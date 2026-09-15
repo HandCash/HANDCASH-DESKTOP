@@ -129,6 +129,14 @@ export async function broadcastAtomicBeef(
       id,
       err instanceof Error ? err.message : String(err),
     )
+    // Arcade (via minerSubmit) flat-out rejected — discard. Explorer lag never
+    // throws here; soft/ghost conflicts return submitted:true instead.
+    try {
+      const { rememberGhostTx } = await import('./ghostTxSuppress')
+      rememberGhostTx(id)
+    } catch {
+      /* discard is best-effort */
+    }
     return false
   }
 }
@@ -1065,14 +1073,25 @@ export async function ingestPaymentsFromTipHints(
   const TIP_INGEST_CONCURRENCY = 3
 
   const ghostTxids: string[] = []
+  const discardIfArcadeGhost = (txid: string): boolean => {
+    const id = txid.trim().toLowerCase()
+    if (!isGhostTxSuppressed(id)) return false
+    if (!ghostTxids.includes(id)) ghostTxids.push(id)
+    return true
+  }
   const markGhostIfMissing = async (
     txid: string,
     hadLocalBeef: boolean,
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
-    // not ACK-away the tip. Validity is Arcade: if we had BEEF and Arcade did
-    // not hard-reject, keep retrying; if we have no BEEF yet, wait for it.
-    // Only hard Arcade rejects (handled elsewhere via rememberGhostTx) ghost.
+    // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
+    // inside broadcastAtomicBeef; we only ACK those. Soft lag keeps pending.
+    if (discardIfArcadeGhost(txid)) {
+      console.info(
+        `[tip-ingest] tip ${txid.slice(0, 12)}… discarded — Arcade hard-reject`,
+      )
+      return
+    }
     void hadLocalBeef
     console.info(
       `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — explorer lag ignored; Arcade is source of truth`,
@@ -1085,6 +1104,11 @@ export async function ingestPaymentsFromTipHints(
   const outcomes = await mapPool(hintList, TIP_INGEST_CONCURRENCY, async (hint) => {
     let importedTxid: string | null = null
     let balanceSats: number | null = null
+
+    // Prior Arcade hard-reject — do not re-chase; ACK the inbox card away.
+    if (discardIfArcadeGhost(hint.txid)) {
+      return { importedTxid, balanceSats }
+    }
 
     if (hint.item) {
       let atomic = hint.tx

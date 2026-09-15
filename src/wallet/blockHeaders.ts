@@ -24,6 +24,7 @@ import { Hash, Utils } from '@bsv/sdk'
 
 import { appendAppLog } from './appLog'
 import { arcadeV2BaseUrl } from './arcadeV2'
+import { durableGetItem, durableSetItem } from './durableStorage'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import type { Chain } from './vault'
 
@@ -41,7 +42,14 @@ export type FetchedBlockHeader = {
 
 const REQUEST_TIMEOUT_MS = 8_000
 const SOURCE_COOLDOWN_MS = 60_000
+/** Session + durable cap — mirrors inscriptionCache hit ceiling style. */
 const HEADER_CACHE_MAX = 200
+/** Durable verified headers so cold start does not re-hit lagging Chain. */
+const DURABLE_KEY = 'handcash.blockHeaders.v1'
+/** HandCash Chain (BRC-CLOUD) often 404s behind tip — demote after streaks. */
+const HANDCASH_CHAIN_SOURCE = 'HandCash Chain'
+const SOURCE_FAIL_STREAK_DEMOTE = 3
+const SOURCE_DEMOTE_MS = 15 * 60_000
 
 async function fetchJson(url: string): Promise<Record<string, unknown> | null> {
   const controller = new AbortController()
@@ -178,11 +186,47 @@ function sourcesFor(chain: Chain): HeaderSource[] {
 
 const cache = new Map<string, FetchedBlockHeader>()
 const cooldownUntil = new Map<string, number>()
+const failStreak = new Map<string, number>()
 const inFlight = new Map<string, Promise<FetchedBlockHeader | undefined>>()
 let loggedFallback = false
+let durableHydrated = false
 
-function remember(key: string, header: FetchedBlockHeader): void {
-  cache.set(key, header)
+function isHeaderShape(value: unknown): value is FetchedBlockHeader {
+  if (value == null || typeof value !== 'object') return false
+  const h = value as Record<string, unknown>
+  return (
+    typeof h.height === 'number' &&
+    typeof h.hash === 'string' &&
+    typeof h.version === 'number' &&
+    typeof h.previousHash === 'string' &&
+    typeof h.merkleRoot === 'string' &&
+    typeof h.time === 'number' &&
+    typeof h.bits === 'number' &&
+    typeof h.nonce === 'number'
+  )
+}
+
+/** Load durable hits into the session Map once (inscriptionCache pattern). */
+function hydrateDurable(): void {
+  if (durableHydrated) return
+  durableHydrated = true
+  try {
+    const raw = durableGetItem(DURABLE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!isHeaderShape(value)) continue
+      // Only accept headers that still self-prove — corrupt durable blobs drop out.
+      if (!selfProving(value)) continue
+      if (!cache.has(key)) cache.set(key, value)
+    }
+    trimCache()
+  } catch {
+    // Corrupt blob must not block header fetches.
+  }
+}
+
+function trimCache(): void {
   while (cache.size > HEADER_CACHE_MAX) {
     const oldest = cache.keys().next()
     if (oldest.done === true) break
@@ -190,11 +234,61 @@ function remember(key: string, header: FetchedBlockHeader): void {
   }
 }
 
+function persistDurable(): void {
+  try {
+    durableSetItem(DURABLE_KEY, JSON.stringify(Object.fromEntries(cache)))
+  } catch {
+    // Cache is an optimisation; losing it costs speed, not correctness.
+  }
+}
+
+function remember(key: string, header: FetchedBlockHeader): void {
+  // Insertion-order LRU: delete+set moves to the end.
+  cache.delete(key)
+  cache.set(key, header)
+  trimCache()
+  persistDurable()
+}
+
+function noteSourceMiss(name: string): void {
+  const streak = (failStreak.get(name) ?? 0) + 1
+  failStreak.set(name, streak)
+  let coolMs = SOURCE_COOLDOWN_MS
+  // HandCash Chain routinely 404s behind tip in dev (Vite → BRC-CLOUD). After a
+  // short streak, demote for longer so Bitails/WoC serve without console spam.
+  if (name === HANDCASH_CHAIN_SOURCE && streak >= SOURCE_FAIL_STREAK_DEMOTE) {
+    coolMs = SOURCE_DEMOTE_MS
+    if (streak === SOURCE_FAIL_STREAK_DEMOTE) {
+      appendAppLog(
+        'info',
+        `[headers] demoting ${name} for ${Math.round(coolMs / 60_000)}m after repeated misses`,
+      )
+    }
+  }
+  cooldownUntil.set(name, Date.now() + coolMs)
+}
+
+function noteSourceHit(name: string): void {
+  failStreak.delete(name)
+}
+
+/** Test hook — clears session + durable hydrate flag (not the durable blob). */
+export function __resetBlockHeaderCacheForTests(): void {
+  cache.clear()
+  cooldownUntil.clear()
+  failStreak.clear()
+  inFlight.clear()
+  loggedFallback = false
+  durableHydrated = false
+}
+
 /**
- * The header at `height` from a public source, or undefined if none can prove one.
+ * The header at `height` from durable cache or a public source, or undefined if
+ * none can prove one.
  *
  * Concurrent callers for the same height share one request — an ingest pass
  * routinely internalizes several outputs from the same block at once.
+ * Verified headers persist across reloads (same idea as inscriptionCache).
  */
 export async function fetchBlockHeaderForHeight(
   chain: Chain,
@@ -203,6 +297,7 @@ export async function fetchBlockHeaderForHeight(
   if (!Number.isInteger(height) || height < 0) return undefined
   const key = `${chain}:${height}`
 
+  hydrateDurable()
   const cached = cache.get(key)
   if (cached != null) return cached
 
@@ -214,13 +309,15 @@ export async function fetchBlockHeaderForHeight(
       if (Date.now() < (cooldownUntil.get(source.name) ?? 0)) continue
       const header = parseHeader(await fetchJson(source.url(height)), height)
       if (header == null) {
-        cooldownUntil.set(source.name, Date.now() + SOURCE_COOLDOWN_MS)
+        noteSourceMiss(source.name)
         continue
       }
       if (!selfProving(header)) {
         appendAppLog('warn', `[headers] ${source.name} served an unverifiable header at ${height}`)
+        noteSourceMiss(source.name)
         continue
       }
+      noteSourceHit(source.name)
       if (!loggedFallback) {
         loggedFallback = true
         appendAppLog('info', `[headers] serving headers from ${source.name} while primary chain host lags`)

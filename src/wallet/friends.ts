@@ -28,6 +28,11 @@ export type Friend = {
    * Value is the canonical display (`$alice` or `@alice@domain`).
    */
   handle?: string | null
+  /**
+   * Optional wallet protocols from handle resolve (`bsv21`, …).
+   * Copied locally so Send Fungible can warn without another round trip.
+   */
+  protocols?: string[]
 }
 
 /**
@@ -82,6 +87,10 @@ function readRaw(): Friend[] {
           : f.handle === null
             ? null
             : undefined,
+      protocols: Array.isArray(f.protocols)
+        ? f.protocols.filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+            .map((p) => p.trim().toLowerCase())
+        : undefined,
     }))
   } catch {
     return []
@@ -113,6 +122,13 @@ export function mergeFriends(incoming: Friend[]): number {
       let next = existing
       if (!existing.messagebox && friend.messagebox) {
         next = { ...next, messagebox: friend.messagebox }
+      }
+      if (
+        (!existing.protocols || existing.protocols.length === 0) &&
+        friend.protocols &&
+        friend.protocols.length > 0
+      ) {
+        next = { ...next, protocols: friend.protocols }
       }
       if (!existing.handle && friend.handle) {
         next = { ...next, handle: friend.handle }
@@ -228,6 +244,7 @@ export function addFriend(args: {
   label: string
   identityKey: string
   messagebox?: string | null
+  protocols?: string[]
   /** Canonical handle display when the friend was added via handle resolve. */
   handle?: string | null
 }): Friend {
@@ -256,6 +273,13 @@ export function addFriend(args: {
         ? null
         : undefined
 
+  const protocols =
+    Array.isArray(args.protocols) && args.protocols.length > 0
+      ? args.protocols
+          .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+          .map((p) => p.trim().toLowerCase())
+      : undefined
+
   const friend: Friend = {
     id: `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`,
     label,
@@ -263,6 +287,7 @@ export function addFriend(args: {
     createdAt: Date.now(),
     ...(messagebox !== undefined ? { messagebox } : {}),
     ...(handle !== undefined ? { handle } : {}),
+    ...(protocols && protocols.length > 0 ? { protocols } : {}),
   }
   writeAll([...friends, friend])
   void import('./appActivity').then(({ recordWalletEvent, WALLET_ACTIVITY_ORIGIN }) => {
@@ -291,6 +316,7 @@ export async function addFriendFromRecipient(args: {
   let identityKey: string
   let suggestedLabel = ''
   let messagebox: string | null | undefined
+  let protocols: string[] | undefined
   let fixedHandle: string | undefined
 
   const peer = tryParsePeerPayUri(value)
@@ -302,6 +328,7 @@ export async function addFriendFromRecipient(args: {
     fixedHandle = formatHandCashHandle(resolved.handle, resolved.domain)
     suggestedLabel = fixedHandle
     messagebox = resolved.messagebox
+    protocols = resolved.protocols
   } else {
     identityKey = normalizeIdentityKey(value)
     const invalid = validateIdentityKey(identityKey)
@@ -321,6 +348,7 @@ export async function addFriendFromRecipient(args: {
     label,
     identityKey,
     messagebox,
+    protocols,
     ...(fixedHandle ? { handle: fixedHandle } : {}),
   })
 }

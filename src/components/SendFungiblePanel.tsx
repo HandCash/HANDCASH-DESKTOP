@@ -18,6 +18,10 @@ import {
   type Friend,
 } from '../wallet/friends'
 import {
+  assessPeerBsv21Support,
+  peerBsv21SupportWarning,
+} from '../wallet/peerTokenCapability'
+import {
   clearNavChild,
   openFungibleDetails,
 } from '../wallet/navStore'
@@ -78,6 +82,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const [amount, setAmount] = useState('')
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
+  const [recipientProtocols, setRecipientProtocols] = useState<string[]>([])
   const [showMatches, setShowMatches] = useState(false)
   const [stage, setStage] = useState<Stage>('edit')
   const sendingRef = useRef(false)
@@ -131,11 +136,26 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const canReview =
     !sendBlocked && to.trim().length > 0 && amount.trim().length > 0
 
+  const friendProtocols =
+    recipientIdentityKey != null
+      ? listFriends().find(
+          (f) => f.identityKey.toLowerCase() === recipientIdentityKey.toLowerCase(),
+        )?.protocols
+      : undefined
+  const bsv21PeerWarning = peerBsv21SupportWarning(
+    assessPeerBsv21Support({
+      recipientIdentityKey,
+      protocols:
+        recipientProtocols.length > 0 ? recipientProtocols : friendProtocols,
+    }),
+  )
+
   /** Same recipient grammar as collectable / BSV send. */
   const applyRecipientInput = (value: string) => {
     setRecipientQuery(value)
     setShowMatches(true)
     setFriendLabel(null)
+    setRecipientProtocols([])
     setError(null)
     const wallet = getActiveWallet()
     const trimmed = value.trim()
@@ -145,6 +165,15 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       try {
         setTo(addressFromIdentityKey(peer.identityKey, chain))
         setRecipientIdentityKey(peer.identityKey)
+        void import('../wallet/handleResolve')
+          .then(({ resolveHandleByIdentityKey }) =>
+            resolveHandleByIdentityKey(peer.identityKey),
+          )
+          .then((rows) => {
+            const protocols = rows.find((r) => r.protocols.length > 0)?.protocols
+            if (protocols?.length) setRecipientProtocols(protocols)
+          })
+          .catch(() => {})
       } catch (err) {
         setTo('')
         setRecipientIdentityKey(null)
@@ -161,6 +190,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
           setTo(addressFromIdentityKey(resolved.identityKey, chain))
           setRecipientIdentityKey(resolved.identityKey)
           setFriendLabel(resolved.display)
+          setRecipientProtocols(resolved.protocols ?? [])
           setError(null)
         },
         onError: (err) => {
@@ -194,6 +224,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       setTo(address)
       setRecipientIdentityKey(friend.identityKey)
       setFriendLabel(friend.label)
+      setRecipientProtocols(friend.protocols ?? [])
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -341,6 +372,12 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                 </CopyableError>
               ) : null}
 
+              {bsv21PeerWarning ? (
+                <p className="send-amount-warning" role="status">
+                  {bsv21PeerWarning}
+                </p>
+              ) : null}
+
               <div className="field send-amount-field">
                 <label htmlFor="fungible-amount">Amount</label>
                 <div className="send-amount-row">
@@ -481,6 +518,11 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                 to <strong>{recipientLabel}</strong>
               </p>
               {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
+              {bsv21PeerWarning ? (
+                <p className="send-amount-warning" role="status">
+                  {bsv21PeerWarning}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

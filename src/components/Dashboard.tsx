@@ -64,7 +64,11 @@ import { whenRecomposeIdle } from '../wallet/recompose'
 // 1.5s produced ~40 messagebox requests/minute and measurable idle renderer
 // load. Five seconds keeps peer receives responsive without a permanent hot loop.
 const TIP_HINT_POLL_MS = 5_000
+/** Empty inbox + idle outbox — stretch the poll so the renderer is not hot forever. */
+const TIP_HINT_POLL_IDLE_MS = 20_000
 const TIP_HINT_POLL_HIDDEN_MS = 30_000
+/** Consecutive empty visible polls before stretching to IDLE_MS. */
+const TIP_HINT_IDLE_AFTER_EMPTY = 2
 /** Cloud history is a full encrypted replica merge, not a presence heartbeat. */
 const HISTORY_PULL_INTERVAL_MS = 5 * 60_000
 /**
@@ -253,7 +257,8 @@ export function Dashboard({
     let tickInFlight = false
     let pollTimer: number | null = null
     let tipHintTimer: number | null = null
-    let scheduledDelayMs = 0
+    /** Visible polls with empty inbox + idle outbox — drives IDLE tip cadence. */
+    let emptyTipPolls = 0
     const chasedAt = new Map<string, number>()
     const chaseHeld = new Set<string>()
 
@@ -287,22 +292,31 @@ export function Dashboard({
       if (cancelled) return
       if (pollTimer != null) window.clearTimeout(pollTimer)
       const delay = delayMs ?? nextChainPollMs()
-      scheduledDelayMs = delay
       pollTimer = window.setTimeout(() => {
         void sync().finally(() => scheduleNext())
       }, delay)
     }
 
+    const nextTipHintDelayMs = (): number => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return TIP_HINT_POLL_HIDDEN_MS
+      }
+      if (emptyTipPolls >= TIP_HINT_IDLE_AFTER_EMPTY) return TIP_HINT_POLL_IDLE_MS
+      return TIP_HINT_POLL_MS
+    }
+
     const scheduleTipHintPoll = (delayMs?: number) => {
       if (cancelled) return
       if (tipHintTimer != null) window.clearTimeout(tipHintTimer)
-      const hidden =
-        typeof document !== 'undefined' && document.visibilityState === 'hidden'
-      const delay =
-        delayMs ?? (hidden ? TIP_HINT_POLL_HIDDEN_MS : TIP_HINT_POLL_MS)
+      const delay = delayMs ?? nextTipHintDelayMs()
       tipHintTimer = window.setTimeout(() => {
         void pollTipHints().finally(() => scheduleTipHintPoll())
       }, delay)
+    }
+
+    const noteTipPollActivity = (busy: boolean) => {
+      if (busy) emptyTipPolls = 0
+      else emptyTipPolls += 1
     }
 
     let ingestInFlight = false
@@ -322,13 +336,17 @@ export function Dashboard({
         const map = new Map(
           listFriends().map((f) => [f.identityKey.toLowerCase(), f.id]),
         )
-        const { flushPendingBrc29Outbox } = await import(
-          '../wallet/pendingBrc29Outbox'
-        )
+        const {
+          flushPendingBrc29Outbox,
+          pendingBrc29OutboxCount,
+        } = await import('../wallet/pendingBrc29Outbox')
+        const {
+          flushPendingItemOutbox,
+          pendingItemOutboxCount,
+        } = await import('../wallet/pendingItemOutbox')
+        const outboxBusy =
+          pendingBrc29OutboxCount() > 0 || pendingItemOutboxCount() > 0
         await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex })
-        const { flushPendingItemOutbox } = await import(
-          '../wallet/pendingItemOutbox'
-        )
         await flushPendingItemOutbox({ rootKeyHex: active.rootKeyHex })
         const hints = await pollInboundTipHints({
           rootKeyHex: active.rootKeyHex,
@@ -337,12 +355,19 @@ export function Dashboard({
         // Inbox cards already dispatch `handcash:payment-hint` inside
         // pollInboundTipHints. Skip the 2MB chat walk on that path.
         if (cancelled) return
-        if (hints.tipHints > 0) return
+        if (hints.tipHints > 0) {
+          noteTipPollActivity(true)
+          return
+        }
         const { ingestPaymentsFromTipHints, pendingBrc29HintsFromChat } =
           await import('../wallet/sendBrc29Payment')
         const fromChat = pendingBrc29HintsFromChat()
         const chatOnly = fromChat.filter((h) => paymentHintTxid(h) !== '')
-        if (chatOnly.length === 0) return
+        if (chatOnly.length === 0) {
+          noteTipPollActivity(outboxBusy)
+          return
+        }
+        noteTipPollActivity(true)
         const combined = chatOnly
         const chaseable = takeChaseable(combined.map((h) => h.txid))
         if (chaseable.length === 0) return
@@ -546,6 +571,9 @@ export function Dashboard({
 
     const onPaymentHint = (ev: Event) => {
       if (cancelled) return
+      // Peer tip arrived — leave idle tip cadence immediately.
+      emptyTipPolls = 0
+      scheduleTipHintPoll(0)
       const detail = (ev as CustomEvent<{
         txids?: string[]
         hints?: Array<{

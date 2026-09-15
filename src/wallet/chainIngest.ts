@@ -401,6 +401,7 @@ export async function refreshFromChainExclusive(
   let scannedTxids: string[] = []
   let addressUnspentAfterIngest = 0
   let fundingSkippedKnownAfterIngest = 0
+  let softDeadlineHit = false
 
   /** Soft UI cap — clear Syncing while beef / SPV providers still finish under the ingest lock. */
   const LEGACY_INGEST_SOFT_MS = 35_000
@@ -415,7 +416,6 @@ export async function refreshFromChainExclusive(
       knownItems: opts?.knownItems,
       fundingOnly,
     })
-    let softDeadlineHit = false
     const softTimer = setTimeout(() => {
       softDeadlineHit = true
       console.warn(
@@ -515,36 +515,50 @@ export async function refreshFromChainExclusive(
         } else {
           invalidateLiveOneSatOutpoints()
         }
-        // Defer BRC-150 verify walk while fungibles heal + collectables list run.
-        void import('./collectables')
-          .then(({ setCollectableVerifyWalkDeferred }) => {
-            setCollectableVerifyWalkDeferred(true)
-          })
-          .then(() =>
-            import('./token/list').then(({ listFungibles }) => listFungibles(active)),
+        // Soft deadline: Collect already browsable under Catching-up. Shed the
+        // heal/list/verify fan-out until the next explicit Refresh so IDB +
+        // indexer work does not keep the renderer hot after the pill soft-clears.
+        if (softDeadlineHit) {
+          console.info(
+            '[chain-ingest] soft deadline — shedding collectables heal/list until Refresh',
           )
-          .then(() =>
-            import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>
-              healMisfiledCollectables(active),
-            ),
+          void import('./collectables').then(
+            ({ setCollectableVerifyWalkDeferred }) => {
+              setCollectableVerifyWalkDeferred(false)
+            },
           )
-          .then(() =>
-            import('./healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
-              healMisfiledBsv21(active),
-            ),
-          )
-          .then(() => listCollectables(active))
-          .finally(() => {
-            void import('./collectables').then(
-              ({ setCollectableVerifyWalkDeferred, resumeCollectableVerifyWalk }) => {
-                setCollectableVerifyWalkDeferred(false)
-                resumeCollectableVerifyWalk()
-              },
+        } else {
+          // Defer BRC-150 verify walk while fungibles heal + collectables list run.
+          void import('./collectables')
+            .then(({ setCollectableVerifyWalkDeferred }) => {
+              setCollectableVerifyWalkDeferred(true)
+            })
+            .then(() =>
+              import('./token/list').then(({ listFungibles }) => listFungibles(active)),
             )
-          })
-          .catch((err) => {
-            console.warn('[chain-ingest] collectables refresh failed', err)
-          })
+            .then(() =>
+              import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>
+                healMisfiledCollectables(active),
+              ),
+            )
+            .then(() =>
+              import('./healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
+                healMisfiledBsv21(active),
+              ),
+            )
+            .then(() => listCollectables(active))
+            .finally(() => {
+              void import('./collectables').then(
+                ({ setCollectableVerifyWalkDeferred, resumeCollectableVerifyWalk }) => {
+                  setCollectableVerifyWalkDeferred(false)
+                  resumeCollectableVerifyWalk()
+                },
+              )
+            })
+            .catch((err) => {
+              console.warn('[chain-ingest] collectables refresh failed', err)
+            })
+        }
       } catch (err) {
         console.warn('[chain-ingest] collectables refresh skipped', err)
       }
@@ -580,8 +594,12 @@ export async function refreshFromChainExclusive(
   // so its answers are noise — skip the round trips rather than log them.
   // Background polls pass audit:false — the audit is report-only and was racing
   // user taps after unlock. Also skip when a send is waiting.
+  // Soft-deadline passes already burned ~35s on address ingest — skip the
+  // report-only spendable audit until an explicit Refresh (forceReview).
   const review =
-    opts?.audit === false || shouldYieldChainIngestToSpend()
+    opts?.audit === false ||
+    shouldYieldChainIngestToSpend() ||
+    (softDeadlineHit && !forceReview)
       ? { suspect: 0, skipped: true }
       : await auditSpendableOutputs(forceReview && importedFunding === 0)
   if (review.error && forceReview) {

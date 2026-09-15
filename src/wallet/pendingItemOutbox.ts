@@ -46,6 +46,11 @@ function save(rows: PendingItemRemit[]): void {
   durableSetItem(KEY, JSON.stringify(rows.slice(0, 50)))
 }
 
+/** Cheap peek for Dashboard tip-poll backoff — no network. */
+export function pendingItemOutboxCount(): number {
+  return load().length
+}
+
 export function enqueuePendingItemRemit(
   row: Omit<PendingItemRemit, 'createdAt' | 'attempts'> &
     Partial<Pick<PendingItemRemit, 'createdAt' | 'attempts'>>,

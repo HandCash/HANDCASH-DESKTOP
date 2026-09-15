@@ -8,6 +8,7 @@
  */
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 import { formatHandCashHandle } from './handleFormat'
+import { parseWalletProtocols } from './peerTokenCapability'
 
 export type ResolvedHandle = {
   handle: string
@@ -17,6 +18,11 @@ export type ResolvedHandle = {
   display: string
   /** BRC-169 messagebox URL when the resolve host returns one. */
   messagebox: string | null
+  /**
+   * Optional wallet protocol tags from the resolve host (e.g. `bsv21`, `1sat`).
+   * Empty when the host does not publish them yet — treat as unknown, not denial.
+   */
+  protocols: string[]
 }
 
 /** True when resolve returned a real BRC-52 handle certificate (not a lab placeholder). */
@@ -152,6 +158,7 @@ export async function resolveHandle(
     identityKey?: string
     certificate?: unknown
     messagebox?: string | null
+    protocols?: unknown
   }
   if (!data.handle || !data.identityKey || !data.domain) {
     throw new Error('Invalid resolve response')
@@ -167,6 +174,7 @@ export async function resolveHandle(
     certificate: data.certificate,
     display: formatHandCashHandle(data.handle, data.domain, { fullyQualified: true }),
     messagebox,
+    protocols: parseWalletProtocols(data.protocols),
   }
 }
 
@@ -210,7 +218,9 @@ export async function resolveHandleByIdentityKey(
       identityKey?: string
       certificate?: unknown
       messagebox?: string | null
+      protocols?: unknown
     }>
+    protocols?: unknown
   }
 
   const rows = Array.isArray(data.handles)
@@ -233,6 +243,9 @@ export async function resolveHandleByIdentityKey(
         certificate: r.certificate,
         display: formatHandCashHandle(r.handle!, r.domain!, { fullyQualified: true }),
         messagebox,
+        protocols: parseWalletProtocols(
+          (r as { protocols?: unknown }).protocols ?? data.protocols,
+        ),
       }
     })
 }

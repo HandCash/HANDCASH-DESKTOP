@@ -46,6 +46,11 @@ function save(rows: PendingBrc29Remit[]): void {
   durableSetItem(KEY, JSON.stringify(rows.slice(0, 50)))
 }
 
+/** Cheap peek for Dashboard tip-poll backoff — no network. */
+export function pendingBrc29OutboxCount(): number {
+  return load().length
+}
+
 export function enqueuePendingBrc29Remit(
   row: Omit<PendingBrc29Remit, 'createdAt' | 'attempts'> &
     Partial<Pick<PendingBrc29Remit, 'createdAt' | 'attempts'>>,

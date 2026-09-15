@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchBlockHeaderForHeight } from './blockHeaders'
+import {
+  __resetBlockHeaderCacheForTests,
+  fetchBlockHeaderForHeight,
+} from './blockHeaders'
 
 vi.mock('./appLog', () => ({ appendAppLog: () => {} }))
+
+const durableStore = new Map<string, string>()
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => durableStore.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    durableStore.set(key, value)
+    return true
+  },
+}))
 
 /** Mainnet block 961050, the height an ordinal import kept failing on. */
 const BLOCK_961050 = {
@@ -25,6 +37,8 @@ let height = 961050
 beforeEach(() => {
   // Each test uses a fresh height so the module's header cache never answers for it.
   height += 1
+  durableStore.clear()
+  __resetBlockHeaderCacheForTests()
 })
 
 afterEach(() => {
@@ -105,5 +119,56 @@ describe('fetchBlockHeaderForHeight', () => {
     )
 
     expect(await fetchBlockHeaderForHeight('main', height)).toBeUndefined()
+  })
+
+  it('serves a cold start from durable rather than the network', async () => {
+    const fetchMock = vi.fn(async () => respondWith({ ...BLOCK_961050, height }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchBlockHeaderForHeight('main', height)
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0)
+
+    __resetBlockHeaderCacheForTests()
+    fetchMock.mockClear()
+    const again = await fetchBlockHeaderForHeight('main', height)
+    expect(again).toMatchObject({ hash: BLOCK_961050.hash, height })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('demotes HandCash Chain after repeated misses so later heights skip it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/v1/chain/header/')) return respondWith(null, false)
+      if (url.includes('arcade-v2') || url.includes('bsvblockchain.tech')) {
+        return respondWith(null, false)
+      }
+      if (url.includes('bitails')) return respondWith(null, false)
+      return respondWith({ ...BLOCK_961050, height })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        height += 1
+        await fetchBlockHeaderForHeight('main', height)
+        // Expire the short miss cooldown so the next height can observe a streak.
+        await vi.advanceTimersByTimeAsync(60_000 + 1)
+      }
+      const chainHits = fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes('/v1/chain/header/'),
+      ).length
+      expect(chainHits).toBe(3)
+
+      fetchMock.mockClear()
+      // Still inside the 15m demote window (only ~3m advanced above).
+      height += 1
+      await fetchBlockHeaderForHeight('main', height)
+      const chainHitsAfter = fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes('/v1/chain/header/'),
+      ).length
+      expect(chainHitsAfter).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
