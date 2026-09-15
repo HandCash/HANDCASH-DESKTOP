@@ -166,11 +166,19 @@ export function classifyOneSatAsBsv21(
   return { kind: 'skip' }
 }
 
-/** 1-sat lock that belongs in Tokens (BSV-21 binary or 1sat-ft), not Collect. */
+/** 1-sat lock that belongs in Tokens (BSV-21 binary/JSON or 1sat-ft), not Collect. */
 export function isFungibleOneSatLock(lockingScriptHex?: string): boolean {
   if (!lockingScriptHex?.trim()) return false
   if (decodeBsv21Binary(lockingScriptHex)) return true
-  return looksLikeOnesatFtTip({ lockingScriptHex })
+  if (looksLikeOnesatFtTip({ lockingScriptHex })) return true
+  // JSON deploy+mint / mint / transfer — same Tokens bucket as binary 162.
+  return (
+    classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${'0'.repeat(64)}_0`,
+      lockingScriptHex,
+    }).kind === 'bsv21'
+  )
 }
 
 export type HealMisfiledBsv21Result = {

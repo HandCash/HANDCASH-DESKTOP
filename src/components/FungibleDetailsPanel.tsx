@@ -59,6 +59,7 @@ import {
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
 import { CollectableSendingMark } from './CollectableSendingMark'
+import { useDetailActionDock } from './WalletActionDock'
 
 type Props = {
   tokenId: string
@@ -280,6 +281,74 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       ? 'send-refused'
       : 'ready'
 
+  useDetailActionDock({
+    ariaLabel: 'Token actions',
+    tertiary: {
+      label: burning ? 'Burning…' : 'Burn token',
+      shortLabel: burning ? 'Burning…' : 'Burn',
+      onClick: () => {
+        if (burnBlocked || burning) return
+        playWalletSound('soft')
+        openBurnFungible(token.tokenId)
+      },
+      disabled: burnBlocked || combining || burning,
+      tone: 'danger',
+      icon: <FireIcon size={18} />,
+      title: burning ? `${inFlight ?? 'Burning'} ${token.sym}` : burnTitle,
+    },
+    secondary: !isColour
+      ? undefined
+      : canCombine
+        ? {
+            label: 'Combine tips',
+            shortLabel: 'Combine',
+            onClick: () => {
+              playWalletSound('soft')
+              setCombineOpen(true)
+            },
+            disabled: combining,
+            icon: <RefreshIcon size={18} />,
+            tone: 'secondary',
+            title: `${token.utxoCount} tips → 1 · same balance · small network fee`,
+          }
+        : {
+            label: 'Copy origin',
+            shortLabel: 'Copy',
+            onClick: () => {
+              playWalletSound('soft')
+              void copyText(token.tokenId, { label: 'origin' })
+            },
+            icon: <CopyIcon size={18} />,
+            tone: 'secondary',
+            title: `Copy origin\n${token.tokenId}`,
+          },
+    primary: isColour
+      ? {
+          label: 'Send token',
+          shortLabel: 'Send',
+          onClick: () => {
+            if (sendBlocked) return
+            playWalletSound('soft')
+            openSendFungible(token.tokenId)
+          },
+          disabled: sendBlocked || combining,
+          tone: 'primary',
+          icon: <SendIcon size={18} />,
+          title: sendBlocked ? spendLabel : `Send ${token.sym}`,
+        }
+      : {
+          label: 'Copy ID',
+          shortLabel: 'Copy',
+          onClick: () => {
+            playWalletSound('soft')
+            void copyText(token.tokenId, { label: 'token ID' })
+          },
+          icon: <CopyIcon size={18} />,
+          tone: 'primary',
+          title: `Copy token ID\n${token.tokenId}`,
+        },
+  })
+
   const live = token
   async function runCombine() {
     if (!canCombine || combining) return
@@ -361,68 +430,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           ) : null}
         </div>
       </header>
-
-      <div className="fungible-details-actions" data-aeon-part="actions">
-        {isColour ? (
-          <button
-            type="button"
-            className="btn btn-primary btn-icon"
-            disabled={sendBlocked || combining}
-            title={sendBlocked ? spendLabel : `Send ${token.sym}`}
-            onClick={() => {
-              if (sendBlocked) return
-              playWalletSound('soft')
-              openSendFungible(token.tokenId)
-            }}
-          >
-            <SendIcon size={14} />
-            Send token
-          </button>
-        ) : null}
-        {canCombine ? (
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            disabled={combining}
-            title={`${token.utxoCount} tips → 1 · same balance · small network fee`}
-            onClick={() => {
-              playWalletSound('soft')
-              setCombineOpen(true)
-            }}
-          >
-            <RefreshIcon size={14} />
-            Combine tips
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon"
-          title={isColour ? `Copy origin\n${token.tokenId}` : `Copy token ID\n${token.tokenId}`}
-          onClick={() => {
-            playWalletSound('soft')
-            void copyText(token.tokenId, { label: isColour ? 'origin' : 'token ID' })
-          }}
-        >
-          <CopyIcon size={14} />
-          {isColour ? 'Copy origin' : 'Copy ID'}
-        </button>
-        {/* Destructive action is always last, on tokens and on items. */}
-        <button
-          type="button"
-          className={`btn btn-ghost btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`}
-          disabled={burnBlocked || combining || burning}
-          aria-busy={burning || undefined}
-          title={burning ? `${inFlight ?? 'Burning'} ${token.sym}` : burnTitle}
-          onClick={() => {
-            if (burnBlocked || burning) return
-            playWalletSound('soft')
-            openBurnFungible(token.tokenId)
-          }}
-        >
-          <FireIcon size={14} />
-          {burning ? 'Burning…' : 'Burn token'}
-        </button>
-      </div>
 
       <Prompt.Root
         open={combineOpen}

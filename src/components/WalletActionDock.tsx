@@ -103,3 +103,13 @@ export function useWalletActionDock(actions: WalletDockActions | null): void {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [register, signature])
 }
+
+/**
+ * Detail views (collectable / token / identity) dock the same bottom action
+ * chrome as connect/pay approval — primary / secondary / danger — so the nav
+ * bar becomes the option strip and the panel can maximize media + meta.
+ */
+export function useDetailActionDock(actions: WalletDockActions | null): void {
+  useWalletActionDock(actions)
+}
+

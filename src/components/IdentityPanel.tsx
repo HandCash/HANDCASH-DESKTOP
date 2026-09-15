@@ -19,6 +19,7 @@ import {
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
 import { CopyIcon } from './icons'
+import { useDetailActionDock } from './WalletActionDock'
 
 type Props = {
   profile: WalletProfile
@@ -160,53 +161,82 @@ export function IdentityPanel({ profile }: Props) {
     )
   }
 
+  useDetailActionDock({
+    ariaLabel: 'Identity actions',
+    tertiary: !handleLabel
+      ? {
+          label: 'Claim handle',
+          shortLabel: 'Claim',
+          onClick: openClaim,
+          tone: 'secondary',
+        }
+      : undefined,
+    secondary: {
+      label: 'Copy identity key',
+      shortLabel: 'Copy',
+      onClick: () => {
+        void copyIdentity()
+      },
+      icon: <CopyIcon size={18} />,
+      tone: 'secondary',
+    },
+    primary: {
+      label: busy ? 'Publishing…' : published ? 'Update profile' : 'Publish identity',
+      shortLabel: busy ? 'Publishing…' : published ? 'Update' : 'Publish',
+      onClick: () => {
+        void onCompose()
+      },
+      disabled: busy,
+      tone: 'primary',
+    },
+  })
+
   return (
     <div className="nav-section-body identity-nav nav-section-with-scroll" data-aeon-scope="identity">
       <div className="identity-scroll nav-section-scroll-body">
         <div className="identity-body">
-          <section className="identity-card" aria-label="Wallet identity">
+          <section className="identity-stage" aria-label="Wallet identity">
             <div className="identity-hero">
-              <div className="identity-qr">
+              <button
+                type="button"
+                className="identity-qr identity-qr-copy"
+                title="Copy identity key"
+                aria-label="Copy identity key"
+                onClick={() => void copyIdentity()}
+              >
                 <div className="identity-qr-frame">
                   {dataUrl ? (
-                    <img src={dataUrl} alt="Identity QR" width={160} height={160} />
+                    <img src={dataUrl} alt="Identity QR" width={200} height={200} />
                   ) : (
                     <SkeletonQr />
                   )}
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost identity-copy-btn"
-                  onClick={() => void copyIdentity()}
-                >
-                  <CopyIcon size={14} />
-                  Copy identity key
-                </button>
-              </div>
+              </button>
               <div className="identity-hero-meta">
-                <div className="identity-field">
-                  <span className="identity-field-label">Handle</span>
-                  {handleLabel ? (
-                    <button
-                      type="button"
-                      className="identity-handle"
-                      title={`Click to copy ${handleLabel}`}
-                      onClick={() => void copyHandle()}
-                    >
-                      {handleLabel}
-                    </button>
-                  ) : (
-                    <div className="identity-handle-empty">
-                      <p className="identity-handle-missing">No handle claimed yet</p>
-                      <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
-                        Claim handle
-                      </button>
-                    </div>
-                  )}
-                </div>
+                {handleLabel ? (
+                  <button
+                    type="button"
+                    className="identity-handle"
+                    title={`Click to copy ${handleLabel}`}
+                    onClick={() => void copyHandle()}
+                  >
+                    {handleLabel}
+                  </button>
+                ) : (
+                  <p className="identity-handle-missing">No handle claimed yet</p>
+                )}
                 <p className="identity-qr-hint">
-                  Scan to pay or add as a friend. Identity is per active wallet account.
+                  Scan to pay or add as a friend. Per active wallet account.
                 </p>
+                <div className="identity-chips">
+                  <strong className="identity-network" data-network={profile.chain}>
+                    {profile.chain === 'main' ? 'Mainnet' : 'Testnet'}
+                  </strong>
+                  <span className="identity-chip mono" title={bapId || undefined}>
+                    BAP {bapId ? shortIdentityKey(bapId) : '—'}
+                    {published ? '' : ' · draft'}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -224,27 +254,13 @@ ${profile.identityKey}`}
                   <CopyIcon size={14} />
                 </button>
               </li>
-              <li className="identity-field">
-                <span className="identity-field-label">Network</span>
-                <strong className="identity-network" data-network={profile.chain}>
-                  {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
-                </strong>
-              </li>
-              <li className="identity-field">
-                <span className="identity-field-label">BAP ID</span>
-                <strong className="mono identity-bap-id">
-                  {bapId ? shortIdentityKey(bapId) : '—'}
-                  {published ? '' : ' (not published yet)'}
-                </strong>
-              </li>
             </ul>
           </section>
 
-          <section className="identity-card identity-compose" aria-label="Compose BAP identity">
+          <section className="identity-stage identity-compose" aria-label="Compose BAP identity">
             <h3 className="identity-compose-title">Compose identity</h3>
             <p className="identity-compose-lede">
-              Publishes your BAP ID (first time) and ALIAS profile on-chain for this wallet
-              account. Needs a little spendable balance for fees.
+              Publishes BAP + ALIAS for this account. Needs a little spendable balance.
             </p>
             <label className="identity-compose-field">
               <span>Display name</span>
@@ -262,7 +278,7 @@ ${profile.identityKey}`}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Short bio"
-                rows={3}
+                rows={2}
                 disabled={busy}
               />
             </label>
@@ -276,14 +292,6 @@ ${profile.identityKey}`}
                 disabled={busy}
               />
             </label>
-            <button
-              type="button"
-              className="btn btn-primary identity-compose-submit"
-              disabled={busy}
-              onClick={() => void onCompose()}
-            >
-              {busy ? 'Publishing…' : published ? 'Update profile' : 'Publish identity'}
-            </button>
             {status ? <p className="identity-compose-status">{status}</p> : null}
           </section>
         </div>

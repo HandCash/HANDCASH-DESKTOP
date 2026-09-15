@@ -46,6 +46,7 @@ import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { LoadingSpinner } from './LoadingSpinner'
 import { EmptyState } from './EmptyState'
+import { useDetailActionDock } from './WalletActionDock'
 import { DeferredModelViewer } from './DeferredModelViewer'
 
 type Props = {
@@ -317,6 +318,63 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       })
   }
 
+  useDetailActionDock(
+    item.covenantLocked
+      ? {
+          ariaLabel: 'Collectable actions',
+          primary: {
+            label: abandoning ? 'Removing…' : 'Remove from wallet',
+            shortLabel: abandoning ? 'Removing…' : 'Remove',
+            onClick: startAbandon,
+            disabled: abandoning,
+            tone: 'primary',
+          },
+        }
+      : {
+          ariaLabel: 'Collectable actions',
+          tertiary: {
+            label: burning ? 'Burning…' : 'Burn item',
+            shortLabel: burning ? 'Burning…' : 'Burn',
+            onClick: () => {
+              if (burning) return
+              playWalletSound('soft')
+              openBurnCollectable(item.outpoint)
+            },
+            disabled: sending,
+            tone: 'danger',
+            icon: <FireIcon size={18} />,
+          },
+          secondary: item.imageUrl
+            ? {
+                label: isModel
+                  ? imageBusy === 'save'
+                    ? 'Saving…'
+                    : 'Save model'
+                  : imageBusy === 'save'
+                    ? 'Saving…'
+                    : 'Save image',
+                shortLabel: imageBusy === 'save' ? 'Saving…' : 'Save',
+                onClick: isModel ? saveModel : saveImage,
+                disabled: Boolean(imageBusy),
+                icon: <DownloadIcon size={18} />,
+                tone: 'secondary',
+              }
+            : undefined,
+          primary: {
+            label:
+              sending && !burning
+                ? `${inFlight ?? 'Sending'}…`
+                : 'Send item',
+            shortLabel: sending && !burning ? 'Sending…' : 'Send',
+            onClick: startSend,
+            disabled: sending || sendBlocked,
+            tone: 'primary',
+            icon: <SendIcon size={18} />,
+            title: sendTitle,
+          },
+        },
+  )
+
   const authenticity = authenticityView(item, verification)
 
   return (
@@ -380,83 +438,20 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
               from this wallet — the sat stays locked on chain.
             </p>
           ) : null}
-          <div className="actions collectable-details-actions">
-            {item.covenantLocked ? (
-              <button
-                type="button"
-                className="btn btn-secondary btn-icon"
-                onClick={startAbandon}
-                disabled={abandoning}
-                aria-busy={abandoning || undefined}
-              >
-                {abandoning ? 'Removing…' : 'Remove from wallet'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary btn-icon"
-                onClick={startSend}
-                disabled={sending || sendBlocked}
-                title={sendTitle}
-                aria-busy={sending && !burning ? true : undefined}
-              >
-                <SendIcon size={14} />
-                {sending && !burning ? `${inFlight ?? 'Sending'}…` : 'Send item'}
-              </button>
-            )}
-            {item.imageUrl && isModel ? (
+          {!isModel && item.imageUrl ? (
+            <div className="collectable-details-media-actions">
               <button
                 type="button"
                 className="btn btn-ghost btn-icon"
-                onClick={saveModel}
+                onClick={copyImage}
                 disabled={Boolean(imageBusy)}
-                aria-busy={imageBusy === 'save' || undefined}
+                aria-busy={imageBusy === 'copy' || undefined}
               >
-                <DownloadIcon size={14} />
-                {imageBusy === 'save' ? 'Saving…' : 'Save model'}
+                <CopyIcon size={14} />
+                {imageBusy === 'copy' ? 'Copying…' : 'Copy image'}
               </button>
-            ) : item.imageUrl ? (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  onClick={copyImage}
-                  disabled={Boolean(imageBusy)}
-                  aria-busy={imageBusy === 'copy' || undefined}
-                >
-                  <CopyIcon size={14} />
-                  {imageBusy === 'copy' ? 'Copying…' : 'Copy image'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  onClick={saveImage}
-                  disabled={Boolean(imageBusy)}
-                  aria-busy={imageBusy === 'save' || undefined}
-                >
-                  <DownloadIcon size={14} />
-                  {imageBusy === 'save' ? 'Saving…' : 'Save image'}
-                </button>
-              </>
-            ) : null}
-            {/* Destructive action is always last, on items and on tokens. */}
-            {item.covenantLocked ? null : (
-              <button
-                type="button"
-                className={`btn btn-ghost btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`}
-                onClick={() => {
-                  if (burning) return
-                  playWalletSound('soft')
-                  openBurnCollectable(item.outpoint)
-                }}
-                disabled={sending}
-                aria-busy={burning || undefined}
-              >
-                <FireIcon size={14} />
-                {burning ? 'Burning…' : 'Burn item'}
-              </button>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
       </div>
 

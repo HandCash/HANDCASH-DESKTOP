@@ -122,6 +122,7 @@ import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
 import { logBrc100Response, shouldLogBrc100Method } from './diagnosticLog'
 import {
+  paintAfterCreateActionBsv21Mint,
   paintAfterCreateActionIssuance,
   paintAfterInternalizeBsv21,
   paintAfterInternalizeItem,
@@ -1141,6 +1142,12 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       }
       if (isBsv21IdentityMintArgs(method, args) && txid) {
         recordIdentityMintActivity(txid, args, originator)
+        paintAfterCreateActionBsv21Mint(
+          active,
+          originator ?? WALLET_ACTIVITY_ORIGIN,
+          args,
+          result,
+        )
         playWalletSound('success')
       } else if (txid && isColourIssuanceArgs(method, args) && recordColourMintActivity(txid, args, originator)) {
         playWalletSound('success')

@@ -267,12 +267,14 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
         : {}),
     })
   }
-  // Live listing is source of truth. Never keep a cache extra whose tip is
-  // the genesis (tokenId == outpoint) when it is spent or absent from live.
-  // Legacy BSV-21 rows absent from live are Activity ghosts — drop them.
-  // Colour tips may stay when listOutputs flakes (WOC 429).
+  // Live listing is source of truth when it returned rows. An empty live list
+  // is usually toolbox lag right after mint (or a flake) — keep prior paint,
+  // especially genesis deploy+mint tips that would otherwise vanish until the
+  // next listOutputs. When live is non-empty, drop genesis / legacy ghosts
+  // absent from it; colour tips may stay on partial flakes.
   for (const [k, t] of [...byId.entries()]) {
     if (liveIds.has(k)) continue
+    if (live.length === 0) continue
     if (isGenesisRow(t)) {
       byId.delete(k)
       continue

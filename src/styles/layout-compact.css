@@ -306,22 +306,39 @@ html:is(.platform-mobile, .layout-compact) .settings-scroll-body {
   touch-action: pan-y;
 }
 
+html:is(.platform-mobile, .layout-compact) .connected-app-row .connected-app-stats {
+  padding: 6px 8px;
+  width: auto;
+  max-width: max-content;
+}
+
+html:is(.platform-mobile, .layout-compact) .connected-app-row .connected-app-card-actions {
+  min-width: 0;
+  width: auto;
+  padding: 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-body {
+  padding: 4px 6px 10px;
+}
+
 html:is(.platform-mobile, .layout-compact) .identity-hero {
-  gap: 12px;
+  gap: 14px;
+  flex-direction: column;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame {
-  padding: 8px;
+  padding: 10px;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame img,
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame .skeleton-qr {
-  width: 108px;
-  height: 108px;
+  width: 176px !important;
+  height: 176px !important;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-handle {
-  font-size: 1.15rem;
+  font-size: 1.45rem;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-key {

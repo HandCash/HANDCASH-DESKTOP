@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
 import {
+  paintAfterCreateActionBsv21Mint,
   paintAfterCreateActionIssuance,
   paintAfterInternalizeBsv21,
   parseInternalizedItemTips,
@@ -121,6 +122,64 @@ describe('paintAfterCreateActionIssuance', () => {
       },
     ])
     expect(getCachedFungibles()[0]?.sym).not.toBe('Collectable')
+    clearFungiblesCache()
+  })
+})
+
+describe('paintAfterCreateActionBsv21Mint', () => {
+  it('paints JSON deploy+mint from local scripts without waiting on listOutputs', () => {
+    clearFungiblesCache()
+    const address = PrivateKey.fromRandom().toAddress()
+    const rest = p2pkhScriptHex(address)
+    const payload = {
+      p: 'bsv-20',
+      op: 'deploy+mint',
+      sym: 'LAB',
+      amt: '5000',
+      dec: '0',
+    }
+    const mime = 'application/bsv-20'
+    const mimeHex = Array.from(new TextEncoder().encode(mime))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    const bodyHex = Array.from(new TextEncoder().encode(JSON.stringify(payload)))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    const mimeLen = (mimeHex.length / 2).toString(16).padStart(2, '0')
+    const bodyLen = bodyHex.length / 2
+    const bodyPush =
+      bodyLen < 76
+        ? bodyLen.toString(16).padStart(2, '0') + bodyHex
+        : '4c' + bodyLen.toString(16).padStart(2, '0') + bodyHex
+    const hex =
+      '0063036f726451' + mimeLen + mimeHex + '00' + bodyPush + '68' + rest
+
+    const painted = paintAfterCreateActionBsv21Mint(
+      { address, chain: 'main' } as never,
+      'https://mint.example',
+      {
+        outputs: [
+          {
+            satoshis: 1,
+            basket: 'bsv21',
+            lockingScript: hex,
+            tags: ['bsv21', 'op:deploy+mint', 'sym:LAB', 'amt:5000'],
+            customInstructions: JSON.stringify(payload),
+          },
+        ],
+      },
+      { txid: TXID },
+    )
+
+    expect(painted).toBe(1)
+    expect(getCachedFungibles()).toMatchObject([
+      {
+        tokenId: `${TXID}_0`,
+        amt: '5000',
+        sym: 'LAB',
+        outpoint: `${TXID}.0`,
+      },
+    ])
     clearFungiblesCache()
   })
 })

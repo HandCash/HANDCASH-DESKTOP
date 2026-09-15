@@ -473,6 +473,9 @@ function createWindow(): void {
 
   const contentsId = mainWindow.webContents.id
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    log.error(
+      `[ui] render-process-gone reason=${details.reason} exitCode=${details.exitCode}`,
+    )
     bridgeWindows.markRendererGone(contentsId)
     failPendingBridgeRequests(`renderer process gone (${details.reason})`)
   })

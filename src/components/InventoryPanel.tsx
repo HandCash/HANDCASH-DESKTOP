@@ -330,7 +330,6 @@ function CollectableListItem({
         }}
       >
         <SendIcon size={14} />
-        {sending ? verb : 'Send'}
       </button>
     </li>
   )
@@ -524,7 +523,8 @@ function FungibleAction({
       }}
     >
       {isLegacy ? <FireIcon size={14} /> : <SendIcon size={14} />}
-      {burning ? 'Burning…' : sending ? verb : isLegacy ? 'Burn' : 'Send'}
+      {/* List rows are icon-only so names don't collide with the action. */}
+      {row ? null : burning ? 'Burning…' : sending ? verb : isLegacy ? 'Burn' : 'Send'}
     </button>
   )
 }

@@ -71,11 +71,27 @@ describe('mergeLiveFungibles', () => {
     expect(merged.some((t) => t.sym === 'GHOST')).toBe(false)
   })
 
-  it('drops a genesis cache extra absent from live even if not yet marked spent', async () => {
+  it('keeps a genesis cache tip when live is empty (post-mint toolbox lag)', async () => {
     const { mergeLiveFungibles } = await import('./token/list')
     const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
     const merged = mergeLiveFungibles([], prior)
-    expect(merged).toHaveLength(0)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]!.tokenId).toBe(ORIGIN)
+  })
+
+  it('drops a genesis cache tip absent from a non-empty live list', async () => {
+    const { mergeLiveFungibles } = await import('./token/list')
+    const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
+    const live = [
+      row({
+        tokenId: KING_ORIGIN,
+        amt: '1',
+        outpoint: RECEIVE_A,
+      }),
+    ]
+    const merged = mergeLiveFungibles(live, prior)
+    expect(merged.some((t) => t.tokenId === ORIGIN)).toBe(false)
+    expect(merged.some((t) => t.tokenId === KING_ORIGIN)).toBe(true)
   })
 
   it('uses live aggregated amt — leftover 68862 + live 69000 is 69000 not 137862', async () => {

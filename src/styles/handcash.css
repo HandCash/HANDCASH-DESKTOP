@@ -4055,34 +4055,47 @@ li[data-aeon-state='failed'] .history-progress-range {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
-  padding: 8px 10px 10px;
+  gap: 14px;
+  width: 100%;
+  max-width: none;
+  padding: 6px 8px 12px;
+}
+
+.identity-stage {
+  display: grid;
+  justify-items: stretch;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .identity-card {
   display: grid;
-  justify-items: center;
+  justify-items: stretch;
   gap: 12px;
-  width: min(100%, 560px);
-  margin: 0 auto;
-  padding: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .identity-hero {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 16px 20px;
   width: 100%;
   min-width: 0;
 }
 
 .identity-hero-meta {
-  flex: 0 1 360px;
+  flex: 1 1 240px;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -4090,13 +4103,14 @@ li[data-aeon-state='failed'] .history-progress-range {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 0;
+  flex-shrink: 0;
 }
 
 .identity-qr-frame {
   display: grid;
   place-items: center;
-  padding: 10px;
+  padding: 12px;
   width: fit-content;
   flex-shrink: 0;
   border-radius: calc(var(--hc-radius) + 2px);
@@ -4106,7 +4120,9 @@ li[data-aeon-state='failed'] .history-progress-range {
 button.identity-qr-copy {
   appearance: none;
   margin: 0;
+  padding: 0;
   border: 0;
+  background: transparent;
   cursor: pointer;
   font: inherit;
   color: inherit;
@@ -4119,33 +4135,24 @@ button.identity-qr-copy:focus-visible {
 
 .identity-qr-frame img {
   display: block;
-  width: 112px;
-  height: 112px;
+  width: 168px;
+  height: 168px;
   border-radius: 4px;
 }
 
 .identity-qr-frame .skeleton-qr {
   display: block;
-  width: 112px !important;
-  height: 112px !important;
+  width: 168px !important;
+  height: 168px !important;
 }
 
-.identity-copy-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 32px;
-  padding: 6px 9px;
-  font-size: 0.72rem;
-}
 
 .identity-qr-hint {
   margin: 0;
   color: var(--hc-muted);
   font-size: 0.74rem;
   line-height: 1.35;
+  max-width: 28rem;
 }
 
 .identity-key-note {
@@ -4168,15 +4175,37 @@ button.identity-qr-copy:focus-visible {
   color: var(--hc-accent);
 }
 
+.identity-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.identity-chip {
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  background: var(--hc-sunken);
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .identity-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 8px;
-  width: min(100%, 560px);
+  width: 100%;
 }
 
 .identity-field {
@@ -4202,10 +4231,10 @@ button.identity-qr-copy:focus-visible {
   border: 0;
   background: transparent;
   color: var(--hc-text);
-  font-size: clamp(1.15rem, 4.5cqi, 1.55rem);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  font-size: clamp(1.35rem, 5.5cqi, 1.85rem);
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
   text-align: left;
   cursor: pointer;
   transition: color 160ms ease;
@@ -4224,15 +4253,10 @@ button.identity-qr-copy:focus-visible {
 .identity-handle-missing {
   margin: 0;
   color: var(--hc-muted);
-  font-size: 0.95rem;
-  font-weight: 500;
+  font-size: 1.05rem;
+  font-weight: 600;
 }
 
-.identity-claim-btn {
-  width: fit-content;
-  padding: 8px 14px;
-  font-size: 0.85rem;
-}
 
 .identity-network {
   justify-self: start;
@@ -4257,7 +4281,7 @@ button.identity-qr-copy:focus-visible {
   appearance: none;
   width: 100%;
   margin: 0;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
   background: var(--hc-sunken);
@@ -4269,9 +4293,6 @@ button.identity-qr-copy:focus-visible {
   line-height: 1.45;
   font-size: 0.8rem;
   transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
-}
-
-.identity-key {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4297,19 +4318,30 @@ button.identity-qr-copy:focus-visible {
 
 @container identity-panel (min-width: 520px) {
   .identity-hero {
-    gap: 14px 20px;
+    gap: 18px 24px;
+  }
+
+  .identity-qr-frame img {
+    width: 184px;
+    height: 184px;
+  }
+
+  .identity-qr-frame .skeleton-qr {
+    width: 184px !important;
+    height: 184px !important;
   }
 }
 
 @container identity-panel (max-width: 460px) {
-  .identity-card {
-    gap: 10px;
-    padding-inline: 4px;
+  .identity-body {
+    padding: 4px 6px 10px;
+    gap: 12px;
   }
 
   .identity-hero {
     align-items: center;
     flex-direction: column;
+    text-align: center;
   }
 
   .identity-hero-meta {
@@ -4318,8 +4350,18 @@ button.identity-qr-copy:focus-visible {
     text-align: center;
   }
 
-  .identity-handle-empty {
+  .identity-handle {
+    text-align: center;
+  }
+
+  .identity-handle-empty,
+  .identity-chips {
+    justify-content: center;
     justify-items: center;
+  }
+
+  .identity-qr-hint {
+    text-align: center;
   }
 
   .identity-list {
@@ -5386,8 +5428,13 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 .connected-app-name {
-  font-size: 0.95rem;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.95rem;
+  font-weight: 650;
 }
 
 .connected-app-host {
@@ -5572,7 +5619,9 @@ a.app-details-host:hover {
 
 .connected-app-row .connected-app-row-live {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(108px, 140px) auto;
+  /* Spent column hugs its amount + label — was minmax(108px, 140px) and ate
+     half the row on phone widths. */
+  grid-template-columns: minmax(0, 1fr) max-content auto;
   align-items: stretch;
 }
 
@@ -5582,6 +5631,7 @@ a.app-details-host:hover {
 
 .connected-app-row .connected-app-stats {
   justify-content: center;
+  width: auto;
   border-top: 0;
   border-left: 1px solid hsl(var(--border));
 }
@@ -5597,7 +5647,7 @@ a.app-details-host:hover {
 
 .connected-app-row .connected-app-card-actions {
   width: auto;
-  min-width: 88px;
+  min-width: 0;
   padding: 6px;
   border-top: 0;
   border-left: 1px solid hsl(var(--border));
@@ -9279,24 +9329,6 @@ html[data-aeon-mode='light'] .skeleton {
   white-space: nowrap;
 }
 
-.collectable-details-actions {
-  margin-top: 6px;
-  width: auto;
-  max-width: none;
-  justify-self: start;
-  gap: 6px;
-}
-
-.collectable-details-actions .btn {
-  width: auto;
-  min-height: 32px;
-  padding: 6px 12px;
-  font-size: 0.78rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-}
 
 .collectable-card {
   display: grid;
@@ -10097,16 +10129,6 @@ html[data-aeon-mode='light'] .skeleton {
   text-align: center;
 }
 
-.fungible-details-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.fungible-details-actions .btn,
-.fungible-details-actions .secondary-btn {
-  width: auto;
-}
 
 @media (max-width: 560px) {
   [data-aeon-scope='fungible-details'] .fungible-details-hero {
@@ -10153,8 +10175,12 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .collectable-send-btn--row {
-  margin: 0 10px 0 0;
+  margin: 0 8px 0 0;
   flex-shrink: 0;
+  /* Icon-only on list rows — keep hit target, drop label width. */
+  padding: 7px;
+  gap: 0;
+  min-width: 32px;
 }
 
 .collectable-burn-btn {
@@ -14072,34 +14098,36 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 }
 
 .identity-compose {
-  margin-top: 16px;
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--hc-muted) 18%, transparent);
 }
 
 .identity-compose-title {
-  margin: 0 0 6px;
-  font-size: 1rem;
+  margin: 0 0 4px;
+  font-size: 0.92rem;
   font-weight: 650;
 }
 
 .identity-compose-lede {
-  margin: 0 0 12px;
-  font-size: 0.82rem;
+  margin: 0 0 10px;
+  font-size: 0.78rem;
   color: var(--hc-muted);
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .identity-compose-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 10px;
-  font-size: 0.78rem;
+  gap: 3px;
+  margin-bottom: 8px;
+  font-size: 0.74rem;
   font-weight: 600;
 }
 
 .identity-compose-field input,
 .identity-compose-field textarea {
-  padding: 8px 10px;
+  padding: 7px 9px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-text) 14%, transparent);
   background: transparent;
@@ -14108,14 +14136,10 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   font-weight: 400;
 }
 
-.identity-compose-submit {
-  width: 100%;
-  margin-top: 4px;
-}
 
 .identity-compose-status {
-  margin: 10px 0 0;
-  font-size: 0.78rem;
+  margin: 8px 0 0;
+  font-size: 0.74rem;
   color: var(--hc-muted);
 }
 
@@ -14124,3 +14148,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   font-weight: 500;
   word-break: break-all;
 }
+
+.collectable-details-media-actions {
+  margin-top: 6px;
+}
+

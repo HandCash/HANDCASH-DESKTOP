@@ -18,6 +18,7 @@ import {
   cacheTokenIconFromBeef,
   fungibleFromImport,
   hydrateCachedTokenIcons,
+  isBsv21IdentityMintArgs,
   looksLikeOnesatFtTip,
   normalizeTokenId,
   originFromOnesatFtLock,
@@ -523,6 +524,65 @@ export function paintAfterInternalizeItem(
   console.info(
     `[brc100] painted ${painted} collectable tip(s) after internalizeAction`,
   )
+  return painted
+}
+
+/**
+ * Seed Tokens immediately after a BSV-21 identity mint `createAction`.
+ *
+ * Activity used to record the mint while Tokens waited on a later `listOutputs`
+ * (often deferred while spend/seal was still busy). Local AtomicBEEF already
+ * has the tip — paint from it, no indexer.
+ */
+export function paintAfterCreateActionBsv21Mint(
+  active: ActiveWallet,
+  originator: string,
+  args: unknown,
+  result: unknown,
+): number {
+  if (!isBsv21IdentityMintArgs('createAction', args)) return 0
+  void originator
+  const txid = extractTxid(result) ?? extractTxid(args)
+  if (!txid) return 0
+  const scripts = lockingScriptsFromCreateAction(txid, args, result)
+  let painted = 0
+  for (const out of scripts) {
+    if (out.satoshis !== 1) continue
+    if (!scriptPaysAddress(out.hex, active.address)) continue
+    const outpoint = `${txid}.${out.vout}`
+    const classified = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint,
+      lockingScriptHex: out.hex,
+    })
+    if (classified.kind !== 'bsv21') continue
+    const amt = classified.payload.amt
+    if (!amt || !/^\d+$/.test(amt) || BigInt(amt) <= 0n) continue
+    const op = classified.payload.op
+    if (op !== 'deploy+mint' && op !== 'mint' && op !== 'transfer') continue
+    const token = fungibleFromImport({
+      outpoint,
+      txid,
+      vout: out.vout,
+      tokenId: classified.tokenId,
+      amt,
+      op,
+      sym: classified.payload.sym || shortTokenLabel(classified.tokenId),
+      dec: classified.payload.dec ?? 0,
+      ...(classified.payload.icon
+        ? { icon: normalizeTokenId(classified.payload.icon) ?? classified.payload.icon }
+        : {}),
+      ...(classified.payload.issuer ? { issuer: classified.payload.issuer } : {}),
+    })
+    rememberFungibleToken(token)
+    void hydrateCachedTokenIcons(active, [token]).catch(() => {})
+    painted += 1
+  }
+  if (painted > 0) {
+    console.info(
+      `[brc100] painted ${painted} BSV-21 mint tip(s) after createAction`,
+    )
+  }
   return painted
 }
 

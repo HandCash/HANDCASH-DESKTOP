@@ -953,6 +953,15 @@ export async function sealAfterAppCreateAction(
   } catch (err) {
     console.warn('[stale-output] keep change after createAction skipped', err)
   }
+  // Hero reads coalesced Wallet.balance() — toolbox spendable just changed.
+  // Always invalidate after an app createAction seal pass; even a partial
+  // hide/keep (or a missed input parse) must not leave yesterday's sats painted.
+  try {
+    const { bumpBalanceAfterHeal } = await import('./session')
+    bumpBalanceAfterHeal()
+  } catch (err) {
+    console.warn('[stale-output] post-createAction balance refresh skipped', err)
+  }
 }
 
 /**
