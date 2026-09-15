@@ -37,7 +37,7 @@ describe('txExistsOnChain', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(false)
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
     // Bitails is primary under phone WebView load; BananaBlocks is fallback.
     expect(order).toEqual(['bitails'])
     expect(fetchMock.mock.calls.some(([u]) => isWoc(u))).toBe(false)
@@ -86,9 +86,9 @@ describe('txExistsOnChain', () => {
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
   })
 
-  it('reports absent only when a provider answered 404 and none affirmed', async () => {
+  it('treats explorer 404 as unknown (lag), not absent', async () => {
     vi.stubGlobal('fetch', cloudSilentThen(async () => new Response('', { status: 404 })))
-    await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(false)
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
   })
 
   it('fails closed with null when every provider is silent', async () => {
@@ -101,7 +101,7 @@ describe('txExistsOnChain', () => {
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
   })
 
-  it('trusts Bitails 404 without calling WhatsOnChain', async () => {
+  it('treats Bitails 404 as unknown without calling WhatsOnChain', async () => {
     const fetchMock = cloudSilentThen(async (url: string) => {
       if (isBanana(url)) return new Response('', { status: 500 })
       if (isBitails(url)) return new Response('', { status: 404 })
@@ -109,7 +109,7 @@ describe('txExistsOnChain', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(false)
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
     expect(fetchMock.mock.calls.some(([u]) => isWoc(u))).toBe(false)
   })
 

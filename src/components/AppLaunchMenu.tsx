@@ -18,8 +18,8 @@ export function AppLaunchMenu({ url, origin, name }: Props) {
     <button
       type="button"
       className="btn btn-primary btn-icon connected-app-icon-action"
-      aria-label={`Open ${name} in-app`}
-      title={`Open ${name} in-app`}
+      aria-label={`Open ${name} in browser`}
+      title={`Open ${name} in browser`}
       onClick={() => {
         playWalletSound('soft')
         launchConnectedApp(origin, target.url)

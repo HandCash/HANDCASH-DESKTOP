@@ -1493,11 +1493,11 @@ export async function restoreLiveSpendableOutputs(opts?: {
             }
             const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
             const onChain = await txExistsOnChain(sealer, active.chain).catch(() => null)
-            if (onChain === false) {
-              releaseConsumedUtxo(overlayKey, 'restore:unsent-sealer')
-              deadSealer = true
-            } else if (onChain !== true) {
-              // Explorer inconclusive — coin still unspent ⇒ ghost seal.
+            if (onChain === true) {
+              keptSpent += 1
+              continue
+            } else if (onChain === false) {
+              // Hard absent only — explorer 404 is null (lag), not a restore signal.
               const parsed = parseOutpoint(overlayKey)
               let unspent = false
               const isUtxo = active.services?.isUtxo
@@ -1582,7 +1582,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
               const spenderTxid = txidFromRow(spender ?? {})?.toLowerCase()
               let keep = true
               if (spenderTxid && active?.chain) {
-                const { txExistsOnChain, spentStatusOfOutpoint } = await import(
+                const { txExistsOnChain } = await import(
                   './legacyScan'
                 )
                 const onChain = await txExistsOnChain(
@@ -1592,34 +1592,8 @@ export async function restoreLiveSpendableOutputs(opts?: {
                 if (onChain === false) {
                   keep = false
                   // Retire the ghost so pendingChange stops crediting its outs.
+                  // Explorer 404 → null; do not unseal on lag + still-UTXO input.
                   await failUnsentLocalTx(spenderTxid)
-                } else if (onChain !== true && overlayKey) {
-                  const parsed = parseOutpoint(overlayKey)
-                  let unspent = false
-                  const isUtxo = active.services?.isUtxo
-                  if (parsed && typeof isUtxo === 'function') {
-                    try {
-                      const result = await isUtxo({
-                        txid: parsed.txid,
-                        vout: parsed.vout,
-                      } as never)
-                      unspent =
-                        result === true ||
-                        (!!result &&
-                          typeof result === 'object' &&
-                          (result as { isUtxo?: unknown }).isUtxo === true)
-                    } catch {
-                      unspent = false
-                    }
-                  }
-                  if (!unspent) {
-                    const status = await spentStatusOfOutpoint(
-                      overlayKey,
-                      active.chain,
-                    ).catch(() => 'unknown' as const)
-                    unspent = status === 'unspent'
-                  }
-                  if (unspent) keep = false
                 }
               }
               if (keep) {

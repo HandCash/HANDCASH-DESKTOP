@@ -105,7 +105,7 @@ export function useWalletActionDock(actions: WalletDockActions | null): void {
 }
 
 /**
- * Detail views (collectable / token / identity) dock the same bottom action
+ * Detail views (collectable / token) dock the same bottom action
  * chrome as connect/pay approval — primary / secondary / danger — so the nav
  * bar becomes the option strip and the panel can maximize media + meta.
  */

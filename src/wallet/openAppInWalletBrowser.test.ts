@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('./navStore', () => ({
   openEmbeddedAppBrowser: vi.fn(),
@@ -24,22 +24,45 @@ import {
 } from './openAppInWalletBrowser'
 
 describe('openAppInWalletBrowser', () => {
+  const openExternal = vi.fn(async () => {})
+
   beforeEach(() => {
     vi.mocked(openEmbeddedAppBrowser).mockClear()
     vi.mocked(decideAppBrowserTarget).mockClear()
+    openExternal.mockClear()
+    vi.stubGlobal('window', {
+      handcash: { openExternal },
+    })
   })
 
-  it('opens safe http(s) apps in the embedded browser', async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('opens safe http(s) apps in the system browser by default', async () => {
     await expect(
       openAppInWalletBrowser({
         origin: 'https://pixelwar.click',
         url: 'https://pixelwar.click/',
+      }),
+    ).resolves.toBe('external')
+    expect(openExternal).toHaveBeenCalledWith('https://pixelwar.click/')
+    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
+  })
+
+  it('opens the embedded browser only when preferInApp is set', async () => {
+    await expect(
+      openAppInWalletBrowser({
+        origin: 'https://pixelwar.click',
+        url: 'https://pixelwar.click/',
+        preferInApp: true,
       }),
     ).resolves.toBe('embedded')
     expect(openEmbeddedAppBrowser).toHaveBeenCalledWith(
       'https://pixelwar.click',
       'https://pixelwar.click/',
     )
+    expect(openExternal).not.toHaveBeenCalled()
   })
 
   it('refuses invalid targets', async () => {
@@ -47,11 +70,13 @@ describe('openAppInWalletBrowser', () => {
       openAppInWalletBrowser({ origin: 'https://pixelwar.click', url: 'not-a-url' }),
     ).resolves.toBe('unavailable')
     expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
   })
 
   it('launchConnectedApp is a no-op without a url', () => {
     launchConnectedApp('https://pixelwar.click', null)
     launchConnectedApp('https://pixelwar.click', '   ')
     expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
   })
 })

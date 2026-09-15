@@ -189,6 +189,9 @@ async function fetchWhatsOnChainPaced(url: string): Promise<Response | null> {
  * answer — it rate-limits aggressively and 429s often arrive without CORS headers.
  */
 export async function txExistsOnChain(txid: string, chain: Chain): Promise<boolean | null> {
+  // Explorer 404 / "not found" is NOT proof the tx is absent — mempool /
+  // indexer lag can last several minutes (up to ~10). Only an explicit hit
+  // returns true; 404 and errors return null (unknown).
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
 
@@ -198,7 +201,7 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   if (bitails) {
     try {
       const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
-      if (res.status === 404) return false
+      if (res.status === 404) return null
       if (res.ok) return true
     } catch (err) {
       if (!isAbortError(err)) {
@@ -211,7 +214,7 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   if (banana) {
     try {
       const res = await fetchWithDeadline(`${banana}/tx/hash/${id}`)
-      if (res.status === 404) return false
+      if (res.status === 404) return null
       if (res.ok) return true
     } catch (err) {
       if (!isAbortError(err)) {
@@ -233,7 +236,7 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   try {
     const res = await fetchWhatsOnChainPaced(`${wocBase(chain)}/tx/hash/${id}`)
     if (!res) return null
-    if (res.status === 404) return false
+    if (res.status === 404) return null
     if (!res.ok) return null
     return true
   } catch {

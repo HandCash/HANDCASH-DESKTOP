@@ -265,8 +265,8 @@ export const WalletNav = memo(function WalletNav({
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
         toastSuccess('Connected', `${name} can use your wallet`)
-        // Defer so the bridge can finish waitForAuthentication before we switch
-        // the nav into the embedded browser.
+        // Defer so the bridge can finish waitForAuthentication, then return
+        // the user to the system browser (not the in-app webview).
         const origin = pendingPrompt.origin
         const home = appHomepage(origin)
         window.setTimeout(() => launchConnectedApp(origin, home), 0)

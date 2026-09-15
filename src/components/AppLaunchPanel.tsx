@@ -52,7 +52,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     onClick: openInApp,
     disabled: !safeUrl || !inAppAvailable,
     icon: <AppsIcon size={18} />,
-    tone: 'primary' as const,
+    tone: 'secondary' as const,
   }
 
   const browserAction = {
@@ -63,26 +63,17 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     icon: <LaunchIcon size={18} />,
   }
 
-  // Prefer the in-app browser when available — that is the immediately actionable CTA.
-  const actions = inAppAvailable
-    ? {
-        ariaLabel: `Launch ${name}`,
-        tertiary: cancelAction,
-        secondary: browserAction,
-        primary: inAppAction,
-      }
-    : {
-        ariaLabel: `Launch ${name}`,
-        tertiary: cancelAction,
-        secondary: {
-          ...inAppAction,
-          tone: undefined,
-        },
-        primary: {
-          ...browserAction,
-          tone: 'primary' as const,
-        },
-      }
+  // System browser is the default return path after connect. In-app only when
+  // the user explicitly picks it here.
+  const actions = {
+    ariaLabel: `Launch ${name}`,
+    tertiary: cancelAction,
+    secondary: inAppAction,
+    primary: {
+      ...browserAction,
+      tone: 'primary' as const,
+    },
+  }
 
   return (
     <WalletRequestTemplate
@@ -101,7 +92,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
 
       <p className="permission-note">
         {inAppAvailable
-          ? 'Open in-app keeps the session inside HandCash. Browser uses your system default. Same wallet permissions either way.'
+          ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
           : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
       </p>
     </WalletRequestTemplate>
