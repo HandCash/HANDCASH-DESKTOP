@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.164] - 2026-09-15
+
+### Changed
+
+- Identity label bar + back to Activity; no tall empty gap under Handle.
+- Compose identity fields full width.
+- Connected-apps settings/launch buttons fixed ~40×40 (not squished).
+
 ## [1.3.163] - 2026-09-15
 
 ### Changed
