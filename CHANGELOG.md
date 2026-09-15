@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.160] - 2026-09-15
+
+### Changed
+
+- Durable block-header cache + demote lagging HandCash Chain; soft-deadline shed; adaptive tip poll.
+- Send Fungible warns when peer identity does not advertise BSV-21 protocols.
+- Tip ingest: Arcade hard-reject discards (ghost/ACK); explorer lag does not.
+
 ## [1.3.159] - 2026-09-14
 
 ### Fixed
