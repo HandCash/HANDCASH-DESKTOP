@@ -93,6 +93,34 @@ describe('locally seeded collectables', () => {
     expect(after.filter((c) => c.outpoint === TIP)).toHaveLength(1)
   })
 
+  it('removes a settled seller tip immediately on a self-purchase', async () => {
+    const {
+      getCachedCollectables,
+      noteIngestedItem,
+      retireCollectableAfterSpend,
+    } = await import('./collectables')
+    noteIngestedItem({ outpoint: TIP, chain: 'main', name: 'Listed Item' })
+    expect(getCachedCollectables().map((item) => item.outpoint)).toContain(TIP)
+    const {
+      isOutpointVerifying,
+      noteAwaitingVerification,
+    } = await import('./verificationProgress')
+    noteAwaitingVerification(TIP)
+    expect(isOutpointVerifying(TIP)).toBe(true)
+
+    retireCollectableAfterSpend(TIP, 'ef'.repeat(32))
+    expect(getCachedCollectables().map((item) => item.outpoint)).not.toContain(TIP)
+    expect(isOutpointVerifying(TIP)).toBe(false)
+    const { markItemsSent } = await import('./sentItemGuard')
+    expect(markItemsSent).toHaveBeenCalledWith([
+      {
+        outpoint: TIP,
+        txid: 'ef'.repeat(32),
+        settle: 'senderBroadcast',
+      },
+    ])
+  })
+
   it('survives a renderer restart while Toolbox has not listed it yet', async () => {
     const first = await import('./collectables')
     first.noteIngestedItem({

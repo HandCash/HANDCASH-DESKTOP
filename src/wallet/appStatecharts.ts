@@ -459,6 +459,11 @@ const MARKET_LISTING = `stateDiagram-v2
     Abort + restore tip while Arcade has not accepted.
     Never abort after BROADCASTED.
   end note
+  note right of committed
+    MarketReceiptDeliveryPath:
+    self → local seller reconcile
+    counterparty → messagebox receipt
+  end note
 `
 
 const MARKET_PURCHASE = `stateDiagram-v2
@@ -1146,7 +1151,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'marketPurchase',
     label: 'Market buy',
     caption:
-      'marketPurchaseMachine — list-time unlocks → broadcast → messagebox remittance',
+      'marketPurchaseMachine — list-time unlocks → broadcast → local self-reconcile | messagebox receipt',
     source: MARKET_PURCHASE,
   },
   {

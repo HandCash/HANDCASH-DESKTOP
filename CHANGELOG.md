@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.185] - 2026-09-15
+
+### Fixed
+
+- Self-purchases now reconcile seller proceeds and the listing deposit locally, retire the old seller tip immediately, and publish the corrected balance.
+- Spent collectables leave the verification queue immediately instead of consuming UI/network work.
+
+### Changed
+
+- Market listings use a yellow price-tag icon; purchases use a distinct yellow dollar icon in Activity and transaction details.
+
 ## [1.3.184] - 2026-09-15
 
 ### Fixed

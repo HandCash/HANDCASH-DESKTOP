@@ -516,6 +516,33 @@ function setCollectablesCache(
   })
 }
 
+/**
+ * Retire a tip immediately after a known settlement spends it.
+ *
+ * Waiting for the next basket/address intersection leaves the seller's old
+ * card beside the buyer's new tip on self-purchases. It also lets the stale
+ * outpoint enter the expensive BRC-150 queue even though it is already spent.
+ */
+export function retireCollectableAfterSpend(
+  outpoint: string,
+  txid: string,
+): void {
+  const key = outpointKey(outpoint)
+  if (!key) return
+  markItemsSent([{ outpoint: key, txid, settle: 'senderBroadcast' }])
+  clearAwaitingVerification(key)
+  clearVerificationProgress(key)
+  firstSeenAt.delete(key)
+  seededItems.delete(key)
+  const identityKey = getActiveWallet()?.identityKey
+  if (identityKey) persistSeededItems(identityKey)
+  invalidateLiveOneSatOutpoints()
+  setCollectablesCache(
+    cachedCollectables.filter((item) => outpointKey(item.outpoint) !== key),
+    { announceArrivals: false },
+  )
+}
+
 export function clearCollectablesCache(options?: { notify?: boolean }): void {
   cachedCollectables = []
   collectablesHydrated = false
@@ -1629,9 +1656,9 @@ async function proveHeldGenesis(
   const held = lastItemOutputs
     .filter(isListableItem)
     .map((o) => normalizeOutpoint(o.outpoint))
-  // A tip already sent on is gone from the basket, but the transfer that sent it
-  // is still on screen in Activity, wearing whatever wrong origin it was recorded
-  // with. Its lineage is chain data, so being spent does not make it unprovable.
+  // Activity may retain a historical tip after it was sent. Do not spend live
+  // UI/network budget proving an outpoint that is no longer inventory; its
+  // cached name remains available and the recipient proves the new tip.
   const inActivity = [
     ...new Set(
       listRecentActivity(ACTIVITY_REPAIR_DEPTH)
@@ -1641,7 +1668,7 @@ async function proveHeldGenesis(
         .map(normalizeOutpoint)
         .filter((outpoint) => !outpointLooksLikeFungible(outpoint)),
     ),
-  ].filter((outpoint) => !held.includes(outpoint))
+  ].filter((outpoint) => !held.includes(outpoint) && !isItemSent(outpoint))
   const preferred = takePreferredCollectableVerification()
   const candidates = [...held, ...inActivity].filter((outpoint) =>
     shouldAttemptGenesis(outpoint)
@@ -1666,6 +1693,11 @@ async function proveHeldGenesis(
   const queued = new Set(candidates)
   try {
     for (const outpoint of candidates) {
+      if (isItemSent(outpoint)) {
+        queued.delete(outpoint)
+        clearAwaitingVerification(outpoint)
+        continue
+      }
       if (outpointLooksLikeFungible(outpoint)) continue
       if (genesisWalkBudgetSpent()) break
       if (getWalletCoordinatorSnapshot().spend === 'active') break
@@ -1712,6 +1744,10 @@ async function proveHeldGenesis(
           // waiting on the panel costs a `listOutputs` timeout. Never abort the
           // tip the user is staring at on the details panel.
           shouldStop: () => {
+            if (isItemSent(outpoint)) {
+              aborted = true
+              return true
+            }
             if (outpoint === preferred) return false
             if (shouldYieldChainIngestToSpend()) {
               aborted = true

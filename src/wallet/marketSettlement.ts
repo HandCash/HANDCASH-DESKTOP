@@ -41,7 +41,7 @@ import {
   MARKET_OFFER_DEPOSIT_SATS,
   parseMarketOffer,
 } from './marketOverlayProtocol'
-import { getActiveWallet } from './session'
+import { bumpBalanceAfterHeal, getActiveWallet } from './session'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import {
   decodeBeefB64,
@@ -56,6 +56,7 @@ import {
   isInsufficientFundsError,
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
+import { chooseMarketReceiptDeliveryPath } from './marketSettlementPath'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { addressFromIdentityKey } from './friends'
@@ -727,15 +728,34 @@ export async function executeMarketPurchase(
     chart.send({ type: 'RESERVED', reference: signable.reference })
     try {
       const preSigned = listingHasBuyerCompletableSettlement(listing, amounts)
-      const isSelfBuy =
-        listing.seller.toLowerCase() === active.identityKey.toLowerCase()
+      const receiptPath = chooseMarketReceiptDeliveryPath({
+        buyerIdentityKey: active.identityKey,
+        sellerIdentityKey: listing.seller,
+      })
       let itemUnlockingScript: string
       let offerUnlockingScript: string
       if (preSigned && listing.settlementUnlocks) {
+        if (receiptPath.path === 'localSellerReconcile') {
+          // List-time unlocks normally let a remote buyer skip the seller. For
+          // a self-buy, reserve our local authorization too so the synchronous
+          // receipt path can internalize proceeds and retire the listed inputs.
+          reserveMarketListingAuthorization({
+            outpoint: listing.outpoint,
+            nonce: listing.nonce,
+            saleId,
+            buyerIdentityKey: active.identityKey,
+            expiresAt: Math.min(
+              pending.expiresAt,
+              args.intent.expiresAt ?? pending.expiresAt,
+            ),
+            txCommitment: marketSettlementCommitment(settlementTx),
+            intent: args.intent,
+          })
+        }
         itemUnlockingScript = listing.settlementUnlocks.itemUnlockingScript
         offerUnlockingScript = listing.settlementUnlocks.offerUnlockingScript
         chart.send({ type: 'SELLER_SIGNED' })
-      } else if (isSelfBuy) {
+      } else if (receiptPath.path === 'localSellerReconcile') {
         // Same wallet is buyer and seller — sign locally; never wait on messagebox.
         const selfWire = {
           type: 'sign-request' as const,
@@ -805,13 +825,30 @@ export async function executeMarketPurchase(
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
         },
       }
-      const remitted = await deliverMarketSettlementWire(receiptWire).catch((err) => {
-        console.warn(
-          '[market-buy] seller remittance failed',
-          err instanceof Error ? err.message : String(err),
-        )
-        return false
-      })
+      // A self-purchase has both roles in this toolbox. Process the seller side
+      // synchronously so proceeds/deposit and old-tip retirement are visible in
+      // the same commit; routing through our own inbox left them pending until
+      // a later poll while the buyer's new tip was already painted.
+      const remitted = receiptPath.path === 'localSellerReconcile'
+        ? await handleInboundMarketSettlementWire({
+            wire: receiptWire.wire,
+            senderIdentityKey: active.identityKey,
+            messagebox: sellerMessagebox,
+            localSelfPurchase: true,
+          }).catch((err) => {
+            console.warn(
+              '[market-buy] local seller reconciliation failed',
+              err instanceof Error ? err.message : String(err),
+            )
+            return false
+          })
+        : await deliverMarketSettlementWire(receiptWire).catch((err) => {
+            console.warn(
+              '[market-buy] seller remittance failed',
+              err instanceof Error ? err.message : String(err),
+            )
+            return false
+          })
       if (remitted) mark('seller remittance delivered')
       else mark('seller remittance not delivered — overlay/catalog may still index')
       chart.send({ type: 'COMMITTED' })
@@ -1128,6 +1165,8 @@ export async function handleInboundMarketSettlementWire(args: {
   wire: MarketSettlementWire
   senderIdentityKey: string
   messagebox?: string
+  /** Buyer and seller are this wallet; skip a redundant receipt-response hop. */
+  localSelfPurchase?: boolean
 }): Promise<boolean> {
   const active = getActiveWallet()
   if (!active) return false
@@ -1228,6 +1267,7 @@ export async function handleInboundMarketSettlementWire(args: {
         settlementTxid: args.wire.txid,
         proceedsInternalized: true,
       })
+      bumpBalanceAfterHeal()
     }
     chart.send({ type: 'PROCEEDS_INTERNALIZED' })
     if (!progress.itemRetired) {
@@ -1259,6 +1299,8 @@ export async function handleInboundMarketSettlementWire(args: {
         itemRetired: true,
       })
     }
+    const { retireCollectableAfterSpend } = await import('./collectables')
+    retireCollectableAfterSpend(listing.outpoint, args.wire.txid)
     chart.send({ type: 'ITEM_RETIRED' })
     if (progress.state !== 'settled') {
       updateMarketListingAuthorization({
@@ -1269,23 +1311,25 @@ export async function handleInboundMarketSettlementWire(args: {
         reason: args.wire.txid,
       })
     }
-    const responseDelivered = await deliverMarketSettlementWire({
-      wire: {
-        type: 'receipt-response',
-        saleId: args.wire.saleId,
-        txid: args.wire.txid,
-        broadcasted: true,
-        receipt,
-        ...(!accepted ? { reason: 'Seller broadcast failed' } : {}),
-      },
-      recipientIdentityKey: args.senderIdentityKey,
-      rootKeyHex: active.rootKeyHex,
-      senderIdentityKey: active.identityKey,
-      messagebox: args.wire.buyerMessagebox,
-    })
-    if (!responseDelivered) {
-      chart.stop()
-      return false
+    if (!args.localSelfPurchase) {
+      const responseDelivered = await deliverMarketSettlementWire({
+        wire: {
+          type: 'receipt-response',
+          saleId: args.wire.saleId,
+          txid: args.wire.txid,
+          broadcasted: true,
+          receipt,
+          ...(!accepted ? { reason: 'Seller broadcast failed' } : {}),
+        },
+        recipientIdentityKey: args.senderIdentityKey,
+        rootKeyHex: active.rootKeyHex,
+        senderIdentityKey: active.identityKey,
+        messagebox: args.wire.buyerMessagebox,
+      })
+      if (!responseDelivered) {
+        chart.stop()
+        return false
+      }
     }
     chart.stop()
     scheduleHistoryBackupPush('market-sale')

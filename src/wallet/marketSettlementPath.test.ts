@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   chooseMarketPurchasePath,
+  chooseMarketReceiptDeliveryPath,
   chooseMarketSellerSettlePath,
 } from './marketSettlementPath'
 
@@ -92,5 +93,27 @@ describe('chooseMarketSellerSettlePath', () => {
         ...peer,
       }),
     ).toEqual({ settle: 'peerDeliver', ...peer })
+  })
+})
+
+describe('chooseMarketReceiptDeliveryPath', () => {
+  it('reconciles a self-purchase locally instead of waiting on messagebox', () => {
+    const identityKey = `02${'ab'.repeat(32)}`
+    expect(
+      chooseMarketReceiptDeliveryPath({
+        buyerIdentityKey: identityKey,
+        sellerIdentityKey: identityKey.toUpperCase(),
+      }),
+    ).toEqual({ path: 'localSellerReconcile' })
+  })
+
+  it('delivers a counterparty receipt through the seller messagebox', () => {
+    const sellerIdentityKey = `03${'cd'.repeat(32)}`
+    expect(
+      chooseMarketReceiptDeliveryPath({
+        buyerIdentityKey: `02${'ab'.repeat(32)}`,
+        sellerIdentityKey,
+      }),
+    ).toEqual({ path: 'messageboxDelivery', sellerIdentityKey })
   })
 })

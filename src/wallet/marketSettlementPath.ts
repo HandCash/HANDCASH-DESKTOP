@@ -33,6 +33,27 @@ export type MarketSellerSettlePath =
         | 'timeout'
     }
 
+export type MarketReceiptDeliveryPath =
+  | { path: 'localSellerReconcile' }
+  | { path: 'messageboxDelivery'; sellerIdentityKey: string }
+
+/** A wallet buying its own listing settles both roles locally and atomically. */
+export function chooseMarketReceiptDeliveryPath(args: {
+  buyerIdentityKey: string
+  sellerIdentityKey: string
+}): MarketReceiptDeliveryPath {
+  if (
+    args.buyerIdentityKey.trim().toLowerCase() ===
+    args.sellerIdentityKey.trim().toLowerCase()
+  ) {
+    return { path: 'localSellerReconcile' }
+  }
+  return {
+    path: 'messageboxDelivery',
+    sellerIdentityKey: args.sellerIdentityKey,
+  }
+}
+
 export function chooseMarketPurchasePath(args: {
   advertValid: boolean
   provenanceValid: boolean

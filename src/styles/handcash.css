@@ -5008,6 +5008,17 @@ a.history-row-link:hover .history-tx-hint {
   color: var(--hc-accent);
 }
 
+.history-row.is-market .history-icon {
+  color: #e8b84f;
+  border: 1px solid color-mix(in srgb, #e8b84f 34%, transparent);
+  background: color-mix(in srgb, #e8b84f 13%, var(--hc-sunken));
+}
+
+.history-row.is-market .history-item-thumb-icon,
+.history-row.is-market .history-amount {
+  color: #e8b84f;
+}
+
 .history-amount-item {
   color: var(--hc-muted);
   font-weight: 600;
@@ -6327,6 +6338,12 @@ html[data-aeon-mode='light']
 .payment-details-hero .history-icon {
   width: 44px;
   height: 44px;
+}
+
+.payment-details-hero.is-market .history-icon {
+  color: #e8b84f;
+  border: 1px solid color-mix(in srgb, #e8b84f 34%, transparent);
+  background: color-mix(in srgb, #e8b84f 13%, var(--hc-sunken));
 }
 
 .payment-details-hero .history-action-badge {
