@@ -1255,14 +1255,18 @@ async function prepareMarketListingSpend(active: ActiveWallet): Promise<void> {
   await abortReservedActionBatches(active, { budgetMs: 1_500 })
 }
 
-/** Arcade/miner answers that mean the tip (or a funding input) is already gone. */
+/**
+ * Arcade/miner answers that mean an input is already gone.
+ *
+ * MissingInputs alone is not enough — incomplete BEEF and Ghost Arcade noise
+ * use that note constantly. Only retire coins after an explicit already-spent /
+ * double-spend verdict (then {@link tipStillUnspentOnChain} still has to prove it).
+ */
 export function isAlreadySpentListingFailure(reason: string): boolean {
-  return (
-    /already spent/i.test(reason) ||
-    /ARCADE_HARD_REJECT/i.test(reason) ||
-    /missing.?inputs/i.test(reason) ||
-    /double.?spend/i.test(reason)
-  )
+  if (/missing.?inputs/i.test(reason) && !/already.?spent|double.?spend/i.test(reason)) {
+    return false
+  }
+  return /already spent/i.test(reason) || /double.?spend/i.test(reason)
 }
 
 /**
@@ -1280,6 +1284,8 @@ async function tipStillUnspentOnChain(
   if (typeof isUtxo === 'function') {
     try {
       const result = await isUtxo({ txid: parsed.txid, vout: parsed.vout } as never)
+      // Only trust an affirmative live answer. Indexer silence / errors answer
+      // `false` for unseen change — that must not count as proven spent.
       if (result === true) return true
       if (
         result &&
@@ -1287,14 +1293,6 @@ async function tipStillUnspentOnChain(
         (result as { isUtxo?: unknown }).isUtxo === true
       ) {
         return true
-      }
-      if (result === false) return false
-      if (
-        result &&
-        typeof result === 'object' &&
-        (result as { isUtxo?: unknown }).isUtxo === false
-      ) {
-        return false
       }
     } catch {
       /* fall through */
@@ -1956,6 +1954,25 @@ async function createMarketListingAdvertExclusive(
         'MARKET_LISTING_BROADCAST_UNKNOWN',
         'Listing was signed but Arcade did not accept the broadcast.',
       )
+    }
+    // Ghost MissingInputs must not become a "listed" activity row. The tip is
+    // still ours; abort the noSend and let the seller retry with a fuller BEEF.
+    if (
+      !mined.confirmed &&
+      (mined.summary?.missingInputs || mined.summary?.doubleSpend)
+    ) {
+      const reason =
+        'Not broadcast — miners could not see every parent input yet. Try listing again.'
+      await abortUnsentMarketAction({
+        active,
+        reference,
+        chart,
+        tipOutpoint: listingOutpoint,
+        reason,
+        signedTxid,
+        atomic: signedAtomic,
+      })
+      throw new MarketListingError('MARKET_LISTING_NOT_BROADCAST', reason)
     }
     chart.send({ type: 'BROADCASTED', txid })
     const listedOutpoint = `${txid}_0`

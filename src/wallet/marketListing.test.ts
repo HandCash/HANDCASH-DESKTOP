@@ -526,13 +526,14 @@ describe('ordinal listing origin', () => {
 })
 
 describe('isAlreadySpentListingFailure', () => {
-  it('matches Arcade Already spent and related hard rejects', () => {
+  it('matches explicit already-spent / double-spend, not bare MissingInputs', () => {
     expect(isAlreadySpentListingFailure('Already spent')).toBe(true)
     expect(isAlreadySpentListingFailure('ARCADE_HARD_REJECT: Already spent')).toBe(
       true,
     )
-    expect(isAlreadySpentListingFailure('missing inputs on vin 2')).toBe(true)
     expect(isAlreadySpentListingFailure('double spend detected')).toBe(true)
+    expect(isAlreadySpentListingFailure('missing inputs on vin 2')).toBe(false)
+    expect(isAlreadySpentListingFailure('ARCADE_HARD_REJECT: Not sent')).toBe(false)
     expect(isAlreadySpentListingFailure('ITEM_ORIGIN_UNPROVEN')).toBe(false)
     expect(isAlreadySpentListingFailure('ACTION_DENIED')).toBe(false)
   })
