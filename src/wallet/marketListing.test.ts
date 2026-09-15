@@ -1,4 +1,4 @@
-import { PrivateKey, Script } from '@bsv/sdk'
+import { LockingScript, P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
@@ -6,6 +6,7 @@ import {
   assertNoOnesatFtRemittance,
   buildBsv21ListingProof,
   buildMarketHeldRemittance,
+  buildMarketSettlementUnlocks,
   calculateMarketSettlement,
   classifyMarketListingAsset,
   createMarketListingAdvert,
@@ -438,5 +439,48 @@ describe('ordinal listing origin', () => {
     expect(() =>
       resolveOrdinalListingOrigin({ outpoint: `${'e4'.repeat(32)}_3` }),
     ).toThrow(/no valid BRC-150 origin/i)
+  })
+})
+
+
+describe('list-time market settlement unlocks', () => {
+  it('builds version-1 NONE|ACP item and SINGLE|ACP offer unlocks', async () => {
+    const fields = fixture()
+    const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
+    const offerLockingScript = encodeMarketOffer(fields, sellerKey)
+    const itemLockingScript = new P2PKH().lock(fields.payTo).toHex()
+    const listingTx = new Transaction()
+    listingTx.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex(itemLockingScript),
+    })
+    listingTx.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex(offerLockingScript),
+    })
+    const amounts = calculateMarketSettlement(fields.grossPriceSats)
+    const unlocks = await buildMarketSettlementUnlocks({
+      listingTx,
+      txid: listingTx.id('hex') as string,
+      itemLockingScript,
+      offerLockingScript,
+      payTo: fields.payTo,
+      priceSats: fields.grossPriceSats,
+      feePayToAddress: fields.feePayTo,
+      privateKey: sellerKey,
+    })
+    expect(unlocks).toMatchObject({
+      version: 1,
+      itemSighash: 'NONE|ANYONECANPAY',
+      offerSighash: 'SINGLE|ANYONECANPAY',
+      sellerSats: amounts.sellerSats,
+      feeSats: amounts.feeSats,
+    })
+    expect(unlocks.itemUnlockingScript).toMatch(/^[0-9a-f]+$/i)
+    expect(unlocks.offerUnlockingScript).toMatch(/^[0-9a-f]+$/i)
+    // Item is sig+pubkey; offer is checksig-only (sig push).
+    expect(unlocks.offerUnlockingScript.length).toBeLessThan(
+      unlocks.itemUnlockingScript.length,
+    )
   })
 })

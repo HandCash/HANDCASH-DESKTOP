@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import type { MarketListingAdvert } from './marketListing'
 import {
+  listingHasBuyerCompletableSettlement,
   marketSettlementCommitment,
   mergePendingPurchase,
   overlayListingBeefBinary,
@@ -340,5 +341,50 @@ describe('bsv21 market settlement buyer lock', () => {
       tokenId,
       amount: 60n,
     })
+  })
+})
+
+
+describe('listingHasBuyerCompletableSettlement', () => {
+  const unlocks = {
+    version: 1 as const,
+    itemUnlockingScript: 'aa11',
+    offerUnlockingScript: 'bb22',
+    itemSighash: 'NONE|ANYONECANPAY' as const,
+    offerSighash: 'SINGLE|ANYONECANPAY' as const,
+    sellerSats: 97,
+    feeSats: 5,
+  }
+  const amounts = { sellerSats: 97, feeSats: 5 }
+
+  it('selects the pre-sign buy path when version-1 scripts match amounts', () => {
+    expect(
+      listingHasBuyerCompletableSettlement({ settlementUnlocks: unlocks }, amounts),
+    ).toBe(true)
+  })
+
+  it('keeps the live seller path when unlocks are missing or amounts diverge', () => {
+    expect(listingHasBuyerCompletableSettlement({})).toBe(false)
+    expect(
+      listingHasBuyerCompletableSettlement({ settlementUnlocks: null }),
+    ).toBe(false)
+    expect(
+      listingHasBuyerCompletableSettlement(
+        { settlementUnlocks: { ...unlocks, sellerSats: 1 } },
+        amounts,
+      ),
+    ).toBe(false)
+    expect(
+      listingHasBuyerCompletableSettlement(
+        { settlementUnlocks: { ...unlocks, feeSats: 0 } },
+        amounts,
+      ),
+    ).toBe(false)
+    expect(
+      listingHasBuyerCompletableSettlement(
+        { settlementUnlocks: { ...unlocks, itemUnlockingScript: '' } },
+        amounts,
+      ),
+    ).toBe(false)
   })
 })
