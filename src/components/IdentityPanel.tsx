@@ -17,8 +17,9 @@ import {
   type BapProfile,
 } from '../wallet/bapIdentity'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
+import { setNavSection } from '../wallet/navStore'
 import { SkeletonQr } from './Skeleton'
-import { CopyIcon } from './icons'
+import { BackIcon, CopyIcon } from './icons'
 
 type Props = {
   profile: WalletProfile
@@ -162,6 +163,18 @@ export function IdentityPanel({ profile }: Props) {
 
   return (
     <div className="nav-section-body identity-nav nav-section-with-scroll" data-aeon-scope="identity">
+      <div className="connected-panel-head">
+        <h2>Identity</h2>
+        <button
+          type="button"
+          className="nav-back-btn"
+          aria-label="Back"
+          title="Back"
+          onClick={() => setNavSection('activity')}
+        >
+          <BackIcon size={18} />
+        </button>
+      </div>
       <div className="identity-scroll nav-section-scroll-body">
         <div className="identity-body">
           <section className="identity-card" aria-label="Wallet identity">

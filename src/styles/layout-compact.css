@@ -313,9 +313,22 @@ html:is(.platform-mobile, .layout-compact) .connected-app-row .connected-app-sta
 }
 
 html:is(.platform-mobile, .layout-compact) .connected-app-row .connected-app-card-actions {
-  min-width: 0;
+  min-width: max-content;
   width: auto;
-  padding: 4px;
+  flex-shrink: 0;
+  padding: 6px;
+  gap: 6px;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .connected-app-card-actions
+  > .connected-app-icon-action {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-shell {
@@ -1065,4 +1078,15 @@ html:is(.platform-mobile, .layout-compact) .identity-key {
 html:is(.platform-mobile, .layout-compact) .identity-compose {
   gap: 6px;
   margin-top: 2px;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-hero-meta {
+  flex: 0 0 auto;
+  max-width: none;
+  width: 100%;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-card.identity-compose {
+  width: 100%;
+  max-width: none;
 }

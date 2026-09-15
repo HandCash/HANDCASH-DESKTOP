@@ -4045,6 +4045,7 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .identity-scroll {
   display: flex;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -4055,10 +4056,14 @@ li[data-aeon-state='failed'] .history-progress-range {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
   padding: 4px 6px 6px;
   gap: 8px;
+}
+
+.identity-body > .identity-card:not(.identity-compose) {
+  align-self: center;
 }
 
 .identity-card {
@@ -4068,6 +4073,13 @@ li[data-aeon-state='failed'] .history-progress-range {
   width: min(100%, 560px);
   margin: 0 auto;
   padding: 0;
+}
+
+.identity-card.identity-compose {
+  justify-items: stretch;
+  align-items: stretch;
+  width: 100%;
+  max-width: 560px;
 }
 
 .identity-hero {
@@ -4080,8 +4092,10 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .identity-hero-meta {
-  flex: 0 1 360px;
+  /* width cap only — flex-basis 360px stacked as column left a huge gap under Handle */
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 360px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4174,10 +4188,11 @@ button.identity-qr-copy:focus-visible {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 8px;
-  width: min(100%, 560px);
+  width: 100%;
+  max-width: 560px;
 }
 
 .identity-field {
@@ -4315,6 +4330,8 @@ button.identity-qr-copy:focus-visible {
 
   .identity-hero-meta {
     width: 100%;
+    max-width: none;
+    flex: 0 0 auto;
     align-items: center;
     text-align: center;
   }
@@ -5606,10 +5623,14 @@ a.app-details-host:hover {
 
 .connected-app-row .connected-app-card-actions {
   width: auto;
-  min-width: 0;
+  min-width: max-content;
+  flex-shrink: 0;
   padding: 6px;
+  gap: 6px;
   border-top: 0;
   border-left: 1px solid hsl(var(--border));
+  align-items: center;
+  justify-content: center;
 }
 
 .connected-app-card-top {
@@ -5789,14 +5810,20 @@ html[data-aeon-mode='light']
 }
 
 .connected-app-card-actions > .connected-app-icon-action {
-  flex: 1 1 0;
-  width: auto;
-  min-width: 0;
-  padding-inline: 0;
+  /* Fixed square hit targets — flex:1 squished icons on narrow rows. */
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  aspect-ratio: 1;
+  box-sizing: border-box;
 }
 
 .connected-app-card-actions .connected-app-icon-action {
   justify-content: center;
+  align-items: center;
 }
 
 .permission-modal .wallet-action-bar {
@@ -14058,6 +14085,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 
 .identity-compose {
   margin-top: 4px;
+  width: 100%;
 }
 
 .identity-compose-title {
@@ -14078,12 +14106,15 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   flex-direction: column;
   gap: 3px;
   margin-bottom: 6px;
+  width: 100%;
   font-size: 0.78rem;
   font-weight: 600;
 }
 
 .identity-compose-field input,
 .identity-compose-field textarea {
+  width: 100%;
+  box-sizing: border-box;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-text) 14%, transparent);
