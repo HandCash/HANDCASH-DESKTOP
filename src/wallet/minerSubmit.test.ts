@@ -172,7 +172,7 @@ describe('submitAtomicBeefToMiners', () => {
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
-  it('does not roll back when Arcade reports missing inputs but coins are unspent', async () => {
+  it('hard-rejects Arcade missing-inputs and drops the local spend', async () => {
     postBeef.mockResolvedValueOnce([
       {
         name: 'ArcadeBeef',
@@ -187,10 +187,8 @@ describe('submitAtomicBeefToMiners', () => {
       },
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
-    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
-    expect(restoreOnChainLocalTx).toHaveBeenCalledWith(TXID)
   })
 })

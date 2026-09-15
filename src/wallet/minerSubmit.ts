@@ -138,11 +138,19 @@ export async function submitAtomicBeefToMiners(
         /* optional */
       }
       await releaseSealedInputsOfUnsentTx(id, atomic)
-      throw new Error(formatPostBeefFailure(summary))
+      const hard = new Error(formatPostBeefFailure(summary))
+      ;(hard as Error & { code?: string }).code = 'ARCADE_HARD_REJECT'
+      throw hard
     } else if (postBeefResultsHitArcade(rawResults)) {
       console.info('[minerSubmit] Arcade contacted (no accept/reject yet)', id.slice(0, 12))
     }
   } catch (err) {
+    if (
+      err instanceof Error &&
+      (err as Error & { code?: string }).code === 'ARCADE_HARD_REJECT'
+    ) {
+      throw err
+    }
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[minerSubmit] postBeef transport failed — treating as submitted', id.slice(0, 12), msg)
     if (isInvalidBeefTransport(msg)) {
