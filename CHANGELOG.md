@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.165] - 2026-09-15
+
+### Changed
+
+- Market buys: list-time pre-signed settlement unlocks so purchases complete without a live seller messagebox wait; longer seller wait and local BRC-150 verify remain for older listings.
+
 ## [1.3.164] - 2026-09-15
 
 ### Changed
