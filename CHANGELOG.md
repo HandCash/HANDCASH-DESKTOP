@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.177] - 2026-09-15
+
+### Fixed
+
+- Release Linux no longer dies on `sentItemGuard`. The listing-auth invalidate waitFor was 15s while the test still used Vitest’s default 5s timeout.
+
 ## [1.3.176] - 2026-09-15
 
 ### Fixed
