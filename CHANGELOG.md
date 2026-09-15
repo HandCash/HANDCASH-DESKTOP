@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.184] - 2026-09-15
+
+### Fixed
+
+- Prevented Activity cleanup and delayed change healing from aborting an NFT action batch while `signAction` is committing it.
+
 ## [1.3.183] - 2026-09-15
 
 ### Fixed

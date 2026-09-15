@@ -3,6 +3,10 @@
  * local failed actions that block later spends after ghost broadcasts.
  */
 import { getActiveWallet, type ActiveWallet } from './session'
+import {
+  getSpendPriorityDepth,
+  shouldYieldChainIngestToSpend,
+} from './walletCoordinator'
 import { txExistsOnChain } from './legacyScan'
 import { healGhostSentItems } from './sentItemGuard'
 import { forgetOneSatImported } from './oneSatImportGuard'
@@ -256,6 +260,14 @@ export async function releaseGhostDoubleSpendReqs(
 export async function releaseUnsignedSpendReservations(
   active?: ActiveWallet | null,
 ): Promise<{ failedTxs: number; reviewLog: string; batchesAborted: number }> {
+  // This API is called by Activity cleanup and delayed healing. During a live
+  // send, createAction may already have returned a signable reference whose
+  // action batch is still needed by signAction. Aborting it here corrupts that
+  // signable gap ("Result must exist and be unique").
+  if (getSpendPriorityDepth() > 0 || shouldYieldChainIngestToSpend()) {
+    console.info('[action-review] reservation release deferred — spend active')
+    return { failedTxs: 0, reviewLog: '', batchesAborted: 0 }
+  }
   const resolved = active ?? getActiveWallet()
   const wallet = resolved?.wallet
   const empty = { failedTxs: 0, reviewLog: '', batchesAborted: 0 }

@@ -30,6 +30,7 @@ const txExistsOnChain = vi.fn(async () => null as boolean | null)
 const {
   abortAction,
   listNoSendActions,
+  spendPriority,
 } = vi.hoisted(() => ({
   abortAction: vi.fn(async () => ({ aborted: true })),
   listNoSendActions: vi.fn(async (_args?: unknown, abort = false) => ({
@@ -38,6 +39,7 @@ const {
       ? []
       : [{ reference: 'keep-me' }, { reference: 'stale' }],
   })),
+  spendPriority: { depth: 0 },
 }))
 
 vi.mock('./session', () => ({
@@ -69,6 +71,10 @@ vi.mock('./session', () => ({
 vi.mock('./marketSettlement', () => ({
   protectedMarketActionReferences: () => new Set(['keep-me']),
 }))
+vi.mock('./walletCoordinator', () => ({
+  getSpendPriorityDepth: () => spendPriority.depth,
+  shouldYieldChainIngestToSpend: () => spendPriority.depth > 0,
+}))
 
 const sweepChangeScripts = vi.fn(async (_args?: unknown) => ({
   scanned: 2,
@@ -88,12 +94,27 @@ vi.mock('./oneSatImportGuard', () => ({ forgetOneSatImported: () => {} }))
 
 describe('actionReview', () => {
   beforeEach(() => {
+    spendPriority.depth = 0
     updateTransactionStatus.mockClear()
     reviewStatus.mockClear()
     validateOutputScript.mockClear()
     updateOutput.mockClear()
     findTransactions.mockClear()
     findOutputs.mockClear()
+    findExpiredActionBatches.mockClear()
+    abortActionBatch.mockClear()
+  })
+
+  it('does not release reservations while a spend is signing', async () => {
+    spendPriority.depth = 1
+    const result = await releaseUnsignedSpendReservations()
+    expect(result).toEqual({
+      failedTxs: 0,
+      reviewLog: '',
+      batchesAborted: 0,
+    })
+    expect(findTransactions).not.toHaveBeenCalled()
+    expect(findExpiredActionBatches).not.toHaveBeenCalled()
   })
 
   it('detects leftover action-batch reservations', () => {

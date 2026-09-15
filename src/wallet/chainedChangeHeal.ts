@@ -10,6 +10,10 @@ import { sweepChangeScripts } from './changeScriptFate'
 import { logDiag } from './diagnosticLog'
 import { bumpBalanceAfterHeal } from './session'
 import {
+  getSpendPriorityDepth,
+  shouldYieldChainIngestToSpend,
+} from './walletCoordinator'
+import {
   promotePendingLocalChangeOutputs,
   reclaimSealedInputsNeverSpent,
   rehideInputsOfLiveLocalTxs,
@@ -176,6 +180,10 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
 export function scheduleHealAfterSendCleanup(): void {
   void (async () => {
     try {
+      if (getSpendPriorityDepth() > 0 || shouldYieldChainIngestToSpend()) {
+        console.info('[change-heal] post-cleanup heal deferred — spend active')
+        return
+      }
       const { releaseSpendAttemptFunds } = await import('./spendAttempt')
       await releaseSpendAttemptFunds()
       const gate = await runChangeHeal({ path: 'spendGate' })
