@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.176] - 2026-09-15
+
+### Fixed
+
+- Release Windows builds again. The regression suite imports `scripts/require-toolbox-patch.mjs`, so Vite transformed it and its `#!/usr/bin/env node` line was invalid JS on windows-latest; mac and linux stripped it silently. The pre-push hook already invokes the script as `node <path>`, so the shebang is gone.
+- Release Mac no longer flakes on `sentItemGuard`. The market-authorization assertion waits on an invalidate that loads `marketListing` through a dynamic import, which does not fit the default 1s `waitFor` budget on a cold runner.
+
 ## [1.3.175] - 2026-09-15
 
 ### Fixed
