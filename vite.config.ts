@@ -45,27 +45,30 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
+      // `secure: false`: Node does not use the macOS keychain. Captive SSL
+      // inspection (IKEA FWSSL, etc.) presents a self-signed chain and would
+      // otherwise 502 Arcade GET /tx during list/buy.
       '/v1': {
         target: 'https://brc-cloud.bcryderman.workers.dev',
         changeOrigin: true,
-        secure: true,
+        secure: false,
       },
       '/.well-known': {
         target: 'https://brc-cloud.bcryderman.workers.dev',
         changeOrigin: true,
-        secure: true,
+        secure: false,
       },
       // Toolbox Arcade client sends xdeployment-id; browser CORS blocks it direct.
       '/arcade-v2': {
         target: 'https://arcade-v2-us-1.bsvblockchain.tech',
         changeOrigin: true,
-        secure: true,
+        secure: false,
         rewrite: (path) => path.replace(/^\/arcade-v2/, ''),
       },
       '/arcade-v2-testnet': {
         target: 'https://arcade-v2-testnet-us-1.bsvblockchain.tech',
         changeOrigin: true,
-        secure: true,
+        secure: false,
         rewrite: (path) => path.replace(/^\/arcade-v2-testnet/, ''),
       },
     },

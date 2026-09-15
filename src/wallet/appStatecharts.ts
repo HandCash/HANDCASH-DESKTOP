@@ -439,6 +439,28 @@ const BRC29_SEND = `stateDiagram-v2
   broadcasting --> failed : FAIL
 `
 
+const MARKET_LISTING = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> classifying : LIST / CANCEL
+  classifying --> failed : refuse / named reason
+  classifying --> staging : createOffer / cancelOffer
+  staging --> preSignAbortable : STAGED reference
+  preSignAbortable --> signedUnknown : SIGNED_UNKNOWN
+  signedUnknown --> broadcast : BROADCASTED
+  signedUnknown --> failed : ABORTED
+  signedUnknown --> recovery : FAIL / RECOVER
+  recovery --> failed : ABORTED when Arcade never accepted
+  recovery --> broadcast : BROADCASTED
+  broadcast --> committed : COMMITTED
+  preSignAbortable --> failed : ABORTED
+  note right of signedUnknown
+    noSend listing/cancel.
+    Abort + restore tip while Arcade has not accepted.
+    Never abort after BROADCASTED.
+  end note
+`
+
 const MARKET_PURCHASE = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -450,17 +472,19 @@ const MARKET_PURCHASE = `stateDiagram-v2
   preSignAbortable --> sellerSigned : seller signs both inputs
   sellerSigned --> signedUnknown : SIGNING / wallet processing begins
   signedUnknown --> broadcast : BROADCASTED
-  signedUnknown --> recovery : unknown result / never abort
+  signedUnknown --> failed : ABORTED on Arcade hard-reject
+  signedUnknown --> recovery : unknown result
   broadcast --> committed : COMMITTED
   recovery --> broadcast : recovered txid
+  recovery --> failed : ABORTED when Arcade ghosted the tx
   preSignAbortable --> aborting : TIMEOUT / DUPLICATE / COMPETING_BUYER / FAIL
   sellerSigned --> aborting : pre-sign FAIL
   aborting --> failed : ABORTED
   note right of signedUnknown
     Buyer-local reference never crosses wallets.
     Inputs: item0, offer1, then buyer funding.
-    Outputs: buyer item, seller price-fee+deposit, exact fee, buyer change.
-    Abort is forbidden after wallet signing starts.
+    Abort after sign only when Arcade hard-rejects
+    (ghost / ARCADE_HARD_REJECT) — frees funding.
   end note
 `
 
@@ -1112,10 +1136,17 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: BRC29_SEND,
   },
   {
+    id: 'marketListing',
+    label: 'Market list',
+    caption:
+      'marketListingMachine — noSend list/cancel; abort+restore tip until Arcade accepts',
+    source: MARKET_LISTING,
+  },
+  {
     id: 'marketPurchase',
     label: 'Market buy',
     caption:
-      'marketPurchaseMachine — exact-output reserve → seller sign → peer deliver → broadcast',
+      'marketPurchaseMachine — list-time unlocks → broadcast → messagebox remittance',
     source: MARKET_PURCHASE,
   },
   {

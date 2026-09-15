@@ -16,6 +16,7 @@ import { marketListingMachine, mayAbortMarketListing } from '../machines/marketL
 import { normalizeAppHost } from './appIdentity'
 import { getActiveWallet, type ActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { runExclusiveSpend } from './spendGuard'
 import {
   buildCollectableCustomInstructions,
   completeProvenanceForPublish,
@@ -107,9 +108,8 @@ export type MarketListingAdvert = {
   /** Overlay-admitted listing BEEF. Prefer this over indexer getBeefForTxid. */
   listingBeefB64?: string | null
   /**
-   * List-time seller signatures so a buyer can settle without a live
-   * messagebox round-trip. Omitted when pre-sign fails; buy then uses the
-   * collaborative seller path.
+   * List-time seller signatures so a buyer can settle without a live seller.
+   * Required to publish: missing unlocks fail closed and the offer is cancelled.
    */
   settlementUnlocks?: MarketSettlementUnlocks | null
 }
@@ -919,7 +919,10 @@ function parseCustomInstructions(raw: unknown): Record<string, unknown> {
   }
 }
 
-async function loadListedOutput(outpoint: string) {
+async function loadListedOutput(
+  outpoint: string,
+  preferredAsset?: 'ordinal' | 'bsv21',
+) {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
   const query = {
@@ -930,13 +933,34 @@ async function loadListedOutput(outpoint: string) {
     seekPermission: false,
   }
   type Listed = NonNullable<Awaited<ReturnType<typeof active.wallet.listOutputs>>['outputs']>[number]
-  let output: Listed | undefined
-  for (const basket of ['1sat', 'bsv21'] as const) {
-    const listed = await active.wallet.listOutputs({ ...query, basket })
-    output = (listed.outputs ?? []).find(
-      (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint
-    )
-    if (output) break
+  const baskets: Array<'1sat' | 'bsv21'> =
+    preferredAsset === 'bsv21'
+      ? ['bsv21', '1sat']
+      : preferredAsset === 'ordinal'
+        ? ['1sat', 'bsv21']
+        : ['1sat', 'bsv21']
+  const findInBaskets = async (): Promise<Listed | undefined> => {
+    for (const basket of baskets) {
+      const listed = await active.wallet.listOutputs({ ...query, basket })
+      const hit = (listed.outputs ?? []).find(
+        (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint,
+      )
+      if (hit) return hit
+    }
+    return undefined
+  }
+  let output = await findInBaskets()
+  if (!output) {
+    // Prior Arcade hard-reject can leave the tip spendable=false while still on
+    // chain. Revive once, then rescan — avoid probing explorers on every list.
+    try {
+      const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
+      if (await restoreUnspentAssetOutpoint(active, outpoint.replace('_', '.'))) {
+        output = await findInBaskets()
+      }
+    } catch {
+      /* restore is best-effort */
+    }
   }
   if (!output) {
     throw new MarketListingError(
@@ -1151,6 +1175,51 @@ async function splitBsv21CoverToExactAmt(args: {
   }
 }
 
+/**
+ * Abort a listing/cancel noSend that Arcade never accepted, and revive the tip
+ * so the next list does not throw ITEM_NOT_HELD.
+ */
+async function abortUnsentMarketAction(args: {
+  active: ActiveWallet
+  reference: string | null
+  chart: {
+    getSnapshot: () => Parameters<typeof mayAbortMarketListing>[0]
+    send: (event: { type: 'ABORTED'; error: string } | { type: 'FAIL'; error: string }) => void
+  }
+  tipOutpoint: string
+  reason: string
+}): Promise<void> {
+  const snap = args.chart.getSnapshot()
+  if (!mayAbortMarketListing(snap)) {
+    args.chart.send({ type: 'FAIL', error: args.reason })
+    return
+  }
+  if (args.reference) {
+    await args.active.wallet.abortAction({ reference: args.reference }).catch(() => {})
+  }
+  args.chart.send({ type: 'ABORTED', error: args.reason })
+  try {
+    const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
+    await restoreUnspentAssetOutpoint(
+      args.active,
+      args.tipOutpoint.replace('_', '.'),
+    )
+  } catch (err) {
+    console.warn(
+      '[market] tip restore after unsent abort skipped',
+      err instanceof Error ? err.message : String(err),
+    )
+  }
+}
+
+async function prepareMarketListingSpend(active: ActiveWallet): Promise<void> {
+  const { releaseStuckNosends, abortReservedActionBatches } = await import(
+    './actionReview'
+  )
+  await releaseStuckNosends(active)
+  await abortReservedActionBatches(active, { budgetMs: 1_500 })
+}
+
 export async function createMarketListingAdvert(
   args: CreateMarketListingArgs
 ): Promise<MarketListingPostPayload> {
@@ -1160,6 +1229,18 @@ export async function createMarketListingAdvert(
       'Market overlay v1 supports 1sat collectables and BSV-21 tokens only.',
     )
   }
+  // Serialize with consolidate / other spends so fee inputs are not raced, and
+  // so a prior failed list's reserved tip can be aborted before we scan.
+  return runExclusiveSpend(
+    () => createMarketListingAdvertExclusive(args),
+    undefined,
+    { promote: false },
+  )
+}
+
+async function createMarketListingAdvertExclusive(
+  args: CreateMarketListingArgs
+): Promise<MarketListingPostPayload> {
   const outpoint = normalizeOutpoint(args.outpoint)
   let listingOutpoint = outpoint
   let itemTxid = listingOutpoint.slice(0, 64)
@@ -1168,7 +1249,15 @@ export async function createMarketListingAdvert(
     amt: bigint
     lockingScript?: string
   }> = []
-  const { active, output, assetType, tokenId, amt: classifiedAmt } = await loadListedOutput(outpoint)
+  const activeEarly = getActiveWallet()
+  if (!activeEarly) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
+  await prepareMarketListingSpend(activeEarly)
+  const preferred =
+    args.assetType === 'bsv21' || args.assetType === 'ordinal'
+      ? args.assetType
+      : undefined
+  const { active, output, assetType, tokenId, amt: classifiedAmt } =
+    await loadListedOutput(outpoint, preferred)
   const priceSats = Math.trunc(Number(args.priceSats))
   if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
     throw new Error('Listing price must be at least 20 satoshis')
@@ -1675,6 +1764,15 @@ export async function createMarketListingAdvert(
       updatedAt: listedAt,
       listing: advert,
     })
+    if (
+      !advert.settlementUnlocks?.itemUnlockingScript ||
+      !advert.settlementUnlocks?.offerUnlockingScript
+    ) {
+      throw new MarketListingError(
+        'MARKET_UNLOCKS_MISSING',
+        'A list-time seller signature could not be built. The listing was not published.',
+      )
+    }
     chart.send({ type: 'COMMITTED' })
     scheduleHistoryBackupPush('market-list')
     rememberGhostTx(txid)
@@ -1779,18 +1877,13 @@ export async function createMarketListingAdvert(
       })
       throw err
     }
-    if (reference && mayAbortMarketListing(snap)) {
-      await active.wallet.abortAction({ reference }).catch(() => {})
-      chart.send({
-        type: 'ABORTED',
-        error: reason,
-      })
-    } else {
-      chart.send({
-        type: 'FAIL',
-        error: reason,
-      })
-    }
+    await abortUnsentMarketAction({
+      active,
+      reference,
+      chart,
+      tipOutpoint: listingOutpoint,
+      reason,
+    })
     recordWalletEvent({
       method: 'market-list',
       note: 'Listing failed',
@@ -2160,7 +2253,7 @@ export function getMarketSaleStatus(args: { outpoint: string }): {
 /**
  * List-time SIGHASH_NONE|ANYONECANPAY on the item (buyer sets vout0) and
  * SIGHASH_SINGLE|ANYONECANPAY checksig-only on the offer (binds vout1 seller
- * payment). Pre-sign failure must not block listing.
+ * payment). Publish fails closed when this cannot be built.
  */
 export async function buildMarketSettlementUnlocks(args: {
   listingTx: Transaction
@@ -2307,12 +2400,24 @@ export async function createCancelMarketListingAdvert(args: {
   outpoint: string
   nonce?: string
 }): Promise<MarketCancelAdvert> {
+  return runExclusiveSpend(
+    () => createCancelMarketListingAdvertExclusive(args),
+    undefined,
+    { promote: false },
+  )
+}
+
+async function createCancelMarketListingAdvertExclusive(args: {
+  outpoint: string
+  nonce?: string
+}): Promise<MarketCancelAdvert> {
   const current = getMarketListingAuthorization(args)
   if (!current) {
     throw new MarketListingError('LISTING_NOT_AUTHORIZED', 'Listing not found.')
   }
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
+  await prepareMarketListingSpend(active)
   const listing = current.listing
   if (!listing) throw new MarketListingError('INVALID_OFFER', 'Listing token is missing.')
   let valid = false
@@ -2430,18 +2535,22 @@ export async function createCancelMarketListingAdvert(args: {
       beef: beefBytes,
     }
   } catch (err) {
-    if (reference && mayAbortMarketListing(chart.getSnapshot())) {
-      await active.wallet.abortAction({ reference }).catch(() => {})
-      chart.send({
-        type: 'ABORTED',
-        error: err instanceof Error ? err.message : String(err),
-      })
-    } else {
-      chart.send({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
+    const reason = err instanceof Error ? err.message : String(err)
+    const snap = chart.getSnapshot()
+    const broadcastedTxid =
+      typeof snap.context.txid === 'string' && /^[0-9a-f]{64}$/i.test(snap.context.txid)
+        ? snap.context.txid.toLowerCase()
+        : null
+    if (broadcastedTxid || snap.matches('broadcast') || snap.matches('committed')) {
+      throw err
     }
+    await abortUnsentMarketAction({
+      active,
+      reference,
+      chart,
+      tipOutpoint: listing.offerOutpoint,
+      reason,
+    })
     throw err
   } finally {
     chart.stop()
@@ -2464,6 +2573,7 @@ export async function purchaseMarketListing(
   txid?: string
   intent: MarketPurchaseIntent
   receipt?: MarketSettlementReceipt
+  beef?: number[]
 }> {
   const { executeMarketPurchase } = await import('./marketSettlement')
   return executeMarketPurchase(args)

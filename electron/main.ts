@@ -152,6 +152,25 @@ if (process.platform === 'linux') {
 // connect answers renderer-not-ready (system browser and in-app alike).
 app.commandLine.appendSwitch('disable-features', DISABLE_HTTPS_FIRST_FEATURES.join(','))
 
+/** Chromium net::ERR_CERT_AUTHORITY_INVALID — SSL inspection appliance CA. */
+const ERR_CERT_AUTHORITY_INVALID = -202
+
+if (isDev) {
+  // Packaged builds keep Chromium's default verifier. Dev listing/buy talks to
+  // Arcade, WhatsOnChain, and GorillaPool; captive FWSSL CAs are not in Electron's
+  // trust store even when Safari has them, which surfaces as handshake -202 and
+  // Vite "self-signed certificate in certificate chain" on /arcade-v2/tx.
+  app.on('session-created', (ses: Session) => {
+    ses.setCertificateVerifyProc((request, callback) => {
+      if (request.errorCode === 0 || request.errorCode === ERR_CERT_AUTHORITY_INVALID) {
+        callback(0)
+        return
+      }
+      callback(-2)
+    })
+  })
+}
+
 function getIconPath(): string | undefined {
   return path.join(__dirname, '../build/icon.png')
 }

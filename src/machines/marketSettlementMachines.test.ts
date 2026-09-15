@@ -66,7 +66,7 @@ describe('market settlement machines', () => {
     expect(sellerMayConfirmBroadcast(actor.getSnapshot())).toBe(true)
   })
 
-  it('routes a lost buyer result to recovery without an abort edge', () => {
+  it('routes a lost buyer result to recovery; Arcade hard-reject may still abort', () => {
     const actor = createActor(marketPurchaseMachine).start()
     actor.send({
       type: 'START',
@@ -84,10 +84,11 @@ describe('market settlement machines', () => {
     actor.send({ type: 'FAIL', error: 'receipt lost after broadcast' })
     expect(actor.getSnapshot().matches('recovery')).toBe(true)
     expect(mustAbortMarketPurchase(actor.getSnapshot())).toBe(false)
-    expect(mayAbortMarketPurchase(actor.getSnapshot())).toBe(false)
+    // Soft failure stays recoverable; abort is allowed when Arcade ghosted.
+    expect(mayAbortMarketPurchase(actor.getSnapshot())).toBe(true)
   })
 
-  it('may abort only before wallet signing starts', () => {
+  it('may abort through sign until Arcade accepts', () => {
     const actor = createActor(marketPurchaseMachine).start()
     actor.send({
       type: 'START',
@@ -104,6 +105,8 @@ describe('market settlement machines', () => {
     actor.send({ type: 'SELLER_SIGNED' })
     expect(mayAbortMarketPurchase(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'SIGNING' })
+    expect(mayAbortMarketPurchase(actor.getSnapshot())).toBe(true)
+    actor.send({ type: 'BROADCASTED' })
     expect(mayAbortMarketPurchase(actor.getSnapshot())).toBe(false)
   })
 })

@@ -1052,11 +1052,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       method === 'purchaseMarketListing'
     ) {
       // Keep the wallet visibly busy after the permission prompt resolves.
-      // These methods sign and may broadcast, but unlike generic createAction
-      // they dispatch through the market module and previously left no wallet
-      // representation while the browser was still waiting. The market
-      // transaction/state machine remains the authority; this is UI lifecycle
-      // only and cannot alter settlement or cancellation semantics.
+      // List / cancel / purchase serialize inside their modules via
+      // runExclusiveSpend so consolidate cannot race fee inputs, and a failed
+      // Arcade reject aborts the noSend before the tip is scanned again.
       const busy = marketBusyCopy(method) ?? {
         label: 'Working…',
         detail: 'Processing market request',

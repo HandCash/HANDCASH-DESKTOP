@@ -21,7 +21,11 @@ import {
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
 import { withVisibleOnChainBeef } from './legacyBeef'
-import { forgetGhostTx, isGhostTxSuppressed } from './ghostTxSuppress'
+import {
+  forgetGhostTx,
+  isGhostTxSuppressed,
+  rememberGhostTx,
+} from './ghostTxSuppress'
 import {
   beginPendingSend,
   clearPendingSend,
@@ -968,8 +972,11 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
       if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
       const txid = (msg.meta?.txid || '').trim().toLowerCase()
       if (!/^[0-9a-f]{64}$/.test(txid)) continue
+      if (isGhostTxSuppressed(txid)) continue
       const isItem = msg.meta?.item === true
       if (hasSettledActivityTxid(txid, 'earned', { item: isItem })) continue
+      const status = String(msg.meta?.status ?? '').toLowerCase()
+      if (status === 'received' || status === 'unavailable') continue
       hints.push({
         txid,
         senderIdentityKey: msg.meta?.identityKey,
@@ -1034,9 +1041,10 @@ export async function ingestPaymentsFromTipHints(
 
   const unique = new Map<string, PaymentTipHint>()
   for (const h of normalized) {
-    // A tip that still carries remittance / BEEF must not stay suppressed from an
-    // earlier explorer-404 ghost — Arcade is the validity gate, not Bitails.
-    if (h.brc29 || h.beefUrl || (h.tx && h.tx.length > 0) || h.item) {
+    // Revive a prior ghost only when this poll has a new AtomicBEEF body.
+    // Chat-only `{txid, item}` cards used to forgetGhostTx every unlock, so
+    // four dead inbound tips came back on every open.
+    if ((h.tx && h.tx.length > 0) || h.beefUrl?.trim()) {
       forgetGhostTx(h.txid)
     }
     if (isGhostTxSuppressed(h.txid)) continue
@@ -1092,7 +1100,24 @@ export async function ingestPaymentsFromTipHints(
       )
       return
     }
-    void hadLocalBeef
+    let knownMiss = false
+    try {
+      const { peekRawTxLookup } = await import('./oneSatImport')
+      knownMiss = peekRawTxLookup(txid) === 'miss'
+    } catch {
+      knownMiss = false
+    }
+    // Durable miss: indexer + WoC + raw already failed. Chat replay without
+    // a body would otherwise hammer the same four invalid txids on every open.
+    if (!hadLocalBeef && knownMiss) {
+      rememberGhostTx(txid)
+      markInboundPaymentStatus(txid, 'Unavailable')
+      if (!ghostTxids.includes(txid)) ghostTxids.push(txid)
+      console.info(
+        `[tip-ingest] tip ${txid.slice(0, 12)}… discarded — tx body never found`,
+      )
+      return
+    }
     console.info(
       `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — explorer lag ignored; Arcade is source of truth`,
     )

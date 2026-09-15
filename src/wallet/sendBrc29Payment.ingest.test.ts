@@ -10,6 +10,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef } from '@bsv/sdk'
 
+const { peekRawTxLookup, ghosts } = vi.hoisted(() => ({
+  peekRawTxLookup: vi.fn((): 'hit' | 'miss' | 'unknown' => 'unknown'),
+  ghosts: new Set<string>(),
+}))
 const postBeef = vi.fn(async () => [
   { status: 'success', txidResults: [{ status: 'success' }] },
 ])
@@ -55,9 +59,17 @@ vi.mock('./beefCache', () => ({
 }))
 
 vi.mock('./ghostTxSuppress', () => ({
-  isGhostTxSuppressed: () => false,
-  rememberGhostTx: () => {},
-  forgetGhostTx: () => {},
+  isGhostTxSuppressed: (txid: string) => ghosts.has(txid.trim().toLowerCase()),
+  rememberGhostTx: (txid: string) => {
+    ghosts.add(txid.trim().toLowerCase())
+  },
+  forgetGhostTx: (txid: string) => {
+    ghosts.delete(txid.trim().toLowerCase())
+  },
+}))
+
+vi.mock('./oneSatImport', () => ({
+  peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
 vi.mock('./appActivity', () => ({
@@ -119,6 +131,9 @@ const SENDER = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709e
 const ATOMIC = [1, 2, 3]
 
 beforeEach(() => {
+  ghosts.clear()
+  peekRawTxLookup.mockReset()
+  peekRawTxLookup.mockReturnValue('unknown')
   postBeef.mockClear()
   txExistsOnChain.mockClear()
   txExistsOnChain.mockResolvedValue(null)
@@ -383,5 +398,42 @@ describe('ingestPaymentsFromTipHints', () => {
     await ingestSkippingRetryDelay([{ ...hint(1), tx: undefined }])
 
     expect(attempts).toBe(2)
+  })
+
+  it('does not revive a ghosted item tip that still has no AtomicBEEF', async () => {
+    const txid = 'd'.repeat(64)
+    ghosts.add(txid)
+    const { ingestPaymentsFromTipHints } = await import('./sendBrc29Payment')
+    const result = await ingestPaymentsFromTipHints([{ txid, item: true }])
+
+    expect(ghosts.has(txid)).toBe(true)
+    expect(result.imported).toBe(0)
+    expect(internalizePeerItemSettle).not.toHaveBeenCalled()
+  })
+
+  it('retries a ghosted tip when a new AtomicBEEF arrives', async () => {
+    const txid = 'e'.repeat(64)
+    ghosts.add(txid)
+    const { ingestPaymentsFromTipHints } = await import('./sendBrc29Payment')
+    const result = await ingestPaymentsFromTipHints([
+      { txid, item: true, tx: ATOMIC },
+    ])
+
+    expect(ghosts.has(txid)).toBe(false)
+    expect(result.importedTxids).toEqual([txid])
+  })
+
+  it('ghosts a body-less tip after a durable raw-tx miss so unlock does not replay it', async () => {
+    peekRawTxLookup.mockReturnValue('miss')
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'Cannot prove the collectable input offline. Try again when connected.',
+    })
+    const txid = 'f'.repeat(64)
+    const result = await ingestSkippingRetryDelay([{ txid, item: true }])
+
+    expect(result.ghostTxids).toEqual([txid])
+    expect(ghosts.has(txid)).toBe(true)
   })
 })

@@ -364,7 +364,7 @@ describe('listingHasBuyerCompletableSettlement', () => {
     ).toBe(true)
   })
 
-  it('keeps the live seller path when unlocks are missing or amounts diverge', () => {
+  it('keeps the listing unbuyable when unlocks are missing or amounts diverge', () => {
     expect(listingHasBuyerCompletableSettlement({})).toBe(false)
     expect(
       listingHasBuyerCompletableSettlement({ settlementUnlocks: null }),

@@ -104,6 +104,8 @@ export const marketPurchaseMachine = setup({
     signedUnknown: {
       on: {
         BROADCASTED: 'broadcast',
+        // Arcade hard-reject: abort the noSend so buyer funding is not reserved forever.
+        ABORTED: 'failed',
         RECOVER: 'recovery',
         FAIL: { target: 'recovery', actions: 'setError' },
       },
@@ -113,6 +115,7 @@ export const marketPurchaseMachine = setup({
       on: {
         BROADCASTED: 'broadcast',
         COMMITTED: 'committed',
+        ABORTED: 'failed',
         FAIL: { actions: 'setError' },
       },
     },
@@ -126,13 +129,20 @@ export type MarketPurchaseSnapshot = SnapshotFrom<
   typeof marketPurchaseMachine
 >
 
+/**
+ * Abort while Arcade has not accepted the settlement.
+ * After SIGNED_UNKNOWN a hard-reject must still free buyer funding (and the
+ * reserved listing inputs) — same durability rule as market list.
+ */
 export function mayAbortMarketPurchase(
   snapshot: MarketPurchaseSnapshot,
 ): boolean {
   return (
     snapshot.matches('preSignAbortable') ||
     snapshot.matches('sellerSigned') ||
-    snapshot.matches('aborting')
+    snapshot.matches('aborting') ||
+    snapshot.matches('signedUnknown') ||
+    snapshot.matches('recovery')
   )
 }
 

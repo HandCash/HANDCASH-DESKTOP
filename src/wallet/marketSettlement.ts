@@ -68,14 +68,10 @@ import {
 const PENDING_KEY = 'handcash.market.pending.v2'
 const RESPONSE_KEY = 'handcash.market.responses.v2'
 /**
- * Buyer waits for the seller peer signature over messagebox.
- *
- * Live seller sign is a short fallback. List-time `settlementUnlocks` are the
- * purchase path; a 3-minute messagebox wait is what left Buying stuck on
- * "Settling the purchase" with no sign/broadcast.
+ * List-time `settlementUnlocks` are the purchase path. Live seller sign is
+ * not required: messagebox is store-and-forward for remittance after pay.
  */
 const SETTLEMENT_TIMEOUT_MS = 30_000
-const SELLER_SIGN_WAIT_MS = 8_000
 const LISTING_DETAIL_MS = 4_000
 
 /**
@@ -515,26 +511,6 @@ export function listingHasBuyerCompletableSettlement(
   return true
 }
 
-async function waitForSellerResponse<T extends StoredResponse['type']>(
-  saleId: string,
-  type: T,
-  timeoutMs = SELLER_SIGN_WAIT_MS
-): Promise<Extract<StoredResponse, { type: T }>> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const found = takeResponse(saleId, type)
-    if (found) return found as Extract<StoredResponse, { type: T }>
-    await pollInboundTipHints({
-      rootKeyHex: getActiveWallet()?.rootKeyHex ?? '',
-    })
-    await new Promise((resolve) => setTimeout(resolve, 300))
-  }
-  throw new MarketListingError(
-    'MARKET_SELLER_TIMEOUT',
-    'This listing has no list-time seller signature, and the seller did not answer in time. Nothing was charged.',
-  )
-}
-
 export async function executeMarketPurchase(
   args: PurchaseMarketListingArgs
 ): Promise<{
@@ -543,6 +519,7 @@ export async function executeMarketPurchase(
   txid?: string
   intent: MarketPurchaseIntent
   receipt?: MarketSettlementReceipt
+  beef?: number[]
 }> {
   return runExclusiveSpend(async () => {
     const t0 = Date.now()
@@ -785,41 +762,10 @@ export async function executeMarketPurchase(
         offerUnlockingScript = signedLocal.offerUnlockingScript
         chart.send({ type: 'SELLER_SIGNED' })
       } else {
-        const delivered = await deliverMarketSettlementWire({
-          recipientIdentityKey: listing.seller,
-          rootKeyHex: active.rootKeyHex,
-          senderIdentityKey: active.identityKey,
-          messagebox: sellerMessagebox,
-          wire: {
-            type: 'sign-request',
-            saleId,
-            buyerIdentityKey: active.identityKey,
-            buyerAddress: active.address,
-            intent: args.intent,
-            ...(buyerMessagebox ? { buyerMessagebox } : {}),
-            listing,
-            provenance,
-            signableBeefB64: b64(signable.tx),
-            itemVin,
-            offerVin,
-            itemOutputIndex: 0,
-            sellerOutputIndex: 1,
-            feeOutputIndex: 2,
-            expiresAt: pending.expiresAt,
-          },
-        })
-        if (!delivered) throw new Error('Seller messagebox is unreachable')
-        mark('waiting for seller signature')
-        const response = await waitForSellerResponse(saleId, 'sign-response')
-        if (!response.accepted || !response.unlockingScript) {
-          throw new Error(response.reason || 'Seller refused settlement')
-        }
-        chart.send({ type: 'SELLER_SIGNED' })
-        if (!response.offerUnlockingScript) {
-          throw new Error('Seller offer-token signature missing')
-        }
-        itemUnlockingScript = response.unlockingScript
-        offerUnlockingScript = response.offerUnlockingScript
+        throw new MarketListingError(
+          'MARKET_SELLER_TIMEOUT',
+          'This listing has no list-time seller signature. Nothing was charged.',
+        )
       }
       chart.send({ type: 'SIGNING' })
       remember({ phase: 'signedUnknown' })
@@ -859,36 +805,22 @@ export async function executeMarketPurchase(
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
         },
       }
-      let receipt: MarketSettlementReceipt | undefined
-      void deliverMarketSettlementWire(receiptWire)
-        .then(async (delivered) => {
-          if (!delivered) return
-          try {
-            const receiptResponse = await waitForSellerResponse(
-              saleId,
-              'receipt-response',
-              4_000,
-            )
-            if (
-              receiptResponse.txid.toLowerCase() === txid.toLowerCase() &&
-              receiptResponse.receipt &&
-              verifyMarketSettlementReceipt(receiptResponse.receipt, args.intent)
-            ) {
-              receipt = receiptResponse.receipt
-              removePending(saleId)
-            }
-          } catch {
-            /* receipt is optional once Arcade has the Atomic BEEF */
-          }
-        })
-        .catch(() => {})
+      const remitted = await deliverMarketSettlementWire(receiptWire).catch((err) => {
+        console.warn(
+          '[market-buy] seller remittance failed',
+          err instanceof Error ? err.message : String(err),
+        )
+        return false
+      })
+      if (remitted) mark('seller remittance delivered')
+      else mark('seller remittance not delivered — overlay/catalog may still index')
       chart.send({ type: 'COMMITTED' })
       remember({
         phase: 'committed',
         txid,
         atomicBeef: atomic,
       })
-      if (receipt) removePending(saleId)
+      removePending(saleId)
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
@@ -912,17 +844,34 @@ export async function executeMarketPurchase(
         status: 'complete',
       })
       scheduleHistoryBackupPush('market-purchase')
-      mark(`done status=${receipt ? 'settled' : 'broadcast'}`)
+      mark('done status=broadcast')
       return {
         saleId,
-        status: receipt ? 'settled' : 'broadcast',
+        status: 'broadcast',
         txid,
         intent: args.intent,
-        ...(receipt ? { receipt } : {}),
+        beef: atomic,
       }
     } catch (err) {
       const snapshot = chart.getSnapshot()
-      if (mayAbortMarketPurchase(snapshot) && !pending.txid && !pending.atomicBeef?.length) {
+      const reason = err instanceof Error ? err.message : String(err)
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code?: unknown }).code ?? '')
+          : ''
+      const arcadeHardReject =
+        code === 'ARCADE_HARD_REJECT' ||
+        /ARCADE_HARD_REJECT/i.test(reason) ||
+        (pending.txid != null &&
+          (await import('./ghostTxSuppress')).isGhostTxSuppressed(pending.txid))
+      // Abort whenever Arcade never accepted — including after sign, when we
+      // already have a local txid/atomicBEEF that miners hard-rejected.
+      const mayAbort =
+        mayAbortMarketPurchase(snapshot) &&
+        (!pending.txid ||
+          !pending.atomicBeef?.length ||
+          arcadeHardReject)
+      if (mayAbort) {
         await active.wallet
           .abortAction({ reference: signable.reference })
           .catch(() => {})
@@ -934,7 +883,7 @@ export async function executeMarketPurchase(
       }
       chart.send({
         type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
+        error: reason,
       })
       throw err
     } finally {
@@ -946,7 +895,18 @@ export async function executeMarketPurchase(
 export async function recoverPendingMarketPurchases(): Promise<void> {
   const active = getActiveWallet()
   if (!active) return
+  const { isGhostTxSuppressed } = await import('./ghostTxSuppress')
   for (const record of readJson<PendingPurchase[]>(PENDING_KEY, [])) {
+    if (record.txid && isGhostTxSuppressed(record.txid)) {
+      await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
+      removePending(record.saleId)
+      console.info(
+        '[market] pending purchase aborted — Arcade ghost',
+        record.saleId,
+        record.txid.slice(0, 12),
+      )
+      continue
+    }
     if (!record.txid && Date.now() >= record.expiresAt) {
       const listed = await active.wallet
         .listActions({
@@ -978,6 +938,10 @@ export async function recoverPendingMarketPurchases(): Promise<void> {
         record.saleId,
         err instanceof Error ? err.message : String(err),
       )
+      if (isGhostTxSuppressed(record.txid)) {
+        await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
+        removePending(record.saleId)
+      }
     }
   }
 }

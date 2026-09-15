@@ -142,7 +142,7 @@ describe('BRC-48 one-sat market offer', () => {
     ).toEqual({ path: 'refuse', reason: 'offer-not-held' })
   })
 
-  it('allows abort only before signing and routes unknown signing to recovery', () => {
+  it('allows abort until Arcade accepts, then routes unknown signing to recovery', () => {
     const actor = createActor(marketListingMachine).start()
     actor.send({
       type: 'LIST',
@@ -151,9 +151,23 @@ describe('BRC-48 one-sat market offer', () => {
     actor.send({ type: 'STAGED', reference: 'ref' })
     expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'SIGNED_UNKNOWN' })
-    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(false)
+    // Hard-reject / never-broadcast must still abort the noSend tip reservation.
+    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'FAIL', error: 'lost receipt' })
     expect(actor.getSnapshot().matches('recovery')).toBe(true)
+    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
+  })
+
+  it('refuses abort after Arcade accepted the listing broadcast', () => {
+    const actor = createActor(marketListingMachine).start()
+    actor.send({
+      type: 'LIST',
+      path: { path: 'createOffer', itemOutpoint: 'item' },
+    })
+    actor.send({ type: 'STAGED', reference: 'ref' })
+    actor.send({ type: 'SIGNED_UNKNOWN' })
+    actor.send({ type: 'BROADCASTED', txid: 'ab'.repeat(32) })
+    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(false)
   })
 
   it('refunds the one-sat offer deposit to seller and pins market origins', () => {

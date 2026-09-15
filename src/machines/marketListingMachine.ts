@@ -86,6 +86,8 @@ export const marketListingMachine = setup({
     signedUnknown: {
       on: {
         BROADCASTED: { target: 'broadcast', actions: 'txid' },
+        // Arcade never accepted — abort the noSend and free the tip.
+        ABORTED: { target: 'failed', actions: 'error' },
         RECOVER: 'recovery',
         FAIL: { target: 'recovery', actions: 'error' },
       },
@@ -95,6 +97,8 @@ export const marketListingMachine = setup({
       on: {
         BROADCASTED: { target: 'broadcast', actions: 'txid' },
         COMMITTED: 'committed',
+        // Still abortable when Arcade never set BROADCASTED (no context.txid).
+        ABORTED: { target: 'failed', actions: 'error' },
         FAIL: { actions: 'error' },
       },
     },
@@ -105,6 +109,19 @@ export const marketListingMachine = setup({
 
 export type MarketListingSnapshot = SnapshotFrom<typeof marketListingMachine>
 
+/**
+ * Abort the listing noSend while Arcade has not accepted it.
+ * After SIGNED_UNKNOWN a hard-reject used to skip abort (only preSignAbortable
+ * was allowed), leaving the tip reserved → ITEM_NOT_HELD on every retry.
+ */
 export function mayAbortMarketListing(snapshot: MarketListingSnapshot): boolean {
-  return snapshot.matches('preSignAbortable')
+  return (
+    snapshot.matches('preSignAbortable') ||
+    snapshot.matches('signedUnknown') ||
+    (snapshot.matches('recovery') &&
+      !(
+        typeof snapshot.context.txid === 'string' &&
+        /^[0-9a-f]{64}$/i.test(snapshot.context.txid)
+      ))
+  )
 }
