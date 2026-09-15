@@ -322,7 +322,16 @@ export function prepareItemBasketArgs(args: unknown): {
          body.includeTags = true
       changed = true
       } else {
-         itemViewRequest = parseItemViewRequest(body)
+      // Bare storage basket is wallet-internal. Apps must use BRC-165 scopes
+      // (`p 1sat all` is full view — still a scope).
+      return {
+        args,
+        error: {
+          code: 'USE_P1SAT_SCOPE',
+          description:
+            'Use BRC-165 basket "p 1sat all|collection|app|creator|id" (filter values in tags). Storage basket "1sat" is wallet-internal.',
+        },
+      }
     }
   } else if (typeof body.basket === 'string' && isTokenViewBasket(body.basket)) {
     const p = parsePBasket(body.basket)
@@ -352,7 +361,14 @@ export function prepareItemBasketArgs(args: unknown): {
       body.includeTags = true
       changed = true
     } else {
-      tokenViewRequest = parseTokenViewRequest(body)
+      return {
+        args,
+        error: {
+          code: 'USE_PBSV21_SCOPE',
+          description:
+            'Use BRC-99 basket "p bsv21 all|id" (filter values in tags). Storage basket "bsv21" is wallet-internal.',
+        },
+      }
     }
   }
 
@@ -1166,5 +1182,12 @@ export function shouldRefuseColourList(
   basket: unknown,
 ): boolean {
   return isThirdPartyOriginator(origin) && isColourBasket(basket)
+}
+
+/** True when an app asked for bare storage inventory instead of a P-scope. */
+export function isBareStorageInventoryBasket(basket: unknown): boolean {
+  if (typeof basket !== 'string') return false
+  const t = basket.trim().toLowerCase()
+  return t === ITEM_STORAGE_BASKET || t === FUNGIBLE_STORAGE_BASKET
 }
 

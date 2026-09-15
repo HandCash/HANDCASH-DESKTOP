@@ -127,6 +127,21 @@ describe('BRC-99 p 1sat baskets', () => {
       .toBe('UNSUPPORTED_P_BASKET')
   })
 
+  it('refuses bare storage 1sat — apps must use p 1sat scopes', () => {
+    expect(prepareItemBasketArgs({ basket: '1sat' }).error?.code).toBe('USE_P1SAT_SCOPE')
+  })
+
+  it('refuses bare storage bsv21 — apps must use p bsv21 scopes', () => {
+    expect(prepareItemBasketArgs({ basket: 'bsv21' }).error?.code).toBe('USE_PBSV21_SCOPE')
+  })
+
+  it('still accepts scoped full view p 1sat all', () => {
+    const prepared = prepareItemBasketArgs({ basket: 'p 1sat all' })
+    expect(prepared.error).toBeUndefined()
+    expect(prepared.itemViewRequest?.wantsAll).toBe(true)
+    expect(prepared.args).toMatchObject({ basket: '1sat', includeTags: true })
+  })
+
   it('keeps app and creator grants distinct when filtering outputs', () => {
     const access = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, {
       scope: 'app',
