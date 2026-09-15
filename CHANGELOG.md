@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.186] - 2026-09-15
+
+### Fixed
+
+- On upgrade, completed self-purchases recover from Activity and retire seller tips left stale by older builds.
+
 ## [1.3.185] - 2026-09-15
 
 ### Fixed

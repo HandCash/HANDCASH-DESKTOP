@@ -121,6 +121,33 @@ describe('locally seeded collectables', () => {
     ])
   })
 
+  it('recovers old self-purchases from durable Activity on upgrade', async () => {
+    const { settledSelfPurchaseRetirements } = await import('./collectables')
+    expect(
+      settledSelfPurchaseRetirements([
+        {
+          id: 'listed',
+          at: 100,
+          method: 'market-list',
+          status: 'complete',
+          item: { origin: `${TXID}_0`, outpoint: TIP, name: 'Listed Item' },
+        },
+        {
+          id: 'received',
+          at: 200,
+          method: 'market-purchase-receive',
+          status: 'complete',
+          txid: 'ef'.repeat(32),
+          item: {
+            origin: `${TXID}.0`,
+            outpoint: `${'ef'.repeat(32)}.0`,
+            name: 'Received Item',
+          },
+        },
+      ] as never),
+    ).toEqual([{ outpoint: TIP, txid: 'ef'.repeat(32) }])
+  })
+
   it('survives a renderer restart while Toolbox has not listed it yet', async () => {
     const first = await import('./collectables')
     first.noteIngestedItem({
