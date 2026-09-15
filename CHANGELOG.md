@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Market list no longer reports "Already spent" for a tip it can still spend. Miner MissingInputs is now attributed to our own BEEF when we could not complete its ancestry, and only names a spend conflict once chain proof shows an input is gone.
+- Signed AtomicBEEF is hydrated to broadcast-safe before postBeef instead of being posted after a 2s race, which guaranteed MissingInputs from every provider.
+- An Arcade service that merely errored (no txid-row defect) no longer counts as a hard reject that drops the local spend.
+- postBeef `detail` records provider reasons, not just statuses.
+- BSV-21 list no longer stalls after a cover split. The listing carried the split txid to `getBeefForTxidCached`, which asked GorillaPool, then WhatsOnChain, then raw + a nested hydrate for a merkle proof of a transaction broadcast seconds earlier; it now reuses the signed split BEEF it already holds.
+- The pre-postBeef hydrate is skipped when every remaining gap is a proof for a parent whose body the BEEF already carries — mining is the only thing that can close that gap, so waiting only cost fetch timeouts. Genuinely fetchable gaps wait 8s, not 15s.
+
 ## [1.3.172] - 2026-09-15
 
 ### Changed

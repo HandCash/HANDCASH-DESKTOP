@@ -61,6 +61,49 @@ function arcadeHardRejectError(summary: PostBeefSummary): ArcadeHardRejectError 
   return hard
 }
 
+type AncestryIncompleteError = Error & { code: 'BEEF_ANCESTRY_INCOMPLETE' }
+
+function ancestryIncompleteError(summary: PostBeefSummary): AncestryIncompleteError {
+  const err = new Error(
+    formatPostBeefFailure(summary, { ancestryIncomplete: true }),
+  ) as AncestryIncompleteError
+  err.code = 'BEEF_ANCESTRY_INCOMPLETE'
+  return err
+}
+
+/**
+ * MissingInputs on a BEEF we could not complete is a delivery defect, not proof
+ * that an input left the wallet. Fail closed on the real reason so the tip stays
+ * spendable and the caller can retry once the parent lands.
+ */
+async function failIfAncestryIncomplete(args: {
+  id: string
+  atomic: number[]
+  active: ActiveWallet
+  summary: PostBeefSummary
+  telemetry: SubmitTelemetry
+  ancestryComplete: boolean
+}): Promise<void> {
+  const { id, atomic, active, summary, telemetry } = args
+  if (args.ancestryComplete || !summary.missingInputs) return
+  if (await signedTxSpendConflictIsProven({ txid: id, atomic, chain: active.chain })) {
+    return
+  }
+  console.warn(
+    '[minerSubmit] MissingInputs on incomplete BEEF — no input proven spent',
+    id.slice(0, 12),
+    summary.detail,
+  )
+  removePendingMinerSubmit(id)
+  recordTransactionStage('hard_rejected', {
+    ...telemetry,
+    blockerCode: 'beef_ancestry_incomplete',
+  })
+  await rememberGhostTxQuiet(id)
+  await releaseSealedInputsOfUnsentTx(id, atomic)
+  throw ancestryIncompleteError(summary)
+}
+
 async function rememberGhostTxQuiet(txid: string): Promise<void> {
   try {
     const { rememberGhostTx } = await import('./ghostTxSuppress')
@@ -97,6 +140,8 @@ async function applyArcadePostBeef(
   rawResults: PostBeefServiceResult[],
   summary: PostBeefSummary,
   telemetry: SubmitTelemetry,
+  active: ActiveWallet,
+  ancestryComplete: boolean,
 ): Promise<PostBeefSummary> {
   const arcadeOk = postBeefResultsArcadeAccepted(rawResults)
   const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults)
@@ -111,6 +156,14 @@ async function applyArcadePostBeef(
     return summary.accepted ? summary : { ...summary, accepted: true }
   }
   if (arcadeHardReject) {
+    await failIfAncestryIncomplete({
+      id,
+      atomic,
+      active,
+      summary,
+      telemetry,
+      ancestryComplete,
+    })
     await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary)
   }
   if (postBeefResultsHitArcade(rawResults)) {
@@ -225,15 +278,38 @@ export async function submitAtomicBeefToMiners(
   }
 
   let beefBytes = atomic
+  // Miners answer MissingInputs both for a spent input and for a BEEF whose
+  // ancestry we failed to supply. Settle which one we are looking at before
+  // posting: an already-complete BEEF costs nothing, and an incomplete one must
+  // be hydrated properly rather than posted to earn a guaranteed false verdict.
+  let ancestryComplete = false
   try {
-    // Best-effort ancestor fill — never stall send waiting on indexer proofs.
-    // Arcade success is completion; hydrate is only to reduce missing-inputs noise.
-    const { hydrateInputBeef } = await import('./beefCache')
-    const shaped = await Promise.race([
-      hydrateInputBeef(active, Beef.fromBinary(atomic)),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2_000)),
-    ])
-    if (shaped?.length) beefBytes = shaped
+    const { classifyBeefAncestryGap, hydrateInputBeef } = await import('./beefCache')
+    const gap = classifyBeefAncestryGap(atomic)
+    if (gap === 'none') {
+      ancestryComplete = true
+    } else if (gap === 'unconfirmed-parents') {
+      // A proof for a parent we just broadcast cannot exist yet. Post now and let
+      // BEEF-aware services take the chain — do not spend fetch timeouts on it.
+      console.info(
+        '[minerSubmit] unconfirmed parent in BEEF — posting without hydrate',
+        id.slice(0, 12),
+      )
+    } else {
+      const shaped = await Promise.race([
+        hydrateInputBeef(active, Beef.fromBinary(atomic)),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8_000)),
+      ])
+      if (shaped?.length) {
+        beefBytes = shaped
+        ancestryComplete = true
+      } else {
+        console.warn(
+          '[minerSubmit] posting with incomplete ancestry — MissingInputs will not count as spent',
+          id.slice(0, 12),
+        )
+      }
+    }
   } catch (err) {
     console.warn('[minerSubmit] ancestor hydrate skipped', id.slice(0, 12), err)
   }
@@ -266,7 +342,15 @@ export async function submitAtomicBeefToMiners(
   }
 
   if (rawResults) {
-    summary = await applyArcadePostBeef(id, atomic, rawResults, summary, telemetry)
+    summary = await applyArcadePostBeef(
+      id,
+      atomic,
+      rawResults,
+      summary,
+      telemetry,
+      active,
+      ancestryComplete,
+    )
   }
 
   if (summary.accepted) {
@@ -300,6 +384,14 @@ export async function submitAtomicBeefToMiners(
     return { confirmed: false, submitted: true, summary }
   }
   if (summary.missingInputs || summary.doubleSpend) {
+    await failIfAncestryIncomplete({
+      id,
+      atomic,
+      active,
+      summary,
+      telemetry,
+      ancestryComplete,
+    })
     return resolveMinerConflict({ id, atomic, active, summary, telemetry })
   }
 

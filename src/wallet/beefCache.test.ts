@@ -251,6 +251,45 @@ describe('beefCache', () => {
     }
   })
 
+  it('classifies a broadcast-safe BEEF as having no gap, and a stub as fetchable', async () => {
+    const { classifyBeefAncestryGap } = await import('./beefCache')
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+    const parentProof = new MerklePath(800_001, [
+      [
+        { offset: 0, hash: parentId, txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ])
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({ satoshis: 9_900, lockingScript: LockingScript.fromHex('51') })
+
+    const ready = new Beef()
+    ready.mergeRawTx(parent.toBinary())
+    ready.mergeBump(parentProof)
+    ready.mergeTransaction(tip)
+    expect(classifyBeefAncestryGap(ready.toBinary())).toBe('none')
+
+    // Parent reduced to a txid stub — a fetch can still supply the body.
+    const stubbed = new Beef()
+    stubbed.mergeTxidOnly(parentId)
+    stubbed.mergeRawTx(tip.toBinary())
+    expect(classifyBeefAncestryGap(stubbed.toBinary())).toBe('missing-bodies')
+
+    expect(classifyBeefAncestryGap([1, 2, 3])).toBe('missing-bodies')
+  })
+
   it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {
     const { hydrateInputBeef, resetBeefCacheForTests } = await import('./beefCache')
     resetBeefCacheForTests()

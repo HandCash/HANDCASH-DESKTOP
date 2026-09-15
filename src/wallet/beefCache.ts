@@ -679,6 +679,41 @@ function roundTripBroadcastSafe(bin: number[]): number[] | undefined {
   }
 }
 
+export type BeefAncestryGap = 'none' | 'unconfirmed-parents' | 'missing-bodies'
+
+/**
+ * What this BEEF still needs before it can stand alone at a miner.
+ *
+ * - `none` — every parent has a body and proofs; post it as-is.
+ * - `unconfirmed-parents` — the only gap is a merkle proof for a tx whose body
+ *   the BEEF already carries (typically a parent we broadcast seconds ago, e.g. a
+ *   BSV-21 cover split). No indexer can supply that proof until the parent is
+ *   mined, so hydrating is futile — it only costs the fetch timeouts.
+ * - `missing-bodies` — a parent body is absent or a txidOnly stub, which a fetch
+ *   can still supply.
+ *
+ * An incomplete BEEF earns MissingInputs, which reads exactly like a spent input,
+ * so callers must be able to tell those apart before blaming an outpoint.
+ */
+export function classifyBeefAncestryGap(bin: number[]): BeefAncestryGap {
+  try {
+    const beef = Beef.fromBinary(bin)
+    beef.atomicTxid = undefined
+    if (roundTripBroadcastSafe(beef.toBinary())) return 'none'
+    const need = incompleteProofTxids(beef)
+    // Nothing to fetch, yet still not broadcast-safe — only mining closes this.
+    if (need.length === 0) return 'unconfirmed-parents'
+    return need.every((txid) => {
+      const found = beef.findTxid(txid)
+      return Boolean(found?.tx) && !found?.isTxidOnly
+    })
+      ? 'unconfirmed-parents'
+      : 'missing-bodies'
+  } catch {
+    return 'missing-bodies'
+  }
+}
+
 /**
  * Ensure inputBEEF has raw tip bodies **and** full parent proofs (no txidOnly).
  * Safe for createAction trustSelf verify and for processAction broadcast verify.

@@ -59,15 +59,21 @@ function txidRowLooksMissingInputs(t: TxidRow): boolean {
   return /missing.?input/i.test(dataMessage(t.data))
 }
 
+/**
+ * Hard reject needs *evidence* — a doubleSpend flag or a note/message naming the
+ * defect. A bare `status: 'error'` row is an unexplained provider answer (down,
+ * rate-limited, policy). Treating it as proof used to drop a live local spend and
+ * report it as "Already spent".
+ */
 function txidRowLooksHardReject(t: TxidRow): boolean {
   if (t.doubleSpend) return true
   if (noteWhat(t.notes).some((w) => /MissingInputs|AlreadySpent|Invalid|not.?found/i.test(w))) {
     return true
   }
-  if (t.status === 'error' && /missing.?input|already.?spent|invalid/i.test(dataMessage(t.data))) {
-    return true
-  }
-  return t.status === 'error'
+  return (
+    t.status === 'error' &&
+    /missing.?input|already.?spent|invalid/i.test(dataMessage(t.data))
+  )
 }
 
 export function postBeefResultsHitArcade(
@@ -98,6 +104,9 @@ export function postBeefResultsArcadeAccepted(
 /**
  * Arcade hard-reject for invalid / missing inputs — drop local change immediately.
  * Do not wait on explorers; do not pin the tx as "Arcade submitted".
+ *
+ * Requires an explicit defect on a txid row. An Arcade service that merely
+ * errored (or answered nothing) is a delivery failure, not a verdict.
  */
 export function postBeefResultsArcadeHardReject(
   results: PostBeefServiceResult[] | null | undefined,
@@ -109,9 +118,6 @@ export function postBeefResultsArcadeHardReject(
     const rows = r.txidResults ?? []
     for (const t of rows) {
       if (txidRowLooksHardReject(t)) return true
-    }
-    if (String(r.status ?? '').toLowerCase() === 'error' && rows.length === 0) {
-      return true
     }
   }
   return false
@@ -140,15 +146,24 @@ export function summarizePostBeef(
 
   for (const r of results) {
     const name = r.name || 'service'
-    parts.push(`${name}:${r.status || 'unknown'}`)
+    // Reasons, not just statuses. "arcade:error" alone could not distinguish an
+    // incomplete BEEF from a spent input when reading a support log.
+    const reasons = new Set<string>()
+    for (const t of r.txidResults ?? []) {
+      for (const what of noteWhat(t.notes)) reasons.add(what)
+      const msg = dataMessage(t.data)
+      if (msg) reasons.add(msg.slice(0, 80))
+    }
+    if (r.error?.message) reasons.add(r.error.message.slice(0, 80))
+    const why = reasons.size > 0 ? `(${[...reasons].slice(0, 2).join('; ')})` : ''
+    parts.push(`${name}:${r.status || 'unknown'}${why}`)
     for (const t of r.txidResults ?? []) {
       anyTxRow = true
       if (txidRowLooksAccepted(t)) accepted = true
       if (t.doubleSpend) doubleSpend = true
-      if (txidRowLooksMissingInputs(t)) {
-        missingInputs = true
-        doubleSpend = true
-      }
+      // MissingInputs stays its own fact. Folding it into doubleSpend made an
+      // incomplete BEEF indistinguishable from a spent input at every caller.
+      if (txidRowLooksMissingInputs(t)) missingInputs = true
       if (t.serviceError) anyServiceError = true
       for (const c of t.competingTxs ?? []) {
         const id = normalizeTxid(c)
@@ -164,13 +179,27 @@ export function summarizePostBeef(
     accepted,
     doubleSpend,
     missingInputs,
-    serviceOnlyErrors: !accepted && !doubleSpend && (anyServiceError || !anyTxRow),
+    serviceOnlyErrors:
+      !accepted && !doubleSpend && !missingInputs && (anyServiceError || !anyTxRow),
     detail: parts.join(', ') || 'no services',
     competingTxs: [...competing],
   }
 }
 
-export function formatPostBeefFailure(summary: PostBeefSummary): string {
+/**
+ * `ancestryIncomplete` means we knowingly posted a BEEF we could not complete.
+ * MissingInputs is then a statement about our BEEF, not about the outpoint —
+ * saying "Already spent" there accuses a tip the wallet can still spend. Callers
+ * pass it only after chain proof showed no input was actually spent; a provider
+ * `doubleSpend` flag alongside MissingInputs (Bitails) is not evidence either.
+ */
+export function formatPostBeefFailure(
+  summary: PostBeefSummary,
+  opts?: { ancestryIncomplete?: boolean },
+): string {
+  if (opts?.ancestryIncomplete && summary.missingInputs) {
+    return 'Not broadcast — a parent transaction is not on chain yet'
+  }
   if (summary.missingInputs || summary.doubleSpend) return 'Already spent'
   if (summary.serviceOnlyErrors) return 'No network'
   return 'Not sent'

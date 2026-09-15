@@ -1187,6 +1187,18 @@ async function splitBsv21CoverToExactAmt(args: {
 }
 
 /**
+ * Which input a miner spend-conflict actually belongs to.
+ *
+ * "Already spent" on a listing is read by the seller as an accusation against the
+ * item. Usually it is a dead funding coin: the tip is still live and sendable.
+ */
+export type MarketSpendConflict =
+  | 'item-spent'
+  | 'funding-spent'
+  | 'none-proven'
+  | 'not-checked'
+
+/**
  * Abort a listing/cancel noSend that Arcade never accepted, and revive the tip
  * so the next list does not throw ITEM_NOT_HELD.
  */
@@ -1202,24 +1214,23 @@ async function abortUnsentMarketAction(args: {
   /** Signed listing txid when Arcade rejected after signAction. */
   signedTxid?: string | null
   atomic?: number[] | null
-}): Promise<void> {
+}): Promise<MarketSpendConflict> {
   const snap = args.chart.getSnapshot()
   if (!mayAbortMarketListing(snap)) {
     args.chart.send({ type: 'FAIL', error: args.reason })
-    return
+    return 'not-checked'
   }
   if (args.reference) {
     await args.active.wallet.abortAction({ reference: args.reference }).catch(() => {})
   }
   args.chart.send({ type: 'ABORTED', error: args.reason })
   if (isAlreadySpentListingFailure(args.reason)) {
-    await retireProvenSpentListingInputs({
+    return retireProvenSpentListingInputs({
       active: args.active,
       tipOutpoint: args.tipOutpoint,
       signedTxid: args.signedTxid ?? null,
       atomic: args.atomic ?? null,
     })
-    return
   }
   try {
     const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
@@ -1233,6 +1244,7 @@ async function abortUnsentMarketAction(args: {
       err instanceof Error ? err.message : String(err),
     )
   }
+  return 'not-checked'
 }
 
 async function prepareMarketListingSpend(active: ActiveWallet): Promise<void> {
@@ -1306,7 +1318,7 @@ async function retireProvenSpentListingInputs(args: {
   tipOutpoint: string
   signedTxid: string | null
   atomic: number[] | null
-}): Promise<void> {
+}): Promise<MarketSpendConflict> {
   const tipKey = normalizeOutpoint(args.tipOutpoint)
   const candidates = new Set<string>([tipKey])
   if (args.signedTxid && args.atomic?.length) {
@@ -1341,7 +1353,7 @@ async function retireProvenSpentListingInputs(args: {
     } catch {
       /* best-effort */
     }
-    return
+    return 'none-proven'
   }
   const feeSpent = spent.filter((op) => op !== tipKey)
   if (feeSpent.length > 0) {
@@ -1349,7 +1361,7 @@ async function retireProvenSpentListingInputs(args: {
       const { hideSpentOutpoints } = await import('./staleOutputRelease')
       await hideSpentOutpoints(feeSpent, '')
       console.info(
-        `[market] hid ${feeSpent.length} spent fee input(s) after listing Already spent`,
+        `[market] listing funding conflict — hid ${feeSpent.length} funding coin(s) proven spent on chain`,
       )
     } catch {
       /* best-effort */
@@ -1357,14 +1369,15 @@ async function retireProvenSpentListingInputs(args: {
   }
   if (spent.includes(tipKey)) {
     await dropSpentListingTip(args.active, tipKey)
-  } else {
-    try {
-      const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
-      await restoreUnspentAssetOutpoint(args.active, tipKey.replace('_', '.'))
-    } catch {
-      /* best-effort */
-    }
+    return 'item-spent'
   }
+  try {
+    const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
+    await restoreUnspentAssetOutpoint(args.active, tipKey.replace('_', '.'))
+  } catch {
+    /* best-effort */
+  }
+  return feeSpent.length > 0 ? 'funding-spent' : 'none-proven'
 }
 
 /**
@@ -1465,6 +1478,8 @@ async function createMarketListingAdvertExclusive(
     amt: bigint
     lockingScript?: string
   }> = []
+  /** Signed BEEF of a just-broadcast BSV-21 cover split — never re-fetched. */
+  let splitListingBeef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
   const activeEarly = getActiveWallet()
   if (!activeEarly) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
   await prepareMarketListingSpend(activeEarly)
@@ -1636,6 +1651,10 @@ async function createMarketListingAdvertExclusive(
       })
       listingOutpoint = split.outpoint
       itemTxid = listingOutpoint.slice(0, 64)
+      // The split tx is seconds old. Asking an indexer to prove it costs the
+      // full fetch/WoC/raw ladder and can never succeed until it is mined — we
+      // already hold the signed BEEF, so carry it into the listing.
+      splitListingBeef = split.beef
       extraCoverTips.length = 0
       provenAmt = requested
       tipAmt = requested
@@ -1746,7 +1765,9 @@ async function createMarketListingAdvertExclusive(
   }
   const chart = createActor(marketListingMachine).start()
   chart.send({ type: 'LIST', path })
-  const listingBeef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
+  const listingBeef =
+    splitListingBeef ??
+    (await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true }))
   if (listedAsset === 'bsv21' && lockTip?.icon) {
     await mergeIconTxIntoBeef(active, listingBeef, lockTip.icon)
   }
@@ -2110,7 +2131,7 @@ async function createMarketListingAdvertExclusive(
       })
       throw err
     }
-    await abortUnsentMarketAction({
+    const conflict = await abortUnsentMarketAction({
       active,
       reference,
       chart,
@@ -2119,18 +2140,34 @@ async function createMarketListingAdvertExclusive(
       signedTxid,
       atomic: signedAtomic,
     })
+    // Name the input that actually died. A dead funding coin must not read as
+    // "Already spent" on an item the wallet just proved it can still spend.
+    const failure =
+      conflict === 'funding-spent'
+        ? new MarketListingError(
+            'LISTING_FUNDING_SPENT',
+            'A coin that was going to pay for this listing had already been spent. It has been removed from the wallet — list again.',
+          )
+        : conflict === 'item-spent'
+          ? new MarketListingError(
+              'ITEM_NOT_HELD',
+              'This item is already spent on chain. It was removed from Collectables.',
+            )
+          : err
+    const failureReason =
+      failure instanceof Error ? failure.message : String(failure)
     recordWalletEvent({
       method: 'market-list',
       note: 'Listing failed',
       status: 'failed',
-      failureReason: reason.slice(0, 280),
+      failureReason: failureReason.slice(0, 280),
       item: {
         name: listedAsset === 'bsv21' ? (lockTip?.sym || 'Token') : 'Collectable',
         origin,
         outpoint: listingOutpoint.replace('_', '.'),
       },
     })
-    throw err
+    throw failure
   } finally {
     chart.stop()
   }

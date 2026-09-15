@@ -32,11 +32,27 @@ vi.mock('./legacyScan', () => ({
   spentStatusOfOutpoint: vi.fn(async () => 'unspent' as const),
 }))
 
+// Whether the signed AtomicBEEF can stand alone at a miner. Default complete so
+// existing cases judge the provider answer, not our BEEF.
+let beefComplete = true
+let beefGap: 'none' | 'unconfirmed-parents' | 'missing-bodies' = 'missing-bodies'
+vi.mock('./beefCache', () => ({
+  classifyBeefAncestryGap: () => (beefComplete ? 'none' : beefGap),
+  hydrateInputBeef: vi.fn(async () => undefined),
+}))
+
+vi.mock('./signedTxInputs', () => ({
+  inputOutpointsForSignedTx: vi.fn(async () => [`${'b'.repeat(64)}.0`]),
+}))
+
 const TXID = 'a'.repeat(64)
 const ATOMIC = [1, 2, 3]
 
 describe('submitAtomicBeefToMiners', () => {
   beforeEach(async () => {
+    beefComplete = true
+    beefGap = 'missing-bodies'
+    vi.mocked((await import('./beefCache')).hydrateInputBeef).mockClear()
     postBeef.mockReset()
     releaseSealedInputsOfUnsentTx.mockClear()
     onAlreadySpentSend.mockClear()
@@ -170,6 +186,64 @@ describe('submitAtomicBeefToMiners', () => {
     await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
     expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
+  })
+
+  const arcadeMissingInputs = [
+    {
+      name: 'ArcadeBeef',
+      status: 'error',
+      txidResults: [
+        {
+          status: 'error',
+          doubleSpend: true,
+          notes: [{ what: 'postRawsErrorMissingInputs' }],
+        },
+      ],
+    },
+  ]
+
+  it('blames our BEEF, not the tip, when ancestry is incomplete', async () => {
+    beefComplete = false
+    postBeef.mockResolvedValueOnce(arcadeMissingInputs)
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow(
+      /parent transaction is not on chain yet/i,
+    )
+    expect(onAlreadySpentSend).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
+  })
+
+  it('does not wait on a hydrate that cannot finish for an unconfirmed parent', async () => {
+    beefComplete = false
+    beefGap = 'unconfirmed-parents'
+    const { hydrateInputBeef } = await import('./beefCache')
+    postBeef.mockResolvedValueOnce([
+      { status: 'success', txidResults: [{ status: 'success' }] },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.confirmed).toBe(true)
+    expect(hydrateInputBeef).not.toHaveBeenCalled()
+  })
+
+  it('still reports Already spent on incomplete ancestry when an input is proven spent', async () => {
+    beefComplete = false
+    const { spentStatusOfOutpoint } = await import('./legacyScan')
+    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('spent')
+    postBeef.mockResolvedValueOnce(arcadeMissingInputs)
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
+  })
+
+  it('does not hard-reject an Arcade service that only errored', async () => {
+    postBeef.mockResolvedValueOnce([
+      { name: 'ArcadeBeef', status: 'error' },
+      { name: 'BitailsPostRaws', status: 'error', txidResults: [] },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.submitted).toBe(true)
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
   it('hard-rejects Arcade missing-inputs and drops the local spend', async () => {
