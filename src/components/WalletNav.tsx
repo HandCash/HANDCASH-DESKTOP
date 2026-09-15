@@ -3,6 +3,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ComponentType,
   type SVGProps,
@@ -88,6 +89,7 @@ import {
   SettingsIcon,
 } from './icons'
 import { playWalletSound } from '../wallet/soundService'
+import { SkeletonSection } from './Skeleton'
 import { toastSuccess } from '../wallet/toast'
 import { WalletActionBar } from './WalletActionBar'
 import {
@@ -175,6 +177,7 @@ export const WalletNav = memo(function WalletNav({
     getEmbeddedAppBrowser(),
   )
   const [optimisticSection, setOptimisticSection] = useState<NavSection | null>(null)
+  const clickSoundArmed = useRef(false)
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
   const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
@@ -470,23 +473,39 @@ export const WalletNav = memo(function WalletNav({
   const activeSection = optimisticSection ?? nav.section
 
   const selectSection = (next: NavSection) => {
+    // Sync SFX + optimistic tab so a press always feels taken, even when the
+    // panel mount / resource load is still in a transition.
+    if (clickSoundArmed.current) clickSoundArmed.current = false
+    else playWalletSound('soft')
     if (next === nav.section && !nav.child) {
       // Tapping Apps while a session is parked restores the browser.
       if (next === 'apps' && getEmbeddedAppBrowser()) {
         setOptimisticSection(next)
-        queueMicrotask(() => playWalletSound('soft'))
         startTransition(() => focusEmbeddedAppBrowser())
       }
       return
     }
     setOptimisticSection(next)
-    queueMicrotask(() => playWalletSound('soft'))
+    if (next !== 'collectables') {
+      setMountedLight((prev) => {
+        if (prev.has(next)) return prev
+        const copy = new Set(prev)
+        copy.add(next)
+        return copy
+      })
+    }
     startTransition(() => {
       if (next !== nav.section) setNavSection(next)
       else if (nav.child?.type === 'app-browser') closeEmbeddedAppBrowser()
       else clearNavChild()
     })
   }
+
+  // Optimistic tab is ahead of committed nav — paint skeleton for the
+  // section while the transition / first mount catches up. Light tabs are
+  // still mounted under the skeleton so the real panel is warm when it shows.
+  const showSectionSkeleton =
+    !mobileInlinePermission && activeSection !== nav.section
 
   const hideSectionPanel =
     (stageChild != null || browserForeground) && !mobileInlinePermission
@@ -661,10 +680,18 @@ export const WalletNav = memo(function WalletNav({
           ) : null}
 
           <div className="wallet-nav-panel" hidden={hideSectionPanel}>
+            {showSectionSkeleton ? (
+              <div className="wallet-nav-slot" aria-busy="true">
+                <SkeletonSection />
+              </div>
+            ) : null}
             {(mountedLight.has('activity') || mobileInlinePermission) && (
               <div
                 className="wallet-nav-slot"
-                hidden={nav.section !== 'activity' && !mobileInlinePermission}
+                hidden={
+                  showSectionSkeleton ||
+                  (activeSection !== 'activity' && !mobileInlinePermission)
+                }
               >
                 {mobileInlinePermission && pendingPrompt ? (
                   <PermissionRequestPanel
@@ -678,19 +705,31 @@ export const WalletNav = memo(function WalletNav({
               </div>
             )}
             {mountedLight.has('apps') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'apps' || mobileInlinePermission}>
+              <div
+                className="wallet-nav-slot"
+                hidden={
+                  showSectionSkeleton ||
+                  activeSection !== 'apps' ||
+                  mobileInlinePermission
+                }
+              >
                 <ConnectedAppsPanel apps={apps} />
               </div>
             )}
             {/* Unmount Collect to free ordinal images. Remount paints the last
                 durable list (collectables.ts) — never an emptied cache. */}
-            {nav.section === 'collectables' && !mobileInlinePermission && (
-              <MemoInventoryPanel />
-            )}
+            {activeSection === 'collectables' &&
+              nav.section === 'collectables' &&
+              !mobileInlinePermission &&
+              !showSectionSkeleton && <MemoInventoryPanel />}
             {mountedLight.has('friends') && (
               <div
                 className="wallet-nav-slot"
-                hidden={nav.section !== 'friends' || mobileInlinePermission}
+                hidden={
+                  showSectionSkeleton ||
+                  activeSection !== 'friends' ||
+                  mobileInlinePermission
+                }
               >
                 <FriendsPanel chain={profile.chain} />
               </div>
@@ -698,7 +737,11 @@ export const WalletNav = memo(function WalletNav({
             {mountedLight.has('identity') && (
               <div
                 className="wallet-nav-slot"
-                hidden={nav.section !== 'identity' || mobileInlinePermission}
+                hidden={
+                  showSectionSkeleton ||
+                  activeSection !== 'identity' ||
+                  mobileInlinePermission
+                }
               >
                 <IdentityPanel profile={profile} />
               </div>
@@ -706,7 +749,11 @@ export const WalletNav = memo(function WalletNav({
             {mountedLight.has('settings') && (
               <div
                 className="wallet-nav-slot"
-                hidden={nav.section !== 'settings' || mobileInlinePermission}
+                hidden={
+                  showSectionSkeleton ||
+                  activeSection !== 'settings' ||
+                  mobileInlinePermission
+                }
               >
                 <SettingsPanel />
               </div>
@@ -739,6 +786,11 @@ export const WalletNav = memo(function WalletNav({
                     aria-selected={selected}
                     title={label}
                     data-selected={selected ? '' : undefined}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0) return
+                      clickSoundArmed.current = true
+                      playWalletSound('soft')
+                    }}
                     onClick={() => selectSection(value)}
                   >
                     <Icon size={18} />
