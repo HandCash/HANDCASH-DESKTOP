@@ -686,11 +686,39 @@ export async function executeMarketPurchase(
     chart.send({ type: 'RESERVED', reference: signable.reference })
     try {
       const preSigned = listingHasBuyerCompletableSettlement(listing, amounts)
+      const isSelfBuy =
+        listing.seller.toLowerCase() === active.identityKey.toLowerCase()
       let itemUnlockingScript: string
       let offerUnlockingScript: string
       if (preSigned && listing.settlementUnlocks) {
         itemUnlockingScript = listing.settlementUnlocks.itemUnlockingScript
         offerUnlockingScript = listing.settlementUnlocks.offerUnlockingScript
+        chart.send({ type: 'SELLER_SIGNED' })
+      } else if (isSelfBuy) {
+        // Same wallet is buyer and seller — sign locally; never wait on messagebox.
+        const selfWire = {
+          type: 'sign-request' as const,
+          saleId,
+          buyerIdentityKey: active.identityKey,
+          buyerAddress: active.address,
+          intent: args.intent,
+          ...(buyerMessagebox ? { buyerMessagebox } : {}),
+          listing,
+          provenance,
+          signableBeefB64: b64(signable.tx),
+          itemVin,
+          offerVin,
+          itemOutputIndex: 0,
+          sellerOutputIndex: 1,
+          feeOutputIndex: 2,
+          expiresAt: pending.expiresAt,
+        }
+        const signedLocal = await signSellerInputs({
+          wire: selfWire,
+          senderIdentityKey: active.identityKey,
+        })
+        itemUnlockingScript = signedLocal.itemUnlockingScript
+        offerUnlockingScript = signedLocal.offerUnlockingScript
         chart.send({ type: 'SELLER_SIGNED' })
       } else {
         const delivered = await deliverMarketSettlementWire({
@@ -764,9 +792,8 @@ export async function executeMarketPurchase(
       }
       let broadcasted = true
       let receipt: MarketSettlementReceipt | undefined
-      if (preSigned) {
-        // Offline seller is the point of list-time unlocks. Do not block the
-        // buyer on messagebox; a later recover path can still ingest proceeds.
+      if (preSigned || isSelfBuy) {
+        // Offline seller / self-buy: do not block on messagebox; recover later.
         void deliverMarketSettlementWire(receiptWire).catch(() => {})
       } else {
         const receiptDelivered = await deliverMarketSettlementWire(receiptWire)

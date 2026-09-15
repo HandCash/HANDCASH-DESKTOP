@@ -330,11 +330,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   font-size: 0.875rem;
   font-weight: 600;
   font-style: normal;
-  line-height: 1;
+  line-height: 1.15;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  white-space: nowrap;
-  /* Cap growth so long sync labels never widen the titlebar or squish brand/actions. */
+  /* Width-capped; long labels wrap to 2 lines instead of … */
+  white-space: normal;
   box-sizing: border-box;
   max-width: min(8.5rem, 32vw);
   min-width: 0;
@@ -351,11 +351,16 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-/* Titlebar sync chip: capped + shrinkable so labels ellipsize without growing
-   the bar or shoving brand/actions off-screen. */
+/* Titlebar sync chip: capped width; wrap to 2 lines rather than ellipsis. */
 .titlebar-end > .status-pill {
   width: auto;
   max-width: min(8.5rem, 32vw);
@@ -363,10 +368,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   flex: 0 1 auto;
   flex-shrink: 1;
   justify-content: flex-start;
+  align-items: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
-  /* Leave room for wordmark + scan/lock; long labels ellipsize inside. */
+  /* Leave room for wordmark + scan/lock; wrap long labels on two lines. */
   max-width: min(6.5rem, calc(100vw - 11.5rem));
   padding-left: 8px;
   padding-right: 8px;
@@ -5026,18 +5032,38 @@ button.payment-details-item-thumb-btn:hover {
   isolation: isolate;
 }
 
+.wallet-nav-stage .connected-panel-head,
+.wallet-nav-stage .panel-label-bar {
+  position: sticky;
+  /* Containing block for the ::before plate */
+}
+
 .wallet-nav-stage .connected-panel-head::before,
 .wallet-nav-stage .panel-label-bar::before {
   content: '';
   position: absolute;
   z-index: -1;
-  top: -8px;
+  /* Only fill the stage padding ABOVE the head — never a left/right strip
+     that sits on top of activity rows. */
+  top: calc(-1 * var(--hc-pad-panel, 16px));
   bottom: auto;
-  right: -14px;
-  left: -14px;
-  height: 8px;
+  left: calc(-1 * var(--hc-pad-panel, 16px));
+  right: calc(-1 * var(--hc-pad-panel, 16px));
+  height: var(--hc-pad-panel, 16px);
   background: hsl(var(--card));
   pointer-events: none;
+}
+
+/* Activity list: no extra left gutter; rows stay clear of sticky chrome. */
+.history-with-filters .history-list {
+  padding-left: 0;
+  margin-left: 0;
+}
+.history-with-filters .history-row,
+.history-with-filters a.history-row-link,
+.history-with-filters button.history-row-btn {
+  position: relative;
+  z-index: 0;
 }
 
 .collection-view-toggle {
