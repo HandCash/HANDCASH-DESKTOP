@@ -57,6 +57,7 @@ import {
 import { getCachedCollectables } from './collectables'
 import { rememberGhostTx } from './ghostTxSuppress'
 import { scheduleHistoryBackupPush } from './deviceSync'
+import { submitAtomicBeefToMiners } from './minerSubmit'
 import {
   encodeMarketOffer,
   MARKET_ITEM_VOUT,
@@ -1006,13 +1007,14 @@ async function splitBsv21CoverToExactAmt(args: {
   const vin0 = args.covers[0]
   if (!vin0) throw new Error('Not enough units available to list that amount.')
   const itemTxid = vin0.outpoint.slice(0, 64)
-  const splitBeef = await getBeefForTxidCached(args.active, itemTxid, { needProof: true })
+  const splitBeef = await getBeefForTxidCached(args.active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
   for (const extra of args.covers.slice(1)) {
     const extraTxid = extra.outpoint.slice(0, 64)
     if (extraTxid === itemTxid) continue
     try {
       const extraBeef = await getBeefForTxidCached(args.active, extraTxid, {
         needProof: true,
+        allowUnprovenRawTx: true,
       })
       splitBeef.mergeBeef(extraBeef.toBinary())
     } catch {
@@ -1227,7 +1229,7 @@ export async function createMarketListingAdvert(
     }
     let beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
     try {
-      beef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
+      beef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
     } catch {
       beef = undefined
     }
@@ -1292,7 +1294,7 @@ export async function createMarketListingAdvert(
         provenAmt = Number(vin0.amt)
         let vin0Beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
         try {
-          vin0Beef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
+          vin0Beef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
         } catch {
           vin0Beef = undefined
         }
@@ -1361,7 +1363,7 @@ export async function createMarketListingAdvert(
         ? null
         : await completeProvenanceForPublish({
             provenance: seed,
-            getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
+            getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
           })
     const chosen = choosePublishableProvenance([complete, seed])
     if (!chosen) {
@@ -1372,7 +1374,7 @@ export async function createMarketListingAdvert(
     }
     const verified = await verifyProvenanceV2Async(chosen, outpoint, {
       enforceBudget: false,
-      getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
+      getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
     })
     if (!verified.proven) {
       throw new MarketListingError(
@@ -1426,7 +1428,7 @@ export async function createMarketListingAdvert(
   }
   const chart = createActor(marketListingMachine).start()
   chart.send({ type: 'LIST', path })
-  const listingBeef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
+  const listingBeef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
   if (listedAsset === 'bsv21' && lockTip?.icon) {
     await mergeIconTxIntoBeef(active, listingBeef, lockTip.icon)
   }
@@ -1434,7 +1436,7 @@ export async function createMarketListingAdvert(
     const extraTxid = extra.outpoint.slice(0, 64)
     if (extraTxid === itemTxid) continue
     try {
-      const extraBeef = await getBeefForTxidCached(active, extraTxid, { needProof: true })
+      const extraBeef = await getBeefForTxidCached(active, extraTxid, { needProof: true, allowUnprovenRawTx: true })
       listingBeef.mergeBeef(extraBeef.toBinary())
     } catch {
       // Overlay conservation still sees the extra input; BEEF hydrate is best-effort.
@@ -1510,6 +1512,7 @@ export async function createMarketListingAdvert(
       options: {
         randomizeOutputs: false,
         signAndProcess: false,
+        noSend: true,
         trustSelf: 'known',
       },
     })
@@ -1585,7 +1588,10 @@ export async function createMarketListingAdvert(
     const signed = await active.wallet.signAction({
       reference,
       spends,
-      options: { acceptDelayedBroadcast: false },
+      options: {
+        noSend: true,
+        acceptDelayedBroadcast: true,
+      },
     })
     const txid = signed.txid?.toLowerCase() ?? ''
     const atomic = signed.tx ? Array.from(signed.tx) : []
@@ -1594,6 +1600,18 @@ export async function createMarketListingAdvert(
       throw new MarketListingError(
         'MARKET_LISTING_BROADCAST_UNKNOWN',
         'Listing was signed but wallet processing did not return a transaction.'
+      )
+    }
+    // Accept on Arcade contact / non-immediate-fail — do not require SPV
+    // "valid on chain main" before the listing is considered broadcast.
+    const mined = await submitAtomicBeefToMiners(txid, atomic, {
+      flow: 'market_listing',
+    })
+    if (!mined.submitted && !mined.confirmed) {
+      chart.send({ type: 'RECOVER' })
+      throw new MarketListingError(
+        'MARKET_LISTING_BROADCAST_UNKNOWN',
+        'Listing was signed but Arcade did not accept the broadcast.',
       )
     }
     chart.send({ type: 'BROADCASTED', txid })
@@ -1735,7 +1753,33 @@ export async function createMarketListingAdvert(
     }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
-    if (reference && mayAbortMarketListing(chart.getSnapshot())) {
+    const snap = chart.getSnapshot()
+    const broadcastedTxid =
+      typeof snap.context.txid === 'string' && /^[0-9a-f]{64}$/i.test(snap.context.txid)
+        ? snap.context.txid.toLowerCase()
+        : null
+    // After Arcade accept / BROADCASTED, never abort or erase the spend — the
+    // listing tx is already a real on-chain/mempool promise.
+    if (broadcastedTxid || snap.matches('broadcast') || snap.matches('committed')) {
+      // Stay in broadcast/committed — FAIL is not wired from those states, and
+      // aborting would drop the real mempool/on-chain spend from history.
+      recordWalletEvent({
+        method: 'market-list',
+        note: `Listed (broadcast ok; finish failed)`,
+        txid: broadcastedTxid || undefined,
+        status: 'failed',
+        failureReason: reason.slice(0, 280),
+        item: {
+          name: listedAsset === 'bsv21' ? (lockTip?.sym || 'Token') : 'Collectable',
+          origin,
+          outpoint: broadcastedTxid
+            ? `${broadcastedTxid}.0`
+            : listingOutpoint.replace('_', '.'),
+        },
+      })
+      throw err
+    }
+    if (reference && mayAbortMarketListing(snap)) {
       await active.wallet.abortAction({ reference }).catch(() => {})
       chart.send({
         type: 'ABORTED',
@@ -1748,10 +1792,10 @@ export async function createMarketListingAdvert(
       })
     }
     recordWalletEvent({
-      method: 'market-cancel',
-      note: `Cancel failed`,
+      method: 'market-list',
+      note: 'Listing failed',
       status: 'failed',
-      failureReason: reason,
+      failureReason: reason.slice(0, 280),
       item: {
         name: listedAsset === 'bsv21' ? (lockTip?.sym || 'Token') : 'Collectable',
         origin,
@@ -1880,7 +1924,7 @@ export async function verifyMarketListingProvenance(args: {
     const verifiedLean = await verifyProvenanceForHeldTip({
       provenance: provenance as ProvenanceV2,
       heldOutpoint: proofTip,
-      getBeef: (txid: string) => getBeefForTxidCached(active, txid, { needProof: true }),
+      getBeef: (txid: string) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
     })
     return verifiedLean.proven
       ? { verified: true, reason: null }

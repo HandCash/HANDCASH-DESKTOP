@@ -90,7 +90,7 @@ export const marketListingMachine = setup({
         FAIL: { target: 'recovery', actions: 'error' },
       },
     },
-    broadcast: { on: { COMMITTED: 'committed', RECOVER: 'recovery' } },
+    broadcast: { on: { COMMITTED: 'committed', RECOVER: 'recovery', FAIL: { actions: 'error' } } },
     recovery: {
       on: {
         BROADCASTED: { target: 'broadcast', actions: 'txid' },
