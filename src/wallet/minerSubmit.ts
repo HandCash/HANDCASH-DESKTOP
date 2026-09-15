@@ -5,9 +5,10 @@
  * Only hard missing-inputs / double-spend responses roll back the seal.
  */
 import { Beef } from '@bsv/sdk'
-import { getActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from './session'
 import {
   formatPostBeefFailure,
+  isInvalidBeefTransport,
   summarizePostBeef,
   type PostBeefSummary,
   type PostBeefServiceResult,
@@ -34,6 +35,7 @@ import {
   recordTransactionStage,
   type TransactionFlow,
 } from './transactionTelemetry'
+import { normalizeTxid } from './txid'
 
 export type MinerSubmitResult = {
   /** At least one miner reported mempool accept / already-known. */
@@ -43,8 +45,142 @@ export type MinerSubmitResult = {
   summary?: PostBeefSummary
 }
 
-function isInvalidBeefTransport(msg: string): boolean {
-  return /4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)
+type SubmitTelemetry = {
+  traceId?: string
+  requestId?: string
+  flow?: TransactionFlow
+  retryCount?: number
+  txid: string
+}
+
+type ArcadeHardRejectError = Error & { code: 'ARCADE_HARD_REJECT' }
+
+function arcadeHardRejectError(summary: PostBeefSummary): ArcadeHardRejectError {
+  const hard = new Error(formatPostBeefFailure(summary)) as ArcadeHardRejectError
+  hard.code = 'ARCADE_HARD_REJECT'
+  return hard
+}
+
+async function rememberGhostTxQuiet(txid: string): Promise<void> {
+  try {
+    const { rememberGhostTx } = await import('./ghostTxSuppress')
+    rememberGhostTx(txid)
+  } catch {
+    /* optional */
+  }
+}
+
+async function dropLocalSpendForArcadeReject(
+  id: string,
+  atomic: number[],
+  telemetry: SubmitTelemetry,
+  summary: PostBeefSummary,
+): Promise<never> {
+  console.warn(
+    '[minerSubmit] Arcade hard-reject — dropping local spend',
+    id.slice(0, 12),
+    summary.detail,
+  )
+  removePendingMinerSubmit(id)
+  recordTransactionStage('hard_rejected', {
+    ...telemetry,
+    blockerCode: summary.missingInputs ? 'arcade_missing_inputs' : 'arcade_reject',
+  })
+  await rememberGhostTxQuiet(id)
+  await releaseSealedInputsOfUnsentTx(id, atomic)
+  throw arcadeHardRejectError(summary)
+}
+
+async function applyArcadePostBeef(
+  id: string,
+  atomic: number[],
+  rawResults: PostBeefServiceResult[],
+  summary: PostBeefSummary,
+  telemetry: SubmitTelemetry,
+): Promise<PostBeefSummary> {
+  const arcadeOk = postBeefResultsArcadeAccepted(rawResults)
+  const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults)
+  // Pin ONLY on Arcade success — pinning on mere contact made missing-inputs
+  // holds keep phantom pendingChange after an invalid-UTXO reject.
+  if (arcadeOk) {
+    rememberArcadeSubmitContact(id)
+    console.info('[minerSubmit] Arcade accepted — tx pinned', id.slice(0, 12))
+    void restoreOnChainLocalTx(id).catch((err) => {
+      console.warn('[minerSubmit] post-Arcade restore skipped', id.slice(0, 12), err)
+    })
+    return summary.accepted ? summary : { ...summary, accepted: true }
+  }
+  if (arcadeHardReject) {
+    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary)
+  }
+  if (postBeefResultsHitArcade(rawResults)) {
+    console.info('[minerSubmit] Arcade contacted (no accept/reject yet)', id.slice(0, 12))
+  }
+  return summary
+}
+
+async function resolveMinerConflict(args: {
+  id: string
+  atomic: number[]
+  active: ActiveWallet
+  summary: PostBeefSummary
+  telemetry: SubmitTelemetry
+}): Promise<MinerSubmitResult> {
+  const { id, atomic, active, summary, telemetry } = args
+  const arcadePinned = txHadArcadeSubmitContact(id)
+  const conflictReal = arcadePinned
+    ? await signedTxSpendConflictIsProven({
+        txid: id,
+        atomic,
+        chain: active.chain,
+      })
+    : await (await import('./postBeefResult')).postBeefConflictIsReal({
+        txid: id,
+        atomic,
+        chain: active.chain,
+      })
+
+  if (!conflictReal) {
+    if (arcadePinned) {
+      console.info(
+        `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — Arcade pin holds seal`,
+        id.slice(0, 12),
+        summary.detail,
+      )
+      return { confirmed: false, submitted: true, summary }
+    }
+    console.info(
+      `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — releasing seal`,
+      id.slice(0, 12),
+      summary.detail,
+    )
+    await releaseSealedInputsOfUnsentTx(id, atomic)
+    // Still "submitted" for optimistic send UX; callers that need a hard ACK
+    // (consolidate) must check confirmed / catch their own release.
+    return { confirmed: false, submitted: true, summary }
+  }
+
+  // Proven conflict — but only hide if OUR tx actually landed. Otherwise
+  // miner noise emptied a phone wallet (119 sealed → spendable=0).
+  const { txExistsOnChain } = await import('./legacyScan')
+  const onChain = await txExistsOnChain(id, active.chain).catch(() => null)
+  removePendingMinerSubmit(id)
+  recordTransactionStage('hard_rejected', {
+    ...telemetry,
+    blockerCode: summary.doubleSpend ? 'provider_double_spend' : 'provider_missing_inputs',
+  })
+  if (onChain === true) {
+    console.warn('[minerSubmit] hard reject — tx on chain, sealing inputs', id.slice(0, 12), summary.detail)
+    await onAlreadySpentSend({ txid: id, atomic })
+    throw new Error(formatPostBeefFailure(summary))
+  }
+  console.warn(
+    '[minerSubmit] hard reject — releasing seal (tx not on chain)',
+    id.slice(0, 12),
+    summary.detail,
+  )
+  await releaseSealedInputsOfUnsentTx(id, atomic)
+  throw new Error(formatPostBeefFailure(summary))
 }
 
 /**
@@ -62,15 +198,15 @@ export async function submitAtomicBeefToMiners(
     retryCount?: number
   },
 ): Promise<MinerSubmitResult> {
-  const id = txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id) || !atomic.length) {
+  const id = normalizeTxid(txid)
+  if (!id || !atomic.length) {
     throw new Error(
       'Payment was signed but no transaction body was returned — try Send again.',
     )
   }
   if (!opts?.fromOutbox) enqueuePendingMinerSubmit(id, atomic)
   const trace = activeTransactionTrace()
-  const telemetry = {
+  const telemetry: SubmitTelemetry = {
     traceId: opts?.traceId ?? trace?.traceId,
     requestId: opts?.requestId ?? trace?.requestId,
     flow: opts?.flow ?? trace?.flow,
@@ -88,8 +224,6 @@ export async function submitAtomicBeefToMiners(
     return { confirmed: false, submitted: true }
   }
 
-  let summary: PostBeefSummary | undefined
-  let rawResults: PostBeefServiceResult[] | undefined
   let beefBytes = atomic
   try {
     // Best-effort ancestor fill — never stall send waiting on indexer proofs.
@@ -103,54 +237,14 @@ export async function submitAtomicBeefToMiners(
   } catch (err) {
     console.warn('[minerSubmit] ancestor hydrate skipped', id.slice(0, 12), err)
   }
+
+  let summary: PostBeefSummary
+  let rawResults: PostBeefServiceResult[] | undefined
   try {
     const results = await active.services.postBeef(Beef.fromBinary(beefBytes), [id])
     rawResults = results as PostBeefServiceResult[]
     summary = summarizePostBeef(rawResults)
-    const arcadeOk = postBeefResultsArcadeAccepted(rawResults)
-    const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults)
-    // Pin ONLY on Arcade success — pinning on mere contact made missing-inputs
-    // holds keep phantom pendingChange after an invalid-UTXO reject.
-    if (arcadeOk) {
-      rememberArcadeSubmitContact(id)
-      console.info('[minerSubmit] Arcade accepted — tx pinned', id.slice(0, 12))
-      void restoreOnChainLocalTx(id).catch((err) => {
-        console.warn('[minerSubmit] post-Arcade restore skipped', id.slice(0, 12), err)
-      })
-      if (!summary.accepted) summary = { ...summary, accepted: true }
-    } else if (arcadeHardReject) {
-      console.warn(
-        '[minerSubmit] Arcade hard-reject — dropping local spend',
-        id.slice(0, 12),
-        summary.detail,
-      )
-      removePendingMinerSubmit(id)
-      recordTransactionStage('hard_rejected', {
-        ...telemetry,
-        blockerCode: summary.missingInputs
-          ? 'arcade_missing_inputs'
-          : 'arcade_reject',
-      })
-      try {
-        const { rememberGhostTx } = await import('./ghostTxSuppress')
-        rememberGhostTx(id)
-      } catch {
-        /* optional */
-      }
-      await releaseSealedInputsOfUnsentTx(id, atomic)
-      const hard = new Error(formatPostBeefFailure(summary))
-      ;(hard as Error & { code?: string }).code = 'ARCADE_HARD_REJECT'
-      throw hard
-    } else if (postBeefResultsHitArcade(rawResults)) {
-      console.info('[minerSubmit] Arcade contacted (no accept/reject yet)', id.slice(0, 12))
-    }
   } catch (err) {
-    if (
-      err instanceof Error &&
-      (err as Error & { code?: string }).code === 'ARCADE_HARD_REJECT'
-    ) {
-      throw err
-    }
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[minerSubmit] postBeef transport failed — treating as submitted', id.slice(0, 12), msg)
     if (isInvalidBeefTransport(msg)) {
@@ -169,6 +263,10 @@ export async function submitAtomicBeefToMiners(
       blockerCode: 'provider_transport',
     })
     return { confirmed: false, submitted: true }
+  }
+
+  if (rawResults) {
+    summary = await applyArcadePostBeef(id, atomic, rawResults, summary, telemetry)
   }
 
   if (summary.accepted) {
@@ -202,71 +300,7 @@ export async function submitAtomicBeefToMiners(
     return { confirmed: false, submitted: true, summary }
   }
   if (summary.missingInputs || summary.doubleSpend) {
-    const conflictReal = await (async () => {
-      if (txHadArcadeSubmitContact(id)) {
-        return signedTxSpendConflictIsProven({
-          txid: id,
-          atomic,
-          chain: active.chain,
-        })
-      }
-      const { postBeefConflictIsReal } = await import('./postBeefResult')
-      return postBeefConflictIsReal({
-        txid: id,
-        atomic,
-        chain: active.chain,
-      })
-    })()
-    if (!conflictReal) {
-      if (txHadArcadeSubmitContact(id)) {
-        console.info(
-          `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — Arcade pin holds seal`,
-          id.slice(0, 12),
-          summary.detail,
-        )
-        return { confirmed: false, submitted: true, summary }
-      }
-      console.info(
-        `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — releasing seal`,
-        id.slice(0, 12),
-        summary.detail,
-      )
-      await releaseSealedInputsOfUnsentTx(id, atomic)
-      // Still "submitted" for optimistic send UX; callers that need a hard ACK
-      // (consolidate) must check confirmed / catch their own release.
-      return { confirmed: false, submitted: true, summary }
-    }
-
-    // Proven conflict — but only hide if OUR tx actually landed. Otherwise
-    // miner noise emptied a phone wallet (119 sealed → spendable=0).
-    const { txExistsOnChain } = await import('./legacyScan')
-    const onChain = await txExistsOnChain(id, active.chain).catch(() => null)
-    if (onChain === true) {
-      removePendingMinerSubmit(id)
-      recordTransactionStage('hard_rejected', {
-        ...telemetry,
-        blockerCode: summary.doubleSpend
-          ? 'provider_double_spend'
-          : 'provider_missing_inputs',
-      })
-      console.warn('[minerSubmit] hard reject — tx on chain, sealing inputs', id.slice(0, 12), summary.detail)
-      await onAlreadySpentSend({ txid: id, atomic })
-      throw new Error(formatPostBeefFailure(summary))
-    }
-    removePendingMinerSubmit(id)
-    recordTransactionStage('hard_rejected', {
-      ...telemetry,
-      blockerCode: summary.doubleSpend
-        ? 'provider_double_spend'
-        : 'provider_missing_inputs',
-    })
-    console.warn(
-      '[minerSubmit] hard reject — releasing seal (tx not on chain)',
-      id.slice(0, 12),
-      summary.detail,
-    )
-    await releaseSealedInputsOfUnsentTx(id, atomic)
-    throw new Error(formatPostBeefFailure(summary))
+    return resolveMinerConflict({ id, atomic, active, summary, telemetry })
   }
 
   console.info(
@@ -287,7 +321,7 @@ export async function reportLateMinerSubmitFailure(args: {
   txid?: string
   reason: unknown
 }): Promise<void> {
-  const txid = args.txid?.trim().toLowerCase()
+  const txid = normalizeTxid(args.txid)
   if (txid && txHadArcadeSubmitContact(txid)) {
     const active = getActiveWallet()
     if (active) {

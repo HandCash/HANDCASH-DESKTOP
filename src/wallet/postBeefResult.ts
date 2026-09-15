@@ -4,9 +4,11 @@
  * Top-level `status: 'error'` is not enough — Bitails marks missing-inputs as
  * error+doubleSpend, while already-in-mempool stays success on the txid row.
  */
-import { inputOutpointsFromAtomicBeef, inputOutpointsFromRawTx } from './txOutpoints'
 import { spentStatusOfOutpoint, txExistsOnChain } from './legacyScan'
 import type { Chain } from './vault'
+import { inputOutpointsForSignedTx } from './signedTxInputs'
+import { normalizeTxid } from './txid'
+
 export type PostBeefServiceResult = {
   name?: string
   status?: string
@@ -32,8 +34,87 @@ export type PostBeefSummary = {
   competingTxs: string[]
 }
 
+type TxidRow = NonNullable<PostBeefServiceResult['txidResults']>[number]
+
 function noteWhat(notes: Array<{ what?: string }> | undefined): string[] {
   return (notes ?? []).map((n) => String(n.what ?? '')).filter(Boolean)
+}
+
+function dataMessage(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  return String((data as { message?: string }).message ?? '')
+}
+
+export function isArcadeNamedService(name?: string): boolean {
+  return String(name ?? '').toLowerCase().includes('arcade')
+}
+
+export function txidRowLooksAccepted(t: TxidRow): boolean {
+  if (t.status === 'success' || t.alreadyKnown) return true
+  return noteWhat(t.notes).some((w) => /AlreadyInMempool/i.test(w))
+}
+
+function txidRowLooksMissingInputs(t: TxidRow): boolean {
+  if (noteWhat(t.notes).some((w) => /MissingInputs/i.test(w))) return true
+  return /missing.?input/i.test(dataMessage(t.data))
+}
+
+function txidRowLooksHardReject(t: TxidRow): boolean {
+  if (t.doubleSpend) return true
+  if (noteWhat(t.notes).some((w) => /MissingInputs|AlreadySpent|Invalid|not.?found/i.test(w))) {
+    return true
+  }
+  if (t.status === 'error' && /missing.?input|already.?spent|invalid/i.test(dataMessage(t.data))) {
+    return true
+  }
+  return t.status === 'error'
+}
+
+export function postBeefResultsHitArcade(
+  results: PostBeefServiceResult[] | null | undefined,
+): boolean {
+  if (!Array.isArray(results)) return false
+  return results.some((r) => isArcadeNamedService(r.name))
+}
+
+/**
+ * Arcade POST success is send completion — do not wait on explorers / merkle.
+ * Matches arcadeV2: 202 / success / alreadyKnown on an Arcade-named service.
+ */
+export function postBeefResultsArcadeAccepted(
+  results: PostBeefServiceResult[] | null | undefined,
+): boolean {
+  if (!Array.isArray(results)) return false
+  for (const r of results) {
+    if (!isArcadeNamedService(r.name)) continue
+    if (String(r.status ?? '').toLowerCase() === 'success') return true
+    for (const t of r.txidResults ?? []) {
+      if (txidRowLooksAccepted(t)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Arcade hard-reject for invalid / missing inputs — drop local change immediately.
+ * Do not wait on explorers; do not pin the tx as "Arcade submitted".
+ */
+export function postBeefResultsArcadeHardReject(
+  results: PostBeefServiceResult[] | null | undefined,
+): boolean {
+  if (!Array.isArray(results)) return false
+  if (postBeefResultsArcadeAccepted(results)) return false
+  for (const r of results) {
+    if (!isArcadeNamedService(r.name)) continue
+    const rows = r.txidResults ?? []
+    for (const t of rows) {
+      if (txidRowLooksHardReject(t)) return true
+    }
+    if (String(r.status ?? '').toLowerCase() === 'error' && rows.length === 0) {
+      return true
+    }
+  }
+  return false
 }
 
 export function summarizePostBeef(
@@ -62,25 +143,16 @@ export function summarizePostBeef(
     parts.push(`${name}:${r.status || 'unknown'}`)
     for (const t of r.txidResults ?? []) {
       anyTxRow = true
-      const notes = noteWhat(t.notes)
-      if (t.status === 'success' || t.alreadyKnown) accepted = true
-      if (notes.some((w) => /AlreadyInMempool/i.test(w))) accepted = true
+      if (txidRowLooksAccepted(t)) accepted = true
       if (t.doubleSpend) doubleSpend = true
-      if (notes.some((w) => /MissingInputs/i.test(w))) {
+      if (txidRowLooksMissingInputs(t)) {
         missingInputs = true
         doubleSpend = true
       }
       if (t.serviceError) anyServiceError = true
       for (const c of t.competingTxs ?? []) {
-        const id = c.trim().toLowerCase()
-        if (/^[0-9a-f]{64}$/.test(id)) competing.add(id)
-      }
-      if (t.status === 'error' && t.data && typeof t.data === 'object') {
-        const msg = String((t.data as { message?: string }).message ?? '')
-        if (/missing.?input/i.test(msg)) {
-          missingInputs = true
-          doubleSpend = true
-        }
+        const id = normalizeTxid(c)
+        if (id) competing.add(id)
       }
     }
     if (r.status === 'error' && !r.txidResults?.length) anyServiceError = true
@@ -104,16 +176,16 @@ export function formatPostBeefFailure(summary: PostBeefSummary): string {
   return 'Not sent'
 }
 
+export function isInvalidBeefTransport(msg: string): boolean {
+  return /4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)
+}
+
 export type DeliverSignedTxOutcome = 'accepted' | 'deferred' | 'conflict_real'
 
 export type DeliverSignedTxResult = {
   outcome: DeliverSignedTxOutcome
   summary?: PostBeefSummary
   detail?: string
-}
-
-function invalidSignedBodyError(message: string): boolean {
-  return /4022206465|4022206466|beef|mergeRawTx|invalid/i.test(message)
 }
 
 /**
@@ -130,8 +202,8 @@ export async function deliverSignedTxBestEffort(args: {
   logPrefix?: string
 }): Promise<DeliverSignedTxResult> {
   const prefix = args.logPrefix ?? '[deliver]'
-  const id = args.txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id)) {
+  const id = normalizeTxid(args.txid)
+  if (!id) {
     return { outcome: 'conflict_real', detail: 'invalid txid' }
   }
 
@@ -150,7 +222,7 @@ export async function deliverSignedTxBestEffort(args: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`${prefix} postBeef transport failed`, id.slice(0, 12), msg)
-    if (invalidSignedBodyError(msg)) {
+    if (isInvalidBeefTransport(msg)) {
       return { outcome: 'conflict_real', detail: msg }
     }
     return { outcome: 'deferred', detail: msg }
@@ -188,8 +260,8 @@ export async function postBeefConflictIsReal(args: {
   atomic?: number[]
   chain: Chain
 }): Promise<boolean> {
-  const txid = args.txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return true
+  const txid = normalizeTxid(args.txid)
+  if (!txid) return true
 
   const onChain = await txExistsOnChain(txid, args.chain).catch(() => null)
   if (onChain === true) return true
@@ -197,25 +269,7 @@ export async function postBeefConflictIsReal(args: {
   // call onAlreadySpentSend and hide live change forever (failed consolidate).
   // Fall through and inspect inputs; inconclusive → not proven.
 
-  let inputs: string[] = []
-  if (args.atomic?.length) {
-    inputs = inputOutpointsFromAtomicBeef(args.atomic, txid)
-  }
-  if (inputs.length === 0) {
-    const { getActiveWallet } = await import('./session')
-    const storage = getActiveWallet()?.wallet?.storage
-    if (storage?.runAsStorageProvider) {
-      try {
-        const raw = await storage.runAsStorageProvider(
-          async (sp: { getProvenOrRawTx?: (id: string) => Promise<{ rawTx?: number[] }> }) =>
-            sp.getProvenOrRawTx?.(txid),
-        )
-        if (raw?.rawTx?.length) inputs = inputOutpointsFromRawTx(raw.rawTx)
-      } catch {
-        /* local raw optional */
-      }
-    }
-  }
+  const inputs = await inputOutpointsForSignedTx(txid, args.atomic)
   if (inputs.length === 0) return false
 
   const statuses = await Promise.all(

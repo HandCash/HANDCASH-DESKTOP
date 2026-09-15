@@ -109,8 +109,8 @@ export function WalletAccountMenu({
         address: next.address,
         chain: next.chain,
       }
-      // Local toolbox UTXOs only (confirmed spendable) — never a stale/poisoned
-      // trusted snapshot that sibling-credit may have doubled.
+      // Local toolbox UTXOs only (confirmed spendable) — never a stale
+      // trusted snapshot from another vault identity.
       let balanceSats =
         readTrustedBalance(next.identityKey, next.chain) ?? 0
       try {

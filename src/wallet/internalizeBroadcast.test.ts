@@ -56,7 +56,7 @@ describe('internalizeActionWithBroadcast', () => {
     })
   })
 
-  it('accepts locally before broadcasting without an explorer gate', async () => {
+  it('credits locally before Arcade double-check finishes', async () => {
     const { internalizeActionWithBroadcast } = await import(
       './internalizeBroadcast'
     )

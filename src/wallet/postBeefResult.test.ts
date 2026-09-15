@@ -3,6 +3,8 @@ import {
   deliverSignedTxBestEffort,
   formatPostBeefFailure,
   postBeefConflictIsReal,
+  postBeefResultsArcadeAccepted,
+  postBeefResultsArcadeHardReject,
   summarizePostBeef,
 } from './postBeefResult'
 
@@ -81,6 +83,21 @@ describe('postBeefResult', () => {
     const s = summarizePostBeef(undefined)
     expect(s.accepted).toBe(false)
     expect(s.serviceOnlyErrors).toBe(true)
+  })
+
+  it('classifies Arcade success independently of Bitails errors', () => {
+    expect(
+      postBeefResultsArcadeAccepted([
+        { name: 'Bitails', status: 'error' },
+        { name: 'ArcadeBeef', status: 'success' },
+      ]),
+    ).toBe(true)
+    expect(
+      postBeefResultsArcadeHardReject([
+        { name: 'ArcadeBeef', status: 'success' },
+        { name: 'Bitails', status: 'error' },
+      ]),
+    ).toBe(false)
   })
 
   it('treats doubleSpend as ghost when tx and inputs are still unspent', async () => {

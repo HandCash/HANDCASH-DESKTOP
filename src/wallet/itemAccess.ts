@@ -200,6 +200,13 @@ export function isTokenViewBasket(basket: unknown): boolean {
   return !!p && p.scheme.toLowerCase() === TOKEN_SCHEME
 }
 
+/** True when an app asked for bare storage inventory instead of a P-scope. */
+export function isBareStorageInventoryBasket(basket: unknown): boolean {
+  if (typeof basket !== 'string') return false
+  const t = basket.trim().toLowerCase()
+  return t === ITEM_STORAGE_BASKET || t === FUNGIBLE_STORAGE_BASKET
+}
+
 /**
  * HTTP BRC-100 callers with an originator are third-party.
  * Missing originator is the wallet's own Collect / internal path.
@@ -285,45 +292,12 @@ export function prepareItemBasketArgs(args: unknown): {
 
   const body = { ...(args as Record<string, unknown>) }
   let changed = false
-   let itemViewRequest: ItemViewRequest | undefined
-   let tokenViewRequest: TokenViewRequest | undefined
+  let itemViewRequest: ItemViewRequest | undefined
+  let tokenViewRequest: TokenViewRequest | undefined
 
   if (typeof body.basket === 'string' && isItemBasket(body.basket)) {
     const p = parsePBasket(body.basket)
-    if (p) {
-         const scope = p.rest.toLowerCase()
-         const allowedScopes = new Set(['all', 'collection', 'app', 'creator', 'id'])
-         if (!allowedScopes.has(scope) || p.rest !== scope) {
-            return {
-               args,
-               error: {
-                  code: 'INVALID_P1SAT_SCOPE',
-                  description: 'Use exactly "p 1sat all|collection|app|creator|id"; filter values belong in tags.',
-               },
-            }
-         }
-         itemViewRequest = parseItemViewRequest(body)
-         const axisValues = {
-            collection: itemViewRequest.collections,
-            app: itemViewRequest.apps,
-            creator: itemViewRequest.creators,
-            id: itemViewRequest.ids,
-         }
-         if (scope !== 'all' && axisValues[scope as keyof typeof axisValues].length === 0) {
-            return {
-               args,
-               error: {
-                  code: 'MISSING_P1SAT_SCOPE_TAG',
-                  description: `Basket "p 1sat ${scope}" requires at least one "${scope}:<value>" tag.`,
-               },
-            }
-         }
-      body.basket = ITEM_STORAGE_BASKET
-         body.includeTags = true
-      changed = true
-      } else {
-      // Bare storage basket is wallet-internal. Apps must use BRC-165 scopes
-      // (`p 1sat all` is full view — still a scope).
+    if (!p || isBareStorageInventoryBasket(body.basket)) {
       return {
         args,
         error: {
@@ -333,34 +307,39 @@ export function prepareItemBasketArgs(args: unknown): {
         },
       }
     }
+    const scope = p.rest.toLowerCase()
+    const allowedScopes = new Set(['all', 'collection', 'app', 'creator', 'id'])
+    if (!allowedScopes.has(scope) || p.rest !== scope) {
+      return {
+        args,
+        error: {
+          code: 'INVALID_P1SAT_SCOPE',
+          description: 'Use exactly "p 1sat all|collection|app|creator|id"; filter values belong in tags.',
+        },
+      }
+    }
+    itemViewRequest = parseItemViewRequest(body)
+    const axisValues = {
+      collection: itemViewRequest.collections,
+      app: itemViewRequest.apps,
+      creator: itemViewRequest.creators,
+      id: itemViewRequest.ids,
+    }
+    if (scope !== 'all' && axisValues[scope as keyof typeof axisValues].length === 0) {
+      return {
+        args,
+        error: {
+          code: 'MISSING_P1SAT_SCOPE_TAG',
+          description: `Basket "p 1sat ${scope}" requires at least one "${scope}:<value>" tag.`,
+        },
+      }
+    }
+    body.basket = ITEM_STORAGE_BASKET
+    body.includeTags = true
+    changed = true
   } else if (typeof body.basket === 'string' && isTokenViewBasket(body.basket)) {
     const p = parsePBasket(body.basket)
-    if (p) {
-      const scope = p.rest.toLowerCase()
-      const allowedScopes = new Set(['all', 'id'])
-      if (!allowedScopes.has(scope) || p.rest !== scope) {
-        return {
-          args,
-          error: {
-            code: 'INVALID_PBSV21_SCOPE',
-            description: 'Use exactly "p bsv21 all|id"; filter values belong in tags.',
-          },
-        }
-      }
-      tokenViewRequest = parseTokenViewRequest(body)
-      if (scope === 'id' && tokenViewRequest.ids.length === 0) {
-        return {
-          args,
-          error: {
-            code: 'MISSING_PBSV21_SCOPE_TAG',
-            description: 'Basket "p bsv21 id" requires at least one "id:<tokenId>" or "bsv21:<tokenId>" tag.',
-          },
-        }
-      }
-      body.basket = FUNGIBLE_STORAGE_BASKET
-      body.includeTags = true
-      changed = true
-    } else {
+    if (!p || isBareStorageInventoryBasket(body.basket)) {
       return {
         args,
         error: {
@@ -370,6 +349,30 @@ export function prepareItemBasketArgs(args: unknown): {
         },
       }
     }
+    const scope = p.rest.toLowerCase()
+    const allowedScopes = new Set(['all', 'id'])
+    if (!allowedScopes.has(scope) || p.rest !== scope) {
+      return {
+        args,
+        error: {
+          code: 'INVALID_PBSV21_SCOPE',
+          description: 'Use exactly "p bsv21 all|id"; filter values belong in tags.',
+        },
+      }
+    }
+    tokenViewRequest = parseTokenViewRequest(body)
+    if (scope === 'id' && tokenViewRequest.ids.length === 0) {
+      return {
+        args,
+        error: {
+          code: 'MISSING_PBSV21_SCOPE_TAG',
+          description: 'Basket "p bsv21 id" requires at least one "id:<tokenId>" or "bsv21:<tokenId>" tag.',
+        },
+      }
+    }
+    body.basket = FUNGIBLE_STORAGE_BASKET
+    body.includeTags = true
+    changed = true
   }
 
   if (Array.isArray(body.outputs)) {
@@ -1182,12 +1185,5 @@ export function shouldRefuseColourList(
   basket: unknown,
 ): boolean {
   return isThirdPartyOriginator(origin) && isColourBasket(basket)
-}
-
-/** True when an app asked for bare storage inventory instead of a P-scope. */
-export function isBareStorageInventoryBasket(basket: unknown): boolean {
-  if (typeof basket !== 'string') return false
-  const t = basket.trim().toLowerCase()
-  return t === ITEM_STORAGE_BASKET || t === FUNGIBLE_STORAGE_BASKET
 }
 

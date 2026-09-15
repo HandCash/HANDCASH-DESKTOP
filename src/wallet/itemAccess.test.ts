@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isBsv21SpendArgs,
+  isBareStorageInventoryBasket,
   isColourBasket,
   isColourIssuanceArgs,
   isItemBasket,
@@ -128,10 +129,13 @@ describe('BRC-99 p 1sat baskets', () => {
   })
 
   it('refuses bare storage 1sat — apps must use p 1sat scopes', () => {
+    expect(isBareStorageInventoryBasket('1sat')).toBe(true)
+    expect(isBareStorageInventoryBasket('p 1sat all')).toBe(false)
     expect(prepareItemBasketArgs({ basket: '1sat' }).error?.code).toBe('USE_P1SAT_SCOPE')
   })
 
   it('refuses bare storage bsv21 — apps must use p bsv21 scopes', () => {
+    expect(isBareStorageInventoryBasket('bsv21')).toBe(true)
     expect(prepareItemBasketArgs({ basket: 'bsv21' }).error?.code).toBe('USE_PBSV21_SCOPE')
   })
 

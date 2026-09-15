@@ -53,6 +53,11 @@
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
+ * - **BRC-100 app exchange** — the signed Atomic BEEF (+ remittance) *is* the
+ *   payment. Arcade `postBeef` / `/txs` is a propagation double-check, not a
+ *   send or receive gate. SPV (scripts + input proofs in the BEEF) validates
+ *   locally. Known parent→child pairs (tx-bounce) may be posted to Arcade as
+ *   one package so the child never waits for the parent to be mined.
  * - **Peer BSV pay (BRC-29)** → `brc29SettlePath` + `brc29SendMachine`. Sender
  *   `createAction` broadcasts immediately (Babbage / toolbox). Remittance
  *   (± inline Atomic BEEF) then goes on `sendMessage`. Inbox miss → local

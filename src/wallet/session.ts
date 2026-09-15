@@ -712,9 +712,9 @@ export async function fetchBalanceRead(
     return { kind: 'unavailable', reason: 'storageUnreadable' }
   }
 
-  // Foreign toolbox while another wallet is unlocked (vault sibling credit):
-  // never pull the *active* wallet's unconfirmed change or overwrite
-  // lastKnownBalanceSats — that doubled sibling balances after root→child.
+  // Foreign toolbox while another identity is unlocked:
+  // never mix the *active* wallet's unconfirmed change or overwrite
+  // lastKnownBalanceSats — that doubled balances after root→child transfers.
   if (session && w !== session.wallet) {
     if (typeof w === 'object' && w != null) {
       spendableBalanceCache.set(w, spendable)

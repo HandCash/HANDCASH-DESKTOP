@@ -24,9 +24,9 @@ function atomicBytes(args: unknown): number[] {
 }
 
 /**
- * Validate and import an app-supplied transaction, then hand the exact Atomic
- * BEEF to Arcade/miner services. A transaction body is sufficient for local
- * ingestion; WhatsOnChain visibility is eventual evidence, not a receive gate.
+ * Import an app-supplied Atomic BEEF. The BEEF (plus remittance on the
+ * BRC-100 call) is the exchange — SPV-valid locally. Arcade postBeef is a
+ * propagation double-check and must not delay crediting the wallet.
  */
 export async function internalizeActionWithBroadcast(
   wallet: WalletInterface,
@@ -57,9 +57,17 @@ export async function internalizeActionWithBroadcast(
     result = { accepted: true, isMerge: true, txid, satoshis }
   }
 
-  const submitted = await broadcastAtomicBeef(txid, atomic)
-  console.info(
-    `[internalize] ${txid.slice(0, 12)}… accepted locally arcadeSubmitted=${String(submitted)}`,
-  )
+  void broadcastAtomicBeef(txid, atomic)
+    .then((submitted) => {
+      console.info(
+        `[internalize] ${txid.slice(0, 12)}… credited locally arcadeSubmitted=${String(submitted)}`,
+      )
+    })
+    .catch((err) => {
+      console.warn(
+        `[internalize] ${txid.slice(0, 12)}… Arcade double-check failed`,
+        err instanceof Error ? err.message : String(err),
+      )
+    })
   return result
 }

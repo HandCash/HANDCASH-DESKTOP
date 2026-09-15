@@ -99,6 +99,23 @@ function paymentHintTxid(raw: string | { txid?: string } | null | undefined): st
   return /^[0-9a-f]{64}$/.test(id) ? id : ''
 }
 
+async function ackIngestedPaymentHints(
+  hints: Array<{ txid: string; messageId?: string }>,
+  spv: { importedTxids: string[]; ghostTxids: string[] },
+  rootKeyHex?: string,
+): Promise<void> {
+  if (spv.importedTxids.length === 0 && spv.ghostTxids.length === 0) return
+  const key = rootKeyHex ?? getActiveWallet()?.rootKeyHex
+  if (!key) return
+  const ackable = new Set([...spv.importedTxids, ...spv.ghostTxids])
+  const ids = hints
+    .filter((h) => h.messageId && ackable.has(h.txid))
+    .map((h) => h.messageId!)
+  if (ids.length === 0) return
+  const { acknowledgeMessageIds } = await import('../wallet/messageTransport')
+  await acknowledgeMessageIds(ids, key)
+}
+
 function nextChainPollMs(): number {
   // syncHealth.pendingTips is collectables-awaiting-origin (pill only). Never
   // accelerate full legacy UTXO rescans off that — it looped Syncing while
@@ -385,18 +402,11 @@ export function Dashboard({
             )
             if (cancelled) return
             if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
-            if (spv.importedTxids.length > 0 || spv.ghostTxids.length > 0) {
-              const ackable = new Set([...spv.importedTxids, ...spv.ghostTxids])
-              const ids = hints.paymentHints
-                .filter((h) => h.messageId && ackable.has(h.txid))
-                .map((h) => h.messageId!)
-              if (ids.length > 0) {
-                const { acknowledgeMessageIds } = await import(
-                  '../wallet/messageTransport'
-                )
-                await acknowledgeMessageIds(ids, active.rootKeyHex)
-              }
-            }
+            await ackIngestedPaymentHints(
+              hints.paymentHints,
+              spv,
+              active.rootKeyHex,
+            )
             if (spv.imported > 0) {
               scheduleNext()
               return
@@ -607,21 +617,7 @@ export function Dashboard({
           )
           if (cancelled) return
           if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
-          if (spv.importedTxids.length > 0 || spv.ghostTxids.length > 0) {
-            const ackable = new Set([...spv.importedTxids, ...spv.ghostTxids])
-            const ids = chaseHints
-              .filter((h) => h.messageId && ackable.has(h.txid))
-              .map((h) => h.messageId!)
-            if (ids.length > 0) {
-              const active = getActiveWallet()
-              if (active?.rootKeyHex) {
-                const { acknowledgeMessageIds } = await import(
-                  '../wallet/messageTransport'
-                )
-                await acknowledgeMessageIds(ids, active.rootKeyHex)
-              }
-            }
-          }
+          await ackIngestedPaymentHints(chaseHints, spv)
           if (spv.imported > 0) {
             scheduleNext()
             return
