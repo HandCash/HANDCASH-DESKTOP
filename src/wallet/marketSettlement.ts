@@ -62,8 +62,16 @@ import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 
 const PENDING_KEY = 'handcash.market.pending.v2'
 const RESPONSE_KEY = 'handcash.market.responses.v2'
-/** Keep the peer-signature wait inside the 120s bridge budget, even on mobile. */
-const SETTLEMENT_TIMEOUT_MS = 30_000
+/**
+ * Buyer waits for the seller peer signature over messagebox.
+ *
+ * `purchaseMarketListing` is a spend-bridge method (`SPEND_DEADLINE_MS` =
+ * 300s in electron/bridgeDeadline.ts). A prior change capped this at 30s to
+ * "stay inside the 120s read bridge", which starved live sellers on mobile and
+ * surfaced as MARKET_SELLER_TIMEOUT after a dead wait. Keep headroom under the
+ * 300s spend budget so a waking seller can still answer.
+ */
+const SETTLEMENT_TIMEOUT_MS = 180_000
 
 /**
  * Overlay already stored the listing tx at admit time. Prefer that BEEF over
@@ -426,11 +434,11 @@ async function waitForSellerResponse<T extends StoredResponse['type']>(
     await pollInboundTipHints({
       rootKeyHex: getActiveWallet()?.rootKeyHex ?? '',
     })
-    await new Promise((resolve) => setTimeout(resolve, 750))
+    await new Promise((resolve) => setTimeout(resolve, 300))
   }
   throw new MarketListingError(
     'MARKET_SELLER_TIMEOUT',
-    'The seller wallet is offline or did not sign this purchase within 30 seconds. Nothing was charged.'
+    'The seller wallet is offline or did not sign this purchase within 3 minutes. Nothing was charged.'
   )
 }
 
