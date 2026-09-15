@@ -15,7 +15,7 @@
  * Sync never marks an output unspendable. Only a spend the network rejected can
  * do that, via `releaseStaleSpendableOutputs`.
  */
-import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend, shouldYieldChainIngestToUi } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { reconcilePendingSends } from './pendingSend'
@@ -279,16 +279,21 @@ export async function refreshFromChainExclusive(
   // A send is waiting on the coordinator — skip ordinal naming / inventory work
   // so the FIFO frees and the spend can begin.
   const yieldToSpend = shouldYieldChainIngestToSpend()
-  const fundingOnly = opts?.fundingOnly === true || yieldToSpend
+  const yieldForScroll = !forceReview && shouldYieldChainIngestToUi()
+  const fundingOnly = opts?.fundingOnly === true || yieldToSpend || yieldForScroll
   if (yieldToSpend && opts?.fundingOnly !== true) {
     console.info('[chain-ingest] yielding ordinal work — send is waiting')
+  } else if (yieldForScroll && opts?.fundingOnly !== true) {
+    console.info('[chain-ingest] yielding ordinal work — UI is scrolling')
   }
 
   // One short pill state for the whole pass — phased "Syncing payments / items"
-  // labels overflowed the status bubble.
-  const syncMessage = fundingOnly
-    ? 'Looking for new payments on your address'
-    : 'Refreshing funds against the network'
+  // labels overflowed the status bubble. A scroll yield is transient, so it
+  // must not relabel the pill mid-fling.
+  const syncMessage =
+    opts?.fundingOnly === true || yieldToSpend
+      ? 'Looking for new payments on your address'
+      : 'Refreshing funds against the network'
   stampSync({
     phase: 'syncing',
     message: syncMessage,
@@ -300,6 +305,8 @@ export async function refreshFromChainExclusive(
     kind: 'refresh',
     phase: fundingOnly ? 'funding' : 'scanning',
     message: syncMessage,
+    identityKey: startedIdentityKey,
+    accountIndex: startedAccountIndex,
   })
   let progressTerminal: 'done' | 'failed' = 'done'
 
@@ -435,6 +442,8 @@ export async function refreshFromChainExclusive(
       updateWalletProgress({
         phase: 'catching-up',
         message: 'Still importing collectables…',
+        identityKey: startedIdentityKey,
+        accountIndex: startedAccountIndex,
       })
       stampSync({
         phase: 'ok',
@@ -511,7 +520,7 @@ export async function refreshFromChainExclusive(
         // but wasteful at ordinal scale. Large baskets trust Toolbox's
         // spendable state between scheduled review passes.
         if (ingest.scan.utxos.length <= 10_000) {
-          rememberLiveOneSatOutpoints(ingest.scan.utxos)
+          rememberLiveOneSatOutpoints(ingest.scan.utxos, startedIdentityKey)
         } else {
           invalidateLiveOneSatOutpoints()
         }
@@ -700,6 +709,8 @@ export async function refreshFromChainExclusive(
     finishWalletProgress(progressTerminal, {
       phase: progressTerminal === 'failed' ? 'error' : 'complete',
       message: snapMessage,
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
     })
   }
 }

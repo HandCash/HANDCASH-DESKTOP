@@ -67,3 +67,14 @@ describe('localToolboxStateLooksEmpty', () => {
     expect(state.looksEmpty).toBe(false)
   })
 })
+
+describe('WALLET_FEATURE_MODULES', () => {
+  it('names the public surfaces beside layers', async () => {
+    const { WALLET_FEATURE_MODULES } = await import('./layers')
+    expect(WALLET_FEATURE_MODULES.tokens).toBe('token/index.ts')
+    expect(WALLET_FEATURE_MODULES.spendVerdict).toBe('spendVerdict/index.ts')
+    expect(WALLET_FEATURE_MODULES.chainProbe).toBe('chainProbe/index.ts')
+    expect(WALLET_FEATURE_MODULES.marketOffer).toBe('marketOffer/index.ts')
+    expect(WALLET_FEATURE_MODULES.uiFeed).toBe('components/uiFeed/index.ts')
+  })
+})

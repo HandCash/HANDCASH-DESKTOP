@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  bindWalletProgressAccount,
   clearWalletProgress,
   finishWalletProgress,
   getWalletProgress,
@@ -125,5 +126,31 @@ describe('walletProgress', () => {
     vi.advanceTimersByTime(5_000)
     expect(getWalletProgress().status).toBe('needs-resume')
     expect(walletProgressLabel()).toBe('Sweep paused')
+  })
+
+  it('keeps progress isolated per vault account', () => {
+    bindWalletProgressAccount({ identityKey: 'ik-a', accountIndex: 0 })
+    startWalletProgress({ kind: 'refresh', phase: 'scanning' })
+    bindWalletProgressAccount({ identityKey: 'ik-b', accountIndex: 1 })
+    expect(getWalletProgress().status).toBe('idle')
+
+    startWalletProgress({ kind: 'refresh', phase: 'funding' })
+    finishWalletProgress('done', {
+      identityKey: 'ik-a',
+      accountIndex: 0,
+      message: 'A complete',
+    })
+    expect(getWalletProgress()).toMatchObject({
+      identityKey: 'ik-b',
+      status: 'running',
+      phase: 'funding',
+    })
+
+    bindWalletProgressAccount({ identityKey: 'ik-a', accountIndex: 0 })
+    expect(getWalletProgress()).toMatchObject({
+      identityKey: 'ik-a',
+      status: 'done',
+      message: 'A complete',
+    })
   })
 })

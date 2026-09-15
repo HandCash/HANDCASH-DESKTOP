@@ -1,0 +1,12 @@
+{
+  "description": "Canonical 1SAT-MARKET offer fields. Desktop encodeMarketOffer is SSoT; Cloud overlay must admit the encoded script and reject non-minimal version pushes.",
+  "sellerPrivHex": "0000000000000000000000000000000000000000000000000000000000000001",
+  "grossPriceSats": 100000,
+  "feeBasisPoints": 500,
+  "feePayTo": "17M4gYpygf4GvbFuS65z4fV6712t9Kth4Y",
+  "provenanceHash": "abababababababababababababababababababababababababababababababab",
+  "provenanceSize": 321,
+  "nonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "messagebox": "https://brc-cloud.bcryderman.workers.dev/v1/messagebox",
+  "nonMinimalAfterMagic": "01 01"
+}

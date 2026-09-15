@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
+  abortReservedActionBatches,
   formatReviewActionsError,
   isReservedActionBatchError,
   isReviewActionsError,
@@ -196,6 +197,32 @@ describe('actionReview', () => {
       await vi.advanceTimersByTimeAsync(2_500)
 
       await expect(releasing).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cannot abort a new action batch after its cleanup budget expires', async () => {
+    vi.useFakeTimers()
+    try {
+      let releaseLookup!: (rows: Array<{ batchId: string }>) => void
+      findExpiredActionBatches.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseLookup = resolve
+          }),
+      )
+      abortActionBatch.mockClear()
+      const cleanup = abortReservedActionBatches(undefined, { budgetMs: 25 })
+      await vi.advanceTimersByTimeAsync(25)
+      await expect(cleanup).resolves.toBe(0)
+
+      // This row represents a batch created after the caller continued into
+      // createAction. The timed-out cleanup must be inert when its read returns.
+      releaseLookup([{ batchId: 'new-live-batch' }])
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(abortActionBatch).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

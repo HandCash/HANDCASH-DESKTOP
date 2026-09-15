@@ -114,6 +114,7 @@ export async function abortReservedActionBatches(
   const wallet = (active ?? getActiveWallet())?.wallet
   if (!wallet) return 0
   let aborted = 0
+  let timedOut = false
 
   try {
     if (await wallet.actionBatch.abort()) aborted += 1
@@ -128,7 +129,12 @@ export async function abortReservedActionBatches(
         const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
         return sp.findExpiredActionBatches(future)
       })
+      // Promise.race does not cancel `persist()`. Without this fence, a slow
+      // lookup can resume after the caller starts createAction and abort that
+      // brand-new batch underneath signing.
+      if (timedOut) return
       for (const batch of listed ?? []) {
+        if (timedOut) return
         const batchId = String(
           (batch as { batchId?: string }).batchId ?? '',
         ).trim()
@@ -147,12 +153,20 @@ export async function abortReservedActionBatches(
 
   const budgetMs = opts?.budgetMs
   if (typeof budgetMs === 'number' && budgetMs >= 0) {
-    await Promise.race([
-      persist(),
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, budgetMs)
-      }),
-    ])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        persist(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            resolve()
+          }, budgetMs)
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
   } else {
     await persist()
   }

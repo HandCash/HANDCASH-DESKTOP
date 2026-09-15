@@ -3,45 +3,38 @@ import { useEffect, useState } from 'react'
 /**
  * Reveal a long list a chunk at a time so opening a panel does not block paint.
  *
- * The ramp must not depend on `requestAnimationFrame` alone. Chromium stops
- * delivering frames while the window is hidden or occluded, and a long task can
- * starve them for seconds, either of which would leave the list stranded
- * partway with no way to finish. A timer races each frame so the count always
- * reaches `total`.
+ * Pause while the parent is scrolling so a fling does not fight the ramp.
  */
-export function useChunkedCount(total: number, chunk: number): number {
+export function useChunkedCount(
+  total: number,
+  chunk: number,
+  paused = false,
+): number {
   const [shown, setShown] = useState(() => Math.min(chunk, total))
 
   useEffect(() => {
     setShown(Math.min(chunk, total))
-    if (total <= chunk) return
+  }, [total, chunk])
+
+  useEffect(() => {
+    if (paused) return
+    if (shown >= total) return
 
     let cancelled = false
-    let next = chunk
     let frame = 0
     let timer = 0
-
     const advance = () => {
       if (cancelled) return
-      window.cancelAnimationFrame(frame)
-      window.clearTimeout(timer)
-      next = Math.min(total, next + chunk)
-      setShown(next)
-      if (next < total) schedule()
+      setShown((current) => Math.min(total, current + chunk))
     }
-
-    const schedule = () => {
-      frame = window.requestAnimationFrame(advance)
-      timer = window.setTimeout(advance, 100)
-    }
-
-    schedule()
+    frame = window.requestAnimationFrame(advance)
+    timer = window.setTimeout(advance, 100)
     return () => {
       cancelled = true
       window.cancelAnimationFrame(frame)
       window.clearTimeout(timer)
     }
-  }, [total, chunk])
+  }, [shown, total, chunk, paused])
 
-  return shown
+  return Math.min(shown, total)
 }

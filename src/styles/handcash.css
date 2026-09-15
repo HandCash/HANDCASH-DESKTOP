@@ -371,6 +371,22 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   align-items: center;
 }
 
+/* Desktop titlebar has room: keep the sync chip on one line. Two-line wrapping
+   is a compact/phone accommodation, not a desktop look. */
+html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill {
+  max-width: none;
+  white-space: nowrap;
+}
+
+html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .status-pill-label {
+  display: inline;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+}
+
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
   /* Leave room for wordmark + scan/lock; wrap long labels on two lines. */
   max-width: min(6.5rem, calc(100vw - 11.5rem));
@@ -3756,13 +3772,49 @@ li[data-aeon-state='failed'] .history-progress-range {
   left: auto;
   right: 0;
   z-index: 40;
-  width: max(100%, 260px);
-  min-width: 260px;
-  padding: 10px;
-  border-radius: 12px;
+  width: min(340px, calc(100vw - 24px));
+  min-width: 290px;
+  padding: 8px;
+  border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--hc-text) 12%, transparent);
   background: var(--hc-panel, var(--hc-bg, #111));
   box-shadow: 0 10px 28px color-mix(in srgb, #000 35%, transparent);
+}
+
+.wallet-account-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px 10px;
+}
+
+.wallet-account-heading > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wallet-account-heading strong {
+  font-size: 0.9rem;
+}
+
+.wallet-account-heading div > span {
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+}
+
+.wallet-account-count {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 
 .wallet-account-list {
@@ -3778,11 +3830,13 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .wallet-account-option {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   width: 100%;
   margin: 0;
+  min-height: 48px;
   padding: 8px 10px;
   border: 0;
   border-radius: 8px;
@@ -3796,6 +3850,37 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-account-option:hover,
 .wallet-account-option.is-selected {
   background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+.wallet-account-option.is-selected {
+  box-shadow: inset 2px 0 var(--hc-accent);
+}
+
+.wallet-account-option-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wallet-account-option-copy strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+
+.wallet-account-option-copy > span {
+  overflow: hidden;
+  color: var(--hc-muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-account-option-check {
+  flex: 0 0 auto;
+  color: var(--hc-accent);
 }
 
 .wallet-account-option-name {
@@ -3847,6 +3932,12 @@ li[data-aeon-state='failed'] .history-progress-range {
   background: color-mix(in srgb, var(--hc-text) 6%, transparent);
 }
 
+.wallet-account-error {
+  margin: 6px 8px 2px;
+  color: var(--hc-danger);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
 
 .wallet-hero-title {
   margin: 0;
@@ -3933,7 +4024,6 @@ li[data-aeon-state='failed'] .history-progress-range {
   height: 18px;
   flex-shrink: 0;
   display: block;
-  margin-inline: auto;
   transition: none;
 }
 
@@ -3945,9 +4035,11 @@ li[data-aeon-state='failed'] .history-progress-range {
   line-height: 0;
 }
 
+/* Only the stacked permission dock centres its glyph. Auto inline margins on a
+   row-direction nav tab would eat the free space and shove icon off the label. */
 .wallet-nav-bar[data-permission] .wallet-nav-tab-icon svg {
   display: block;
-  margin: 0;
+  margin-inline: auto;
   align-self: center;
 }
 
@@ -9017,6 +9109,11 @@ html[data-aeon-mode='light'] .skeleton {
   line-height: 1;
   pointer-events: none;
   backdrop-filter: blur(10px);
+}
+
+html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .collectable-details-copy {
@@ -14129,9 +14226,19 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 }
 
 .wallet-account-rename {
-  display: flex;
-  gap: 6px;
-  padding: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--hc-text) 5%, transparent);
+}
+
+.wallet-account-rename label {
+  grid-column: 1 / -1;
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .wallet-account-rename-input {
@@ -14143,6 +14250,17 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   background: transparent;
   color: var(--hc-text);
   font: inherit;
+}
+
+.wallet-account-rename-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wallet-account-rename-actions .btn {
+  min-height: 34px;
+  padding: 6px 9px;
 }
 
 .identity-compose {

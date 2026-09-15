@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { Skeleton } from './Skeleton'
 import { acquireImageLoadSlot, releaseImageLoadSlot } from './imageLoadSlots'
+import { shouldAttachDeferredSrc } from './uiFeed/attachSrc'
 
 type Props = Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'> & {
   /** Skeleton size while loading. Defaults to width/height props. */
@@ -42,6 +43,13 @@ const LOAD_MARGIN_PX = 900
  * a frame parked on the boundary would load and unload on every scroll tick.
  */
 const RELEASE_MARGIN_PX = 2200
+
+function loadMarginPx(): number {
+  if (typeof document !== 'undefined' && document.documentElement.dataset.hcScrolling === '1') {
+    return 240
+  }
+  return LOAD_MARGIN_PX
+}
 
 function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
   const rect = frame.getBoundingClientRect()
@@ -166,19 +174,25 @@ export function DeferredImage({
     if (!frame) return
 
     let cancelled = false
+    let raf = 0
     const mark = (value: boolean) => {
-      if (!cancelled) setNear(value)
+      if (cancelled) return
+      window.cancelAnimationFrame(raf)
+      raf = window.requestAnimationFrame(() => {
+        if (!cancelled) setNear(value)
+      })
     }
 
     // Android WebViews often never fire IntersectionObserver for elements that
     // were already on screen when observe() ran. Check first, then observe.
-    if (frameIsNear(frame)) mark(true)
+    if (frameIsNear(frame, loadMarginPx())) mark(true)
 
     if (typeof IntersectionObserver === 'undefined') {
       // No observer support — stagger so a grid does not decode everything at once.
       const fallbackTimer = window.setTimeout(() => mark(true), 1_200)
       return () => {
         cancelled = true
+        window.cancelAnimationFrame(raf)
         window.clearTimeout(fallbackTimer)
       }
     }
@@ -187,7 +201,7 @@ export function DeferredImage({
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) mark(true)
       },
-      { rootMargin: `${LOAD_MARGIN_PX}px` },
+      { rootMargin: `${loadMarginPx()}px` },
     )
     // Dropping src frees the decoded bitmap; scrolling back re-fetches from cache.
     const releaseObserver = new IntersectionObserver(
@@ -214,7 +228,10 @@ export function DeferredImage({
         ) {
           return
         }
-        if (entries.every((e) => !e.isIntersecting)) mark(false)
+        if (entries.every((e) => !e.isIntersecting)) {
+          if (frameIsNear(frame, 0)) return
+          mark(false)
+        }
       },
       { rootMargin: `${RELEASE_MARGIN_PX}px` },
     )
@@ -227,6 +244,7 @@ export function DeferredImage({
 
     return () => {
       cancelled = true
+      window.cancelAnimationFrame(raf)
       window.clearTimeout(fallbackTimer)
       loadObserver.disconnect()
       releaseObserver.disconnect()
@@ -353,7 +371,14 @@ export function DeferredImage({
 
   // Never paint an <img> without src. Clearing src while status stayed `ready`
   // (scroll release + decodedOnce short-circuit) was the empty Activity square.
-  const attachSrc = retained.current || (near && loadSlot)
+  const intersecting = Boolean(frameRef.current && frameIsNear(frameRef.current, 0))
+  const attachSrc = shouldAttachDeferredSrc({
+    retained: retained.current,
+    near,
+    loadSlot,
+    intersecting,
+    ready: status === 'ready',
+  })
   const showImg = status === 'ready' && attachSrc
   const showSkeleton =
     !showImg &&

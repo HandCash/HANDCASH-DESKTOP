@@ -17,6 +17,7 @@ import { normalizeAppHost } from './appIdentity'
 import { getActiveWallet, type ActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { runExclusiveSpend } from './spendGuard'
+import { isAlreadySpentListingFailure } from './spendVerdict'
 import {
   buildCollectableCustomInstructions,
   completeProvenanceForPublish,
@@ -1255,19 +1256,7 @@ async function prepareMarketListingSpend(active: ActiveWallet): Promise<void> {
   await abortReservedActionBatches(active, { budgetMs: 1_500 })
 }
 
-/**
- * Arcade/miner answers that mean an input is already gone.
- *
- * MissingInputs alone is not enough — incomplete BEEF and Ghost Arcade noise
- * use that note constantly. Only retire coins after an explicit already-spent /
- * double-spend verdict (then {@link tipStillUnspentOnChain} still has to prove it).
- */
-export function isAlreadySpentListingFailure(reason: string): boolean {
-  if (/missing.?inputs/i.test(reason) && !/already.?spent|double.?spend/i.test(reason)) {
-    return false
-  }
-  return /already spent/i.test(reason) || /double.?spend/i.test(reason)
-}
+export { isAlreadySpentListingFailure }
 
 /**
  * True when a live UTXO service still sees this tip. Unknown/offline does not

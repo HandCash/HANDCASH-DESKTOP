@@ -5,6 +5,8 @@ import { DeferredImage } from './DeferredImage'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
 import { useChunkedCount } from './useChunkedCount'
+import { useScrollIdle } from './uiFeed/useScrollIdle'
+import { useWindowedRange } from './uiFeed/useWindowedRange'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -350,12 +352,29 @@ function CollectableItems({
   selected: ReadonlySet<string>
   onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
 }) {
-  const shownCount = useChunkedCount(items.length, RENDER_CHUNK)
-  const visible = items.slice(0, shownCount)
+  const listRef = useRef<HTMLUListElement>(null)
+  const scrolling = useScrollIdle(listRef)
+  const shownCount = useChunkedCount(items.length, RENDER_CHUNK, scrolling)
+  const windowed = useWindowedRange({
+    total: shownCount,
+    itemExtent: view === 'grid' ? 176 : 56,
+    columns: view === 'grid' ? 3 : 1,
+    overscan: 6,
+    scrollRef: listRef,
+  })
+  const visible = items.slice(windowed.start, windowed.end)
   const Item = view === 'grid' ? CollectableGridItem : CollectableListItem
 
   return (
-    <ul className={view === 'grid' ? 'collection-grid' : 'connected-app-list'}>
+    <ul
+      className={view === 'grid' ? 'collection-grid' : 'connected-app-list'}
+      ref={listRef}
+      style={
+        windowed.padStart > 0 || windowed.padEnd > 0
+          ? { paddingTop: windowed.padStart, paddingBottom: windowed.padEnd }
+          : undefined
+      }
+    >
       {visible.map((item) => (
         <Item
           key={item.outpoint}

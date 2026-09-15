@@ -20,6 +20,13 @@ import {
   chooseLegacySweepPath,
   MIN_SWEEPABLE_SATS,
 } from './legacySweepPath'
+import {
+  classifyBitailsUtxoStatus,
+  type OutpointSpentStatus,
+} from './chainProbe'
+
+export type { OutpointSpentStatus }
+export { classifyBitailsUtxoStatus }
 
 /** Re-export — floor lives in {@link ./legacySweepPath}. */
 export { MIN_SWEEPABLE_SATS }
@@ -244,8 +251,6 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   }
 }
 
-export type OutpointSpentStatus = 'spent' | 'unspent' | 'unknown'
-
 /** `txid.vout` or `txid_vout` → parts, or null when the key is not an outpoint. */
 export function parseOutpoint(outpoint: string): { txid: string; vout: number } | null {
   const m = outpoint.trim().match(/^([0-9a-f]{64})[._](\d+)$/i)
@@ -257,26 +262,14 @@ export function parseOutpoint(outpoint: string): { txid: string; vout: number } 
 }
 
 /**
- * Bitails `/tx/{txid}/output/{n}/status`. `unknown` means spent *or* never
- * seen — that is not proof the coins moved, so the caller must fail closed.
- */
-export function classifyBitailsUtxoStatus(body: {
-  status?: unknown
-  spent?: unknown
-}): OutpointSpentStatus {
-  const status = String(body.status ?? '').toLowerCase()
-  if (status === 'unknown' || status === 'not found') return 'unknown'
-  if (body.spent === true) return 'spent'
-  if (body.spent === false) return 'unspent'
-  return 'unknown'
-}
-
-/**
  * Whether `outpoint` is spent on chain (mempool or mined).
  *
  * Spent is only returned from a positive indexer answer. Everything else —
  * including Bitails `unknown` and provider silence — is not proof, so it is
  * `unspent` (404 on a known host) or `unknown` (fail closed).
+ *
+ * Arcade `/tx` MINED is never consulted here — that is source-tx presence,
+ * not output spent (`chainProbe.spentStatusFromArcadeTxLookup`).
  */
 export async function spentStatusOfOutpoint(
   outpoint: string,

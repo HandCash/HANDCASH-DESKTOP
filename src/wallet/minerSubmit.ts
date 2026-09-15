@@ -36,6 +36,7 @@ import {
   type TransactionFlow,
 } from './transactionTelemetry'
 import { normalizeTxid } from './txid'
+import { spendConflictIsProven } from './spendVerdict'
 
 export type MinerSubmitResult = {
   /** At least one miner reported mempool accept / already-known. */
@@ -181,17 +182,12 @@ async function resolveMinerConflict(args: {
 }): Promise<MinerSubmitResult> {
   const { id, atomic, active, summary, telemetry } = args
   const arcadePinned = txHadArcadeSubmitContact(id)
-  const conflictReal = arcadePinned
-    ? await signedTxSpendConflictIsProven({
-        txid: id,
-        atomic,
-        chain: active.chain,
-      })
-    : await (await import('./postBeefResult')).postBeefConflictIsReal({
-        txid: id,
-        atomic,
-        chain: active.chain,
-      })
+  const conflictReal = await spendConflictIsProven({
+    intent: arcadePinned ? 'arcadePinRemoval' : 'postBeefGhostCheck',
+    txid: id,
+    atomic,
+    chain: active.chain,
+  })
 
   if (!conflictReal) {
     if (arcadePinned) {

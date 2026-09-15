@@ -15,6 +15,8 @@ import {
 } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { useChunkedCount } from './useChunkedCount'
+import { useScrollIdle } from './uiFeed/useScrollIdle'
+import { useWindowedRange } from './uiFeed/useWindowedRange'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { LoadingSpinner } from './LoadingSpinner'
 import {
@@ -52,10 +54,8 @@ import {
   shouldAnnounceActivity,
 } from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
-import {
-  getCachedCollectables,
-  subscribeCollectables,
-} from '../wallet/collectables'
+import { subscribeCollectables } from '../wallet/collectables'
+import { isItemProven } from '../wallet/provenCache'
 import { subscribeFungibles } from '../wallet/token'
 import {
   getVerificationProgress,
@@ -307,19 +307,7 @@ function HistoryRow({
   const failureReason = failed ? activityFailureLabel(entry) : null
   useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
   const inventoryProven = Boolean(
-    entry.item?.outpoint &&
-      getCachedCollectables().some(
-        (c) =>
-          c.proven === true &&
-          c.outpoint
-            .trim()
-            .toLowerCase()
-            .replace(/_(\d+)$/, '.$1') ===
-            entry
-              .item!.outpoint!.trim()
-              .toLowerCase()
-              .replace(/_(\d+)$/, '.$1')
-      )
+    entry.item?.outpoint && isItemProven(entry.item.outpoint),
   )
   const indexInstall =
     event &&
@@ -623,10 +611,14 @@ function useActivityFeed(limit: number) {
     refresh()
     const unsubActivity = subscribeAppActivity(refresh)
     const unsubApps = subscribeConnectedApps(refresh)
-    // A repaired collectable / resolved token icon changes what item rows show.
-    const unsubItems = subscribeCollectables(refresh)
+    let itemTimer = 0
+    const unsubItems = subscribeCollectables(() => {
+      window.clearTimeout(itemTimer)
+      itemTimer = window.setTimeout(refresh, 280)
+    })
     const unsubTokens = subscribeFungibles(refresh)
     return () => {
+      window.clearTimeout(itemTimer)
       unsubActivity()
       unsubApps()
       unsubItems()
@@ -640,26 +632,6 @@ function useActivityFeed(limit: number) {
   )
 
   return { entries: merged, usdPerBsv, currency, origins }
-}
-
-function useScrollReveal(ref: RefObject<HTMLElement | null>) {
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    let timer = 0
-    const onScroll = () => {
-      el.classList.add('is-scrolling')
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        el.classList.remove('is-scrolling')
-      }, 700)
-    }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      el.removeEventListener('scroll', onScroll)
-      window.clearTimeout(timer)
-    }
-  }, [ref])
 }
 
 /**
@@ -762,7 +734,7 @@ export function ActivityFeed({
   )
   const [indexProgress, setIndexProgress] = useState(() => getWalletProgress())
   const listRef = useRef<HTMLUListElement>(null)
-  useScrollReveal(listRef)
+  const scrolling = useScrollIdle(listRef)
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), [])
   useEffect(() => subscribeWalletProgress(setIndexProgress), [])
@@ -777,8 +749,15 @@ export function ActivityFeed({
     () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
     [entries, filters, showFilters]
   )
-  const shownCount = useChunkedCount(filtered.length, RENDER_CHUNK)
-  const visibleEntries = filtered.slice(0, shownCount)
+  const shownCount = useChunkedCount(filtered.length, RENDER_CHUNK, scrolling)
+  const windowed = useWindowedRange({
+    total: shownCount,
+    itemExtent: 72,
+    overscan: 10,
+    rowSelector: '[data-activity-key]:not([data-aeon-scope="phrase-import"])',
+    scrollRef: listRef,
+  })
+  const visibleEntries = filtered.slice(windowed.start, windowed.end)
   const newest = useMemo(() => {
     const top = filtered[0]
     return top ? { key: activityEntryKey(top), at: top.at } : undefined
@@ -927,6 +906,14 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
+        {windowed.padStart > 0 ? (
+          <li
+            className="history-window-pad"
+            data-ui-feed-pad="start"
+            style={{ height: windowed.padStart }}
+            aria-hidden
+          />
+        ) : null}
         {visiblePhraseImport ? (
           <PendingPhraseImportRow cursor={visiblePhraseImport} />
         ) : null}
@@ -937,29 +924,23 @@ export function ActivityFeed({
             currency={currency}
             usdPerBsv={usdPerBsv}
             showWhen={showWhen}
-            newest={index === 0}
+            newest={windowed.start === 0 && index === 0}
             verifying={
-              !(
-                entry.item?.outpoint &&
-                getCachedCollectables().some(
-                  (c) =>
-                    c.proven === true &&
-                    c.outpoint
-                      .trim()
-                      .toLowerCase()
-                      .replace(/_(\d+)$/, '.$1') ===
-                      entry
-                        .item!.outpoint!.trim()
-                        .toLowerCase()
-                        .replace(/_(\d+)$/, '.$1')
-                )
-              ) &&
+              !(entry.item?.outpoint && isItemProven(entry.item.outpoint)) &&
               (isPendingActivity(entry) ||
                 isOutpointVerifying(entry.item?.outpoint, verification))
             }
             indexProgress={indexProgress}
           />
         ))}
+        {windowed.padEnd > 0 ? (
+          <li
+            className="history-window-pad"
+            data-ui-feed-pad="end"
+            style={{ height: windowed.padEnd }}
+            aria-hidden
+          />
+        ) : null}
         {viewAllLabel && onViewAll ? (
           <li className="history-view-all-row">
             <button

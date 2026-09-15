@@ -334,6 +334,9 @@ export function clearActiveWallet(): void {
   void import('./walletHealth').then(({ bindSyncHealthAccount }) => {
     bindSyncHealthAccount(null)
   })
+  void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
+    bindWalletProgressAccount(null)
+  })
 }
 
 let propagationRecoveryStarted = false

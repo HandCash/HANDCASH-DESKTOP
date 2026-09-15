@@ -163,6 +163,9 @@ export const WALLET_LAYER_MODULES = {
     'marketSettlement.ts',
     'marketSettlementPath.ts',
     'marketOverlayProtocol.ts',
+    'marketOffer/index.ts',
+    'spendVerdict/index.ts',
+    'chainProbe/index.ts',
     'ingestPaymentByTxid.ts',
     'inscriptionCache.ts',
     'provenCache.ts',
@@ -195,6 +198,8 @@ export const WALLET_LAYER_MODULES = {
     'healMisfiledBsv21.ts',
     'healMisfiledCollectables.ts',
     'staleOutputRelease.ts',
+    'spendVerdict/index.ts',
+    'chainProbe/index.ts',
     'txReconcile.ts',
   ],
   historyReplica: [
@@ -227,6 +232,25 @@ export const WALLET_LAYER_MODULES = {
     'spendLease.ts',
   ],
 } as const satisfies Record<WalletLayer | 'coordinator', readonly string[]>
+
+/**
+ * Feature modules sit on top of layers. A layer answers *where money lives*;
+ * a module answers *one capability* with a hard public surface:
+ *
+ * - `index.ts` — only exports other code may import
+ * - tagged unions / path choosers (no boolean fallthrough)
+ * - XState machine if the module mutates UTXOs
+ * - tests that pin the public surface
+ *
+ * Template: `token/`. Callers import the module, never internals.
+ */
+export const WALLET_FEATURE_MODULES = {
+  tokens: 'token/index.ts',
+  spendVerdict: 'spendVerdict/index.ts',
+  chainProbe: 'chainProbe/index.ts',
+  marketOffer: 'marketOffer/index.ts',
+  uiFeed: 'components/uiFeed/index.ts',
+} as const
 
 /**
  * Composed recovery entry — prefer over calling history + chain separately.

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.182] - 2026-09-15
+
+### Fixed
+
+- Rebuilt the wallet selector on an explicit Aeon/XState interaction model.
+- Isolated sync, progress, and delayed collectable publications by wallet account.
+- Removed the slow pre-send change scan and fenced late cleanup from aborting active NFT sends.
+- Smoothed long activity and collectable feeds without hiding Recent Activity or shifting desktop controls.
+
+### Changed
+
+- Added named wallet modules for spend verdicts, chain probes, market offers, and UI feeds.
+
 ## [1.3.181] - 2026-09-15
 
 ### Changed

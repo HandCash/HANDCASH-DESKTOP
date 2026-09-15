@@ -31,6 +31,7 @@ const unlockListeners = new Set<UnlockListener>()
 
 let boundIdentityKey: string | null = null
 let boundAccountIndex: number | null = null
+const syncHealthByIdentity = new Map<string, SyncHealth>()
 
 let syncHealth: SyncHealth = {
   phase: 'idle',
@@ -113,6 +114,9 @@ export function bindSyncHealthAccount(
   args: { identityKey: string; accountIndex: number } | null,
 ): void {
   clearSyncingWatchdog()
+  if (boundIdentityKey) {
+    syncHealthByIdentity.set(boundIdentityKey, syncHealth)
+  }
   if (!args) {
     boundIdentityKey = null
     boundAccountIndex = null
@@ -130,15 +134,18 @@ export function bindSyncHealthAccount(
   }
   boundIdentityKey = args.identityKey
   boundAccountIndex = args.accountIndex
-  syncHealth = {
-    phase: 'idle',
-    message: null,
-    heldOneSats: 0,
-    pendingTips: 0,
-    updatedAt: Date.now(),
-    identityKey: args.identityKey,
-    accountIndex: args.accountIndex,
-  }
+  syncHealth =
+    syncHealthByIdentity.get(args.identityKey) ?? {
+      phase: 'idle',
+      message: null,
+      heldOneSats: 0,
+      pendingTips: 0,
+      updatedAt: Date.now(),
+      identityKey: args.identityKey,
+      accountIndex: args.accountIndex,
+    }
+  syncHealthByIdentity.set(args.identityKey, syncHealth)
+  if (syncHealth.phase === 'syncing') armSyncingWatchdog()
   emitSync()
 }
 
@@ -159,12 +166,24 @@ export function getSyncHealth(): SyncHealth {
  * are dropped so root cannot paint Synced onto a child.
  */
 export function setSyncHealth(patch: Partial<SyncHealth>): void {
-  const patchIk = patch.identityKey
-  if (
-    patchIk != null &&
-    boundIdentityKey != null &&
-    patchIk !== boundIdentityKey
-  ) {
+  const targetIdentity = patch.identityKey ?? boundIdentityKey
+  if (targetIdentity && targetIdentity !== boundIdentityKey) {
+    const previous =
+      syncHealthByIdentity.get(targetIdentity) ?? {
+        phase: 'idle',
+        message: null,
+        heldOneSats: 0,
+        pendingTips: 0,
+        updatedAt: 0,
+        identityKey: targetIdentity,
+        accountIndex: patch.accountIndex ?? null,
+      }
+    syncHealthByIdentity.set(targetIdentity, {
+      ...previous,
+      ...patch,
+      identityKey: targetIdentity,
+      updatedAt: Date.now(),
+    })
     return
   }
   syncHealth = {
@@ -174,6 +193,9 @@ export function setSyncHealth(patch: Partial<SyncHealth>): void {
     accountIndex:
       boundAccountIndex ?? patch.accountIndex ?? syncHealth.accountIndex,
     updatedAt: Date.now(),
+  }
+  if (syncHealth.identityKey) {
+    syncHealthByIdentity.set(syncHealth.identityKey, syncHealth)
   }
   if (syncHealth.phase === 'syncing') armSyncingWatchdog()
   else clearSyncingWatchdog()

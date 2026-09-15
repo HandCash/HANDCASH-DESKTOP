@@ -68,6 +68,7 @@ export function resetWalletCoordinatorForTests(): void {
   actor.stop()
   actor = createActor(walletCoordinatorMachine).start()
   spendPriorityHolds = []
+  lastUiScrollAt = 0
   emitCoordinator()
 }
 
@@ -151,6 +152,28 @@ export function releaseSpendPriority(): void {
 export function shouldYieldChainIngestToSpend(): boolean {
   dropExpiredSpendPriority()
   return spendPriorityHolds.length > 0
+}
+
+const UI_SCROLL_YIELD_MS = 450
+let lastUiScrollAt = 0
+let uiScrollClassTimer = 0
+
+/** List/grid scroll — pause non-urgent chain ingest until the fling settles. */
+export function noteUiScrollActivity(): void {
+  lastUiScrollAt = Date.now()
+  if (typeof document === 'undefined' || typeof window === 'undefined') return
+  document.documentElement.dataset.hcScrolling = '1'
+  window.clearTimeout(uiScrollClassTimer)
+  uiScrollClassTimer = window.setTimeout(() => {
+    delete document.documentElement.dataset.hcScrolling
+  }, UI_SCROLL_YIELD_MS)
+}
+
+export function shouldYieldChainIngestToUi(): boolean {
+  if (typeof document !== 'undefined' && document.documentElement.dataset.hcScrolling === '1') {
+    return true
+  }
+  return lastUiScrollAt > 0 && Date.now() - lastUiScrollAt < UI_SCROLL_YIELD_MS
 }
 
 /** How many callers currently want the FIFO freed for a spend. */

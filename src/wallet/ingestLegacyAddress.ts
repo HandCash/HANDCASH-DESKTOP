@@ -536,13 +536,14 @@ export async function ingestLegacyAddressUtxos(
       if ((itemResult.outpoints ?? []).length > 0) {
         void import('./collectables')
           .then(async ({ noteIngestedItem, listCollectables, rememberLiveOneSatOutpoints }) => {
-            rememberLiveOneSatOutpoints(scan.utxos)
+            rememberLiveOneSatOutpoints(scan.utxos, active.identityKey)
             for (const raw of itemResult.outpoints ?? []) {
               const op = outpointKey(raw)
               const item = candidateByOp.get(op)
               noteIngestedItem({
                 outpoint: op,
                 chain: active.chain,
+                identityKey: active.identityKey,
                 origin: item?.origin,
                 name: item?.name,
               })

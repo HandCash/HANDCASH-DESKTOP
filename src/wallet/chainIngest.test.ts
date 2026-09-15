@@ -127,6 +127,7 @@ vi.mock('./walletCoordinator', () => ({
   runChainIngest: (fn: () => Promise<unknown>) => fn(),
   runChainIngestDuringSpend: (fn: () => Promise<unknown>) => fn(),
   shouldYieldChainIngestToSpend: () => mockShouldYieldChainIngestToSpend(),
+  shouldYieldChainIngestToUi: () => false,
 }))
 
 vi.mock('./walletHealth', () => ({

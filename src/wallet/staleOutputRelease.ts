@@ -44,6 +44,8 @@ import {
   txHadArcadeSubmitContact,
 } from './arcadeSubmitGuard'
 
+export { isAlreadySpentInputError } from './spendVerdict'
+
 /** Toolbox statuses that mean this wallet already committed the tx locally. */
 const LIVE_LOCAL_TX = new Set([
   'sending',
@@ -93,19 +95,6 @@ export function isUndefinedPartialFilterError(err: unknown): boolean {
   return (
     message.includes('must be not undefined') ||
     message.includes('Passing undefined as a filter value is not supported')
-  )
-}
-
-/** True only for a rejection that proves an input is spent or gone. */
-export function isAlreadySpentInputError(err: unknown): boolean {
-  const message = (err instanceof Error ? err.message : String(err)).toLowerCase()
-  return (
-    message.includes('missing inputs') ||
-    message.includes('missingorspent') ||
-    message.includes('mempool-conflict') ||
-    message.includes('already spent') ||
-    message.includes('double spend') ||
-    message.includes('doublespend')
   )
 }
 

@@ -281,8 +281,10 @@ const firstSeenAt = new Map<string, number>()
 
 /** Feed a fresh address scan into the ownership filter (chain ingest). */
 export function rememberLiveOneSatOutpoints(
-  utxos: Array<{ outpoint: string; satoshis: number }>
+  utxos: Array<{ outpoint: string; satoshis: number }>,
+  identityKey?: string,
 ): void {
+  if (identityKey && getActiveWallet()?.identityKey !== identityKey) return
   const at = Date.now()
   cachedLiveOneSats = { at, keys: liveOneSatKeys(utxos) }
   cachedLiveAllOutpoints = {
@@ -1013,11 +1015,12 @@ let lastItemOutputs: ItemOutput[] = []
 let lastItemChain: Chain = 'main'
 let resolvingOrigins = false
 
-/** One address scan in flight at a time — Collect and ingest share the answer. */
-let liveScan: Promise<void> | null = null
+/** One address scan per account epoch — a prior vault must not block this one. */
+let liveScan: { epoch: number; promise: Promise<void> } | null = null
 
 function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
-  if (liveScan != null) return
+  const epoch = collectablesAccountEpoch
+  if (liveScan?.epoch === epoch) return
   if (
     getSpendPriorityDepth() > 0 ||
     shouldYieldChainIngestToSpend() ||
@@ -1025,9 +1028,10 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
   ) {
     return
   }
-  liveScan = scanLegacyAddress(wallet)
+  const promise = scanLegacyAddress(wallet)
     .then((scan) => {
-      rememberLiveOneSatOutpoints(scan.utxos)
+      if (epoch !== collectablesAccountEpoch) return
+      rememberLiveOneSatOutpoints(scan.utxos, wallet.identityKey)
       if (
         getSpendPriorityDepth() > 0 ||
         shouldYieldChainIngestToSpend() ||
@@ -1046,8 +1050,9 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
       )
     })
     .finally(() => {
-      liveScan = null
+      if (liveScan?.promise === promise) liveScan = null
     })
+  liveScan = { epoch, promise }
 }
 
 /** Await a fresh address UTXO set (send path — missing-inputs is worse than waiting). */
@@ -1080,7 +1085,7 @@ async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
   }
   try {
     const scan = await scanLegacyAddress(wallet)
-    rememberLiveOneSatOutpoints(scan.utxos)
+    rememberLiveOneSatOutpoints(scan.utxos, wallet.identityKey)
     if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
     return {
       oneSats: cachedLiveOneSats.keys,
@@ -1274,7 +1279,9 @@ export function noteIngestedItem(args: {
   app?: string | null
   collectionId?: string | null
   content?: string | null
+  identityKey?: string
 }): void {
+  if (args.identityKey && getActiveWallet()?.identityKey !== args.identityKey) return
   const target = normalizeOutpoint(args.outpoint)
   if (!target || isItemSent(target)) return
   const key = outpointKey(target)
@@ -4070,7 +4077,10 @@ export async function sendCollectable(args: {
           'Waiting to send the collectable',
           outpoint,
         ),
-      { promote: 'light' },
+      // The item input is explicit and createAction selects its own fee input.
+      // A pre-send change promotion scanned 552 rows and cost 15s in the field;
+      // stale fee state fails closed inside createAction and heals after failure.
+      { promote: false },
     )
   } catch (err) {
     clearPendingSend(outboundPending.id)
@@ -4707,7 +4717,9 @@ export async function sendCollectables(
           `Waiting to send ${outpoints.length} collectables`,
           outpoints[0],
         ),
-      { promote: 'light' },
+      // Same explicit-input path as a single item; do not page historical change
+      // before signing an otherwise-ready atomic transfer.
+      { promote: false },
     )
   } catch (err) {
     forgetItemsSent(outpoints)

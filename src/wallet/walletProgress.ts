@@ -33,6 +33,9 @@ export type WalletProgress = {
   status: WalletProgressStatus
   message: string | null
   updatedAt: number
+  /** Vault account that owns this progress snapshot. */
+  identityKey: string | null
+  accountIndex: number | null
 }
 
 type Listener = (progress: WalletProgress) => void
@@ -49,9 +52,14 @@ const IDLE: WalletProgress = {
   status: 'idle',
   message: null,
   updatedAt: 0,
+  identityKey: null,
+  accountIndex: null,
 }
 
 let progress: WalletProgress = { ...IDLE }
+let boundIdentityKey: string | null = null
+let boundAccountIndex: number | null = null
+const progressByIdentity = new Map<string, WalletProgress>()
 let clearTimer: ReturnType<typeof setTimeout> | null = null
 
 function emit(): void {
@@ -67,6 +75,25 @@ function clearClearTimer(): void {
 
 export function getWalletProgress(): WalletProgress {
   return progress
+}
+
+/** Bind the visible progress bus to one vault without discarding another's job. */
+export function bindWalletProgressAccount(
+  account: { identityKey: string; accountIndex: number } | null,
+): void {
+  clearClearTimer()
+  if (boundIdentityKey) progressByIdentity.set(boundIdentityKey, progress)
+  boundIdentityKey = account?.identityKey ?? null
+  boundAccountIndex = account?.accountIndex ?? null
+  progress = account
+    ? progressByIdentity.get(account.identityKey) ?? {
+        ...IDLE,
+        identityKey: account.identityKey,
+        accountIndex: account.accountIndex,
+        updatedAt: Date.now(),
+      }
+    : { ...IDLE, updatedAt: Date.now() }
+  emit()
 }
 
 export function isWalletProgressBusy(
@@ -142,9 +169,11 @@ export function startWalletProgress(args: {
   failed?: number
   skipped?: number
   message?: string | null
+  identityKey?: string | null
+  accountIndex?: number | null
 }): void {
-  clearClearTimer()
-  progress = {
+  const targetIdentity = args.identityKey ?? boundIdentityKey
+  const next: WalletProgress = {
     kind: args.kind,
     phase: args.phase ?? null,
     current: args.current ?? null,
@@ -154,7 +183,16 @@ export function startWalletProgress(args: {
     status: 'running',
     message: args.message?.trim() || null,
     updatedAt: Date.now(),
+    identityKey: targetIdentity,
+    accountIndex: args.accountIndex ?? boundAccountIndex,
   }
+  if (targetIdentity && targetIdentity !== boundIdentityKey) {
+    progressByIdentity.set(targetIdentity, next)
+    return
+  }
+  clearClearTimer()
+  progress = next
+  if (targetIdentity) progressByIdentity.set(targetIdentity, progress)
   emit()
 }
 
@@ -170,31 +208,46 @@ export function updateWalletProgress(
       | 'skipped'
       | 'message'
       | 'status'
+      | 'identityKey'
+      | 'accountIndex'
     >
   >,
 ): void {
-  if (progress.status !== 'running' && progress.status !== 'needs-resume') {
+  const targetIdentity = patch.identityKey ?? boundIdentityKey
+  const target =
+    targetIdentity && targetIdentity !== boundIdentityKey
+      ? progressByIdentity.get(targetIdentity)
+      : progress
+  if (!target || (target.status !== 'running' && target.status !== 'needs-resume')) {
     return
   }
-  clearClearTimer()
-  progress = {
-    ...progress,
+  const next: WalletProgress = {
+    ...target,
     ...patch,
     failed:
       patch.failed != null
         ? Math.max(0, Math.trunc(patch.failed))
-        : progress.failed,
+        : target.failed,
     skipped:
       patch.skipped != null
         ? Math.max(0, Math.trunc(patch.skipped))
-        : progress.skipped,
+        : target.skipped,
     message:
       patch.message !== undefined
         ? patch.message?.trim() || null
-        : progress.message,
-    status: patch.status ?? progress.status,
+        : target.message,
+    status: patch.status ?? target.status,
+    identityKey: targetIdentity,
+    accountIndex: patch.accountIndex ?? target.accountIndex,
     updatedAt: Date.now(),
   }
+  if (targetIdentity && targetIdentity !== boundIdentityKey) {
+    progressByIdentity.set(targetIdentity, next)
+    return
+  }
+  clearClearTimer()
+  progress = next
+  if (targetIdentity) progressByIdentity.set(targetIdentity, progress)
   emit()
 }
 
@@ -205,29 +258,52 @@ export function updateWalletProgress(
 export function finishWalletProgress(
   status: Exclude<WalletProgressStatus, 'idle' | 'running'>,
   patch?: Partial<
-    Pick<WalletProgress, 'phase' | 'current' | 'total' | 'failed' | 'skipped' | 'message'>
+    Pick<
+      WalletProgress,
+      | 'phase'
+      | 'current'
+      | 'total'
+      | 'failed'
+      | 'skipped'
+      | 'message'
+      | 'identityKey'
+      | 'accountIndex'
+    >
   >,
 ): void {
-  if (progress.status === 'idle') return
-  clearClearTimer()
-  progress = {
-    ...progress,
+  const targetIdentity = patch?.identityKey ?? boundIdentityKey
+  const target =
+    targetIdentity && targetIdentity !== boundIdentityKey
+      ? progressByIdentity.get(targetIdentity)
+      : progress
+  if (!target || target.status === 'idle') return
+  const next: WalletProgress = {
+    ...target,
     ...patch,
     failed:
       patch?.failed != null
         ? Math.max(0, Math.trunc(patch.failed))
-        : progress.failed,
+        : target.failed,
     skipped:
       patch?.skipped != null
         ? Math.max(0, Math.trunc(patch.skipped))
-        : progress.skipped,
+        : target.skipped,
     message:
       patch?.message !== undefined
         ? patch.message?.trim() || null
-        : progress.message,
+        : target.message,
     status,
+    identityKey: targetIdentity,
+    accountIndex: patch?.accountIndex ?? target.accountIndex,
     updatedAt: Date.now(),
   }
+  if (targetIdentity && targetIdentity !== boundIdentityKey) {
+    progressByIdentity.set(targetIdentity, next)
+    return
+  }
+  clearClearTimer()
+  progress = next
+  if (targetIdentity) progressByIdentity.set(targetIdentity, progress)
   emit()
   if (status === 'done' || status === 'failed') {
     clearTimer = setTimeout(() => {
@@ -239,7 +315,13 @@ export function finishWalletProgress(
 
 export function clearWalletProgress(): void {
   clearClearTimer()
-  progress = { ...IDLE, updatedAt: Date.now() }
+  progress = {
+    ...IDLE,
+    identityKey: boundIdentityKey,
+    accountIndex: boundAccountIndex,
+    updatedAt: Date.now(),
+  }
+  if (boundIdentityKey) progressByIdentity.set(boundIdentityKey, progress)
   emit()
 }
 
@@ -255,4 +337,7 @@ export function subscribeWalletProgress(listener: Listener): () => void {
 export function resetWalletProgressForTests(): void {
   clearClearTimer()
   progress = { ...IDLE }
+  boundIdentityKey = null
+  boundAccountIndex = null
+  progressByIdentity.clear()
 }
