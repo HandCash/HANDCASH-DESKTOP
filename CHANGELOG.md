@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.168] - 2026-09-15
+
+### Changed
+
+- Nav: instant tab click SFX + section skeleton while panel catches up (PR #7).
+- Arcade success finishes send immediately (no explorer wait).
+- Arcade invalid/missing-UTXO reject drops local spend so phantom pendingChange cannot paint.
+- Ancestor BEEF hydrate before postBeef capped at 2s.
+
 ## [1.3.167] - 2026-09-15
 
 ### Changed
