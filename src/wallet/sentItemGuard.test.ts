@@ -238,12 +238,16 @@ describe('sentItemGuard', () => {
     const guard = await import('./sentItemGuard')
     guard.markItemsSent([{ outpoint: `${TX}.0`, txid: 'b'.repeat(64) }])
 
-    // Dynamic import is async — wait a tick for invalidate to land.
-    await vi.waitFor(async () => {
-      const { getMarketListingAuthorization } = await import('./marketListing')
-      expect(getMarketListingAuthorization({ outpoint: `${TX}.0` })?.state).toBe(
-        'cancelled',
-      )
-    })
+    // Invalidate runs behind a dynamic import of marketListing. The default 1s
+    // waitFor budget is not enough to load that graph on a cold CI runner.
+    await vi.waitFor(
+      async () => {
+        const { getMarketListingAuthorization } = await import('./marketListing')
+        expect(getMarketListingAuthorization({ outpoint: `${TX}.0` })?.state).toBe(
+          'cancelled',
+        )
+      },
+      { timeout: 15_000, interval: 25 },
+    )
   })
 })

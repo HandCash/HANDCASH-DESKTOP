@@ -1,6 +1,9 @@
-#!/usr/bin/env node
 /**
  * Refuse a stale `@bsv/wallet-toolbox-client` patch.
+ *
+ * No shebang: the pre-push hook runs this as `node <path>`, and a shebang makes
+ * Vite's transform of this file throw `SyntaxError` on Windows runners when the
+ * regression suite imports it.
  *
  * `patch-package` pins a patch to one exact version. Bumping the dependency
  * without running `scripts/patch-wallet-toolbox.mjs` leaves a patch that cannot
