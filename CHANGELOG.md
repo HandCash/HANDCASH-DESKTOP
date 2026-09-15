@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.183] - 2026-09-15
+
+### Fixed
+
+- Made the market-offer fixture suite hermetic so tagged Mac and Linux packaging jobs do not depend on a sibling BRC-CLOUD checkout.
+
 ## [1.3.182] - 2026-09-15
 
 ### Fixed

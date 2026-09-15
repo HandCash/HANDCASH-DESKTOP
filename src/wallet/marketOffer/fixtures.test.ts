@@ -1,15 +1,18 @@
-import { LockingScript, PrivateKey, PublicKey } from '@bsv/sdk'
+import { PrivateKey, PublicKey } from '@bsv/sdk'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-// eslint-disable-next-line import/no-relative-parent-imports
-import { decodeOfferScript, offerScriptUsesNonMinimalPushes } from '../../../../BRC-CLOUD/src/marketOverlayProtocol.js'
 import {
   MARKET_FEE_BASIS_POINTS,
   MARKET_FEE_IDENTITY_KEY,
 } from '../walletConfig'
-import { encodeMarketOffer, MARKET_OFFER_MAGIC, marketOfferUsesMinimalPushes } from './index'
+import {
+  encodeMarketOffer,
+  MARKET_OFFER_MAGIC,
+  marketOfferUsesMinimalPushes,
+  parseMarketOffer,
+} from './index'
 import type { MarketOfferFields } from '../marketOverlayProtocol'
 
 const fixture = JSON.parse(
@@ -54,18 +57,17 @@ function fields(): MarketOfferFields {
 }
 
 describe('marketOffer fixtures', () => {
-  it('encodes MINIMALDATA that the overlay admits', () => {
+  it('encodes canonical MINIMALDATA accepted by the wire parser', () => {
     const hex = encodeMarketOffer(fields(), sellerKey)
     expect(marketOfferUsesMinimalPushes(hex)).toBe(true)
-    expect(offerScriptUsesNonMinimalPushes(hex)).toBe(false)
-    const offer = decodeOfferScript(LockingScript.fromHex(hex))
-    expect(offer.priceSats).toBe(fixture.grossPriceSats)
-    expect(offer.nonce).toBe(fixture.nonce)
+    const offer = parseMarketOffer(hex)
+    expect(offer?.grossPriceSats).toBe(fixture.grossPriceSats)
+    expect(offer?.nonce).toBe(fixture.nonce)
   })
 
   it('rejects a non-minimal version push after 1SAT-MARKET', () => {
     const magic = Buffer.from(MARKET_OFFER_MAGIC, 'utf8').toString('hex')
     const nonMinimal = `${magic}0101`
-    expect(offerScriptUsesNonMinimalPushes(nonMinimal)).toBe(true)
+    expect(marketOfferUsesMinimalPushes(nonMinimal)).toBe(false)
   })
 })
