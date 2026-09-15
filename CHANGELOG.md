@@ -1,23 +1,23 @@
 # Changelog
 
-## [1.3.180] - 2026-09-15
+## [1.3.181] - 2026-09-15
 
 ### Changed
 
 - Patch release (every push must ship a new version).
+
+## [1.3.180] - 2026-09-15
+
+### Fixed
+
+- Market listing no longer treats Arcade `MINED` / indexer `isUtxo=false` as proof that funding coins were spent. That false verdict was wiping live change after MissingInputs and surfacing “A coin that was going to pay for this listing had already been spent.”
+- Ghost MissingInputs on a list attempt aborts cleanly and keeps the tip; only explicit already-spent / double-spend answers may retire coins.
 
 ## [1.3.179] - 2026-09-15
 
 ### Changed
 
 - Patch release (every push must ship a new version).
-
-## [Unreleased]
-
-### Fixed
-
-- Market listing no longer treats Arcade `MINED` / indexer `isUtxo=false` as proof that funding coins were spent. That false verdict was wiping live change after MissingInputs and surfacing “A coin that was going to pay for this listing had already been spent.”
-- Ghost MissingInputs on a list attempt aborts cleanly and keeps the tip; only explicit already-spent / double-spend answers may retire coins.
 
 ## [1.3.178] - 2026-09-15
 
