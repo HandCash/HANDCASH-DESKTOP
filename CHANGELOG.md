@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.174] - 2026-09-15
+
+### Fixed
+
+- Release workflows no longer exit 1 while reporting a green suite. Four collectable tests stubbed `sentItemGuard` with a fixed set of exports, so the `isItemAbandoned` read on the relinquish path threw an unhandled rejection; those mocks are partial now. 1.3.173 shipped no installers because of this.
+
 ## [1.3.173] - 2026-09-15
 
 ### Fixed
