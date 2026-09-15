@@ -2,10 +2,12 @@ import {
   Beef,
   BigNumber,
   Hash,
+  LockingScript,
   P2PKH,
   PrivateKey,
   PublicKey,
   Signature,
+  Transaction,
   UnlockingScript,
   Utils,
 } from '@bsv/sdk'
@@ -103,6 +105,22 @@ export type MarketListingAdvert = {
   nonce: string
   /** Overlay-admitted listing BEEF. Prefer this over indexer getBeefForTxid. */
   listingBeefB64?: string | null
+  /**
+   * List-time seller signatures so a buyer can settle without a live
+   * messagebox round-trip. Omitted when pre-sign fails; buy then uses the
+   * collaborative seller path.
+   */
+  settlementUnlocks?: MarketSettlementUnlocks | null
+}
+
+export type MarketSettlementUnlocks = {
+  version: 1
+  itemUnlockingScript: string
+  offerUnlockingScript: string
+  itemSighash: 'NONE|ANYONECANPAY'
+  offerSighash: 'SINGLE|ANYONECANPAY'
+  sellerSats: number
+  feeSats: number
 }
 
 export type CreateMarketListingArgs = {
@@ -1604,6 +1622,27 @@ export async function createMarketListingAdvert(
       expiresAt: fields.expiresAt,
       nonce: fields.nonce,
     }
+    try {
+      const listingTx = Beef.fromBinary(atomic).findTxid(txid)?.tx
+      if (!listingTx) {
+        throw new Error('Listing transaction missing from AtomicBEEF')
+      }
+      advert.settlementUnlocks = await buildMarketSettlementUnlocks({
+        listingTx,
+        txid,
+        itemLockingScript,
+        offerLockingScript,
+        payTo: fields.payTo,
+        priceSats,
+        feePayToAddress: fields.feePayTo,
+        privateKey: offerKey,
+      })
+    } catch (err) {
+      console.warn(
+        '[market] list-time settlement pre-sign failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
     // Authorization is written only after signAction produced the processed result.
     saveAuthorization({
       key: listingAuthorizationKey(listedOutpoint, nonce),
@@ -2074,16 +2113,94 @@ export function getMarketSaleStatus(args: { outpoint: string }): {
 }
 
 
+/**
+ * List-time SIGHASH_NONE|ANYONECANPAY on the item (buyer sets vout0) and
+ * SIGHASH_SINGLE|ANYONECANPAY checksig-only on the offer (binds vout1 seller
+ * payment). Pre-sign failure must not block listing.
+ */
+export async function buildMarketSettlementUnlocks(args: {
+  listingTx: Transaction
+  txid: string
+  itemLockingScript: string
+  offerLockingScript: string
+  payTo: string
+  priceSats: number
+  feePayToAddress: string
+  privateKey: PrivateKey
+}): Promise<MarketSettlementUnlocks> {
+  const txid = args.txid.trim().toLowerCase()
+  if (String(args.listingTx.id('hex')).toLowerCase() !== txid) {
+    throw new Error('Listing transaction does not match txid')
+  }
+  const amounts = calculateMarketSettlement(args.priceSats)
+  const itemLock = LockingScript.fromHex(args.itemLockingScript)
+  const offerLock = LockingScript.fromHex(args.offerLockingScript)
+  const skeleton = new Transaction()
+  skeleton.addInput({
+    sourceTXID: txid,
+    sourceOutputIndex: MARKET_ITEM_VOUT,
+    sourceTransaction: args.listingTx,
+    unlockingScriptTemplate: new P2PKH().unlock(
+      args.privateKey,
+      'none',
+      true,
+      1,
+      itemLock,
+    ),
+  })
+  skeleton.addInput({
+    sourceTXID: txid,
+    sourceOutputIndex: MARKET_OFFER_VOUT,
+    sourceTransaction: args.listingTx,
+    unlockingScriptTemplate: checksigOnlyUnlock(
+      args.privateKey,
+      1,
+      offerLock,
+      'single',
+      true,
+    ),
+  })
+  skeleton.addOutput({
+    satoshis: 1,
+    lockingScript: new P2PKH().lock(args.payTo),
+  })
+  skeleton.addOutput({
+    satoshis: amounts.sellerSats,
+    lockingScript: new P2PKH().lock(args.payTo),
+  })
+  skeleton.addOutput({
+    satoshis: amounts.feeSats,
+    lockingScript: new P2PKH().lock(args.feePayToAddress),
+  })
+  await skeleton.sign()
+  const itemUnlockingScript = skeleton.inputs[0]?.unlockingScript?.toHex()
+  const offerUnlockingScript = skeleton.inputs[1]?.unlockingScript?.toHex()
+  if (!itemUnlockingScript || !offerUnlockingScript) {
+    throw new Error('List-time settlement signatures missing')
+  }
+  return {
+    version: 1,
+    itemUnlockingScript,
+    offerUnlockingScript,
+    itemSighash: 'NONE|ANYONECANPAY',
+    offerSighash: 'SINGLE|ANYONECANPAY',
+    sellerSats: amounts.sellerSats,
+    feeSats: amounts.feeSats,
+  }
+}
+
 /** Offer lock is <pubkey> OP_CHECKSIG + PushDrop fields. Unlock is sig-only. */
 function checksigOnlyUnlock(
   privateKey: PrivateKey,
   satoshis: number,
   lockingScript: { toHex?: () => string } | unknown,
+  signOutputs: 'all' | 'none' | 'single' = 'all',
+  anyoneCanPay = false,
 ) {
   const p2pkh = new P2PKH().unlock(
     privateKey,
-    'all',
-    false,
+    signOutputs,
+    anyoneCanPay,
     satoshis,
     lockingScript as Parameters<P2PKH['unlock']>[4],
   )

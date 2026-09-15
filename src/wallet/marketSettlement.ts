@@ -423,6 +423,32 @@ export function validateMarketSettlementOutputs(args: {
   }
 }
 
+/** True when the advert carries list-time seller unlocks a buyer can spend. */
+export function listingHasBuyerCompletableSettlement(
+  listing: Pick<MarketListingAdvert, 'settlementUnlocks'>,
+  amounts?: { sellerSats: number; feeSats: number },
+): boolean {
+  const unlocks = listing.settlementUnlocks
+  if (
+    !unlocks ||
+    unlocks.version !== 1 ||
+    typeof unlocks.itemUnlockingScript !== 'string' ||
+    typeof unlocks.offerUnlockingScript !== 'string' ||
+    !unlocks.itemUnlockingScript.trim() ||
+    !unlocks.offerUnlockingScript.trim()
+  ) {
+    return false
+  }
+  if (
+    amounts &&
+    (unlocks.sellerSats !== amounts.sellerSats ||
+      unlocks.feeSats !== amounts.feeSats)
+  ) {
+    return false
+  }
+  return true
+}
+
 async function waitForSellerResponse<T extends StoredResponse['type']>(
   saleId: string,
   type: T,
@@ -659,43 +685,55 @@ export async function executeMarketPurchase(
     chart.send({ type: 'VERIFIED' })
     chart.send({ type: 'RESERVED', reference: signable.reference })
     try {
-      const delivered = await deliverMarketSettlementWire({
-        recipientIdentityKey: listing.seller,
-        rootKeyHex: active.rootKeyHex,
-        senderIdentityKey: active.identityKey,
-        messagebox: sellerMessagebox,
-        wire: {
-          type: 'sign-request',
-          saleId,
-          buyerIdentityKey: active.identityKey,
-          buyerAddress: active.address,
-          intent: args.intent,
-          ...(buyerMessagebox ? { buyerMessagebox } : {}),
-          listing,
-          provenance,
-          signableBeefB64: b64(signable.tx),
-          itemVin,
-          offerVin,
-          itemOutputIndex: 0,
-          sellerOutputIndex: 1,
-          feeOutputIndex: 2,
-          expiresAt: pending.expiresAt,
-        },
-      })
-      if (!delivered) throw new Error('Seller messagebox is unreachable')
-      const response = await waitForSellerResponse(saleId, 'sign-response')
-      if (!response.accepted || !response.unlockingScript) {
-        throw new Error(response.reason || 'Seller refused settlement')
+      const preSigned = listingHasBuyerCompletableSettlement(listing, amounts)
+      let itemUnlockingScript: string
+      let offerUnlockingScript: string
+      if (preSigned && listing.settlementUnlocks) {
+        itemUnlockingScript = listing.settlementUnlocks.itemUnlockingScript
+        offerUnlockingScript = listing.settlementUnlocks.offerUnlockingScript
+        chart.send({ type: 'SELLER_SIGNED' })
+      } else {
+        const delivered = await deliverMarketSettlementWire({
+          recipientIdentityKey: listing.seller,
+          rootKeyHex: active.rootKeyHex,
+          senderIdentityKey: active.identityKey,
+          messagebox: sellerMessagebox,
+          wire: {
+            type: 'sign-request',
+            saleId,
+            buyerIdentityKey: active.identityKey,
+            buyerAddress: active.address,
+            intent: args.intent,
+            ...(buyerMessagebox ? { buyerMessagebox } : {}),
+            listing,
+            provenance,
+            signableBeefB64: b64(signable.tx),
+            itemVin,
+            offerVin,
+            itemOutputIndex: 0,
+            sellerOutputIndex: 1,
+            feeOutputIndex: 2,
+            expiresAt: pending.expiresAt,
+          },
+        })
+        if (!delivered) throw new Error('Seller messagebox is unreachable')
+        const response = await waitForSellerResponse(saleId, 'sign-response')
+        if (!response.accepted || !response.unlockingScript) {
+          throw new Error(response.reason || 'Seller refused settlement')
+        }
+        chart.send({ type: 'SELLER_SIGNED' })
+        if (!response.offerUnlockingScript) {
+          throw new Error('Seller offer-token signature missing')
+        }
+        itemUnlockingScript = response.unlockingScript
+        offerUnlockingScript = response.offerUnlockingScript
       }
-      chart.send({ type: 'SELLER_SIGNED' })
-      const offerUnlockingScript = response.offerUnlockingScript
-      if (!offerUnlockingScript) throw new Error('Seller offer-token signature missing')
       chart.send({ type: 'SIGNING' })
       remember({ phase: 'signedUnknown' })
       const signed = await active.wallet.signAction({
         reference: signable.reference,
         spends: {
-          [itemVin]: { unlockingScript: response.unlockingScript },
+          [itemVin]: { unlockingScript: itemUnlockingScript },
           [offerVin]: { unlockingScript: offerUnlockingScript },
         },
         options: { acceptDelayedBroadcast: false },
@@ -711,33 +749,40 @@ export async function executeMarketPurchase(
         txid,
         atomicBeef: atomic,
       })
-      const receiptDelivered = await deliverMarketSettlementWire({
+      const receiptWire = {
         recipientIdentityKey: listing.seller,
         rootKeyHex: active.rootKeyHex,
         senderIdentityKey: active.identityKey,
         messagebox: sellerMessagebox,
         wire: {
-          type: 'receipt',
+          type: 'receipt' as const,
           saleId,
           txid,
           atomicBeefB64: b64(atomic),
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
         },
-      })
+      }
       let broadcasted = true
       let receipt: MarketSettlementReceipt | undefined
-      if (receiptDelivered) try {
-        const receiptResponse = await waitForSellerResponse(
-          saleId,
-          'receipt-response',
-          15_000
-        )
-        broadcasted =
-          receiptResponse.txid.toLowerCase() === txid.toLowerCase() &&
-          receiptResponse.broadcasted
-        receipt = receiptResponse.receipt
-      } catch {
-        // BRC-33 is optional. Durable recovery will accept a later seller receipt.
+      if (preSigned) {
+        // Offline seller is the point of list-time unlocks. Do not block the
+        // buyer on messagebox; a later recover path can still ingest proceeds.
+        void deliverMarketSettlementWire(receiptWire).catch(() => {})
+      } else {
+        const receiptDelivered = await deliverMarketSettlementWire(receiptWire)
+        if (receiptDelivered) try {
+          const receiptResponse = await waitForSellerResponse(
+            saleId,
+            'receipt-response',
+            15_000
+          )
+          broadcasted =
+            receiptResponse.txid.toLowerCase() === txid.toLowerCase() &&
+            receiptResponse.broadcasted
+          receipt = receiptResponse.receipt
+        } catch {
+          // BRC-33 is optional. Durable recovery will accept a later seller receipt.
+        }
       }
       if (
         receipt &&
