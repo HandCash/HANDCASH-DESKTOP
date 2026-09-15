@@ -321,6 +321,7 @@ html:is(.platform-mobile, .layout-compact) .connected-app-row .connected-app-car
 }
 
 html:is(.platform-mobile, .layout-compact)
+  .connected-app-row
   .connected-app-card-actions
   > .connected-app-icon-action {
   width: 40px;

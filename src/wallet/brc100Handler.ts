@@ -1131,13 +1131,24 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       const items = payload?.importedItemsCount ?? 0
       if (funds > 0 || items > 0) playWalletSound('receive')
       else playWalletSound('soft')
+    } else if (method === 'processAction') {
+      // App finished broadcast of a prior noSend — change can join the UTXO set.
+      const txid = extractTxid(result) ?? extractTxid(args)
+      if (txid) {
+        try {
+          await keepChangeOfSignedTx(txid)
+        } catch (err) {
+          console.warn('[brc100] keep change after processAction skipped', err)
+        }
+      }
     } else if (method === 'createAction') {
       const txid = extractTxid(result)
       if (txid) {
         cacheImageIconsFromCreateAction(txid, args, result)
         void cacheCreateActionBeef(active, txid, result)
-        // Await so the HTTP response lands after change is spendable — rapid
-        // app createAction / internalize chains must not race this promote.
+        // Await so the HTTP response lands after spent inputs are sealed.
+        // Unsent/noSend change stays unspendable until Arcade/processAction so
+        // the next app prefers fresh UTXOs over chaining an unbroadcast parent.
         await sealAfterAppCreateAction(txid, result)
       }
       if (isBsv21IdentityMintArgs(method, args) && txid) {

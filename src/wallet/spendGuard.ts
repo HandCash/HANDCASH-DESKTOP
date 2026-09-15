@@ -11,7 +11,11 @@
 import { extractSatsFromArgs } from './appActivity'
 import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
-import { fetchBalanceRead, getActiveWallet } from './session'
+import {
+  fetchBalanceRead,
+  getActiveWallet,
+  peekProvenConfirmedSpendable,
+} from './session'
 import { acquireSpendLease } from './spendLease'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
@@ -224,18 +228,46 @@ export async function runExclusiveBurn<T>(
 const BALANCE_UNREADABLE =
   'Wallet storage is busy, so your spendable balance could not be read. Nothing was sent — try again in a moment.'
 
+/** Bound live toolbox reads so app pay is not stuck behind a wedged IDB. */
+const CONFIRMED_READ_BUDGET_MS = 1_500
+
 /**
  * Confirmed spendable sats, or a refusal.
  *
  * An unreadable balance must never be spent against as 0: that reports a funded
- * wallet as broke and hides a storage problem behind a wrong number.
+ * wallet as broke and hides a storage problem behind a wrong number. When the
+ * live read fails or exceeds the budget, a previously proven confirmed total
+ * is allowed — sync contention must not block auth/pay when funds exist.
  */
 async function readConfirmedSpendable(active: {
   wallet: Parameters<typeof fetchBalanceRead>[0]
 }): Promise<number> {
-  const read = await fetchBalanceRead(active.wallet, { creditUnconfirmed: false })
-  if (read.kind === 'unavailable') throw new Error(BALANCE_UNREADABLE)
-  return read.sats
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let read: Awaited<ReturnType<typeof fetchBalanceRead>>
+  try {
+    read = await Promise.race([
+      fetchBalanceRead(active.wallet, { creditUnconfirmed: false }),
+      new Promise<Awaited<ReturnType<typeof fetchBalanceRead>>>((resolve) => {
+        timer = setTimeout(
+          () => resolve({ kind: 'unavailable', reason: 'storageUnreadable' }),
+          CONFIRMED_READ_BUDGET_MS,
+        )
+      }),
+    ])
+  } finally {
+    if (timer != null) clearTimeout(timer)
+  }
+  if (read.kind === 'ok') return read.sats
+
+  const proven = peekProvenConfirmedSpendable(active.wallet)
+  if (proven != null && proven > 0) {
+    logDiag('spend-guard', 'warn', 'confirmed-from-proven-cache', {
+      proven,
+      reason: read.reason,
+    })
+    return proven
+  }
+  throw new Error(BALANCE_UNREADABLE)
 }
 
 /** Local toolbox spendable sats — no network refresh, no unconfirmed credit. */

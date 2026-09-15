@@ -5809,8 +5809,8 @@ html[data-aeon-mode='light']
   --wallet-action-slot-own: #ecefec;
 }
 
-.connected-app-card-actions > .connected-app-icon-action {
-  /* Fixed square hit targets — flex:1 squished icons on narrow rows. */
+/* List row only — grid cards keep flexible action strip. */
+.connected-app-row .connected-app-card-actions > .connected-app-icon-action {
   flex: 0 0 auto;
   width: 40px;
   height: 40px;
@@ -5821,9 +5821,20 @@ html[data-aeon-mode='light']
   box-sizing: border-box;
 }
 
-.connected-app-card-actions .connected-app-icon-action {
+.connected-app-row .connected-app-card-actions .connected-app-icon-action {
   justify-content: center;
   align-items: center;
+}
+
+.collection-grid-card .connected-app-card-actions > .connected-app-icon-action {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  padding-inline: 0;
+}
+
+.collection-grid-card .connected-app-card-actions .connected-app-icon-action {
+  justify-content: center;
 }
 
 .permission-modal .wallet-action-bar {

@@ -31,6 +31,10 @@ vi.mock('./paymentPolicy', () => ({
   assertOnlineForPayment: () => assertOnlineForPayment(),
 }))
 
+const peekProvenConfirmedSpendable = vi.fn(
+  (_wallet?: unknown): number | null => null,
+)
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     wallet: {},
@@ -43,6 +47,8 @@ vi.mock('./session', () => ({
   }),
   fetchBalanceRead: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
     fetchBalanceRead(wallet, opts),
+  peekProvenConfirmedSpendable: (wallet?: unknown) =>
+    peekProvenConfirmedSpendable(wallet),
   bumpBalanceAfterHeal: vi.fn(),
 }))
 
@@ -87,6 +93,8 @@ vi.mock('./spendLease', () => ({
 
 describe('refreshSpendableBalance', () => {
   beforeEach(() => {
+    peekProvenConfirmedSpendable.mockReset()
+    peekProvenConfirmedSpendable.mockReturnValue(null)
     vi.clearAllMocks()
     mockConfirmed(12_345)
     unconfirmedChangeSats.mockResolvedValue(0)
@@ -300,6 +308,7 @@ describe('refreshSpendableBalance', () => {
       kind: 'unavailable',
       reason: 'storageUnreadable',
     })
+    peekProvenConfirmedSpendable.mockReturnValue(null)
     const { assertSendableBalance, refreshSpendableBalance } = await import('./spendGuard')
 
     await expect(assertSendableBalance(500)).rejects.toThrow(/could not be read/)
@@ -307,5 +316,33 @@ describe('refreshSpendableBalance', () => {
     // No "insufficient" verdict may be reached from a failed read.
     await expect(assertSendableBalance(500)).rejects.not.toThrow(/Insufficient balance/)
     expect(unconfirmedChangeSats).not.toHaveBeenCalled()
+  })
+
+  it('uses a proven confirmed cache when live storage is unreadable', async () => {
+    fetchBalanceRead.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'storageUnreadable',
+    })
+    peekProvenConfirmedSpendable.mockReturnValue(12_000)
+    const { assertSendableBalanceForReview, assertSendableBalance } =
+      await import('./spendGuard')
+
+    await expect(assertSendableBalanceForReview(500)).resolves.toBe(12_000)
+    await expect(assertSendableBalance(500)).resolves.toBe(12_000)
+    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
+  })
+
+  it('still refuses when the proven cache is short of the amount', async () => {
+    fetchBalanceRead.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'storageUnreadable',
+    })
+    peekProvenConfirmedSpendable.mockReturnValue(100)
+    unconfirmedChangeSats.mockResolvedValue(0)
+    const { assertSendableBalanceForReview } = await import('./spendGuard')
+
+    await expect(assertSendableBalanceForReview(500)).rejects.toThrow(
+      /Insufficient balance/,
+    )
   })
 })

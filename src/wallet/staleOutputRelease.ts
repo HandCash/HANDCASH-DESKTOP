@@ -920,6 +920,51 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
  * After an app `createAction`: hide spent inputs and promote this tx's unspent
  * outs so the next bet / payout spend can chain without waiting on confirmation.
  */
+/**
+ * App `noSend` / `unsent` change must not become the next app's fee input —
+ * that chains an unbroadcast parent and Arcade rejects with missing-inputs.
+ * Promote only once the wallet (or Arcade) has taken the tx past that hold.
+ */
+async function appCreateActionChangeReadyToPromote(txid: string): Promise<boolean> {
+  const id = txid.trim().toLowerCase()
+  if (txHadArcadeSubmitContact(id)) return true
+  const storage = getActiveWallet()?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return false
+  try {
+    const status = await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return null
+      let rows: TxStatusRow[] | undefined
+      try {
+        rows = await sp.findTransactions({
+          partial: { txid: id },
+          noRawTx: true,
+          paged: { limit: 1, offset: 0 },
+        })
+      } catch (err) {
+        if (!isUndefinedPartialFilterError(err)) {
+          console.warn(
+            '[stale-output] app-change status lookup skipped',
+            id.slice(0, 12),
+            err,
+          )
+        }
+        return null
+      }
+      return String(rows?.[0]?.status ?? '').toLowerCase() || null
+    })
+    if (!status) return false
+    // App still owns broadcast — leave change unspendable so other apps pick
+    // confirmed / unrelated UTXOs instead of chaining this parent.
+    if (status === 'unsent' || status === 'nosend') return false
+    if (status === 'failed') return false
+    return isLiveLocalTxStatus(status)
+  } catch (err) {
+    console.warn('[stale-output] app-change promote gate skipped', id.slice(0, 12), err)
+    return false
+  }
+}
+
 export async function sealAfterAppCreateAction(
   txid: string,
   result: unknown,
@@ -945,7 +990,13 @@ export async function sealAfterAppCreateAction(
     console.warn('[stale-output] seal inputs after createAction skipped', err)
   }
   try {
-    await keepChangeOfSignedTx(id)
+    if (await appCreateActionChangeReadyToPromote(id)) {
+      await keepChangeOfSignedTx(id)
+    } else {
+      console.info(
+        `[stale-output] defer change promote for ${id.slice(0, 12)} — unsent/noSend; next app uses fresh UTXOs`,
+      )
+    }
   } catch (err) {
     console.warn('[stale-output] keep change after createAction skipped', err)
   }
@@ -962,8 +1013,11 @@ export async function sealAfterAppCreateAction(
 
 /**
  * Mark this wallet's unspent default-basket outs of `txid` spendable so the next
- * createAction can chain them immediately — change after an app spend, or BSV
- * the app just internalized — without waiting on indexer confirmation.
+ * createAction can chain them — change after a broadcast/Arcade-pinned app spend,
+ * or BSV the app just internalized — without waiting on indexer confirmation.
+ *
+ * Callers that seal an app `noSend`/`unsent` createAction must not invoke this
+ * until broadcast/Arcade pin; otherwise the next app chains an unbroadcast parent.
  *
  * Item / BSV-21 basket tips stay untouched (identity remittance path).
  */
@@ -1020,11 +1074,13 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
   }
 }
 
-/** Statuses whose change outputs may still be unspendable in the toolbox. */
+/** Statuses whose change outputs may still be unspendable in the toolbox.
+ *  Omit `nosend`/`unsent` — app-held broadcasts must not feed the next app's
+ *  fee selection until Arcade/processAction pins them.
+ */
 const PENDING_CHANGE_TX_STATUSES = [
   'sending',
   'unproven',
-  'nosend',
   'nonfinal',
   'unfail',
   'unmined',

@@ -88,8 +88,18 @@ export async function submitAtomicBeefToMiners(
 
   let summary: PostBeefSummary | undefined
   let rawResults: PostBeefServiceResult[] | undefined
+  let beefBytes = atomic
   try {
-    const results = await active.services.postBeef(Beef.fromBinary(atomic), [id])
+    // Unconfirmed parent chains need ancestor bodies in the BEEF Arcade sees.
+    // App→app change chaining without this looks like missing-inputs / doubleSpend.
+    const { hydrateInputBeef } = await import('./beefCache')
+    const shaped = await hydrateInputBeef(active, Beef.fromBinary(atomic))
+    if (shaped?.length) beefBytes = shaped
+  } catch (err) {
+    console.warn('[minerSubmit] ancestor hydrate skipped', id.slice(0, 12), err)
+  }
+  try {
+    const results = await active.services.postBeef(Beef.fromBinary(beefBytes), [id])
     rawResults = results as PostBeefServiceResult[]
     summary = summarizePostBeef(rawResults)
     if (postBeefResultsHitArcade(rawResults)) {

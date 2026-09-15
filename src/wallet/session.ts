@@ -518,10 +518,12 @@ export type BalanceRead =
  *
  * Showing `$0.00` because a read failed is the single most alarming thing a
  * wallet can do, so a failed read falls back to the last real figure instead
- * of inventing a zero. Spend gates must not use this — they take the tagged
- * `fetchBalanceRead` and fail closed.
+ * of inventing a zero. Spend gates prefer a live `fetchBalanceRead`; when
+ * storage is busy they may fall back to {@link peekProvenConfirmedSpendable}.
  */
 let lastKnownBalanceSats: number | null = null
+/** Last confirmed-only spendable that actually came from toolbox storage. */
+let lastConfirmedSpendableSats: number | null = null
 let lastBalanceBreakdown = ''
 
 /** Drop cached balance breakdown so the next read re-logs after a heal promoted rows. */
@@ -576,6 +578,8 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
 }
 
 const spendableBalanceCache = new WeakMap<object, number>()
+/** Confirmed-only totals (creditUnconfirmed:false) for spend preflight under IDB load. */
+const confirmedSpendableCache = new WeakMap<object, number>()
 const spendableBalanceRefresh = new WeakMap<object, Promise<number | null>>()
 const balanceReadFlights = new WeakMap<
   object,
@@ -601,12 +605,35 @@ export function invalidateBalanceReads(
         : null
   if (!target) return
   spendableBalanceCache.delete(target)
+  confirmedSpendableCache.delete(target)
   balanceReadFlights.delete(target)
 }
 
 
 export function lastKnownBalance(): number | null {
   return lastKnownBalanceSats
+}
+
+/**
+ * Last proven confirmed spendable sats for this wallet (or session-wide).
+ * Used by spend preflight when a live toolbox read fails under storage contention.
+ * Returns null when nothing has been proven yet — never invents zero.
+ */
+export function peekProvenConfirmedSpendable(
+  wallet?: Wallet | WalletInterface | object | null,
+): number | null {
+  const session = getActiveWallet()
+  const w =
+    wallet && typeof wallet === 'object'
+      ? wallet
+      : session?.wallet && typeof session.wallet === 'object'
+        ? session.wallet
+        : null
+  if (w) {
+    const cached = confirmedSpendableCache.get(w)
+    if (cached != null) return cached
+  }
+  return lastConfirmedSpendableSats
 }
 
 export async function fetchBalanceRead(
@@ -695,8 +722,13 @@ export async function fetchBalanceRead(
     return { kind: 'ok', sats: spendable }
   }
   // Confirmed-only: return toolbox spendable without downgrading the display
-  // cache / lastKnown (pending change is still owned cash).
+  // cache / lastKnown (pending change is still owned cash). Still record a
+  // confirmed snapshot so spend preflight can proceed while IDB is busy.
   if (opts?.creditUnconfirmed === false) {
+    lastConfirmedSpendableSats = spendable
+    if (typeof w === 'object' && w != null) {
+      confirmedSpendableCache.set(w, spendable)
+    }
     return { kind: 'ok', sats: spendable }
   }
 
@@ -737,9 +769,9 @@ export async function fetchBalanceRead(
  *
  * An unreadable balance resolves to the last figure this wallet actually read
  * rather than 0, so storage contention cannot make a funded wallet look empty.
- * Confirmed-only reads (spend gates) get 0 instead — those callers must fail
- * closed, and `spendGuard` uses `fetchBalanceRead` to refuse with a real
- * reason rather than pretending the wallet is broke.
+ * Confirmed-only reads (spend gates) get 0 here; `spendGuard` uses
+ * `fetchBalanceRead` plus {@link peekProvenConfirmedSpendable} so a busy
+ * store cannot freeze app auth/pay when funds were already proven.
  */
 export async function fetchBalanceSats(
   wallet?: Wallet | WalletInterface,
