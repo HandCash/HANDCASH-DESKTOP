@@ -68,6 +68,56 @@ export function postBeefResultsHitArcade(
   return results.some((r) => String(r.name ?? '').toLowerCase().includes('arcade'))
 }
 
+/**
+ * Arcade POST success is send completion — do not wait on explorers / merkle.
+ * Matches arcadeV2: 202 / success / alreadyKnown on an Arcade-named service.
+ */
+export function postBeefResultsArcadeAccepted(
+  results: PostBeefServiceResult[] | null | undefined,
+): boolean {
+  if (!Array.isArray(results)) return false
+  for (const r of results) {
+    if (!String(r.name ?? '').toLowerCase().includes('arcade')) continue
+    if (String(r.status ?? '').toLowerCase() === 'success') return true
+    for (const t of r.txidResults ?? []) {
+      if (t.status === 'success' || t.alreadyKnown) return true
+      const notes = (t.notes ?? []).map((n) => String(n.what ?? ''))
+      if (notes.some((w) => /AlreadyInMempool/i.test(w))) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Arcade hard-reject for invalid / missing inputs — drop local change immediately.
+ * Do not wait on explorers; do not pin the tx as "Arcade submitted".
+ */
+export function postBeefResultsArcadeHardReject(
+  results: PostBeefServiceResult[] | null | undefined,
+): boolean {
+  if (!Array.isArray(results)) return false
+  if (postBeefResultsArcadeAccepted(results)) return false
+  for (const r of results) {
+    if (!String(r.name ?? '').toLowerCase().includes('arcade')) continue
+    for (const t of r.txidResults ?? []) {
+      if (t.doubleSpend) return true
+      const notes = (t.notes ?? []).map((n) => String(n.what ?? ''))
+      if (notes.some((w) => /MissingInputs|AlreadySpent|Invalid|not.?found/i.test(w))) {
+        return true
+      }
+      if (t.status === 'error' && t.data && typeof t.data === 'object') {
+        const msg = String((t.data as { message?: string }).message ?? '')
+        if (/missing.?input|already.?spent|invalid/i.test(msg)) return true
+      }
+      if (t.status === 'error') return true
+    }
+    if (String(r.status ?? '').toLowerCase() === 'error' && !(r.txidResults ?? []).length) {
+      return true
+    }
+  }
+  return false
+}
+
 export function rememberArcadeSubmitContact(txid: string): void {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return

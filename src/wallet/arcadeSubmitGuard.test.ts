@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetArcadeSubmitGuardForTests,
+  postBeefResultsArcadeAccepted,
+  postBeefResultsArcadeHardReject,
   postBeefResultsHitArcade,
   rememberArcadeSubmitContact,
   signedTxSpendConflictIsProven,
@@ -47,6 +49,49 @@ describe('arcadeSubmitGuard', () => {
     ).toBe(true)
     expect(
       postBeefResultsHitArcade([{ name: 'Bitails', status: 'error' }]),
+    ).toBe(false)
+  })
+
+  it('treats Arcade success / alreadyKnown as accepted without explorers', () => {
+    expect(
+      postBeefResultsArcadeAccepted([
+        { name: 'Bitails', status: 'error' },
+        { name: 'ArcadeBeef', status: 'success' },
+      ]),
+    ).toBe(true)
+    expect(
+      postBeefResultsArcadeAccepted([
+        {
+          name: 'Arcade',
+          status: 'error',
+          txidResults: [{ status: 'success', alreadyKnown: true }],
+        },
+      ]),
+    ).toBe(true)
+    expect(
+      postBeefResultsArcadeAccepted([
+        { name: 'ArcadeBeef', status: 'error', txidResults: [{ status: 'error' }] },
+      ]),
+    ).toBe(false)
+  })
+
+  it('treats Arcade missing-inputs / error as hard reject (drop funds)', () => {
+    expect(
+      postBeefResultsArcadeHardReject([
+        {
+          name: 'ArcadeBeef',
+          status: 'error',
+          txidResults: [
+            { status: 'error', doubleSpend: true, notes: [{ what: 'MissingInputs' }] },
+          ],
+        },
+      ]),
+    ).toBe(true)
+    expect(
+      postBeefResultsArcadeHardReject([
+        { name: 'ArcadeBeef', status: 'success' },
+        { name: 'Bitails', status: 'error' },
+      ]),
     ).toBe(false)
   })
 

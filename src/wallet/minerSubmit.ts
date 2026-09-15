@@ -18,6 +18,8 @@ import {
   restoreOnChainLocalTx,
 } from './staleOutputRelease'
 import {
+  postBeefResultsArcadeAccepted,
+  postBeefResultsArcadeHardReject,
   postBeefResultsHitArcade,
   rememberArcadeSubmitContact,
   signedTxSpendConflictIsProven,
@@ -90,10 +92,13 @@ export async function submitAtomicBeefToMiners(
   let rawResults: PostBeefServiceResult[] | undefined
   let beefBytes = atomic
   try {
-    // Unconfirmed parent chains need ancestor bodies in the BEEF Arcade sees.
-    // App→app change chaining without this looks like missing-inputs / doubleSpend.
+    // Best-effort ancestor fill — never stall send waiting on indexer proofs.
+    // Arcade success is completion; hydrate is only to reduce missing-inputs noise.
     const { hydrateInputBeef } = await import('./beefCache')
-    const shaped = await hydrateInputBeef(active, Beef.fromBinary(atomic))
+    const shaped = await Promise.race([
+      hydrateInputBeef(active, Beef.fromBinary(atomic)),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2_000)),
+    ])
     if (shaped?.length) beefBytes = shaped
   } catch (err) {
     console.warn('[minerSubmit] ancestor hydrate skipped', id.slice(0, 12), err)
@@ -102,12 +107,40 @@ export async function submitAtomicBeefToMiners(
     const results = await active.services.postBeef(Beef.fromBinary(beefBytes), [id])
     rawResults = results as PostBeefServiceResult[]
     summary = summarizePostBeef(rawResults)
-    if (postBeefResultsHitArcade(rawResults)) {
+    const arcadeOk = postBeefResultsArcadeAccepted(rawResults)
+    const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults)
+    // Pin ONLY on Arcade success — pinning on mere contact made missing-inputs
+    // holds keep phantom pendingChange after an invalid-UTXO reject.
+    if (arcadeOk) {
       rememberArcadeSubmitContact(id)
-      console.info('[minerSubmit] Arcade contacted — tx pinned', id.slice(0, 12))
-      // Item/BRC-29 `noSend` rows stay `unsent` until processAction. Promote so
-      // heal cannot reclaim sealed inputs while explorers lag.
-      await restoreOnChainLocalTx(id)
+      console.info('[minerSubmit] Arcade accepted — tx pinned', id.slice(0, 12))
+      void restoreOnChainLocalTx(id).catch((err) => {
+        console.warn('[minerSubmit] post-Arcade restore skipped', id.slice(0, 12), err)
+      })
+      if (!summary.accepted) summary = { ...summary, accepted: true }
+    } else if (arcadeHardReject) {
+      console.warn(
+        '[minerSubmit] Arcade hard-reject — dropping local spend',
+        id.slice(0, 12),
+        summary.detail,
+      )
+      removePendingMinerSubmit(id)
+      recordTransactionStage('hard_rejected', {
+        ...telemetry,
+        blockerCode: summary.missingInputs
+          ? 'arcade_missing_inputs'
+          : 'arcade_reject',
+      })
+      try {
+        const { rememberGhostTx } = await import('./ghostTxSuppress')
+        rememberGhostTx(id)
+      } catch {
+        /* optional */
+      }
+      await releaseSealedInputsOfUnsentTx(id, atomic)
+      throw new Error(formatPostBeefFailure(summary))
+    } else if (postBeefResultsHitArcade(rawResults)) {
+      console.info('[minerSubmit] Arcade contacted (no accept/reject yet)', id.slice(0, 12))
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -140,7 +173,11 @@ export async function submitAtomicBeefToMiners(
     ) {
       recordTransactionStage('completed', telemetry)
     }
-    if (!txHadArcadeSubmitContact(id)) await restoreOnChainLocalTx(id)
+    if (!txHadArcadeSubmitContact(id)) {
+      void restoreOnChainLocalTx(id).catch(() => {
+        /* background */
+      })
+    }
     return { confirmed: true, submitted: true, summary }
   }
   // Pure transport / endpoint failures are not proof of a spent input.
