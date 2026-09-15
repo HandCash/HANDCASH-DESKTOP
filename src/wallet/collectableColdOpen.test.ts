@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // durable list cache, so the next boot started at zero and Collect showed
 // "Looking for collectables…" on a wallet that already held tips.
 
-vi.mock('./sentItemGuard', () => ({
+// Partial: only the reads this cold open pins. Spreading the real module keeps a
+// new guard export from surfacing as an unhandled rejection mid-list.
+vi.mock('./sentItemGuard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sentItemGuard')>()),
   isItemSent: () => false,
   markItemsSent: vi.fn(),
   getSentItemRecord: () => null,

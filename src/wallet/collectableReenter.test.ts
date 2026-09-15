@@ -15,7 +15,8 @@ vi.mock('./durableStorage', () => ({
   durableForgetCached: () => {},
 }))
 
-vi.mock('./sentItemGuard', () => ({
+vi.mock('./sentItemGuard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sentItemGuard')>()),
   isItemSent: () => false,
   markItemsSent: vi.fn(),
   getSentItemRecord: () => null,

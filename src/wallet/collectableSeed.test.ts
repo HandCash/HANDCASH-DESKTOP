@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // The grid is rebuilt from the basket read alone, so a tip the wallet minted to
 // itself has to be carried until the read admits it. These cover that carry.
 
-vi.mock('./sentItemGuard', () => ({
+vi.mock('./sentItemGuard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sentItemGuard')>()),
   isItemSent: () => false,
   markItemsSent: vi.fn(),
   getSentItemRecord: () => null,
