@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.161] - 2026-09-15
+
+### Changed
+
+- Detail views dock Send/Save/Burn (and ID Publish/Copy/Claim) into the nav action bar.
+- Denser identity page with larger QR; list Send icon-only; tighter connected-apps spent column on mobile.
+- Paint BSV-21 createAction mints into Tokens immediately; keep genesis rows when listOutputs is empty.
+- Bump hero balance after app createAction seal; permission heads-up on mobile even when foregrounded.
+
 ## [1.3.160] - 2026-09-15
 
 ### Changed
