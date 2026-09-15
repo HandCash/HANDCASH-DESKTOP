@@ -89,7 +89,6 @@ import {
   SettingsIcon,
 } from './icons'
 import { playWalletSound } from '../wallet/soundService'
-import { SkeletonSection } from './Skeleton'
 import { toastSuccess } from '../wallet/toast'
 import { WalletActionBar } from './WalletActionBar'
 import {
@@ -335,15 +334,17 @@ export const WalletNav = memo(function WalletNav({
   const scanInSide = child?.type === 'scan' && !compact
   const stageChild =
     scanInSide || child?.type === 'app-browser' ? null : child
+  const activeSection = optimisticSection ?? nav.section
+  // Labels / aeon chrome follow the optimistic tab, not committed panel content.
   const aeonState = browserForeground
     ? 'apps.app-browser'
     : stageChild
-      ? `${nav.section}.${stageChild.type}`
-      : nav.section
+      ? `${activeSection}.${stageChild.type}`
+      : activeSection
 
   const crumbs = (() => {
     const root = {
-      label: sectionLabel(nav.section),
+      label: sectionLabel(activeSection),
       onClick: () => clearNavChild(),
     }
     if (!stageChild) return [{ label: root.label }]
@@ -470,8 +471,6 @@ export const WalletNav = memo(function WalletNav({
     return [root, { label: 'Transaction' }]
   })()
 
-  const activeSection = optimisticSection ?? nav.section
-
   const selectSection = (next: NavSection) => {
     // Sync SFX + optimistic tab so a press always feels taken, even when the
     // panel mount / resource load is still in a transition.
@@ -500,12 +499,6 @@ export const WalletNav = memo(function WalletNav({
       else clearNavChild()
     })
   }
-
-  // Optimistic tab is ahead of committed nav — paint skeleton for the
-  // section while the transition / first mount catches up. Light tabs are
-  // still mounted under the skeleton so the real panel is warm when it shows.
-  const showSectionSkeleton =
-    !mobileInlinePermission && activeSection !== nav.section
 
   const hideSectionPanel =
     (stageChild != null || browserForeground) && !mobileInlinePermission
@@ -680,18 +673,10 @@ export const WalletNav = memo(function WalletNav({
           ) : null}
 
           <div className="wallet-nav-panel" hidden={hideSectionPanel}>
-            {showSectionSkeleton ? (
-              <div className="wallet-nav-slot" aria-busy="true">
-                <SkeletonSection />
-              </div>
-            ) : null}
             {(mountedLight.has('activity') || mobileInlinePermission) && (
               <div
                 className="wallet-nav-slot"
-                hidden={
-                  showSectionSkeleton ||
-                  (activeSection !== 'activity' && !mobileInlinePermission)
-                }
+                hidden={activeSection !== 'activity' && !mobileInlinePermission}
               >
                 {mobileInlinePermission && pendingPrompt ? (
                   <PermissionRequestPanel
@@ -707,29 +692,21 @@ export const WalletNav = memo(function WalletNav({
             {mountedLight.has('apps') && (
               <div
                 className="wallet-nav-slot"
-                hidden={
-                  showSectionSkeleton ||
-                  activeSection !== 'apps' ||
-                  mobileInlinePermission
-                }
+                hidden={activeSection !== 'apps' || mobileInlinePermission}
               >
                 <ConnectedAppsPanel apps={apps} />
               </div>
             )}
-            {/* Unmount Collect to free ordinal images. Remount paints the last
-                durable list (collectables.ts) — never an emptied cache. */}
-            {activeSection === 'collectables' &&
-              nav.section === 'collectables' &&
-              !mobileInlinePermission &&
-              !showSectionSkeleton && <MemoInventoryPanel />}
+            {/* Unmount Collect when leaving to free ordinal images; show as
+                soon as the optimistic tab selects it so labels/chrome stay sync.
+                Remount paints the last durable list (collectables.ts). */}
+            {activeSection === 'collectables' && !mobileInlinePermission && (
+              <MemoInventoryPanel />
+            )}
             {mountedLight.has('friends') && (
               <div
                 className="wallet-nav-slot"
-                hidden={
-                  showSectionSkeleton ||
-                  activeSection !== 'friends' ||
-                  mobileInlinePermission
-                }
+                hidden={activeSection !== 'friends' || mobileInlinePermission}
               >
                 <FriendsPanel chain={profile.chain} />
               </div>
@@ -737,11 +714,7 @@ export const WalletNav = memo(function WalletNav({
             {mountedLight.has('identity') && (
               <div
                 className="wallet-nav-slot"
-                hidden={
-                  showSectionSkeleton ||
-                  activeSection !== 'identity' ||
-                  mobileInlinePermission
-                }
+                hidden={activeSection !== 'identity' || mobileInlinePermission}
               >
                 <IdentityPanel profile={profile} />
               </div>
@@ -749,11 +722,7 @@ export const WalletNav = memo(function WalletNav({
             {mountedLight.has('settings') && (
               <div
                 className="wallet-nav-slot"
-                hidden={
-                  showSectionSkeleton ||
-                  activeSection !== 'settings' ||
-                  mobileInlinePermission
-                }
+                hidden={activeSection !== 'settings' || mobileInlinePermission}
               >
                 <SettingsPanel />
               </div>

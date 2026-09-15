@@ -93,15 +93,3 @@ export function SkeletonQr({ size = 180 }: { size?: number }) {
     />
   )
 }
-
-/** Lightweight placeholder for a whole wallet nav section while it settles. */
-export function SkeletonSection({ rows = 6 }: { rows?: number }) {
-  return (
-    <div className="skeleton-section" aria-busy="true" aria-hidden>
-      {Array.from({ length: rows }, (_, i) => (
-        <SkeletonHistoryRow key={i} />
-      ))}
-    </div>
-  )
-}
-
