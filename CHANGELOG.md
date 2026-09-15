@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.172] - 2026-09-15
+
+### Changed
+
+- Offline market buy: list-time settlementUnlocks + messagebox remittance; overlay admits the same BEEF without a second sendMessage.
+- Durable list: exclusive spend, abort unsent noSend after Arcade hard-reject, restore tip when basket misses.
+- Dev Arcade TLS: Vite proxy `secure: false` and Electron CERT_ERR bypass for local market.
+
 ## [1.3.171] - 2026-09-15
 
 ### Changed
