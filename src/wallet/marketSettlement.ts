@@ -47,6 +47,7 @@ import {
   decodeBeefB64,
   deliverMarketSettlementWire,
   pollInboundTipHints,
+  publicMessageboxBase,
   type MarketSettlementWire,
 } from './messageTransport'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -620,8 +621,15 @@ export async function executeMarketPurchase(
       sellerOutputIndex: 1,
       feeOutputIndex: 2,
     })
-    const sellerMessagebox = args.sellerMessagebox
-    const buyerMessagebox = args.buyerMessagebox
+    // Prefer explicit args, else the advert's BRC-33 endpoint, else the wallet's
+    // public messagebox. Omitting this forced default cloud routing and left the
+    // buyer waiting out MARKET_SELLER_TIMEOUT when the seller never saw the wire.
+    const sellerMessagebox =
+      args.sellerMessagebox?.trim() ||
+      (typeof listing.messagebox === 'string' ? listing.messagebox.trim() : '') ||
+      undefined
+    const buyerMessagebox =
+      args.buyerMessagebox?.trim() || publicMessageboxBase() || undefined
     let pending: PendingPurchase = {
       saleId,
       reference: signable.reference,

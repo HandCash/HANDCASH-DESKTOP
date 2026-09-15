@@ -1824,14 +1824,32 @@ export async function verifyMarketListingProvenance(args: {
   // Overlay BRC-150 proves the pre-list item tip. The listing outpoint is
   // output 0 of a new tx the buyer does not have in BEEF — do not treat it
   // as a held tip. Hash / origin / offer terms already bound the listing.
+  //
+  // Market buys pass a publish-complete proof (full path bodies). Verify that
+  // locally so the buyer never waits on indexer getBeef (~8s each) before
+  // spending. Only lean/incomplete proofs may hydrate, and they fail closed
+  // quickly if bodies are still missing.
   const proofTip = (provenance as ProvenanceV2).tip
-  const active = getActiveWallet()
+  const missing = provenanceMissingPathBodies(provenance)
+  if (missing && missing.length > 0) {
+    const active = getActiveWallet()
+    if (!active) {
+      return fail(
+        `ITEM_ORIGIN_INCOMPLETE: BRC-150 proof is missing ${missing.length} path body(ies) and wallet is locked`,
+      )
+    }
+    const verifiedLean = await verifyProvenanceForHeldTip({
+      provenance: provenance as ProvenanceV2,
+      heldOutpoint: proofTip,
+      getBeef: (txid: string) => getBeefForTxidCached(active, txid, { needProof: true }),
+    })
+    return verifiedLean.proven
+      ? { verified: true, reason: null }
+      : fail(`ITEM_ORIGIN_UNPROVEN: ${verifiedLean.reason ?? 'unknown reason'}`)
+  }
   const verified = await verifyProvenanceForHeldTip({
     provenance: provenance as ProvenanceV2,
     heldOutpoint: proofTip,
-    ...(active
-      ? { getBeef: (txid: string) => getBeefForTxidCached(active, txid, { needProof: true }) }
-      : {}),
   })
   return verified.proven
     ? { verified: true, reason: null }
