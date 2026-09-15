@@ -607,6 +607,24 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab svg {
   flex-shrink: 0;
 }
 
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab
+  svg {
+  align-self: center;
+  margin-inline: auto;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab
+  .wallet-nav-tab-icon {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 /* Compact: icon-only tabs (Accept/Decline keep short labels). */
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab-label {
   display: none !important;

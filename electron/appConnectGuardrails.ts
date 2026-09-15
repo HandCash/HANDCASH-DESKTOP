@@ -74,6 +74,21 @@ export function bridgeConnectUnavailableCode(message: string): string | null {
   return message.includes('WALLET_BRIDGE_UNAVAILABLE') ? 'WALLET_BRIDGE_UNAVAILABLE' : null
 }
 
+const MAX_RENDERER_CRASH_RELOADS = 3
+
+/**
+ * Chromium exitCode 5 (`crashed`) left the window dead: every later /getVersion
+ * was renderer-not-ready until a manual restart. Reload a bounded number of
+ * times; never reload a clean exit.
+ */
+export function shouldReloadAfterRendererGone(
+  reason: string,
+  reloadsAlready: number,
+): boolean {
+  if (reason === 'clean-exit') return false
+  return reloadsAlready < MAX_RENDERER_CRASH_RELOADS
+}
+
 /** Headers browsers need for Private Network Access to localhost :2121/:3321. */
 export function bridgeCorsHeaders(): Record<string, string> {
   return {

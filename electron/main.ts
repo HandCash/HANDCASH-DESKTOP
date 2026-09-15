@@ -63,6 +63,7 @@ import { isTrustedAppUrl } from './appUrlPolicy.js'
 import {
   decideWalletUiNavigation,
   DISABLE_HTTPS_FIRST_FEATURES,
+  shouldReloadAfterRendererGone,
 } from './appConnectGuardrails.js'
 import { grantsAppCameraPermission } from './cameraPermissions.js'
 import { guardStdioWrites } from './brokenPipe.js'
@@ -76,6 +77,8 @@ guardStdioWrites([process.stdout, process.stderr], (err) => {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 const isE2E = process.env.HANDCASH_E2E === '1'
+const openDevTools =
+  process.env.HANDCASH_DEVTOOLS === '1' || process.env.HANDCASH_DEVTOOLS === 'true'
 
 /**
  * Renderer origin:
@@ -407,7 +410,9 @@ function createWindow(): void {
   // localhost IndexedDB partition — load that origin so balance is not zero.
   if (isDev) {
     void mainWindow.loadURL(DEV_ORIGIN)
-    if (!isE2E) mainWindow.webContents.openDevTools({ mode: 'detach' })
+    // Detached DevTools on Chromium 150 was crashing the wallet renderer
+    // (render-process-gone exitCode=5). Open only when explicitly requested.
+    if (!isE2E && openDevTools) mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else if (packagedUiOrigin) {
     void mainWindow.loadURL(packagedUiOrigin)
   } else {
@@ -451,10 +456,6 @@ function createWindow(): void {
     })
   })
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    notifyBridgeStatus()
-  })
-
   // Match the pre-1.3.131 connect path: never loadURL to "fix"
   // https://localhost:5173 (that cleared readiness → renderer-not-ready).
   // Cancel forced HTTPS upgrades in place; HTTPS-First is also disabled above.
@@ -472,12 +473,33 @@ function createWindow(): void {
   mainWindow.webContents.on('will-redirect', handleNavigation)
 
   const contentsId = mainWindow.webContents.id
+  let rendererCrashReloads = 0
+  let rendererHealthyTimer: ReturnType<typeof setTimeout> | null = null
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     log.error(
       `[ui] render-process-gone reason=${details.reason} exitCode=${details.exitCode}`,
     )
     bridgeWindows.markRendererGone(contentsId)
     failPendingBridgeRequests(`renderer process gone (${details.reason})`)
+    if (!shouldReloadAfterRendererGone(details.reason, rendererCrashReloads)) {
+      log.error('[ui] renderer crash reload skipped', details.reason, rendererCrashReloads)
+      return
+    }
+    rendererCrashReloads += 1
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return
+      log.warn(`[ui] reloading renderer after crash (${rendererCrashReloads})`)
+      win.webContents.reload()
+    }, 250)
+  })
+  mainWindow.webContents.on('did-finish-load', () => {
+    notifyBridgeStatus()
+    if (rendererHealthyTimer) clearTimeout(rendererHealthyTimer)
+    rendererHealthyTimer = setTimeout(() => {
+      rendererCrashReloads = 0
+    }, 30_000)
   })
   // Never clear readiness on did-start-loading. Vite HMR / soft navigations /
   // HTTPS-First noise fire that event without remounting App, which left every

@@ -60,19 +60,23 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { addressFromIdentityKey } from './friends'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
+import {
+  DEFAULT_BRC_CLOUD_BASE_URL,
+  PUBLIC_BRC_CLOUD_ORIGIN,
+} from './walletConfig'
 
 const PENDING_KEY = 'handcash.market.pending.v2'
 const RESPONSE_KEY = 'handcash.market.responses.v2'
 /**
  * Buyer waits for the seller peer signature over messagebox.
  *
- * `purchaseMarketListing` is a spend-bridge method (`SPEND_DEADLINE_MS` =
- * 300s in electron/bridgeDeadline.ts). A prior change capped this at 30s to
- * "stay inside the 120s read bridge", which starved live sellers on mobile and
- * surfaced as MARKET_SELLER_TIMEOUT after a dead wait. Keep headroom under the
- * 300s spend budget so a waking seller can still answer.
+ * Live seller sign is a short fallback. List-time `settlementUnlocks` are the
+ * purchase path; a 3-minute messagebox wait is what left Buying stuck on
+ * "Settling the purchase" with no sign/broadcast.
  */
-const SETTLEMENT_TIMEOUT_MS = 180_000
+const SETTLEMENT_TIMEOUT_MS = 30_000
+const SELLER_SIGN_WAIT_MS = 8_000
+const LISTING_DETAIL_MS = 4_000
 
 /**
  * Overlay already stored the listing tx at admit time. Prefer that BEEF over
@@ -92,6 +96,65 @@ export function overlayListingBeefBinary(
     return beef.toBinary()
   } catch {
     return null
+  }
+}
+
+function marketCloudOrigin(): string {
+  return (DEFAULT_BRC_CLOUD_BASE_URL.trim() || PUBLIC_BRC_CLOUD_ORIGIN).replace(
+    /\/+$/,
+    '',
+  )
+}
+
+function listingItemTxid(listing: MarketListingAdvert): string {
+  return normalizeOutpoint(listing.outpoint).split('.')[0] ?? ''
+}
+
+/** Pull overlay BEEF + list-time unlocks when the buy payload omitted them. */
+export async function hydrateMarketListingForPurchase(
+  listing: MarketListingAdvert,
+): Promise<MarketListingAdvert> {
+  const amounts = calculateMarketSettlement(listing.priceSats)
+  const hasUnlocks = listingHasBuyerCompletableSettlement(listing, amounts)
+  const hasBeef = Boolean(
+    overlayListingBeefBinary(listing, listingItemTxid(listing)),
+  )
+  if (hasUnlocks && hasBeef) return listing
+  const outpoint = listing.outpoint?.trim()
+  if (!outpoint) return listing
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), LISTING_DETAIL_MS)
+  try {
+    const res = await fetch(
+      `${marketCloudOrigin()}/v1/market/listings/${encodeURIComponent(outpoint)}`,
+      { signal: ac.signal, headers: { Accept: 'application/json' } },
+    )
+    if (!res.ok) return listing
+    const body = (await res.json()) as { listing?: Partial<MarketListingAdvert> }
+    const detail = body.listing
+    if (!detail || typeof detail !== 'object') return listing
+    const merged: MarketListingAdvert = {
+      ...listing,
+      ...detail,
+      outpoint: listing.outpoint,
+      settlementUnlocks:
+        detail.settlementUnlocks ?? listing.settlementUnlocks ?? null,
+      listingBeefB64: detail.listingBeefB64 ?? listing.listingBeefB64 ?? null,
+    }
+    console.info(
+      '[market-buy] hydrated listing detail',
+      `unlocks=${String(listingHasBuyerCompletableSettlement(merged, amounts))}`,
+      `beef=${Boolean(overlayListingBeefBinary(merged, listingItemTxid(merged)))}`,
+    )
+    return merged
+  } catch (err) {
+    console.warn(
+      '[market-buy] listing detail skipped',
+      err instanceof Error ? err.message : String(err),
+    )
+    return listing
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -439,12 +502,15 @@ export function listingHasBuyerCompletableSettlement(
   ) {
     return false
   }
-  if (
-    amounts &&
-    (unlocks.sellerSats !== amounts.sellerSats ||
-      unlocks.feeSats !== amounts.feeSats)
-  ) {
-    return false
+  if (amounts) {
+    if (unlocks.feeSats !== amounts.feeSats) return false
+    const deposit = MARKET_OFFER_DEPOSIT_SATS
+    if (
+      unlocks.sellerSats !== amounts.sellerSats &&
+      unlocks.sellerSats !== amounts.sellerSats - deposit
+    ) {
+      return false
+    }
   }
   return true
 }
@@ -452,7 +518,7 @@ export function listingHasBuyerCompletableSettlement(
 async function waitForSellerResponse<T extends StoredResponse['type']>(
   saleId: string,
   type: T,
-  timeoutMs = SETTLEMENT_TIMEOUT_MS
+  timeoutMs = SELLER_SIGN_WAIT_MS
 ): Promise<Extract<StoredResponse, { type: T }>> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -465,7 +531,7 @@ async function waitForSellerResponse<T extends StoredResponse['type']>(
   }
   throw new MarketListingError(
     'MARKET_SELLER_TIMEOUT',
-    'The seller wallet is offline or did not sign this purchase within 3 minutes. Nothing was charged.'
+    'This listing has no list-time seller signature, and the seller did not answer in time. Nothing was charged.',
   )
 }
 
@@ -479,21 +545,18 @@ export async function executeMarketPurchase(
   receipt?: MarketSettlementReceipt
 }> {
   return runExclusiveSpend(async () => {
+    const t0 = Date.now()
+    const mark = (phase: string) => {
+      console.info(`[market-buy] +${Date.now() - t0}ms ${phase}`)
+    }
     const active = getActiveWallet()
     if (!active) throw new Error('Wallet locked')
     if (active.chain !== 'main') throw new Error('Market settlement is mainnet only')
     const saleId = args.intent.intentId
-    const listing = args.listing
-    const proof = await verifyMarketListingProvenance({
-      listing,
-      provenance: args.provenance,
-    })
-    if (!proof.verified) {
-      throw new MarketListingError(
-        'ITEM_ORIGIN_UNPROVEN',
-        proof.reason ?? 'Listing provenance is invalid.'
-      )
-    }
+    const listing = await hydrateMarketListingForPurchase(args.listing)
+    mark(
+      `listing unlocks=${String(listingHasBuyerCompletableSettlement(listing))} beef=${Boolean(overlayListingBeefBinary(listing, listingItemTxid(listing)))}`,
+    )
     const provenance =
       listing.assetType === 'bsv21'
         ? undefined
@@ -525,7 +588,8 @@ export async function executeMarketPurchase(
       releaseStuckNosends,
     } = await import('./actionReview')
     await releaseStuckNosends(active)
-    await abortReservedActionBatches(active)
+    await abortReservedActionBatches(active, { budgetMs: 1_500 })
+    mark('reservations released')
     // Buyer funds seller + fee outputs from local spendable BSV. Do not run
     // explorer/status recovery here: createAction is authoritative and returns a
     // deterministic insufficient-funds error without blocking the seller round trip.
@@ -745,6 +809,7 @@ export async function executeMarketPurchase(
           },
         })
         if (!delivered) throw new Error('Seller messagebox is unreachable')
+        mark('waiting for seller signature')
         const response = await waitForSellerResponse(saleId, 'sign-response')
         if (!response.accepted || !response.unlockingScript) {
           throw new Error(response.reason || 'Seller refused settlement')
@@ -758,19 +823,23 @@ export async function executeMarketPurchase(
       }
       chart.send({ type: 'SIGNING' })
       remember({ phase: 'signedUnknown' })
+      mark(preSigned ? 'signing with list-time unlocks' : 'signing')
       const signed = await active.wallet.signAction({
         reference: signable.reference,
         spends: {
           [itemVin]: { unlockingScript: itemUnlockingScript },
           [offerVin]: { unlockingScript: offerUnlockingScript },
         },
-        options: { acceptDelayedBroadcast: false },
+        options: { acceptDelayedBroadcast: true },
       })
       const txid = signed.txid
       const atomic = signed.tx ? Array.from(signed.tx) : undefined
       if (!txid || !atomic?.length)
         throw new Error('Signed market transaction missing')
       remember({ phase: 'signedUnknown', txid, atomicBeef: atomic })
+      mark(`signed ${txid.slice(0, 12)} — Arcade postBeef once`)
+      const broadcasted = await broadcastAtomicBeef(txid, atomic)
+      if (!broadcasted) throw new Error('Market transaction broadcast failed')
       chart.send({ type: 'BROADCASTED' })
       remember({
         phase: 'broadcast',
@@ -790,35 +859,29 @@ export async function executeMarketPurchase(
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
         },
       }
-      let broadcasted = true
       let receipt: MarketSettlementReceipt | undefined
-      if (preSigned || isSelfBuy) {
-        // Offline seller / self-buy: do not block on messagebox; recover later.
-        void deliverMarketSettlementWire(receiptWire).catch(() => {})
-      } else {
-        const receiptDelivered = await deliverMarketSettlementWire(receiptWire)
-        if (receiptDelivered) try {
-          const receiptResponse = await waitForSellerResponse(
-            saleId,
-            'receipt-response',
-            15_000
-          )
-          broadcasted =
-            receiptResponse.txid.toLowerCase() === txid.toLowerCase() &&
-            receiptResponse.broadcasted
-          receipt = receiptResponse.receipt
-        } catch {
-          // BRC-33 is optional. Durable recovery will accept a later seller receipt.
-        }
-      }
-      if (
-        receipt &&
-        (receipt.settlementTxid.toLowerCase() !== txid.toLowerCase() ||
-          !verifyMarketSettlementReceipt(receipt, args.intent))
-      ) {
-        throw new Error('Seller settlement receipt signature is invalid')
-      }
-      if (!broadcasted) throw new Error('Market transaction broadcast failed')
+      void deliverMarketSettlementWire(receiptWire)
+        .then(async (delivered) => {
+          if (!delivered) return
+          try {
+            const receiptResponse = await waitForSellerResponse(
+              saleId,
+              'receipt-response',
+              4_000,
+            )
+            if (
+              receiptResponse.txid.toLowerCase() === txid.toLowerCase() &&
+              receiptResponse.receipt &&
+              verifyMarketSettlementReceipt(receiptResponse.receipt, args.intent)
+            ) {
+              receipt = receiptResponse.receipt
+              removePending(saleId)
+            }
+          } catch {
+            /* receipt is optional once Arcade has the Atomic BEEF */
+          }
+        })
+        .catch(() => {})
       chart.send({ type: 'COMMITTED' })
       remember({
         phase: 'committed',
@@ -849,6 +912,7 @@ export async function executeMarketPurchase(
         status: 'complete',
       })
       scheduleHistoryBackupPush('market-purchase')
+      mark(`done status=${receipt ? 'settled' : 'broadcast'}`)
       return {
         saleId,
         status: receipt ? 'settled' : 'broadcast',

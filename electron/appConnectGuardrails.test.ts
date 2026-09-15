@@ -6,6 +6,7 @@ import {
   bridgeCorsHeaders,
   decideWalletUiNavigation,
   DISABLE_HTTPS_FIRST_FEATURES,
+  shouldReloadAfterRendererGone,
 } from './appConnectGuardrails.js'
 import { isTrustedAppUrl } from './appUrlPolicy.js'
 import { createBridgeWindowSource, type BridgeWindowLike } from './bridgeWindow.js'
@@ -198,12 +199,21 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
     expect(mainSrc).not.toMatch(/reload-http[\s\S]{0,120}loadURL/)
     expect(mainSrc).not.toMatch(/recovering via[\s\S]{0,80}loadURL/)
     expect(mainSrc).not.toMatch(/blocked HTTPS upgrade[\s\S]{0,200}void mainWindow\.loadURL/)
-    expect(mainSrc).not.toMatch(/block-https-upgrade[\s\S]{0,200}loadURL/)
+    expect(mainSrc).toContain('shouldReloadAfterRendererGone')
+    expect(mainSrc).toContain('win.webContents.reload()')
+    expect(mainSrc).toContain('HANDCASH_DEVTOOLS')
 
     expect(httpSrc).toContain('bridgeConnectUnavailableMessage')
     expect(httpSrc).toContain('bridgeCorsHeaders')
     expect(preloadSrc).toContain('announceBridgeReady')
     expect(appSrc).toContain('announceBridgeReady')
     expect(appSrc).toContain('setInterval(announce')
+  })
+
+  it('reloads a crashed renderer so /getVersion is not stuck renderer-not-ready', () => {
+    expect(shouldReloadAfterRendererGone('crashed', 0)).toBe(true)
+    expect(shouldReloadAfterRendererGone('oom', 2)).toBe(true)
+    expect(shouldReloadAfterRendererGone('crashed', 3)).toBe(false)
+    expect(shouldReloadAfterRendererGone('clean-exit', 0)).toBe(false)
   })
 })

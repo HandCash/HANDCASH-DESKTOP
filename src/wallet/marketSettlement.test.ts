@@ -14,6 +14,7 @@ import {
   marketSettlementCommitment,
   mergePendingPurchase,
   overlayListingBeefBinary,
+  hydrateMarketListingForPurchase,
   validateMarketSettlementOutputs,
 } from './marketSettlement'
 import {
@@ -376,6 +377,12 @@ describe('listingHasBuyerCompletableSettlement', () => {
     ).toBe(false)
     expect(
       listingHasBuyerCompletableSettlement(
+        { settlementUnlocks: { ...unlocks, sellerSats: amounts.sellerSats - 1 } },
+        amounts,
+      ),
+    ).toBe(true)
+    expect(
+      listingHasBuyerCompletableSettlement(
         { settlementUnlocks: { ...unlocks, feeSats: 0 } },
         amounts,
       ),
@@ -386,5 +393,35 @@ describe('listingHasBuyerCompletableSettlement', () => {
         amounts,
       ),
     ).toBe(false)
+  })
+})
+
+describe('hydrateMarketListingForPurchase', () => {
+  it('merges overlay unlocks from listing detail', async () => {
+    const unlocks = {
+      version: 1 as const,
+      itemUnlockingScript: 'aa11',
+      offerUnlockingScript: 'bb22',
+      itemSighash: 'NONE|ANYONECANPAY' as const,
+      offerSighash: 'SINGLE|ANYONECANPAY' as const,
+      sellerSats: 96,
+      feeSats: 5,
+    }
+    const listing = {
+      outpoint: `${'ab'.repeat(32)}_0`,
+      priceSats: 100,
+    } as unknown as MarketListingAdvert
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ listing: { settlementUnlocks: unlocks } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch
+    try {
+      const merged = await hydrateMarketListingForPurchase(listing)
+      expect(listingHasBuyerCompletableSettlement(merged)).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

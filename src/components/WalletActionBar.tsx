@@ -120,7 +120,11 @@ export function WalletActionBar({
               setHoveredIndex(index)
             }}
           >
-            {action.icon}
+            {placement === 'nav' && action.icon ? (
+              <span className="wallet-nav-tab-icon">{action.icon}</span>
+            ) : (
+              action.icon
+            )}
             <span className={placement === 'nav' ? 'wallet-nav-tab-label' : undefined}>
               {action.label}
             </span>
