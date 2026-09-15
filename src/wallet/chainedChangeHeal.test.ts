@@ -120,13 +120,13 @@ describe('runChangeHeal', () => {
 
   it('displayBackground only promotes pending change locally', async () => {
     promotePendingLocalChangeOutputs.mockResolvedValueOnce(2)
-    reclaimSealedInputsNeverSpent.mockResolvedValueOnce(1)
 
     const { runChangeHeal } = await import('./chainedChangeHeal')
     const stats = await runChangeHeal({ path: 'displayBackground' })
 
     expect(stats.pendingPromoted).toBe(2)
-    expect(stats.reclaimed).toBe(1)
+    expect(stats.reclaimed).toBe(0)
+    expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
     expect(sweepChangeScripts).not.toHaveBeenCalled()
   })

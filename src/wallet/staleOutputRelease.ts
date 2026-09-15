@@ -775,10 +775,16 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
             deadSealers.delete(txid)
             continue
           }
-          // Failed / unsent / missing local row — ghost seal, revive without explorers.
+          // Missing local row is common for app createAction seals — never treat
+          // absence as a ghost (that revived spent inputs and bounced the hero
+          // 47¢→23¢→70¢ with no Activity). Leave unclassified for Arcade/chain.
+          if (!rows?.length) {
+            continue
+          }
+          // `unsent` alone is not a ghost — app createAction / noSend often
+          // stay unsent while Arcade already has the BEEF. Only hard-fail
+          // statuses revive without explorers; unsent goes to Arcade/chain.
           if (
-            !rows?.length ||
-            status === 'unsent' ||
             status === 'failed' ||
             status === 'doublespend' ||
             status === 'invalid'
@@ -788,6 +794,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
           } else if (rows.some((row) => isLiveLocalTxStatus(row?.status))) {
             liveSealers.add(txid)
           }
+          // status === 'unsent' (and other unknowns): leave unclassified.
         } catch (err) {
           if (!isUndefinedPartialFilterError(err)) {
             console.warn('[stale-output] sealer status skipped', txid.slice(0, 12), err)
@@ -824,13 +831,9 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
         deadSealers.delete(txid)
         continue
       }
-      if (onChain === false) {
-        liveSealers.delete(txid)
-        deadSealers.add(txid)
-        await failUnsentLocalTx(txid)
-        continue
-      }
-      // Inconclusive explorer — sample one sealed input. Unspent → ghost sealer.
+      // Explorer 404 alone is lag. Only treat as ghost when a sealed *input*
+      // is still a UTXO — if the input is spent, keep the seal even when the
+      // sealer tx is invisible to explorers.
       const sample = sealedNamed.find((rec) => rec.spentBy === txid)
       const parsed = sample ? parseOutpoint(sample.outpoint) : null
       if (!parsed) continue
@@ -857,10 +860,13 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
         ).catch(() => 'unknown' as const)
         unspent = status === 'unspent'
       }
-      if (unspent) {
-        liveSealers.delete(txid)
-        deadSealers.add(txid)
-      }
+      // Pending broadcast looks identical to a ghost under explorer silence
+      // (inputs still UTXOs). Only a hard "sealer absent" + still-UTXO input
+      // is enough to revive — never inconclusive null.
+      if (!unspent || onChain !== false) continue
+      liveSealers.delete(txid)
+      deadSealers.add(txid)
+      await failUnsentLocalTx(txid)
     }
     if (deadSealers.size > 0) {
       console.info(
@@ -873,21 +879,11 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   for (const rec of sealedNamed) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
     const sealer = rec.spentBy as string
+    // Only revive when the sealer is proven dead. Speculative isUtxo=true on
+    // unclassified seals (missing local row / explorer lag) un-spent live
+    // app createAction inputs and bounced the hero (47¢→23¢→70¢).
     if (deadSealers.has(sealer)) {
       revive.push(rec.outpoint)
-      continue
-    }
-    if (liveSealers.has(sealer)) continue
-    const parsed = parseOutpoint(rec.outpoint)
-    if (!parsed || typeof isUtxo !== 'function') continue
-    try {
-      const result = await isUtxo({ txid: parsed.txid, vout: parsed.vout } as never)
-      const alive =
-        result === true ||
-        (!!result && typeof result === 'object' && (result as { isUtxo?: unknown }).isUtxo === true)
-      if (alive) revive.push(rec.outpoint)
-    } catch {
-      // No answer means no evidence. Leave the coin sealed.
     }
   }
   if (revive.length === 0) return revived

@@ -23,7 +23,7 @@ export type ChangeHealPath =
   | { path: 'spendGate' }
   /** Retry pending-tx promote when spendGate already ran but bulk restore missed credit. */
   | { path: 'spendGatePartialRetry' }
-  /** Lightweight promote after display balance credits pending change. */
+  /** Lightweight promote after display credits pending change — never reclaim. */
   | { path: 'displayBackground' }
   /** Refresh maintenance: script sweep → rehide → promote → restore → reclaim. */
   | { path: 'chainMaintenance'; throwIfYield?: () => void }
@@ -82,9 +82,9 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
 
   switch (path.path) {
     case 'displayBackground': {
-      // Background — yield if a burn/send raised spend priority.
+      // Promote only. Reclaim on a display tick revived sealed app-spend
+      // inputs (missing local tx row) and bounced the hero with no Activity.
       stats.pendingPromoted = await promotePendingLocalChangeOutputs()
-      stats.reclaimed = await reclaimSealedInputsNeverSpent()
       noteHeal(stats)
       return stats
     }

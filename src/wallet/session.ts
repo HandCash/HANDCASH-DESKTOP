@@ -558,12 +558,12 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
   chainedBalanceHealFlight = (async () => {
     chainedBalanceHealAt = Date.now()
     try {
-      const {
-        promotePendingLocalChangeOutputs,
-        reclaimSealedInputsNeverSpent,
-      } = await import('./staleOutputRelease')
+      const { promotePendingLocalChangeOutputs } = await import(
+        './staleOutputRelease'
+      )
+      // Promote pending change into spendable UTXOs only. Reclaim here used to
+      // revive sealed spends (hero 47→23→70 with nothing new in Activity).
       await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      await reclaimSealedInputsNeverSpent({ forSpendChain: true })
       lastBalanceBreakdown = ''
       bumpBalanceAfterHeal()
     } catch (err) {

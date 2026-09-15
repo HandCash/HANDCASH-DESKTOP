@@ -1177,4 +1177,37 @@ describe('reclaimSealedInputsNeverSpent', () => {
     expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
     expect(getUtxoLock(`${prevTxid}_0`)?.spentBy).toBe(sealer)
   })
+
+  it('does not reclaim sealed inputs when the sealer has no local tx row', async () => {
+    const prevTxid = '22'.repeat(32)
+    const sealer = '44'.repeat(32)
+    hideUtxo(`${prevTxid}_0`, { spentBy: sealer, satoshis: 500_000 })
+    findTransactions.mockResolvedValue([])
+    txExistsOnChain.mockResolvedValue(null)
+    spentStatusOfOutpoint.mockResolvedValue('unknown')
+    isUtxo.mockResolvedValue(true)
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
+    expect(getUtxoLock(`${prevTxid}_0`)?.spentBy).toBe(sealer)
+  })
+
+  it('does not reclaim when explorer 404s but sealed inputs are already spent', async () => {
+    const prevTxid = '55'.repeat(32)
+    const sealer = '66'.repeat(32)
+    hideUtxo(`${prevTxid}_0`, { spentBy: sealer, satoshis: 250_000 })
+    findTransactions.mockResolvedValue([{ txid: sealer, status: 'unsent' }])
+    txExistsOnChain.mockResolvedValue(false)
+    spentStatusOfOutpoint.mockResolvedValue('spent')
+    isUtxo.mockResolvedValue(false)
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
+  })
 })
