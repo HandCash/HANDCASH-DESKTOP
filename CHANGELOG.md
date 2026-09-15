@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.166] - 2026-09-15
+
+### Changed
+
+- App auth/pay: use proven confirmed balance when storage is busy (1.5s live read budget).
+- Defer promoting unsent/noSend app change so the next app prefers fresh UTXOs.
+- Hydrate ancestor BEEF before Arcade postBeef; promote change on processAction/Arcade pin.
+- Identity: label bar without back button; list-mode-only square connected-apps actions.
+
 ## [1.3.165] - 2026-09-15
 
 ### Changed
