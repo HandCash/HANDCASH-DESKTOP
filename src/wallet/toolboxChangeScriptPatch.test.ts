@@ -2,12 +2,19 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-// @ts-expect-error -- plain ESM script shared with the pre-push hook
-import { assertToolboxPatchPinned } from '../../scripts/require-toolbox-patch.mjs'
 
 const require = createRequire(import.meta.url)
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
+// Loaded by URL at runtime: a static specifier makes Vite transform this plain
+// ESM script from outside src/, which throws SyntaxError on Windows runners.
+const { assertToolboxPatchPinned } = (await import(
+  /* @vite-ignore */ pathToFileURL(
+    path.join(repoRoot, 'scripts', 'require-toolbox-patch.mjs'),
+  ).href
+)) as { assertToolboxPatchPinned: (root: string) => { version: string } }
 
 function installedToolboxVersion(): string {
   const pkgJson = require.resolve('@bsv/wallet-toolbox-client/package.json')
@@ -26,12 +33,12 @@ describe('toolbox change-script hydration release floor', () => {
   })
 
   it('ships a patch pinned to the installed Toolbox version', () => {
-    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+    const root = repoRoot
     expect(assertToolboxPatchPinned(root).version).toBe(installedToolboxVersion())
   })
 
   it('gates unproven BEEF only by the internal wallet scope', () => {
-    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+    const root = repoRoot
     const patch = readFileSync(
       path.join(
         root,
