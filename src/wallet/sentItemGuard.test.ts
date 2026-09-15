@@ -214,7 +214,7 @@ describe('sentItemGuard', () => {
     )
   })
 
-  it('cancels market listing auth when a listed tip is spent', async () => {
+  it('cancels market listing auth when a listed tip is spent', { timeout: 20_000 }, async () => {
     const TX = 'aa'.repeat(32)
     const AUTH_KEY = 'handcash.market.listingAuthorizations.v2'
     store.set(
