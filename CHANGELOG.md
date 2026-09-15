@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.170] - 2026-09-15
+
+### Changed
+
+- Arcade hard-reject no longer soft-submits (transport catch was swallowing the drop).
+
 ## [1.3.169] - 2026-09-15
 
 ### Changed
