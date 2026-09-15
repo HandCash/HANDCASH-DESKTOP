@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.169] - 2026-09-15
+
+### Changed
+
+- Apps must request scoped inventory (`p 1sat all` / `p bsv21 all`); bare `1sat`/`bsv21` listOutputs is refused.
+- Market Cloudflare build rebuilt to use BRC-165 `p 1sat all` (was still bare `1sat`).
+
 ## [1.3.168] - 2026-09-15
 
 ### Changed
