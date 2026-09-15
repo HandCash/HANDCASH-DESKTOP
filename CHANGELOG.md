@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.175] - 2026-09-15
+
+### Fixed
+
+- Release Windows can build again. `toolboxChangeScriptPatch.test.ts` imported `scripts/require-toolbox-patch.mjs` by static specifier, so Vite transformed a plain ESM file from outside `src/` and threw `SyntaxError` on windows-latest; it is loaded by file URL at runtime now.
+
 ## [1.3.174] - 2026-09-15
 
 ### Fixed
