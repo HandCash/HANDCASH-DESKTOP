@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.163] - 2026-09-15
+
+### Changed
+
+- Identity undocked: pre-dock card layout with tighter padding (no action-bar chrome).
+- Connect/launch opens the system browser by default; in-app only when chosen.
+- Connected-apps settings/launch buttons stay square (~40×40).
+- Explorer 404 / not-found is unknown (lag), not absent — seals stay until hard absence.
+
 ## [1.3.162] - 2026-09-15
 
 ### Changed
