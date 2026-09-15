@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.171] - 2026-09-15
+
+### Changed
+
+- Market buys: list-time settlement unlocks and same-wallet self-buy (no seller messagebox wait); broadcast once with delayed sign.
+- BEEF is the BRC-100 exchange; Arcade is a non-blocking double-check. Credit internalize locally.
+- Nav: drop jumpy section skeletons; breadcrumb follows the tab. Two-line sync pill.
+- Reload after Chromium render-process-gone so the wallet bridge comes back.
+
 ## [1.3.170] - 2026-09-15
 
 ### Changed
