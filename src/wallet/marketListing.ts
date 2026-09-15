@@ -2832,7 +2832,12 @@ async function createCancelMarketListingAdvertExclusive(args: {
 export type PurchaseMarketListingArgs = {
   listing: MarketListingAdvert
   provenance: unknown
-  intent: MarketPurchaseIntent
+  /**
+   * Legacy two-call clients may still supply a buyer-signed intent. New clients
+   * omit it: the wallet verifies the listing, signs the intent, and settles in
+   * this one permissioned request.
+   */
+  intent?: MarketPurchaseIntent
   sellerMessagebox?: string
   buyerMessagebox?: string
 }
@@ -2848,7 +2853,13 @@ export async function purchaseMarketListing(
   beef?: number[]
 }> {
   const { executeMarketPurchase } = await import('./marketSettlement')
-  return executeMarketPurchase(args)
+  const intent =
+    args.intent ??
+    (await createMarketPurchaseIntent({
+      listing: args.listing,
+      provenance: args.provenance,
+    }))
+  return executeMarketPurchase({ ...args, intent })
 }
 
 export async function getMarketSettlementReceipt(args: {

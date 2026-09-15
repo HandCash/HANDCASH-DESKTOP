@@ -55,9 +55,64 @@ const SIGNED_FIELD_COUNT = 19
 const FIELD_COUNT = 20
 const OP_CHECKSIG = 0xac
 const OP_2DROP = 0x6d
+const OP_0 = 0x00
+const OP_1NEGATE = 0x4f
+const OP_1 = 0x51
 const utf8 = (value: string): number[] => Utils.toArray(value, 'utf8')
 const text = (value: number[]): string =>
   new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(value))
+
+/**
+ * Bitcoin's MINIMALDATA policy requires one-byte script numbers to use their
+ * dedicated opcodes. Script.writeBin([1]) emits `01 01`, which is valid data
+ * but non-minimal; spending that output then fails before the offer cleanup
+ * runs. PushDrop.decode maps these opcodes back to the original field bytes.
+ */
+function writeMinimalBin(script: Script, value: number[]): void {
+  if (value.length === 0) {
+    script.writeOpCode(OP_0)
+  } else if (value.length === 1 && value[0] === 0x81) {
+    script.writeOpCode(OP_1NEGATE)
+  } else if (value.length === 1 && value[0]! >= 1 && value[0]! <= 16) {
+    script.writeOpCode(OP_1 - 1 + value[0]!)
+  } else {
+    script.writeBin(value)
+  }
+}
+
+function chunkIsMinimalPush(chunk: { op?: number; data?: number[] }): boolean {
+  const data = chunk.data ?? []
+  const op = chunk.op
+  // Script parsing represents dedicated numeric pushes as opcode-only chunks;
+  // PushDrop.decode reconstructs their canonical stack bytes.
+  if (
+    data.length === 0 &&
+    (op === OP_0 || op === OP_1NEGATE || (op != null && op >= OP_1 && op <= 0x60))
+  ) {
+    return true
+  }
+  if (data.length === 0) return op === OP_0
+  if (data.length === 1 && data[0] === 0x81) return op === OP_1NEGATE
+  if (data.length === 1 && data[0]! >= 1 && data[0]! <= 16) {
+    return op === OP_1 - 1 + data[0]!
+  }
+  if (data.length <= 75) return op === data.length
+  if (data.length <= 0xff) return op === 0x4c
+  if (data.length <= 0xffff) return op === 0x4d
+  return op === 0x4e
+}
+
+export function marketOfferUsesMinimalPushes(lockingScriptHex: string): boolean {
+  try {
+    const chunks = Script.fromHex(lockingScriptHex.trim().toLowerCase()).chunks
+    return (
+      chunks.length === FIELD_COUNT + 12 &&
+      chunks.slice(2, 2 + FIELD_COUNT).every(chunkIsMinimalPush)
+    )
+  } catch {
+    return false
+  }
+}
 
 function unsignedBytes(value: number, length: number): number[] {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid unsigned integer')
@@ -204,12 +259,15 @@ export function encodeMarketOffer(fields: MarketOfferFields, sellerKey: PrivateK
   const script = new Script()
   script.writeBin(Utils.toArray(normalized.sellerIdentityKey, 'hex'))
   script.writeOpCode(OP_CHECKSIG)
-  for (const field of [...offerFields, signature]) script.writeBin(field)
+  for (const field of [...offerFields, signature]) writeMinimalBin(script, field)
   for (let i = 0; i < FIELD_COUNT / 2; i++) script.writeOpCode(OP_2DROP)
   return script.toHex()
 }
 
 export function parseMarketOffer(lockingScriptHex: string): MarketOfferFields {
+  if (!marketOfferUsesMinimalPushes(lockingScriptHex)) {
+    throw new Error('Market offer uses non-minimal data pushes — seller must relist')
+  }
   let decoded: ReturnType<typeof PushDrop.decode>
   try {
     decoded = PushDrop.decode(Script.fromHex(lockingScriptHex.trim().toLowerCase()), 'before')

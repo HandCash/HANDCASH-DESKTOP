@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Market offers now encode one-byte script-number fields with minimal opcodes (`OP_1` / `OP_2`). The previous `01 01` version push was accepted by the overlay but could never be spent under miner `MINIMALDATA` policy, causing Mobile buys to fail on offer input 1 with “This data is not minimally-encoded.”
+- Buyers reject legacy malformed offers before wallet signing with a clear “seller must relist” error. A VM-level regression test spends the corrected offer script under `Spend.validate()`.
+- Market buy is one buyer-side wallet request. `purchaseMarketListing` now verifies provenance and creates the buyer-signed intent itself when omitted, preserving compatibility with older clients that still provide an intent.
+
 ## [1.3.177] - 2026-09-15
 
 ### Fixed

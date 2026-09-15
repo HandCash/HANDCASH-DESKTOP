@@ -512,7 +512,7 @@ export function listingHasBuyerCompletableSettlement(
 }
 
 export async function executeMarketPurchase(
-  args: PurchaseMarketListingArgs
+  args: PurchaseMarketListingArgs & { intent: MarketPurchaseIntent }
 ): Promise<{
   saleId: string
   status: string

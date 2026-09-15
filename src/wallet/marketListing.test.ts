@@ -1,4 +1,12 @@
-import { LockingScript, P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
+import {
+  LockingScript,
+  P2PKH,
+  PrivateKey,
+  Script,
+  Spend,
+  Transaction,
+  UnlockingScript,
+} from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
@@ -103,6 +111,10 @@ describe('BRC-48 one-sat market offer', () => {
     expect(encodeMarketOffer(fields, sellerKey)).toBe(first)
     expect(parseMarketOffer(first)).toEqual(fields)
     expect(Script.fromHex(first).chunks).toHaveLength(32)
+    // u8 version/provenanceVersion must be OP_1/OP_2, never `01 01`/`01 02`.
+    // Miners enforce MINIMALDATA while spending the offer output.
+    expect(Script.fromHex(first).chunks[3]?.op).toBe(0x51)
+    expect(Script.fromHex(first).chunks[16]?.op).toBe(0x52)
   })
 
   it('rejects token field, cleanup, fee, and canonical encoding tampering', () => {
@@ -121,6 +133,53 @@ describe('BRC-48 one-sat market offer', () => {
       `${'00'.repeat(MARKET_OFFER_MAGIC.length - 1)}01`,
     )
     expect(() => parseMarketOffer(tampered)).toThrow(/protocol/i)
+  })
+
+  it('rejects legacy offers whose one-byte version used a non-minimal data push', () => {
+    const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
+    const canonical = encodeMarketOffer(fixture(), sellerKey)
+    const magicHex = Buffer.from(MARKET_OFFER_MAGIC).toString('hex')
+    const legacy = canonical.replace(`${magicHex}51`, `${magicHex}0101`)
+    expect(legacy).not.toBe(canonical)
+    expect(() => parseMarketOffer(legacy)).toThrow(/seller must relist/i)
+  })
+
+  it('spends a canonical offer under miner script policy', async () => {
+    const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
+    const lockingScript = LockingScript.fromHex(encodeMarketOffer(fixture(), sellerKey))
+    const source = new Transaction()
+    source.addOutput({ satoshis: 1, lockingScript })
+    const spend = new Transaction()
+    const fullUnlock = new P2PKH().unlock(sellerKey, 'all', false, 1, lockingScript)
+    spend.addInput({
+      sourceTransaction: source,
+      sourceOutputIndex: 0,
+      unlockingScriptTemplate: {
+        sign: async (tx, inputIndex) => {
+          const full = await fullUnlock.sign(tx, inputIndex)
+          return new UnlockingScript(full.chunks.slice(0, 1))
+        },
+        estimateLength: async () => 73,
+      },
+    })
+    spend.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(sellerKey.toAddress()) })
+    await spend.sign()
+
+    expect(
+      new Spend({
+        sourceTXID: source.id('hex'),
+        sourceOutputIndex: 0,
+        sourceSatoshis: 1,
+        lockingScript,
+        transactionVersion: spend.version,
+        otherInputs: [],
+        inputIndex: 0,
+        unlockingScript: spend.inputs[0]!.unlockingScript!,
+        outputs: spend.outputs,
+        inputSequence: spend.inputs[0]!.sequence ?? 0xffffffff,
+        lockTime: spend.lockTime,
+      }).validate(),
+    ).toBe(true)
   })
 
   it('classifies list and cancel paths without fallback', () => {
