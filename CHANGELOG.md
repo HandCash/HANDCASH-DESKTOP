@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.167] - 2026-09-15
+
+### Changed
+
+- Market listing: accept on Arcade broadcast (not SPV on-chain), keep Activity history after a successful pin, and allow unproven input BEEF for recent parents.
+
 ## [1.3.166] - 2026-09-15
 
 ### Changed
