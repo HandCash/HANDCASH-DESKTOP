@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.162] - 2026-09-15
+
+### Changed
+
+- Stop sealed-spend reclaim from bouncing the hero (47¢→23¢→70¢ with no Activity).
+- Display/chained heal promotes pending change only — balance stays Σ spendable UTXOs.
+
 ## [1.3.161] - 2026-09-15
 
 ### Changed
