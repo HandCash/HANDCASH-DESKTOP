@@ -256,7 +256,52 @@ const GENESIS_KEY = 'handcash.collectables.genesisAttempt.v1'
  * which was simply unmined at the time gets another chance.
  */
 export const GENESIS_RETRY_MS = 24 * 60 * 60_000
+/**
+ * Transient network / indexer misses. Long enough that boot + panel open do
+ * not re-walk the same stuck tip every session; short enough a brief outage
+ * does not leave a receivable item Unverified until tomorrow.
+ */
+export const GENESIS_UNAVAILABLE_RETRY_MS = 60 * 60_000
 const GENESIS_MAX_ENTRIES = 500
+
+/**
+ * Why the last lineage walk for a tip did not produce a proof.
+ *
+ * `invalid` is a verdict about the item — the chain says it cannot be proven.
+ * Everything else is a verdict about the attempt, and is worth retrying. Keeping
+ * them apart is the difference between telling someone their item is stuck and
+ * telling them it is unprovable.
+ */
+export type GenesisFailureKind = 'aborted' | 'unavailable' | 'overBudget' | 'invalid'
+
+/**
+ * Indexer/chain answers that will not change with another hop fetch this hour.
+ * Pin these for the full day so the queue is not monopolised by one dead tip.
+ */
+export function isPermanentGenesisMiss(reason: string): boolean {
+  const text = reason.trim()
+  if (!text) return false
+  return (
+    /must be valid transaction on chain/i.test(text) ||
+    /WERR_INVALID_PARAMETER/i.test(text) ||
+    /txid .* parameter must be valid/i.test(text) ||
+    /no such (transaction|output)/i.test(text) ||
+    /transaction not found/i.test(text)
+  )
+}
+
+export function genesisRetryMsFor(
+  kind: GenesisFailureKind | null | undefined,
+  reason = '',
+): number {
+  if (kind === 'invalid' || isPermanentGenesisMiss(reason)) {
+    return GENESIS_RETRY_MS
+  }
+  if (kind === 'unavailable' || kind === 'overBudget') {
+    return GENESIS_UNAVAILABLE_RETRY_MS
+  }
+  return GENESIS_RETRY_MS
+}
 
 let genesisAttempts: Map<string, number> | null = null
 
@@ -299,13 +344,19 @@ export function shouldAttemptGenesis(
   const verdict = load().get(k)
   // Proven and knows how: nothing left to learn.
   if (verdict?.tier === 'brc150' && verdict.path?.length) return false
+  const failure = loadGenesisFailures().get(k)
   // Proven but pathless — a send would have to omit remittance and make the
   // receiver walk the lineage over again. One quiet walk buys that back.
+  // Unproven tips that just failed a network hop wait the unavailable window
+  // instead of monopolising every boot / panel open.
   const wait =
     verdict?.tier === 'brc150'
       ? Math.min(retryMs, GENESIS_PATH_BACKFILL_MS)
-      : retryMs
-  const attempted = loadGenesisAttempts().get(k)
+      : Math.min(retryMs, genesisRetryMsFor(failure?.kind, failure?.reason ?? ''))
+  // Prefer the attempt pin; fall back to the failure timestamp so tips that
+  // recorded an unavailable miss before attempts were pinned for that case
+  // still cool down across boots instead of re-entering the queue every launch.
+  const attempted = loadGenesisAttempts().get(k) ?? failure?.at
   return attempted == null || now - attempted >= wait
 }
 
@@ -330,16 +381,6 @@ export function rememberGenesisAttempt(outpoint: string, now = Date.now()): void
 
 const GENESIS_FAILURE_KEY = 'handcash.collectables.genesisFailure.v1'
 const GENESIS_FAILURE_MAX_ENTRIES = 200
-
-/**
- * Why the last lineage walk for a tip did not produce a proof.
- *
- * `invalid` is a verdict about the item — the chain says it cannot be proven.
- * Everything else is a verdict about the attempt, and is worth retrying. Keeping
- * them apart is the difference between telling someone their item is stuck and
- * telling them it is unprovable.
- */
-export type GenesisFailureKind = 'aborted' | 'unavailable' | 'overBudget' | 'invalid'
 
 export type GenesisFailure = { kind: GenesisFailureKind; reason: string; at: number }
 

@@ -10,6 +10,7 @@ import {
   calculateMarketSettlement,
   classifyMarketListingAsset,
   createMarketListingAdvert,
+  isAlreadySpentListingFailure,
   isMarketListingOrigin,
   MarketListingError,
   resolveOrdinalListingOrigin,
@@ -61,6 +62,15 @@ vi.mock('./beefCache', () => ({
     return new Beef()
   },
 }))
+
+vi.mock('./legacyScan', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./legacyScan')>()
+  return {
+    ...actual,
+    spentStatusOfOutpoint: vi.fn(async () => 'unspent' as const),
+  }
+})
+
 function fixture(): MarketOfferFields {
   const seller = PrivateKey.fromHex('1'.padStart(64, '0')).toPublicKey()
   const fee = PrivateKey.fromHex('2'.padStart(64, '0')).toPublicKey()
@@ -456,6 +466,18 @@ describe('ordinal listing origin', () => {
   })
 })
 
+describe('isAlreadySpentListingFailure', () => {
+  it('matches Arcade Already spent and related hard rejects', () => {
+    expect(isAlreadySpentListingFailure('Already spent')).toBe(true)
+    expect(isAlreadySpentListingFailure('ARCADE_HARD_REJECT: Already spent')).toBe(
+      true,
+    )
+    expect(isAlreadySpentListingFailure('missing inputs on vin 2')).toBe(true)
+    expect(isAlreadySpentListingFailure('double spend detected')).toBe(true)
+    expect(isAlreadySpentListingFailure('ITEM_ORIGIN_UNPROVEN')).toBe(false)
+    expect(isAlreadySpentListingFailure('ACTION_DENIED')).toBe(false)
+  })
+})
 
 describe('list-time market settlement unlocks', () => {
   it('builds version-1 NONE|ACP item and SINGLE|ACP offer unlocks', async () => {

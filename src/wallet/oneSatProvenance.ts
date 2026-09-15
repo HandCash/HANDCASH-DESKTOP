@@ -17,6 +17,7 @@ import { hasOrdEnvelope } from './ordinalOwnership'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
+import { yieldToUi } from './yieldToUi'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -410,18 +411,21 @@ export async function hydrateMissingPathTxs(
   if (missing.length === 0) return { beef, fetched: [] }
   const merged = beef.clone()
   const fetched: string[] = []
-  await Promise.all(
-    missing.map(async (txid) => {
-      try {
-        const piece = await getBeef(txid)
-        if (!piece.findTxid(txid)?.tx) return
-        merged.mergeBeef(piece.toBinary())
-        fetched.push(txid)
-      } catch {
-        // Verify will fail closed on the still-missing body.
-      }
-    }),
-  )
+  // Sequential + yield: parallel mergeBeef of fat mint origins freezes input
+  // for seconds on Desktop (see [stall] / [longtask] during listing rebuild).
+  for (let i = 0; i < missing.length; i++) {
+    if (i > 0) await yieldToUi()
+    const txid = missing[i]!
+    try {
+      const piece = await getBeef(txid)
+      if (!piece.findTxid(txid)?.tx) continue
+      await yieldToUi()
+      merged.mergeBeef(piece.toBinary())
+      fetched.push(txid)
+    } catch {
+      // Verify will fail closed on the still-missing body.
+    }
+  }
   return { beef: merged, fetched }
 }
 
@@ -466,6 +470,7 @@ export async function completeProvenanceForPublish(args: {
   if (!provenance) return null
   try {
     const path = provenance.path.map((point) => toUnderscore(point).toLowerCase())
+    await yieldToUi()
     const source = Beef.fromBinary(Array.from(base64ToBytes(provenance.beefB64)))
     const { beef } = await hydrateMissingPathTxs(source, path, args.getBeef)
     if (missingPathTxBodies(beef, path).length > 0) {
@@ -476,6 +481,7 @@ export async function completeProvenanceForPublish(args: {
     // entries; a publish package is a plain BEEF over the whole lineage.
     const complete = beef.clone()
     complete.atomicTxid = undefined
+    await yieldToUi()
     if (!complete.verifyValid(false).valid) {
       console.warn('[brc-150] cannot publish provenance — package does not self-verify')
       return null
@@ -919,6 +925,7 @@ export async function verifyProvenanceV2Async(
       )
     }
   }
+  await yieldToUi()
   return verifyLineageInBeef({
     beef,
     origin: p.origin,
@@ -1293,6 +1300,12 @@ export async function tryBuildProvenanceV2(args: {
    * without a network lineage re-verify before attach.
    */
   trustProven?: boolean
+  /**
+   * Market / overlay publish may carry a larger package than remittance wire.
+   * When true, an assembled lineage is returned even if it cannot fit the
+   * remittance budget — the caller enforces its own size gate.
+   */
+  allowOversized?: boolean
 }): Promise<ProvenanceV2 | null> {
   const tip = toUnderscore(args.tipOutpoint)
   const origin = toUnderscore(args.origin)
@@ -1320,13 +1333,15 @@ export async function tryBuildProvenanceV2(args: {
         remembered.origin === originKey &&
         remembered.beefB64
       ) {
+        // Budget is a remittance-wire concern, not authenticity. A tip the UI
+        // already marked verified must not fail rebuild solely for size.
         const trusted = verifyProvenanceV2(remembered, tipDot, {
-          enforceBudget: true,
+          enforceBudget: false,
         })
         if (trusted.proven) return finish(remembered)
       }
       const ok = await verifyProvenanceV2Async(remembered, tipDot, {
-        enforceBudget: true,
+        enforceBudget: args.allowOversized ? false : true,
         getBeef,
       })
       if (ok.proven && remembered.origin === originKey) return finish(remembered)
@@ -1355,11 +1370,11 @@ export async function tryBuildProvenanceV2(args: {
       null
     if (prior) {
       if (args.trustProven) {
-        const trusted = verifyProvenanceV2(prior, tipDot, { enforceBudget: true })
+        const trusted = verifyProvenanceV2(prior, tipDot, { enforceBudget: false })
         if (trusted.proven) return finish(prior)
       } else {
         const direct = await verifyProvenanceV2Async(prior, tipDot, {
-          enforceBudget: true,
+          enforceBudget: args.allowOversized ? false : true,
           getBeef,
         })
         if (direct.proven) return finish(prior)
@@ -1384,16 +1399,32 @@ export async function tryBuildProvenanceV2(args: {
     // Assembled as a full (non-atomic) BEEF so ancestry survives; AtomicBEEF
     // would drop mined parents. Wire encoding may later strip fat bodies.
     let assembled = beef
-    let path =
+    let path: string[] | null =
       args.path && args.path.length > 0
-        ? args.path.map(toUnderscore)
-        : deriveOneSatPathFromBeef(beef, tip, origin)
-    if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
+        ? args.path.map((point) => toUnderscore(point).toLowerCase())
+        : (() => {
+            const derived = deriveOneSatPathFromBeef(beef, tip, origin)
+            return derived
+              ? derived.map((point) => toUnderscore(point).toLowerCase())
+              : null
+          })()
+    const pathNamesLineage =
+      !!path &&
+      path.length > 0 &&
+      path[0] === tipKey &&
+      path[path.length - 1] === originKey
+    // A caller (market list) may pass the durable proven path while only the
+    // tip BEEF is local. That path is correct — but verify fails until every
+    // hop body is merged. Skipping the replay when the path "looks complete"
+    // is what made verified items refuse to list.
+    const pathBodiesMissing =
+      pathNamesLineage && missingPathTxBodies(assembled, path!).length > 0
+    if (!pathNamesLineage || pathBodiesMissing) {
       // A tip this wallet already proved has its path on record, and replaying a
       // known path is a warm-cache pass rather than a discovery walk. Refusing
       // it is what sent proven items out bare and made the receiver repeat the
       // walk we had already paid for.
-      const known = knownProvenPath(tip, origin)
+      const known = pathNamesLineage ? path! : knownProvenPath(tip, origin)
       if (known) {
         const txids = [...new Set(known.map((point) => point.split('_')[0]!))]
         if (!args.trustProven) {
@@ -1404,16 +1435,17 @@ export async function tryBuildProvenanceV2(args: {
           `[brc-150] rebuilding remittance over ${known.length - 1} proven hop(s) for ${tip}`,
         )
         const replayed = new Beef()
-        const bodies = await Promise.all(
-          txids.map((txid) =>
-            getBeef(txid).catch(() => null),
-          ),
-        )
+        const bodies: Array<Beef | null> = []
+        for (let i = 0; i < txids.length; i++) {
+          if (i > 0) await yieldToUi()
+          bodies.push(await getBeef(txids[i]!).catch(() => null))
+        }
         let replayOk = bodies.every((body) => body != null)
         if (replayOk) {
-          for (const body of bodies) {
+          for (let i = 0; i < bodies.length; i++) {
+            if (i > 0) await yieldToUi()
             try {
-              replayed.mergeBeef(body!.toBinary())
+              replayed.mergeBeef(bodies[i]!.toBinary())
             } catch {
               replayOk = false
               break
@@ -1421,6 +1453,7 @@ export async function tryBuildProvenanceV2(args: {
           }
         }
         if (replayOk) {
+          await yieldToUi()
           const replayCheck = verifyLineageInBeef({
             beef: replayed,
             origin,
@@ -1435,7 +1468,11 @@ export async function tryBuildProvenanceV2(args: {
         }
       }
     }
-    if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
+    if (
+      !path ||
+      path[0] !== tipKey ||
+      path[path.length - 1] !== originKey
+    ) {
       if (!args.allowLineageHydrate) {
         console.info(
           '[brc-150] omit provenance — no tip-local path (skip lineage hydrate on send)',
@@ -1449,7 +1486,7 @@ export async function tryBuildProvenanceV2(args: {
         )
         return null
       }
-      path = hydrated.path
+      path = hydrated.path.map((point) => toUnderscore(point).toLowerCase())
       assembled = Beef.fromBinary(hydrated.beef)
     }
 
@@ -1462,12 +1499,27 @@ export async function tryBuildProvenanceV2(args: {
     })
     if (!check.proven) return null
 
+    await yieldToUi()
     const encoded = encodeRemittanceBeef(assembled, path)
     if (!encoded) {
+      if (!args.allowOversized) {
+        console.info(
+          '[brc-150] omit provenance — lineage cannot fit remittance budget even lean',
+        )
+        return null
+      }
       console.info(
-        '[brc-150] omit provenance — lineage cannot fit remittance budget even lean',
+        `[brc-150] publish package for ${tip} exceeds remittance wire; returning full lineage`,
       )
-      return null
+      const oversized: ProvenanceV2 = {
+        v: 2,
+        origin,
+        tip,
+        path,
+        beefB64: bytesToBase64(assembled.toBinary()),
+        ...(args.contentType ? { contentType: args.contentType } : {}),
+      }
+      return finish(oversized)
     }
     if (encoded.stripped.length > 0) {
       console.info(
@@ -1482,7 +1534,13 @@ export async function tryBuildProvenanceV2(args: {
       beefB64: encoded.beefB64,
       ...(args.contentType ? { contentType: args.contentType } : {}),
     }
-    if (!provenanceFitsBudget(provenance)) return null
+    if (!provenanceFitsBudget(provenance)) {
+      if (!args.allowOversized) return null
+      return finish({
+        ...provenance,
+        beefB64: bytesToBase64(assembled.toBinary()),
+      })
+    }
     return finish(provenance)
   } catch (err) {
     console.warn('[brc-150] build provenance failed', err)
@@ -1506,6 +1564,7 @@ export async function tryBuildProvenanceForSend(args: {
   priorProvenance?: unknown
   allowLineageHydrate?: boolean
   trustProven?: boolean
+  allowOversized?: boolean
 }): Promise<ProvenanceRemittance | null> {
   return tryBuildProvenanceV2(args)
 }

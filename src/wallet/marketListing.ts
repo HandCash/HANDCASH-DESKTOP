@@ -20,6 +20,7 @@ import { runExclusiveSpend } from './spendGuard'
 import {
   buildCollectableCustomInstructions,
   completeProvenanceForPublish,
+  getRememberedProvenanceRemittance,
   parseProvenanceV2,
   provenanceMissingPathBodies,
   tryBuildProvenanceV2,
@@ -968,6 +969,16 @@ async function loadListedOutput(
       'The listed item is no longer held by this wallet.'
     )
   }
+  // Basket rows lag the chain. A tip still listed locally but spent elsewhere
+  // is what produces "Already spent" on list after a friend-send / prior list.
+  const live = await tipStillUnspentOnChain(active, outpoint)
+  if (live === false) {
+    await retireSpentListingTip(active, outpoint)
+    throw new MarketListingError(
+      'ITEM_NOT_HELD',
+      'This item is already spent on chain. It was removed from Collectables.',
+    )
+  }
   if ((output.satoshis ?? 1) !== 1) {
     throw new MarketListingError(
       'ITEM_NOT_ORDINAL',
@@ -1188,6 +1199,9 @@ async function abortUnsentMarketAction(args: {
   }
   tipOutpoint: string
   reason: string
+  /** Signed listing txid when Arcade rejected after signAction. */
+  signedTxid?: string | null
+  atomic?: number[] | null
 }): Promise<void> {
   const snap = args.chart.getSnapshot()
   if (!mayAbortMarketListing(snap)) {
@@ -1198,6 +1212,15 @@ async function abortUnsentMarketAction(args: {
     await args.active.wallet.abortAction({ reference: args.reference }).catch(() => {})
   }
   args.chart.send({ type: 'ABORTED', error: args.reason })
+  if (isAlreadySpentListingFailure(args.reason)) {
+    await retireProvenSpentListingInputs({
+      active: args.active,
+      tipOutpoint: args.tipOutpoint,
+      signedTxid: args.signedTxid ?? null,
+      atomic: args.atomic ?? null,
+    })
+    return
+  }
   try {
     const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
     await restoreUnspentAssetOutpoint(
@@ -1218,6 +1241,199 @@ async function prepareMarketListingSpend(active: ActiveWallet): Promise<void> {
   )
   await releaseStuckNosends(active)
   await abortReservedActionBatches(active, { budgetMs: 1_500 })
+}
+
+/** Arcade/miner answers that mean the tip (or a funding input) is already gone. */
+export function isAlreadySpentListingFailure(reason: string): boolean {
+  return (
+    /already spent/i.test(reason) ||
+    /ARCADE_HARD_REJECT/i.test(reason) ||
+    /missing.?inputs/i.test(reason) ||
+    /double.?spend/i.test(reason)
+  )
+}
+
+/**
+ * True when a live UTXO service still sees this tip. Unknown/offline does not
+ * fail closed here — createAction will surface a real spend conflict.
+ */
+async function tipStillUnspentOnChain(
+  active: ActiveWallet,
+  outpoint: string,
+): Promise<boolean | null> {
+  const { parseOutpoint, spentStatusOfOutpoint } = await import('./legacyScan')
+  const parsed = parseOutpoint(outpoint.replace('_', '.'))
+  if (!parsed) return null
+  const isUtxo = active.services?.isUtxo
+  if (typeof isUtxo === 'function') {
+    try {
+      const result = await isUtxo({ txid: parsed.txid, vout: parsed.vout } as never)
+      if (result === true) return true
+      if (
+        result &&
+        typeof result === 'object' &&
+        (result as { isUtxo?: unknown }).isUtxo === true
+      ) {
+        return true
+      }
+      if (result === false) return false
+      if (
+        result &&
+        typeof result === 'object' &&
+        (result as { isUtxo?: unknown }).isUtxo === false
+      ) {
+        return false
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  const status = await spentStatusOfOutpoint(outpoint, active.chain).catch(
+    () => 'unknown' as const,
+  )
+  if (status === 'unspent') return true
+  if (status === 'spent') return false
+  return null
+}
+
+/**
+ * After Arcade Already-spent: drop only inputs proven spent on chain.
+ * Fee ghosts must leave inventory; a still-live tip must not (friend-send
+ * can still move it). Unknown indexer silence leaves rows alone.
+ */
+async function retireProvenSpentListingInputs(args: {
+  active: ActiveWallet
+  tipOutpoint: string
+  signedTxid: string | null
+  atomic: number[] | null
+}): Promise<void> {
+  const tipKey = normalizeOutpoint(args.tipOutpoint)
+  const candidates = new Set<string>([tipKey])
+  if (args.signedTxid && args.atomic?.length) {
+    try {
+      const { inputOutpointsFromAtomicBeef } = await import('./txOutpoints')
+      for (const op of inputOutpointsFromAtomicBeef(
+        args.atomic,
+        args.signedTxid,
+      )) {
+        try {
+          candidates.add(normalizeOutpoint(op))
+        } catch {
+          /* skip malformed */
+        }
+      }
+    } catch {
+      /* atomic parse optional */
+    }
+  }
+  const spent: string[] = []
+  for (const op of candidates) {
+    const live = await tipStillUnspentOnChain(args.active, op)
+    if (live === false) spent.push(op)
+  }
+  if (spent.length === 0) {
+    console.info(
+      `[market] Already spent but no input proven spent on chain — tip ${tipKey.slice(0, 18)}… kept`,
+    )
+    try {
+      const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
+      await restoreUnspentAssetOutpoint(args.active, tipKey.replace('_', '.'))
+    } catch {
+      /* best-effort */
+    }
+    return
+  }
+  const feeSpent = spent.filter((op) => op !== tipKey)
+  if (feeSpent.length > 0) {
+    try {
+      const { hideSpentOutpoints } = await import('./staleOutputRelease')
+      await hideSpentOutpoints(feeSpent, '')
+      console.info(
+        `[market] hid ${feeSpent.length} spent fee input(s) after listing Already spent`,
+      )
+    } catch {
+      /* best-effort */
+    }
+  }
+  if (spent.includes(tipKey)) {
+    await dropSpentListingTip(args.active, tipKey)
+  } else {
+    try {
+      const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
+      await restoreUnspentAssetOutpoint(args.active, tipKey.replace('_', '.'))
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/**
+ * Drop a tip proven spent on chain so Collect stops offering it.
+ * Call only after {@link tipStillUnspentOnChain} returned false.
+ */
+async function dropSpentListingTip(
+  active: ActiveWallet,
+  tipOutpoint: string,
+): Promise<void> {
+  try {
+    const { hideSpentOutpoints } = await import('./staleOutputRelease')
+    await hideSpentOutpoints([tipOutpoint], '')
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const { hideCollectablesAfterSpend } = await import('./collectables')
+    hideCollectablesAfterSpend([tipOutpoint], 'already-spent')
+  } catch {
+    /* best-effort */
+  }
+  try {
+    await active.wallet.relinquishOutput({
+      basket: '1sat',
+      output: tipOutpoint.replace('_', '.'),
+    })
+  } catch {
+    /* already gone from basket */
+  }
+  try {
+    await active.wallet.relinquishOutput({
+      basket: 'bsv21',
+      output: tipOutpoint.replace('_', '.'),
+    })
+  } catch {
+    /* not a 162 tip */
+  }
+  console.info(
+    `[market] retired spent listing tip ${tipOutpoint.slice(0, 18)}… — inventory dropped`,
+  )
+}
+
+/**
+ * Drop a tip that Arcade/chain already spent so Collect stops offering it.
+ * Fee-input conflicts leave the tip live — those must not be retired.
+ */
+async function retireSpentListingTip(
+  active: ActiveWallet,
+  tipOutpoint: string,
+): Promise<void> {
+  const stillLive = await tipStillUnspentOnChain(active, tipOutpoint)
+  if (stillLive === true) {
+    try {
+      const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
+      await restoreUnspentAssetOutpoint(active, tipOutpoint.replace('_', '.'))
+    } catch {
+      /* best-effort */
+    }
+    return
+  }
+  if (stillLive === null) {
+    // Unknown — do not drop a tip that may still be live (fee-input Already spent).
+    console.info(
+      `[market] tip spend status unknown for ${tipOutpoint.slice(0, 18)}…; leaving inventory`,
+    )
+    return
+  }
+  await dropSpentListingTip(active, tipOutpoint)
 }
 
 export async function createMarketListingAdvert(
@@ -1431,19 +1647,32 @@ async function createMarketListingAdvertExclusive(
     }
     amt = requested
   } else {
-    const remittanceProvenance = tryParseProvenanceFromCi(output.customInstructions)
+    // Inventory paints "verified" from durable provenCache; remittance is often
+    // absent from customInstructions (internalize 1k cap). Rebuild the same way
+    // collectable send does — trust the verdict, replay its path, allow a
+    // publish-sized package the overlay size-gates separately.
+    const remittanceProvenance =
+      tryParseProvenanceFromCi(output.customInstructions) ??
+      getRememberedProvenanceRemittance(outpoint)
+    const verdict = getProvenVerdict(outpoint)
+    const trustProven = verdict?.tier === 'brc150'
     const built = await tryBuildProvenanceV2({
       tipOutpoint: outpoint,
       origin,
       wallet: active,
       priorProvenance: remittanceProvenance ?? custom.provenance,
       allowLineageHydrate: true,
+      trustProven,
+      allowOversized: true,
+      ...(verdict?.path?.length ? { path: verdict.path } : {}),
     })
     const seed = built ?? remittanceProvenance
     if (!seed) {
       throw new MarketListingError(
         'ITEM_ORIGIN_UNPROVEN',
-        'A complete BRC-150 proof could not be built for this item.'
+        trustProven
+          ? 'This item is verified locally but a publishable BRC-150 package could not be rebuilt. Refresh Collectables and try again.'
+          : 'A complete BRC-150 proof could not be built for this item.',
       )
     }
     const outstanding = provenanceMissingPathBodies(seed)
@@ -1533,6 +1762,8 @@ async function createMarketListingAdvertExclusive(
   }
   const inputBEEF = listingBeef.toBinary()
   let reference: string | null = null
+  let signedTxid: string | null = null
+  let signedAtomic: number[] | null = null
   try {
     const created = await active.wallet.createAction({
       description: 'Create 1Sat market offer',
@@ -1684,7 +1915,9 @@ async function createMarketListingAdvertExclusive(
     })
     const txid = signed.txid?.toLowerCase() ?? ''
     const atomic = signed.tx ? Array.from(signed.tx) : []
-    if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) {
+    signedTxid = /^[0-9a-f]{64}$/.test(txid) ? txid : null
+    signedAtomic = atomic.length > 0 ? atomic : null
+    if (!signedTxid || !signedAtomic) {
       chart.send({ type: 'RECOVER' })
       throw new MarketListingError(
         'MARKET_LISTING_BROADCAST_UNKNOWN',
@@ -1883,6 +2116,8 @@ async function createMarketListingAdvertExclusive(
       chart,
       tipOutpoint: listingOutpoint,
       reason,
+      signedTxid,
+      atomic: signedAtomic,
     })
     recordWalletEvent({
       method: 'market-list',

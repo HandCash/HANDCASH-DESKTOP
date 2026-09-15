@@ -4,8 +4,9 @@
  * Basket `1sat` rows outlive a spend — `listOutputs` keeps returning them until
  * something writes `spendable: false`. The address UTXO set cannot lie that way:
  * a spent tip is gone, and a tip we never held is not there. The inventory list
- * is basket ∩ live 1-sats, except a lagging scan must not relinquish a tip that
- * still locks to us (failed send). Unknown locking script → keep, never ghost-drop.
+ * is basket ∩ live 1-sats, with a short settle grace for indexer lag. Past
+ * grace, soft tips missing from the live set ghost-drop even when the locking
+ * script still pays us (spent tip) or is unknown.
  */
 import { ownershipFate } from './collectableOwnershipFate'
 import { classifyTipKind } from './collectableTipKind'

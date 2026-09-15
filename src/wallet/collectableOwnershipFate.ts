@@ -23,7 +23,7 @@ export function ownershipFate(args: {
    * When known from the tip locking script: does it pay this wallet's address?
    * `false` means the tip is locked to someone else (typical outbound send) —
    * never grace-hold those, or the sender gets false "Item received" toasts.
-   * `null` / omitted = unknown (keep grace for indexer lag on self-receives).
+   * `null` / omitted = unknown script (listOutputs sometimes omits it).
    */
   paysOurAddress?: boolean | null
 }): OwnershipFate {
@@ -43,13 +43,9 @@ export function ownershipFate(args: {
 
   if (covenantLike) return 'keepCovenant'
 
-  // Tip still locks to us — address scan may lag Bitails / WoC. Relinquishing
-  // here orphaned inventory while Activity still showed the receive.
-  if (args.paysOurAddress === true) return 'graceHold'
-
-  // listOutputs often omits lockingScript. Unknown ≠ "not ours" — ghost-dropping
-  // after a failed send burned live 1-sats off the basket.
-  if (args.paysOurAddress !== false) return 'graceHold'
-
+  // Past grace and missing from a successful address scan. Indexer lag is
+  // covered by {@link isOwnershipUnjudged}. Keeping "still pays us" or
+  // unknown-script tips forever left hundreds of spent basket rows on screen
+  // (lab: ~785 durable cards vs ~4 live 1-sats). Soft tips leave.
   return 'ghostDrop'
 }

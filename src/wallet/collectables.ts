@@ -270,6 +270,15 @@ let cachedLiveOneSats: { at: number; keys: Set<string> } | null = null
 /** All address UTXOs — same TTL as one-sats. */
 let cachedLiveAllOutpoints: { at: number; keys: Set<string> } | null = null
 
+/**
+ * When each tip was first seen in the basket.
+ *
+ * A scan can only testify about the address as it was when it ran. Judging a
+ * tip that arrived after it would hide the very item the user is waiting for —
+ * an import lands, the basket has it, and a minutes-old scan does not.
+ */
+const firstSeenAt = new Map<string, number>()
+
 /** Feed a fresh address scan into the ownership filter (chain ingest). */
 export function rememberLiveOneSatOutpoints(
   utxos: Array<{ outpoint: string; satoshis: number }>
@@ -384,6 +393,13 @@ function persistDurableList(items: Collectable[]): void {
   if (durable.length > 0) {
     cachedCollectables = durable
     collectablesHydrated = true
+    // Durable cards are not "just arrived". Aging firstSeen past settle grace
+    // lets ownership fate drop spent tips on the first live address scan
+    // instead of re-holding ~700 ghosts for another 10 minutes every boot.
+    const aged = Date.now() - OWNERSHIP_SETTLE_GRACE_MS - 60_000
+    for (const item of durable) {
+      firstSeenAt.set(outpointKey(item.outpoint), aged)
+    }
   }
 }
 
@@ -541,6 +557,10 @@ export function rebindCollectablesForAccount(): void {
   if (durable.length > 0) {
     cachedCollectables = durable
     collectablesHydrated = true
+    const aged = Date.now() - OWNERSHIP_SETTLE_GRACE_MS - 60_000
+    for (const item of durable) {
+      firstSeenAt.set(outpointKey(item.outpoint), aged)
+    }
   }
   notifyCollectables(cachedCollectables)
   // Authoritative list so short-page "keep cached" cannot retain the prior wallet.
@@ -1106,15 +1126,6 @@ function resolveLiveOneSatKeys(
   if (!fresh) refreshLiveOneSatKeys(wallet)
   return cachedLiveOneSats
 }
-
-/**
- * When each tip was first seen in the basket.
- *
- * A scan can only testify about the address as it was when it ran. Judging a
- * tip that arrived after it would hide the very item the user is waiting for —
- * an import lands, the basket has it, and a minutes-old scan does not.
- */
-const firstSeenAt = new Map<string, number>()
 
 /**
  * Tips this wallet knows it holds before `listOutputs` will admit it.
@@ -1750,20 +1761,11 @@ async function proveHeldGenesis(
           clearAwaitingVerification(outpoint)
           queued.delete(outpoint)
           noteGenesisWalk()
-          // Chain data says this item cannot be proven. Re-walking it every
-          // session spends the whole budget on a known answer and starves the
-          // tips that could still earn a badge.
-          //
-          // A tip that already holds its badge is here only to recover the path
-          // a send would pass on. It loses nothing by waiting out the backfill
-          // window, and letting it retry on every list would starve the same
-          // tips for the same reason.
-          if (
-            outcome.kind === 'invalid' ||
-            getProvenVerdict(outpoint)?.tier === 'brc150'
-          ) {
-            rememberGenesisAttempt(outpoint)
-          }
+          // Always pin the attempt. Unavailable used to skip this, so the same
+          // hop-5 / dead-txid tip was re-walked on every boot and starved the
+          // queue (and the UI). shouldAttemptGenesis uses a 1h window for
+          // transient misses and 24h for invalid / permanent indexer rejects.
+          rememberGenesisAttempt(outpoint)
         }
         continue
       }
@@ -2415,29 +2417,50 @@ async function listCollectablesNow(
     // spent). Merge newly listed outpoints; do not drop existing ones because
     // this page is short. Mobile sync/soft pull is often NOT the recompose
     // coordinator, so that flag must not be required.
+    //
+    // Exception: a fresh address UTXO scan proves which tips are still live.
+    // Then a short basket page is real shrinkage (spent ghosts left), not a
+    // recompose glitch — fall through so ownership fate can drop the rest.
     if (
       !append &&
       cachedCollectables.length > 0 &&
       !authoritativeAfterReplace &&
       page.length < cachedCollectables.length
     ) {
-      const seeded = pendingSeededItems(page, Date.now(), wallet.identityKey)
-      const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain)
-      console.info(
-        `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
-      )
-      if (page.length > 0) {
-        const byOp = new Map(
-          lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
+      const liveNow = resolveLiveOneSatKeys(wallet)
+      const liveFresh =
+        liveNow != null &&
+        Date.now() - liveNow.at < LIVE_ONE_SAT_TTL_MS &&
+        liveNow.keys.size > 0
+      // Empty page is still the recompose hazard — only skip keep-cache when
+      // the basket returned *some* tips and the live set is far smaller than
+      // the painted inventory (spent ghosts).
+      const liveProvesShrink =
+        liveFresh &&
+        page.length > 0 &&
+        liveNow!.keys.size < Math.max(16, Math.floor(cachedCollectables.length / 4))
+      if (!liveProvesShrink) {
+        const seeded = pendingSeededItems(page, Date.now(), wallet.identityKey)
+        const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain)
+        console.info(
+          `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
         )
-        for (const o of [...page, ...seeded]) {
-          byOp.set(outpointKey(o.outpoint), o)
+        if (page.length > 0) {
+          const byOp = new Map(
+            lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
+          )
+          for (const o of [...page, ...seeded]) {
+            byOp.set(outpointKey(o.outpoint), o)
+          }
+          lastItemOutputs = [...byOp.values()]
+          lastItemChain = wallet.chain
         }
-        lastItemOutputs = [...byOp.values()]
-        lastItemChain = wallet.chain
+        setCollectablesCache(merged, { announceArrivals: true, forEpoch: epoch })
+        return getCachedCollectables()
       }
-      setCollectablesCache(merged, { announceArrivals: true, forEpoch: epoch })
-      return getCachedCollectables()
+      console.info(
+        `[collectables] short basket page (${page.length}) with fresh live set (${liveNow!.keys.size}) — reconciling ownership`,
+      )
     }
     listedOutputTotal = inferCollectableOutputTotal({
       offset: pageOffset,
@@ -2506,7 +2529,9 @@ async function listCollectablesNow(
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
     const keptMissing: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
-    for (const o of spentOrMissing) {
+    for (let i = 0; i < spentOrMissing.length; i++) {
+      if (i > 0 && i % 40 === 0) await yieldToUi()
+      const o = spentOrMissing[i]!
       if ((o.satoshis ?? 1) !== 1) continue
       const unjudged = isOwnershipUnjudged({
         firstSeenAt: firstSeenAt.get(outpointKey(o.outpoint)) ?? seenNow,

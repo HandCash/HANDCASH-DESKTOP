@@ -187,6 +187,45 @@ describe('tryBuildProvenanceV2', () => {
     expect(verifyProvenanceV2(provenance, `${tip.id('hex')}.0`).proven).toBe(true)
   })
 
+  it('fetches hop bodies when the caller supplies the path but only the tip BEEF', async () => {
+    // Market list passes durable path + tip-local BEEF. Skipping the replay
+    // when the path already named tip→origin left verified items unlistable.
+    const origin = inscription()
+    const hop = transfer(origin)
+    const tip = transfer(hop)
+    const { wallet } = walletServing([origin, hop, tip])
+    const originPoint = `${origin.id('hex')}_0`
+    const hopPoint = `${hop.id('hex')}_0`
+    const tipPoint = `${tip.id('hex')}_0`
+    rememberProvenVerdict(tipPoint, {
+      tier: 'brc150',
+      origin: originPoint,
+      path: [tipPoint, hopPoint, originPoint],
+      verifiedAt: Date.now(),
+    })
+
+    const provenance = await tryBuildProvenanceV2({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      origin: originPoint,
+      wallet,
+      path: [tipPoint, hopPoint, originPoint],
+      inputBeef: minedBeef(tip, 900_002).toBinary(),
+      allowOversized: true,
+      trustProven: true,
+    })
+
+    expect(provenance).not.toBeNull()
+    expect(provenance?.path.map((p) => p.toLowerCase())).toEqual([
+      tipPoint.toLowerCase(),
+      hopPoint.toLowerCase(),
+      originPoint.toLowerCase(),
+    ])
+    expect(
+      verifyProvenanceV2(provenance, `${tip.id('hex')}.0`, { enforceBudget: false })
+        .proven,
+    ).toBe(true)
+  })
+
   it('trustProven skips async re-verify when remittance is already on disk', async () => {
     const origin = inscription()
     const tip = transfer(origin)

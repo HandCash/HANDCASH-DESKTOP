@@ -131,4 +131,19 @@ describe('collectableOwnership', () => {
       }),
     ).toBe(true)
   })
+
+  it('rejects a send when a tip that still pays us is past grace and missing from live', () => {
+    const now = 1_000 + OWNERSHIP_SETTLE_GRACE_MS + 5_000
+    expect(
+      shouldRejectSendForMissingLiveTip({
+        outpoint: `${TX}.0`,
+        inLiveSet: false,
+        firstSeenAt: 1_000,
+        liveScanAt: now - 1_000,
+        now,
+        lockingScriptHex: OUR_SCRIPT,
+        walletAddress: OUR_ADDRESS,
+      }),
+    ).toBe(true)
+  })
 })

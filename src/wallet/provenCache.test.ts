@@ -128,3 +128,53 @@ describe('the path a proof walked', () => {
     expect(cache.getProvenVerdict('bb.0')?.path).toEqual(['bb_0', 'aa_0'])
   })
 })
+
+describe('genesis attempt cooldown', () => {
+  beforeEach(() => {
+    store.clear()
+    vi.resetModules()
+  })
+
+  it('does not re-queue an unavailable tip across boots within the hour', async () => {
+    const cache = await import('./provenCache')
+    const tip = `${'ab'.repeat(32)}.0`
+    const at = Date.now() - 5 * 60_000
+    cache.rememberGenesisFailure(
+      tip,
+      'unavailable',
+      'could not read hop 5 — Cannot prove the collectable input offline',
+      at,
+    )
+    cache.rememberGenesisAttempt(tip, at)
+    expect(cache.shouldAttemptGenesis(tip)).toBe(false)
+  })
+
+  it('pins a permanent indexer reject for a full day', async () => {
+    const cache = await import('./provenCache')
+    const tip = `${'cd'.repeat(32)}.0`
+    const at = Date.now() - 2 * 60 * 60_000
+    cache.rememberGenesisFailure(
+      tip,
+      'unavailable',
+      'The txid deadbeef parameter must be valid transaction on chain main',
+      at,
+    )
+    cache.rememberGenesisAttempt(tip, at)
+    expect(cache.isPermanentGenesisMiss(
+      'The txid deadbeef parameter must be valid transaction on chain main',
+    )).toBe(true)
+    expect(cache.shouldAttemptGenesis(tip)).toBe(false)
+  })
+
+  it('honours a legacy failure timestamp when no attempt was pinned', async () => {
+    const cache = await import('./provenCache')
+    const tip = `${'ef'.repeat(32)}.0`
+    cache.rememberGenesisFailure(
+      tip,
+      'unavailable',
+      'offline hop',
+      Date.now() - 10 * 60_000,
+    )
+    expect(cache.shouldAttemptGenesis(tip)).toBe(false)
+  })
+})

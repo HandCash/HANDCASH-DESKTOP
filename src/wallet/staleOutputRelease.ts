@@ -30,6 +30,7 @@ import {
   outpointFromOutput,
 } from './txOutpoints'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { yieldToUi } from './yieldToUi'
 import {
   classifyChangeScript,
   hasLockingScript,
@@ -266,8 +267,9 @@ export async function releaseSealedInputsOfUnsentTx(
   if (inputs.length === 0) return 0
 
   const unique = [...new Set(inputs.map((o) => o.trim()).filter(Boolean))]
-  for (const op of unique) {
-    releaseConsumedUtxo(op, `unsent:${id.slice(0, 12)}`)
+  for (let i = 0; i < unique.length; i++) {
+    if (i > 0 && i % 8 === 0) await yieldToUi()
+    releaseConsumedUtxo(unique[i]!, `unsent:${id.slice(0, 12)}`)
   }
 
   const storage = getActiveWallet()?.wallet?.storage
@@ -275,7 +277,9 @@ export async function releaseSealedInputsOfUnsentTx(
     try {
       await storage.runAsStorageProvider(async (activeSp) => {
         const sp = activeSp as unknown as LocalStorage
-        for (const op of unique) {
+        for (let i = 0; i < unique.length; i++) {
+          if (i > 0 && i % 8 === 0) await yieldToUi()
+          const op = unique[i]!
           const parsed = parseOutpoint(op)
           if (!parsed) continue
           const rows = await findOutputsForTxid(sp, parsed.txid)
@@ -553,7 +557,9 @@ export async function hideSpentOutpoints(
   if (unique.length === 0) return 0
   const spender = spentBy?.trim().toLowerCase()
   const id = spender && /^[0-9a-f]{64}$/.test(spender) ? spender : ''
-  for (const op of unique) {
+  for (let i = 0; i < unique.length; i++) {
+    if (i > 0 && i % 8 === 0) await yieldToUi()
+    const op = unique[i]!
     // Record *which* transaction consumed the coin when we know it. A bare
     // marker is unauditable: a coin sealed for a spend that never reached a
     // node looks identical to one a miner really took, so nothing downstream
@@ -568,7 +574,9 @@ export async function hideSpentOutpoints(
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage
-      for (const op of unique) {
+      for (let i = 0; i < unique.length; i++) {
+        if (i > 0 && i % 8 === 0) await yieldToUi()
+        const op = unique[i]!
         const parsed = parseOutpoint(op)
         if (!parsed) continue
         const rows = await findOutputsForTxid(sp, parsed.txid)
