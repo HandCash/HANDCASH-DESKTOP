@@ -164,6 +164,7 @@ export function AuthScreen({
     const secret = getOpenUnlockSecret()
     if (!secret) return
     let cancelled = false
+    console.info('[unlock] factor=open-secret — device lock is off')
     setDeviceUnlockAttempted(true)
     send({ type: 'SUBMIT' })
     setPreparing({ title: 'Opening', lede: 'Opening your wallet on this device.' })
@@ -189,7 +190,11 @@ export function AuthScreen({
     if (mode !== 'locked' || formMode !== 'unlock' || deviceUnlockAttempted || preparing) return
     if (shouldAutoUnlock()) return
     const factors = readVaultUnlockFactors()
-    if (!factors.device) return
+    if (!factors.device) {
+      console.info('[unlock] factor=password — no device wrap in this vault')
+      return
+    }
+    console.info('[unlock] factor=device — prompting this device')
 
     // Never Touch-ID prompt while the window is hidden (close / alt-tab). Wait
     // until the user is looking at the lock screen again.

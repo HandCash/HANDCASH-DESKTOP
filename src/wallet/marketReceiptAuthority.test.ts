@@ -2,6 +2,7 @@ import { P2PKH, PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import {
   chooseMarketReceiptAuthority,
+  marketReceiptRefusalIsTerminal,
   verifyMarketSettlementPayout,
 } from './marketReceiptAuthority'
 import { calculateMarketSettlement } from './marketListing'
@@ -248,5 +249,29 @@ describe('verifyMarketSettlementPayout', () => {
         outputs: settlementOutputs({ feeSats: 1 }),
       }),
     ).toEqual({ ok: false, reason: 'fee-payment-mismatch' })
+  })
+})
+
+describe('marketReceiptRefusalIsTerminal', () => {
+  it('keeps a receipt whose listing may still arrive', () => {
+    expect(marketReceiptRefusalIsTerminal('no-local-listing-for-sale')).toBe(false)
+    expect(marketReceiptRefusalIsTerminal('listing-not-sold-by-active-account')).toBe(
+      false,
+    )
+  })
+
+  it('consumes a receipt no amount of waiting can make valid', () => {
+    for (const reason of [
+      'listing-has-no-token',
+      'listing-cancelled',
+      'listing-settled-by-another-tx',
+      'reservation-buyer-mismatch',
+      'settlement-missing-item-input',
+      'settlement-missing-offer-input',
+      'seller-payment-mismatch',
+      'fee-payment-mismatch',
+    ] as const) {
+      expect(marketReceiptRefusalIsTerminal(reason)).toBe(true)
+    }
   })
 })

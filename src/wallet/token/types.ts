@@ -148,6 +148,12 @@ export type FungibleToken = {
    * unknown, not proof that the token uses the legacy JSON encoding.
    */
   encoding?: 'brc162' | 'legacy-json'
+  /**
+   * When this card was first painted. Used to bound how long a mint that never
+   * reached the chain may keep painting; a row without it predates the field and
+   * is treated as old.
+   */
+  seenAt?: number
   maxSupply?: number | null
   provenanceOk?: boolean
   /** Active BRC-48 listing when this held tip is on the market. */

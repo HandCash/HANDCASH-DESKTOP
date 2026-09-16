@@ -24,6 +24,7 @@ import {
   type FungibleToken,
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
+import { chooseFungibleChainFate } from './fungibleChainFate'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
 import { accountLocalKey } from '../accountLocalKeys'
 import {
@@ -142,6 +143,10 @@ function loadDurableList(): FungibleToken[] {
       dec: Number.isFinite(t.dec) ? t.dec : 0,
       spendKind:
         t.spendKind === 'cosigned' || t.spendKind === 'mixed' ? t.spendKind : 'plain',
+      // A row written before `seenAt` existed is old, not new — 0 keeps it
+      // eligible for the unconfirmed verdict instead of restarting its grace
+      // period on every launch.
+      seenAt: t.seenAt ?? 0,
     }))
   } catch {
     return []
@@ -172,6 +177,7 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
           ...(t.binarySupply ? { binarySupply: t.binarySupply } : {}),
           ...(t.encoding ? { encoding: t.encoding } : {}),
+          ...(t.seenAt != null ? { seenAt: t.seenAt } : {}),
           ...(t.maxSupply != null ? { maxSupply: t.maxSupply } : {}),
           ...(t.provenanceOk != null ? { provenanceOk: t.provenanceOk } : {}),
         })),
@@ -210,7 +216,12 @@ function setFungiblesCache(
   ) {
     return
   }
-  cached = items.filter(cacheExtraLooksLikeFungible).map(attachMarketListingToToken)
+  const paintedAt = Date.now()
+  cached = items
+    .filter(cacheExtraLooksLikeFungible)
+    .map(attachMarketListingToToken)
+    // Stamp first paint so an unconfirmed mint can age out of the list.
+    .map((token) => (token.seenAt == null ? { ...token, seenAt: paintedAt } : token))
   hydrated = true
   persistDurableList(cached)
   notify()
@@ -822,6 +833,77 @@ export function listFungibles(active?: ActiveWallet | null): Promise<FungibleTok
   return run
 }
 
+/** Existence answers for cards the basket did not return — one probe per tx. */
+const chainPresenceCache = new Map<string, { at: number; onChain: boolean | null }>()
+const CHAIN_PRESENCE_TTL_MS = 5 * 60_000
+
+async function tipIsOnChain(
+  txid: string,
+  chain: Chain,
+): Promise<boolean | null> {
+  const hit = chainPresenceCache.get(txid)
+  if (hit && Date.now() - hit.at < CHAIN_PRESENCE_TTL_MS) return hit.onChain
+  try {
+    const { txExistsOnChain } = await import('../legacyScan')
+    const onChain = await txExistsOnChain(txid, chain)
+    chainPresenceCache.set(txid, { at: Date.now(), onChain })
+    return onChain
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Stop painting a mint that never reached the chain.
+ *
+ * A `deploy+mint` whose transaction no provider has ever seen, and which the
+ * basket does not hold, is not an asset — offering it Send or Burn is a promise
+ * the wallet cannot keep. Every other absence keeps its card.
+ */
+async function dropUnconfirmedFungibles(
+  rows: FungibleToken[],
+  wallet: ActiveWallet,
+  args: { liveRows: FungibleToken[]; liveReadUsable: boolean },
+): Promise<FungibleToken[]> {
+  const prior = rows.filter((t) => !leftoverCollectableSym(t.sym))
+  const liveOutpoints = new Set(
+    args.liveRows
+      .map((row) => normalizedDottedOutpoint(row.outpoint))
+      .filter((point): point is string => Boolean(point)),
+  )
+  const kept: FungibleToken[] = []
+  const now = Date.now()
+  for (const row of prior) {
+    const point = normalizedDottedOutpoint(row.outpoint)
+    const inLiveBasket = point == null || liveOutpoints.has(point)
+    const preliminary = chooseFungibleChainFate({
+      inLiveBasket,
+      liveReadUsable: args.liveReadUsable,
+      onChain: null,
+      ageMs: now - (row.seenAt ?? 0),
+    })
+    // Only pay for a lookup when absence would otherwise retire the card.
+    if (preliminary.kind !== 'unconfirmed') {
+      kept.push(row)
+      continue
+    }
+    const fate = chooseFungibleChainFate({
+      inLiveBasket,
+      liveReadUsable: args.liveReadUsable,
+      onChain: await tipIsOnChain(point!.split('.')[0]!, wallet.chain),
+      ageMs: now - (row.seenAt ?? 0),
+    })
+    if (fate.kind !== 'unconfirmed') {
+      kept.push(row)
+      continue
+    }
+    console.info(
+      `[bsv21] retiring unconfirmed card ${point} — ${fate.reason}`,
+    )
+  }
+  return kept
+}
+
 /**
  * List live BSV-21 tips from basket `bsv21` and aggregate by token id.
  */
@@ -874,15 +956,20 @@ async function listFungiblesNow(
   try {
     await yieldToUi()
     let liveRows: FungibleToken[] = []
+    let liveReadUsable = true
     try {
       const { listBsv21BinaryTokens } = await import('./listTips')
       liveRows = await listBsv21BinaryTokens(wallet)
     } catch (err) {
+      liveReadUsable = false
       console.warn('[bsv21] list failed', err)
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
     // Live BRC-162 rows win over stale JSON BSV-21 rows.
-    const prior = cached.filter((t) => !leftoverCollectableSym(t.sym))
+    const prior = await dropUnconfirmedFungibles(cached, wallet, {
+      liveRows,
+      liveReadUsable,
+    })
     const merged = mergeLiveFungibles(liveRows, prior)
     setFungiblesCache(merged, { forEpoch: epoch })
     // Fill missing icons from local/session BEEF (no HTTP content indexer).

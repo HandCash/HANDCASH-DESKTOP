@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.206] - 2026-09-16
+
+### Fixed
+
+- A send that stops responding no longer blocks every later payment. The
+  exclusive spend region is released when the send watchdog gives up (or after a
+  hard ceiling), the wallet reports a named failure instead of spinning, and the
+  next send clears any reserved batch before it selects inputs.
+- Market sale receipts that can never become valid — a cancelled listing, a
+  settlement already spent by another transaction, a payout mismatch — are
+  acknowledged and dropped instead of re-verified on every inbox poll and
+  navigation. Receipts still waiting on transaction data now back off.
+- A BSV-21 mint that never reached the chain no longer lingers in the inventory
+  as a burn-only card, while a tip the chain confirmed stays visible until the
+  basket catches up.
+- The fingerprint prompt follows the unlock factors actually enrolled in the
+  vault, so a device wrap always prompts, and the chosen factor is logged.
+- Freeze reports name the wallet layer that was running when the thread blocked.
+
 ## [1.3.205] - 2026-09-16
 
 ### Fixed

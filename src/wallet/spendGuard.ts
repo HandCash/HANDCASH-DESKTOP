@@ -164,6 +164,37 @@ async function promoteSpendableChangeBody(
   return restored
 }
 
+/**
+ * A previous spend was abandoned mid-flight, so its reserved batch may still be
+ * held. Clearing it is a precondition of the next selection — reselecting those
+ * inputs is how a double-spend gets built.
+ */
+let spendNeedsPostAbandonReview = false
+
+/** Matched by code, not class, so a mocked coordinator cannot break the check. */
+function isAbandonedSpendError(err: unknown): boolean {
+  return (
+    (err as { code?: unknown } | null | undefined)?.code === 'SPEND_REGION_ABANDONED'
+  )
+}
+
+async function reviewAfterAbandonedSpend(): Promise<void> {
+  if (!spendNeedsPostAbandonReview) return
+  spendNeedsPostAbandonReview = false
+  console.warn(
+    '[spend-guard] previous spend was abandoned — releasing reserved batches before selecting inputs',
+  )
+  try {
+    const { releaseStuckNosends } = await import('./actionReview')
+    await releaseStuckNosends()
+  } catch (err) {
+    console.warn(
+      '[spend-guard] post-abandon review skipped',
+      err instanceof Error ? err.message : String(err),
+    )
+  }
+}
+
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
@@ -185,6 +216,8 @@ export function runExclusiveSpend<T>(
   return runExclusiveSpendCoordinated(
     async () => {
       throwIfAborted()
+      await reviewAfterAbandonedSpend()
+      throwIfAborted()
       if (promote !== false) await promoteSpendableChange(promote, abort.signal)
       throwIfAborted()
       spendChainPromoted = true
@@ -198,9 +231,18 @@ export function runExclusiveSpend<T>(
     },
     () => acquireSpendLease(abort.signal),
     onSpendRegion,
-  ).finally(() => {
-    if (liveSpendAbort === abort) liveSpendAbort = null
-  })
+    // The watchdog's abort is what frees the region: without it a toolbox call
+    // that never settles keeps every later payment queued behind this one.
+    { abandonSignal: abort.signal },
+  )
+    .catch((err: unknown) => {
+      // Its reserved batch may outlive the region — heal before the next select.
+      if (isAbandonedSpendError(err)) spendNeedsPostAbandonReview = true
+      throw err
+    })
+    .finally(() => {
+      if (liveSpendAbort === abort) liveSpendAbort = null
+    })
 }
 
 /**

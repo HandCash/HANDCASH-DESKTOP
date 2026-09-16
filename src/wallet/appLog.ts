@@ -197,6 +197,29 @@ function startHeapWatch(): void {
  */
 const STALL_TICK_MS = 500
 const STALL_WARN_MS = 1_000
+
+/**
+ * What the wallet was doing when the thread blocked.
+ *
+ * `longtask` attribution in a WebView is always `self`, so a log full of
+ * "blocked 2000ms" says only that something is wrong. Whoever knows which
+ * layers are running registers here; this module stays dependency-free.
+ */
+let stallContext: (() => string) | null = null
+
+export function setStallContextProvider(provider: () => string): void {
+  stallContext = provider
+}
+
+function describeStallContext(): string {
+  if (!stallContext) return ''
+  try {
+    const described = stallContext().trim()
+    return described ? ` · ${described}` : ''
+  } catch {
+    return ''
+  }
+}
 let stallTimer: ReturnType<typeof setInterval> | null = null
 /**
  * When the app last came back to the foreground.
@@ -223,7 +246,10 @@ function startStallWatch(): void {
     // minute drift is suspension/sleep, not a continuously blocked JS task.
     if (drift > 60_000) return
     if (drift < STALL_WARN_MS) return
-    appendAppLog('warn', `[stall] main thread blocked ${Math.round(drift)}ms`)
+    appendAppLog(
+      'warn',
+      `[stall] main thread blocked ${Math.round(drift)}ms${describeStallContext()}`,
+    )
     flushNow()
   }, STALL_TICK_MS)
 }
@@ -243,7 +269,7 @@ function startLongTaskWatch(): void {
         lastLongTaskAt = now
         appendAppLog(
           'warn',
-          `[longtask] ${Math.round(entry.duration)}ms (${entry.name || 'unknown'})`,
+          `[longtask] ${Math.round(entry.duration)}ms (${entry.name || 'unknown'})${describeStallContext()}`,
         )
       }
     })

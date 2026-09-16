@@ -73,9 +73,18 @@ export function isNoDeviceLock(): boolean {
   return getDeviceLockMode() === 'none' && Boolean(getOpenUnlockSecret())
 }
 
-/** Lock screen / idle timer should open the wallet without a prompt. */
+/**
+ * Lock screen / idle timer should open the wallet without a prompt.
+ *
+ * The vault record is the source of truth for custody factors; this pref only
+ * records the holder's choice. When a device wrap is enrolled we must prompt,
+ * even if the pref still reads `none` — otherwise a leftover open secret
+ * silently retires the factor the holder deliberately added, and the wallet
+ * stops asking for a fingerprint with no visible cause.
+ */
 export function shouldAutoUnlock(): boolean {
-  return isNoDeviceLock()
+  if (!isNoDeviceLock()) return false
+  return !readVaultUnlockFactors().device
 }
 
 export function inferDeviceLockMode(): DeviceLockMode {

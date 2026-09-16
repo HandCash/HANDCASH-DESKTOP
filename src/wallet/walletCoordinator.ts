@@ -4,6 +4,7 @@
  * longer share one FIFO (so a queued backup does not delay a waiting spend).
  */
 import { createActor, type Actor } from 'xstate'
+import { setStallContextProvider } from './appLog'
 import { createSerialQueue } from './serialQueue'
 import {
   canBeginChainIngest,
@@ -198,6 +199,9 @@ export type WalletCoordinatorLiveStatus = WalletCoordinatorSnapshot & {
   /** Human one-liner for Settings / pill tooltips. */
   summary: string
 }
+
+// A freeze report is only actionable if it names the layer that was running.
+setStallContextProvider(() => describeWalletCoordinator().summary)
 
 /** Live coordinator view — use this instead of guessing which layer is stuck. */
 export function describeWalletCoordinator(): WalletCoordinatorLiveStatus {
@@ -402,11 +406,103 @@ export function runChainIngestDuringSpend<T>(fn: () => Promise<T>): Promise<T> {
   })()
 }
 
+/**
+ * Ceiling on one spend region. A toolbox call that never settles — an
+ * IndexedDB transaction lost while the main thread was blocked, for example —
+ * would otherwise hold this FIFO for the rest of the session, and every later
+ * payment would wait behind it with no way to recover but a restart.
+ */
+const SPEND_REGION_MAX_MS = 240_000
+
+/** Why the region was given up. Both are "the send never reported back". */
+export type SpendAbandonCause = 'aborted' | 'ceiling'
+
+/**
+ * The spend region was released while its work was still outstanding. Nothing
+ * more is broadcast from here; the next spend reviews reserved batches before
+ * it selects inputs.
+ */
+export class SpendRegionAbandonedError extends Error {
+  readonly code = 'SPEND_REGION_ABANDONED' as const
+
+  constructor(readonly abandonCause: SpendAbandonCause) {
+    super('The send stopped responding. Nothing further was broadcast — try again.')
+    this.name = 'SpendRegionAbandonedError'
+  }
+}
+
+/** Recognise an abandoned region without importing the class (mock-safe). */
+export const SPEND_REGION_ABANDONED = 'SPEND_REGION_ABANDONED'
+
+/**
+ * Run the spend body, but never let it own the region forever. The work cannot
+ * be cancelled — it is left to settle on its own and only logged — so the
+ * region is freed on the caller's abort or at {@link SPEND_REGION_MAX_MS}.
+ */
+function runSpendBody<T>(
+  fn: () => Promise<T>,
+  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
+): Promise<T> {
+  const ceilingMs = Math.max(1_000, opts?.ceilingMs ?? SPEND_REGION_MAX_MS)
+  const signal = opts?.abandonSignal
+  const startedAt = Date.now()
+  const work = fn()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  let abandoned = false
+
+  const giveUpAt = new Promise<never>((_, reject) => {
+    const giveUp = (cause: SpendAbandonCause) => {
+      if (abandoned) return
+      abandoned = true
+      console.warn(
+        `[coordinator] spend region abandoned (${cause}) after ${Math.round(
+          (Date.now() - startedAt) / 1000,
+        )}s — freeing the queue for the next payment`,
+      )
+      reject(new SpendRegionAbandonedError(cause))
+    }
+    timer = setTimeout(() => giveUp('ceiling'), ceilingMs)
+    if (!signal) return
+    if (signal.aborted) {
+      giveUp('aborted')
+      return
+    }
+    onAbort = () => giveUp('aborted')
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+
+  const cleanup = () => {
+    if (timer) clearTimeout(timer)
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+  }
+
+  // A late settle is history, not a result — report it and swallow it, or it
+  // surfaces as an unhandled rejection long after the user moved on.
+  work.then(
+    () => {
+      if (abandoned) {
+        console.warn('[coordinator] abandoned spend finished late — result discarded')
+      }
+    },
+    (err: unknown) => {
+      if (!abandoned) return
+      console.warn(
+        '[coordinator] abandoned spend failed late',
+        err instanceof Error ? err.message : String(err),
+      )
+    },
+  )
+
+  return Promise.race([work, giveUpAt]).finally(cleanup)
+}
+
 /** Send / BRC spend paths — exclusive with chain ingest and history replica. */
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   acquireLease: () => Promise<() => Promise<void>>,
   onSpendRegion?: () => void,
+  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
 ): Promise<T> {
   // Before the region waits — so a running refresh can yield ordinal work now.
   const priority = leaseSpendPriority('runExclusiveSpend')
@@ -424,7 +520,7 @@ export function runExclusiveSpend<T>(
       onSpendRegion?.()
       const releaseLease = await acquireLease()
       try {
-        return await fn()
+        return await runSpendBody(fn, opts)
       } finally {
         await releaseLease()
         releaseSpend()

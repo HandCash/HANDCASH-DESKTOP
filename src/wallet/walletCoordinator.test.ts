@@ -17,6 +17,8 @@ import {
   shouldYieldChainIngestToSpend,
   getSpendPriorityDepth,
   describeSpendPriorityHolds,
+  SpendRegionAbandonedError,
+  SPEND_REGION_ABANDONED,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -187,6 +189,82 @@ describe('walletCoordinator runtime', () => {
       },
     )
     expect(order).toEqual(['acquired', 'lease', 'fn', 'release-lease'])
+  })
+
+  it('frees the region when a hung spend is aborted, so the next payment runs', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const lease = async () => async () => undefined
+    const abort = new AbortController()
+
+    // A toolbox call that never settles — the shape of a lost IDB transaction.
+    const hung = runExclusiveSpend(() => new Promise<string>(() => {}), lease, undefined, {
+      abandonSignal: abort.signal,
+    })
+    await Promise.resolve()
+    abort.abort('Send timed out')
+
+    await expect(hung).rejects.toBeInstanceOf(SpendRegionAbandonedError)
+    await expect(runExclusiveSpend(async () => 'next-tx', lease)).resolves.toBe('next-tx')
+    expect(getWalletCoordinatorSnapshot().spend).toBe('idle')
+    expect(getSpendPriorityDepth()).toBe(0)
+  })
+
+  it('gives up on a spend that never reports back at all', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const lease = async () => async () => undefined
+
+    await expect(
+      runExclusiveSpend(() => new Promise<string>(() => {}), lease, undefined, {
+        ceilingMs: 1_000,
+      }),
+    ).rejects.toMatchObject({
+      code: 'SPEND_REGION_ABANDONED',
+      abandonCause: 'ceiling',
+    })
+  })
+
+  it('names the cause so the next spend knows to heal first', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const abort = new AbortController()
+    abort.abort('Send timed out')
+
+    await expect(
+      runExclusiveSpend(
+        () => new Promise<string>(() => {}),
+        async () => async () => undefined,
+        undefined,
+        { abandonSignal: abort.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: SPEND_REGION_ABANDONED,
+      abandonCause: 'aborted',
+    })
+  })
+
+  it('does not let an abandoned spend reject after the fact', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let failLate!: (err: Error) => void
+    const abort = new AbortController()
+
+    const hung = runExclusiveSpend(
+      () =>
+        new Promise<string>((_, reject) => {
+          failLate = reject
+        }),
+      async () => async () => undefined,
+      undefined,
+      { abandonSignal: abort.signal },
+    )
+    await Promise.resolve()
+    abort.abort('Send timed out')
+    await expect(hung).rejects.toBeInstanceOf(SpendRegionAbandonedError)
+
+    failLate(new Error('createAction failed after we stopped waiting'))
+    await Promise.resolve()
+    expect(warn).toHaveBeenCalledWith(
+      '[coordinator] abandoned spend failed late',
+      'createAction failed after we stopped waiting',
+    )
   })
 
   it('tracks explicit requestSpendPriority independently of the FIFO', () => {

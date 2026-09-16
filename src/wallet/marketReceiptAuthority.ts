@@ -39,6 +39,36 @@ export type MarketReceiptAuthority =
   | { path: 'listTimeUnlocks'; authorization: MarketListingAuthorization }
   | { path: 'refuse'; reason: MarketReceiptRefusal }
 
+/**
+ * Whether waiting could ever change this verdict.
+ *
+ * A terminal refusal is a fact about the settlement transaction or a closed
+ * listing, so the inbox message must be consumed. Leaving it unacknowledged is
+ * what made one dead sale re-run its BEEF hydration on every inbox poll and
+ * every navigation, forever.
+ *
+ * Retryable reasons depend on state that still arrives: the listing record, or
+ * the account that owns it being the active one.
+ */
+export function marketReceiptRefusalIsTerminal(
+  reason: MarketReceiptRefusal,
+): boolean {
+  switch (reason) {
+    case 'no-local-listing-for-sale':
+    case 'listing-not-sold-by-active-account':
+      return false
+    case 'listing-has-no-token':
+    case 'listing-cancelled':
+    case 'listing-settled-by-another-tx':
+    case 'reservation-buyer-mismatch':
+    case 'settlement-missing-item-input':
+    case 'settlement-missing-offer-input':
+    case 'seller-payment-mismatch':
+    case 'fee-payment-mismatch':
+      return true
+  }
+}
+
 function normalizePoint(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
