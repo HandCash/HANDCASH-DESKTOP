@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { encodeBsv21Binary } from './token'
-import { classifyOneSatAsBsv21, isFungibleOneSatLock } from './healMisfiledBsv21'
+import {
+  classifyOneSatAsBsv21,
+  isBsv21OneSatLock,
+  isNonCollectableOneSatLock,
+} from './healMisfiledBsv21'
 
 const P2PKH = '76a914' + '11'.repeat(20) + '88ac'
 const IMAGE_ENV =
@@ -120,15 +124,16 @@ describe('classifyOneSatAsBsv21', () => {
     }
   })
 
-  it('treats 162 binary and 1sat-ft locks as fungible', () => {
+  it('separates active BSV-21 from quarantined fungible locks', () => {
     const script = encodeBsv21Binary({
       tokenId,
       amount: 11111111111n,
       rest: P2PKH,
     }).toHex()
-    expect(isFungibleOneSatLock(script)).toBe(true)
-    expect(isFungibleOneSatLock(FT_ENV + P2PKH)).toBe(true)
-    expect(isFungibleOneSatLock(IMAGE_ENV + P2PKH)).toBe(false)
-    expect(isFungibleOneSatLock(P2PKH)).toBe(false)
+    expect(isBsv21OneSatLock(script)).toBe(true)
+    expect(isBsv21OneSatLock(FT_ENV + P2PKH)).toBe(false)
+    expect(isNonCollectableOneSatLock(FT_ENV + P2PKH)).toBe(true)
+    expect(isNonCollectableOneSatLock(IMAGE_ENV + P2PKH)).toBe(false)
+    expect(isNonCollectableOneSatLock(P2PKH)).toBe(false)
   })
 })

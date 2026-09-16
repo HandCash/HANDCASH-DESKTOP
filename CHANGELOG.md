@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.200] - 2026-09-16
+
+### Fixed
+
+- Freshly minted and received 1Sat items now paint artwork from local
+  transaction or BRC-150 proof bytes before using an indexer to fill missing
+  metadata.
+- Item fallback icons are vertically centered in their square image frames.
+- Existing and newly imported BRC-162 holdings retain their binary supply
+  classification, so Mobile no longer presents them as burn-only legacy BSV-21.
+
+### Changed
+
+- Removed the retired `1sat-ft` wallet paths, protocol aliases, and documentation.
+
 ## [1.3.199] - 2026-09-16
 
 ### Fixed

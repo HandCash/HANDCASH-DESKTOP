@@ -54,15 +54,6 @@ export type ItemTransferAsset =
       icon?: string
       issuer?: string
     }
-  | {
-      /** Inbound decode only. New outbound token peer is kind `fungible` (162 / bsv21). */
-      kind: '1sat-ft'
-      origin: string
-      amount: string
-      sym: string
-      supply?: 'locked' | 'open'
-      maxSupply?: number | null
-    }
 
 export type ChatMessage = {
   id: string

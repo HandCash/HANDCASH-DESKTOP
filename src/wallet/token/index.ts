@@ -17,9 +17,11 @@ export {
   detectCosignFromLockingScript,
   formatFungibleAmount,
   isBsv21Mime,
+  issuerFromBsv21Tags,
   issuerFromRemittance,
   issuerFromSigmaLockingScript,
   normalizeTokenId,
+  requireTokenId,
   parseBsv21CustomInstructions,
   parseBsv21Json,
   shortIssuerLabel,
@@ -83,7 +85,11 @@ export {
 } from './listTips'
 
 // Send / receive
-export { combineColourTips, sendColourCoins } from './send'
+export {
+  combineBsv21Tips,
+  sendBsv21Tokens,
+  signBsv21TipTransfer,
+} from './send'
 
 export {
   buildFungibleInputBeef,
@@ -109,14 +115,13 @@ export {
 export { bsv21SendMachine } from './sendMachine'
 
 // Burn
-export { burnColourCoins, previewColourBurn } from './burn'
+export { burnBsv21Tokens, previewBsv21Burn } from './burn'
 
 // BRC-176 prove
 export { fillTokenParentBodies, prove, type Bsv21ProofResult } from './prove176'
 
 // Settle (P2P receive)
 export { internalizePeerFungibleSettle } from './settle'
-export { internalizePeerColourSettle } from './settleLegacy'
 
 // Icons
 export {
@@ -128,7 +133,6 @@ export {
   cacheTokenIconFromBeef,
   mergeIconTxIntoBeef,
   resolveBsv21IconDataUrl,
-  resolveOnesatFtIconDataUrl,
   resolveTokenIconDataUrl,
 } from './icons/resolve'
 
@@ -154,41 +158,14 @@ export {
   sigmaSignDeployLockingScript,
 } from './issuer'
 
-// Collectable / NFT guards (deprecated 1sat-ft detection only)
-export {
-  aggregateColourTokens,
-  assertColourAmtConservation,
-  buildColourCustomInstructions,
-  buildOnesatFtOriginInscriptionJson,
-  evaluateColourSupply,
-  isOnesatFtAmtHop,
-  isOnesatFtMime,
-  looksLikeOnesatFtTip,
-  mergeColourRemittance,
-  normalizeColourOrigin,
-  ONESAT_FT_TAG,
-  ONESAT_FT_MIME,
-  issuerFromColourTags,
-  originFromColourCi,
-  originFromOnesatFtLock,
-  parseColourTipAmt,
-  parseOnesatFtOriginPolicy,
-  selectColourTipsForAmount,
-  shortOriginLabel,
-  tryParseProvenanceFromCi,
-  verifyColourTipProvenance,
-  type ColourTip,
-  type ColourToken,
-} from './guards'
-
 // Legacy JSON inscribe helpers (burn path)
 export {
   buildBsv21BurnLockingScript,
   buildBsv21TransferLockingScript,
 } from './legacyInscribe'
 
-// Preferred aliases for new code
+// Stable feature aliases
 export { listFungibles as listTokens } from './list'
 export { sendFungible as sendToken } from './sendEntry'
-export { burnColourCoins as burnToken } from './burn'
-export { combineColourTips as combineToken } from './send'
+export { burnBsv21Tokens as burnToken } from './burn'
+export { combineBsv21Tips as combineToken } from './send'

@@ -11,7 +11,6 @@ import { createActor } from 'xstate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
 import {
-  assertNoOnesatFtRemittance,
   buildBsv21ListingProof,
   buildMarketHeldRemittance,
   buildMarketSettlementUnlocks,
@@ -26,7 +25,6 @@ import {
 import { rememberProvenVerdict } from './provenCache'
 import { decodeBsv21Binary } from './token'
 import { buildBsv21ValueLock } from './token'
-import { buildColourCustomInstructions } from './token'
 import {
   chooseMarketCancelPath,
   chooseMarketListingPath,
@@ -310,17 +308,14 @@ describe('market 162 listing remittance', () => {
     expect(ci.id).toBe(tokenId)
     expect(ci.amt).toBe('60')
     expect(remit.customInstructions).not.toMatch(/1sat-ft/)
-    expect(() => assertNoOnesatFtRemittance(remit.customInstructions)).not.toThrow()
   })
 
-  it('refuses to create 1sat-ft remittance', () => {
-    const leftover = buildColourCustomInstructions({
+  it('refuses a retired fungible protocol tip', () => {
+    const leftover = JSON.stringify({
+      p: '1sat-ft',
       origin: tokenId,
-      amt: 68862,
+      amt: '68862',
     })
-    expect(() => assertNoOnesatFtRemittance(leftover)).toThrow(MarketListingError)
-    expect(() => assertNoOnesatFtRemittance(leftover)).toThrow(/1sat-ft remittance/i)
-
     const classified = classifyMarketListingAsset({
       outpoint: tip,
       satoshis: 1,
@@ -328,7 +323,7 @@ describe('market 162 listing remittance', () => {
       tags: ['1sat-ft'],
       customInstructions: leftover,
     })
-    expect(classified.refuse).toBe('1sat-ft')
+    expect(classified.refuse).toBe('retired-protocol')
     expect(classified.assetType).not.toBe('bsv21')
   })
 

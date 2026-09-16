@@ -9,6 +9,7 @@ import {
 import { Skeleton } from './Skeleton'
 import { acquireImageLoadSlot, releaseImageLoadSlot } from './imageLoadSlots'
 import { shouldAttachDeferredSrc } from './uiFeed/attachSrc'
+import { deferredFallbackFrame } from './uiFeed/fallbackFrame'
 
 type Props = Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'> & {
   /** Skeleton size while loading. Defaults to width/height props. */
@@ -380,12 +381,18 @@ export function DeferredImage({
     ready: status === 'ready',
   })
   const showImg = status === 'ready' && attachSrc
+  const showFallback = status === 'error' && Boolean(fallback)
   const showSkeleton =
     !showImg &&
     !(status === 'error' && (revealOnError || fallback))
 
   return (
-    <span className="deferred-image" data-aeon-state={status} ref={frameRef}>
+    <span
+      className="deferred-image"
+      data-aeon-state={status}
+      ref={frameRef}
+      style={deferredFallbackFrame({ showFallback, width: skW, height: skH })}
+    >
       {showSkeleton ? (
         <Skeleton
           className={skeletonClassName}

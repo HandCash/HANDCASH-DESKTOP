@@ -44,7 +44,7 @@ const token: FungibleToken = {
   utxoCount: 1,
   outpoint: 'abc123_0',
   spendKind: 'plain',
-  colourSupply: 'locked',
+  binarySupply: 'locked',
 }
 
 describe('tokenMarketView', () => {

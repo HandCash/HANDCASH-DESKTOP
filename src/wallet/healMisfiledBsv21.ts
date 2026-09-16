@@ -2,8 +2,7 @@
  * Heal BSV-21 fungibles that Refresh/import painted into basket `1sat` (NFT).
  * Local basket move only — no broadcast.
  *
- * Real 1sat collectables (image/text inscriptions, ordinal remittance without
- * a valid bsv-20 payload) stay in `1sat`. 1sat-ft stays for the FT reclaim.
+ * Real collectables stay in `1sat`; removed protocols remain quarantined.
  */
 import {
   BSV21_BASKET,
@@ -11,14 +10,16 @@ import {
   bsv21Tags,
   decodeBsv21Binary,
   isBsv21Mime,
-  isOnesatFtMime,
-  looksLikeOnesatFtTip,
   parseBsv21Json,
   tokenIdForPayload,
   tokenIdFromBsv21Tags,
   type Bsv21Op,
   type Bsv21Payload,
 } from './token'
+import {
+  isRetiredFungibleMime,
+  looksLikeRetiredFungibleTip,
+} from './retiredFungible'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import { normalizeLockingScriptHex } from './collectableTipKind'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -27,8 +28,18 @@ import { wireCollectableOutpoint } from './oneSatCollectableGuard'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { getActiveWallet, type ActiveWallet } from './session'
 
+/**
+ * `encoding` names how the holding was proven: `binary` is a BRC-162 lock
+ * (live, sendable), `json` is a read-only legacy inscription/remittance. The
+ * caller must not infer this from a missing field.
+ */
 export type OneSatAsBsv21 =
-  | { kind: 'bsv21'; payload: Bsv21Payload; tokenId: string }
+  | {
+      kind: 'bsv21'
+      encoding: 'binary' | 'json'
+      payload: Bsv21Payload
+      tokenId: string
+    }
   | { kind: 'skip' }
 
 export type ClassifyOneSatAsBsv21Args = {
@@ -86,7 +97,7 @@ function collectableMime(mime: string): boolean {
     mime.startsWith('application/json') === false &&
       mime.length > 0 &&
       !isBsv21Mime(mime) &&
-      !isOnesatFtMime(mime)
+      !isRetiredFungibleMime(mime)
   )
 }
 
@@ -114,16 +125,23 @@ export function classifyOneSatAsBsv21(
         ...(binary.payload?.sym ? { sym: binary.payload.sym } : {}),
         ...(binary.payload?.dec != null ? { dec: String(binary.payload.dec) } : {}),
       })
-      if (payload) return { kind: 'bsv21', payload, tokenId }
+      if (payload) return { kind: 'bsv21', encoding: 'binary', payload, tokenId }
     }
   }
 
   const { mime, payload: envPayload } = payloadFromEnvelope(args.lockingScriptHex)
-  if (mime && isOnesatFtMime(mime)) return { kind: 'skip' }
+  if (
+    isRetiredFungibleMime(mime) ||
+    looksLikeRetiredFungibleTip({
+      tags: args.tags,
+      customInstructions: args.customInstructions,
+      lockingScriptHex: args.lockingScriptHex,
+    })
+  ) {
+    return { kind: 'skip' }
+  }
 
   const ci = asRecord(args.customInstructions)
-  const ciProtocol = String(ci?.p ?? '').toLowerCase()
-  if (ciProtocol === '1sat-ft') return { kind: 'skip' }
 
   // Image / text / other collectable envelopes stay NFTs even if someone
   // stamped a token remittance on top (Pixel Foxes ≠ FOX).
@@ -143,7 +161,7 @@ export function classifyOneSatAsBsv21(
   )
 
   if (payload && tokenId) {
-    return { kind: 'bsv21', payload, tokenId }
+    return { kind: 'bsv21', encoding: 'json', payload, tokenId }
   }
   if ((isBsv21Mime(mime) || hasBsv21Tag) && tokenId && amt) {
     const built = parseBsv21Json({
@@ -158,6 +176,7 @@ export function classifyOneSatAsBsv21(
     if (built) {
       return {
         kind: 'bsv21',
+        encoding: 'json',
         payload: built,
         tokenId: tokenIdForPayload(built, args.outpoint ?? '') ?? tokenId,
       }
@@ -166,11 +185,10 @@ export function classifyOneSatAsBsv21(
   return { kind: 'skip' }
 }
 
-/** 1-sat lock that belongs in Tokens (BSV-21 binary/JSON or 1sat-ft), not Collect. */
-export function isFungibleOneSatLock(lockingScriptHex?: string): boolean {
+/** True when a one-sat lock is an active BSV-21 token output. */
+export function isBsv21OneSatLock(lockingScriptHex?: string): boolean {
   if (!lockingScriptHex?.trim()) return false
   if (decodeBsv21Binary(lockingScriptHex)) return true
-  if (looksLikeOnesatFtTip({ lockingScriptHex })) return true
   // JSON deploy+mint / mint / transfer — same Tokens bucket as binary 162.
   return (
     classifyOneSatAsBsv21({
@@ -178,6 +196,14 @@ export function isFungibleOneSatLock(lockingScriptHex?: string): boolean {
       outpoint: `${'0'.repeat(64)}_0`,
       lockingScriptHex,
     }).kind === 'bsv21'
+  )
+}
+
+/** True when a one-sat output must not be painted as a collectable. */
+export function isNonCollectableOneSatLock(lockingScriptHex?: string): boolean {
+  return (
+    isBsv21OneSatLock(lockingScriptHex) ||
+    looksLikeRetiredFungibleTip({ lockingScriptHex })
   )
 }
 

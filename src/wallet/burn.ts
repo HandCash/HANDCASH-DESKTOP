@@ -641,7 +641,7 @@ export async function previewBsv21Burn(args: {
   })
 }
 
-/** Route burn preview to BSV-21 plan or 1Sat FT tip selection. */
+/** Route burn preview to the binary or legacy BSV-21 plan. */
 export async function previewFungibleBurn(args: {
   tokenId: string
   amount: string
@@ -650,9 +650,9 @@ export async function previewFungibleBurn(args: {
   if (!tokenId) throw new Error('Invalid token id')
   const token = getFungible(tokenId)
   if (!token) throw new Error('Token not found')
-  if (token.colourSupply != null) {
-    const { previewColourBurn } = await import('./token')
-    return previewColourBurn({ origin: token.tokenId, amount: args.amount })
+  if (token.binarySupply != null) {
+    const { previewBsv21Burn } = await import('./token')
+    return previewBsv21Burn({ tokenId: token.tokenId, amount: args.amount })
   }
   return previewBsv21Burn(args)
 }
@@ -698,16 +698,14 @@ export async function burnBsv21(args: {
     `[burn] queued token=${tokenId.slice(0, 16)}… pending=${pendingId}`
   )
 
-  // 1Sat FT burns destroy face-value tips (no BSV-21 burn inscription).
-  if (token.colourSupply != null) {
+  // Binary BSV-21 burns destroy face-value units without a burn inscription.
+  if (token.binarySupply != null) {
     try {
-      const { burnColourCoins } = await import('./token')
-      const result = await burnColourCoins({
-        origin: token.tokenId,
+      const { burnBsv21Tokens } = await import('./token')
+      const result = await burnBsv21Tokens({
+        tokenId: token.tokenId,
         amount: args.amount,
         sym: token.sym,
-        supply: token.colourSupply,
-        maxSupply: token.colourMaxSupply ?? null,
         icon: token.icon,
         pendingId,
         item,

@@ -43,11 +43,20 @@ import {
   getCachedFungibles,
   isBsv21BinaryScript,
   isBsv21Mime,
-  isOnesatFtMime,
-  looksLikeOnesatFtTip,
-  ONESAT_FT_TAG,
 } from './token'
+import {
+  isRetiredFungibleMime,
+  looksLikeRetiredFungibleTip,
+} from './retiredFungible'
 import { decodeBProtocol } from './bProtocol'
+import {
+  getItemArtDataUrl,
+  getItemArtRecord,
+  itemArtUnexamined,
+  rememberItemArtFromBeef,
+  rememberItemArtFromProvenance,
+  rememberItemArtFromScript,
+} from './localItemArt'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
@@ -343,6 +352,9 @@ function loadDurableList(): Collectable[] {
         : cachedAuth
       return {
         ...item,
+        // Art bytes live in the item art store, not in this row (a 100 KB data
+        // URL per item would be the whole list cache). Re-attach on read.
+        imageUrl: getItemArtDataUrl(item.content ?? item.origin) ?? item.imageUrl,
         traits: Array.isArray(item.traits) ? item.traits : [],
         extras: Array.isArray(item.extras) ? item.extras : [],
         proven: authenticity === 'brc150',
@@ -368,7 +380,14 @@ function persistDurableList(items: Collectable[]): void {
           ...(item.content ? { content: item.content } : {}),
           name: item.name,
           app: item.app,
-          imageUrl: item.imageUrl,
+          // Art bytes belong to the item art store — inlining the data URL here
+          // would write every picture twice and blow the list cache budget.
+          imageUrl: item.imageUrl.startsWith('data:')
+            ? contentUrlForOrigin(
+                item.content ?? item.origin,
+                getActiveWallet()?.chain ?? 'main',
+              )
+            : item.imageUrl,
           satoshis: item.satoshis,
           mimeType: item.mimeType,
           type: item.type,
@@ -391,7 +410,7 @@ function persistDurableList(items: Collectable[]): void {
   const durable = loadDurableList().filter(
     (item) =>
       !isItemSent(item.outpoint) &&
-      !collectableIsOnesatFt(item) &&
+      !collectableIsFungible(item) &&
       !isBareOriginCollectable(item),
   )
   if (durable.length > 0) {
@@ -465,15 +484,15 @@ function setCollectablesCache(
       skipArrivalToast.delete(op)
     }
   }
-  // Drop leftover 1sat-ft. Unnamed / tip-as-origin 1sat NFTs still paint —
+  // Drop quarantined fungible rows. Unnamed / tip-as-origin NFTs still paint;
   // indexer traits arrive after ingest.
   items = items
     .map((item) =>
-      collectableIsOnesatFt(item)
+      collectableIsFungible(item)
         ? heldNamedCollectable(item.outpoint) ?? item
         : item,
     )
-    .filter((item) => !collectableIsOnesatFt(item))
+    .filter((item) => !collectableIsFungible(item))
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)
@@ -583,7 +602,7 @@ export function rebindCollectablesForAccount(): void {
   const durable = loadDurableList().filter(
     (item) =>
       !isItemSent(item.outpoint) &&
-      !collectableIsOnesatFt(item) &&
+      !collectableIsFungible(item) &&
       !isBareOriginCollectable(item),
   )
   if (durable.length > 0) {
@@ -682,7 +701,7 @@ export function shortOrigin(origin: string): string {
 }
 
 
-export function collectableIsOnesatFt(item: {
+export function collectableIsFungible(item: {
   outpoint: string
   origin?: string
   mimeType?: string
@@ -692,7 +711,7 @@ export function collectableIsOnesatFt(item: {
 }): boolean {
   // Protocol / mime / a matching Tokens origin — not "no name yet".
   // Transfer tips paint tip-as-origin until BRC-150 / indexer fills traits.
-  if (isOnesatFtMime(item.mimeType)) return true
+  if (isRetiredFungibleMime(item.mimeType)) return true
   const op = (item.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const origin = item.origin ? item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') : ''
   try {
@@ -708,7 +727,7 @@ export function collectableIsOnesatFt(item: {
   return false
 }
 
-/** Hashed origin card with no collection/name — leftover 1sat-FT NFT misfile. */
+/** Hashed origin card with no collection/name — likely an NFT misfile. */
 export function isBareOriginCollectable(item: {
   name?: string
   origin?: string
@@ -813,8 +832,10 @@ function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
   })
   const nextImage = next.imageUrl?.trim()
   const heldImage = held.imageUrl?.trim()
+  const localArt = getItemArtDataUrl(mediaOrigin)
   const imageUrl =
-    nextImage && !isSelfOrigin(next.origin, next.outpoint)
+    localArt ??
+    (nextImage && !isSelfOrigin(next.origin, next.outpoint)
       ? nextImage
       : heldImage && !isSelfOrigin(held.origin, held.outpoint)
         ? heldImage
@@ -827,7 +848,7 @@ function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
               resolved: getResolvedInscriptionByOrigin(held.origin),
             }),
             chain,
-          ) || nextImage || heldImage || contentUrlForOrigin(mediaOrigin, chain)
+          ) || nextImage || heldImage || contentUrlForOrigin(mediaOrigin, chain))
   return {
     ...next,
     collectionId,
@@ -933,16 +954,25 @@ function toCollectable(
     verdictOrigin: verdict?.origin,
     resolved,
   })
+  // An unmoved tip *is* its origin, so its locking script still carries the ord
+  // envelope this wallet (or the minting app) wrote. Keep those bytes: the
+  // indexer has not seen a fresh mint yet, and asking it paints the placeholder.
+  if (isSelfOrigin(mediaOrigin, normalizeOutpoint(o.outpoint))) {
+    rememberItemArtFromScript(mediaOrigin, o.lockingScript)
+  }
+  // Remittance art costs a BEEF decode, so it happens in `hydrateLocalItemArt`
+  // after the list is on screen — never inside a list build.
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
     ...(content ? { content } : {}),
     name: name.trim() || shortOrigin(origin),
     app,
-    imageUrl: contentUrlForOrigin(mediaOrigin, chain),
+    imageUrl: getItemArtDataUrl(mediaOrigin) ?? contentUrlForOrigin(mediaOrigin, chain),
     satoshis: o.satoshis,
     ...(o.lockingScript ? { lockingScript: o.lockingScript } : {}),
-    mimeType: resolved?.mimeType,
+    // Art we hold states its own type; an indexer walk is not needed to know it.
+    mimeType: resolved?.mimeType ?? getItemArtRecord(mediaOrigin)?.mime,
     type: resolved?.type,
     subType: resolved?.subType,
     collectionId,
@@ -1386,7 +1416,7 @@ export function noteIngestedItem(args: {
 function lockingScriptIsFungible(hex?: string): boolean {
   if (!hex) return false
   if (isBsv21BinaryScript(hex)) return true
-  return looksLikeOnesatFtTip({ lockingScriptHex: hex })
+  return looksLikeRetiredFungibleTip({ lockingScriptHex: hex })
 }
 
 function outpointLooksLikeFungible(outpoint: string): boolean {
@@ -1421,11 +1451,10 @@ function isListableItem(o: ItemOutput): boolean {
   if (o.tags?.includes('bsv21')) return false
   if (o.lockingScript && isBsv21BinaryScript(o.lockingScript)) return false
   if (o.lockingScript && decodeBProtocol(o.lockingScript)) return false
-  // 1sat-FT leftovers belong in Tokens (basket 1sat-ft), not NFT cards.
-  // Bare leftover change is 1-sat P2PKH — no MIME until CI/leftover says so.
-  if (isOnesatFtMime(resolved?.mimeType)) return false
+  // Quarantine outputs from the retired fungible experiment.
+  if (isRetiredFungibleMime(resolved?.mimeType)) return false
   if (
-    looksLikeOnesatFtTip({
+    looksLikeRetiredFungibleTip({
       tags: o.tags,
       customInstructions: o.customInstructions,
       lockingScriptHex: o.lockingScript,
@@ -1433,7 +1462,6 @@ function isListableItem(o: ItemOutput): boolean {
   ) {
     return false
   }
-  if (o.tags?.some((tag) => tag === ONESAT_FT_TAG || tag.startsWith('1sat-ft'))) return false
   // NFT transfers are bare P2PKH at the live tip (inscription lives at origin).
   // Do not require an ord envelope here — that hid every self-sent 1sat NFT.
   return true
@@ -1459,7 +1487,7 @@ function heldNamedCollectable(outpoint: string): Collectable | undefined {
   const held = cachedCollectables.find(
     (c) => normalizeOutpoint(c.outpoint) === key,
   )
-  if (held && !collectableIsOnesatFt(held)) return held
+  if (held && !collectableIsFungible(held)) return held
   return undefined
 }
 
@@ -1475,7 +1503,7 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
       ),
       chain,
     )
-    if (collectableIsOnesatFt(item)) {
+    if (collectableIsFungible(item)) {
       // Named items briefly lack remittance during sync — keep the painted card.
       const held = heldNamedCollectable(item.outpoint)
       if (held) items.push(held)
@@ -1488,6 +1516,47 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
     (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
     cachedLiveOneSats?.keys ?? null,
   )
+}
+
+/**
+ * Fill item art from bytes already on the device — remittance first, then the
+ * origin transaction in managed storage.
+ *
+ * Runs after the list paints because both sources cost a BEEF decode. Nothing
+ * here touches the network: an item whose art this finds never asks GorillaPool
+ * for a picture again, and a fresh mint stops depending on being indexed.
+ */
+async function hydrateLocalItemArt(
+  outputs: ItemOutput[],
+  wallet: ActiveWallet,
+): Promise<void> {
+  const epoch = collectablesAccountEpoch
+  let found = 0
+  for (const o of outputs) {
+    if (epoch !== collectablesAccountEpoch) return
+    if (!isListableItem(o)) continue
+    const custom = parseCustom(o.customInstructions)
+    const origin = custom.content ?? custom.origin ?? tagValue(o.tags, 'origin:')
+    if (!origin || !itemArtUnexamined(origin)) continue
+    if (custom.provenance && rememberItemArtFromProvenance(custom.provenance)) {
+      found += 1
+      await yieldToUi()
+      continue
+    }
+    const parts = /^([0-9a-f]{64})[_.](\d+)$/i.exec(origin.trim())
+    if (!parts) continue
+    const beef = await getLocalBeefForTxid(wallet, parts[1]!.toLowerCase()).catch(
+      () => null,
+    )
+    if (beef && rememberItemArtFromBeef(origin, beef)) found += 1
+    await yieldToUi()
+  }
+  if (found === 0 || epoch !== collectablesAccountEpoch) return
+  console.info(`[items] painted ${found} item(s) from local art — no content indexer`)
+  setCollectablesCache(buildItems(lastItemOutputs, lastItemChain), {
+    announceArrivals: false,
+    forEpoch: epoch,
+  })
 }
 
 /**
@@ -2380,11 +2449,11 @@ function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
     if (isItemSent(key)) continue
     const prev = byOp.get(key)
     if (!prev) {
-      if (!collectableIsOnesatFt(item)) byOp.set(key, item)
+      if (!collectableIsFungible(item)) byOp.set(key, item)
       continue
     }
-    if (collectableIsOnesatFt(item) && !collectableIsOnesatFt(prev)) continue
-    if (!collectableIsOnesatFt(item)) byOp.set(key, item)
+    if (collectableIsFungible(item) && !collectableIsFungible(prev)) continue
+    if (!collectableIsFungible(item)) byOp.set(key, item)
   }
   return dedupeByOrigin(
     [...byOp.values()],
@@ -2675,6 +2744,10 @@ async function listCollectablesNow(
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
   setCollectablesCache(deduped, { announceArrivals: !append, forEpoch: epoch })
+  // Art the device already holds, before any indexer is asked for a picture.
+  void hydrateLocalItemArt(outputs, wallet).catch((err) => {
+    console.warn('[items] local art hydrate failed', err)
+  })
   // Identity first, then authenticity — a lineage walk is the expensive one and
   // must never delay getting a name and an image onto the card.
   const ownRead = listInFlight

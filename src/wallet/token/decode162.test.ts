@@ -1,6 +1,6 @@
 import { LockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { buildOnesatFtMintLockingScript } from '../onesatFtInscribe'
+import { buildRetiredFungibleOrigin } from '../retiredFungible.testFixtures'
 import { hasOrdEnvelope, parseOrdEnvelope } from '../ordinalOwnership'
 import {
   BSV21_TAG_HEX,
@@ -113,7 +113,7 @@ describe('bsv21Binary encode/decode', () => {
     expect(parseOrdEnvelope(script)).toBeNull()
     expect(hasOrdEnvelope(script)).toBe(false)
 
-    const onesat = buildOnesatFtMintLockingScript({
+    const onesat = buildRetiredFungibleOrigin({
       address: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
       sym: 'GOLD',
       amt: 100,

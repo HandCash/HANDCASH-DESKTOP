@@ -1,8 +1,8 @@
 /**
  * Fungible send entrypoint.
  *
- * BRC-162 value tips: spend basket `bsv21` inputs and create payee (+ change)
- * 162 value outputs with conserved amt. New sends never emit 1sat-ft MIME.
+ * Spend BRC-162 tips from basket `bsv21` and create payee plus change outputs
+ * with conserved amounts.
  */
 import { Beef } from '@bsv/sdk'
 import {
@@ -161,9 +161,9 @@ export async function sendFungible(args: {
       `Insufficient balance (have ${formatFungibleAmount(token.amt, token.dec)})`,
     )
   }
-  const { sendColourCoins } = await import('./send')
-  const result = await sendColourCoins({
-    origin: token.tokenId,
+  const { sendBsv21Tokens } = await import('./send')
+  const result = await sendBsv21Tokens({
+    tokenId: token.tokenId,
     amount: Number(units),
     toAddress: args.toAddress,
     friendLabel: args.friendLabel,

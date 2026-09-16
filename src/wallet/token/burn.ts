@@ -1,13 +1,11 @@
 /**
- * Burn 162 value tips: spend 162 inputs, destroy face-value units, keep
- * optional 162 change + pack physical tip sats into managed recovery.
- * New burns never emit application/1sat-ft+json or basket `1sat-ft`.
+ * Burn BRC-162 value tips: destroy face-value units, keep optional token
+ * change, and pack the physical tip sats into managed recovery.
  */
 import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
 import { buildMergedInputBeef, rememberBeefTree } from '../beefCache'
-import { normalizeColourOrigin } from './guards'
-import { BSV21_BASKET } from './types'
+import { BSV21_BASKET, requireTokenId } from './types'
 import {
   buildBsv21SendRemittance,
   buildBsv21ValueLock,
@@ -40,18 +38,18 @@ function parseBurnUnits(amount: string): number {
   return n
 }
 
-/** Preview tip selection + fee for a 1Sat FT burn (no BSV-21 burn inscription). */
-export async function previewColourBurn(args: {
-  origin: string
+/** Preview BSV-21 tip selection and transaction fee. */
+export async function previewBsv21Burn(args: {
+  tokenId: string
   amount: string
 }): Promise<BurnEconomics> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
-  const origin = normalizeColourOrigin(args.origin)
+  const tokenId = requireTokenId(args.tokenId)
   const amount = parseBurnUnits(args.amount)
-  const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === origin)
+  const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === tokenId)
   const plan = planBsv21Send({
-    tokenId: origin,
+    tokenId,
     amount: BigInt(amount),
     tips: listed.map((t) => ({
       outpoint: t.outpoint,
@@ -110,13 +108,11 @@ async function deriveSelfPayment(active: ActiveWallet): Promise<{
   }
 }
 
-export async function burnColourCoins(args: {
-  origin: string
+export async function burnBsv21Tokens(args: {
+  tokenId: string
   /** Face-value units to destroy (decimal string or integer). */
   amount: string
   sym?: string
-  supply?: 'locked' | 'open'
-  maxSupply?: number | null
   icon?: string
   pendingId: string
   item: {
@@ -129,7 +125,7 @@ export async function burnColourCoins(args: {
     icon?: string
   }
 }): Promise<{ txid: string; recoveredSatoshis: number; feeSatoshis?: number }> {
-  const origin = normalizeColourOrigin(args.origin)
+  const tokenId = requireTokenId(args.tokenId)
   const amountRaw = args.amount.trim().replace(/,/g, '')
   const amount = /^\d+$/.test(amountRaw)
     ? Number(amountRaw)
@@ -139,7 +135,7 @@ export async function burnColourCoins(args: {
   }
   const sym = args.sym?.trim() || 'Token'
 
-  return runExclusiveBurn('burn-colour', async () => {
+  return runExclusiveBurn('burn-bsv21', async () => {
     assertOnlineForPayment()
     const active = getActiveWallet()
     if (!active) throw new Error('Wallet locked')
@@ -150,9 +146,9 @@ export async function burnColourCoins(args: {
       await abortReservedActionBatches(active)
     }
 
-    const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === origin)
+    const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === tokenId)
     const plan = planBsv21Send({
-      tokenId: origin,
+      tokenId,
       amount: BigInt(amount),
       tips: listed.map((t) => ({
         outpoint: t.outpoint,
@@ -189,14 +185,14 @@ export async function burnColourCoins(args: {
     }> = []
     if (change > 0) {
       const remit = buildBsv21SendRemittance({
-        tokenId: origin,
+        tokenId,
         amt: BigInt(change),
         sym,
         dec: 0,
       })
       outputs.push({
         lockingScript: buildBsv21ValueLock({
-          tokenId: origin,
+          tokenId,
           amount: BigInt(change),
           address: active.address,
         }),
@@ -261,9 +257,9 @@ export async function burnColourCoins(args: {
       const signable = created.signableTransaction
       if (!signable) throw new Error('Token burn produced no txid')
       console.info('[bsv21-burn] createAction returned signable — unlocking tip(s)')
-      const { signColourTipTransfer } = await import('./send')
+      const { signBsv21TipTransfer } = await import('./send')
       try {
-        const signed = await signColourTipTransfer({
+        const signed = await signBsv21TipTransfer({
           wallet: active,
           signable,
           outpoints: spendOutpoints,
@@ -351,7 +347,7 @@ export async function burnColourCoins(args: {
       pendingId: args.pendingId,
     })
     console.info(`[bsv21-burn] complete txid=${txid}`)
-    scheduleHistoryBackupPush('burnColourCoins')
+    scheduleHistoryBackupPush('burnBsv21Tokens')
     markItemsSent(
       selected.map((tip) => ({ outpoint: wireOutpoint(tip.outpoint), txid })),
     )
@@ -359,7 +355,7 @@ export async function burnColourCoins(args: {
       .then(({ paintFungibleAfterSpend }) => {
         const keptOp = change > 0 ? `${txid}_0` : undefined
         paintFungibleAfterSpend({
-          tokenId: origin,
+          tokenId,
           remainingAmt: change,
           outpoint: keptOp,
           sym,

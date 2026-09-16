@@ -1,6 +1,5 @@
 /**
  * Tokens list: basket `bsv21` BRC-162 value tips, aggregated by deploy outpoint.
- * 1sat-ft leftovers are not painted as tokens.
  * Never included in fetchBalanceSats / Pay.
  */
 
@@ -34,7 +33,11 @@ import {
   releaseOneSatImport,
 } from '../oneSatImportGuard'
 import { getTokenIconDataUrl } from './icons/cache'
-import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDataUrl } from './icons/resolve'
+import {
+  cacheTokenIconFromBeef,
+  resolveBsv21IconDataUrl,
+  resolveTokenIconDataUrl,
+} from './icons/resolve'
 import { yieldToUi } from '../yieldToUi'
 import { stampBrc164Id } from '../itemAccess'
 import { isItemSent, markItemsConsumed } from '../sentItemGuard'
@@ -72,6 +75,32 @@ function isFungibleShape(x: unknown): x is FungibleToken {
   )
 }
 
+/**
+ * Rows cached by builds before the BSV-21 rename spell the binary fields
+ * `colour*`. Reading them under the current names keeps an upgraded install
+ * from painting held BRC-162 tokens as read-only legacy (burn only) until the
+ * next live basket read lands — which may be deferred while the wallet is busy.
+ */
+export function migrateCachedFungibleFields(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const { colourSupply, colourMaxSupply, colourProvenanceOk, ...row } =
+    raw as Record<string, unknown>
+  const migrated = { ...row }
+  if (
+    migrated.binarySupply == null &&
+    (colourSupply === 'locked' || colourSupply === 'open')
+  ) {
+    migrated.binarySupply = colourSupply
+  }
+  if (migrated.maxSupply == null && typeof colourMaxSupply === 'number') {
+    migrated.maxSupply = colourMaxSupply
+  }
+  if (migrated.provenanceOk == null && typeof colourProvenanceOk === 'boolean') {
+    migrated.provenanceOk = colourProvenanceOk
+  }
+  return migrated
+}
+
 function loadDurableList(): FungibleToken[] {
   try {
     const raw = durableGetItem(listCacheKey())
@@ -79,6 +108,7 @@ function loadDurableList(): FungibleToken[] {
     const parsed = JSON.parse(raw) as { items?: unknown }
     if (!Array.isArray(parsed?.items)) return []
     return parsed.items
+      .map(migrateCachedFungibleFields)
       .filter(isFungibleShape)
       .filter((t) => !leftoverCollectableSym(t.sym))
       .map((t) => ({
@@ -113,9 +143,9 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.issuerHandle ? { issuerHandle: t.issuerHandle } : {}),
           ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
           ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
-          ...(t.colourSupply ? { colourSupply: t.colourSupply } : {}),
-          ...(t.colourMaxSupply != null ? { colourMaxSupply: t.colourMaxSupply } : {}),
-          ...(t.colourProvenanceOk != null ? { colourProvenanceOk: t.colourProvenanceOk } : {}),
+          ...(t.binarySupply ? { binarySupply: t.binarySupply } : {}),
+          ...(t.maxSupply != null ? { maxSupply: t.maxSupply } : {}),
+          ...(t.provenanceOk != null ? { provenanceOk: t.provenanceOk } : {}),
         })),
       }),
     )
@@ -224,7 +254,7 @@ function tokenKey(t: Pick<FungibleToken, 'tokenId'>): string {
   return t.tokenId.trim().toLowerCase()
 }
 
-/** Live rows win. Keep cached colour tokens listOutputs dropped (WOC 429).
+/** Live rows win. Keep cached BRC-162 tokens when listOutputs dropped them.
  * Drop a cache row whose tip was just sent/burned so the mint amt cannot linger. */
 
 function isGenesisRow(t: Pick<FungibleToken, 'tokenId' | 'outpoint'>): boolean {
@@ -238,7 +268,7 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   const liveIds = new Set<string>()
   for (const t of prior) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
-    if (t.colourMaxSupply != null && Number(t.amt) > t.colourMaxSupply) continue
+    if (t.maxSupply != null && Number(t.amt) > t.maxSupply) continue
     byId.set(tokenKey(t), t)
   }
   for (const t of live) {
@@ -262,8 +292,8 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
       ...(priorRow && !t.iconUrl && priorRow.iconUrl ? { iconUrl: priorRow.iconUrl } : {}),
       ...(priorRow && !t.issuer && priorRow.issuer ? { issuer: priorRow.issuer } : {}),
       ...(priorRow?.issuerAttested && !t.issuerAttested ? { issuerAttested: true } : {}),
-      ...(priorRow && t.colourMaxSupply == null && priorRow.colourMaxSupply != null
-        ? { colourMaxSupply: priorRow.colourMaxSupply }
+      ...(priorRow && t.maxSupply == null && priorRow.maxSupply != null
+        ? { maxSupply: priorRow.maxSupply }
         : {}),
     })
   }
@@ -271,7 +301,7 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   // is usually toolbox lag right after mint (or a flake) — keep prior paint,
   // especially genesis deploy+mint tips that would otherwise vanish until the
   // next listOutputs. When live is non-empty, drop genesis / legacy ghosts
-  // absent from it; colour tips may stay on partial flakes.
+  // absent from it; token tips may stay on partial flakes.
   for (const [k, t] of [...byId.entries()]) {
     if (liveIds.has(k)) continue
     if (live.length === 0) continue
@@ -279,7 +309,7 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
       byId.delete(k)
       continue
     }
-    if (t.colourSupply != null && cacheExtraLooksLikeFungible(t)) continue
+    if (t.binarySupply != null && cacheExtraLooksLikeFungible(t)) continue
     byId.delete(k)
   }
   const out = [...byId.values()]
@@ -303,8 +333,8 @@ export function paintFungibleAfterSpend(args: {
   sym?: string
   dec?: number
   utxoCount?: number
-  colourSupply?: FungibleToken['colourSupply']
-  colourMaxSupply?: number | null
+  binarySupply?: FungibleToken['binarySupply']
+  maxSupply?: number | null
   icon?: string
 }): void {
   let remainingAmt: string
@@ -328,9 +358,9 @@ export function paintFungibleAfterSpend(args: {
     utxoCount: Math.max(1, Math.trunc(args.utxoCount ?? 1)),
     outpoint: args.outpoint || prior?.outpoint || args.tokenId,
     spendKind: 'plain',
-    colourSupply: args.colourSupply ?? prior?.colourSupply,
-    colourMaxSupply: args.colourMaxSupply ?? prior?.colourMaxSupply ?? null,
-    colourProvenanceOk: prior?.colourProvenanceOk ?? true,
+    binarySupply: args.binarySupply ?? prior?.binarySupply,
+    maxSupply: args.maxSupply ?? prior?.maxSupply ?? null,
+    provenanceOk: prior?.provenanceOk ?? true,
     ...(args.icon || prior?.icon ? { icon: args.icon || prior?.icon } : {}),
     ...(prior?.iconUrl ? { iconUrl: prior.iconUrl } : {}),
     ...(prior?.issuer ? { issuer: prior.issuer } : {}),
@@ -379,7 +409,6 @@ export function leftoverFloorWouldClobber(
       }
     })
     .catch(() => {})
-  // 1sat-ft leftover remittance is not painted as Tokens.
 }
 
 function notify() {
@@ -442,7 +471,7 @@ export async function hydrateCachedTokenIcons(
     const symIsFallback =
       !token.sym.trim() || token.sym === shortTokenLabel(token.tokenId)
     if (
-      !token.colourSupply &&
+      !token.binarySupply &&
       (!token.icon || symIsFallback || !token.issuer)
     ) {
       const metadata = await recoverBsv21DeployMetadata(wallet, token.tokenId)
@@ -459,14 +488,15 @@ export async function hydrateCachedTokenIcons(
         }
       }
     }
-    const url = token.colourSupply
-      ? (await resolveOnesatFtIconDataUrl({
+    const url = token.binarySupply
+      ? (await resolveBsv21IconDataUrl({
           origin: token.tokenId,
           icon: token.icon,
-          tipOutpoint: token.outpoint,
           wallet,
         })) ??
-        (token.icon ? await resolveTokenIconDataUrl(token.icon, wallet) : undefined)
+        (token.icon
+          ? await resolveTokenIconDataUrl(token.icon, wallet)
+          : undefined)
       : token.icon
         ? await resolveTokenIconDataUrl(token.icon, wallet)
         : undefined
@@ -669,8 +699,7 @@ async function listFungiblesNow(
       console.warn('[bsv21] list failed', err)
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
-    // Do not paint 1sat-ft leftovers as tokens.
-    // Live 162 (colourSupply set) wins over stale JSON BSV-21 rows.
+    // Live BRC-162 rows win over stale JSON BSV-21 rows.
     const prior = cached.filter((t) => !leftoverCollectableSym(t.sym))
     const merged = mergeLiveFungibles(liveRows, prior)
     setFungiblesCache(merged, { forEpoch: epoch })
@@ -678,7 +707,7 @@ async function listFungiblesNow(
     void hydrateMissingTokenIcons(wallet, merged)
     return merged
   } catch (err) {
-    console.warn('[1sat-ft] list failed', err)
+    console.warn('[bsv21] list failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.
     return getCachedFungibles()
   }
@@ -833,6 +862,9 @@ export function fungibleFromImport(
     ...(item.issuer ? { issuer: item.issuer } : {}),
     ...(item.icon ? { icon: item.icon } : {}),
     ...(iconUrl ? { iconUrl } : {}),
+    // Without this a BRC-162 mint/receive paints as read-only legacy (burn
+    // only) until a live basket decode lands, which Refresh may defer.
+    ...(item.binarySupply ? { binarySupply: item.binarySupply } : {}),
   }
 }
 

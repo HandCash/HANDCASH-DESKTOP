@@ -1,7 +1,6 @@
 import { PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildBsv21ValueLock } from './token'
-import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 
 const store = new Map<string, string>()
 
@@ -26,31 +25,7 @@ vi.mock('./token/list', () => ({
 }))
 
 const ADDR = PrivateKey.fromRandom().toAddress()
-const ORIGIN = `${'ab'.repeat(32)}_0`
-const LEFTOVER = `${'cd'.repeat(32)}_1`
 const TOKEN_A = `${'11'.repeat(32)}_0`
-const KING_ORIGIN =
-  '9c385c416f708fad7627db3dc2ab4f8b28acca7062dfb2dfe56db20e5f961ac4_0'
-
-function kingCi(amt: number, origin = KING_ORIGIN) {
-  return JSON.stringify({
-    p: '1sat-ft',
-    origin,
-    amt: String(amt),
-    sym: 'KING',
-    supply: 'locked',
-    max: '69420',
-  })
-}
-
-function receiveRow(outpoint: string, amt: number, origin = KING_ORIGIN) {
-  return {
-    outpoint,
-    satoshis: 1,
-    tags: ['1sat-ft', `origin:${origin}`],
-    customInstructions: kingCi(amt, origin),
-  }
-}
 
 function mockWallet(byBasket: Record<string, Array<Record<string, unknown>>>) {
   return {
@@ -62,7 +37,7 @@ function mockWallet(byBasket: Record<string, Array<Record<string, unknown>>>) {
   } as never
 }
 
-describe('listColourTips bsv21 only', () => {
+describe('BRC-162 token listing', () => {
   beforeEach(() => {
     store.clear()
     vi.resetModules()
@@ -74,8 +49,8 @@ describe('listColourTips bsv21 only', () => {
       amount: 42n,
       address: ADDR,
     })
-    const { listColourTokens } = await import('./token/listTips')
-    const tokens = await listColourTokens(
+    const { listBsv21BinaryTokens } = await import('./token/listTips')
+    const tokens = await listBsv21BinaryTokens(
       mockWallet({
         bsv21: [
           {
@@ -92,12 +67,11 @@ describe('listColourTips bsv21 only', () => {
             }),
           },
         ],
-        '1sat-ft': [receiveRow(`${'11'.repeat(32)}.0`, 69)],
       }),
     )
     expect(tokens).toHaveLength(1)
-    expect(tokens[0]!.origin).toBe(TOKEN_A)
-    expect(tokens[0]!.balance).toBe(42)
+    expect(tokens[0]!.tokenId).toBe(TOKEN_A)
+    expect(tokens[0]!.amt).toBe('42')
     expect(tokens[0]!.sym).toBe('GOLD')
   })
 })
@@ -139,7 +113,7 @@ describe('162 payload icon is live not legacy', () => {
       satoshis: 1,
       lockingScript: script,
     })
-    expect(tip?.colourSupply).toBe('locked')
+    expect(tip?.binarySupply).toBe('locked')
     expect(tip?.icon).toBe(`${'aa'.repeat(32)}_2`)
     expect(tip?.sym).toBe('GOLD')
   })

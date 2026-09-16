@@ -5,11 +5,9 @@
  * `nonstandard` and omit them from address UTXO lists — including self-sent
  * 1Sat ordinals. Refresh must ask the ordinal index for:
  * - NFT / file tips (`scanAddressOrdinalTxos`, no filter)
- * - 1sat-ft inscribed tips (same ordinal page — WOC omits nonstandard scripts)
  * - Legacy BSV-21 tips (`scanAddressTokenTxos`, `bsv20=true`)
  *
- * Classify files 1sat-ft by mime or leftover lineage. Remittance is the
- * fast path, not the only path.
+ * Remittance is the authoritative token import path; scan results are evidence.
  *
  * HARD RULE: only 1-satoshi outputs — never spend real funds from an indexer hint.
  */

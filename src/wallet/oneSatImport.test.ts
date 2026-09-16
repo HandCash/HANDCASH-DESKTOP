@@ -10,9 +10,9 @@ import {
   resolveOneSatInscription,
 } from './oneSatImport'
 import {
-  buildOnesatFtMintLockingScript,
-  buildOnesatFtTransferLockingScript,
-} from './onesatFtInscribe'
+  buildRetiredFungibleOrigin,
+  buildRetiredFungibleTransfer,
+} from './retiredFungible.testFixtures'
 import { shouldResolveInscription } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
 
@@ -318,12 +318,12 @@ describe('classifyLegacyUtxos', () => {
 
   it('files an amt-inscribed leftover by walking to the mint, like 1sat', async () => {
     const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
-    const mintLock = buildOnesatFtMintLockingScript({
+    const mintLock = buildRetiredFungibleOrigin({
       address: addr,
       sym: 'KING',
       amt: 69000,
     }).lockingScript
-    const hopLock = buildOnesatFtTransferLockingScript({
+    const hopLock = buildRetiredFungibleTransfer({
       address: addr,
       amt: 9000,
     }).lockingScript
@@ -348,7 +348,7 @@ describe('classifyLegacyUtxos', () => {
 
   it('does not file a 1sat-ft genesis icon as an NFT', async () => {
     const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
-    const mintLock = buildOnesatFtMintLockingScript({
+    const mintLock = buildRetiredFungibleOrigin({
       address: addr,
       sym: 'KING',
       amt: 69420,
@@ -487,12 +487,12 @@ describe('classifyLegacyUtxos', () => {
 
   it('re-probes a latched collection-less leftover as held FT dust', async () => {
     const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
-    const mintLock = buildOnesatFtMintLockingScript({
+    const mintLock = buildRetiredFungibleOrigin({
       address: addr,
       sym: 'KING',
       amt: 69000,
     }).lockingScript
-    const hopLock = buildOnesatFtTransferLockingScript({
+    const hopLock = buildRetiredFungibleTransfer({
       address: addr,
       amt: 420,
     }).lockingScript

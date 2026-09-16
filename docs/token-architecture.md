@@ -10,7 +10,7 @@ SSoT: [`src/wallet/token/`](../src/wallet/token/). **Pay balance excludes tokens
 | **BRC-163** | Remittance JSON in `customInstructions` + basket `bsv21` tags |
 | **BRC-176** | Subject Atomic BEEF for peer send and market listing proof |
 
-Legacy JSON BSV-21 (`application/bsv-20`) and basket `1sat-ft` are **not** product paths for new sends. Inbound 1sat-ft-shaped tips are detected only so they never appear as collectables or tokens.
+Legacy JSON BSV-21 (`application/bsv-20`) is read-only. New token transactions use BRC-162.
 
 ## Module map
 
@@ -29,13 +29,10 @@ Legacy JSON BSV-21 (`application/bsv-20`) and basket `1sat-ft` are **not** produ
 | `token/issuer.ts` | BRC-100 deploy/mint enrich |
 | `token/icons/*` | Local icon cache + BEEF resolve |
 | `token/marketView.ts` | Attach market listing overlay to token rows |
-| `token/guards.ts` | Deprecated 1sat-ft detection (NFT grid safety only) |
-
-Deprecated shim files at `src/wallet/bsv21*.ts`, `fungibles.ts`, `colour*.ts`, etc. re-export from `token/` for backward compatibility.
 
 ## Ingress
 
-1. **P2P settle** — `internalizePeerFungibleSettle` / `internalizePeerColourSettle` → basket `bsv21`.
+1. **P2P settle** — `internalizePeerFungibleSettle` → basket `bsv21`.
 2. **BRC-100** — connected apps via `createAction` / `internalizeAction`; issuer enrich in `token/issuer.ts`.
 3. **Chain refresh** — does **not** import tokens from address scan (recovery via remittance / settle only).
 

@@ -83,8 +83,8 @@ export type Bsv21Utxo = {
   /** Locking script hex when listed with `include: locking scripts`. */
   lockingScript?: string
   /** Set on BRC-162 tips — Collect treats these as live (Send), not JSON legacy. */
-  colourSupply?: 'locked' | 'open'
-  colourMaxSupply?: number | null
+  binarySupply?: 'locked' | 'open'
+  maxSupply?: number | null
 }
 
 /** Candidate tip ready to internalize into basket `bsv21`. */
@@ -100,6 +100,8 @@ export type Bsv21ImportItem = {
   dec?: number
   cosign?: Bsv21Cosign
   issuer?: string
+  /** Set when a BRC-162 lock proved this holding — absent for legacy JSON. */
+  binarySupply?: 'locked' | 'open'
 }
 
 /** Aggregated balance for one token id (Collect list row). */
@@ -132,13 +134,10 @@ export type FungibleToken = {
    * ids (representative `tokenId` is also listed here).
    */
   tokenIds?: string[]
-  /**
-   * 1Sat fungible fields (tip→origin). When `colourSupply` is set, Collect treats
-   * this row as `1sat-ft` tips (balance = Σ tip `amt`; missing amt ⇒ 1).
-   */
-  colourSupply?: 'locked' | 'open'
-  colourMaxSupply?: number | null
-  colourProvenanceOk?: boolean
+  /** Set for BRC-162 binary tips; absent on read-only legacy JSON rows. */
+  binarySupply?: 'locked' | 'open'
+  maxSupply?: number | null
+  provenanceOk?: boolean
   /** Active BRC-48 listing when this held tip is on the market. */
   marketListing?: {
     priceSats: number
@@ -151,6 +150,24 @@ export type FungibleToken = {
 export function normalizeTokenId(raw: string): string | null {
   const id = raw.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   return TOKEN_ID_RE.test(id) ? id : null
+}
+
+export function requireTokenId(raw: string): string {
+  const tokenId = normalizeTokenId(raw)
+  if (!tokenId) throw new Error('Invalid BSV-21 token id')
+  return tokenId
+}
+
+export function issuerFromBsv21Tags(tags: unknown): string | undefined {
+  if (!Array.isArray(tags)) return undefined
+  for (const tag of tags) {
+    if (typeof tag !== 'string') continue
+    const value = tag.trim()
+    if (!value.toLowerCase().startsWith('issuer:')) continue
+    const issuer = normalizeIssuerPubKey(value.slice('issuer:'.length))
+    if (issuer) return issuer
+  }
+  return undefined
 }
 
 export function isBsv21Mime(mime: string | undefined | null): boolean {
@@ -414,9 +431,9 @@ function mergeFungibleRows(
   if (from.issuerAttested) into.issuerAttested = true
   if (!into.icon && from.icon) into.icon = from.icon
   if (!into.iconUrl && from.iconUrl) into.iconUrl = from.iconUrl
-  if (!into.colourSupply && from.colourSupply) into.colourSupply = from.colourSupply
-  if (into.colourMaxSupply == null && from.colourMaxSupply != null) {
-    into.colourMaxSupply = from.colourMaxSupply
+  if (!into.binarySupply && from.binarySupply) into.binarySupply = from.binarySupply
+  if (into.maxSupply == null && from.maxSupply != null) {
+    into.maxSupply = from.maxSupply
   }
   if (from._bestAmt > into._bestAmt) {
     into._bestAmt = from._bestAmt
@@ -459,8 +476,8 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.issuer ? { issuer: u.issuer } : {}),
         ...(u.issuerAttested ? { issuerAttested: true } : {}),
         ...(u.icon ? { icon: u.icon } : {}),
-        ...(u.colourSupply ? { colourSupply: u.colourSupply } : {}),
-        ...(u.colourMaxSupply != null ? { colourMaxSupply: u.colourMaxSupply } : {}),
+        ...(u.binarySupply ? { binarySupply: u.binarySupply } : {}),
+        ...(u.maxSupply != null ? { maxSupply: u.maxSupply } : {}),
         _sum: add,
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
@@ -477,9 +494,9 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
     if (u.issuerAttested) existing.issuerAttested = true
     if (!existing.icon && u.icon) existing.icon = u.icon
-    if (!existing.colourSupply && u.colourSupply) existing.colourSupply = u.colourSupply
-    if (existing.colourMaxSupply == null && u.colourMaxSupply != null) {
-      existing.colourMaxSupply = u.colourMaxSupply
+    if (!existing.binarySupply && u.binarySupply) existing.binarySupply = u.binarySupply
+    if (existing.maxSupply == null && u.maxSupply != null) {
+      existing.maxSupply = u.maxSupply
     }
     if (add > existing._bestAmt) {
       existing._bestAmt = add

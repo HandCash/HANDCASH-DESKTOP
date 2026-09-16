@@ -15,21 +15,19 @@ vi.mock('./session', () => ({
   }),
 }))
 
-describe('sendColourCoins remittance-only refuse', () => {
+describe('sendBsv21Tokens remittance-only refuse', () => {
   it('refuses to spend a remittance-only 1-sat as a 162 token', async () => {
-    const { sendColourCoins } = await import('./token/send')
+    const { sendBsv21Tokens } = await import('./token/send')
     await expect(
-      sendColourCoins({
-        origin: TOKEN,
+      sendBsv21Tokens({
+        tokenId: TOKEN,
         amount: 60,
         toAddress: ADDR,
         tips: [
           {
             outpoint: `${'cd'.repeat(32)}_1`,
-            origin: TOKEN,
-            satoshis: 1,
-            amt: 60,
-            proven: true,
+            tokenId: TOKEN,
+            amt: 60n,
             lockingScript: `76a914${'11'.repeat(20)}88ac`,
             customInstructions: JSON.stringify({
               p: 'bsv-20',

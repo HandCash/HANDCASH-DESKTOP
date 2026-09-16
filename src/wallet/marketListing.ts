@@ -36,13 +36,12 @@ import {
   decodeListedBsv21Tip,
   getTokenIconDataUrl,
   listBsv21BinaryTips,
-  looksLikeOnesatFtTip,
   mergeIconTxIntoBeef,
   parseBsv21CustomInstructions,
   planBsv21Send,
   prove,
-  tryParseProvenanceFromCi,
 } from './token'
+import { looksLikeRetiredFungibleTip } from './retiredFungible'
 import { getBeefForTxidCached } from './beefCache'
 import { getProvenVerdict } from './provenCache'
 import { toUnderscoreOutpoint } from './outpointFormat'
@@ -321,22 +320,30 @@ export function buildBsv21ListingProof(args: {
 }
 
 
-/** Closed beta: market remittance is 163 / collectables, never 1sat-ft. */
-export function assertNoOnesatFtRemittance(customInstructions: string): void {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(customInstructions)
-  } catch {
-    return
+function provenanceFromCustomInstructions(
+  customInstructions: unknown,
+): ProvenanceV2 | null {
+  let value = customInstructions
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
-  const p = String((parsed as { p?: unknown }).p ?? '').toLowerCase()
-  if (p === '1sat-ft') {
-    throw new MarketListingError(
-      'MARKET_ASSET_UNSUPPORTED',
-      'Market listing refuses to create 1sat-ft remittance.',
-    )
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const provenance = (value as { provenance?: unknown }).provenance
+  if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)) {
+    return null
   }
+  const candidate = provenance as ProvenanceV2
+  return candidate.v === 2 &&
+    typeof candidate.origin === 'string' &&
+    typeof candidate.tip === 'string' &&
+    Array.isArray(candidate.path) &&
+    typeof candidate.beefB64 === 'string'
+    ? candidate
+    : null
 }
 
 
@@ -379,7 +386,7 @@ function listedActivityIdentity(args: {
   }
 }
 
-/** Classify a held tip. 1sat-ft leftovers are refused; 162 / bsv21 is the fungible path. */
+/** Classify a held tip. Removed protocols are refused. */
 export function classifyMarketListingAsset(args: {
   outpoint: string
   satoshis?: number
@@ -390,16 +397,16 @@ export function classifyMarketListingAsset(args: {
   assetType: MarketAssetType
   tokenId?: string
   amt?: number
-  refuse?: '1sat-ft'
+  refuse?: 'retired-protocol'
 } {
   if (
-    looksLikeOnesatFtTip({
+    looksLikeRetiredFungibleTip({
       tags: args.tags,
       customInstructions: args.customInstructions,
       lockingScriptHex: args.lockingScriptHex,
     })
   ) {
-    return { assetType: 'ordinal', refuse: '1sat-ft' }
+    return { assetType: 'ordinal', refuse: 'retired-protocol' }
   }
   const tip = decodeListedBsv21Tip({
     outpoint: args.outpoint,
@@ -420,7 +427,7 @@ export function classifyMarketListingAsset(args: {
 /**
  * Held-item remittance for a market listing or settlement.
  * Fungibles: basket `bsv21`, 163 amt/id copied from the 162 tip.
- * Collectables: basket `1sat`. Never emits 1sat-ft.
+ * Collectables use basket `1sat`.
  */
 export function buildMarketHeldRemittance(args: {
   assetType: MarketAssetType
@@ -443,7 +450,6 @@ export function buildMarketHeldRemittance(args: {
       amt: BigInt(args.amt),
       icon: args.icon,
     })
-    assertNoOnesatFtRemittance(remit.customInstructions)
     return {
       basket: remit.basket,
       tags: [...remit.tags, ...(args.extraTags ?? [])],
@@ -455,7 +461,6 @@ export function buildMarketHeldRemittance(args: {
     name: args.name?.trim() || 'Market item',
     provenance: args.provenance,
   })
-  assertNoOnesatFtRemittance(customInstructions)
   return {
     basket: '1sat',
     tags: [
@@ -1068,10 +1073,10 @@ async function loadListedOutput(
     customInstructions: output.customInstructions,
     lockingScriptHex,
   })
-  if (classified.refuse === '1sat-ft') {
+  if (classified.refuse === 'retired-protocol') {
     throw new MarketListingError(
       'MARKET_ASSET_UNSUPPORTED',
-      '1sat-ft leftovers are not listable.',
+      'This retired asset protocol is not listable.',
     )
   }
   return {
@@ -1512,12 +1517,6 @@ async function retireSpentListingTip(
 export async function createMarketListingAdvert(
   args: CreateMarketListingArgs
 ): Promise<MarketListingPostPayload> {
-  if ((args as { assetType?: string }).assetType === '1sat-ft') {
-    throw new MarketListingError(
-      'MARKET_ASSET_UNSUPPORTED',
-      'Market overlay v1 supports 1sat collectables and BSV-21 tokens only.',
-    )
-  }
   // Serialize with consolidate / other spends so fee inputs are not raced, and
   // so a prior failed list's reserved tip can be aborted before we scan.
   const requestedAt = Date.now()
@@ -1741,7 +1740,7 @@ async function createMarketListingAdvertExclusive(
     // collectable send does — trust the verdict, replay its path, allow a
     // publish-sized package the overlay size-gates separately.
     const remittanceProvenance =
-      tryParseProvenanceFromCi(output.customInstructions) ??
+      provenanceFromCustomInstructions(output.customInstructions) ??
       getRememberedProvenanceRemittance(outpoint)
     const verdict = getProvenVerdict(outpoint)
     const trustProven = verdict?.tier === 'brc150'

@@ -50,7 +50,6 @@ describe('localToolboxStateLooksEmpty', () => {
     const state = await inspectLocalToolboxState()
     expect(state.oneSatOutputCount).toBe(36)
     expect(state.bsv21OutputCount).toBe(3)
-    expect(state.colourOutputCount).toBe(0)
     expect(state.looksEmpty).toBe(true)
   })
 

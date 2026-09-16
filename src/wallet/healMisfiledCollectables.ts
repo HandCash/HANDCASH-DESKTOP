@@ -2,14 +2,17 @@
  * Heal 1sat collectables that Refresh/import painted into basket `bsv21`
  * (Collect → Tokens / NFT). Local basket move only — no broadcast.
  *
- * Real BSV-21 (application/bsv-20 + valid JSON) and 1sat-ft stay put.
+ * Real BSV-21 stays put. Removed protocol outputs remain quarantined.
  */
 import {
   BSV21_BASKET,
   isBsv21Mime,
-  isOnesatFtMime,
   parseBsv21Json,
 } from './token'
+import {
+  isRetiredFungibleMime,
+  looksLikeRetiredFungibleTip,
+} from './retiredFungible'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
@@ -82,8 +85,16 @@ export function classifyTokenBasketTip(
     cachedCollectable ||
     Boolean(args.importedOneSat && (originTag || cached?.origin || ci?.origin))
 
-  if (mime && isOnesatFtMime(mime)) return 'token'
-  if (ciProtocol === '1sat-ft') return 'token'
+  if (
+    isRetiredFungibleMime(mime) ||
+    looksLikeRetiredFungibleTip({
+      tags: args.tags,
+      customInstructions: args.customInstructions,
+      lockingScriptHex: args.lockingScriptHex,
+    })
+  ) {
+    return 'token'
+  }
 
   if (mime && isBsv21Mime(mime)) {
     let body: unknown
@@ -102,7 +113,7 @@ export function classifyTokenBasketTip(
   if (mime.startsWith('image/') || mime.startsWith('text/') || mime.includes('html')) {
     return 'collectable'
   }
-  if (env && mime && !isBsv21Mime(mime) && !isOnesatFtMime(mime)) {
+  if (env && mime && !isBsv21Mime(mime)) {
     return 'collectable'
   }
 

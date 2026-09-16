@@ -12,15 +12,13 @@
 import { normalizeAppHost } from './appIdentity'
 import { decodeBsv21Binary } from './token'
 import { INDEX_SCHEME } from './indexExpansionTypes'
+import { looksLikeRetiredFungibleTip } from './retiredFungible'
 
 /** Storage basket that holds collectables — not spendable under normal pay. */
 export const ITEM_STORAGE_BASKET = '1sat'
 
-/** Storage basket for legacy BSV-21 fungibles — Collect tokens, not Pay currency. */
+/** Storage basket for BSV-21 fungibles — Collect tokens, not Pay currency. */
 export const FUNGIBLE_STORAGE_BASKET = 'bsv21'
-
-/** Storage basket for 1Sat fungibles (BRC-175). */
-export const COLOUR_STORAGE_BASKET = '1sat-ft'
 
 /** BRC-99 permission scheme ID for 1Sat collectables. */
 export const ITEM_SCHEME = '1sat'
@@ -28,13 +26,11 @@ export const ITEM_SCHEME = '1sat'
 /** Baskets that hold collectables / tokens — not spendable under normal pay.
  * Recursive inscription content (HTML/JS that references other inscriptions)
  * still lives on 1-sat tips in basket `1sat` — same remittance + BRC-39 path.
- * 1Sat fungibles live in `1sat-ft` (tip→origin, face-value `amt`). Legacy BSV-21 tips live
- * in `bsv21`. Neither is Pay / balanceView.
+ * BSV-21 tips live in `bsv21`. They are not Pay / balanceView.
  */
 export const ITEM_BASKETS = new Set([
   ITEM_STORAGE_BASKET,
   FUNGIBLE_STORAGE_BASKET,
-  COLOUR_STORAGE_BASKET,
 ])
 
 /** BRC-99 permission scheme ID for BSV-21 tokens. */
@@ -181,7 +177,7 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
 
 /**
  * Collectable view / spend basket: plain `1sat` or BRC-99 `p 1sat <scope>`.
- * `bsv21` and `1sat-ft` are not item view — they have their own gates.
+ * `bsv21` is not an item view; it has its own token gate.
  */
 export function isItemBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
@@ -428,82 +424,6 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
     }
   }
   return null
-}
-
-/** True when the basket is the 1Sat fungible storage basket. */
-export function isColourBasket(value: unknown): boolean {
-  if (typeof value !== 'string') return false
-  return value.trim().toLowerCase() === COLOUR_STORAGE_BASKET
-}
-
-/**
- * True when createAction looks like 1Sat fungible mint (outputs only, 1sat-ft
- * basket, mint label) — permission copy says "Mint token".
- */
-export function isColourIssuanceArgs(method: string, args: unknown): boolean {
-  if (method !== 'createAction') return false
-  const body = asRecord(args)
-  const labels = Array.isArray(body.labels)
-    ? body.labels.filter((l): l is string => typeof l === 'string')
-    : []
-  if (labels.some((l) => /handcash-mint-1sat-ft|1sat-ft/i.test(l))) return true
-  const inputs = Array.isArray(body.inputs) ? body.inputs : []
-  if (inputs.length > 0) return false
-  const outputs = Array.isArray(body.outputs) ? body.outputs : []
-  if (outputs.length === 0) return false
-  let colourOuts = 0
-  for (const raw of outputs) {
-    if (!raw || typeof raw !== 'object') continue
-    const out = raw as Record<string, unknown>
-    if (isColourBasket(out.basket)) colourOuts += 1
-    else if (
-      Array.isArray(out.tags) &&
-      out.tags.some((t) => typeof t === 'string' && /^1sat-ft$/i.test(t))
-    ) {
-      colourOuts += 1
-    }
-  }
-  return colourOuts > 0 && colourOuts === outputs.length
-}
-
-/** True when createAction / labels / outputs look like a 1Sat fungible transfer. */
-export function isColourSpendArgs(method: string, args: unknown): boolean {
-  if (method === 'relinquishOutput') {
-    return isColourBasket(asRecord(args).basket)
-  }
-  if (method !== 'createAction' && method !== 'signAction') return false
-
-  const body = asRecord(args)
-  const labels = Array.isArray(body.labels)
-    ? body.labels.filter((l): l is string => typeof l === 'string')
-    : []
-  if (
-    labels.some(
-      (l) => /^1sat-ft$/i.test(l) || /handcash-send-1sat-ft|handcash-combine-1sat-ft/i.test(l),
-    )
-  ) {
-    return true
-  }
-
-  const outputs = Array.isArray(body.outputs) ? body.outputs : []
-  for (const raw of outputs) {
-    if (!raw || typeof raw !== 'object') continue
-    const out = raw as Record<string, unknown>
-    if (isColourBasket(out.basket)) return true
-    const tags = Array.isArray(out.tags)
-      ? out.tags.filter((t): t is string => typeof t === 'string')
-      : []
-    if (tags.some((t) => /^1sat-ft$/i.test(t))) return true
-  }
-
-  const inputs = Array.isArray(body.inputs) ? body.inputs : []
-  for (const raw of inputs) {
-    if (!raw || typeof raw !== 'object') continue
-    const desc = (raw as { inputDescription?: unknown }).inputDescription
-    if (typeof desc === 'string' && /(1sat-ft|1sat tip)/i.test(desc)) return true
-  }
-
-  return false
 }
 
 /** True when the basket is the BSV-21 fungible storage basket. */
@@ -972,36 +892,12 @@ export function outputMatchesTokenAccess(
   return access.ids.includes(tokenId)
 }
 
-const ONESAT_FT_MIME_HEX = '6170706c69636174696f6e2f317361742d66742b6a736f6e'
-
 function lockingScriptHexOf(raw: unknown): string {
   if (typeof raw === 'string') return raw.toLowerCase()
   if (raw && typeof raw === 'object' && typeof (raw as { toHex?: () => string }).toHex === 'function') {
     return String((raw as { toHex: () => string }).toHex() || '').toLowerCase()
   }
   return ''
-}
-
-function looksLikeOnesatFtOutput(
-  tags: string[],
-  customInstructions?: string,
-  lockingScript?: unknown,
-): boolean {
-  if (customInstructions) {
-    try {
-      const o = JSON.parse(customInstructions) as Record<string, unknown>
-      const nested =
-        o.colour && typeof o.colour === 'object' && !Array.isArray(o.colour)
-          ? (o.colour as Record<string, unknown>)
-          : o
-      if (String(nested.p ?? o.p ?? '').toLowerCase() === '1sat-ft') return true
-    } catch {
-      // ignore
-    }
-  }
-  const hex = lockingScriptHexOf(lockingScript)
-  if (hex.includes(ONESAT_FT_MIME_HEX)) return true
-  return tags.some((t) => t.toLowerCase() === '1sat-ft' || t.toLowerCase().startsWith('1sat-ft:'))
 }
 
 function itemDisplayFields(tags: string[], customInstructions?: string): {
@@ -1030,10 +926,9 @@ function itemDisplayFields(tags: string[], customInstructions?: string): {
 }
 
 /**
- * Leftover 1sat-ft (FOX) and unnamed Collectable · hex / Uncollected dust.
- * Third-party inventory drops these even when an old grant set view=all.
+ * Removed fungible outputs and unnamed dust never enter third-party inventory.
  */
-export function isOnesatFtLeftoverRow(raw: {
+export function isRetiredFungibleRow(raw: {
   tags?: unknown
   customInstructions?: unknown
   lockingScript?: unknown
@@ -1042,7 +937,11 @@ export function isOnesatFtLeftoverRow(raw: {
     ? raw.tags.filter((t): t is string => typeof t === 'string')
     : []
   const custom = typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined
-  return looksLikeOnesatFtOutput(tags, custom, raw.lockingScript)
+  return looksLikeRetiredFungibleTip({
+    tags,
+    customInstructions: custom,
+    lockingScriptHex: lockingScriptHexOf(raw.lockingScript),
+  })
 }
 
 export function isLeftoverThirdPartyItem(raw: {
@@ -1054,7 +953,7 @@ export function isLeftoverThirdPartyItem(raw: {
     ? raw.tags.filter((t): t is string => typeof t === 'string')
     : []
   const custom = typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined
-  if (isOnesatFtLeftoverRow(raw)) return true
+  if (isRetiredFungibleRow(raw)) return true
   const fields = itemDisplayFields(tags, custom)
   const id = tagValueOf(tags, 'id:')
   return !fields.collection && !fields.app && !fields.name && !fields.content && !id
@@ -1073,7 +972,7 @@ function tagValueOf(tags: string[], prefix: string): string | undefined {
 
 /**
  * Named collections/apps a third-party filtered grant may include.
- * FOX leftover / 1sat-ft / unnamed ordinals never appear.
+ * Removed protocols and unnamed ordinals never appear.
  */
 export function grantableCollectionsFromOutputs(outputs: unknown[]): Array<{ id: string; name: string }> {
   const byId = new Map<string, string>()
@@ -1139,7 +1038,7 @@ export function grantableCollectionIdsFromOutputs(outputs: unknown[]): {
   return { collections, apps }
 }
 
-/** Live 162 tips only. Leftover 1sat-ft FOX is not a token. */
+/** Live BRC-162 tips only. */
 export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: string; ticker: string }> {
   const byId = new Map<string, string>()
   for (const raw of outputs) {
@@ -1149,7 +1048,15 @@ export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: stri
       ? o.tags.filter((t): t is string => typeof t === 'string')
       : []
     const custom = typeof o.customInstructions === 'string' ? o.customInstructions : undefined
-    if (looksLikeOnesatFtOutput(tags, custom, o.lockingScript)) continue
+    if (
+      looksLikeRetiredFungibleTip({
+        tags,
+        customInstructions: custom,
+        lockingScriptHex: lockingScriptHexOf(o.lockingScript),
+      })
+    ) {
+      continue
+    }
     let proto = ''
     let sym: string | undefined
     if (custom) {
@@ -1161,7 +1068,6 @@ export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: stri
         // ignore
       }
     }
-    if (proto === '1sat-ft') continue
     const tagged = tags.includes('bsv21') || tags.some((t) => t.toLowerCase().startsWith('bsv21:'))
     const lockLooks = lockingScriptHexOf(o.lockingScript).includes('4253563231')
     if (proto !== 'bsv-20' && proto !== 'bsv21' && !tagged && !lockLooks) continue
@@ -1174,16 +1080,5 @@ export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: stri
     if (!byId.has(id)) byId.set(id, ticker)
   }
   return [...byId.entries()].map(([id, ticker]) => ({ id, ticker }))
-}
-
-export function emptyListOutputsResult(): { outputs: unknown[]; totalOutputs: number } {
-  return { outputs: [], totalOutputs: 0 }
-}
-
-export function shouldRefuseColourList(
-  origin: string | undefined,
-  basket: unknown,
-): boolean {
-  return isThirdPartyOriginator(origin) && isColourBasket(basket)
 }
 

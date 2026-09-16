@@ -30,6 +30,12 @@
  *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
  *     This is the *only* item authenticity/identity model — there is no on-chain
  *     latch companion (BRC-156 was withdrawn and fully removed).
+ *   - **Item art** (`localItemArt.ts`) — the picture comes from bytes the device
+ *     already holds: the mint's own `createAction`, an unmoved tip's ord
+ *     envelope, the peer's BRC-150 remittance BEEF, or the origin tx in managed
+ *     storage. GorillaPool `/content/` is the last resort for an origin whose
+ *     bytes never reached us (a legacy-address sweep), never how a fresh mint
+ *     first paints — a just-signed transaction is in no indexer yet.
  *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
  *     spend does not wait on an indexer.
  *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).
@@ -131,7 +137,7 @@ export const WALLET_LAYER_MODULES = {
     'token/prove176.ts',
     'token/settle.ts',
     'token/issuer.ts',
-    'token/guards.ts',
+    'retiredFungible.ts',
     'token/sendMachine.ts',
     'token/icons/cache.ts',
     'token/icons/resolve.ts',
@@ -148,7 +154,6 @@ export const WALLET_LAYER_MODULES = {
     'spendAttempt.ts',
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
-    'token/settleLegacy.ts',
     'bsvSendMachine.ts',
     'brc29SettlePath.ts',
     'brc29SendMachine.ts',
@@ -271,8 +276,6 @@ export type LocalToolboxState = {
   oneSatOutputCount: number
   /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
   bsv21OutputCount: number
-  /** Unused. Tokens live in `bsv21`. */
-  colourOutputCount: number
   actionCount: number
   /** True only when there is nothing worth restoring/pushing as history. */
   looksEmpty: boolean
@@ -313,7 +316,6 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
       defaultOutputCount: 0,
       oneSatOutputCount: 0,
       bsv21OutputCount: 0,
-      colourOutputCount: 0,
       actionCount: 0,
       looksEmpty: true,
     }
@@ -324,18 +326,16 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     defaultOutputCount,
     oneSatOutputCount,
     bsv21OutputCount,
-    colourOutputCount,
     actionCount,
   ] = await Promise.all([
     fetchBalanceSats(active.wallet).catch(() => 0),
     countOutputs('default'),
     countOutputs('1sat'),
     countOutputs('bsv21'),
-    Promise.resolve(0),
     countActions(),
   ])
 
-  // 1sat / bsv21 / 1sat-ft from address scan alone are not historyReplica. After restore,
+  // Item/token outputs from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must
   // not block empty-local recovery of spendable balance + TX history.
   const looksEmpty =
@@ -346,7 +346,6 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     defaultOutputCount,
     oneSatOutputCount,
     bsv21OutputCount,
-    colourOutputCount,
     actionCount,
     looksEmpty,
   }

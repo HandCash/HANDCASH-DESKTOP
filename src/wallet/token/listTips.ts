@@ -1,7 +1,4 @@
-/**
- * List fungible tips. Tokens are BRC-162 value tips in basket `bsv21` (BRC-163).
- * 1sat-ft leftover overlay and basket `1sat-ft` are not Tokens.
- */
+/** List BRC-162 value tips from basket `bsv21` (BRC-163). */
 import { getActiveWallet, type ActiveWallet } from '../session'
 import {
   aggregateFungibles,
@@ -17,13 +14,7 @@ import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { tipFromBsv21Script } from './sendPlan'
 import { durableGetItem, durableSetItem } from '../durableStorage'
 import { isItemSent } from '../sentItemGuard'
-import {
-  looksLikeOnesatFtTip,
-  type ColourTip,
-  type ColourToken,
-} from './guards'
-
-export type { ColourToken, ColourTip }
+import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
 
@@ -128,7 +119,7 @@ function tagValue(tags: string[] | undefined, prefix: string): string | undefine
 
 /**
  * Decode a listed basket row as BRC-162 / BRC-163.
- * Script amount wins. CI/tags supply id, dec, sym. 1sat-ft leftovers return null.
+ * Script amount wins. CI/tags supply id, dec, and symbol.
  */
 export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): Bsv21Utxo | null {
   const outpointRaw = (raw.outpoint ?? '').trim()
@@ -139,7 +130,7 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
   if (!scriptHex) return null
   const tags = Array.isArray(raw.tags) ? raw.tags.map(String) : []
   if (
-    looksLikeOnesatFtTip({
+    looksLikeRetiredFungibleTip({
       tags,
       customInstructions: raw.customInstructions,
       lockingScriptHex: scriptHex,
@@ -172,13 +163,13 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
   const icon =
     iconOutpointFromPayload(decoded.payload?.icon, tokenId) ?? fromCi?.icon
   const maxN = Number(amt)
-  const colourMaxSupply =
+  const maxSupply =
     op === 'deploy+mint' && Number.isSafeInteger(maxN) && maxN > 0
       ? maxN
       : maxSupplyFromCi(
           typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined,
         ) ?? rememberedDeployCap(tokenId)
-  if (colourMaxSupply != null) rememberDeployCap(tokenId, colourMaxSupply)
+  if (maxSupply != null) rememberDeployCap(tokenId, maxSupply)
   const remittanceIssuer = issuerFromRemittance({
     customInstructions: raw.customInstructions,
     tags,
@@ -195,10 +186,10 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     op,
     dec,
     satoshis: 1,
-    colourSupply: 'locked',
+    binarySupply: 'locked',
     ...(sym ? { sym } : {}),
     ...(icon ? { icon } : {}),
-    ...(colourMaxSupply != null ? { colourMaxSupply } : {}),
+    ...(maxSupply != null ? { maxSupply } : {}),
     ...(scriptHex ? { lockingScript: scriptHex } : {}),
     ...(issuer ? { issuer } : {}),
     ...(sigma.issuer ? { issuerAttested: true } : {}),
@@ -232,9 +223,9 @@ export async function listBsv21BinaryTokens(
   if (!active) return []
   const tokens = aggregateFungibles(await listBsv21BinaryTips(active))
   for (const token of tokens) {
-    if (token.colourSupply !== 'locked' || token.colourMaxSupply != null) continue
+    if (token.binarySupply !== 'locked' || token.maxSupply != null) continue
     const cap = await capFromLocalDeploy(active, token.tokenId)
-    if (cap != null) token.colourMaxSupply = cap
+    if (cap != null) token.maxSupply = cap
   }
   return tokens
 }
@@ -260,70 +251,6 @@ async function listBasketTips(
   }
 }
 
-
-function colourTipFromBsv21(tip: Bsv21Utxo): ColourTip | null {
-  const amt = Number(String(tip.amt).replace(/\D/g, '') || '0')
-  if (!(amt > 0)) return null
-  return {
-    outpoint: tip.outpoint,
-    origin: tip.tokenId,
-    satoshis: 1,
-    amt,
-    proven: true,
-    lockingScript: tip.lockingScript,
-  }
-}
-
-/** 162 / basket `bsv21` only. Does not overlay leftover 1sat-ft. */
-export async function listColourTips(
-  wallet: ActiveWallet = getActiveWallet()!,
-): Promise<ColourTip[]> {
-  if (!wallet) return []
-  const tips: ColourTip[] = []
-  for (const tip of await listBsv21BinaryTips(wallet)) {
-    const colour = colourTipFromBsv21(tip)
-    if (colour) tips.push(colour)
-  }
-  return tips
-}
-
-export async function listColourTokens(
-  wallet?: ActiveWallet | null,
-): Promise<ColourToken[]> {
-  const tokens = await listBsv21BinaryTokens(wallet)
-  return tokens.map((t) => ({
-    origin: t.tokenId,
-    sym: t.sym || 'Token',
-    tipCount: t.utxoCount,
-    balance: Number(String(t.amt).replace(/\D/g, '') || '0'),
-    supply: (t.colourSupply === 'open' ? 'open' : 'locked') as 'locked' | 'open',
-    maxSupply: t.colourMaxSupply ?? null,
-    provenanceOk: true,
-    outpoint: t.outpoint,
-    ...(t.icon ? { icon: t.icon } : {}),
-    ...(t.iconUrl ? { iconUrl: t.iconUrl } : {}),
-    ...(t.issuer ? { issuer: t.issuer } : {}),
-  }))
-}
-
-export async function listColourTokensAsFungibles(
-  wallet?: ActiveWallet | null,
-): Promise<ReturnType<typeof aggregateFungibles>> {
-  return listBsv21BinaryTokens(wallet)
-}
-
-export async function listColourTipsForOrigin(
-  origin: string,
-  wallet?: ActiveWallet | null,
-): Promise<ColourTip[]> {
-  const tips = await listColourTips(wallet ?? getActiveWallet()!)
-  const want =
-    normalizeTokenId(origin) ??
-    (origin.includes('.')
-      ? origin.replace(/\.(\d+)$/, '_$1').toLowerCase()
-      : origin.toLowerCase())
-  return tips.filter((t) => t.origin === want && t.satoshis === 1 && t.amt > 0)
-}
 
 /** Stamp icon:<outpoint> on listed 162 rows when the deploy payload names one. */
 export function stampBsv21IconOnListedOutputs(result: unknown): unknown {

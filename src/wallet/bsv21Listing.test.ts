@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { aggregateFungibles } from './token'
 import { encodeBsv21Binary, tokenIdToWire } from './token'
 import { decodeListedBsv21Tip } from './token'
-import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
+import { buildRetiredFungibleTransfer } from './retiredFungible.testFixtures'
 import { buildBsv21ValueLock } from './token'
 import { listFungibleTips } from './token'
 
@@ -28,7 +28,7 @@ describe('bsv21 listing aggregation', () => {
       amount: 7n,
       address: ADDR,
     })
-    const leftover = buildOnesatFtTransferLockingScript({
+    const leftover = buildRetiredFungibleTransfer({
       address: ADDR,
       amt: 68862,
     }).lockingScript
@@ -167,7 +167,7 @@ describe('parseListedOutput remittance-only', () => {
   })
 })
 
-describe('162 payload icon and colourSupply', () => {
+  describe('162 payload icon and binary supply', () => {
   const P2PKH = `76a914${'11'.repeat(20)}88ac`
 
   it('deploy 162 with 4-byte payload icon and no CI is live locked with icon outpoint', () => {
@@ -183,13 +183,13 @@ describe('162 payload icon and colourSupply', () => {
       lockingScript: script,
     })
     expect(tip).not.toBeNull()
-    expect(tip?.colourSupply).toBe('locked')
+    expect(tip?.binarySupply).toBe('locked')
     expect(tip?.icon).toBe(`${'ee'.repeat(32)}_1`)
     expect(tip?.sym).toBe('GOLD')
     const card = aggregateFungibles([tip!])[0]
-    expect(card?.colourSupply).toBe('locked')
+    expect(card?.binarySupply).toBe('locked')
     expect(card?.icon).toBe(`${'ee'.repeat(32)}_1`)
-    expect(card?.colourMaxSupply).toBe(69240)
+    expect(card?.maxSupply).toBe(69240)
   })
 
   it('deploy 162 with 36-byte payload icon and no CI is live locked', () => {
@@ -205,10 +205,10 @@ describe('162 payload icon and colourSupply', () => {
       satoshis: 1,
       lockingScript: script,
     })
-    expect(tip?.colourSupply).toBe('locked')
+    expect(tip?.binarySupply).toBe('locked')
     expect(tip?.icon).toBe(iconId)
     const card = aggregateFungibles([tip!])[0]
-    expect(card?.colourSupply).toBe('locked')
+    expect(card?.binarySupply).toBe('locked')
     expect(card?.icon).toBe(iconId)
   })
 })

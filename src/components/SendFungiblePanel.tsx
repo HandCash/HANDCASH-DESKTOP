@@ -41,7 +41,7 @@ import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { shortOriginLabel } from '../wallet/token'
+import { shortTokenLabel } from '../wallet/token'
 import { useWalletActionDock } from './WalletActionDock'
 
 type Props = {
@@ -130,7 +130,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
   const sendBlocked =
     !token ||
-    !token.colourSupply ||
+    !token.binarySupply ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
   const canReview =
@@ -354,7 +354,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                   <p className="send-eyebrow">Send token</p>
                   <strong className="collectable-details-name">{token.sym}</strong>
                   <p className="collectable-details-app" title={`Origin ${token.tokenId}`}>
-                    {shortOriginLabel(token.tokenId)}
+                    {shortTokenLabel(token.tokenId)}
                   </p>
                   <p className="collectable-details-app">Balance {balanceLabel}</p>
                 </div>
@@ -364,7 +364,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
             <div className="send-side">
               {sendBlocked ? (
                 <CopyableError role="status">
-                  {!token.colourSupply
+                  {!token.binarySupply
                     ? 'This tip is not a BSV-21 value lock.'
                     : token.spendKind === 'cosigned'
                       ? 'This token requires a cosigner to send.'

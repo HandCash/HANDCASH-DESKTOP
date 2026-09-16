@@ -36,9 +36,8 @@ export function isLatchedCollectable(
 }
 
 /**
- * Latch only real collection NFTs. Collection-less leftovers (blank 1sat-ft
- * hops, remittance-only splits) must re-probe — otherwise Refresh files them
- * as collectables, then strips them as bare-origin, and they vanish.
+ * Cache only real collection NFTs. Collection-less dust must re-probe;
+ * otherwise Refresh can misfile it as a collectable.
  */
 export function collectableLatchHolds(
   remittance?: { collectionId?: string } | null,

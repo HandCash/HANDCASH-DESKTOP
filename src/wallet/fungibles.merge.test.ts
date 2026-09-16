@@ -31,9 +31,9 @@ function row(opts: { tokenId: string; amt: string; outpoint: string }) {
     utxoCount: 1,
     outpoint: opts.outpoint,
     spendKind: 'plain' as const,
-    colourSupply: 'locked' as const,
-    colourMaxSupply: 69420,
-    colourProvenanceOk: true,
+    binarySupply: 'locked' as const,
+    maxSupply: 69420,
+    provenanceOk: true,
   }
 }
 
@@ -356,7 +356,7 @@ describe('mergeLiveFungibles', () => {
     ).toBe(false)
   })
 
-  it('live 162 colourSupply wins over stale colourSupply-null legacy same tokenId', async () => {
+  it('live BRC-162 row wins over a stale legacy row with the same tokenId', async () => {
     const { mergeLiveFungibles } = await import('./token/list')
     const tokenId = `${'5a'.repeat(32)}_0`
     const prior = [
@@ -379,13 +379,13 @@ describe('mergeLiveFungibles', () => {
         utxoCount: 1,
         outpoint: tokenId,
         spendKind: 'plain' as const,
-        colourSupply: 'locked' as const,
+        binarySupply: 'locked' as const,
         icon: `${'5a'.repeat(32)}_1`,
       },
     ]
     const merged = mergeLiveFungibles(live, prior)
     expect(merged).toHaveLength(1)
-    expect(merged[0]!.colourSupply).toBe('locked')
+    expect(merged[0]!.binarySupply).toBe('locked')
     expect(merged[0]!.amt).toBe('69240')
     expect(merged[0]!.icon).toBe(`${'5a'.repeat(32)}_1`)
   })

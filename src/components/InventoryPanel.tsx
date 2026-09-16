@@ -19,7 +19,7 @@ import {
   listCollectables,
   loadMoreCollectables,
   subscribeCollectables,
-  collectableIsOnesatFt,
+  collectableIsFungible,
   type Collectable,
 } from '../wallet/collectables'
 import { searchCollectables } from '../wallet/collectableSearch'
@@ -493,10 +493,10 @@ function FungibleAction({
   row?: boolean
 }) {
   const sendBlocked =
-    !token.colourSupply ||
+    !token.binarySupply ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
-  const isLegacy = !token.colourSupply
+  const isLegacy = !token.binarySupply
   const verb = inFlightVerb(token.outpoint) ?? 'Sending'
   const burning = sending && /^burn/i.test(verb)
   const className = `collectable-send-btn${row ? ' collectable-send-btn--row' : ''}${
@@ -560,7 +560,7 @@ function FungibleItem({
   const amount = formatFungibleAmount(token.amt, token.dec)
   const issuer = token.issuer
     ? token.issuerHandle || shortIssuerLabel(token.issuer)
-    : !token.colourSupply
+    : !token.binarySupply
       ? 'Legacy BSV-21'
       : 'BSV-21'
   const listPrice =
@@ -771,7 +771,7 @@ export function InventoryPanel() {
   const deferredItems = useDeferredValue(items)
   const deferredQuery = useDeferredValue(query)
   const visibleItems = useMemo(() => {
-    const nfts = deferredItems.filter((item) => !collectableIsOnesatFt(item))
+    const nfts = deferredItems.filter((item) => !collectableIsFungible(item))
     return searchCollectables(deferredQuery, nfts)
   }, [deferredItems, deferredQuery, tokens])
   const busyOutpoints = useMemo(
@@ -851,7 +851,7 @@ export function InventoryPanel() {
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const { groups, singles, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
-  const empty = items.filter((item) => !collectableIsOnesatFt(item)).length === 0 && tokens.length === 0 && ready && tokensReady
+  const empty = items.filter((item) => !collectableIsFungible(item)).length === 0 && tokens.length === 0 && ready && tokensReady
   const searchEmpty =
     !empty &&
     !showLoading &&

@@ -43,17 +43,19 @@ import { getAtomicBeefBinaryForTxid } from './beefCache'
 import {
   decodeBsv21Binary,
   isBsv21Mime,
-  isOnesatFtAmtHop,
-  isOnesatFtMime,
-  looksLikeOnesatFtTip,
   normalizeTokenId,
-  originFromOnesatFtLock,
   parseBsv21Json,
   tokenIdForPayload,
   type Bsv21ImportItem,
   type Bsv21Op,
   type Bsv21Payload,
 } from './token'
+import {
+  isRetiredFungibleAmountHop,
+  isRetiredFungibleMime,
+  looksLikeRetiredFungibleTip,
+  retiredFungibleOriginFromLock,
+} from './retiredFungible'
 import { decodeBProtocol } from './bProtocol'
 import { parseContentReference } from './derivativeContent'
 import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
@@ -919,12 +921,12 @@ async function rebuildBrc150Identity(
 /** Per-pass ceiling on transfer-shape probes (a couple of cached rawtx fetches each). */
 export const MAX_TRANSFER_PROBES_PER_PASS = 12
 
-type OrdinalTransferProbe = 'item' | 'bsv21' | 'ft' | 'icon' | 'unknown'
+type OrdinalTransferProbe = 'item' | 'bsv21' | 'retired' | 'icon' | 'unknown'
 
 /** Inscribed parent tip shape — bare needs a further hop. */
-type OnesatParentShape = 'nft' | 'ft' | 'ftHop' | 'bare' | 'other'
+type OnesatParentShape = 'nft' | 'retired' | 'retiredHop' | 'bare' | 'other'
 
-/** Bound the FT-vs-NFT lineage walk on bare transfer tips. */
+/** Bound the retired-protocol-vs-NFT lineage walk on bare transfer tips. */
 const BARE_LINEAGE_DEPTH = 6
 
 function shapeOfOnesatLock(
@@ -934,12 +936,12 @@ function shapeOfOnesatLock(
   if (satoshis !== 1) return 'other'
   if (scriptHex && decodeBsv21Binary(scriptHex)) return 'other'
   if (scriptHex && decodeBProtocol(scriptHex)) return 'other'
-  if (isOnesatFtAmtHop(scriptHex)) return 'ftHop'
-  if (looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })) return 'ft'
+  if (isRetiredFungibleAmountHop(scriptHex)) return 'retiredHop'
+  if (looksLikeRetiredFungibleTip({ lockingScriptHex: scriptHex })) return 'retired'
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
-    if (isOnesatFtMime(envelope.contentType)) {
-      return isOnesatFtAmtHop(scriptHex) ? 'ftHop' : 'ft'
+    if (isRetiredFungibleMime(envelope.contentType)) {
+      return isRetiredFungibleAmountHop(scriptHex) ? 'retiredHop' : 'retired'
     }
     if (isBsv21Mime(envelope.contentType)) return 'other'
     return 'nft'
@@ -949,21 +951,20 @@ function shapeOfOnesatLock(
 }
 
 /**
- * Bare 1-sat tips are used by both NFT transfers and 1Sat FT transfers.
- * "Parent is also 1 sat" is therefore not enough to paint a collectable —
- * walk to an inscribed ancestor: FT mime ⇒ hold (not NFT); other ord ⇒ item.
+ * A bare one-sat parent is not enough to paint a collectable. Walk to an
+ * inscribed ancestor and quarantine removed protocol outputs.
  */
 async function lineageOfBareOnesatSpend(
   tx: Transaction,
   chain: Chain,
   depth: number,
   seen: Set<string>,
-): Promise<{ kind: 'item' | 'ft' | 'unknown'; origin?: string }> {
+): Promise<{ kind: 'item' | 'retired' | 'unknown'; origin?: string }> {
   if (depth <= 0) return { kind: 'unknown' }
 
-  let sawFt = false
+  let sawRetired = false
   let sawNft = false
-  let ftOrigin: string | undefined
+  let retiredOrigin: string | undefined
 
   for (const input of tx.inputs.slice(0, VIN_PROBE_LIMIT)) {
     const sourceTxid = input.sourceTXID?.trim().toLowerCase()
@@ -985,32 +986,32 @@ async function lineageOfBareOnesatSpend(
       parentOut?.lockingScript?.toHex(),
       parentOut?.satoshis,
     )
-    if (shape === 'ft') {
-      sawFt = true
-      ftOrigin = `${sourceTxid}_${sourceVout}`
+    if (shape === 'retired') {
+      sawRetired = true
+      retiredOrigin = `${sourceTxid}_${sourceVout}`
       continue
     }
     if (shape === 'nft') {
       sawNft = true
       continue
     }
-    if (shape === 'bare' || shape === 'ftHop') {
+    if (shape === 'bare' || shape === 'retiredHop') {
       const nested = await lineageOfBareOnesatSpend(
         parentTx,
         chain,
         depth - 1,
         seen,
       )
-      if (nested.kind === 'ft') {
-        sawFt = true
-        ftOrigin = nested.origin ?? ftOrigin
+      if (nested.kind === 'retired') {
+        sawRetired = true
+        retiredOrigin = nested.origin ?? retiredOrigin
       }
       if (nested.kind === 'item') sawNft = true
     }
   }
 
-  // FT lineage wins: hold — never basket `1sat` (1sat-ft product removed).
-  if (sawFt) return { kind: 'ft', origin: ftOrigin }
+  // Removed-protocol lineage wins: quarantine it instead of painting an NFT.
+  if (sawRetired) return { kind: 'retired', origin: retiredOrigin }
   if (sawNft) return { kind: 'item' }
   return { kind: 'unknown' }
 }
@@ -1020,12 +1021,10 @@ async function lineageOfBareOnesatSpend(
  *
  * By 1Sat rules an NFT transfer moves an existing 1-sat tip, so its settle
  * transaction spends a 1-sat input and pays bare P2PKH; a mint carries the ord
- * envelope in the output itself; a valid BSV-21 fungible always re-inscribes
- * its token JSON, so a bare 1-sat can never be a BSV-21 holding. 1Sat FT
- * transfers use the same bare tip shape — parent lineage (not "any 1-sat
- * parent") decides NFT vs hold-for-FT. Authentication stays with BRC-150.
+ * envelope in the output itself. Parent lineage prevents retired protocol
+ * outputs from being painted as NFTs. Authentication stays with BRC-150.
  */
-function isOnesatFtTickerIcon(tx: Transaction, vout: number): boolean {
+function isRetiredFungibleTickerIcon(tx: Transaction, vout: number): boolean {
   const out = tx.outputs[vout]
   if (!out || out.satoshis !== 1) return false
   const env = parseOrdEnvelope(out.lockingScript?.toHex())
@@ -1036,7 +1035,7 @@ function isOnesatFtTickerIcon(tx: Transaction, vout: number): boolean {
     const sibling = tx.outputs[i]
     if (!sibling || sibling.satoshis !== 1) continue
     const sibEnv = parseOrdEnvelope(sibling.lockingScript?.toHex())
-    if (sibEnv && isOnesatFtMime(sibEnv.contentType)) return true
+    if (sibEnv && isRetiredFungibleMime(sibEnv.contentType)) return true
   }
   return false
 }
@@ -1077,36 +1076,36 @@ async function probeOrdinalTransfer(
   }
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
-    // Inscribed at this outpoint — a mint, so tip-as-origin is literally
-    // correct. BSV-21 → basket `bsv21`. 1Sat FT → basket `1sat-ft` (not NFT).
+    // BSV-21 enters its token basket; removed protocols are quarantined.
     if (isBsv21Mime(envelope.contentType)) return { kind: 'bsv21' }
     if (
-      isOnesatFtMime(envelope.contentType) ||
-      looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })
+      isRetiredFungibleMime(envelope.contentType) ||
+      looksLikeRetiredFungibleTip({ lockingScriptHex: scriptHex })
     ) {
-      const named = originFromOnesatFtLock(scriptHex)
-      if (named) return { kind: 'ft', origin: named }
-      if (isOnesatFtAmtHop(scriptHex)) {
+      const named = retiredFungibleOriginFromLock(scriptHex)
+      if (named) return { kind: 'retired', origin: named }
+      if (isRetiredFungibleAmountHop(scriptHex)) {
         const lineage = await lineageOfBareOnesatSpend(
           tx,
           chain,
           BARE_LINEAGE_DEPTH,
           new Set(),
         )
-        if (lineage.kind === 'ft') return { kind: 'ft', origin: lineage.origin }
+        if (lineage.kind === 'retired') {
+          return { kind: 'retired', origin: lineage.origin }
+        }
         return { kind: 'unknown' }
       }
-      return { kind: 'ft', origin: txidVoutUnderscore(txid, vout) }
+      return { kind: 'retired', origin: txidVoutUnderscore(txid, vout) }
     }
-    // Image sibling in a 1sat-ft genesis tx is a ticker icon, not a collectable.
-    if (isOnesatFtTickerIcon(tx, vout)) return { kind: 'icon' }
+    if (isRetiredFungibleTickerIcon(tx, vout)) return { kind: 'icon' }
     return { kind: 'item' }
   }
   // Envelope structure we cannot parse a mime out of: let the indexer decide.
   if (decodeBProtocol(scriptHex)) return { kind: 'icon' }
   if (hasOrdEnvelope(scriptHex)) return { kind: 'unknown' }
 
-  // Bare P2PKH: NFT only when lineage reaches a non-FT ordinal inscription.
+  // Bare P2PKH: NFT only when lineage reaches an eligible ordinal inscription.
   const lineage = await lineageOfBareOnesatSpend(
     tx,
     chain,
@@ -1114,7 +1113,9 @@ async function probeOrdinalTransfer(
     new Set(),
   )
   if (lineage.kind === 'item') return { kind: 'item' }
-  if (lineage.kind === 'ft') return { kind: 'ft', origin: lineage.origin }
+  if (lineage.kind === 'retired') {
+    return { kind: 'retired', origin: lineage.origin }
+  }
   return { kind: 'unknown' }
 }
 
@@ -1293,8 +1294,8 @@ export async function classifyLegacyUtxos(
             }
           } else if (probe.kind === 'item') {
             resolved = { origin: txidVoutUnderscore(u.txid, u.vout) }
-          } else if (probe.kind === 'ft') {
-            // Removed product: beta 1sat-ft tips stay held — never basket `1sat`.
+          } else if (probe.kind === 'retired') {
+            // Removed protocol tips stay held and never enter a product basket.
             rememberUnresolved(cacheKey)
             heldOneSats.push(u)
             claimed.add(liveKey)
@@ -1341,7 +1342,7 @@ export async function classifyLegacyUtxos(
       }
 
       const resolvedMime = (resolved?.mimeType ?? '').toLowerCase()
-      if (resolved && isOnesatFtMime(resolved.mimeType)) {
+      if (resolved && isRetiredFungibleMime(resolved.mimeType)) {
         rememberUnresolved(cacheKey)
         heldOneSats.push(u)
         claimed.add(liveKey)
@@ -1352,7 +1353,7 @@ export async function classifyLegacyUtxos(
         if (hex) {
           try {
             const live = Transaction.fromHex(hex)
-            if (isOnesatFtTickerIcon(live, u.vout)) {
+            if (isRetiredFungibleTickerIcon(live, u.vout)) {
               rememberUnresolved(cacheKey)
               heldOneSats.push(u)
               claimed.add(liveKey)

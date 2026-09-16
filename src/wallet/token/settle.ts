@@ -121,6 +121,8 @@ export async function internalizePeerFungibleSettle(opts: {
   }
 
   let tipVout = -1
+  /** How the accepted tip proved itself — BRC-162 lock or legacy JSON. */
+  let tipEncoding: 'binary' | 'json' | null = null
   let parsedBeef: Beef | null = null
   let resolvedSym = opts.token.sym
   let resolvedIcon = opts.token.icon
@@ -160,6 +162,7 @@ export async function internalizePeerFungibleSettle(opts: {
             }
           }
           tipVout = i
+          tipEncoding = 'binary'
           continue
         }
       }
@@ -190,6 +193,7 @@ export async function internalizePeerFungibleSettle(opts: {
           }
         }
         tipVout = i
+        tipEncoding = 'json'
       }
     }
   } catch (err) {
@@ -221,6 +225,7 @@ export async function internalizePeerFungibleSettle(opts: {
       icon: resolvedIcon,
       dec: opts.token.dec,
       issuer: resolvedIssuer,
+      ...(tipEncoding === 'binary' ? { binarySupply: 'locked' as const } : {}),
     })
     rememberFungibleToken(painted)
     void hydrateCachedTokenIcons(active, [painted]).catch(() => {})

@@ -119,6 +119,28 @@ describe('message transport envelopes', () => {
     })
   })
 
+  it('does not expose the retired fungible wire variant', () => {
+    const decoded = decodeMessageBody(
+      encodeMessageBody({
+        kind: 'tip',
+        text: 'Historical transfer',
+        meta: {
+          txid: 'cd'.repeat(32),
+          item: true,
+          asset: {
+            kind: 'fungible',
+            tokenId: `${'ab'.repeat(32)}_0`,
+            amount: '125',
+            sym: 'OLD',
+            dec: 0,
+          },
+        },
+      }).replace('"fungible"', '"1sat-ft"'),
+    )
+    expect(decoded.meta?.item).toBe(true)
+    expect(decoded.meta?.asset).toBeUndefined()
+  })
+
   it('round-trips a sub-cent tip as a semantic card', () => {
     const decoded = decodeMessageBody(
       encodeMessageBody({

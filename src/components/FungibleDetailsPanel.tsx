@@ -4,7 +4,7 @@ import { ListRow, Prompt, StatusBanner } from '@aeon-ui/react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
-  combineToken as combineColourTips,
+  combineToken,
   formatFungibleAmount,
   getFungible,
   listFungibles,
@@ -240,13 +240,13 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const usdPerBsv = getCachedUsdPerBsv()
   const marketListing = token.marketListing
   const priceHistory = tokenMarketPriceHistory(token.tokenId, snapshot.context.activity)
-  const isColour = Boolean(token.colourSupply)
-  const sendBlocked = !isColour || token.spendKind !== 'plain'
-  const canCombine = isColour && !sendBlocked && token.utxoCount >= 2
-  const supplyLabel = isColour
-    ? token.colourSupply === 'locked'
-      ? token.colourMaxSupply != null
-        ? `BSV-21 · max supply ${token.colourMaxSupply}`
+  const isBinary = Boolean(token.binarySupply)
+  const sendBlocked = !isBinary || token.spendKind !== 'plain'
+  const canCombine = isBinary && !sendBlocked && token.utxoCount >= 2
+  const supplyLabel = isBinary
+    ? token.binarySupply === 'locked'
+      ? token.maxSupply != null
+        ? `BSV-21 · max supply ${token.maxSupply}`
         : 'BSV-21 · supply locked'
       : 'BSV-21 · no supply cap'
     : null
@@ -258,8 +258,8 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   // Legacy BSV-21 tips are read-only except Burn (cleanup path).
   const burnBlocked =
-    (isColour && token.spendKind !== 'plain') || tokenIds.length > 1
-  const spendLabel = !isColour
+    (isBinary && token.spendKind !== 'plain') || tokenIds.length > 1
+  const spendLabel = !isBinary
     ? 'Legacy BSV-21 — burn only'
     : token.spendKind === 'plain'
       ? 'Wallet controlled'
@@ -267,7 +267,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         ? 'Cosigner required'
         : 'Mixed plain and cosigned outputs'
   const burnTitle = burnBlocked
-    ? isColour && token.spendKind !== 'plain'
+    ? isBinary && token.spendKind !== 'plain'
       ? `${spendLabel}; burn unavailable`
       : tokenIds.length > 1
         ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
@@ -296,7 +296,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       icon: <FireIcon size={18} />,
       title: burning ? `${inFlight ?? 'Burning'} ${token.sym}` : burnTitle,
     },
-    secondary: !isColour
+    secondary: !isBinary
       ? undefined
       : canCombine
         ? {
@@ -322,7 +322,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             tone: 'secondary',
             title: `Copy origin\n${token.tokenId}`,
           },
-    primary: isColour
+    primary: isBinary
       ? {
           label: 'Send token',
           shortLabel: 'Send',
@@ -355,11 +355,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
     setCombining(true)
     playWalletSound('soft')
     try {
-      const result = await combineColourTips({
-        origin: live.tokenId,
+      const result = await combineToken({
+        tokenId: live.tokenId,
         sym: live.sym,
-        supply: live.colourSupply,
-        maxSupply: live.colourMaxSupply ?? null,
       })
       setCombineOpen(false)
       toastSuccess(
@@ -396,7 +394,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <div className="fungible-details-heading">
           <div className="fungible-details-title">
             <h2>{token.sym}</h2>
-            {!isColour ? (
+            {!isBinary ? (
               <span
                 className={`fungible-attest fungible-attest-${
                   token.issuerAttested ? 'ok' : 'none'
@@ -493,7 +491,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             {token.utxoCount === 1 ? 'Tip' : 'Tips'}
           </MetricStrip.Label>
         </MetricStrip.Chip>
-        {!isColour ? (
+        {!isBinary ? (
           <MetricStrip.Chip>
             <MetricStrip.Value>{tokenIds.length}</MetricStrip.Value>
             <MetricStrip.Label>{tokenIds.length === 1 ? 'Deploy' : 'Deploys'}</MetricStrip.Label>
@@ -501,7 +499,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         ) : null}
       </MetricStrip.Root>
 
-      {isColour ? (
+      {isBinary ? (
         <section className="fungible-details-section" data-aeon-part="market">
           <div className="fungible-section-heading">
             <h3>Market</h3>
@@ -517,24 +515,24 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
 
       <section className="fungible-details-section" data-aeon-part="metadata">
         <div className="fungible-section-heading">
-          <h3>{isColour ? 'Origin' : 'Token details'}</h3>
-          <span>{isColour ? 'Same everywhere' : 'Wallet-local'}</span>
+          <h3>{isBinary ? 'Origin' : 'Token details'}</h3>
+          <span>{isBinary ? 'Same everywhere' : 'Wallet-local'}</span>
         </div>
         <dl className="fungible-details-meta">
           <MetaRow
-            label={isColour ? 'Origin' : 'Token ID'}
+            label={isBinary ? 'Origin' : 'Token ID'}
             value={token.tokenId}
-            copyLabel={isColour ? 'origin' : 'token ID'}
+            copyLabel={isBinary ? 'origin' : 'token ID'}
           />
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
           <MetaRow
             label="Protocol"
-            value={isColour ? 'BSV-21 (BRC-162)' : 'Legacy BSV-21 (burn only)'}
+            value={isBinary ? 'BSV-21 (BRC-162)' : 'Legacy BSV-21 (burn only)'}
           />
           <MetaRow label="Basket" value={'bsv21'} />
           <MetaRow
             label="Spend policy"
-            value={isColour ? spendLabel : 'Burn cleanup only — sends retired'}
+            value={isBinary ? spendLabel : 'Burn cleanup only — sends retired'}
           />
           <MetaRow
             label="Held tip"
@@ -561,7 +559,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               copyLabel="issuer identity key"
             />
           ) : null}
-          {!isColour ? (
+          {!isBinary ? (
             <MetaRow
               label="Attestation"
               value={token.issuerAttested ? 'Sigma matched (BRC-77)' : 'None'}

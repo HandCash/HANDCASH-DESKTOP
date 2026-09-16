@@ -2,6 +2,7 @@ import { errorText } from './errorText'
 import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { getItemArtDataUrl } from './localItemArt'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
@@ -719,49 +720,6 @@ export function noteInboundReceiveComplete(args: {
     txid,
     status: 'complete',
   })
-}
-
-function normActivityOutpoint(raw: string | undefined | null): string {
-  return (raw ?? '').trim().toLowerCase().replace(/_(\d+)$/, '.$1')
-}
-
-/** Rewrite receive-collectable rows whose outpoint is a live 1sat-ft tip. Does not create new rows. */
-export function healMisfiledOnesatFtReceives(
-  tips: Array<{ outpoint: string; origin: string; amt: number; name?: string }>,
-): number {
-  const byOp = new Map<string, (typeof tips)[number]>()
-  for (const tip of tips) {
-    const op = normActivityOutpoint(tip.outpoint)
-    if (!op.includes('.')) continue
-    if (!tip.origin?.trim()) continue
-    byOp.set(op, tip)
-  }
-  if (byOp.size === 0) return 0
-  let healed = 0
-  for (const row of readAll()) {
-    if (row.method !== 'receive-collectable' || row.kind !== 'earned') continue
-    const op = normActivityOutpoint(row.item?.outpoint)
-    if (!op) continue
-    const tip = byOp.get(op)
-    if (!tip) continue
-    const itemOrigin = (row.item?.origin ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-    const tipOrigin = tip.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-    if (itemOrigin && tipOrigin && itemOrigin !== tipOrigin) continue
-    const txid = (row.txid || op.split('.')[0] || '').trim().toLowerCase()
-    if (!/^[0-9a-f]{64}$/.test(txid)) continue
-    const amt = String(Math.max(1, Math.trunc(Number(tip.amt)) || 1))
-    const sym = tip.name?.trim() || row.item?.name?.trim() || 'Token'
-    noteInboundReceiveComplete({
-      txid,
-      item: true,
-      itemName: sym,
-      itemOrigin: tipOrigin,
-      outpoint: op,
-      token: { tokenId: tipOrigin, amount: amt, sym, dec: 0 },
-    })
-    healed += 1
-  }
-  return healed
 }
 
 /** Activity row the moment an outbound send starts — survives Back / navigate away. */
@@ -1507,15 +1465,20 @@ function normalizeActivityItem(
     decRaw <= 18
       ? decRaw
       : undefined
+  // Bytes this device holds outrank a stored `/content/` URL: a fresh mint is
+  // not indexed yet, so the recorded URL 404s while the art sits on disk.
+  const imageUrl =
+    getItemArtDataUrl(origin) ??
+    (typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
+      ? raw.imageUrl.trim()
+      : undefined)
   return {
     name: name.slice(0, 80),
     origin,
     ...(typeof raw.outpoint === 'string' && raw.outpoint.trim()
       ? { outpoint: raw.outpoint.trim() }
       : {}),
-    ...(typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
-      ? { imageUrl: raw.imageUrl.trim() }
-      : {}),
+    ...(imageUrl ? { imageUrl } : {}),
     ...(typeof raw.app === 'string' && raw.app.trim()
       ? { app: raw.app.trim().slice(0, 40) }
       : {}),

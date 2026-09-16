@@ -6,7 +6,7 @@
  * ord leftover and not a bare 1sat. Remittance is basket `bsv21` with
  * underscore token id and decimal amt. Subject outputs carry a 176 BEEF.
  *
- * Does not emit application/1sat-ft+json or BRC-161 JSON inscriptions.
+ * Emits only BRC-162 locks, never legacy inscription formats.
  *
  * BRC delta (draft, not posted): 163 remittance MUST carry `icon` when the
  * deploy named one. 176 BEEF MUST include the icon's B-protocol tx (same-tx
@@ -29,15 +29,11 @@ import { prove, type Bsv21ProofResult } from './prove176'
 import { stampBrc164Id } from '../itemAccess'
 import { p2pkhScriptHex } from '../ordinalOwnership'
 import { toUnderscoreOutpoint } from '../outpointFormat'
+import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 
-const ONESAT_FT_MIME = 'application/1sat-ft+json'
-const ONESAT_FT_MIME_HEX = [...new TextEncoder().encode(ONESAT_FT_MIME)]
-  .map((b) => b.toString(16).padStart(2, '0'))
-  .join('')
-
-function assertNoOnesatFtMime(scriptHex: string): void {
-  if (scriptHex.toLowerCase().includes(ONESAT_FT_MIME_HEX)) {
-    throw new Error('BSV-21 send refused to emit application/1sat-ft+json')
+function assertNoRetiredProtocolLock(scriptHex: string): void {
+  if (looksLikeRetiredFungibleTip({ lockingScriptHex: scriptHex })) {
+    throw new Error('BSV-21 send refused to emit a retired protocol lock')
   }
 }
 
@@ -238,7 +234,7 @@ export function buildBsv21ValueLock(args: {
   })
     .toHex()
     .toLowerCase()
-  assertNoOnesatFtMime(hex)
+  assertNoRetiredProtocolLock(hex)
   const decoded = decodeBsv21Binary(hex)
   if (!decoded || decoded.role !== 'value' || decoded.tokenId !== tokenId) {
     throw new Error('BSV-21 send produced a non-value lock')
@@ -357,7 +353,7 @@ export function buildBsv21SendOutputs(args: {
     })
   }
   for (const out of outputs) {
-    assertNoOnesatFtMime(out.lockingScript)
+    assertNoRetiredProtocolLock(out.lockingScript)
     if (!decodeBsv21Binary(out.lockingScript)) {
       throw new Error('BSV-21 send output is not BRC-162 binary')
     }

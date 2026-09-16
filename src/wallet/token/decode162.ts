@@ -1,8 +1,8 @@
 /**
  * BRC-162 BSV-21 binary prefix — encode / decode.
  *
- * New tokens use this prefix, not 1sat-ft MIME and not BRC-161 JSON
- * inscriptions. Fixed-supply deploy only (empty id, amount > 0). Authority
+ * New tokens use this prefix instead of legacy JSON inscriptions.
+ * Fixed-supply deploy only (empty id, amount > 0). Authority
  * outputs (amount 0) are not created here.
  *
  * Wire:

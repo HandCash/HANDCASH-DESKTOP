@@ -21,18 +21,14 @@ import {
   filterIndexOutputsForOrigin,
 } from './permissions'
 import {
-  emptyListOutputsResult,
   isBsv21ReceiveArgs,
-  isColourBasket,
   isItemBasket,
   isItemReceiveArgs,
   isItemSpendArgs,
-  isColourIssuanceArgs,
   isThirdPartyOriginator,
   isTokenViewBasket,
   p1SatSpendIds,
   prepareItemBasketArgs,
-  shouldRefuseColourList,
   type ItemViewRequest,
   type TokenViewRequest,
 } from './itemAccess'
@@ -130,9 +126,12 @@ import {
 import { flattenJsonError } from './errorText'
 import { toDottedOutpoint } from './outpointFormat'
 import {
+  containsRetiredFungibleRequest,
+  isRetiredFungibleBasket,
+} from './retiredFungible'
+import {
   cacheImageIconsFromCreateAction,
   recordBsv21TransferSends,
-  recordColourMintActivity,
   recordIdentityMintActivity,
 } from './brc100ActivitySideEffects'
 
@@ -663,6 +662,19 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   }
 
   const originator = parseOrigin(event.headers)
+  if (
+    method !== 'listOutputs' &&
+    containsRetiredFungibleRequest(args)
+  ) {
+    return {
+      status: 400,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'ASSET_PROTOCOL_RETIRED',
+        description: 'This fungible asset protocol is no longer supported.',
+      }),
+    }
+  }
 
   // Discovery / silent auth / connect prompt: skip basket rewrite. Do not
   // queue getVersion or isAuthenticated behind runExclusiveSpend.
@@ -922,10 +934,10 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       args && typeof args === 'object' && !Array.isArray(args)
         ? (args as { basket?: unknown }).basket
         : undefined
-    if (shouldRefuseColourList(originator, basket) || (isColourBasket(basket) && isThirdPartyOriginator(originator))) {
+    if (isRetiredFungibleBasket(basket)) {
       return {
         status: 200,
-        body: JSON.stringify(emptyListOutputsResult()),
+        body: JSON.stringify({ outputs: [], totalOutputs: 0 }),
       }
     }
     if (isTokenViewBasket(basket)) {
@@ -1103,9 +1115,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         args && typeof args === 'object' && !Array.isArray(args)
           ? (args as { basket?: unknown }).basket
           : undefined
-      if (isColourBasket(basket) && isThirdPartyOriginator(originator)) {
-        result = emptyListOutputsResult()
-      } else if (isTokenViewBasket(basket)) {
+      if (isTokenViewBasket(basket)) {
         result = stampBsv21IconOnListedOutputs(
           filterTokenOutputsForOrigin(originator, result, tokenViewRequest),
         )
@@ -1157,8 +1167,6 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
           args,
           result,
         )
-        playWalletSound('success')
-      } else if (txid && isColourIssuanceArgs(method, args) && recordColourMintActivity(txid, args, originator)) {
         playWalletSound('success')
       } else if (txid && recordBsv21TransferSends(txid, args, originator)) {
         playWalletSound('success')

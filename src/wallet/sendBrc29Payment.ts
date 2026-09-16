@@ -1156,29 +1156,18 @@ export async function ingestPaymentsFromTipHints(
                     beefPurpose: 'inboundItemHint',
                   }),
               )
-            : asset?.kind === '1sat-ft'
-              ? await import('./token/settleLegacy').then(
-                  ({ internalizePeerColourSettle }) =>
-                    internalizePeerColourSettle({
-                      txid: hint.txid,
-                      tx: attempt === 0 ? atomic : undefined,
-                      beefUrl: attempt === 0 ? undefined : hint.beefUrl,
-                      token: asset,
-                      beefPurpose: 'inboundItemHint',
-                    }),
-                )
-              : await import('./ingestItemSettle').then(
-                  ({ internalizePeerItemSettle }) =>
-                    internalizePeerItemSettle({
-                      txid: hint.txid,
-                      tx: attempt === 0 ? atomic : undefined,
-                      beefUrl: attempt === 0 ? undefined : hint.beefUrl,
-                      name: hint.itemName,
-                      origin: hint.itemOrigin,
-                      collectionId: hint.itemCollectionId,
-                      beefPurpose: 'inboundItemHint',
-                    }),
-                )
+            : await import('./ingestItemSettle').then(
+                ({ internalizePeerItemSettle }) =>
+                  internalizePeerItemSettle({
+                    txid: hint.txid,
+                    tx: attempt === 0 ? atomic : undefined,
+                    beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+                    name: hint.itemName,
+                    origin: hint.itemOrigin,
+                    collectionId: hint.itemCollectionId,
+                    beefPurpose: 'inboundItemHint',
+                  }),
+              )
         if (result.accepted) {
           importedTxid = hint.txid
           accepted = true

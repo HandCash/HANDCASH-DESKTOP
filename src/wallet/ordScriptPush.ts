@@ -1,7 +1,7 @@
 /**
  * Shared ordinal inscription PushData / envelope helpers.
  *
- * Used by BSV-21 and 1Sat-FT locking-script builders — hex encoding only.
+ * Shared by inscription fixture and protocol builders; hex encoding only.
  */
 import { bytesToHex } from './hexBinary'
 

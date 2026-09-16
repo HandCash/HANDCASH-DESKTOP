@@ -122,6 +122,8 @@ describe('paintAfterCreateActionIssuance', () => {
       },
     ])
     expect(getCachedFungibles()[0]?.sym).not.toBe('Collectable')
+    // A binary tip must paint as sendable BSV-21, never "Legacy — burn only".
+    expect(getCachedFungibles()[0]?.binarySupply).toBe('locked')
     clearFungiblesCache()
   })
 })

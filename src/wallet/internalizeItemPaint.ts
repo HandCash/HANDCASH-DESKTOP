@@ -19,15 +19,14 @@ import {
   fungibleFromImport,
   hydrateCachedTokenIcons,
   isBsv21IdentityMintArgs,
-  looksLikeOnesatFtTip,
   normalizeTokenId,
-  originFromOnesatFtLock,
   parseBsv21CustomInstructions,
   rememberFungibleToken,
   shortTokenLabel,
   tokenIdFromBsv21Tags,
 } from './token'
-import { parseOrdEnvelope, scriptPaysAddress } from './ordinalOwnership'
+import { scriptPaysAddress } from './ordinalOwnership'
+import { looksLikeRetiredFungibleTip } from './retiredFungible'
 import {
   hasSettledActivityItemOutpoint,
   noteInboundReceiveComplete,
@@ -37,9 +36,11 @@ import {
 import { announceItemsReceived } from './itemArrivalToast'
 import { contentUrlForOrigin } from './oneSatImport'
 import { rememberResolvedInscription } from './inscriptionCache'
+import { rememberItemArtFromScript } from './localItemArt'
 import {
   classifyOneSatAsBsv21,
-  isFungibleOneSatLock,
+  isBsv21OneSatLock,
+  isNonCollectableOneSatLock,
 } from './healMisfiledBsv21'
 
 export type InternalizedItemTip = {
@@ -107,10 +108,18 @@ function tipsFromInsertionOutputs(
     if (!rem || !isItemBasket(rem.basket)) continue
     const tags = Array.isArray(rem.tags) ? rem.tags : []
     if (
+      looksLikeRetiredFungibleTip({
+        tags,
+        customInstructions: rem.customInstructions,
+      })
+    ) {
+      continue
+    }
+    if (
       tags.some(
         (t) =>
           typeof t === 'string' &&
-          (/^bsv21/i.test(t) || /^amt:/i.test(t) || /^1sat-ft/i.test(t)),
+          (/^bsv21/i.test(t) || /^amt:/i.test(t)),
       )
     ) {
       continue
@@ -161,7 +170,7 @@ function tipsFromAtomicBeef(
       const sats = out?.satoshis
       const hex = out?.lockingScript?.toHex()
       if (sats !== 1 || !hex || !scriptPaysAddress(hex, active.address)) continue
-      if (isFungibleOneSatLock(hex)) continue
+      if (isNonCollectableOneSatLock(hex)) continue
       tips.push({
         outpoint: `${txid}.${i}`,
         origin: `${txid}_${i}`,
@@ -202,23 +211,6 @@ function tokenSym(raw: string | undefined, tokenId: string): string {
   return shortTokenLabel(tokenId)
 }
 
-function onesatFtAmtFromLock(hex: string): string | null {
-  try {
-    const env = parseOrdEnvelope(hex)
-    if (!env?.body?.length) return null
-    const json = JSON.parse(new TextDecoder().decode(env.body)) as { amt?: unknown }
-    if (typeof json?.amt === 'string' && /^\d+$/.test(json.amt) && BigInt(json.amt) > 0n) {
-      return json.amt
-    }
-    if (typeof json?.amt === 'number' && Number.isSafeInteger(json.amt) && json.amt > 0) {
-      return String(json.amt)
-    }
-  } catch {
-    /* ignore */
-  }
-  return null
-}
-
 function paintFungibleTip(opts: {
   active: ActiveWallet
   originator: string
@@ -242,11 +234,6 @@ function paintFungibleTip(opts: {
     amt = classified.payload.amt ?? null
     sym = classified.payload.sym
     dec = classified.payload.dec ?? 0
-  } else if (looksLikeOnesatFtTip({ lockingScriptHex: opts.hex })) {
-    tokenId =
-      originFromOnesatFtLock(opts.hex) ??
-      `${opts.txid}_${opts.vout}`
-    amt = onesatFtAmtFromLock(opts.hex)
   }
   if (!tokenId || !amt || !/^\d+$/.test(amt) || BigInt(amt) <= 0n) return false
   const name = tokenSym(sym, tokenId)
@@ -259,6 +246,9 @@ function paintFungibleTip(opts: {
     op: classified.kind === 'bsv21' ? classified.payload.op : 'transfer',
     sym: name,
     dec,
+    ...(classified.kind === 'bsv21' && classified.encoding === 'binary'
+      ? { binarySupply: 'locked' as const }
+      : {}),
   })
   rememberFungibleToken(token)
   void hydrateCachedTokenIcons(opts.active, [token]).catch(() => {})
@@ -360,7 +350,7 @@ function paintFungiblesFromScripts(
   for (const out of scripts) {
     if (out.satoshis !== 1) continue
     if (!scriptPaysAddress(out.hex, active.address)) continue
-    if (!isFungibleOneSatLock(out.hex)) continue
+    if (!isBsv21OneSatLock(out.hex)) continue
     if (paintFungibleTip({ active, originator, txid, vout: out.vout, hex: out.hex, method })) {
       painted += 1
     }
@@ -418,6 +408,20 @@ export function paintAfterInternalizeBsv21(
       undefined
     const issuer = ci?.issuer ?? tagValue(tags, 'issuer:') ?? undefined
     if (icon && beef) cacheTokenIconFromBeef(icon, beef)
+    // Remittance tags are metadata; only the lock proves BRC-162. Read it from
+    // the supplied BEEF so a binary tip is not painted as burn-only legacy.
+    const lockHex = beef
+      ? (beef.findTxid(txid)?.tx ?? beef.findAtomicTransaction(txid))?.outputs[
+          outputIndex
+        ]?.lockingScript?.toHex()
+      : undefined
+    const classified = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${txid}.${outputIndex}`,
+      lockingScriptHex: lockHex,
+      customInstructions: rem.customInstructions,
+      tags,
+    })
     const token = fungibleFromImport({
       outpoint: `${txid}.${outputIndex}`,
       txid,
@@ -429,6 +433,9 @@ export function paintAfterInternalizeBsv21(
       icon,
       dec: ci?.dec ?? 0,
       issuer,
+      ...(classified.kind === 'bsv21' && classified.encoding === 'binary'
+        ? { binarySupply: 'locked' as const }
+        : {}),
     })
     rememberFungibleToken(token)
     void hydrateCachedTokenIcons(active, [token]).catch(() => {})
@@ -455,7 +462,7 @@ export function paintAfterInternalizeItem(
     : 0
   const tokenOps = new Set(
     scripts
-      .filter((s) => s.satoshis === 1 && isFungibleOneSatLock(s.hex))
+      .filter((s) => s.satoshis === 1 && isBsv21OneSatLock(s.hex))
       .map((s) => `${txid}.${s.vout}`),
   )
   const tips = parseInternalizedItemTips(active, args, result).filter(
@@ -573,6 +580,9 @@ export function paintAfterCreateActionBsv21Mint(
         ? { icon: normalizeTokenId(classified.payload.icon) ?? classified.payload.icon }
         : {}),
       ...(classified.payload.issuer ? { issuer: classified.payload.issuer } : {}),
+      ...(classified.encoding === 'binary'
+        ? { binarySupply: 'locked' as const }
+        : {}),
     })
     rememberFungibleToken(token)
     void hydrateCachedTokenIcons(active, [token]).catch(() => {})
@@ -610,7 +620,7 @@ export function paintAfterCreateActionIssuance(
   )
   const tokenOps = new Set(
     scripts
-      .filter((s) => s.satoshis === 1 && isFungibleOneSatLock(s.hex))
+      .filter((s) => s.satoshis === 1 && isBsv21OneSatLock(s.hex))
       .map((s) => `${txid}.${s.vout}`),
   )
   const itemTips: InternalizedItemTip[] = []
@@ -619,9 +629,14 @@ export function paintAfterCreateActionIssuance(
     const op = `${txid}.${out.vout}`
     if (tokenOps.has(op)) continue
     if (!scriptPaysAddress(out.hex, active.address)) continue
+    const origin = `${txid}_${out.vout}`
+    // The mint we just signed carries its own art. Keep it now: the indexer has
+    // never heard of this transaction, so `/content/` would 404 for as long as
+    // it takes to be indexed and the card would paint the placeholder glyph.
+    rememberItemArtFromScript(origin, out.hex)
     itemTips.push({
       outpoint: op,
-      origin: `${txid}_${out.vout}`,
+      origin,
       name: issuanceNameFromArgs(args) || 'Collectable',
     })
   }

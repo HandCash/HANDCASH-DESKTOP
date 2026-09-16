@@ -2,8 +2,7 @@
  * Send BRC-162 value tips: spend 162 inputs, emit payee (+ change) 162 value
  * outputs with conserved `amt`. Dust/fees from ordinary BSV.
  *
- * NEW sends never emit application/1sat-ft+json. Remittance is BRC-163
- * (basket `bsv21`). Subject outputs carry a 176 BEEF packet.
+ * Remittance is BRC-163 (basket `bsv21`). Subject outputs carry BRC-176 BEEF.
  */
 import {
   Beef,
@@ -13,12 +12,10 @@ import {
   type Transaction,
 } from '@bsv/sdk'
 import {
-  issuerFromColourTags,
-  normalizeColourOrigin,
-  type ColourTip,
-} from './guards'
-import {
   BSV21_BASKET,
+  issuerFromBsv21Tags,
+  normalizeTokenId,
+  requireTokenId,
 } from './types'
 import { decodeBsv21Binary } from './decode162'
 import { fillTokenParentBodies } from './prove176'
@@ -109,11 +106,14 @@ async function recoverBsv21TipsFromLocalBeef(
 ): Promise<Bsv21SendTip[]> {
   const { getLocalBeefForTxid } = await import('../beefCache')
   const { getCachedFungibles } = await import('./list')
-  const want = normalizeColourOrigin(tokenId)
+  const want = requireTokenId(tokenId)
   const candidates = new Set<string>()
   for (const token of getCachedFungibles()) {
-    const id = normalizeColourOrigin(token.tokenId)
-    const aliases = (token.tokenIds ?? []).map(normalizeColourOrigin)
+    const id = normalizeTokenId(token.tokenId)
+    const aliases = (token.tokenIds ?? []).flatMap((candidate) => {
+      const normalized = normalizeTokenId(candidate)
+      return normalized ? [normalized] : []
+    })
     if (id === want || aliases.includes(want)) {
       if (token.outpoint) candidates.add(token.outpoint)
     }
@@ -135,7 +135,7 @@ async function recoverBsv21TipsFromLocalBeef(
       satoshis: 1,
     })
     if (!decoded || !decodeBsv21Binary(hex)) continue
-    if (normalizeColourOrigin(decoded.tokenId) !== want) continue
+    if (normalizeTokenId(decoded.tokenId) !== want) continue
     tips.push({
       outpoint: decoded.outpoint,
       tokenId: decoded.tokenId,
@@ -152,10 +152,9 @@ async function recoverBsv21TipsFromLocalBeef(
 }
 
 /**
- * BRC-100 auto-signs managed change only. Inscribed 1sat-ft tips come back as
- * signable — unlock with the root key, same as collectables.
+ * Complete a staged BSV-21 transfer with the wallet root P2PKH key.
  */
-export async function signColourTipTransfer(args: {
+export async function signBsv21TipTransfer(args: {
   wallet: ActiveWallet
   signable: SignableTransaction
   outpoints: string[]
@@ -297,29 +296,27 @@ export async function signColourTipTransfer(args: {
   return { txid, atomicBeef }
 }
 
-export async function sendColourCoins(args: {
-  origin: string
+export async function sendBsv21Tokens(args: {
+  tokenId: string
   /** Face-value units to send. */
   amount: number
   toAddress: string
   friendLabel?: string | null
   recipientIdentityKey?: string | null
   sym?: string
-  supply?: 'locked' | 'open'
-  maxSupply?: number | null
   /** Decorative icon inscription to echo into child remittance. */
   icon?: string
   /**
    * Spend exactly these tips (e.g. combine). When omitted, greedy-cover
    * `amount` from listed tips.
    */
-  tips?: ColourTip[]
+  tips?: Bsv21SendTip[]
   /** Skip peer remittance (self-combine). */
   skipPeerNotify?: boolean
   actionDescription?: string
   actionLabel?: string
 }): Promise<{ txid: string; tipsSpent: number; change: number }> {
-  const origin = normalizeColourOrigin(args.origin)
+  const tokenId = requireTokenId(args.tokenId)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
@@ -330,7 +327,6 @@ export async function sendColourCoins(args: {
     const decoded = tipFromBsv21Script({
       outpoint: t.outpoint,
       lockingScript: t.lockingScript,
-      satoshis: t.satoshis,
       customInstructions: t.customInstructions,
       tags: t.tags,
     })
@@ -342,7 +338,7 @@ export async function sendColourCoins(args: {
   const fromBasket: Bsv21SendTip[] = listed162
     .filter(
       (t) =>
-        t.tokenId === origin &&
+        t.tokenId === tokenId &&
         !!t.lockingScript &&
         !!decodeBsv21Binary(t.lockingScript),
     )
@@ -353,10 +349,10 @@ export async function sendColourCoins(args: {
       lockingScript: t.lockingScript,
     }))
   if (fromArgs.length === 0 && fromBasket.length === 0) {
-    fromBasket.push(...(await recoverBsv21TipsFromLocalBeef(active, origin)))
+    fromBasket.push(...(await recoverBsv21TipsFromLocalBeef(active, tokenId)))
   }
   const plan = planBsv21Send({
-    tokenId: origin,
+    tokenId,
     amount: BigInt(args.amount),
     tips: fromArgs.length ? fromArgs : fromBasket,
   })
@@ -364,18 +360,10 @@ export async function sendColourCoins(args: {
   const change = Number(plan.changeAmt)
   const amount = Number(plan.payeeAmt)
   console.info(
-    `[bsv21] send plan tips=${selected.length} amount=${amount} change=${change} origin=${origin.slice(0, 16)}`,
+    `[bsv21] send plan tips=${selected.length} amount=${amount} change=${change} token=${tokenId.slice(0, 16)}`,
   )
-  const selectedColour: ColourTip[] = selected.map((t) => ({
-    outpoint: t.outpoint,
-    origin,
-    satoshis: 1,
-    amt: Number(t.amt),
-    proven: true,
-    lockingScript: t.lockingScript,
-  }))
   const sym = args.sym?.trim() || 'Token'
-  const primary = selectedColour[0]!
+  const primary = selected[0]!
   const actionLabel = args.actionLabel ?? 'handcash-send-bsv21'
   const actionDescription = args.actionDescription ?? 'Send token'
 
@@ -396,9 +384,9 @@ export async function sendColourCoins(args: {
   })
   const activityItem = {
     name: sym,
-    origin,
+    origin: tokenId,
     outpoint: primary.outpoint,
-    tokenId: origin,
+    tokenId,
     amt: String(amount),
     dec: 0,
   }
@@ -430,10 +418,10 @@ export async function sendColourCoins(args: {
       const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
       const issuer = (() => {
         for (const tip of listed162) {
-          if (tip.tokenId === origin && tip.issuer) return tip.issuer
+          if (tip.tokenId === tokenId && tip.issuer) return tip.issuer
         }
-        for (const tip of selectedColour) {
-          const fromTags = issuerFromColourTags(tip.tags)
+        for (const tip of selected) {
+          const fromTags = issuerFromBsv21Tags(tip.tags)
           if (fromTags) return fromTags
           try {
             const o = JSON.parse(String(tip.customInstructions ?? '')) as {
@@ -448,11 +436,11 @@ export async function sendColourCoins(args: {
       })()
       const icon =
         args.icon ||
-        listed162.find((t) => t.tokenId === origin && t.icon)?.icon
+        listed162.find((t) => t.tokenId === tokenId && t.icon)?.icon
       let plannedOutputs
       try {
         plannedOutputs = buildBsv21SendOutputs({
-          tokenId: origin,
+          tokenId,
           payeeAmt: plan.payeeAmt,
           changeAmt: plan.changeAmt,
           payeeAddress: to,
@@ -612,7 +600,7 @@ export async function sendColourCoins(args: {
           'Signing token tip…',
           primary.outpoint,
         )
-        const signed = await signColourTipTransfer({
+        const signed = await signBsv21TipTransfer({
           wallet,
           signable,
           outpoints: spendOutpoints,
@@ -672,7 +660,7 @@ export async function sendColourCoins(args: {
         if (signedTx) {
           const classified = classifyBsv21SendOutputs({
             tx: signedTx,
-            tokenId: origin,
+            tokenId,
             payeeRestHex: p2pkhScriptHex(to),
             changeRestHex: p2pkhScriptHex(wallet.address),
             payeeAmt: plan.payeeAmt,
@@ -739,7 +727,7 @@ export async function sendColourCoins(args: {
         )
         const asset = {
           kind: 'fungible' as const,
-          tokenId: origin,
+          tokenId,
           amount: String(amount),
           sym,
           dec: 0,
@@ -796,7 +784,7 @@ export async function sendColourCoins(args: {
             blockerCode: 'peer_delivery_error',
           })
           console.warn(
-            '[send-colour] peer delivery queued',
+            '[bsv21-send] peer delivery queued',
             error instanceof Error ? error.message : String(error),
           )
         }
@@ -838,15 +826,15 @@ export async function sendColourCoins(args: {
       })
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
-      scheduleHistoryBackupPush('sendColourCoins')
+      scheduleHistoryBackupPush('sendBsv21Tokens')
       const { paintFungibleAfterSpend, getFungible } = await import('./list')
       paintFungibleAfterSpend({
-        tokenId: origin,
+        tokenId,
         remainingAmt,
         outpoint: remainingOp,
         sym,
         icon: args.icon,
-        dec: getFungible(origin)?.dec ?? 0,
+        dec: getFungible(tokenId)?.dec ?? 0,
       })
       return { txid, tipsSpent: selected.length, change: remainingAmt }
       } finally {
@@ -902,24 +890,22 @@ export async function sendColourCoins(args: {
     resumeCollectableVerifyWalk()
   }
 }
-export async function combineColourTips(args: {
-  origin: string
+export async function combineBsv21Tips(args: {
+  tokenId: string
   sym?: string
-  supply?: 'locked' | 'open'
-  maxSupply?: number | null
 }): Promise<{ txid: string; tipsSpent: number }> {
-  const origin = normalizeColourOrigin(args.origin)
+  const tokenId = requireTokenId(args.tokenId)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
   const listed162 = await listBsv21BinaryTips(active)
-  const mine = listed162.filter((t) => t.tokenId === origin)
+  const mine = listed162.filter((t) => t.tokenId === tokenId)
   if (mine.length < 2) {
     throw new Error('Already a single tip — nothing to combine')
   }
   const amount = mine.reduce((s, t) => s + Number(t.amt.replace(/\D/g, '') || '0'), 0)
-  const result = await sendColourCoins({
-    origin,
+  const result = await sendBsv21Tokens({
+    tokenId,
     amount,
     toAddress: active.address,
     skipPeerNotify: true,

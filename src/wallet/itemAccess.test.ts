@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   isBsv21SpendArgs,
   isBareStorageInventoryBasket,
-  isColourBasket,
-  isColourIssuanceArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemSpendArgs,
@@ -25,7 +23,6 @@ import {
   tokenViewGranted,
   grantableCollectionIdsFromOutputs,
   grantableTokensFromOutputs,
-  shouldRefuseColourList,
   DEFAULT_ITEM_ACCESS,
   DEFAULT_TOKEN_ACCESS,
 } from './itemAccess'
@@ -280,28 +277,6 @@ describe('telling an item mint from an item send', () => {
     expect(isItemSpendArgs('createAction', send)).toBe(true)
   })
 
-  it('recognizes 1sat-ft mint as issuance', () => {
-    const mint = {
-      description: 'Mint GOLD',
-      labels: ['1sat-ft', 'handcash-mint-1sat-ft'],
-      outputs: [
-        {
-          lockingScript: '00',
-          satoshis: 1,
-          basket: '1sat-ft',
-          tags: ['1sat-ft', 'ordinal'],
-        },
-        {
-          lockingScript: '00',
-          satoshis: 1,
-          basket: '1sat-ft',
-          tags: ['1sat-ft', 'ordinal'],
-        },
-      ],
-    }
-    expect(isColourIssuanceArgs('createAction', mint)).toBe(true)
-  })
-
   it('recognizes BSV-21 basket transfers as token spends', () => {
     const send = {
       description: 'Send TST',
@@ -379,13 +354,6 @@ describe('third-party item and token view', () => {
     expect(
       outputMatchesItemAccess(access, ['1sat-ft', 'name:FOX'], undefined, allRequest),
     ).toBe(false)
-  })
-
-  it('returns empty colour lists for third parties', () => {
-    expect(isColourBasket('1sat-ft')).toBe(true)
-    expect(shouldRefuseColourList('market.handcash.io', '1sat-ft')).toBe(true)
-    expect(shouldRefuseColourList(undefined, '1sat-ft')).toBe(false)
-    expect(shouldRefuseColourList('market.handcash.io', '1sat')).toBe(false)
   })
 
   it('does not put 1sat-ft leftover or unnamed rows in the collection picker', () => {
