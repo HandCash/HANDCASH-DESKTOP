@@ -58,7 +58,10 @@
  *     is only the internal visible-P2PKH sweep scope — never a BRC-100 label.
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
- *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
+ *   not custody. Bodies are BRC-169 §7 / BRC-78 envelopes. A live draft-BRC-246
+ *   IPv6 session carries the same sealed chat and skips the box for that message
+ *   (Desktop Electron and Android Capacitor). BRC-CLOUD hosts a convenience box;
+ *   resolve may return any box URL.
  * - **BRC-100 app exchange** — the signed Atomic BEEF (+ remittance) *is* the
  *   payment. Arcade `postBeef` / `/txs` is a propagation double-check, not a
  *   send or receive gate. SPV (scripts + input proofs in the BEEF) validates

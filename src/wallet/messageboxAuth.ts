@@ -12,11 +12,10 @@
  * Wire headers (fetch):
  *   X-BRC33-Identity / Timestamp / Signature  — interim ECDSA (always)
  *
- * BRC-103 identity proof is still signed locally but **not** attached to fetch
- * by default. Extra `X-BRC103-*` headers trip CORS preflight on Android WebView
- * when the box Allow-Headers list only has X-BRC33-* (and browsers cache that
- * miss for Access-Control-Max-Age). BRC-CLOUD accepts either; full Authrite
- * Peer sessions + certificates still deferred.
+ * BRC-103 identity proof is signed locally. Fetch attaches `X-BRC103-*` only
+ * to BRC-CLOUD (Allow-Headers already lists them). Other boxes keep
+ * `X-BRC33-*` alone so Android WebView does not cache a CORS miss.
+ * Full Authrite Peer sessions + certificates remain deferred.
  */
 import { BigNumber, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
 

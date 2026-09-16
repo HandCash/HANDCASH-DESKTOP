@@ -46,8 +46,8 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | BSV / item-tip custody | Grade A P2PKH | Keep |
 | Item identity / authenticity | BRC-150 v2 offline tip→origin proof | Keep; fail closed when proof cannot be verified |
 | BRC-150 remittance to peer | Local only | Optional later: Outpoint BEEF / messagebox envelope (B); never gate chain custody on delivery |
-| Chat delivery | Hardcoded BRC-CLOUD box; plaintext + `handcash-message:` cards; no BRC-31 auth; custom `/files` | Resolve recipient **messagebox URL**; BRC-33-shaped client; BRC-CLOUD remains default fallback host |
-| Chat encryption | Plain body | Move toward BRC-169 encrypted envelope content |
+| Chat delivery | Resolved peer **messagebox URL**; BRC-CLOUD fallback; live draft-BRC-246 IPv6 session when both wallets are reachable | Keep box as rendezvous + offline inbox; socket is the hot path |
+| Chat encryption | BRC-169 §7 envelope + BRC-78 content (legacy plaintext inbound still accepted) | Tolls / reachability policy; full Authrite Peer sessions |
 | Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |
 | Item send | Plain P2PKH tip + local BRC-150 provenance | `ItemSettlePath` owns who broadcasts; no latch output or fallback path |
 | Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback (grade C) |
@@ -70,18 +70,21 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 1. [x] On handle resolve, **persist `messagebox` URL** from the resolve response (already returned by BRC-CLOUD).  
 2. [x] `deliverOutbound` / `pollInbound` / `uploadChatFile` take **resolved box base URL**, defaulting to today’s BRC-CLOUD path when missing.  
 3. [x] Friends / chat peers store `messagebox?: string` alongside identityKey.  
-4. [x] Keep wire formats (`handcash-message:`) for now so existing threads work.  
-5. [x] Document BRC-33 deltas we still violate (auth, ack shape, encrypted content) in `messageTransport.ts`.
+4. [x] Keep wire formats (`handcash-message:`) inside sealed envelopes so existing thread kinds still decode.
+5. [x] Document remaining BRC-33 deltas (tolls, full Authrite Peer) in `messageTransport.ts`.
 
 **Done when:** a friend whose resolve returns another box URL can receive chat without code pointing only at `brc-cloud…/v1/messagebox`.
 ### Phase 2 — BRC-CLOUD box: converge on PeerServ
 
 1. [x] Align request/response shapes with BRC-33 (`status`, `sender`, `messageIds[]`).  
-2. [x] Interim identity auth (ECDSA headers) — full **BRC-103/104** still deferred.  
+2. [x] Identity auth: `X-BRC33-*` everywhere; `X-BRC103-*` on BRC-CLOUD. Full **Authrite Peer** sessions still deferred.
 3. [x] Keep `/files` as a HandCash extension; advertise auth mode on box manifest.  
 4. [x] Resolve response already exposes `messagebox` — keep that as the federation hook.
+5. [x] BRC-169 §7 / BRC-78 sealed content. Chat also rides a live IPv6 session (draft BRC-246) when the pair is hot (Desktop Electron and Mobile Capacitor). The box is still the offline inbox.
 
-**Still deferred:** BRC-169 §7 encrypted envelopes, tolls/reachability policy, full Authrite Peer sessions (identity proof headers are live alongside BRC-33-lite).
+**Still deferred:** tolls/reachability policy, full Authrite Peer sessions + certificates, overlay catalog mirrors (BRC-230, parked).
+
+**Public beta vs dropping BETA.** Encrypted friend chat is a product requirement and is implemented. Draft BRC-246 sockets, overlay catalog mirrors, and Authrite-complete sessions are protocol polish: they must not block a public-beta **wallet**. They should block dropping the BETA badge if the promise includes Authrite-complete federated messaging or in-wallet catalogs.
 
 ### Phase 3 — Robustness (from I/O map; pick in order)
 

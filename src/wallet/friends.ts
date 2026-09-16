@@ -357,6 +357,12 @@ export function getFriendById(id: string): Friend | null {
   return readRaw().find((f) => f.id === id) ?? null
 }
 
+export function getFriendByIdentityKey(identityKey: string): Friend | null {
+  const key = normalizeIdentityKey(identityKey)
+  if (!key) return null
+  return readRaw().find((f) => f.identityKey.toLowerCase() === key) ?? null
+}
+
 export function updateFriend(
   id: string,
   patch: { label?: string; identityKey?: string; messagebox?: string | null },

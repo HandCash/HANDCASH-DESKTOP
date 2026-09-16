@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.202] - 2026-09-16
+
+### Added
+
+- Friend chat is sealed with BRC-169 §7 / BRC-78 envelopes so a messagebox
+  operator cannot read bodies. A live IPv6 session (draft BRC-246) carries the
+  same sealed chat when both wallets are reachable; inbound lines land on the
+  friend thread, not the identity-key id. Android uses the same socket protocol
+  through a Capacitor plugin when the phone has a global unicast IPv6 address.
+
+### Changed
+
+- Park BRC-230 catalog expansion packs outside the public-beta wallet until
+  their protocol and product surface are ready.
+
 ## [1.3.201] - 2026-09-16
 
 ### Fixed

@@ -5,11 +5,13 @@
  * not the protocol: BRC-169 resolve returns a `messagebox` URL; federation posts
  * to the recipient's box. See `docs/wallet-p2p-messagebox.md`.
  *
- * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is interim
- * `X-BRC33-*` ECDSA (`messageboxAuth.ts`). Full Authrite / BRC-103 headers are
- * signed locally but not sent on fetch (Android CORS preflight).
- * Bodies remain plaintext / `handcash-message:` app payloads (BRC-169 §7
- * encrypted envelopes deferred). `/files` is a HandCash extension.
+ * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is `X-BRC33-*`
+ * plus `X-BRC103-*` on BRC-CLOUD (other boxes skip extra headers to avoid
+ * Android CORS misses). Bodies are BRC-169 §7 envelopes (BRC-78 content).
+ * Legacy plaintext inbound still decodes. `/files` is a HandCash extension.
+ *
+ * A live draft-BRC-246 IPv6 session carries the same sealed body and skips the
+ * box for that message. The box stays the rendezvous and the offline inbox.
  */
 import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import {
@@ -21,6 +23,8 @@ import {
   freshMessageboxAuthHeaders,
   type MessageboxMethod,
 } from './messageboxAuth'
+import { getFriendByIdentityKey } from './friends'
+import { openPeerMessage, sealPeerMessage } from './messageEnvelope'
 import {
   appendMessage,
   type ChatAttachment,
@@ -54,6 +58,8 @@ const MARKET_WIRE_PREFIX = 'handcash-market-v2:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
 /** BRC-CLOUD sendMessage cap is 16_384 — stay under it for remittance ± inline BEEF. */
 export const MESSAGEBOX_BODY_MAX = 16_000
+/** Inner plaintext budget so a BRC-169 envelope still fits `MESSAGEBOX_BODY_MAX`. */
+export const MESSAGEBOX_INNER_MAX = 11_000
 
 export type MarketSettlementWire =
   | {
@@ -112,7 +118,7 @@ export function encodeMarketSettlementWire(
   wire: MarketSettlementEnvelope
 ): string {
   const body = `${MARKET_WIRE_PREFIX}${JSON.stringify(wire)}`
-  if (body.length > MESSAGEBOX_BODY_MAX) {
+  if (body.length > MESSAGEBOX_INNER_MAX) {
     throw new Error('Market settlement message exceeds the BRC-33 body limit')
   }
   return body
@@ -360,7 +366,7 @@ export function withOptionalBeefB64(
       },
     }
     const encoded = `${WIRE_PREFIX}${JSON.stringify(next)}`
-    if (encoded.length > MESSAGEBOX_BODY_MAX) return { body, beefInBox: false }
+    if (encoded.length > MESSAGEBOX_INNER_MAX) return { body, beefInBox: false }
     return { body: encoded, beefInBox: true }
   } catch {
     return { body, beefInBox: false }
@@ -546,24 +552,34 @@ export type PeerBeefNotifyResult = {
   beefInBox: boolean
 }
 
+function messageboxHostAllowsAuthrite(box: string): boolean {
+  const n = normalizeBase(box)
+  if (n.startsWith('/')) return true
+  try {
+    return new URL(n).host.toLowerCase() === 'brc-cloud.bcryderman.workers.dev'
+  } catch {
+    return false
+  }
+}
+
 /** Sign-then-attach so retries cannot reuse a stale X-BRC33-Timestamp. */
 function signedMessageboxHeaders(
   rootKeyHex: string,
   method: MessageboxMethod,
-  extra?: Record<string, string>,
+  extra: Record<string, string> | undefined,
+  box: string,
 ): Headers {
   const signed = freshMessageboxAuthHeaders({
     rootKeyHex,
     method,
     messageBox: 'inbox',
+    includeAuthrite: messageboxHostAllowsAuthrite(box),
   })
   const headers = new Headers()
   if (extra) {
     for (const [key, value] of Object.entries(extra)) headers.set(key, value)
   }
-  headers.set('X-BRC33-Identity', signed['X-BRC33-Identity'] ?? '')
-  headers.set('X-BRC33-Timestamp', signed['X-BRC33-Timestamp'] ?? '')
-  headers.set('X-BRC33-Signature', signed['X-BRC33-Signature'] ?? '')
+  for (const [key, value] of Object.entries(signed)) headers.set(key, value)
   return headers
 }
 
@@ -597,7 +613,7 @@ export async function uploadMessageboxBytes(args: {
       'Content-Type': contentType,
       'X-HandCash-Recipient': args.recipientIdentityKey,
       'X-HandCash-Filename': encodeURIComponent(filename),
-    }),
+    }, box),
     // Blob, not File — Android WebView rejects `File` as a fetch body.
     body: new Blob([payload.buffer], { type: contentType }),
   })
@@ -631,6 +647,51 @@ export async function uploadChatFile(args: {
   })
 }
 
+function dropInnerBeef(body: string): string {
+  if (!body.startsWith(WIRE_PREFIX)) return body
+  try {
+    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
+    if (!parsed.meta?.beefB64) return body
+    const { beefB64: _omit, ...meta } = parsed.meta
+    return `${WIRE_PREFIX}${JSON.stringify({ ...parsed, meta })}`
+  } catch {
+    return body
+  }
+}
+
+function sealForPeer(args: {
+  plaintext: string
+  rootKeyHex: string
+  recipientIdentityKey: string
+}): string {
+  let sealed = sealPeerMessage(args)
+  if (sealed.length <= MESSAGEBOX_BODY_MAX) return sealed
+  const stripped = dropInnerBeef(args.plaintext)
+  if (stripped !== args.plaintext) {
+    sealed = sealPeerMessage({ ...args, plaintext: stripped })
+    if (sealed.length <= MESSAGEBOX_BODY_MAX) return sealed
+  }
+  throw new Error('Message exceeds the BRC-33 body limit')
+}
+
+function plaintextFromPeer(
+  body: string,
+  rootKeyHex: string,
+  expectedSenderIdentityKey?: string,
+): string | null {
+  const opened = openPeerMessage({
+    body,
+    rootKeyHex,
+    expectedSenderIdentityKey,
+  })
+  if ('refuse' in opened) return null
+  return opened.plaintext
+}
+
+function threadIdForSender(identityKey: string): string | null {
+  return getFriendByIdentityKey(identityKey)?.id ?? null
+}
+
 function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }): void {
   installElectronDirectSession()
   setDirectSessionIdentity({
@@ -638,20 +699,62 @@ function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }
     identityKey: env.senderIdentityKey,
   })
   setDirectInboundHandler((sender, body) => {
-    void acceptDirectBody(sender, body)
+    acceptDirectBody(sender, body, env.rootKeyHex)
   })
 }
 
-/** Deliver outbound text. A live session skips the box; otherwise the box is the path. */
+/**
+ * Bind the IPv6 listener and put a short-lived offer in the friend's box so a
+ * live pair can move chat onto the socket before the next typed line.
+ */
+export async function preparePeerDirectPath(args: {
+  rootKeyHex: string
+  senderIdentityKey: string
+  recipientIdentityKey: string
+  messagebox?: string | null
+}): Promise<void> {
+  armDirectSession(args)
+  const box = normalizeMessageboxBase(args.messagebox)
+  await postSessionOffer(
+    {
+      recipientIdentityKey: args.recipientIdentityKey,
+      senderIdentityKey: args.senderIdentityKey,
+      rootKeyHex: args.rootKeyHex,
+      body: '',
+      peerId: threadIdForSender(args.recipientIdentityKey) ?? args.recipientIdentityKey,
+      messagebox: box,
+    },
+    box,
+  )
+  warmDirectSession(args.recipientIdentityKey)
+}
+
+/** Deliver outbound text. A live IPv6 session skips the box; otherwise the box is the path. */
 export async function deliverOutbound(
   env: OutboundEnvelope,
 ): Promise<{ delivered: 'local' | 'cloud' | 'direct'; messagebox: string }> {
   const box = normalizeMessageboxBase(env.messagebox)
   armDirectSession(env)
+  let wireBody = env.body
   if (env.body) {
+    try {
+      wireBody = sealForPeer({
+        plaintext: env.body,
+        rootKeyHex: env.rootKeyHex,
+        recipientIdentityKey: env.recipientIdentityKey,
+      })
+    } catch (err) {
+      console.warn(
+        '[messagebox] seal failed',
+        err instanceof Error ? err.message : String(err),
+      )
+      return { delivered: 'local', messagebox: box }
+    }
+  }
+  if (wireBody) {
     const direct = await tryDirectDeliver({
       recipientIdentityKey: env.recipientIdentityKey,
-      body: env.body,
+      body: wireBody,
     })
     if (direct === 'direct') return { delivered: 'direct', messagebox: box }
   }
@@ -662,12 +765,12 @@ export async function deliverOutbound(
       headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }),
+      }, box),
       body: JSON.stringify({
         message: {
           recipient: env.recipientIdentityKey,
           messageBox: 'inbox',
-          body: env.body,
+          body: wireBody,
           // Optional display claim only — server binds sender from auth.
           senderHandle: env.senderHandle,
         },
@@ -698,18 +801,28 @@ async function postSessionOffer(env: OutboundEnvelope, box: string): Promise<voi
   await ensureDirectListener()
   const offer = sessionOfferMessage(env.recipientIdentityKey)
   if (!offer) return
+  let body = offer
+  try {
+    body = sealForPeer({
+      plaintext: offer,
+      rootKeyHex: env.rootKeyHex,
+      recipientIdentityKey: env.recipientIdentityKey,
+    })
+  } catch {
+    return
+  }
   try {
     await fetch(`${box}/sendMessage`, {
       method: 'POST',
       headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }),
+      }, box),
       body: JSON.stringify({
         message: {
           recipient: env.recipientIdentityKey,
           messageBox: 'inbox',
-          body: offer,
+          body,
         },
       }),
     })
@@ -718,28 +831,33 @@ async function postSessionOffer(env: OutboundEnvelope, box: string): Promise<voi
   }
 }
 
-function acceptDirectBody(sender: string, body: string): void {
-  if (ingestSessionOfferBody(body)) {
+function acceptDirectBody(sender: string, body: string, rootKeyHex: string): void {
+  const inner = plaintextFromPeer(body, rootKeyHex, sender)
+  if (inner == null) return
+  if (ingestSessionOfferBody(inner)) {
     warmDirectSession(sender)
     return
   }
-  const decoded = decodeMessageBody(body)
+  const decoded = decodeMessageBody(inner)
   const senderKey = sender.trim().toLowerCase()
+  const peerId = threadIdForSender(senderKey)
   const inlineBeef = decodeBeefB64(decoded.meta?.beefB64)
   if (inlineBeef && typeof decoded.meta?.txid === 'string') {
     rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
   }
-  appendMessage(senderKey, {
-    direction: 'in',
-    kind: decoded.kind,
-    text: decoded.text,
-    createdAt: Date.now(),
-    meta: {
-      ...(decoded.meta ?? {}),
-      identityKey: senderKey,
-      origin: 'direct',
-    },
-  })
+  if (peerId) {
+    appendMessage(peerId, {
+      direction: 'in',
+      kind: decoded.kind,
+      text: decoded.text,
+      createdAt: Date.now(),
+      meta: {
+        ...(decoded.meta ?? {}),
+        identityKey: senderKey,
+        origin: 'direct',
+      },
+    })
+  }
   const txid = decoded.meta?.txid?.trim().toLowerCase()
   if (
     txid &&
@@ -838,7 +956,7 @@ export async function pollInboundTipHints(args: {
       headers: signedMessageboxHeaders(args.rootKeyHex, 'listMessages', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }),
+      }, box),
       body: JSON.stringify({ messageBox: 'inbox' }),
     })
     if (!res.ok) {
@@ -870,12 +988,14 @@ export async function pollInboundTipHints(args: {
     void ensureDirectListener()
     for (const m of list) {
       const senderKey = listedSender(m)
-      if (ingestSessionOfferBody(m.body)) {
+      const inner = plaintextFromPeer(m.body, args.rootKeyHex, senderKey)
+      if (inner == null) continue
+      if (ingestSessionOfferBody(inner)) {
         warmDirectSession(senderKey)
         if (m.messageId) ackIds.push(String(m.messageId))
         continue
       }
-      const encodedMarketWire = decodeMarketSettlementWire(m.body)
+      const encodedMarketWire = decodeMarketSettlementWire(inner)
       if (encodedMarketWire) {
         try {
           const marketWire = await resolveMarketSettlementWire(encodedMarketWire)
@@ -896,8 +1016,8 @@ export async function pollInboundTipHints(args: {
         }
         continue
       }
-      const peerId = args.peerIdForSender?.(senderKey) ?? null
-      const decoded = decodeMessageBody(m.body)
+      const peerId = args.peerIdForSender?.(senderKey) ?? threadIdForSender(senderKey)
+      const decoded = decodeMessageBody(inner)
       const isPaymentHint =
         (decoded.kind === 'tip' || decoded.kind === 'pay-sent') &&
         typeof decoded.meta?.txid === 'string' &&
@@ -1161,7 +1281,7 @@ async function acknowledgeMessages(
       headers: signedMessageboxHeaders(rootKeyHex, 'acknowledgeMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }),
+      }, box),
       body: JSON.stringify({ messageBox: 'inbox', messageIds }),
     })
   } catch {

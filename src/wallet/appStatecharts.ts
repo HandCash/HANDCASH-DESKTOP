@@ -985,10 +985,12 @@ const MESSAGEBOX_CHART = `flowchart TB
   end
 
   subgraph Today["HandCash today"]
-    HARD["hardcoded BRC-CLOUD\\n/v1/messagebox"] --> SEND2["sendMessage\\nplaintext / handcash-message cards"]
+    HARD["resolved messagebox URL\\nBRC-CLOUD fallback"] --> SEND2["sendMessage\\nBRC-169 envelope + BRC-78 content"]
+    SEND2 --> IPV6["live IPv6 session\\ndraft BRC-246 when both reachable"]
+    IPV6 --> LOCAL2["messageStore friend thread"]
     SEND2 --> FILES["optional chat attachments only\\nPOST /files → R2"]
-    HARD --> POLL["listMessages by recipient key\\nno BRC-31 auth yet"]
-    POLL --> LOCAL2["messageStore"]
+    HARD --> POLL["listMessages by recipient key\\nX-BRC33-* / X-BRC103-* on BRC-CLOUD"]
+    POLL --> LOCAL2
   end
 
   subgraph NotBox["Not messagebox"]

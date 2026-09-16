@@ -43,6 +43,7 @@ describe('message transport envelopes', () => {
   it('keeps oversized receipts inline and lets the seller fetch BEEF by txid', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
+    const recipient = PrivateKey.fromRandom()
     let sentBody = ''
     const urls: string[] = []
     vi.stubGlobal(
@@ -65,23 +66,29 @@ describe('message transport envelopes', () => {
           txid: 'ab'.repeat(32),
           atomicBeefB64: 'x'.repeat(20_000),
         },
-        recipientIdentityKey: `02${'ab'.repeat(32)}`,
+        recipientIdentityKey: recipient.toPublicKey().toString(),
         rootKeyHex: root.toHex(),
         senderIdentityKey: root.toPublicKey().toString(),
         messagebox: 'https://mb.peer.example/v1/messagebox',
       }),
     ).resolves.toBe(true)
 
+    const { openPeerMessage } = await import('./messageEnvelope')
     const outer = JSON.parse(sentBody)
-    expect(decodeMarketSettlementWire(outer.message.body)).toMatchObject({
+    const opened = openPeerMessage({
+      body: outer.message.body,
+      rootKeyHex: recipient.toHex(),
+    })
+    expect('plaintext' in opened && opened.sealed).toBe(true)
+    const inner = 'plaintext' in opened ? opened.plaintext : ''
+    expect(decodeMarketSettlementWire(inner)).toMatchObject({
       type: 'receipt',
       saleId: 'sale-large',
       txid: 'ab'.repeat(32),
     })
-    expect(decodeMarketSettlementWire(outer.message.body)).not.toHaveProperty(
-      'atomicBeefB64',
-    )
+    expect(decodeMarketSettlementWire(inner)).not.toHaveProperty('atomicBeefB64')
     expect(urls.some((url) => url.endsWith('/files'))).toBe(false)
+    expect(outer.message.body).not.toContain('sale-large')
     expect(outer.message.body.length).toBeLessThan(16_000)
   })
 
@@ -290,7 +297,9 @@ describe('messagebox base URL', () => {
 
   it('posts deliverOutbound to a non-default messagebox base', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
+    const { openPeerMessage } = await import('./messageEnvelope')
     const root = PrivateKey.fromRandom()
+    const recipient = PrivateKey.fromRandom()
     const calls: { url: string; headers: Headers; body: string }[] = []
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({
@@ -303,7 +312,7 @@ describe('messagebox base URL', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await deliverOutbound({
-      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      recipientIdentityKey: recipient.toPublicKey().toString(),
       senderIdentityKey: root.toPublicKey().toString(),
       rootKeyHex: root.toHex(),
       body: 'hello federation',
@@ -319,15 +328,93 @@ describe('messagebox base URL', () => {
     expect(calls[0]?.headers.get('X-BRC33-Identity')).toBe(
       root.toPublicKey().toString().toLowerCase(),
     )
+    expect(calls[0]?.headers.get('X-BRC103-Identity')).toBeNull()
     expect(calls[0]?.headers.get('X-BRC33-Timestamp')).toMatch(/^\d+$/)
     expect(Number(calls[0]?.headers.get('X-BRC33-Timestamp'))).toBeGreaterThan(0)
     expect(calls[0]?.headers.get('X-BRC33-Signature')).toMatch(/^[0-9a-f]{128}$/i)
-    expect(JSON.parse(calls[0]!.body).message).toMatchObject({
-      recipient: '02' + 'ab'.repeat(32),
+    const message = JSON.parse(calls[0]!.body).message
+    expect(message).toMatchObject({
+      recipient: recipient.toPublicKey().toString(),
       messageBox: 'inbox',
-      body: 'hello federation',
     })
-    expect(JSON.parse(calls[0]!.body).message.sender).toBeUndefined()
+    expect(message.body).not.toContain('hello federation')
+    expect(
+      openPeerMessage({ body: message.body, rootKeyHex: recipient.toHex() }),
+    ).toEqual({ plaintext: 'hello federation', sealed: true })
+    expect(message.sender).toBeUndefined()
+  })
+
+  it('sends sealed chat on a live IPv6 session and skips the box', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const { openPeerMessage } = await import('./messageEnvelope')
+    const {
+      installDirectSessionPort,
+      rememberSessionOffer,
+      resetDirectSessions,
+      setDirectSessionIdentity,
+    } = await import('./directSession/session')
+    const { signSessionHello, signSessionOffer, signSessionWelcome } =
+      await import('./directSession/protocol')
+    const a = PrivateKey.fromRandom()
+    const b = PrivateKey.fromRandom()
+    const aKey = a.toPublicKey().toString().toLowerCase()
+    const bKey = b.toPublicKey().toString().toLowerCase()
+    const dialer = aKey < bKey ? a : b
+    const acceptor = aKey < bKey ? b : a
+    const dialerKey = dialer.toPublicKey().toString().toLowerCase()
+    const acceptorKey = acceptor.toPublicKey().toString().toLowerCase()
+    setDirectSessionIdentity({ rootKeyHex: dialer.toHex(), identityKey: dialerKey })
+    rememberSessionOffer(
+      signSessionOffer({
+        rootKeyHex: acceptor.toHex(),
+        counterparty: dialerKey,
+        host: '2001:db8:2::8',
+        port: 9,
+      }),
+    )
+    const sent: string[] = []
+    installDirectSessionPort({
+      listen: async () => null,
+      connect: async (args) => {
+        const parsed = JSON.parse(args.hello) as ReturnType<typeof signSessionHello>
+        const welcome = signSessionWelcome({
+          rootKeyHex: acceptor.toHex(),
+          hello: parsed,
+        })
+        return { ok: true, remoteHello: JSON.stringify(welcome), socketId: 'sock' }
+      },
+      send: async (_id, body) => {
+        sent.push(body)
+        return true
+      },
+      close: async () => undefined,
+      accept: async () => undefined,
+      reject: async () => undefined,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('box must not run')
+      }),
+    )
+
+    const result = await deliverOutbound({
+      recipientIdentityKey: acceptorKey,
+      senderIdentityKey: dialerKey,
+      rootKeyHex: dialer.toHex(),
+      body: 'hello ipv6',
+      peerId: 'peer-1',
+      messagebox: 'https://mb.peer.example/v1/messagebox',
+    })
+
+    expect(result.delivered).toBe('direct')
+    expect(sent[0]).not.toContain('hello ipv6')
+    expect(openPeerMessage({ body: sent[0]!, rootKeyHex: acceptor.toHex() })).toEqual({
+      plaintext: 'hello ipv6',
+      sealed: true,
+    })
+    resetDirectSessions()
+    installDirectSessionPort(null)
   })
 
   it('uploads BEEF as raw bytes with Content-Length (not a File body)', async () => {
@@ -380,6 +467,7 @@ describe('messagebox base URL', () => {
   it('inlines small Atomic BEEF in sendMessage (no /files)', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
+    const recipient = PrivateKey.fromRandom()
     const urls: string[] = []
     vi.stubGlobal(
       'fetch',
@@ -390,7 +478,7 @@ describe('messagebox base URL', () => {
     )
 
     const result = await notifyPeerItemIncoming({
-      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      recipientIdentityKey: recipient.toPublicKey().toString(),
       rootKeyHex: root.toHex(),
       senderIdentityKey: root.toPublicKey().toString(),
       txid: 'a'.repeat(64),
@@ -405,8 +493,10 @@ describe('messagebox base URL', () => {
 
   it('attaches large collectable BEEF instead of dropping the supplied proof', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
+    const { openPeerMessage } = await import('./messageEnvelope')
     const root = PrivateKey.fromRandom()
-    const recipient = '02' + 'ab'.repeat(32)
+    const recipientKey = PrivateKey.fromRandom()
+    const recipient = recipientKey.toPublicKey().toString()
     const txid = 'a'.repeat(64)
     const urls: string[] = []
     let sentBody = ''
@@ -449,8 +539,14 @@ describe('messagebox base URL', () => {
     expect(result.delivered).toBe('cloud')
     expect(urls[0]).toContain('/files')
     expect(urls[1]).toContain('/sendMessage')
-    expect(decodeMessageBody(JSON.parse(sentBody).message.body).meta?.attachment?.url)
-      .toContain(`/files/${recipient}/${txid}`)
+    const opened = openPeerMessage({
+      body: JSON.parse(sentBody).message.body,
+      rootKeyHex: recipientKey.toHex(),
+    })
+    expect('plaintext' in opened).toBe(true)
+    expect(
+      decodeMessageBody('plaintext' in opened ? opened.plaintext : '').meta?.attachment?.url,
+    ).toContain(`/files/${recipient}/${txid}`)
   })
 
   it('omits inline BEEF when it would exceed the sendMessage cap', async () => {
@@ -474,9 +570,10 @@ describe('messagebox base URL', () => {
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ status: 'success' }), { status: 200 })),
     )
+    const recipient = PrivateKey.fromRandom()
     const huge = Array.from({ length: 20_000 }, (_, i) => i % 256)
     const result = await notifyPeerBrc29Payment({
-      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      recipientIdentityKey: recipient.toPublicKey().toString(),
       rootKeyHex: root.toHex(),
       senderIdentityKey: root.toPublicKey().toString(),
       txid: 'a'.repeat(64),
@@ -493,6 +590,7 @@ describe('messagebox base URL', () => {
   it('notifyPeerItemIncoming sends X-BRC33 Identity, Timestamp, and Signature', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
+    const recipient = PrivateKey.fromRandom()
     let headers: Headers | undefined
     vi.stubGlobal(
       'fetch',
@@ -503,7 +601,7 @@ describe('messagebox base URL', () => {
     )
 
     const result = await notifyPeerItemIncoming({
-      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      recipientIdentityKey: recipient.toPublicKey().toString(),
       rootKeyHex: root.toHex(),
       senderIdentityKey: root.toPublicKey().toString(),
       txid: 'a'.repeat(64),
@@ -553,7 +651,7 @@ describe('messagebox base URL', () => {
     )
 
     const result = await notifyPeerItemIncoming({
-      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      recipientIdentityKey: PrivateKey.fromRandom().toPublicKey().toString(),
       rootKeyHex: root.toHex(),
       senderIdentityKey: root.toPublicKey().toString(),
       txid: 'b'.repeat(64),

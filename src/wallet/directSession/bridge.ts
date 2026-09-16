@@ -1,6 +1,8 @@
 /**
- * Electron IPC adapter. Missing in tests and in the browser shell — the
- * messagebox path is unchanged when this is absent.
+ * Shell adapter for draft BRC-246. Desktop uses Electron IPC; Mobile uses the
+ * Capacitor DirectSession plugin. Both expose the same `window.handcash`
+ * methods. Missing in tests and the browser shell — the messagebox path is
+ * unchanged when this is absent.
  */
 
 import {

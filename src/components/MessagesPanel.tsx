@@ -64,6 +64,7 @@ import {
   encodeMessageBody,
   MAX_CHAT_FILE_BYTES,
   pollInbound,
+  preparePeerDirectPath,
   uploadChatFile,
 } from '../wallet/messageTransport'
 import { Composer, Thread } from '@aeon-ui/react'
@@ -540,6 +541,15 @@ export function MessagesPanel({
     const tick = () => {
       const rootKeyHex = getActiveWallet()?.rootKeyHex
       if (!rootKeyHex) return
+      const friend = activePeerId ? getFriendById(activePeerId) : null
+      if (friend) {
+        void preparePeerDirectPath({
+          rootKeyHex,
+          senderIdentityKey: identityKey,
+          recipientIdentityKey: friend.identityKey,
+          messagebox: friend.messagebox,
+        })
+      }
       void pollInbound({
         identityKey,
         rootKeyHex,
@@ -551,7 +561,7 @@ export function MessagesPanel({
     tick()
     const id = window.setInterval(tick, 20_000)
     return () => window.clearInterval(id)
-  }, [identityKey])
+  }, [identityKey, activePeerId])
 
   const activeFriend = activePeerId ? getFriendById(activePeerId) : null
   const messages = useMemo(
