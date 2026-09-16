@@ -491,6 +491,11 @@ const MARKET_PURCHASE = `stateDiagram-v2
     Abort after sign only when Arcade hard-rejects
     (ghost / ARCADE_HARD_REJECT) — frees funding.
   end note
+  note right of broadcast
+    MarketSoldAnnouncePath (catalog hygiene, never custody):
+    overlaySubmit → BRC-22 settlement + buyerIdentityKey
+    skip → no-host | no-settlement-beef | buyer-identity-unknown
+  end note
 `
 
 const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
@@ -504,7 +509,7 @@ const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
   peerDeliver --> awaitingBroadcast : DELIVERED
   awaitingBroadcast --> internalizingProceeds : receipt BEEF validated + broadcast
   internalizingProceeds --> retiringItem : PROCEEDS_INTERNALIZED
-  retiringItem --> settled : ITEM_RETIRED
+  retiringItem --> settled : ITEM_RETIRED / de-list backstop when buyer never announced
   internalizingProceeds --> recovery : ingest failed
   retiringItem --> recovery : retire failed
   validating --> refused : DUPLICATE / COMPETING_BUYER / TIMEOUT / FAIL

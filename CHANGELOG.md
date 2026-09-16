@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.187] - 2026-09-16
+
+### Fixed
+
+- A sold listing is now de-listed from the market. The settlement is submitted to the overlay with the buyer context it requires, and the cached catalog row is dropped immediately.
+- Listing and purchase now use the same subscript badge convention as send/receive/mint/burn — a yellow price tag for listings and a yellow dollar sign for purchases — instead of replacing the row artwork.
+
 ## [1.3.186] - 2026-09-15
 
 ### Fixed

@@ -98,4 +98,24 @@ describe('indexExpansion store', () => {
     expect(page.totalOutputs).toBe(1)
     expect(page.outputs[0]?.basket).toBe('index')
   })
+
+  it('drops a sold listing so the cached catalog stops showing it', async () => {
+    const store = await import('./indexExpansionStore')
+    const rows = ['abc123_0', 'def456_0'].map((overlayOutpoint) =>
+      store.buildIndexEntryRecord({
+        packId: 'demo',
+        entryKey: `listing:${overlayOutpoint}`,
+        overlayOutpoint,
+        ci: { packId: 'demo', entryKey: `listing:${overlayOutpoint}` },
+      }),
+    )
+    store.replaceStoredIndexEntries('demo', rows)
+
+    // Callers hold `txid_vout`; stored rows are `txid.vout`.
+    expect(store.dropStoredIndexEntriesByOutpoint('demo', ['ABC123_0'])).toBe(1)
+    expect(
+      store.listStoredIndexEntries('demo').map((row) => row.outpoint),
+    ).toEqual(['def456.0'])
+    expect(store.dropStoredIndexEntriesByOutpoint('demo', ['abc123.0'])).toBe(0)
+  })
 })

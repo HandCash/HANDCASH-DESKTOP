@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
-import { ListingIcon, PurchaseIcon, ReceiveIcon, SendIcon } from './icons'
+import { ReceiveIcon, SendIcon } from './icons'
 import { HistoryActionBadge } from './RecentActivity'
 import { SkeletonLine } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
@@ -240,7 +240,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   }
 
   const spent = entry.kind === 'spent'
-  const marketPurchase = entry.method === 'market-purchase'
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
@@ -378,12 +377,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       data-aeon-scope="payment-details"
       data-aeon-state={ready ? undefined : 'loading'}
     >
-      <div className={`payment-details-hero${marketPurchase ? ' is-market' : ''}`}>
+      <div className="payment-details-hero">
         <div className="history-icon-wrap">
           <div className="history-icon">
-            {marketPurchase ? (
-              <PurchaseIcon size={20} />
-            ) : item && shownItem?.imageUrl ? (
+            {item && shownItem?.imageUrl ? (
               openItem ? (
                 <button
                   type="button"
@@ -766,10 +763,25 @@ function ListingActivityDetails({
       data-aeon-scope="payment-details"
       data-aeon-state="listing"
     >
-      <div className="payment-details-hero is-market">
+      <div className="payment-details-hero">
         <div className="history-icon-wrap">
           <div className="history-icon">
-            <ListingIcon size={20} />
+            {imageUrl ? (
+              <DeferredImage
+                className="history-item-thumb"
+                src={imageUrl}
+                alt=""
+                width={32}
+                height={32}
+                skeletonWidth={32}
+                skeletonHeight={32}
+                skeletonRadius={6}
+                retainDecoded
+                decoding="async"
+              />
+            ) : (
+              <ReceiveIcon size={16} />
+            )}
           </div>
         </div>
         <div className="payment-details-copy">

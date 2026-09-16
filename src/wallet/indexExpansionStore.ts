@@ -140,6 +140,51 @@ export function mergeStoredIndexEntries(
   return { entryCount: merged.length, bytesUsed, partial: false }
 }
 
+/**
+ * Drop rows whose listing outpoint is gone (sold or cancelled). The overlay is
+ * authoritative, but a cached pack would keep painting a dead listing until the
+ * next full sync — so evict locally the moment we know.
+ */
+export function dropStoredIndexEntriesByOutpoint(
+  packId: string,
+  outpoints: string[],
+): number {
+  const dead = new Set(
+    outpoints
+      .map((outpoint) => outpoint.trim().toLowerCase().replace('_', '.'))
+      .filter(Boolean),
+  )
+  if (dead.size === 0) return 0
+  const entries = readEntries()
+  const bucket = entries[packId]
+  if (!bucket) return 0
+  let removed = 0
+  const kept: Record<string, IndexEntryRecord> = {}
+  for (const [key, row] of Object.entries(bucket)) {
+    if (dead.has(row.outpoint.trim().toLowerCase())) {
+      removed += 1
+      continue
+    }
+    kept[key] = row
+  }
+  if (removed === 0) return 0
+  entries[packId] = kept
+  writeEntries(entries)
+  const packs = readPacks()
+  const pack = packs[packId]
+  if (pack) {
+    const rows = Object.values(kept)
+    packs[packId] = {
+      ...pack,
+      entryCount: rows.length,
+      bytesUsed: rows.reduce((sum, row) => sum + row.bytes, 0),
+    }
+    writePacks(packs)
+    emitPackChange()
+  }
+  return removed
+}
+
 export function entryBytes(row: IndexEntryRecord): number {
   return row.customInstructions.length + row.tags.join(',').length + row.outpoint.length
 }

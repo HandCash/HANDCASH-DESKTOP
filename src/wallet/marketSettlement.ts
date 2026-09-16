@@ -57,6 +57,7 @@ import {
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
 import { chooseMarketReceiptDeliveryPath } from './marketSettlementPath'
+import { clearSoldListingFromMarket } from './marketSoldAnnounce'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { addressFromIdentityKey } from './friends'
@@ -812,6 +813,13 @@ export async function executeMarketPurchase(
         txid,
         atomicBeef: atomic,
       })
+      // The offer coin is spent, but the overlay only learns that from a BRC-22
+      // submission — without this the listing kept showing as active in market.
+      clearSoldListingFromMarket({
+        settlementBeef: atomic,
+        buyerIdentityKey: active.identityKey,
+        listingOutpoints: [listing.outpoint, listing.offerOutpoint],
+      })
       const receiptWire = {
         recipientIdentityKey: listing.seller,
         rootKeyHex: active.rootKeyHex,
@@ -1302,6 +1310,15 @@ export async function handleInboundMarketSettlementWire(args: {
     const { retireCollectableAfterSpend } = await import('./collectables')
     retireCollectableAfterSpend(listing.outpoint, args.wire.txid)
     chart.send({ type: 'ITEM_RETIRED' })
+    // Backstop for a buyer whose announce never landed (offline, refused host).
+    // A self-purchase already announced on the buyer leg.
+    if (!args.localSelfPurchase && atomic.length) {
+      clearSoldListingFromMarket({
+        settlementBeef: atomic,
+        buyerIdentityKey: args.senderIdentityKey,
+        listingOutpoints: [listing.outpoint, listing.offerOutpoint],
+      })
+    }
     if (progress.state !== 'settled') {
       updateMarketListingAuthorization({
         outpoint: authorization.outpoint,

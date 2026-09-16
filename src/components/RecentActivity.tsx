@@ -235,15 +235,22 @@ function formatWhen(at: number): string {
   return `${years} years ago`
 }
 
-/** Subscript send/receive/mint/burn mark shared by the Activity list and detail hero. */
+/** Subscript send/receive/mint/burn/market mark shared by the Activity list and detail hero. */
 export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
-  if (isEventActivity(entry) || entry.method === 'market-purchase') return null
+  if (isEventActivity(entry)) return null
   const spent = entry.kind === 'spent'
   const minted = isMintTokenActivity(entry)
   const burned = isBurnActivity(entry)
   const failed = isFailedActivity(entry)
+  const listed = entry.method === 'market-list' || entry.method === 'market-cancel'
+  const purchased =
+    entry.method === 'market-purchase' || entry.method === 'market-purchase-receive'
   const badgeKind = failed
     ? 'failed'
+    : listed
+    ? 'list'
+    : purchased
+    ? 'purchase'
     : burned
     ? 'burn'
     : minted
@@ -253,6 +260,12 @@ export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
     : 'receive'
   const badgeLabel = failed
     ? 'Failed'
+    : entry.method === 'market-cancel'
+    ? 'Cancel listing'
+    : listed
+    ? 'Listing'
+    : purchased
+    ? 'Purchase'
     : burned
     ? 'Burn'
     : minted
@@ -268,6 +281,10 @@ export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
     >
       {failed ? (
         <WarningIcon size={9} />
+      ) : listed ? (
+        <ListingIcon size={8} />
+      ) : purchased ? (
+        <PurchaseIcon size={9} />
       ) : burned ? (
         <FireIcon size={8} />
       ) : minted ? (
@@ -327,8 +344,6 @@ function HistoryRow({
     pending && (spent || !inventoryProven || indexInstall)
   const listing = entry.method === 'market-list'
   const cancelling = entry.method === 'market-cancel'
-  const purchase = entry.method === 'market-purchase'
-  const market = listing || cancelling || purchase
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -409,7 +424,7 @@ function HistoryRow({
     >
       <button
         type="button"
-        className={`history-row history-row-btn${market ? ' is-market' : ''}${listing || cancelling ? ' is-market-listing' : ''}${purchase ? ' is-market-purchase' : ''}${failed ? ' is-failed' : ''}`}
+        className={`history-row history-row-btn${failed ? ' is-failed' : ''}`}
         onClick={() => {
           if (entry.id === LIVE_OUTBOUND_ID) return
           if (utxoHeal) return
@@ -419,15 +434,7 @@ function HistoryRow({
       >
         <div className="history-icon-wrap">
           <div className="history-icon">
-            {listing || cancelling ? (
-              <span className="history-item-thumb-icon" aria-hidden>
-                <ListingIcon size={19} />
-              </span>
-            ) : purchase ? (
-              <span className="history-item-thumb-icon" aria-hidden>
-                <PurchaseIcon size={19} />
-              </span>
-            ) : event && !(shown && shown.imageUrl) ? (
+            {event && !(shown && shown.imageUrl) ? (
               <span className="history-item-thumb-icon" aria-hidden>
                 {eventIcon(entry)}
               </span>

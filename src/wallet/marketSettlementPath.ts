@@ -37,6 +37,50 @@ export type MarketReceiptDeliveryPath =
   | { path: 'localSellerReconcile' }
   | { path: 'messageboxDelivery'; sellerIdentityKey: string }
 
+/**
+ * Telling the overlay a listing is sold. This is catalog hygiene, never custody:
+ * a refused announce leaves the settled tx alone and only delays de-listing.
+ */
+export type MarketSoldAnnouncePath =
+  | {
+      announce: 'overlaySubmit'
+      /** BRC-22 host that admitted the offer. */
+      host: string
+      topic: string
+      /** `classifyLifecycle` refuses a settlement without buyer context. */
+      buyerIdentityKey: string
+    }
+  | {
+      announce: 'skip'
+      reason:
+        | 'no-host'
+        | 'no-settlement-beef'
+        | 'buyer-identity-unknown'
+    }
+
+export function chooseMarketSoldAnnouncePath(args: {
+  host: string | null | undefined
+  topic: string
+  buyerIdentityKey: string | null | undefined
+  settlementBeefBytes: number
+}): MarketSoldAnnouncePath {
+  const host = args.host?.trim().replace(/\/+$/, '') ?? ''
+  if (!host) return { announce: 'skip', reason: 'no-host' }
+  if (args.settlementBeefBytes <= 0) {
+    return { announce: 'skip', reason: 'no-settlement-beef' }
+  }
+  const buyerIdentityKey = args.buyerIdentityKey?.trim().toLowerCase() ?? ''
+  if (!/^(02|03)[0-9a-f]{64}$/.test(buyerIdentityKey)) {
+    return { announce: 'skip', reason: 'buyer-identity-unknown' }
+  }
+  return {
+    announce: 'overlaySubmit',
+    host,
+    topic: args.topic,
+    buyerIdentityKey,
+  }
+}
+
 /** A wallet buying its own listing settles both roles locally and atomically. */
 export function chooseMarketReceiptDeliveryPath(args: {
   buyerIdentityKey: string
