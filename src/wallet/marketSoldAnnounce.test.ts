@@ -5,6 +5,7 @@ import {
   encodeSoldSubmission,
 } from './marketSoldAnnounce'
 import { chooseMarketSoldAnnouncePath } from './marketSettlementPath'
+import { PUBLIC_BRC_CLOUD_ORIGIN } from './walletConfig'
 
 const BUYER = `02${'ab'.repeat(32)}`
 
@@ -78,7 +79,8 @@ describe('announceMarketSold', () => {
     )
     expect(result).toEqual({ announced: true, kind: 'settled' })
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://market.handcash.io/submit')
+    // Must be the BRC-22 host. `market.handcash.io/submit` 307s to HTML.
+    expect(url).toBe(`${PUBLIC_BRC_CLOUD_ORIGIN}/submit`)
     expect(init.method).toBe('POST')
     expect(init.headers).toMatchObject({
       'Content-Type': 'application/octet-stream',

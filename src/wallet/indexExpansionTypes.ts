@@ -1,5 +1,7 @@
 /** BRC-230 index expansion pack types (grade-C overlay catalog mirrors). */
 
+import { PUBLIC_BRC_CLOUD_ORIGIN } from './walletConfig'
+
 /** What the cached overlay index represents — drives Activity copy and NFT verify hints. */
 export type IndexCatalogContext =
   | 'onesat-ordinal'
@@ -168,7 +170,9 @@ export const HANDCASH_MARKET_CATALOG_MANIFEST: IndexExpansionManifest = {
   name: 'HandCash Market',
   description: 'Browse active 1Sat listings',
   iconUrl: 'https://market.handcash.io/favicon.ico',
-  overlayBaseUrl: 'https://market.handcash.io',
+  // BRC-22/24 host, not the storefront: `market.handcash.io` 307s to the
+  // marketing site, so `/submit` and `/lookup` there answer HTML.
+  overlayBaseUrl: PUBLIC_BRC_CLOUD_ORIGIN,
   topic: 'tm_1sat_market',
   lookupService: 'ls_1sat_market',
   scope: { kind: 'overlay-query', query: { mode: 'active', limit: 500 } },
