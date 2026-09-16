@@ -1,12 +1,13 @@
 # Changelog
 
+## [1.3.198] - 2026-09-16
+
+### Fixed
+
+- Release notes: the Activity action-mark change shipped in 1.3.197 and is now
+  recorded there instead of under a 1.3.196 heading that was never tagged.
+
 ## [1.3.197] - 2026-09-16
-
-### Changed
-
-- Patch release (every push must ship a new version).
-
-## [1.3.196] - 2026-09-16
 
 ### Changed
 
