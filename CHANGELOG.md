@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.191] - 2026-09-16
+
+### Fixed
+
+- Complete market purchases after a bounded miner handoff instead of waiting
+  indefinitely for provider acknowledgement.
+- Keep seller receipts durable until delivery or local proceeds ingestion
+  succeeds, with account-safe retries after the buyer spend lease exits.
+- Paint the purchased NFT in the receiving wallet immediately after broadcast;
+  self-purchases retire the exact sold tip before inserting the new output.
+
 ## [1.3.190] - 2026-09-16
 
 ### Fixed
