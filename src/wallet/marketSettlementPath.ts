@@ -37,6 +37,10 @@ export type MarketReceiptDeliveryPath =
   | { path: 'localSellerReconcile' }
   | { path: 'messageboxDelivery'; sellerIdentityKey: string }
 
+export type MarketReceiptBroadcastPath =
+  | { broadcast: 'alreadyConfirmedByLocalBuyer' }
+  | { broadcast: 'sellerPostBeef' }
+
 /**
  * Telling the overlay a listing is sold. This is catalog hygiene, never custody:
  * a refused announce leaves the settled tx alone and only delays de-listing.
@@ -96,6 +100,19 @@ export function chooseMarketReceiptDeliveryPath(args: {
     path: 'messageboxDelivery',
     sellerIdentityKey: args.sellerIdentityKey,
   }
+}
+
+/**
+ * A local self-purchase reaches receipt handling only after the buyer leg
+ * successfully posted the same AtomicBEEF. Reposting it from the seller leg
+ * adds a full miner timeout to the critical path without changing custody.
+ */
+export function chooseMarketReceiptBroadcastPath(args: {
+  localSelfPurchase: boolean
+}): MarketReceiptBroadcastPath {
+  return args.localSelfPurchase
+    ? { broadcast: 'alreadyConfirmedByLocalBuyer' }
+    : { broadcast: 'sellerPostBeef' }
 }
 
 export function chooseMarketPurchasePath(args: {

@@ -8,6 +8,7 @@ import { chooseMarketSoldAnnouncePath } from './marketSettlementPath'
 import { PUBLIC_BRC_CLOUD_ORIGIN } from './walletConfig'
 
 const BUYER = `02${'ab'.repeat(32)}`
+const BUYER_ADDRESS = '1BuyerPaymentAddress'
 
 describe('chooseMarketSoldAnnouncePath', () => {
   it('announces with buyer context when the overlay host is known', () => {
@@ -74,7 +75,11 @@ describe('announceMarketSold', () => {
       new Response(JSON.stringify({ kind: 'settled' }), { status: 200 }),
     )
     const result = await announceMarketSold(
-      { settlementBeef: [1, 2, 3], buyerIdentityKey: BUYER },
+      {
+        settlementBeef: [1, 2, 3],
+        buyerIdentityKey: BUYER,
+        buyerAddress: BUYER_ADDRESS,
+      },
       fetchImpl as unknown as typeof fetch,
     )
     expect(result).toEqual({ announced: true, kind: 'settled' })
@@ -87,6 +92,10 @@ describe('announceMarketSold', () => {
       'X-Topics': '["tm_1sat_market"]',
       'x-includes-off-chain-values': 'true',
     })
+    const body = new Uint8Array(init.body as ArrayBuffer)
+    expect(new TextDecoder().decode(body.slice(4))).toBe(
+      `{"buyerAddress":"${BUYER_ADDRESS}","buyerIdentityKey":"${BUYER}"}`,
+    )
   })
 
   it('treats a 409 as already de-listed', async () => {

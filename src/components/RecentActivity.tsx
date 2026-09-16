@@ -237,7 +237,11 @@ function formatWhen(at: number): string {
 
 /** Subscript send/receive/mint/burn/market mark shared by the Activity list and detail hero. */
 export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
-  if (isEventActivity(entry)) return null
+  // Listing/cancel rows are deliberately recorded as wallet events, but they
+  // still use the same visual action subscript as transaction rows.
+  const marketEvent =
+    entry.method === 'market-list' || entry.method === 'market-cancel'
+  if (isEventActivity(entry) && !marketEvent) return null
   const spent = entry.kind === 'spent'
   const minted = isMintTokenActivity(entry)
   const burned = isBurnActivity(entry)

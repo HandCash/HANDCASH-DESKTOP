@@ -74,6 +74,8 @@ export async function announceMarketSold(
   args: {
     settlementBeef: number[]
     buyerIdentityKey: string
+    /** Wallet payment address used by settlement output 0. */
+    buyerAddress?: string
     manifest?: IndexExpansionManifest
   },
   fetchImpl: typeof fetch = fetch,
@@ -89,7 +91,12 @@ export async function announceMarketSold(
     console.info(`[market-sold] announce skipped — ${path.reason}`)
     return { announced: false, reason: path.reason }
   }
-  return submitSoldAnnounce(path, args.settlementBeef, fetchImpl)
+  return submitSoldAnnounce(
+    path,
+    args.settlementBeef,
+    args.buyerAddress,
+    fetchImpl,
+  )
 }
 
 /**
@@ -100,6 +107,7 @@ export async function announceMarketSold(
 export function clearSoldListingFromMarket(args: {
   settlementBeef: number[]
   buyerIdentityKey: string
+  buyerAddress?: string
   /** Item + offer outpoints of the listing that just settled. */
   listingOutpoints: string[]
 }): void {
@@ -113,16 +121,19 @@ export function clearSoldListingFromMarket(args: {
   void announceMarketSold({
     settlementBeef: args.settlementBeef,
     buyerIdentityKey: args.buyerIdentityKey,
+    buyerAddress: args.buyerAddress,
   })
 }
 
 async function submitSoldAnnounce(
   path: Extract<MarketSoldAnnouncePath, { announce: 'overlaySubmit' }>,
   settlementBeef: number[],
+  buyerAddress: string | undefined,
   fetchImpl: typeof fetch,
 ): Promise<MarketSoldAnnounceResult> {
   const body = encodeSoldSubmission(settlementBeef, {
     buyerIdentityKey: path.buyerIdentityKey,
+    ...(buyerAddress?.trim() ? { buyerAddress: buyerAddress.trim() } : {}),
   })
   try {
     const res = await fetchImpl(`${path.host}/submit`, {

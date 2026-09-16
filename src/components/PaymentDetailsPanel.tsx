@@ -783,6 +783,7 @@ function ListingActivityDetails({
               <ReceiveIcon size={16} />
             )}
           </div>
+          <HistoryActionBadge entry={entry} />
         </div>
         <div className="payment-details-copy">
           <div className="payment-details-title-row">

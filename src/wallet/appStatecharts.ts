@@ -493,8 +493,9 @@ const MARKET_PURCHASE = `stateDiagram-v2
   end note
   note right of broadcast
     MarketSoldAnnouncePath (catalog hygiene, never custody):
-    overlaySubmit → BRC-22 settlement + buyerIdentityKey
+    overlaySubmit → BRC-22 settlement + buyerIdentityKey + payment address
     skip → no-host | no-settlement-beef | buyer-identity-unknown
+    local self receipt → buyer broadcast already confirmed; never post twice
   end note
 `
 

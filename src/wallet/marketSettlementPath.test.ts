@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   chooseMarketPurchasePath,
+  chooseMarketReceiptBroadcastPath,
   chooseMarketReceiptDeliveryPath,
   chooseMarketSellerSettlePath,
 } from './marketSettlementPath'
@@ -115,5 +116,19 @@ describe('chooseMarketReceiptDeliveryPath', () => {
         sellerIdentityKey,
       }),
     ).toEqual({ path: 'messageboxDelivery', sellerIdentityKey })
+  })
+})
+
+describe('chooseMarketReceiptBroadcastPath', () => {
+  it('does not post the same settlement twice during a self-purchase', () => {
+    expect(
+      chooseMarketReceiptBroadcastPath({ localSelfPurchase: true }),
+    ).toEqual({ broadcast: 'alreadyConfirmedByLocalBuyer' })
+  })
+
+  it('lets a remote seller confirm a buyer receipt', () => {
+    expect(
+      chooseMarketReceiptBroadcastPath({ localSelfPurchase: false }),
+    ).toEqual({ broadcast: 'sellerPostBeef' })
   })
 })

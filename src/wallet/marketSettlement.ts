@@ -56,7 +56,10 @@ import {
   isInsufficientFundsError,
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
-import { chooseMarketReceiptDeliveryPath } from './marketSettlementPath'
+import {
+  chooseMarketReceiptBroadcastPath,
+  chooseMarketReceiptDeliveryPath,
+} from './marketSettlementPath'
 import { clearSoldListingFromMarket } from './marketSoldAnnounce'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
@@ -818,6 +821,7 @@ export async function executeMarketPurchase(
       clearSoldListingFromMarket({
         settlementBeef: atomic,
         buyerIdentityKey: active.identityKey,
+        buyerAddress: active.address,
         listingOutpoints: [listing.outpoint, listing.offerOutpoint],
       })
       const receiptWire = {
@@ -1233,7 +1237,13 @@ export async function handleInboundMarketSettlementWire(args: {
       sellerOutputIndex: 1,
       feeOutputIndex: 2,
     })
-    const accepted = await broadcastAtomicBeef(args.wire.txid, atomic)
+    const receiptBroadcast = chooseMarketReceiptBroadcastPath({
+      localSelfPurchase: args.localSelfPurchase === true,
+    })
+    const accepted =
+      receiptBroadcast.broadcast === 'alreadyConfirmedByLocalBuyer'
+        ? true
+        : await broadcastAtomicBeef(args.wire.txid, atomic)
     if (!accepted && authorization.settlementTxid !== args.wire.txid.toLowerCase()) {
       return false
     }
