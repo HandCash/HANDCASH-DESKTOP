@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.195] - 2026-09-16
+
+### Changed
+
+- One transaction is now one Activity record. A listing and the held item it
+  created, a purchase and what it bought, a sale and its proceeds each read as a
+  single button instead of two unrelated rows, and the record is priced from the
+  money leg of that transaction (`activityRecords.ts`).
+- A transaction that moved several distinct assets keeps a row per asset, folded
+  inside that one record rather than fragmenting the feed.
+- A bought collectable reads "Bought <name>", and payment details show Paid /
+  Proceeds for the transaction the open row belongs to.
+
 ## [1.3.194] - 2026-09-16
 
 ### Fixed

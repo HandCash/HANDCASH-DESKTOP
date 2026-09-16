@@ -56,6 +56,7 @@ import {
   shouldAnnounceActivity,
 } from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
+import { composeActivityRecords } from '../wallet/activityRecords'
 import { subscribeCollectables } from '../wallet/collectables'
 import { isItemProven } from '../wallet/provenCache'
 import { subscribeFungibles } from '../wallet/token'
@@ -317,6 +318,8 @@ function HistoryRow({
   newest = false,
   verifying = false,
   indexProgress = null,
+  amountEntry = null,
+  assets = [],
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
@@ -325,6 +328,10 @@ function HistoryRow({
   newest?: boolean
   verifying?: boolean
   indexProgress?: WalletProgress | null
+  /** Money leg of the same transaction — a purchase price, sale proceeds. */
+  amountEntry?: ActivityEntry | null
+  /** Further distinct assets moved by the same transaction. */
+  assets?: readonly ActivityEntry[]
 }) {
   const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const spent = entry.kind === 'spent'
@@ -375,7 +382,16 @@ function HistoryRow({
               : showPending && entry.sats <= 0
                 ? '…'
                 : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
-  const signed = utxoHealDone
+  // A composed record prices itself from the money leg of the same transaction:
+  // an item row alone would read "Item" where the user expects what it cost.
+  const moneyLabel = amountEntry
+    ? formatPrimaryFromSats(amountEntry.sats, currency, usdPerBsv)
+    : null
+  const signed = moneyLabel
+    ? currency === 'usd' && usdPerBsv == null
+      ? '—'
+      : `${amountEntry!.kind === 'spent' ? '−' : '+'}${moneyLabel}`
+    : utxoHealDone
     ? `+${amountLabel}`
     : event
       ? amountLabel
@@ -521,11 +537,50 @@ function HistoryRow({
               {subtitle}
             </span>
           ) : null}
+          {assets.length > 0 ? (
+            <ul className="history-record-assets">
+              {assets.map((asset) => {
+                const assetItem = asset.item ? viewActivityItem(asset.item) : undefined
+                const assetName =
+                  assetItem?.name?.trim() || asset.item?.name?.trim() || 'Collectable'
+                return (
+                  <li className="history-record-asset" key={activityEntryKey(asset)}>
+                    {assetItem?.imageUrl ? (
+                      <DeferredImage
+                        className="history-record-asset-thumb"
+                        src={assetItem.imageUrl}
+                        alt=""
+                        width={16}
+                        height={16}
+                        skeletonWidth={16}
+                        skeletonHeight={16}
+                        skeletonRadius={4}
+                        retainDecoded
+                        decoding="async"
+                        fallback={
+                          <span className="history-record-asset-thumb-icon">
+                            <CollectablesIcon size={11} />
+                          </span>
+                        }
+                      />
+                    ) : (
+                      <span className="history-record-asset-thumb-icon">
+                        <CollectablesIcon size={11} />
+                      </span>
+                    )}
+                    <span className="history-record-asset-name" title={assetName}>
+                      {assetName}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : null}
         </div>
         <div className="history-amount-block">
           <span
             className={
-              utxoHealDone
+              utxoHealDone || moneyLabel
                 ? 'history-amount'
                 : event || item || failed || approving
                   ? 'history-amount history-amount-item'
@@ -779,7 +834,10 @@ export function ActivityFeed({
     () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
     [entries, filters, showFilters]
   )
-  const shownCount = useChunkedCount(filtered.length, RENDER_CHUNK, scrolling)
+  // One transaction is one record: a listing and the item it created, a purchase
+  // and what it bought, a sale and its proceeds.
+  const records = useMemo(() => composeActivityRecords(filtered), [filtered])
+  const shownCount = useChunkedCount(records.length, RENDER_CHUNK, scrolling)
   const windowed = useWindowedRange({
     total: shownCount,
     itemExtent: 72,
@@ -787,12 +845,15 @@ export function ActivityFeed({
     rowSelector: '[data-activity-key]:not([data-aeon-scope="phrase-import"])',
     scrollRef: listRef,
   })
-  const visibleEntries = filtered.slice(windowed.start, windowed.end)
+  const visibleRecords = records.slice(windowed.start, windowed.end)
   const newest = useMemo(() => {
-    const top = filtered[0]
-    return top ? { key: activityEntryKey(top), at: top.at } : undefined
-  }, [filtered])
-  const shownKeys = useMemo(() => filtered.map(activityEntryKey), [filtered])
+    const top = records[0]
+    return top ? { key: top.key, at: top.subject.at } : undefined
+  }, [records])
+  const shownKeys = useMemo(
+    () => records.flatMap((record) => record.entries.map(activityEntryKey)),
+    [records],
+  )
   useStickNewestToTop(listRef, newest, shownKeys)
 
   const filtersActive =
@@ -947,18 +1008,23 @@ export function ActivityFeed({
         {visiblePhraseImport ? (
           <PendingPhraseImportRow cursor={visiblePhraseImport} />
         ) : null}
-        {visibleEntries.map((entry, index) => (
+        {visibleRecords.map((record, index) => (
           <HistoryRow
-            key={activityEntryKey(entry)}
-            entry={entry}
+            key={record.key}
+            entry={record.subject}
+            amountEntry={record.money}
+            assets={record.assets}
             currency={currency}
             usdPerBsv={usdPerBsv}
             showWhen={showWhen}
             newest={windowed.start === 0 && index === 0}
             verifying={
-              !(entry.item?.outpoint && isItemProven(entry.item.outpoint)) &&
-              (isPendingActivity(entry) ||
-                isOutpointVerifying(entry.item?.outpoint, verification))
+              !(
+                record.subject.item?.outpoint &&
+                isItemProven(record.subject.item.outpoint)
+              ) &&
+              (isPendingActivity(record.subject) ||
+                isOutpointVerifying(record.subject.item?.outpoint, verification))
             }
             indexProgress={indexProgress}
           />

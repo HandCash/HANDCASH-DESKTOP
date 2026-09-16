@@ -18,12 +18,14 @@ import {
   isMintTokenActivity,
   isPendingActivity,
   isTokenActivity,
+  listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
   type ActivityItem,
 } from '../wallet/appActivity'
 import { viewActivityItem } from '../wallet/activityItemView'
+import { moneyLegForEntry } from '../wallet/activityRecords'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
@@ -290,6 +292,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         : shownItem?.app || shownItem?.name || 'BSV-21 token'
       : shownItem?.app || '1Sat collectable'
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
+  // The feed folds a purchase or sale into one record; the detail view opens one
+  // of its entries, so it reads the money leg back from the same transaction.
+  const moneyLeg = moneyLegForEntry(entry, listRecentActivity(200))
   const explorer = isExplorerTxid(entry.txid)
     ? txExplorerUrl(entry.txid!, chain)
     : null
@@ -512,6 +517,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           <dl className="payment-details-meta">
             <dt>Type</dt>
             <dd>{detailLabel}</dd>
+            {moneyLeg ? (
+              <>
+                <dt>{moneyLeg.kind === 'spent' ? 'Paid' : 'Proceeds'}</dt>
+                <dd>{formatPrimaryFromSats(moneyLeg.sats, currency, usdPerBsv)}</dd>
+              </>
+            ) : null}
             {!isWallet && (
               <>
                 <dt>App</dt>
