@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.204] - 2026-09-16
+
+### Fixed
+
+- A freshly minted BSV-21 token is no longer labelled burn-only legacy. Only a
+  decoded locking script may name the wire format: a BRC-162 lock is `brc162`,
+  an ord inscription is `legacy-json`, and remittance or tags alone leave the
+  card unclassified until the live basket read decides.
+- Token display caches written by 1.3.203 drop their inferred legacy stamp on
+  read, so an already-minted token recovers Send without a reinstall.
+
 ## [1.3.203] - 2026-09-16
 
 ### Fixed

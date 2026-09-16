@@ -29,14 +29,16 @@ import { parseOrdEnvelope } from './ordinalOwnership'
 import { getActiveWallet, type ActiveWallet } from './session'
 
 /**
- * `encoding` names how the holding was proven: `binary` is a BRC-162 lock
- * (live, sendable), `json` is a read-only legacy inscription/remittance. The
- * caller must not infer this from a missing field.
+ * `encoding` names how the holding was proven by the locking script: `binary`
+ * is a BRC-162 lock (live, sendable), `json` is a read-only legacy ord
+ * inscription. `unproven` means only remittance / tags said "token" — that is
+ * metadata, never proof of the wire format. The caller must not infer any of
+ * this from a missing field.
  */
 export type OneSatAsBsv21 =
   | {
       kind: 'bsv21'
-      encoding: 'binary' | 'json'
+      encoding: 'binary' | 'json' | 'unproven'
       payload: Bsv21Payload
       tokenId: string
     }
@@ -161,7 +163,12 @@ export function classifyOneSatAsBsv21(
   )
 
   if (payload && tokenId) {
-    return { kind: 'bsv21', encoding: 'json', payload, tokenId }
+    return {
+      kind: 'bsv21',
+      encoding: envPayload ? 'json' : 'unproven',
+      payload,
+      tokenId,
+    }
   }
   if ((isBsv21Mime(mime) || hasBsv21Tag) && tokenId && amt) {
     const built = parseBsv21Json({
@@ -176,7 +183,8 @@ export function classifyOneSatAsBsv21(
     if (built) {
       return {
         kind: 'bsv21',
-        encoding: 'json',
+        // Built from a bsv21 mime / tag, not from decoded inscription JSON.
+        encoding: isBsv21Mime(mime) ? 'json' : 'unproven',
         payload: built,
         tokenId: tokenIdForPayload(built, args.outpoint ?? '') ?? tokenId,
       }

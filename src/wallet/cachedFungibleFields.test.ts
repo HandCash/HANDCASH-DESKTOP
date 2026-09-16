@@ -87,6 +87,61 @@ describe('cached fungible field migration', () => {
     expect(token?.maxSupply).toBe(69420)
   })
 
+  it('paints a fresh mint as unclassified when the script was not decoded', async () => {
+    const { fungibleFromImport } = await import('./token/list')
+    const painted = fungibleFromImport({
+      outpoint: `${'bb'.repeat(32)}.0`,
+      txid: 'bb'.repeat(32),
+      vout: 0,
+      tokenId: KING_ORIGIN,
+      amt: '1111111111111',
+      op: 'deploy+mint',
+      sym: 'KING',
+    })
+    expect(painted.encoding).toBeUndefined()
+    expect(painted.binarySupply).toBeUndefined()
+  })
+
+  it('keeps a proven BRC-162 mint sendable', async () => {
+    const { fungibleFromImport } = await import('./token/list')
+    const painted = fungibleFromImport({
+      outpoint: `${'bb'.repeat(32)}.0`,
+      txid: 'bb'.repeat(32),
+      vout: 0,
+      tokenId: KING_ORIGIN,
+      amt: '1111111111111',
+      op: 'deploy+mint',
+      sym: 'KING',
+      binarySupply: 'locked',
+      encoding: 'brc162',
+    })
+    expect(painted.encoding).toBe('brc162')
+  })
+
+  it('drops a legacy stamp written by a cache version that inferred it', async () => {
+    store.set(
+      CACHE_KEY,
+      JSON.stringify({
+        at: Date.now(),
+        items: [
+          {
+            tokenId: KING_ORIGIN,
+            sym: 'KING',
+            amt: '1111111111111',
+            dec: 0,
+            utxoCount: 1,
+            outpoint: `${'bb'.repeat(32)}_0`,
+            spendKind: 'plain' as const,
+            encoding: 'legacy-json' as const,
+          },
+        ],
+      }),
+    )
+    const { getCachedFungibles } = await import('./token/list')
+    const [token] = getCachedFungibles()
+    expect(token?.encoding).toBeUndefined()
+  })
+
   it('does not call an unclassified old cache row legacy', async () => {
     const { classifyFungibleEncoding } = await import('./token/types')
     expect(

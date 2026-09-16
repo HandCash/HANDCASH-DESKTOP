@@ -226,6 +226,9 @@ export async function internalizePeerFungibleSettle(opts: {
       dec: opts.token.dec,
       issuer: resolvedIssuer,
       ...(tipEncoding === 'binary' ? { binarySupply: 'locked' as const } : {}),
+      // Both branches decoded this tip's locking script, so the wire format is
+      // proven either way.
+      encoding: tipEncoding === 'binary' ? 'brc162' : 'legacy-json',
     })
     rememberFungibleToken(painted)
     void hydrateCachedTokenIcons(active, [painted]).catch(() => {})

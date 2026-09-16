@@ -41,7 +41,22 @@ import {
   classifyOneSatAsBsv21,
   isBsv21OneSatLock,
   isNonCollectableOneSatLock,
+  type OneSatAsBsv21,
 } from './healMisfiledBsv21'
+
+/**
+ * Carry the wire format only when the locking script proved it. Remittance-only
+ * evidence (`unproven`) leaves the card unclassified so the live basket read
+ * names it, instead of pinning a fresh BRC-162 mint as burn-only legacy.
+ */
+function bsv21EncodingOf(
+  classified: OneSatAsBsv21,
+): { encoding?: 'brc162' | 'legacy-json' } {
+  if (classified.kind !== 'bsv21') return {}
+  if (classified.encoding === 'binary') return { encoding: 'brc162' }
+  if (classified.encoding === 'json') return { encoding: 'legacy-json' }
+  return {}
+}
 
 export type InternalizedItemTip = {
   outpoint: string
@@ -249,6 +264,7 @@ function paintFungibleTip(opts: {
     ...(classified.kind === 'bsv21' && classified.encoding === 'binary'
       ? { binarySupply: 'locked' as const }
       : {}),
+    ...bsv21EncodingOf(classified),
   })
   rememberFungibleToken(token)
   void hydrateCachedTokenIcons(opts.active, [token]).catch(() => {})
@@ -436,6 +452,7 @@ export function paintAfterInternalizeBsv21(
       ...(classified.kind === 'bsv21' && classified.encoding === 'binary'
         ? { binarySupply: 'locked' as const }
         : {}),
+      ...bsv21EncodingOf(classified),
     })
     rememberFungibleToken(token)
     void hydrateCachedTokenIcons(active, [token]).catch(() => {})
@@ -583,6 +600,7 @@ export function paintAfterCreateActionBsv21Mint(
       ...(classified.encoding === 'binary'
         ? { binarySupply: 'locked' as const }
         : {}),
+      ...bsv21EncodingOf(classified),
     })
     rememberFungibleToken(token)
     void hydrateCachedTokenIcons(active, [token]).catch(() => {})

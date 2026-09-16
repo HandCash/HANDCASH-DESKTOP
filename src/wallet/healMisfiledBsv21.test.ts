@@ -67,6 +67,29 @@ describe('classifyOneSatAsBsv21', () => {
       tags: ['bsv21', `bsv21:${tokenId}`, 'amt:1000', 'sym:fox'],
     })
     expect(got.kind).toBe('bsv21')
+    // Remittance is metadata, not the wire format. Calling this legacy JSON is
+    // what pinned freshly minted BRC-162 tokens as burn-only.
+    if (got.kind === 'bsv21') expect(got.encoding).toBe('unproven')
+  })
+
+  it('names the encoding legacy JSON only from a decoded inscription', () => {
+    const inscribed = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${'aa'.repeat(32)}.0`,
+      lockingScriptHex: transferEnv() + P2PKH,
+    })
+    expect(inscribed.kind === 'bsv21' && inscribed.encoding).toBe('json')
+
+    const binary = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${'aa'.repeat(32)}.1`,
+      lockingScriptHex: encodeBsv21Binary({
+        tokenId,
+        amount: 1000n,
+        rest: P2PKH,
+      }).toHex(),
+    })
+    expect(binary.kind === 'bsv21' && binary.encoding).toBe('binary')
   })
 
   it('does not move an image collectable even with token remittance', () => {

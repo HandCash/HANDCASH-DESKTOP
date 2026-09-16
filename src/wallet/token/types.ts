@@ -104,6 +104,11 @@ export type Bsv21ImportItem = {
   issuer?: string
   /** Set when a BRC-162 lock proved this holding — absent for legacy JSON. */
   binarySupply?: 'locked' | 'open'
+  /**
+   * Wire format proven by the locking script. Omit when nothing decoded yet:
+   * a paint without the script must stay unknown, never legacy by default.
+   */
+  encoding?: 'brc162' | 'legacy-json'
 }
 
 /** Aggregated balance for one token id (Collect list row). */

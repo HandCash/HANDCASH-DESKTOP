@@ -107,13 +107,31 @@ export function migrateCachedFungibleFields(raw: unknown): unknown {
   return migrated
 }
 
+/**
+ * v2 is the first payload whose `encoding` is only ever written from a decoded
+ * locking script. v1 writers inferred `legacy-json` from a missing binary
+ * field, which pinned freshly minted BRC-162 tokens as burn-only legacy. Drop
+ * those stamps on read so the live basket decode can classify them again.
+ */
+const LIST_CACHE_VERSION = 2
+
+function dropUnprovenLegacyStamp(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const row = raw as Record<string, unknown>
+  if (row.encoding !== 'legacy-json') return row
+  const { encoding: _dropped, ...rest } = row
+  return rest
+}
+
 function loadDurableList(): FungibleToken[] {
   try {
     const raw = durableGetItem(listCacheKey())
     if (!raw) return []
-    const parsed = JSON.parse(raw) as { items?: unknown }
+    const parsed = JSON.parse(raw) as { items?: unknown; v?: unknown }
     if (!Array.isArray(parsed?.items)) return []
+    const trusted = parsed.v === LIST_CACHE_VERSION
     return parsed.items
+      .map((row) => (trusted ? row : dropUnprovenLegacyStamp(row)))
       .map(migrateCachedFungibleFields)
       .filter(isFungibleShape)
       .filter((t) => !leftoverCollectableSym(t.sym))
@@ -134,6 +152,7 @@ function persistDurableList(items: FungibleToken[]): void {
       listCacheKey(),
       JSON.stringify({
         at: Date.now(),
+        v: LIST_CACHE_VERSION,
         items: items.map((t) => ({
           tokenId: t.tokenId,
           sym: t.sym,
@@ -783,7 +802,8 @@ async function recoverCachedLegacyTips(
         op: payload?.op ?? 'transfer',
         dec: payload?.dec ?? token.dec,
         satoshis: 1,
-        encoding: 'legacy-json',
+        // Only the decoded inscription proves legacy JSON here.
+        ...(payload ? { encoding: 'legacy-json' as const } : {}),
         ...(payload?.sym || token.sym ? { sym: payload?.sym || token.sym } : {}),
         ...(payload?.icon || token.icon ? { icon: payload?.icon || token.icon } : {}),
         lockingScript,
@@ -883,7 +903,10 @@ export function fungibleFromImport(
     // Without this a BRC-162 mint/receive paints as read-only legacy (burn
     // only) until a live basket decode lands, which Refresh may defer.
     ...(item.binarySupply ? { binarySupply: item.binarySupply } : {}),
-    encoding: item.binarySupply ? 'brc162' : 'legacy-json',
+    // Only a decoded locking script may classify the wire format. A mint whose
+    // script was not available yet stays unknown so the live basket read can
+    // name it — absence must never paint a fresh 162 mint as burn-only legacy.
+    ...(item.encoding ? { encoding: item.encoding } : {}),
   }
 }
 
