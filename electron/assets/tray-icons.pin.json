@@ -1,0 +1,24 @@
+{
+  "generatedFrom": {
+    "handcash-tray.svg": "d6b8e0d9f44480b762479ce92520390025d7fa6f5241e98a76f58c1549f78e9b",
+    "handcash-tray-black.svg": "016c8c789339dafe27aece7ec38bb804080c5670d8b1bee4793cf91b500ae88c"
+  },
+  "pngs": {
+    "tray-icon.png": {
+      "size": 128,
+      "sha256": "631573d20131af610cdf593a0c16e235a1198c37052209f5f57d3ce630bcdc13"
+    },
+    "tray-icon-32.png": {
+      "size": 32,
+      "sha256": "624812a4f65a2917396771c8fb7f047b132ef13a71032efd51035fa869126128"
+    },
+    "tray-icon-black.png": {
+      "size": 128,
+      "sha256": "f3b1adcfcb38e5aa85c02116648dee7335078064b2476b954833b86909b57457"
+    },
+    "tray-icon-black-32.png": {
+      "size": 32,
+      "sha256": "6b66b51ffbe060dde3253f18fa49508e5ba5c653ac1bbadf6bf05eba2f522972"
+    }
+  }
+}

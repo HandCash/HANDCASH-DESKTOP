@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.199] - 2026-09-16
+
+### Fixed
+
+- System tray showed the retired HandCash mark. `nativeImage` cannot decode SVG,
+  so the tray only ever loads PNG — and the PNGs were a logo generation behind
+  `handcash-tray*.svg`, which the code called the source of truth. They are now
+  rasterized from that SVG by `npm run icons:tray`, pinned, and checked by
+  `electron/trayAssets.test.ts`, so the tray cannot silently fall behind again.
+- A missing tray PNG now logs what to run instead of dropping through a dead SVG
+  branch that could never decode.
+
 ## [1.3.198] - 2026-09-16
 
 ### Fixed

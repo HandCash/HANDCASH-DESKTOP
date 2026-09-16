@@ -1,6 +1,10 @@
 /**
- * System tray — real HandCash mark SVG (monochrome), no coloured disc.
- * White on dark panels, black on light panels.
+ * System tray — the official HandCash mark, monochrome, no coloured disc.
+ * White glyph on dark panels, black glyph on light panels (macOS uses the black
+ * glyph as a template image and flips it itself).
+ *
+ * The glyph lives in `assets/handcash-tray*.svg`; the PNGs the tray loads are
+ * generated from it by `npm run icons:tray`.
  */
 import {
   Tray,
@@ -42,28 +46,24 @@ function panelWantsLightIcon(): boolean {
   return nativeTheme.shouldUseDarkColors
 }
 
-/** Prefer PNG for Linux StatusNotifier; SVG is the source of truth. */
+/**
+ * `handcash-tray*.svg` is the source of truth for the mark, but `nativeImage`
+ * cannot decode SVG — the tray can only load the PNGs rasterized from it by
+ * `npm run icons:tray` (pinned, and enforced by `trayAssets.test.ts`). A missing
+ * PNG is a packaging fault, so say so instead of silently drawing nothing.
+ */
 export function loadTrayImage(lightGlyph = panelWantsLightIcon()): NativeImage {
-  const pngName = lightGlyph ? 'tray-icon.png' : 'tray-icon-black.png'
-  const png32 = lightGlyph ? 'tray-icon-32.png' : 'tray-icon-black-32.png'
-  const png = resolveAsset(pngName) ?? resolveAsset(png32)
-  if (png) {
+  const names = lightGlyph
+    ? ['tray-icon.png', 'tray-icon-32.png']
+    : ['tray-icon-black.png', 'tray-icon-black-32.png']
+  for (const name of names) {
+    const png = resolveAsset(name)
+    if (!png) continue
     const img = nativeImage.createFromPath(png)
     if (!img.isEmpty()) return img
+    log.warn('tray icon could not be decoded', png)
   }
-
-  const svgName = lightGlyph ? 'handcash-tray.svg' : 'handcash-tray-black.svg'
-  const svg = resolveAsset(svgName) ?? resolveAsset('handcash-tray.svg')
-  if (svg) {
-    try {
-      const buf = fs.readFileSync(svg)
-      const dataUrl = `data:image/svg+xml;base64,${buf.toString('base64')}`
-      const img = nativeImage.createFromDataURL(dataUrl)
-      if (!img.isEmpty()) return img
-    } catch (err) {
-      log.warn('tray SVG load failed', err)
-    }
-  }
+  log.warn(`tray icon PNG missing (${names.join(', ')}) — run npm run icons:tray`)
   return nativeImage.createEmpty()
 }
 
