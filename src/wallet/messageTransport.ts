@@ -85,7 +85,8 @@ export type MarketSettlementWire =
       type: 'receipt'
       saleId: string
       txid: string
-      atomicBeefB64: string
+      /** Omitted when AtomicBEEF exceeds the BRC-33 body cap; seller SPV-fetches by txid. */
+      atomicBeefB64?: string
       buyerMessagebox?: string
     }
   | {
@@ -192,24 +193,13 @@ export async function deliverMarketSettlementWire(args: {
     ) {
       throw error
     }
-    const bytes = new TextEncoder().encode(
-      `${MARKET_WIRE_PREFIX}${JSON.stringify(args.wire)}`
-    )
-    const file = await uploadMessageboxBytes({
-      bytes,
-      filename: `${args.wire.saleId}.market-settlement.json`,
-      contentType: 'application/json',
-      recipientIdentityKey: args.recipientIdentityKey,
-      senderIdentityKey: args.senderIdentityKey,
-      rootKeyHex: args.rootKeyHex,
-      messagebox: args.messagebox,
-    })
+    if (args.wire.type !== 'receipt' || !args.wire.atomicBeefB64) throw error
+    // Market custody must never depend on messagebox `/files` (Android cannot
+    // reliably fetch those pointers). Keep the receipt inline and let the
+    // seller resolve the already-broadcast transaction by txid.
     body = encodeMarketSettlementWire({
-      type: 'file',
-      saleId: args.wire.saleId,
-      url: file.url,
-      size: file.size,
-      sha256: Utils.toHex(Hash.sha256([...bytes])),
+      ...args.wire,
+      atomicBeefB64: undefined,
     })
   }
   const sent = await deliverOutbound({

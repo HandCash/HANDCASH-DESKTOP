@@ -40,31 +40,16 @@ describe('message transport envelopes', () => {
     ).toThrow(/body limit/i)
   })
 
-  it('uploads oversized settlement payloads and sends a bounded file reference', async () => {
+  it('keeps oversized receipts inline and lets the seller fetch BEEF by txid', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
     let sentBody = ''
+    const urls: string[] = []
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
-        if (url.endsWith('/files')) {
-          const size = (init?.body as Blob).size
-          return new Response(
-            JSON.stringify({
-              status: 'success',
-              file: {
-                id: 'deadbeef',
-                name: 'sale-large.market-settlement.json',
-                contentType: 'application/json',
-                size,
-                url: 'https://mb.peer.example/v1/messagebox/files/02ab/deadbeef',
-                expiresAt: Date.now() + 60_000,
-              },
-            }),
-            { status: 200 },
-          )
-        }
+        urls.push(url)
         sentBody = String(init?.body ?? '')
         return new Response(JSON.stringify({ status: 'success' }), {
           status: 200,
@@ -89,10 +74,14 @@ describe('message transport envelopes', () => {
 
     const outer = JSON.parse(sentBody)
     expect(decodeMarketSettlementWire(outer.message.body)).toMatchObject({
-      type: 'file',
+      type: 'receipt',
       saleId: 'sale-large',
-      url: 'https://mb.peer.example/v1/messagebox/files/02ab/deadbeef',
+      txid: 'ab'.repeat(32),
     })
+    expect(decodeMarketSettlementWire(outer.message.body)).not.toHaveProperty(
+      'atomicBeefB64',
+    )
+    expect(urls.some((url) => url.endsWith('/files'))).toBe(false)
     expect(outer.message.body.length).toBeLessThan(16_000)
   })
 

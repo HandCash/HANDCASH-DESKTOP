@@ -42,6 +42,7 @@ import {
   getCachedCollectables,
   normalizeOutpoint,
 } from '../wallet/collectables'
+import { isItemProven } from '../wallet/provenCache'
 import {
   clearNavChild,
   openCollectableDetails,
@@ -247,19 +248,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const failed = isFailedActivity(entry)
   const failureReason = failed ? activityFailureLabel(entry) : null
   const inventoryProven = Boolean(
-    entry.item?.outpoint &&
-      getCachedCollectables().some(
-        (c) =>
-          c.proven === true &&
-          c.outpoint
-            .trim()
-            .toLowerCase()
-            .replace(/_(\d+)$/, '.$1') ===
-            entry
-              .item!.outpoint!.trim()
-              .toLowerCase()
-              .replace(/_(\d+)$/, '.$1'),
-      ),
+    entry.item?.outpoint && isItemProven(entry.item.outpoint),
   )
   const showPending = pending && (spent || !inventoryProven)
   const pendingLabel = spent ? 'Sending…' : 'Verifying…'

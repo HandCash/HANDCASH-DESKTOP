@@ -552,11 +552,14 @@ export function Dashboard({
     let deferTimer: number | null = null
     const startFirst = async () => {
       if (cancelled) return
+      // BRC-33 is the fast seller/payment path. Do not hold inbox delivery
+      // behind a full chain scan; on an account switch that left sale receipts
+      // sitting in messagebox while the visible seller balance stayed stale.
+      scheduleTipHintPoll(0)
       await whenRecomposeIdle()
       if (cancelled) return
       void sync().finally(() => {
         scheduleNext()
-        scheduleTipHintPoll(0)
       })
     }
     if (isPhoneShell()) {

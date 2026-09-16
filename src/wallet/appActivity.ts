@@ -1851,6 +1851,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   if (entry.item?.name) {
     const name = entry.item.name
     if (isBurnActivity(entry)) return `Burned ${name}`
+    if (entry.method === 'market-sale') return `Sold ${name}`
     if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
       return entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`
     }

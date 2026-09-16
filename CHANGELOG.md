@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.192] - 2026-09-16
+
+### Fixed
+
+- Keep oversized market receipts inline in BRC-33 instead of using `/files`;
+  sellers now fetch settlement BEEF by txid and poll their inbox immediately
+  when their wallet account becomes active.
+- Extend the admitted BRC-150 proof across a purchase locally, avoiding duplicate
+  indexer walks and stale Verifying status for a just-purchased item.
+- Show removed market items as Sold activity with a distinct green sale
+  subscript, preserved item identity, and seller proceeds alongside it.
+
 ## [1.3.191] - 2026-09-16
 
 ### Fixed

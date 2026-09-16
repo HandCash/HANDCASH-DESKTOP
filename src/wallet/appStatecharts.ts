@@ -496,7 +496,8 @@ const MARKET_PURCHASE = `stateDiagram-v2
     overlaySubmit → BRC-22 settlement + buyerIdentityKey + payment address
     skip → no-host | no-settlement-beef | buyer-identity-unknown
     miner ACK wait is bounded; pending outbox owns slow propagation
-    buyer txid.0 is painted immediately after custody commits
+    buyer txid.0 extends the admitted BRC-150 proof and paints proven
+    oversized seller receipt stays inline; seller fetches BEEF by txid
     local seller reconcile runs after spend lease + retries durably
   end note
 `
@@ -521,6 +522,8 @@ const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
   note right of peerDeliver
     Validate BRC-48 token + BRC-150 and full transaction.
     Seller signs item and offer inputs.
+    Inbox polling starts before chain refresh on account activation.
+    Compact receipt resolves settlement BEEF by txid, never /files.
     Slow miner ACK does not block proceeds ingest.
     ACK only after proceeds ingest and item retirement.
   end note
@@ -980,7 +983,7 @@ const MESSAGEBOX_CHART = `flowchart TB
 
   subgraph Today["HandCash today"]
     HARD["hardcoded BRC-CLOUD\\n/v1/messagebox"] --> SEND2["sendMessage\\nplaintext / handcash-message cards"]
-    SEND2 --> FILES["optional POST /files → R2"]
+    SEND2 --> FILES["optional chat attachments only\\nPOST /files → R2"]
     HARD --> POLL["listMessages by recipient key\\nno BRC-31 auth yet"]
     POLL --> LOCAL2["messageStore"]
   end

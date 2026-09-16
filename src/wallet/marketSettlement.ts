@@ -34,7 +34,16 @@ import {
   type MarketSettlementReceipt,
   type PurchaseMarketListingArgs,
 } from './marketListing'
-import { parseProvenanceV2 } from './oneSatProvenance'
+import {
+  extendProvenanceV2,
+  parseProvenanceV2,
+  rememberProvenLineage,
+} from './oneSatProvenance'
+import { rememberProvenVerdict } from './provenCache'
+import {
+  clearAwaitingVerification,
+  clearVerificationProgress,
+} from './verificationProgress'
 import { buildBsv21ValueLock, decodeBsv21Binary } from './token'
 import {
   MARKET_ITEM_VOUT,
@@ -67,6 +76,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { addressFromIdentityKey } from './friends'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
+import { getResolvedInscription } from './inscriptionCache'
 import {
   DEFAULT_BRC_CLOUD_BASE_URL,
   PUBLIC_BRC_CLOUD_ORIGIN,
@@ -149,6 +159,45 @@ async function submitMarketSettlement(
     })
   }
   return outcome.accepted
+}
+
+/**
+ * The listing proof already established old-tip → origin and the signed
+ * settlement proves new-tip → old-tip. Extend that known proof locally instead
+ * of launching indexer walks against a transaction that just entered mempool.
+ */
+async function provePurchasedMarketTip(args: {
+  active: NonNullable<ReturnType<typeof getActiveWallet>>
+  provenance: NonNullable<ReturnType<typeof parseProvenanceV2>>
+  outpoint: string
+  atomic: number[]
+}): Promise<boolean> {
+  const extended = await extendProvenanceV2({
+    prior: args.provenance,
+    heldOutpoint: args.outpoint,
+    tipBeef: args.atomic,
+    getBeef: (txid) =>
+      getBeefForTxidCached(args.active, txid, {
+        needProof: true,
+        allowUnprovenRawTx: true,
+      }),
+  })
+  if (!extended) return false
+  rememberProvenVerdict(args.outpoint, {
+    tier: 'brc150',
+    origin: extended.origin,
+    path: extended.path,
+    verifiedAt: Date.now(),
+  })
+  rememberProvenLineage({
+    tipOutpoint: args.outpoint,
+    origin: extended.origin,
+    path: extended.path,
+    beef: Utils.toArray(extended.beefB64, 'base64'),
+  })
+  clearAwaitingVerification(args.outpoint)
+  clearVerificationProgress(args.outpoint)
+  return true
 }
 
 /**
@@ -901,6 +950,15 @@ export async function executeMarketPurchase(
       })
       if (!isBsv21) {
         try {
+          const purchasedOutpoint = `${txid}.0`
+          const proven = provenance
+            ? await provePurchasedMarketTip({
+                active,
+                provenance,
+                outpoint: purchasedOutpoint,
+                atomic,
+              })
+            : false
           const {
             noteIngestedItem,
             retireCollectableAfterSpend,
@@ -912,7 +970,7 @@ export async function executeMarketPurchase(
             retireCollectableAfterSpend(listing.outpoint, txid)
           }
           noteIngestedItem({
-            outpoint: `${txid}.0`,
+            outpoint: purchasedOutpoint,
             chain: active.chain,
             origin: listing.origin,
             name: itemDisplayName,
@@ -921,7 +979,7 @@ export async function executeMarketPurchase(
             content: listingMeta.content,
             identityKey: active.identityKey,
           })
-          mark('buyer collectable painted')
+          mark(`buyer collectable painted proven=${String(proven)}`)
         } catch (err) {
           // Local cache projection is recoverable from listOutputs; custody and
           // the durable Activity row must not be rolled back for a paint error.
@@ -1352,8 +1410,24 @@ export async function handleInboundMarketSettlementWire(args: {
     ) {
       return false
     }
-    const atomic = decodeBeefB64(args.wire.atomicBeefB64)
-    if (!atomic) return false
+    let atomic = decodeBeefB64(args.wire.atomicBeefB64)
+    if (!atomic) {
+      try {
+        const fetched = await getBeefForTxidCached(active, args.wire.txid, {
+          needProof: false,
+          allowUnprovenRawTx: true,
+        })
+        atomic = Array.from(fetched.toBinaryAtomic(args.wire.txid))
+        console.info(
+          '[market-sale] hydrated compact receipt BEEF',
+          args.wire.txid.slice(0, 12),
+        )
+      } catch {
+        // Leave the BRC-33 message unacknowledged. The next lightweight inbox
+        // poll retries once miners/indexers expose the buyer's transaction.
+        return false
+      }
+    }
     let finalTx: Transaction
     try {
       const beef = Beef.fromBinary(atomic)
@@ -1507,6 +1581,7 @@ export async function handleInboundMarketSettlementWire(args: {
     scheduleHistoryBackupPush('market-sale')
     if (listing) {
       const proceeds = calculateMarketSettlement(listing.priceSats).sellerSats
+      const soldItem = getResolvedInscription(listing.outpoint)
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
@@ -1515,9 +1590,10 @@ export async function handleInboundMarketSettlementWire(args: {
         note: 'Sold market collectable',
         txid: args.wire.txid,
         item: {
-          name: 'Market collectable',
+          name: soldItem?.name?.trim() || 'Market collectable',
           origin: listing.origin,
           outpoint: listing.outpoint,
+          ...(soldItem?.app ? { app: soldItem.app } : {}),
         },
         status: 'complete',
       })

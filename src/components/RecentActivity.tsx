@@ -247,12 +247,15 @@ export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
   const burned = isBurnActivity(entry)
   const failed = isFailedActivity(entry)
   const listed = entry.method === 'market-list' || entry.method === 'market-cancel'
+  const sold = entry.method === 'market-sale'
   const purchased =
     entry.method === 'market-purchase' || entry.method === 'market-purchase-receive'
   const badgeKind = failed
     ? 'failed'
     : listed
     ? 'list'
+    : sold
+    ? 'sale'
     : purchased
     ? 'purchase'
     : burned
@@ -268,6 +271,8 @@ export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
     ? 'Cancel listing'
     : listed
     ? 'Listing'
+    : sold
+    ? 'Sold'
     : purchased
     ? 'Purchase'
     : burned
@@ -286,6 +291,8 @@ export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
       {failed ? (
         <WarningIcon size={9} />
       ) : listed ? (
+        <ListingIcon size={8} />
+      ) : sold ? (
         <ListingIcon size={8} />
       ) : purchased ? (
         <PurchaseIcon size={9} />

@@ -72,6 +72,22 @@ function entry(partial: Partial<ActivityEntry>): ActivityEntry {
 }
 
 describe('activityEntryTitle', () => {
+  it('names a removed market item as sold instead of sent', () => {
+    expect(
+      activityEntryTitle(
+        entry({
+          kind: 'spent',
+          method: 'market-sale',
+          item: {
+            name: 'KING',
+            origin: `${'ab'.repeat(32)}_0`,
+            outpoint: `${'cd'.repeat(32)}.0`,
+          },
+        }),
+      ),
+    ).toBe('Sold KING')
+  })
+
   it('shows a friendly recipient instead of a raw identity key', () => {
     const row = entry({
       kind: 'spent',

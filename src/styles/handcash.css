@@ -4936,6 +4936,10 @@ a.history-row-link:hover .history-tx-hint {
   background: #e8b84f;
 }
 
+.history-action-badge.is-sale {
+  background: #2da76f;
+}
+
 .history-action-badge.is-failed {
   background: #c44747;
   font-size: 10px;

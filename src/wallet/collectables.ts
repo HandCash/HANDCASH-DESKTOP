@@ -253,6 +253,8 @@ export function inferCollectableOutputTotal(args: {
 }
 
 let cachedCollectables: Collectable[] = []
+/** One details-panel authenticity request per tip; remounts join the same work. */
+const explicitVerificationRequests = new Set<string>()
 /** True after at least one successful list (even if empty), or a durable hit. */
 let collectablesHydrated = false
 /** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
@@ -566,6 +568,7 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
  */
 export function rebindCollectablesForAccount(): void {
   collectablesAccountEpoch += 1
+  explicitVerificationRequests.clear()
   cachedCollectables = []
   collectablesHydrated = false
   listedOutputCursor = 0
@@ -1884,6 +1887,11 @@ export function requestCollectableVerification(outpoint: string): void {
     clearVerificationProgress(target)
     return
   }
+  // Related Activity/detail routes can remount the same item repeatedly. They
+  // must observe the existing request, not launch parallel remittance checks
+  // and genesis walks for one outpoint.
+  if (explicitVerificationRequests.has(target)) return
+  explicitVerificationRequests.add(target)
   const cached = getCachedCollectables().find(
     (c) => normalizeOutpoint(c.outpoint) === target
   )
@@ -1911,27 +1919,35 @@ export function requestCollectableVerification(outpoint: string): void {
           clearVerificationProgress(target)
           return
         }
-        void proveHeldGenesis(wallet, listInFlight)
+        return proveHeldGenesis(wallet, listInFlight)
       })
       .catch(() => {
         clearAwaitingVerification(target)
         clearVerificationProgress(target)
       })
+      .finally(() => explicitVerificationRequests.delete(target))
     return
   }
   if (!shouldAttemptGenesis(target)) {
     clearAwaitingVerification(target)
     clearVerificationProgress(target)
+    explicitVerificationRequests.delete(target)
     return
   }
-  if (provingGenesis) return
+  if (provingGenesis) {
+    explicitVerificationRequests.delete(target)
+    return
+  }
   const wallet = getActiveWallet()
   if (!wallet) {
     clearAwaitingVerification(target)
     clearVerificationProgress(target)
+    explicitVerificationRequests.delete(target)
     return
   }
-  void proveHeldGenesis(wallet, listInFlight)
+  void proveHeldGenesis(wallet, listInFlight).finally(() =>
+    explicitVerificationRequests.delete(target)
+  )
 }
 
 /**
