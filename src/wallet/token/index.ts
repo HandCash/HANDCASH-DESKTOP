@@ -75,6 +75,8 @@ export {
   listFungibles,
   listFungibleTips,
   paintFungibleAfterSpend,
+  proveCachedFungibleEncoding,
+  proveCachedFungibleEncodings,
   rememberFungibleToken,
   subscribeFungibles,
 } from './list'

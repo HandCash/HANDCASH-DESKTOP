@@ -1041,7 +1041,11 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       const txid = extractTxid(result)
       if (txid) {
         cacheImageIconsFromCreateAction(txid, args, result)
-        void cacheCreateActionBeef(active, txid, result)
+        void cacheCreateActionBeef(active, txid, result).then(() =>
+          import('./token/list').then(({ proveCachedFungibleEncodings }) =>
+            proveCachedFungibleEncodings(active),
+          ),
+        )
         // Await so the HTTP response lands after spent inputs are sealed.
         // Unsent/noSend change stays unspendable until Arcade/processAction so
         // the next app prefers fresh UTXOs over chaining an unbroadcast parent.

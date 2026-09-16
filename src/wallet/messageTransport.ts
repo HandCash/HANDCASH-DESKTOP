@@ -938,6 +938,30 @@ export type InboundPaymentHint = {
   asset?: ItemTransferAsset
 }
 
+const MARKET_RECOVERY_POLL_MS = 60_000
+let marketRecoveryStartedAt = 0
+let marketRecoveryInFlight: Promise<void> | null = null
+
+/**
+ * Market recovery is maintenance, not part of the five-second inbox heartbeat.
+ * Keep it off the critical path and coalesce callers so a slow BEEF recovery
+ * cannot delay chat/payment delivery or overlap itself.
+ */
+function scheduleMarketRecovery(): void {
+  if (marketRecoveryInFlight) return
+  const now = Date.now()
+  if (now - marketRecoveryStartedAt < MARKET_RECOVERY_POLL_MS) return
+  marketRecoveryStartedAt = now
+  marketRecoveryInFlight = import('./marketSettlement')
+    .then(({ recoverPendingMarketPurchases }) => recoverPendingMarketPurchases())
+    .catch(() => {
+      /* recovery remains best-effort */
+    })
+    .finally(() => {
+      marketRecoveryInFlight = null
+    })
+}
+
 export async function pollInboundTipHints(args: {
   rootKeyHex: string
   peerIdForSender?: (senderIdentityKey: string) => string | null
@@ -964,12 +988,7 @@ export async function pollInboundTipHints(args: {
     }
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
-    try {
-      const { recoverPendingMarketPurchases } = await import('./marketSettlement')
-      await recoverPendingMarketPurchases()
-    } catch {
-      /* recovery is best-effort beside inbox ingest */
-    }
+    scheduleMarketRecovery()
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0

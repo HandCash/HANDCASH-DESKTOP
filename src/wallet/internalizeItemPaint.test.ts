@@ -129,6 +129,42 @@ describe('paintAfterCreateActionIssuance', () => {
 })
 
 describe('paintAfterCreateActionBsv21Mint', () => {
+  it('paints Mint Studio BRC-162 deploy as proven and sendable immediately', () => {
+    clearFungiblesCache()
+    const address = PrivateKey.fromRandom().toAddress()
+    const hex = encodeBsv21Binary({
+      amount: 1_111_111_111_111n,
+      payload: { sym: 'KING' },
+      rest: p2pkhScriptHex(address),
+    }).toHex()
+    const painted = paintAfterCreateActionBsv21Mint(
+      { address, chain: 'main' } as never,
+      'https://mint.example',
+      {
+        labels: ['bsv21', 'handcash-mint-bsv21', 'handcash-mint-studio'],
+        outputs: [
+          {
+            satoshis: 1,
+            basket: 'bsv21',
+            lockingScript: hex,
+            tags: ['bsv21', 'op:deploy+mint', 'sym:KING', 'amt:1111111111111'],
+          },
+        ],
+      },
+      { txid: TXID },
+    )
+
+    expect(painted).toBe(1)
+    expect(getCachedFungibles()[0]).toMatchObject({
+      tokenId: `${TXID}_0`,
+      sym: 'KING',
+      amt: '1111111111111',
+      binarySupply: 'locked',
+      encoding: 'brc162',
+    })
+    clearFungiblesCache()
+  })
+
   it('paints JSON deploy+mint from local scripts without waiting on listOutputs', () => {
     clearFungiblesCache()
     const address = PrivateKey.fromRandom().toAddress()
@@ -180,6 +216,7 @@ describe('paintAfterCreateActionBsv21Mint', () => {
         amt: '5000',
         sym: 'LAB',
         outpoint: `${TXID}.0`,
+        encoding: 'legacy-json',
       },
     ])
     clearFungiblesCache()

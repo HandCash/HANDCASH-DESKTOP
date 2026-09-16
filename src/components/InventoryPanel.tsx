@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useDeferredValue } from 'react'
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
@@ -507,7 +514,7 @@ function FungibleAction({
   }${burning ? ' is-burning' : ''}`
   const blockedTitle =
     isUnknown
-      ? 'Checking BSV-21 token encoding'
+      ? 'BSV-21 encoding is not yet verified'
       : token.spendKind === 'cosigned'
       ? 'Cosigner required to send'
       : 'Mixed plain / cosigned tips'
@@ -674,23 +681,38 @@ export function InventoryPanel() {
       }),
     [],
   )
-  useEffect(() => subscribeAppActivity(() => bumpInFlight((n) => n + 1)), [])
+  useEffect(
+    () =>
+      subscribeAppActivity(() => {
+        // Background ingest can update several Activity rows in one pass.
+        // Inventory still needs the eventual in-flight verb, but it must not
+        // preempt a tap, scroll, or search keystroke with a full card-tree render.
+        startTransition(() => bumpInFlight((n) => n + 1))
+      }),
+    [],
+  )
   useEffect(
     () =>
       subscribeCollectables((next) => {
-        setItems(next)
-        if (areCollectablesHydrated()) {
-          setReady(true)
-          setAwaitingFirst(false)
-        }
+        // The durable snapshot already supplied first paint. Background
+        // identity/authenticity upgrades are non-urgent and must yield to input.
+        startTransition(() => {
+          setItems(next)
+          if (areCollectablesHydrated()) {
+            setReady(true)
+            setAwaitingFirst(false)
+          }
+        })
       }),
     [],
   )
   useEffect(
     () =>
       subscribeFungibles((next) => {
-        setTokens(next)
-        if (areFungiblesHydrated()) setTokensReady(true)
+        startTransition(() => {
+          setTokens(next)
+          if (areFungiblesHydrated()) setTokensReady(true)
+        })
       }),
     [],
   )
@@ -779,7 +801,7 @@ export function InventoryPanel() {
   const visibleItems = useMemo(() => {
     const nfts = deferredItems.filter((item) => !collectableIsFungible(item))
     return searchCollectables(deferredQuery, nfts)
-  }, [deferredItems, deferredQuery, tokens])
+  }, [deferredItems, deferredQuery])
   const busyOutpoints = useMemo(
     () =>
       new Set(

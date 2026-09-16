@@ -118,6 +118,25 @@ describe('cached fungible field migration', () => {
     expect(painted.encoding).toBe('brc162')
   })
 
+  it('upgrades an unclassified fresh mint from its local BRC-162 lock', async () => {
+    const { encodeBsv21Binary } = await import('./token/decode162')
+    const { fungibleEncodingFromLockingScript } = await import('./token/list')
+    const lockingScript = encodeBsv21Binary({
+      amount: 1_111_111_111_111n,
+      payload: { sym: 'KING' },
+      rest: `76a914${'11'.repeat(20)}88ac`,
+    }).toHex()
+    expect(
+      fungibleEncodingFromLockingScript(
+        {
+          tokenId: KING_ORIGIN,
+          outpoint: KING_ORIGIN,
+        },
+        lockingScript,
+      ),
+    ).toEqual({ binarySupply: 'locked', encoding: 'brc162' })
+  })
+
   it('drops a legacy stamp written by a cache version that inferred it', async () => {
     store.set(
       CACHE_KEY,

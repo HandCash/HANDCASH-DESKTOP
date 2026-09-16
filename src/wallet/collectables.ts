@@ -366,40 +366,78 @@ function loadDurableList(): Collectable[] {
   }
 }
 
+type DurableListSnapshot = {
+  items: Collectable[]
+  identityKey: string | null
+  chain: Chain
+}
+
+function durableListJson(snapshot: DurableListSnapshot): string {
+  const { items, identityKey, chain } = snapshot
+  return JSON.stringify({
+    at: Date.now(),
+    identityKey,
+    items: items.map((item) => ({
+      outpoint: item.outpoint,
+      origin: item.origin,
+      ...(item.content ? { content: item.content } : {}),
+      name: item.name,
+      app: item.app,
+      // Art bytes belong to the item art store — inlining the data URL here
+      // would write every picture twice and blow the list cache budget.
+      imageUrl: item.imageUrl.startsWith('data:')
+        ? contentUrlForOrigin(item.content ?? item.origin, chain)
+        : item.imageUrl,
+      satoshis: item.satoshis,
+      mimeType: item.mimeType,
+      type: item.type,
+      subType: item.subType,
+      collectionId: item.collectionId,
+      traits: item.traits,
+      extras: item.extras,
+      proven: item.proven,
+      authenticity: item.authenticity,
+    })),
+  })
+}
+
+/** Large cache writes are coalesced so background proof paint cannot block input. */
+const pendingDurableLists = new Map<string, DurableListSnapshot>()
+let durableListTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushPendingDurableLists(): void {
+  durableListTimer = null
+  const pending = [...pendingDurableLists.entries()]
+  pendingDurableLists.clear()
+  void (async () => {
+    for (const [key, snapshot] of pending) {
+      await yieldToUi()
+      try {
+        durableSetItem(key, durableListJson(snapshot))
+      } catch {
+        // Cache is an optimisation.
+      }
+    }
+  })()
+}
+
 function persistDurableList(items: Collectable[]): void {
   try {
     const bounded = items.slice(0, DURABLE_LIST_LIMIT)
-    durableSetItem(
-      listCacheKey(),
-      JSON.stringify({
-        at: Date.now(),
-        identityKey: getActiveWallet()?.identityKey ?? null,
-        items: bounded.map((item) => ({
-          outpoint: item.outpoint,
-          origin: item.origin,
-          ...(item.content ? { content: item.content } : {}),
-          name: item.name,
-          app: item.app,
-          // Art bytes belong to the item art store — inlining the data URL here
-          // would write every picture twice and blow the list cache budget.
-          imageUrl: item.imageUrl.startsWith('data:')
-            ? contentUrlForOrigin(
-                item.content ?? item.origin,
-                getActiveWallet()?.chain ?? 'main',
-              )
-            : item.imageUrl,
-          satoshis: item.satoshis,
-          mimeType: item.mimeType,
-          type: item.type,
-          subType: item.subType,
-          collectionId: item.collectionId,
-          traits: item.traits,
-          extras: item.extras,
-          proven: item.proven,
-          authenticity: item.authenticity,
-        })),
-      })
-    )
+    const active = getActiveWallet()
+    const snapshot: DurableListSnapshot = {
+      items: bounded,
+      identityKey: active?.identityKey ?? null,
+      chain: active?.chain ?? 'main',
+    }
+    if (bounded.length <= 120) {
+      durableSetItem(listCacheKey(), durableListJson(snapshot))
+      return
+    }
+    pendingDurableLists.set(listCacheKey(), snapshot)
+    if (durableListTimer == null) {
+      durableListTimer = setTimeout(flushPendingDurableLists, 180)
+    }
   } catch {
     // Cache is an optimisation.
   }

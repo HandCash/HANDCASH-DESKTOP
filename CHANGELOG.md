@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.205] - 2026-09-16
+
+### Fixed
+
+- Fresh BRC-162 mints now retry their local locking-script proof across the
+  createAction/cache race, so an unverified token card resolves in seconds
+  instead of waiting for a later full basket refresh.
+- Background inbox polling no longer waits for market recovery or reparses the
+  complete chat history once per friend. This removes recurring main-thread
+  work that could interrupt navigation and scrolling on Android.
+- Large asset paints are coalesced and projected as non-urgent UI updates, and
+  mobile payment recovery yields between hints instead of monopolizing the
+  WebView thread.
+
 ## [1.3.204] - 2026-09-16
 
 ### Fixed

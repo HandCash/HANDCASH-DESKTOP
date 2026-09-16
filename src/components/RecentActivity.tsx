@@ -653,14 +653,18 @@ function useActivityFeed(limit: number) {
     refresh()
     const unsubActivity = subscribeAppActivity(refresh)
     const unsubApps = subscribeConnectedApps(refresh)
-    let itemTimer = 0
-    const unsubItems = subscribeCollectables(() => {
-      window.clearTimeout(itemTimer)
-      itemTimer = window.setTimeout(refresh, 280)
-    })
-    const unsubTokens = subscribeFungibles(refresh)
+    let assetTimer = 0
+    const refreshAfterAssetPaint = () => {
+      // Authenticity, icon, and encoding upgrades can arrive in short bursts.
+      // The feed only needs their settled projection; rebuilding it for every
+      // intermediate cache paint used to interrupt foreground input.
+      window.clearTimeout(assetTimer)
+      assetTimer = window.setTimeout(refresh, 280)
+    }
+    const unsubItems = subscribeCollectables(refreshAfterAssetPaint)
+    const unsubTokens = subscribeFungibles(refreshAfterAssetPaint)
     return () => {
-      window.clearTimeout(itemTimer)
+      window.clearTimeout(assetTimer)
       unsubActivity()
       unsubApps()
       unsubItems()

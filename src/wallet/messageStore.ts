@@ -150,6 +150,7 @@ type ChatState = {
 type Listener = () => void
 
 const listeners = new Set<Listener>()
+let messageWriteGeneration = 0
 
 function notify() {
   for (const l of listeners) l()
@@ -188,11 +189,18 @@ function readState(): ChatState {
 
 function writeState(state: ChatState) {
   durableSetItem(messagesStorageKey(), JSON.stringify(state))
+  messageWriteGeneration += 1
   notify()
 }
 
 export function rebindMessagesForAccount(): void {
+  messageWriteGeneration += 1
   notify()
+}
+
+/** Cheap cache key for derived chat indexes; changes only when messages do. */
+export function getMessageWriteGeneration(): number {
+  return messageWriteGeneration
 }
 
 export function subscribeMessages(listener: Listener): () => void {
@@ -267,6 +275,11 @@ export function listMessages(peerId: string): ChatMessage[] {
   return readState()
     .messages.filter((m) => m.peerId === peerId)
     .sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/** One parse for background indexes that span every thread. */
+export function listAllMessages(): readonly ChatMessage[] {
+  return readState().messages
 }
 
 function uid(): string {

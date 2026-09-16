@@ -62,6 +62,8 @@ let listInFlight: Promise<FungibleToken[]> | null = null
 /** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
 let fungiblesAccountEpoch = 0
 const listeners = new Set<Listener>()
+/** One local locking-script proof read per held tip; callers join the same work. */
+const encodingProofInFlight = new Map<string, Promise<void>>()
 
 function isFungibleShape(x: unknown): x is FungibleToken {
   if (!x || typeof x !== 'object') return false
@@ -345,6 +347,10 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
 
 export function rememberFungibleToken(token: FungibleToken): void {
   setFungiblesCache(mergeLiveFungibles([token], cached))
+  if (!token.binarySupply && !token.encoding) {
+    const wallet = getActiveWallet()
+    if (wallet) void proveCachedFungibleEncoding(token.outpoint, wallet)
+  }
 }
 
 export function forgetFungibleToken(tokenId: string): void {
@@ -582,6 +588,143 @@ export function getCachedFungibles(): FungibleToken[] {
   return cached
 }
 
+function normalizedDottedOutpoint(raw: string): string | null {
+  const dotted = raw.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+  return /^[0-9a-f]{64}\.\d+$/.test(dotted) ? dotted : null
+}
+
+/** Pure locking-script verdict used by local proof and regression tests. */
+export function fungibleEncodingFromLockingScript(
+  row: Pick<FungibleToken, 'tokenId' | 'tokenIds' | 'outpoint'>,
+  lockingScript: string,
+  satoshis = 1,
+): Pick<FungibleToken, 'binarySupply' | 'encoding'> | null {
+  if (satoshis !== 1) return null
+  const point = normalizedDottedOutpoint(row.outpoint)
+  if (!point) return null
+  const ids = new Set([row.tokenId, ...(row.tokenIds ?? [])])
+  const binary = tipFromBsv21Script({
+    outpoint: point,
+    lockingScript,
+    satoshis,
+  })
+  if (binary) {
+    return ids.has(binary.tokenId)
+      ? { binarySupply: 'locked', encoding: 'brc162' }
+      : null
+  }
+  const envelope = parseOrdEnvelope(lockingScript)
+  let payload: ReturnType<typeof parseBsv21Json> = null
+  try {
+    payload = envelope?.body?.length
+      ? parseBsv21Json(JSON.parse(new TextDecoder().decode(envelope.body)))
+      : null
+  } catch {
+    payload = null
+  }
+  if (!payload) return null
+  const payloadId =
+    payload.op === 'deploy+mint' || payload.op === 'deploy+auth'
+      ? normalizeTokenId(point)
+      : normalizeTokenId(payload.id ?? '')
+  return payloadId && ids.has(payloadId) ? { encoding: 'legacy-json' } : null
+}
+
+/**
+ * Token equivalent of BRC-150's local proof-first lifecycle.
+ *
+ * Encoding is a property of the held locking script, so the locally retained
+ * transaction is sufficient proof; no indexer or full inventory list is
+ * needed. The card paints immediately, then this upgrades its durable verdict.
+ */
+export function proveCachedFungibleEncoding(
+  outpoint: string,
+  active?: ActiveWallet | null,
+): Promise<void> {
+  const point = normalizedDottedOutpoint(outpoint)
+  const wallet = active ?? getActiveWallet()
+  if (!point || !wallet) return Promise.resolve()
+  const existing = encodingProofInFlight.get(point)
+  if (existing) return existing
+  const epoch = fungiblesAccountEpoch
+  const run = (async () => {
+    await yieldToUi()
+    const [txid, rawVout] = point.split('.')
+    const vout = Number(rawVout)
+    const { getLocalBeefForTxid } = await import('../beefCache')
+    const beef = await getLocalBeefForTxid(wallet, txid!)
+    const output = beef?.findTxid(txid!)?.tx?.outputs[vout]
+    const lockingScript = output?.lockingScript?.toHex()
+    if (!lockingScript || output?.satoshis !== 1) {
+      scheduleEncodingProofRetry(point, wallet, epoch)
+      return
+    }
+
+    const rowIndex = cached.findIndex(
+      (row) => normalizedDottedOutpoint(row.outpoint) === point,
+    )
+    if (rowIndex < 0 || epoch !== fungiblesAccountEpoch) return
+    const row = cached[rowIndex]!
+    if (row.binarySupply || row.encoding) return
+
+    const verdict = fungibleEncodingFromLockingScript(row, lockingScript, 1)
+    if (!verdict) return
+    encodingProofRetries.delete(point)
+    const proven: FungibleToken = { ...row, ...verdict }
+    if (epoch !== fungiblesAccountEpoch || !proven) return
+    const next = [...cached]
+    next[rowIndex] = proven
+    setFungiblesCache(next, { forEpoch: epoch })
+    console.info(
+      `[bsv21] local encoding proof ${point} → ${proven.encoding}`,
+    )
+  })().finally(() => {
+    encodingProofInFlight.delete(point)
+  })
+  encodingProofInFlight.set(point, run)
+  return run
+}
+
+const encodingProofRetries = new Map<string, number>()
+const ENCODING_PROOF_RETRY_MS = [250, 500, 1_000, 2_000, 4_000] as const
+
+function scheduleEncodingProofRetry(
+  point: string,
+  wallet: ActiveWallet,
+  epoch: number,
+): void {
+  const attempt = encodingProofRetries.get(point) ?? 0
+  if (attempt >= ENCODING_PROOF_RETRY_MS.length) return
+  encodingProofRetries.set(point, attempt + 1)
+  setTimeout(() => {
+    if (epoch !== fungiblesAccountEpoch) {
+      encodingProofRetries.delete(point)
+      return
+    }
+    const row = cached.find(
+      (candidate) => normalizedDottedOutpoint(candidate.outpoint) === point,
+    )
+    if (!row || row.binarySupply || row.encoding) {
+      encodingProofRetries.delete(point)
+      return
+    }
+    void proveCachedFungibleEncoding(point, wallet)
+  }, ENCODING_PROOF_RETRY_MS[attempt])
+}
+
+/** Prove unknown cached rows independently of the slower basket list. */
+export async function proveCachedFungibleEncodings(
+  active?: ActiveWallet | null,
+): Promise<void> {
+  const wallet = active ?? getActiveWallet()
+  if (!wallet) return
+  const unknown = cached.filter((row) => !row.binarySupply && !row.encoding)
+  for (const row of unknown) {
+    await proveCachedFungibleEncoding(row.outpoint, wallet)
+    await yieldToUi()
+  }
+}
+
 export function areFungiblesHydrated(): boolean {
   return hydrated
 }
@@ -689,6 +832,9 @@ async function listFungiblesNow(
   const wallet = active ?? getActiveWallet()
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
+  // Same policy as BRC-150 items: paint the durable card first, prove from
+  // local transaction bytes in the background, and let the live list reconcile.
+  void proveCachedFungibleEncodings(wallet)
   const beforeRepair = getCachedFungibles()
   const repaired = await recoverReceivedTokensFromActivity(beforeRepair)
   if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()

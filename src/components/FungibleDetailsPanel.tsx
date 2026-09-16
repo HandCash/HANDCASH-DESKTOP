@@ -264,7 +264,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const burnBlocked =
     isUnknown || (isBinary && token.spendKind !== 'plain') || tokenIds.length > 1
   const spendLabel = isUnknown
-    ? 'Checking BSV-21 token encoding'
+    ? 'BSV-21 encoding unverified'
     : isLegacy
       ? 'Legacy BSV-21 — burn only'
     : token.spendKind === 'plain'
@@ -524,7 +524,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       <section className="fungible-details-section" data-aeon-part="metadata">
         <div className="fungible-section-heading">
           <h3>{isBinary ? 'Origin' : 'Token details'}</h3>
-          <span>{isUnknown ? 'Checking encoding' : isBinary ? 'Same everywhere' : 'Wallet-local'}</span>
+          <span>{isUnknown ? 'Unverified' : isBinary ? 'Same everywhere' : 'Wallet-local'}</span>
         </div>
         <dl className="fungible-details-meta">
           <MetaRow
@@ -540,7 +540,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
                 ? 'BSV-21 (BRC-162)'
                 : isLegacy
                   ? 'Legacy BSV-21 (burn only)'
-                  : 'BSV-21 (checking encoding)'
+                  : 'BSV-21'
             }
           />
           <MetaRow label="Basket" value={'bsv21'} />

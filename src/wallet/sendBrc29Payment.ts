@@ -13,6 +13,7 @@ import { createActor } from 'xstate'
 import {
   hasActivityTxid,
   hasSettledActivityTxid,
+  getActivityWriteGeneration,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
   noteOutboundSendComplete,
@@ -62,8 +63,8 @@ import {
 } from './brc29SendMachine'
 import { enqueuePendingBrc29Remit } from './pendingBrc29Outbox'
 import {
-  listMessages,
-  listThreads,
+  getMessageWriteGeneration,
+  listAllMessages,
   updateMessage,
 } from './messageStore'
 import type { ItemTransferAsset } from './messageStore'
@@ -195,13 +196,11 @@ function markInboundPaymentStatus(txid: string, status: string): void {
   const id = txid.trim().toLowerCase()
   if (!id) return
   try {
-    for (const thread of listThreads()) {
-      for (const msg of listMessages(thread.peerId)) {
-        if (msg.direction !== 'in') continue
-        if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
-        if ((msg.meta?.txid || '').trim().toLowerCase() !== id) continue
-        updateMessage(msg.id, { meta: { status } })
-      }
+    for (const msg of listAllMessages()) {
+      if (msg.direction !== 'in') continue
+      if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
+      if ((msg.meta?.txid || '').trim().toLowerCase() !== id) continue
+      updateMessage(msg.id, { meta: { status } })
     }
   } catch {
     /* chat UI is optional */
@@ -966,39 +965,46 @@ export type PaymentTipHint = {
 }
 
 /** Inbound chat cards still waiting to be internalized (inbox may already be ACKed). */
+let pendingChatHintGeneration = ''
+let pendingChatHintCache: PaymentTipHint[] = []
+
 export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
+  const generation = `${getMessageWriteGeneration()}:${getActivityWriteGeneration()}`
+  if (generation === pendingChatHintGeneration) return pendingChatHintCache
   const hints: PaymentTipHint[] = []
-  for (const thread of listThreads()) {
-    for (const msg of listMessages(thread.peerId)) {
-      if (msg.direction !== 'in') continue
-      if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
-      const txid = (msg.meta?.txid || '').trim().toLowerCase()
-      if (!/^[0-9a-f]{64}$/.test(txid)) continue
-      if (isGhostTxSuppressed(txid)) continue
-      const isItem = msg.meta?.item === true
-      if (hasSettledActivityTxid(txid, 'earned', { item: isItem })) continue
-      const status = String(msg.meta?.status ?? '').toLowerCase()
-      if (status === 'received' || status === 'unavailable') continue
-      hints.push({
-        txid,
-        senderIdentityKey: msg.meta?.identityKey,
-        satoshis: msg.meta?.sats,
-        brc29: msg.meta?.brc29,
-        item: isItem || undefined,
-        itemName: msg.meta?.memo?.trim() || undefined,
-        itemOrigin:
-          typeof msg.meta?.itemOrigin === 'string'
-            ? msg.meta.itemOrigin.trim() || undefined
-            : undefined,
-        itemCollectionId:
-          typeof msg.meta?.itemCollectionId === 'string'
-            ? msg.meta.itemCollectionId.trim() || undefined
-            : undefined,
-        asset: msg.meta?.asset,
-      })
-    }
+  // One message-store parse, not listThreads × listMessages (which reparsed the
+  // complete history once per thread every five-second empty-inbox poll).
+  for (const msg of listAllMessages()) {
+    if (msg.direction !== 'in') continue
+    if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
+    const txid = (msg.meta?.txid || '').trim().toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(txid)) continue
+    if (isGhostTxSuppressed(txid)) continue
+    const isItem = msg.meta?.item === true
+    if (hasSettledActivityTxid(txid, 'earned', { item: isItem })) continue
+    const status = String(msg.meta?.status ?? '').toLowerCase()
+    if (status === 'received' || status === 'unavailable') continue
+    hints.push({
+      txid,
+      senderIdentityKey: msg.meta?.identityKey,
+      satoshis: msg.meta?.sats,
+      brc29: msg.meta?.brc29,
+      item: isItem || undefined,
+      itemName: msg.meta?.memo?.trim() || undefined,
+      itemOrigin:
+        typeof msg.meta?.itemOrigin === 'string'
+          ? msg.meta.itemOrigin.trim() || undefined
+          : undefined,
+      itemCollectionId:
+        typeof msg.meta?.itemCollectionId === 'string'
+          ? msg.meta.itemCollectionId.trim() || undefined
+          : undefined,
+      asset: msg.meta?.asset,
+    })
   }
-  return hints
+  pendingChatHintGeneration = generation
+  pendingChatHintCache = hints
+  return pendingChatHintCache
 }
 
 /**
