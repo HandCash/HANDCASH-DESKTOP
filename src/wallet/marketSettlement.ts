@@ -60,6 +60,7 @@ import {
   choosePendingMarketReceiptPath,
   chooseMarketReceiptBroadcastPath,
   chooseMarketReceiptDeliveryPath,
+  type MarketReceiptDeliveryPath,
 } from './marketSettlementPath'
 import { clearSoldListingFromMarket } from './marketSoldAnnounce'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -81,6 +82,40 @@ const SETTLEMENT_TIMEOUT_MS = 30_000
 const LISTING_DETAIL_MS = 4_000
 /** Normal Arcade accepts land in under 4s; slower propagation belongs in outbox. */
 const MARKET_BROADCAST_WAIT_MS = 5_000
+
+/**
+ * What happened to the seller's copy of a committed settlement.
+ *
+ * `boxAccepted` is the case messagebox exists for: BRC-33 store-and-forward now
+ * holds the receipt, so the seller may be offline indefinitely and there is
+ * nothing left to chase. The other two are the cases it cannot cover — a box
+ * that never accepted the message stored nothing, and a local seller has no box
+ * hop at all.
+ */
+type SellerHandoffOutcome =
+  | { handoff: 'boxAccepted' }
+  | { handoff: 'boxUnreachable'; reason: string }
+  | { handoff: 'localSweepDeferred' }
+
+async function sellerHandoffOutcome(
+  receiptPath: MarketReceiptDeliveryPath,
+  receiptWire: Parameters<typeof deliverMarketSettlementWire>[0],
+): Promise<SellerHandoffOutcome> {
+  if (receiptPath.path === 'localSellerReconcile') {
+    return { handoff: 'localSweepDeferred' }
+  }
+  try {
+    const delivered = await deliverMarketSettlementWire(receiptWire)
+    return delivered
+      ? { handoff: 'boxAccepted' }
+      : { handoff: 'boxUnreachable', reason: 'not accepted by box' }
+  } catch (err) {
+    return {
+      handoff: 'boxUnreachable',
+      reason: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
 
 /**
  * Hand the signed settlement to miner propagation without making the purchase
@@ -912,36 +947,31 @@ export async function executeMarketPurchase(
       // The settlement tx is already committed. A self-purchase must release
       // the spend lease before it creates the seller-proceeds sweep; awaiting
       // that second transaction here made the Buy request take nearly a minute.
-      const remitted = receiptPath.path === 'localSellerReconcile'
-        ? false
-        : await deliverMarketSettlementWire(receiptWire).catch((err) => {
-            console.warn(
-              '[market-buy] seller remittance failed',
-              err instanceof Error ? err.message : String(err),
-            )
-            return false
-          })
-      if (receiptPath.path === 'localSellerReconcile') {
-        mark('local seller reconciliation queued')
-      } else if (remitted) {
-        mark('seller remittance delivered')
-      } else {
-        mark('seller remittance queued for retry')
-      }
+      const handoff = await sellerHandoffOutcome(receiptPath, receiptWire)
+      mark(
+        handoff.handoff === 'boxAccepted'
+          ? 'seller remittance in messagebox'
+          : handoff.handoff === 'localSweepDeferred'
+            ? 'local seller sweep deferred past spend lease'
+            : `seller messagebox unreachable (${handoff.reason})`,
+      )
       chart.send({ type: 'COMMITTED' })
       remember({
         phase: 'committed',
         txid,
         atomicBeef: atomic,
       })
-      // Keep the durable buyer record until the seller handoff succeeds. For a
-      // local seller, recovery performs the sweep after this spend lease exits.
-      if (remitted) removePending(saleId)
+      // Once the box holds the receipt, store-and-forward owns delivery and this
+      // record has no further duty — an offline seller is not a pending purchase.
+      if (handoff.handoff === 'boxAccepted') removePending(saleId)
       else {
+        // Either nothing was ever stored (box unreachable) or there is no box in
+        // this sale at all (local seller). Both need a local pass we cannot run
+        // inside the spend lease that is still held by this createAction.
         setTimeout(() => {
           void recoverPendingMarketPurchases().catch((err) => {
             console.warn(
-              '[market-buy] seller reconciliation retry failed',
+              '[market-buy] seller reconciliation failed',
               err instanceof Error ? err.message : String(err),
             )
           })
