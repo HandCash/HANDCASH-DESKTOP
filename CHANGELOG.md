@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.201] - 2026-09-16
+
+### Fixed
+
+- Windows release checks now normalize SVG line endings before verifying tray
+  icon source hashes. CRLF checkout conversion no longer rejects unchanged art.
+
 ## [1.3.200] - 2026-09-16
 
 ### Fixed

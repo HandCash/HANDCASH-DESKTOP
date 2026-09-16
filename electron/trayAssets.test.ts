@@ -23,6 +23,11 @@ function sha256(file: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
+function sha256Text(file: string): string {
+  const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
+  return crypto.createHash('sha256').update(text).digest('hex')
+}
+
 /** Width/height straight out of the PNG IHDR. */
 function pngSize(file: string): { width: number; height: number } {
   const buf = fs.readFileSync(file)
@@ -39,7 +44,7 @@ describe('tray icon assets', () => {
 
   it('was regenerated after the source SVG last changed', () => {
     for (const [svg, hash] of Object.entries(pin.generatedFrom)) {
-      expect(sha256(path.join(assets, svg)), `${svg} changed — run npm run icons:tray`).toBe(
+      expect(sha256Text(path.join(assets, svg)), `${svg} changed — run npm run icons:tray`).toBe(
         hash,
       )
     }

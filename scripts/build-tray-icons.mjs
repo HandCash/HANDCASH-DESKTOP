@@ -35,6 +35,12 @@ export function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
+/** Text checkouts may use CRLF on Windows; source meaning has not changed. */
+export function sha256Text(file) {
+  const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
+  return crypto.createHash('sha256').update(text).digest('hex')
+}
+
 /** One Electron per icon: a second offscreen transparent window fails to load. */
 function rasterize(job) {
   const electron = path.join(root, 'node_modules/.bin/electron')
@@ -72,7 +78,7 @@ if (!checkOnly) {
 }
 
 for (const variant of VARIANTS) {
-  pin.generatedFrom[variant.svg] = sha256(path.join(assets, variant.svg))
+  pin.generatedFrom[variant.svg] = sha256Text(path.join(assets, variant.svg))
   pin.pngs[variant.png] = { size: variant.size, sha256: sha256(path.join(assets, variant.png)) }
 }
 
