@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.208] - 2026-09-16
+
+### Changed
+
+- Deferred images decide visibility from an observer instead of measuring layout
+  while they render. Every row of a long list used to ask the browser for its
+  position on each render, and the release path measured again on top of that;
+  both now read state the observers already maintain.
+
 ## [1.3.207] - 2026-09-16
 
 ### Fixed

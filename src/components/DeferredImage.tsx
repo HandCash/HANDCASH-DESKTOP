@@ -64,6 +64,11 @@ function immediateLoadMarginPx(): number {
   return LOAD_MARGIN_PX
 }
 
+/** A frame inside `[hidden]` / `display: none` — no size, so not a scroll-away. */
+function collapsedRect(rect: DOMRectReadOnly): boolean {
+  return rect.width <= 0 && rect.height <= 0
+}
+
 function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
   const rect = frame.getBoundingClientRect()
   if (rect.width <= 0 && rect.height <= 0) return false
@@ -169,6 +174,14 @@ export function DeferredImage({
   )
   const [loadSlot, setLoadSlot] = useState(cached)
   const slotHeld = useRef(false)
+  /**
+   * On screen right now, tracked by an observer rather than measured during
+   * render. `src` must not be dropped while the frame is visible (that paints an
+   * empty square), and asking layout for that on every render of every row is
+   * how a long list pays for scrolling twice.
+   */
+  const [onScreen, setOnScreen] = useState(false)
+  const onScreenRef = useRef(false)
   /** Once painted with retainDecoded, never drop src on this mount. */
   const retained = useRef(retainDecoded && cached)
 
@@ -196,9 +209,16 @@ export function DeferredImage({
       })
     }
 
+    const markOnScreen = (value: boolean) => {
+      if (cancelled || onScreenRef.current === value) return
+      onScreenRef.current = value
+      setOnScreen(value)
+    }
+
     // Android WebViews often never fire IntersectionObserver for elements that
     // were already on screen when observe() ran. Check first, then observe.
     if (frameIsNear(frame, immediateLoadMarginPx())) mark(true)
+    if (frameIsNear(frame, 0)) markOnScreen(true)
 
     if (typeof IntersectionObserver === 'undefined') {
       // No observer support — stagger so a grid does not decode everything at once.
@@ -216,6 +236,22 @@ export function DeferredImage({
       },
       { rootMargin: `${LOAD_MARGIN_PX}px` },
     )
+    /**
+     * Plain visibility. A collapsed frame (`[hidden]` / `display: none`) reports
+     * not-intersecting at 0×0 — that is a hidden panel, not a scroll-away, and
+     * clearing src for it is what blinked Activity's top thumbnail.
+     */
+    const visibleObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          markOnScreen(true)
+          return
+        }
+        if (entries.every((e) => collapsedRect(e.boundingClientRect))) return
+        markOnScreen(false)
+      },
+      { rootMargin: '0px' },
+    )
     // Dropping src frees the decoded bitmap; scrolling back re-fetches from cache.
     const releaseObserver = new IntersectionObserver(
       (entries) => {
@@ -223,14 +259,7 @@ export function DeferredImage({
         // reports not-intersecting. That is a keep-alive tab, not a scroll-away
         // — releasing here is what made Activity's top thumbnail blink every
         // time the tab was re-shown.
-        if (
-          entries.every((e) => {
-            const r = e.boundingClientRect
-            return r.width <= 0 && r.height <= 0
-          })
-        ) {
-          return
-        }
+        if (entries.every((e) => collapsedRect(e.boundingClientRect))) return
         // List thumbs keep the bitmap once shown; releasing them is what
         // flashed empty squares while scrolling Activity.
         if (
@@ -242,13 +271,15 @@ export function DeferredImage({
           return
         }
         if (entries.every((e) => !e.isIntersecting)) {
-          if (frameIsNear(frame, 0)) return
+          // The visibility observer already knows; do not ask layout again.
+          if (onScreenRef.current) return
           mark(false)
         }
       },
       { rootMargin: `${RELEASE_MARGIN_PX}px` },
     )
     loadObserver.observe(frame)
+    visibleObserver.observe(frame)
     releaseObserver.observe(frame)
 
     // Long safety net only. A short timeout used to force-decode every card in
@@ -260,6 +291,7 @@ export function DeferredImage({
       window.cancelAnimationFrame(raf)
       window.clearTimeout(fallbackTimer)
       loadObserver.disconnect()
+      visibleObserver.disconnect()
       releaseObserver.disconnect()
     }
   }, [src, retainDecoded])
@@ -384,12 +416,11 @@ export function DeferredImage({
 
   // Never paint an <img> without src. Clearing src while status stayed `ready`
   // (scroll release + decodedOnce short-circuit) was the empty Activity square.
-  const intersecting = Boolean(frameRef.current && frameIsNear(frameRef.current, 0))
   const attachSrc = shouldAttachDeferredSrc({
     retained: retained.current,
     near,
     loadSlot,
-    intersecting,
+    intersecting: onScreen,
     ready: status === 'ready',
   })
   const showImg = status === 'ready' && attachSrc
