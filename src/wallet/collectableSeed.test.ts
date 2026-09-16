@@ -121,31 +121,32 @@ describe('locally seeded collectables', () => {
     ])
   })
 
-  it('recovers old self-purchases from durable Activity on upgrade', async () => {
-    const { settledSelfPurchaseRetirements } = await import('./collectables')
-    expect(
-      settledSelfPurchaseRetirements([
-        {
-          id: 'listed',
-          at: 100,
-          method: 'market-list',
-          status: 'complete',
-          item: { origin: `${TXID}_0`, outpoint: TIP, name: 'Listed Item' },
-        },
-        {
-          id: 'received',
-          at: 200,
-          method: 'market-purchase-receive',
-          status: 'complete',
-          txid: 'ef'.repeat(32),
-          item: {
-            origin: `${TXID}.0`,
-            outpoint: `${'ef'.repeat(32)}.0`,
-            name: 'Received Item',
-          },
-        },
-      ] as never),
-    ).toEqual([{ outpoint: TIP, txid: 'ef'.repeat(32) }])
+  it('keeps a held item that Activity also shows as listed and repurchased', async () => {
+    // An origin-matched Activity repair used to run on every inventory load and
+    // retire the live tip of any item listed then repurchased — a self-purchase
+    // produces exactly that pair, so inventory came back empty.
+    const { noteIngestedItem, listCollectables } = await import('./collectables')
+    const { recordAppActivity } = await import('./appActivity')
+    recordAppActivity({
+      origin: 'wallet',
+      kind: 'spent',
+      sats: 1,
+      method: 'market-list',
+      item: { name: 'Listed Item', origin: TIP, outpoint: TIP },
+    })
+    recordAppActivity({
+      origin: 'wallet',
+      kind: 'earned',
+      sats: 1,
+      method: 'market-purchase-receive',
+      txid: 'ef'.repeat(32),
+      item: { name: 'Bought Item', origin: TIP, outpoint: `${'ef'.repeat(32)}.0` },
+      status: 'complete',
+    })
+
+    noteIngestedItem({ outpoint: TIP, chain: 'main', name: 'Listed Item' })
+    const after = await listCollectables(walletListing([TIP]) as never)
+    expect(after.map((c) => c.outpoint)).toContain(TIP)
   })
 
   it('survives a renderer restart while Toolbox has not listed it yet', async () => {

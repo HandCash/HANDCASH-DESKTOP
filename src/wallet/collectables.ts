@@ -26,7 +26,6 @@ import {
   isTokenActivity,
   listRecentActivity,
   WALLET_ACTIVITY_ORIGIN,
-  type ActivityEntry,
 } from './appActivity'
 import {
   beginPendingSend,
@@ -542,56 +541,6 @@ export function retireCollectableAfterSpend(
     cachedCollectables.filter((item) => outpointKey(item.outpoint) !== key),
     { announceArrivals: false },
   )
-}
-
-/** Recover self-purchases made before local seller reconciliation shipped. */
-export function settledSelfPurchaseRetirements(
-  entries: ActivityEntry[],
-): Array<{ outpoint: string; txid: string }> {
-  const purchases = new Map<string, { txid: string; at: number }>()
-  for (const entry of entries) {
-    if (
-      entry.method !== 'market-purchase-receive' ||
-      !entry.item?.origin ||
-      !entry.txid ||
-      entry.status === 'failed'
-    ) {
-      continue
-    }
-    purchases.set(normalizeOutpoint(entry.item.origin), {
-      txid: entry.txid,
-      at: entry.at,
-    })
-  }
-  const retirements: Array<{ outpoint: string; txid: string }> = []
-  for (const entry of entries) {
-    if (
-      entry.method !== 'market-list' ||
-      !entry.item?.origin ||
-      !entry.item.outpoint ||
-      entry.status === 'failed'
-    ) {
-      continue
-    }
-    const purchase = purchases.get(normalizeOutpoint(entry.item.origin))
-    if (purchase && purchase.at >= entry.at) {
-      retirements.push({
-        outpoint: normalizeOutpoint(entry.item.outpoint),
-        txid: purchase.txid,
-      })
-    }
-  }
-  return retirements
-}
-
-function reconcileSettledSelfPurchasesFromActivity(): void {
-  for (const retirement of settledSelfPurchaseRetirements(
-    listRecentActivity(ACTIVITY_REPAIR_DEPTH),
-  )) {
-    if (!isItemSent(retirement.outpoint)) {
-      retireCollectableAfterSpend(retirement.outpoint, retirement.txid)
-    }
-  }
 }
 
 export function clearCollectablesCache(options?: { notify?: boolean }): void {
@@ -2436,7 +2385,6 @@ async function listCollectablesNow(
   const epoch = collectablesAccountEpoch
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
-  reconcileSettledSelfPurchasesFromActivity()
 
   const cachedFor = durableListIdentity()
   if (

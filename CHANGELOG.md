@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.189] - 2026-09-16
+
+### Fixed
+
+- Inventory and app connect could hang or come back empty. The self-purchase
+  Activity repair added in 1.3.188 ran on every collectables load, matched
+  listings to purchases by origin instead of by the listing outpoint, and could
+  retire a still-held item — mutating and notifying the cache re-entrantly from
+  inside the load. Removed it; the settlement path already retires the seller
+  tip when a sale actually settles.
+
 ## [1.3.188] - 2026-09-16
 
 ### Fixed
