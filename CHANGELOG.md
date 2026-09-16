@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.188] - 2026-09-16
+
+### Fixed
+
+- The sold-listing announce now targets the BRC-22 overlay host. `market.handcash.io` redirects to the storefront, so `/submit` there answered HTML and the de-list never landed.
+
 ## [1.3.187] - 2026-09-16
 
 ### Fixed
