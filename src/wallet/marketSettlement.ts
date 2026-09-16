@@ -16,10 +16,12 @@ import {
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
 import { getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
+  adoptMarketSaleReceipt,
   buildMarketHeldRemittance,
   calculateMarketSettlement,
   createMarketSettlementReceipt,
   findMarketListingAuthorizationBySaleId,
+  listMarketListingAuthorizations,
   getMarketListingAuthorization,
   marketFeePayToAddress,
   markMarketSettlementProgress,
@@ -30,10 +32,15 @@ import {
   verifyMarketListingProvenance,
   verifyMarketSettlementReceipt,
   type MarketListingAdvert,
+  type MarketListingAuthorization,
   type MarketPurchaseIntent,
   type MarketSettlementReceipt,
   type PurchaseMarketListingArgs,
 } from './marketListing'
+import {
+  chooseMarketReceiptAuthority,
+  verifyMarketSettlementPayout,
+} from './marketReceiptAuthority'
 import {
   extendProvenanceV2,
   parseProvenanceV2,
@@ -1401,13 +1408,14 @@ export async function handleInboundMarketSettlementWire(args: {
     return true
   }
   if (args.wire.type === 'receipt') {
-    const authorization = findMarketListingAuthorizationBySaleId(
-      args.wire.saleId
-    )
-    if (
-      !authorization ||
-      authorization.reservationBuyer !== args.senderIdentityKey.toLowerCase()
-    ) {
+    const saleId = args.wire.saleId
+    const settlementTxid = args.wire.txid
+    const refuse = (reason: string): false => {
+      console.warn(
+        `[market-sale] receipt refused — ${reason}`,
+        `sale=${saleId.slice(0, 12)}`,
+        `tx=${settlementTxid.slice(0, 12)}`,
+      )
       return false
     }
     let atomic = decodeBeefB64(args.wire.atomicBeefB64)
@@ -1425,37 +1433,87 @@ export async function handleInboundMarketSettlementWire(args: {
       } catch {
         // Leave the BRC-33 message unacknowledged. The next lightweight inbox
         // poll retries once miners/indexers expose the buyer's transaction.
-        return false
+        return refuse('settlement beef not available yet — will retry')
       }
     }
     let finalTx: Transaction
     try {
-      const beef = Beef.fromBinary(atomic)
-      finalTx = subjectTransaction(
-        beef,
-        authorization.listing?.outpoint ?? authorization.outpoint
-      ).tx
-    } catch {
-      return false
+      const found = Beef.fromBinary(atomic).findTxid(args.wire.txid)?.tx
+      if (!found) throw new Error('settlement tx missing from receipt beef')
+      finalTx = found
+    } catch (err) {
+      return refuse(err instanceof Error ? err.message : String(err))
     }
-    if (
-      finalTx.id('hex').toLowerCase() !== args.wire.txid.toLowerCase() ||
-      marketSettlementCommitment(finalTx) !==
-        authorization.reservationTxCommitment
-    ) {
-      return false
+    if (finalTx.id('hex').toLowerCase() !== args.wire.txid.toLowerCase()) {
+      return refuse('settlement txid does not match the receipt')
     }
-    const intent = authorization.reservationIntent
-    const listing = authorization.listing
-    if (!intent || !listing || !verifyMarketPurchaseIntent(intent, listing)) {
-      return false
+    const spentOutpoints = finalTx.inputs.map(
+      (input) => `${String(input.sourceTXID).toLowerCase()}.${input.sourceOutputIndex}`,
+    )
+    const spent = new Set(spentOutpoints)
+    const settlesLocalListing = (record: MarketListingAuthorization): boolean => {
+      const token = record.listing
+      if (!token) return false
+      return (
+        spent.has(normalizeOutpoint(token.outpoint)) &&
+        spent.has(normalizeOutpoint(token.offerOutpoint))
+      )
     }
-    const receipt = createMarketSettlementReceipt({
-      intent,
+    const authority = chooseMarketReceiptAuthority({
+      senderIdentityKey: args.senderIdentityKey,
+      activeIdentityKey: active.identityKey,
       settlementTxid: args.wire.txid,
-      sellerOutputIndex: 1,
-      feeOutputIndex: 2,
+      reserved: findMarketListingAuthorizationBySaleId(args.wire.saleId),
+      settledLocally:
+        listMarketListingAuthorizations().find(settlesLocalListing) ?? null,
     })
+    if (authority.path === 'refuse') return refuse(authority.reason)
+    const authorization = authority.authorization
+    const listing = authorization.listing
+    if (!listing) return refuse('listing-has-no-token')
+    let receipt: MarketSettlementReceipt | null = null
+    if (authority.path === 'reservedBySignHop') {
+      if (
+        marketSettlementCommitment(finalTx) !==
+        authorization.reservationTxCommitment
+      ) {
+        return refuse('settlement shape differs from the reserved commitment')
+      }
+      const intent = authorization.reservationIntent
+      if (!intent || !verifyMarketPurchaseIntent(intent, listing)) {
+        return refuse('reserved purchase intent does not verify')
+      }
+      receipt = createMarketSettlementReceipt({
+        intent,
+        settlementTxid: args.wire.txid,
+        sellerOutputIndex: 1,
+        feeOutputIndex: 2,
+      })
+    } else {
+      // Pre-signed listing: the buyer never asked us to sign, so the transaction
+      // is the only authority. It must spend our item and offer and pay our own
+      // payTo plus the market fee.
+      const payout = verifyMarketSettlementPayout({
+        listing,
+        spentOutpoints,
+        outputs: finalTx.outputs.map((output) => ({
+          satoshis: output.satoshis,
+          lockingScriptHex: output.lockingScript?.toHex(),
+        })),
+      })
+      if (!payout.ok) return refuse(payout.reason)
+      adoptMarketSaleReceipt({
+        outpoint: authorization.outpoint,
+        nonce: authorization.nonce,
+        saleId: args.wire.saleId,
+        buyerIdentityKey: args.senderIdentityKey,
+      })
+      console.info(
+        '[market-sale] list-time unlock sale adopted',
+        `sale=${args.wire.saleId.slice(0, 12)}`,
+        `seller=${payout.sellerSats} fee=${payout.feeSats}`,
+      )
+    }
     const receiptBroadcast = chooseMarketReceiptBroadcastPath({
       localSelfPurchase: args.localSelfPurchase === true,
     })
@@ -1464,20 +1522,21 @@ export async function handleInboundMarketSettlementWire(args: {
         ? true
         : await submitMarketSettlement(args.wire.txid, atomic)
     if (!accepted && authorization.settlementTxid !== args.wire.txid.toLowerCase()) {
-      return false
+      return refuse('settlement was not accepted by a miner')
     }
     let progress = markMarketSettlementProgress({
       saleId: args.wire.saleId,
       settlementTxid: args.wire.txid,
     })
+    const buyerIdentityKey = args.senderIdentityKey
     const chart = createActor(marketSellerSettlementMachine).start()
     chart.send({
       type: 'START',
       listingKey: `${authorization.outpoint}:${authorization.nonce}`,
-      buyerIdentityKey: intent.buyer,
+      buyerIdentityKey,
       path: {
         settle: 'peerDeliver',
-        buyerIdentityKey: intent.buyer,
+        buyerIdentityKey,
         listingKey: `${authorization.outpoint}:${authorization.nonce}`,
       },
     })
@@ -1528,7 +1587,7 @@ export async function handleInboundMarketSettlementWire(args: {
       if (retireErrors.length) {
         chart.send({ type: 'FAIL', error: retireErrors[0]! })
         chart.stop()
-        return false
+        return refuse(`sold inputs could not be retired — ${retireErrors[0]!}`)
       }
       progress = markMarketSettlementProgress({
         saleId: args.wire.saleId,
@@ -1552,12 +1611,16 @@ export async function handleInboundMarketSettlementWire(args: {
       updateMarketListingAuthorization({
         outpoint: authorization.outpoint,
         nonce: authorization.nonce,
-        from: ['reserved'],
+        // A list-time-unlock sale is still `active` here — it was never reserved.
+        from: ['active', 'reserved'],
         to: 'settled',
         reason: args.wire.txid,
       })
     }
-    if (!args.localSelfPurchase) {
+    // Only a sign-hop sale has a buyer waiting on a countersigned receipt. A
+    // buyer that settled with list-time unlocks already holds the item, so a
+    // failed response hop must not undo an ingested sale.
+    if (!args.localSelfPurchase && receipt) {
       const responseDelivered = await deliverMarketSettlementWire({
         wire: {
           type: 'receipt-response',
@@ -1574,7 +1637,7 @@ export async function handleInboundMarketSettlementWire(args: {
       })
       if (!responseDelivered) {
         chart.stop()
-        return false
+        return refuse('receipt response could not be delivered to the buyer')
       }
     }
     chart.stop()

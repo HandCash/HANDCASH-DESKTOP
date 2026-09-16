@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.194] - 2026-09-16
+
+### Fixed
+
+- Accept a sale receipt for a listing that shipped list-time unlocks. A buyer
+  using pre-signed unlocks never reserves the listing, so the seller refused
+  every receipt and the sale sat unacknowledged in messagebox: no proceeds, no
+  Sold activity. Authority is now explicit — the settlement must spend the
+  listed item and its offer and pay the listing's own payTo plus market fee.
+- Only the selling account may ingest a receipt (authorizations are shared
+  across accounts), and every refusal now logs a named reason.
+
 ## [1.3.193] - 2026-09-16
 
 ### Fixed

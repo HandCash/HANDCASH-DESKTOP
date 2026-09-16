@@ -520,8 +520,11 @@ const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
   signingSellerInputs --> refused : TIMEOUT / FAIL
   peerDeliver --> refused : TIMEOUT / FAIL
   note right of peerDeliver
-    Validate BRC-48 token + BRC-150 and full transaction.
-    Seller signs item and offer inputs.
+    Receipt authority is explicit (marketReceiptAuthority):
+    reservedBySignHop matches the reserved commitment + intent;
+    listTimeUnlocks has no reservation, so the settlement tx must
+    spend our item and offer and pay payTo + fee; else named refuse.
+    Seller signs item and offer inputs only on the sign hop.
     Inbox polling starts before chain refresh on account activation.
     Compact receipt resolves settlement BEEF by txid, never /files.
     Slow miner ACK does not block proceeds ingest.

@@ -878,6 +878,34 @@ export function findMarketListingAuthorizationBySaleId(
   )
 }
 
+/**
+ * Bind a sale id and buyer to a listing that was never reserved.
+ *
+ * A buyer using list-time unlocks settles without a sign hop, so the sale is
+ * identified by the settlement transaction rather than by a reservation. Stamping
+ * it here makes the receipt idempotent: a redelivered message finds the same
+ * record by sale id and resumes wherever the previous pass stopped.
+ */
+export function adoptMarketSaleReceipt(args: {
+  outpoint: string
+  nonce: string
+  saleId: string
+  buyerIdentityKey: string
+}): MarketListingAuthorization {
+  const current = getMarketListingAuthorization(args)
+  if (!current) {
+    throw new MarketListingError('LISTING_NOT_AUTHORIZED', 'Listing not found.')
+  }
+  const next: MarketListingAuthorization = {
+    ...current,
+    reservationSaleId: args.saleId,
+    reservationBuyer: args.buyerIdentityKey.trim().toLowerCase(),
+    updatedAt: Date.now(),
+  }
+  saveAuthorization(next)
+  return next
+}
+
 export function markMarketSettlementProgress(args: {
   saleId: string
   settlementTxid: string
