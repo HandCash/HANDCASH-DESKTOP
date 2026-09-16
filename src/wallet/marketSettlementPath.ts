@@ -41,6 +41,11 @@ export type MarketReceiptBroadcastPath =
   | { broadcast: 'alreadyConfirmedByLocalBuyer' }
   | { broadcast: 'sellerPostBeef' }
 
+export type PendingMarketReceiptPath =
+  | { path: 'skip'; reason: 'foreign-buyer-account' }
+  | { path: 'localSellerReconcile' }
+  | { path: 'messageboxDelivery'; sellerIdentityKey: string }
+
 /**
  * Telling the overlay a listing is sold. This is catalog hygiene, never custody:
  * a refused announce leaves the settled tx alone and only delays de-listing.
@@ -113,6 +118,25 @@ export function chooseMarketReceiptBroadcastPath(args: {
   return args.localSelfPurchase
     ? { broadcast: 'alreadyConfirmedByLocalBuyer' }
     : { broadcast: 'sellerPostBeef' }
+}
+
+/** Account-safe retry route for a signed purchase whose seller handoff is pending. */
+export function choosePendingMarketReceiptPath(args: {
+  activeIdentityKey: string
+  buyerIdentityKey: string
+  sellerIdentityKey: string
+}): PendingMarketReceiptPath {
+  const active = args.activeIdentityKey.trim().toLowerCase()
+  if (args.buyerIdentityKey.trim().toLowerCase() !== active) {
+    return { path: 'skip', reason: 'foreign-buyer-account' }
+  }
+  if (args.sellerIdentityKey.trim().toLowerCase() === active) {
+    return { path: 'localSellerReconcile' }
+  }
+  return {
+    path: 'messageboxDelivery',
+    sellerIdentityKey: args.sellerIdentityKey,
+  }
 }
 
 export function chooseMarketPurchasePath(args: {

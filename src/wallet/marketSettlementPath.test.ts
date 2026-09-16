@@ -1,10 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import {
+  choosePendingMarketReceiptPath,
   chooseMarketPurchasePath,
   chooseMarketReceiptBroadcastPath,
   chooseMarketReceiptDeliveryPath,
   chooseMarketSellerSettlePath,
 } from './marketSettlementPath'
+
+describe('choosePendingMarketReceiptPath', () => {
+  const buyer = `02${'ab'.repeat(32)}`
+  const seller = `03${'cd'.repeat(32)}`
+
+  it('retries self-purchase proceeds locally', () => {
+    expect(
+      choosePendingMarketReceiptPath({
+        activeIdentityKey: buyer,
+        buyerIdentityKey: buyer.toUpperCase(),
+        sellerIdentityKey: buyer,
+      }),
+    ).toEqual({ path: 'localSellerReconcile' })
+  })
+
+  it('delivers remote seller receipts but skips a different buyer account', () => {
+    expect(
+      choosePendingMarketReceiptPath({
+        activeIdentityKey: buyer,
+        buyerIdentityKey: buyer,
+        sellerIdentityKey: seller,
+      }),
+    ).toEqual({ path: 'messageboxDelivery', sellerIdentityKey: seller })
+    expect(
+      choosePendingMarketReceiptPath({
+        activeIdentityKey: seller,
+        buyerIdentityKey: buyer,
+        sellerIdentityKey: seller,
+      }),
+    ).toEqual({ path: 'skip', reason: 'foreign-buyer-account' })
+  })
+})
 
 describe('chooseMarketPurchasePath', () => {
   const keys = {

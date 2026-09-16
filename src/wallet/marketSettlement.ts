@@ -57,6 +57,7 @@ import {
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
 import {
+  choosePendingMarketReceiptPath,
   chooseMarketReceiptBroadcastPath,
   chooseMarketReceiptDeliveryPath,
 } from './marketSettlementPath'
@@ -78,6 +79,42 @@ const RESPONSE_KEY = 'handcash.market.responses.v2'
  */
 const SETTLEMENT_TIMEOUT_MS = 30_000
 const LISTING_DETAIL_MS = 4_000
+/** Normal Arcade accepts land in under 4s; slower propagation belongs in outbox. */
+const MARKET_BROADCAST_WAIT_MS = 5_000
+
+/**
+ * Hand the signed settlement to miner propagation without making the purchase
+ * UI wait indefinitely for provider acknowledgement. `broadcastAtomicBeef`
+ * durably queues before posting, and continues handling a late hard rejection.
+ */
+async function submitMarketSettlement(
+  txid: string,
+  atomic: number[],
+): Promise<boolean> {
+  const pending = broadcastAtomicBeef(txid, atomic)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    pending.then((accepted) => ({ kind: 'answered' as const, accepted })),
+    new Promise<{ kind: 'queued'; accepted: true }>((resolve) => {
+      timer = setTimeout(
+        () => resolve({ kind: 'queued', accepted: true }),
+        MARKET_BROADCAST_WAIT_MS,
+      )
+    }),
+  ])
+  if (timer) clearTimeout(timer)
+  if (outcome.kind === 'queued') {
+    console.info(
+      `[market-buy] miner acknowledgement still pending after ${MARKET_BROADCAST_WAIT_MS}ms — propagation queued`,
+    )
+    void pending.then((accepted) => {
+      if (!accepted) {
+        console.warn('[market-buy] queued settlement was later rejected', txid)
+      }
+    })
+  }
+  return outcome.accepted
+}
 
 /**
  * Overlay already stored the listing tx at admit time. Prefer that BEEF over
@@ -579,6 +616,9 @@ export async function executeMarketPurchase(
     const listingMeta = listing as MarketListingAdvert & {
       name?: string | null
       sym?: string | null
+      app?: string | null
+      collectionId?: string | null
+      content?: string | null
     }
     const itemDisplayName =
       listingMeta.sym?.trim() ||
@@ -808,7 +848,7 @@ export async function executeMarketPurchase(
         throw new Error('Signed market transaction missing')
       remember({ phase: 'signedUnknown', txid, atomicBeef: atomic })
       mark(`signed ${txid.slice(0, 12)} — Arcade postBeef once`)
-      const broadcasted = await broadcastAtomicBeef(txid, atomic)
+      const broadcasted = await submitMarketSettlement(txid, atomic)
       if (!broadcasted) throw new Error('Market transaction broadcast failed')
       chart.send({ type: 'BROADCASTED' })
       remember({
@@ -824,6 +864,38 @@ export async function executeMarketPurchase(
         buyerAddress: active.address,
         listingOutpoints: [listing.outpoint, listing.offerOutpoint],
       })
+      if (!isBsv21) {
+        try {
+          const {
+            noteIngestedItem,
+            retireCollectableAfterSpend,
+          } = await import('./collectables')
+          // On a self-purchase, origin deduplication would otherwise retain the
+          // sold tip and hide txid.0. Retire the exact spent tip before painting
+          // the buyer output that Activity already reports.
+          if (receiptPath.path === 'localSellerReconcile') {
+            retireCollectableAfterSpend(listing.outpoint, txid)
+          }
+          noteIngestedItem({
+            outpoint: `${txid}.0`,
+            chain: active.chain,
+            origin: listing.origin,
+            name: itemDisplayName,
+            app: listingMeta.app,
+            collectionId: listingMeta.collectionId,
+            content: listingMeta.content,
+            identityKey: active.identityKey,
+          })
+          mark('buyer collectable painted')
+        } catch (err) {
+          // Local cache projection is recoverable from listOutputs; custody and
+          // the durable Activity row must not be rolled back for a paint error.
+          console.warn(
+            '[market-buy] buyer collectable paint deferred',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
       const receiptWire = {
         recipientIdentityKey: listing.seller,
         rootKeyHex: active.rootKeyHex,
@@ -837,23 +909,11 @@ export async function executeMarketPurchase(
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
         },
       }
-      // A self-purchase has both roles in this toolbox. Process the seller side
-      // synchronously so proceeds/deposit and old-tip retirement are visible in
-      // the same commit; routing through our own inbox left them pending until
-      // a later poll while the buyer's new tip was already painted.
+      // The settlement tx is already committed. A self-purchase must release
+      // the spend lease before it creates the seller-proceeds sweep; awaiting
+      // that second transaction here made the Buy request take nearly a minute.
       const remitted = receiptPath.path === 'localSellerReconcile'
-        ? await handleInboundMarketSettlementWire({
-            wire: receiptWire.wire,
-            senderIdentityKey: active.identityKey,
-            messagebox: sellerMessagebox,
-            localSelfPurchase: true,
-          }).catch((err) => {
-            console.warn(
-              '[market-buy] local seller reconciliation failed',
-              err instanceof Error ? err.message : String(err),
-            )
-            return false
-          })
+        ? false
         : await deliverMarketSettlementWire(receiptWire).catch((err) => {
             console.warn(
               '[market-buy] seller remittance failed',
@@ -861,15 +921,32 @@ export async function executeMarketPurchase(
             )
             return false
           })
-      if (remitted) mark('seller remittance delivered')
-      else mark('seller remittance not delivered — overlay/catalog may still index')
+      if (receiptPath.path === 'localSellerReconcile') {
+        mark('local seller reconciliation queued')
+      } else if (remitted) {
+        mark('seller remittance delivered')
+      } else {
+        mark('seller remittance queued for retry')
+      }
       chart.send({ type: 'COMMITTED' })
       remember({
         phase: 'committed',
         txid,
         atomicBeef: atomic,
       })
-      removePending(saleId)
+      // Keep the durable buyer record until the seller handoff succeeds. For a
+      // local seller, recovery performs the sweep after this spend lease exits.
+      if (remitted) removePending(saleId)
+      else {
+        setTimeout(() => {
+          void recoverPendingMarketPurchases().catch((err) => {
+            console.warn(
+              '[market-buy] seller reconciliation retry failed',
+              err instanceof Error ? err.message : String(err),
+            )
+          })
+        }, 0)
+      }
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
@@ -886,7 +963,7 @@ export async function executeMarketPurchase(
         note: 'Received market collectable',
         txid,
         item: {
-          name: 'Market collectable',
+          name: itemDisplayName,
           origin: listing.origin,
           outpoint: `${txid}.0`,
         },
@@ -946,6 +1023,12 @@ export async function recoverPendingMarketPurchases(): Promise<void> {
   if (!active) return
   const { isGhostTxSuppressed } = await import('./ghostTxSuppress')
   for (const record of readJson<PendingPurchase[]>(PENDING_KEY, [])) {
+    const receiptPath = choosePendingMarketReceiptPath({
+      activeIdentityKey: active.identityKey,
+      buyerIdentityKey: record.intent.buyer,
+      sellerIdentityKey: record.sellerIdentityKey,
+    })
+    if (receiptPath.path === 'skip') continue
     if (record.txid && isGhostTxSuppressed(record.txid)) {
       await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
       removePending(record.saleId)
@@ -979,18 +1062,50 @@ export async function recoverPendingMarketPurchases(): Promise<void> {
       continue
     }
     if (!record.txid || !record.atomicBeef?.length) continue
-    try {
-      await broadcastAtomicBeef(record.txid, record.atomicBeef)
-    } catch (err) {
-      console.warn(
-        '[market] pending purchase rebroadcast skipped',
-        record.saleId,
-        err instanceof Error ? err.message : String(err),
-      )
-      if (isGhostTxSuppressed(record.txid)) {
-        await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
-        removePending(record.saleId)
+    // A broadcast/committed record has already entered the miner outbox. Its
+    // remaining duty is seller reconciliation, not another blocking postBeef.
+    if (record.phase === 'signedUnknown' || record.phase === 'recovery') {
+      try {
+        await submitMarketSettlement(record.txid, record.atomicBeef)
+      } catch (err) {
+        console.warn(
+          '[market] pending purchase rebroadcast skipped',
+          record.saleId,
+          err instanceof Error ? err.message : String(err),
+        )
+        if (isGhostTxSuppressed(record.txid)) {
+          await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
+          removePending(record.saleId)
+        }
+        continue
       }
+    }
+    const receiptWire = {
+      type: 'receipt' as const,
+      saleId: record.saleId,
+      txid: record.txid,
+      atomicBeefB64: b64(record.atomicBeef),
+    }
+    const handedOff = receiptPath.path === 'localSellerReconcile'
+      ? await handleInboundMarketSettlementWire({
+          wire: receiptWire,
+          senderIdentityKey: active.identityKey,
+          messagebox: record.sellerMessagebox,
+          localSelfPurchase: true,
+        })
+      : await deliverMarketSettlementWire({
+          recipientIdentityKey: receiptPath.sellerIdentityKey,
+          rootKeyHex: active.rootKeyHex,
+          senderIdentityKey: active.identityKey,
+          messagebox: record.sellerMessagebox,
+          wire: receiptWire,
+        })
+    if (handedOff) {
+      removePending(record.saleId)
+      console.info(
+        `[market] seller ${receiptPath.path === 'localSellerReconcile' ? 'proceeds reconciled' : 'receipt delivered'}`,
+        record.saleId,
+      )
     }
   }
 }
@@ -1243,7 +1358,7 @@ export async function handleInboundMarketSettlementWire(args: {
     const accepted =
       receiptBroadcast.broadcast === 'alreadyConfirmedByLocalBuyer'
         ? true
-        : await broadcastAtomicBeef(args.wire.txid, atomic)
+        : await submitMarketSettlement(args.wire.txid, atomic)
     if (!accepted && authorization.settlementTxid !== args.wire.txid.toLowerCase()) {
       return false
     }

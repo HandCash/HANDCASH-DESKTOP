@@ -495,7 +495,9 @@ const MARKET_PURCHASE = `stateDiagram-v2
     MarketSoldAnnouncePath (catalog hygiene, never custody):
     overlaySubmit → BRC-22 settlement + buyerIdentityKey + payment address
     skip → no-host | no-settlement-beef | buyer-identity-unknown
-    local self receipt → buyer broadcast already confirmed; never post twice
+    miner ACK wait is bounded; pending outbox owns slow propagation
+    buyer txid.0 is painted immediately after custody commits
+    local seller reconcile runs after spend lease + retries durably
   end note
 `
 
@@ -519,6 +521,7 @@ const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
   note right of peerDeliver
     Validate BRC-48 token + BRC-150 and full transaction.
     Seller signs item and offer inputs.
+    Slow miner ACK does not block proceeds ingest.
     ACK only after proceeds ingest and item retirement.
   end note
 `
