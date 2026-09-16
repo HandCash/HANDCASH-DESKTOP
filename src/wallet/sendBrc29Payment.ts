@@ -77,6 +77,8 @@ import {
   withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
 import { recordTransactionStage } from './transactionTelemetry'
+import { isPhoneShell } from './runtimePlatform'
+import { yieldToUi } from './yieldToUi'
 
 /** BRC-29 protocol id — see BRCs/payments/0029.md */
 export const BRC29_PROTOCOL_ID: [2, '3241645161d8'] = [2, '3241645161d8']
@@ -1075,10 +1077,11 @@ export async function ingestPaymentsFromTipHints(
   }
 
   // Item/token AtomicBEEF is expensive; keep retries bounded per tip poll.
-  const ingestAttempts = 2
+  const phoneShell = isPhoneShell()
+  const ingestAttempts = phoneShell ? 1 : 2
   const ingestDelayMs = 4_000
   /** Concurrent tip internalizations — BEEF + postBeef are heavy. */
-  const TIP_INGEST_CONCURRENCY = 3
+  const TIP_INGEST_CONCURRENCY = phoneShell ? 1 : 3
 
   const ghostTxids: string[] = []
   const discardIfArcadeGhost = (txid: string): boolean => {
@@ -1127,6 +1130,10 @@ export async function ingestPaymentsFromTipHints(
   const hintList = [...unique.values()]
 
   const outcomes = await mapPool(hintList, TIP_INGEST_CONCURRENCY, async (hint) => {
+    // On Android each BEEF merge and toolbox call shares the WebView process
+    // with input/rendering. One hint per turn keeps stale inbox recovery from
+    // producing a multi-second navigation stall; failed hints retry next poll.
+    if (phoneShell) await yieldToUi()
     let importedTxid: string | null = null
     let balanceSats: number | null = null
 

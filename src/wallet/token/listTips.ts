@@ -187,6 +187,7 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     dec,
     satoshis: 1,
     binarySupply: 'locked',
+    encoding: 'brc162',
     ...(sym ? { sym } : {}),
     ...(icon ? { icon } : {}),
     ...(maxSupply != null ? { maxSupply } : {}),

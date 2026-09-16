@@ -55,6 +55,7 @@ import { FungibleTokenFace } from './FungibleTokenFace'
 import { CloseIcon, CollectablesIcon, FireIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
+  classifyFungibleEncoding,
   formatFungibleAmount,
   getCachedFungibles,
   listFungibles,
@@ -492,18 +493,22 @@ function FungibleAction({
   sending: boolean
   row?: boolean
 }) {
+  const encoding = classifyFungibleEncoding(token)
+  const isLegacy = encoding.kind === 'legacy-json'
+  const isUnknown = encoding.kind === 'unknown'
   const sendBlocked =
-    !token.binarySupply ||
+    encoding.kind !== 'brc162' ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
-  const isLegacy = !token.binarySupply
   const verb = inFlightVerb(token.outpoint) ?? 'Sending'
   const burning = sending && /^burn/i.test(verb)
   const className = `collectable-send-btn${row ? ' collectable-send-btn--row' : ''}${
     isLegacy ? ' collectable-burn-btn' : ''
   }${burning ? ' is-burning' : ''}`
   const blockedTitle =
-    token.spendKind === 'cosigned'
+    isUnknown
+      ? 'Checking BSV-21 token encoding'
+      : token.spendKind === 'cosigned'
       ? 'Cosigner required to send'
       : 'Mixed plain / cosigned tips'
 
@@ -558,9 +563,10 @@ function FungibleItem({
   view: CollectionView
 }) {
   const amount = formatFungibleAmount(token.amt, token.dec)
+  const encoding = classifyFungibleEncoding(token)
   const issuer = token.issuer
     ? token.issuerHandle || shortIssuerLabel(token.issuer)
-    : !token.binarySupply
+    : encoding.kind === 'legacy-json'
       ? 'Legacy BSV-21'
       : 'BSV-21'
   const listPrice =

@@ -13,6 +13,7 @@ export {
   aggregateFungibles,
   buildBsv21CustomInstructions,
   bsv21Tags,
+  classifyFungibleEncoding,
   cosignFromRemittance,
   detectCosignFromLockingScript,
   formatFungibleAmount,
@@ -41,6 +42,7 @@ export {
   type Bsv21Payload,
   type Bsv21Utxo,
   type FungibleToken,
+  type FungibleEncoding,
 } from './types'
 
 // BRC-162 decode / encode

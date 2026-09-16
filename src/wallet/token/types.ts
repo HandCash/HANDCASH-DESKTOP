@@ -84,6 +84,8 @@ export type Bsv21Utxo = {
   lockingScript?: string
   /** Set on BRC-162 tips — Collect treats these as live (Send), not JSON legacy. */
   binarySupply?: 'locked' | 'open'
+  /** Positive wire classification. Absence means an old cache row is unclassified. */
+  encoding?: 'brc162' | 'legacy-json'
   maxSupply?: number | null
 }
 
@@ -136,6 +138,11 @@ export type FungibleToken = {
   tokenIds?: string[]
   /** Set for BRC-162 binary tips; absent on read-only legacy JSON rows. */
   binarySupply?: 'locked' | 'open'
+  /**
+   * Positive wire classification. Old durable rows may omit this; omission is
+   * unknown, not proof that the token uses the legacy JSON encoding.
+   */
+  encoding?: 'brc162' | 'legacy-json'
   maxSupply?: number | null
   provenanceOk?: boolean
   /** Active BRC-48 listing when this held tip is on the market. */
@@ -145,6 +152,20 @@ export type FungibleToken = {
     state: 'active' | 'reserved'
     listedOutpoint: string
   }
+}
+
+export type FungibleEncoding =
+  | { kind: 'brc162'; supply: NonNullable<FungibleToken['binarySupply']> }
+  | { kind: 'legacy-json' }
+  | { kind: 'unknown' }
+
+/** Fail closed: a missing BRC-162 field in an old display cache is not legacy proof. */
+export function classifyFungibleEncoding(
+  token: Pick<FungibleToken, 'binarySupply' | 'encoding'>,
+): FungibleEncoding {
+  if (token.binarySupply) return { kind: 'brc162', supply: token.binarySupply }
+  if (token.encoding === 'legacy-json') return { kind: 'legacy-json' }
+  return { kind: 'unknown' }
 }
 
 export function normalizeTokenId(raw: string): string | null {
@@ -432,6 +453,7 @@ function mergeFungibleRows(
   if (!into.icon && from.icon) into.icon = from.icon
   if (!into.iconUrl && from.iconUrl) into.iconUrl = from.iconUrl
   if (!into.binarySupply && from.binarySupply) into.binarySupply = from.binarySupply
+  if (!into.encoding && from.encoding) into.encoding = from.encoding
   if (into.maxSupply == null && from.maxSupply != null) {
     into.maxSupply = from.maxSupply
   }
@@ -477,6 +499,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.issuerAttested ? { issuerAttested: true } : {}),
         ...(u.icon ? { icon: u.icon } : {}),
         ...(u.binarySupply ? { binarySupply: u.binarySupply } : {}),
+        ...(u.encoding ? { encoding: u.encoding } : {}),
         ...(u.maxSupply != null ? { maxSupply: u.maxSupply } : {}),
         _sum: add,
         _plain: !tipCosigned,
@@ -495,6 +518,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (u.issuerAttested) existing.issuerAttested = true
     if (!existing.icon && u.icon) existing.icon = u.icon
     if (!existing.binarySupply && u.binarySupply) existing.binarySupply = u.binarySupply
+    if (!existing.encoding && u.encoding) existing.encoding = u.encoding
     if (existing.maxSupply == null && u.maxSupply != null) {
       existing.maxSupply = u.maxSupply
     }

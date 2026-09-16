@@ -92,6 +92,12 @@ export function migrateCachedFungibleFields(raw: unknown): unknown {
   ) {
     migrated.binarySupply = colourSupply
   }
+  if (
+    migrated.encoding == null &&
+    (migrated.binarySupply === 'locked' || migrated.binarySupply === 'open')
+  ) {
+    migrated.encoding = 'brc162'
+  }
   if (migrated.maxSupply == null && typeof colourMaxSupply === 'number') {
     migrated.maxSupply = colourMaxSupply
   }
@@ -144,6 +150,7 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
           ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
           ...(t.binarySupply ? { binarySupply: t.binarySupply } : {}),
+          ...(t.encoding ? { encoding: t.encoding } : {}),
           ...(t.maxSupply != null ? { maxSupply: t.maxSupply } : {}),
           ...(t.provenanceOk != null ? { provenanceOk: t.provenanceOk } : {}),
         })),
@@ -359,6 +366,10 @@ export function paintFungibleAfterSpend(args: {
     outpoint: args.outpoint || prior?.outpoint || args.tokenId,
     spendKind: 'plain',
     binarySupply: args.binarySupply ?? prior?.binarySupply,
+    encoding:
+      args.binarySupply != null
+        ? 'brc162'
+        : prior?.encoding,
     maxSupply: args.maxSupply ?? prior?.maxSupply ?? null,
     provenanceOk: prior?.provenanceOk ?? true,
     ...(args.icon || prior?.icon ? { icon: args.icon || prior?.icon } : {}),
@@ -628,6 +639,8 @@ function parseListedOutput(
     ...(cosign ? { cosign } : {}),
     ...(issuer ? { issuer } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
+    encoding: from162 ? 'brc162' : 'legacy-json',
+    ...(from162 ? { binarySupply: 'locked' as const } : {}),
   }
 }
 
@@ -676,8 +689,12 @@ async function listFungiblesNow(
   } = await import('../walletCoordinator')
   const coord = getWalletCoordinatorSnapshot()
   const cachedRows = getCachedFungibles()
+  const cacheNeedsWireClassification = cachedRows.some(
+    (row) => row.binarySupply == null && row.encoding == null,
+  )
   if (
     cachedRows.length > 0 &&
+    !cacheNeedsWireClassification &&
     (coord.chainIngest === 'active' ||
       coord.spend === 'active' ||
       shouldYieldChainIngestToSpend() ||
@@ -766,6 +783,7 @@ async function recoverCachedLegacyTips(
         op: payload?.op ?? 'transfer',
         dec: payload?.dec ?? token.dec,
         satoshis: 1,
+        encoding: 'legacy-json',
         ...(payload?.sym || token.sym ? { sym: payload?.sym || token.sym } : {}),
         ...(payload?.icon || token.icon ? { icon: payload?.icon || token.icon } : {}),
         lockingScript,
@@ -865,6 +883,7 @@ export function fungibleFromImport(
     // Without this a BRC-162 mint/receive paints as read-only legacy (burn
     // only) until a live basket decode lands, which Refresh may defer.
     ...(item.binarySupply ? { binarySupply: item.binarySupply } : {}),
+    encoding: item.binarySupply ? 'brc162' : 'legacy-json',
   }
 }
 

@@ -577,7 +577,10 @@ export function Dashboard({
     // waiting for the old timeout to become runnable again.
     const onAppActive = () => {
       if (cancelled) return
-      void sync({ forceReview: true }).finally(() => scheduleNext())
+      // Resume is an automatic catch-up, not an explicit Refresh. A forced
+      // spendable audit here made every Android app switch compete with taps,
+      // inbox ingest, and token classification on the WebView thread.
+      void sync().finally(() => scheduleNext())
       scheduleTipHintPoll(0)
     }
     document.addEventListener('handcash:app-active', onAppActive)

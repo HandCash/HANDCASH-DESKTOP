@@ -50,6 +50,7 @@ describe('cached fungible field migration', () => {
     expect(migrateCachedFungibleFields(preRenameCacheRow())).toMatchObject({
       tokenId: KING_ORIGIN,
       binarySupply: 'locked',
+      encoding: 'brc162',
       maxSupply: 69420,
       provenanceOk: true,
     })
@@ -82,6 +83,23 @@ describe('cached fungible field migration', () => {
     const [token] = getCachedFungibles()
     // `binarySupply` is the gate Collect uses for Send vs "Legacy BSV-21 — burn only".
     expect(token?.binarySupply).toBe('locked')
+    expect(token?.encoding).toBe('brc162')
     expect(token?.maxSupply).toBe(69420)
+  })
+
+  it('does not call an unclassified old cache row legacy', async () => {
+    const { classifyFungibleEncoding } = await import('./token/types')
+    expect(
+      classifyFungibleEncoding({
+        binarySupply: undefined,
+        encoding: undefined,
+      }),
+    ).toEqual({ kind: 'unknown' })
+    expect(
+      classifyFungibleEncoding({
+        binarySupply: undefined,
+        encoding: 'legacy-json',
+      }),
+    ).toEqual({ kind: 'legacy-json' })
   })
 })

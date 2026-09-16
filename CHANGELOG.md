@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.203] - 2026-09-16
+
+### Fixed
+
+- Old token cache rows are no longer assumed to be legacy JSON BSV-21. Collect
+  verifies the live locking script before enabling Send or legacy Burn.
+- Android inbox recovery now internalizes one payment hint per UI turn, and app
+  resume no longer starts a forced spendable-output audit. Navigation remains
+  responsive while wallet maintenance catches up.
+
 ## [1.3.202] - 2026-09-16
 
 ### Added

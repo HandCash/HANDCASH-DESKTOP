@@ -5,6 +5,7 @@ import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
   combineToken,
+  classifyFungibleEncoding,
   formatFungibleAmount,
   getFungible,
   listFungibles,
@@ -240,7 +241,10 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const usdPerBsv = getCachedUsdPerBsv()
   const marketListing = token.marketListing
   const priceHistory = tokenMarketPriceHistory(token.tokenId, snapshot.context.activity)
-  const isBinary = Boolean(token.binarySupply)
+  const encoding = classifyFungibleEncoding(token)
+  const isBinary = encoding.kind === 'brc162'
+  const isLegacy = encoding.kind === 'legacy-json'
+  const isUnknown = encoding.kind === 'unknown'
   const sendBlocked = !isBinary || token.spendKind !== 'plain'
   const canCombine = isBinary && !sendBlocked && token.utxoCount >= 2
   const supplyLabel = isBinary
@@ -258,16 +262,20 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   // Legacy BSV-21 tips are read-only except Burn (cleanup path).
   const burnBlocked =
-    (isBinary && token.spendKind !== 'plain') || tokenIds.length > 1
-  const spendLabel = !isBinary
-    ? 'Legacy BSV-21 — burn only'
+    isUnknown || (isBinary && token.spendKind !== 'plain') || tokenIds.length > 1
+  const spendLabel = isUnknown
+    ? 'Checking BSV-21 token encoding'
+    : isLegacy
+      ? 'Legacy BSV-21 — burn only'
     : token.spendKind === 'plain'
       ? 'Wallet controlled'
       : token.spendKind === 'cosigned'
         ? 'Cosigner required'
         : 'Mixed plain and cosigned outputs'
   const burnTitle = burnBlocked
-    ? isBinary && token.spendKind !== 'plain'
+    ? isUnknown
+      ? 'Burn unavailable until token encoding is verified'
+      : isBinary && token.spendKind !== 'plain'
       ? `${spendLabel}; burn unavailable`
       : tokenIds.length > 1
         ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
@@ -394,7 +402,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <div className="fungible-details-heading">
           <div className="fungible-details-title">
             <h2>{token.sym}</h2>
-            {!isBinary ? (
+            {isLegacy ? (
               <span
                 className={`fungible-attest fungible-attest-${
                   token.issuerAttested ? 'ok' : 'none'
@@ -491,7 +499,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             {token.utxoCount === 1 ? 'Tip' : 'Tips'}
           </MetricStrip.Label>
         </MetricStrip.Chip>
-        {!isBinary ? (
+        {isLegacy ? (
           <MetricStrip.Chip>
             <MetricStrip.Value>{tokenIds.length}</MetricStrip.Value>
             <MetricStrip.Label>{tokenIds.length === 1 ? 'Deploy' : 'Deploys'}</MetricStrip.Label>
@@ -516,7 +524,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       <section className="fungible-details-section" data-aeon-part="metadata">
         <div className="fungible-section-heading">
           <h3>{isBinary ? 'Origin' : 'Token details'}</h3>
-          <span>{isBinary ? 'Same everywhere' : 'Wallet-local'}</span>
+          <span>{isUnknown ? 'Checking encoding' : isBinary ? 'Same everywhere' : 'Wallet-local'}</span>
         </div>
         <dl className="fungible-details-meta">
           <MetaRow
@@ -527,12 +535,18 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
           <MetaRow
             label="Protocol"
-            value={isBinary ? 'BSV-21 (BRC-162)' : 'Legacy BSV-21 (burn only)'}
+            value={
+              isBinary
+                ? 'BSV-21 (BRC-162)'
+                : isLegacy
+                  ? 'Legacy BSV-21 (burn only)'
+                  : 'BSV-21 (checking encoding)'
+            }
           />
           <MetaRow label="Basket" value={'bsv21'} />
           <MetaRow
             label="Spend policy"
-            value={isBinary ? spendLabel : 'Burn cleanup only — sends retired'}
+            value={isLegacy ? 'Burn cleanup only — sends retired' : spendLabel}
           />
           <MetaRow
             label="Held tip"
@@ -559,7 +573,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               copyLabel="issuer identity key"
             />
           ) : null}
-          {!isBinary ? (
+          {isLegacy ? (
             <MetaRow
               label="Attestation"
               value={token.issuerAttested ? 'Sigma matched (BRC-77)' : 'None'}
