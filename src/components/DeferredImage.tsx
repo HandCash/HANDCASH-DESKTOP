@@ -45,7 +45,19 @@ const LOAD_MARGIN_PX = 900
  */
 const RELEASE_MARGIN_PX = 2200
 
-function loadMarginPx(): number {
+/**
+ * Margin for the *immediate* check only.
+ *
+ * Mid-fling a frame that is merely near should wait, so a fling does not queue a
+ * viewport of decodes on the spot. The observers below keep {@link
+ * LOAD_MARGIN_PX}: their margin is fixed when they are constructed, and a
+ * windowed list mounts most of its rows while the finger is moving — reading the
+ * fling state there left those rows permanently unwilling to prefetch, which is
+ * what turned scrolling into a wall of skeletons. Re-creating observers when the
+ * fling settles is not the fix either; that re-fires the initial callback and
+ * boundary rows load/release in a loop.
+ */
+function immediateLoadMarginPx(): number {
   if (typeof document !== 'undefined' && document.documentElement.dataset.hcScrolling === '1') {
     return 240
   }
@@ -186,7 +198,7 @@ export function DeferredImage({
 
     // Android WebViews often never fire IntersectionObserver for elements that
     // were already on screen when observe() ran. Check first, then observe.
-    if (frameIsNear(frame, loadMarginPx())) mark(true)
+    if (frameIsNear(frame, immediateLoadMarginPx())) mark(true)
 
     if (typeof IntersectionObserver === 'undefined') {
       // No observer support — stagger so a grid does not decode everything at once.
@@ -202,7 +214,7 @@ export function DeferredImage({
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) mark(true)
       },
-      { rootMargin: `${loadMarginPx()}px` },
+      { rootMargin: `${LOAD_MARGIN_PX}px` },
     )
     // Dropping src frees the decoded bitmap; scrolling back re-fetches from cache.
     const releaseObserver = new IntersectionObserver(

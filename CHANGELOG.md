@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.207] - 2026-09-16
+
+### Fixed
+
+- Paying yourself is two records again — coins out and coins in. Folding every
+  leg of a transaction into one record is right for a market deal, where the
+  coins and the item are one thing that happened, but it hid half of an ordinary
+  self-send behind the other half.
+- Scrolling a long list no longer re-renders every row on each scroll event. The
+  windowed slice is measured at most once per frame and published only when it
+  actually moves.
+- Feeds share one "is scrolling" flag with a single settle timer. Two owners on
+  different timers had been clearing it mid-fling, and one list unmounting
+  cleared it for the rest.
+- Rows mounted while the list was moving now prefetch their images normally once
+  it settles, instead of staying in a shrunken-margin mode that painted
+  skeletons as you scrolled.
+
 ## [1.3.206] - 2026-09-16
 
 ### Fixed

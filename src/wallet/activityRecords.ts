@@ -53,13 +53,60 @@ function assetIdentity(entry: ActivityEntry): string | null {
   return tokenId || origin || point || null
 }
 
-/** Same transaction, same producer — a listing event and its held item pair up. */
-function groupKeyOf(entry: ActivityEntry): string | null {
+/**
+ * How far a leg may fold into the other legs of its transaction.
+ *
+ * A market transaction is one deal with legs on both sides — coins out, item in,
+ * change back — so all of it belongs in one record. An ordinary transaction is
+ * not: paying yourself moves coins out *and* brings coins in, and those are two
+ * facts about your wallet. Folding by transaction alone hid one of them behind
+ * the other, which is why a self-send rendered as a single row.
+ */
+export type ActivityFold =
+  | { kind: 'solo' }
+  /** Every leg of one market transaction, whichever way its value moved. */
+  | { kind: 'transaction'; key: string }
+  /** Legs of one transaction that move value the same way. */
+  | { kind: 'direction'; key: string }
+
+function txidOf(entry: ActivityEntry): string | null {
   const txid = (entry.txid ?? '').trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return null
+  return /^[0-9a-f]{64}$/.test(txid) ? txid : null
+}
+
+/** Which way this leg moved value — an event moves none. */
+function directionOf(entry: ActivityEntry): 'in' | 'out' | 'event' {
+  if (entry.kind === 'earned') return 'in'
+  if (entry.kind === 'spent') return 'out'
+  return 'event'
+}
+
+/** Transactions that carry a market leg, and so fold across directions. */
+function marketTransactions(entries: readonly ActivityEntry[]): Set<string> {
+  const keys = new Set<string>()
+  for (const entry of entries) {
+    if (isFailedActivity(entry) || !MARKET_METHODS.has(entry.method)) continue
+    const txid = txidOf(entry)
+    if (txid) keys.add(`${entry.origin}|${txid}`)
+  }
+  return keys
+}
+
+export function chooseActivityFold(
+  entry: ActivityEntry,
+  marketKeys: ReadonlySet<string>,
+): ActivityFold {
+  const txid = txidOf(entry)
+  if (!txid) return { kind: 'solo' }
   // A failed leg must stay its own row: it is cleared and retried on its own.
-  if (isFailedActivity(entry)) return null
-  return `${entry.origin}|${txid}`
+  if (isFailedActivity(entry)) return { kind: 'solo' }
+  const key = `${entry.origin}|${txid}`
+  if (marketKeys.has(key)) return { kind: 'transaction', key }
+  return { kind: 'direction', key: `${key}|${directionOf(entry)}` }
+}
+
+function foldKeyOf(fold: ActivityFold): string | null {
+  return fold.kind === 'solo' ? null : fold.key
 }
 
 function subjectRank(entry: ActivityEntry): number {
@@ -97,11 +144,14 @@ export function moneyLegForEntry(
   entry: ActivityEntry,
   entries: readonly ActivityEntry[],
 ): ActivityEntry | null {
-  const key = groupKeyOf(entry)
+  const marketKeys = marketTransactions(entries)
+  const key = foldKeyOf(chooseActivityFold(entry, marketKeys))
   if (!key || isMoneyLeg(entry)) return null
   return pickMoneyLeg(
     entries.filter(
-      (candidate) => candidate.id !== entry.id && groupKeyOf(candidate) === key,
+      (candidate) =>
+        candidate.id !== entry.id &&
+        foldKeyOf(chooseActivityFold(candidate, marketKeys)) === key,
     ),
   )
 }
@@ -111,8 +161,11 @@ export function composeActivityRecords(
 ): ActivityRecord[] {
   const order: string[] = []
   const buckets = new Map<string, ActivityEntry[]>()
+  const marketKeys = marketTransactions(entries)
   for (const entry of entries) {
-    const key = groupKeyOf(entry) ?? `solo|${activityEntryKey(entry)}`
+    const key =
+      foldKeyOf(chooseActivityFold(entry, marketKeys)) ??
+      `solo|${activityEntryKey(entry)}`
     const bucket = buckets.get(key)
     if (bucket) bucket.push(entry)
     else {

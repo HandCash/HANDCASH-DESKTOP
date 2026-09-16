@@ -1,45 +1,37 @@
 import { useEffect, useState, type RefObject } from 'react'
-import { noteUiScrollActivity } from '../../wallet/walletCoordinator'
+import {
+  feedIsScrolling,
+  forgetFeedScrollRoot,
+  noteFeedScroll,
+  subscribeFeedScroll,
+} from './scrollActivity'
 import { resolveScrollRoot } from './scrollRoot'
 
 /**
  * True while the feed is being flung. Chunk ramps and image prefetch shrink
  * until it settles; chain ingest yields its ordinal work for the same window.
+ *
+ * The flag itself lives in `scrollActivity` — one owner for every feed — so this
+ * hook only reports scrolls and re-renders on the transitions.
  */
-export function useScrollIdle(
-  ref: RefObject<HTMLElement | null>,
-  settleMs = 700,
-): boolean {
-  const [scrolling, setScrolling] = useState(false)
+export function useScrollIdle(ref: RefObject<HTMLElement | null>): boolean {
+  const [scrolling, setScrolling] = useState(feedIsScrolling)
+
+  useEffect(() => subscribeFeedScroll(setScrolling), [])
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const root = resolveScrollRoot(el)
     const marked = root === window ? null : (root as HTMLElement)
-    let timer = 0
-    const onScroll = () => {
-      noteUiScrollActivity()
-      marked?.classList.add('is-scrolling')
-      // DeferredImage reads this to shrink its prefetch margin mid-fling.
-      document.documentElement.dataset.hcScrolling = '1'
-      setScrolling(true)
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        marked?.classList.remove('is-scrolling')
-        delete document.documentElement.dataset.hcScrolling
-        setScrolling(false)
-      }, settleMs)
-    }
+    const onScroll = () => noteFeedScroll(marked)
     const target: EventTarget = root === window ? window : root
     target.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       target.removeEventListener('scroll', onScroll)
-      window.clearTimeout(timer)
-      marked?.classList.remove('is-scrolling')
-      delete document.documentElement.dataset.hcScrolling
+      forgetFeedScrollRoot(marked)
     }
-  }, [ref, settleMs])
+  }, [ref])
 
   return scrolling
 }

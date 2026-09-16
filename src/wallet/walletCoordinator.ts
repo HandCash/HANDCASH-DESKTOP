@@ -157,17 +157,15 @@ export function shouldYieldChainIngestToSpend(): boolean {
 
 const UI_SCROLL_YIELD_MS = 450
 let lastUiScrollAt = 0
-let uiScrollClassTimer = 0
 
-/** List/grid scroll — pause non-urgent chain ingest until the fling settles. */
+/**
+ * List/grid scroll — pause non-urgent chain ingest until the fling settles.
+ *
+ * The `hcScrolling` DOM flag belongs to the UI (`uiFeed/scrollActivity`); this
+ * layer only records when the last scroll happened and reads that flag.
+ */
 export function noteUiScrollActivity(): void {
   lastUiScrollAt = Date.now()
-  if (typeof document === 'undefined' || typeof window === 'undefined') return
-  document.documentElement.dataset.hcScrolling = '1'
-  window.clearTimeout(uiScrollClassTimer)
-  uiScrollClassTimer = window.setTimeout(() => {
-    delete document.documentElement.dataset.hcScrolling
-  }, UI_SCROLL_YIELD_MS)
 }
 
 export function shouldYieldChainIngestToUi(): boolean {

@@ -117,6 +117,36 @@ describe('composeActivityRecords', () => {
     expect(records).toHaveLength(4)
   })
 
+  it('keeps a self-send as the two facts it is, not one joined record', () => {
+    const records = composeActivityRecords([
+      entry({ method: 'send', kind: 'spent', sats: 5_000, txid: TXID }),
+      entry({ method: 'receive', kind: 'earned', sats: 5_000, txid: TXID }),
+    ])
+    expect(records).toHaveLength(2)
+    expect(records.map((record) => record.subject.method)).toEqual([
+      'send',
+      'receive',
+    ])
+    // Neither leg may be demoted to the other's price.
+    expect(records.every((record) => record.money === null)).toBe(true)
+  })
+
+  it('still folds same-direction legs of an ordinary transaction', () => {
+    const records = composeActivityRecords([
+      entry({
+        method: 'send-collectable',
+        kind: 'spent',
+        sats: 1,
+        txid: TXID,
+        item: { name: 'Fox', origin: `${OTHER_TXID}_0`, outpoint: `${OTHER_TXID}.0` },
+      }),
+      entry({ method: 'send', kind: 'spent', sats: 4_000, txid: TXID }),
+    ])
+    expect(records).toHaveLength(1)
+    expect(records[0]!.subject.method).toBe('send-collectable')
+    expect(records[0]!.money?.sats).toBe(4_000)
+  })
+
   it('leaves entries without a txid as their own records', () => {
     const records = composeActivityRecords([
       entry({ method: 'connect', kind: 'event', sats: 0 }),
