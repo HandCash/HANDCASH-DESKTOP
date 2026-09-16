@@ -118,7 +118,6 @@ export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Session logs'
   if (id === 'wallet-health') return 'Wallet health'
-  if (id === 'index-packs') return 'Index packs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'change-password') return 'Unlock'
@@ -319,12 +318,6 @@ export function SettingsPanel() {
 
       <SettingsSection title="Support" part="support">
         <ul className="settings-list">
-          <SettingsNavRow
-            label="Index packs"
-            description="Cached BRC-230 catalog mirrors"
-            icon={settingIconFor('index-packs').icon}
-            onClick={() => openSetting('index-packs')}
-          />
           <SettingsNavRow
             label="Wallet health"
             description={

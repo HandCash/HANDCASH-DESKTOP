@@ -13,7 +13,6 @@ export type WalletProgressKind =
   | 'refresh'
   | 'phrase-import'
   | 'one-sat-import'
-  | 'index-expansion'
 
 export type WalletProgressStatus =
   | 'idle'
@@ -135,7 +134,6 @@ export function walletProgressLabel(
     if (snapshot.phase === 'importing-items') return 'Importing'
     return 'Syncing'
   }
-  if (snapshot.kind === 'index-expansion') return 'Downloading'
   return 'Working'
 }
 

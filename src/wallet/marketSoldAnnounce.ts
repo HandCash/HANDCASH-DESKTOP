@@ -11,15 +11,14 @@
  * is logged and swallowed. Never gate a purchase on it.
  */
 
-import { dropStoredIndexEntriesByOutpoint } from './indexExpansionStore'
-import {
-  HANDCASH_MARKET_CATALOG_MANIFEST,
-  type IndexExpansionManifest,
-} from './indexExpansionTypes'
+import { PUBLIC_BRC_CLOUD_ORIGIN } from './walletConfig'
 import {
   chooseMarketSoldAnnouncePath,
   type MarketSoldAnnouncePath,
 } from './marketSettlementPath'
+
+/** Overlay topic for 1Sat market listings. Independent of BRC-230 catalog packs. */
+const MARKET_OVERLAY_TOPIC = 'tm_1sat_market'
 
 /**
  * The overlay re-serializes the context and refuses any other byte encoding
@@ -76,14 +75,14 @@ export async function announceMarketSold(
     buyerIdentityKey: string
     /** Wallet payment address used by settlement output 0. */
     buyerAddress?: string
-    manifest?: IndexExpansionManifest
+    overlayBaseUrl?: string
+    topic?: string
   },
   fetchImpl: typeof fetch = fetch,
 ): Promise<MarketSoldAnnounceResult> {
-  const manifest = args.manifest ?? HANDCASH_MARKET_CATALOG_MANIFEST
   const path = chooseMarketSoldAnnouncePath({
-    host: manifest.overlayBaseUrl,
-    topic: manifest.topic,
+    host: args.overlayBaseUrl ?? PUBLIC_BRC_CLOUD_ORIGIN,
+    topic: args.topic ?? MARKET_OVERLAY_TOPIC,
     buyerIdentityKey: args.buyerIdentityKey,
     settlementBeefBytes: args.settlementBeef.length,
   })
@@ -100,9 +99,8 @@ export async function announceMarketSold(
 }
 
 /**
- * De-list a sold offer everywhere the wallet can reach: the local catalog cache
- * first (instant), then the overlay (authoritative for every other client).
- * Both roles call this — whoever gets there first wins, and `409` is success.
+ * De-list a sold offer on the overlay so other clients stop seeing it.
+ * `409` means another party already de-listed it — treat that as success.
  */
 export function clearSoldListingFromMarket(args: {
   settlementBeef: number[]
@@ -111,13 +109,7 @@ export function clearSoldListingFromMarket(args: {
   /** Item + offer outpoints of the listing that just settled. */
   listingOutpoints: string[]
 }): void {
-  const dropped = dropStoredIndexEntriesByOutpoint(
-    HANDCASH_MARKET_CATALOG_MANIFEST.packId,
-    args.listingOutpoints,
-  )
-  if (dropped > 0) {
-    console.info(`[market-sold] dropped ${dropped} cached catalog row(s)`)
-  }
+  void args.listingOutpoints
   void announceMarketSold({
     settlementBeef: args.settlementBeef,
     buyerIdentityKey: args.buyerIdentityKey,

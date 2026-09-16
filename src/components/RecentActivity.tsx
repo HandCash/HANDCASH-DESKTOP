@@ -123,12 +123,6 @@ import { getActiveWallet } from '../wallet/session'
 import { EmptyState } from './EmptyState'
 import { AppAvatar } from './AppAvatar'
 import { appDisplayName } from '../wallet/appIdentity'
-import {
-  getWalletProgress,
-  subscribeWalletProgress,
-  walletProgressDetail,
-  type WalletProgress,
-} from '../wallet/walletProgress'
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24
@@ -290,7 +284,6 @@ function HistoryRow({
   showWhen,
   newest = false,
   verifying = false,
-  indexProgress = null,
   amountEntry = null,
   assets = [],
 }: {
@@ -300,7 +293,6 @@ function HistoryRow({
   showWhen: boolean
   newest?: boolean
   verifying?: boolean
-  indexProgress?: WalletProgress | null
   /** Money leg of the same transaction — a purchase price, sale proceeds. */
   amountEntry?: ActivityEntry | null
   /** Further distinct assets moved by the same transaction. */
@@ -325,12 +317,6 @@ function HistoryRow({
     (entry.method === 'index-install' || entry.method === 'index-sync')
   const utxoHeal = isUtxoHealActivity(entry)
   const utxoHealDone = utxoHeal && !failed && entry.sats > 0
-  const indexDetail =
-    indexInstall &&
-    indexProgress?.kind === 'index-expansion' &&
-    indexProgress.status === 'running'
-      ? walletProgressDetail(indexProgress)
-      : null
   const showPending =
     pending && (spent || !inventoryProven || indexInstall)
   const listing = entry.method === 'market-list'
@@ -382,9 +368,7 @@ function HistoryRow({
   const subtitle =
     failed && failureReason
       ? failureReason
-      : indexDetail
-        ? indexDetail
-        : event
+      : event
             ? entry.origin !== WALLET_ACTIVITY_ORIGIN
               ? entry.origin
               : null
@@ -790,12 +774,10 @@ export function ActivityFeed({
   const [phraseImport, setPhraseImport] = useState(() =>
     peekPhraseItemMigrateCursor()
   )
-  const [indexProgress, setIndexProgress] = useState(() => getWalletProgress())
   const listRef = useRef<HTMLUListElement>(null)
   const scrolling = useScrollIdle(listRef)
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), [])
-  useEffect(() => subscribeWalletProgress(setIndexProgress), [])
   const visiblePhraseImport = phraseImportBelongsToWallet(
     phraseImport,
     getActiveWallet()?.identityKey
@@ -999,7 +981,6 @@ export function ActivityFeed({
               (isPendingActivity(record.subject) ||
                 isOutpointVerifying(record.subject.item?.outpoint, verification))
             }
-            indexProgress={indexProgress}
           />
         ))}
         {windowed.padEnd > 0 ? (

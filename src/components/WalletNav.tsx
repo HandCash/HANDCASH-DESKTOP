@@ -67,7 +67,6 @@ import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { WalletHealthPanel } from './settings/WalletHealthPanel'
-import { IndexPacksSettingsPanel } from './settings/IndexPacksSettingsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
 import { UnlockSettingsPanel } from './UnlockSettingsPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
@@ -655,9 +654,6 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'setting' && stageChild.settingId === 'logs' && <LogViewerPanel />}
               {stageChild.type === 'setting' && stageChild.settingId === 'wallet-health' && (
                 <WalletHealthPanel />
-              )}
-              {stageChild.type === 'setting' && stageChild.settingId === 'index-packs' && (
-                <IndexPacksSettingsPanel />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />

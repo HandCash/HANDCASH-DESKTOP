@@ -14,35 +14,18 @@ import {
   getTokenAccess,
   requestItemViewApproval,
   requestTokenViewApproval,
-  requestIndexInstallApproval,
-  requestIndexReadApproval,
-  requestIndexSyncApproval,
-  requestOverlayLookupApproval,
-  filterIndexOutputsForOrigin,
 } from './permissions'
 import {
   isBsv21ReceiveArgs,
   isItemBasket,
   isItemReceiveArgs,
   isItemSpendArgs,
-  isThirdPartyOriginator,
   isTokenViewBasket,
   p1SatSpendIds,
   prepareItemBasketArgs,
   type ItemViewRequest,
   type TokenViewRequest,
 } from './itemAccess'
-import { isIndexBasket, prepareIndexBasketArgs, type IndexReadRequest } from './indexAccess'
-import {
-  installIndexExpansion,
-  listIndexExpansionEntries,
-  listIndexExpansions,
-  listIndexBasketOutputs,
-  overlayLookup,
-  removeIndexExpansion,
-  syncIndexExpansion,
-} from './indexExpansion'
-import { IndexManifestError } from './indexExpansionManifest'
 import {
   extractInternalizedSats,
   extractSatsFromArgs,
@@ -138,6 +121,33 @@ import {
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
 const BRC_ACTION_PREFLIGHT_TIMEOUT_MS = 10_000
+
+/** BRC-230 catalog packs live on `feature/brc-230-index-expansion`, not this release. */
+const RETIRED_INDEX_EXPANSION_METHODS = new Set([
+  'installIndexExpansion',
+  'listIndexExpansions',
+  'removeIndexExpansion',
+  'syncIndexExpansion',
+  'listIndexExpansionEntries',
+  'overlayLookup',
+])
+
+function isRetiredIndexBasket(basket: unknown): boolean {
+  if (typeof basket !== 'string') return false
+  const t = basket.trim().toLowerCase()
+  return t === 'index' || t.startsWith('p index ')
+}
+
+function indexExpansionUnavailable(): { status: number; body: string } {
+  return {
+    status: 404,
+    body: JSON.stringify({
+      status: 'error',
+      code: 'INDEX_EXPANSION_UNAVAILABLE',
+      description: 'Index expansion packs are not in this wallet release.',
+    }),
+  }
+}
 
 async function assertBrcActionFundsAvailable(amountSats: number): Promise<void> {
   if (!(amountSats > 0)) return
@@ -494,28 +504,6 @@ async function dispatchWalletMethod(
       return getClaimedCloudHandleVerified()
     case 'clearClaimedCloudHandle':
       return clearClaimedCloudHandlePayload()
-    case 'installIndexExpansion':
-      return installIndexExpansion({
-        body: (args ?? {}) as Parameters<typeof installIndexExpansion>[0]['body'],
-        origin: originator,
-      })
-    case 'listIndexExpansions':
-      return listIndexExpansions()
-    case 'removeIndexExpansion':
-      return removeIndexExpansion((args ?? {}) as { packId: string })
-    case 'syncIndexExpansion':
-      return syncIndexExpansion({
-        body: (args ?? {}) as Parameters<typeof syncIndexExpansion>[0]['body'],
-        origin: originator,
-      })
-    case 'listIndexExpansionEntries':
-      return listIndexExpansionEntries(
-        (args ?? {}) as Parameters<typeof listIndexExpansionEntries>[0],
-      )
-    case 'overlayLookup':
-      return overlayLookup({
-        body: (args ?? {}) as Parameters<typeof overlayLookup>[0]['body'],
-      })
     case 'getVersion':
       return wallet.getVersion({})
     case 'getNetwork':
@@ -537,13 +525,6 @@ async function dispatchWalletMethod(
     case 'internalizeAction':
       return wallet.internalizeAction((args ?? {}) as never, originator)
     case 'listOutputs': {
-      const basket =
-        args && typeof args === 'object' && !Array.isArray(args)
-          ? (args as { basket?: unknown }).basket
-          : undefined
-      if (isIndexBasket(basket)) {
-        return listIndexBasketOutputs(args)
-      }
       const { listMarketBasketOutputs } = await import('./marketInventory')
       return listMarketBasketOutputs(wallet, (args ?? {}) as never)
     }
@@ -635,6 +616,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   if (!method || method === 'manifest.json' || method === 'favicon.ico') {
     return { status: 404, body: JSON.stringify({ status: 'error', description: 'Not found' }) }
   }
+  if (RETIRED_INDEX_EXPANSION_METHODS.has(method)) {
+    return indexExpansionUnavailable()
+  }
 
   const active = getActiveWallet()
   if (!active) {
@@ -652,7 +636,6 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   let args: unknown = undefined
   let itemViewRequest: ItemViewRequest | undefined
   let tokenViewRequest: TokenViewRequest | undefined
-  let indexReadRequest: IndexReadRequest | undefined
   if (event.body) {
     try {
       args = JSON.parse(event.body)
@@ -679,20 +662,6 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   // Discovery / silent auth / connect prompt: skip basket rewrite. Do not
   // queue getVersion or isAuthenticated behind runExclusiveSpend.
   if (!isPublicMethod(method) && !isSilentAuthMethod(method) && method !== 'waitForAuthentication') {
-    const indexPrepared = prepareIndexBasketArgs(args)
-    if (indexPrepared.error) {
-      return {
-        status: 400,
-        body: JSON.stringify({
-          status: 'error',
-          code: indexPrepared.error.code,
-          description: indexPrepared.error.description,
-        }),
-      }
-    }
-    args = indexPrepared.args
-    indexReadRequest = indexPrepared.indexReadRequest
-
     const prepared = prepareItemBasketArgs(args)
     if (prepared.error) {
       return {
@@ -806,71 +775,6 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
     }
   }
 
-  if (method === 'installIndexExpansion') {
-    const installDecision = await requestIndexInstallApproval(originator, args)
-    if (installDecision !== 'allow') {
-      return {
-        status: 403,
-        body: JSON.stringify({
-          status: 'error',
-          code: 'INDEX_INSTALL_DENIED',
-          description: 'You denied installing this catalog pack.',
-        }),
-      }
-    }
-    await yieldForPermissionProjection()
-  }
-
-  if (method === 'syncIndexExpansion') {
-    const syncDecision = await requestIndexSyncApproval(originator, args)
-    if (syncDecision !== 'allow') {
-      return {
-        status: 403,
-        body: JSON.stringify({
-          status: 'error',
-          code: 'INDEX_SYNC_DENIED',
-          description: 'You denied syncing this catalog pack.',
-        }),
-      }
-    }
-    await yieldForPermissionProjection()
-  }
-
-  if (method === 'listIndexExpansionEntries') {
-    const body =
-      args && typeof args === 'object' && !Array.isArray(args)
-        ? (args as { packId?: unknown; live?: unknown })
-        : {}
-    const packId = String(body.packId ?? '').trim()
-    const readDecision = await requestIndexReadApproval(originator, packId)
-    if (readDecision !== 'allow') {
-      return {
-        status: 403,
-        body: JSON.stringify({
-          status: 'error',
-          code: 'INDEX_READ_DENIED',
-          description: 'You denied reading this catalog cache.',
-        }),
-      }
-    }
-    await yieldForPermissionProjection()
-  }
-
-  if (method === 'overlayLookup') {
-    const lookupDecision = await requestOverlayLookupApproval(originator, args)
-    if (lookupDecision !== 'allow') {
-      return {
-        status: 403,
-        body: JSON.stringify({
-          status: 'error',
-          code: 'OVERLAY_LOOKUP_DENIED',
-          description: 'You denied live overlay lookup.',
-        }),
-      }
-    }
-    await yieldForPermissionProjection()
-  }
-
   if (isActionMethod(method)) {
     if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
       try {
@@ -940,6 +844,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         body: JSON.stringify({ outputs: [], totalOutputs: 0 }),
       }
     }
+    if (isRetiredIndexBasket(basket)) {
+      return indexExpansionUnavailable()
+    }
     if (isTokenViewBasket(basket)) {
       const viewDecision = await requestTokenViewApproval(originator, args, tokenViewRequest)
       if (viewDecision !== 'allow') {
@@ -961,19 +868,6 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
             status: 'error',
             code: 'ITEM_VIEW_DENIED',
             description: 'You denied this app access to view collectables.',
-          }),
-        }
-      }
-    } else if (isIndexBasket(basket) && isThirdPartyOriginator(originator)) {
-      const packId = indexReadRequest?.packId ?? ''
-      const readDecision = await requestIndexReadApproval(originator, packId)
-      if (readDecision !== 'allow') {
-        return {
-          status: 403,
-          body: JSON.stringify({
-            status: 'error',
-            code: 'INDEX_READ_DENIED',
-            description: 'You denied reading this catalog cache.',
           }),
         }
       }
@@ -1124,12 +1018,6 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         if (isMarketListingOrigin(originator)) {
           result = await addMarketOriginVerdictsAsync(result)
         }
-      } else if (isIndexBasket(basket)) {
-        result = filterIndexOutputsForOrigin(
-          originator,
-          result,
-          indexReadRequest?.packId,
-        )
       }
     }
 
@@ -1252,9 +1140,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
     const code =
       error instanceof MarketListingError
         ? error.code
-        : error instanceof IndexManifestError
-          ? 'INVALID_INDEX_MANIFEST'
-          : flat.code
+        : flat.code
     return {
       status: 400,
       body: JSON.stringify({
