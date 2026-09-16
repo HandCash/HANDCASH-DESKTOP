@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.190] - 2026-09-16
+
+### Fixed
+
+- Restore yellow price-tag and dollar-sign action subscripts to listing,
+  cancellation, purchase, and received-item Activity rows and detail heroes.
+- Self-purchases no longer post the same settlement twice from buyer and seller
+  roles, removing the extra miner timeout from the purchase path.
+- Sold announcements include the active wallet payment address, allowing the
+  overlay to validate output 0 and remove the listing from the public catalog.
+
 ## [1.3.189] - 2026-09-16
 
 ### Fixed
