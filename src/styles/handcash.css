@@ -4931,13 +4931,12 @@ a.history-row-link:hover .history-tx-hint {
   background: #c9852a;
 }
 
+/* Market family shares the accent; the glyph, not the colour, names the action. */
 .history-action-badge.is-list,
-.history-action-badge.is-purchase {
-  background: #e8b84f;
-}
-
+.history-action-badge.is-cancel,
+.history-action-badge.is-purchase,
 .history-action-badge.is-sale {
-  background: #2da76f;
+  background: #e8b84f;
 }
 
 .history-action-badge.is-failed {

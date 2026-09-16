@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
 import {
   ActivityIcon,
   AppsIcon,
+  CancelListingIcon,
   CollectablesIcon,
   FilterIcon,
   FriendsIcon,
@@ -11,6 +19,7 @@ import {
   PurchaseIcon,
   ReceiveIcon,
   SendIcon,
+  SoldIcon,
   FireIcon,
   RefreshIcon,
   WarningIcon,
@@ -30,7 +39,6 @@ import {
   getActivityWriteGeneration,
   isEventActivity,
   isItemActivity,
-  isMintTokenActivity,
   isBurnActivity,
   isTokenActivity,
   isPendingActivity,
@@ -56,6 +64,10 @@ import {
   shouldAnnounceActivity,
 } from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
+import {
+  activityActionMark,
+  type ActivityActionMark,
+} from '../wallet/activityActionMark'
 import { composeActivityRecords } from '../wallet/activityRecords'
 import { subscribeCollectables } from '../wallet/collectables'
 import { isItemProven } from '../wallet/provenCache'
@@ -236,76 +248,37 @@ function formatWhen(at: number): string {
   return `${years} years ago`
 }
 
-/** Subscript send/receive/mint/burn/market mark shared by the Activity list and detail hero. */
+/**
+ * One glyph per action. The `Record` is exhaustive by type, so a new action mark
+ * cannot ship reusing another action's icon by omission.
+ */
+const ACTION_GLYPHS: Record<
+  ActivityActionMark,
+  { label: string; glyph: ReactNode }
+> = {
+  failed: { label: 'Failed', glyph: <WarningIcon size={9} /> },
+  list: { label: 'Listing', glyph: <ListingIcon size={8} /> },
+  cancel: { label: 'Cancel listing', glyph: <CancelListingIcon size={9} /> },
+  sale: { label: 'Sold', glyph: <SoldIcon size={10} /> },
+  purchase: { label: 'Purchase', glyph: <PurchaseIcon size={9} /> },
+  burn: { label: 'Burn', glyph: <FireIcon size={8} /> },
+  mint: { label: 'Mint', glyph: <MintIcon size={8} /> },
+  send: { label: 'Send', glyph: <SendIcon size={6.75} /> },
+  receive: { label: 'Receive', glyph: <ReceiveIcon size={9} /> },
+}
+
+/** Subscript action mark shared by the Activity list and the detail hero. */
 export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
-  // Listing/cancel rows are deliberately recorded as wallet events, but they
-  // still use the same visual action subscript as transaction rows.
-  const marketEvent =
-    entry.method === 'market-list' || entry.method === 'market-cancel'
-  if (isEventActivity(entry) && !marketEvent) return null
-  const spent = entry.kind === 'spent'
-  const minted = isMintTokenActivity(entry)
-  const burned = isBurnActivity(entry)
-  const failed = isFailedActivity(entry)
-  const listed = entry.method === 'market-list' || entry.method === 'market-cancel'
-  const sold = entry.method === 'market-sale'
-  const purchased =
-    entry.method === 'market-purchase' || entry.method === 'market-purchase-receive'
-  const badgeKind = failed
-    ? 'failed'
-    : listed
-    ? 'list'
-    : sold
-    ? 'sale'
-    : purchased
-    ? 'purchase'
-    : burned
-    ? 'burn'
-    : minted
-    ? 'mint'
-    : spent
-    ? 'send'
-    : 'receive'
-  const badgeLabel = failed
-    ? 'Failed'
-    : entry.method === 'market-cancel'
-    ? 'Cancel listing'
-    : listed
-    ? 'Listing'
-    : sold
-    ? 'Sold'
-    : purchased
-    ? 'Purchase'
-    : burned
-    ? 'Burn'
-    : minted
-    ? 'Mint'
-    : spent
-    ? 'Send'
-    : 'Receive'
+  const mark = activityActionMark(entry)
+  if (!mark) return null
+  const { label, glyph } = ACTION_GLYPHS[mark]
   return (
     <span
-      className={`history-action-badge is-${badgeKind}`}
-      aria-label={badgeLabel}
-      title={badgeLabel}
+      className={`history-action-badge is-${mark}`}
+      aria-label={label}
+      title={label}
     >
-      {failed ? (
-        <WarningIcon size={9} />
-      ) : listed ? (
-        <ListingIcon size={8} />
-      ) : sold ? (
-        <ListingIcon size={8} />
-      ) : purchased ? (
-        <PurchaseIcon size={9} />
-      ) : burned ? (
-        <FireIcon size={8} />
-      ) : minted ? (
-        <MintIcon size={8} />
-      ) : spent ? (
-        <SendIcon size={6.75} />
-      ) : (
-        <ReceiveIcon size={9} />
-      )}
+      {glyph}
     </span>
   )
 }

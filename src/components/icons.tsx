@@ -56,6 +56,24 @@ export function ListingIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `label_off` (market listing withdrawn) */
+export function CancelListingIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m3.25 2.75 17 17L19 21l-2-2H5c-1.1 0-2-.9-2-2V7c0-.55.23-1.05.59-1.41L2 4l1.25-1.25zM22 12l-4.37-6.16C17.27 5.33 16.67 5 16 5H8l11 11 3-4z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `local_atm` (market sale settled — cash collected) */
+export function SoldIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M11 17h2v-1h1c.55 0 1-.45 1-1v-3c0-.55-.45-1-1-1h-3v-1h4V8h-2V7h-2v1h-1c-.55 0-1 .45-1 1v3c0 .55.45 1 1 1h3v1H9v2h2v1zm9-13H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4V6h16v12z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `attach_money` (market purchase) */
 export function PurchaseIcon(props: IconProps) {
   return (

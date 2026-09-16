@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.196] - 2026-09-16
+
+### Changed
+
+- Every Activity action now owns its own mark. A sale no longer borrows the
+  listing's price tag: listing is a tag, a withdrawn listing is a struck tag, a
+  sale is a banknote, a purchase is a dollar sign, and all four wear the market
+  accent — the glyph names the action, not the colour.
+- The action vocabulary moved to `activityActionMark.ts` and the icon table is
+  exhaustive by type, so a new action cannot ship wearing another one's icon.
+
 ## [1.3.195] - 2026-09-16
 
 ### Changed
