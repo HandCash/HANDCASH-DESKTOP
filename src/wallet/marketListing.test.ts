@@ -46,6 +46,7 @@ const listingHarness = vi.hoisted(() => ({
   listed: null as null | Record<string, unknown>,
   address: '',
   identityKey: '',
+  listOutputsCalls: [] as Array<{ basket?: string; tags?: string[]; limit?: number }>,
 }))
 
 vi.mock('./session', () => ({
@@ -55,9 +56,19 @@ vi.mock('./session', () => ({
     address: listingHarness.address,
     rootKeyHex: '1'.padStart(64, '0'),
     wallet: {
-      listOutputs: async ({ basket }: { basket?: string }) => ({
-        outputs: basket === 'bsv21' && listingHarness.listed ? [listingHarness.listed] : [],
-      }),
+      listOutputs: async (query: {
+        basket?: string
+        tags?: string[]
+        limit?: number
+      }) => {
+        listingHarness.listOutputsCalls.push(query)
+        return {
+          outputs:
+            query.basket === 'bsv21' && listingHarness.listed
+              ? [listingHarness.listed]
+              : [],
+        }
+      },
       createAction: listingHarness.createAction,
       abortAction: async () => ({}),
     },
@@ -346,8 +357,47 @@ describe('162 market list createAction lock', () => {
       throw new Error('stop-after-createAction')
     })
     listingHarness.listed = null
+    listingHarness.listOutputsCalls.length = 0
     listingHarness.address = seller.toAddress()
     listingHarness.identityKey = seller.toPublicKey().toString()
+  })
+
+  it('reads the held tip by origin tag instead of scanning the whole basket', async () => {
+    const knownTip = `${'be'.repeat(32)}_1`
+    const knownOrigin = `${'bf'.repeat(32)}_0`
+    rememberProvenVerdict(knownTip.replace('_', '.'), {
+      tier: 'brc150',
+      origin: knownOrigin,
+      path: [knownTip, knownOrigin],
+      verifiedAt: Date.now(),
+    })
+    listingHarness.listed = {
+      outpoint: knownTip.replace('_', '.'),
+      satoshis: 1,
+      lockingScript: buildBsv21ValueLock({
+        tokenId,
+        amount: 60n,
+        address: seller.toAddress(),
+      }),
+      tags: ['bsv21', `bsv21:${tokenId}`, 'amt:60'],
+      customInstructions: JSON.stringify({
+        p: 'bsv-20',
+        op: 'transfer',
+        id: tokenId,
+        amt: '60',
+      }),
+    }
+    await expect(
+      createMarketListingAdvert({ outpoint: knownTip, priceSats: 100 }),
+    ).rejects.toThrow(/stop-after-createAction/)
+    const first = listingHarness.listOutputsCalls[0]!
+    expect(first.tags).toEqual([`origin:${knownOrigin.replace('_', '.')}`])
+    expect(first.limit).toBe(25)
+    expect(
+      listingHarness.listOutputsCalls.some(
+        (call) => !call.tags?.length && (call.limit ?? 0) > 1_000,
+      ),
+    ).toBe(false)
   })
 
   it('proves a fresh 162 tip from binary + 163 without BRC-150', () => {

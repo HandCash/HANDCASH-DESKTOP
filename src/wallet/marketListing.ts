@@ -921,9 +921,26 @@ function parseCustomInstructions(raw: unknown): Record<string, unknown> {
   }
 }
 
+/**
+ * Dotted origin for a held tip, read from local caches only. Items are tagged
+ * `origin:<txid.vout>` on every ingest path, so a known origin turns the basket
+ * read below into a one-row query.
+ */
+function knownItemOriginTag(outpoint: string): string | null {
+  const target = normalizeOutpoint(outpoint)
+  const cached = getCachedCollectables().find(
+    (item) => normalizeOutpoint(item.outpoint) === target,
+  )
+  const origin = cached?.origin ?? getProvenVerdict(target)?.origin
+  if (!origin) return null
+  const dotted = origin.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+  return /^[0-9a-f]{64}\.\d+$/.test(dotted) ? dotted : null
+}
+
 async function loadListedOutput(
   outpoint: string,
   preferredAsset?: 'ordinal' | 'bsv21',
+  mark: (phase: string) => void = () => {},
 ) {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
@@ -951,7 +968,34 @@ async function loadListedOutput(
     }
     return undefined
   }
-  let output = await findInBaskets()
+  // Reading a whole basket with locking scripts *and* remittance costs seconds
+  // once an account holds hundreds of items — remittance carries BRC-150 BEEF.
+  // Narrow by the item's own origin tag first; the scan stays as the fallback
+  // for tips whose origin is not cached yet.
+  const findByOriginTag = async (): Promise<Listed | undefined> => {
+    const originTag = knownItemOriginTag(outpoint)
+    if (!originTag) return undefined
+    for (const basket of baskets) {
+      const listed = await active.wallet.listOutputs({
+        ...query,
+        basket,
+        limit: 25,
+        tags: [`origin:${originTag}`],
+        tagQueryMode: 'all' as const,
+      })
+      const hit = (listed.outputs ?? []).find(
+        (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint,
+      )
+      if (hit) return hit
+    }
+    return undefined
+  }
+  // Liveness is a network probe and the basket read is local storage. Starting
+  // both together means a list waits for the slower one, not for their sum.
+  const liveness = tipStillUnspentOnChain(active, outpoint).catch(() => null)
+  const narrowed = await findByOriginTag()
+  mark(`basket read ${narrowed ? 'narrowed by origin tag' : 'full scan'}`)
+  let output = narrowed ?? (await findInBaskets())
   if (!output) {
     // Prior Arcade hard-reject can leave the tip spendable=false while still on
     // chain. Revive once, then rescan — avoid probing explorers on every list.
@@ -972,7 +1016,8 @@ async function loadListedOutput(
   }
   // Basket rows lag the chain. A tip still listed locally but spent elsewhere
   // is what produces "Already spent" on list after a friend-send / prior list.
-  const live = await tipStillUnspentOnChain(active, outpoint)
+  const live = await liveness
+  mark(`tip liveness probe ${live === false ? 'spent' : live === true ? 'live' : 'unknown'}`)
   if (live === false) {
     await retireSpentListingTip(active, outpoint)
     throw new MarketListingError(
@@ -1447,16 +1492,24 @@ export async function createMarketListingAdvert(
   }
   // Serialize with consolidate / other spends so fee inputs are not raced, and
   // so a prior failed list's reserved tip can be aborted before we scan.
+  const requestedAt = Date.now()
   return runExclusiveSpend(
-    () => createMarketListingAdvertExclusive(args),
+    () => createMarketListingAdvertExclusive(args, requestedAt),
     undefined,
     { promote: false },
   )
 }
 
 async function createMarketListingAdvertExclusive(
-  args: CreateMarketListingArgs
+  args: CreateMarketListingArgs,
+  requestedAt: number = Date.now(),
 ): Promise<MarketListingPostPayload> {
+  // Same phase timing the purchase path logs: a slow list has to name which
+  // phase paid for it (queue wait, basket read, BRC-150 rebuild, miner ack).
+  const mark = (phase: string) => {
+    console.info(`[market-list] +${Date.now() - requestedAt}ms ${phase}`)
+  }
+  mark('spend region acquired')
   const outpoint = normalizeOutpoint(args.outpoint)
   let listingOutpoint = outpoint
   let itemTxid = listingOutpoint.slice(0, 64)
@@ -1470,12 +1523,14 @@ async function createMarketListingAdvertExclusive(
   const activeEarly = getActiveWallet()
   if (!activeEarly) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
   await prepareMarketListingSpend(activeEarly)
+  mark('reservations cleared')
   const preferred =
     args.assetType === 'bsv21' || args.assetType === 'ordinal'
       ? args.assetType
       : undefined
   const { active, output, assetType, tokenId, amt: classifiedAmt } =
-    await loadListedOutput(outpoint, preferred)
+    await loadListedOutput(outpoint, preferred, mark)
+  mark(`item loaded asset=${assetType}`)
   const priceSats = Math.trunc(Number(args.priceSats))
   if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
     throw new Error('Listing price must be at least 20 satoshis')
@@ -1672,6 +1727,7 @@ async function createMarketListingAdvertExclusive(
       allowOversized: true,
       ...(verdict?.path?.length ? { path: verdict.path } : {}),
     })
+    mark(`brc-150 rebuilt built=${String(Boolean(built))} trusted=${String(trustProven)}`)
     const seed = built ?? remittanceProvenance
     if (!seed) {
       throw new MarketListingError(
@@ -1689,6 +1745,9 @@ async function createMarketListingAdvertExclusive(
             provenance: seed,
             getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
           })
+    mark(
+      `brc-150 publish package hydrated=${String(Boolean(complete))} outstanding=${outstanding?.length ?? 0}`,
+    )
     const chosen = choosePublishableProvenance([complete, seed])
     if (!chosen) {
       throw new MarketListingError(
@@ -1706,6 +1765,7 @@ async function createMarketListingAdvertExclusive(
         `BRC-150 verification failed: ${verified.reason ?? 'unknown reason'}`
       )
     }
+    mark('brc-150 publish package verified')
     provenance = chosen
   }
   const digest = hashMarketProvenance(provenance)
@@ -1755,6 +1815,7 @@ async function createMarketListingAdvertExclusive(
   const listingBeef =
     splitListingBeef ??
     (await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true }))
+  mark('item beef ready')
   if (listedAsset === 'bsv21' && lockTip?.icon) {
     await mergeIconTxIntoBeef(active, listingBeef, lockTip.icon)
   }
@@ -1848,6 +1909,7 @@ async function createMarketListingAdvertExclusive(
     if (!signable) throw new Error('Market listing did not return a signable action')
     reference = signable.reference
     chart.send({ type: 'STAGED', reference })
+    mark('action staged')
     const beef = Beef.fromBinary(signable.tx)
     const vin0Vout = Number(listingOutpoint.split('_')[1])
     const tx = beef.txs.find((entry) =>
@@ -1932,11 +1994,15 @@ async function createMarketListingAdvertExclusive(
         'Listing was signed but wallet processing did not return a transaction.'
       )
     }
+    mark(`signed ${signedTxid.slice(0, 12)}`)
     // Accept on Arcade contact / non-immediate-fail — do not require SPV
     // "valid on chain main" before the listing is considered broadcast.
     const mined = await submitAtomicBeefToMiners(txid, atomic, {
       flow: 'market_listing',
     })
+    mark(
+      `miner answered submitted=${String(mined.submitted)} confirmed=${String(mined.confirmed)}`,
+    )
     if (!mined.submitted && !mined.confirmed) {
       chart.send({ type: 'RECOVER' })
       throw new MarketListingError(
@@ -2004,6 +2070,7 @@ async function createMarketListingAdvertExclusive(
         feePayToAddress: fields.feePayTo,
         privateKey: offerKey,
       })
+      mark('settlement unlocks pre-signed')
     } catch (err) {
       console.warn(
         '[market] list-time settlement pre-sign failed',
@@ -2034,6 +2101,7 @@ async function createMarketListingAdvertExclusive(
       )
     }
     chart.send({ type: 'COMMITTED' })
+    mark('done — advert ready to publish')
     scheduleHistoryBackupPush('market-list')
     rememberGhostTx(txid)
     const identity = listedActivityIdentity({

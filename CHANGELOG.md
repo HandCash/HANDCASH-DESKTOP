@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.193] - 2026-09-16
+
+### Fixed
+
+- Read the listed tip by its origin tag instead of scanning the whole 1sat
+  basket with locking scripts and remittance, and probe tip liveness alongside
+  that read rather than after it.
+
+### Added
+
+- Phase timings for a market listing (`[market-list] +Nms …`) covering spend
+  queue wait, basket read, liveness probe, BRC-150 rebuild and publish package,
+  signing, and miner acknowledgement.
+
 ## [1.3.192] - 2026-09-16
 
 ### Fixed
