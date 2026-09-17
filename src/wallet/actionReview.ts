@@ -2,58 +2,58 @@
  * Handle toolbox `WERR_REVIEW_ACTIONS` (undelayed create/sign failures) and
  * local failed actions that block later spends after ghost broadcasts.
  */
-import { getActiveWallet, type ActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from "./session";
 import {
   getSpendPriorityDepth,
   shouldYieldChainIngestToSpend,
-} from './walletCoordinator'
-import { txExistsOnChain } from './legacyScan'
-import { signedTxSpendConflictIsProven } from './arcadeSubmitGuard'
-import { healGhostSentItems } from './sentItemGuard'
-import { forgetOneSatImported } from './oneSatImportGuard'
-import { sweepChangeScripts } from './changeScriptFate'
+} from "./walletCoordinator";
+import { txExistsOnChain } from "./legacyScan";
+import { signedTxSpendConflictIsProven } from "./arcadeSubmitGuard";
+import { healGhostSentItems } from "./sentItemGuard";
+import { forgetOneSatImported } from "./oneSatImportGuard";
+import { sweepChangeScripts } from "./changeScriptFate";
 
 export type ReviewActionRow = {
-  txid?: string
-  status?: string
-  competingTxs?: string[]
-}
+  txid?: string;
+  status?: string;
+  competingTxs?: string[];
+};
 
 export type SendWithRow = {
-  txid?: string
-  status?: string
-}
+  txid?: string;
+  status?: string;
+};
 
 export function isReservedActionBatchError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
-    msg.includes('not reserved by an active action batch') ||
-    msg.includes('reserved by an active action batch')
-  )
+    msg.includes("not reserved by an active action batch") ||
+    msg.includes("reserved by an active action batch")
+  );
 }
 
-const SEND_CLEANUP_BUDGET_MS = 2_500
+const SEND_CLEANUP_BUDGET_MS = 2_500;
 
 async function withSendCleanupBudget<T>(
   label: string,
-  work: () => Promise<T>,
+  work: () => Promise<T>
 ): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       work(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error(`${label} timed out`)),
-          SEND_CLEANUP_BUDGET_MS,
-        )
+          SEND_CLEANUP_BUDGET_MS
+        );
       }),
-    ])
+    ]);
   } catch (err) {
-    console.warn(`[action-review] ${label} skipped`, err)
-    return null
+    console.warn(`[action-review] ${label} skipped`, err);
+    return null;
   } finally {
-    if (timer) clearTimeout(timer)
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -67,44 +67,43 @@ async function withSendCleanupBudget<T>(
  * createAction.
  */
 export async function releaseStuckNosends(
-  active?: ActiveWallet | null,
+  active?: ActiveWallet | null
 ): Promise<void> {
-  const wallet = (active ?? getActiveWallet())?.wallet
-  if (!wallet) return
-  const listed = await withSendCleanupBudget(
-    'list no-send actions',
-    () => wallet.listNoSendActions({ labels: [], limit: 100 }, false),
-  )
+  const wallet = (active ?? getActiveWallet())?.wallet;
+  if (!wallet) return;
+  const listed = await withSendCleanupBudget("list no-send actions", () =>
+    wallet.listNoSendActions({ labels: [], limit: 100 }, false)
+  );
   if (listed) {
-    let protectedRefs = new Set<string>()
+    let protectedRefs = new Set<string>();
     try {
-      const { protectedMarketActionReferences } = await import('./marketSettlement')
-      protectedRefs = protectedMarketActionReferences()
+      const { protectedMarketActionReferences } = await import(
+        "./marketSettlement"
+      );
+      protectedRefs = protectedMarketActionReferences();
     } catch {
       /* market module optional during early boot */
     }
     if (protectedRefs.size === 0) {
-      await withSendCleanupBudget(
-        'abort no-send actions',
-        () => wallet.listNoSendActions({ labels: [], limit: 100 }, true),
-      )
+      await withSendCleanupBudget("abort no-send actions", () =>
+        wallet.listNoSendActions({ labels: [], limit: 100 }, true)
+      );
     } else {
       for (const action of listed.actions ?? []) {
         const reference = String(
-          (action as { reference?: string }).reference ?? '',
-        ).trim()
-        if (!reference || protectedRefs.has(reference)) continue
+          (action as { reference?: string }).reference ?? ""
+        ).trim();
+        if (!reference || protectedRefs.has(reference)) continue;
         await withSendCleanupBudget(
           `abort no-send ${reference.slice(0, 12)}`,
-          () => wallet.abortAction({ reference }),
-        )
+          () => wallet.abortAction({ reference })
+        );
       }
     }
   }
-  await withSendCleanupBudget(
-    'abort action batch',
-    () => wallet.actionBatch.abort(),
-  )
+  await withSendCleanupBudget("abort action batch", () =>
+    wallet.actionBatch.abort()
+  );
 }
 
 /**
@@ -114,142 +113,148 @@ export async function releaseStuckNosends(
  */
 export async function abortReservedActionBatches(
   active?: ActiveWallet | null,
-  opts?: { budgetMs?: number },
+  opts?: { budgetMs?: number }
 ): Promise<number> {
-  const wallet = (active ?? getActiveWallet())?.wallet
-  if (!wallet) return 0
-  let aborted = 0
-  let timedOut = false
+  const wallet = (active ?? getActiveWallet())?.wallet;
+  if (!wallet) return 0;
+  let aborted = 0;
+  let timedOut = false;
 
   try {
-    if (await wallet.actionBatch.abort()) aborted += 1
+    if (await wallet.actionBatch.abort()) aborted += 1;
   } catch (err) {
-    console.warn('[action-review] actionBatch.abort skipped', err)
+    console.warn("[action-review] actionBatch.abort skipped", err);
   }
 
   const persist = async (): Promise<void> => {
     try {
-      const storage = wallet.storage
+      const storage = wallet.storage;
       const listed = await storage.runAsStorageProvider(async (sp) => {
-        const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
-        return sp.findExpiredActionBatches(future)
-      })
+        const future = new Date(Date.now() + 2 * 60 * 60 * 1000);
+        return sp.findExpiredActionBatches(future);
+      });
       // Promise.race does not cancel `persist()`. Without this fence, a slow
       // lookup can resume after the caller starts createAction and abort that
       // brand-new batch underneath signing.
-      if (timedOut) return
+      if (timedOut) return;
       for (const batch of listed ?? []) {
-        if (timedOut) return
+        if (timedOut) return;
         const batchId = String(
-          (batch as { batchId?: string }).batchId ?? '',
-        ).trim()
-        if (!batchId) continue
+          (batch as { batchId?: string }).batchId ?? ""
+        ).trim();
+        if (!batchId) continue;
         try {
-          const result = await storage.abortActionBatch(batchId)
-          if (result?.aborted !== false) aborted += 1
+          const result = await storage.abortActionBatch(batchId);
+          if (result?.aborted !== false) aborted += 1;
         } catch (err) {
-          console.warn('[action-review] abortActionBatch skipped', batchId, err)
+          console.warn(
+            "[action-review] abortActionBatch skipped",
+            batchId,
+            err
+          );
         }
       }
     } catch (err) {
-      console.warn('[action-review] persisted action-batch abort skipped', err)
+      console.warn("[action-review] persisted action-batch abort skipped", err);
     }
-  }
+  };
 
-  const budgetMs = opts?.budgetMs
-  if (typeof budgetMs === 'number' && budgetMs >= 0) {
-    let timer: ReturnType<typeof setTimeout> | undefined
+  const budgetMs = opts?.budgetMs;
+  if (typeof budgetMs === "number" && budgetMs >= 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         persist(),
         new Promise<void>((resolve) => {
           timer = setTimeout(() => {
-            timedOut = true
-            resolve()
-          }, budgetMs)
+            timedOut = true;
+            resolve();
+          }, budgetMs);
         }),
-      ])
+      ]);
     } finally {
-      if (timer) clearTimeout(timer)
+      if (timer) clearTimeout(timer);
     }
   } else {
-    await persist()
+    await persist();
   }
 
   if (aborted > 0) {
-    console.info(`[action-review] aborted ${aborted} reserved action batch(es)`)
+    console.info(
+      `[action-review] aborted ${aborted} reserved action batch(es)`
+    );
   }
-  return aborted
+  return aborted;
 }
 
 export type RepairFailedSpendOptions = {
   /** Pay for chain raw-tx lookups when rebuilding script-less change rows. */
-  fromChain?: boolean
+  fromChain?: boolean;
   /** Skip the paged change-script sweep (Activity clear / fast unblock). */
-  skipChangeSweep?: boolean
-}
+  skipChangeSweep?: boolean;
+};
 
 type ProvenTxReqRow = {
-  provenTxReqId: number
-  txid?: string
-  status?: string
-}
+  provenTxReqId: number;
+  txid?: string;
+  status?: string;
+};
 
 /**
  * Clear provenTxReq rows stuck in `doubleSpend` when HandCash Chain proves the
  * tx never landed. Arcade status alone leaves them forever (unknown → no unfail).
  */
 export async function releaseGhostDoubleSpendReqs(
-  active?: ActiveWallet | null,
+  active?: ActiveWallet | null
 ): Promise<number> {
-  const resolved = active ?? getActiveWallet()
-  const chain = resolved?.chain
-  const storage = resolved?.wallet?.storage
-  if (!chain || !storage?.runAsStorageProvider) return 0
+  const resolved = active ?? getActiveWallet();
+  const chain = resolved?.chain;
+  const storage = resolved?.wallet?.storage;
+  if (!chain || !storage?.runAsStorageProvider) return 0;
 
-  let cleared = 0
+  let cleared = 0;
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as {
         findProvenTxReqs?: (args: {
-          partial: { status: string }
-          paged: { limit: number; offset: number }
-        }) => Promise<ProvenTxReqRow[]>
+          partial: { status: string };
+          paged: { limit: number; offset: number };
+        }) => Promise<ProvenTxReqRow[]>;
         updateProvenTxReq?: (
           ids: number[],
-          update: { status: string },
-        ) => Promise<unknown>
-      }
-      if (typeof sp.findProvenTxReqs !== 'function') return
+          update: { status: string }
+        ) => Promise<unknown>;
+      };
+      if (typeof sp.findProvenTxReqs !== "function") return;
       const reqs = await sp.findProvenTxReqs({
-        partial: { status: 'doubleSpend' },
+        partial: { status: "doubleSpend" },
         paged: { limit: 50, offset: 0 },
-      })
-      const toInvalid: number[] = []
+      });
+      const toInvalid: number[] = [];
       for (const req of reqs ?? []) {
-        const txid = req.txid?.trim().toLowerCase()
-        if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue
-        const onChain = await txExistsOnChain(txid, chain).catch(() => null)
+        const txid = req.txid?.trim().toLowerCase();
+        if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue;
+        const onChain = await txExistsOnChain(txid, chain).catch(() => null);
         if (
           onChain === false &&
           (await signedTxSpendConflictIsProven({ txid, chain }))
         ) {
-          toInvalid.push(req.provenTxReqId)
+          toInvalid.push(req.provenTxReqId);
         }
       }
-      if (toInvalid.length > 0 && typeof sp.updateProvenTxReq === 'function') {
-        await sp.updateProvenTxReq(toInvalid, { status: 'invalid' })
-        cleared = toInvalid.length
+      if (toInvalid.length > 0 && typeof sp.updateProvenTxReq === "function") {
+        await sp.updateProvenTxReq(toInvalid, { status: "invalid" });
+        cleared = toInvalid.length;
       }
-    })
+    });
   } catch (err) {
-    console.warn('[action-review] ghost doubleSpend clear skipped', err)
-    return 0
+    console.warn("[action-review] ghost doubleSpend clear skipped", err);
+    return 0;
   }
   if (cleared > 0) {
-    console.info(`[action-review] cleared ${cleared} ghost doubleSpend req(s)`)
+    console.info(`[action-review] cleared ${cleared} ghost doubleSpend req(s)`);
   }
-  return cleared
+  return cleared;
 }
 
 /**
@@ -265,67 +270,75 @@ export async function releaseGhostDoubleSpendReqs(
  */
 export async function releaseUnsignedSpendReservations(
   active?: ActiveWallet | null,
+  opts?: { skipReview?: boolean }
 ): Promise<{ failedTxs: number; reviewLog: string; batchesAborted: number }> {
   // This API is called by Activity cleanup and delayed healing. During a live
   // send, createAction may already have returned a signable reference whose
   // action batch is still needed by signAction. Aborting it here corrupts that
   // signable gap ("Result must exist and be unique").
   if (getSpendPriorityDepth() > 0 || shouldYieldChainIngestToSpend()) {
-    console.info('[action-review] reservation release deferred — spend active')
-    return { failedTxs: 0, reviewLog: '', batchesAborted: 0 }
+    console.info("[action-review] reservation release deferred — spend active");
+    return { failedTxs: 0, reviewLog: "", batchesAborted: 0 };
   }
-  const resolved = active ?? getActiveWallet()
-  const wallet = resolved?.wallet
-  const empty = { failedTxs: 0, reviewLog: '', batchesAborted: 0 }
-  if (!wallet?.storage) return empty
+  const resolved = active ?? getActiveWallet();
+  const wallet = resolved?.wallet;
+  const empty = { failedTxs: 0, reviewLog: "", batchesAborted: 0 };
+  if (!wallet?.storage) return empty;
 
-  let failedTxs = 0
-  let reviewLog = ''
+  let failedTxs = 0;
+  let reviewLog = "";
 
   try {
     failedTxs = await wallet.storage.runAsStorageProvider(async (sp) => {
-      let n = 0
+      let n = 0;
       const stuck = await sp.findTransactions({
         partial: {},
-        status: ['unprocessed', 'unsigned'],
+        status: ["unprocessed", "unsigned"],
         noRawTx: true,
         paged: { limit: 100, offset: 0 },
-      })
+      });
       for (const tx of stuck ?? []) {
-        const id = Number((tx as { transactionId?: number }).transactionId)
-        if (!Number.isFinite(id) || id <= 0) continue
+        const id = Number((tx as { transactionId?: number }).transactionId);
+        if (!Number.isFinite(id) || id <= 0) continue;
         try {
-          await sp.updateTransactionStatus('failed', id)
-          n += 1
+          await sp.updateTransactionStatus("failed", id);
+          n += 1;
         } catch (err) {
-          console.warn('[action-review] fail abandoned tx skipped', id, err)
+          console.warn("[action-review] fail abandoned tx skipped", id, err);
         }
       }
-      return n
-    })
+      return n;
+    });
     if (failedTxs > 0) {
-      console.info(`[action-review] failed ${failedTxs} abandoned unsigned/unprocessed tx(s)`)
+      console.info(
+        `[action-review] failed ${failedTxs} abandoned unsigned/unprocessed tx(s)`
+      );
     }
   } catch (err) {
-    console.warn('[action-review] abandon-fail skipped', err)
+    console.warn("[action-review] abandon-fail skipped", err);
   }
 
   try {
-    const review = await wallet.storage.runAsStorageProvider(async (sp) =>
-      sp.reviewStatus({ agedLimit: new Date(0) }),
-    )
-    reviewLog = String((review as { log?: string })?.log ?? '')
-    if (reviewLog.trim()) {
-      console.info('[action-review] reviewStatus', reviewLog.trim().slice(0, 400))
+    if (!opts?.skipReview) {
+      const review = await wallet.storage.runAsStorageProvider(async (sp) =>
+        sp.reviewStatus({ agedLimit: new Date(0) })
+      );
+      reviewLog = String((review as { log?: string })?.log ?? "");
+      if (reviewLog.trim()) {
+        console.info(
+          "[action-review] reviewStatus",
+          reviewLog.trim().slice(0, 400)
+        );
+      }
     }
   } catch (err) {
-    console.warn('[action-review] reviewStatus skipped', err)
+    console.warn("[action-review] reviewStatus skipped", err);
   }
 
-  const batchesAborted = await abortReservedActionBatches(resolved)
-  await releaseGhostDoubleSpendReqs(resolved)
+  const batchesAborted = await abortReservedActionBatches(resolved);
+  await releaseGhostDoubleSpendReqs(resolved);
 
-  return { failedTxs, reviewLog, batchesAborted }
+  return { failedTxs, reviewLog, batchesAborted };
 }
 
 /**
@@ -335,101 +348,108 @@ export async function releaseUnsignedSpendReservations(
  */
 export async function repairFailedSpendState(
   active?: ActiveWallet | null,
-  opts?: RepairFailedSpendOptions,
+  opts?: RepairFailedSpendOptions
 ): Promise<{
-  failedTxs: number
-  reviewLog: string
-  batchesAborted: number
-  quarantined: number
-  healed: number
+  failedTxs: number;
+  reviewLog: string;
+  batchesAborted: number;
+  quarantined: number;
+  healed: number;
 }> {
-  const resolved = active ?? getActiveWallet()
-  const base = await releaseUnsignedSpendReservations(resolved)
+  const resolved = active ?? getActiveWallet();
+  const base = await releaseUnsignedSpendReservations(resolved);
   if (opts?.skipChangeSweep) {
-    return { ...base, quarantined: 0, healed: 0 }
+    return { ...base, quarantined: 0, healed: 0 };
   }
 
   const sweep = await sweepChangeScripts({
     active: resolved,
     fromChain: opts?.fromChain,
-  })
+  });
 
   return {
     ...base,
     quarantined: sweep.quarantined,
     healed: sweep.healed,
-  }
+  };
 }
 
 export function isIteratorCrashError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
-  return msg.includes('is not iterable')
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes("is not iterable");
 }
 
 export function isReviewActionsError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false
+  if (!err || typeof err !== "object") return false;
   const e = err as {
-    name?: string
-    code?: number
-    reviewActionResults?: unknown
-    message?: string
-  }
-  if (e.name === 'WERR_REVIEW_ACTIONS' || e.code === 5) return true
-  if (Array.isArray(e.reviewActionResults)) return true
-  const msg = (e.message ?? String(err)).toLowerCase()
-  return msg.includes('require review') && msg.includes('undelayed')
+    name?: string;
+    code?: number;
+    reviewActionResults?: unknown;
+    message?: string;
+  };
+  if (e.name === "WERR_REVIEW_ACTIONS" || e.code === 5) return true;
+  if (Array.isArray(e.reviewActionResults)) return true;
+  const msg = (e.message ?? String(err)).toLowerCase();
+  return msg.includes("require review") && msg.includes("undelayed");
 }
 
 export function reviewActionRows(err: unknown): ReviewActionRow[] {
-  if (!err || typeof err !== 'object') return []
-  const rows = (err as { reviewActionResults?: unknown }).reviewActionResults
-  return Array.isArray(rows) ? (rows as ReviewActionRow[]) : []
+  if (!err || typeof err !== "object") return [];
+  const rows = (err as { reviewActionResults?: unknown }).reviewActionResults;
+  return Array.isArray(rows) ? (rows as ReviewActionRow[]) : [];
 }
 
 export function sendWithRows(err: unknown): SendWithRow[] {
-  if (!err || typeof err !== 'object') return []
-  const rows = (err as { sendWithResults?: unknown }).sendWithResults
-  return Array.isArray(rows) ? (rows as SendWithRow[]) : []
+  if (!err || typeof err !== "object") return [];
+  const rows = (err as { sendWithResults?: unknown }).sendWithResults;
+  return Array.isArray(rows) ? (rows as SendWithRow[]) : [];
 }
 
 /** True when delayed/undelayed sendWithResults report a hard failure. */
-export function sendWithHasFailure(rows: SendWithRow[] | undefined | null): boolean {
-  if (!rows?.length) return false
+export function sendWithHasFailure(
+  rows: SendWithRow[] | undefined | null
+): boolean {
+  if (!rows?.length) return false;
   return rows.some((r) => {
-    const s = (r.status ?? '').toLowerCase()
-    return s === 'failed' || s === 'doublespend' || s === 'invalid' || s === 'invalidtx'
-  })
+    const s = (r.status ?? "").toLowerCase();
+    return (
+      s === "failed" ||
+      s === "doublespend" ||
+      s === "invalid" ||
+      s === "invalidtx"
+    );
+  });
 }
 
 export function formatReviewActionsError(err: unknown): string {
-  const reviews = reviewActionRows(err)
-  const sends = sendWithRows(err)
+  const reviews = reviewActionRows(err);
+  const sends = sendWithRows(err);
   const statuses = [
     ...reviews.map((r) => r.status).filter(Boolean),
     ...sends.map((r) => r.status).filter(Boolean),
-  ].map((s) => String(s).toLowerCase())
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  ].map((s) => String(s).toLowerCase());
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
 
   // Not a double-spend: a change output reached createAction with no locking
   // script (`asString(undefined)`). Reporting it as a conflict hid the real
   // cause for several releases — name it.
-  if (msg.includes('is not iterable')) {
-    return 'Missing script'
+  if (msg.includes("is not iterable")) {
+    return "Missing script";
   }
   if (
-    statuses.some((s) => s.includes('doublespend')) ||
-    msg.includes('doublespend') ||
-    msg.includes('double spend')
+    statuses.some((s) => s.includes("doublespend")) ||
+    msg.includes("doublespend") ||
+    msg.includes("double spend")
   ) {
-    return 'Already spent'
+    return "Already spent";
   }
-  if (statuses.some((s) => s.includes('service') || s === 'error')) {
-    return 'No network'
+  if (statuses.some((s) => s.includes("service") || s === "error")) {
+    return "No network";
   }
-  if (statuses.some((s) => s.includes('invalid'))) {
-    return 'Not sent'
+  if (statuses.some((s) => s.includes("invalid"))) {
+    return "Not sent";
   }
-  return 'Not sent'
+  return "Not sent";
 }
 
 /**
@@ -437,19 +457,19 @@ export function formatReviewActionsError(err: unknown): string {
  * current signable reference when we still have one.
  */
 export async function recoverFromReviewActions(args: {
-  err: unknown
-  reference?: string | null
-  tipOutpoints?: string[]
-  active?: ActiveWallet | null
+  err: unknown;
+  reference?: string | null;
+  tipOutpoints?: string[];
+  active?: ActiveWallet | null;
 }): Promise<void> {
-  const active = args.active ?? getActiveWallet()
-  if (!active) return
+  const active = args.active ?? getActiveWallet();
+  if (!active) return;
 
   if (args.reference?.trim()) {
     try {
-      await active.wallet.abortAction({ reference: args.reference.trim() })
+      await active.wallet.abortAction({ reference: args.reference.trim() });
     } catch (abortErr) {
-      console.warn('[action-review] abortAction skipped', abortErr)
+      console.warn("[action-review] abortAction skipped", abortErr);
     }
   }
 
@@ -458,46 +478,48 @@ export async function recoverFromReviewActions(args: {
   // "undefined is not iterable". Fail abandoned txs + reviewStatus instead.
   const repair = await repairFailedSpendState(active, {
     fromChain: isIteratorCrashError(args.err),
-  })
+  });
 
   // `Array.from(undefined)` means a change row reached createAction with no
   // locking script. The pre-send sweep only rebuilds from local raw tx; here a
   // coin is already blocking the wallet, so pay for chain lookups and let the
   // audited restore path re-enable whatever we rebuilt.
   if (isIteratorCrashError(args.err) && repair.healed > 0) {
-    const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
-    await restoreLiveSpendableOutputs({ onlyLiveChange: true })
+    const { restoreLiveSpendableOutputs } = await import(
+      "./staleOutputRelease"
+    );
+    await restoreLiveSpendableOutputs({ onlyLiveChange: true });
   }
 
   try {
-    const healed = await healGhostSentItems(active.chain, txExistsOnChain)
+    const healed = await healGhostSentItems(active.chain, txExistsOnChain);
     if (healed.length > 0) {
-      forgetOneSatImported(healed)
-      console.info('[action-review] restored ghost-hidden tips', healed)
+      forgetOneSatImported(healed);
+      console.info("[action-review] restored ghost-hidden tips", healed);
     }
   } catch (healErr) {
-    console.warn('[action-review] ghost heal skipped', healErr)
+    console.warn("[action-review] ghost heal skipped", healErr);
   }
 
   if (args.tipOutpoints?.length) {
-    forgetOneSatImported(args.tipOutpoints)
+    forgetOneSatImported(args.tipOutpoints);
   }
 
-  const reviews = reviewActionRows(args.err)
-  const competing = reviews.flatMap((r) => r.competingTxs ?? [])
+  const reviews = reviewActionRows(args.err);
+  const competing = reviews.flatMap((r) => r.competingTxs ?? []);
   const own = [
-    typeof (args.err as { txid?: string })?.txid === 'string'
+    typeof (args.err as { txid?: string })?.txid === "string"
       ? (args.err as { txid: string }).txid
-      : '',
-    ...reviews.map((r) => r.txid ?? ''),
-    ...sendWithRows(args.err).map((r) => r.txid ?? ''),
-  ]
+      : "",
+    ...reviews.map((r) => r.txid ?? ""),
+    ...sendWithRows(args.err).map((r) => r.txid ?? ""),
+  ];
   for (const txid of [...new Set([...own, ...competing])]) {
-    const id = txid.trim().toLowerCase()
-    if (!/^[0-9a-f]{64}$/.test(id)) continue
+    const id = txid.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(id)) continue;
     try {
-      const exists = await txExistsOnChain(id, active.chain)
-      console.info(`[action-review] tx ${id.slice(0, 12)}… on-chain=${exists}`)
+      const exists = await txExistsOnChain(id, active.chain);
+      console.info(`[action-review] tx ${id.slice(0, 12)}… on-chain=${exists}`);
     } catch {
       /* lookup noise */
     }

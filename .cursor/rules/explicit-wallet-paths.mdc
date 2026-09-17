@@ -20,6 +20,7 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
 | Concern | Module |
 |---|-----|
 | Tip / send vocabulary | `collectableTipKind.ts` |
+| Selection → atomic tx ceiling | `collectableBatch.ts` |
 | Item settle (who broadcasts) | `itemSettlePath.ts` |
 | Collectable parent chart | `collectableSendMachine.ts` |
 | Item send child chart (BRC-150 / P2PKH) | `itemSendMachine.ts` |

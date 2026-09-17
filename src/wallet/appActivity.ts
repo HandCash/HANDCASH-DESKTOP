@@ -1,95 +1,95 @@
-import { errorText } from './errorText'
-import { appDisplayName, normalizeAppHost } from './appIdentity'
-import { accountLocalKey } from './accountLocalKeys'
-import { durableGetItem, durableSetItem } from './durableStorage'
-import { storageRegistry } from '../storage/registry'
-import { getItemArtDataUrl } from './localItemArt'
-import { isGhostTxSuppressed } from './ghostTxSuppress'
-import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
-import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { errorText } from "./errorText";
+import { appDisplayName, normalizeAppHost } from "./appIdentity";
+import { accountLocalKey } from "./accountLocalKeys";
+import { durableGetItem, durableSetItem } from "./durableStorage";
+import { storageRegistry } from "../storage/registry";
+import { getItemArtDataUrl } from "./localItemArt";
+import { isGhostTxSuppressed } from "./ghostTxSuppress";
+import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
+import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 
-const STORAGE_KEY_BASE = storageRegistry.activity.key
+const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
 function activityStorageKey(): string {
-  return accountLocalKey(STORAGE_KEY_BASE)
+  return accountLocalKey(STORAGE_KEY_BASE);
 }
 
 /** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
-export type ActivityKind = 'spent' | 'earned' | 'event'
+export type ActivityKind = "spent" | "earned" | "event";
 
 /**
  * In-flight ingest / authenticity. Absent = settled (legacy rows).
  * `failed` is terminal: the send never reached a txid and the row keeps the reason.
  */
-export type ActivityStatus = 'pending' | 'complete' | 'failed'
+export type ActivityStatus = "pending" | "complete" | "failed";
 
 /** Collectable / NFT / fungible remittance attached to an activity row. */
 export type ActivityItem = {
-  name: string
+  name: string;
   /** NFT origin, or BSV-21 token id when {@link tokenId} is set. */
-  origin: string
-  outpoint?: string
-  imageUrl?: string
-  app?: string
+  origin: string;
+  outpoint?: string;
+  imageUrl?: string;
+  app?: string;
   /** When set, this row is a BSV-21 fungible tip (not a 1Sat collectable). */
-  tokenId?: string
+  tokenId?: string;
   /** Integer token units (BSV-21 `amt`); formatted with {@link dec}. */
-  amt?: string
+  amt?: string;
   /** Deploy decimals for {@link amt} (0–18). */
-  dec?: number
+  dec?: number;
   /** BSV-21 icon inscription outpoint (`txid_vout`) when known. */
-  icon?: string
-}
+  icon?: string;
+};
 
 /** Structured data required to retry the exact same spend without guessing. */
 export type ActivityRetry =
   | {
-      kind: 'send-collectable'
-      outpoint: string
-      toAddress: string
-      recipientIdentityKey?: string
-      friendLabel?: string
+      kind: "send-collectable";
+      outpoint: string;
+      toAddress: string;
+      recipientIdentityKey?: string;
+      friendLabel?: string;
     }
   | {
-      kind: 'send-token'
-      tokenId: string
-      amount: string
-      toAddress: string
-      recipientIdentityKey?: string
-      friendLabel?: string
+      kind: "send-token";
+      tokenId: string;
+      amount: string;
+      toAddress: string;
+      recipientIdentityKey?: string;
+      friendLabel?: string;
     }
   | {
-      kind: 'send-bsv'
-      toAddress: string
-      satoshis: number
-      recipientIdentityKey?: string
-      friendLabel?: string
-    }
+      kind: "send-bsv";
+      toAddress: string;
+      satoshis: number;
+      recipientIdentityKey?: string;
+      friendLabel?: string;
+    };
 
 export type ActivityEntry = {
-  id: string
-  origin: string
-  kind: ActivityKind
-  sats: number
-  at: number
-  method: string
-  note?: string
-  txid?: string
+  id: string;
+  origin: string;
+  kind: ActivityKind;
+  sats: number;
+  at: number;
+  method: string;
+  note?: string;
+  txid?: string;
   /** Present when this row is an item transfer, not a BSV payment. */
-  item?: ActivityItem
+  item?: ActivityItem;
   /** Receiving / verifying — Activity shows the row before internalize finishes. */
-  status?: ActivityStatus
+  status?: ActivityStatus;
   /** Links an in-flight outbound send until a txid lands. */
-  pendingId?: string
+  pendingId?: string;
   /** Why a `failed` row failed — shown in Activity so a dead send is never silent. */
-  failureReason?: string
+  failureReason?: string;
   /** Present only when the original action can be reconstructed safely. */
-  retry?: ActivityRetry
+  retry?: ActivityRetry;
   /** Irreversible asset destruction economics (not a send/payment). */
-  burn?: ActivityBurn
+  burn?: ActivityBurn;
   /** Set when the row is hidden from Activity but kept for heal / backup. */
-  archivedAt?: number
-}
+  archivedAt?: number;
+};
 
 /**
  * Everything about a row that changes what the UI decides, as one string.
@@ -103,62 +103,62 @@ export type ActivityEntry = {
 export function activityRowSignature(entry: ActivityEntry): string {
   return [
     entry.id,
-    entry.status ?? '',
-    entry.txid ?? '',
+    entry.status ?? "",
+    entry.txid ?? "",
     entry.at,
     entry.sats,
     entry.method,
-    entry.failureReason ?? '',
-    entry.archivedAt ?? '',
-    entry.item?.outpoint ?? '',
-    entry.retry?.kind ?? '',
-  ].join('|')
+    entry.failureReason ?? "",
+    entry.archivedAt ?? "",
+    entry.item?.outpoint ?? "",
+    entry.retry?.kind ?? "",
+  ].join("|");
 }
 
 /** True when two reads of the same row are interchangeable for the UI. */
 export function sameActivityRow(
   a: ActivityEntry | null,
-  b: ActivityEntry | null,
+  b: ActivityEntry | null
 ): boolean {
-  if (a === b) return true
-  if (!a || !b) return false
-  return activityRowSignature(a) === activityRowSignature(b)
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return activityRowSignature(a) === activityRowSignature(b);
 }
 
 export type ActivityBurn = {
-  asset: 'bsv21' | '1sat'
-  destroyedAmount: string
-  recoveredSatoshis?: number
-  feeSatoshis?: number
-}
+  asset: "bsv21" | "1sat";
+  destroyedAmount: string;
+  recoveredSatoshis?: number;
+  feeSatoshis?: number;
+};
 
 /** Keeps stored reasons short enough that one row cannot bloat history. */
-const MAX_FAILURE_REASON = 240
+const MAX_FAILURE_REASON = 240;
 
 export function normalizeFailureReason(reason: unknown): string | undefined {
-  const trimmed = errorText(reason).replace(/\s+/g, ' ').trim()
-  if (!trimmed || trimmed === '[object Object]') return undefined
+  const trimmed = errorText(reason).replace(/\s+/g, " ").trim();
+  if (!trimmed || trimmed === "[object Object]") return undefined;
   return trimmed.length > MAX_FAILURE_REASON
     ? `${trimmed.slice(0, MAX_FAILURE_REASON - 1)}…`
-    : trimmed
+    : trimmed;
 }
 
-const ACTIVITY_KINDS = new Set<ActivityKind>(['spent', 'earned', 'event'])
+const ACTIVITY_KINDS = new Set<ActivityKind>(["spent", "earned", "event"]);
 
 export type AppMoneySummary = {
-  spent24h: number
-  earned24h: number
-  spentAll: number
-  earnedAll: number
-}
+  spent24h: number;
+  earned24h: number;
+  spentAll: number;
+  earnedAll: number;
+};
 
 /** Origin used for in-wallet Send / Receive (not a connected app). */
-export const WALLET_ACTIVITY_ORIGIN = 'handcash'
+export const WALLET_ACTIVITY_ORIGIN = "handcash";
 
-type ActivityListener = () => void
+type ActivityListener = () => void;
 
-const listeners = new Set<ActivityListener>()
-const DAY_MS = 24 * 60 * 60_000
+const listeners = new Set<ActivityListener>();
+const DAY_MS = 24 * 60 * 60_000;
 
 /**
  * Last parse, keyed by the exact stored string.
@@ -167,63 +167,62 @@ const DAY_MS = 24 * 60 * 60_000
  * re-parsing per call showed up as UI stall. Callers must treat the result as
  * read-only — it is shared.
  */
-let parsedRaw: string | null = null
-let parsedEntries: ActivityEntry[] = []
+let parsedRaw: string | null = null;
+let parsedEntries: ActivityEntry[] = [];
 
 function readAll(): ActivityEntry[] {
   try {
-    const raw = durableGetItem(activityStorageKey())
-    if (!raw) return []
-    if (raw === parsedRaw) return parsedEntries
-    const decoded = JSON.parse(raw) as unknown
+    const raw = durableGetItem(activityStorageKey());
+    if (!raw) return [];
+    if (raw === parsedRaw) return parsedEntries;
+    const decoded = JSON.parse(raw) as unknown;
     // v0 was a bare array. Preserve it forever as an explicit migration input;
     // all new writes use the registry-owned versioned envelope.
-    const parsed =
-      Array.isArray(decoded)
-        ? decoded
-        : decoded &&
-            typeof decoded === 'object' &&
-            (decoded as { v?: unknown }).v === storageRegistry.activity.version &&
-            Array.isArray((decoded as { data?: unknown }).data)
-          ? (decoded as { data: unknown[] }).data
-          : null
-    if (!parsed) return []
+    const parsed = Array.isArray(decoded)
+      ? decoded
+      : decoded &&
+        typeof decoded === "object" &&
+        (decoded as { v?: unknown }).v === storageRegistry.activity.version &&
+        Array.isArray((decoded as { data?: unknown }).data)
+      ? (decoded as { data: unknown[] }).data
+      : null;
+    if (!parsed) return [];
     const entries = parsed
       .filter((e): e is ActivityEntry => {
-        if (!e || typeof e !== 'object') return false
-        const row = e as ActivityEntry
+        if (!e || typeof e !== "object") return false;
+        const row = e as ActivityEntry;
         return (
-          typeof row.origin === 'string' &&
-          typeof row.sats === 'number' &&
-          typeof row.at === 'number' &&
+          typeof row.origin === "string" &&
+          typeof row.sats === "number" &&
+          typeof row.at === "number" &&
           ACTIVITY_KINDS.has(row.kind) &&
-          typeof row.method === 'string'
-        )
+          typeof row.method === "string"
+        );
       })
       .map((e): ActivityEntry => {
-        const row = e as ActivityEntry
-        const item = normalizeActivityItem(row.item)
+        const row = e as ActivityEntry;
+        const item = normalizeActivityItem(row.item);
         const status: ActivityStatus | undefined =
-          row.status === 'pending'
-            ? 'pending'
-            : row.status === 'failed'
-            ? 'failed'
-            : undefined
+          row.status === "pending"
+            ? "pending"
+            : row.status === "failed"
+            ? "failed"
+            : undefined;
         const pendingId =
-          typeof row.pendingId === 'string' && row.pendingId.trim()
+          typeof row.pendingId === "string" && row.pendingId.trim()
             ? row.pendingId.trim()
-            : undefined
+            : undefined;
         const failureReason =
-          status === 'failed'
+          status === "failed"
             ? normalizeFailureReason(row.failureReason)
-            : undefined
-        const retry = normalizeActivityRetry(row.retry)
+            : undefined;
+        const retry = normalizeActivityRetry(row.retry);
         const archivedAt =
-          typeof row.archivedAt === 'number' &&
+          typeof row.archivedAt === "number" &&
           Number.isFinite(row.archivedAt) &&
           row.archivedAt > 0
             ? Math.trunc(row.archivedAt)
-            : undefined
+            : undefined;
         return {
           ...row,
           item: item ?? undefined,
@@ -232,287 +231,335 @@ function readAll(): ActivityEntry[] {
           ...(failureReason ? { failureReason } : { failureReason: undefined }),
           ...(retry ? { retry } : { retry: undefined }),
           ...(archivedAt ? { archivedAt } : { archivedAt: undefined }),
-        }
-      })
-    parsedRaw = raw
-    parsedEntries = entries
-    return entries
+        };
+      });
+    parsedRaw = raw;
+    parsedEntries = entries;
+    return entries;
   } catch {
-    return []
+    return [];
   }
 }
 
 function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const row = value as Record<string, unknown>
-  const toAddress = typeof row.toAddress === 'string' ? row.toAddress.trim() : ''
-  if (!toAddress) return undefined
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  const toAddress =
+    typeof row.toAddress === "string" ? row.toAddress.trim() : "";
+  if (!toAddress) return undefined;
   const recipientIdentityKey =
-    typeof row.recipientIdentityKey === 'string' && row.recipientIdentityKey.trim()
+    typeof row.recipientIdentityKey === "string" &&
+    row.recipientIdentityKey.trim()
       ? row.recipientIdentityKey.trim()
-      : undefined
+      : undefined;
   const friendLabel =
-    typeof row.friendLabel === 'string' && row.friendLabel.trim()
+    typeof row.friendLabel === "string" && row.friendLabel.trim()
       ? row.friendLabel.trim().slice(0, 80)
-      : undefined
-  if (row.kind === 'send-collectable') {
-    const outpoint = typeof row.outpoint === 'string' ? row.outpoint.trim() : ''
-    if (!outpoint) return undefined
+      : undefined;
+  if (row.kind === "send-collectable") {
+    const outpoint =
+      typeof row.outpoint === "string" ? row.outpoint.trim() : "";
+    if (!outpoint) return undefined;
     return {
-      kind: 'send-collectable',
+      kind: "send-collectable",
       outpoint,
       toAddress,
       ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
       ...(friendLabel ? { friendLabel } : {}),
-    }
+    };
   }
-  if (row.kind === 'send-token') {
-    const tokenId = typeof row.tokenId === 'string' ? row.tokenId.trim() : ''
-    const amount = typeof row.amount === 'string' ? row.amount.trim() : ''
-    if (!tokenId || !amount) return undefined
+  if (row.kind === "send-token") {
+    const tokenId = typeof row.tokenId === "string" ? row.tokenId.trim() : "";
+    const amount = typeof row.amount === "string" ? row.amount.trim() : "";
+    if (!tokenId || !amount) return undefined;
     return {
-      kind: 'send-token',
+      kind: "send-token",
       tokenId,
       amount,
       toAddress,
       ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
       ...(friendLabel ? { friendLabel } : {}),
-    }
+    };
   }
-  if (row.kind === 'send-bsv') {
+  if (row.kind === "send-bsv") {
     const satoshis =
-      typeof row.satoshis === 'number' && Number.isFinite(row.satoshis)
+      typeof row.satoshis === "number" && Number.isFinite(row.satoshis)
         ? Math.trunc(row.satoshis)
-        : 0
-    if (satoshis <= 0) return undefined
+        : 0;
+    if (satoshis <= 0) return undefined;
     return {
-      kind: 'send-bsv',
+      kind: "send-bsv",
       toAddress,
       satoshis,
       ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
       ...(friendLabel ? { friendLabel } : {}),
-    }
+    };
   }
-  return undefined
+  return undefined;
 }
 
 /** Bumps on every write — activity feed caches must not serve a pre-write snapshot. */
-let writeGeneration = 0
+let writeGeneration = 0;
 
 /** Monotonic generation for feed cache invalidation (remount-safe). */
 
 /** Drop parse cache and notify so Activity reloads the active account store. */
 export function rebindAppActivityForAccount(): void {
-  parsedRaw = null
-  parsedEntries = []
-  writeGeneration += 1
-  for (const cb of listeners) cb()
+  parsedRaw = null;
+  parsedEntries = [];
+  writeGeneration += 1;
+  for (const cb of listeners) cb();
 }
 
 export function getActivityWriteGeneration(): number {
-  return writeGeneration
+  return writeGeneration;
 }
 
 function writeAll(entries: ActivityEntry[]): void {
   // Cap history so storage stays small.
-  const trimmed = entries.slice(-2000)
-  writeGeneration += 1
+  const trimmed = entries.slice(-2000);
+  writeGeneration += 1;
   durableSetItem(
     activityStorageKey(),
-    JSON.stringify({ v: storageRegistry.activity.version, data: trimmed }),
-  )
-  for (const cb of listeners) cb()
+    JSON.stringify({ v: storageRegistry.activity.version, data: trimmed })
+  );
+  for (const cb of listeners) cb();
 }
 
 function activityRowIsItem(row: {
-  item?: ActivityItem
-  method: string
+  item?: ActivityItem;
+  method: string;
 }): boolean {
-  return Boolean(row.item) || /collectable|token|1sat|ordinal/i.test(row.method)
+  return (
+    Boolean(row.item) || /collectable|token|1sat|ordinal/i.test(row.method)
+  );
 }
 
 /** True if we already logged this on-chain (or local) txid. */
 export function hasActivityTxid(
   txid: string | undefined | null,
-  kind?: ActivityKind,
+  kind?: ActivityKind
 ): boolean {
-  const key = txid?.trim().toLowerCase()
-  if (!key) return false
+  const key = txid?.trim().toLowerCase();
+  if (!key) return false;
   return readAll().some(
-    (e) => e.txid?.toLowerCase() === key && (kind == null || e.kind === kind),
-  )
+    (e) => e.txid?.toLowerCase() === key && (kind == null || e.kind === kind)
+  );
 }
 
 /** True when a receive/send for this txid has finished ingest (not just verifying). */
 export function hasSettledActivityTxid(
   txid: string | undefined | null,
   kind?: ActivityKind,
-  opts?: { item?: boolean },
+  opts?: { item?: boolean }
 ): boolean {
-  const key = txid?.trim().toLowerCase()
-  if (!key) return false
+  const key = txid?.trim().toLowerCase();
+  if (!key) return false;
   return readAll().some((e) => {
-    if (e.txid?.toLowerCase() !== key) return false
-    if (kind != null && e.kind !== kind) return false
-    if (e.status === 'pending' || e.status === 'failed') return false
-    if (opts?.item != null && activityRowIsItem(e) !== opts.item) return false
-    return true
-  })
+    if (e.txid?.toLowerCase() !== key) return false;
+    if (kind != null && e.kind !== kind) return false;
+    if (e.status === "pending" || e.status === "failed") return false;
+    if (opts?.item != null && activityRowIsItem(e) !== opts.item) return false;
+    return true;
+  });
 }
 
 export function isPendingActivity(entry: ActivityEntry): boolean {
-  return entry.status === 'pending'
+  return entry.status === "pending";
 }
 
 export function isFailedActivity(entry: ActivityEntry): boolean {
-  return entry.status === 'failed'
+  return entry.status === "failed";
+}
+
+/**
+ * A signed cheque later marked failed (timeout, explorer 404) is still the
+ * spend. Restoring it to settled hides the bulk Rebroadcast/Clear chrome.
+ */
+export function reviveFailedOutboundByTxid(txid: string): boolean {
+  const id = txid.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(id)) return false;
+  const prev = readAll();
+  let changed = false;
+  const entries = prev.map((e) => {
+    if (e.kind !== "spent" || e.status !== "failed") return e;
+    if (e.txid?.trim().toLowerCase() !== id) return e;
+    changed = true;
+    const note = e.note?.replace(/^Failed:\s*/i, "").trim();
+    return {
+      ...e,
+      status: undefined,
+      failureReason: undefined,
+      note: note || e.note,
+    };
+  });
+  if (changed) writeAll(entries);
+  return changed;
 }
 
 /** Short label for a failed Activity row. Long why stays in details storage. */
 export function compactFailureLabel(reason: unknown): string {
-  const raw = errorText(reason).replace(/\s+/g, ' ').trim()
-  if (!raw || raw === '[object Object]') return 'Send failed'
-  if (/already spent|doublespend|double spend|missing.?input|mempool-conflict|competing/i.test(raw)) {
-    return 'Already spent'
+  const raw = errorText(reason).replace(/\s+/g, " ").trim();
+  if (!raw || raw === "[object Object]") return "Send failed";
+  if (
+    /already spent|doublespend|double spend|missing.?input|mempool-conflict|competing/i.test(
+      raw
+    )
+  ) {
+    return "Already spent";
   }
-  if (/timed? ?out|never confirmed|stopped hearing|signing took too long/i.test(raw)) {
-    return 'Send timed out'
+  if (
+    /timed? ?out|never confirmed|stopped hearing|signing took too long/i.test(
+      raw
+    )
+  ) {
+    return "Send timed out";
   }
-  if (/unreachable|no network|connection|service error|fetch failed/i.test(raw)) {
-    return 'No network'
+  if (
+    /unreachable|no network|connection|service error|fetch failed/i.test(raw)
+  ) {
+    return "No network";
   }
-  if (/not iterable|locking script|missing script/i.test(raw)) return 'Missing script'
-  if (/broadcast failed|not accepted|rejected|not sent/i.test(raw)) return 'Not sent'
-  const first = raw.split(/[.(—–]/)[0]!.trim()
-  return first.length > 28 ? `${first.slice(0, 27)}…` : first || 'Send failed'
+  if (/not iterable|locking script|missing script/i.test(raw))
+    return "Missing script";
+  if (/broadcast failed|not accepted|rejected|not sent/i.test(raw))
+    return "Not sent";
+  const first = raw.split(/[.(—–]/)[0]!.trim();
+  return first.length > 28 ? `${first.slice(0, 27)}…` : first || "Send failed";
 }
 
 /** Reason stored on a failed row — never blank once a row is failed. */
 export function activityFailureReason(entry: ActivityEntry): string | null {
-  if (entry.status !== 'failed') return null
-  return entry.failureReason?.trim() || 'Send failed'
+  if (entry.status !== "failed") return null;
+  return entry.failureReason?.trim() || "Send failed";
 }
 
 /** Compact subtitle for the Activity feed. */
 export function activityFailureLabel(entry: ActivityEntry): string | null {
-  if (entry.status !== 'failed') return null
-  return compactFailureLabel(entry.failureReason)
+  if (entry.status !== "failed") return null;
+  return compactFailureLabel(entry.failureReason);
 }
 
 /** True if we already logged a collectable receive/send for this tip outpoint. */
 export function hasActivityItemOutpoint(
-  outpoint: string | undefined | null,
+  outpoint: string | undefined | null
 ): boolean {
-  const key = outpoint?.trim().toLowerCase().replace('_', '.')
-  if (!key) return false
+  const key = outpoint?.trim().toLowerCase().replace("_", ".");
+  if (!key) return false;
   return readAll().some((e) => {
-    const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-    return op === key
-  })
+    const op = e.item?.outpoint?.trim().toLowerCase().replace("_", ".");
+    return op === key;
+  });
 }
 
 /** True when this tip outpoint already has a settled activity row. */
 export function hasSettledActivityItemOutpoint(
-  outpoint: string | undefined | null,
+  outpoint: string | undefined | null
 ): boolean {
-  const key = outpoint?.trim().toLowerCase().replace('_', '.')
-  if (!key) return false
+  const key = outpoint?.trim().toLowerCase().replace("_", ".");
+  if (!key) return false;
   return readAll().some((e) => {
-    const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-    return op === key && e.status !== 'pending'
-  })
+    const op = e.item?.outpoint?.trim().toLowerCase().replace("_", ".");
+    return op === key && e.status !== "pending";
+  });
 }
 
 export function subscribeAppActivity(cb: ActivityListener): () => void {
-  listeners.add(cb)
+  listeners.add(cb);
   return () => {
-    listeners.delete(cb)
-  }
+    listeners.delete(cb);
+  };
 }
 
 function findActivityMatchIndex(
   entries: ActivityEntry[],
   args: {
-    kind: ActivityKind
-    txid?: string
-    item?: ActivityItem
-    method: string
-    pendingId?: string
-  },
+    kind: ActivityKind;
+    txid?: string;
+    item?: ActivityItem;
+    method: string;
+    pendingId?: string;
+  }
 ): number {
-  const pendingId = args.pendingId?.trim()
+  const pendingId = args.pendingId?.trim();
   if (pendingId) {
     const byPending = entries.findIndex(
-      (e) => e.pendingId === pendingId && e.kind === args.kind,
-    )
-    if (byPending >= 0) return byPending
+      (e) => e.pendingId === pendingId && e.kind === args.kind
+    );
+    if (byPending >= 0) return byPending;
     // New pendingId must not collapse onto a prior settled spend of the same tip
     // (failed broadcast / chain-ingest restore). Only refresh an in-flight pending
     // row for this outpoint; otherwise insert a fresh Sending… row.
-    const outpoint = args.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+    const outpoint = args.item?.outpoint
+      ?.trim()
+      .toLowerCase()
+      .replace("_", ".");
     if (outpoint) {
       const byPendingOp = entries.findIndex((e) => {
-        if (e.kind !== args.kind || e.status !== 'pending') return false
-        const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-        return op === outpoint
-      })
-      if (byPendingOp >= 0) return byPendingOp
+        if (e.kind !== args.kind || e.status !== "pending") return false;
+        const op = e.item?.outpoint?.trim().toLowerCase().replace("_", ".");
+        return op === outpoint;
+      });
+      if (byPendingOp >= 0) return byPendingOp;
     }
-    return -1
+    return -1;
   }
-  const outpoint = args.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+  const outpoint = args.item?.outpoint?.trim().toLowerCase().replace("_", ".");
   if (outpoint) {
     const byOp = entries.findIndex((e) => {
-      const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-      return op === outpoint && e.kind === args.kind
-    })
-    if (byOp >= 0) return byOp
+      const op = e.item?.outpoint?.trim().toLowerCase().replace("_", ".");
+      return op === outpoint && e.kind === args.kind;
+    });
+    if (byOp >= 0) return byOp;
   }
-  const packOrigin = args.item?.origin?.trim().toLowerCase()
+  const packOrigin = args.item?.origin?.trim().toLowerCase();
   if (
-    args.kind === 'event' &&
+    args.kind === "event" &&
     packOrigin &&
-    (args.method === 'index-install' || args.method === 'index-sync')
+    (args.method === "index-install" || args.method === "index-sync")
   ) {
     const byPack = entries.findIndex(
       (e) =>
-        e.kind === 'event' &&
-        e.status === 'pending' &&
+        e.kind === "event" &&
+        e.status === "pending" &&
         e.item?.origin?.trim().toLowerCase() === packOrigin &&
-        (e.method === 'index-install' || e.method === 'index-sync'),
-    )
-    if (byPack >= 0) return byPack
+        (e.method === "index-install" || e.method === "index-sync")
+    );
+    if (byPack >= 0) return byPack;
   }
-  const txid = args.txid?.trim().toLowerCase()
-  if (!txid) return -1
-  const wantItem = activityRowIsItem(args)
+  const txid = args.txid?.trim().toLowerCase();
+  if (!txid) return -1;
+  const wantItem = activityRowIsItem(args);
   return entries.findIndex((e) => {
-    if (e.kind !== args.kind) return false
-    if (e.txid?.toLowerCase() !== txid) return false
-    if (activityRowIsItem(e) !== wantItem) return false
+    if (e.kind !== args.kind) return false;
+    if (e.txid?.toLowerCase() !== txid) return false;
+    if (activityRowIsItem(e) !== wantItem) return false;
     // Batch self-sends put multiple collectables in one tx. Never collapse a
     // different tip onto an existing item row just because the txid matches.
     if (wantItem && outpoint) {
-      const existingOp = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-      if (existingOp && existingOp !== outpoint) return false
+      const existingOp = e.item?.outpoint
+        ?.trim()
+        .toLowerCase()
+        .replace("_", ".");
+      if (existingOp && existingOp !== outpoint) return false;
     }
-    return true
-  })
+    return true;
+  });
 }
 
 export function recordAppActivity(args: {
-  origin: string | undefined
-  kind: ActivityKind
-  sats: number
-  method: string
-  note?: string
-  txid?: string
-  item?: ActivityItem
-  status?: ActivityStatus
-  failureReason?: string
-  pendingId?: string
+  origin: string | undefined;
+  kind: ActivityKind;
+  sats: number;
+  method: string;
+  note?: string;
+  txid?: string;
+  item?: ActivityItem;
+  status?: ActivityStatus;
+  failureReason?: string;
+  pendingId?: string;
 }): void {
-  upsertAppActivity(args)
+  upsertAppActivity(args);
 }
 
 /**
@@ -521,75 +568,75 @@ export function recordAppActivity(args: {
  * Distinct collectable outpoints on the same tx keep separate rows.
  */
 export function upsertAppActivity(args: {
-  origin: string | undefined
-  kind: ActivityKind
-  sats: number
-  method: string
-  note?: string
-  txid?: string
-  item?: ActivityItem
-  status?: ActivityStatus
-  pendingId?: string
-  failureReason?: string
-  retry?: ActivityRetry
-  burn?: ActivityBurn
+  origin: string | undefined;
+  kind: ActivityKind;
+  sats: number;
+  method: string;
+  note?: string;
+  txid?: string;
+  item?: ActivityItem;
+  status?: ActivityStatus;
+  pendingId?: string;
+  failureReason?: string;
+  retry?: ActivityRetry;
+  burn?: ActivityBurn;
 }): void {
-  const sats = Math.max(0, Math.trunc(args.sats))
-  const item = normalizeActivityItem(args.item)
-  const isEvent = args.kind === 'event'
-  const pending = args.status === 'pending'
-  const failed = args.status === 'failed'
+  const sats = Math.max(0, Math.trunc(args.sats));
+  const item = normalizeActivityItem(args.item);
+  const isEvent = args.kind === "event";
+  const pending = args.status === "pending";
+  const failed = args.status === "failed";
   // Item transfers are meaningful even when the tip is only 1 satoshi — never drop them
   // because the money amount is dust. Events (connect, friend, …) may be zero-sats.
   // Pending BSV receives may not know sats yet — still show Verifying… in Activity.
   // Pending outbound sends (sats > 0 or item) must show before a txid exists.
   // A failed send must survive even with no amount — it is the only trace left.
-  if (sats <= 0 && !item && !isEvent && !pending && !failed) return
-  if (isEvent && !(args.note?.trim() || args.method.trim())) return
-  const origin = normalizeAppHost(args.origin)
-  const txid = args.txid?.trim() || undefined
-  const pendingId = args.pendingId?.trim() || undefined
-  const entries = [...readAll()]
+  if (sats <= 0 && !item && !isEvent && !pending && !failed) return;
+  if (isEvent && !(args.note?.trim() || args.method.trim())) return;
+  const origin = normalizeAppHost(args.origin);
+  const txid = args.txid?.trim() || undefined;
+  const pendingId = args.pendingId?.trim() || undefined;
+  const entries = [...readAll()];
   const idx = findActivityMatchIndex(entries, {
     kind: args.kind,
     txid,
     item: item ?? args.item,
     method: args.method,
     pendingId,
-  })
+  });
   if (idx >= 0) {
-    const prev = entries[idx]!
+    const prev = entries[idx]!;
     // Never take a settled row back to verifying.
     const nextStatus =
-      prev.status !== 'pending' && pending
+      prev.status !== "pending" && pending
         ? prev.status
-        : args.status === 'complete'
+        : args.status === "complete"
         ? undefined
-        : args.status ?? prev.status
+        : args.status ?? prev.status;
     const prevIsToken =
       Boolean(prev.item?.tokenId?.trim()) ||
-      prev.method === 'receive-token' ||
-      prev.method === 'send-token' ||
-      prev.method === 'mint-token'
+      prev.method === "receive-token" ||
+      prev.method === "send-token" ||
+      prev.method === "mint-token";
     const nextItem =
-      prevIsToken && args.method === 'receive-collectable'
+      prevIsToken && args.method === "receive-collectable"
         ? prev.item
         : item
-          ? prev.item
-            ? { ...prev.item, ...item }
-            : item
-          : prev.item
+        ? prev.item
+          ? { ...prev.item, ...item }
+          : item
+        : prev.item;
     const nextMethod =
-      prevIsToken && args.method === 'receive-collectable'
+      prevIsToken && args.method === "receive-collectable"
         ? prev.method
-        : args.method || prev.method
-    const nextPendingId = pendingId || prev.pendingId
+        : args.method || prev.method;
+    const nextPendingId = pendingId || prev.pendingId;
     // A confirmed txid clears an earlier failure; otherwise keep the reason.
     const nextFailureReason =
-      nextStatus === 'failed'
+      nextStatus === "failed"
         ? normalizeFailureReason(args.failureReason) ?? prev.failureReason
-        : undefined
-    const nextRetry = normalizeActivityRetry(args.retry) ?? prev.retry
+        : undefined;
+    const nextRetry = normalizeActivityRetry(args.retry) ?? prev.retry;
     entries[idx] = {
       ...prev,
       origin: origin || prev.origin,
@@ -598,7 +645,7 @@ export function upsertAppActivity(args: {
       note: args.note ?? prev.note,
       txid: txid || prev.txid,
       ...(nextItem ? { item: nextItem } : {}),
-      ...(nextStatus === 'pending' || nextStatus === 'failed'
+      ...(nextStatus === "pending" || nextStatus === "failed"
         ? { status: nextStatus }
         : { status: undefined }),
       ...(nextPendingId
@@ -609,9 +656,9 @@ export function upsertAppActivity(args: {
         : { failureReason: undefined }),
       ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
       ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
-    }
-    writeAll(entries)
-    return
+    };
+    writeAll(entries);
+    return;
   }
   writeAll([
     ...entries,
@@ -625,8 +672,8 @@ export function upsertAppActivity(args: {
       note: args.note,
       txid,
       ...(item ? { item } : {}),
-      ...(pending ? { status: 'pending' as const } : {}),
-      ...(failed ? { status: 'failed' as const } : {}),
+      ...(pending ? { status: "pending" as const } : {}),
+      ...(failed ? { status: "failed" as const } : {}),
       ...(failed
         ? { failureReason: normalizeFailureReason(args.failureReason) }
         : {}),
@@ -636,48 +683,52 @@ export function upsertAppActivity(args: {
         : {}),
       ...(args.burn ? { burn: args.burn } : {}),
     },
-  ])
+  ]);
 }
 
 /** Activity row as soon as a peer tip/pay lands — before internalize finishes. */
 export function noteInboundReceivePending(args: {
-  txid: string
-  sats?: number
-  item?: boolean
-  itemName?: string
-  itemOrigin?: string
-  outpoint?: string
+  txid: string;
+  sats?: number;
+  item?: boolean;
+  itemName?: string;
+  itemOrigin?: string;
+  outpoint?: string;
   token?: {
-    tokenId: string
-    amount: string
-    sym: string
-    dec: number
-    icon?: string
-  }
+    tokenId: string;
+    amount: string;
+    sym: string;
+    dec: number;
+    icon?: string;
+  };
 }): void {
-  const txid = args.txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return
-  if (isGhostTxSuppressed(txid)) return
+  const txid = args.txid.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txid)) return;
+  if (isGhostTxSuppressed(txid)) return;
   if (args.item) {
-    const name = args.token?.sym?.trim() || args.itemName?.trim() || 'Collectable'
-    const outpoint = args.outpoint?.trim() || undefined
+    const name =
+      args.token?.sym?.trim() || args.itemName?.trim() || "Collectable";
+    const outpoint = args.outpoint?.trim() || undefined;
     // Never invent `${txid}.0` — batch receives tip at other vouts, and a fake
     // .0 orphans Verifying… or collapses two foxes onto one activity row.
     const origin =
       args.token?.tokenId?.trim() ||
       args.itemOrigin?.trim() ||
-      (outpoint ? outpoint.replace(/\.(\d+)$/, '_$1') : undefined) ||
-      `${txid}_pending`
+      (outpoint ? outpoint.replace(/\.(\d+)$/, "_$1") : undefined) ||
+      `${txid}_pending`;
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'earned',
+      kind: "earned",
       sats: 1,
-      method: args.token ? 'receive-token' : 'receive-collectable',
+      method: args.token ? "receive-token" : "receive-collectable",
       note: args.token
-        ? `Receiving ${formatActivityTokenAmt(args.token.amount, args.token.dec)} ${name}`
+        ? `Receiving ${formatActivityTokenAmt(
+            args.token.amount,
+            args.token.dec
+          )} ${name}`
         : `Receiving ${name}`,
       txid,
-      status: 'pending',
+      status: "pending",
       item: {
         name,
         origin,
@@ -691,56 +742,60 @@ export function noteInboundReceivePending(args: {
             }
           : {}),
       },
-    })
-    return
+    });
+    return;
   }
   upsertAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'earned',
+    kind: "earned",
     sats: Math.max(0, Math.trunc(args.sats ?? 0)),
-    method: 'receive',
-    note: 'Received coins',
+    method: "receive",
+    note: "Received coins",
     txid,
-    status: 'pending',
-  })
+    status: "pending",
+  });
 }
 
 /** Mark a verifying receive as settled (or create the row if ingest skipped pending). */
 export function noteInboundReceiveComplete(args: {
-  txid: string
-  sats?: number
-  item?: boolean
-  itemName?: string
-  itemOrigin?: string
-  outpoint?: string
+  txid: string;
+  sats?: number;
+  item?: boolean;
+  itemName?: string;
+  itemOrigin?: string;
+  outpoint?: string;
   token?: {
-    tokenId: string
-    amount: string
-    sym: string
-    dec: number
-    icon?: string
-  }
+    tokenId: string;
+    amount: string;
+    sym: string;
+    dec: number;
+    icon?: string;
+  };
 }): void {
-  const txid = args.txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return
+  const txid = args.txid.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txid)) return;
   if (args.item) {
-    const name = args.token?.sym?.trim() || args.itemName?.trim() || 'Collectable'
-    const outpoint = args.outpoint?.trim() || undefined
+    const name =
+      args.token?.sym?.trim() || args.itemName?.trim() || "Collectable";
+    const outpoint = args.outpoint?.trim() || undefined;
     const origin =
       args.token?.tokenId?.trim() ||
       args.itemOrigin?.trim() ||
-      (outpoint ? outpoint.replace(/\.(\d+)$/, '_$1') : undefined) ||
-      `${txid}_pending`
+      (outpoint ? outpoint.replace(/\.(\d+)$/, "_$1") : undefined) ||
+      `${txid}_pending`;
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'earned',
+      kind: "earned",
       sats: 1,
-      method: args.token ? 'receive-token' : 'receive-collectable',
+      method: args.token ? "receive-token" : "receive-collectable",
       note: args.token
-        ? `Received ${formatActivityTokenAmt(args.token.amount, args.token.dec)} ${name}`
+        ? `Received ${formatActivityTokenAmt(
+            args.token.amount,
+            args.token.dec
+          )} ${name}`
         : `Received ${name}`,
       txid,
-      status: 'complete',
+      status: "complete",
       item: {
         name,
         origin,
@@ -754,58 +809,58 @@ export function noteInboundReceiveComplete(args: {
             }
           : {}),
       },
-    })
-    return
+    });
+    return;
   }
   upsertAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'earned',
+    kind: "earned",
     sats: Math.max(0, Math.trunc(args.sats ?? 0)),
-    method: 'receive',
-    note: 'Received coins',
+    method: "receive",
+    note: "Received coins",
     txid,
-    status: 'complete',
-  })
+    status: "complete",
+  });
 }
 
 /** Activity row the moment an outbound send starts — survives Back / navigate away. */
 export function noteOutboundSendPending(args: {
-  pendingId: string
-  sats: number
-  to: string
-  friendLabel?: string | null
-  recipientIdentityKey?: string | null
-  item?: ActivityItem
+  pendingId: string;
+  sats: number;
+  to: string;
+  friendLabel?: string | null;
+  recipientIdentityKey?: string | null;
+  item?: ActivityItem;
 }): void {
-  const pendingId = args.pendingId.trim()
-  if (!pendingId) return
+  const pendingId = args.pendingId.trim();
+  if (!pendingId) return;
   const recipient = formatActivityRecipientDisplay({
     friendLabel: args.friendLabel,
     to: args.to,
-  })
+  });
   if (args.item) {
-    const isToken = Boolean(args.item.tokenId)
-    const name = args.item.name?.trim() || (isToken ? 'Token' : 'Collectable')
+    const isToken = Boolean(args.item.tokenId);
+    const name = args.item.name?.trim() || (isToken ? "Token" : "Collectable");
     const qty =
       isToken && args.item.amt
         ? formatActivityTokenAmt(args.item.amt, args.item.dec ?? 0)
-        : null
+        : null;
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'spent',
+      kind: "spent",
       sats: Math.max(1, Math.trunc(args.sats) || 1),
-      method: isToken ? 'send-token' : 'send-collectable',
+      method: isToken ? "send-token" : "send-collectable",
       note: qty
         ? `Sending ${qty} ${name} to ${recipient}`
         : `Sending ${name} to ${recipient}`,
-      status: 'pending',
+      status: "pending",
       pendingId,
       item: args.item,
       retry: isToken
         ? {
-            kind: 'send-token',
+            kind: "send-token",
             tokenId: args.item.tokenId!,
-            amount: args.item.amt ?? '0',
+            amount: args.item.amt ?? "0",
             toAddress: args.to,
             ...(args.recipientIdentityKey
               ? { recipientIdentityKey: args.recipientIdentityKey }
@@ -813,158 +868,158 @@ export function noteOutboundSendPending(args: {
             ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
           }
         : {
-            kind: 'send-collectable',
-            outpoint: args.item.outpoint ?? '',
+            kind: "send-collectable",
+            outpoint: args.item.outpoint ?? "",
             toAddress: args.to,
             ...(args.recipientIdentityKey
               ? { recipientIdentityKey: args.recipientIdentityKey }
               : {}),
             ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
           },
-    })
-    return
+    });
+    return;
   }
   upsertAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'spent',
+    kind: "spent",
     sats: Math.max(0, Math.trunc(args.sats)),
-    method: 'send',
+    method: "send",
     note: `Sending to ${recipient}`,
-    status: 'pending',
+    status: "pending",
     pendingId,
     retry: bsvRetry(args),
-  })
+  });
 }
 
 function shortenActivityCounterparty(value: string): string {
-  const v = value.trim()
-  if (v.length <= 20) return v
-  return `${v.slice(0, 10)}…${v.slice(-8)}`
+  const v = value.trim();
+  if (v.length <= 20) return v;
+  return `${v.slice(0, 10)}…${v.slice(-8)}`;
 }
 
 /** Human-readable counterparty for Activity titles and notes. */
 export function formatActivityRecipientDisplay(args: {
-  friendLabel?: string | null
-  to: string
+  friendLabel?: string | null;
+  to: string;
 }): string {
-  const label = args.friendLabel?.trim()
-  const to = args.to.trim()
+  const label = args.friendLabel?.trim();
+  const to = args.to.trim();
   if (label) {
-    const normalized = label.toLowerCase() === 'me' ? 'myself' : label
+    const normalized = label.toLowerCase() === "me" ? "myself" : label;
     // Identity keys and long addresses belong in detail rows, not parenthesized.
-    if (/^[0-9a-f]{64}$/i.test(to) || to.length >= 34) return normalized
-    if (to.length <= 20) return `${normalized} (${to})`
-    return normalized
+    if (/^[0-9a-f]{64}$/i.test(to) || to.length >= 34) return normalized;
+    if (to.length <= 20) return `${normalized} (${to})`;
+    return normalized;
   }
-  return shortenActivityCounterparty(to)
+  return shortenActivityCounterparty(to);
 }
 
 /** Counterparty name for wallet payment rows — never the full identity key. */
 export function activityRecipientLabel(entry: ActivityEntry): string | null {
-  const retry = entry.retry
-  if (retry && 'toAddress' in retry) {
+  const retry = entry.retry;
+  if (retry && "toAddress" in retry) {
     return formatActivityRecipientDisplay({
       friendLabel: retry.friendLabel,
       to: retry.toAddress,
-    })
+    });
   }
-  const note = entry.note?.trim()
-  if (!note) return null
+  const note = entry.note?.trim();
+  if (!note) return null;
   const match =
     note.match(/^Sent(?:ing)?(?:\s+[\d,.\s]+)?(?:\s+\S+)?\s+to\s+(.+)$/i) ??
-    note.match(/^Received from\s+(.+)$/i)
-  if (!match) return null
-  let label = match[1]!.trim()
-  const paren = label.match(/^(.+?)\s+\(([^)]+)\)$/)
+    note.match(/^Received from\s+(.+)$/i);
+  if (!match) return null;
+  let label = match[1]!.trim();
+  const paren = label.match(/^(.+?)\s+\(([^)]+)\)$/);
   if (paren) {
-    const inner = paren[2]!.trim()
+    const inner = paren[2]!.trim();
     if (/^[0-9a-f]{64}$/i.test(inner) || inner.length >= 34) {
-      label = paren[1]!.trim()
+      label = paren[1]!.trim();
     }
   }
-  if (label.toLowerCase() === 'me') return 'myself'
-  return label || null
+  if (label.toLowerCase() === "me") return "myself";
+  return label || null;
 }
 
 /** Whether an activity row is a payment/item move with this friend. */
 export function activityMatchesFriend(
   entry: ActivityEntry,
-  friend: { identityKey: string; label: string },
+  friend: { identityKey: string; label: string }
 ): boolean {
-  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return false
-  if (entry.kind !== 'spent' && entry.kind !== 'earned') return false
-  const ik = friend.identityKey.trim().toLowerCase()
-  const label = friend.label.trim().toLowerCase()
-  const retry = entry.retry
-  if (retry?.recipientIdentityKey?.trim().toLowerCase() === ik) return true
-  if (retry?.friendLabel?.trim().toLowerCase() === label) return true
-  const recipient = activityRecipientLabel(entry)?.trim().toLowerCase()
-  return Boolean(recipient && recipient === label)
+  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return false;
+  if (entry.kind !== "spent" && entry.kind !== "earned") return false;
+  const ik = friend.identityKey.trim().toLowerCase();
+  const label = friend.label.trim().toLowerCase();
+  const retry = entry.retry;
+  if (retry?.recipientIdentityKey?.trim().toLowerCase() === ik) return true;
+  if (retry?.friendLabel?.trim().toLowerCase() === label) return true;
+  const recipient = activityRecipientLabel(entry)?.trim().toLowerCase();
+  return Boolean(recipient && recipient === label);
 }
 
 /** Recipient + amount a payment row needs to be retried or explained after it dies. */
 function bsvRetry(args: {
-  sats: number
-  to: string
-  friendLabel?: string | null
-  recipientIdentityKey?: string | null
+  sats: number;
+  to: string;
+  friendLabel?: string | null;
+  recipientIdentityKey?: string | null;
 }): ActivityRetry | undefined {
-  const satoshis = Math.max(0, Math.trunc(args.sats))
-  const toAddress = args.to.trim()
-  if (satoshis <= 0 || !toAddress) return undefined
+  const satoshis = Math.max(0, Math.trunc(args.sats));
+  const toAddress = args.to.trim();
+  if (satoshis <= 0 || !toAddress) return undefined;
   return {
-    kind: 'send-bsv',
+    kind: "send-bsv",
     toAddress,
     satoshis,
     ...(args.recipientIdentityKey
       ? { recipientIdentityKey: args.recipientIdentityKey }
       : {}),
     ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-  }
+  };
 }
 
 /** Promote a Sending… row to Settled after broadcast accepts. */
 export function noteOutboundSendComplete(args: {
-  pendingId: string
-  txid: string
-  sats: number
-  to: string
-  friendLabel?: string | null
-  recipientIdentityKey?: string | null
-  item?: ActivityItem
+  pendingId: string;
+  txid: string;
+  sats: number;
+  to: string;
+  friendLabel?: string | null;
+  recipientIdentityKey?: string | null;
+  item?: ActivityItem;
 }): void {
-  const pendingId = args.pendingId.trim()
-  const txid = args.txid.trim().toLowerCase()
-  if (!pendingId) return
-  if (!/^[0-9a-f]{64}$/.test(txid) && !txid.startsWith('local-')) return
+  const pendingId = args.pendingId.trim();
+  const txid = args.txid.trim().toLowerCase();
+  if (!pendingId) return;
+  if (!/^[0-9a-f]{64}$/.test(txid) && !txid.startsWith("local-")) return;
   const recipient = formatActivityRecipientDisplay({
     friendLabel: args.friendLabel,
     to: args.to,
-  })
+  });
   if (args.item) {
-    const isToken = Boolean(args.item.tokenId)
-    const name = args.item.name?.trim() || (isToken ? 'Token' : 'Collectable')
+    const isToken = Boolean(args.item.tokenId);
+    const name = args.item.name?.trim() || (isToken ? "Token" : "Collectable");
     const qty =
       isToken && args.item.amt
         ? formatActivityTokenAmt(args.item.amt, args.item.dec ?? 0)
-        : null
+        : null;
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'spent',
+      kind: "spent",
       sats: Math.max(1, Math.trunc(args.sats) || 1),
-      method: isToken ? 'send-token' : 'send-collectable',
+      method: isToken ? "send-token" : "send-collectable",
       note: qty
         ? `Sent ${qty} ${name} to ${recipient}`
         : `Sent ${name} to ${recipient}`,
       txid,
-      status: 'complete',
+      status: "complete",
       pendingId,
       item: args.item,
       retry: isToken
         ? {
-            kind: 'send-token',
+            kind: "send-token",
             tokenId: args.item.tokenId!,
-            amount: args.item.amt ?? '0',
+            amount: args.item.amt ?? "0",
             toAddress: args.to,
             ...(args.recipientIdentityKey
               ? { recipientIdentityKey: args.recipientIdentityKey }
@@ -972,28 +1027,28 @@ export function noteOutboundSendComplete(args: {
             ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
           }
         : {
-            kind: 'send-collectable',
-            outpoint: args.item.outpoint ?? '',
+            kind: "send-collectable",
+            outpoint: args.item.outpoint ?? "",
             toAddress: args.to,
             ...(args.recipientIdentityKey
               ? { recipientIdentityKey: args.recipientIdentityKey }
               : {}),
             ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
           },
-    })
-    return
+    });
+    return;
   }
   upsertAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'spent',
+    kind: "spent",
     sats: Math.max(0, Math.trunc(args.sats)),
-    method: 'send',
+    method: "send",
     note: `Sent to ${recipient}`,
     txid,
-    status: 'complete',
+    status: "complete",
     pendingId,
     retry: bsvRetry(args),
-  })
+  });
 }
 
 /**
@@ -1002,14 +1057,13 @@ export function noteOutboundSendComplete(args: {
  * {@link failOutboundSendPending} so Activity keeps the reason.
  */
 export function clearOutboundSendPending(pendingId: string): void {
-  const id = pendingId.trim()
-  if (!id) return
-  const prev = readAll()
+  const id = pendingId.trim();
+  if (!id) return;
+  const prev = readAll();
   const entries = prev.filter(
-    (e) =>
-      !(e.pendingId === id && e.status === 'pending' && e.kind === 'spent'),
-  )
-  if (entries.length !== prev.length) writeAll(entries)
+    (e) => !(e.pendingId === id && e.status === "pending" && e.kind === "spent")
+  );
+  if (entries.length !== prev.length) writeAll(entries);
 }
 
 /**
@@ -1018,29 +1072,29 @@ export function clearOutboundSendPending(pendingId: string): void {
  * instead of silently dropping it.
  */
 export function failOutboundSendPending(args: {
-  pendingId: string
-  reason: unknown
+  pendingId: string;
+  reason: unknown;
 }): boolean {
-  const id = args.pendingId.trim()
-  if (!id) return false
-  const reason = normalizeFailureReason(args.reason) ?? 'Send failed'
-  const prev = readAll()
-  let changed = false
+  const id = args.pendingId.trim();
+  if (!id) return false;
+  const reason = normalizeFailureReason(args.reason) ?? "Send failed";
+  const prev = readAll();
+  let changed = false;
   const entries = prev.map((e) => {
-    if (e.pendingId !== id || e.kind !== 'spent') return e
-    // A row that already reached a txid settled — never rewrite it as failed.
-    if (e.status !== 'pending') return e
-    changed = true
-    const name = e.item?.name?.trim()
+    if (e.pendingId !== id || e.kind !== "spent") return e;
+    // A signed cheque is already the spend. Never rewrite it as failed.
+    if (e.status !== "pending" || e.txid) return e;
+    changed = true;
+    const name = e.item?.name?.trim();
     return {
       ...e,
-      status: 'failed' as const,
+      status: "failed" as const,
       failureReason: reason,
-      note: name ? `${name} was not sent` : 'Payment was not sent',
-    }
-  })
-  if (changed) writeAll(entries)
-  return changed
+      note: name ? `${name} was not sent` : "Payment was not sent",
+    };
+  });
+  if (changed) writeAll(entries);
+  return changed;
 }
 
 /**
@@ -1048,66 +1102,66 @@ export function failOutboundSendPending(args: {
  * (e.g. missing inputs). Optimistic transport silence does not call this.
  */
 export function noteOutboundSendBroadcastFailed(args: {
-  pendingId?: string
-  txid?: string
-  reason: unknown
+  pendingId?: string;
+  txid?: string;
+  reason: unknown;
 }): boolean {
-  const pendingId = args.pendingId?.trim()
-  const txid = args.txid?.trim().toLowerCase()
+  const pendingId = args.pendingId?.trim();
+  const txid = args.txid?.trim().toLowerCase();
   if (txid && txHadArcadeSubmitContact(txid)) {
     console.info(
-      '[activity] broadcast failure ignored — Arcade submit still in flight',
-      txid.slice(0, 12),
-    )
-    return false
+      "[activity] broadcast failure ignored — Arcade submit still in flight",
+      txid.slice(0, 12)
+    );
+    return false;
   }
-  const reason = normalizeFailureReason(args.reason) ?? 'Broadcast failed'
-  if (!pendingId && !txid) return false
-  let changed = false
+  const reason = normalizeFailureReason(args.reason) ?? "Broadcast failed";
+  if (!pendingId && !txid) return false;
+  let changed = false;
   const entries = readAll().map((e) => {
-    if (e.kind !== 'spent') return e
-    const matchPending = Boolean(pendingId && e.pendingId === pendingId)
-    const matchTxid = Boolean(txid && e.txid?.toLowerCase() === txid)
-    if (!matchPending && !matchTxid) return e
-    if (e.status === 'failed') return e
-    changed = true
-    const name = e.item?.name?.trim()
+    if (e.kind !== "spent") return e;
+    const matchPending = Boolean(pendingId && e.pendingId === pendingId);
+    const matchTxid = Boolean(txid && e.txid?.toLowerCase() === txid);
+    if (!matchPending && !matchTxid) return e;
+    if (e.status === "failed") return e;
+    changed = true;
+    const name = e.item?.name?.trim();
     return {
       ...e,
-      status: 'failed' as const,
+      status: "failed" as const,
       failureReason: reason,
       note: name
         ? `${name} was not sent`
-        : e.note?.startsWith('Sent ')
-          ? `Failed: ${e.note}`
-          : 'Payment was not sent',
-    }
-  })
-  if (changed) writeAll(entries)
-  return changed
+        : e.note?.startsWith("Sent ")
+        ? `Failed: ${e.note}`
+        : "Payment was not sent",
+    };
+  });
+  if (changed) writeAll(entries);
+  return changed;
 }
 
 function normalizeActivityOutpoint(outpoint: string): string {
   return outpoint
     .trim()
     .toLowerCase()
-    .replace(/_(\d+)$/, '.$1')
+    .replace(/_(\d+)$/, ".$1");
 }
 
 /** Drop a Verifying… receive when ingest fails before the tip is held. */
 export function clearInboundReceivePending(txid: string): void {
-  const id = txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id)) return
-  const prev = readAll()
+  const id = txid.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(id)) return;
+  const prev = readAll();
   const entries = prev.filter(
     (e) =>
       !(
         e.txid?.toLowerCase() === id &&
-        e.status === 'pending' &&
-        e.kind === 'earned'
-      ),
-  )
-  if (entries.length !== prev.length) writeAll(entries)
+        e.status === "pending" &&
+        e.kind === "earned"
+      )
+  );
+  if (entries.length !== prev.length) writeAll(entries);
 }
 
 /**
@@ -1116,16 +1170,16 @@ export function clearInboundReceivePending(txid: string): void {
  */
 export function expireStaleInboundPending(
   maxAgeMs = 120_000,
-  now = Date.now(),
+  now = Date.now()
 ): number {
-  const prev = readAll()
+  const prev = readAll();
   const entries = prev.filter((e) => {
-    if (e.status !== 'pending' || e.kind !== 'earned') return true
-    return now - e.at < maxAgeMs
-  })
-  const removed = prev.length - entries.length
-  if (removed > 0) writeAll(entries)
-  return removed
+    if (e.status !== "pending" || e.kind !== "earned") return true;
+    return now - e.at < maxAgeMs;
+  });
+  const removed = prev.length - entries.length;
+  if (removed > 0) writeAll(entries);
+  return removed;
 }
 
 /**
@@ -1135,34 +1189,35 @@ export function expireStaleInboundPending(
  */
 export function expireStaleOutboundPending(
   maxAgeMs = 90_000,
-  now = Date.now(),
+  now = Date.now()
 ): number {
   // A hung send still holds spend priority after the pill watchdog fires.
   // Failing the Activity row while that work is alive made Sending… vanish
   // and look like a timeout even though nothing had returned yet.
-  if (shouldYieldChainIngestToSpend()) return 0
-  const prev = readAll()
-  let expired = 0
+  if (shouldYieldChainIngestToSpend()) return 0;
+  const prev = readAll();
+  let expired = 0;
   const entries = prev.map((e) => {
-    if (e.status !== 'pending' || e.kind !== 'spent') return e
-    if (now - e.at < maxAgeMs) return e
-    expired += 1
-    const name = e.item?.name?.trim()
+    if (e.status !== "pending" || e.kind !== "spent") return e;
+    if (e.txid) return e;
+    if (now - e.at < maxAgeMs) return e;
+    expired += 1;
+    const name = e.item?.name?.trim();
     return {
       ...e,
-      status: 'failed' as const,
+      status: "failed" as const,
       failureReason:
-        'Send timed out — signing took too long and nothing was broadcast',
-      note: name ? `${name} was not sent` : 'Collectable was not sent',
-    }
-  })
+        "Send timed out — signing took too long and nothing was broadcast",
+      note: name ? `${name} was not sent` : "Collectable was not sent",
+    };
+  });
   if (expired > 0) {
-    writeAll(entries)
-    void import('./chainedChangeHeal').then(({ scheduleHealAfterSendCleanup }) =>
-      scheduleHealAfterSendCleanup(),
-    )
+    writeAll(entries);
+    void import("./chainedChangeHeal").then(
+      ({ scheduleHealAfterSendCleanup }) => scheduleHealAfterSendCleanup()
+    );
   }
-  return expired
+  return expired;
 }
 
 /** Drop every Activity row for txids already proven invalid/ghosted. */
@@ -1170,48 +1225,48 @@ export function removeActivityForTxids(txids: string[]): number {
   const missing = new Set(
     txids
       .map((t) => t.trim().toLowerCase())
-      .filter((t) => /^[0-9a-f]{64}$/.test(t) && !txHadArcadeSubmitContact(t)),
-  )
-  if (missing.size === 0) return 0
-  const prev = readAll()
+      .filter((t) => /^[0-9a-f]{64}$/.test(t) && !txHadArcadeSubmitContact(t))
+  );
+  if (missing.size === 0) return 0;
+  const prev = readAll();
   const next = prev.filter((e) => {
-    const txid = e.txid?.toLowerCase()
-    return !txid || !missing.has(txid)
-  })
-  const removed = prev.length - next.length
-  if (removed > 0) writeAll(next)
-  return removed
+    const txid = e.txid?.toLowerCase();
+    return !txid || !missing.has(txid);
+  });
+  const removed = prev.length - next.length;
+  if (removed > 0) writeAll(next);
+  return removed;
 }
 
 /** Activity row hidden from the feed but still in durable storage. */
 export function isArchivedActivity(entry: ActivityEntry): boolean {
-  return typeof entry.archivedAt === 'number' && entry.archivedAt > 0
+  return typeof entry.archivedAt === "number" && entry.archivedAt > 0;
 }
 
 function readVisible(): ActivityEntry[] {
-  return readAll().filter((entry) => !isArchivedActivity(entry))
+  return readAll().filter((entry) => !isArchivedActivity(entry));
 }
 
 /** Hide one Activity row (archive). Never mutates or cancels a transaction. */
 export function archiveActivityById(id: string): boolean {
-  const key = id.trim()
-  if (!key) return false
-  const at = Date.now()
-  const prev = readAll()
-  let changed = false
+  const key = id.trim();
+  if (!key) return false;
+  const at = Date.now();
+  const prev = readAll();
+  let changed = false;
   const next = prev.map((entry) => {
-    if (entry.id !== key || isArchivedActivity(entry)) return entry
-    changed = true
-    return { ...entry, archivedAt: at }
-  })
-  if (!changed) return false
-  writeAll(next)
-  return true
+    if (entry.id !== key || isArchivedActivity(entry)) return entry;
+    changed = true;
+    return { ...entry, archivedAt: at };
+  });
+  if (!changed) return false;
+  writeAll(next);
+  return true;
 }
 
 /** @deprecated name — archives the row instead of deleting it. */
 export function removeActivityById(id: string): boolean {
-  return archiveActivityById(id)
+  return archiveActivityById(id);
 }
 
 /**
@@ -1223,22 +1278,22 @@ export function removeActivityById(id: string): boolean {
  * counted here.
  */
 export function countFailedActivity(
-  keep?: (entry: ActivityEntry) => boolean,
+  keep?: (entry: ActivityEntry) => boolean
 ): number {
   return readVisible().reduce(
-    (n, e) => (e.status === 'failed' && !keep?.(e) ? n + 1 : n),
-    0,
-  )
+    (n, e) => (e.status === "failed" && !keep?.(e) ? n + 1 : n),
+    0
+  );
 }
 
 /** Failed send rows currently visible in Activity, in store order. */
 export function listFailedActivity(): ActivityEntry[] {
-  return readVisible().filter((e) => e.status === 'failed')
+  return readVisible().filter((e) => e.status === "failed");
 }
 
 /** Archived rows kept for heal scans and history backup. */
 export function listArchivedActivity(): ActivityEntry[] {
-  return readAll().filter(isArchivedActivity)
+  return readAll().filter(isArchivedActivity);
 }
 
 /**
@@ -1251,39 +1306,43 @@ export function listArchivedActivity(): ActivityEntry[] {
  * only edits the history list. Returns how many rows were removed.
  */
 export function removeFailedActivity(
-  keep?: (entry: ActivityEntry) => boolean,
+  keep?: (entry: ActivityEntry) => boolean
 ): number {
-  const prev = readAll()
-  const at = Date.now()
-  let archived = 0
+  const prev = readAll();
+  const at = Date.now();
+  let archived = 0;
   const next = prev.map((entry) => {
-    if (entry.status !== 'failed' || keep?.(entry) || isArchivedActivity(entry)) {
-      return entry
+    if (
+      entry.status !== "failed" ||
+      keep?.(entry) ||
+      isArchivedActivity(entry)
+    ) {
+      return entry;
     }
-    archived += 1
-    return { ...entry, archivedAt: at }
-  })
-  if (archived > 0) writeAll(next)
-  return archived
+    archived += 1;
+    return { ...entry, archivedAt: at };
+  });
+  if (archived > 0) writeAll(next);
+  return archived;
 }
 
-const TXID_HEX = /^[0-9a-f]{64}$/i
+const TXID_HEX = /^[0-9a-f]{64}$/i;
 
 /** Txids from visible + archived Activity — used by UTXO heal from history. */
 export function collectActivityTxids(): {
-  txids: Set<string>
-  archived: number
-  total: number
+  txids: Set<string>;
+  archived: number;
+  total: number;
 } {
-  const all = readAll()
-  const txids = new Set<string>()
-  let archived = 0
+  const all = readAll();
+  const txids = new Set<string>();
+  let archived = 0;
   for (const row of all) {
-    if (isArchivedActivity(row)) archived += 1
-    const txid = row.txid?.trim().toLowerCase()
-    if (txid && TXID_HEX.test(txid)) txids.add(txid)
+    if (isArchivedActivity(row)) archived += 1;
+    const txid = row.txid?.trim().toLowerCase();
+    if (txid && TXID_HEX.test(txid)) txids.add(txid);
   }
-  return { txids, archived, total: all.length }
+  return { txids, archived, total: all.length };
 }
 
 /**
@@ -1298,50 +1357,50 @@ export function collectActivityTxids(): {
  * falls back to "Transaction not found".
  */
 export async function pruneMissingOnChainActivity(
-  _chain: import('./vault').Chain,
+  _chain: import("./vault").Chain,
   _exists: (
     txid: string,
-    chain: import('./vault').Chain,
+    chain: import("./vault").Chain
   ) => Promise<boolean | null>,
-  opts?: { minAgeMs?: number; pendingMinAgeMs?: number; limit?: number },
+  opts?: { minAgeMs?: number; pendingMinAgeMs?: number; limit?: number }
 ): Promise<number> {
-  const settledMinAgeMs = opts?.minAgeMs ?? 10 * 60_000
-  const pendingMinAgeMs = opts?.pendingMinAgeMs ?? 60_000
-  const limit = opts?.limit ?? 40
-  const now = Date.now()
-  const prev = readAll()
+  const settledMinAgeMs = opts?.minAgeMs ?? 10 * 60_000;
+  const pendingMinAgeMs = opts?.pendingMinAgeMs ?? 60_000;
+  const limit = opts?.limit ?? 40;
+  const now = Date.now();
+  const prev = readAll();
   const candidates = prev
     .filter((e) => {
-      if (!e.txid || !/^[0-9a-f]{64}$/i.test(e.txid)) return false
-      if (activityRowIsItem(e)) return false
-      const age = now - e.at
-      if (e.status === 'pending') return age >= pendingMinAgeMs
-      if (age < settledMinAgeMs) return false
-      return e.kind === 'spent' || e.kind === 'earned'
+      if (!e.txid || !/^[0-9a-f]{64}$/i.test(e.txid)) return false;
+      if (activityRowIsItem(e)) return false;
+      const age = now - e.at;
+      if (e.status === "pending") return age >= pendingMinAgeMs;
+      if (age < settledMinAgeMs) return false;
+      return e.kind === "spent" || e.kind === "earned";
     })
-    .slice(0, limit)
+    .slice(0, limit);
 
-  if (candidates.length === 0) return 0
+  if (candidates.length === 0) return 0;
 
-  const missing = new Set<string>()
+  const missing = new Set<string>();
   for (const row of candidates) {
-    const txid = row.txid!.toLowerCase()
-    if (missing.has(txid)) continue
-    if (txHadArcadeSubmitContact(txid)) continue
+    const txid = row.txid!.toLowerCase();
+    if (missing.has(txid)) continue;
+    if (txHadArcadeSubmitContact(txid)) continue;
     if (isGhostTxSuppressed(txid)) {
-      missing.add(txid)
+      missing.add(txid);
     }
   }
-  if (missing.size === 0) return 0
+  if (missing.size === 0) return 0;
 
   const next = prev.filter((e) => {
-    const txid = e.txid?.toLowerCase()
-    if (!txid || !missing.has(txid)) return true
-    return false
-  })
-  const removed = prev.length - next.length
-  if (removed > 0) writeAll(next)
-  return removed
+    const txid = e.txid?.toLowerCase();
+    if (!txid || !missing.has(txid)) return true;
+    return false;
+  });
+  const removed = prev.length - next.length;
+  if (removed > 0) writeAll(next);
+  return removed;
 }
 
 /**
@@ -1353,55 +1412,55 @@ export async function pruneMissingOnChainActivity(
  */
 export function reconcilePendingActivityWithHeldItems(
   held: Array<{
-    outpoint: string
-    proven?: boolean
-    name?: string
-    origin?: string
-  }>,
+    outpoint: string;
+    proven?: boolean;
+    name?: string;
+    origin?: string;
+  }>
 ): number {
-  if (!held.length) return 0
+  if (!held.length) return 0;
   const byOutpoint = new Map(
     held
       .map((h) => {
-        const op = normalizeActivityOutpoint(h.outpoint)
-        return op ? ([op, h] as const) : null
+        const op = normalizeActivityOutpoint(h.outpoint);
+        return op ? ([op, h] as const) : null;
       })
       .filter(
-        (row): row is readonly [string, (typeof held)[number]] => row != null,
-      ),
-  )
-  if (byOutpoint.size === 0) return 0
+        (row): row is readonly [string, (typeof held)[number]] => row != null
+      )
+  );
+  if (byOutpoint.size === 0) return 0;
 
-  const entries = [...readAll()]
-  let changed = 0
+  const entries = [...readAll()];
+  let changed = 0;
   for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]!
-    if (entry.status !== 'pending' || entry.kind !== 'earned') continue
+    const entry = entries[i]!;
+    if (entry.status !== "pending" || entry.kind !== "earned") continue;
     const op = entry.item?.outpoint
       ? normalizeActivityOutpoint(entry.item.outpoint)
-      : ''
-    if (!op) continue
-    const item = byOutpoint.get(op)
-    if (!item) continue
+      : "";
+    if (!op) continue;
+    const item = byOutpoint.get(op);
+    if (!item) continue;
     // Owned in inventory ⇒ ingest finished. Pending was only for pre-paint.
     entries[i] = {
       ...entry,
       status: undefined,
       item: {
-        name: item.name?.trim() || entry.item?.name || 'Collectable',
+        name: item.name?.trim() || entry.item?.name || "Collectable",
         origin:
           item.origin?.trim() ||
           entry.item?.origin ||
-          `${op.replace('.', '_')}`,
+          `${op.replace(".", "_")}`,
         outpoint: op,
         ...(entry.item?.imageUrl ? { imageUrl: entry.item.imageUrl } : {}),
         ...(entry.item?.app ? { app: entry.item.app } : {}),
       },
-    }
-    changed += 1
+    };
+    changed += 1;
   }
-  if (changed > 0) writeAll(entries)
-  return changed
+  if (changed > 0) writeAll(entries);
+  return changed;
 }
 
 /**
@@ -1411,50 +1470,50 @@ export function reconcilePendingActivityWithHeldItems(
  * deleting it or leaving Activity inconsistent with Collectables.
  */
 export function reconcilePendingItemActivityWithSpentOutpoints(
-  outpoints: string[],
+  outpoints: string[]
 ): number {
   const spent = new Set(
-    outpoints.map(normalizeActivityOutpoint).filter(Boolean),
-  )
-  if (spent.size === 0) return 0
+    outpoints.map(normalizeActivityOutpoint).filter(Boolean)
+  );
+  if (spent.size === 0) return 0;
 
-  const entries = [...readAll()]
-  let changed = 0
+  const entries = [...readAll()];
+  let changed = 0;
   for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i]!
+    const entry = entries[i]!;
     if (
-      entry.status !== 'pending' ||
-      entry.kind !== 'earned' ||
+      entry.status !== "pending" ||
+      entry.kind !== "earned" ||
       !activityRowIsItem(entry)
     ) {
-      continue
+      continue;
     }
     const outpoint = entry.item?.outpoint
       ? normalizeActivityOutpoint(entry.item.outpoint)
-      : ''
-    if (!outpoint || !spent.has(outpoint)) continue
-    entries[i] = { ...entry, status: undefined }
-    changed += 1
+      : "";
+    if (!outpoint || !spent.has(outpoint)) continue;
+    entries[i] = { ...entry, status: undefined };
+    changed += 1;
   }
-  if (changed > 0) writeAll(entries)
-  return changed
+  if (changed > 0) writeAll(entries);
+  return changed;
 }
 
 /** Non-tx wallet action (permission decision, friend, disconnect, …). */
 export function recordWalletEvent(args: {
-  origin?: string
-  method: string
-  note: string
-  sats?: number
-  txid?: string
-  item?: ActivityItem
-  status?: ActivityStatus
-  failureReason?: string
-  pendingId?: string
+  origin?: string;
+  method: string;
+  note: string;
+  sats?: number;
+  txid?: string;
+  item?: ActivityItem;
+  status?: ActivityStatus;
+  failureReason?: string;
+  pendingId?: string;
 }): void {
   recordAppActivity({
     origin: args.origin ?? WALLET_ACTIVITY_ORIGIN,
-    kind: 'event',
+    kind: "event",
     sats: Math.max(0, Math.trunc(args.sats ?? 0)),
     method: args.method,
     note: args.note.trim().slice(0, 160),
@@ -1463,141 +1522,142 @@ export function recordWalletEvent(args: {
     ...(args.status ? { status: args.status } : {}),
     ...(args.failureReason ? { failureReason: args.failureReason } : {}),
     ...(args.pendingId ? { pendingId: args.pendingId } : {}),
-  })
+  });
 }
 
 export function isIndexExpansionActivity(entry: ActivityEntry): boolean {
-  return (
-    entry.method === 'index-install' ||
-    entry.method === 'index-sync'
-  )
+  return entry.method === "index-install" || entry.method === "index-sync";
 }
 
-export const UTXO_HEAL_METHOD = 'utxo-heal'
+export const UTXO_HEAL_METHOD = "utxo-heal";
 
 export function isUtxoHealActivity(entry: ActivityEntry): boolean {
-  return entry.method === UTXO_HEAL_METHOD
+  return entry.method === UTXO_HEAL_METHOD;
 }
 
 /** Overlay refused a listing that already has a txid. Rewrite that row as failed. */
 export function failMarketListingActivity(args: {
-  txid?: string
-  reason: string
+  txid?: string;
+  reason: string;
 }): void {
-  const txid = args.txid?.trim().toLowerCase()
-  if (!txid) return
-  const reason = args.reason.trim().slice(0, 280) || 'Could not publish listing'
+  const txid = args.txid?.trim().toLowerCase();
+  if (!txid) return;
+  const reason =
+    args.reason.trim().slice(0, 280) || "Could not publish listing";
   writeAll(
     readAll().map((entry) => {
-      if (entry.method !== 'market-list') return entry
-      if ((entry.txid || '').toLowerCase() !== txid) return entry
+      if (entry.method !== "market-list") return entry;
+      if ((entry.txid || "").toLowerCase() !== txid) return entry;
       return {
         ...entry,
-        status: 'failed' as const,
+        status: "failed" as const,
         failureReason: reason,
-        note: entry.note?.startsWith('Listed ')
+        note: entry.note?.startsWith("Listed ")
           ? `Failed: ${entry.note}`
-          : entry.note || 'Listing failed',
-      }
-    }),
-  )
+          : entry.note || "Listing failed",
+      };
+    })
+  );
 }
 
 /** True when the row is a permission / friend / other non-money action. */
 export function isEventActivity(entry: ActivityEntry): boolean {
-  return entry.kind === 'event'
+  return entry.kind === "event";
 }
 
 /** Failed on-chain market listing the overlay rejected (amt/origin mismatch, etc.). */
 export function isFailedMarketListingActivity(entry: ActivityEntry): boolean {
   return (
-    entry.status === 'failed' &&
-    (entry.method === 'market-list' || entry.method === 'market-cancel')
-  )
+    entry.status === "failed" &&
+    (entry.method === "market-list" || entry.method === "market-cancel")
+  );
 }
 
 function normalizeActivityItem(
-  raw: ActivityItem | undefined,
+  raw: ActivityItem | undefined
 ): ActivityItem | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const name = typeof raw.name === 'string' ? raw.name.trim() : ''
-  const origin = typeof raw.origin === 'string' ? raw.origin.trim() : ''
-  if (!name || !origin) return undefined
+  if (!raw || typeof raw !== "object") return undefined;
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const origin = typeof raw.origin === "string" ? raw.origin.trim() : "";
+  if (!name || !origin) return undefined;
   const amt =
-    typeof raw.amt === 'string' && /^\d+$/.test(raw.amt.trim())
+    typeof raw.amt === "string" && /^\d+$/.test(raw.amt.trim())
       ? raw.amt.trim()
-      : undefined
-  const decRaw = raw.dec
+      : undefined;
+  const decRaw = raw.dec;
   const dec =
-    typeof decRaw === 'number' &&
+    typeof decRaw === "number" &&
     Number.isInteger(decRaw) &&
     decRaw >= 0 &&
     decRaw <= 18
       ? decRaw
-      : undefined
+      : undefined;
   // Bytes this device holds outrank a stored `/content/` URL: a fresh mint is
   // not indexed yet, so the recorded URL 404s while the art sits on disk.
   const imageUrl =
     getItemArtDataUrl(origin) ??
-    (typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
+    (typeof raw.imageUrl === "string" && raw.imageUrl.trim()
       ? raw.imageUrl.trim()
-      : undefined)
+      : undefined);
   return {
     name: name.slice(0, 80),
     origin,
-    ...(typeof raw.outpoint === 'string' && raw.outpoint.trim()
+    ...(typeof raw.outpoint === "string" && raw.outpoint.trim()
       ? { outpoint: raw.outpoint.trim() }
       : {}),
     ...(imageUrl ? { imageUrl } : {}),
-    ...(typeof raw.app === 'string' && raw.app.trim()
+    ...(typeof raw.app === "string" && raw.app.trim()
       ? { app: raw.app.trim().slice(0, 40) }
       : {}),
-    ...(typeof raw.tokenId === 'string' && raw.tokenId.trim()
+    ...(typeof raw.tokenId === "string" && raw.tokenId.trim()
       ? { tokenId: raw.tokenId.trim().toLowerCase() }
       : {}),
     ...(amt ? { amt } : {}),
     ...(dec != null ? { dec } : {}),
-    ...(typeof raw.icon === 'string' && raw.icon.trim()
-      ? { icon: raw.icon.trim().toLowerCase().replace('.', '_') }
+    ...(typeof raw.icon === "string" && raw.icon.trim()
+      ? { icon: raw.icon.trim().toLowerCase().replace(".", "_") }
       : {}),
-  }
+  };
 }
 
 /** True when this row is a collectable transfer (not a BSV payment). */
 /** True when the row is a collectable / ordinal tip transfer. */
 export function isItemActivity(entry: ActivityEntry): boolean {
-  if (isTokenActivity(entry)) return true
+  if (isTokenActivity(entry)) return true;
   return (
     Boolean(entry.item) ||
-    entry.method === 'send-collectable' ||
+    entry.method === "send-collectable" ||
     /collectable|1sat|ordinal/i.test(entry.method)
-  )
+  );
 }
 
 /** True when the row is a BSV-21 fungible tip (Collect → Tokens). */
 export function isTokenActivity(entry: ActivityEntry): boolean {
-  if (entry.item?.tokenId?.trim()) return true
+  if (entry.item?.tokenId?.trim()) return true;
   return (
-    entry.method === 'receive-token' ||
-    entry.method === 'send-token' ||
-    entry.method === 'mint-token' ||
+    entry.method === "receive-token" ||
+    entry.method === "send-token" ||
+    entry.method === "mint-token" ||
     /bsv-?21|fungible|receive-token|send-token|mint-token/i.test(entry.method)
-  )
+  );
 }
 
 /** True when this row is a token create / issue (not a transfer). */
 export function isMintTokenActivity(entry: ActivityEntry): boolean {
-  if (entry.method === 'mint-token') return true
-  return isTokenActivity(entry) && /\bmint\b/i.test(entry.note ?? '')
+  if (entry.method === "mint-token") return true;
+  return isTokenActivity(entry) && /\bmint\b/i.test(entry.note ?? "");
 }
 
 /** True only for irreversible on-chain asset destruction. */
 export function isBurnActivity(entry: ActivityEntry): boolean {
-  return entry.method === 'burn-token' || entry.method === 'burn-collectable'
+  return entry.method === "burn-token" || entry.method === "burn-collectable";
 }
 
 function activityOutpointKey(outpoint: string | undefined | null): string {
-  return (outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  return (outpoint ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.(\d+)$/, "_$1");
 }
 
 /**
@@ -1605,32 +1665,32 @@ function activityOutpointKey(outpoint: string | undefined | null): string {
  * `runExclusiveSpend` even after payment progress cleared for the prior tx.
  */
 export function findPendingOutpointFlight(
-  outpoint: string | undefined | null,
+  outpoint: string | undefined | null
 ): ActivityEntry | null {
-  const key = activityOutpointKey(outpoint)
-  if (!key) return null
+  const key = activityOutpointKey(outpoint);
+  if (!key) return null;
   for (const entry of readAll()) {
-    if (entry.status !== 'pending') continue
-    if (entry.kind !== 'spent' && entry.kind !== 'earned') continue
-    const op = entry.item?.outpoint
-    if (!op) continue
-    if (activityOutpointKey(op) !== key) continue
-    return entry
+    if (entry.status !== "pending") continue;
+    if (entry.kind !== "spent" && entry.kind !== "earned") continue;
+    const op = entry.item?.outpoint;
+    if (!op) continue;
+    if (activityOutpointKey(op) !== key) continue;
+    return entry;
   }
-  return null
+  return null;
 }
 
 /** Inventory / details badge verb from a pending Activity row. */
 export function pendingOutpointFlightVerb(
-  outpoint: string | undefined | null,
+  outpoint: string | undefined | null
 ): string | null {
-  const entry = findPendingOutpointFlight(outpoint)
-  if (!entry) return null
-  if (isBurnActivity(entry)) return 'Burning'
-  if (entry.method === 'market-list') return 'Listing'
-  if (entry.method === 'market-cancel') return 'Cancelling'
-  if (entry.method === 'purchaseMarketListing') return 'Buying'
-  return 'Sending'
+  const entry = findPendingOutpointFlight(outpoint);
+  if (!entry) return null;
+  if (isBurnActivity(entry)) return "Burning";
+  if (entry.method === "market-list") return "Listing";
+  if (entry.method === "market-cancel") return "Cancelling";
+  if (entry.method === "purchaseMarketListing") return "Buying";
+  return "Sending";
 }
 
 /**
@@ -1638,44 +1698,44 @@ export function pendingOutpointFlightVerb(
  * Kept local so appActivity does not import the full fungibles stack.
  */
 export function formatActivityTokenAmt(amt: string, dec = 0): string {
-  const safeDec = Number.isInteger(dec) && dec >= 0 && dec <= 18 ? dec : 0
-  const digits = String(amt).replace(/\D/g, '') || '0'
+  const safeDec = Number.isInteger(dec) && dec >= 0 && dec <= 18 ? dec : 0;
+  const digits = String(amt).replace(/\D/g, "") || "0";
   if (safeDec === 0) {
     try {
-      return BigInt(digits).toLocaleString('en-US')
+      return BigInt(digits).toLocaleString("en-US");
     } catch {
-      return digits
+      return digits;
     }
   }
-  const padded = digits.padStart(safeDec + 1, '0')
-  const whole = padded.slice(0, -safeDec) || '0'
-  const frac = padded.slice(-safeDec).replace(/0+$/, '')
-  let wholeFmt = whole
+  const padded = digits.padStart(safeDec + 1, "0");
+  const whole = padded.slice(0, -safeDec) || "0";
+  const frac = padded.slice(-safeDec).replace(/0+$/, "");
+  let wholeFmt = whole;
   try {
-    wholeFmt = BigInt(whole).toLocaleString('en-US')
+    wholeFmt = BigInt(whole).toLocaleString("en-US");
   } catch {
     // keep raw
   }
-  return frac ? `${wholeFmt}.${frac}` : wholeFmt
+  return frac ? `${wholeFmt}.${frac}` : wholeFmt;
 }
 
 /** Quantity label for a token row, or null when amt was never stored. */
 export function activityTokenQuantity(
-  item: ActivityItem | undefined,
+  item: ActivityItem | undefined
 ): string | null {
-  if (!item?.amt?.trim()) return null
-  return formatActivityTokenAmt(item.amt, item.dec ?? 0)
+  if (!item?.amt?.trim()) return null;
+  return formatActivityTokenAmt(item.amt, item.dec ?? 0);
 }
 
 /** Right-column amount for token rows (signed quantity). */
 export function activityTokenAmountDisplay(entry: ActivityEntry): string {
-  const qty = activityTokenQuantity(entry.item)
+  const qty = activityTokenQuantity(entry.item);
   if (!qty) {
-    if (isMintTokenActivity(entry)) return 'Minted'
-    return entry.kind === 'spent' ? 'Sent' : 'Received'
+    if (isMintTokenActivity(entry)) return "Minted";
+    return entry.kind === "spent" ? "Sent" : "Received";
   }
-  if (isMintTokenActivity(entry) || entry.kind === 'earned') return `+${qty}`
-  return `−${qty}`
+  if (isMintTokenActivity(entry) || entry.kind === "earned") return `+${qty}`;
+  return `−${qty}`;
 }
 
 /**
@@ -1683,12 +1743,12 @@ export function activityTokenAmountDisplay(entry: ActivityEntry): string {
  * Prefer "Transaction" — reserve "Payment" for explicit BSV payments (app money).
  */
 export function activityDetailLabel(
-  entry: ActivityEntry,
-): 'Payment' | 'Transaction' | 'Activity' {
-  if (isEventActivity(entry)) return 'Activity'
-  if (isItemActivity(entry)) return 'Transaction'
-  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return 'Payment'
-  return 'Transaction'
+  entry: ActivityEntry
+): "Payment" | "Transaction" | "Activity" {
+  if (isEventActivity(entry)) return "Activity";
+  if (isItemActivity(entry)) return "Transaction";
+  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return "Payment";
+  return "Transaction";
 }
 
 /**
@@ -1697,78 +1757,78 @@ export function activityDetailLabel(
  */
 export function activityNavLabel(entry: ActivityEntry): string {
   if (isEventActivity(entry)) {
-    const title = activityEntryTitle(entry).trim()
-    return title || 'Activity'
+    const title = activityEntryTitle(entry).trim();
+    return title || "Activity";
   }
-  return activityDetailLabel(entry)
+  return activityDetailLabel(entry);
 }
 
 export function clearAppActivity(origin?: string): void {
   if (!origin) {
-    writeAll([])
-    return
+    writeAll([]);
+    return;
   }
-  const key = normalizeAppHost(origin)
-  writeAll(readAll().filter((e) => e.origin !== key))
+  const key = normalizeAppHost(origin);
+  writeAll(readAll().filter((e) => e.origin !== key));
 }
 
 export function getAppMoneySummary(origin: string): AppMoneySummary {
-  const key = normalizeAppHost(origin)
-  const cutoff = Date.now() - DAY_MS
-  let spent24h = 0
-  let earned24h = 0
-  let spentAll = 0
-  let earnedAll = 0
+  const key = normalizeAppHost(origin);
+  const cutoff = Date.now() - DAY_MS;
+  let spent24h = 0;
+  let earned24h = 0;
+  let spentAll = 0;
+  let earnedAll = 0;
   for (const e of readAll()) {
-    if (e.origin !== key) continue
+    if (e.origin !== key) continue;
     // Collectable tip sats are not BSV payment volume.
-    if (isItemActivity(e)) continue
-    if (e.kind === 'spent') {
-      spentAll += e.sats
-      if (e.at >= cutoff) spent24h += e.sats
+    if (isItemActivity(e)) continue;
+    if (e.kind === "spent") {
+      spentAll += e.sats;
+      if (e.at >= cutoff) spent24h += e.sats;
     } else {
-      earnedAll += e.sats
-      if (e.at >= cutoff) earned24h += e.sats
+      earnedAll += e.sats;
+      if (e.at >= cutoff) earned24h += e.sats;
     }
   }
-  return { spent24h, earned24h, spentAll, earnedAll }
+  return { spent24h, earned24h, spentAll, earnedAll };
 }
 
 /** Latest activity timestamp for an origin (0 if none). */
 export function getAppLastActivityAt(origin: string): number {
-  const key = normalizeAppHost(origin)
-  let latest = 0
+  const key = normalizeAppHost(origin);
+  let latest = 0;
   for (const e of readAll()) {
-    if (e.origin !== key) continue
-    if (e.at > latest) latest = e.at
+    if (e.origin !== key) continue;
+    if (e.at > latest) latest = e.at;
   }
-  return latest
+  return latest;
 }
 
 /** Total sats moved (spent + earned) for ranking connected apps. */
 export function getAppActivityVolume(origin: string): number {
-  const money = getAppMoneySummary(origin)
-  return money.spentAll + money.earnedAll
+  const money = getAppMoneySummary(origin);
+  return money.spentAll + money.earnedAll;
 }
 
 /** Spent satoshis for an origin since `sinceMs` (inclusive). */
 export function getSpentSatsSince(
   origin: string | undefined,
-  sinceMs: number,
+  sinceMs: number
 ): number {
-  const key = normalizeAppHost(origin)
-  let total = 0
+  const key = normalizeAppHost(origin);
+  let total = 0;
   for (const e of readAll()) {
-    if (e.origin !== key || e.kind !== 'spent') continue
-    if (isItemActivity(e)) continue
-    if (e.at >= sinceMs) total += e.sats
+    if (e.origin !== key || e.kind !== "spent") continue;
+    if (isItemActivity(e)) continue;
+    if (e.at >= sinceMs) total += e.sats;
   }
-  return total
+  return total;
 }
 
 function activityTipKey(outpoint: string | undefined | null): string | null {
-  const value = outpoint?.trim().toLowerCase().replace(/_/g, '.')
-  return value || null
+  const value = outpoint?.trim().toLowerCase().replace(/_/g, ".");
+  return value || null;
 }
 
 /**
@@ -1785,17 +1845,18 @@ function activityTipKey(outpoint: string | undefined | null): string | null {
  * tip, not by the clock, so Sending… can settle into Sent on the same list node.
  */
 export function activityEntryKey(entry: ActivityEntry): string {
-  const kind = entry.kind
-  const txid = entry.txid?.trim().toLowerCase()
-  const outpoint = activityTipKey(entry.item?.outpoint)
-  const pendingId = entry.pendingId?.trim()
-  const live = entry.id === 'live-outbound-send' || pendingId === 'live-outbound-send'
-  const tokenId = entry.item?.tokenId?.trim().toLowerCase()
+  const kind = entry.kind;
+  const txid = entry.txid?.trim().toLowerCase();
+  const outpoint = activityTipKey(entry.item?.outpoint);
+  const pendingId = entry.pendingId?.trim();
+  const live =
+    entry.id === "live-outbound-send" || pendingId === "live-outbound-send";
+  const tokenId = entry.item?.tokenId?.trim().toLowerCase();
 
   if (live) {
-    if (tokenId) return `token:${tokenId}:${kind}:pending`
-    if (outpoint) return `item:${outpoint}:${kind}:pending`
-    return `live-outbound:${kind}`
+    if (tokenId) return `token:${tokenId}:${kind}:pending`;
+    if (outpoint) return `item:${outpoint}:${kind}:pending`;
+    return `live-outbound:${kind}`;
   }
 
   // Item / token tips: outpoint is the durable identity (one tx can carry many
@@ -1805,42 +1866,42 @@ export function activityEntryKey(entry: ActivityEntry): string {
   // and are local-only, so their row id is both unique and as durable as they
   // get. Without either, React saw duplicate keys and dropped a row.
   if (tokenId) {
-    if (txid) return `token:${tokenId}:${kind}:${txid}`
-    if (pendingId) return `token:${tokenId}:${kind}:${pendingId}`
-    if (entry.status === 'pending') return `token:${tokenId}:${kind}:pending`
-    return `token:${tokenId}:${kind}:${entry.id}`
+    if (txid) return `token:${tokenId}:${kind}:${txid}`;
+    if (pendingId) return `token:${tokenId}:${kind}:${pendingId}`;
+    if (entry.status === "pending") return `token:${tokenId}:${kind}:pending`;
+    return `token:${tokenId}:${kind}:${entry.id}`;
   }
   if (outpoint) {
-    if (txid) return `item:${outpoint}:${kind}:${txid}`
-    if (pendingId) return `item:${outpoint}:${kind}:${pendingId}`
-    if (entry.status === 'pending') return `item:${outpoint}:${kind}:pending`
-    return `item:${outpoint}:${kind}:${entry.id}`
+    if (txid) return `item:${outpoint}:${kind}:${txid}`;
+    if (pendingId) return `item:${outpoint}:${kind}:${pendingId}`;
+    if (entry.status === "pending") return `item:${outpoint}:${kind}:pending`;
+    return `item:${outpoint}:${kind}:${entry.id}`;
   }
   if (txid) {
     // Item receive before the tip outpoint is known — stay on the tx so the
     // settled row can inherit this identity in {@link activityEntryContinues}.
-    if (entry.item) return `tx:${txid}:${kind}:item`
-    return `tx:${txid}:${kind}`
+    if (entry.item) return `tx:${txid}:${kind}:item`;
+    return `tx:${txid}:${kind}`;
   }
-  if (kind === 'event') {
+  if (kind === "event") {
     if (entry.method === UTXO_HEAL_METHOD && entry.pendingId) {
-      return `event:utxo-heal:${entry.pendingId}`
+      return `event:utxo-heal:${entry.pendingId}`;
     }
-    if (entry.pendingId) return `event:${entry.pendingId}`
-    const pack = entry.item?.origin?.trim().toLowerCase()
+    if (entry.pendingId) return `event:${entry.pendingId}`;
+    const pack = entry.item?.origin?.trim().toLowerCase();
     if (
       pack &&
-      (entry.method === 'index-install' || entry.method === 'index-sync')
+      (entry.method === "index-install" || entry.method === "index-sync")
     ) {
-      return `event:pack:${pack}`
+      return `event:pack:${pack}`;
     }
-    return `event:${entry.at}:${entry.method}:${entry.note ?? ''}`
+    return `event:${entry.at}:${entry.method}:${entry.note ?? ""}`;
   }
-  if (pendingId) return `pending:${pendingId}:${kind}`
-  if (entry.status === 'pending') return `pending:${kind}:${entry.id}`
+  if (pendingId) return `pending:${pendingId}:${kind}`;
+  if (entry.status === "pending") return `pending:${kind}:${entry.id}`;
   // Nothing on-chain to key on (a local-only row): the timestamp it was written
   // with is as stable as this row gets.
-  return `at:${entry.at}:${kind}:${entry.sats}`
+  return `at:${entry.at}:${kind}:${entry.sats}`;
 }
 
 /**
@@ -1849,242 +1910,258 @@ export function activityEntryKey(entry: ActivityEntry): string {
  */
 export function activityEntryContinues(
   prev: ActivityEntry,
-  next: ActivityEntry,
+  next: ActivityEntry
 ): boolean {
-  if (prev.id === next.id) return true
-  if (prev.kind !== next.kind) return false
-  const prevPending = prev.pendingId?.trim()
-  const nextPending = next.pendingId?.trim()
+  if (prev.id === next.id) return true;
+  if (prev.kind !== next.kind) return false;
+  const prevPending = prev.pendingId?.trim();
+  const nextPending = next.pendingId?.trim();
   if (
     prevPending &&
     nextPending &&
     prevPending === nextPending &&
-    prevPending !== 'live-outbound-send'
+    prevPending !== "live-outbound-send"
   ) {
-    return true
+    return true;
   }
   const prevLive =
-    prev.id === 'live-outbound-send' || prevPending === 'live-outbound-send'
+    prev.id === "live-outbound-send" || prevPending === "live-outbound-send";
   const nextLive =
-    next.id === 'live-outbound-send' || nextPending === 'live-outbound-send'
-  const prevOp = activityTipKey(prev.item?.outpoint)
-  const nextOp = activityTipKey(next.item?.outpoint)
-  const prevToken = prev.item?.tokenId?.trim().toLowerCase()
-  const nextToken = next.item?.tokenId?.trim().toLowerCase()
+    next.id === "live-outbound-send" || nextPending === "live-outbound-send";
+  const prevOp = activityTipKey(prev.item?.outpoint);
+  const nextOp = activityTipKey(next.item?.outpoint);
+  const prevToken = prev.item?.tokenId?.trim().toLowerCase();
+  const nextToken = next.item?.tokenId?.trim().toLowerCase();
   if (prevLive || nextLive) {
-    if (prevToken && prevToken === nextToken) return true
-    if (prevOp && prevOp === nextOp) return true
-    if (!prevOp && !nextOp && !prev.item && !next.item) return true
+    if (prevToken && prevToken === nextToken) return true;
+    if (prevOp && prevOp === nextOp) return true;
+    if (!prevOp && !nextOp && !prev.item && !next.item) return true;
   }
-  const prevTx = prev.txid?.trim().toLowerCase()
-  const nextTx = next.txid?.trim().toLowerCase()
+  const prevTx = prev.txid?.trim().toLowerCase();
+  const nextTx = next.txid?.trim().toLowerCase();
   if (prevTx && nextTx && prevTx === nextTx) {
-    if (prevToken || nextToken) return Boolean(prevToken && prevToken === nextToken)
+    if (prevToken || nextToken)
+      return Boolean(prevToken && prevToken === nextToken);
     if (prev.item || next.item) {
-      if (!prevOp || !nextOp) return true
-      return prevOp === nextOp
+      if (!prevOp || !nextOp) return true;
+      return prevOp === nextOp;
     }
-    return !prev.item && !next.item
+    return !prev.item && !next.item;
   }
-  return false
+  return false;
 }
 
 /** Human title for an activity row (payment, collectable, or event). */
 export function activityEntryTitle(entry: ActivityEntry): string {
-  if (entry.status === 'failed') {
-    if (entry.method === UTXO_HEAL_METHOD) return 'Balance heal failed'
+  if (entry.status === "failed") {
+    if (entry.method === UTXO_HEAL_METHOD) return "Balance heal failed";
     if (isBurnActivity(entry)) {
-      return entry.item?.name ? `${entry.item.name} not burned` : 'Burn failed'
+      return entry.item?.name ? `${entry.item.name} not burned` : "Burn failed";
     }
-    if (entry.method === 'market-list') {
+    if (entry.method === "market-list") {
       return entry.item?.name
         ? `${entry.item.name} listing failed`
-        : 'Listing failed'
+        : "Listing failed";
     }
-    if (entry.method === 'market-cancel') {
+    if (entry.method === "market-cancel") {
       return entry.item?.name
         ? `${entry.item.name} cancel failed`
-        : 'Cancel listing failed'
+        : "Cancel listing failed";
     }
-    if (entry.item?.name) return `${entry.item.name} not sent`
-    return 'Send failed'
+    if (entry.item?.name) return `${entry.item.name} not sent`;
+    return "Send failed";
   }
-  if (entry.status === 'pending' && (entry.kind === 'spent' || entry.method === 'market-list' || entry.method === 'market-cancel')) {
+  if (
+    entry.status === "pending" &&
+    (entry.kind === "spent" ||
+      entry.method === "market-list" ||
+      entry.method === "market-cancel")
+  ) {
     if (isBurnActivity(entry)) {
-      return entry.item?.name ? `Burning ${entry.item.name}…` : 'Burning…'
+      return entry.item?.name ? `Burning ${entry.item.name}…` : "Burning…";
     }
-    if (entry.method === 'market-list') {
-      return entry.item?.name ? `Listing ${entry.item.name}…` : 'Listing…'
+    if (entry.method === "market-list") {
+      return entry.item?.name ? `Listing ${entry.item.name}…` : "Listing…";
     }
-    if (entry.method === 'market-cancel') {
-      return entry.item?.name ? `Cancelling ${entry.item.name}…` : 'Cancelling…'
+    if (entry.method === "market-cancel") {
+      return entry.item?.name
+        ? `Cancelling ${entry.item.name}…`
+        : "Cancelling…";
     }
-    if (entry.item?.name) return `Sending ${entry.item.name}…`
-    return 'Sending…'
+    if (entry.item?.name) return `Sending ${entry.item.name}…`;
+    return "Sending…";
   }
-  if (entry.status === 'pending' && entry.kind === 'earned') {
-    if (entry.item?.name) return `Receiving ${entry.item.name}…`
-    return 'Receiving…'
+  if (entry.status === "pending" && entry.kind === "earned") {
+    if (entry.item?.name) return `Receiving ${entry.item.name}…`;
+    return "Receiving…";
   }
-  if (entry.status === 'pending' && entry.kind === 'event') {
-    if (entry.method === UTXO_HEAL_METHOD) return 'Healing balance…'
-    if (entry.method === 'index-install') {
+  if (entry.status === "pending" && entry.kind === "event") {
+    if (entry.method === UTXO_HEAL_METHOD) return "Healing balance…";
+    if (entry.method === "index-install") {
       return entry.item?.name
         ? `Installing ${entry.item.name}…`
-        : 'Installing catalog…'
+        : "Installing catalog…";
     }
-    if (entry.method === 'index-sync') {
-      return entry.item?.name ? `Syncing ${entry.item.name}…` : 'Syncing catalog…'
+    if (entry.method === "index-sync") {
+      return entry.item?.name
+        ? `Syncing ${entry.item.name}…`
+        : "Syncing catalog…";
     }
   }
-  if (entry.kind === 'event') {
+  if (entry.kind === "event") {
     if (entry.method === UTXO_HEAL_METHOD) {
       if (entry.sats > 0) {
-        return `Recovered ${entry.sats.toLocaleString()} sats`
+        return `Recovered ${entry.sats.toLocaleString()} sats`;
       }
-      return entry.note?.trim() || 'Balance heal complete'
+      return entry.note?.trim() || "Balance heal complete";
     }
-    if (entry.method === 'market-list' && entry.item?.name?.trim() && entry.item.name !== 'Collectable') {
-      const price = entry.note?.match(/for ([\d,]+) sats/)?.[1]
+    if (
+      entry.method === "market-list" &&
+      entry.item?.name?.trim() &&
+      entry.item.name !== "Collectable"
+    ) {
+      const price = entry.note?.match(/for ([\d,]+) sats/)?.[1];
       return price
         ? `Listed ${entry.item.name} for ${price} sats`
-        : `Listed ${entry.item.name}`
+        : `Listed ${entry.item.name}`;
     }
-    return entry.note?.trim() || entry.method || 'Activity'
+    return entry.note?.trim() || entry.method || "Activity";
   }
   if (entry.item?.tokenId || isTokenActivity(entry)) {
-    const name = entry.item?.name?.trim() || 'Token'
-    const qty = activityTokenQuantity(entry.item)
-    const withQty = qty ? `${qty} ${name}` : name
-    if (isMintTokenActivity(entry)) return `Minted ${withQty}`
-    if (isBurnActivity(entry)) return `Burned ${withQty}`
-    if (entry.kind === 'spent' || entry.method === 'send-token') {
-      return `Sent ${withQty}`
+    const name = entry.item?.name?.trim() || "Token";
+    const qty = activityTokenQuantity(entry.item);
+    const withQty = qty ? `${qty} ${name}` : name;
+    if (isMintTokenActivity(entry)) return `Minted ${withQty}`;
+    if (isBurnActivity(entry)) return `Burned ${withQty}`;
+    if (entry.kind === "spent" || entry.method === "send-token") {
+      return `Sent ${withQty}`;
     }
-    return `Received ${withQty}`
+    return `Received ${withQty}`;
   }
   if (entry.item?.name) {
-    const name = entry.item.name
-    if (isBurnActivity(entry)) return `Burned ${name}`
-    if (entry.method === 'market-sale') return `Sold ${name}`
-    if (entry.method === 'market-purchase-receive') return `Bought ${name}`
+    const name = entry.item.name;
+    if (isBurnActivity(entry)) return `Burned ${name}`;
+    if (entry.method === "market-sale") return `Sold ${name}`;
+    if (entry.method === "market-purchase-receive") return `Bought ${name}`;
     if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
-      return entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`
+      return entry.kind === "spent" ? `Sent ${name}` : `Received ${name}`;
     }
     return (
       entry.note?.trim() ||
-      (entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`)
-    )
+      (entry.kind === "spent" ? `Sent ${name}` : `Received ${name}`)
+    );
   }
-  if (entry.method === 'send-collectable' && entry.note?.trim()) {
-    return entry.note.trim()
+  if (entry.method === "send-collectable" && entry.note?.trim()) {
+    return entry.note.trim();
   }
   if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
-    const recipient = activityRecipientLabel(entry)
+    const recipient = activityRecipientLabel(entry);
     if (recipient) {
-      return entry.kind === 'spent' ? `Sent to ${recipient}` : `Received from ${recipient}`
+      return entry.kind === "spent"
+        ? `Sent to ${recipient}`
+        : `Received from ${recipient}`;
     }
-    return entry.kind === 'spent' ? 'Sent coins' : 'Received coins'
+    return entry.kind === "spent" ? "Sent coins" : "Received coins";
   }
-  const name = appDisplayName(entry.origin)
-  if (entry.kind === 'spent') return entry.note?.trim() || `Paid ${name}`
-  return entry.note?.trim() || `From ${name}`
+  const name = appDisplayName(entry.origin);
+  if (entry.kind === "spent") return entry.note?.trim() || `Paid ${name}`;
+  return entry.note?.trim() || `From ${name}`;
 }
 
 /** Newest-first activity feed for the history panel (excludes archived rows). */
 export function listRecentActivity(limit = 40): ActivityEntry[] {
-  const entries = [...readVisible()]
-  entries.sort((a, b) => b.at - a.at)
-  return entries.slice(0, Math.max(1, limit))
+  const entries = [...readVisible()];
+  entries.sort((a, b) => b.at - a.at);
+  return entries.slice(0, Math.max(1, limit));
 }
 
 export function getActivityById(id: string): ActivityEntry | null {
-  return readAll().find((e) => e.id === id) ?? null
+  return readAll().find((e) => e.id === id) ?? null;
 }
 
 /** Export full local activity (storage-capped) for history backup. */
 export function exportAllActivity(): ActivityEntry[] {
-  return [...readAll()]
+  return [...readAll()];
 }
 
 function activityMergeKey(entry: ActivityEntry): string | null {
-  if (!entry.txid || !ACTIVITY_KINDS.has(entry.kind)) return null
-  const op = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-  if (op) return `${entry.txid.toLowerCase()}:${entry.kind}:item:${op}`
+  if (!entry.txid || !ACTIVITY_KINDS.has(entry.kind)) return null;
+  const op = entry.item?.outpoint?.trim().toLowerCase().replace("_", ".");
+  if (op) return `${entry.txid.toLowerCase()}:${entry.kind}:item:${op}`;
   if (activityRowIsItem(entry)) {
-    return `${entry.txid.toLowerCase()}:${entry.kind}:item`
+    return `${entry.txid.toLowerCase()}:${entry.kind}:item`;
   }
-  return `${entry.txid.toLowerCase()}:${entry.kind}:bsv`
+  return `${entry.txid.toLowerCase()}:${entry.kind}:bsv`;
 }
 
 /** Merge remote activity into local history (idempotent by id / txid+kind[+outpoint]). */
 export function mergeActivityEntries(incoming: ActivityEntry[]): number {
-  const local = readAll()
-  const byId = new Map(local.map((e) => [e.id, e]))
+  const local = readAll();
+  const byId = new Map(local.map((e) => [e.id, e]));
   const byTxKind = new Map(
     local
       .map((e) => {
-        const key = activityMergeKey(e)
-        return key ? ([key, e] as const) : null
+        const key = activityMergeKey(e);
+        return key ? ([key, e] as const) : null;
       })
-      .filter((row): row is readonly [string, ActivityEntry] => row != null),
-  )
-  let added = 0
+      .filter((row): row is readonly [string, ActivityEntry] => row != null)
+  );
+  let added = 0;
   for (const entry of incoming) {
-    if (!entry?.id) continue
-    if (byId.has(entry.id)) continue
-    const txKind = activityMergeKey(entry)
-    if (txKind && byTxKind.has(txKind)) continue
-    byId.set(entry.id, entry)
-    if (txKind) byTxKind.set(txKind, entry)
-    added += 1
+    if (!entry?.id) continue;
+    if (byId.has(entry.id)) continue;
+    const txKind = activityMergeKey(entry);
+    if (txKind && byTxKind.has(txKind)) continue;
+    byId.set(entry.id, entry);
+    if (txKind) byTxKind.set(txKind, entry);
+    added += 1;
   }
-  writeAll([...byId.values()].sort((a, b) => a.at - b.at))
-  return added
+  writeAll([...byId.values()].sort((a, b) => a.at - b.at));
+  return added;
 }
 
 /** Sum satoshis from common BRC-100 payment payloads. */
 export function extractSatsFromArgs(method: string, args: unknown): number {
-  if (!args || typeof args !== 'object') return 0
-  const body = args as Record<string, unknown>
+  if (!args || typeof args !== "object") return 0;
+  const body = args as Record<string, unknown>;
 
   if (
-    method === 'createAction' ||
-    method === 'internalizeAction' ||
-    method === 'signAction'
+    method === "createAction" ||
+    method === "internalizeAction" ||
+    method === "signAction"
   ) {
-    const outputs = Array.isArray(body.outputs) ? body.outputs : []
-    let total = 0
+    const outputs = Array.isArray(body.outputs) ? body.outputs : [];
+    let total = 0;
     for (const raw of outputs) {
-      if (!raw || typeof raw !== 'object') continue
-      const sats = (raw as { satoshis?: unknown }).satoshis
-      if (typeof sats === 'number' && Number.isFinite(sats))
-        total += Math.max(0, sats)
+      if (!raw || typeof raw !== "object") continue;
+      const sats = (raw as { satoshis?: unknown }).satoshis;
+      if (typeof sats === "number" && Number.isFinite(sats))
+        total += Math.max(0, sats);
     }
-    if (total > 0) return Math.trunc(total)
+    if (total > 0) return Math.trunc(total);
   }
 
-  if (typeof body.satoshis === 'number' && Number.isFinite(body.satoshis)) {
-    return Math.max(0, Math.trunc(body.satoshis))
+  if (typeof body.satoshis === "number" && Number.isFinite(body.satoshis)) {
+    return Math.max(0, Math.trunc(body.satoshis));
   }
-  if (typeof body.amount === 'number' && Number.isFinite(body.amount)) {
+  if (typeof body.amount === "number" && Number.isFinite(body.amount)) {
     // Assume BSV if fractional, sats if large integer.
-    const amount = body.amount
+    const amount = body.amount;
     if (amount > 0 && amount < 1000 && !Number.isInteger(amount)) {
-      return Math.round(amount * 1e8)
+      return Math.round(amount * 1e8);
     }
-    return Math.max(0, Math.trunc(amount))
+    return Math.max(0, Math.trunc(amount));
   }
-  return 0
+  return 0;
 }
 
 /** Prefer the wallet's validated credit value; remittance args usually omit it. */
 export function extractInternalizedSats(
   result: unknown,
-  args: unknown,
+  args: unknown
 ): number {
   return (
-    extractSatsFromArgs('internalizeAction', result) ||
-    extractSatsFromArgs('internalizeAction', args)
-  )
+    extractSatsFromArgs("internalizeAction", result) ||
+    extractSatsFromArgs("internalizeAction", args)
+  );
 }

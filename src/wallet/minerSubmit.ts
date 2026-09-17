@@ -4,20 +4,20 @@
  * A signed tx is a spendable promise — UI success should not block on miner ACK.
  * Only hard missing-inputs / double-spend responses roll back the seal.
  */
-import { Beef } from '@bsv/sdk'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { Beef } from "@bsv/sdk";
+import { getActiveWallet, type ActiveWallet } from "./session";
 import {
   formatPostBeefFailure,
   isInvalidBeefTransport,
   summarizePostBeef,
   type PostBeefSummary,
   type PostBeefServiceResult,
-} from './postBeefResult'
+} from "./postBeefResult";
 import {
   onAlreadySpentSend,
   releaseSealedInputsOfUnsentTx,
   restoreOnChainLocalTx,
-} from './staleOutputRelease'
+} from "./staleOutputRelease";
 import {
   postBeefResultsArcadeAccepted,
   postBeefResultsArcadeHardReject,
@@ -25,18 +25,18 @@ import {
   rememberArcadeSubmitContact,
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
-} from './arcadeSubmitGuard'
+} from "./arcadeSubmitGuard";
 import {
   enqueuePendingMinerSubmit,
   removePendingMinerSubmit,
-} from './pendingMinerOutbox'
+} from "./pendingMinerOutbox";
 import {
   activeTransactionTrace,
   recordTransactionStage,
   type TransactionFlow,
-} from './transactionTelemetry'
-import { normalizeTxid } from './txid'
-import { spendConflictIsProven } from './spendVerdict'
+} from "./transactionTelemetry";
+import { normalizeTxid } from "./txid";
+import { spendConflictIsProven } from "./spendVerdict";
 
 export type MinerSubmitResult = {
   /**
@@ -44,41 +44,47 @@ export type MinerSubmitResult = {
    * parent *bodies* count — that is the cheque that negates explorer latency.
    * Merkle-complete on-chain proofs are not required.
    */
-  confirmed: boolean
+  confirmed: boolean;
   /** Signed tx was handed to miners (or transport failed after hand-off). */
-  submitted: boolean
+  submitted: boolean;
   /**
    * Keep the miner outbox until every ancestor has a merkle proof (the
    * subject is then standing on mined parents). Arcade 202 is not that.
    */
-  keepPropagating?: boolean
-  summary?: PostBeefSummary
-}
+  keepPropagating?: boolean;
+  summary?: PostBeefSummary;
+};
 
 type SubmitTelemetry = {
-  traceId?: string
-  requestId?: string
-  flow?: TransactionFlow
-  retryCount?: number
-  txid: string
+  traceId?: string;
+  requestId?: string;
+  flow?: TransactionFlow;
+  retryCount?: number;
+  txid: string;
+};
+
+type ArcadeHardRejectError = Error & { code: "ARCADE_HARD_REJECT" };
+
+function arcadeHardRejectError(
+  summary: PostBeefSummary
+): ArcadeHardRejectError {
+  const hard = new Error(
+    formatPostBeefFailure(summary)
+  ) as ArcadeHardRejectError;
+  hard.code = "ARCADE_HARD_REJECT";
+  return hard;
 }
 
-type ArcadeHardRejectError = Error & { code: 'ARCADE_HARD_REJECT' }
+type AncestryIncompleteError = Error & { code: "BEEF_ANCESTRY_INCOMPLETE" };
 
-function arcadeHardRejectError(summary: PostBeefSummary): ArcadeHardRejectError {
-  const hard = new Error(formatPostBeefFailure(summary)) as ArcadeHardRejectError
-  hard.code = 'ARCADE_HARD_REJECT'
-  return hard
-}
-
-type AncestryIncompleteError = Error & { code: 'BEEF_ANCESTRY_INCOMPLETE' }
-
-function ancestryIncompleteError(summary: PostBeefSummary): AncestryIncompleteError {
+function ancestryIncompleteError(
+  summary: PostBeefSummary
+): AncestryIncompleteError {
   const err = new Error(
-    formatPostBeefFailure(summary, { ancestryIncomplete: true }),
-  ) as AncestryIncompleteError
-  err.code = 'BEEF_ANCESTRY_INCOMPLETE'
-  return err
+    formatPostBeefFailure(summary, { ancestryIncomplete: true })
+  ) as AncestryIncompleteError;
+  err.code = "BEEF_ANCESTRY_INCOMPLETE";
+  return err;
 }
 
 /**
@@ -87,34 +93,40 @@ function ancestryIncompleteError(summary: PostBeefSummary): AncestryIncompleteEr
  * spendable and the caller can retry once the parent lands.
  */
 async function failIfAncestryIncomplete(args: {
-  id: string
-  atomic: number[]
-  active: ActiveWallet
-  summary: PostBeefSummary
-  telemetry: SubmitTelemetry
-  proofsComplete: boolean
+  id: string;
+  atomic: number[];
+  active: ActiveWallet;
+  summary: PostBeefSummary;
+  telemetry: SubmitTelemetry;
+  proofsComplete: boolean;
 }): Promise<void> {
-  const { id, atomic, active, summary, telemetry } = args
-  if (args.proofsComplete || !summary.missingInputs) return
-  if (await signedTxSpendConflictIsProven({ txid: id, atomic, chain: active.chain })) {
-    return
+  const { id, atomic, active, summary, telemetry } = args;
+  if (args.proofsComplete || !summary.missingInputs) return;
+  if (
+    await signedTxSpendConflictIsProven({
+      txid: id,
+      atomic,
+      chain: active.chain,
+    })
+  ) {
+    return;
   }
   console.warn(
-    '[minerSubmit] MissingInputs on incomplete BEEF — keeping the signed cheque',
+    "[minerSubmit] MissingInputs on incomplete BEEF — keeping the signed cheque",
     id.slice(0, 12),
-    summary.detail,
-  )
-  recordTransactionStage('propagation_queued', {
+    summary.detail
+  );
+  recordTransactionStage("propagation_queued", {
     ...telemetry,
-    blockerCode: 'beef_ancestry_incomplete',
-  })
-  throw ancestryIncompleteError(summary)
+    blockerCode: "beef_ancestry_incomplete",
+  });
+  throw ancestryIncompleteError(summary);
 }
 
 async function rememberGhostTxQuiet(txid: string): Promise<void> {
   try {
-    const { rememberGhostTx } = await import('./ghostTxSuppress')
-    rememberGhostTx(txid)
+    const { rememberGhostTx } = await import("./ghostTxSuppress");
+    rememberGhostTx(txid);
   } catch {
     /* optional */
   }
@@ -124,21 +136,23 @@ async function dropLocalSpendForArcadeReject(
   id: string,
   atomic: number[],
   telemetry: SubmitTelemetry,
-  summary: PostBeefSummary,
+  summary: PostBeefSummary
 ): Promise<never> {
   console.warn(
-    '[minerSubmit] Arcade hard-reject — dropping local spend',
+    "[minerSubmit] Arcade hard-reject — dropping local spend",
     id.slice(0, 12),
-    summary.detail,
-  )
-  removePendingMinerSubmit(id)
-  recordTransactionStage('hard_rejected', {
+    summary.detail
+  );
+  removePendingMinerSubmit(id);
+  recordTransactionStage("hard_rejected", {
     ...telemetry,
-    blockerCode: summary.missingInputs ? 'arcade_missing_inputs' : 'arcade_reject',
-  })
-  await rememberGhostTxQuiet(id)
-  await releaseSealedInputsOfUnsentTx(id, atomic)
-  throw arcadeHardRejectError(summary)
+    blockerCode: summary.missingInputs
+      ? "arcade_missing_inputs"
+      : "arcade_reject",
+  });
+  await rememberGhostTxQuiet(id);
+  await releaseSealedInputsOfUnsentTx(id, atomic);
+  throw arcadeHardRejectError(summary);
 }
 
 async function applyArcadePostBeef(
@@ -148,19 +162,26 @@ async function applyArcadePostBeef(
   summary: PostBeefSummary,
   telemetry: SubmitTelemetry,
   active: ActiveWallet,
-  proofsComplete: boolean,
+  proofsComplete: boolean
 ): Promise<PostBeefSummary> {
-  const arcadeOk = postBeefResultsArcadeAccepted(rawResults)
-  const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults)
+  const arcadeOk = postBeefResultsArcadeAccepted(rawResults);
+  const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults);
   // Pin ONLY on Arcade success — pinning on mere contact made missing-inputs
   // holds keep phantom pendingChange after an invalid-UTXO reject.
   if (arcadeOk) {
-    rememberArcadeSubmitContact(id)
-    console.info('[minerSubmit] Arcade accepted — tx pinned', id.slice(0, 12))
+    rememberArcadeSubmitContact(id);
+    console.info("[minerSubmit] Arcade accepted — tx pinned", id.slice(0, 12));
+    void import("./appActivity")
+      .then(({ reviveFailedOutboundByTxid }) => reviveFailedOutboundByTxid(id))
+      .catch(() => undefined);
     void restoreOnChainLocalTx(id).catch((err) => {
-      console.warn('[minerSubmit] post-Arcade restore skipped', id.slice(0, 12), err)
-    })
-    return summary.accepted ? summary : { ...summary, accepted: true }
+      console.warn(
+        "[minerSubmit] post-Arcade restore skipped",
+        id.slice(0, 12),
+        err
+      );
+    });
+    return summary.accepted ? summary : { ...summary, accepted: true };
   }
   if (arcadeHardReject) {
     await failIfAncestryIncomplete({
@@ -170,72 +191,85 @@ async function applyArcadePostBeef(
       summary,
       telemetry,
       proofsComplete,
-    })
-    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary)
+    });
+    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary);
   }
   if (postBeefResultsHitArcade(rawResults)) {
-    console.info('[minerSubmit] Arcade contacted (no accept/reject yet)', id.slice(0, 12))
+    console.info(
+      "[minerSubmit] Arcade contacted (no accept/reject yet)",
+      id.slice(0, 12)
+    );
   }
-  return summary
+  return summary;
 }
 
 async function resolveMinerConflict(args: {
-  id: string
-  atomic: number[]
-  active: ActiveWallet
-  summary: PostBeefSummary
-  telemetry: SubmitTelemetry
+  id: string;
+  atomic: number[];
+  active: ActiveWallet;
+  summary: PostBeefSummary;
+  telemetry: SubmitTelemetry;
 }): Promise<MinerSubmitResult> {
-  const { id, atomic, active, summary, telemetry } = args
-  const arcadePinned = txHadArcadeSubmitContact(id)
+  const { id, atomic, active, summary, telemetry } = args;
+  const arcadePinned = txHadArcadeSubmitContact(id);
   const conflictReal = await spendConflictIsProven({
-    intent: arcadePinned ? 'arcadePinRemoval' : 'postBeefGhostCheck',
+    intent: arcadePinned ? "arcadePinRemoval" : "postBeefGhostCheck",
     txid: id,
     atomic,
     chain: active.chain,
-  })
+  });
 
   if (!conflictReal) {
     if (arcadePinned) {
       console.info(
-        `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — Arcade pin holds seal`,
+        `[minerSubmit] ghost ${
+          summary.missingInputs ? "missing-inputs" : "doubleSpend"
+        } — Arcade pin holds seal`,
         id.slice(0, 12),
-        summary.detail,
-      )
-      return { confirmed: false, submitted: true, summary }
+        summary.detail
+      );
+      return { confirmed: false, submitted: true, summary };
     }
     console.info(
-      `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — releasing seal`,
+      `[minerSubmit] ghost ${
+        summary.missingInputs ? "missing-inputs" : "doubleSpend"
+      } — releasing seal`,
       id.slice(0, 12),
-      summary.detail,
-    )
-    await releaseSealedInputsOfUnsentTx(id, atomic)
+      summary.detail
+    );
+    await releaseSealedInputsOfUnsentTx(id, atomic);
     // Still "submitted" for optimistic send UX; callers that need a hard ACK
     // (consolidate) must check confirmed / catch their own release.
-    return { confirmed: false, submitted: true, summary }
+    return { confirmed: false, submitted: true, summary };
   }
 
   // Proven conflict — but only hide if OUR tx actually landed. Otherwise
   // miner noise emptied a phone wallet (119 sealed → spendable=0).
-  const { txExistsOnChain } = await import('./legacyScan')
-  const onChain = await txExistsOnChain(id, active.chain).catch(() => null)
-  removePendingMinerSubmit(id)
-  recordTransactionStage('hard_rejected', {
+  const { txExistsOnChain } = await import("./legacyScan");
+  const onChain = await txExistsOnChain(id, active.chain).catch(() => null);
+  removePendingMinerSubmit(id);
+  recordTransactionStage("hard_rejected", {
     ...telemetry,
-    blockerCode: summary.doubleSpend ? 'provider_double_spend' : 'provider_missing_inputs',
-  })
+    blockerCode: summary.doubleSpend
+      ? "provider_double_spend"
+      : "provider_missing_inputs",
+  });
   if (onChain === true) {
-    console.warn('[minerSubmit] hard reject — tx on chain, sealing inputs', id.slice(0, 12), summary.detail)
-    await onAlreadySpentSend({ txid: id, atomic })
-    throw new Error(formatPostBeefFailure(summary))
+    console.warn(
+      "[minerSubmit] hard reject — tx on chain, sealing inputs",
+      id.slice(0, 12),
+      summary.detail
+    );
+    await onAlreadySpentSend({ txid: id, atomic });
+    throw new Error(formatPostBeefFailure(summary));
   }
   console.warn(
-    '[minerSubmit] hard reject — releasing seal (tx not on chain)',
+    "[minerSubmit] hard reject — releasing seal (tx not on chain)",
     id.slice(0, 12),
-    summary.detail,
-  )
-  await releaseSealedInputsOfUnsentTx(id, atomic)
-  throw new Error(formatPostBeefFailure(summary))
+    summary.detail
+  );
+  await releaseSealedInputsOfUnsentTx(id, atomic);
+  throw new Error(formatPostBeefFailure(summary));
 }
 
 /**
@@ -246,113 +280,130 @@ export async function submitAtomicBeefToMiners(
   txid: string,
   atomic: number[],
   opts?: {
-    fromOutbox?: boolean
-    traceId?: string
-    requestId?: string
-    flow?: TransactionFlow
-    retryCount?: number
-  },
+    fromOutbox?: boolean;
+    traceId?: string;
+    requestId?: string;
+    flow?: TransactionFlow;
+    retryCount?: number;
+  }
 ): Promise<MinerSubmitResult> {
-  const id = normalizeTxid(txid)
+  const id = normalizeTxid(txid);
   if (!id || !atomic.length) {
     throw new Error(
-      'Payment was signed but no transaction body was returned — try Send again.',
-    )
+      "Payment was signed but no transaction body was returned — try Send again."
+    );
   }
-  if (!opts?.fromOutbox) enqueuePendingMinerSubmit(id, atomic)
-  const trace = activeTransactionTrace()
+  if (!opts?.fromOutbox) enqueuePendingMinerSubmit(id, atomic);
+  const trace = activeTransactionTrace();
   const telemetry: SubmitTelemetry = {
     traceId: opts?.traceId ?? trace?.traceId,
     requestId: opts?.requestId ?? trace?.requestId,
     flow: opts?.flow ?? trace?.flow,
     retryCount: opts?.retryCount,
     txid: id,
-  }
-  recordTransactionStage('provider_attempt', telemetry)
-  const active = getActiveWallet()
+  };
+  recordTransactionStage("provider_attempt", telemetry);
+  const active = getActiveWallet();
   if (!active?.services?.postBeef) {
-    console.info('[minerSubmit] offline — treating signed tx as submitted', id.slice(0, 12))
-    recordTransactionStage('propagation_queued', {
+    console.info(
+      "[minerSubmit] offline — treating signed tx as submitted",
+      id.slice(0, 12)
+    );
+    recordTransactionStage("propagation_queued", {
       ...telemetry,
-      blockerCode: 'provider_offline',
-    })
-    return { confirmed: false, submitted: true }
+      blockerCode: "provider_offline",
+    });
+    return { confirmed: false, submitted: true };
   }
 
-  let beefBytes = atomic
+  let beefBytes = atomic;
   // Miners answer MissingInputs both for a spent input and for a BEEF whose
   // ancestry we failed to supply. SPV of a chained send is the unconfirmed
   // parent *bodies this wallet signed* — merge those first. Merkle proofs for
   // those parents cannot exist yet; hydrating them from an indexer is futile.
-  let ancestryComplete = false
-  let proofsComplete = false
+  let ancestryComplete = false;
+  let proofsComplete = false;
   try {
     const {
       classifyBeefAncestryGap,
       hydrateInputBeef,
       mergeLocalUnconfirmedAncestry,
-    } = await import('./beefCache')
-    const { proofKindFromBeefGap, maySelectAsInput } = await import('./chainProofKind')
+    } = await import("./beefCache");
+    const { proofKindFromBeefGap, maySelectAsInput } = await import(
+      "./chainProofKind"
+    );
     const applyGap = (
-      next: 'none' | 'unconfirmed-parents' | 'missing-bodies',
+      next: "none" | "unconfirmed-parents" | "missing-bodies"
     ) => {
-      const proof = proofKindFromBeefGap(next)
-      ancestryComplete = maySelectAsInput(proof)
-      proofsComplete = next === 'none'
-    }
-    beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic)
-    let gap = classifyBeefAncestryGap(beefBytes)
-    applyGap(gap)
-    if (gap === 'unconfirmed-parents') {
+      const proof = proofKindFromBeefGap(next);
+      ancestryComplete = maySelectAsInput(proof);
+      proofsComplete = next === "none";
+    };
+    beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic);
+    let gap = classifyBeefAncestryGap(beefBytes);
+    applyGap(gap);
+    if (gap === "unconfirmed-parents") {
       console.info(
-        '[minerSubmit] posting chained unconfirmed ancestry',
-        id.slice(0, 12),
-      )
-    } else if (gap === 'missing-bodies') {
+        "[minerSubmit] posting chained unconfirmed ancestry",
+        id.slice(0, 12)
+      );
+    } else if (gap === "missing-bodies") {
       const shaped = await Promise.race([
         hydrateInputBeef(active, Beef.fromBinary(beefBytes)),
-        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8_000)),
-      ])
+        new Promise<undefined>((resolve) =>
+          setTimeout(() => resolve(undefined), 8_000)
+        ),
+      ]);
       if (shaped?.length) {
-        beefBytes = shaped
-        gap = classifyBeefAncestryGap(shaped)
-        applyGap(gap)
+        beefBytes = shaped;
+        gap = classifyBeefAncestryGap(shaped);
+        applyGap(gap);
       } else {
         console.warn(
-          '[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque',
-          id.slice(0, 12),
-        )
+          "[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque",
+          id.slice(0, 12)
+        );
       }
     }
   } catch (err) {
-    console.warn('[minerSubmit] ancestor hydrate skipped', id.slice(0, 12), err)
+    console.warn(
+      "[minerSubmit] ancestor hydrate skipped",
+      id.slice(0, 12),
+      err
+    );
   }
 
-  let summary: PostBeefSummary
-  let rawResults: PostBeefServiceResult[] | undefined
+  let summary: PostBeefSummary;
+  let rawResults: PostBeefServiceResult[] | undefined;
   try {
-    const results = await active.services.postBeef(Beef.fromBinary(beefBytes), [id])
-    rawResults = results as PostBeefServiceResult[]
-    summary = summarizePostBeef(rawResults)
+    const results = await active.services.postBeef(Beef.fromBinary(beefBytes), [
+      id,
+    ]);
+    rawResults = results as PostBeefServiceResult[];
+    summary = summarizePostBeef(rawResults);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn('[minerSubmit] postBeef transport failed — treating as submitted', id.slice(0, 12), msg)
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      "[minerSubmit] postBeef transport failed — treating as submitted",
+      id.slice(0, 12),
+      msg
+    );
     if (isInvalidBeefTransport(msg)) {
-      removePendingMinerSubmit(id)
-      recordTransactionStage('hard_rejected', {
+      removePendingMinerSubmit(id);
+      recordTransactionStage("hard_rejected", {
         ...telemetry,
-        blockerCode: 'invalid_beef',
-      })
-      await releaseSealedInputsOfUnsentTx(id, atomic)
+        blockerCode: "invalid_beef",
+      });
+      await releaseSealedInputsOfUnsentTx(id, atomic);
       throw new Error(
-        'Payment was signed but the transaction body is invalid — try Send again.',
-      )
+        "Payment was signed but the transaction body is invalid — try Send again."
+      );
     }
-    recordTransactionStage('propagation_queued', {
+    recordTransactionStage("propagation_queued", {
       ...telemetry,
-      blockerCode: 'provider_transport',
-    })
-    return { confirmed: false, submitted: true }
+      blockerCode: "provider_transport",
+    });
+    return { confirmed: false, submitted: true };
   }
 
   if (rawResults) {
@@ -363,50 +414,50 @@ export async function submitAtomicBeefToMiners(
       summary,
       telemetry,
       active,
-      proofsComplete,
-    )
+      proofsComplete
+    );
   }
 
   if (summary.accepted) {
-    recordTransactionStage('provider_accepted', telemetry)
+    recordTransactionStage("provider_accepted", telemetry);
     // Arcade 202 is not the chain. Keep posting until merkle proofs close.
     // Local SPV of unconfirmed parent bodies is still a valid cheque — that
     // is how we negate explorer latency.
-    const keepPropagating = !proofsComplete
+    const keepPropagating = !proofsComplete;
     if (!keepPropagating) {
-      removePendingMinerSubmit(id)
+      removePendingMinerSubmit(id);
       if (
-        telemetry.flow !== 'brc29' &&
-        telemetry.flow !== 'item_transfer' &&
-        telemetry.flow !== 'token_transfer'
+        telemetry.flow !== "brc29" &&
+        telemetry.flow !== "item_transfer" &&
+        telemetry.flow !== "token_transfer"
       ) {
-        recordTransactionStage('completed', telemetry)
+        recordTransactionStage("completed", telemetry);
       }
     }
     if (!txHadArcadeSubmitContact(id) || keepPropagating) {
       void restoreOnChainLocalTx(id).catch(() => {
         /* background */
-      })
+      });
     }
     return {
       confirmed: ancestryComplete,
       submitted: true,
       keepPropagating,
       summary,
-    }
+    };
   }
   // Pure transport / endpoint failures are not proof of a spent input.
   if (summary.serviceOnlyErrors) {
     console.info(
-      '[minerSubmit] no miner ack — signed tx treated as submitted',
+      "[minerSubmit] no miner ack — signed tx treated as submitted",
       id.slice(0, 12),
-      summary.detail,
-    )
-    recordTransactionStage('propagation_queued', {
+      summary.detail
+    );
+    recordTransactionStage("propagation_queued", {
       ...telemetry,
-      blockerCode: 'provider_service_error',
-    })
-    return { confirmed: false, submitted: true, summary }
+      blockerCode: "provider_service_error",
+    });
+    return { confirmed: false, submitted: true, summary };
   }
   if (summary.missingInputs || summary.doubleSpend) {
     await failIfAncestryIncomplete({
@@ -416,57 +467,57 @@ export async function submitAtomicBeefToMiners(
       summary,
       telemetry,
       proofsComplete,
-    })
-    return resolveMinerConflict({ id, atomic, active, summary, telemetry })
+    });
+    return resolveMinerConflict({ id, atomic, active, summary, telemetry });
   }
 
   console.info(
-    '[minerSubmit] no miner ack — signed tx treated as submitted',
+    "[minerSubmit] no miner ack — signed tx treated as submitted",
     id.slice(0, 12),
-    summary.detail,
-  )
-  recordTransactionStage('propagation_queued', {
+    summary.detail
+  );
+  recordTransactionStage("propagation_queued", {
     ...telemetry,
-    blockerCode: 'provider_no_ack',
-  })
-  return { confirmed: false, submitted: true, summary }
+    blockerCode: "provider_no_ack",
+  });
+  return { confirmed: false, submitted: true, summary };
 }
 
 /** Surface a hard miner reject after optimistic send success. */
 export async function reportLateMinerSubmitFailure(args: {
-  pendingId?: string
-  txid?: string
-  reason: unknown
+  pendingId?: string;
+  txid?: string;
+  reason: unknown;
 }): Promise<void> {
-  const txid = normalizeTxid(args.txid)
+  const txid = normalizeTxid(args.txid);
   if (txid && txHadArcadeSubmitContact(txid)) {
-    const active = getActiveWallet()
+    const active = getActiveWallet();
     if (active) {
       const proven = await signedTxSpendConflictIsProven({
         txid,
         chain: active.chain,
-      })
+      });
       if (!proven) {
         console.info(
-          '[minerSubmit] late failure ignored — Arcade submit still in flight',
-          txid.slice(0, 12),
-        )
-        return
+          "[minerSubmit] late failure ignored — Arcade submit still in flight",
+          txid.slice(0, 12)
+        );
+        return;
       }
     }
   }
   const { noteOutboundSendBroadcastFailed, compactFailureLabel } = await import(
-    './appActivity'
-  )
-  const { toastError } = await import('./toast')
+    "./appActivity"
+  );
+  const { toastError } = await import("./toast");
   if (txid) {
-    const { getTxByTxid, markTxFailed } = await import('./txStore')
-    const record = getTxByTxid(txid)
-    if (record && record.status !== 'FAILED_REJECTED') {
-      markTxFailed(record.id, 'ARC_REJECTED', compactFailureLabel(args.reason))
+    const { getTxByTxid, markTxFailed } = await import("./txStore");
+    const record = getTxByTxid(txid);
+    if (record && record.status !== "FAILED_REJECTED") {
+      markTxFailed(record.id, "ARC_REJECTED", compactFailureLabel(args.reason));
     }
   }
-  if (!noteOutboundSendBroadcastFailed(args)) return
-  const label = compactFailureLabel(args.reason)
-  toastError('Send issue', label)
+  if (!noteOutboundSendBroadcastFailed(args)) return;
+  const label = compactFailureLabel(args.reason);
+  toastError("Send issue", label);
 }

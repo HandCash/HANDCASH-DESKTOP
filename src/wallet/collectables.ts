@@ -136,8 +136,9 @@ import { chooseItemSettlePath, isPeerDeliverSettle } from './itemSettlePath'
 import { createActor } from 'xstate'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import {
+  chooseCollectableSendBatch,
   collectableBatchOutputOutpoint,
-  normalizeCollectableBatchOutpoints,
+  collectableSendBatchRefusal,
 } from './collectableBatch'
 import { scanLegacyAddress } from './legacyScan'
 import {
@@ -4281,19 +4282,25 @@ export type SendCollectablesArgs = {
 export async function sendCollectables(
   args: SendCollectablesArgs
 ): Promise<{ txid: string }> {
-  const outpoints = normalizeCollectableBatchOutpoints(args.outpoints)
-  if (outpoints.length === 0) throw new Error('Select at least one collectable')
-  if (outpoints.length === 1) {
+  const batch = chooseCollectableSendBatch(args.outpoints)
+  if (batch.kind === 'refuse') {
+    throw new Error(collectableSendBatchRefusal(batch))
+  }
+  if (batch.kind === 'single') {
     return sendCollectable({
-      outpoint: outpoints[0]!,
+      outpoint: batch.outpoint,
       toAddress: args.toAddress,
       recipientIdentityKey: args.recipientIdentityKey,
       friendLabel: args.friendLabel,
     })
   }
+  const outpoints = batch.outpoints
+  const cachedByOutpoint = new Map(
+    cachedCollectables.map((item) => [item.outpoint, item] as const),
+  )
 
   const earlyItems = outpoints.map((outpoint) => {
-    const cached = cachedCollectables.find((item) => item.outpoint === outpoint)
+    const cached = cachedByOutpoint.get(outpoint)
     const ready = inspectCollectableSendReady({
       outpoint,
       proven:
@@ -4398,9 +4405,11 @@ export async function sendCollectables(
           const live = await awaitLiveOutpoints(wallet)
 
           const prepared = []
+          const cachedNow = new Map(
+            cachedCollectables.map((item) => [item.outpoint, item] as const),
+          )
           for (const outpoint of outpoints) {
-            const cached =
-              cachedCollectables.find((item) => item.outpoint === outpoint) ?? null
+            const cached = cachedNow.get(outpoint) ?? null
             const match =
               heldByOutpoint.get(outpoint) ??
               (cached

@@ -1,14 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const store = new Map<string, string>()
+const store = new Map<string, string>();
 
-vi.mock('./durableStorage', () => ({
+vi.mock("./durableStorage", () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
-    store.set(key, value)
-    return true
+    store.set(key, value);
+    return true;
   },
-}))
+}));
 
 import {
   activityDetailLabel,
@@ -30,6 +30,7 @@ import {
   noteOutboundSendPending,
   noteOutboundSendBroadcastFailed,
   failOutboundSendPending,
+  reviveFailedOutboundByTxid,
   isFailedActivity,
   activityFailureReason,
   activityFailureLabel,
@@ -50,894 +51,952 @@ import {
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
-} from './appActivity'
+} from "./appActivity";
 import {
   __resetGhostTxSuppressForTests,
   isGhostTxSuppressed,
   rememberGhostTx,
-} from './ghostTxSuppress'
+} from "./ghostTxSuppress";
 import {
   __resetArcadeSubmitGuardForTests,
   rememberArcadeSubmitContact,
-} from './arcadeSubmitGuard'
+} from "./arcadeSubmitGuard";
 
 function entry(partial: Partial<ActivityEntry>): ActivityEntry {
   return {
-    id: '1',
-    origin: 'handcash',
-    kind: 'spent',
+    id: "1",
+    origin: "handcash",
+    kind: "spent",
     sats: 1,
     at: 1,
-    method: 'send',
+    method: "send",
     ...partial,
-  }
+  };
 }
 
-describe('sameActivityRow', () => {
-  it('holds a re-read of an unchanged row interchangeable', () => {
+describe("sameActivityRow", () => {
+  it("holds a re-read of an unchanged row interchangeable", () => {
     // Every activity write rebuilds row objects. A screen that keys an effect on
     // the object then re-runs on unrelated writes — and when that effect writes
     // to Activity itself, the two chase each other into a React update loop.
-    expect(sameActivityRow(entry({ txid: 'a' }), entry({ txid: 'a' }))).toBe(true)
-  })
+    expect(sameActivityRow(entry({ txid: "a" }), entry({ txid: "a" }))).toBe(
+      true
+    );
+  });
 
-  it('sees the changes a screen decides on', () => {
-    const base = entry({ txid: 'a', status: 'pending' })
-    expect(sameActivityRow(base, entry({ txid: 'a', status: 'failed' }))).toBe(false)
-    expect(sameActivityRow(base, entry({ txid: 'b', status: 'pending' }))).toBe(false)
+  it("sees the changes a screen decides on", () => {
+    const base = entry({ txid: "a", status: "pending" });
+    expect(sameActivityRow(base, entry({ txid: "a", status: "failed" }))).toBe(
+      false
+    );
+    expect(sameActivityRow(base, entry({ txid: "b", status: "pending" }))).toBe(
+      false
+    );
     expect(
-      sameActivityRow(base, entry({ txid: 'a', status: 'pending', archivedAt: 5 })),
-    ).toBe(false)
-  })
+      sameActivityRow(
+        base,
+        entry({ txid: "a", status: "pending", archivedAt: 5 })
+      )
+    ).toBe(false);
+  });
 
-  it('never calls a missing row the same as a present one', () => {
-    expect(sameActivityRow(null, null)).toBe(true)
-    expect(sameActivityRow(null, entry({}))).toBe(false)
-  })
-})
+  it("never calls a missing row the same as a present one", () => {
+    expect(sameActivityRow(null, null)).toBe(true);
+    expect(sameActivityRow(null, entry({}))).toBe(false);
+  });
+});
 
-describe('activityEntryTitle', () => {
-  it('names a removed market item as sold instead of sent', () => {
+describe("activityEntryTitle", () => {
+  it("names a removed market item as sold instead of sent", () => {
     expect(
       activityEntryTitle(
         entry({
-          kind: 'spent',
-          method: 'market-sale',
+          kind: "spent",
+          method: "market-sale",
           item: {
-            name: 'KING',
-            origin: `${'ab'.repeat(32)}_0`,
-            outpoint: `${'cd'.repeat(32)}.0`,
+            name: "KING",
+            origin: `${"ab".repeat(32)}_0`,
+            outpoint: `${"cd".repeat(32)}.0`,
           },
-        }),
-      ),
-    ).toBe('Sold KING')
-  })
+        })
+      )
+    ).toBe("Sold KING");
+  });
 
-  it('shows a friendly recipient instead of a raw identity key', () => {
+  it("shows a friendly recipient instead of a raw identity key", () => {
     const row = entry({
-      kind: 'spent',
-      method: 'send',
-      note: `Sent to me (${'0'.repeat(64)})`,
+      kind: "spent",
+      method: "send",
+      note: `Sent to me (${"0".repeat(64)})`,
       retry: {
-        kind: 'send-bsv',
-        toAddress: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
+        kind: "send-bsv",
+        toAddress: "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
         satoshis: 1000,
-        friendLabel: 'me',
+        friendLabel: "me",
       },
-    })
-    expect(activityRecipientLabel(row)).toBe('myself')
-    expect(activityEntryTitle(row)).toBe('Sent to myself')
-  })
+    });
+    expect(activityRecipientLabel(row)).toBe("myself");
+    expect(activityEntryTitle(row)).toBe("Sent to myself");
+  });
 
-  it('labels mint tips with quantity, distinct from send/receive', () => {
+  it("labels mint tips with quantity, distinct from send/receive", () => {
     expect(
       activityEntryTitle(
         entry({
-          kind: 'earned',
-          method: 'mint-token',
+          kind: "earned",
+          method: "mint-token",
           item: {
-            name: 'DEMO',
-            origin: 'aa_0',
-            tokenId: 'aa_0',
-            amt: '1000',
+            name: "DEMO",
+            origin: "aa_0",
+            tokenId: "aa_0",
+            amt: "1000",
             dec: 0,
           },
-        }),
-      ),
-    ).toBe('Minted 1,000 DEMO')
+        })
+      )
+    ).toBe("Minted 1,000 DEMO");
     expect(
       activityEntryTitle(
         entry({
-          kind: 'spent',
-          method: 'send-token',
+          kind: "spent",
+          method: "send-token",
           item: {
-            name: 'DEMO',
-            origin: 'aa_0',
-            tokenId: 'aa_0',
-            amt: '50',
+            name: "DEMO",
+            origin: "aa_0",
+            tokenId: "aa_0",
+            amt: "50",
           },
-        }),
-      ),
-    ).toBe('Sent 50 DEMO')
+        })
+      )
+    ).toBe("Sent 50 DEMO");
     expect(
       activityEntryTitle(
         entry({
-          kind: 'earned',
-          method: 'receive-token',
+          kind: "earned",
+          method: "receive-token",
           item: {
-            name: 'DEMO',
-            origin: 'aa_0',
-            tokenId: 'aa_0',
-            amt: '25',
+            name: "DEMO",
+            origin: "aa_0",
+            tokenId: "aa_0",
+            amt: "25",
           },
-        }),
-      ),
-    ).toBe('Received 25 DEMO')
-  })
-})
+        })
+      )
+    ).toBe("Received 25 DEMO");
+  });
+});
 
-describe('formatActivityRecipientDisplay', () => {
-  it('drops parenthesized identity keys when a label is present', () => {
+describe("formatActivityRecipientDisplay", () => {
+  it("drops parenthesized identity keys when a label is present", () => {
     expect(
       formatActivityRecipientDisplay({
-        friendLabel: 'Alice',
-        to: '0'.repeat(64),
-      }),
-    ).toBe('Alice')
+        friendLabel: "Alice",
+        to: "0".repeat(64),
+      })
+    ).toBe("Alice");
     expect(
       formatActivityRecipientDisplay({
-        friendLabel: 'me',
-        to: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
-      }),
-    ).toBe('myself')
-  })
-})
+        friendLabel: "me",
+        to: "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+      })
+    ).toBe("myself");
+  });
+});
 
-describe('activityDetailLabel', () => {
-  it('labels collectable rows as Transaction', () => {
+describe("activityDetailLabel", () => {
+  it("labels collectable rows as Transaction", () => {
     const row = entry({
-      method: 'send-collectable',
-      item: { name: 'Badge', origin: 'aa_0', outpoint: 'bb.0' },
-    })
-    expect(isItemActivity(row)).toBe(true)
-    expect(activityDetailLabel(row)).toBe('Transaction')
-  })
+      method: "send-collectable",
+      item: { name: "Badge", origin: "aa_0", outpoint: "bb.0" },
+    });
+    expect(isItemActivity(row)).toBe(true);
+    expect(activityDetailLabel(row)).toBe("Transaction");
+  });
 
-  it('labels app money rows as Payment', () => {
+  it("labels app money rows as Payment", () => {
     expect(
       activityDetailLabel(
         entry({
-          origin: 'https://market.example',
-          method: 'createAction',
+          origin: "https://market.example",
+          method: "createAction",
           sats: 1000,
-        }),
-      ),
-    ).toBe('Payment')
-  })
+        })
+      )
+    ).toBe("Payment");
+  });
 
-  it('labels wallet BSV sends as Transaction', () => {
-    expect(activityDetailLabel(entry({ method: 'send', sats: 5000 }))).toBe(
-      'Transaction',
-    )
-  })
+  it("labels wallet BSV sends as Transaction", () => {
+    expect(activityDetailLabel(entry({ method: "send", sats: 5000 }))).toBe(
+      "Transaction"
+    );
+  });
 
-  it('labels permission / friend rows as Activity', () => {
+  it("labels permission / friend rows as Activity", () => {
     const row = entry({
-      kind: 'event',
+      kind: "event",
       sats: 0,
-      method: 'connect',
-      note: 'Connected market.example',
-      origin: 'market.example',
-    })
-    expect(isEventActivity(row)).toBe(true)
-    expect(activityDetailLabel(row)).toBe('Activity')
-    expect(activityEntryTitle(row)).toBe('Connected market.example')
-    expect(activityNavLabel(row)).toBe('Connected market.example')
-  })
+      method: "connect",
+      note: "Connected market.example",
+      origin: "market.example",
+    });
+    expect(isEventActivity(row)).toBe(true);
+    expect(activityDetailLabel(row)).toBe("Activity");
+    expect(activityEntryTitle(row)).toBe("Connected market.example");
+    expect(activityNavLabel(row)).toBe("Connected market.example");
+  });
 
-  it('does not repeat Activity in the nav crumb for an approval', () => {
+  it("does not repeat Activity in the nav crumb for an approval", () => {
     const row = entry({
-      kind: 'event',
+      kind: "event",
       sats: 0,
-      method: 'approve',
-      note: 'List item for sale',
-      origin: 'brc-cloud.bcryderman.workers.dev',
-    })
-    expect(activityNavLabel(row)).toBe('List item for sale')
-  })
-})
+      method: "approve",
+      note: "List item for sale",
+      origin: "brc-cloud.bcryderman.workers.dev",
+    });
+    expect(activityNavLabel(row)).toBe("List item for sale");
+  });
+});
 
-describe('activityEntryKey', () => {
-  it('is the same for one transaction recorded twice', () => {
+describe("activityEntryKey", () => {
+  it("is the same for one transaction recorded twice", () => {
     // A restored history replica re-records the row with a fresh clock-minted id.
     // Keying the seen record on `id` is what made the top row flash on every visit.
-    const local = entry({ id: '1770000000000-ab12', txid: 'AA', at: 10 })
-    const restored = entry({ id: '1780000000000-cd34', txid: 'aa', at: 10 })
+    const local = entry({ id: "1770000000000-ab12", txid: "AA", at: 10 });
+    const restored = entry({ id: "1780000000000-cd34", txid: "aa", at: 10 });
 
-    expect(activityEntryKey(restored)).toBe(activityEntryKey(local))
-  })
+    expect(activityEntryKey(restored)).toBe(activityEntryKey(local));
+  });
 
-  it('separates the send and the receive of the same transaction', () => {
-    const sent = entry({ txid: 'aa', kind: 'spent' })
-    const earned = entry({ txid: 'aa', kind: 'earned' })
+  it("separates the send and the receive of the same transaction", () => {
+    const sent = entry({ txid: "aa", kind: "spent" });
+    const earned = entry({ txid: "aa", kind: "earned" });
 
-    expect(activityEntryKey(sent)).not.toBe(activityEntryKey(earned))
-  })
+    expect(activityEntryKey(sent)).not.toBe(activityEntryKey(earned));
+  });
 
-  it('keys an item row with no txid on the tip and its own row id', () => {
+  it("keys an item row with no txid on the tip and its own row id", () => {
     const row = entry({
-      id: 'attempt-1',
-      item: { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' },
-    })
-    expect(activityEntryKey(row)).toBe('item:bb.0:spent:attempt-1')
-  })
+      id: "attempt-1",
+      item: { name: "Fox", origin: "aa_0", outpoint: "BB.0" },
+    });
+    expect(activityEntryKey(row)).toBe("item:bb.0:spent:attempt-1");
+  });
 
-  it('separates two attempts on the same tip that never produced a txid', () => {
+  it("separates two attempts on the same tip that never produced a txid", () => {
     // Both died before signing, so neither has a txid to tell them apart. They
     // are still two rows, and React needs two keys.
-    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' }
-    const first = entry({ id: 'attempt-1', item, status: 'failed' })
-    const second = entry({ id: 'attempt-2', item, status: 'failed' })
+    const item = { name: "Fox", origin: "aa_0", outpoint: "BB.0" };
+    const first = entry({ id: "attempt-1", item, status: "failed" });
+    const second = entry({ id: "attempt-2", item, status: "failed" });
 
-    expect(activityEntryKey(first)).not.toBe(activityEntryKey(second))
-  })
+    expect(activityEntryKey(first)).not.toBe(activityEntryKey(second));
+  });
 
-  it('separates two send attempts that spent the same tip', () => {
+  it("separates two send attempts that spent the same tip", () => {
     // A send the payee never broadcast returns the tip; sending it again leaves
     // two spent rows on one outpoint. Sharing a key made React drop one.
-    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' }
-    const first = entry({ txid: 'cc', item })
-    const second = entry({ txid: 'dd', item })
+    const item = { name: "Fox", origin: "aa_0", outpoint: "bb.0" };
+    const first = entry({ txid: "cc", item });
+    const second = entry({ txid: "dd", item });
 
-    expect(activityEntryKey(first)).not.toBe(activityEntryKey(second))
-  })
+    expect(activityEntryKey(first)).not.toBe(activityEntryKey(second));
+  });
 
-  it('still matches an item row re-recorded from restored history', () => {
-    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' }
-    const local = entry({ id: '1770000000000-ab12', txid: 'CC', item })
-    const restored = entry({ id: '1780000000000-cd34', txid: 'cc', item })
+  it("still matches an item row re-recorded from restored history", () => {
+    const item = { name: "Fox", origin: "aa_0", outpoint: "BB.0" };
+    const local = entry({ id: "1770000000000-ab12", txid: "CC", item });
+    const restored = entry({ id: "1780000000000-cd34", txid: "cc", item });
 
-    expect(activityEntryKey(restored)).toBe(activityEntryKey(local))
-  })
+    expect(activityEntryKey(restored)).toBe(activityEntryKey(local));
+  });
 
-  it('keys a local-only row on its timestamp', () => {
-    expect(activityEntryKey(entry({ at: 42, sats: 7 }))).toBe('at:42:spent:7')
-  })
+  it("keys a local-only row on its timestamp", () => {
+    expect(activityEntryKey(entry({ at: 42, sats: 7 }))).toBe("at:42:spent:7");
+  });
 
-  it('keys the live outbound row as the in-flight pending for that tip', () => {
+  it("keys the live outbound row as the in-flight pending for that tip", () => {
     const live = entry({
-      id: 'live-outbound-send',
-      pendingId: 'live-outbound-send',
-      status: 'pending',
+      id: "live-outbound-send",
+      pendingId: "live-outbound-send",
+      status: "pending",
       at: 99,
-      item: { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' },
-    })
-    const later = { ...live, at: 100 }
-    expect(activityEntryKey(live)).toBe('item:bb.0:spent:pending')
-    expect(activityEntryKey(later)).toBe(activityEntryKey(live))
-  })
-})
+      item: { name: "Fox", origin: "aa_0", outpoint: "bb.0" },
+    });
+    const later = { ...live, at: 100 };
+    expect(activityEntryKey(live)).toBe("item:bb.0:spent:pending");
+    expect(activityEntryKey(later)).toBe(activityEntryKey(live));
+  });
+});
 
-describe('activityEntryContinues', () => {
-  it('treats live outbound and the durable Sending… row as one feed node', () => {
-    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' }
+describe("activityEntryContinues", () => {
+  it("treats live outbound and the durable Sending… row as one feed node", () => {
+    const item = { name: "Fox", origin: "aa_0", outpoint: "bb.0" };
     const live = entry({
-      id: 'live-outbound-send',
-      pendingId: 'live-outbound-send',
-      status: 'pending',
+      id: "live-outbound-send",
+      pendingId: "live-outbound-send",
+      status: "pending",
       item,
-    })
+    });
     const durable = entry({
-      id: 'send-1',
-      pendingId: 'send-1',
-      status: 'pending',
+      id: "send-1",
+      pendingId: "send-1",
+      status: "pending",
       item,
-    })
-    expect(activityEntryContinues(live, durable)).toBe(true)
-  })
+    });
+    expect(activityEntryContinues(live, durable)).toBe(true);
+  });
 
-  it('treats a verifying receive and the settled row as one feed node', () => {
-    const txid = 'aa'.repeat(32)
+  it("treats a verifying receive and the settled row as one feed node", () => {
+    const txid = "aa".repeat(32);
     const pending = entry({
-      kind: 'earned',
-      method: 'receive-collectable',
-      status: 'pending',
+      kind: "earned",
+      method: "receive-collectable",
+      status: "pending",
       txid,
-      item: { name: 'Fox', origin: `${txid}_pending` },
-    })
+      item: { name: "Fox", origin: `${txid}_pending` },
+    });
     const settled = entry({
       id: pending.id,
-      kind: 'earned',
-      method: 'receive-collectable',
+      kind: "earned",
+      method: "receive-collectable",
       txid,
-      item: { name: 'Fox', origin: `${txid}_0`, outpoint: `${txid}.0` },
-    })
-    expect(activityEntryContinues(pending, settled)).toBe(true)
-  })
+      item: { name: "Fox", origin: `${txid}_0`, outpoint: `${txid}.0` },
+    });
+    expect(activityEntryContinues(pending, settled)).toBe(true);
+  });
 
-  it('keeps two spends of the same tip on different txs apart', () => {
-    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' }
-    const first = entry({ id: 'a', txid: 'cc', item })
-    const second = entry({ id: 'b', txid: 'dd', item })
-    expect(activityEntryContinues(first, second)).toBe(false)
-  })
-})
+  it("keeps two spends of the same tip on different txs apart", () => {
+    const item = { name: "Fox", origin: "aa_0", outpoint: "bb.0" };
+    const first = entry({ id: "a", txid: "cc", item });
+    const second = entry({ id: "b", txid: "dd", item });
+    expect(activityEntryContinues(first, second)).toBe(false);
+  });
+});
 
-describe('inbound receive activity', () => {
-  const TX = 'a'.repeat(64)
+describe("inbound receive activity", () => {
+  const TX = "a".repeat(64);
 
   beforeEach(() => {
-    store.clear()
-    clearAppActivity()
-    __resetGhostTxSuppressForTests()
-    __resetArcadeSubmitGuardForTests()
-  })
+    store.clear();
+    clearAppActivity();
+    __resetGhostTxSuppressForTests();
+    __resetArcadeSubmitGuardForTests();
+  });
 
-  it('shows a verifying payment in Activity before internalize finishes', () => {
-    noteInboundReceivePending({ txid: TX, sats: 12_345 })
-    const rows = listRecentActivity(10)
-    expect(rows).toHaveLength(1)
+  it("shows a verifying payment in Activity before internalize finishes", () => {
+    noteInboundReceivePending({ txid: TX, sats: 12_345 });
+    const rows = listRecentActivity(10);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      kind: 'earned',
-      method: 'receive',
+      kind: "earned",
+      method: "receive",
       sats: 12345,
       txid: TX,
-      status: 'pending',
-    })
-    expect(isPendingActivity(rows[0]!)).toBe(true)
-    expect(hasSettledActivityTxid(TX, 'earned', { item: false })).toBe(false)
-  })
+      status: "pending",
+    });
+    expect(isPendingActivity(rows[0]!)).toBe(true);
+    expect(hasSettledActivityTxid(TX, "earned", { item: false })).toBe(false);
+  });
 
-  it('promotes the same row when ingest settles (no duplicate)', () => {
-    noteInboundReceivePending({ txid: TX, sats: 100 })
-    noteInboundReceiveComplete({ txid: TX, sats: 100 })
-    const rows = listRecentActivity(10).filter((e) => e.txid === TX)
-    expect(rows).toHaveLength(1)
-    expect(rows[0]?.status).toBeUndefined()
-    expect(rows[0]?.sats).toBe(100)
-    expect(hasSettledActivityTxid(TX, 'earned', { item: false })).toBe(true)
-  })
+  it("promotes the same row when ingest settles (no duplicate)", () => {
+    noteInboundReceivePending({ txid: TX, sats: 100 });
+    noteInboundReceiveComplete({ txid: TX, sats: 100 });
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBeUndefined();
+    expect(rows[0]?.sats).toBe(100);
+    expect(hasSettledActivityTxid(TX, "earned", { item: false })).toBe(true);
+  });
 
-  it('keeps item and BSV receives on the same txid as separate rows', () => {
-    noteInboundReceivePending({ txid: TX, sats: 5000 })
+  it("keeps item and BSV receives on the same txid as separate rows", () => {
+    noteInboundReceivePending({ txid: TX, sats: 5000 });
     noteInboundReceivePending({
       txid: TX,
       item: true,
-      itemName: 'Fox',
-    })
-    noteInboundReceiveComplete({ txid: TX, sats: 5000 })
+      itemName: "Fox",
+    });
+    noteInboundReceiveComplete({ txid: TX, sats: 5000 });
     noteInboundReceiveComplete({
       txid: TX,
       item: true,
-      itemName: 'Fox',
+      itemName: "Fox",
       outpoint: `${TX}.0`,
-    })
-    const rows = listRecentActivity(10).filter((e) => e.txid === TX)
-    expect(rows).toHaveLength(2)
-    expect(rows.some((e) => e.method === 'receive' && !e.item)).toBe(true)
+    });
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(rows).toHaveLength(2);
+    expect(rows.some((e) => e.method === "receive" && !e.item)).toBe(true);
     expect(
       rows.some(
-        (e) => e.method === 'receive-collectable' && e.item?.name === 'Fox',
-      ),
-    ).toBe(true)
-  })
+        (e) => e.method === "receive-collectable" && e.item?.name === "Fox"
+      )
+    ).toBe(true);
+  });
 
-  it('keeps two collectables received in the same tx as separate rows', () => {
+  it("keeps two collectables received in the same tx as separate rows", () => {
     noteInboundReceiveComplete({
       txid: TX,
       item: true,
-      itemName: 'Fox A',
+      itemName: "Fox A",
       outpoint: `${TX}.0`,
-    })
+    });
     noteInboundReceiveComplete({
       txid: TX,
       item: true,
-      itemName: 'Fox B',
+      itemName: "Fox B",
       outpoint: `${TX}.1`,
-    })
+    });
     const rows = listRecentActivity(10).filter(
-      (e) => e.txid === TX && e.method === 'receive-collectable',
-    )
-    expect(rows).toHaveLength(2)
+      (e) => e.txid === TX && e.method === "receive-collectable"
+    );
+    expect(rows).toHaveLength(2);
     expect(rows.map((e) => e.item?.outpoint).sort()).toEqual([
       `${TX}.0`,
       `${TX}.1`,
-    ])
-  })
+    ]);
+  });
 
-  it('does not invent tip .0 when an item receive has no outpoint yet', () => {
+  it("does not invent tip .0 when an item receive has no outpoint yet", () => {
     noteInboundReceivePending({
       txid: TX,
       item: true,
-      itemName: 'Fox',
-    })
-    const row = listRecentActivity(10).find((e) => e.txid === TX)
-    expect(row?.item?.outpoint).toBeUndefined()
-    expect(row?.item?.origin).toBe(`${TX}_pending`)
-  })
+      itemName: "Fox",
+    });
+    const row = listRecentActivity(10).find((e) => e.txid === TX);
+    expect(row?.item?.outpoint).toBeUndefined();
+    expect(row?.item?.origin).toBe(`${TX}_pending`);
+  });
 
-  it('promotes a fungible settle as receive-token with token metadata', () => {
+  it("promotes a fungible settle as receive-token with token metadata", () => {
     const token = {
-      tokenId: `${'ab'.repeat(32)}_0`,
-      amount: '125',
-      sym: 'TST',
+      tokenId: `${"ab".repeat(32)}_0`,
+      amount: "125",
+      sym: "TST",
       dec: 2,
-    }
+    };
     noteInboundReceivePending({
       txid: TX,
       item: true,
       itemName: token.sym,
       token,
-    })
+    });
     noteInboundReceiveComplete({
       txid: TX,
       item: true,
       itemName: token.sym,
       outpoint: `${TX}.0`,
       token,
-    })
-    const rows = listRecentActivity(10).filter((e) => e.txid === TX)
-    expect(rows).toHaveLength(1)
+    });
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      method: 'receive-token',
-      note: 'Received 1.25 TST',
+      method: "receive-token",
+      note: "Received 1.25 TST",
       status: undefined,
       item: {
         tokenId: token.tokenId,
-        amt: '125',
+        amt: "125",
         dec: 2,
         outpoint: `${TX}.0`,
       },
-    })
-  })
+    });
+  });
 
-  it('does not take a settled receive back to verifying', () => {
-    noteInboundReceiveComplete({ txid: TX, sats: 9 })
-    noteInboundReceivePending({ txid: TX, sats: 9 })
-    const row = listRecentActivity(10).find((e) => e.txid === TX)
-    expect(row?.status).toBeUndefined()
-    expect(isPendingActivity(row!)).toBe(false)
-  })
+  it("does not take a settled receive back to verifying", () => {
+    noteInboundReceiveComplete({ txid: TX, sats: 9 });
+    noteInboundReceivePending({ txid: TX, sats: 9 });
+    const row = listRecentActivity(10).find((e) => e.txid === TX);
+    expect(row?.status).toBeUndefined();
+    expect(isPendingActivity(row!)).toBe(false);
+  });
 
-  it('clears stale Verifying when the tip is already held in inventory', () => {
+  it("clears stale Verifying when the tip is already held in inventory", () => {
     noteInboundReceivePending({
       txid: TX,
       item: true,
-      itemName: 'Fox',
+      itemName: "Fox",
       outpoint: `${TX}.0`,
-    })
-    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
+    });
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
     const cleared = reconcilePendingActivityWithHeldItems([
-      { outpoint: `${TX}.0`, proven: true, name: 'Fox', origin: `${TX}_0` },
-    ])
-    expect(cleared).toBe(1)
-    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
-  })
+      { outpoint: `${TX}.0`, proven: true, name: "Fox", origin: `${TX}_0` },
+    ]);
+    expect(cleared).toBe(1);
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false);
+  });
 
-  it('settles Verifying history when the received tip is now proven spent', () => {
+  it("settles Verifying history when the received tip is now proven spent", () => {
     noteInboundReceivePending({
       txid: TX,
       item: true,
-      itemName: 'Fox',
+      itemName: "Fox",
       outpoint: `${TX}.0`,
-    })
-    expect(
-      reconcilePendingItemActivityWithSpentOutpoints([`${TX}.0`]),
-    ).toBe(1)
-    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
-  })
+    });
+    expect(reconcilePendingItemActivityWithSpentOutpoints([`${TX}.0`])).toBe(1);
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false);
+  });
 
-  it('expires stale Verifying receives that never internalized', () => {
+  it("expires stale Verifying receives that never internalized", () => {
     noteInboundReceivePending({
       txid: TX,
       item: true,
-      itemName: 'Fox',
+      itemName: "Fox",
       outpoint: `${TX}.0`,
-    })
-    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
-    expect(expireStaleInboundPending(60_000, Date.now() + 61_000)).toBe(1)
-    expect(listRecentActivity(10)).toHaveLength(0)
-  })
+    });
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
+    expect(expireStaleInboundPending(60_000, Date.now() + 61_000)).toBe(1);
+    expect(listRecentActivity(10)).toHaveLength(0);
+  });
 
-  it('adds Sending… for a re-send after a settled spend of the same tip', () => {
+  it("adds Sending… for a re-send after a settled spend of the same tip", () => {
     noteOutboundSendPending({
-      pendingId: 'old-send',
+      pendingId: "old-send",
       sats: 1,
-      to: '1abc',
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
+      to: "1abc",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
     noteOutboundSendComplete({
-      pendingId: 'old-send',
-      txid: 'aa'.repeat(32),
+      pendingId: "old-send",
+      txid: "aa".repeat(32),
       sats: 1,
-      to: '1abc',
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
+      to: "1abc",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
     expect(
       listRecentActivity(10).filter(
-        (e) => e.item?.outpoint === `${TX}.0` && e.kind === 'spent',
-      ),
-    ).toHaveLength(1)
+        (e) => e.item?.outpoint === `${TX}.0` && e.kind === "spent"
+      )
+    ).toHaveLength(1);
 
     noteOutboundSendPending({
-      pendingId: 'new-send',
+      pendingId: "new-send",
       sats: 1,
-      to: '1xyz',
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
+      to: "1xyz",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
     const rows = listRecentActivity(10).filter(
-      (e) => e.item?.outpoint === `${TX}.0` && e.kind === 'spent',
-    )
-    expect(rows).toHaveLength(2)
+      (e) => e.item?.outpoint === `${TX}.0` && e.kind === "spent"
+    );
+    expect(rows).toHaveLength(2);
     expect(
-      rows.some((e) => e.status === 'pending' && e.pendingId === 'new-send'),
-    ).toBe(true)
-    expect(rows.some((e) => e.status !== 'pending' && e.txid)).toBe(true)
-  })
+      rows.some((e) => e.status === "pending" && e.pendingId === "new-send")
+    ).toBe(true);
+    expect(rows.some((e) => e.status !== "pending" && e.txid)).toBe(true);
+  });
 
-  it('persists the exact recipient details required to retry an item send', () => {
+  it("persists the exact recipient details required to retry an item send", () => {
     noteOutboundSendPending({
-      pendingId: 'retryable',
+      pendingId: "retryable",
       sats: 1,
-      to: '1retry',
-      friendLabel: 'Alice',
-      recipientIdentityKey: '02'.padEnd(66, '1'),
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
+      to: "1retry",
+      friendLabel: "Alice",
+      recipientIdentityKey: "02".padEnd(66, "1"),
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
     noteOutboundSendComplete({
-      pendingId: 'retryable',
-      txid: 'cc'.repeat(32),
+      pendingId: "retryable",
+      txid: "cc".repeat(32),
       sats: 1,
-      to: '1retry',
-      friendLabel: 'Alice',
-      recipientIdentityKey: '02'.padEnd(66, '1'),
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
+      to: "1retry",
+      friendLabel: "Alice",
+      recipientIdentityKey: "02".padEnd(66, "1"),
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
 
     expect(listRecentActivity(10)[0]?.retry).toEqual({
-      kind: 'send-collectable',
+      kind: "send-collectable",
       outpoint: `${TX}.0`,
-      toAddress: '1retry',
-      friendLabel: 'Alice',
-      recipientIdentityKey: '02'.padEnd(66, '1'),
-    })
-  })
+      toAddress: "1retry",
+      friendLabel: "Alice",
+      recipientIdentityKey: "02".padEnd(66, "1"),
+    });
+  });
 
-  it('archives one local attempt by id without deleting it from storage', () => {
+  it("archives one local attempt by id without deleting it from storage", () => {
     noteOutboundSendPending({
-      pendingId: 'delete-me',
+      pendingId: "delete-me",
       sats: 1,
-      to: '1abc',
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
-    noteInboundReceiveComplete({ txid: 'dd'.repeat(32), sats: 10 })
+      to: "1abc",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
+    noteInboundReceiveComplete({ txid: "dd".repeat(32), sats: 10 });
     const attempt = listRecentActivity(10).find(
-      (row) => row.pendingId === 'delete-me',
-    )!
+      (row) => row.pendingId === "delete-me"
+    )!;
 
-    expect(removeActivityById(attempt.id)).toBe(true)
+    expect(removeActivityById(attempt.id)).toBe(true);
     expect(listRecentActivity(10).some((row) => row.id === attempt.id)).toBe(
-      false,
-    )
-    expect(listRecentActivity(10)).toHaveLength(1)
-    const archived = exportAllActivity().find((row) => row.id === attempt.id)
-    expect(archived?.archivedAt).toBeGreaterThan(0)
-    expect(listArchivedActivity()).toHaveLength(1)
-    expect(removeActivityById(attempt.id)).toBe(false)
-  })
+      false
+    );
+    expect(listRecentActivity(10)).toHaveLength(1);
+    const archived = exportAllActivity().find((row) => row.id === attempt.id);
+    expect(archived?.archivedAt).toBeGreaterThan(0);
+    expect(listArchivedActivity()).toHaveLength(1);
+    expect(removeActivityById(attempt.id)).toBe(false);
+  });
 
-  it('archives every failed send, keeping healthy rows', () => {
-    for (const id of ['fail-a', 'fail-b', 'fail-c']) {
-      noteOutboundSendPending({ pendingId: id, sats: 100, to: '1abc' })
-      failOutboundSendPending({ pendingId: id, reason: 'Broadcast refused' })
+  it("archives every failed send, keeping healthy rows", () => {
+    for (const id of ["fail-a", "fail-b", "fail-c"]) {
+      noteOutboundSendPending({ pendingId: id, sats: 100, to: "1abc" });
+      failOutboundSendPending({ pendingId: id, reason: "Broadcast refused" });
     }
-    noteOutboundSendPending({ pendingId: 'live', sats: 200, to: '1abc' })
-    noteInboundReceiveComplete({ txid: 'dd'.repeat(32), sats: 10 })
+    noteOutboundSendPending({ pendingId: "live", sats: 200, to: "1abc" });
+    noteInboundReceiveComplete({ txid: "dd".repeat(32), sats: 10 });
 
-    expect(countFailedActivity()).toBe(3)
+    expect(countFailedActivity()).toBe(3);
 
-    expect(removeFailedActivity()).toBe(3)
-    expect(countFailedActivity()).toBe(0)
-    expect(removeFailedActivity()).toBe(0)
-    expect(listArchivedActivity()).toHaveLength(3)
+    expect(removeFailedActivity()).toBe(3);
+    expect(countFailedActivity()).toBe(0);
+    expect(removeFailedActivity()).toBe(0);
+    expect(listArchivedActivity()).toHaveLength(3);
 
-    const rows = listRecentActivity(20)
-    expect(rows.some((r) => r.pendingId === 'live')).toBe(true)
-    expect(rows.some((r) => r.txid === 'dd'.repeat(32))).toBe(true)
-    expect(rows.every((r) => r.status !== 'failed')).toBe(true)
-  })
+    const rows = listRecentActivity(20);
+    expect(rows.some((r) => r.pendingId === "live")).toBe(true);
+    expect(rows.some((r) => r.txid === "dd".repeat(32))).toBe(true);
+    expect(rows.every((r) => r.status !== "failed")).toBe(true);
+  });
 
-  it('rewrites a settled send when background broadcast hard-fails', () => {
-    noteOutboundSendPending({ pendingId: 'late-fail', sats: 500, to: '1abc' })
+  it("rewrites a settled send when background broadcast hard-fails", () => {
+    noteOutboundSendPending({ pendingId: "late-fail", sats: 500, to: "1abc" });
     noteOutboundSendComplete({
-      pendingId: 'late-fail',
+      pendingId: "late-fail",
       txid: TX,
       sats: 500,
-      to: '1abc',
-    })
-    expect(noteOutboundSendBroadcastFailed({
-      pendingId: 'late-fail',
-      txid: TX,
-      reason: 'Already spent',
-    })).toBe(true)
-    const row = listRecentActivity(10)[0]!
-    expect(isFailedActivity(row)).toBe(true)
-    expect(activityFailureReason(row)).toBe('Already spent')
-    expect(row.note).toBe(`Failed: Sent to 1abc`)
-  })
+      to: "1abc",
+    });
+    expect(
+      noteOutboundSendBroadcastFailed({
+        pendingId: "late-fail",
+        txid: TX,
+        reason: "Already spent",
+      })
+    ).toBe(true);
+    const row = listRecentActivity(10)[0]!;
+    expect(isFailedActivity(row)).toBe(true);
+    expect(activityFailureReason(row)).toBe("Already spent");
+    expect(row.note).toBe(`Failed: Sent to 1abc`);
+  });
 
-  it('marks stale Sending… rows as failed with a reason', () => {
+  it("marks stale Sending… rows as failed with a reason", () => {
     noteOutboundSendPending({
-      pendingId: 'stuck',
+      pendingId: "stuck",
       sats: 1000,
-      to: '1abc',
-    })
-    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
-    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
-    const row = listRecentActivity(10)[0]!
-    expect(isFailedActivity(row)).toBe(true)
+      to: "1abc",
+    });
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1);
+    const row = listRecentActivity(10)[0]!;
+    expect(isFailedActivity(row)).toBe(true);
     expect(activityFailureReason(row)).toBe(
-      'Send timed out — signing took too long and nothing was broadcast',
-    )
-    expect(activityFailureLabel(row)).toBe('Send timed out')
-    expect(activityEntryTitle(row)).toBe('Send failed')
-  })
+      "Send timed out — signing took too long and nothing was broadcast"
+    );
+    expect(activityFailureLabel(row)).toBe("Send timed out");
+    expect(activityEntryTitle(row)).toBe("Send failed");
+  });
 
-  it('keeps Sending… while a spend is still in flight', async () => {
+  it("keeps Sending… while a spend is still in flight", async () => {
     const { leaseSpendPriority, resetWalletCoordinatorForTests } = await import(
-      './walletCoordinator'
-    )
-    resetWalletCoordinatorForTests()
-    const hold = leaseSpendPriority('send-collectable')
+      "./walletCoordinator"
+    );
+    resetWalletCoordinatorForTests();
+    const hold = leaseSpendPriority("send-collectable");
     noteOutboundSendPending({
-      pendingId: 'still-running',
+      pendingId: "still-running",
       sats: 1,
-      to: '1abc',
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
-    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(0)
-    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
-    hold.release()
-    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
-    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(true)
-    resetWalletCoordinatorForTests()
-  })
+      to: "1abc",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(0);
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
+    hold.release();
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1);
+    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(true);
+    resetWalletCoordinatorForTests();
+  });
 
-  it('labels failed market listings separately from sends', () => {
+  it("does not fail a Sending… row that already has a signed txid", () => {
+    noteOutboundSendPending({
+      pendingId: "signed-pending",
+      sats: 1,
+      to: "1abc",
+    });
+    const pending = listRecentActivity(10)[0]!;
+    upsertAppActivity({
+      origin: pending.origin,
+      kind: "spent",
+      sats: 1,
+      method: "send",
+      pendingId: "signed-pending",
+      txid: TX,
+      status: "pending",
+    });
+    expect(
+      failOutboundSendPending({
+        pendingId: "signed-pending",
+        reason: "timeout",
+      })
+    ).toBe(false);
+    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(false);
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(0);
+  });
+
+  it("revives a failed signed send once the cheque is known live", () => {
+    noteOutboundSendPending({ pendingId: "late", sats: 500, to: "1abc" });
+    failOutboundSendPending({ pendingId: "late", reason: "timeout" });
+    noteOutboundSendComplete({
+      pendingId: "late",
+      txid: TX,
+      sats: 500,
+      to: "1abc",
+    });
+    const row = listRecentActivity(10)[0]!;
+    expect(row.txid).toBe(TX);
+    expect(
+      noteOutboundSendBroadcastFailed({ txid: TX, reason: "Already spent" })
+    ).toBe(true);
+    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(true);
+    expect(reviveFailedOutboundByTxid(TX)).toBe(true);
+    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(false);
+  });
+
+  it("labels failed market listings separately from sends", () => {
     recordWalletEvent({
-      method: 'market-list',
-      note: 'Failed: Listed KING for 5,000 sats',
-      status: 'failed',
-      failureReason: 'amt-mismatch',
-      item: { name: 'KING', origin: 'aa'.repeat(32) },
-    })
-    const row = listRecentActivity(10)[0]!
-    expect(activityEntryTitle(row)).toBe('KING listing failed')
-    expect(isFailedMarketListingActivity(row)).toBe(true)
-  })
+      method: "market-list",
+      note: "Failed: Listed KING for 5,000 sats",
+      status: "failed",
+      failureReason: "amt-mismatch",
+      item: { name: "KING", origin: "aa".repeat(32) },
+    });
+    const row = listRecentActivity(10)[0]!;
+    expect(activityEntryTitle(row)).toBe("KING listing failed");
+    expect(isFailedMarketListingActivity(row)).toBe(true);
+  });
 
-  it('surfaces amt-mismatch / ITEM_ORIGIN_UNPROVEN when failureReason is an object', () => {
+  it("surfaces amt-mismatch / ITEM_ORIGIN_UNPROVEN when failureReason is an object", () => {
     noteOutboundSendPending({
-      pendingId: 'obj-fail',
+      pendingId: "obj-fail",
       sats: 500,
-      to: '1abc',
-    })
+      to: "1abc",
+    });
     expect(
       failOutboundSendPending({
-        pendingId: 'obj-fail',
+        pendingId: "obj-fail",
         reason: {
-          code: 'ITEM_ORIGIN_UNPROVEN',
-          description: 'amt-mismatch',
+          code: "ITEM_ORIGIN_UNPROVEN",
+          description: "amt-mismatch",
         },
-      }),
-    ).toBe(true)
-    const row = listRecentActivity(10)[0]!
-    expect(activityFailureReason(row)).toBe('amt-mismatch')
-    expect(activityFailureLabel(row)).toBe('amt-mismatch')
-  })
+      })
+    ).toBe(true);
+    const row = listRecentActivity(10)[0]!;
+    expect(activityFailureReason(row)).toBe("amt-mismatch");
+    expect(activityFailureLabel(row)).toBe("amt-mismatch");
+  });
 
-  it('keeps a failed send in Activity with the why', () => {
+  it("keeps a failed send in Activity with the why", () => {
     noteOutboundSendPending({
-      pendingId: 'poison',
+      pendingId: "poison",
       sats: 500,
-      to: '1abc',
-    })
+      to: "1abc",
+    });
     expect(
       failOutboundSendPending({
-        pendingId: 'poison',
-        reason: 'undefined is not iterable',
-      }),
-    ).toBe(true)
-    const row = listRecentActivity(10)[0]!
-    expect(isFailedActivity(row)).toBe(true)
-    expect(activityFailureReason(row)).toBe('undefined is not iterable')
-    expect(activityFailureLabel(row)).toBe('Missing script')
-    expect(row.sats).toBe(500)
+        pendingId: "poison",
+        reason: "undefined is not iterable",
+      })
+    ).toBe(true);
+    const row = listRecentActivity(10)[0]!;
+    expect(isFailedActivity(row)).toBe(true);
+    expect(activityFailureReason(row)).toBe("undefined is not iterable");
+    expect(activityFailureLabel(row)).toBe("Missing script");
+    expect(row.sats).toBe(500);
     // A second fail on an already-failed row is a no-op.
     expect(
       failOutboundSendPending({
-        pendingId: 'poison',
-        reason: 'should not replace',
-      }),
-    ).toBe(false)
+        pendingId: "poison",
+        reason: "should not replace",
+      })
+    ).toBe(false);
     expect(activityFailureReason(listRecentActivity(10)[0]!)).toBe(
-      'undefined is not iterable',
-    )
-  })
+      "undefined is not iterable"
+    );
+  });
 
-  it('keeps settled Activity rows when the tx is absent from explorers', async () => {
+  it("keeps settled Activity rows when the tx is absent from explorers", async () => {
     noteOutboundSendComplete({
-      pendingId: 'ghost',
-      txid: 'bb'.repeat(32),
+      pendingId: "ghost",
+      txid: "bb".repeat(32),
       sats: 500,
-      to: '1abc',
-    })
-    expect(listRecentActivity(10)).toHaveLength(1)
+      to: "1abc",
+    });
+    expect(listRecentActivity(10)).toHaveLength(1);
     const pruned = await pruneMissingOnChainActivity(
-      'main',
+      "main",
       async () => false,
-      { minAgeMs: 0 },
-    )
-    expect(pruned).toBe(0)
-    expect(listRecentActivity(10)).toHaveLength(1)
-  })
+      { minAgeMs: 0 }
+    );
+    expect(pruned).toBe(0);
+    expect(listRecentActivity(10)).toHaveLength(1);
+  });
 
-  it('keeps a settled item send whose txid 404s (payee has not broadcast)', async () => {
+  it("keeps a settled item send whose txid 404s (payee has not broadcast)", async () => {
     // peerDeliver: the payee broadcasts, so a 404 is expected for a while. The
     // tip already left the basket — pruning the row leaves the details panel
     // showing "Transaction not found" for a transfer that really happened.
     noteOutboundSendComplete({
-      pendingId: 'item-send',
-      txid: 'ee'.repeat(32),
+      pendingId: "item-send",
+      txid: "ee".repeat(32),
       sats: 1,
-      to: '1abc',
-      item: { name: 'Pixel Fox', origin: 'aa_0', outpoint: 'aa.0' },
-    })
-    expect(listRecentActivity(10)).toHaveLength(1)
+      to: "1abc",
+      item: { name: "Pixel Fox", origin: "aa_0", outpoint: "aa.0" },
+    });
+    expect(listRecentActivity(10)).toHaveLength(1);
 
     const pruned = await pruneMissingOnChainActivity(
-      'main',
+      "main",
       async () => false,
-      { minAgeMs: 0 },
-    )
+      { minAgeMs: 0 }
+    );
 
-    expect(pruned).toBe(0)
-    expect(listRecentActivity(10)[0]?.item?.name).toBe('Pixel Fox')
-  })
+    expect(pruned).toBe(0);
+    expect(listRecentActivity(10)[0]?.item?.name).toBe("Pixel Fox");
+  });
 
-  it('keeps aged pending receives when explorers have no transaction', async () => {
-    noteInboundReceivePending({ txid: 'cc'.repeat(32), sats: 100 })
+  it("keeps aged pending receives when explorers have no transaction", async () => {
+    noteInboundReceivePending({ txid: "cc".repeat(32), sats: 100 });
     noteInboundReceivePending({
-      txid: 'dd'.repeat(32),
+      txid: "dd".repeat(32),
       item: true,
-      itemName: 'Fox',
-    })
+      itemName: "Fox",
+    });
     const aged = listRecentActivity(10).map((e) => ({
       ...e,
       at: Date.now() - 120_000,
-    }))
-    store.set('handcash.brc100.appActivity', JSON.stringify(aged))
+    }));
+    store.set("handcash.brc100.appActivity", JSON.stringify(aged));
 
     const pruned = await pruneMissingOnChainActivity(
-      'main',
+      "main",
       async () => false,
       {
         minAgeMs: 0,
         pendingMinAgeMs: 60_000,
-      },
-    )
-    expect(pruned).toBe(0)
-    const left = listRecentActivity(10)
-    expect(left).toHaveLength(2)
-    expect(isGhostTxSuppressed('cc'.repeat(32))).toBe(false)
-  })
+      }
+    );
+    expect(pruned).toBe(0);
+    const left = listRecentActivity(10);
+    expect(left).toHaveLength(2);
+    expect(isGhostTxSuppressed("cc".repeat(32))).toBe(false);
+  });
 
-  it('refuses to re-pin Verifying… for a suppressed ghost txid', () => {
-    rememberGhostTx(TX)
+  it("refuses to re-pin Verifying… for a suppressed ghost txid", () => {
+    rememberGhostTx(TX);
     noteInboundReceivePending({
       txid: TX,
       sats: 99,
       item: true,
-      itemName: 'Fox',
-    })
-    expect(listRecentActivity(10)).toHaveLength(0)
-  })
+      itemName: "Fox",
+    });
+    expect(listRecentActivity(10)).toHaveLength(0);
+  });
 
-  it('removeActivityForTxids drops Sent rows for ghost attempts', () => {
+  it("removeActivityForTxids drops Sent rows for ghost attempts", () => {
     noteOutboundSendComplete({
-      pendingId: 'a',
+      pendingId: "a",
       txid: TX,
       sats: 1,
-      to: '1abc',
-      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
-    })
-    expect(removeActivityForTxids([TX])).toBe(1)
-    expect(listRecentActivity(10)).toHaveLength(0)
-  })
+      to: "1abc",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
+    expect(removeActivityForTxids([TX])).toBe(1);
+    expect(listRecentActivity(10)).toHaveLength(0);
+  });
 
-  it('does not remove or fail rows pinned by Arcade submit', () => {
-    rememberArcadeSubmitContact(TX)
+  it("does not remove or fail rows pinned by Arcade submit", () => {
+    rememberArcadeSubmitContact(TX);
     noteOutboundSendComplete({
-      pendingId: 'arc',
+      pendingId: "arc",
       txid: TX,
       sats: 500,
-      to: '1Pay',
-    })
+      to: "1Pay",
+    });
     expect(
-      noteOutboundSendBroadcastFailed({ txid: TX, reason: 'Not sent' }),
-    ).toBe(false)
-    expect(removeActivityForTxids([TX])).toBe(0)
-    expect(listRecentActivity(10)).toHaveLength(1)
-  })
+      noteOutboundSendBroadcastFailed({ txid: TX, reason: "Not sent" })
+    ).toBe(false);
+    expect(removeActivityForTxids([TX])).toBe(0);
+    expect(listRecentActivity(10)).toHaveLength(1);
+  });
 
-  it('labels irreversible burns as burns rather than sends', () => {
+  it("labels irreversible burns as burns rather than sends", () => {
     const burn: ActivityEntry = {
-      id: 'burn-1',
-      origin: 'handcash',
-      kind: 'spent',
+      id: "burn-1",
+      origin: "handcash",
+      kind: "spent",
       sats: 1,
       at: Date.now(),
-      method: 'burn-token',
-      status: 'complete',
+      method: "burn-token",
+      status: "complete",
       item: {
-        name: 'CHIPS',
+        name: "CHIPS",
         origin: `${TX}_0`,
         tokenId: `${TX}_0`,
-        amt: '25',
+        amt: "25",
         dec: 0,
       },
-    }
-    expect(activityEntryTitle(burn)).toBe('Burned 25 CHIPS')
-    expect(activityEntryTitle({ ...burn, status: 'pending' })).toBe('Burning CHIPS…')
-    expect(activityEntryTitle({ ...burn, status: 'failed' })).toBe('CHIPS not burned')
-  })
-})
+    };
+    expect(activityEntryTitle(burn)).toBe("Burned 25 CHIPS");
+    expect(activityEntryTitle({ ...burn, status: "pending" })).toBe(
+      "Burning CHIPS…"
+    );
+    expect(activityEntryTitle({ ...burn, status: "failed" })).toBe(
+      "CHIPS not burned"
+    );
+  });
+});
 
-describe('burn activity handoff', () => {
+describe("burn activity handoff", () => {
   beforeEach(() => {
-    store.clear()
-    clearAppActivity()
-  })
+    store.clear();
+    clearAppActivity();
+  });
 
-  it('keeps one visible row from queued through terminal failure', () => {
-    const pendingId = 'burn-test'
+  it("keeps one visible row from queued through terminal failure", () => {
+    const pendingId = "burn-test";
     const item = {
-      name: 'Fox',
-      origin: `${'a'.repeat(64)}_0`,
-      outpoint: `${'b'.repeat(64)}.0`,
-    }
+      name: "Fox",
+      origin: `${"a".repeat(64)}_0`,
+      outpoint: `${"b".repeat(64)}.0`,
+    };
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'spent',
+      kind: "spent",
       sats: 1,
-      method: 'burn-collectable',
+      method: "burn-collectable",
       item,
-      burn: { asset: '1sat', destroyedAmount: '1' },
-      status: 'pending',
+      burn: { asset: "1sat", destroyedAmount: "1" },
+      status: "pending",
       pendingId,
-    })
+    });
     expect(listRecentActivity(10)[0]).toMatchObject({
-      method: 'burn-collectable',
-      status: 'pending',
+      method: "burn-collectable",
+      status: "pending",
       pendingId,
-    })
+    });
 
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'spent',
+      kind: "spent",
       sats: 1,
-      method: 'burn-collectable',
+      method: "burn-collectable",
       item,
-      burn: { asset: '1sat', destroyedAmount: '1' },
-      status: 'failed',
+      burn: { asset: "1sat", destroyedAmount: "1" },
+      status: "failed",
       pendingId,
-      failureReason: 'source transaction timed out',
-    })
-    const rows = listRecentActivity(10)
-    expect(rows).toHaveLength(1)
+      failureReason: "source transaction timed out",
+    });
+    const rows = listRecentActivity(10);
+    expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      status: 'failed',
-      failureReason: 'source transaction timed out',
-    })
-  })
-})
+      status: "failed",
+      failureReason: "source transaction timed out",
+    });
+  });
+});

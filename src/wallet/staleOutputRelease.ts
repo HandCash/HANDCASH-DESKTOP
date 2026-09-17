@@ -763,6 +763,9 @@ export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
         looked.status
       } → unproven`
     );
+    void import("./appActivity")
+      .then(({ reviveFailedOutboundByTxid }) => reviveFailedOutboundByTxid(id))
+      .catch(() => undefined);
     // Seal spent inputs first — keep-then-seal left inputs spendable while
     // change was already counted (same ~2× class as sibling abort).
     await sealSpentInputsOfSignedTx(id, undefined);

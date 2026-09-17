@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.219] - 2026-09-17
+
+### Fixed
+
+- **A huge item selection refuses instead of freezing.** One atomic 1-sat
+  transaction carries up to `MAX_ITEMS_PER_ONE_SAT_TX` (25) tips — the same
+  sighash ceiling the migrate bundle already used. Selecting 700 built one
+  `createAction` with 700 inputs and 700 outputs on the render thread, after
+  resolving metadata for every tip. Send and Burn now disable above the
+  ceiling with the count to deselect, `sendCollectables` / `burnOneSat` fail
+  closed with a named reason before any pending row or spend lock, and the
+  send panel skips the per-tip metadata walk for a selection it will refuse.
+
+- **Activity no longer offers Clear for a live signed cheque.** A pending
+  send that already has a txid is not rewritten as failed; Arcade accept
+  restores a false-failed row; Clear only counts rows that are actually
+  droppable. Reservation cleanup no longer waits on a full toolbox
+  `reviewStatus` pass, which was hanging Clear for 30s.
+
 ## [1.3.218] - 2026-09-17
 
 ### Changed

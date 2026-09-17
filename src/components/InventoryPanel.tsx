@@ -82,6 +82,7 @@ import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
 } from '../wallet/collectableSendReady'
+import { MAX_ITEMS_PER_ONE_SAT_TX } from '../wallet/collectableBatch'
 import {
   reconcileCollectableSelection,
   selectableCollectables,
@@ -860,8 +861,11 @@ export function InventoryPanel() {
     setSelected((current) => reconcileCollectableSelection(current, availableItems))
   }, [availableItems])
 
+  /** One transaction cannot carry an unbounded selection — say so on the dock. */
+  const overOneSatCeiling = selectedCount > MAX_ITEMS_PER_ONE_SAT_TX
   const selectedCanSend =
     selectedCount > 0 &&
+    !overOneSatCeiling &&
     selectedItems.every((item) =>
       inspectCollectableSendReady({
         outpoint: item.outpoint,
@@ -870,7 +874,12 @@ export function InventoryPanel() {
       }).ready,
     )
   const selectedCanBurn =
-    selectedCount > 0 && selectedItems.every((item) => !item.covenantLocked)
+    selectedCount > 0 &&
+    !overOneSatCeiling &&
+    selectedItems.every((item) => !item.covenantLocked)
+  const ceilingTitle = `One transaction carries up to ${MAX_ITEMS_PER_ONE_SAT_TX} collectables — deselect ${
+    selectedCount - MAX_ITEMS_PER_ONE_SAT_TX
+  }`
 
   useWalletActionDock(
     selectedCount > 0
@@ -892,7 +901,9 @@ export function InventoryPanel() {
             icon: <FireIcon size={18} />,
             title: selectedCanBurn
               ? `Burn ${selectedCount} collectables`
-              : 'A selected item cannot be burned',
+              : overOneSatCeiling
+                ? ceilingTitle
+                : 'A selected item cannot be burned',
           },
           primary: {
             label: `Send (${selectedCount})`,
@@ -904,7 +915,9 @@ export function InventoryPanel() {
             icon: <SendIcon size={18} />,
             title: selectedCanSend
               ? `Send ${selectedCount} collectables`
-              : 'Wait for selected items to finish verification',
+              : overOneSatCeiling
+                ? ceilingTitle
+                : 'Wait for selected items to finish verification',
           },
         }
       : null,

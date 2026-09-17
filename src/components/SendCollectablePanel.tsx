@@ -34,6 +34,10 @@ import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
 } from '../wallet/collectableSendReady'
+import {
+  chooseCollectableSendBatch,
+  collectableSendBatchRefusal,
+} from '../wallet/collectableBatch'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
@@ -93,6 +97,13 @@ export function SendCollectablePanel({
     [outpoint, outpoints],
   )
   const outpointKey = requestedOutpoints.join('|')
+  /** One atomic transaction has a tip ceiling — refuse here, not mid-signing. */
+  const sendBatch = useMemo(
+    () => chooseCollectableSendBatch(requestedOutpoints),
+    [outpointKey],
+  )
+  const batchRefusal =
+    sendBatch.kind === 'refuse' ? collectableSendBatchRefusal(sendBatch) : null
   const [items, setItems] = useState<Collectable[]>(() =>
     requestedOutpoints
       .map((value) => getCachedCollectable(value))
@@ -124,22 +135,27 @@ export function SendCollectablePanel({
       .map((value) => getCachedCollectable(value))
       .filter((value): value is Collectable => value != null)
     setItems(cached)
-    setLoading(cached.length !== requestedOutpoints.length)
     setStage('edit')
     setError(null)
-    void Promise.all(
-      requestedOutpoints.map((value) => getCollectable(value)),
-    ).then((loaded) => {
-      if (!cancelled) {
-        setItems(loaded.filter((value): value is Collectable => value != null))
-      }
-    }).finally(() => {
-      if (!cancelled) setLoading(false)
-    })
+    // A refused selection never becomes a transaction, so do not resolve
+    // metadata for every tip — that walk is what stalls an oversized batch.
+    if (batchRefusal) {
+      setLoading(false)
+    } else {
+      setLoading(cached.length !== requestedOutpoints.length)
+      void Promise.all(
+        requestedOutpoints.map((value) => getCollectable(value)),
+      ).then((loaded) => {
+        if (!cancelled) {
+          setItems(loaded.filter((value): value is Collectable => value != null))
+        }
+      }).finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    }
+    const wanted = new Set(requestedOutpoints)
     const unsubscribe = subscribeCollectables((list) => {
-      const selected = list.filter((item) =>
-        requestedOutpoints.includes(item.outpoint),
-      )
+      const selected = list.filter((item) => wanted.has(item.outpoint))
       if (selected.length > 0) setItems(selected)
     })
     return () => {
@@ -158,7 +174,8 @@ export function SendCollectablePanel({
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
-  const sendReady = items.length === requestedOutpoints.length && items.length > 0
+  const sendReady = batchRefusal == null
+    && items.length === requestedOutpoints.length && items.length > 0
     ? items
         .map((selected) =>
           inspectCollectableSendReady({
@@ -169,10 +186,10 @@ export function SendCollectablePanel({
         )
         .find((ready) => !ready.ready) ?? { ready: true as const }
     : { ready: false as const, reason: 'unproven' as const }
-  const sendBlocked = !sendReady.ready
-  const sendBlockMessage = sendBlocked
-    ? collectableSendReadyMessage(sendReady.reason)
-    : null
+  const sendBlocked = batchRefusal != null || !sendReady.ready
+  const sendBlockMessage =
+    batchRefusal ??
+    (sendReady.ready ? null : collectableSendReadyMessage(sendReady.reason))
   const canReview = to.trim().length > 0 && !sendBlocked
 
   /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, $handle. */

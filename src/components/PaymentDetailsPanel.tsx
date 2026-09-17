@@ -97,10 +97,7 @@ function openExplorer(url: string) {
 }
 
 /** Open the collectable only when this wallet still holds that origin. */
-function itemLinkOutpoint(
-  entry: ActivityEntry,
-  item: ActivityItem | undefined,
-): string | null {
+function itemLinkOutpoint(item: ActivityItem | undefined): string | null {
   if (!item) return null
   if (item.tokenId?.trim()) return null
   const originKey = item.origin
@@ -222,7 +219,7 @@ function PaymentBreakdownRow({
         ? activityTokenAmountDisplay(named)
         : `${entry.kind === 'spent' ? '−' : '+'}${formatPrimaryFromSats(entry.sats, currency, usdPerBsv)}`
       : null
-  const itemOutpoint = itemLinkOutpoint(entry, shown)
+  const itemOutpoint = itemLinkOutpoint(shown)
   const tokenId = tokenLinkId(shown ?? entry.item)
   const openItem = tokenId
     ? () => {
@@ -431,7 +428,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
   const recipientLabel =
     isWallet && !item && !token ? activityRecipientLabel(entry) : null
-  const itemOutpoint = itemLinkOutpoint(entry, shownItem)
+  const itemOutpoint = itemLinkOutpoint(shownItem)
   const tokenId = tokenLinkId(shownItem ?? entry.item)
   const openItem = tokenId
     ? () => {

@@ -18,6 +18,7 @@ import {
   planOneSatBurn,
 } from './burnPlan'
 import { burnMachine } from './burnMachine'
+import { collectableBurnBatchRefusal } from './collectableBatch'
 import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
 import {
   BSV21_BASKET,
@@ -850,6 +851,8 @@ export async function burnOneSat(
 ): Promise<{ txid: string; recoveredSatoshis: number; feeSatoshis?: number }> {
   const wanted = [...new Set(outpoints.map(wireOutpoint).filter(Boolean))]
   if (wanted.length === 0) throw new Error('No collectables selected to burn')
+  const overCeiling = collectableBurnBatchRefusal(wanted.length)
+  if (overCeiling) throw new Error(overCeiling)
   const pendingId = `burn-${Date.now()}-${Math.random()
     .toString(16)
     .slice(2, 8)}`

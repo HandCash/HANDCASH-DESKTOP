@@ -1,6 +1,6 @@
-import { P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ActivityEntry } from './appActivity'
+import { P2PKH, PrivateKey, Transaction, UnlockingScript } from "@bsv/sdk";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActivityEntry } from "./appActivity";
 
 const mocks = vi.hoisted(() => ({
   txExistsOnChain: vi.fn(),
@@ -24,793 +24,853 @@ const mocks = vi.hoisted(() => ({
   releaseSealedInputsOfUnsentTx: vi.fn(),
   forgetItemsSent: vi.fn(),
   txHadArcadeSubmitContact: vi.fn(),
-}))
+}));
 
-vi.mock('./sentItemGuard', () => ({
+vi.mock("./sentItemGuard", () => ({
   counterpartyMaySettle: mocks.counterpartyMaySettle,
   forgetItemsSent: mocks.forgetItemsSent,
-}))
+}));
 
-vi.mock('./arcadeSubmitGuard', () => ({
+vi.mock("./arcadeSubmitGuard", () => ({
   txHadArcadeSubmitContact: mocks.txHadArcadeSubmitContact,
-}))
+}));
 
-vi.mock('./legacyScan', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./legacyScan')>()),
+vi.mock("./legacyScan", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./legacyScan")>()),
   txExistsOnChain: mocks.txExistsOnChain,
   spentStatusOfOutpoint: mocks.spentStatusOfOutpoint,
-}))
+}));
 
-vi.mock('./collectables', () => ({
+vi.mock("./collectables", () => ({
   isCollectableOutpointSpendable: mocks.isCollectableOutpointSpendable,
   sendCollectable: mocks.sendCollectable,
-}))
+}));
 
-vi.mock('./token', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./token')>()
+vi.mock("./token", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./token")>();
   return {
     ...actual,
     getFungible: mocks.getFungible,
     getCachedFungibles: () => [],
     sendFungible: mocks.sendFungible,
-  }
-})
+  };
+});
 
-vi.mock('./beefCache', () => ({
+vi.mock("./beefCache", () => ({
   getBeefForTxidCached: mocks.getBeefForTxidCached,
-}))
+}));
 
-vi.mock('./sendBrc29Payment', () => ({
+vi.mock("./sendBrc29Payment", () => ({
   broadcastAtomicBeef: mocks.broadcastAtomicBeef,
-}))
+}));
 
-vi.mock('./txStore', () => ({
+vi.mock("./txStore", () => ({
   getTxByTxid: mocks.getTxByTxid,
-}))
+}));
 
-vi.mock('./staleOutputRelease', () => ({
+vi.mock("./staleOutputRelease", () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
   hideSpentOutpoints: mocks.hideSpentOutpoints,
   releaseSealedInputsOfUnsentTx: mocks.releaseSealedInputsOfUnsentTx,
-}))
+}));
 
-vi.mock('./session', () => ({
+vi.mock("./session", () => ({
   getActiveWallet: () => ({
-    chain: 'main',
+    chain: "main",
     wallet: {
       storage: {
         runAsStorageProvider: async <T>(
-          fn: (sp: { getProvenOrRawTx: typeof mocks.getProvenOrRawTx }) => Promise<T>,
+          fn: (sp: {
+            getProvenOrRawTx: typeof mocks.getProvenOrRawTx;
+          }) => Promise<T>
         ) => fn({ getProvenOrRawTx: mocks.getProvenOrRawTx }),
       },
     },
   }),
-}))
+}));
 
-vi.mock('./actionReview', () => ({
+vi.mock("./actionReview", () => ({
   releaseUnsignedSpendReservations: mocks.releaseUnsignedSpendReservations,
-}))
+}));
 
-vi.mock('./appActivity', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./appActivity')>()),
+vi.mock("./appActivity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./appActivity")>()),
   removeActivityById: mocks.removeActivityById,
   removeFailedActivity: mocks.removeFailedActivity,
   countFailedActivity: mocks.countFailedActivity,
   listFailedActivity: mocks.listFailedActivity,
-}))
+}));
 
 import {
   clearAllFailedSpends,
   clearSpendAttempt,
+  countClearableFailedSpends,
   countRebroadcastableFailedSpends,
   rebroadcastAllFailedSpends,
   reclaimSpendAttempt,
   resolveSpendAttemptFate,
   retrySpendAttempt,
-} from './spendAttempt'
+} from "./spendAttempt";
 
-const TX = 'a'.repeat(64)
-const PREV = 'b'.repeat(64)
-const OUTPOINT = `${PREV}.0`
+const TX = "a".repeat(64);
+const PREV = "b".repeat(64);
+const OUTPOINT = `${PREV}.0`;
 
 function spendTxRaw(prevTxid = PREV, prevVout = 0): number[] {
-  const tx = new Transaction()
+  const tx = new Transaction();
   tx.addInput({
     sourceTXID: prevTxid,
     sourceOutputIndex: prevVout,
     unlockingScript: new UnlockingScript([]),
     sequence: 0xffffffff,
-  })
+  });
   tx.addOutput({
     satoshis: 1000,
     lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()),
-  })
-  return tx.toBinary()
+  });
+  return tx.toBinary();
 }
 
 function itemAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
   return {
-    id: 'attempt',
-    origin: 'handcash',
-    kind: 'spent',
+    id: "attempt",
+    origin: "handcash",
+    kind: "spent",
     sats: 1,
     at: Date.now() - 60 * 60_000,
-    method: 'send-collectable',
+    method: "send-collectable",
     txid: TX,
-    item: { name: 'Fox', origin: OUTPOINT.replace('.', '_'), outpoint: OUTPOINT },
-    retry: { kind: 'send-collectable', outpoint: OUTPOINT, toAddress: '1recipient' },
+    item: {
+      name: "Fox",
+      origin: OUTPOINT.replace(".", "_"),
+      outpoint: OUTPOINT,
+    },
+    retry: {
+      kind: "send-collectable",
+      outpoint: OUTPOINT,
+      toAddress: "1recipient",
+    },
     ...partial,
-  }
+  };
 }
 
 function paymentAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
   return {
-    id: 'payment',
-    origin: 'handcash',
-    kind: 'spent',
+    id: "payment",
+    origin: "handcash",
+    kind: "spent",
     sats: 1200,
     at: Date.now(),
-    method: 'send',
-    status: 'failed',
-    failureReason: 'Broadcast refused',
-    retry: { kind: 'send-bsv', toAddress: '1payee', satoshis: 1200 },
+    method: "send",
+    status: "failed",
+    failureReason: "Broadcast refused",
+    retry: { kind: "send-bsv", toAddress: "1payee", satoshis: 1200 },
     ...partial,
-  }
+  };
 }
 
 function tokenAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
-  const tokenId = `${'c'.repeat(64)}_0`
+  const tokenId = `${"c".repeat(64)}_0`;
   return {
-    id: 'token-attempt',
-    origin: 'handcash',
-    kind: 'spent',
+    id: "token-attempt",
+    origin: "handcash",
+    kind: "spent",
     sats: 1,
     at: Date.now() - 60 * 60_000,
-    method: 'send-token',
-    status: 'failed',
-    failureReason: 'Delivery failed',
+    method: "send-token",
+    status: "failed",
+    failureReason: "Delivery failed",
     item: {
-      name: 'TST',
+      name: "TST",
       origin: tokenId,
       tokenId,
-      amt: '25',
+      amt: "25",
       dec: 0,
       outpoint: OUTPOINT,
     },
     retry: {
-      kind: 'send-token',
+      kind: "send-token",
       tokenId,
-      amount: '25',
-      toAddress: '1recipient',
+      amount: "25",
+      toAddress: "1recipient",
     },
     ...partial,
-  }
+  };
 }
 
 beforeEach(() => {
-  for (const mock of Object.values(mocks)) mock.mockReset()
+  for (const mock of Object.values(mocks)) mock.mockReset();
   mocks.releaseUnsignedSpendReservations.mockResolvedValue({
     failedTxs: 0,
-    reviewLog: '',
+    reviewLog: "",
     batchesAborted: 0,
-  })
-  mocks.removeActivityById.mockReturnValue(true)
-  mocks.removeFailedActivity.mockReturnValue(0)
-  mocks.countFailedActivity.mockReturnValue(0)
-  mocks.listFailedActivity.mockReturnValue([])
-  mocks.counterpartyMaySettle.mockReturnValue(false)
-  mocks.getProvenOrRawTx.mockResolvedValue(undefined)
-  mocks.getTxByTxid.mockReturnValue(null)
-  mocks.spentStatusOfOutpoint.mockResolvedValue('unknown')
-  mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
-  mocks.keepChangeOfSignedTx.mockResolvedValue(0)
-  mocks.hideSpentOutpoints.mockResolvedValue(0)
+  });
+  mocks.removeActivityById.mockReturnValue(true);
+  mocks.removeFailedActivity.mockReturnValue(0);
+  mocks.countFailedActivity.mockReturnValue(0);
+  mocks.listFailedActivity.mockReturnValue([]);
+  mocks.counterpartyMaySettle.mockReturnValue(false);
+  mocks.getProvenOrRawTx.mockResolvedValue(undefined);
+  mocks.getTxByTxid.mockReturnValue(null);
+  mocks.spentStatusOfOutpoint.mockResolvedValue("unknown");
+  mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
+  mocks.keepChangeOfSignedTx.mockResolvedValue(0);
+  mocks.hideSpentOutpoints.mockResolvedValue(0);
   mocks.getFungible.mockReturnValue({
-    tokenId: `${'c'.repeat(64)}_0`,
-    sym: 'TST',
-    amt: '100',
+    tokenId: `${"c".repeat(64)}_0`,
+    sym: "TST",
+    amt: "100",
     dec: 0,
     utxoCount: 1,
     outpoint: OUTPOINT,
-    spendKind: 'plain',
-  })
-  mocks.sendFungible.mockResolvedValue({ txid: TX })
-  mocks.releaseSealedInputsOfUnsentTx.mockResolvedValue(2)
-  mocks.txHadArcadeSubmitContact.mockReturnValue(false)
-})
+    spendKind: "plain",
+  });
+  mocks.sendFungible.mockResolvedValue({ txid: TX });
+  mocks.releaseSealedInputsOfUnsentTx.mockResolvedValue(2);
+  mocks.txHadArcadeSubmitContact.mockReturnValue(false);
+});
 
-describe('reclaimSpendAttempt', () => {
-  it('takes back the coins of a transfer nobody published', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+describe("reclaimSpendAttempt", () => {
+  it("takes back the coins of a transfer nobody published", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
 
-    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).resolves.toEqual({
+    await expect(reclaimSpendAttempt(itemAttempt(), "main")).resolves.toEqual({
       inputs: 2,
       outpoint: OUTPOINT,
-    })
-    expect(mocks.releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TX, undefined)
+    });
+    expect(mocks.releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(
+      TX,
+      undefined
+    );
     // The tip is ours again, so it must not stay hidden as sent.
-    expect(mocks.forgetItemsSent).toHaveBeenCalledWith([OUTPOINT])
-  })
+    expect(mocks.forgetItemsSent).toHaveBeenCalledWith([OUTPOINT]);
+  });
 
-  it('refuses once the transaction is on chain', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(true)
+  it("refuses once the transaction is on chain", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(true);
 
-    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).rejects.toThrow(
-      /already spent/i,
-    )
-    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
-  })
+    await expect(reclaimSpendAttempt(itemAttempt(), "main")).rejects.toThrow(
+      /already spent/i
+    );
+    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled();
+  });
 
-  it('refuses when no explorer can speak for the transaction', async () => {
-    mocks.txExistsOnChain.mockRejectedValue(new Error('offline'))
+  it("refuses when no explorer can speak for the transaction", async () => {
+    mocks.txExistsOnChain.mockRejectedValue(new Error("offline"));
 
-    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).rejects.toThrow(
-      /could not be checked/i,
-    )
-    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
-  })
+    await expect(reclaimSpendAttempt(itemAttempt(), "main")).rejects.toThrow(
+      /could not be checked/i
+    );
+    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled();
+  });
 
-  it('refuses while Arcade may still be submitting it', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
-    mocks.txHadArcadeSubmitContact.mockReturnValue(true)
+  it("refuses while Arcade may still be submitting it", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
+    mocks.txHadArcadeSubmitContact.mockReturnValue(true);
 
-    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).rejects.toThrow(
-      /Arcade/,
-    )
-    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
-  })
+    await expect(reclaimSpendAttempt(itemAttempt(), "main")).rejects.toThrow(
+      /Arcade/
+    );
+    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled();
+  });
 
-  it('has nothing to reclaim for an attempt that never signed', async () => {
+  it("has nothing to reclaim for an attempt that never signed", async () => {
     await expect(
-      reclaimSpendAttempt(itemAttempt({ txid: undefined }), 'main'),
-    ).rejects.toThrow(/never signed/i)
-    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
-  })
-})
+      reclaimSpendAttempt(itemAttempt({ txid: undefined }), "main")
+    ).rejects.toThrow(/never signed/i);
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled();
+  });
+});
 
-describe('resolveSpendAttemptFate — tokens', () => {
-  it('keeps clear closed while the peer can still settle', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-    mocks.txExistsOnChain.mockResolvedValue(false)
+describe("resolveSpendAttemptFate — tokens", () => {
+  it("keeps clear closed while the peer can still settle", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
+    mocks.txExistsOnChain.mockResolvedValue(false);
     await expect(
-      resolveSpendAttemptFate(tokenAttempt(), 'main'),
+      resolveSpendAttemptFate(tokenAttempt(), "main")
     ).resolves.toMatchObject({
       peerPublishes: true,
       mayClear: false,
-    })
+    });
     expect(mocks.counterpartyMaySettle).toHaveBeenCalledWith(
       OUTPOINT,
-      expect.any(Number),
-    )
-  })
+      expect.any(Number)
+    );
+  });
 
-  it('recreates only an unsigned token attempt with enough live balance', async () => {
-    const entry = tokenAttempt({ txid: undefined })
-    await expect(resolveSpendAttemptFate(entry, 'main')).resolves.toMatchObject({
-      kind: 'retry',
-      action: 'recreateItem',
-      retry: { kind: 'send-token' },
-    })
-    await expect(retrySpendAttempt(entry, 'main')).resolves.toEqual({
-      kind: 'recreated',
+  it("recreates only an unsigned token attempt with enough live balance", async () => {
+    const entry = tokenAttempt({ txid: undefined });
+    await expect(resolveSpendAttemptFate(entry, "main")).resolves.toMatchObject(
+      {
+        kind: "retry",
+        action: "recreateItem",
+        retry: { kind: "send-token" },
+      }
+    );
+    await expect(retrySpendAttempt(entry, "main")).resolves.toEqual({
+      kind: "recreated",
       txid: TX,
-    })
+    });
     expect(mocks.sendFungible).toHaveBeenCalledWith({
-      tokenId: `${'c'.repeat(64)}_0`,
-      amount: '25',
-      toAddress: '1recipient',
+      tokenId: `${"c".repeat(64)}_0`,
+      amount: "25",
+      toAddress: "1recipient",
       recipientIdentityKey: undefined,
       friendLabel: undefined,
-    })
-  })
-})
+    });
+  });
+});
 
-describe('resolveSpendAttemptFate — items', () => {
-  it('refuses retry once the attempted transaction is on-chain', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(true)
+describe("resolveSpendAttemptFate — items", () => {
+  it("refuses retry once the attempted transaction is on-chain", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(true);
 
-    await expect(resolveSpendAttemptFate(itemAttempt(), 'main')).resolves.toEqual({
-      kind: 'confirmed',
-    })
-    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
-  })
+    await expect(
+      resolveSpendAttemptFate(itemAttempt(), "main")
+    ).resolves.toEqual({
+      kind: "confirmed",
+    });
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled();
+  });
 
-  it('blocks clearing when confirmation cannot be checked, but still publishes', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(null)
+  it("blocks clearing when confirmation cannot be checked, but still publishes", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(null);
 
-    const fate = await resolveSpendAttemptFate(itemAttempt(), 'main')
+    const fate = await resolveSpendAttemptFate(itemAttempt(), "main");
     expect(fate).toMatchObject({
-      kind: 'retry',
-      action: 'rebroadcast',
+      kind: "retry",
+      action: "rebroadcast",
       mayClear: false,
-    })
-    expect(fate).not.toHaveProperty('mayReclaimInputs', true)
+    });
+    expect(fate).not.toHaveProperty("mayReclaimInputs", true);
     // Publishing the signed transfer needs no spendability check — the coins
     // were sealed for it when it was built.
-    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
-  })
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled();
+  });
 
-  it('strands nothing but a row with no signed transaction', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(null)
+  it("strands nothing but a row with no signed transaction", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(null);
 
     expect(
       await resolveSpendAttemptFate(
         itemAttempt({ txid: undefined, retry: undefined }),
-        'main',
-      ),
+        "main"
+      )
     ).toMatchObject({
-      kind: 'refuse',
-      reason: 'missingRetryDetails',
-    })
-  })
+      kind: "refuse",
+      reason: "missingRetryDetails",
+    });
+  });
 
-  it('allows retry only when the original item output is spendable, and never clear while inputs live', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+  it("allows retry only when the original item output is spendable, and never clear while inputs live", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
 
     await expect(
-      resolveSpendAttemptFate(itemAttempt(), 'main'),
+      resolveSpendAttemptFate(itemAttempt(), "main")
     ).resolves.toMatchObject({
-      kind: 'retry',
-      action: 'rebroadcast',
-      retry: { outpoint: OUTPOINT, toAddress: '1recipient' },
+      kind: "retry",
+      action: "rebroadcast",
+      retry: { outpoint: OUTPOINT, toAddress: "1recipient" },
       mayClear: false,
-    })
-  })
+    });
+  });
 
-  it('lets an unsigned item attempt be cleared when the source is gone', async () => {
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(false)
+  it("lets an unsigned item attempt be cleared when the source is gone", async () => {
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(false);
 
     const fate = await resolveSpendAttemptFate(
-      itemAttempt({ txid: undefined, status: 'failed' }),
-      'main',
-    )
+      itemAttempt({ txid: undefined, status: "failed" }),
+      "main"
+    );
     expect(fate).toMatchObject({
-      kind: 'refuse',
-      reason: 'sourceNotSpendable',
+      kind: "refuse",
+      reason: "sourceNotSpendable",
       mayClear: true,
-    })
-  })
+    });
+  });
 
-  it('refuses clear of a signed 404 while inputs cannot be proven spent', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(false)
+  it("refuses clear of a signed 404 while inputs cannot be proven spent", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(false);
 
-    const fate = await resolveSpendAttemptFate(itemAttempt(), 'main')
+    const fate = await resolveSpendAttemptFate(itemAttempt(), "main");
     expect(fate).toMatchObject({
-      kind: 'refuse',
-      reason: 'sourceNotSpendable',
+      kind: "refuse",
+      reason: "sourceNotSpendable",
       mayClear: false,
-    })
-  })
+    });
+  });
 
-  it('clears a signed send once every input is spent on chain', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('spent')
+  it("clears a signed send once every input is spent on chain", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("spent");
 
-    await expect(resolveSpendAttemptFate(itemAttempt(), 'main')).resolves.toMatchObject({
-      kind: 'refuse',
-      reason: 'inputsSpent',
+    await expect(
+      resolveSpendAttemptFate(itemAttempt(), "main")
+    ).resolves.toMatchObject({
+      kind: "refuse",
+      reason: "inputsSpent",
       mayClear: true,
-    })
-    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled();
+  });
 
-  it('rebroadcasts the original signed BEEF instead of creating a double spend', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+  it("rebroadcasts the original signed BEEF instead of creating a double spend", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
     mocks.getBeefForTxidCached.mockResolvedValue({
       toBinaryAtomic: () => [1, 2, 3],
-    })
-    mocks.broadcastAtomicBeef.mockResolvedValue(true)
+    });
+    mocks.broadcastAtomicBeef.mockResolvedValue(true);
 
-    await expect(retrySpendAttempt(itemAttempt(), 'main')).resolves.toEqual({
-      kind: 'rebroadcasted',
+    await expect(retrySpendAttempt(itemAttempt(), "main")).resolves.toEqual({
+      kind: "rebroadcasted",
       txid: TX,
-    })
-    expect(mocks.sendCollectable).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.sendCollectable).not.toHaveBeenCalled();
+  });
 
-  it('recreates only an attempt that failed before producing a txid', async () => {
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
-    mocks.sendCollectable.mockResolvedValue({ txid: 'c'.repeat(64) })
+  it("recreates only an attempt that failed before producing a txid", async () => {
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
+    mocks.sendCollectable.mockResolvedValue({ txid: "c".repeat(64) });
 
     await expect(
-      retrySpendAttempt(itemAttempt({ txid: undefined, status: 'failed' }), 'main'),
-    ).resolves.toEqual({ kind: 'recreated', txid: 'c'.repeat(64) })
-    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled()
-  })
-})
+      retrySpendAttempt(
+        itemAttempt({ txid: undefined, status: "failed" }),
+        "main"
+      )
+    ).resolves.toEqual({ kind: "recreated", txid: "c".repeat(64) });
+    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled();
+  });
+});
 
-describe('isSpendAttempt', () => {
-  it('leaves a freshly broadcast payment alone until its grace window passes', async () => {
-    const fresh = paymentAttempt({ status: 'complete', txid: TX, at: Date.now() })
+describe("isSpendAttempt", () => {
+  it("leaves a freshly broadcast payment alone until its grace window passes", async () => {
+    const fresh = paymentAttempt({
+      status: "complete",
+      txid: TX,
+      at: Date.now(),
+    });
 
-    await expect(resolveSpendAttemptFate(fresh, 'main')).resolves.toEqual({
-      kind: 'notAttempt',
-    })
-    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
-  })
-})
+    await expect(resolveSpendAttemptFate(fresh, "main")).resolves.toEqual({
+      kind: "notAttempt",
+    });
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled();
+  });
+});
 
-describe('resolveSpendAttemptFate — payments', () => {
-  it('offers a failed coin payment back to the Send screen rather than re-spending', async () => {
-    const fate = await resolveSpendAttemptFate(paymentAttempt(), 'main')
+describe("resolveSpendAttemptFate — payments", () => {
+  it("offers a failed coin payment back to the Send screen rather than re-spending", async () => {
+    const fate = await resolveSpendAttemptFate(paymentAttempt(), "main");
 
     expect(fate).toMatchObject({
-      kind: 'retry',
-      action: 'reopenPayment',
+      kind: "retry",
+      action: "reopenPayment",
       mayClear: true,
-    })
-    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
-    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled();
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled();
+  });
 
-  it('never silently re-spends coins on retry', async () => {
-    await expect(retrySpendAttempt(paymentAttempt(), 'main')).resolves.toEqual({
-      kind: 'reopenPayment',
-      toAddress: '1payee',
+  it("never silently re-spends coins on retry", async () => {
+    await expect(retrySpendAttempt(paymentAttempt(), "main")).resolves.toEqual({
+      kind: "reopenPayment",
+      toAddress: "1payee",
       satoshis: 1200,
-    })
-    expect(mocks.sendCollectable).not.toHaveBeenCalled()
-    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.sendCollectable).not.toHaveBeenCalled();
+    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled();
+  });
 
-  it('still allows clearing a legacy unsigned payment row with no saved recipient', async () => {
+  it("still allows clearing a legacy unsigned payment row with no saved recipient", async () => {
     const fate = await resolveSpendAttemptFate(
       paymentAttempt({ retry: undefined }),
-      'main',
-    )
+      "main"
+    );
 
     expect(fate).toMatchObject({
-      kind: 'refuse',
-      reason: 'missingRetryDetails',
+      kind: "refuse",
+      reason: "missingRetryDetails",
       mayClear: true,
-    })
-  })
+    });
+  });
 
-  it('lets a signed 404 payment be cleared when its inputs never left the wallet', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+  it("lets a signed 404 payment be cleared when its inputs never left the wallet", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
 
     const fate = await resolveSpendAttemptFate(
       paymentAttempt({ txid: TX, at: Date.now() - 3 * 60_000 }),
-      'main',
-    )
+      "main"
+    );
     expect(fate).toMatchObject({
-      kind: 'retry',
-      action: 'reopenPayment',
+      kind: "retry",
+      action: "reopenPayment",
       mayClear: true,
-    })
-  })
+    });
+  });
 
-  it('history-only clears a signed payment once its inputs are spent', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('spent')
+  it("history-only clears a signed payment once its inputs are spent", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("spent");
 
     await expect(
-      resolveSpendAttemptFate(paymentAttempt({ txid: TX, at: Date.now() - 3 * 60_000 }), 'main'),
+      resolveSpendAttemptFate(
+        paymentAttempt({ txid: TX, at: Date.now() - 3 * 60_000 }),
+        "main"
+      )
     ).resolves.toMatchObject({
-      kind: 'refuse',
-      reason: 'inputsSpent',
+      kind: "refuse",
+      reason: "inputsSpent",
       mayClear: true,
-    })
-  })
-})
+    });
+  });
+});
 
-describe('a transfer the recipient can still settle', () => {
-  it('lets the sender publish the transfer it already signed', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+describe("a transfer the recipient can still settle", () => {
+  it("lets the sender publish the transfer it already signed", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
 
     // Publishing it is the same txid the recipient holds, so it settles the
     // transfer instead of racing it — the item chart's confirmBroadcast state.
     expect(
-      await resolveSpendAttemptFate(itemAttempt({ status: 'failed' }), 'main'),
+      await resolveSpendAttemptFate(itemAttempt({ status: "failed" }), "main")
     ).toMatchObject({
-      kind: 'retry',
-      action: 'rebroadcast',
+      kind: "retry",
+      action: "rebroadcast",
       mayClear: false,
       mayReclaimInputs: true,
       peerPublishes: true,
-    })
-  })
+    });
+  });
 
-  it('still offers the publish when no explorer can answer', async () => {
+  it("still offers the publish when no explorer can answer", async () => {
     // Not knowing is not a reason to strand the row: republishing the same
     // signed transaction cannot double-spend, whatever the chain turns out to say.
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-    mocks.txExistsOnChain.mockResolvedValue(null)
+    mocks.counterpartyMaySettle.mockReturnValue(true);
+    mocks.txExistsOnChain.mockResolvedValue(null);
 
     expect(
-      await resolveSpendAttemptFate(itemAttempt({ status: 'failed' }), 'main'),
+      await resolveSpendAttemptFate(itemAttempt({ status: "failed" }), "main")
     ).toMatchObject({
-      kind: 'retry',
-      action: 'rebroadcast',
+      kind: "retry",
+      action: "rebroadcast",
       mayClear: false,
-    })
-  })
+    });
+  });
 
-  it('reads as confirmed once the recipient published it', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-    mocks.txExistsOnChain.mockResolvedValue(true)
+  it("reads as confirmed once the recipient published it", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
+    mocks.txExistsOnChain.mockResolvedValue(true);
 
     expect(
-      await resolveSpendAttemptFate(itemAttempt({ status: 'failed' }), 'main'),
-    ).toEqual({ kind: 'confirmed' })
-  })
+      await resolveSpendAttemptFate(itemAttempt({ status: "failed" }), "main")
+    ).toEqual({ kind: "confirmed" });
+  });
 
-  it('offers no clear on a row with nothing signed to publish', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
+  it("offers no clear on a row with nothing signed to publish", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
 
     const fate = await resolveSpendAttemptFate(
-      itemAttempt({ txid: undefined, status: 'failed' }),
-      'main',
-    )
+      itemAttempt({ txid: undefined, status: "failed" }),
+      "main"
+    );
     expect(fate).toMatchObject({
-      kind: 'refuse',
-      reason: 'counterpartyMaySettle',
+      kind: "refuse",
+      reason: "counterpartyMaySettle",
       mayClear: false,
       mayReleaseFunds: true,
       peerPublishes: true,
-    })
-    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled();
+  });
 
-  it('refuses to delete the sender’s only record of it', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-
-    await expect(clearSpendAttempt(itemAttempt({ status: 'failed' }))).rejects.toThrow(
-      /can still broadcast/i,
-    )
-    expect(mocks.removeActivityById).not.toHaveBeenCalled()
-  })
-
-  it('refuses to build a replacement transfer, which would race a live one', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+  it("refuses to delete the sender’s only record of it", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
 
     await expect(
-      retrySpendAttempt(itemAttempt({ txid: undefined, status: 'failed' }), 'main'),
-    ).rejects.toThrow(/no signed transaction/i)
-    expect(mocks.sendCollectable).not.toHaveBeenCalled()
-    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled()
-  })
+      clearSpendAttempt(itemAttempt({ status: "failed" }))
+    ).rejects.toThrow(/can still broadcast/i);
+    expect(mocks.removeActivityById).not.toHaveBeenCalled();
+  });
 
-  it('does not gate a coin payment, which has no payee-broadcast path', async () => {
-    mocks.counterpartyMaySettle.mockReturnValue(true)
-    mocks.txExistsOnChain.mockResolvedValue(false)
+  it("refuses to build a replacement transfer, which would race a live one", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
 
     await expect(
-      resolveSpendAttemptFate(paymentAttempt(), 'main'),
-    ).resolves.toMatchObject({ kind: 'retry', action: 'reopenPayment' })
-  })
-})
+      retrySpendAttempt(
+        itemAttempt({ txid: undefined, status: "failed" }),
+        "main"
+      )
+    ).rejects.toThrow(/no signed transaction/i);
+    expect(mocks.sendCollectable).not.toHaveBeenCalled();
+    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled();
+  });
 
-describe('clearSpendAttempt', () => {
-  it('releases local spend reservations before removing an unsigned row', async () => {
-    const order: string[] = []
+  it("does not gate a coin payment, which has no payee-broadcast path", async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true);
+    mocks.txExistsOnChain.mockResolvedValue(false);
+
+    await expect(
+      resolveSpendAttemptFate(paymentAttempt(), "main")
+    ).resolves.toMatchObject({ kind: "retry", action: "reopenPayment" });
+  });
+});
+
+describe("clearSpendAttempt", () => {
+  it("releases local spend reservations before removing an unsigned row", async () => {
+    const order: string[] = [];
     mocks.releaseUnsignedSpendReservations.mockImplementation(async () => {
-      order.push('repair')
-      return { failedTxs: 1, reviewLog: '', batchesAborted: 0 }
-    })
+      order.push("repair");
+      return { failedTxs: 1, reviewLog: "", batchesAborted: 0 };
+    });
     mocks.removeActivityById.mockImplementation(() => {
-      order.push('remove')
-      return true
-    })
+      order.push("remove");
+      return true;
+    });
 
     await expect(clearSpendAttempt(paymentAttempt())).resolves.toEqual({
       removed: true,
-    })
-    expect(order).toEqual(['repair', 'remove'])
-  })
+    });
+    expect(order).toEqual(["repair", "remove"]);
+  });
 
-  it('still removes an unsigned row when the local repair throws', async () => {
-    mocks.releaseUnsignedSpendReservations.mockRejectedValue(new Error('storage locked'))
+  it("still removes an unsigned row when the local repair throws", async () => {
+    mocks.releaseUnsignedSpendReservations.mockRejectedValue(
+      new Error("storage locked")
+    );
 
     await expect(
-      clearSpendAttempt(itemAttempt({ txid: undefined, status: 'failed' })),
+      clearSpendAttempt(itemAttempt({ txid: undefined, status: "failed" }))
     ).resolves.toEqual({
       removed: true,
-    })
-    expect(mocks.removeActivityById).toHaveBeenCalledWith('attempt')
-  })
+    });
+    expect(mocks.removeActivityById).toHaveBeenCalledWith("attempt");
+  });
 
-  it('clears a signed failed send whose inputs are still unspent when the tx never landed', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+  it("clears a signed failed send whose inputs are still unspent when the tx never landed", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
 
-    await expect(clearSpendAttempt(itemAttempt({ status: 'failed' }))).resolves.toEqual({
+    await expect(
+      clearSpendAttempt(itemAttempt({ status: "failed" }))
+    ).resolves.toEqual({
       removed: true,
-    })
-    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled()
-    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled()
-    expect(mocks.removeActivityById).toHaveBeenCalledWith('attempt')
-  })
+    });
+    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled();
+    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled();
+    expect(mocks.removeActivityById).toHaveBeenCalledWith("attempt");
+  });
 
-  it('drops the history row of a signed send after its inputs are spent, without repair', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('spent')
+  it("drops the history row of a signed send after its inputs are spent, without repair", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("spent");
 
-    await expect(clearSpendAttempt(itemAttempt({ status: 'failed' }))).resolves.toEqual({
+    await expect(
+      clearSpendAttempt(itemAttempt({ status: "failed" }))
+    ).resolves.toEqual({
       removed: true,
-    })
-    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled()
-    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(itemAttempt().txid)
-    expect(mocks.hideSpentOutpoints).toHaveBeenCalled()
-    expect(mocks.removeActivityById).toHaveBeenCalledWith('attempt')
-  })
-})
+    });
+    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled();
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(itemAttempt().txid);
+    expect(mocks.hideSpentOutpoints).toHaveBeenCalled();
+    expect(mocks.removeActivityById).toHaveBeenCalledWith("attempt");
+  });
+});
 
-describe('clearAllFailedSpends', () => {
-  it('repairs local reservations once, then drops unsigned failed rows', async () => {
-    mocks.countFailedActivity.mockReturnValue(5)
+describe("clearAllFailedSpends", () => {
+  it("repairs local reservations once, then drops unsigned failed rows", async () => {
+    mocks.countFailedActivity.mockReturnValue(5);
     mocks.listFailedActivity.mockReturnValue([
-      paymentAttempt({ id: 'u1' }),
-      paymentAttempt({ id: 'u2' }),
-      paymentAttempt({ id: 'u3' }),
-      paymentAttempt({ id: 'u4' }),
-      paymentAttempt({ id: 'u5' }),
-    ])
-    mocks.removeFailedActivity.mockReturnValue(5)
+      paymentAttempt({ id: "u1" }),
+      paymentAttempt({ id: "u2" }),
+      paymentAttempt({ id: "u3" }),
+      paymentAttempt({ id: "u4" }),
+      paymentAttempt({ id: "u5" }),
+    ]);
+    mocks.removeFailedActivity.mockReturnValue(5);
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 5,
       kept: 0,
-    })
-    expect(mocks.releaseUnsignedSpendReservations).toHaveBeenCalledTimes(1)
-    expect(mocks.removeFailedActivity).toHaveBeenCalledTimes(1)
-    expect(mocks.removeActivityById).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.releaseUnsignedSpendReservations).toHaveBeenCalledTimes(1);
+    expect(mocks.removeFailedActivity).toHaveBeenCalledTimes(1);
+    expect(mocks.removeActivityById).not.toHaveBeenCalled();
+  });
 
-  it('clears the unsigned backlog even when the repair throws', async () => {
-    mocks.releaseUnsignedSpendReservations.mockRejectedValue(new Error('storage locked'))
-    mocks.countFailedActivity.mockReturnValue(3)
+  it("clears the unsigned backlog even when the repair throws", async () => {
+    mocks.releaseUnsignedSpendReservations.mockRejectedValue(
+      new Error("storage locked")
+    );
+    mocks.countFailedActivity.mockReturnValue(3);
     mocks.listFailedActivity.mockReturnValue([
-      paymentAttempt({ id: 'u1' }),
-      paymentAttempt({ id: 'u2' }),
-      paymentAttempt({ id: 'u3' }),
-    ])
-    mocks.removeFailedActivity.mockReturnValue(3)
+      paymentAttempt({ id: "u1" }),
+      paymentAttempt({ id: "u2" }),
+      paymentAttempt({ id: "u3" }),
+    ]);
+    mocks.removeFailedActivity.mockReturnValue(3);
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 3,
       kept: 0,
-    })
-  })
+    });
+  });
 
-  it('keeps back rows the recipient can still broadcast, and reports them', async () => {
-    mocks.countFailedActivity.mockReturnValue(4)
+  it("keeps back rows the recipient can still broadcast, and reports them", async () => {
+    mocks.countFailedActivity.mockReturnValue(4);
     mocks.listFailedActivity.mockReturnValue([
-      paymentAttempt({ id: 'u1' }),
-      paymentAttempt({ id: 'u2' }),
-      paymentAttempt({ id: 'u3' }),
-      itemAttempt({ id: 'item', status: 'failed' }),
-    ])
+      paymentAttempt({ id: "u1" }),
+      paymentAttempt({ id: "u2" }),
+      paymentAttempt({ id: "u3" }),
+      itemAttempt({ id: "item", status: "failed" }),
+    ]);
     mocks.counterpartyMaySettle.mockImplementation(
-      (outpoint: string) => outpoint === OUTPOINT,
-    )
-    mocks.removeFailedActivity.mockReturnValue(3)
+      (outpoint: string) => outpoint === OUTPOINT
+    );
+    mocks.removeFailedActivity.mockReturnValue(3);
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 3,
       kept: 1,
-    })
-    expect(mocks.removeFailedActivity).toHaveBeenCalledWith(expect.any(Function))
-  })
+    });
+    expect(mocks.removeFailedActivity).toHaveBeenCalledWith(
+      expect.any(Function)
+    );
+  });
 
-  it('never reports a negative backlog when repair settles rows mid-clear', async () => {
-    mocks.countFailedActivity.mockReturnValue(0)
-    mocks.listFailedActivity.mockReturnValue([])
-    mocks.removeFailedActivity.mockReturnValue(2)
+  it("never reports a negative backlog when repair settles rows mid-clear", async () => {
+    mocks.countFailedActivity.mockReturnValue(0);
+    mocks.listFailedActivity.mockReturnValue([]);
+    mocks.removeFailedActivity.mockReturnValue(2);
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 2,
       kept: 0,
-    })
-    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled();
+  });
 
-  it('clears failed market listings without chain checks', async () => {
-    mocks.countFailedActivity.mockReturnValue(1)
+  it("clears failed market listings without chain checks", async () => {
+    mocks.countFailedActivity.mockReturnValue(1);
     mocks.listFailedActivity.mockReturnValue([
       {
-        id: 'list-fail',
-        status: 'failed',
-        method: 'market-list',
-        kind: 'event',
+        id: "list-fail",
+        status: "failed",
+        method: "market-list",
+        kind: "event",
         at: Date.now() - 2 * 86400000,
         sats: 0,
-        origin: 'handcash-wallet',
-        note: 'Failed: Listed KING for 5,000 sats',
-        failureReason: 'amt-mismatch',
-        item: { name: 'KING', origin: 'aa'.repeat(32) },
+        origin: "handcash-wallet",
+        note: "Failed: Listed KING for 5,000 sats",
+        failureReason: "amt-mismatch",
+        item: { name: "KING", origin: "aa".repeat(32) },
         txid: TX,
       },
-    ])
-    mocks.removeFailedActivity.mockReturnValue(1)
+    ]);
+    mocks.removeFailedActivity.mockReturnValue(1);
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 1,
       kept: 0,
-    })
-    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
-  })
+    });
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled();
+  });
 
-  it('clears a signed failed send whose inputs are still unspent when the tx never landed', async () => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
-    mocks.countFailedActivity.mockReturnValue(1)
+  it("clears a signed failed send whose inputs are still unspent when the tx never landed", async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
+    mocks.countFailedActivity.mockReturnValue(1);
     mocks.listFailedActivity.mockReturnValue([
-      paymentAttempt({ id: 'signed', txid: TX, at: Date.now() - 3 * 60_000 }),
-    ])
-    mocks.removeFailedActivity.mockReturnValue(1)
+      paymentAttempt({ id: "signed", txid: TX, at: Date.now() - 3 * 60_000 }),
+    ]);
+    mocks.removeFailedActivity.mockReturnValue(1);
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 1,
       kept: 0,
-    })
-    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled()
-  })
-})
+    });
+    expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled();
+  });
+});
 
-describe('rebroadcastAllFailedSpends', () => {
+describe("rebroadcastAllFailedSpends", () => {
   beforeEach(() => {
-    mocks.txExistsOnChain.mockResolvedValue(false)
-    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
-    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
-    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+    mocks.txExistsOnChain.mockResolvedValue(false);
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
+    mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
     mocks.getBeefForTxidCached.mockResolvedValue({
       toBinaryAtomic: () => new Uint8Array([1, 2, 3]),
-    })
-    mocks.broadcastAtomicBeef.mockResolvedValue(true)
-    mocks.counterpartyMaySettle.mockReturnValue(false)
-  })
+    });
+    mocks.broadcastAtomicBeef.mockResolvedValue(true);
+    mocks.counterpartyMaySettle.mockReturnValue(false);
+  });
 
-  it('rebroadcasts every signed item failure and skips unsigned coin sends', async () => {
+  it("rebroadcasts every signed item failure and skips unsigned coin sends", async () => {
     mocks.listFailedActivity.mockReturnValue([
-      itemAttempt({ id: 'item', status: 'failed' }),
-      paymentAttempt({ id: 'coin', status: 'failed' }),
-    ])
+      itemAttempt({ id: "item", status: "failed" }),
+      paymentAttempt({ id: "coin", status: "failed" }),
+    ]);
 
     await expect(rebroadcastAllFailedSpends()).resolves.toEqual({
       rebroadcasted: 1,
       skipped: 1,
       failed: 0,
       errors: [],
-    })
-    expect(mocks.broadcastAtomicBeef).toHaveBeenCalledTimes(1)
-  })
+    });
+    expect(mocks.broadcastAtomicBeef).toHaveBeenCalledTimes(1);
+  });
 
-  it('counts only rebroadcastable signed failures', async () => {
-    const liveOutpoint = `${'d'.repeat(64)}.0`
+  it("counts only rebroadcastable signed failures", async () => {
+    const liveOutpoint = `${"d".repeat(64)}.0`;
     mocks.listFailedActivity.mockReturnValue([
-      itemAttempt({ id: 'item', status: 'failed' }),
-      paymentAttempt({ id: 'coin', status: 'failed' }),
+      itemAttempt({ id: "item", status: "failed" }),
+      paymentAttempt({ id: "coin", status: "failed" }),
       itemAttempt({
-        id: 'live',
-        status: 'failed',
-        item: { name: 'Fox', origin: liveOutpoint.replace('.', '_'), outpoint: liveOutpoint },
-        retry: { kind: 'send-collectable', outpoint: liveOutpoint, toAddress: '1recipient' },
+        id: "live",
+        status: "failed",
+        item: {
+          name: "Fox",
+          origin: liveOutpoint.replace(".", "_"),
+          outpoint: liveOutpoint,
+        },
+        retry: {
+          kind: "send-collectable",
+          outpoint: liveOutpoint,
+          toAddress: "1recipient",
+        },
       }),
-    ])
+    ]);
     mocks.counterpartyMaySettle.mockImplementation(
-      (outpoint: string) => outpoint === liveOutpoint,
-    )
+      (outpoint: string) => outpoint === liveOutpoint
+    );
 
-    await expect(countRebroadcastableFailedSpends('main')).resolves.toBe(1)
-  })
-})
+    await expect(countRebroadcastableFailedSpends("main")).resolves.toBe(1);
+  });
+
+  it("does not count an Arcade-pinned signed failure as clearable", async () => {
+    mocks.txHadArcadeSubmitContact.mockReturnValue(true);
+    mocks.listFailedActivity.mockReturnValue([
+      itemAttempt({ id: "item", status: "failed" }),
+    ]);
+    await expect(countClearableFailedSpends("main")).resolves.toBe(0);
+    await expect(countRebroadcastableFailedSpends("main")).resolves.toBe(1);
+  });
+});
