@@ -10,9 +10,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef } from '@bsv/sdk'
 
-const { peekRawTxLookup, ghosts } = vi.hoisted(() => ({
+const { peekRawTxLookup, ghosts, chatMessages, updateMessage } = vi.hoisted(() => ({
   peekRawTxLookup: vi.fn((): 'hit' | 'miss' | 'unknown' => 'unknown'),
   ghosts: new Set<string>(),
+  chatMessages: [] as Array<Record<string, unknown>>,
+  updateMessage: vi.fn(),
 }))
 const postBeef = vi.fn(async () => [
   { status: 'success', txidResults: [{ status: 'success' }] },
@@ -86,7 +88,8 @@ vi.mock('./appActivity', () => ({
 vi.mock('./messageStore', () => ({
   listThreads: () => [],
   listMessages: () => [],
-  updateMessage: () => null,
+  listAllMessages: () => chatMessages,
+  updateMessage: (id: string, patch: unknown) => updateMessage(id, patch),
 }))
 
 vi.mock('./friends', () => ({
@@ -131,6 +134,8 @@ const SENDER = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709e
 const ATOMIC = [1, 2, 3]
 
 beforeEach(() => {
+  chatMessages.length = 0
+  updateMessage.mockClear()
   ghosts.clear()
   peekRawTxLookup.mockReset()
   peekRawTxLookup.mockReturnValue('unknown')
@@ -435,5 +440,73 @@ describe('ingestPaymentsFromTipHints', () => {
 
     expect(result.ghostTxids).toEqual([])
     expect(ghosts.has(txid)).toBe(false)
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateMessage).not.toHaveBeenCalled()
+  })
+
+  it('retires a hint the sender never broadcast instead of chasing it forever', async () => {
+    const { UNRESOLVABLE_GRACE_MS, UNRESOLVABLE_HINT_STATUS } = await import(
+      './kernel/inboundHintFate'
+    )
+    const txid = '9'.repeat(64)
+    peekRawTxLookup.mockReturnValue('miss')
+    txExistsOnChain.mockResolvedValue(false)
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'Cannot prove the collectable input offline. Try again when connected.',
+    })
+    chatMessages.push({
+      id: 'm1',
+      direction: 'in',
+      kind: 'pay-sent',
+      meta: { txid, status: 'Receiving (SPV)' },
+    })
+
+    const result = await ingestSkippingRetryDelay([
+      { txid, item: true, firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1 },
+    ])
+
+    // Not an Arcade reject, so the inbox card is not ACKed away — but the sweep
+    // is done with it.
+    expect(result.ghostTxids).toEqual([])
+    expect(ghosts.has(txid)).toBe(false)
+    expect(updateMessage).toHaveBeenCalledWith('m1', {
+      meta: { status: UNRESOLVABLE_HINT_STATUS },
+    })
+  })
+
+  it('keeps chasing an old hint while an explorer cannot confirm absence', async () => {
+    const { UNRESOLVABLE_GRACE_MS } = await import('./kernel/inboundHintFate')
+    const txid = '7'.repeat(64)
+    peekRawTxLookup.mockReturnValue('miss')
+    txExistsOnChain.mockResolvedValue(null)
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'Cannot prove the collectable input offline. Try again when connected.',
+    })
+
+    await ingestSkippingRetryDelay([
+      { txid, item: true, firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1 },
+    ])
+
+    expect(updateMessage).not.toHaveBeenCalled()
+  })
+
+  it('revives a retired hint when a new AtomicBEEF arrives', async () => {
+    const txid = '8'.repeat(64)
+    chatMessages.push({
+      id: 'm2',
+      direction: 'in',
+      kind: 'pay-sent',
+      meta: { txid, status: 'Unavailable — sender never broadcast' },
+    })
+
+    await ingestSkippingRetryDelay([{ txid, item: true, tx: ATOMIC }])
+
+    expect(updateMessage).toHaveBeenCalledWith('m2', {
+      meta: { status: 'Receiving (SPV)' },
+    })
   })
 })

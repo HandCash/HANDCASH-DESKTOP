@@ -962,6 +962,8 @@ export type InboundPaymentHint = {
   itemOrigin?: string
   itemCollectionId?: string
   asset?: ItemTransferAsset
+  /** When the card arrived — how long an unbroadcast hint has been chased. */
+  firstSeenAt?: number
 }
 
 const MARKET_RECOVERY_POLL_MS = 60_000
@@ -1115,6 +1117,7 @@ export async function pollInboundTipHints(args: {
         paymentTxids.push(txid)
         paymentHints.push({
           txid,
+          firstSeenAt: m.createdAt || Date.now(),
           messageId: m.messageId ? String(m.messageId) : undefined,
           senderIdentityKey: senderKey,
           satoshis: decoded.meta?.sats,
