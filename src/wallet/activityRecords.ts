@@ -245,6 +245,17 @@ export function batchSiblingsForEntry(
   return siblings
 }
 
+/** Every independent leg of the transaction this row belongs to. */
+export function transactionLegsForEntry(
+  entry: ActivityEntry,
+  entries: readonly ActivityEntry[],
+): ActivityEntry[] {
+  const record = composeActivityRecords(entries).find((row) =>
+    row.entries.some((leg) => activityEntryKey(leg) === activityEntryKey(entry)),
+  )
+  return record?.entries ?? [entry]
+}
+
 export function composeActivityRecords(
   entries: readonly ActivityEntry[],
 ): ActivityRecord[] {

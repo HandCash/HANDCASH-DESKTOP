@@ -1,30 +1,63 @@
 ---
-description: Aeon UI is the single source of truth for Desktop UI — machines first, no parallel stacks
+description: Aeon is the only UI stack — chart first, project state, compose compounds, brand in CSS
 globs: ["**/*.{tsx,ts,css}"]
 alwaysApply: true
 ---
 
-# Aeon UI (Desktop SSoT)
+# Aeon UI (HandCash Desktop)
 
-HandCash Desktop UI is built **only** through **Aeon** (`aeon-ui-engine` / `@aeon-ui/*`). Do not introduce a second UI system.
+HandCash Desktop UI is **only** Aeon (`vendor/aeon-ui-engine` → `@aeon-ui/*` + XState). Complexity is layered; it is still one function: **UI = f(chart snapshot)**. Do not add a second UI system.
 
-## Must
+Canonical consumer notes: `vendor/aeon-ui-engine/CONSUMER.md`, `vendor/aeon-ui-engine/README.md`. Engine source (when present): `~/AeonUI`. Desktop **consumes** Aeon; it does not fork a dialog kit.
 
-1. **Machines first** — define XState charts (states + events) in `src/machines/`, then project UI. **UI = f(state)**.
-2. Project machine/status onto `data-aeon-scope`, `data-aeon-part`, `data-aeon-state` (via `@aeon-ui/core` helpers when available).
-3. Prefer Aeon compounds: `Prompt`, `StatusBanner`, `Accordion`, Field/Button/Dialog patterns from `@aeon-ui/react`.
-4. Brand once: `applyBrandPalette` in `src/main.tsx`. Product chrome lives in `src/styles/handcash.css` keyed off `data-aeon-*`.
-5. Vite: keep `aeonUiViteAliases()` + `aeonUiOptimizeDeps()` from `aeon-ui-engine/vite` (or `aeonUiVitePlugin()`).
-6. Need a missing primitive? Prefer composing Aeon parts. If the shell belongs in the engine, change **AeonUI** (`~/AeonUI`) and bump `aeon-ui-engine` — do not fork a Desktop-only dialog kit.
+## Layers (keep them distinct)
+
+| Layer | Lives in | May import | Must not |
+|---|---|---|---|
+| 1. Domain | `src/wallet/`, `src/contracts/` | ports, protocol | React, `@aeon-ui/react`, `src/components/` |
+| 2. Charts | `src/machines/`, `*Machine.ts` in wallet | xstate, domain types | JSX, CSS class names as control flow |
+| 3. Ports | `src/ports/` | nothing UI | components, CSS |
+| 4. Features | `src/features/*` | domain + hooks | duplicate chart lists |
+| 5. Projection | `src/components/` | `useMachine` / `useAeonMachine`, `@aeon-ui/core` attrs | parallel `useState` stages |
+| 6. Compounds | `@aeon-ui/react` then `@aeon-ui/ui` | anatomy parts | restyle by rebuilding the primitive |
+| 7. Brand | `src/styles/handcash.css`, `handcashTheme.ts` | `data-aeon-*` selectors | a second token sheet |
+| 8. Feed/scene | `src/components/uiFeed/`, `@aeon-ui/scene` | presentation only | spend/auth/market control flow |
+
+Register every product chart in `src/machines/machineManifest.ts`. Settings Mermaid in `src/wallet/appStatecharts.ts` must match the executable machine. Tagged spend paths stay in `explicit-wallet-paths.mdc`.
+
+## Chart → DOM
+
+1. Define states + events first (`setup({ types }).createMachine`). Then write JSX.
+2. Bind with `useMachine` or `useAeonMachine`. Clicks **send events**; they do not set a parallel stage flag.
+3. Project with `@aeon-ui/core`: `stateToAttr`, `partAttrs`, `scopeAttrs`. Nested XState values must never hit the DOM as `[object Object]`.
+
+```tsx
+import { stateToAttr } from '@aeon-ui/core'
+<div data-aeon-scope="wallet-account-menu" data-aeon-state={stateToAttr(snapshot.value)} />
+```
+
+4. CSS keys off `data-aeon-scope`, `data-aeon-part`, `data-aeon-state` — not extra BEM that restates the chart.
+5. Reference projection: `WalletAccountMenu.tsx` + `walletAccountMenuMachine.ts`.
+
+## Compounds and chrome
+
+Prefer Aeon: `Button`, `Field`, `Dialog`/`Prompt`, `StatusBanner`, `Accordion`, `Menu`, `Tabs`, `Identity`, `ListRow`, `MetricStrip`, `Panel`, `Thread`, `Toast`. Compose parts before inventing a wallet-only primitive.
+
+- Brand once: `applyBrandPalette` in `src/wallet/handcashTheme.ts` (called from `src/main.tsx`).
+- Vite: keep `aeonUiViteAliases()` + `aeonUiOptimizeDeps()` (or `aeonUiVitePlugin()`).
+- CSS: import engine sheets, then product chrome in `handcash.css`.
+- Images: `DeferredImage` / `AppAvatar` (see `deferred-images.mdc`). 3D/GLB is a chart (`loading → ready | failed`), not a raw canvas dump.
+- Missing shell primitive → change AeonUI and bump `vendor/aeon-ui-engine`. Do not copy a Desktop-only kit.
 
 ## Do not
 
-- Add Tailwind, shadcn, Chakra, MUI, Bootstrap, or a second design-token sheet.
-- Duplicate machine concerns with ad-hoc `useState` / boolean flags (`isOpen`, `isLoading` parallel to a chart).
-- Rebuild Prompt / StatusBanner / AppNav / Electron chrome when Aeon already ships them.
-- Invent niche Aeon primitives for wallet-only flows — compose universal parts.
-- Copy items-market Tailwind/shadcn patterns into this repo.
+- Tailwind, shadcn, Chakra, MUI, Bootstrap, or a second design-token sheet.
+- `useState('edit' | 'confirm' | 'loading')` beside a machine. The ratchet `src/machines/aeonAdherence.test.ts` allowlist **only shrinks**.
+- Grow `RAW_IMAGE_RENDERERS`. Domain `src/wallet/**` must not import `src/components/`.
+- Copy items-market Tailwind/shadcn patterns here.
+- Drive overlay/prompt/nav from booleans that the chart already names.
+- Put market/buy/send legality in CSS. Charts fail closed with named reasons; CSS only reflects `data-aeon-state`.
 
-## Engine source
+## When a flow feels too nested
 
-Canonical Aeon authoring rules: `~/AeonUI/AGENTS.md`. Desktop **consumes** Aeon; it does not re-implement it.
+Name the layers out loud, then implement in order: **domain decision → tagged path → machine states → `stateToAttr` → Aeon compound → `handcash.css`**. If two charts overlap, compose (parent invokes child / coordinator regions) — do not merge them into component-local flags. If the UI needs a new state, **add it to the chart first**.

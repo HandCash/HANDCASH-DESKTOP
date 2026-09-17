@@ -35,6 +35,7 @@ import {
   groupCollectables,
   groupQuantityLabel,
   type CollectableGroup,
+  type CollectableIssuer,
 } from '../wallet/collectableGroups'
 import {
   getVerificationProgress,
@@ -189,13 +190,6 @@ function CollectableGridItem({
       className="collection-grid-card collectable-card"
       data-sending={sending ? 'true' : undefined}
     >
-      <SelectionCheckbox
-        className="collect-select--card"
-        checked={selected}
-        disabled={sending}
-        label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
-        onChange={onSelectedChange}
-      />
       <button
         type="button"
         className="collection-grid-main collectable-main"
@@ -238,22 +232,31 @@ function CollectableGridItem({
           {item.app || '\u00a0'}
         </span>
       </button>
-      <button
-        type="button"
-        className="collectable-send-btn"
-        title={sendUi.title}
-        aria-label={sendUi.title}
-        disabled={sendUi.disabled}
-        onClick={(e) => {
-          e.stopPropagation()
-          if (sendUi.disabled) return
-          playWalletSound('soft')
-          openSendCollectable(item.outpoint)
-        }}
-      >
-        <SendIcon size={14} />
-        {sending ? verb : 'Send'}
-      </button>
+      <div className="collectable-card-actions">
+        <SelectionCheckbox
+          className="collect-select--inline"
+          checked={selected}
+          disabled={sending}
+          label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
+          onChange={onSelectedChange}
+        />
+        <button
+          type="button"
+          className="collectable-send-btn"
+          title={sendUi.title}
+          aria-label={sendUi.title}
+          disabled={sendUi.disabled}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (sendUi.disabled) return
+            playWalletSound('soft')
+            openSendCollectable(item.outpoint)
+          }}
+        >
+          <SendIcon size={14} />
+          {sending ? verb : 'Send'}
+        </button>
+      </div>
     </li>
   )
 }
@@ -428,27 +431,37 @@ function CollectableFacepile({ group }: { group: CollectableGroup }) {
   )
 }
 
-function CollectionGroupItem({
-  group,
+function IssuerGroupItem({
+  issuer,
   view,
   verification,
   selected,
   onSelectionChange,
 }: {
-  group: CollectableGroup
+  issuer: CollectableIssuer
   view: CollectionView
   verification: VerificationProgress
   selected: ReadonlySet<string>
   onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
 }) {
-  const sendingHere = group.items.some((item) => isOutpointSending(item.outpoint))
-  const available = group.items.filter((item) => !isOutpointSending(item.outpoint))
+  const sendingHere = issuer.items.some((item) => isOutpointSending(item.outpoint))
+  const available = issuer.items.filter((item) => !isOutpointSending(item.outpoint))
   const state = selectionState(selected, available)
-  const selectedCount = group.items.filter((item) => selected.has(item.outpoint)).length
+  const selectedCount = issuer.items.filter((item) => selected.has(item.outpoint)).length
+  const faceGroup: CollectableGroup = {
+    key: issuer.key,
+    app: issuer.app,
+    label: issuer.label,
+    items: issuer.items,
+    faces: issuer.faces,
+    overflow: issuer.overflow,
+    quantity: issuer.quantity,
+    provenCount: issuer.provenCount,
+  }
 
   return (
     <Accordion.Item
-      value={group.key}
+      value={issuer.key}
       className="collect-collection"
       data-sending={sendingHere ? 'true' : undefined}
       data-selected={state === 'none' ? undefined : state}
@@ -459,17 +472,17 @@ function CollectionGroupItem({
           checked={state === 'all'}
           mixed={state === 'some'}
           disabled={available.length === 0}
-          label={`${state === 'all' ? 'Deselect' : 'Select'} ${group.label}`}
+          label={`${state === 'all' ? 'Deselect' : 'Select'} ${issuer.label}`}
           onChange={(checked) => onSelectionChange(available, checked)}
         />
-        <Accordion.ItemTrigger value={group.key} className="collect-collection-trigger">
-          <CollectableFacepile group={group} />
+        <Accordion.ItemTrigger value={issuer.key} className="collect-collection-trigger">
+          <CollectableFacepile group={faceGroup} />
           <span className="collect-collection-body">
-            <strong className="collect-collection-name" title={group.label}>
-              {group.label}
+            <strong className="collect-collection-name" title={issuer.label}>
+              {issuer.label}
             </strong>
             <span className="collect-collection-meta">
-              {groupQuantityLabel(group)}
+              {groupQuantityLabel(issuer)}
               {selectedCount > 0 ? ` · ${selectedCount} selected` : ''}
             </span>
           </span>
@@ -478,14 +491,33 @@ function CollectionGroupItem({
           </Accordion.ItemIndicator>
         </Accordion.ItemTrigger>
       </div>
-      <Accordion.ItemContent value={group.key} className="collect-collection-body-content">
-        <CollectableItems
-          items={group.items}
-          view={view}
-          verification={verification}
-          selected={selected}
-          onSelectionChange={onSelectionChange}
-        />
+      <Accordion.ItemContent value={issuer.key} className="collect-collection-body-content">
+        {issuer.collections.map((collection) => (
+          <section key={collection.key} className="collect-nested-collection">
+            <h4 className="collect-section-title collect-nested-title">{collection.label}</h4>
+            <CollectableItems
+              items={collection.items}
+              view={view}
+              verification={verification}
+              selected={selected}
+              onSelectionChange={onSelectionChange}
+            />
+          </section>
+        ))}
+        {issuer.loose.length > 0 ? (
+          <section className="collect-nested-collection">
+            {issuer.collections.length > 0 ? (
+              <h4 className="collect-section-title collect-nested-title">Uncollected</h4>
+            ) : null}
+            <CollectableItems
+              items={issuer.loose}
+              view={view}
+              verification={verification}
+              selected={selected}
+              onSelectionChange={onSelectionChange}
+            />
+          </section>
+        ) : null}
       </Accordion.ItemContent>
     </Accordion.Item>
   )
@@ -878,7 +910,7 @@ export function InventoryPanel() {
       : null,
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
-  const { groups, singles, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
+  const { issuers, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
   const empty = items.filter((item) => !collectableIsFungible(item)).length === 0 && tokens.length === 0 && ready && tokensReady
   const searchEmpty =
     !empty &&
@@ -947,12 +979,19 @@ export function InventoryPanel() {
         <section className="collect-items-section" aria-label="Items">
           {tokens.length > 0 ? <h3 className="collect-section-title">Items</h3> : null}
 
-          {groups.length > 0 ? (
-            <Accordion.Root collapsible className="collect-collections">
-              {groups.map((group) => (
-                <CollectionGroupItem
-                  key={group.key}
-                  group={group}
+          {issuers.length > 0 ? (
+            <Accordion.Root
+              collapsible
+              className={
+                issuers.length > 1
+                  ? 'collect-collections collect-collections--many'
+                  : 'collect-collections'
+              }
+            >
+              {issuers.map((issuer) => (
+                <IssuerGroupItem
+                  key={issuer.key}
+                  issuer={issuer}
                   view={view}
                   verification={verification}
                   selected={selected}
@@ -962,25 +1001,10 @@ export function InventoryPanel() {
             </Accordion.Root>
           ) : null}
 
-          {singles.length > 0 ? (
-            <>
-              {groups.length > 0 ? (
-                <h3 className="collect-section-title">Singles</h3>
-              ) : null}
-              <CollectableItems
-                items={singles}
-                view={view}
-                verification={verification}
-                selected={selected}
-                onSelectionChange={selectionChange}
-              />
-            </>
-          ) : null}
-
           {ungrouped.length > 0 ? (
             <>
-              {groups.length > 0 || singles.length > 0 ? (
-                <h3 className="collect-section-title">Not in a collection</h3>
+              {issuers.length > 0 ? (
+                <h3 className="collect-section-title">No issuer</h3>
               ) : null}
               <CollectableItems
                 items={ungrouped}

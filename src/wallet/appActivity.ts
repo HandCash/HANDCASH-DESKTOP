@@ -583,10 +583,7 @@ export function upsertAppActivity(args: {
       prevIsToken && args.method === 'receive-collectable'
         ? prev.method
         : args.method || prev.method
-    const nextPendingId =
-      nextStatus === 'pending' || nextStatus === 'failed'
-        ? pendingId || prev.pendingId
-        : undefined
+    const nextPendingId = pendingId || prev.pendingId
     // A confirmed txid clears an earlier failure; otherwise keep the reason.
     const nextFailureReason =
       nextStatus === 'failed'
@@ -678,7 +675,7 @@ export function noteInboundReceivePending(args: {
       method: args.token ? 'receive-token' : 'receive-collectable',
       note: args.token
         ? `Receiving ${formatActivityTokenAmt(args.token.amount, args.token.dec)} ${name}`
-        : `Received ${name}`,
+        : `Receiving ${name}`,
       txid,
       status: 'pending',
       item: {
@@ -1745,6 +1742,11 @@ export function getSpentSatsSince(
   return total
 }
 
+function activityTipKey(outpoint: string | undefined | null): string | null {
+  const value = outpoint?.trim().toLowerCase().replace(/_/g, '.')
+  return value || null
+}
+
 /**
  * Stable identity for the event a row describes.
  *
@@ -1754,19 +1756,48 @@ export function getSpentSatsSince(
  * rows by `id` therefore forgets them, which is why the newest row kept
  * announcing itself as an arrival. What the transaction *is* does not change:
  * its txid, or for an item transfer its tip outpoint.
+ *
+ * The optimistic live outbound row is keyed as the in-flight pending for that
+ * tip, not by the clock, so Sending… can settle into Sent on the same list node.
  */
 export function activityEntryKey(entry: ActivityEntry): string {
   const kind = entry.kind
   const txid = entry.txid?.trim().toLowerCase()
+  const outpoint = activityTipKey(entry.item?.outpoint)
+  const pendingId = entry.pendingId?.trim()
+  const live = entry.id === 'live-outbound-send' || pendingId === 'live-outbound-send'
+  const tokenId = entry.item?.tokenId?.trim().toLowerCase()
+
+  if (live) {
+    if (tokenId) return `token:${tokenId}:${kind}:pending`
+    if (outpoint) return `item:${outpoint}:${kind}:pending`
+    return `live-outbound:${kind}`
+  }
+
   // Item / token tips: outpoint is the durable identity (one tx can carry many
   // tips). One tip can still be spent by more than one attempt — a send whose
   // tip came back unspent and was sent again — so the spending txid separates
   // those rows. Attempts that died before signing have no txid to separate them
   // and are local-only, so their row id is both unique and as durable as they
   // get. Without either, React saw duplicate keys and dropped a row.
-  const outpoint = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-  if (outpoint) return `item:${outpoint}:${kind}:${txid ?? entry.id}`
-  if (txid) return `tx:${txid}:${kind}`
+  if (tokenId) {
+    if (txid) return `token:${tokenId}:${kind}:${txid}`
+    if (pendingId) return `token:${tokenId}:${kind}:${pendingId}`
+    if (entry.status === 'pending') return `token:${tokenId}:${kind}:pending`
+    return `token:${tokenId}:${kind}:${entry.id}`
+  }
+  if (outpoint) {
+    if (txid) return `item:${outpoint}:${kind}:${txid}`
+    if (pendingId) return `item:${outpoint}:${kind}:${pendingId}`
+    if (entry.status === 'pending') return `item:${outpoint}:${kind}:pending`
+    return `item:${outpoint}:${kind}:${entry.id}`
+  }
+  if (txid) {
+    // Item receive before the tip outpoint is known — stay on the tx so the
+    // settled row can inherit this identity in {@link activityEntryContinues}.
+    if (entry.item) return `tx:${txid}:${kind}:item`
+    return `tx:${txid}:${kind}`
+  }
   if (kind === 'event') {
     if (entry.method === UTXO_HEAL_METHOD && entry.pendingId) {
       return `event:utxo-heal:${entry.pendingId}`
@@ -1781,9 +1812,57 @@ export function activityEntryKey(entry: ActivityEntry): string {
     }
     return `event:${entry.at}:${entry.method}:${entry.note ?? ''}`
   }
+  if (pendingId) return `pending:${pendingId}:${kind}`
+  if (entry.status === 'pending') return `pending:${kind}:${entry.id}`
   // Nothing on-chain to key on (a local-only row): the timestamp it was written
   // with is as stable as this row gets.
   return `at:${entry.at}:${kind}:${entry.sats}`
+}
+
+/**
+ * True when `next` is the same feed row as `prev` after a send/receive settles.
+ * Used so React can keep the list node mounted across Sending… → Sent.
+ */
+export function activityEntryContinues(
+  prev: ActivityEntry,
+  next: ActivityEntry,
+): boolean {
+  if (prev.id === next.id) return true
+  if (prev.kind !== next.kind) return false
+  const prevPending = prev.pendingId?.trim()
+  const nextPending = next.pendingId?.trim()
+  if (
+    prevPending &&
+    nextPending &&
+    prevPending === nextPending &&
+    prevPending !== 'live-outbound-send'
+  ) {
+    return true
+  }
+  const prevLive =
+    prev.id === 'live-outbound-send' || prevPending === 'live-outbound-send'
+  const nextLive =
+    next.id === 'live-outbound-send' || nextPending === 'live-outbound-send'
+  const prevOp = activityTipKey(prev.item?.outpoint)
+  const nextOp = activityTipKey(next.item?.outpoint)
+  const prevToken = prev.item?.tokenId?.trim().toLowerCase()
+  const nextToken = next.item?.tokenId?.trim().toLowerCase()
+  if (prevLive || nextLive) {
+    if (prevToken && prevToken === nextToken) return true
+    if (prevOp && prevOp === nextOp) return true
+    if (!prevOp && !nextOp && !prev.item && !next.item) return true
+  }
+  const prevTx = prev.txid?.trim().toLowerCase()
+  const nextTx = next.txid?.trim().toLowerCase()
+  if (prevTx && nextTx && prevTx === nextTx) {
+    if (prevToken || nextToken) return Boolean(prevToken && prevToken === nextToken)
+    if (prev.item || next.item) {
+      if (!prevOp || !nextOp) return true
+      return prevOp === nextOp
+    }
+    return !prev.item && !next.item
+  }
+  return false
 }
 
 /** Human title for an activity row (payment, collectable, or event). */

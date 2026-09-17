@@ -388,12 +388,25 @@ html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .s
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
-  /* Leave room for wordmark + scan/lock; wrap long labels on two lines. */
-  max-width: min(6.5rem, calc(100vw - 11.5rem));
-  padding-left: 8px;
-  padding-right: 8px;
+  max-width: min(7.25rem, calc(100vw - 12.5rem));
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  padding: 0 8px;
   gap: 5px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
+  align-items: center;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-pill-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 
 
@@ -2673,6 +2686,16 @@ button.wallet-detail-value.is-copied {
   pointer-events: auto;
 }
 
+.app-avatar-embedded {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  overflow: hidden;
+}
+
 .app-avatar-sm {
   width: 36px;
   height: 36px;
@@ -4808,10 +4831,26 @@ button.identity-qr-copy:focus-visible {
   gap: 10px;
   align-items: center;
   align-self: start;
-  /* App badge hangs 8px left/down of the 36px thumb — keep it inside the row
-     so overflow:auto on the list cannot cover that subscript. */
+  /* Marks hang 4px off the 36px thumb — keep them inside the row so
+     overflow:auto on the list cannot cover a subscript. */
   padding: 8px 8px 12px 12px;
   border-radius: 10px;
+  transition:
+    background-color 280ms ease,
+    opacity 280ms ease;
+}
+
+.history-title,
+.history-when,
+.history-amount {
+  transition:
+    color 220ms ease,
+    opacity 220ms ease;
+}
+
+[data-activity-pending] .history-title,
+[data-activity-pending] .history-amount {
+  opacity: 0.88;
 }
 
 a.history-row-link {
@@ -4843,16 +4882,19 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-icon-wrap {
+  --hc-mark-size: 16px;
+  --hc-mark-outset: 4px;
   position: relative;
   width: 36px;
   height: 36px;
   overflow: visible;
+  isolation: isolate;
   z-index: 1;
 }
 
 .history-icon {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   width: 36px;
   height: 36px;
   border-radius: 12px;
@@ -4893,18 +4935,21 @@ a.history-row-link:hover .history-tx-hint {
 
 .history-action-badge {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 16px;
-  height: 16px;
+  right: calc(-1 * var(--hc-mark-outset, 4px));
+  bottom: calc(-1 * var(--hc-mark-outset, 4px));
+  z-index: 8;
+  box-sizing: border-box;
+  width: var(--hc-mark-size, 16px);
+  height: var(--hc-mark-size, 16px);
   display: grid;
   place-items: center;
-  transform: translate(50%, 50%);
+  transform: none;
   border: 2px solid hsl(var(--background));
   border-radius: 50%;
   color: #fff;
   line-height: 0;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
 }
 
 .history-action-badge > svg,
@@ -4915,6 +4960,22 @@ a.history-row-link:hover .history-tx-hint {
   display: block;
   place-self: center;
   margin: auto;
+}
+
+.history-action-badge--inline {
+  position: static;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  pointer-events: auto;
+}
+
+.history-action-badge--timeline {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
 }
 
 .history-action-badge.is-send {
@@ -4950,12 +5011,13 @@ a.history-row-link:hover .history-tx-hint {
 
 .history-app-badge {
   position: absolute;
-  left: 0;
-  bottom: 0;
-  z-index: 2;
-  width: 16px;
-  height: 16px;
-  transform: translate(-50%, 50%);
+  left: calc(-1 * var(--hc-mark-outset, 4px));
+  bottom: calc(-1 * var(--hc-mark-outset, 4px));
+  z-index: 8;
+  box-sizing: border-box;
+  width: var(--hc-mark-size, 16px);
+  height: var(--hc-mark-size, 16px);
+  transform: none;
   overflow: hidden;
   border: 2px solid hsl(var(--background));
   border-radius: 50%;
@@ -4963,13 +5025,17 @@ a.history-row-link:hover .history-tx-hint {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
-.history-app-badge .app-avatar {
-  width: 12px !important;
-  height: 12px !important;
-  min-width: 12px;
-  border: 0;
+.history-app-badge .app-avatar,
+.history-app-badge .skeleton-avatar {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0;
+  border: 0 !important;
   border-radius: 50%;
-  background: transparent;
+  background: transparent !important;
+  box-shadow: none;
 }
 
 .history-app-badge .app-avatar-img {
@@ -4992,14 +5058,17 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 /* Opposite corner from the send/receive badge. */
-.history-icon-wrap .collectable-verify-mark,
-.history-icon-wrap .history-pending-mark {
-  top: -2px;
-  right: -2px;
+.history-icon-wrap > .collectable-verify-mark,
+.history-icon-wrap > .history-pending-mark {
+  top: calc(-1 * var(--hc-mark-outset, 4px));
+  right: calc(-1 * var(--hc-mark-outset, 4px));
   bottom: auto;
   left: auto;
-  width: 14px;
-  height: 14px;
+  z-index: 8;
+  width: var(--hc-mark-size, 16px);
+  height: var(--hc-mark-size, 16px);
+  border-width: 2px;
+  border-color: hsl(var(--background));
 }
 
 .history-icon-wrap .loading-spinner--sm,
@@ -5101,39 +5170,49 @@ button.payment-details-item-thumb-btn:hover {
 .history-icon-stack {
   position: absolute;
   inset: 0;
-  border-radius: 12px;
-  background: var(--hc-sunken);
-  border: 1px solid var(--hc-border);
-  transform: translate(3px, -3px);
   z-index: 0;
+  pointer-events: none;
 }
 
-.history-icon-stack::before {
-  content: '';
+.history-icon-stack-face {
   position: absolute;
   inset: 0;
   border-radius: 12px;
-  background: var(--hc-sunken);
+  overflow: hidden;
   border: 1px solid var(--hc-border);
-  transform: translate(3px, -3px);
+  background: var(--hc-sunken);
+}
+
+.history-icon-stack-face:nth-child(1) {
+  transform: translate(5px, -5px);
+}
+
+.history-icon-stack-face:nth-child(2) {
+  transform: translate(9px, -9px);
+}
+
+.history-icon-stack::before {
+  content: none;
 }
 
 /* Only free corner: app badge and action badge own the bottom, verify the top right. */
 .history-batch-count {
   position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 3;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  left: calc(-1 * var(--hc-mark-outset, 4px));
+  top: calc(-1 * var(--hc-mark-outset, 4px));
+  z-index: 8;
+  box-sizing: border-box;
+  width: var(--hc-mark-size, 16px);
+  min-width: var(--hc-mark-size, 16px);
+  height: var(--hc-mark-size, 16px);
+  padding: 0;
   display: grid;
   place-items: center;
-  transform: translate(-40%, -40%);
+  transform: none;
   border: 2px solid hsl(var(--background));
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--hc-accent);
-  color: #fff;
+  color: #0a120e;
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1;
@@ -5287,7 +5366,8 @@ button.payment-details-item-thumb-btn:hover {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(148px, 168px));
+  justify-content: start;
   gap: 10px;
 }
 
@@ -5336,7 +5416,6 @@ button.payment-details-item-thumb-btn:hover {
 
 .collection-grid-card:hover {
   border-color: color-mix(in srgb, var(--hc-accent) 35%, hsl(var(--border)));
-  background: color-mix(in srgb, var(--hc-accent) 8%, var(--hc-surface));
 }
 
 .collection-grid-main {
@@ -6370,9 +6449,12 @@ html[data-aeon-mode='light']
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 16px;
+  overflow: visible;
 }
 
 .payment-details-hero .history-icon-wrap {
+  --hc-mark-size: 16px;
+  --hc-mark-outset: 4px;
   width: 44px;
   height: 44px;
   flex-shrink: 0;
@@ -6385,10 +6467,8 @@ html[data-aeon-mode='light']
 }
 
 .payment-details-hero .history-action-badge {
-  width: 18px;
-  height: 18px;
-  right: 0;
-  bottom: 0;
+  width: var(--hc-mark-size);
+  height: var(--hc-mark-size);
 }
 
 .payment-details-copy {
@@ -7573,6 +7653,25 @@ html[data-aeon-mode='light'] .shortcut-key {
   color: inherit;
   font: inherit;
   font-size: 0.88rem;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.friends-search input::-webkit-search-decoration,
+.friends-search input::-webkit-search-cancel-button,
+.friends-search input::-webkit-search-results-button,
+.friends-search input::-webkit-search-results-decoration {
+  display: none;
+}
+
+[data-aeon-scope='collectables'] .friends-search {
+  margin: 2px 0 14px;
+  padding: 0 2px;
+}
+
+[data-aeon-scope='collectables'] .friends-search input {
+  min-height: 40px;
+  padding: 10px 14px;
 }
 
 .friends-search input:focus {
@@ -9057,6 +9156,213 @@ html[data-aeon-mode='light'] .skeleton {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+  align-items: stretch;
+}
+
+.item-history {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.item-history-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 4px 0 0;
+  list-style: none;
+}
+
+.item-history-list li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 0 0 18px;
+}
+
+.item-history-list li:last-child {
+  padding-bottom: 0;
+}
+
+.item-history-list li:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 28px;
+  bottom: 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--hc-accent) 42%, var(--hc-border));
+}
+
+.item-history-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+}
+
+.item-history-list .history-action-badge {
+  position: static;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  z-index: 1;
+  transform: none;
+  margin: 0;
+}
+
+.item-history-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.item-history-copy strong {
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.item-history-copy span,
+.item-history-copy time {
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.item-history-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.item-history-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--hc-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hc-panel) 88%, transparent);
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.2;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-history-chip:hover {
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, var(--hc-border));
+  color: var(--hc-accent);
+}
+
+.item-history .history-action-badge {
+  pointer-events: auto;
+}
+
+.payment-tx-breakdown {
+  display: grid;
+  gap: 0;
+  margin: 8px 0 12px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--hc-border);
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.payment-tx-breakdown > li {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px 12px 14px;
+  border-top: 1px solid var(--hc-border);
+}
+
+.payment-tx-breakdown > li:first-child {
+  border-top: 0;
+}
+
+.payment-tx-leg-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.payment-tx-leg-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.payment-tx-leg-title:hover {
+  color: var(--hc-accent);
+}
+
+.payment-tx-leg-copy span {
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.payment-tx-legs {
+  display: grid;
+  gap: 0;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--hc-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.payment-tx-legs li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--hc-border);
+}
+
+.payment-tx-legs li:first-child {
+  border-top: 0;
+}
+
+.payment-tx-legs strong {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.payment-tx-legs span {
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.collect-nested-title {
+  margin: 12px 0 8px;
+}
+
+.collect-nested-collection:first-child .collect-nested-title {
+  margin-top: 4px;
 }
 
 .collectable-model-stage {
@@ -9725,11 +10031,13 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 @container collect-inventory (min-width: 620px) {
-  [data-aeon-scope='collectables'][data-aeon-state='grid'] .collect-collections {
+  [data-aeon-scope='collectables'][data-aeon-state='grid']
+    .collect-collections--many {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   [data-aeon-scope='collectables'][data-aeon-state='grid']
+    .collect-collections--many
     .collect-collection:has(.collect-collection-trigger[aria-expanded='true']) {
     grid-column: 1 / -1;
   }
@@ -10353,6 +10661,31 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   }
 }
 
+.collectable-card,
+.collectable-card:hover,
+.collectable-send-btn,
+.collect-select > span {
+  transition: none;
+}
+
+.collectable-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 0 8px 10px;
+}
+
+.collectable-card-actions .collectable-send-btn {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.collect-select--inline {
+  position: static;
+  opacity: 1;
+}
+
 .collectable-send-btn {
   appearance: none;
   display: inline-flex;
@@ -10371,11 +10704,11 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
+  transition: none;
 }
 
 .collectable-send-btn:hover {
   border-color: color-mix(in srgb, var(--hc-accent, #38d385) 45%, transparent);
-  background: color-mix(in srgb, var(--hc-accent, #38d385) 10%, transparent);
 }
 
 .collectable-send-btn--row {

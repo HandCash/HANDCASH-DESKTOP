@@ -65,6 +65,8 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
   padding-bottom: 12px;
   padding-left: max(12px, env(safe-area-inset-left, 0px));
   padding-right: max(12px, env(safe-area-inset-right, 0px));
+  align-items: center;
+  min-height: 0;
 }
 
 /* Light sheet on phone: status-bar inset and chrome must match paper, not the

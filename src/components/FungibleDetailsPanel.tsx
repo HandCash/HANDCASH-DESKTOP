@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
-import { ListRow, Prompt, StatusBanner } from '@aeon-ui/react'
+import { Prompt, StatusBanner } from '@aeon-ui/react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
@@ -14,24 +14,17 @@ import {
   tokenMarketPriceHistory,
 } from '../wallet/token'
 import {
-  activityEntryTitle,
-  activityFailureLabel,
-  activityTokenAmountDisplay,
-  isFailedActivity,
-  isBurnActivity,
-  isMintTokenActivity,
-  isPendingActivity,
   listRecentActivity,
   subscribeAppActivity,
-  type ActivityEntry,
 } from '../wallet/appActivity'
 import {
   fungibleDetailsMachine,
   activityForFungible,
 } from '../machines/fungibleDetailsMachine'
+import { tokenHistory } from '../wallet/itemHistory'
+import { AssetHistoryList } from './AssetHistoryList'
 import {
   openBurnFungible,
-  openPaymentDetails,
   openSendFungible,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
@@ -39,12 +32,9 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import {
   CollectablesIcon,
   CopyIcon,
-  MintIcon,
-  ReceiveIcon,
   RefreshIcon,
   SendIcon,
   FireIcon,
-  WarningIcon,
 } from './icons'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
@@ -100,75 +90,6 @@ function MetaRow({
         )}
       </dd>
     </div>
-  )
-}
-
-function formatActivityWhen(at: number): string {
-  return new Date(at).toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  })
-}
-
-function TokenActivityRow({ entry }: { entry: ActivityEntry }) {
-  const failed = isFailedActivity(entry)
-  const pending = isPendingActivity(entry)
-  const minted = isMintTokenActivity(entry)
-  const burned = isBurnActivity(entry)
-  const spent = entry.kind === 'spent'
-  const burnStatus =
-    burned && entry.burn?.recoveredSatoshis != null
-      ? `${entry.burn.recoveredSatoshis.toLocaleString()} sats recovered${
-          entry.burn.feeSatoshis != null
-            ? ` · ${entry.burn.feeSatoshis.toLocaleString()} fee`
-            : ''
-        }`
-      : null
-  const status = failed
-    ? (activityFailureLabel(entry) ?? 'Failed transaction')
-    : pending
-      ? burned
-        ? 'Burning…'
-        : spent
-        ? 'Sending…'
-        : 'Verifying…'
-      : burnStatus ?? formatActivityWhen(entry.at)
-
-  return (
-    <ListRow.Root
-      as="button"
-      type="button"
-      className="fungible-activity-row"
-      data-aeon-state={failed ? 'failed' : pending ? 'pending' : 'complete'}
-      onClick={() => {
-        playWalletSound('soft')
-        openPaymentDetails(entry.id)
-      }}
-    >
-      <ListRow.Leading
-        className={`fungible-activity-icon${burned ? ' is-burn' : ''}`}
-        aria-hidden
-      >
-        {failed ? (
-          <WarningIcon size={15} />
-        ) : burned ? (
-          <FireIcon size={14} />
-        ) : minted ? (
-          <MintIcon size={15} />
-        ) : spent ? (
-          <SendIcon size={14} />
-        ) : (
-          <ReceiveIcon size={16} />
-        )}
-      </ListRow.Leading>
-      <span className="fungible-activity-copy">
-        <ListRow.Label>{activityEntryTitle(entry)}</ListRow.Label>
-        <ListRow.Description title={status}>{status}</ListRow.Description>
-      </span>
-      <ListRow.Trailing className="fungible-activity-amount">
-        {failed ? 'Failed' : activityTokenAmountDisplay(entry)}
-      </ListRow.Trailing>
-    </ListRow.Root>
   )
 }
 
@@ -604,21 +525,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </dl>
       </section>
 
-      <section className="fungible-details-section" data-aeon-part="activity">
-        <div className="fungible-section-heading">
-          <h3>Token activity</h3>
-          <span>{snapshot.context.activity.length} local transactions</span>
-        </div>
-        {snapshot.context.activity.length > 0 ? (
-          <div className="fungible-activity-list">
-            {snapshot.context.activity.map((entry) => (
-              <TokenActivityRow key={entry.id} entry={entry} />
-            ))}
-          </div>
-        ) : (
-          <p className="fungible-activity-empty">No local activity for this token yet.</p>
-        )}
-      </section>
+      {snapshot.context.activity.length > 0 ? (
+        <AssetHistoryList events={tokenHistory(token, snapshot.context.activity)} />
+      ) : (
+        <p className="fungible-activity-empty">No local activity for this token yet.</p>
+      )}
     </div>
   )
 }

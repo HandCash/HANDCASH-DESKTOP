@@ -13,6 +13,7 @@ vi.mock('./durableStorage', () => ({
 import {
   activityDetailLabel,
   activityEntryKey,
+  activityEntryContinues,
   activityEntryTitle,
   activityNavLabel,
   activityRecipientLabel,
@@ -300,6 +301,64 @@ describe('activityEntryKey', () => {
 
   it('keys a local-only row on its timestamp', () => {
     expect(activityEntryKey(entry({ at: 42, sats: 7 }))).toBe('at:42:spent:7')
+  })
+
+  it('keys the live outbound row as the in-flight pending for that tip', () => {
+    const live = entry({
+      id: 'live-outbound-send',
+      pendingId: 'live-outbound-send',
+      status: 'pending',
+      at: 99,
+      item: { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' },
+    })
+    const later = { ...live, at: 100 }
+    expect(activityEntryKey(live)).toBe('item:bb.0:spent:pending')
+    expect(activityEntryKey(later)).toBe(activityEntryKey(live))
+  })
+})
+
+describe('activityEntryContinues', () => {
+  it('treats live outbound and the durable Sending… row as one feed node', () => {
+    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' }
+    const live = entry({
+      id: 'live-outbound-send',
+      pendingId: 'live-outbound-send',
+      status: 'pending',
+      item,
+    })
+    const durable = entry({
+      id: 'send-1',
+      pendingId: 'send-1',
+      status: 'pending',
+      item,
+    })
+    expect(activityEntryContinues(live, durable)).toBe(true)
+  })
+
+  it('treats a verifying receive and the settled row as one feed node', () => {
+    const txid = 'aa'.repeat(32)
+    const pending = entry({
+      kind: 'earned',
+      method: 'receive-collectable',
+      status: 'pending',
+      txid,
+      item: { name: 'Fox', origin: `${txid}_pending` },
+    })
+    const settled = entry({
+      id: pending.id,
+      kind: 'earned',
+      method: 'receive-collectable',
+      txid,
+      item: { name: 'Fox', origin: `${txid}_0`, outpoint: `${txid}.0` },
+    })
+    expect(activityEntryContinues(pending, settled)).toBe(true)
+  })
+
+  it('keeps two spends of the same tip on different txs apart', () => {
+    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' }
+    const first = entry({ id: 'a', txid: 'cc', item })
+    const second = entry({ id: 'b', txid: 'dd', item })
+    expect(activityEntryContinues(first, second)).toBe(false)
   })
 })
 

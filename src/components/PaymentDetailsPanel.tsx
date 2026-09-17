@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
-import { ReceiveIcon, SendIcon } from './icons'
-import { HistoryActionBadge } from './RecentActivity'
+import { ReceiveIcon } from './icons'
+import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
 import { SkeletonLine } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
+  activityEntryKey,
   activityDetailLabel,
   activityEntryTitle,
   activityRecipientLabel,
@@ -27,9 +28,14 @@ import {
 } from '../wallet/appActivity'
 import { viewActivityItem } from '../wallet/activityItemView'
 import {
-  batchSiblingsForEntry,
+  activityBatchName,
+  composeActivityRecords,
   moneyLegForEntry,
 } from '../wallet/activityRecords'
+import {
+  ACTION_MARK_LABEL,
+  activityActionMark,
+} from '../wallet/activityActionMark'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
@@ -55,11 +61,6 @@ import {
   openFungibleDetails,
   openSendFlow,
 } from '../wallet/navStore'
-import { bsvLogoForClassic } from '../assets/brand/bsvLogos'
-import {
-  getBsvLogoClassic,
-  subscribeBsvLogoClassic,
-} from '../wallet/bsvLogoPreference'
 import {
   clearSpendAttempt,
   isSpendAttempt,
@@ -133,6 +134,116 @@ function eventStatusLabel(method: string): string {
   return 'Done'
 }
 
+function activityRecordForEntry(
+  entry: ActivityEntry,
+  recent: readonly ActivityEntry[],
+) {
+  return (
+    composeActivityRecords(recent).find((row) =>
+      row.entries.some(
+        (leg) => activityEntryKey(leg) === activityEntryKey(entry),
+      ),
+    ) ?? null
+  )
+}
+
+function expandedActivityLegs(
+  entry: ActivityEntry,
+  recent: readonly ActivityEntry[],
+): ActivityEntry[] {
+  const record = activityRecordForEntry(entry, recent)
+  if (!record) return [entry]
+  const rows: ActivityEntry[] = []
+  const seen = new Set<string>()
+  for (const leg of [record.subject, ...record.assets]) {
+    const key = activityEntryKey(leg)
+    if (seen.has(key)) continue
+    seen.add(key)
+    rows.push(leg)
+  }
+  if (record.money) {
+    const key = activityEntryKey(record.money)
+    if (!seen.has(key)) rows.push(record.money)
+  }
+  return rows
+}
+
+function PaymentBreakdownRow({
+  entry,
+  currency,
+  usdPerBsv,
+}: {
+  entry: ActivityEntry
+  currency: DisplayCurrency
+  usdPerBsv: number | null
+}) {
+  const shown = entry.item ? viewActivityItem(entry.item) : undefined
+  const mark = activityActionMark(entry)
+  const action = mark ? ACTION_MARK_LABEL[mark] : activityEntryTitle(entry)
+  const title = activityEntryTitle(entry)
+  const peer = activityRecipientLabel(entry)
+  const counterparties: { label: string; value: string }[] = []
+  if (entry.kind === 'spent') {
+    counterparties.push({ label: 'From', value: 'You' })
+    if (peer) counterparties.push({ label: 'To', value: peer })
+  } else if (entry.kind === 'earned') {
+    if (peer) counterparties.push({ label: 'From', value: peer })
+    counterparties.push({ label: 'To', value: 'You' })
+  }
+  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) {
+    counterparties.push({ label: 'App', value: appDisplayName(entry.origin) })
+  }
+  const token = isTokenActivity(entry)
+  const item = isItemActivity(entry)
+  const named = shown ? { ...entry, item: shown } : entry
+  const amount = token
+    ? activityTokenAmountDisplay(named)
+    : item
+      ? action
+      : entry.sats > 0
+        ? `${entry.kind === 'spent' ? '−' : '+'}${formatPrimaryFromSats(entry.sats, currency, usdPerBsv)}`
+        : action
+  const itemOutpoint = itemLinkOutpoint(entry, shown)
+  const tokenId = tokenLinkId(shown ?? entry.item)
+  const openItem = tokenId
+    ? () => {
+        playWalletSound('soft')
+        openFungibleDetails(tokenId)
+      }
+    : itemOutpoint
+      ? () => {
+          playWalletSound('soft')
+          openCollectableDetails(itemOutpoint)
+        }
+      : null
+
+  return (
+    <li data-aeon-part="tx-leg" data-aeon-state={mark ?? 'event'}>
+      <HistoryIconCluster entry={entry} />
+      <div className="payment-tx-leg-copy">
+        {openItem ? (
+          <button
+            type="button"
+            className="payment-tx-leg-title"
+            onClick={openItem}
+          >
+            {title}
+          </button>
+        ) : (
+          <strong>{title}</strong>
+        )}
+        <span>{action}</span>
+        {counterparties.map((line) => (
+          <span key={`${line.label}:${line.value}`}>
+            {line.label} {line.value}
+          </span>
+        ))}
+      </div>
+      <span className="history-amount history-amount-item">{amount}</span>
+    </li>
+  )
+}
+
 export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [entry, setEntry] = useState<ActivityEntry | null>(() =>
     getActivityById(entryId),
@@ -143,7 +254,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [currency, setCurrency] = useState<DisplayCurrency>(() =>
     getDisplayCurrency(),
   )
-  const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const [iconReady, setIconReady] = useState(false)
   const [attemptFate, setAttemptFate] = useState<SpendAttemptFate>({
     kind: 'notAttempt',
@@ -156,7 +266,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
-  useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
   useEffect(() => {
     setIconReady(false)
     // Keep the previous object when nothing the screen reads changed: the fate
@@ -310,10 +419,14 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   // The feed folds a purchase or sale into one record; the detail view opens one
   // of its entries, so it reads the money leg back from the same transaction.
   const recent = listRecentActivity(200)
+  const record = activityRecordForEntry(entry, recent)
+  const subject = record?.subject ?? entry
+  const assets = record?.assets ?? []
+  const batch = record?.batch ?? null
+  const batchName = batch ? activityBatchName(batch) : null
   const moneyLeg = moneyLegForEntry(entry, recent)
-  // The feed names a batch by count and series, so this is the only place the
-  // other members of the same transfer are spelled out.
-  const batchSiblings = batchSiblingsForEntry(entry, recent)
+  const breakdown = expandedActivityLegs(entry, recent)
+  const showBreakdown = breakdown.length > 1
   const explorer = isExplorerTxid(entry.txid)
     ? txExplorerUrl(entry.txid!, chain)
     : null
@@ -418,73 +531,28 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       data-aeon-state={ready ? undefined : 'loading'}
     >
       <div className="payment-details-hero">
-        <div className="history-icon-wrap">
-          <div className="history-icon">
-            {item && shownItem?.imageUrl ? (
-              openItem ? (
-                <button
-                  type="button"
-                  className="payment-details-item-thumb-btn"
-                  onClick={openItem}
-                  aria-label={`Open ${shownItem.name}`}
-                >
-                  <DeferredImage
-                    className="history-item-thumb"
-                    src={shownItem.imageUrl}
-                    alt=""
-                    width={32}
-                    height={32}
-                    skeletonWidth={32}
-                    skeletonHeight={32}
-                    skeletonRadius={6}
-                    retainDecoded
-                    decoding="async"
-                  />
-                </button>
-              ) : (
-                <DeferredImage
-                  className="history-item-thumb"
-                  src={shownItem.imageUrl}
-                  alt=""
-                  width={32}
-                  height={32}
-                  skeletonWidth={32}
-                  skeletonHeight={32}
-                  skeletonRadius={6}
-                  retainDecoded
-                  decoding="async"
-                />
-              )
-            ) : isWallet && !item ? (
-              <img
-                className="history-asset-logo"
-                src={bsvLogoForClassic(classicBsvLogo)}
-                alt=""
-                width={32}
-                height={32}
-              />
-            ) : isWallet ? (
-              spent ? (
-                <SendIcon size={16} />
-              ) : (
-                <ReceiveIcon size={16} />
-              )
-            ) : (
-              <AppAvatar
-                origin={entry.origin}
-                name={appDisplayName(entry.origin)}
-                size="sm"
-                onReady={() => setIconReady(true)}
-              />
-            )}
-          </div>
-          <HistoryActionBadge entry={entry} />
-        </div>
+        <HistoryIconCluster
+          entry={subject}
+          assets={assets}
+          batch={batch}
+        />
         {ready ? (
           <div className="payment-details-copy">
             <div className="payment-details-title-row">
               <strong className="payment-details-title">
-                {activityEntryTitle(entry)}
+                {activityEntryTitle(
+                  batchName && subject.item
+                    ? {
+                        ...subject,
+                        item: {
+                          ...viewActivityItem(subject.item),
+                          name: batchName,
+                        },
+                      }
+                    : subject.item
+                      ? { ...subject, item: viewActivityItem(subject.item) }
+                      : subject,
+                )}
               </strong>
               {explorer ? (
                 <button
@@ -531,7 +599,20 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             <span className="payment-details-secondary">{secondary}</span>
           </div>
 
-          {item && shownItem?.imageUrl ? (
+          {showBreakdown ? (
+            <ol className="payment-tx-breakdown" data-aeon-part="tx-legs">
+              {breakdown.map((leg) => (
+                <PaymentBreakdownRow
+                  key={activityEntryKey(leg)}
+                  entry={leg}
+                  currency={currency}
+                  usdPerBsv={usdPerBsv}
+                />
+              ))}
+            </ol>
+          ) : null}
+
+          {item && shownItem?.imageUrl && !showBreakdown ? (
             openItem ? (
               <button
                 type="button"
@@ -591,11 +672,11 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                     shownItem.name
                   )}
                 </dd>
-                {batchSiblings.length > 0 ? (
+                {assets.length > 0 && !showBreakdown ? (
                   <>
                     <dt>{spent ? 'Also sent' : 'Also received'}</dt>
                     <dd>
-                      {batchSiblings
+                      {assets
                         .map(
                           (sibling) =>
                             viewActivityItem(sibling.item!).name?.trim() ||
@@ -865,6 +946,7 @@ function ListingActivityDetails({
             )}
           </div>
           <HistoryActionBadge entry={entry} />
+          <HistoryAppBadge entry={entry} />
         </div>
         <div className="payment-details-copy">
           <div className="payment-details-title-row">

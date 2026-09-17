@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.215] - 2026-09-17
+
+### Changed
+
+- Activity, item, and token history: coherent corner marks, a timeline of
+  events, and Sending… / Receiving… settling into Sent / Received on the same
+  row instead of disappearing.
+
 ## [1.3.214] - 2026-09-17
 
 ### Fixed

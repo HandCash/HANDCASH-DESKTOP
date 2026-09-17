@@ -1,19 +1,14 @@
 import type { Collectable } from './collectables'
 
 /**
- * Collect groups items by collection so a 200-tip wallet reads as a shelf of
- * sets rather than a wall of thumbnails.
+ * Collect hierarchy is issuer → collection → items.
  *
- * Grouping is display-only: the key is the item's own `collectionId` (BRC-99
- * `collection:<id>` scope), and `app` is the fallback axis for items minted
- * without one. A group of one is not folded into an accordion, but those items
- * still belong to their collection and are listed under `singles`.
+ * `app` is the issuer axis. `collectionId` (BRC-99 `collection:<id>`) is the
+ * set. Items without an issuer still nest under a collection shelf when they
+ * have an id; only tips with neither sit in `ungrouped`.
  */
 
-/** Faces shown before the pile collapses into a "+N" chip. */
 export const FACE_LIMIT = 4
-/** Below this a "collection" is just an item, so it is not folded. */
-const MIN_GROUP_SIZE = 2
 
 export type CollectableFace = {
   outpoint: string
@@ -22,49 +17,51 @@ export type CollectableFace = {
 }
 
 export type CollectableGroup = {
-  /** Stable React key and Accordion value. */
   key: string
   collectionId?: string
   app?: string
-  /** Display heading, disambiguated when two groups would read the same. */
   label: string
   items: Collectable[]
   faces: CollectableFace[]
-  /** Items beyond the facepile, for the "+N" chip. */
   overflow: number
   quantity: number
-  /** How many carry a complete BRC-150 tip→origin proof. */
+  provenCount: number
+}
+
+export type CollectableIssuer = {
+  key: string
+  label: string
+  app?: string
+  collections: CollectableGroup[]
+  loose: Collectable[]
+  items: Collectable[]
+  faces: CollectableFace[]
+  overflow: number
+  quantity: number
   provenCount: number
 }
 
 export type GroupedCollectables = {
-  groups: CollectableGroup[]
-  /** One item from a collection/app — not folded, but still belongs to a set. */
-  singles: Collectable[]
-  /** No collection or app axis. */
+  issuers: CollectableIssuer[]
   ungrouped: Collectable[]
+  /** Flattened collections (every size, including one). */
+  groups: CollectableGroup[]
+  /** Always empty — one-item collections stay under their issuer. */
+  singles: Collectable[]
 }
 
 function shortId(value: string): string {
   return value.length > 10 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
 }
 
-function axisFor(item: Collectable): { key: string; collectionId?: string; app?: string } | null {
-  if (item.collectionId) {
-    return {
-      key: `collection:${item.collectionId.toLowerCase()}`,
-      collectionId: item.collectionId,
-      app: item.app,
-    }
-  }
-  if (item.app) return { key: `app:${item.app.toLowerCase()}`, app: item.app }
+export function collectionSeriesLabel(items: readonly Collectable[]): string | null {
+  const stems = items
+    .map((item) => item.name.replace(/\s*#\d+\s*$/u, '').trim())
+    .filter(Boolean)
+  if (stems.length === 0) return null
+  const first = stems[0]!
+  if (stems.every((stem) => stem.toLowerCase() === first.toLowerCase())) return first
   return null
-}
-
-function baseLabel(axis: { collectionId?: string; app?: string }): string {
-  if (axis.app) return axis.app
-  if (axis.collectionId) return `Collection ${shortId(axis.collectionId)}`
-  return 'Collection'
 }
 
 function facesFor(items: Collectable[]): { faces: CollectableFace[]; overflow: number } {
@@ -79,37 +76,101 @@ function facesFor(items: Collectable[]): { faces: CollectableFace[]; overflow: n
   return { faces, overflow: Math.max(0, items.length - faces.length) }
 }
 
+function collectionLabel(items: Collectable[], collectionId: string): string {
+  return collectionSeriesLabel(items) ?? `Collection ${shortId(collectionId)}`
+}
+
+function makeGroup(args: {
+  key: string
+  items: Collectable[]
+  collectionId?: string
+  app?: string
+  label: string
+}): CollectableGroup {
+  const { faces, overflow } = facesFor(args.items)
+  return {
+    key: args.key,
+    ...(args.collectionId ? { collectionId: args.collectionId } : {}),
+    ...(args.app ? { app: args.app } : {}),
+    label: args.label,
+    items: args.items,
+    faces,
+    overflow,
+    quantity: args.items.length,
+    provenCount: args.items.filter((item) => item.proven).length,
+  }
+}
+
+function issuerKeyFor(item: Collectable): { key: string; label: string; app?: string } | null {
+  const app = item.app?.trim()
+  if (app) return { key: `issuer:${app.toLowerCase()}`, label: app, app }
+  if (item.collectionId?.trim()) {
+    return {
+      key: `issuer:collection:${item.collectionId.toLowerCase()}`,
+      label: collectionSeriesLabel([item]) ?? `Collection ${shortId(item.collectionId)}`,
+    }
+  }
+  return null
+}
+
 export function groupCollectables(items: Collectable[]): GroupedCollectables {
-  const buckets = new Map<
+  const issuerBuckets = new Map<
     string,
-    { axis: { key: string; collectionId?: string; app?: string }; items: Collectable[] }
+    { meta: { key: string; label: string; app?: string }; items: Collectable[] }
   >()
-  const singles: Collectable[] = []
   const ungrouped: Collectable[] = []
 
   for (const item of items) {
-    const axis = axisFor(item)
-    if (!axis) {
+    const meta = issuerKeyFor(item)
+    if (!meta) {
       ungrouped.push(item)
       continue
     }
-    const bucket = buckets.get(axis.key)
+    const bucket = issuerBuckets.get(meta.key)
     if (bucket) bucket.items.push(item)
-    else buckets.set(axis.key, { axis, items: [item] })
+    else issuerBuckets.set(meta.key, { meta, items: [item] })
   }
 
+  const issuers: CollectableIssuer[] = []
   const groups: CollectableGroup[] = []
-  for (const bucket of buckets.values()) {
-    if (bucket.items.length < MIN_GROUP_SIZE) {
-      singles.push(...bucket.items)
-      continue
+
+  for (const bucket of issuerBuckets.values()) {
+    const byCollection = new Map<string, Collectable[]>()
+    const loose: Collectable[] = []
+    for (const item of bucket.items) {
+      const id = item.collectionId?.trim()
+      if (!id) {
+        loose.push(item)
+        continue
+      }
+      const list = byCollection.get(id.toLowerCase())
+      if (list) list.push(item)
+      else byCollection.set(id.toLowerCase(), [item])
     }
+
+    const collections: CollectableGroup[] = []
+    for (const [id, collectionItems] of byCollection) {
+      const group = makeGroup({
+        key: `${bucket.meta.key}|collection:${id}`,
+        items: collectionItems,
+        collectionId: collectionItems[0]?.collectionId,
+        app: bucket.meta.app,
+        label: collectionLabel(collectionItems, collectionItems[0]?.collectionId ?? id),
+      })
+      collections.push(group)
+      groups.push(group)
+    }
+    collections.sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+    )
+
     const { faces, overflow } = facesFor(bucket.items)
-    groups.push({
-      key: bucket.axis.key,
-      ...(bucket.axis.collectionId ? { collectionId: bucket.axis.collectionId } : {}),
-      ...(bucket.axis.app ? { app: bucket.axis.app } : {}),
-      label: baseLabel(bucket.axis),
+    issuers.push({
+      key: bucket.meta.key,
+      label: bucket.meta.label,
+      ...(bucket.meta.app ? { app: bucket.meta.app } : {}),
+      collections,
+      loose,
       items: bucket.items,
       faces,
       overflow,
@@ -118,23 +179,14 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
     })
   }
 
-  // Two collections from one app would otherwise both read as the app name.
-  const labelCounts = new Map<string, number>()
-  for (const group of groups) {
-    labelCounts.set(group.label, (labelCounts.get(group.label) ?? 0) + 1)
-  }
-  for (const group of groups) {
-    if ((labelCounts.get(group.label) ?? 0) < 2) continue
-    const suffix = group.collectionId ?? group.app
-    if (suffix) group.label = `${group.label} · ${shortId(suffix)}`
-  }
-
-  groups.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
-  return { groups, singles, ungrouped }
+  issuers.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+  return { issuers, ungrouped, groups, singles: [] }
 }
 
-/** Card subtitle: "12 items", plus verified count once any are proven. */
-export function groupQuantityLabel(group: CollectableGroup): string {
+export function groupQuantityLabel(group: {
+  quantity: number
+  provenCount: number
+}): string {
   const quantity = `${group.quantity.toLocaleString()} ${group.quantity === 1 ? 'item' : 'items'}`
   if (group.provenCount === 0) return quantity
   return `${quantity} · ${group.provenCount.toLocaleString()} verified`

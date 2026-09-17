@@ -23,6 +23,9 @@ import {
   type VerificationProgress,
 } from '../wallet/verificationProgress'
 import { getGenesisFailure, getProvenVerdict } from '../wallet/provenCache'
+import { listRecentActivity, subscribeAppActivity } from '../wallet/appActivity'
+import { itemHistory } from '../wallet/itemHistory'
+import { AssetHistoryList } from './AssetHistoryList'
 import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
@@ -31,8 +34,6 @@ import {
   isOutpointSending, inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { subscribeAppActivity } from '../wallet/appActivity'
-
 import {
   clearNavChild,
   openBurnCollectable,
@@ -79,18 +80,42 @@ function MetaRow({
   )
 }
 
+function prettyTrait(trait: CollectableTrait): CollectableTrait {
+  const raw = trait.value.trim()
+  if (!raw.startsWith('[') && !raw.startsWith('{')) return trait
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (Array.isArray(parsed) && parsed[0] && typeof parsed[0] === 'object') {
+      const row = parsed[0] as { destination?: unknown; percentage?: unknown }
+      if (typeof row.destination === 'string' && typeof row.percentage === 'number') {
+        const pct = row.percentage <= 1 ? row.percentage * 100 : row.percentage
+        return {
+          name: trait.name,
+          value: `${pct % 1 === 0 ? pct : pct.toFixed(1)}% · ${row.destination}`,
+        }
+      }
+    }
+  } catch {
+    return trait
+  }
+  return trait
+}
+
 function TraitStrip({ title, traits }: { title: string; traits: CollectableTrait[] }) {
   if (traits.length === 0) return null
   return (
     <div className="collectable-traits">
       <span className="field-static-label">{title}</span>
       <MetricStrip.Root density="loose" className="collectable-trait-strip">
-        {traits.map((trait) => (
-          <MetricStrip.Chip key={`${trait.name}:${trait.value}`}>
-            <MetricStrip.Value title={trait.value}>{trait.value}</MetricStrip.Value>
-            <MetricStrip.Label>{trait.name}</MetricStrip.Label>
+        {traits.map((trait) => {
+          const shown = prettyTrait(trait)
+          return (
+          <MetricStrip.Chip key={`${shown.name}:${shown.value}`}>
+            <MetricStrip.Value title={shown.value}>{shown.value}</MetricStrip.Value>
+            <MetricStrip.Label>{shown.name}</MetricStrip.Label>
           </MetricStrip.Chip>
-        ))}
+          )
+        })}
       </MetricStrip.Root>
     </div>
   )
@@ -376,6 +401,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   )
 
   const authenticity = authenticityView(item, verification)
+  const history = itemHistory(item, listRecentActivity(200))
 
   return (
     <div
@@ -477,6 +503,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           onCopy={() => void copy('outpoint', item.outpoint)}
         />
       </dl>
+
+      {history.length > 0 ? <AssetHistoryList events={history} /> : null}
     </div>
   )
 }

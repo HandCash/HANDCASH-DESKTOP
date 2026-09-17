@@ -9,7 +9,7 @@
 
 ## North stars
 
-1. **UI = Aeon** — chart before JSX. Screen steps are XState events, not `useState` flags. Gate: `.cursor/rules/aeon-ui.mdc`. Ratchet: `src/machines/aeonAdherence.test.ts` (do not grow the allowlist).
+1. **UI = Aeon** — chart before JSX. Layers: domain → tagged path → machine → `stateToAttr` → `@aeon-ui/react` → `handcash.css`. Screen steps are XState events, not `useState` flags. Gate: `.cursor/rules/aeon-ui.mdc`. Catalog: `src/machines/machineManifest.ts`. Ratchet: `src/machines/aeonAdherence.test.ts` (do not grow the allowlist).
 2. **Protocol = BRC-100 / BSVA** — local HTTP bridge, origin permissions, mirrored migrate contract. See `.cursor/rules/brc100-bsva.mdc`.
 3. **Wallet layers** — do not conflate chain ingest with BRC-39 history. See `src/wallet/layers.ts`.
 
@@ -43,7 +43,8 @@
 | BRC / migrate rules | `.cursor/rules/brc100-bsva.mdc` |
 | Wallet layer SSoT | `src/wallet/layers.ts` |
 | P2P / remittance / messagebox | `docs/wallet-p2p-messagebox.md` |
-| Aeon engine (upstream) | `~/AeonUI/AGENTS.md` |
+| Aeon engine (vendored) | `vendor/aeon-ui-engine/CONSUMER.md` |
+| Aeon engine (upstream, if cloned) | `~/AeonUI/AGENTS.md` |
 | App overview | `README.md` |
 | Versioning / releases | `VERSIONING.md` |
 

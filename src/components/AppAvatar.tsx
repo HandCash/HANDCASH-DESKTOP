@@ -7,6 +7,8 @@ type Props = {
   origin: string
   name: string
   size?: 'sm' | 'md' | 'lg'
+  /** Fill a parent badge — no second ring, border, or skeleton disc. */
+  embedded?: boolean
   /** Fires once the icon (or initials fallback) is ready to show. */
   onReady?: () => void
 }
@@ -18,7 +20,13 @@ const RETRY_AFTER_MS = 8_000
 /** Tiny legacy favicons look visibly pixelated in app cards and badges. */
 const MIN_ICON_EDGE_PX = 24
 
-export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
+export function AppAvatar({
+  origin,
+  name,
+  size = 'md',
+  embedded = false,
+  onReady,
+}: Props) {
   const candidates = useMemo(() => appFaviconCandidates(origin), [origin])
   const [index, setIndex] = useState(0)
   const [attempt, setAttempt] = useState(0)
@@ -117,12 +125,12 @@ export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
 
   return (
     <div
-      className={`app-avatar app-avatar-${size}`}
+      className={`app-avatar app-avatar-${size}${embedded ? ' app-avatar-embedded' : ''}`}
       data-aeon-part="avatar"
       data-aeon-state={ready ? (failed ? 'fallback' : 'ready') : 'loading'}
       title={name}
     >
-      {!ready ? <SkeletonAvatar size={size} /> : null}
+      {!ready && !embedded ? <SkeletonAvatar size={size} /> : null}
       {imgSrc ? (
         <img
           key={`${imgSrc}-${attempt}-${index}`}
@@ -150,7 +158,9 @@ export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
       ) : null}
       {failed ? (
         <span className="app-avatar-fallback" aria-label={appInitials(origin)}>
-          <AppsIcon size={size === 'lg' ? 28 : size === 'sm' ? 18 : 22} />
+          <AppsIcon
+            size={embedded ? 8 : size === 'lg' ? 28 : size === 'sm' ? 18 : 22}
+          />
         </span>
       ) : null}
     </div>

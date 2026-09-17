@@ -32,6 +32,7 @@ import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { LoadingSpinner } from './LoadingSpinner'
 import {
   activityEntryKey,
+  activityEntryContinues,
   activityEntryTitle,
   activityTokenAmountDisplay,
   expireStaleInboundPending,
@@ -72,6 +73,7 @@ import {
   activityBatchName,
   composeActivityRecords,
   type ActivityBatch,
+  type ActivityRecord,
 } from '../wallet/activityRecords'
 import { subscribeCollectables } from '../wallet/collectables'
 import { isItemProven } from '../wallet/provenCache'
@@ -250,39 +252,204 @@ function formatWhen(at: number): string {
  * One glyph per action. The `Record` is exhaustive by type, so a new action mark
  * cannot ship reusing another action's icon by omission.
  */
-const ACTION_GLYPHS: Record<
+function actionGlyphs(icon: number): Record<
   ActivityActionMark,
   { label: string; glyph: ReactNode }
-> = {
-  failed: { label: 'Failed', glyph: <WarningIcon size={9} /> },
-  list: { label: 'Listing', glyph: <ListingIcon size={8} /> },
-  cancel: { label: 'Cancel listing', glyph: <CancelListingIcon size={9} /> },
-  sale: { label: 'Sold', glyph: <SoldIcon size={10} /> },
-  purchase: { label: 'Purchase', glyph: <PurchaseIcon size={9} /> },
-  burn: { label: 'Burn', glyph: <FireIcon size={8} /> },
-  mint: { label: 'Mint', glyph: <MintIcon size={8} /> },
-  send: { label: 'Send', glyph: <SendIcon size={6.75} /> },
-  receive: { label: 'Receive', glyph: <ReceiveIcon size={9} /> },
+> {
+  return {
+    failed: { label: 'Failed', glyph: <WarningIcon size={icon} /> },
+    list: { label: 'Listing', glyph: <ListingIcon size={icon - 1} /> },
+    cancel: { label: 'Cancel listing', glyph: <CancelListingIcon size={icon} /> },
+    sale: { label: 'Sold', glyph: <SoldIcon size={icon + 1} /> },
+    purchase: { label: 'Purchase', glyph: <PurchaseIcon size={icon} /> },
+    burn: { label: 'Burn', glyph: <FireIcon size={icon - 1} /> },
+    mint: { label: 'Mint', glyph: <MintIcon size={icon - 1} /> },
+    send: { label: 'Send', glyph: <SendIcon size={icon * 0.75} /> },
+    receive: { label: 'Receive', glyph: <ReceiveIcon size={icon} /> },
+  }
 }
 
-/** Subscript action mark shared by the Activity list and the detail hero. */
-export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
-  const mark = activityActionMark(entry)
-  if (!mark) return null
-  const { label, glyph } = ACTION_GLYPHS[mark]
+const OVERLAY_GLYPHS = actionGlyphs(9)
+const TIMELINE_GLYPHS = actionGlyphs(15)
+
+/** Subscript action mark shared by the Activity list, detail hero, and item history. */
+export function HistoryActionMarkBadge({
+  mark,
+  label,
+  inline = false,
+  size = 'overlay',
+}: {
+  mark: ActivityActionMark
+  label?: string
+  /** Timeline / legend — a mark of its own, not a subscript of another mark. */
+  inline?: boolean
+  size?: 'overlay' | 'timeline'
+}) {
+  const { label: fallback, glyph } = (size === 'timeline' ? TIMELINE_GLYPHS : OVERLAY_GLYPHS)[mark]
+  const text = label ?? fallback
   return (
     <span
-      className={`history-action-badge is-${mark}`}
-      aria-label={label}
-      title={label}
+      className={`history-action-badge is-${mark}${inline ? ' history-action-badge--inline' : ''}${size === 'timeline' ? ' history-action-badge--timeline' : ''}`}
+      aria-label={text}
+      title={text}
     >
       {glyph}
     </span>
   )
 }
 
+export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
+  const mark = activityActionMark(entry)
+  if (!mark) return null
+  return <HistoryActionMarkBadge mark={mark} label={OVERLAY_GLYPHS[mark].label} />
+}
+
+/** Subject thumb, batch stack, and the four corner marks — shared with the detail hero. */
+export function HistoryIconCluster({
+  entry,
+  assets = [],
+  batch = null,
+  verifying = false,
+}: {
+  entry: ActivityEntry
+  assets?: readonly ActivityEntry[]
+  batch?: ActivityBatch | null
+  verifying?: boolean
+}) {
+  const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
+  useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
+  const spent = entry.kind === 'spent'
+  const event = isEventActivity(entry)
+  const item = isItemActivity(entry)
+  const burned = isBurnActivity(entry)
+  const pending = isPendingActivity(entry)
+  const inventoryProven = Boolean(
+    entry.item?.outpoint && isItemProven(entry.item.outpoint),
+  )
+  const indexInstall =
+    event &&
+    pending &&
+    (entry.method === 'index-install' || entry.method === 'index-sync')
+  const showPending =
+    pending && (spent || !inventoryProven || indexInstall)
+  const listing = entry.method === 'market-list'
+  const cancelling = entry.method === 'market-cancel'
+  const shown = entry.item ? viewActivityItem(entry.item) : undefined
+  const showVerify = Boolean(
+    !spent && !event && !inventoryProven && (showPending || (item && verifying)),
+  )
+  const showSending = Boolean(
+    (spent && !event && showPending) ||
+      (burned && pending) ||
+      ((listing || cancelling) && pending) ||
+      indexInstall,
+  )
+  const sendingLabel = burned
+    ? 'Burning'
+    : listing
+      ? 'Listing'
+      : cancelling
+        ? 'Cancelling'
+        : 'Sending'
+
+  return (
+    <div className="history-icon-wrap">
+      {batch && assets.length > 0 ? (
+        <span className="history-icon-stack" aria-hidden>
+          {assets.slice(0, 2).map((asset, index) => {
+            const face = asset.item ? viewActivityItem(asset.item) : null
+            if (!face?.imageUrl) return null
+            return (
+              <span
+                key={activityEntryKey(asset)}
+                className="history-icon-stack-face"
+                style={{ zIndex: 1 + index }}
+              >
+                <DeferredImage
+                  className="history-item-thumb"
+                  src={face.imageUrl}
+                  alt=""
+                  width={28}
+                  height={28}
+                  skeletonWidth={28}
+                  skeletonHeight={28}
+                  skeletonRadius={6}
+                  retainDecoded
+                  decoding="async"
+                />
+              </span>
+            )
+          })}
+        </span>
+      ) : null}
+      <div className="history-icon">
+        {event && !(shown && shown.imageUrl) ? (
+          <span className="history-item-thumb-icon" aria-hidden>
+            {eventIcon(entry)}
+          </span>
+        ) : (item || listing || cancelling) && shown?.imageUrl ? (
+          <DeferredImage
+            className="history-item-thumb"
+            src={shown.imageUrl}
+            alt=""
+            width={28}
+            height={28}
+            skeletonWidth={28}
+            skeletonHeight={28}
+            skeletonRadius={6}
+            retainDecoded
+            decoding="async"
+            fallback={
+              <span className="history-item-thumb-icon">
+                <CollectablesIcon size={18} />
+              </span>
+            }
+          />
+        ) : item || listing || cancelling ? (
+          <span className="history-item-thumb-icon">
+            <CollectablesIcon size={18} />
+          </span>
+        ) : (
+          <img
+            className="history-asset-logo"
+            src={bsvLogoForClassic(classicBsvLogo)}
+            alt=""
+            width={32}
+            height={32}
+          />
+        )}
+      </div>
+      <CollectableVerifyMark
+        verifying={!showSending && showVerify}
+        outpoint={entry.item?.outpoint}
+      />
+      {showSending ? (
+        <span
+          className="history-pending-mark"
+          aria-live="polite"
+          aria-label={sendingLabel}
+          title={sendingLabel}
+        >
+          <LoadingSpinner size="sm" />
+        </span>
+      ) : null}
+      {batch ? (
+        <span
+          className="history-batch-count"
+          aria-label={`${batch.count} collectables`}
+        >
+          {batch.count}
+        </span>
+      ) : null}
+      <HistoryAppBadge entry={entry} />
+      <HistoryActionBadge entry={entry} />
+    </div>
+  )
+}
+
 function HistoryRow({
   entry,
+  rowKey,
   currency,
   usdPerBsv,
   showWhen,
@@ -293,6 +460,8 @@ function HistoryRow({
   batch = null,
 }: {
   entry: ActivityEntry
+  /** Feed identity that survives Sending… → Sent / Receiving… → Received. */
+  rowKey?: string
   currency: DisplayCurrency
   usdPerBsv: number | null
   showWhen: boolean
@@ -305,7 +474,6 @@ function HistoryRow({
   /** Set when the transaction moved several collectables at once. */
   batch?: ActivityBatch | null
 }) {
-  const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const spent = entry.kind === 'spent'
   const event = isEventActivity(entry)
   const item = isItemActivity(entry)
@@ -314,7 +482,6 @@ function HistoryRow({
   const pending = isPendingActivity(entry)
   const failed = isFailedActivity(entry)
   const failureReason = failed ? activityFailureLabel(entry) : null
-  useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
   const inventoryProven = Boolean(
     entry.item?.outpoint && isItemProven(entry.item.outpoint),
   )
@@ -400,18 +567,7 @@ function HistoryRow({
               ? shown.app
               : null
 
-  const entryKey = activityEntryKey(entry)
-  const showVerify = Boolean(
-    !spent && !event && !inventoryProven && (showPending || (item && verifying))
-  )
-  // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
-  // never resolve into an authenticity check for the tip it just gave away.
-  const showSending = Boolean(
-    (spent && !event && showPending) ||
-      (burned && pending) ||
-      ((listing || cancelling) && pending) ||
-      indexInstall,
-  )
+  const entryKey = rowKey ?? activityEntryKey(entry)
   const pendingLabel = burned
       ? 'Burning…'
       : listing
@@ -421,7 +577,6 @@ function HistoryRow({
           : spent
             ? 'Sending…'
             : 'Verifying…'
-  // Spinner chrome is uniform (accent) for send / burn / list — only the label differs.
 
   return (
     <li
@@ -440,87 +595,12 @@ function HistoryRow({
           openPaymentDetails(entry.id)
         }}
       >
-        <div className="history-icon-wrap">
-          {/* Depth behind the subject thumb: this row is a pile, not one tip. */}
-          {batch ? <span className="history-icon-stack" aria-hidden /> : null}
-          <div className="history-icon">
-            {event && !(shown && shown.imageUrl) ? (
-              <span className="history-item-thumb-icon" aria-hidden>
-                {eventIcon(entry)}
-              </span>
-            ) : (item || listing || cancelling) && shown?.imageUrl ? (
-              <DeferredImage
-                className="history-item-thumb"
-                src={shown.imageUrl}
-                alt=""
-                width={28}
-                height={28}
-                skeletonWidth={28}
-                skeletonHeight={28}
-                skeletonRadius={6}
-                retainDecoded
-                decoding="async"
-                fallback={
-                  <span className="history-item-thumb-icon">
-                    <CollectablesIcon size={18} />
-                  </span>
-                }
-              />
-            ) : item || listing || cancelling ? (
-              <span className="history-item-thumb-icon">
-                <CollectablesIcon size={18} />
-              </span>
-            ) : (
-              <img
-                className="history-asset-logo"
-                src={bsvLogoForClassic(classicBsvLogo)}
-                alt=""
-                width={32}
-                height={32}
-              />
-            )}
-          </div>
-          <CollectableVerifyMark
-            verifying={showVerify}
-            outpoint={entry.item?.outpoint}
-          />
-          {showSending ? (
-            <span
-              className="history-pending-mark"
-              aria-live="polite"
-              aria-label={
-                burned
-                  ? 'Burning'
-                  : listing
-                    ? 'Listing'
-                    : cancelling
-                      ? 'Cancelling'
-                      : 'Sending'
-              }
-              title={
-                burned
-                  ? 'Burning'
-                  : listing
-                    ? 'Listing'
-                    : cancelling
-                      ? 'Cancelling'
-                      : 'Sending'
-              }
-            >
-              <LoadingSpinner size="sm" />
-            </span>
-          ) : null}
-          {batch ? (
-            <span
-              className="history-batch-count"
-              aria-label={`${batch.count} collectables`}
-            >
-              {batch.count}
-            </span>
-          ) : null}
-          <HistoryAppBadge entry={entry} />
-          <HistoryActionBadge entry={entry} />
-        </div>
+        <HistoryIconCluster
+          entry={entry}
+          assets={assets}
+          batch={batch}
+          verifying={verifying}
+        />
         <div className="history-body history-progress-body">
           <strong className="history-title" title={batchNames ?? undefined}>
             {title}
@@ -571,7 +651,7 @@ export function HistoryAppBadge({ entry }: { entry: ActivityEntry }) {
       aria-label={`App: ${name}`}
       title={name}
     >
-      <AppAvatar origin={entry.origin} name={name} size="sm" />
+      <AppAvatar origin={entry.origin} name={name} size="sm" embedded />
     </span>
   )
 }
@@ -753,6 +833,26 @@ function useStickNewestToTop(
   }, [listRef, newest?.key, newest?.at, shownFingerprint])
 }
 
+function useContinuousRecordKeys(records: readonly ActivityRecord[]): string[] {
+  const prevRef = useRef<{ stable: string; entry: ActivityEntry }[]>([])
+  const taken = new Set<string>()
+  const next: { stable: string; entry: ActivityEntry }[] = []
+  const keys: string[] = []
+  for (const record of records) {
+    const found = prevRef.current.find(
+      (row) =>
+        !taken.has(row.stable) && activityEntryContinues(row.entry, record.subject),
+    )
+    let stable = found?.stable ?? record.key
+    if (taken.has(stable)) stable = record.key
+    taken.add(stable)
+    keys.push(stable)
+    next.push({ stable, entry: record.subject })
+  }
+  prevRef.current = next
+  return keys
+}
+
 export function ActivityFeed({
   limit = 40,
   title = 'Recent activity',
@@ -793,6 +893,7 @@ export function ActivityFeed({
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
   const records = useMemo(() => composeActivityRecords(filtered), [filtered])
+  const recordKeys = useContinuousRecordKeys(records)
   const shownCount = useChunkedCount(records.length, RENDER_CHUNK, scrolling)
   const windowed = useWindowedRange({
     total: shownCount,
@@ -804,8 +905,9 @@ export function ActivityFeed({
   const visibleRecords = records.slice(windowed.start, windowed.end)
   const newest = useMemo(() => {
     const top = records[0]
-    return top ? { key: top.key, at: top.subject.at } : undefined
-  }, [records])
+    const key = recordKeys[0]
+    return top && key ? { key, at: top.subject.at } : undefined
+  }, [records, recordKeys])
   const shownKeys = useMemo(
     () => records.flatMap((record) => record.entries.map(activityEntryKey)),
     [records],
@@ -966,7 +1068,8 @@ export function ActivityFeed({
         ) : null}
         {visibleRecords.map((record, index) => (
           <HistoryRow
-            key={record.key}
+            key={recordKeys[windowed.start + index] ?? record.key}
+            rowKey={recordKeys[windowed.start + index] ?? record.key}
             entry={record.subject}
             amountEntry={record.money}
             assets={record.assets}

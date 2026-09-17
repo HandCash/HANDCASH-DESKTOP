@@ -25,6 +25,18 @@ export type ActivityActionMark =
   | 'send'
   | 'receive'
 
+export const ACTION_MARK_LABEL: Record<ActivityActionMark, string> = {
+  failed: 'Failed',
+  list: 'Listing',
+  cancel: 'Cancel listing',
+  sale: 'Sold',
+  purchase: 'Purchase',
+  burn: 'Burn',
+  mint: 'Mint',
+  send: 'Send',
+  receive: 'Receive',
+}
+
 const MARKET_MARKS: Record<string, ActivityActionMark> = {
   'market-list': 'list',
   'market-cancel': 'cancel',
