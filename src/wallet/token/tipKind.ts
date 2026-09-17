@@ -165,3 +165,19 @@ export function chooseBsv21SendPath(
     }
   }
 }
+
+/** Path the compose panel asks the BSV-21 send chart to interpret for a held card. */
+export function heldFungibleSendPath(token: {
+  binarySupply?: 'locked' | 'open'
+  spendKind: 'plain' | 'cosigned' | 'mixed'
+  cosign?: Bsv21Cosign
+}): Bsv21SendPath {
+  if (!token.binarySupply) return { path: 'refuse', reason: 'unknown_lock' }
+  if (token.spendKind === 'mixed') return { path: 'refuse', reason: 'mixed_tips' }
+  if (token.spendKind === 'cosigned') {
+    return token.cosign
+      ? chooseBsv21SendPath({ kind: 'cosigned', cosign: token.cosign })
+      : { path: 'refuse', reason: 'cosigner_required' }
+  }
+  return chooseBsv21SendPath({ kind: 'plain' })
+}

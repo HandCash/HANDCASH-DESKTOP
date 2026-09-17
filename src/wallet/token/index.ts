@@ -32,6 +32,7 @@ export {
   tokenIdFromBsv21Tags,
   chooseBsv21BatchSendPath,
   chooseBsv21SendPath,
+  heldFungibleSendPath,
   classifyBsv21TipKind,
   normalizeCosignPubKey,
   normalizeIssuerPubKey,
@@ -116,7 +117,7 @@ export {
   tipFromBsv21Script,
 } from './sendPlan'
 
-export { bsv21SendMachine } from './sendMachine'
+export { bsv21SendMachine, interpretBsv21SendPath } from './sendMachine'
 
 // Burn
 export { burnBsv21Tokens, previewBsv21Burn } from './burn'

@@ -190,3 +190,30 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
 
   return { path: 'p2pkhSend' }
 }
+
+/**
+ * Path the compose panel asks the send chart to interpret for a held tip.
+ *
+ * Missing script is not "unknown" here — listOutputs often omits it, and send
+ * recovers the lock from BEEF. A stored covenant flag still refuses.
+ */
+export function heldCollectableSendPath(args: {
+  lockingScript?: string
+  covenantLocked?: boolean
+  proven: boolean
+}): SendPath {
+  if (args.covenantLocked) {
+    return chooseSendPath({
+      tipKind: {
+        kind: 'covenantLocked',
+        lockingScript: args.lockingScript ?? '',
+      },
+      provenTier: args.proven ? 'brc150' : 'unproven',
+    })
+  }
+  if (!args.lockingScript?.trim()) return { path: 'p2pkhSend' }
+  return chooseSendPath({
+    tipKind: classifyTipKind(args.lockingScript),
+    provenTier: args.proven ? 'brc150' : 'unproven',
+  })
+}

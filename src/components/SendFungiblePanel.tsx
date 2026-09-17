@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { sendMachine } from '../machines/sendMachine'
+import { assetSendMachine } from '../machines/assetSendMachine'
 import {
   formatFungibleAmount,
   getFungible,
@@ -37,6 +37,8 @@ import { CopyableError } from './CopyableError'
 import {
   parseFungibleSendAmount,
   sendFungible,
+  heldFungibleSendPath,
+  interpretBsv21SendPath,
 } from '../wallet/token'
 import type { Chain } from '../wallet/vault'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
@@ -83,7 +85,9 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [recipientProtocols, setRecipientProtocols] = useState<string[]>([])
   const [showMatches, setShowMatches] = useState(false)
-  const [sendSnapshot, sendUi] = useMachine(sendMachine)
+  const [sendSnapshot, sendUi] = useMachine(assetSendMachine, {
+    input: { needsQuantity: true },
+  })
   const editing = sendSnapshot.matches('editing')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
@@ -128,13 +132,29 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     : ''
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
-  const sendBlocked =
-    !token ||
-    !token.binarySupply ||
-    token.spendKind === 'cosigned' ||
-    token.spendKind === 'mixed'
+  const sendPath = token ? heldFungibleSendPath(token) : null
+  const pathVerdict = token
+    ? interpretBsv21SendPath(token.tokenId, sendPath!)
+    : { allowed: true, error: null as string | null }
+  const sendBlocked = !pathVerdict.allowed
+  const sendBlockMessage = !pathVerdict.error
+    ? null
+    : pathVerdict.error === 'cosigner_required'
+      ? 'This token requires a cosigner to send.'
+      : pathVerdict.error === 'mixed_tips'
+        ? 'This balance mixes plain and cosigned tips — send them separately.'
+        : pathVerdict.error === 'unknown_lock'
+          ? 'This tip is not a BSV-21 value lock.'
+          : pathVerdict.error
   const canReview =
     !sendBlocked && to.trim().length > 0 && amount.trim().length > 0
+
+  useEffect(() => {
+    sendUi({
+      type: 'CLASSIFY',
+      refuseReason: pathVerdict.allowed ? null : pathVerdict.error,
+    })
+  }, [pathVerdict.allowed, pathVerdict.error, sendUi])
 
   const friendProtocols =
     recipientIdentityKey != null
@@ -288,7 +308,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       sendUi({
         type: 'EDIT',
         to: address,
-        amount: amount.trim(),
+        quantity: amount.trim(),
         friendLabel,
         payeeIdentityKey: recipientIdentityKey,
       })
@@ -370,14 +390,8 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
             </div>
 
             <div className="send-side">
-              {sendBlocked ? (
-                <CopyableError role="status">
-                  {!token.binarySupply
-                    ? 'This tip is not a BSV-21 value lock.'
-                    : token.spendKind === 'cosigned'
-                      ? 'This token requires a cosigner to send.'
-                      : 'This balance mixes plain and cosigned tips — send them separately.'}
-                </CopyableError>
+              {sendBlockMessage ? (
+                <CopyableError role="status">{sendBlockMessage}</CopyableError>
               ) : null}
 
               {bsv21PeerWarning ? (

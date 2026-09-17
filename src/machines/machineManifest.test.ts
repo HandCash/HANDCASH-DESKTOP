@@ -19,7 +19,7 @@ describe('machine manifest', () => {
     }
 
     expect(missing).toEqual([])
-    expect(catalog.size).toBe(27)
+    expect(catalog.size).toBe(28)
   })
 
   it('gives every authoritative flow a stable id and states', () => {

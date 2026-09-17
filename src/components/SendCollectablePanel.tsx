@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { sendMachine } from '../machines/sendMachine'
+import { assetSendMachine } from '../machines/assetSendMachine'
 import {
   getCachedCollectable,
   getCollectable,
@@ -28,15 +28,8 @@ import {
   openCollectableDetails,
 } from '../wallet/navStore'
 import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
-import {
-  getVerificationProgress,
-  isOutpointVerifying,
-  subscribeVerificationProgress,
-} from '../wallet/verificationProgress'
-import {
-  collectableSendReadyMessage,
-  inspectCollectableSendReady,
-} from '../wallet/collectableSendReady'
+import { interpretCollectableSendPath } from '../wallet/collectableSendMachine'
+import { heldCollectableSendPath } from '../wallet/collectableTipKind'
 import {
   planCollectableSendRun,
   summarizeCollectableSendRun,
@@ -125,16 +118,14 @@ export function SendCollectablePanel({
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [showMatches, setShowMatches] = useState(false)
-  const [sendSnapshot, sendUi] = useMachine(sendMachine)
+  const [sendSnapshot, sendUi] = useMachine(assetSendMachine)
   const editing = sendSnapshot.matches('editing')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningTo, setScanningTo] = useState(false)
-  const [verification, setVerification] = useState(() => getVerificationProgress())
   const handleResolveRef = useRef(createHandleResolveDebouncer())
 
   useEffect(() => subscribeFriends(setFriends), [])
-  useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
 
   useEffect(() => {
@@ -183,25 +174,31 @@ export function SendCollectablePanel({
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
-  const sendReady = items.length === requestedOutpoints.length && items.length > 0
-    ? items
-        .map((selected) =>
-          inspectCollectableSendReady({
-            outpoint: selected.outpoint,
-            proven: selected.proven,
-            verifying: isOutpointVerifying(selected.outpoint, verification),
-          }),
-        )
-        .find((ready) => !ready.ready) ?? { ready: true as const }
-    : { ready: false as const, reason: 'unproven' as const }
-  const sendBlocked = sendPlan.kind === 'refuse' || !sendReady.ready
+  const pathVerdict = useMemo(() => {
+    if (items.length === 0 || items.length !== requestedOutpoints.length) {
+      return { allowed: true, error: null as string | null }
+    }
+    for (const selected of items) {
+      const verdict = interpretCollectableSendPath(
+        heldCollectableSendPath(selected),
+      )
+      if (!verdict.allowed) return verdict
+    }
+    return { allowed: true, error: null as string | null }
+  }, [items, requestedOutpoints.length])
+  const sendBlocked = sendPlan.kind === 'refuse' || !pathVerdict.allowed
   const sendBlockMessage =
     sendPlan.kind === 'refuse'
       ? 'Select at least one collectable'
-      : sendReady.ready
-        ? null
-        : collectableSendReadyMessage(sendReady.reason)
+      : pathVerdict.error
   const canReview = to.trim().length > 0 && !sendBlocked
+
+  useEffect(() => {
+    sendUi({
+      type: 'CLASSIFY',
+      refuseReason: pathVerdict.allowed ? null : pathVerdict.error,
+    })
+  }, [pathVerdict, sendUi])
 
   /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, $handle. */
   const applyRecipientInput = (value: string) => {
@@ -381,7 +378,6 @@ export function SendCollectablePanel({
       sendUi({
         type: 'EDIT',
         to: address,
-        amount: String(requestedOutpoints.length),
         friendLabel,
         payeeIdentityKey: recipientIdentityKey,
       })

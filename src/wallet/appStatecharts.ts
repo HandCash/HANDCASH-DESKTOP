@@ -184,6 +184,22 @@ const SEND = `stateDiagram-v2
   failure : Refused before send
 `
 
+const ASSET_SEND = `stateDiagram-v2
+  direction LR
+  [*] --> editing
+  editing --> confirming : REVIEW
+  editing --> editing : CLASSIFY refuse
+  confirming --> editing : BACK
+  confirming --> handoff : CONFIRM
+  confirming --> failure : CLASSIFY refuse / FAIL
+  handoff --> [*] : panel closes
+  failure --> editing : BACK / RESET
+  editing : Recipient and optional quantity
+  confirming : Confirm
+  handoff : Handed to wallet
+  failure : Domain send path refused
+`
+
 const RECEIVE = `stateDiagram-v2
   direction LR
   [*] --> ready
@@ -1095,6 +1111,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Send',
     caption: 'sendPayment — edit → confirm → hand off to the wallet',
     source: SEND,
+  },
+  {
+    id: 'assetSend',
+    label: 'Send item / token',
+    caption:
+      'assetSendMachine — edit → confirm without a sat amount; collectableSendMachine / bsv21SendMachine own refuse',
+    source: ASSET_SEND,
   },
   {
     id: 'receiveFlow',

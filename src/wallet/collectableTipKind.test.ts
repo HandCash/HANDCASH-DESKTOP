@@ -4,6 +4,7 @@ import {
   chooseSendPath,
   classifyTipKind,
   hasSpendableP2pkhBranch,
+  heldCollectableSendPath,
   isCovenantLockedScript,
   lockingScriptHexFromBeef,
   normalizeLockingScriptHex,
@@ -182,6 +183,20 @@ describe('chooseSendPath', () => {
     ).toMatchObject({
       path: 'refuse',
       reason: expect.stringMatching(/verified/i),
+    })
+  })
+})
+
+describe('heldCollectableSendPath', () => {
+  it('refuses a stored covenant flag without inventing a script', () => {
+    expect(
+      heldCollectableSendPath({ proven: true, covenantLocked: true }),
+    ).toMatchObject({ path: 'refuse' })
+  })
+
+  it('does not treat a missing listOutputs script as an unknown lock', () => {
+    expect(heldCollectableSendPath({ proven: false })).toEqual({
+      path: 'p2pkhSend',
     })
   })
 })

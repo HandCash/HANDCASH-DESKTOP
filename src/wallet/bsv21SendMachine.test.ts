@@ -1,6 +1,6 @@
 import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
-import { bsv21SendMachine } from './token'
+import { bsv21SendMachine, interpretBsv21SendPath } from './token'
 
 const TOKEN_ID = `${'ab'.repeat(32)}_0`
 
@@ -45,5 +45,17 @@ describe('bsv21SendMachine', () => {
     })
     expect(actor.getSnapshot().matches('failed')).toBe(true)
     expect(actor.getSnapshot().context.error).toBe('cosigner_required')
+  })
+
+  it('is the compose panel’s refuse authority', () => {
+    expect(
+      interpretBsv21SendPath(TOKEN_ID, { path: 'plain' }).allowed,
+    ).toBe(true)
+    expect(
+      interpretBsv21SendPath(TOKEN_ID, {
+        path: 'refuse',
+        reason: 'mixed_tips',
+      }).allowed,
+    ).toBe(false)
   })
 })

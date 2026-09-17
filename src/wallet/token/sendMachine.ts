@@ -5,7 +5,7 @@
  * plain P2PKH item-settle path or refuses. Cosigned tips have no silent
  * fallthrough — they refuse until a cosigner client is configured.
  */
-import { assign, setup, type SnapshotFrom } from 'xstate'
+import { assign, setup, createActor, type SnapshotFrom } from 'xstate'
 import type { Bsv21SendPath } from './tipKind'
 
 export type Bsv21SendPhase =
@@ -128,3 +128,19 @@ export const bsv21SendMachine = setup({
 })
 
 export type Bsv21SendSnapshot = SnapshotFrom<typeof bsv21SendMachine>
+
+/** The send chart's verdict for a path the chooser already named. */
+export function interpretBsv21SendPath(
+  tokenId: string,
+  sendPath: Bsv21SendPath,
+): {
+  allowed: boolean
+  error: string | null
+} {
+  const actor = createActor(bsv21SendMachine).start()
+  actor.send({ type: 'START', tokenId, sendPath })
+  const snap = actor.getSnapshot()
+  actor.stop()
+  if (snap.matches('plainSend')) return { allowed: true, error: null }
+  return { allowed: false, error: snap.context.error }
+}

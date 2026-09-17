@@ -31,10 +31,7 @@ const RAW_IMAGE_RENDERERS = new Set([
 ])
 
 /** Known pre-machine compose flows; this allowlist may only shrink. */
-const AD_HOC_FLOW_STATE = new Set([
-  'src/components/SendCollectablePanel.tsx',
-  'src/components/SendFungiblePanel.tsx',
-])
+const AD_HOC_FLOW_STATE = new Set<string>([])
 
 describe('Aeon architecture ratchet', () => {
   it('does not add a bare image renderer', () => {

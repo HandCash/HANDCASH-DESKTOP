@@ -1,6 +1,6 @@
 import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
-import { collectableSendMachine } from './collectableSendMachine'
+import { collectableSendMachine, interpretCollectableSendPath } from './collectableSendMachine'
 
 const TX = 'a'.repeat(64)
 
@@ -31,6 +31,18 @@ describe('collectableSendMachine', () => {
     expect(actor.getSnapshot().matches('failed')).toBe(true)
     expect(actor.getSnapshot().context.error).toMatch(/abandon/i)
     expect(actor.getSnapshot().matches('p2pkhSend')).toBe(false)
+  })
+
+  it('is the compose panel’s refuse authority', () => {
+    expect(
+      interpretCollectableSendPath({ path: 'p2pkhSend' }).allowed,
+    ).toBe(true)
+    expect(
+      interpretCollectableSendPath({
+        path: 'refuse',
+        reason: 'covenant',
+      }).allowed,
+    ).toBe(false)
   })
 
   it('has no hardened state', () => {

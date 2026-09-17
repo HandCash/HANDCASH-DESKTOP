@@ -23,6 +23,7 @@ export {
   chooseBsv21BatchSendPath,
   classifyBsv21TipKind,
   chooseBsv21SendPath,
+  heldFungibleSendPath,
   detectCosignFromLockingScript,
   normalizeCosignPubKey,
   parseBsv21Cosign,

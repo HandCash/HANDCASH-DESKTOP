@@ -4,6 +4,7 @@ import {
   chooseBsv21SendPath,
   classifyBsv21TipKind,
   detectCosignFromLockingScript,
+  heldFungibleSendPath,
   normalizeCosignPubKey,
   parseBsv21Cosign,
 } from './token'
@@ -104,5 +105,25 @@ describe('bsv21TipKind cosign', () => {
       endpoint: 'cosigner.example',
       feeAddress: '1Fee...',
     })
+  })
+})
+
+describe('heldFungibleSendPath', () => {
+  it('refuses mixed, cosigned, and non-binary cards before the send chart starts', () => {
+    expect(
+      heldFungibleSendPath({ spendKind: 'mixed', binarySupply: 'locked' }),
+    ).toEqual({ path: 'refuse', reason: 'mixed_tips' })
+    expect(
+      heldFungibleSendPath({ spendKind: 'cosigned', binarySupply: 'locked' }),
+    ).toEqual({ path: 'refuse', reason: 'cosigner_required' })
+    expect(
+      heldFungibleSendPath({ spendKind: 'plain' }),
+    ).toEqual({ path: 'refuse', reason: 'unknown_lock' })
+  })
+
+  it('allows a plain binary supply', () => {
+    expect(
+      heldFungibleSendPath({ spendKind: 'plain', binarySupply: 'locked' }),
+    ).toEqual({ path: 'plain' })
   })
 })

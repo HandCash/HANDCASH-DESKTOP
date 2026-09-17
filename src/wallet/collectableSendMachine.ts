@@ -7,7 +7,7 @@
  * UI confirm flow (edit → confirm) stays in the panel machine; this chart owns
  * the on-chain path only.
  */
-import { assign, setup, type SnapshotFrom } from 'xstate'
+import { assign, setup, createActor, type SnapshotFrom } from 'xstate'
 import type { SendPath } from './collectableTipKind'
 
 export type CollectableSendPhase =
@@ -124,3 +124,16 @@ export const collectableSendMachine = setup({
 })
 
 export type CollectableSendSnapshot = SnapshotFrom<typeof collectableSendMachine>
+
+/** The send chart's verdict for a path the chooser already named. */
+export function interpretCollectableSendPath(sendPath: SendPath): {
+  allowed: boolean
+  error: string | null
+} {
+  const actor = createActor(collectableSendMachine).start()
+  actor.send({ type: 'START', outpoint: 'compose', sendPath })
+  const snap = actor.getSnapshot()
+  actor.stop()
+  if (snap.matches('p2pkhSend')) return { allowed: true, error: null }
+  return { allowed: false, error: snap.context.error }
+}
