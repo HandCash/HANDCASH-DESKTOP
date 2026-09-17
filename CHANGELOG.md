@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.221] - 2026-09-17
+
+### Fixed
+
+- **Change consolidation no longer empties the displayed balance.** The
+  background pass seals the inputs it spent, then internalizes their single
+  replacement a few seconds later. A balance read in that gap returned a total
+  that was true of neither the wallet before nor after — on this device it
+  published 1,079,500 → 8,626 sats and stayed there until a manual Heal.
+  `selfFundsRewrite.ts` marks the window; the balance view answers
+  `unavailable` inside it, so the hero keeps the last owned figure and spend
+  gates fall back to proven confirmed sats. The settled figure is republished
+  when the window closes, including when the broadcast is rejected and the
+  inputs come back.
+
+### Changed
+
+- **A multi-item send is one Activity row while it is still sending.** Pending
+  legs of one transfer share a `sendGroupId`, so 25 collectables read as
+  "Sending… 25 Pixel Foxes" instead of 25 unrelated rows, and the txid takes
+  over the same grouping once it lands. A failed leg still stands alone — it is
+  cleared and retried on its own.
+
 ## [1.3.220] - 2026-09-17
 
 ### Added

@@ -10,6 +10,7 @@ import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { appendAppLog } from './appLog'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
+import { selfFundsRewriteActive } from './selfFundsRewrite'
 import {
   configurePostBeefServices,
   preferServiceOrder,
@@ -514,7 +515,10 @@ export type BalanceRead =
    * wallet — under heavy IndexedDB contention all four can time out at once.
    * Callers must never render or spend against this as zero.
    */
-  | { kind: 'unavailable'; reason: 'noWallet' | 'storageUnreadable' }
+  | {
+      kind: 'unavailable'
+      reason: 'noWallet' | 'storageUnreadable' | 'fundsMidRewrite'
+    }
 
 /**
  * Last balance actually read from storage, for the hero number only.
@@ -646,6 +650,11 @@ export async function fetchBalanceRead(
   const session = getActiveWallet()
   const w = wallet ?? session?.wallet
   if (!w) return { kind: 'unavailable', reason: 'noWallet' }
+  // A self-consolidation has retired its inputs and not yet internalized their
+  // replacement. Reading now is a torn read, not an empty wallet.
+  if (selfFundsRewriteActive()) {
+    return { kind: 'unavailable', reason: 'fundsMidRewrite' }
+  }
   let spendable = 0
   let haveSpendable = false
   const asToolbox = w as Wallet

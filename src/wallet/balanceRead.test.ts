@@ -42,6 +42,64 @@ describe('fetchBalanceRead', () => {
     expect(read).toEqual({ kind: 'unavailable', reason: 'storageUnreadable' })
   })
 
+  /**
+   * The consolidation bug: inputs sealed, replacement output not internalized
+   * yet. Storage answers successfully with a total that is true of neither the
+   * wallet before nor the wallet after, and publishing it emptied the hero.
+   */
+  it('refuses to publish a torn read while own funds are mid-rewrite', async () => {
+    const { fetchBalanceRead, fetchBalanceSats } = await import('./session')
+    const { beginSelfFundsRewrite } = await import('./selfFundsRewrite')
+
+    await fetchBalanceRead(readableWallet(1_079_500) as never)
+
+    const endRewrite = beginSelfFundsRewrite()
+    // Storage would happily report the sealed-but-not-replaced total.
+    const torn = await fetchBalanceRead(readableWallet(8_626) as never)
+    expect(torn).toEqual({ kind: 'unavailable', reason: 'fundsMidRewrite' })
+    // The hero keeps the last figure it actually owned.
+    await expect(fetchBalanceSats(readableWallet(8_626) as never)).resolves.toBe(
+      1_079_500,
+    )
+
+    endRewrite()
+    await expect(
+      fetchBalanceRead(readableWallet(1_888_000) as never),
+    ).resolves.toEqual({ kind: 'ok', sats: 1_888_000 })
+  })
+
+  it('closes the rewrite window once even if the closer is called twice', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const { beginSelfFundsRewrite } = await import('./selfFundsRewrite')
+
+    const endRewrite = beginSelfFundsRewrite()
+    endRewrite()
+    endRewrite()
+
+    await expect(fetchBalanceRead(readableWallet(42) as never)).resolves.toEqual({
+      kind: 'ok',
+      sats: 42,
+    })
+  })
+
+  it('stays closed until every overlapping rewrite ends', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const { beginSelfFundsRewrite } = await import('./selfFundsRewrite')
+
+    const first = beginSelfFundsRewrite()
+    const second = beginSelfFundsRewrite()
+    first()
+    expect(await fetchBalanceRead(readableWallet(42) as never)).toEqual({
+      kind: 'unavailable',
+      reason: 'fundsMidRewrite',
+    })
+    second()
+    expect(await fetchBalanceRead(readableWallet(42) as never)).toEqual({
+      kind: 'ok',
+      sats: 42,
+    })
+  })
+
   it('reports a real zero as ok, so an empty wallet still reads as empty', async () => {
     const { fetchBalanceRead } = await import('./session')
     const read = await fetchBalanceRead(readableWallet(0) as never)

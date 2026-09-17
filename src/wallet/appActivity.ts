@@ -81,6 +81,15 @@ export type ActivityEntry = {
   status?: ActivityStatus;
   /** Links an in-flight outbound send until a txid lands. */
   pendingId?: string;
+  /**
+   * Links the legs of one multi-item send before any of them has a txid.
+   *
+   * A batch transfer writes one pending row per collectable, and until the
+   * transaction is signed there is no txid to fold them by — so 25 foxes read
+   * as 25 unrelated Sending… rows. This is that transaction's identity while it
+   * is in flight; the txid takes over once it lands.
+   */
+  sendGroupId?: string;
   /** Why a `failed` row failed — shown in Activity so a dead send is never silent. */
   failureReason?: string;
   /** Present only when the original action can be reconstructed safely. */
@@ -577,6 +586,7 @@ export function upsertAppActivity(args: {
   item?: ActivityItem;
   status?: ActivityStatus;
   pendingId?: string;
+  sendGroupId?: string;
   failureReason?: string;
   retry?: ActivityRetry;
   burn?: ActivityBurn;
@@ -596,6 +606,7 @@ export function upsertAppActivity(args: {
   const origin = normalizeAppHost(args.origin);
   const txid = args.txid?.trim() || undefined;
   const pendingId = args.pendingId?.trim() || undefined;
+  const sendGroupId = args.sendGroupId?.trim() || undefined;
   const entries = [...readAll()];
   const idx = findActivityMatchIndex(entries, {
     kind: args.kind,
@@ -651,6 +662,9 @@ export function upsertAppActivity(args: {
       ...(nextPendingId
         ? { pendingId: nextPendingId }
         : { pendingId: undefined }),
+      ...(sendGroupId || prev.sendGroupId
+        ? { sendGroupId: sendGroupId || prev.sendGroupId }
+        : {}),
       ...(nextFailureReason
         ? { failureReason: nextFailureReason }
         : { failureReason: undefined }),
@@ -678,6 +692,7 @@ export function upsertAppActivity(args: {
         ? { failureReason: normalizeFailureReason(args.failureReason) }
         : {}),
       ...((pending || failed) && pendingId ? { pendingId } : {}),
+      ...(sendGroupId ? { sendGroupId } : {}),
       ...(normalizeActivityRetry(args.retry)
         ? { retry: normalizeActivityRetry(args.retry) }
         : {}),
@@ -831,9 +846,12 @@ export function noteOutboundSendPending(args: {
   friendLabel?: string | null;
   recipientIdentityKey?: string | null;
   item?: ActivityItem;
+  /** Shared by every leg of one multi-item transfer, so Activity folds it now. */
+  sendGroupId?: string;
 }): void {
   const pendingId = args.pendingId.trim();
   if (!pendingId) return;
+  const sendGroupId = args.sendGroupId?.trim() || undefined;
   const recipient = formatActivityRecipientDisplay({
     friendLabel: args.friendLabel,
     to: args.to,
@@ -855,6 +873,7 @@ export function noteOutboundSendPending(args: {
         : `Sending ${name} to ${recipient}`,
       status: "pending",
       pendingId,
+      ...(sendGroupId ? { sendGroupId } : {}),
       item: args.item,
       retry: isToken
         ? {

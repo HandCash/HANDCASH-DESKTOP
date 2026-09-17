@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MIN_FRAGMENTS_TO_CONSOLIDATE } from './changeConsolidationPath'
+import {
+  __resetSelfFundsRewriteForTests,
+  selfFundsRewriteActive,
+} from './selfFundsRewrite'
 
 // --- mocked wallet surface -------------------------------------------------
 const createAction = vi.fn(async (_args: unknown) => ({
@@ -7,7 +11,10 @@ const createAction = vi.fn(async (_args: unknown) => ({
   tx: [1, 2, 3, 4],
   sendWithResults: [{ txid: 'c'.repeat(64), status: 'unproven' }],
 }))
-const internalizeAction = vi.fn(async (_args: unknown) => ({ accepted: true }))
+const internalizeAction = vi.fn(async (_args: unknown) => {
+  internalizeWindowWasOpen = selfFundsRewriteActive()
+  return { accepted: true }
+})
 const getPublicKey = vi.fn(async () => ({
   publicKey: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
 }))
@@ -21,7 +28,16 @@ const runAsStorageProvider = vi.fn(async (fn: (sp: unknown) => Promise<unknown>)
 
 const shouldYield = vi.fn(() => false)
 const recomposeActive = vi.fn(() => false)
-const sealSpentInputsOfSignedTx = vi.fn(async (..._a: unknown[]) => 1)
+const invalidateBalanceReads = vi.fn(() => undefined)
+const bumpBalanceAfterHeal = vi.fn(() => undefined)
+
+// Whether the balance view was already suppressed at each write of the pass.
+let sealWindowWasOpen = false
+let internalizeWindowWasOpen = false
+const sealSpentInputsOfSignedTx = vi.fn(async (..._a: unknown[]) => {
+  sealWindowWasOpen = selfFundsRewriteActive()
+  return 1
+})
 const releaseSealedInputsOfUnsentTx = vi.fn(async (..._a: unknown[]) => 1)
 const submitAtomicBeefToMiners = vi.fn(async (..._a: unknown[]) => ({
   confirmed: true,
@@ -40,6 +56,9 @@ vi.mock('./session', () => ({
       storage: { runAsStorageProvider },
     },
   }),
+  // The pass republishes the balance when the funds-rewrite window closes.
+  invalidateBalanceReads: () => invalidateBalanceReads(),
+  bumpBalanceAfterHeal: () => bumpBalanceAfterHeal(),
 }))
 
 vi.mock('./spendGuard', () => ({
@@ -107,6 +126,10 @@ describe('maybeConsolidateChange', () => {
     recomposeActive.mockReturnValue(false)
     findOutputs.mockResolvedValue([])
     runAsStorageProvider.mockImplementation(async (fn) => fn({ findOutputs }))
+    submitAtomicBeefToMiners.mockResolvedValue({ confirmed: true, submitted: true })
+    sealWindowWasOpen = false
+    internalizeWindowWasOpen = false
+    __resetSelfFundsRewriteForTests()
     const mod = await import('./consolidateChange')
     mod.__resetConsolidationCooldownForTests()
   })
@@ -132,6 +155,30 @@ describe('maybeConsolidateChange', () => {
     expect(sealSpentInputsOfSignedTx).toHaveBeenCalledTimes(1)
     expect(submitAtomicBeefToMiners).toHaveBeenCalledTimes(1)
     expect(internalizeAction).toHaveBeenCalledTimes(1)
+    // The seal → internalize gap is not observable, and the settled figure is
+    // republished afterwards. Leaving that window open showed an empty wallet.
+    expect(sealWindowWasOpen).toBe(true)
+    expect(internalizeWindowWasOpen).toBe(true)
+    expect(selfFundsRewriteActive()).toBe(false)
+    expect(bumpBalanceAfterHeal).toHaveBeenCalled()
+  })
+
+  it('closes the funds-rewrite window when the broadcast is rejected', async () => {
+    findOutputs.mockImplementation(async (args: unknown) =>
+      offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
+    )
+    submitAtomicBeefToMiners.mockResolvedValue({
+      confirmed: false,
+      submitted: false,
+    })
+    const { maybeConsolidateChange } = await import('./consolidateChange')
+
+    const outcome = await maybeConsolidateChange()
+    expect(outcome).toEqual({ ran: false, reason: 'error' })
+    // Inputs came back and the balance is readable again — not stuck hidden.
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledTimes(1)
+    expect(selfFundsRewriteActive()).toBe(false)
+    expect(bumpBalanceAfterHeal).toHaveBeenCalled()
   })
 
   it('skips a pool that is not fragmented enough — no transaction', async () => {

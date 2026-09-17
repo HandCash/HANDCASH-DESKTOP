@@ -261,6 +261,98 @@ describe('composeActivityRecords', () => {
     expect(records).toHaveLength(2)
   })
 
+  it('folds the pending legs of one batch send before any txid exists', () => {
+    const leg = (name: string, vout: number) =>
+      entry({
+        method: 'send-collectable',
+        kind: 'spent',
+        sats: 1,
+        status: 'pending',
+        pendingId: `pending-${vout}`,
+        sendGroupId: 'batch-abc',
+        item: {
+          name,
+          origin: `${OTHER_TXID}_${vout}`,
+          outpoint: `${OTHER_TXID}.${vout}`,
+        },
+      })
+    const records = composeActivityRecords([
+      leg('Pixel Foxes #1', 0),
+      leg('Pixel Foxes #2', 1),
+      leg('Pixel Foxes #3', 2),
+    ])
+
+    expect(records).toHaveLength(1)
+    expect(records[0]!.batch).toEqual({ count: 3, label: 'Pixel Foxes' })
+    expect(activityBatchName(records[0]!.batch!)).toBe('3 Pixel Foxes')
+    // Nothing is dropped: every leg stays individually addressable.
+    expect(records[0]!.entries).toHaveLength(3)
+  })
+
+  it('keeps pending sends of different batches apart', () => {
+    const leg = (group: string, vout: number) =>
+      entry({
+        method: 'send-collectable',
+        kind: 'spent',
+        sats: 1,
+        status: 'pending',
+        sendGroupId: group,
+        item: {
+          name: 'Fox',
+          origin: `${OTHER_TXID}_${vout}`,
+          outpoint: `${OTHER_TXID}.${vout}`,
+        },
+      })
+    const records = composeActivityRecords([
+      leg('batch-one', 0),
+      leg('batch-two', 1),
+    ])
+    expect(records).toHaveLength(2)
+  })
+
+  it('never folds a failed leg into its batch — it is cleared on its own', () => {
+    const records = composeActivityRecords([
+      entry({
+        method: 'send-collectable',
+        kind: 'spent',
+        sats: 1,
+        status: 'pending',
+        sendGroupId: 'batch-abc',
+        item: { name: 'Fox', origin: `${OTHER_TXID}_0`, outpoint: `${OTHER_TXID}.0` },
+      }),
+      entry({
+        method: 'send-collectable',
+        kind: 'spent',
+        sats: 1,
+        status: 'failed',
+        failureReason: 'rejected',
+        sendGroupId: 'batch-abc',
+        item: { name: 'Fox', origin: `${OTHER_TXID}_1`, outpoint: `${OTHER_TXID}.1` },
+      }),
+    ])
+    expect(records).toHaveLength(2)
+  })
+
+  it('hands a settled batch over to the txid fold without splitting it', () => {
+    const leg = (vout: number) =>
+      entry({
+        method: 'send-collectable',
+        kind: 'spent',
+        sats: 1,
+        txid: TXID,
+        // The group id survives the settle; the txid is what folds it now.
+        sendGroupId: 'batch-abc',
+        item: {
+          name: 'Pixel Foxes #9',
+          origin: `${OTHER_TXID}_${vout}`,
+          outpoint: `${TXID}.${vout}`,
+        },
+      })
+    const records = composeActivityRecords([leg(0), leg(1)])
+    expect(records).toHaveLength(1)
+    expect(records[0]!.batch?.count).toBe(2)
+  })
+
   it('preserves feed order by first appearance', () => {
     const records = composeActivityRecords([
       entry({ method: 'market-purchase', kind: 'spent', sats: 9_000, txid: TXID, at: 5 }),

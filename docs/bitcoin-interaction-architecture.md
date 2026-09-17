@@ -73,6 +73,16 @@ Heal rules:
   re-listed, and pending item Activity is reconciled from the same evidence.
 - The checkpoint is a batching optimization for history txids, never evidence.
 
+Reads must also refuse to publish a **torn** total. A self-consolidation seals
+the inputs it spent, then internalizes their single replacement seconds later;
+in between, local state honestly holds almost nothing. `selfFundsRewrite.ts`
+marks that window and `fetchBalanceRead` answers `unavailable`
+(`fundsMidRewrite`) inside it — the same answer busy storage gives, so the hero
+keeps the last owned figure and spend gates fall back to proven confirmed sats.
+The pass republishes the settled balance when the window closes, on the reject
+path as well as on success. A read failure is never a zero; a mid-rewrite read
+is never a balance.
+
 ## Confirmation model
 
 - Soft locks + ARC status (`dualLayerSend`, `utxoLockManager`) are rumours.

@@ -102,6 +102,11 @@ export type ActivityFold =
   | { kind: 'transaction'; key: string }
   /** Legs of one transaction that move value the same way. */
   | { kind: 'direction'; key: string }
+  /**
+   * Legs of one in-flight multi-item send, before a txid exists to fold by.
+   * Sending 25 foxes is one thing happening, not 25 things.
+   */
+  | { kind: 'sendGroup'; key: string }
 
 function txidOf(entry: ActivityEntry): string | null {
   const txid = (entry.txid ?? '').trim().toLowerCase()
@@ -130,10 +135,16 @@ export function chooseActivityFold(
   entry: ActivityEntry,
   marketKeys: ReadonlySet<string>,
 ): ActivityFold {
-  const txid = txidOf(entry)
-  if (!txid) return { kind: 'solo' }
   // A failed leg must stay its own row: it is cleared and retried on its own.
   if (isFailedActivity(entry)) return { kind: 'solo' }
+  const txid = txidOf(entry)
+  if (!txid) {
+    // No txid yet — the send group is the transaction's identity in flight.
+    const group = (entry.sendGroupId ?? '').trim()
+    return group
+      ? { kind: 'sendGroup', key: `${entry.origin}|send-group:${group}` }
+      : { kind: 'solo' }
+  }
   const key = `${entry.origin}|${txid}`
   if (marketKeys.has(key)) return { kind: 'transaction', key }
   return { kind: 'direction', key: `${key}|${directionOf(entry)}` }

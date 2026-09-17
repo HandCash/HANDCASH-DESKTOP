@@ -4338,6 +4338,11 @@ export async function sendCollectables(
   setCollectableVerifyWalkDeferred(true)
   const spendPriority = leaseSpendPriority('send-collectables')
   const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
+  // One id for every leg of this transaction, so Activity folds the pending rows
+  // into one "Sending 25 Pixel Foxes" now rather than after the txid lands.
+  const sendGroupId = `batch-${Date.now().toString(36)}-${Math.random()
+    .toString(16)
+    .slice(2, 8)}`
   const pending = earlyItems.map((item) => {
     const send = beginPendingSend({
       to: args.toAddress,
@@ -4351,6 +4356,7 @@ export async function sendCollectables(
       friendLabel: args.friendLabel ?? null,
       recipientIdentityKey: args.recipientIdentityKey ?? null,
       item,
+      sendGroupId,
     })
     return send
   })

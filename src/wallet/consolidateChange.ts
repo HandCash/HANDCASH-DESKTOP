@@ -22,7 +22,13 @@
  *   chain ingest.
  */
 import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
-import { getActiveWallet, type ActiveWallet } from './session'
+import {
+  bumpBalanceAfterHeal,
+  getActiveWallet,
+  invalidateBalanceReads,
+  type ActiveWallet,
+} from './session'
+import { beginSelfFundsRewrite } from './selfFundsRewrite'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
 import {
@@ -235,60 +241,93 @@ async function runSelfConsolidation(): Promise<string> {
     }
 
     const txid = realTxid
-    // Retire the coins this transaction consumed before anything else can pick
-    // them — same protection the send paths use after createAction.
-    await sealSpentInputsOfSignedTx(txid, atomicBeef)
+    // From here until the replacement output is internalized, this wallet's own
+    // coins are sealed with nothing standing in for them. Mark the window so a
+    // balance read cannot publish that intermediate state as an empty wallet.
+    const endRewrite = beginSelfFundsRewrite()
     try {
-      const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-      if (!atomicBeef?.length) {
-        throw new Error('Consolidate signed but no transaction body was returned')
-      }
-      const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
-      // Arcade 202 is not SPV. Internalize only when the BEEF itself verifies
-      // (unconfirmed parent bodies count). Service-only / incomplete ancestry
-      // must not mint phantom change.
-      if (!miner.confirmed) {
-        throw new Error(
-          miner.summary?.detail
-            ? `Consolidate broadcast failed (${miner.summary.detail})`
-            : 'Consolidate broadcast failed',
-        )
-      }
-    } catch (broadcastErr) {
-      // Hard reject / ghost conflict must not leave consolidate inputs retired.
-      const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')
-      await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
-      throw broadcastErr
+      return await internalizeConsolidated({
+        active,
+        txid,
+        atomicBeef,
+        derivationPrefix,
+        derivationSuffix,
+      })
+    } finally {
+      endRewrite()
+      // The window suppressed reads; publish the settled figure now that the
+      // consolidated output exists (or the inputs are back).
+      invalidateBalanceReads(active.wallet)
+      bumpBalanceAfterHeal()
     }
+  })
+}
 
-    // Internalize the single output back into managed change, silently. Direct
-    // internalizeAction (not internalizeBrc29Payment) so there is no inbound
-    // "Payment received" Activity row for money that never left the wallet.
-    if (atomicBeef?.length) {
-      await withVisibleOnChainBeef(() =>
-        active.wallet.internalizeAction({
-          tx: atomicBeef,
-          description: 'Consolidated change',
-          labels: ['handcash-consolidate'],
-          outputs: [
-            {
-              outputIndex: 0,
-              protocol: 'wallet payment',
-              paymentRemittance: {
-                derivationPrefix,
-                derivationSuffix,
-                senderIdentityKey: active.identityKey,
-              },
-            },
-          ],
-          seekPermission: false,
-        }),
+/**
+ * Broadcast the signed consolidation, then take its single output back as
+ * managed change. Split out so the funds-rewrite window has one exit.
+ */
+async function internalizeConsolidated(args: {
+  active: ActiveWallet
+  txid: string
+  atomicBeef: number[] | undefined
+  derivationPrefix: string
+  derivationSuffix: string
+}): Promise<string> {
+  const { active, txid, atomicBeef, derivationPrefix, derivationSuffix } = args
+  // Retire the coins this transaction consumed before anything else can pick
+  // them — same protection the send paths use after createAction.
+  await sealSpentInputsOfSignedTx(txid, atomicBeef)
+  try {
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    if (!atomicBeef?.length) {
+      throw new Error('Consolidate signed but no transaction body was returned')
+    }
+    const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
+    // Arcade 202 is not SPV. Internalize only when the BEEF itself verifies
+    // (unconfirmed parent bodies count). Service-only / incomplete ancestry
+    // must not mint phantom change.
+    if (!miner.confirmed) {
+      throw new Error(
+        miner.summary?.detail
+          ? `Consolidate broadcast failed (${miner.summary.detail})`
+          : 'Consolidate broadcast failed',
       )
     }
+  } catch (broadcastErr) {
+    // Hard reject / ghost conflict must not leave consolidate inputs retired.
+    const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')
+    await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
+    throw broadcastErr
+  }
 
-    scheduleHistoryBackupPush('send')
-    return txid
-  })
+  // Internalize the single output back into managed change, silently. Direct
+  // internalizeAction (not internalizeBrc29Payment) so there is no inbound
+  // "Payment received" Activity row for money that never left the wallet.
+  if (atomicBeef?.length) {
+    await withVisibleOnChainBeef(() =>
+      active.wallet.internalizeAction({
+        tx: atomicBeef,
+        description: 'Consolidated change',
+        labels: ['handcash-consolidate'],
+        outputs: [
+          {
+            outputIndex: 0,
+            protocol: 'wallet payment',
+            paymentRemittance: {
+              derivationPrefix,
+              derivationSuffix,
+              senderIdentityKey: active.identityKey,
+            },
+          },
+        ],
+        seekPermission: false,
+      }),
+    )
+  }
+
+  scheduleHistoryBackupPush('send')
+  return txid
 }
 
 /**
