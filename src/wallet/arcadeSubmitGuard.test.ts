@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetArcadeSubmitGuardForTests,
+  ARCADE_PIN_ABSENCE_GRACE_MS,
   postBeefResultsArcadeAccepted,
   postBeefResultsArcadeHardReject,
   postBeefResultsHitArcade,
   rememberArcadeSubmitContact,
+  signedTxMayBeRemoved,
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
 } from './arcadeSubmitGuard'
@@ -104,6 +106,41 @@ describe('arcadeSubmitGuard', () => {
     rememberArcadeSubmitContact(TX)
     await expect(
       signedTxSpendConflictIsProven({ txid: TX, chain: 'main' }),
+    ).resolves.toBe(false)
+  })
+
+  it('keeps a fresh pin while the chain has not seen the tx yet', async () => {
+    rememberArcadeSubmitContact(TX)
+    // Absent + just submitted is ordinary propagation lag.
+    await expect(
+      signedTxMayBeRemoved({ txid: TX, chain: 'main' }),
+    ).resolves.toBe(false)
+  })
+
+  it('lets proven absence override an old pin', async () => {
+    rememberArcadeSubmitContact(TX)
+    // Arcade holds transactions it rejected, so the pin alone would nurse a dead
+    // chain forever — its inputs resealed every pass, its row unclearable.
+    await expect(
+      signedTxMayBeRemoved({
+        txid: TX,
+        chain: 'main',
+        now: Date.now() + ARCADE_PIN_ABSENCE_GRACE_MS + 1,
+      }),
+    ).resolves.toBe(true)
+  })
+
+  it('keeps an old pin when no provider can speak for the tx', async () => {
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValueOnce(null)
+    vi.mocked(txExistsOnChain).mockResolvedValueOnce(null)
+    rememberArcadeSubmitContact(TX)
+    await expect(
+      signedTxMayBeRemoved({
+        txid: TX,
+        chain: 'main',
+        now: Date.now() + ARCADE_PIN_ABSENCE_GRACE_MS + 1,
+      }),
     ).resolves.toBe(false)
   })
 

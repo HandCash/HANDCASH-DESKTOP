@@ -69,6 +69,7 @@ import {
   type MarketSettlementWire,
 } from './messageTransport'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { createDurableTtlTxidMap } from './durableTtlTxidMap'
 import {
   describeInsufficientFunds,
   isInsufficientFundsError,
@@ -1389,6 +1390,26 @@ async function signSellerInputs(args: {
 const receiptBeefRetryAt = new Map<string, number>()
 const RECEIPT_BEEF_RETRY_MS = 5 * 60_000
 
+/**
+ * First time each settlement's BEEF could not be found, kept across restarts so
+ * the wait is bounded by wall-clock rather than by session length.
+ */
+const receiptBeefMisses = createDurableTtlTxidMap({
+  key: 'handcash.market.receiptBeefMiss.v1',
+  max: 200,
+  ttlMs: 24 * 60 * 60_000,
+})
+
+/**
+ * How long a compact receipt may wait for a transaction no provider has.
+ *
+ * "Not visible yet" is normally minutes of indexer lag. It is also what a buyer's
+ * settlement looks like when its ancestry was rejected and can never confirm —
+ * and that receipt was retried on every inbox poll forever (lab hc-ad7afb: two
+ * sales retrying every ~20s for hours). Past this the message is consumed.
+ */
+const RECEIPT_BEEF_GIVE_UP_MS = 60 * 60_000
+
 export async function handleInboundMarketSettlementWire(args: {
   wire: MarketSettlementWire
   senderIdentityKey: string
@@ -1440,10 +1461,21 @@ export async function handleInboundMarketSettlementWire(args: {
       marketReceiptRefusalIsTerminal(reason) ? discard(reason) : refuse(reason)
     let atomic = decodeBeefB64(args.wire.atomicBeefB64)
     if (!atomic) {
-      const retryAt = receiptBeefRetryAt.get(settlementTxid) ?? 0
-      if (Date.now() < retryAt) {
-        return refuse('settlement beef not available yet — backing off')
+      const firstMissAt = receiptBeefMisses.rememberedAt(settlementTxid)
+      if (
+        firstMissAt != null &&
+        Date.now() - firstMissAt >= RECEIPT_BEEF_GIVE_UP_MS
+      ) {
+        receiptBeefMisses.forget(settlementTxid)
+        receiptBeefRetryAt.delete(settlementTxid)
+        return discard(
+          'settlement beef never became available — no provider has the buyer’s transaction',
+        )
       }
+      const retryAt = receiptBeefRetryAt.get(settlementTxid) ?? 0
+      // Waiting out the backoff is the expected state, so it is silent. Logging
+      // it turned one unfindable settlement into a line every inbox poll.
+      if (Date.now() < retryAt) return false
       try {
         const fetched = await getBeefForTxidCached(active, args.wire.txid, {
           needProof: false,
@@ -1451,6 +1483,7 @@ export async function handleInboundMarketSettlementWire(args: {
         })
         atomic = Array.from(fetched.toBinaryAtomic(args.wire.txid))
         receiptBeefRetryAt.delete(settlementTxid)
+        receiptBeefMisses.forget(settlementTxid)
         console.info(
           '[market-sale] hydrated compact receipt BEEF',
           args.wire.txid.slice(0, 12),
@@ -1461,6 +1494,7 @@ export async function handleInboundMarketSettlementWire(args: {
         // but not on every poll and navigation, which is a multi-provider
         // lookup per attempt for a transaction nobody can see yet.
         receiptBeefRetryAt.set(settlementTxid, Date.now() + RECEIPT_BEEF_RETRY_MS)
+        if (firstMissAt == null) receiptBeefMisses.remember(settlementTxid)
         return refuse('settlement beef not available yet — will retry')
       }
     }

@@ -91,6 +91,40 @@ export type ActivityEntry = {
   archivedAt?: number
 }
 
+/**
+ * Everything about a row that changes what the UI decides, as one string.
+ *
+ * `getActivityById` rebuilds the row object on every notification, so a screen
+ * that keys an effect on the object re-runs on every unrelated activity write.
+ * When that effect also *causes* a write, the two chase each other until React
+ * gives up ("Maximum update depth exceeded"). Compare this instead: identical
+ * signature means nothing a screen cares about moved.
+ */
+export function activityRowSignature(entry: ActivityEntry): string {
+  return [
+    entry.id,
+    entry.status ?? '',
+    entry.txid ?? '',
+    entry.at,
+    entry.sats,
+    entry.method,
+    entry.failureReason ?? '',
+    entry.archivedAt ?? '',
+    entry.item?.outpoint ?? '',
+    entry.retry?.kind ?? '',
+  ].join('|')
+}
+
+/** True when two reads of the same row are interchangeable for the UI. */
+export function sameActivityRow(
+  a: ActivityEntry | null,
+  b: ActivityEntry | null,
+): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return activityRowSignature(a) === activityRowSignature(b)
+}
+
 export type ActivityBurn = {
   asset: 'bsv21' | '1sat'
   destroyedAmount: string

@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.214] - 2026-09-17
+
+### Fixed
+
+- **A React update loop in Payment Details, which ended sessions in crash
+  recovery.** Every Activity write rebuilds row objects, and the panel keyed its
+  fate effect on that object — so an unrelated write re-resolved the fate, and a
+  resolve that writes to Activity re-triggered itself until React gave up.
+  `sameActivityRow` keeps the previous object when nothing a screen reads moved.
+- **An Arcade pin no longer nurses a dead transaction chain.** The pin means
+  "Arcade's first answer is unreliable", not "Arcade is the chain" — but Arcade
+  also keeps transactions it *rejected*, so a chain rejected for `UTXO_SPENT`
+  stayed pinned: its inputs were resealed on every maintenance pass and its
+  Activity row could never be cleared. Absence proven by chain providers now
+  overrides a pin older than ten minutes; explorer silence still keeps it.
+- A local transaction proven absent whose inputs are outputs of an equally
+  absent parent is now failed instead of resealed forever. Its coins are not
+  revived — they cannot be proven to exist — but it stops counting as in flight.
+- **A market receipt whose settlement transaction no provider has is now given
+  up on after an hour** instead of retried on every inbox poll forever, and
+  waiting out the backoff is silent rather than a log line every twenty seconds.
+
 ## [1.3.213] - 2026-09-17
 
 ### Fixed

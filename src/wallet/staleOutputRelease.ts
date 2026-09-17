@@ -845,6 +845,17 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
         ).catch(() => 'unknown' as const)
         unspent = status === 'unspent'
       }
+      // A descendant of a dead local chain: proven absent, but its inputs are
+      // outputs of an equally absent parent, so nothing here can be revived as a
+      // live coin. Stop it *looking* in flight anyway — otherwise every pass
+      // reseals its inputs and its change keeps counting, forever (lab
+      // hc-ad7afb: 87ce439f, whose ancestor Arcade rejected UTXO_SPENT).
+      // `signedTxMayBeRemoved` above already required the Arcade pin to yield to
+      // this proof, which is why forcing the fail is not a heuristic.
+      if (onChain === false && !unspent) {
+        await failUnsentLocalTx(txid, { force: true })
+        continue
+      }
       // Pending broadcast looks identical to a ghost under explorer silence
       // (inputs still UTXOs). Only a hard "sealer absent" + still-UTXO input
       // is enough to revive — never inconclusive null.

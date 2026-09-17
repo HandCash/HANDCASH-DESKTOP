@@ -44,6 +44,7 @@ import {
   isFailedMarketListingActivity,
   removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
+  sameActivityRow,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
@@ -69,6 +70,29 @@ function entry(partial: Partial<ActivityEntry>): ActivityEntry {
     ...partial,
   }
 }
+
+describe('sameActivityRow', () => {
+  it('holds a re-read of an unchanged row interchangeable', () => {
+    // Every activity write rebuilds row objects. A screen that keys an effect on
+    // the object then re-runs on unrelated writes — and when that effect writes
+    // to Activity itself, the two chase each other into a React update loop.
+    expect(sameActivityRow(entry({ txid: 'a' }), entry({ txid: 'a' }))).toBe(true)
+  })
+
+  it('sees the changes a screen decides on', () => {
+    const base = entry({ txid: 'a', status: 'pending' })
+    expect(sameActivityRow(base, entry({ txid: 'a', status: 'failed' }))).toBe(false)
+    expect(sameActivityRow(base, entry({ txid: 'b', status: 'pending' }))).toBe(false)
+    expect(
+      sameActivityRow(base, entry({ txid: 'a', status: 'pending', archivedAt: 5 })),
+    ).toBe(false)
+  })
+
+  it('never calls a missing row the same as a present one', () => {
+    expect(sameActivityRow(null, null)).toBe(true)
+    expect(sameActivityRow(null, entry({}))).toBe(false)
+  })
+})
 
 describe('activityEntryTitle', () => {
   it('names a removed market item as sold instead of sent', () => {

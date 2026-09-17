@@ -19,6 +19,7 @@ import {
   isPendingActivity,
   isTokenActivity,
   listRecentActivity,
+  sameActivityRow,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
@@ -158,7 +159,14 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
   useEffect(() => {
     setIconReady(false)
-    const refresh = () => setEntry(getActivityById(entryId))
+    // Keep the previous object when nothing the screen reads changed: the fate
+    // effect below keys on this row, and resolving a fate can itself write to
+    // Activity — a fresh identity per notification made those chase each other.
+    const refresh = () =>
+      setEntry((prev) => {
+        const next = getActivityById(entryId)
+        return sameActivityRow(prev, next) ? prev : next
+      })
     refresh()
     return subscribeAppActivity(refresh)
   }, [entryId])
