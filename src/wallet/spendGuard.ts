@@ -29,6 +29,35 @@ let liveSpendAbort: AbortController | null = null
 
 /** Light promote is local-only; this is a stuck-IDB backstop, not an explorer budget. */
 const LIGHT_PROMOTE_MS = 3_000
+let monitorPauseGeneration = 0
+
+/**
+ * Toolbox reconciliation is maintenance. It shares IndexedDB with createAction
+ * and has produced multi-second stalls and finished-transaction AbortErrors in
+ * field logs. Stop scheduling it for the spend region, then resume after the
+ * transaction path releases storage.
+ */
+function pauseMonitorForSpend(): () => void {
+  const generation = ++monitorPauseGeneration
+  const active = getActiveWallet()
+  if (!active) return () => undefined
+  const monitor = active.monitor
+  if (!monitor?.stopTasks) return () => undefined
+  try {
+    monitor.stopTasks()
+  } catch {
+    return () => undefined
+  }
+  const identityKey = active.identityKey
+  return () => {
+    setTimeout(() => {
+      if (generation !== monitorPauseGeneration) return
+      const current = getActiveWallet()
+      if (current?.identityKey !== identityKey) return
+      void current.monitor?.startTasks?.()
+    }, 1_000)
+  }
+}
 
 /** Abort the in-flight exclusive spend (lease / promote / createAction wait). */
 export function abortLiveExclusiveSpend(reason = 'Send timed out'): boolean {
@@ -38,6 +67,7 @@ export function abortLiveExclusiveSpend(reason = 'Send timed out'): boolean {
 }
 
 export type SpendPromoteMode = 'full' | 'light'
+export type SpendPreparation = SpendPromoteMode | 'on-demand' | false
 
 /**
  * Fee headroom for BRC-100 createAction / signAction gates.
@@ -199,9 +229,13 @@ async function reviewAfterAbandonedSpend(): Promise<void> {
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { promote?: SpendPromoteMode | false },
+  opts?: { promote?: SpendPreparation },
 ): Promise<T> {
-  const promote = opts?.promote ?? 'full'
+  // Spending known local UTXOs is the wallet's primary path. Maintenance is
+  // demand-driven: only a real local-balance shortage may promote chained
+  // change. Callers doing explicit-input work (items/burns) use `false`; repair
+  // and migration callers may still request `full` or bounded `light`.
+  const promote = opts?.promote ?? 'on-demand'
   const abort = new AbortController()
   liveSpendAbort = abort
   const throwIfAborted = () => {
@@ -218,15 +252,19 @@ export function runExclusiveSpend<T>(
       throwIfAborted()
       await reviewAfterAbandonedSpend()
       throwIfAborted()
-      if (promote !== false) await promoteSpendableChange(promote, abort.signal)
-      throwIfAborted()
-      spendChainPromoted = true
-      spendRecoveryDisabled = promote === false
+      const resumeMonitor = pauseMonitorForSpend()
       try {
+        if (promote === 'full' || promote === 'light') {
+          await promoteSpendableChange(promote, abort.signal)
+        }
+        throwIfAborted()
+        spendChainPromoted = promote === 'full' || promote === 'light'
+        spendRecoveryDisabled = promote === false
         return await fn()
       } finally {
         spendChainPromoted = false
         spendRecoveryDisabled = false
+        resumeMonitor()
       }
     },
     () => acquireSpendLease(abort.signal),
@@ -381,7 +419,9 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
 
   // Display balance credits pending change; createAction only selects spendable
   // toolbox rows. Promote live change — never pass the gate on credit alone.
-  if (!spendChainPromoted) await promoteSpendableChange()
+  if (!spendChainPromoted && !spendRecoveryDisabled) {
+    await promoteSpendableChange()
+  }
   confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
 

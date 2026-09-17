@@ -4,9 +4,10 @@
  */
 import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { storageRegistry } from '../storage/registry'
 import { listFriends, type Friend } from './friends'
 
-const STORAGE_KEY_BASE = 'handcash.messages.v1'
+const STORAGE_KEY_BASE = storageRegistry.messages.key
 const LEGACY_KEY = 'handcash.brc100.chat.v1'
 
 function messagesStorageKey(): string {
@@ -164,7 +165,10 @@ function migrateLegacy(): ChatState | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as ChatState
     if (!parsed || !Array.isArray(parsed.messages)) return null
-    durableSetItem(messagesStorageKey(), JSON.stringify(parsed))
+    durableSetItem(
+      messagesStorageKey(),
+      JSON.stringify({ v: storageRegistry.messages.version, data: parsed }),
+    )
     return parsed
   } catch {
     return null
@@ -179,7 +183,17 @@ function readState(): ChatState {
       if (legacy) return legacy
       return { messages: [] }
     }
-    const parsed = JSON.parse(raw) as ChatState
+    const decoded = JSON.parse(raw) as unknown
+    const record =
+      decoded && typeof decoded === 'object'
+        ? (decoded as Record<string, unknown>)
+        : null
+    const parsed =
+      record?.v === storageRegistry.messages.version &&
+      record.data &&
+      typeof record.data === 'object'
+        ? (record.data as ChatState)
+        : (decoded as ChatState)
     if (!parsed || !Array.isArray(parsed.messages)) return { messages: [] }
     return { messages: parsed.messages }
   } catch {
@@ -188,7 +202,10 @@ function readState(): ChatState {
 }
 
 function writeState(state: ChatState) {
-  durableSetItem(messagesStorageKey(), JSON.stringify(state))
+  durableSetItem(
+    messagesStorageKey(),
+    JSON.stringify({ v: storageRegistry.messages.version, data: state }),
+  )
   messageWriteGeneration += 1
   notify()
 }

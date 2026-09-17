@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.3.209] - 2026-09-17
+
+### Fixed
+
+- Sending spends the coins you already have. A send used to run change
+  promotion, sealed-input reclaim, and a script sweep across the whole change
+  history *before* building the transaction — on a wallet with hundreds of rows
+  that spent the entire 90-second watchdog while 1.5M confirmed sats sat ready.
+  Recovery is now demand-driven: it runs only when the local balance is actually
+  short of the amount.
+- Toolbox reconciliation no longer competes with the transaction it is
+  reconciling. Its tasks share IndexedDB with `createAction`, and their reviews
+  were landing as multi-second main-thread stalls mid-send; they pause for the
+  spend region and resume after it releases.
+- Activity stops going blank past a few screens. The list is its own scroll
+  container, so the windowed slice was measuring how far the list had scrolled
+  past itself — always zero — and kept the first rows mounted while the
+  scrollbar travelled through the end spacer.
+
+### Changed
+
+- A transaction that moves several collectables reads as one batch: "Sent 3
+  Pixel Foxes", with the pile shown behind the thumbnail and an exact count,
+  instead of naming one arbitrary member and listing the rest as footnotes. A
+  batch is only named after a series every member shares; mixed sends say
+  "3 collectables". The individual names moved to the detail panel, which now
+  lists the other items in the same transfer.
+
+### Internal
+
+- Architecture hardening: frozen BRC-100 method and handler contracts, a durable
+  storage registry with versioned envelopes, typed wallet outcomes and a cache
+  registry behind account rebinds, feature facades for collectables, market,
+  activity, and messages, an executable statechart manifest, selector-based read
+  models, and `@handcash/wallet-ui` narrowed to explicit entrypoints.
+
 ## [1.3.208] - 2026-09-16
 
 ### Changed

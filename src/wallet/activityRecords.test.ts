@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { composeActivityRecords } from './activityRecords'
+import {
+  activityBatchName,
+  batchSiblingsForEntry,
+  composeActivityRecords,
+} from './activityRecords'
 import type { ActivityEntry } from './appActivity'
 
 const WALLET = 'handcash.wallet'
@@ -15,6 +19,24 @@ function entry(overrides: Partial<ActivityEntry> & { method: string }): Activity
     at: 1,
     ...overrides,
   } as ActivityEntry
+}
+
+/** One collectable leg of {@link TXID}, distinct by vout. */
+function collectable(
+  name: string,
+  vout: number,
+  overrides: Partial<ActivityEntry> = {},
+): ActivityEntry {
+  return entry({
+    method: 'receive-collectable',
+    txid: TXID,
+    item: {
+      name,
+      origin: `${OTHER_TXID}_${vout}`,
+      outpoint: `${TXID}.${vout}`,
+    },
+    ...overrides,
+  })
 }
 
 describe('composeActivityRecords', () => {
@@ -105,6 +127,58 @@ describe('composeActivityRecords', () => {
     ])
     expect(records).toHaveLength(1)
     expect(records[0]!.assets.map((row) => row.item?.name)).toEqual(['Bear', 'Owl'])
+  })
+
+  it('names a batch by its shared series, not by one of its members', () => {
+    const records = composeActivityRecords([
+      collectable('Pixel Foxes #8413557', 0),
+      collectable('Pixel Foxes #9412777', 1),
+      collectable('Pixel Foxes #9412755', 2),
+    ])
+    expect(records).toHaveLength(1)
+    expect(records[0]!.batch).toEqual({ count: 3, label: 'Pixel Foxes' })
+    expect(activityBatchName(records[0]!.batch!)).toBe('3 Pixel Foxes')
+  })
+
+  it('speaks a singular series as a plural once it is a batch', () => {
+    const records = composeActivityRecords([
+      collectable('Fox #1', 0),
+      collectable('Fox #2', 1),
+    ])
+    expect(activityBatchName(records[0]!.batch!)).toBe('2 Foxes')
+  })
+
+  it('will not claim a series the members do not share', () => {
+    const records = composeActivityRecords([
+      collectable('Fox #1', 0),
+      collectable('Bear #4', 1),
+    ])
+    expect(records[0]!.batch).toEqual({ count: 2, label: null })
+    expect(activityBatchName(records[0]!.batch!)).toBe('2 collectables')
+  })
+
+  it('leaves a single collectable unbatched', () => {
+    const records = composeActivityRecords([collectable('Pixel Foxes #8413557', 0)])
+    expect(records[0]!.batch).toBeNull()
+  })
+
+  it('does not batch a market record around its money leg', () => {
+    const records = composeActivityRecords([
+      entry({ method: 'market-purchase', kind: 'spent', sats: 9_000, txid: TXID }),
+      collectable('Pixel Foxes #8413557', 0, { method: 'market-purchase-receive' }),
+    ])
+    expect(records[0]!.batch).toBeNull()
+  })
+
+  it('spells out the other members for the detail view', () => {
+    const entries = [
+      collectable('Pixel Foxes #8413557', 0),
+      collectable('Pixel Foxes #9412777', 1),
+      collectable('Pixel Foxes #9412755', 2),
+    ]
+    expect(
+      batchSiblingsForEntry(entries[0]!, entries).map((row) => row.item?.name),
+    ).toEqual(['Pixel Foxes #9412777', 'Pixel Foxes #9412755'])
   })
 
   it('never folds a failed leg, a different transaction, or a different origin', () => {

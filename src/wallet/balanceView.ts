@@ -16,7 +16,12 @@
  */
 import { getActiveWallet } from './session'
 import { hasLockingScript, type ChangeRow } from './changeScriptFate'
-import { isLiveLocalTxStatus } from './staleOutputRelease'
+import {
+  txLivenessFromStatus,
+  type TxLiveness,
+} from './kernel/txLiveness'
+
+export { txLivenessFromStatus, type TxLiveness } from './kernel/txLiveness'
 
 export type OwnedCashRow = {
   satoshis?: number
@@ -34,8 +39,6 @@ export type OwnedCashRow = {
  * merges can retain old completed change rows with `spendable: false`; treating
  * those as pending credits historical change on top of today's spendable set.
  */
-export type TxLiveness = 'pending' | 'settled' | 'dead' | 'none'
-
 export type OwnedCashFate =
   | { kind: 'count'; as: 'spendable' | 'unconfirmedChange'; satoshis: number }
   | {
@@ -45,13 +48,6 @@ export type OwnedCashFate =
 
 const PAGE = 200
 const MAX_PAGES = 10
-
-export function txLivenessFromStatus(status: unknown): TxLiveness {
-  const normalized = String(status ?? '').toLowerCase()
-  if (!normalized) return 'none'
-  if (normalized === 'completed') return 'settled'
-  return isLiveLocalTxStatus(normalized) ? 'pending' : 'dead'
-}
 
 /**
  * One output's contribution to displayed owned cash.

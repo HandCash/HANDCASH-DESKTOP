@@ -1,5 +1,9 @@
 import { useEffect, useState, type RefObject } from 'react'
-import { resolveScrollRoot, scrollRootHeight, scrollRootTop } from './scrollRoot'
+import {
+  resolveScrollRoot,
+  scrollRootHeight,
+  scrollRootScrolledPast,
+} from './scrollRoot'
 
 /**
  * Below this, windowing costs more than it saves and a mis-measured row height
@@ -108,10 +112,7 @@ export function useWindowedRange(args: {
       const columns = measureColumns(style, columnHint)
       const rowExtent = measureRowExtent(list, style, itemExtent, rowSelector)
       // How far the list has already scrolled past the top of its viewport.
-      const scrolledPast = Math.max(
-        0,
-        scrollRootTop(root) - list.getBoundingClientRect().top,
-      )
+      const scrolledPast = scrollRootScrolledPast(root, list)
       const rows = Math.ceil(total / columns)
       const firstRow = Math.max(0, Math.floor(scrolledPast / rowExtent) - overscan)
       const visibleRows =

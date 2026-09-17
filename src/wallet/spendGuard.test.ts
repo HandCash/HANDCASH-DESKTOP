@@ -16,6 +16,9 @@ function mockConfirmed(sats: number): void {
   fetchBalanceRead.mockResolvedValue({ kind: 'ok', sats })
 }
 const assertOnlineForPayment = vi.fn(() => undefined)
+const monitorStop = vi.fn()
+const monitorStart = vi.fn()
+let monitorEnabled = false
 const unconfirmedChangeSats = vi.fn(async (_opts?: { needAtLeast?: number }) => 0)
 const restoreLiveSpendableOutputs = vi.fn(async () => ({ restored: 0, unscripted: 0 }))
 const reclaimSealedInputsNeverSpent = vi.fn(async () => 0)
@@ -44,6 +47,9 @@ vi.mock('./session', () => ({
     address: '1abc',
     handle: 'test',
     chain: 'main',
+    ...(monitorEnabled
+      ? { monitor: { stopTasks: monitorStop, startTasks: monitorStart } }
+      : {}),
   }),
   fetchBalanceRead: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
     fetchBalanceRead(wallet, opts),
@@ -95,6 +101,7 @@ describe('refreshSpendableBalance', () => {
   beforeEach(() => {
     peekProvenConfirmedSpendable.mockReset()
     peekProvenConfirmedSpendable.mockReturnValue(null)
+    monitorEnabled = false
     vi.clearAllMocks()
     mockConfirmed(12_345)
     unconfirmedChangeSats.mockResolvedValue(0)
@@ -270,12 +277,41 @@ describe('refreshSpendableBalance', () => {
     await expect(assertSendableBalance(500)).rejects.toThrow(/Insufficient balance/)
   })
 
-  it('runExclusiveSpend promotes local change without chain script sweep', async () => {
+  it('runExclusiveSpend does no maintenance before ready local UTXOs', async () => {
     const { runExclusiveSpend } = await import('./spendGuard')
     await expect(runExclusiveSpend(async () => 'ok')).resolves.toBe('ok')
-    expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: false })
-    expect(sweepChangeScripts).not.toHaveBeenCalledWith({ fromChain: true })
-    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
+    expect(sweepChangeScripts).not.toHaveBeenCalled()
+    expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
+    expect(promotePendingLocalChangeOutputs).not.toHaveBeenCalled()
+    expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+  })
+
+  it('pauses toolbox maintenance while the spend owns IndexedDB', async () => {
+    vi.useFakeTimers()
+    monitorEnabled = true
+    try {
+      const { runExclusiveSpend } = await import('./spendGuard')
+      await expect(runExclusiveSpend(async () => 'ok')).resolves.toBe('ok')
+      expect(monitorStop).toHaveBeenCalledOnce()
+      expect(monitorStart).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(monitorStart).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runExclusiveSpend promotes only after the requested amount is locally short', async () => {
+    mockConfirmed(2)
+    promotePendingLocalChangeOutputs.mockImplementation(async () => {
+      mockConfirmed(600)
+      return 1
+    })
+    const { runExclusiveSpend, assertSendableBalance } = await import('./spendGuard')
+    await expect(
+      runExclusiveSpend(() => assertSendableBalance(500)),
+    ).resolves.toBe(600)
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalled()
   })
 
   it('runExclusiveSpend light promote skips explorer reclaim and restore', async () => {

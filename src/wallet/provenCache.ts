@@ -12,10 +12,11 @@
  * across restarts.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { storageRegistry } from '../storage/registry'
 
-const KEY = 'handcash.collectables.proven.v2'
-const LEGACY_KEY = 'handcash.collectables.proven.v1'
-const ORIGIN_KEY = 'handcash.collectables.originCommitments.v1'
+const KEY = storageRegistry.collectableProven.key
+const LEGACY_KEY = storageRegistry.collectableProvenLegacy.key
+const ORIGIN_KEY = storageRegistry.collectableOrigins.key
 const MAX_ENTRIES = 2_000
 
 export type AuthenticityTier = 'brc150' | 'unproven'
@@ -247,7 +248,7 @@ export function hasProvenTier(outpoint: string): boolean {
   return getProvenVerdict(outpoint)?.tier === 'brc150'
 }
 
-const GENESIS_KEY = 'handcash.collectables.genesisAttempt.v1'
+const GENESIS_KEY = storageRegistry.collectableGenesisAttempts.key
 /**
  * How long a failed lineage walk is left alone.
  *
@@ -379,7 +380,7 @@ export function rememberGenesisAttempt(outpoint: string, now = Date.now()): void
   }
 }
 
-const GENESIS_FAILURE_KEY = 'handcash.collectables.genesisFailure.v1'
+const GENESIS_FAILURE_KEY = storageRegistry.collectableGenesisFailures.key
 const GENESIS_FAILURE_MAX_ENTRIES = 200
 
 export type GenesisFailure = { kind: GenesisFailureKind; reason: string; at: number }

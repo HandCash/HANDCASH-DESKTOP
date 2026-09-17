@@ -28,9 +28,9 @@ import {
   subscribeCollectables,
   collectableIsFungible,
   type Collectable,
-} from '../wallet/collectables'
+} from '../features/collectables'
 import { searchCollectables } from '../wallet/collectableSearch'
-import { subscribeAppActivity } from '../wallet/appActivity'
+import { subscribeAppActivity } from '../features/activity'
 import {
   groupCollectables,
   groupQuantityLabel,
@@ -75,7 +75,7 @@ import {
   getCachedUsdPerBsv,
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
-import { getMarketListingAuthorization } from '../wallet/marketListing'
+import { getMarketListingAuthorization } from '../features/market'
 import { isItemSent } from '../wallet/sentItemGuard'
 import {
   collectableSendReadyMessage,

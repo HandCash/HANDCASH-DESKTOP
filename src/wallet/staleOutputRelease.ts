@@ -38,28 +38,21 @@ import {
   sweepChangeScripts,
   type ChangeRow,
 } from './changeScriptFate'
-import { txLivenessFromStatus } from './balanceView'
+import {
+  isLiveLocalTxStatus,
+  LIVE_LOCAL_TX_STATUSES,
+  txLivenessFromStatus,
+} from './kernel/txLiveness'
 import {
   signedTxMayBeRemoved,
   txHadArcadeSubmitContact,
 } from './arcadeSubmitGuard'
 
 export { isAlreadySpentInputError } from './spendVerdict'
+export { isLiveLocalTxStatus } from './kernel/txLiveness'
 
 /** Toolbox statuses that mean this wallet already committed the tx locally. */
-const LIVE_LOCAL_TX = new Set([
-  'sending',
-  'unproven',
-  'completed',
-  'nosend',
-  'nonfinal',
-  'unfail',
-  // Monitor proof pipeline — still ours until completed/failed (TaskCheckForProofs).
-  'unmined',
-  'callback',
-  'unconfirmed',
-  'unknown',
-])
+const LIVE_LOCAL_TX: ReadonlySet<string> = new Set(LIVE_LOCAL_TX_STATUSES)
 
 type TxStatusRow = {
   status?: string
@@ -79,11 +72,6 @@ const INTERNALIZE_OK_TX = new Set([
 function positiveId(value: unknown): number | null {
   const n = Number(value)
   return Number.isFinite(n) && n > 0 ? n : null
-}
-
-/** True when a local transaction is still this wallet's spend — not failed/abandoned. */
-export function isLiveLocalTxStatus(status: unknown): boolean {
-  return LIVE_LOCAL_TX.has(String(status ?? '').toLowerCase())
 }
 
 /** Cap restore work so a huge dead set cannot stall unlock/refresh. */

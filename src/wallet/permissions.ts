@@ -2,6 +2,8 @@ import {
   appDisplayName,
   normalizeAppHost,
 } from './appIdentity'
+import { brc100Contract } from '../contracts/brc100'
+import { storageRegistry } from '../storage/registry'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import {
   grantableCollectionIdsFromOutputs,
@@ -44,7 +46,7 @@ import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
 
-const STORAGE_KEY_BASE = 'handcash.brc100.connectedApps'
+const STORAGE_KEY_BASE = storageRegistry.connectedApps.key
 
 function connectedAppsStorageKey(): string {
   return accountLocalKey(STORAGE_KEY_BASE)
@@ -106,51 +108,6 @@ export type PendingPrompt = PendingPermission | PendingAction
 
 type PromptListener = (pending: PendingPrompt | null) => void
 type ConnectedListener = (apps: ConnectedApp[]) => void
-
-const PUBLIC_METHODS = new Set([
-  'getVersion',
-  'getNetwork',
-  'getHeight',
-  'getHeaderForHeight',
-  'health',
-])
-
-const SILENT_AUTH_METHODS = new Set(['isAuthenticated'])
-const CONNECT_METHODS = new Set(['waitForAuthentication'])
-
-const ACTION_METHODS = new Set([
-  'createAction',
-  'signAction',
-  'internalizeAction',
-  'relinquishOutput',
-  'relinquishCertificate',
-  'createSignature',
-  'createAdminIdentityProof',
-  'createMarketListingAdvert',
-  'createMarketPurchaseIntent',
-  'purchaseMarketListing',
-  'createCancelMarketListingAdvert',
-  'encrypt',
-  'decrypt',
-  'revealCounterpartyKeyLinkage',
-  'revealSpecificKeyLinkage',
-  'proveCertificate',
-  'acquireCertificate',
-])
-
-/**
- * Every request in this set describes a distinct signature or chain mutation.
- * Never let one prompt authorize another waiter merely because method + origin
- * match: two listing requests can name different items or prices.
- */
-const NO_COALESCE_ACTIONS = new Set([
-  'createSignature',
-  'createAdminIdentityProof',
-  'createMarketListingAdvert',
-  'createMarketPurchaseIntent',
-  'purchaseMarketListing',
-  'createCancelMarketListingAdvert',
-])
 
 let idCounter = 1
 /** Multiple UI surfaces (Dashboard column + locked modals + mobile nav) may listen. */
@@ -320,19 +277,19 @@ function enqueuePrompt(request: PendingPrompt): Promise<PermissionDecision> {
 }
 
 export function isPublicMethod(method: string): boolean {
-  return PUBLIC_METHODS.has(method)
+  return brc100Contract.isPublicMethod(method)
 }
 
 export function isSilentAuthMethod(method: string): boolean {
-  return SILENT_AUTH_METHODS.has(method)
+  return brc100Contract.isSilentAuthMethod(method)
 }
 
 export function isConnectMethod(method: string): boolean {
-  return CONNECT_METHODS.has(method)
+  return brc100Contract.isConnectMethod(method)
 }
 
 export function isActionMethod(method: string): boolean {
-  return ACTION_METHODS.has(method)
+  return brc100Contract.isActionMethod(method)
 }
 
 /** Identity / ownership proofs that often follow a Connect authorize. */
@@ -1258,7 +1215,7 @@ export function requestActionApproval(
   // another method-identical request. Signatures and market mutations bind
   // request-specific payloads and always receive their own prompt.
   if (
-    !NO_COALESCE_ACTIONS.has(method) &&
+    brc100Contract.actionMayCoalesce(method) &&
     current?.request.kind === 'action' &&
     current.request.origin === key &&
     current.request.method === method
@@ -1283,7 +1240,7 @@ export function requestActionApproval(
 
   const queued = queue.find(
     (item) =>
-      !NO_COALESCE_ACTIONS.has(method) &&
+      brc100Contract.actionMayCoalesce(method) &&
       item.request.kind === 'action' &&
       item.request.origin === key &&
       item.request.method === method,

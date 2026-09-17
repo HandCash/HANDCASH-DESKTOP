@@ -6,6 +6,7 @@
  */
 import { getActiveWallet } from './session'
 import { normalizeAppHost } from './appIdentity'
+import { brc100Contract } from '../contracts/brc100'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { refreshFromChainExclusive } from './chainIngest'
@@ -53,11 +54,7 @@ export function isMigrationOrigin(origin: string | undefined): boolean {
 }
 
 export function isMigrationMethod(method: string): boolean {
-  return (
-    method === 'getLegacyAddress' ||
-    method === 'refreshLegacyAddress' ||
-    method === 'listMigrationTxids'
-  )
+  return brc100Contract.isMigrationMethod(method)
 }
 
 function readTxidLog(): string[] {

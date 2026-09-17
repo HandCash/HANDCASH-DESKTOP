@@ -1,3 +1,8 @@
+import { machineStateManifest } from '../machines/machineManifest'
+
+/** Executable machine inventory shown beside the hand-authored explanatory charts. */
+export const executableWalletStatecharts = machineStateManifest()
+
 /**
  * HandCash Desktop — master + per-scope Mermaid statecharts.
  * Readable charts for Settings → About → HandCash → View statecharts.

@@ -1,5 +1,6 @@
 import type { WalletInterface } from '@bsv/sdk'
 import { Beef, Transaction } from '@bsv/sdk'
+import { brc100HandlerOwner } from '../contracts/brc100Handlers'
 import { getActiveWallet, fetchFastBalanceSats } from './session'
 import {
   filterItemOutputsForOrigin,
@@ -618,6 +619,15 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   }
   if (RETIRED_INDEX_EXPANSION_METHODS.has(method)) {
     return indexExpansionUnavailable()
+  }
+  if (!brc100HandlerOwner(method)) {
+    return {
+      status: 404,
+      body: JSON.stringify({
+        status: 'error',
+        description: `Unsupported BRC-100 method: ${method}`,
+      }),
+    }
   }
 
   const active = getActiveWallet()

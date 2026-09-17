@@ -18,6 +18,7 @@ vi.mock('./changeScriptFate', () => ({
 
 vi.mock('./session', () => ({
   bumpBalanceAfterHeal: () => bumpBalanceAfterHeal(),
+  getActiveWallet: () => null,
 }))
 
 vi.mock('./staleOutputRelease', () => ({

@@ -5,9 +5,14 @@
  * tip; a purchase writes the money leg and the received item; a sale writes the
  * sold item and its proceeds. Rendered raw, each of those reads as two unrelated
  * rows for a single thing that happened. Compose them instead: the record keeps
- * the subject that names it, the money leg that prices it, and one row per
- * additional distinct asset — a multi-asset transaction stays multi-row inside a
- * single record rather than fragmenting into unrelated buttons.
+ * the subject that names it, the money leg that prices it, and the other distinct
+ * assets it moved.
+ *
+ * A batch send is one thing too. Electing one of five foxes as the subject and
+ * listing the rest underneath reads as a single fox with footnotes, so a record
+ * that moved several collectables also carries an {@link ActivityBatch}: how many
+ * moved, and the series they share when they share one. The row then names the
+ * batch ("Sent 5 Pixel Foxes") instead of one arbitrary member.
  *
  * Nothing is dropped from the store: folded entries stay individually addressable
  * through `entries`, so detail panels, seen-marking, and filters still see them.
@@ -27,8 +32,23 @@ export type ActivityRecord = {
   money: ActivityEntry | null
   /** Additional distinct assets moved by the same transaction. */
   assets: ActivityEntry[]
+  /** Set when this record moved more than one distinct collectable. */
+  batch: ActivityBatch | null
   /** Everything folded here, subject first. */
   entries: ActivityEntry[]
+}
+
+/**
+ * A record that moved several collectables at once.
+ *
+ * `label` is the series every member agrees on, already plural, so the row can
+ * say what the batch *is*. Members from different series have no shared name, and
+ * naming one of them would be a lie about the other four — the row falls back to
+ * the generic noun instead.
+ */
+export type ActivityBatch = {
+  count: number
+  label: string | null
 }
 
 const MARKET_SUBJECT_METHODS = new Set([
@@ -109,6 +129,44 @@ function foldKeyOf(fold: ActivityFold): string | null {
   return fold.kind === 'solo' ? null : fold.key
 }
 
+/** Edition marker at the end of a mint name: `#8413557`, ` 12`, `_003`. */
+const EDITION_SUFFIX = /[\s._\-–—]*#?\d[\d,]*$/
+
+/** "Pixel Foxes #8413557" → "Pixel Foxes": editions differ, the series does not. */
+function seriesOf(entry: ActivityEntry): string | null {
+  const name = entry.item?.name?.trim()
+  if (!name) return null
+  return name.replace(EDITION_SUFFIX, '').trim() || null
+}
+
+/** A batch is always more than one, so the series is always spoken plural. */
+function pluralOf(series: string): string {
+  if (/s$/i.test(series)) return series
+  if (/(x|z|ch|sh)$/i.test(series)) return `${series}es`
+  if (/[^aeiou]y$/i.test(series)) return `${series.slice(0, -1)}ies`
+  return `${series}s`
+}
+
+/** Collectables only: a BSV-21 row already states its own quantity. */
+function isCollectableAsset(entry: ActivityEntry): boolean {
+  return Boolean(entry.item && !entry.item.tokenId)
+}
+
+function chooseActivityBatch(
+  members: readonly ActivityEntry[],
+): ActivityBatch | null {
+  const items = members.filter(isCollectableAsset)
+  if (items.length < 2) return null
+  const series = new Set(items.map((entry) => seriesOf(entry) ?? ''))
+  const shared = series.size === 1 ? [...series][0]! : ''
+  return { count: items.length, label: shared ? pluralOf(shared) : null }
+}
+
+/** How a batched record names itself: "5 Pixel Foxes", "3 collectables". */
+export function activityBatchName(batch: ActivityBatch): string {
+  return `${batch.count.toLocaleString()} ${batch.label ?? 'collectables'}`
+}
+
 function subjectRank(entry: ActivityEntry): number {
   if (MARKET_SUBJECT_METHODS.has(entry.method)) return 0
   if (entry.item) return 1
@@ -144,16 +202,47 @@ export function moneyLegForEntry(
   entry: ActivityEntry,
   entries: readonly ActivityEntry[],
 ): ActivityEntry | null {
+  if (isMoneyLeg(entry)) return null
+  return pickMoneyLeg(siblingsOf(entry, entries))
+}
+
+/** The other legs folded into the same record as `entry`. */
+function siblingsOf(
+  entry: ActivityEntry,
+  entries: readonly ActivityEntry[],
+): ActivityEntry[] {
   const marketKeys = marketTransactions(entries)
   const key = foldKeyOf(chooseActivityFold(entry, marketKeys))
-  if (!key || isMoneyLeg(entry)) return null
-  return pickMoneyLeg(
-    entries.filter(
-      (candidate) =>
-        candidate.id !== entry.id &&
-        foldKeyOf(chooseActivityFold(candidate, marketKeys)) === key,
-    ),
+  if (!key) return []
+  return entries.filter(
+    (candidate) =>
+      candidate.id !== entry.id &&
+      foldKeyOf(chooseActivityFold(candidate, marketKeys)) === key,
   )
+}
+
+/**
+ * The other collectables this transaction moved.
+ *
+ * The feed names a batch by count and series; the individual names belong in the
+ * detail view, which opens one member and would otherwise show no trace of the
+ * rest.
+ */
+export function batchSiblingsForEntry(
+  entry: ActivityEntry,
+  entries: readonly ActivityEntry[],
+): ActivityEntry[] {
+  if (!isCollectableAsset(entry)) return []
+  const seen = new Set([assetIdentity(entry)])
+  const siblings: ActivityEntry[] = []
+  for (const candidate of siblingsOf(entry, entries)) {
+    if (!isCollectableAsset(candidate)) continue
+    const asset = assetIdentity(candidate)
+    if (!asset || seen.has(asset)) continue
+    seen.add(asset)
+    siblings.push(candidate)
+  }
+  return siblings
 }
 
 export function composeActivityRecords(
@@ -194,6 +283,7 @@ export function composeActivityRecords(
       subject,
       money,
       assets,
+      batch: chooseActivityBatch([subject, ...assets]),
       entries: [subject, ...rest],
     }
   })

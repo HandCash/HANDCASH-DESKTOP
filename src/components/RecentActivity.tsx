@@ -68,7 +68,11 @@ import {
   activityActionMark,
   type ActivityActionMark,
 } from '../wallet/activityActionMark'
-import { composeActivityRecords } from '../wallet/activityRecords'
+import {
+  activityBatchName,
+  composeActivityRecords,
+  type ActivityBatch,
+} from '../wallet/activityRecords'
 import { subscribeCollectables } from '../wallet/collectables'
 import { isItemProven } from '../wallet/provenCache'
 import { subscribeFungibles } from '../wallet/token'
@@ -286,6 +290,7 @@ function HistoryRow({
   verifying = false,
   amountEntry = null,
   assets = [],
+  batch = null,
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
@@ -297,6 +302,8 @@ function HistoryRow({
   amountEntry?: ActivityEntry | null
   /** Further distinct assets moved by the same transaction. */
   assets?: readonly ActivityEntry[]
+  /** Set when the transaction moved several collectables at once. */
+  batch?: ActivityBatch | null
 }) {
   const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const spent = entry.kind === 'spent'
@@ -323,7 +330,24 @@ function HistoryRow({
   const cancelling = entry.method === 'market-cancel'
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
-  const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
+  const named = shown ? { ...entry, item: shown } : entry
+  // A batch is named by what it is, not by whichever member sorted first. The
+  // verb still comes from the subject, so "Sent"/"Burned"/"Sold" stay correct.
+  const batchName = batch ? activityBatchName(batch) : null
+  const title = activityEntryTitle(
+    batchName && named.item
+      ? { ...named, item: { ...named.item, name: batchName } }
+      : named,
+  )
+  // Every member by name, for the row the feed deliberately does not spell out.
+  const batchNames = batchName
+    ? [entry, ...assets]
+        .map((asset) =>
+          asset.item ? viewActivityItem(asset.item).name?.trim() : '',
+        )
+        .filter((name): name is string => Boolean(name))
+        .join(', ')
+    : null
   // A pending spend the wallet cannot price yet has no transaction built —
   // it is still clearing approval. Say so, rather than signing an empty amount
   // or falling through to the no-rate dash, which read as a stray "—".
@@ -331,16 +355,16 @@ function HistoryRow({
   const amountLabel = utxoHealDone
     ? formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
     : event
-        ? eventAmountLabel(entry)
-        : token
-          ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
-          : item
-            ? shown?.name || 'Collectable'
-            : approving
-              ? 'Approving'
-              : showPending && entry.sats <= 0
-                ? '…'
-                : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+      ? eventAmountLabel(entry)
+      : token
+        ? activityTokenAmountDisplay(named)
+        : item
+          ? batchName || shown?.name || 'Collectable'
+          : approving
+            ? 'Approving'
+            : showPending && entry.sats <= 0
+              ? '…'
+              : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   // A composed record prices itself from the money leg of the same transaction:
   // an item row alone would read "Item" where the user expects what it cost.
   const moneyLabel = amountEntry
@@ -417,6 +441,8 @@ function HistoryRow({
         }}
       >
         <div className="history-icon-wrap">
+          {/* Depth behind the subject thumb: this row is a pile, not one tip. */}
+          {batch ? <span className="history-icon-stack" aria-hidden /> : null}
           <div className="history-icon">
             {event && !(shown && shown.imageUrl) ? (
               <span className="history-item-thumb-icon" aria-hidden>
@@ -484,54 +510,25 @@ function HistoryRow({
               <LoadingSpinner size="sm" />
             </span>
           ) : null}
+          {batch ? (
+            <span
+              className="history-batch-count"
+              aria-label={`${batch.count} collectables`}
+            >
+              {batch.count}
+            </span>
+          ) : null}
           <HistoryAppBadge entry={entry} />
           <HistoryActionBadge entry={entry} />
         </div>
         <div className="history-body history-progress-body">
-          <strong className="history-title">{title}</strong>
+          <strong className="history-title" title={batchNames ?? undefined}>
+            {title}
+          </strong>
           {subtitle ? (
             <span className="history-when" title={subtitle}>
               {subtitle}
             </span>
-          ) : null}
-          {assets.length > 0 ? (
-            <ul className="history-record-assets">
-              {assets.map((asset) => {
-                const assetItem = asset.item ? viewActivityItem(asset.item) : undefined
-                const assetName =
-                  assetItem?.name?.trim() || asset.item?.name?.trim() || 'Collectable'
-                return (
-                  <li className="history-record-asset" key={activityEntryKey(asset)}>
-                    {assetItem?.imageUrl ? (
-                      <DeferredImage
-                        className="history-record-asset-thumb"
-                        src={assetItem.imageUrl}
-                        alt=""
-                        width={16}
-                        height={16}
-                        skeletonWidth={16}
-                        skeletonHeight={16}
-                        skeletonRadius={4}
-                        retainDecoded
-                        decoding="async"
-                        fallback={
-                          <span className="history-record-asset-thumb-icon">
-                            <CollectablesIcon size={11} />
-                          </span>
-                        }
-                      />
-                    ) : (
-                      <span className="history-record-asset-thumb-icon">
-                        <CollectablesIcon size={11} />
-                      </span>
-                    )}
-                    <span className="history-record-asset-name" title={assetName}>
-                      {assetName}
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
           ) : null}
         </div>
         <div className="history-amount-block">
@@ -973,6 +970,7 @@ export function ActivityFeed({
             entry={record.subject}
             amountEntry={record.money}
             assets={record.assets}
+            batch={record.batch}
             currency={currency}
             usdPerBsv={usdPerBsv}
             showWhen={showWhen}

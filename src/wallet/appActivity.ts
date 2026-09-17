@@ -2,12 +2,13 @@ import { errorText } from './errorText'
 import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { storageRegistry } from '../storage/registry'
 import { getItemArtDataUrl } from './localItemArt'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
-const STORAGE_KEY_BASE = 'handcash.brc100.appActivity'
+const STORAGE_KEY_BASE = storageRegistry.activity.key
 
 function activityStorageKey(): string {
   return accountLocalKey(STORAGE_KEY_BASE)
@@ -140,8 +141,19 @@ function readAll(): ActivityEntry[] {
     const raw = durableGetItem(activityStorageKey())
     if (!raw) return []
     if (raw === parsedRaw) return parsedEntries
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
+    const decoded = JSON.parse(raw) as unknown
+    // v0 was a bare array. Preserve it forever as an explicit migration input;
+    // all new writes use the registry-owned versioned envelope.
+    const parsed =
+      Array.isArray(decoded)
+        ? decoded
+        : decoded &&
+            typeof decoded === 'object' &&
+            (decoded as { v?: unknown }).v === storageRegistry.activity.version &&
+            Array.isArray((decoded as { data?: unknown }).data)
+          ? (decoded as { data: unknown[] }).data
+          : null
+    if (!parsed) return []
     const entries = parsed
       .filter((e): e is ActivityEntry => {
         if (!e || typeof e !== 'object') return false
@@ -271,7 +283,10 @@ function writeAll(entries: ActivityEntry[]): void {
   // Cap history so storage stays small.
   const trimmed = entries.slice(-2000)
   writeGeneration += 1
-  durableSetItem(activityStorageKey(), JSON.stringify(trimmed))
+  durableSetItem(
+    activityStorageKey(),
+    JSON.stringify({ v: storageRegistry.activity.version, data: trimmed }),
+  )
   for (const cb of listeners) cb()
 }
 

@@ -17,15 +17,14 @@ import {
 } from '../wallet/friends'
 import {
   appendMessage,
-  listMessagePeers,
   listMessages,
   markThreadRead,
   messageBelongsInThreadSection,
-  subscribeMessages,
   updateMessage,
+  useMessagePeers,
   type ChatMessage,
   type ChatThreadSection,
-} from '../wallet/messageStore'
+} from '../features/messages'
 import {
   COMMAND_PALETTE,
   formatFiatLabel,
@@ -56,7 +55,7 @@ import {
   listRecentActivity,
   subscribeAppActivity,
   type ActivityEntry,
-} from '../wallet/appActivity'
+} from '../features/activity'
 import { copyText } from '../wallet/clipboard'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import {
@@ -66,7 +65,7 @@ import {
   pollInbound,
   preparePeerDirectPath,
   uploadChatFile,
-} from '../wallet/messageTransport'
+} from '../features/messages'
 import { Composer, Thread } from '@aeon-ui/react'
 import type { ComposerState } from '@aeon-ui/react'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
@@ -480,7 +479,8 @@ export function MessagesPanel({
 }: Props) {
   const navRouted = navRoutedChat({ nestedInNav, fullscreen })
   const threadOnly = Boolean(peerId) && !navRouted
-  const [peers, setPeers] = useState(() => listMessagePeers())
+  const peers = useMessagePeers()
+  const [, setFriendTick] = useState(0)
   const [activePeerId, setActivePeerId] = useState<string | null>(() => peerId ?? null)
   const [draft, setDraft] = useState('')
   const [hint, setHint] = useState<string | null>(null)
@@ -504,8 +504,6 @@ export function MessagesPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const refresh = () => setPeers(listMessagePeers())
-
   useEffect(() => {
     setActivePeerId(peerId ?? null)
   }, [peerId])
@@ -515,8 +513,7 @@ export function MessagesPanel({
     setThreadSection('messages')
   }, [activePeerId])
 
-  useEffect(() => subscribeFriends(refresh), [])
-  useEffect(() => subscribeMessages(refresh), [])
+  useEffect(() => subscribeFriends(() => setFriendTick((tick) => tick + 1)), [])
   useEffect(() => subscribeAppActivity(() => setActivityTick((n) => n + 1)), [])
 
   useEffect(() => {
@@ -531,7 +528,6 @@ export function MessagesPanel({
   useEffect(() => {
     if (!activePeerId) return
     markThreadRead(activePeerId)
-    refresh()
   }, [activePeerId])
 
   useEffect(() => {
@@ -554,8 +550,6 @@ export function MessagesPanel({
         identityKey,
         rootKeyHex,
         peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
-      }).then((n) => {
-        if (n > 0) refresh()
       })
     }
     tick()

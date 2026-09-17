@@ -4851,6 +4851,8 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-icon {
+  position: relative;
+  z-index: 1;
   width: 36px;
   height: 36px;
   border-radius: 12px;
@@ -5095,44 +5097,48 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 /* Extra assets moved by the same transaction, folded into one record. */
-.history-record-assets {
-  display: grid;
-  gap: 2px;
-  margin: 3px 0 0;
-  padding: 0;
-  list-style: none;
-  min-width: 0;
+/* Batch record: the pile reads as depth behind the subject thumb. */
+.history-icon-stack {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: var(--hc-sunken);
+  border: 1px solid var(--hc-border);
+  transform: translate(3px, -3px);
+  z-index: 0;
 }
 
-.history-record-asset {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--hc-muted);
-  font-size: 0.72rem;
+.history-icon-stack::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: var(--hc-sunken);
+  border: 1px solid var(--hc-border);
+  transform: translate(3px, -3px);
 }
 
-.history-record-asset-thumb,
-.history-record-asset-thumb-icon {
-  flex: 0 0 auto;
-  width: 16px;
+/* Only free corner: app badge and action badge own the bottom, verify the top right. */
+.history-batch-count {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  min-width: 16px;
   height: 16px;
-  border-radius: 4px;
-  object-fit: cover;
-}
-
-.history-record-asset-thumb-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--hc-accent);
-}
-
-.history-record-asset-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  transform: translate(-40%, -40%);
+  border: 2px solid hsl(var(--background));
+  border-radius: 999px;
+  background: var(--hc-accent);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
 .history-amount-block {

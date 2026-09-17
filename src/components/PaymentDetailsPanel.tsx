@@ -25,7 +25,10 @@ import {
   type ActivityItem,
 } from '../wallet/appActivity'
 import { viewActivityItem } from '../wallet/activityItemView'
-import { moneyLegForEntry } from '../wallet/activityRecords'
+import {
+  batchSiblingsForEntry,
+  moneyLegForEntry,
+} from '../wallet/activityRecords'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
@@ -294,7 +297,11 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   // The feed folds a purchase or sale into one record; the detail view opens one
   // of its entries, so it reads the money leg back from the same transaction.
-  const moneyLeg = moneyLegForEntry(entry, listRecentActivity(200))
+  const recent = listRecentActivity(200)
+  const moneyLeg = moneyLegForEntry(entry, recent)
+  // The feed names a batch by count and series, so this is the only place the
+  // other members of the same transfer are spelled out.
+  const batchSiblings = batchSiblingsForEntry(entry, recent)
   const explorer = isExplorerTxid(entry.txid)
     ? txExplorerUrl(entry.txid!, chain)
     : null
@@ -545,6 +552,20 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                     shownItem.name
                   )}
                 </dd>
+                {batchSiblings.length > 0 ? (
+                  <>
+                    <dt>{spent ? 'Also sent' : 'Also received'}</dt>
+                    <dd>
+                      {batchSiblings
+                        .map(
+                          (sibling) =>
+                            viewActivityItem(sibling.item!).name?.trim() ||
+                            'Collectable',
+                        )
+                        .join(', ')}
+                    </dd>
+                  </>
+                ) : null}
                 <dt>Origin</dt>
                 <dd className="mono">{shownItem.origin}</dd>
                 {shownItem.outpoint ? (

@@ -21,3 +21,18 @@ export function scrollRootHeight(root: HTMLElement | Window): number {
 export function scrollRootTop(root: HTMLElement | Window): number {
   return root === window ? 0 : (root as HTMLElement).getBoundingClientRect().top
 }
+
+/**
+ * How far the list's content has moved past the viewport.
+ *
+ * Activity's `<ul>` is itself the scroll root. Geometry subtraction there is
+ * `list.top - list.top = 0` forever, so windowing kept the first rows mounted
+ * while the scrollbar travelled through the end spacer: visible white space.
+ */
+export function scrollRootScrolledPast(
+  root: HTMLElement | Window,
+  list: HTMLElement,
+): number {
+  if (root === list) return list.scrollTop
+  return Math.max(0, scrollRootTop(root) - list.getBoundingClientRect().top)
+}
