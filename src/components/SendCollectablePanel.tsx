@@ -118,7 +118,9 @@ export function SendCollectablePanel({
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [showMatches, setShowMatches] = useState(false)
-  const [sendSnapshot, sendUi] = useMachine(assetSendMachine)
+  const [sendSnapshot, sendUi] = useMachine(assetSendMachine, {
+    input: { needsQuantity: false },
+  })
   const editing = sendSnapshot.matches('editing')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)

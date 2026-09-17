@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.224] - 2026-09-17
+
+### Fixed
+
+- **Collectable send now instantiates `assetSendMachine` with explicit input.**
+  The 1.3.223 compose-chart refactor correctly separated item/token UI from the
+  BSV payment form, but the collectable panel omitted the machine's required
+  input object and failed CI typecheck. It now names
+  `needsQuantity: false`; BSV-21 continues to name `true`.
+
 ## [1.3.223] - 2026-09-17
 
 ### Changed
