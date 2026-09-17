@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.210] - 2026-09-17
+
+### Changed
+
+- A collectable the recipient has not published yet no longer reads like a
+  problem. Handing an item to a peer is a normal outcome: their wallet publishes
+  the signed transfer, so the panel now says that plainly, in neutral chrome
+  rather than warning amber, and explains that the row is your record until it
+  confirms. It no longer narrates what retrying or clearing would do to a live
+  transaction, and the reserved-coin action says what it actually frees — coins
+  from sends that were never signed — instead of implying this transfer is
+  holding funds. Retry and clear still refuse, each with its own reason.
+
 ## [1.3.209] - 2026-09-17
 
 ### Fixed

@@ -6484,6 +6484,12 @@ html[data-aeon-mode='light']
   background: rgb(255 184 77 / 8%);
 }
 
+/* A peer-published transfer is a normal outcome, not a warning to act on. */
+.payment-attempt-actions[data-aeon-state='counterpartyMaySettle'] {
+  border-color: var(--hc-border);
+  background: var(--hc-sunken);
+}
+
 .payment-attempt-actions p {
   margin: 0;
   color: var(--hc-muted);

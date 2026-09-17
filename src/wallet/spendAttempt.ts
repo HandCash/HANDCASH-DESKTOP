@@ -248,8 +248,11 @@ export async function resolveSpendAttemptFate(
     return {
       kind: 'refuse',
       reason: 'counterpartyMaySettle',
+      // Nothing has gone wrong here, so the copy does not describe hazards. It
+      // says who holds the transfer, who publishes it, and that the row is the
+      // sender's record until then — the reason there is no retry or clear.
       message:
-        'The recipient has this transfer and can still broadcast it, so it is not lost. Retrying would race a live transaction and clearing would delete your only record of it.',
+        'The item has left your wallet and the recipient has the signed transfer. Their wallet publishes it, so it confirms once they are online. This stays in your Activity as the record until then.',
       mayClear: false,
       mayReleaseFunds: true,
     }
@@ -388,6 +391,13 @@ export async function retrySpendAttempt(
 ): Promise<SpendAttemptRetryResult> {
   const fate = await resolveSpendAttemptFate(entry, chain)
   if (fate.kind !== 'retry') {
+    // The display copy for a peer-published transfer describes a normal state,
+    // so a refusal states its own reason rather than reusing that sentence.
+    if (fate.kind === 'refuse' && fate.reason === 'counterpartyMaySettle') {
+      throw new Error(
+        'The recipient can still broadcast this transfer, so sending it again would race a live transaction.',
+      )
+    }
     throw new Error(
       fate.kind === 'refuse' ? fate.message : 'This send cannot be retried.',
     )

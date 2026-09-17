@@ -338,8 +338,8 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     try {
       await releaseSpendAttemptFunds()
       toastSuccess(
-        'Freed reserved funds',
-        'Coins held by half-built sends are spendable again.',
+        'Coins unlocked',
+        'Coins held by sends that were never signed are spendable again.',
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -625,11 +625,18 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
           {attemptFate.kind !== 'notAttempt' &&
           attemptFate.kind !== 'confirmed' ? (
-            <section className="payment-attempt-actions" aria-live="polite">
+            <section
+              className="payment-attempt-actions"
+              aria-live="polite"
+              data-aeon-part="spend-attempt"
+              data-aeon-state={
+                attemptFate.kind === 'refuse' ? attemptFate.reason : attemptFate.kind
+              }
+            >
               <strong>
                 {attemptFate.kind === 'refuse' &&
                 attemptFate.reason === 'counterpartyMaySettle'
-                  ? 'Waiting on the recipient'
+                  ? 'Sent — the recipient publishes it'
                   : isFailedActivity(entry)
                   ? 'Failed send'
                   : 'Unconfirmed send'}
@@ -676,9 +683,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                     className="btn btn-secondary"
                     disabled={retrying || clearing || releasing}
                     onClick={() => void releaseFunds()}
-                    title="Unlock coins reserved by half-built sends without removing this record"
+                    title="Frees coins held by sends that were never signed. This transfer is not affected."
                   >
-                    {releasing ? 'Freeing…' : 'Free up reserved funds'}
+                    {releasing ? 'Unlocking…' : 'Unlock coins from unfinished sends'}
                   </button>
                 ) : null}
               </div>
