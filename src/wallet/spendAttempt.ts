@@ -63,10 +63,11 @@ export type SpendAttemptFate =
          */
         | 'inputsSpent'
         /**
-         * The transfer left this wallet and the payee may still broadcast it.
-         * Neither retry nor clear is safe: retry would race a live transaction,
-         * and clearing would delete the sender's only record of an item that can
-         * still land in the recipient's wallet.
+         * The transfer left this wallet and the payee may still broadcast it, and
+         * this row has no signed transaction to publish. Clear stays refused —
+         * it would delete the sender's only record of an item that can still land
+         * in the recipient's wallet. (A row that *does* hold the signed transfer
+         * is retryable instead: publishing it is the same txid, not a race.)
          */
         | 'counterpartyMaySettle'
       message: string
@@ -83,6 +84,8 @@ export type SpendAttemptFate =
        * re-checks and fails closed, so this only decides whether to show it.
        */
       mayReclaimInputs?: boolean
+      /** {@link SPEND_ATTEMPT_PEER_PUBLISHES} — a normal state, not a problem. */
+      peerPublishes?: boolean
     }
   | {
       kind: 'retry'
@@ -96,7 +99,29 @@ export type SpendAttemptFate =
       retry: ActivityRetry
       message: string
       mayClear: boolean
+      /** See the refuse variant — a retryable row may also be cancelled outright. */
+      mayReclaimInputs?: boolean
+      /** {@link SPEND_ATTEMPT_PEER_PUBLISHES} — a normal state, not a problem. */
+      peerPublishes?: boolean
     }
+
+/**
+ * Projection key for "the recipient holds this signed transfer and publishes
+ * it". Both a retryable and a refused row can be in that state, so the heading
+ * and chrome read it from the fate instead of inferring it from `kind`.
+ */
+export const SPEND_ATTEMPT_PEER_PUBLISHES = 'counterpartyMaySettle'
+
+/** `data-aeon-state` for one attempt fate. */
+export function spendAttemptState(fate: SpendAttemptFate): string {
+  if (
+    (fate.kind === 'refuse' || fate.kind === 'retry') &&
+    fate.peerPublishes === true
+  ) {
+    return SPEND_ATTEMPT_PEER_PUBLISHES
+  }
+  return fate.kind === 'refuse' ? fate.reason : fate.kind
+}
 
 const ITEM_METHOD = 'send-collectable'
 const TOKEN_METHOD = 'send-token'
@@ -133,9 +158,10 @@ export function isSpendAttempt(
  *
  * A failed row is not automatically a dead row: on a `peerDeliver` settle the
  * signed transfer is already in the recipient's inbox, so it can land hours
- * later. Offering retry or clear in that window is how a sender either races a
- * live transaction or deletes the only local record of an item that is really
- * gone.
+ * later. Clearing in that window deletes the only local record of an item that
+ * is really gone, and building a *replacement* transfer would race a live one —
+ * so both stay refused. Publishing the transfer this row already signed does
+ * neither: it is the same transaction the recipient holds.
  */
 export function isCounterpartySettlePending(
   entry: ActivityEntry,
@@ -152,6 +178,35 @@ export function isCounterpartySettlePending(
 
 function hasTxid(entry: ActivityEntry): boolean {
   return Boolean(entry.txid && /^[0-9a-f]{64}$/i.test(entry.txid))
+}
+
+/**
+ * May this wallet publish the transfer it already signed?
+ *
+ * Asked of {@link itemSendMachine} rather than answered here: `RETRY_BROADCAST`
+ * enters `confirmBroadcast`, the state whose whole purpose is the sender's
+ * postBeef after the remittance left `peerDeliver`. That is why publishing a
+ * peer-settled transfer by hand is legal — it is the identical transaction, so
+ * the recipient's copy and this one are one txid — while `peerDeliver` itself
+ * still has no sender-broadcast edge.
+ */
+function senderMayPublishSignedTransfer(entry: ActivityEntry): boolean {
+  const chartKey =
+    entry.retry?.kind === 'send-collectable'
+      ? entry.retry.outpoint
+      : entry.item?.outpoint
+  if (!chartKey) return false
+  const chart = createActor(itemSendMachine).start()
+  try {
+    chart.send({
+      type: 'RETRY_BROADCAST',
+      outpoint: chartKey,
+      txid: entry.txid!.trim().toLowerCase(),
+    })
+    return maySenderBroadcast(chart.getSnapshot())
+  } finally {
+    chart.stop()
+  }
 }
 
 type SignedInputsFate = KernelSignedInputsFate
@@ -255,21 +310,6 @@ export async function resolveSpendAttemptFate(
 ): Promise<SpendAttemptFate> {
   if (!isSpendAttempt(entry)) return { kind: 'notAttempt' }
 
-  if (isCounterpartySettlePending(entry)) {
-    return {
-      kind: 'refuse',
-      reason: 'counterpartyMaySettle',
-      // Nothing has gone wrong here, so the copy does not describe hazards. It
-      // says who holds the transfer, who publishes it, and that the row is the
-      // sender's record until then — the reason there is no retry or clear.
-      message:
-        'The item has left your wallet and the recipient has the signed transfer. Their wallet publishes it, so it confirms once they are online. This stays in your Activity as the record until then.',
-      mayClear: false,
-      mayReleaseFunds: true,
-      mayReclaimInputs: hasTxid(entry),
-    }
-  }
-
   let txOnChain: boolean | null = null
   if (hasTxid(entry)) {
     const onChain = await Promise.resolve(
@@ -300,6 +340,45 @@ export async function resolveSpendAttemptFate(
   }
 
   const retry = entry.retry
+
+  // Checked *after* the chain: a transfer the recipient already published reads
+  // as confirmed, and only a transfer that is genuinely absent is described as
+  // theirs to publish.
+  if (isCounterpartySettlePending(entry)) {
+    const senderMayPublish =
+      hasTxid(entry) &&
+      (retry?.kind === 'send-collectable' || retry?.kind === 'send-token') &&
+      senderMayPublishSignedTransfer(entry)
+    if (senderMayPublish) {
+      return {
+        kind: 'retry',
+        action: 'rebroadcast',
+        retry: retry!,
+        // Publishing this is not a race: it is the same signed transaction the
+        // recipient holds, so both copies are one txid. It is the sender's own
+        // silent postBeef, offered by hand because it has not landed.
+        message:
+          'The item has left your wallet and the recipient has the signed transfer — their wallet publishes it once they are online. It is not on chain yet, so you can publish that same transfer yourself; it is the same transaction, not a second one.',
+        mayClear: false,
+        mayReclaimInputs: inputsFate === 'unspent',
+        peerPublishes: true,
+      }
+    }
+    return {
+      kind: 'refuse',
+      reason: 'counterpartyMaySettle',
+      // Nothing has gone wrong here, so the copy does not describe hazards. It
+      // says who holds the transfer, who publishes it, and that the row is the
+      // sender's record until then — the reason there is no clear.
+      message:
+        'The item has left your wallet and the recipient has the signed transfer. Their wallet publishes it, so it confirms once they are online. This stays in your Activity as the record until then.',
+      mayClear: false,
+      mayReleaseFunds: true,
+      mayReclaimInputs: hasTxid(entry) && inputsFate === 'unspent',
+      peerPublishes: true,
+    }
+  }
+
   if (!retry) {
     return {
       kind: 'refuse',
@@ -407,7 +486,7 @@ export async function retrySpendAttempt(
     // so a refusal states its own reason rather than reusing that sentence.
     if (fate.kind === 'refuse' && fate.reason === 'counterpartyMaySettle') {
       throw new Error(
-        'The recipient can still broadcast this transfer, so sending it again would race a live transaction.',
+        'There is no signed transaction on this row to publish, and the recipient may still broadcast their copy. Building a second transfer would race it.',
       )
     }
     throw new Error(

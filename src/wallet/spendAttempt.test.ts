@@ -273,13 +273,13 @@ describe('reclaimSpendAttempt', () => {
 })
 
 describe('resolveSpendAttemptFate — tokens', () => {
-  it('blocks retry while the peer can still settle', async () => {
+  it('keeps clear closed while the peer can still settle', async () => {
     mocks.counterpartyMaySettle.mockReturnValue(true)
+    mocks.txExistsOnChain.mockResolvedValue(false)
     await expect(
       resolveSpendAttemptFate(tokenAttempt(), 'main'),
     ).resolves.toMatchObject({
-      kind: 'refuse',
-      reason: 'counterpartyMaySettle',
+      peerPublishes: true,
       mayClear: false,
     })
     expect(mocks.counterpartyMaySettle).toHaveBeenCalledWith(
@@ -489,12 +489,39 @@ describe('resolveSpendAttemptFate — payments', () => {
 })
 
 describe('a transfer the recipient can still settle', () => {
-  it('offers neither retry nor clear while the payee may still broadcast', async () => {
+  it('lets the sender publish the transfer it already signed', async () => {
     mocks.counterpartyMaySettle.mockReturnValue(true)
     mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+
+    // Publishing it is the same txid the recipient holds, so it settles the
+    // transfer instead of racing it — the item chart's confirmBroadcast state.
+    expect(
+      await resolveSpendAttemptFate(itemAttempt({ status: 'failed' }), 'main'),
+    ).toMatchObject({
+      kind: 'retry',
+      action: 'rebroadcast',
+      mayClear: false,
+      mayReclaimInputs: true,
+      peerPublishes: true,
+    })
+  })
+
+  it('reads as confirmed once the recipient published it', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+    mocks.txExistsOnChain.mockResolvedValue(true)
+
+    expect(
+      await resolveSpendAttemptFate(itemAttempt({ status: 'failed' }), 'main'),
+    ).toEqual({ kind: 'confirmed' })
+  })
+
+  it('offers no clear on a row with nothing signed to publish', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
 
     const fate = await resolveSpendAttemptFate(
-      itemAttempt({ status: 'failed' }),
+      itemAttempt({ txid: undefined, status: 'failed' }),
       'main',
     )
     expect(fate).toMatchObject({
@@ -502,8 +529,8 @@ describe('a transfer the recipient can still settle', () => {
       reason: 'counterpartyMaySettle',
       mayClear: false,
       mayReleaseFunds: true,
+      peerPublishes: true,
     })
-    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
     expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
   })
 
@@ -516,13 +543,13 @@ describe('a transfer the recipient can still settle', () => {
     expect(mocks.removeActivityById).not.toHaveBeenCalled()
   })
 
-  it('refuses to re-send it, so the wallet cannot race a live transfer', async () => {
+  it('refuses to build a replacement transfer, which would race a live one', async () => {
     mocks.counterpartyMaySettle.mockReturnValue(true)
     mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
 
     await expect(
       retrySpendAttempt(itemAttempt({ txid: undefined, status: 'failed' }), 'main'),
-    ).rejects.toThrow(/can still broadcast/i)
+    ).rejects.toThrow(/no signed transaction/i)
     expect(mocks.sendCollectable).not.toHaveBeenCalled()
     expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled()
   })

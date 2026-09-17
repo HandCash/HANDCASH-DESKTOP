@@ -66,6 +66,8 @@ import {
   releaseSpendAttemptFunds,
   resolveSpendAttemptFate,
   retrySpendAttempt,
+  spendAttemptState,
+  SPEND_ATTEMPT_PEER_PUBLISHES,
   type SpendAttemptFate,
 } from '../wallet/spendAttempt'
 import { toastError, toastSuccess } from '../wallet/toast'
@@ -658,13 +660,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               className="payment-attempt-actions"
               aria-live="polite"
               data-aeon-part="spend-attempt"
-              data-aeon-state={
-                attemptFate.kind === 'refuse' ? attemptFate.reason : attemptFate.kind
-              }
+              data-aeon-state={spendAttemptState(attemptFate)}
             >
               <strong>
-                {attemptFate.kind === 'refuse' &&
-                attemptFate.reason === 'counterpartyMaySettle'
+                {spendAttemptState(attemptFate) === SPEND_ATTEMPT_PEER_PUBLISHES
                   ? 'Sent — the recipient publishes it'
                   : isFailedActivity(entry)
                   ? 'Failed send'
@@ -687,13 +686,17 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                     onClick={() => void retryAttempt()}
                   >
                     {retrying
-                      ? 'Retrying…'
+                      ? attemptFate.action === 'rebroadcast'
+                        ? 'Resubmitting…'
+                        : 'Retrying…'
                       : attemptFate.action === 'reopenPayment'
                       ? 'Send again'
+                      : attemptFate.action === 'rebroadcast'
+                      ? 'Resubmit'
                       : 'Retry send'}
                   </button>
                 ) : null}
-                {(attemptFate.kind === 'retry' ||
+                {((attemptFate.kind === 'retry' && attemptFate.mayClear) ||
                   (attemptFate.kind === 'refuse' && attemptFate.mayClear)) && (
                   <button
                     type="button"
@@ -704,7 +707,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                     {clearing ? 'Clearing…' : 'Clear from Activity'}
                   </button>
                 )}
-                {attemptFate.kind === 'refuse' && attemptFate.mayReclaimInputs ? (
+                {(attemptFate.kind === 'refuse' ||
+                  attemptFate.kind === 'retry') &&
+                attemptFate.mayReclaimInputs ? (
                   <button
                     type="button"
                     className="btn btn-secondary"

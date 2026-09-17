@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.212] - 2026-09-17
+
+### Fixed
+
+- **Resubmit is offered on a peer-published transfer that has not landed.** The
+  panel used to withhold every action for twelve hours on nothing but a clock,
+  so a transfer sitting off chain had no way forward except taking the coins
+  back. Publishing it yourself is not a race: it is the *same* signed
+  transaction the recipient holds, so both copies are one txid — the sender's
+  own silent postBeef, which the wallet already attempts in the background. The
+  permission now comes from `itemSendMachine` (`RETRY_BROADCAST` →
+  `confirmBroadcast`, where sender broadcast is legal) instead of the clock, and
+  the button says **Resubmit**.
+- The chain is checked before that state is described, so a transfer the
+  recipient already published reads as confirmed rather than as still waiting on
+  them. Clear stays refused while they may settle it — that would delete the
+  sender's only record — and building a *replacement* transfer is still refused,
+  because that would race a live one.
+- Clear no longer appears on a retryable row that said it may not be cleared.
+
 ## [1.3.211] - 2026-09-17
 
 ### Added
