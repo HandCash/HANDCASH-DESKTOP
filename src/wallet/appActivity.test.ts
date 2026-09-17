@@ -35,6 +35,7 @@ import {
   isFailedActivity,
   activityFailureReason,
   activityFailureLabel,
+  archiveOversizedBulkSendDebris,
   expireStaleInboundPending,
   expireStaleOutboundPending,
   pruneMissingOnChainActivity,
@@ -382,6 +383,28 @@ describe("inbound receive activity", () => {
     clearAppActivity();
     __resetGhostTxSuppressForTests();
     __resetArcadeSubmitGuardForTests();
+  });
+
+  it("archives legacy oversized unsigned bulk-send debris only", () => {
+    for (let i = 0; i < 3; i += 1) {
+      upsertAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        kind: "spent",
+        sats: 1,
+        method: "send-collectable",
+        status: "failed",
+        sendGroupId: "legacy-700",
+        pendingId: `legacy-${i}`,
+        item: {
+          name: `Fox ${i}`,
+          origin: `${TX}_${i}`,
+          outpoint: `${TX}.${i}`,
+        },
+      });
+    }
+    expect(archiveOversizedBulkSendDebris(2)).toBe(3);
+    expect(listRecentActivity(10)).toEqual([]);
+    expect(listArchivedActivity()).toHaveLength(3);
   });
 
   it("shows a verifying payment in Activity before internalize finishes", () => {

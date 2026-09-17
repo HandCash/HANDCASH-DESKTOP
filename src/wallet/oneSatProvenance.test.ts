@@ -30,6 +30,8 @@ import {
   rebuildProvenanceV2FromBeef,
   provenanceFitsBudget,
   rememberProvenLineage,
+  encodeRemittanceForPeerBox,
+  rememberPeerRemittanceForHeldTips,
   REMITTANCE_MAX_BEEF_B64_CHARS,
   REMITTANCE_MAX_BEEF_BYTES,
   verifyProvenanceV2,
@@ -458,6 +460,34 @@ describe('keeping a proven lineage for the next send', () => {
     expect(found).not.toBeNull()
     expect(fresh.verifyProvenanceV2(found, held).proven).toBe(true)
     fresh.clearRememberedProvenanceRemittances()
+  })
+})
+
+describe('peer-box remittance', () => {
+  beforeEach(() => {
+    durableStore.clear()
+    clearRememberedProvenanceRemittances()
+  })
+
+  it('files a parent remittance under the held tip the hop created', () => {
+    const { provenance } = buildV2Fixture()
+    const held = `${'ab'.repeat(32)}_0`
+    rememberPeerRemittanceForHeldTips([held], provenance)
+    expect(getRememberedProvenanceRemittance(held)?.origin).toBe(provenance.origin)
+    expect(getRememberedProvenanceRemittance(provenance.tip)?.tip).toBe(provenance.tip)
+  })
+
+  it('refuses a remittance that cannot fit the peer-box budget even lean', () => {
+    const p: ProvenanceV2 = {
+      v: 2,
+      origin: `${'aa'.repeat(32)}_0`,
+      tip: `${'bb'.repeat(32)}_0`,
+      path: [`${'bb'.repeat(32)}_0`, `${'aa'.repeat(32)}_0`],
+      beefB64: 'x'.repeat(500),
+    }
+    expect(encodeRemittanceForPeerBox(p, 8)).toBeNull()
+    const { provenance } = buildV2Fixture()
+    expect(encodeRemittanceForPeerBox(provenance, provenance.beefB64.length)?.v).toBe(2)
   })
 })
 

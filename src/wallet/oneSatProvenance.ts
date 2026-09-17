@@ -520,6 +520,61 @@ export function encodeRemittanceBeef(
 }
 
 /**
+ * Slim a remittance so it can ride the item inbox envelope.
+ *
+ * Local remittance may be hundreds of kilobytes. `sendMessage` is ~11k. The
+ * peer still needs a BRC-150 object (path + origin + as much BEEF as fits);
+ * txid-only origin is allowed. Returning null means this proof cannot travel
+ * on the box — receive would have to rediscover, which is not P2P send.
+ */
+export function encodeRemittanceForPeerBox(
+  provenance: unknown,
+  maxB64Chars: number,
+): ProvenanceV2 | null {
+  const parsed = parseProvenanceV2(provenance)
+  if (!parsed || maxB64Chars < 8) return null
+  if (parsed.beefB64.length <= maxB64Chars) return parsed
+  try {
+    const beef = Beef.fromBinary(Array.from(base64ToBytes(parsed.beefB64)))
+    const fitted = fitRemittanceBeef(
+      beef,
+      parsed.path,
+      Math.floor((maxB64Chars * 3) / 4),
+    )
+    if (!fitted) return null
+    const next: ProvenanceV2 = {
+      ...parsed,
+      beefB64: bytesToBase64(fitted.binary),
+    }
+    return next.beefB64.length <= maxB64Chars ? next : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * File a parent remittance against the tips this hop created.
+ *
+ * `verifyProvenanceForHeldTip` accepts a remittance whose `tip` is the spent
+ * parent. Storing that object under the held outpoint is how receive finds it
+ * after toolbox customInstructions have dropped the BEEF.
+ */
+export function rememberPeerRemittanceForHeldTips(
+  heldOutpoints: string[],
+  provenance: unknown,
+): void {
+  const parsed = parseProvenanceV2(provenance)
+  if (!parsed) return
+  rememberProvenanceRemittance(parsed)
+  loadDurableRemittances()
+  for (const held of heldOutpoints) {
+    const key = toUnderscore(held).toLowerCase()
+    if (!/^[0-9a-f]{64}_\d+$/i.test(key)) continue
+    remittanceByTip.set(key, parsed)
+  }
+}
+
+/**
  * Session + durable cache of tip-named remittances built by extending a parent
  * proof after item settle (or imported). Avoids re-hydrate on the next send.
  *

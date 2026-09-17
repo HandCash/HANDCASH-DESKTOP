@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.227] - 2026-09-17
+
+### Fixed
+
+- **Multi-item P2P receives keep every collectable’s identity.** Inbox cards now
+  bind name, origin, and BRC-150 remittance to an exact output index. Receive
+  merges every card sharing a txid before internalize and repaints late cards
+  immediately, instead of collapsing the batch to one scalar hint.
+- **Item outbox retries no longer lose all but the last member of a batch.**
+  Durable retries are keyed by transaction plus output index, while overlapping
+  inbox polls are single-flight by txid.
+- **Oversized sends fail before touching wallet state.** A user send run accepts
+  at most 25 collectables, executed as five measured-safe atomic legs. Legacy
+  unsigned 700-item Activity debris is archived; signed transactions are never
+  removed by this cleanup.
+- **NFT delivery is locally verifiable P2P.** Each item envelope carries its
+  BRC-150 remittance and this hop’s Atomic BEEF when they fit. Remittance is
+  slimmed and prioritized over redundant hop BEEF under the box cap.
+
 ## [1.3.226] - 2026-09-17
 
 ### Changed

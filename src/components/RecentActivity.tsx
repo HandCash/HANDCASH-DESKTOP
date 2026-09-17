@@ -35,6 +35,7 @@ import {
   activityEntryContinues,
   activityEntryTitle,
   activityTokenAmountDisplay,
+  archiveOversizedBulkSendDebris,
   expireStaleInboundPending,
   expireStaleOutboundPending,
   getActivityWriteGeneration,
@@ -738,6 +739,7 @@ function useActivityFeed(limit: number) {
   useEffect(() => subscribePaymentProgress(setPayment), []);
   useEffect(() => {
     const refresh = () => {
+      archiveOversizedBulkSendDebris()
       expireStaleInboundPending();
       expireStaleOutboundPending();
       invalidateActivityFeed(limit);

@@ -50,7 +50,9 @@ export async function sendCollectablesRun(
   const plan = planCollectableSendRun(args.outpoints)
   if (plan.kind === 'refuse') {
     throw new Error(
-      collectableSendBatchRefusal({ kind: 'refuse', reason: 'empty' }),
+      plan.reason === 'empty'
+        ? collectableSendBatchRefusal({ kind: 'refuse', reason: 'empty' })
+        : `Send up to ${plan.max} collectables at a time, not ${plan.count}.`,
     )
   }
 

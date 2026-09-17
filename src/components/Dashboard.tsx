@@ -606,10 +606,22 @@ export function Dashboard({
           tx?: number[]
           item?: boolean
           itemName?: string
+          itemOrigin?: string
+          itemCollectionId?: string
+          itemOutputIndex?: number
+          items?: import('../wallet/messageStore').ItemTransferMember[]
+          provenance?: import('../wallet/oneSatProvenance').ProvenanceV2
         }>
       }>).detail
       const hints = detail?.hints ?? []
       const txids = detail?.txids ?? hints.map((h) => h.txid)
+      // A later card for another output of an already-seen batch is new identity
+      // evidence, even though its txid is under the ordinary funding backoff.
+      for (const hint of hints) {
+        if (Number.isInteger(hint.itemOutputIndex)) {
+          chasedAt.delete(paymentHintTxid(hint))
+        }
+      }
       const chaseable = takeChaseable(txids)
       if (chaseable.length === 0) return
       const chaseHints = hints.filter((h) => chaseable.includes(paymentHintTxid(h)))

@@ -26,6 +26,15 @@ export function normalizeCollectableBatchOutpoints(outpoints: string[]): string[
 export const MAX_ITEMS_PER_ONE_SAT_TX = 5
 
 /**
+ * Maximum user selection for one deliberate send run.
+ *
+ * A 700-item click created hours of stale probes and recovery work. Twenty-five
+ * remains practical as five measured-safe atomic legs while the bulk protocol
+ * is hardened further.
+ */
+export const MAX_ITEMS_PER_COLLECTABLE_SEND_RUN = 25
+
+/**
  * How a selection becomes one send transaction — never a silent fallthrough.
  *
  * This is the *atomic* decision. A selection above the ceiling refuses here;

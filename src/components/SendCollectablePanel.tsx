@@ -191,7 +191,9 @@ export function SendCollectablePanel({
   const sendBlocked = sendPlan.kind === 'refuse' || !pathVerdict.allowed
   const sendBlockMessage =
     sendPlan.kind === 'refuse'
-      ? 'Select at least one collectable'
+      ? sendPlan.reason === 'empty'
+        ? 'Select at least one collectable'
+        : `Send up to ${sendPlan.max} collectables at a time, not ${sendPlan.count}`
       : pathVerdict.error
   const canReview = to.trim().length > 0 && !sendBlocked
 

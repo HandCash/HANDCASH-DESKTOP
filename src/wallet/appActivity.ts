@@ -1239,6 +1239,46 @@ export function expireStaleOutboundPending(
   return expired;
 }
 
+/**
+ * Archive debris from legacy oversized bulk attempts that could never be sent.
+ *
+ * Current UI refuses above 25 before writing Activity. Older builds wrote one
+ * unsigned failed row per selected item, leaving hundreds of identical errors.
+ * No txid means there is no cheque or custody state to preserve.
+ */
+export function archiveOversizedBulkSendDebris(maxItems = 25): number {
+  const prev = readAll();
+  const groups = new Map<string, ActivityEntry[]>();
+  for (const entry of prev) {
+    const group = entry.sendGroupId?.trim();
+    if (
+      !group ||
+      entry.txid ||
+      entry.kind !== "spent" ||
+      entry.status !== "failed" ||
+      isArchivedActivity(entry)
+    ) {
+      continue;
+    }
+    const rows = groups.get(group);
+    if (rows) rows.push(entry);
+    else groups.set(group, [entry]);
+  }
+  const debrisIds = new Set(
+    [...groups.values()]
+      .filter((rows) => rows.length > maxItems)
+      .flatMap((rows) => rows.map((entry) => entry.id))
+  );
+  if (debrisIds.size === 0) return 0;
+  const archivedAt = Date.now();
+  writeAll(
+    prev.map((entry) =>
+      debrisIds.has(entry.id) ? { ...entry, archivedAt } : entry
+    )
+  );
+  return debrisIds.size;
+}
+
 /** Drop every Activity row for txids already proven invalid/ghosted. */
 export function removeActivityForTxids(txids: string[]): number {
   const missing = new Set(

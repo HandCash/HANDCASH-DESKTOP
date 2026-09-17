@@ -48,7 +48,9 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
   `createAction` broadcasts immediately; inbox miss → remittance outbox retry
 - ACKing a payment/item inbox message before ingest succeeds
 - Using messagebox `/files` as the BRC-29 / item delivery path (Android
-  `Failed to fetch`) — remittance ± inline `beefB64` on `sendMessage`
+  `Failed to fetch`) — remittance ± inline `beefB64` on `sendMessage`. Item
+  send must attach BRC-150 `provenance` on that envelope so the peer can
+  verify without an indexer walk; hydrate is C-grade fallback only.
 - QR / physical-scan `brc29:` claim receipt as the inbox-fail fallback
 
 Effect.ts is deferred until we need interruptible fibers beyond `fromPromise`.

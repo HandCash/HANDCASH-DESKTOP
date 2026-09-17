@@ -2269,7 +2269,9 @@ export async function verifyItemAuthenticity(
     await yieldToUi()
 
     const custom = parseCustom(match?.customInstructions)
-    const provenance = custom.provenance
+    const provenance =
+      parseProvenanceV2(custom.provenance) ??
+      getRememberedProvenanceRemittance(target)
     let authenticity: AuthenticityResult = {
       tier: 'unproven',
       proven: false,
@@ -4121,10 +4123,12 @@ export async function sendCollectable(args: {
                     itemName: name,
                     itemOrigin: origin,
                     itemCollectionId: collectionId,
+                    itemOutputIndex: 0,
                     atomicBeef,
+                    provenance,
                   })
                   console.info(
-                    `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
+                    `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox} provenanceInBox=${delivered.provenanceInBox}`
                   )
                   if (!delivered.beefInBox) {
                     console.info(
@@ -4144,7 +4148,9 @@ export async function sendCollectable(args: {
                       itemName: name,
                       itemOrigin: origin,
                       itemCollectionId: collectionId,
+                      itemOutputIndex: 0,
                       messagebox: friend?.messagebox,
+                      provenance: parseProvenanceV2(provenance) ?? undefined,
                     })
                   } else {
                     recordTransactionStage('peer_delivered', {
@@ -4169,6 +4175,7 @@ export async function sendCollectable(args: {
                     itemOrigin: origin,
                     itemCollectionId: collectionId,
                     messagebox: friend?.messagebox,
+                    provenance: parseProvenanceV2(provenance) ?? undefined,
                   })
                   recordTransactionStage('peer_delivery_queued', {
                     flow: 'item_transfer',
@@ -4803,7 +4810,7 @@ export async function sendCollectables(
                   candidate.identityKey.toLowerCase() ===
                   settlePath.recipientIdentityKey.toLowerCase(),
               )
-              for (const item of prepared) {
+              for (const [itemOutputIndex, item] of prepared.entries()) {
                 try {
                   const delivered = await notifyPeerItemIncoming({
                     recipientIdentityKey: settlePath.recipientIdentityKey,
@@ -4814,7 +4821,9 @@ export async function sendCollectables(
                     itemName: item.name,
                     itemOrigin: item.origin,
                     itemCollectionId: item.collectionId,
+                    itemOutputIndex,
                     atomicBeef,
+                    provenance: item.provenance,
                   })
                   if (delivered.delivered === 'cloud' || delivered.delivered === 'direct') continue
                 } catch (err) {
@@ -4827,7 +4836,9 @@ export async function sendCollectables(
                   itemName: item.name,
                   itemOrigin: item.origin,
                   itemCollectionId: item.collectionId,
+                  itemOutputIndex,
                   messagebox: friend?.messagebox,
+                  provenance: parseProvenanceV2(item.provenance) ?? undefined,
                 })
               }
             })()

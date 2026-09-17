@@ -72,6 +72,35 @@ vi.mock('./oneSatImport', () => ({
   peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
+describe('multi-item inbox identity', () => {
+  it('keeps every per-vout card sharing one txid', async () => {
+    const { mergeItemTransferMembers } = await import('./sendBrc29Payment')
+    const txid = 'ab'.repeat(32)
+    const first = {
+      txid,
+      item: true as const,
+      itemName: 'Fox #1',
+      itemOrigin: `${'01'.repeat(32)}_0`,
+      itemOutputIndex: 0,
+    }
+    const second = {
+      txid,
+      item: true as const,
+      itemName: 'Fox #2',
+      itemOrigin: `${'02'.repeat(32)}_0`,
+      itemOutputIndex: 1,
+    }
+    const members = mergeItemTransferMembers(
+      { ...first, items: mergeItemTransferMembers(undefined, first) },
+      second,
+    )
+    expect(members).toEqual([
+      expect.objectContaining({ outputIndex: 0, name: 'Fox #1' }),
+      expect.objectContaining({ outputIndex: 1, name: 'Fox #2' }),
+    ])
+  })
+})
+
 vi.mock('./appActivity', () => ({
   hasActivityTxid: () => false,
   hasSettledActivityTxid: () => false,

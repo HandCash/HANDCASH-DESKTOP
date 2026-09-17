@@ -45,7 +45,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 |---------|-------|--------|
 | BSV / item-tip custody | Grade A P2PKH | Keep |
 | Item identity / authenticity | BRC-150 v2 offline tip→origin proof | Keep; fail closed when proof cannot be verified |
-| BRC-150 remittance to peer | Local only | Optional later: Outpoint BEEF / messagebox envelope (B); never gate chain custody on delivery |
+| BRC-150 remittance to peer | Inbox envelope `meta.provenance` + Atomic BEEF of this hop | Keep; receive verifies from the package. Indexer hydrate is C fallback for a slimmed origin body. Never gate chain custody on delivery |
 | Chat delivery | Resolved peer **messagebox URL**; BRC-CLOUD fallback; live draft-BRC-246 IPv6 session when both wallets are reachable | Keep box as rendezvous + offline inbox; socket is the hot path |
 | Chat encryption | BRC-169 §7 envelope + BRC-78 content (legacy plaintext inbound still accepted) | Tolls / reachability policy; full Authrite Peer sessions |
 | Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |
@@ -94,10 +94,14 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 4. Auto ordinal pass after spend yields `fundingOnly`.  
 5. History Argon2 off UI thread (already deferred post-spend; finish the job).
 
-### Phase 4 — Optional richer P2P proofs (only if product needs)
+### Phase 4 — Item send is fully verifiable P2P
 
-- Ship authenticity package via messagebox or BRC-158 Outpoint BEEF so cold receive can verify without re-walking SPV.  
-- Not a substitute for latch state identity.
+- The sender attaches BRC-150 remittance on the same `sendMessage` as the hop’s Atomic BEEF (`notifyPeerItemIncoming`). Receive files that remittance against the held tip and verifies locally first.
+- Batch cards carry their exact output index. Receive merges every card sharing a
+  txid before internalize, so each held output keeps its own name, origin, and
+  BRC-150 remittance; the outbox likewise keys retries by txid + output index.
+- Slimming a fat mint origin to txid-only is a **size** fallback so the package still travels. Fetching that origin from an indexer is grade C, not the reason send omitted the proof.
+- Not a substitute for chain custody (A). Messagebox miss still retries the outbox; it does not create a second payment tx.
 
 ---
 

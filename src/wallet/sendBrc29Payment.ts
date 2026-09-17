@@ -22,6 +22,7 @@ import {
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
 import { withVisibleOnChainBeef } from './legacyBeef'
+import { parseProvenanceV2, type ProvenanceV2 } from './oneSatProvenance'
 import {
   forgetGhostTx,
   isGhostTxSuppressed,
@@ -66,7 +67,7 @@ import {
   listAllMessages,
   updateMessage,
 } from './messageStore'
-import type { ItemTransferAsset } from './messageStore'
+import type { ItemTransferAsset, ItemTransferMember } from './messageStore'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
@@ -967,13 +968,20 @@ export type PaymentTipHint = {
   itemName?: string
   itemOrigin?: string
   itemCollectionId?: string
+  itemOutputIndex?: number
+  /** Every output card observed for one multi-item transaction. */
+  items?: ItemTransferMember[]
   /** Tagged asset grammar; absent means legacy collectable. */
   asset?: ItemTransferAsset
+  /** BRC-150 remittance from the sender's inbox card. */
+  provenance?: ProvenanceV2
 }
 
 /** Inbound chat cards still waiting to be internalized (inbox may already be ACKed). */
 let pendingChatHintGeneration = ''
 let pendingChatHintCache: PaymentTipHint[] = []
+/** Prevent overlapping inbox polls from broadcasting/internalizing one tx repeatedly. */
+const tipIngestInFlight = new Set<string>()
 
 export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
   const generation = `${getMessageWriteGeneration()}:${getActivityWriteGeneration()}`
@@ -1006,12 +1014,50 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
         typeof msg.meta?.itemCollectionId === 'string'
           ? msg.meta.itemCollectionId.trim() || undefined
           : undefined,
+      itemOutputIndex: msg.meta?.itemOutputIndex,
+      items: msg.meta?.items,
       asset: msg.meta?.asset,
+      provenance: parseProvenanceV2(msg.meta?.provenance) ?? undefined,
     })
   }
   pendingChatHintGeneration = generation
   pendingChatHintCache = hints
   return pendingChatHintCache
+}
+
+export function mergeItemTransferMembers(
+  previous: PaymentTipHint | undefined,
+  next: PaymentTipHint,
+): ItemTransferMember[] | undefined {
+  const byOutput = new Map<number, ItemTransferMember>()
+  for (const member of [...(previous?.items ?? []), ...(next.items ?? [])]) {
+    if (Number.isInteger(member.outputIndex) && member.outputIndex >= 0) {
+      byOutput.set(member.outputIndex, member)
+    }
+  }
+  const addCard = (hint: PaymentTipHint | undefined) => {
+    if (
+      !hint?.item ||
+      !Number.isInteger(hint.itemOutputIndex) ||
+      hint.itemOutputIndex! < 0 ||
+      !hint.itemName?.trim() ||
+      !hint.itemOrigin?.trim()
+    ) {
+      return
+    }
+    byOutput.set(hint.itemOutputIndex!, {
+      outputIndex: hint.itemOutputIndex!,
+      name: hint.itemName.trim(),
+      origin: hint.itemOrigin.trim().replace(/\.(\d+)$/, '_$1').toLowerCase(),
+      ...(hint.itemCollectionId ? { collectionId: hint.itemCollectionId } : {}),
+      ...(hint.provenance ? { provenance: hint.provenance } : {}),
+    })
+  }
+  addCard(previous)
+  addCard(next)
+  return byOutput.size > 0
+    ? [...byOutput.values()].sort((a, b) => a.outputIndex - b.outputIndex)
+    : undefined
 }
 
 /**
@@ -1050,7 +1096,13 @@ export async function ingestPaymentsFromTipHints(
       itemName: h.itemName?.trim() || undefined,
       itemOrigin: h.itemOrigin?.trim() || undefined,
       itemCollectionId: h.itemCollectionId?.trim() || undefined,
+      itemOutputIndex:
+        Number.isInteger(h.itemOutputIndex) && h.itemOutputIndex! >= 0
+          ? h.itemOutputIndex
+          : undefined,
+      items: h.items,
       asset: h.asset,
+      provenance: parseProvenanceV2(h.provenance) ?? undefined,
     })
   }
 
@@ -1072,10 +1124,22 @@ export async function ingestPaymentsFromTipHints(
       (h.itemName && !prev.itemName) ||
       (h.itemOrigin && !prev.itemOrigin) ||
       (h.itemCollectionId && !prev.itemCollectionId) ||
+      (h.itemOutputIndex != null &&
+        !prev.items?.some((member) => member.outputIndex === h.itemOutputIndex)) ||
+      (h.items && h.items.length > 0) ||
+      (h.provenance && !prev.provenance) ||
       (h.beefUrl && !prev.beefUrl) ||
       (h.tx && !prev.tx)
     ) {
-      unique.set(h.txid, { ...prev, ...h })
+      unique.set(h.txid, {
+        ...prev,
+        ...h,
+        tx: h.tx ?? prev?.tx,
+        beefUrl: h.beefUrl ?? prev?.beefUrl,
+        brc29: h.brc29 ?? prev?.brc29,
+        senderIdentityKey: h.senderIdentityKey ?? prev?.senderIdentityKey,
+        items: mergeItemTransferMembers(prev, h),
+      })
     }
   }
 
@@ -1125,6 +1189,11 @@ export async function ingestPaymentsFromTipHints(
   const hintList = [...unique.values()]
 
   const outcomes = await mapPool(hintList, TIP_INGEST_CONCURRENCY, async (hint) => {
+    if (tipIngestInFlight.has(hint.txid)) {
+      return { importedTxid: null, balanceSats: null }
+    }
+    tipIngestInFlight.add(hint.txid)
+    try {
     // On Android each BEEF merge and toolbox call shares the WebView process
     // with input/rendering. One hint per turn keeps stale inbox recovery from
     // producing a multi-second navigation stall; failed hints retry next poll.
@@ -1167,6 +1236,8 @@ export async function ingestPaymentsFromTipHints(
                     name: hint.itemName,
                     origin: hint.itemOrigin,
                     collectionId: hint.itemCollectionId,
+                    provenance: hint.provenance,
+                    items: hint.items,
                     beefPurpose: 'inboundItemHint',
                   }),
               )
@@ -1237,6 +1308,9 @@ export async function ingestPaymentsFromTipHints(
     }
     if (!accepted) await markGhostIfMissing(hint.txid, false)
     return { importedTxid, balanceSats }
+    } finally {
+      tipIngestInFlight.delete(hint.txid)
+    }
   })
 
   const importedTxids: string[] = []

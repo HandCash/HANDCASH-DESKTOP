@@ -21,7 +21,8 @@ Full plan: [`docs/wallet-p2p-messagebox.md`](../../docs/wallet-p2p-messagebox.md
 ## When changing send / receive / chat
 
 1. Custody paths stay grade A; never gate collectable/BSV success on messagebox.
-2. Do not describe remittance as “sent to the peer.”
+2. Do not describe remittance as “sent to the peer” in UI copy — it does not ride P2PKH. The **item inbox envelope** is still how the peer gets identity: `notifyPeerItemIncoming` must attach BRC-150 remittance (`meta.provenance`) with the Atomic BEEF of this hop so receive can `verifyProvenanceForHeldTip` from the package. Batch cards also carry their exact output index; receive and outbox must not deduplicate distinct items by txid alone. Indexer / WhatsOnChain hydrate is grade **C** fallback for a lean origin body, not the send contract.
 3. Chat delivery takes a box base URL (`Friend.messagebox` → `deliverOutbound`); BRC-CLOUD is fallback only. Bodies are BRC-169 §7 / BRC-78 envelopes. A live IPv6 session (draft BRC-246) carries the same sealed chat. Requests use `X-BRC33-*` (`messageboxAuth.ts`); `X-BRC103-*` on BRC-CLOUD only. Full Authrite Peer sessions are still deferred.
 4. Settings statecharts + `layers.ts` glossary must stay accurate if behaviour changes.
 5. Do not regress BRC-33 field names (`sender`, `messageIds`, `status: success`).
+6. Do not use messagebox `/files` as the item or BRC-29 delivery path. Remittance ± inline `beefB64` on `sendMessage`. If the box cap cannot take both, keep remittance (identity) over a second indexer walk; Atomic BEEF of this hop may SPV-fetch as it already does when omitted.
