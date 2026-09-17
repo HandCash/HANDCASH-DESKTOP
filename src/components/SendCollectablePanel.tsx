@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMachine } from '@xstate/react'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
+import { sendMachine } from '../machines/sendMachine'
 import {
   getCachedCollectable,
   getCollectable,
   listCollectables,
   sendCollectable,
   sendCollectables,
-  sendCollectablesRun,
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
+import { sendCollectablesRun } from '../wallet/collectableSendRunExecutor'
 import { isItemSent } from '../wallet/sentItemGuard'
 import {
   addressFromIdentityKey,
@@ -70,9 +72,6 @@ type Props = {
   onFail?: (error: string) => void
 }
 
-/** The panel only composes and confirms; the send outlives it. */
-type Stage = 'edit' | 'confirm'
-
 function shortenAddress(value: string): string {
   const v = value.trim()
   if (v.length <= 20) return v
@@ -126,7 +125,8 @@ export function SendCollectablePanel({
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [showMatches, setShowMatches] = useState(false)
-  const [stage, setStage] = useState<Stage>('edit')
+  const [sendSnapshot, sendUi] = useMachine(sendMachine)
+  const editing = sendSnapshot.matches('editing')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningTo, setScanningTo] = useState(false)
@@ -143,7 +143,7 @@ export function SendCollectablePanel({
       .map((value) => getCachedCollectable(value))
       .filter((value): value is Collectable => value != null)
     setItems(cached)
-    setStage('edit')
+    sendUi({ type: 'RESET' })
     setError(null)
     // `getCollectable` enriches and re-verifies one tip: an indexer walk we must
     // not fire hundreds of times to draw a count. A run paints from the cache
@@ -297,6 +297,7 @@ export function SendCollectablePanel({
       app: item.app,
     }
     const label = recipientLabel
+    sendUi({ type: 'CONFIRM' })
     clearNavChild()
 
     const total = requestedOutpoints.length
@@ -377,7 +378,14 @@ export function SendCollectablePanel({
       const address = resolvePaymentAddress(to, chain)
       setTo(address)
       setError(null)
-      setStage('confirm')
+      sendUi({
+        type: 'EDIT',
+        to: address,
+        amount: String(requestedOutpoints.length),
+        friendLabel,
+        payeeIdentityKey: recipientIdentityKey,
+      })
+      sendUi({ type: 'REVIEW' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
@@ -387,7 +395,7 @@ export function SendCollectablePanel({
 
   useWalletActionDock(
     item
-      ? stage === 'edit'
+      ? editing
         ? {
             ariaLabel: 'Collectable send actions',
             secondary: {
@@ -452,9 +460,9 @@ export function SendCollectablePanel({
     <div
       className="nav-child-panel send-panel send-collectable-panel"
       data-aeon-scope="send-collectable"
-      data-aeon-state={stateToAttr(stage)}
+      data-aeon-state={stateToAttr(sendSnapshot.value)}
     >
-      {stage === 'edit' && (
+      {editing && (
         <div className="send-stage send-stage-edit">
           <div className="send-layout">
             <div className="send-amount-hero send-collectable-hero">
@@ -544,7 +552,7 @@ export function SendCollectablePanel({
                     Sending to <strong>{resolvedName}</strong>
                   </p>
                 ) : null}
-                {error && stage === 'edit' ? (
+                {error && editing ? (
                   <p className="error" role="status">
                     {error}
                   </p>
@@ -586,7 +594,7 @@ export function SendCollectablePanel({
         </div>
       )}
 
-      {stage === 'confirm' && (
+      {sendSnapshot.matches('confirming') && (
         <div className="send-stage send-stage-confirm">
           <div className="send-layout send-layout-confirm">
             <div className="send-amount-hero send-collectable-hero">

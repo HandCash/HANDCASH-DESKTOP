@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMachine } from '@xstate/react'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
+import { sendMachine } from '../machines/sendMachine'
 import {
   formatFungibleAmount,
   getFungible,
@@ -51,9 +53,6 @@ type Props = {
   onFail?: (error: string) => void
 }
 
-/** The panel only composes and confirms; the send outlives it. */
-type Stage = 'edit' | 'confirm'
-
 function shortenAddress(value: string): string {
   const v = value.trim()
   if (v.length <= 20) return v
@@ -84,7 +83,8 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [recipientProtocols, setRecipientProtocols] = useState<string[]>([])
   const [showMatches, setShowMatches] = useState(false)
-  const [stage, setStage] = useState<Stage>('edit')
+  const [sendSnapshot, sendUi] = useMachine(sendMachine)
+  const editing = sendSnapshot.matches('editing')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningTo, setScanningTo] = useState(false)
@@ -255,6 +255,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     }
     const label = recipientLabel
     const sym = token.sym
+    sendUi({ type: 'CONFIRM' })
     clearNavChild()
 
     void (async () => {
@@ -284,7 +285,14 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       const address = resolvePaymentAddress(to, chain)
       setTo(address)
       setError(null)
-      setStage('confirm')
+      sendUi({
+        type: 'EDIT',
+        to: address,
+        amount: amount.trim(),
+        friendLabel,
+        payeeIdentityKey: recipientIdentityKey,
+      })
+      sendUi({ type: 'REVIEW' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
@@ -294,7 +302,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
 
   useWalletActionDock(
     token
-      ? stage === 'edit'
+      ? editing
         ? {
             ariaLabel: 'Token send actions',
             secondary: {
@@ -337,9 +345,9 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     <div
       className="nav-child-panel send-panel send-collectable-panel send-fungible-panel"
       data-aeon-scope="send-fungible"
-      data-aeon-state={stateToAttr(stage)}
+      data-aeon-state={stateToAttr(sendSnapshot.value)}
     >
-      {stage === 'edit' && (
+      {editing && (
         <div className="send-stage send-stage-edit">
           <div className="send-layout">
             <div className="send-amount-hero send-collectable-hero">
@@ -459,7 +467,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                     Sending to <strong>{resolvedName}</strong>
                   </p>
                 ) : null}
-                {error && stage === 'edit' ? (
+                {error && editing ? (
                   <CopyableError role="status">{error}</CopyableError>
                 ) : null}
                 {showMatches && matches.length > 0 ? (
@@ -494,7 +502,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
         </div>
       )}
 
-      {stage === 'confirm' && (
+      {sendSnapshot.matches('confirming') && (
         <div className="send-stage send-stage-confirm">
           <div className="send-layout send-layout-confirm">
             <div className="send-amount-hero send-collectable-hero">

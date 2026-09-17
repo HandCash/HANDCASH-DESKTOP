@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.222] - 2026-09-17
+
+### Changed
+
+- **Item send panels now project the existing send statechart.** Collectable and
+  BSV-21 panels no longer keep parallel `useState('edit' | 'confirm')` stages;
+  Review and Confirm send XState events, and Aeon state attributes come directly
+  from the chart snapshot.
+- **The machine manifest is exhaustive and self-ratcheting.** All 27
+  `*Machine.ts` exports are registered. The manifest test discovers source
+  machines automatically, so adding a chart without cataloging it now fails CI.
+- **Bulk-send orchestration left the collectables god file.**
+  `collectableSendRunExecutor.ts` now drives `collectableSendRunMachine` and the
+  bounded atomic legs; `collectables.ts` retains the single-transaction domain
+  operation rather than also owning the multi-transaction queue.
+
 ## [1.3.221] - 2026-09-17
 
 ### Fixed
