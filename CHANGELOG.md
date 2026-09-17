@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.218] - 2026-09-17
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.217] - 2026-09-17
 
 ### Fixed
