@@ -62,6 +62,7 @@ import {
 import {
   clearSpendAttempt,
   isSpendAttempt,
+  reclaimSpendAttempt,
   releaseSpendAttemptFunds,
   resolveSpendAttemptFate,
   retrySpendAttempt,
@@ -147,6 +148,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [retrying, setRetrying] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [releasing, setReleasing] = useState(false)
+  const [reclaiming, setReclaiming] = useState(false)
   const [attemptError, setAttemptError] = useState<string | null>(null)
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
@@ -347,6 +349,33 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       toastError('Could not free funds', message)
     } finally {
       setReleasing(false)
+    }
+  }
+
+  const reclaimAttempt = async () => {
+    if (!entry || reclaiming) return
+    const confirmed = window.confirm(
+      'Take these coins back?\n\nNothing was published, so the coins are yours to spend again. If the recipient publishes their copy later it will be rejected as a double spend — the transfer is cancelled by doing this.',
+    )
+    if (!confirmed) return
+    setReclaiming(true)
+    setAttemptError(null)
+    try {
+      const { inputs } = await reclaimSpendAttempt(entry, chain)
+      toastSuccess(
+        'Coins taken back',
+        inputs > 0
+          ? `${inputs} input${inputs === 1 ? '' : 's'} are spendable again. The transfer is cancelled.`
+          : 'The transfer is cancelled and its coins are spendable again.',
+      )
+      setAttemptFate({ kind: 'checking' })
+      setAttemptFate(await resolveSpendAttemptFate(entry, chain))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setAttemptError(message)
+      toastError('Could not take the coins back', message)
+    } finally {
+      setReclaiming(false)
     }
   }
 
@@ -675,13 +704,24 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                     {clearing ? 'Clearing…' : 'Clear from Activity'}
                   </button>
                 )}
+                {attemptFate.kind === 'refuse' && attemptFate.mayReclaimInputs ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={retrying || clearing || releasing || reclaiming}
+                    onClick={() => void reclaimAttempt()}
+                    title="Spend these coins again. Only possible while the transaction is absent from the chain, and it cancels the transfer."
+                  >
+                    {reclaiming ? 'Taking back…' : 'Take the coins back'}
+                  </button>
+                ) : null}
                 {attemptFate.kind === 'refuse' &&
                 !attemptFate.mayClear &&
                 attemptFate.mayReleaseFunds ? (
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    disabled={retrying || clearing || releasing}
+                    disabled={retrying || clearing || releasing || reclaiming}
                     onClick={() => void releaseFunds()}
                     title="Frees coins held by sends that were never signed. This transfer is not affected."
                   >

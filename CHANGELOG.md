@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.211] - 2026-09-17
+
+### Added
+
+- Coins sealed for a transfer nobody ever published can be taken back. When a
+  recipient never broadcasts a peer-published item transfer, the sender's inputs
+  stayed sealed against a transaction that does not exist on chain — the row
+  could not be cleared (it is the only record of the transfer) and the coins
+  could not be spent. Payment Details now offers **Take the coins back** on such
+  a row: it hands the sealed inputs back to the spendable set, returns the item
+  to inventory, and cancels the transfer.
+- The decision is a named path (`localTxReclaimPath.ts`), re-checked against the
+  chain at the moment you press it, and refuses on anything uncertain: a
+  transaction that is on chain, inputs already spent, an unreadable input set, no
+  explorer answer, or an Arcade submit that may still be in flight. The dialog
+  states the trade plainly — if the recipient publishes their copy later it is
+  rejected as a double spend.
+
 ## [1.3.210] - 2026-09-17
 
 ### Changed

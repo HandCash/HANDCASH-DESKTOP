@@ -21,10 +21,18 @@ const mocks = vi.hoisted(() => ({
   hideSpentOutpoints: vi.fn(),
   getFungible: vi.fn(),
   sendFungible: vi.fn(),
+  releaseSealedInputsOfUnsentTx: vi.fn(),
+  forgetItemsSent: vi.fn(),
+  txHadArcadeSubmitContact: vi.fn(),
 }))
 
 vi.mock('./sentItemGuard', () => ({
   counterpartyMaySettle: mocks.counterpartyMaySettle,
+  forgetItemsSent: mocks.forgetItemsSent,
+}))
+
+vi.mock('./arcadeSubmitGuard', () => ({
+  txHadArcadeSubmitContact: mocks.txHadArcadeSubmitContact,
 }))
 
 vi.mock('./legacyScan', async (importOriginal) => ({
@@ -63,6 +71,7 @@ vi.mock('./txStore', () => ({
 vi.mock('./staleOutputRelease', () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
   hideSpentOutpoints: mocks.hideSpentOutpoints,
+  releaseSealedInputsOfUnsentTx: mocks.releaseSealedInputsOfUnsentTx,
 }))
 
 vi.mock('./session', () => ({
@@ -95,6 +104,7 @@ import {
   clearSpendAttempt,
   countRebroadcastableFailedSpends,
   rebroadcastAllFailedSpends,
+  reclaimSpendAttempt,
   resolveSpendAttemptFate,
   retrySpendAttempt,
 } from './spendAttempt'
@@ -205,6 +215,61 @@ beforeEach(() => {
     spendKind: 'plain',
   })
   mocks.sendFungible.mockResolvedValue({ txid: TX })
+  mocks.releaseSealedInputsOfUnsentTx.mockResolvedValue(2)
+  mocks.txHadArcadeSubmitContact.mockReturnValue(false)
+})
+
+describe('reclaimSpendAttempt', () => {
+  it('takes back the coins of a transfer nobody published', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+
+    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).resolves.toEqual({
+      inputs: 2,
+      outpoint: OUTPOINT,
+    })
+    expect(mocks.releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TX, undefined)
+    // The tip is ours again, so it must not stay hidden as sent.
+    expect(mocks.forgetItemsSent).toHaveBeenCalledWith([OUTPOINT])
+  })
+
+  it('refuses once the transaction is on chain', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(true)
+
+    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).rejects.toThrow(
+      /already spent/i,
+    )
+    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('refuses when no explorer can speak for the transaction', async () => {
+    mocks.txExistsOnChain.mockRejectedValue(new Error('offline'))
+
+    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).rejects.toThrow(
+      /could not be checked/i,
+    )
+    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('refuses while Arcade may still be submitting it', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+    mocks.txHadArcadeSubmitContact.mockReturnValue(true)
+
+    await expect(reclaimSpendAttempt(itemAttempt(), 'main')).rejects.toThrow(
+      /Arcade/,
+    )
+    expect(mocks.releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('has nothing to reclaim for an attempt that never signed', async () => {
+    await expect(
+      reclaimSpendAttempt(itemAttempt({ txid: undefined }), 'main'),
+    ).rejects.toThrow(/never signed/i)
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
+  })
 })
 
 describe('resolveSpendAttemptFate — tokens', () => {

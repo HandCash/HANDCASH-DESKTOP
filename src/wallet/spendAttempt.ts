@@ -27,7 +27,7 @@ import {
   getFungible,
   sendFungible,
 } from './token'
-import { counterpartyMaySettle } from './sentItemGuard'
+import { counterpartyMaySettle, forgetItemsSent } from './sentItemGuard'
 import { getBeefForTxidCached } from './beefCache'
 import {
   parseOutpoint,
@@ -38,6 +38,11 @@ import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { getActiveWallet } from './session'
 import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 import { itemSendMachine, maySenderBroadcast } from './itemSendMachine'
+import type { SignedInputsFate as KernelSignedInputsFate } from './kernel/signedInputsFate'
+import {
+  chooseLocalTxReclaimPath,
+  localTxReclaimRefusal,
+} from './localTxReclaimPath'
 import { getTxByTxid } from './txStore'
 import type { Chain } from './vault'
 import { createActor } from 'xstate'
@@ -72,6 +77,12 @@ export type SpendAttemptFate =
        * touching a signed transfer the payee still holds.
        */
       mayReleaseFunds?: boolean
+      /**
+       * The row is stuck on a signed transaction, so the holder may take its
+       * sealed coins back. Offered without a chain call — {@link reclaimSpendAttempt}
+       * re-checks and fails closed, so this only decides whether to show it.
+       */
+      mayReclaimInputs?: boolean
     }
   | {
       kind: 'retry'
@@ -143,7 +154,7 @@ function hasTxid(entry: ActivityEntry): boolean {
   return Boolean(entry.txid && /^[0-9a-f]{64}$/i.test(entry.txid))
 }
 
-type SignedInputsFate = 'unsigned' | 'spent' | 'unspent' | 'unknown'
+type SignedInputsFate = KernelSignedInputsFate
 
 async function loadLocalRawTx(txid: string): Promise<number[] | null> {
   const storage = getActiveWallet()?.wallet?.storage
@@ -255,6 +266,7 @@ export async function resolveSpendAttemptFate(
         'The item has left your wallet and the recipient has the signed transfer. Their wallet publishes it, so it confirms once they are online. This stays in your Activity as the record until then.',
       mayClear: false,
       mayReleaseFunds: true,
+      mayReclaimInputs: hasTxid(entry),
     }
   }
 
@@ -554,6 +566,62 @@ export async function clearSpendAttempt(
  */
 export async function releaseSpendAttemptFunds(): Promise<void> {
   await releaseLocalSpendReservations()
+}
+
+export type SpendAttemptReclaim = {
+  /** Sealed inputs handed back to the spendable set. */
+  inputs: number
+  /** The item returned to inventory, when this was an item transfer. */
+  outpoint: string | null
+}
+
+/**
+ * Take back the coins sealed for a signed transaction that never reached the
+ * chain, so the next send may spend over it.
+ *
+ * This is the holder's decision, not a repair the wallet may make on its own: if
+ * the counterparty ever publishes their copy, it becomes a double-spend of
+ * whatever is spent from here first. {@link chooseLocalTxReclaimPath} is
+ * re-evaluated against live chain state and refuses on anything uncertain, so a
+ * transaction that did land — or that no explorer can speak for — is never
+ * reclaimed.
+ */
+export async function reclaimSpendAttempt(
+  entry: ActivityEntry,
+  chain: Chain,
+): Promise<SpendAttemptReclaim> {
+  if (!hasTxid(entry)) {
+    throw new Error(localTxReclaimRefusal('nothingSigned'))
+  }
+  const txid = entry.txid!.trim().toLowerCase()
+  const onChain = await Promise.resolve(txExistsOnChain(txid, chain)).catch(
+    () => null,
+  )
+  const path = chooseLocalTxReclaimPath({
+    onChain,
+    inputsFate: await signedTxInputsFate(entry, chain),
+    arcadeContacted: txHadArcadeSubmitContact(txid),
+  })
+  if (path.path === 'refuse') {
+    console.info(`[spend-attempt] reclaim refused reason=${path.reason} txid=${txid}`)
+    throw new Error(localTxReclaimRefusal(path.reason))
+  }
+
+  const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')
+  const inputs = await releaseSealedInputsOfUnsentTx(txid, undefined)
+
+  // The tip was hidden as sent. Nothing published it, so it is ours again —
+  // otherwise the coins come back while the item stays invisible for a day.
+  const outpoint =
+    entry.retry?.kind === 'send-collectable'
+      ? entry.retry.outpoint
+      : entry.item?.outpoint ?? null
+  if (outpoint) forgetItemsSent([outpoint])
+
+  console.info(
+    `[spend-attempt] reclaimed ${inputs} input(s) of ${txid.slice(0, 12)} — nothing was published`,
+  )
+  return { inputs, outpoint: outpoint ?? null }
 }
 
 /**
