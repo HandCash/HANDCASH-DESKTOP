@@ -21,6 +21,7 @@ vi.mock('./token', async (importOriginal) => {
 })
 vi.mock('./inscriptionCache', () => ({
   getResolvedInscription: () => resolved(),
+  getResolvedInscriptionByOrigin: () => resolved(),
   isThinResolution: (r: { mimeType?: string; traits?: unknown[] } | null) =>
     !r || (!r.mimeType && (r.traits?.length ?? 0) === 0),
 }))

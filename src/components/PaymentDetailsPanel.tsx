@@ -30,11 +30,11 @@ import { viewActivityItem } from '../wallet/activityItemView'
 import { activityContactLink } from '../wallet/itemHistory'
 import {
   activityBatchName,
+  activityBatchOf,
   composeActivityRecords,
   moneyLegForEntry,
 } from '../wallet/activityRecords'
 import {
-  ACTION_MARK_LABEL,
   activityActionMark,
 } from '../wallet/activityActionMark'
 import {
@@ -208,14 +208,14 @@ function PaymentBreakdownRow({
   usdPerBsv: number | null
 }) {
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
+  const named = shown ? { ...entry, item: shown } : entry
   const mark = activityActionMark(entry)
-  const action = mark ? ACTION_MARK_LABEL[mark] : activityEntryTitle(entry)
-  const title = activityEntryTitle(entry)
+  const itemName = shown?.name?.trim()
+  const title = itemName || activityEntryTitle(named)
   const contact = activityContactLink(entry)
   const peer = contact?.label ?? activityRecipientLabel(entry)
   const token = isTokenActivity(entry)
   const item = isItemActivity(entry)
-  const named = shown ? { ...entry, item: shown } : entry
   const amount =
     token || (!item && entry.sats > 0)
       ? token
@@ -258,30 +258,31 @@ function PaymentBreakdownRow({
             {title}
           </button>
         ) : (
-          <strong>{title}</strong>
+          <strong className="payment-tx-leg-title">{title}</strong>
         )}
-        <span className="payment-tx-leg-meta">
-          <span>{action}</span>
-          {entry.kind === 'spent' ? (
-            <>
-              <IdentityMark
-                label="You"
-                onClick={() => setNavSection('identity')}
-              />
-              <span aria-hidden>→</span>
-              {peer ? <IdentityMark label={peer} onClick={openPeer} /> : null}
-            </>
-          ) : entry.kind === 'earned' ? (
-            <>
-              {peer ? <IdentityMark label={peer} onClick={openPeer} /> : null}
-              {peer ? <span aria-hidden>→</span> : null}
-              <IdentityMark
-                label="You"
-                onClick={() => setNavSection('identity')}
-              />
-            </>
-          ) : null}
-        </span>
+        {peer ? (
+          <span className="payment-tx-leg-meta">
+            {entry.kind === 'spent' ? (
+              <>
+                <IdentityMark
+                  label="You"
+                  onClick={() => setNavSection('identity')}
+                />
+                <span aria-hidden>→</span>
+                <IdentityMark label={peer} onClick={openPeer} />
+              </>
+            ) : entry.kind === 'earned' ? (
+              <>
+                <IdentityMark label={peer} onClick={openPeer} />
+                <span aria-hidden>→</span>
+                <IdentityMark
+                  label="You"
+                  onClick={() => setNavSection('identity')}
+                />
+              </>
+            ) : null}
+          </span>
+        ) : null}
       </div>
       {amount ? (
         <span className="history-amount">{amount}</span>
@@ -468,7 +469,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const record = activityRecordForEntry(entry, recent)
   const subject = record?.subject ?? entry
   const assets = record?.assets ?? []
-  const batch = record?.batch ?? null
+  const viewedMembers = [subject, ...assets].map((row) =>
+    row.item ? { ...row, item: viewActivityItem(row.item) } : row,
+  )
+  const batch = activityBatchOf(viewedMembers) ?? record?.batch ?? null
   const batchName = batch ? activityBatchName(batch) : null
   const moneyLeg = moneyLegForEntry(entry, recent)
   const breakdown = expandedActivityLegs(entry, recent)

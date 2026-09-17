@@ -170,6 +170,13 @@ function isCollectableAsset(entry: ActivityEntry): boolean {
   return true
 }
 
+/** Batch count/label from members as they should be named on screen. */
+export function activityBatchOf(
+  members: readonly ActivityEntry[],
+): ActivityBatch | null {
+  return chooseActivityBatch(members)
+}
+
 function chooseActivityBatch(
   members: readonly ActivityEntry[],
 ): ActivityBatch | null {

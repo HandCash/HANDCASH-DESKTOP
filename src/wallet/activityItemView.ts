@@ -1,13 +1,34 @@
 import type { ActivityItem } from './appActivity'
 import { getCachedCollectables } from './collectables'
 import { getCachedFungibles, getTokenIconDataUrl } from './token'
-import { getResolvedInscription, isThinResolution } from './inscriptionCache'
+import {
+  getResolvedInscription,
+  getResolvedInscriptionByOrigin,
+  isThinResolution,
+} from './inscriptionCache'
 import { contentUrlForOrigin } from './oneSatImport'
 import { getProvenVerdict } from './provenCache'
 import { getActiveWallet } from './session'
 
 const asOutpoint = (v: string) => v.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 const asOrigin = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+
+function isGenericCollectableName(name: string | undefined): boolean {
+  return !name?.trim() || /^collectable$/i.test(name.trim())
+}
+
+function resolvedInscriptionName(...keys: Array<string | null | undefined>): string | undefined {
+  for (const key of keys) {
+    const raw = key?.trim()
+    if (!raw) continue
+    const hit =
+      getResolvedInscription(asOutpoint(raw)) ??
+      getResolvedInscriptionByOrigin(asOrigin(raw))
+    const name = hit && !isThinResolution(hit) ? hit.name?.trim() : ''
+    if (name) return name
+  }
+  return undefined
+}
 
 function tokenIconUrl(iconOutpoint: string | undefined | null): string | undefined {
   if (!iconOutpoint?.trim()) return undefined
@@ -61,9 +82,16 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   )
   if (held) {
     const chain = getActiveWallet()?.chain ?? 'main'
+    const named = resolvedInscriptionName(
+      held.origin,
+      held.outpoint,
+      originKey,
+      outpoint,
+    )
     return {
       ...item,
-      name: held.name,
+      name:
+        isGenericCollectableName(held.name) && named ? named : held.name,
       origin: held.origin,
       imageUrl:
         held.imageUrl ||
@@ -78,7 +106,10 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   // still held keeps repairing the record of the transfer that sent it away —
   // which is the only trace of it left in this wallet.
   const resolved = outpoint ? getResolvedInscription(outpoint) : null
-  const usable = resolved && !isThinResolution(resolved) ? resolved : null
+  const byOrigin = originKey ? getResolvedInscriptionByOrigin(originKey) : null
+  const usable =
+    (resolved && !isThinResolution(resolved) ? resolved : null) ??
+    (byOrigin && !isThinResolution(byOrigin) ? byOrigin : null)
   const previousOrigin = item.origin ? asOrigin(item.origin) : null
   const origin =
     (outpoint ? getProvenVerdict(outpoint)?.origin : null) ??
