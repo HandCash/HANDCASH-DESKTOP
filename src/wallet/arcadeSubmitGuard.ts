@@ -49,11 +49,15 @@ export async function signedTxSpendConflictIsProven(args: {
   txid: string
   atomic?: number[]
   chain: Chain
+  knownOnChain?: boolean | null
 }): Promise<boolean> {
   const txid = normalizeTxid(args.txid)
   if (!txid) return false
 
-  const onChain = await txExistsOnChain(txid, args.chain).catch(() => null)
+  const onChain =
+    args.knownOnChain !== undefined
+      ? args.knownOnChain
+      : await txExistsOnChain(txid, args.chain).catch(() => null)
   if (onChain === true) return false
 
   const inputs = await inputOutpointsForSignedTx(txid, args.atomic)
@@ -67,50 +71,19 @@ export async function signedTxSpendConflictIsProven(args: {
 }
 
 /**
- * How long an Arcade pin outlives proof that the chain does not have the tx.
+ * Whether Activity / sealed inputs may treat this signed send as dead.
  *
- * The pin exists because Arcade's first answer is unreliable, not because Arcade
- * is the chain. Arcade also *keeps* transactions it refused: a `REJECTED` chain
- * ("parent rejected … / UTXO_SPENT") stays pinned forever, so its inputs were
- * resealed every pass and its Activity row could never be cleared — a dead spend
- * nursed as if it were in flight. Absence proven by chain providers wins once the
- * submit is older than this.
+ * A locally SPV-valid signed transaction is a cheque. Explorer absence is
+ * latency, not a cancel. Only a proven competing spend (our tx not on chain
+ * and an input spent by someone else) undoes it.
  */
-export const ARCADE_PIN_ABSENCE_GRACE_MS = 10 * 60_000
-
-/**
- * True when the chain positively does not have this pinned tx and the submit is
- * old enough that propagation lag is no longer a credible explanation.
- *
- * `txExistsOnChain` answers `false` only on real evidence — a provider that has
- * never heard of it answers `null`, and Arcade reports its own `REJECTED` as
- * absent. Silence therefore keeps the pin.
- */
-async function pinnedTxProvenAbsent(args: {
-  txid: string
-  chain: Chain
-  now?: number
-}): Promise<boolean> {
-  const txid = normalizeTxid(args.txid)
-  if (!txid) return false
-  const pinnedAt = pins.rememberedAt(txid)
-  if (pinnedAt == null) return false
-  const now = args.now ?? Date.now()
-  if (now - pinnedAt < ARCADE_PIN_ABSENCE_GRACE_MS) return false
-  const onChain = await txExistsOnChain(txid, args.chain).catch(() => null)
-  return onChain === false
-}
-
-/** Whether Activity / sealed inputs may treat this signed send as dead. */
 export async function signedTxMayBeRemoved(args: {
   txid: string
   atomic?: number[]
   chain: Chain
-  now?: number
 }): Promise<boolean> {
   if (!txHadArcadeSubmitContact(args.txid)) return true
-  if (await signedTxSpendConflictIsProven(args)) return true
-  return pinnedTxProvenAbsent(args)
+  return signedTxSpendConflictIsProven(args)
 }
 
 export function __resetArcadeSubmitGuardForTests(): void {

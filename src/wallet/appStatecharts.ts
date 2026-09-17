@@ -807,7 +807,8 @@ const WALLET_IO = `flowchart TB
     KEYS["rootKeyHex + toolbox wallet"]
     COORD["walletCoordinator\\n4 exclusive regions"]
     SPEND["Spend machines\\nBSV / item / BRC-100"]
-    INGEST["chainIngest\\nscan → classify → import"]
+    INGEST["chainIngest\\nscan → import"]
+    DIGEST["header digest\\nheaderProven vs unconfirmed"]
     HIST["historyReplica\\nBRC-39"]
     HANDLER["brc100Handler\\ndevicePeerHandler"]
   end
@@ -843,10 +844,12 @@ const WALLET_IO = `flowchart TB
   COORD --> HIST
   SPEND -->|delayed + postBeef| ARC
   SPEND --> BITAILS
+  SPEND --> DIGEST
   INGEST --> BITAILS
   INGEST --> WOC
   INGEST --> GP
   INGEST --> JB
+  DIGEST --> CT
   KEYS --> CT
   HIST --> H39
   HANDLER --> HANDLES
@@ -924,9 +927,14 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
   DRAFT --> VALIDATING : protocolValidate
   VALIDATING --> BROADCASTING : soft-lock + dispatch
   VALIDATING --> FAILED_REJECTED : dust / funds / refuse
-  BROADCASTING --> SEEN_IN_MEMPOOL : ARC SEEN_ON_NETWORK\\npostBeef accept
-  BROADCASTING --> FAILED_REJECTED : ARC REJECTED / DOUBLE_SPEND
+  BROADCASTING --> SEEN_IN_MEMPOOL : ARC SEEN_ON_NETWORK\\nor local SPV cheque
+  BROADCASTING --> FAILED_REJECTED : proven competing spend
   SEEN_IN_MEMPOOL --> MINED : BUMP verified vs headers
+  note right of SEEN_IN_MEMPOOL
+    unconfirmed — chain with
+    ancestor bodies in BEEF
+    (chainProofKind)
+  end note
   SEEN_IN_MEMPOOL --> FAILED_REJECTED : eviction / reject
   MINED --> REORG_ORPHANED : reorg
   REORG_ORPHANED --> SEEN_IN_MEMPOOL : re-announced
@@ -954,7 +962,7 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
 const CHAIN_INGEST_CHART = `flowchart TB
   START([refreshFromChain]) --> PRE[pending sends + abort reserved]
   PRE --> MAINT[parallel maintenance\\ndual-layer · ghost-heal\\nactivity prune · restore]
-  MAINT --> SCAN[legacy address UTXO scan\\nBitails ∥ WoC → services]
+  MAINT --> SCAN[legacy address UTXO scan\\nfinder — not a cheque judge]
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
   CLASS --> TIPS[1sat tips → importOneSatOrdinals]
@@ -963,7 +971,7 @@ const CHAIN_INGEST_CHART = `flowchart TB
   CLASS --> DUST[heldUneconomical\\nbelow sweep floor\\nnever sweep]
   TIPS --> PAINT[listCollectables paint]
   PAINT --> AUTH[authenticity / genesis\\nbudgeted background]
-  FUND --> AUDIT[spendable audit report-only]
+  FUND --> AUDIT[spendable audit report-only\\nunconfirmed cheque ≠ spent]
   TIPS --> AUDIT
   FT --> AUDIT
   AUDIT --> BAL[balance refresh + toast]
@@ -1040,7 +1048,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'chainIngestChart',
     label: 'Chain ingest',
-    caption: 'Refresh pipeline — scan → classify → import → paint',
+    caption: 'Refresh pipeline — find coins; do not judge unconfirmed cheques',
     source: CHAIN_INGEST_CHART,
   },
   {

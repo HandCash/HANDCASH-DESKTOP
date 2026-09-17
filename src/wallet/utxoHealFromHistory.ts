@@ -18,13 +18,14 @@ import { bumpBalanceAfterHeal, getActiveWallet } from './session'
 import type { Chain } from './vault'
 import { releaseSpendAttemptFunds } from './spendAttempt'
 import {
-  failUnsentLocalTx,
   keepChangeOfSignedTx,
   listFailedLocalTxids,
   listPendingLocalChangeTxids,
+  reconcileKnownUtxosByEvidence,
   restoreOnChainLocalTx,
   sealSpentInputsOfSignedTx,
   rehideInputsOfLiveLocalTxs,
+  type UtxoEvidenceHealResult,
 } from './staleOutputRelease'
 import {
   appendHealCheckpointBatch,
@@ -37,6 +38,15 @@ import {
 } from './utxoHealCheckpoint'
 
 let utxoHealDepth = 0
+
+const emptyEvidence = (): UtxoEvidenceHealResult => ({
+  checked: 0,
+  hiddenSpent: 0,
+  restoredUnspent: 0,
+  unknown: 0,
+  spentOutpoints: [],
+  restoredOutpoints: [],
+})
 
 /** True while any UTXO heal pass holds the chain-ingest region. */
 export function isUtxoHealRunning(): boolean {
@@ -62,6 +72,7 @@ export type UtxoHealFromHistoryResult = {
   txidsChecked: number
   txidsOnChain: number
   changeKept: number
+  evidence: UtxoEvidenceHealResult
   heal: ChangeHealStats
   recoveredSats: number
   balanceBefore: UtxoHealBalanceSnapshot | null
@@ -91,6 +102,12 @@ function mergeHealStats(a: ChangeHealStats, b: ChangeHealStats): ChangeHealStats
 
 export function formatUtxoHealResult(result: UtxoHealFromHistoryResult): string {
   if (result.skipped) return 'Balance heal is current'
+  if (
+    result.evidence.hiddenSpent > 0 ||
+    result.evidence.restoredUnspent > 0
+  ) {
+    return `Removed ${result.evidence.hiddenSpent} spent and restored ${result.evidence.restoredUnspent} unspent output(s)`
+  }
   if (result.recoveredSats > 0) {
     return `Recovered ${result.recoveredSats.toLocaleString()} sats`
   }
@@ -153,6 +170,9 @@ async function hasLocalSignedTx(txid: string): Promise<boolean> {
 }
 
 async function healShouldYieldToSpend(_opts: UtxoHealPassOpts): Promise<boolean> {
+  // A user-requested repair must not report "done" after checking zero rows.
+  // It already owns the chain-ingest region; new spends queue behind this pass.
+  if (_opts.source === 'manual') return false
   // Manual heal used to refuse yield and held chainIngest for minutes while
   // burns/sends timed out ("Wallet is busy · spend waiting"). Checkpoint +
   // auto resume cover the rest of the txid list after the spend finishes.
@@ -213,16 +233,9 @@ async function processTxidBatch(
     if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null)
       if (onChain === false) {
-        // Explorer "not on chain" is not a ghost after a successful submit.
-        // failUnsent refuses live unmined/sending rows; keep their change.
-        if (local) {
-          const markedFailed = await failUnsentLocalTx(txid)
-          if (!markedFailed) {
-            await sealSpentInputsOfSignedTx(txid, undefined)
-            changeKept += await keepChangeOfSignedTx(txid)
-          }
-        }
-        continue
+        // Absence is not cancellation. Failed rows remain failed; signed local
+        // cheques stay sealed and retain their chainable change.
+        if (failed.has(txid)) continue
       }
       if (onChain === true) {
         txidsOnChain += 1
@@ -250,6 +263,7 @@ async function runHealCore(
 ): Promise<{
   changeKept: number
   txidsOnChain: number
+  evidence: UtxoEvidenceHealResult
   heal: ChangeHealStats
   balanceAfter: UtxoHealBalanceSnapshot | null
   recoveredSats: number
@@ -262,6 +276,7 @@ async function runHealCore(
     return {
       changeKept: 0,
       txidsOnChain: 0,
+      evidence: emptyEvidence(),
       heal: {
         restored: 0,
         scriptsLocal: 0,
@@ -278,7 +293,10 @@ async function runHealCore(
   // This repair can hold toolbox storage while it reviews old unsigned rows.
   // Never start it after a send has raised priority: the payment owns the next
   // storage turn, and the checkpoint scheduler will resume this heal afterward.
-  await releaseSpendAttemptFunds()
+  // Do not cancel a user's in-progress send merely because they opened Heal.
+  // Automatic cleanup may release abandoned UI attempts; explicit evidence
+  // repair only reconciles durable wallet state.
+  if (opts.source !== 'manual') await releaseSpendAttemptFunds()
 
   if (await healShouldYieldToSpend(opts)) {
     logDiag('utxo-heal', 'info', 'yield-to-spend', { phase: 'after-release' })
@@ -287,6 +305,7 @@ async function runHealCore(
     return {
       changeKept: 0,
       txidsOnChain: 0,
+      evidence: emptyEvidence(),
       heal: {
         restored: 0,
         scriptsLocal: 0,
@@ -301,6 +320,9 @@ async function runHealCore(
   }
 
   let heal = await runPendingChangeHeal(balanceBefore, opts)
+  const evidence = await reconcileKnownUtxosByEvidence({
+    forManualHeal: opts.source === 'manual',
+  })
 
   const chain = getActiveWallet()?.chain
   let changeKept = 0
@@ -352,6 +374,28 @@ async function runHealCore(
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
   }
 
+  // The toolbox set is now authoritative. Re-listing updates Collectables and
+  // settles pending item Activity against the held inventory. History itself
+  // remains append-only.
+  if (
+    opts.source === 'manual' ||
+    evidence.hiddenSpent > 0 ||
+    evidence.restoredUnspent > 0
+  ) {
+    try {
+      const { reconcilePendingItemActivityWithSpentOutpoints } = await import(
+        './appActivity'
+      )
+      reconcilePendingItemActivityWithSpentOutpoints(evidence.spentOutpoints)
+      const { relistCollectablesAfterLocalStateReplace } = await import(
+        './collectables'
+      )
+      await relistCollectablesAfterLocalStateReplace()
+    } catch (err) {
+      console.warn('[utxo-heal] collectable/activity projection refresh skipped', err)
+    }
+  }
+
   bumpBalanceAfterHeal()
   const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance())
   const recoveredSats =
@@ -367,7 +411,15 @@ async function runHealCore(
     source: opts.source,
   })
 
-  return { changeKept, txidsOnChain, heal, balanceAfter, recoveredSats, txidsChecked }
+  return {
+    changeKept,
+    txidsOnChain,
+    evidence,
+    heal,
+    balanceAfter,
+    recoveredSats,
+    txidsChecked,
+  }
 }
 
 /**
@@ -406,6 +458,7 @@ export async function runUtxoHealPass(
       txidsChecked: cp?.txids.length ?? 0,
       txidsOnChain: 0,
       changeKept: 0,
+      evidence: emptyEvidence(),
       heal: {
         restored: 0,
         scriptsLocal: 0,
@@ -456,6 +509,7 @@ export async function runUtxoHealPass(
         txidsChecked: core.txidsChecked,
         txidsOnChain: core.txidsOnChain,
         changeKept: core.changeKept,
+        evidence: core.evidence,
         heal: core.heal,
         recoveredSats: core.recoveredSats,
         balanceBefore,
@@ -464,7 +518,10 @@ export async function runUtxoHealPass(
 
       if (
         opts.source === 'manual' &&
-        (core.recoveredSats > 0 || pendingChangeAfter > 0)
+        (core.recoveredSats > 0 ||
+          pendingChangeAfter > 0 ||
+          core.evidence.hiddenSpent > 0 ||
+          core.evidence.restoredUnspent > 0)
       ) {
         recordWalletEvent({
           origin: WALLET_ACTIVITY_ORIGIN,
@@ -481,6 +538,9 @@ export async function runUtxoHealPass(
       logDiag('utxo-heal', 'info', 'done', {
         source: opts.source,
         txidsChecked: result.txidsChecked,
+        outputsChecked: result.evidence.checked,
+        spentRemoved: result.evidence.hiddenSpent,
+        unspentRecovered: result.evidence.restoredUnspent,
         recoveredSats: core.recoveredSats,
         pendingChangeAfter,
       })

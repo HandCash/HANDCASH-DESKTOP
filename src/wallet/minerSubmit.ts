@@ -39,10 +39,19 @@ import { normalizeTxid } from './txid'
 import { spendConflictIsProven } from './spendVerdict'
 
 export type MinerSubmitResult = {
-  /** At least one miner reported mempool accept / already-known. */
+  /**
+   * Local SPV of a complete-enough BEEF plus a miner accept. Unconfirmed
+   * parent *bodies* count — that is the cheque that negates explorer latency.
+   * Merkle-complete on-chain proofs are not required.
+   */
   confirmed: boolean
   /** Signed tx was handed to miners (or transport failed after hand-off). */
   submitted: boolean
+  /**
+   * Keep the miner outbox until every ancestor has a merkle proof (the
+   * subject is then standing on mined parents). Arcade 202 is not that.
+   */
+  keepPropagating?: boolean
   summary?: PostBeefSummary
 }
 
@@ -83,25 +92,22 @@ async function failIfAncestryIncomplete(args: {
   active: ActiveWallet
   summary: PostBeefSummary
   telemetry: SubmitTelemetry
-  ancestryComplete: boolean
+  proofsComplete: boolean
 }): Promise<void> {
   const { id, atomic, active, summary, telemetry } = args
-  if (args.ancestryComplete || !summary.missingInputs) return
+  if (args.proofsComplete || !summary.missingInputs) return
   if (await signedTxSpendConflictIsProven({ txid: id, atomic, chain: active.chain })) {
     return
   }
   console.warn(
-    '[minerSubmit] MissingInputs on incomplete BEEF — no input proven spent',
+    '[minerSubmit] MissingInputs on incomplete BEEF — keeping the signed cheque',
     id.slice(0, 12),
     summary.detail,
   )
-  removePendingMinerSubmit(id)
-  recordTransactionStage('hard_rejected', {
+  recordTransactionStage('propagation_queued', {
     ...telemetry,
     blockerCode: 'beef_ancestry_incomplete',
   })
-  await rememberGhostTxQuiet(id)
-  await releaseSealedInputsOfUnsentTx(id, atomic)
   throw ancestryIncompleteError(summary)
 }
 
@@ -142,7 +148,7 @@ async function applyArcadePostBeef(
   summary: PostBeefSummary,
   telemetry: SubmitTelemetry,
   active: ActiveWallet,
-  ancestryComplete: boolean,
+  proofsComplete: boolean,
 ): Promise<PostBeefSummary> {
   const arcadeOk = postBeefResultsArcadeAccepted(rawResults)
   const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults)
@@ -163,7 +169,7 @@ async function applyArcadePostBeef(
       active,
       summary,
       telemetry,
-      ancestryComplete,
+      proofsComplete,
     })
     await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary)
   }
@@ -275,33 +281,45 @@ export async function submitAtomicBeefToMiners(
 
   let beefBytes = atomic
   // Miners answer MissingInputs both for a spent input and for a BEEF whose
-  // ancestry we failed to supply. Settle which one we are looking at before
-  // posting: an already-complete BEEF costs nothing, and an incomplete one must
-  // be hydrated properly rather than posted to earn a guaranteed false verdict.
+  // ancestry we failed to supply. SPV of a chained send is the unconfirmed
+  // parent *bodies this wallet signed* — merge those first. Merkle proofs for
+  // those parents cannot exist yet; hydrating them from an indexer is futile.
   let ancestryComplete = false
+  let proofsComplete = false
   try {
-    const { classifyBeefAncestryGap, hydrateInputBeef } = await import('./beefCache')
-    const gap = classifyBeefAncestryGap(atomic)
-    if (gap === 'none') {
-      ancestryComplete = true
-    } else if (gap === 'unconfirmed-parents') {
-      // A proof for a parent we just broadcast cannot exist yet. Post now and let
-      // BEEF-aware services take the chain — do not spend fetch timeouts on it.
+    const {
+      classifyBeefAncestryGap,
+      hydrateInputBeef,
+      mergeLocalUnconfirmedAncestry,
+    } = await import('./beefCache')
+    const { proofKindFromBeefGap, maySelectAsInput } = await import('./chainProofKind')
+    const applyGap = (
+      next: 'none' | 'unconfirmed-parents' | 'missing-bodies',
+    ) => {
+      const proof = proofKindFromBeefGap(next)
+      ancestryComplete = maySelectAsInput(proof)
+      proofsComplete = next === 'none'
+    }
+    beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic)
+    let gap = classifyBeefAncestryGap(beefBytes)
+    applyGap(gap)
+    if (gap === 'unconfirmed-parents') {
       console.info(
-        '[minerSubmit] unconfirmed parent in BEEF — posting without hydrate',
+        '[minerSubmit] posting chained unconfirmed ancestry',
         id.slice(0, 12),
       )
-    } else {
+    } else if (gap === 'missing-bodies') {
       const shaped = await Promise.race([
-        hydrateInputBeef(active, Beef.fromBinary(atomic)),
+        hydrateInputBeef(active, Beef.fromBinary(beefBytes)),
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 8_000)),
       ])
       if (shaped?.length) {
         beefBytes = shaped
-        ancestryComplete = true
+        gap = classifyBeefAncestryGap(shaped)
+        applyGap(gap)
       } else {
         console.warn(
-          '[minerSubmit] posting with incomplete ancestry — MissingInputs will not count as spent',
+          '[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque',
           id.slice(0, 12),
         )
       }
@@ -345,26 +363,37 @@ export async function submitAtomicBeefToMiners(
       summary,
       telemetry,
       active,
-      ancestryComplete,
+      proofsComplete,
     )
   }
 
   if (summary.accepted) {
-    removePendingMinerSubmit(id)
     recordTransactionStage('provider_accepted', telemetry)
-    if (
-      telemetry.flow !== 'brc29' &&
-      telemetry.flow !== 'item_transfer' &&
-      telemetry.flow !== 'token_transfer'
-    ) {
-      recordTransactionStage('completed', telemetry)
+    // Arcade 202 is not the chain. Keep posting until merkle proofs close.
+    // Local SPV of unconfirmed parent bodies is still a valid cheque — that
+    // is how we negate explorer latency.
+    const keepPropagating = !proofsComplete
+    if (!keepPropagating) {
+      removePendingMinerSubmit(id)
+      if (
+        telemetry.flow !== 'brc29' &&
+        telemetry.flow !== 'item_transfer' &&
+        telemetry.flow !== 'token_transfer'
+      ) {
+        recordTransactionStage('completed', telemetry)
+      }
     }
-    if (!txHadArcadeSubmitContact(id)) {
+    if (!txHadArcadeSubmitContact(id) || keepPropagating) {
       void restoreOnChainLocalTx(id).catch(() => {
         /* background */
       })
     }
-    return { confirmed: true, submitted: true, summary }
+    return {
+      confirmed: ancestryComplete,
+      submitted: true,
+      keepPropagating,
+      summary,
+    }
   }
   // Pure transport / endpoint failures are not proof of a spent input.
   if (summary.serviceOnlyErrors) {
@@ -386,7 +415,7 @@ export async function submitAtomicBeefToMiners(
       active,
       summary,
       telemetry,
-      ancestryComplete,
+      proofsComplete,
     })
     return resolveMinerConflict({ id, atomic, active, summary, telemetry })
   }

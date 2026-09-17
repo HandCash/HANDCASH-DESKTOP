@@ -290,6 +290,51 @@ describe('beefCache', () => {
     expect(classifyBeefAncestryGap([1, 2, 3])).toBe('missing-bodies')
   })
 
+  it('merges a locally held unconfirmed parent body into the child BEEF', async () => {
+    const {
+      classifyBeefAncestryGap,
+      mergeLocalUnconfirmedAncestry,
+      rememberBeefTree,
+    } = await import('./beefCache')
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+    const parentBeef = new Beef()
+    parentBeef.mergeRawTx(parent.toBinary())
+    rememberBeefTree(parentBeef.toBinary(), parentId)
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({ satoshis: 9_900, lockingScript: LockingScript.fromHex('51') })
+    const child = new Beef()
+    child.mergeTxidOnly(parentId)
+    child.mergeTransaction(tip)
+    child.atomicTxid = tip.id('hex')
+    expect(classifyBeefAncestryGap(child.toBinaryAtomic(tip.id('hex')))).toBe(
+      'missing-bodies',
+    )
+
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+    } as unknown as ActiveWallet
+    const merged = await mergeLocalUnconfirmedAncestry(
+      wallet,
+      child.toBinaryAtomic(tip.id('hex')),
+    )
+    const out = Beef.fromBinary(merged)
+    expect(out.findTxid(parentId)?.tx).toBeTruthy()
+    expect(out.findTxid(parentId)?.isTxidOnly).toBeFalsy()
+    expect(classifyBeefAncestryGap(merged)).not.toBe('missing-bodies')
+  })
+
   it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {
     const { hydrateInputBeef, resetBeefCacheForTests } = await import('./beefCache')
     resetBeefCacheForTests()

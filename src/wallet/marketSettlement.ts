@@ -14,7 +14,12 @@ import {
   mayAbortMarketPurchase,
 } from '../machines/marketPurchaseMachine'
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
-import { getBeefForTxidCached, rememberBeefBinary } from './beefCache'
+import {
+  getBeefForTxidCached,
+  mergeLocalUnconfirmedAncestry,
+  rememberBeefBinary,
+  rememberBeefTree,
+} from './beefCache'
 import {
   adoptMarketSaleReceipt,
   buildMarketHeldRemittance,
@@ -937,9 +942,11 @@ export async function executeMarketPurchase(
         options: { acceptDelayedBroadcast: true },
       })
       const txid = signed.txid
-      const atomic = signed.tx ? Array.from(signed.tx) : undefined
+      let atomic = signed.tx ? Array.from(signed.tx) : undefined
       if (!txid || !atomic?.length)
         throw new Error('Signed market transaction missing')
+      atomic = await mergeLocalUnconfirmedAncestry(active, atomic)
+      rememberBeefTree(atomic, txid)
       remember({ phase: 'signedUnknown', txid, atomicBeef: atomic })
       mark(`signed ${txid.slice(0, 12)} — Arcade postBeef once`)
       const broadcasted = await submitMarketSettlement(txid, atomic)

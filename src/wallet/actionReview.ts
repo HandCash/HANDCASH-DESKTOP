@@ -8,6 +8,7 @@ import {
   shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
 import { txExistsOnChain } from './legacyScan'
+import { signedTxSpendConflictIsProven } from './arcadeSubmitGuard'
 import { healGhostSentItems } from './sentItemGuard'
 import { forgetOneSatImported } from './oneSatImportGuard'
 import { sweepChangeScripts } from './changeScriptFate'
@@ -229,7 +230,12 @@ export async function releaseGhostDoubleSpendReqs(
         const txid = req.txid?.trim().toLowerCase()
         if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue
         const onChain = await txExistsOnChain(txid, chain).catch(() => null)
-        if (onChain === false) toInvalid.push(req.provenTxReqId)
+        if (
+          onChain === false &&
+          (await signedTxSpendConflictIsProven({ txid, chain }))
+        ) {
+          toInvalid.push(req.provenTxReqId)
+        }
       }
       if (toInvalid.length > 0 && typeof sp.updateProvenTxReq === 'function') {
         await sp.updateProvenTxReq(toInvalid, { status: 'invalid' })

@@ -170,7 +170,7 @@ export function WalletHealthPanel() {
         <ul className="settings-list">
           <SettingsControlRow
             icon={SETTINGS_APPLICATION_ICONS.updates}
-            label="Heal balance from history"
+            label="Heal wallet UTXOs"
             description={healing ? 'Healing…' : healHint}
           >
             <span

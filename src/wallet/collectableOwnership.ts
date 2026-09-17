@@ -101,12 +101,15 @@ export function shouldRejectSendForMissingLiveTip(args: {
     args.lockingScriptHex && args.walletAddress
       ? scriptPaysAddress(args.lockingScriptHex, args.walletAddress)
       : null
-  return (
-    ownershipFate({
-      tipKind: classifyTipKind(args.lockingScriptHex),
+  const tipKind = classifyTipKind(args.lockingScriptHex)
+  const fate = ownershipFate({
+      tipKind,
       inLiveSet: false,
       unjudged,
       paysOurAddress: paysOur,
-    }) === 'ghostDrop'
-  )
+    })
+  if (fate === 'ghostDrop') return true
+  // Inventory retains unknown tips, but coin selection fails closed after the
+  // scan grace unless this lock is intentionally absent from P2PKH scans.
+  return !unjudged && tipKind.kind !== 'covenantLocked'
 }

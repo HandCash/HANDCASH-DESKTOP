@@ -11,7 +11,6 @@ import { getActiveWallet } from './session'
 import { listPendingConfirmation,
   listTxRecords,
   markTxFailed,
-  markTxReorgOrphaned,
   transitionTx,
 } from './txStore'
 import { listUtxoLocks, rollbackLocks, thawUtxo } from './utxoLockManager'
@@ -107,19 +106,9 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
     }
   }
 
-  // Mined txs that disappear from chain → reorg orphan.
-  for (const rec of listTxRecords()) {
-    if (rec.status !== 'MINED' || !rec.txid) continue
-    try {
-      const onChain = await txExistsOnChain(rec.txid, chain)
-      if (onChain === false) {
-        markTxReorgOrphaned(rec.id)
-        result.orphaned += 1
-      }
-    } catch {
-      // inconclusive — leave mined
-    }
-  }
+  // MINED came from a BUMP verified against our header store. An explorer
+  // losing the tx is not a reorg signal; header-chain reconciliation owns any
+  // future MINED → REORG_ORPHANED transition.
 
   // Thaw frozen UTXOs after 24h with no owner (reconcile may re-lock later).
   for (const lock of listUtxoLocks()) {

@@ -1,9 +1,9 @@
 /**
  * Ownership fate for a basket tip vs the address UTXO scan.
  *
- * Spendable P2PKH tips must leave inventory when the address no longer holds
- * them (past settle grace). Covenant-locked tips never appear on that scan —
- * they stay until the user explicitly abandons them.
+ * Address scans find tips; absence is not spend proof. Outbound scripts can be
+ * rejected immediately, while locally-addressed tips remain until a sent mark
+ * or affirmative spent-outpoint evidence retires them.
  */
 import type { TipKind, ProvenTier } from './collectableTipKind'
 
@@ -43,9 +43,7 @@ export function ownershipFate(args: {
 
   if (covenantLike) return 'keepCovenant'
 
-  // Past grace and missing from a successful address scan. Indexer lag is
-  // covered by {@link isOwnershipUnjudged}. Keeping "still pays us" or
-  // unknown-script tips forever left hundreds of spent basket rows on screen
-  // (lab: ~785 durable cards vs ~4 live 1-sats). Soft tips leave.
-  return 'ghostDrop'
+  // Missing from an address index is still only absence. Heal/sent-item state
+  // owns removal once a spend is proven; do not cancel a P2P cheque here.
+  return 'graceHold'
 }

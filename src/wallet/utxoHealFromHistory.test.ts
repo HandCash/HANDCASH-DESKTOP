@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => {
   const durableStore: Record<string, string> = {}
   return {
   collectActivityTxids: vi.fn(),
+  reconcilePendingItemActivityWithSpentOutpoints: vi.fn(),
+  relistCollectablesAfterLocalStateReplace: vi.fn(async () => undefined),
   recordWalletEvent: vi.fn(),
   runChangeHeal: vi.fn(),
   snapshotWalletBalance: vi.fn(),
@@ -23,6 +25,14 @@ const mocks = vi.hoisted(() => {
   restoreOnChainLocalTx: vi.fn(async () => false),
   listFailedLocalTxids: vi.fn(async () => [] as string[]),
   listPendingLocalChangeTxids: vi.fn(async () => [] as string[]),
+  reconcileKnownUtxosByEvidence: vi.fn(async () => ({
+    checked: 3,
+    hiddenSpent: 0,
+    restoredUnspent: 0,
+    unknown: 0,
+    spentOutpoints: [] as string[],
+    restoredOutpoints: [] as string[],
+  })),
   clearDurableStore: () => {
     for (const key of Object.keys(durableStore)) delete durableStore[key]
   },
@@ -30,9 +40,16 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('./appActivity', () => ({
   collectActivityTxids: mocks.collectActivityTxids,
+  reconcilePendingItemActivityWithSpentOutpoints:
+    mocks.reconcilePendingItemActivityWithSpentOutpoints,
   recordWalletEvent: mocks.recordWalletEvent,
   UTXO_HEAL_METHOD: 'utxo-heal',
   WALLET_ACTIVITY_ORIGIN: 'wallet',
+}))
+
+vi.mock('./collectables', () => ({
+  relistCollectablesAfterLocalStateReplace:
+    mocks.relistCollectablesAfterLocalStateReplace,
 }))
 
 vi.mock('./chainedChangeHeal', () => ({
@@ -67,6 +84,8 @@ vi.mock('./staleOutputRelease', () => ({
     mocks.listPendingLocalChangeTxids(...args),
   listFailedLocalTxids: (...args: unknown[]) =>
     mocks.listFailedLocalTxids(...args),
+  reconcileKnownUtxosByEvidence: (...args: unknown[]) =>
+    mocks.reconcileKnownUtxosByEvidence(...args),
   failUnsentLocalTx: (...args: unknown[]) => mocks.failUnsentLocalTx(...args),
   restoreOnChainLocalTx: (...args: unknown[]) =>
     mocks.restoreOnChainLocalTx(...args),
@@ -138,6 +157,10 @@ describe('healUtxoFromActivityHistory', () => {
       }),
     )
     expect(mocks.durableSetItem).toHaveBeenCalled()
+    expect(mocks.releaseSpendAttemptFunds).not.toHaveBeenCalled()
+    expect(mocks.reconcileKnownUtxosByEvidence).toHaveBeenCalledWith({
+      forManualHeal: true,
+    })
     expect(result.recoveredSats).toBe(2614)
     expect(formatUtxoHealResult(result)).toBe('Recovered 2,614 sats')
   })
@@ -231,7 +254,7 @@ describe('healUtxoFromActivityHistory', () => {
 
     await runUtxoHealPass({ source: 'send-cleanup', force: true })
 
-    expect(mocks.failUnsentLocalTx).toHaveBeenCalledWith(TX)
+    expect(mocks.failUnsentLocalTx).not.toHaveBeenCalled()
     expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
   })
 

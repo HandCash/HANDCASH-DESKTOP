@@ -17,7 +17,13 @@
  * ```
  *
  * Glossary:
- * - **Refresh** → `chainIngest` only (`refreshFromChain`). Does not pull BRC-39.
+ * - **Refresh** → `chainIngest` only (`refreshFromChain`). Finder of coins
+ *   not yet in localState. Does not pull BRC-39. Does not reclassify a live
+ *   unconfirmed cheque as dead because an indexer has not listed it.
+ * - **Header digest** → local block headers (`blockHeaders.ts`, Arcade
+ *   go-chaintracks, `chainTrackerFallback`) + `chainProofKind`. Mined txs
+ *   verify merkle-to-header (`spvFinality`). Unconfirmed txs are a different
+ *   kind: chain them only with ancestor bodies in the BEEF.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
  * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
@@ -63,10 +69,17 @@
  *   (Desktop Electron and Android Capacitor). BRC-CLOUD hosts a convenience box;
  *   resolve may return any box URL.
  * - **BRC-100 app exchange** — the signed Atomic BEEF (+ remittance) *is* the
- *   payment. Arcade `postBeef` / `/txs` is a propagation double-check, not a
- *   send or receive gate. SPV (scripts + input proofs in the BEEF) validates
- *   locally. Known parent→child pairs (tx-bounce) may be posted to Arcade as
- *   one package so the child never waits for the parent to be mined.
+ *   payment. `chainProofKind.ts`: a locally SPV-valid signed transaction is a
+ *   cheque (`unconfirmed` while no header covers it; `headerProven` after BUMP
+ *   verifies against the local header store). Account the cheque immediately.
+ *   Explorer absence is latency, not a cancel. Undo only on a proven competing
+ *   spend. Arcade `postBeef` / `/txs` is a propagation double-check, not a
+ *   send gate and not confirmation. Unconfirmed spends must carry parent
+ *   *bodies* (`mergeLocalUnconfirmedAncestry`); mined spends ride merkle
+ *   paths against headers (`blockHeaders` / `chainTrackerFallback`). Keep
+ *   posting until merkle proofs close. The merge is an outbound boundary:
+ *   miner posts, BRC-33 item/payment/market wires, BRC-100 createAction
+ *   responses, token transfers, and legacy/phrase sweeps all use it.
  * - **Peer BSV pay (BRC-29)** → `brc29SettlePath` + `brc29SendMachine`. Sender
  *   `createAction` broadcasts immediately (Babbage / toolbox). Remittance
  *   (± inline Atomic BEEF) then goes on `sendMessage`. Inbox miss → local
@@ -85,8 +98,10 @@
  *   until every one of its inputs is spent on chain — clearing history is not a
  *   cancel, and it keeps that tx's change.
  * - **Chained unconfirmed change** — spending change from a prior local send
- *   before it confirms on-chain. `balanceView` credits pending change for display;
- *   `spendGuard.promoteSpendableChange` (reclaim sealed →
+ *   before it confirms on-chain. SPV for the child is the parent bodies this
+ *   wallet already signed (`mergeLocalUnconfirmedAncestry`); merkle proofs of
+ *   those parents cannot exist yet. `balanceView` credits pending change for
+ *   display; `spendGuard.promoteSpendableChange` (reclaim sealed →
  *   `promotePendingLocalChangeOutputs` → script sweep →
  *   `staleOutputRelease.restoreLiveSpendableOutputs`)
  *   mark live change spendable for the next pay. `runExclusiveSpend` serializes
@@ -189,6 +204,10 @@ export const WALLET_LAYER_MODULES = {
   ],
   chainIngest: [
     'chainIngest.ts',
+    'chainProofKind.ts',
+    'blockHeaders.ts',
+    'chainTrackerFallback.ts',
+    'spvFinality.ts',
     'walletProgress.ts',
     'ingestLegacyAddress.ts',
     'legacyScan.ts',

@@ -18,7 +18,10 @@
  * expire in case the send never confirmed and the item really is still ours.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
+import {
+  signedTxSpendConflictIsProven,
+  txHadArcadeSubmitContact,
+} from './arcadeSubmitGuard'
 
 const STORAGE_KEY = 'handcash.collectables.sentOutpoints.v1'
 const MAX_ENTRIES = 500
@@ -330,15 +333,12 @@ export function forgetItemsSent(outpoints: string[]): void {
 }
 
 /**
- * Drop hide marks whose recorded spend txid is proven absent from the chain
- * *and* past the grace window for who was supposed to broadcast it. Returns
- * the outpoints restored.
+ * Drop hide marks only when the recorded spend has a proven competing input
+ * spend and is past the settle grace. Returns the outpoints restored.
  *
- * A sender-broadcast ghost also loses its Activity "Sent" / Verifying rows and
- * gets tip-hint re-pins suppressed — otherwise the feed keeps a Sent link that
- * 404s on WoC while a later successful transfer (different txid) already moved
- * the tip. A `peerDeliver` restore keeps its rows: the tip left this basket and
- * the row is the only local record of the transfer.
+ * A sender-broadcast conflict also loses its Activity "Sent" / Verifying rows.
+ * A `peerDeliver` restore keeps its rows: the tip left this basket and the row
+ * is the only local record of the transfer.
  *
  * Abandon markers (`abandon:…`) are left alone — those are intentional hides.
  */
@@ -374,12 +374,24 @@ export async function healGhostSentItems(
   const healed: string[] = []
   const ghostTxids: string[] = []
   for (const [txid, group] of byTx) {
+    const onChain = await existsOnChain(txid, chain)
     const fate = ghostHealFate({
       settle: group.settle,
       ageMs: now - group.at,
-      onChain: await existsOnChain(txid, chain),
+      onChain,
     })
     if (fate.kind === 'keep') continue
+    // Absence is latency. Return the tip only when another transaction
+    // conclusively consumed one of this cheque's inputs.
+    if (
+      !(await signedTxSpendConflictIsProven({
+        txid,
+        chain,
+        knownOnChain: onChain,
+      }))
+    ) {
+      continue
+    }
     console.info(
       `[sent-item-guard] restore ${group.ops.length} tip(s) reason=${fate.reason} txid=${txid}`,
     )

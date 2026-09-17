@@ -83,6 +83,7 @@ import {
   buildMergedInputBeef,
   getBeefForTxidCached,
   getLocalBeefForTxid,
+  mergeLocalUnconfirmedAncestry,
   rememberBeefBinary,
   rememberBeefTree,
   peekSessionBeef,
@@ -2691,7 +2692,7 @@ async function listCollectablesNow(
     // Do not un-hide sent tips just because a lagging address scan still lists
     // them. That put a just-sent NFT back in Collect so the user sent it twice.
     // Failed sends already call forgetItemsSent; healGhostSentItems restores
-    // hides whose spend txid is proven absent from the chain.
+    // only after a competing spend proves the signed transfer cannot settle.
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
     const keptMissing: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
@@ -3206,6 +3207,8 @@ async function signOrdinalTransfer(args: {
   if (!atomicBeef?.length) {
     throw new Error('Collectable transfer returned no signed BEEF')
   }
+  rememberBeefTree(atomicBeef, txid)
+  atomicBeef = await mergeLocalUnconfirmedAncestry(args.wallet, atomicBeef)
   rememberBeefTree(atomicBeef, txid)
 
   const {

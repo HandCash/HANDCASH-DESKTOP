@@ -189,9 +189,33 @@ export async function deliverMarketSettlementWire(args: {
   senderIdentityKey: string
   messagebox?: string | null
 }): Promise<boolean> {
+  let wire = args.wire
+  if (wire.type === 'receipt' && wire.atomicBeefB64) {
+    try {
+      const active = (await import('./session')).getActiveWallet()
+      if (active) {
+        const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
+          './beefCache'
+        )
+        const decoded = decodeBeefB64(wire.atomicBeefB64)
+        if (!decoded?.length) throw new Error('Invalid settlement Atomic BEEF')
+        const completed = await mergeLocalUnconfirmedAncestry(
+          active,
+          decoded,
+        )
+        rememberBeefTree(completed, wire.txid)
+        wire = {
+          ...wire,
+          atomicBeefB64: bytesToBase64(Uint8Array.from(completed)),
+        }
+      }
+    } catch (error) {
+      console.warn('[market-wire] ancestry completion skipped', error)
+    }
+  }
   let body: string
   try {
-    body = encodeMarketSettlementWire(args.wire)
+    body = encodeMarketSettlementWire(wire)
   } catch (error) {
     if (
       !(error instanceof Error) ||
@@ -199,12 +223,12 @@ export async function deliverMarketSettlementWire(args: {
     ) {
       throw error
     }
-    if (args.wire.type !== 'receipt' || !args.wire.atomicBeefB64) throw error
+    if (wire.type !== 'receipt' || !wire.atomicBeefB64) throw error
     // Market custody must never depend on messagebox `/files` (Android cannot
     // reliably fetch those pointers). Keep the receipt inline and let the
     // seller resolve the already-broadcast transaction by txid.
     body = encodeMarketSettlementWire({
-      ...args.wire,
+      ...wire,
       atomicBeefB64: undefined,
     })
   }
@@ -366,7 +390,9 @@ export function withOptionalBeefB64(
       },
     }
     const encoded = `${WIRE_PREFIX}${JSON.stringify(next)}`
-    if (encoded.length > MESSAGEBOX_INNER_MAX) return { body, beefInBox: false }
+    if (encoded.length > MESSAGEBOX_INNER_MAX) {
+      return { body, beefInBox: false }
+    }
     return { body: encoded, beefInBox: true }
   } catch {
     return { body, beefInBox: false }
@@ -1146,6 +1172,21 @@ export async function notifyPeerItemIncoming(args: {
   if (!/^[0-9a-f]{64}$/.test(txid)) {
     return { delivered: 'local', beefInBox: false }
   }
+  let atomicBeef = args.atomicBeef
+  if (atomicBeef?.length) {
+    try {
+      const active = (await import('./session')).getActiveWallet()
+      if (active) {
+        const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
+          './beefCache'
+        )
+        atomicBeef = await mergeLocalUnconfirmedAncestry(active, atomicBeef)
+        rememberBeefTree(atomicBeef, txid)
+      }
+    } catch (error) {
+      console.warn('[messagebox] item ancestry completion skipped', error)
+    }
+  }
   const name = args.itemName.trim() || 'item'
   const itemOrigin = args.itemOrigin?.trim() || undefined
   const itemCollectionId = args.itemCollectionId?.trim() || undefined
@@ -1167,17 +1208,17 @@ export async function notifyPeerItemIncoming(args: {
     })
   let packed = withOptionalBeefB64(
     itemMessage(),
-    args.atomicBeef,
+    atomicBeef,
   )
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()
   if (
     !packed.beefInBox &&
-    Array.isArray(args.atomicBeef) &&
-    args.atomicBeef.length > 0
+    Array.isArray(atomicBeef) &&
+    atomicBeef.length > 0
   ) {
     const attachment = await uploadMessageboxBytes({
-      bytes: Uint8Array.from(args.atomicBeef),
+      bytes: Uint8Array.from(atomicBeef),
       filename: `${txid}.beef`,
       contentType: 'application/octet-stream',
       recipientIdentityKey: recipient,
@@ -1185,7 +1226,10 @@ export async function notifyPeerItemIncoming(args: {
       rootKeyHex: args.rootKeyHex,
       messagebox: args.messagebox,
     })
-    packed = { body: itemMessage(attachment), beefInBox: false }
+    packed = {
+      body: itemMessage(attachment),
+      beefInBox: Boolean(attachment),
+    }
   }
 
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -1241,6 +1285,21 @@ export async function notifyPeerBrc29Payment(args: {
     Number.isFinite(args.satoshis) && args.satoshis > 0
       ? Math.floor(args.satoshis)
       : 0
+  let atomicBeef = args.atomicBeef
+  if (atomicBeef?.length) {
+    try {
+      const active = (await import('./session')).getActiveWallet()
+      if (active) {
+        const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
+          './beefCache'
+        )
+        atomicBeef = await mergeLocalUnconfirmedAncestry(active, atomicBeef)
+        rememberBeefTree(atomicBeef, txid)
+      }
+    } catch (error) {
+      console.warn('[messagebox] payment ancestry completion skipped', error)
+    }
+  }
   const packed = withOptionalBeefB64(
     encodeMessageBody({
       kind: 'pay-sent',
@@ -1258,7 +1317,7 @@ export async function notifyPeerBrc29Payment(args: {
         ...(args.chatRef ? { chatRef: true } : {}),
       },
     }),
-    args.atomicBeef,
+    atomicBeef,
   )
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()

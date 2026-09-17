@@ -208,7 +208,6 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   if (bitails) {
     try {
       const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
-      if (res.status === 404) return null
       if (res.ok) return true
     } catch (err) {
       if (!isAbortError(err)) {
@@ -221,7 +220,6 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   if (banana) {
     try {
       const res = await fetchWithDeadline(`${banana}/tx/hash/${id}`)
-      if (res.status === 404) return null
       if (res.ok) return true
     } catch (err) {
       if (!isAbortError(err)) {

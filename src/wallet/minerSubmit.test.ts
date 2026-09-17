@@ -39,6 +39,7 @@ let beefGap: 'none' | 'unconfirmed-parents' | 'missing-bodies' = 'missing-bodies
 vi.mock('./beefCache', () => ({
   classifyBeefAncestryGap: () => (beefComplete ? 'none' : beefGap),
   hydrateInputBeef: vi.fn(async () => undefined),
+  mergeLocalUnconfirmedAncestry: vi.fn(async (_w: unknown, atomic: number[]) => atomic),
 }))
 
 vi.mock('./signedTxInputs', () => ({
@@ -210,7 +211,7 @@ describe('submitAtomicBeefToMiners', () => {
       /parent transaction is not on chain yet/i,
     )
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
-    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
   it('does not wait on a hydrate that cannot finish for an unconfirmed parent', async () => {
@@ -223,6 +224,7 @@ describe('submitAtomicBeefToMiners', () => {
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.confirmed).toBe(true)
+    expect(result.keepPropagating).toBe(true)
     expect(hydrateInputBeef).not.toHaveBeenCalled()
   })
 

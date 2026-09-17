@@ -1,9 +1,10 @@
 /**
  * Dual-layer transaction lifecycle — optimistic UI vs cryptographic finality.
  *
- * Sit *beside* soft-latch / BRC-29 / BSV send machines (who broadcasts / peer
- * deliver). This module owns network confirmation: ARC status → mempool →
- * MINED only after a verified BUMP against local headers.
+ * Sit *beside* BRC-29 / BSV send machines (who broadcasts / peer deliver).
+ * This module owns network confirmation: ARC status is a rumour;
+ * unconfirmed cheques stay `SEEN_IN_MEMPOOL` and may be chained (parent bodies);
+ * MINED only after a verified BUMP against local headers (`chainProofKind`).
  *
  * Never treat HTTP 200 / postBeef accept as hard finality.
  */

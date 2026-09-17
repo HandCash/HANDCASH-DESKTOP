@@ -24,6 +24,8 @@ export type AwaitingReason =
   | 'live-read-unavailable'
   /** On chain, but the basket has not projected the row yet. */
   | 'basket-projection-lag'
+  /** No provider can classify the tx — absence is not cancellation. */
+  | 'chain-unknown'
   /** Freshly painted; broadcast and projection are still plausible. */
   | 'settling'
 
@@ -49,6 +51,9 @@ export function chooseFungibleChainFate(args: {
   }
   if (args.ageMs < (args.graceMs ?? FUNGIBLE_SETTLE_GRACE_MS)) {
     return { kind: 'awaitingBasket', reason: 'settling' }
+  }
+  if (args.onChain == null) {
+    return { kind: 'awaitingBasket', reason: 'chain-unknown' }
   }
   return { kind: 'unconfirmed', reason: 'never-seen-on-chain' }
 }

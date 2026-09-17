@@ -120,11 +120,25 @@ export async function flushPendingMinerOutbox(): Promise<number> {
         flow: row.flow,
         retryCount: attempt,
       })
-      if (result.confirmed) {
+      if (result.confirmed && !result.keepPropagating) {
         accepted += 1
         continue
       }
     } catch (error) {
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? String((error as { code?: unknown }).code ?? '')
+          : ''
+      // Incomplete ancestry is not a spent input. Keep the cheque and retry
+      // once the parent bodies can ride with the subject.
+      if (code === 'BEEF_ANCESTRY_INCOMPLETE' && attempt < MAX_ATTEMPTS) {
+        keep.push({
+          ...row,
+          attempts: attempt,
+          nextAttemptAt: Date.now() + backoffMs(attempt),
+        })
+        continue
+      }
       await reportLateMinerSubmitFailure({
         txid: row.txid,
         reason: error,

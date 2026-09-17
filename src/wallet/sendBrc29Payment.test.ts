@@ -349,9 +349,13 @@ describe('internalizeBrc29Payment', () => {
       fetchBalanceSats: async () => 91_000,
       invalidateBalanceReads: () => {},
     }))
-    vi.doMock('./beefCache', () => ({
-      getBeefForTxidCached: async () => ({ toBinaryAtomic }),
-    }))
+    vi.doMock('./beefCache', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('./beefCache')>()
+      return {
+        ...actual,
+        getBeefForTxidCached: async () => ({ toBinaryAtomic }),
+      }
+    })
 
     const { internalizeBrc29Payment } = await import('./sendBrc29Payment')
     const result = await internalizeBrc29Payment({

@@ -47,7 +47,6 @@ import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
-import { summarizePostBeef } from './postBeefResult'
 import { isInsufficientFundsError } from './insufficientFunds'
 import { refreshFromChain } from './chainIngest'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -1464,11 +1463,12 @@ async function signAndPostItemMigrate(
   packed.mergeBeef(sweepAtomic)
   packed.atomicTxid = undefined
   const bin = packed.toBinaryAtomic(sweepTxid)
-  if (!active.services?.postBeef) throw new Error('No broadcast service')
-  const results = await active.services.postBeef(Beef.fromBinary(bin), [sweepTxid])
-  const summary = summarizePostBeef(results as never)
-  if (!summary.accepted) {
-    throw new Error(`Broadcast rejected (${summary.detail})`)
+  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+  const submitted = await submitAtomicBeefToMiners(sweepTxid, bin)
+  if (!submitted.submitted) {
+    throw new Error(
+      `Broadcast rejected (${submitted.summary?.detail ?? 'not submitted'})`,
+    )
   }
   return sweepTxid
 }

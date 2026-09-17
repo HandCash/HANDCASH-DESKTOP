@@ -42,7 +42,11 @@ import {
   resolveBsv21IconDataUrl,
   stampBsv21IconOnListedOutputs,
 } from './token'
-import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
+import {
+  hydrateInputBeef,
+  mergeLocalUnconfirmedAncestry,
+  rememberBeefBinary,
+} from './beefCache'
 import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
   claimCloudHandlePayload,
@@ -330,8 +334,8 @@ async function cacheCreateActionBeef(
   active: NonNullable<ReturnType<typeof getActiveWallet>>,
   txid: string,
   result: unknown,
-): Promise<void> {
-  if (!result || typeof result !== 'object') return
+): Promise<number[] | null> {
+  if (!result || typeof result !== 'object') return null
   const raw = (result as { tx?: unknown }).tx
   let binary: number[] | null = null
   if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
@@ -346,30 +350,32 @@ async function cacheCreateActionBeef(
       binary = null
     }
   }
-  if (!binary?.length) return
+  if (!binary?.length) return null
   const id = txid.trim().toLowerCase()
+  let packed = binary
   try {
     const asBeef = Beef.fromBinary(binary)
     asBeef.atomicTxid = undefined
-    const shaped = await hydrateInputBeef(active, asBeef)
-    if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) {
-      rememberBeefBinary(id, shaped)
-      return
-    }
+    packed = asBeef.toBinaryAtomic(id)
   } catch {
-    // not AtomicBEEF / not shapeable
+    try {
+      const wrapped = new Beef()
+      wrapped.mergeTransaction(Transaction.fromBinary(binary))
+      wrapped.atomicTxid = undefined
+      packed = wrapped.toBinaryAtomic(id)
+    } catch {
+      return null
+    }
   }
+  packed = await mergeLocalUnconfirmedAncestry(active, packed)
   try {
-    const wrapped = new Beef()
-    wrapped.mergeTransaction(Transaction.fromBinary(binary))
-    wrapped.atomicTxid = undefined
-    const shaped = await hydrateInputBeef(active, wrapped)
-    if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) {
-      rememberBeefBinary(id, shaped)
-    }
+    const shaped = await hydrateInputBeef(active, Beef.fromBinary(packed))
+    if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) packed = shaped
   } catch {
-    // ignore — follow-up spend may still fetch from services
+    // Complete unconfirmed bodies are enough; merkle hydration may be pending.
   }
+  rememberBeefBinary(id, packed)
+  return packed
 }
 
 async function dispatchWalletMethod(
@@ -1050,11 +1056,15 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
     } else if (method === 'createAction') {
       const txid = extractTxid(result)
       if (txid) {
+        const completed = await cacheCreateActionBeef(active, txid, result)
+        if (completed && result && typeof result === 'object') {
+          // The app receives the same SPV-complete package this wallet can
+          // spend/post, including every locally-known unconfirmed parent body.
+          result = { ...(result as Record<string, unknown>), tx: completed }
+        }
         cacheImageIconsFromCreateAction(txid, args, result)
-        void cacheCreateActionBeef(active, txid, result).then(() =>
-          import('./token/list').then(({ proveCachedFungibleEncodings }) =>
-            proveCachedFungibleEncodings(active),
-          ),
+        void import('./token/list').then(({ proveCachedFungibleEncodings }) =>
+          proveCachedFungibleEncodings(active),
         )
         // Await so the HTTP response lands after spent inputs are sealed.
         // Unsent/noSend change stays unspendable until Arcade/processAction so

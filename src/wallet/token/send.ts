@@ -38,6 +38,7 @@ import {
 import {
   buildMergedInputBeef,
   getBeefForTxidCached,
+  mergeLocalUnconfirmedAncestry,
   rememberBeefTree,
 } from '../beefCache'
 import {
@@ -701,6 +702,7 @@ export async function sendBsv21Tokens(args: {
       if (plan.changeAmt > 0n && !remainingOp) {
         throw new Error('Token change missing from the signed transaction')
       }
+      atomic = await mergeLocalUnconfirmedAncestry(wallet, atomic)
       rememberBeefTree(atomic, txid)
 
       try {

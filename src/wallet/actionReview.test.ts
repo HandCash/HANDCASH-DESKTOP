@@ -181,13 +181,13 @@ describe('actionReview', () => {
     expect(sweepChangeScripts).not.toHaveBeenCalled()
   })
 
-  it('clears ghost doubleSpend reqs when the tx never reached the chain', async () => {
+  it('keeps doubleSpend reqs when only chain absence is known', async () => {
     const txid = 'cc'.repeat(32)
     findProvenTxReqs.mockResolvedValueOnce([{ provenTxReqId: 285, txid, status: 'doubleSpend' }])
     txExistsOnChain.mockResolvedValueOnce(false)
     const { releaseGhostDoubleSpendReqs } = await import('./actionReview')
-    await expect(releaseGhostDoubleSpendReqs()).resolves.toBe(1)
-    expect(updateProvenTxReq).toHaveBeenCalledWith([285], { status: 'invalid' })
+    await expect(releaseGhostDoubleSpendReqs()).resolves.toBe(0)
+    expect(updateProvenTxReq).not.toHaveBeenCalled()
   })
 
   it('repairFailedSpendState includes change-script sweep', async () => {

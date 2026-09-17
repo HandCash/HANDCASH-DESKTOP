@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.216] - 2026-09-17
+
+### Fixed
+
+- **Signed transactions now remain local cheques until a competing spend is
+  proven.** Explorer/indexer absence no longer removes Activity, restores sent
+  items, retires token cards, fails pending change, or creates a competing
+  legacy sweep. Mined status is likewise no longer orphaned without local
+  header evidence.
+- **Every outbound transaction package carries locally known unconfirmed
+  ancestry.** Miner submissions, BRC-33 item/payment/market delivery, BRC-100
+  `createAction` responses, token sends, and legacy/phrase sweeps now share the
+  Atomic BEEF completion path.
+- **Wallet Heal now uses tri-state outpoint evidence.** Proven-spent outputs are
+  hidden, proven-unspent dropped outputs are restored, and unknown evidence
+  leaves balance, Activity, and collectables unchanged.
+
 ## [1.3.215] - 2026-09-17
 
 ### Changed

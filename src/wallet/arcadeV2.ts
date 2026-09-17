@@ -3,9 +3,11 @@
  *
  * Public hosts expose:
  * - `/chaintracks/v2/*` — go-chaintracks headers / tip (replaces legacy Chaintracks)
- * - `/tx` — Teranode broadcaster (202 accepted is a completed submit)
+ * - `/tx` — Teranode broadcaster (202 accepted is a queued submit)
  *
- * Send completion is that POST success. Do not wait for SSE / callback / merkle.
+ * POST `/tx` is propagation, not header finality and not a cheque cancel.
+ * Unconfirmed txs chain by carrying parent bodies; MINED is BUMP vs headers.
+ * Do not wait on SSE / callback before accounting a locally SPV-valid signed tx.
  *
  * Arcade CORS allow-list is Content-Type + X-CallbackToken (not XDeployment-ID).
  * The toolbox ARC client always sends XDeployment-ID, so we strip it. Vite still

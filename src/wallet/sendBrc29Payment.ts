@@ -25,7 +25,6 @@ import { withVisibleOnChainBeef } from './legacyBeef'
 import {
   forgetGhostTx,
   isGhostTxSuppressed,
-  rememberGhostTx,
 } from './ghostTxSuppress'
 import {
   beginPendingSend,
@@ -376,7 +375,15 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
 
           const realTxid = (result as { txid?: string })?.txid
-          const atomicBeef = atomicBeefFromCreateAction(result)
+          let atomicBeef = atomicBeefFromCreateAction(result)
+          if (atomicBeef?.length && realTxid) {
+            const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
+              './beefCache'
+            )
+            rememberBeefTree(atomicBeef, realTxid)
+            atomicBeef = await mergeLocalUnconfirmedAncestry(active, atomicBeef)
+            rememberBeefTree(atomicBeef, realTxid)
+          }
           signedTxid = realTxid
           signedAtomic = atomicBeef
           const sendWith = (result as { sendWithResults?: Array<{ status?: string }> })
@@ -1098,7 +1105,7 @@ export async function ingestPaymentsFromTipHints(
   }
   const markGhostIfMissing = async (
     txid: string,
-    hadLocalBeef: boolean,
+    _hadLocalBeef: boolean,
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
     // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
@@ -1109,26 +1116,8 @@ export async function ingestPaymentsFromTipHints(
       )
       return
     }
-    let knownMiss = false
-    try {
-      const { peekRawTxLookup } = await import('./oneSatImport')
-      knownMiss = peekRawTxLookup(txid) === 'miss'
-    } catch {
-      knownMiss = false
-    }
-    // Durable miss: indexer + WoC + raw already failed. Chat replay without
-    // a body would otherwise hammer the same four invalid txids on every open.
-    if (!hadLocalBeef && knownMiss) {
-      rememberGhostTx(txid)
-      markInboundPaymentStatus(txid, 'Unavailable')
-      if (!ghostTxids.includes(txid)) ghostTxids.push(txid)
-      console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… discarded — tx body never found`,
-      )
-      return
-    }
     console.info(
-      `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — explorer lag ignored; Arcade is source of truth`,
+      `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
     )
   }
 

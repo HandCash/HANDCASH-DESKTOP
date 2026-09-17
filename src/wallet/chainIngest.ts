@@ -1,8 +1,17 @@
 /**
- * Chain ingest layer — network → local toolbox state.
+ * Chain ingest — finder of coins that are not yet in localState.
  *
- * Refresh / background poll belong here. This is **not** BRC-39 history replica
- * and **not** Desktop↔Mobile sync. See `layers.ts`.
+ * Refresh / background poll belong here. This is **not** BRC-39 history replica,
+ * **not** Desktop↔Mobile sync, and **not** the header digest that classifies
+ * already-held txs. See `layers.ts` and `chainProofKind.ts`.
+ *
+ * Two jobs that must stay distinct:
+ * - **Ingest** (this module) — scan the receive address / known txids and
+ *   import funding + 1sat that localState does not have. Indexers are finders.
+ * - **Digest** — local headers (`blockHeaders` / chainTracker) + BEEF ancestry.
+ *   A tx is `headerProven` or `unconfirmed`. Unconfirmed cheques chain by
+ *   carrying parent bodies; ingest must not judge them absent because an
+ *   indexer has not listed them yet.
  *
  * Pipeline:
  * 1. reconcile interrupted pending sends + abort reserved batches
@@ -13,7 +22,8 @@
  * 4. refresh spendable balance
  *
  * Sync never marks an output unspendable. Only a spend the network rejected can
- * do that, via `releaseStaleSpendableOutputs`.
+ * do that, via `releaseStaleSpendableOutputs`. Indexer `isUtxo === false` on
+ * our own unconfirmed change is expected — that coin is `unconfirmed`, not spent.
  */
 import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend, shouldYieldChainIngestToUi } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats, invalidateBalanceReads } from './session'
@@ -146,10 +156,11 @@ function maybeReceiveChime(): void {
  * that is deliberate. The toolbox decides an output is dead via
  * `services.isUtxo`, which is `or.isUtxo === true`: an indexer that has not seen
  * our unconfirmed change, or a UTXO service that simply errored, both answer
- * `false`, and `release` then sets `spendable: false` for good. Silence is not
- * evidence of a spend, and the two costs are not symmetric — a stale spendable
- * output costs one failed send, which is visible and recoverable, while a wrong
- * release destroys live coins permanently.
+ * `false`, and `release` then sets `spendable: false` for good. That output is
+ * `chainProofKind.unconfirmed`, not spent. Silence is not evidence of a spend,
+ * and the two costs are not symmetric — a stale spendable output costs one
+ * failed send, which is visible and recoverable, while a wrong release
+ * destroys live coins permanently.
  *
  * Genuinely spent outputs (e.g. spent on another device sharing this identity)
  * are cleared by `releaseStaleSpendableOutputs`, on evidence, instead.

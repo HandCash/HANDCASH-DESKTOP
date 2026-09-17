@@ -103,7 +103,7 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent(`${txid}.1`)).toBe(true)
   })
 
-  it('heals hides whose spend txid is missing from the chain', async () => {
+  it('keeps hides when only chain absence is known', async () => {
     const guard = await import('./sentItemGuard')
     const activity = await import('./appActivity')
     const ghost = 'a'.repeat(64)
@@ -126,14 +126,12 @@ describe('sentItemGuard', () => {
       async (txid) => (txid === ghost ? false : true),
       Date.now() + guard.SENDER_GHOST_GRACE_MS + 1,
     )
-    expect(healed.sort()).toEqual(['latch.1', 'tip.0'])
-    expect(guard.isItemSent('tip.0')).toBe(false)
-    expect(guard.isItemSent('latch.1')).toBe(false)
+    expect(healed).toEqual([])
+    expect(guard.isItemSent('tip.0')).toBe(true)
+    expect(guard.isItemSent('latch.1')).toBe(true)
     expect(guard.isItemSent('kept.0')).toBe(true)
     expect(guard.isItemSent('abandon.0')).toBe(true)
-    expect(activity.listRecentActivity(10).some((e) => e.txid === ghost)).toBe(
-      false,
-    )
+    expect(activity.listRecentActivity(10).some((e) => e.txid === ghost)).toBe(true)
   })
 
   it('keeps hides when the chain lookup is inconclusive', async () => {
@@ -187,7 +185,7 @@ describe('sentItemGuard', () => {
     )
   })
 
-  it('returns a peerDeliver tip the payee never broadcast, keeping the row', async () => {
+  it('keeps an old peerDeliver cheque without competing-spend proof', async () => {
     const guard = await import('./sentItemGuard')
     const activity = await import('./appActivity')
     const txid = 'f'.repeat(64)
@@ -206,8 +204,8 @@ describe('sentItemGuard', () => {
       Date.now() + guard.PEER_DELIVER_GHOST_GRACE_MS + 1,
     )
 
-    expect(healed).toEqual(['tip.0'])
-    expect(guard.isItemSent('tip.0')).toBe(false)
+    expect(healed).toEqual([])
+    expect(guard.isItemSent('tip.0')).toBe(true)
     // The tip came back, but the send still happened — keep the evidence.
     expect(activity.listRecentActivity(10).some((e) => e.txid === txid)).toBe(
       true,

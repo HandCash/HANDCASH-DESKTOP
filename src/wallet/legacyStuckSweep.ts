@@ -1,27 +1,24 @@
 /**
- * Reclaim legacy sweeps that were marked imported but never reached a miner.
+ * Reclaim legacy import marks that never recorded a signed transaction.
  *
  * The sweep runs through the toolbox in delayed mode, so a reported success only
- * means the transaction was accepted locally. If it never reached a miner, the
- * deposit sits unspent behind a permanent mark and no other code path can free
- * it — that is a received payment the wallet will never credit.
+ * means the transaction was accepted locally. Once a txid exists it is a signed
+ * cheque and must keep propagating; this helper never creates a competing sweep.
  *
  * An address scan still listing the input as unspent proves nothing on its own;
  * providers lag our own broadcast by minutes, and re-sweeping on that alone
- * double-spends the first sweep. So the recorded txid must be provably missing.
- * When the provider will not answer, the mark stands.
+ * double-spends the first sweep. Explorer absence cannot cancel it.
  *
  * Shared by the own-address ingest and the imported-phrase sweep: both reach
  * `importLegacyUtxos` through the same durable guard, so both must be able to
  * heal it the same way.
  */
-import { txExistsOnChain } from './legacyScan'
 import { legacySweepRecord, legacySweepRetryEligible } from './legacyImportGuard'
 import type { Chain } from './vault'
 
 export async function retryableStuckSweeps(
   utxos: Array<{ outpoint: string }>,
-  chain: Chain,
+  _chain: Chain,
 ): Promise<string[]> {
   const withTxid: string[] = []
   const withoutTxid: string[] = []
@@ -42,14 +39,8 @@ export async function retryableStuckSweeps(
     withoutTxid.push(op)
   }
 
-  const { mapPool } = await import('./asyncPool')
-  const provedMissing = (
-    await mapPool(withTxid, 4, async (op) => {
-      const txid = legacySweepRecord(op)?.txid
-      if (!txid) return null
-      if ((await txExistsOnChain(txid, chain)) !== false) return null
-      return op
-    })
-  ).filter((op): op is string => !!op)
-  return [...provedMissing, ...withoutTxid]
+  // A recorded txid is a signed cheque. Explorer absence cannot authorize a
+  // competing sweep; keep those marks and continue propagating the original.
+  void withTxid
+  return withoutTxid
 }

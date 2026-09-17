@@ -39,7 +39,7 @@ describe('retryableStuckSweeps', () => {
     expect(txExistsOnChain).not.toHaveBeenCalled()
   })
 
-  it('retries only when a recorded sweep tx is provably missing from chain', async () => {
+  it('never creates a competing sweep for a recorded signed transaction', async () => {
     store.set(
       'handcash.brc100.importedLegacyOutpoints.v2',
       JSON.stringify({
@@ -51,8 +51,8 @@ describe('retryableStuckSweeps', () => {
     const { retryableStuckSweeps } = await import('./legacyStuckSweep')
     const retryable = await retryableStuckSweeps([{ outpoint: OP }], 'main')
 
-    expect(retryable).toEqual([OP])
-    expect(txExistsOnChain).toHaveBeenCalledWith(TX, 'main')
+    expect(retryable).toEqual([])
+    expect(txExistsOnChain).not.toHaveBeenCalled()
   })
 
   it('does not retry when the recorded sweep tx is still on chain', async () => {

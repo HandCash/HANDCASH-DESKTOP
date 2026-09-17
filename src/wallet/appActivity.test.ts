@@ -45,6 +45,7 @@ import {
   isFailedMarketListingActivity,
   removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
+  reconcilePendingItemActivityWithSpentOutpoints,
   sameActivityRow,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -513,6 +514,19 @@ describe('inbound receive activity', () => {
     expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
   })
 
+  it('settles Verifying history when the received tip is now proven spent', () => {
+    noteInboundReceivePending({
+      txid: TX,
+      item: true,
+      itemName: 'Fox',
+      outpoint: `${TX}.0`,
+    })
+    expect(
+      reconcilePendingItemActivityWithSpentOutpoints([`${TX}.0`]),
+    ).toBe(1)
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
+  })
+
   it('expires stale Verifying receives that never internalized', () => {
     noteInboundReceivePending({
       txid: TX,
@@ -751,7 +765,7 @@ describe('inbound receive activity', () => {
     )
   })
 
-  it('prunes settled Activity rows whose txid 404s on-chain', async () => {
+  it('keeps settled Activity rows when the tx is absent from explorers', async () => {
     noteOutboundSendComplete({
       pendingId: 'ghost',
       txid: 'bb'.repeat(32),
@@ -764,8 +778,8 @@ describe('inbound receive activity', () => {
       async () => false,
       { minAgeMs: 0 },
     )
-    expect(pruned).toBe(1)
-    expect(listRecentActivity(10)).toHaveLength(0)
+    expect(pruned).toBe(0)
+    expect(listRecentActivity(10)).toHaveLength(1)
   })
 
   it('keeps a settled item send whose txid 404s (payee has not broadcast)', async () => {
@@ -791,7 +805,7 @@ describe('inbound receive activity', () => {
     expect(listRecentActivity(10)[0]?.item?.name).toBe('Pixel Fox')
   })
 
-  it('prunes aged pending BSV Verifying… on 404 but keeps pending collectables', async () => {
+  it('keeps aged pending receives when explorers have no transaction', async () => {
     noteInboundReceivePending({ txid: 'cc'.repeat(32), sats: 100 })
     noteInboundReceivePending({
       txid: 'dd'.repeat(32),
@@ -812,11 +826,10 @@ describe('inbound receive activity', () => {
         pendingMinAgeMs: 60_000,
       },
     )
-    expect(pruned).toBe(1)
+    expect(pruned).toBe(0)
     const left = listRecentActivity(10)
-    expect(left).toHaveLength(1)
-    expect(left[0]?.item?.name).toBe('Fox')
-    expect(isGhostTxSuppressed('cc'.repeat(32))).toBe(true)
+    expect(left).toHaveLength(2)
+    expect(isGhostTxSuppressed('cc'.repeat(32))).toBe(false)
   })
 
   it('refuses to re-pin Verifying… for a suppressed ghost txid', () => {

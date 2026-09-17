@@ -49,7 +49,7 @@ describe('chooseFungibleChainFate', () => {
     ).toEqual({ kind: 'awaitingBasket', reason: 'settling' })
   })
 
-  it('retires a mint that aged out without ever being seen on chain', () => {
+  it('keeps an aged mint when chain presence is unknown', () => {
     expect(
       chooseFungibleChainFate({
         inLiveBasket: false,
@@ -57,10 +57,10 @@ describe('chooseFungibleChainFate', () => {
         onChain: null,
         ageMs: FUNGIBLE_SETTLE_GRACE_MS + 1,
       }),
-    ).toEqual({ kind: 'unconfirmed', reason: 'never-seen-on-chain' })
+    ).toEqual({ kind: 'awaitingBasket', reason: 'chain-unknown' })
   })
 
-  it('treats a row with no first-paint stamp as old, not new', () => {
+  it('does not delete an old row on unknown chain presence', () => {
     // Durable rows written before `seenAt` existed compute their age from 0.
     expect(
       chooseFungibleChainFate({
@@ -68,6 +68,17 @@ describe('chooseFungibleChainFate', () => {
         liveReadUsable: true,
         onChain: null,
         ageMs: Date.now(),
+      }),
+    ).toEqual({ kind: 'awaitingBasket', reason: 'chain-unknown' })
+  })
+
+  it('retires only after an explicit absent verdict and grace', () => {
+    expect(
+      chooseFungibleChainFate({
+        inLiveBasket: false,
+        liveReadUsable: true,
+        onChain: false,
+        ageMs: FUNGIBLE_SETTLE_GRACE_MS + 1,
       }),
     ).toEqual({ kind: 'unconfirmed', reason: 'never-seen-on-chain' })
   })

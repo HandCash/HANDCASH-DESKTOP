@@ -45,8 +45,53 @@ const {
   reclaimSealedInputsNeverSpent,
   restoreOnChainLocalTx,
   restoreUnspentAssetOutpoint,
+  chooseUtxoEvidenceAction,
 } = await import('./staleOutputRelease')
 const sentItemGuard = await import('./sentItemGuard')
+
+describe('chooseUtxoEvidenceAction', () => {
+  it('removes only a currently spendable output proven spent', () => {
+    expect(
+      chooseUtxoEvidenceAction({
+        verdict: 'spent',
+        spendable: true,
+        hasToolboxSpender: false,
+        blockedByLocalSpend: false,
+        itemTransferPending: false,
+      }),
+    ).toEqual({ action: 'remove', reason: 'proven-spent' })
+    expect(
+      chooseUtxoEvidenceAction({
+        verdict: 'unknown',
+        spendable: true,
+        hasToolboxSpender: false,
+        blockedByLocalSpend: false,
+        itemTransferPending: false,
+      }),
+    ).toEqual({ action: 'keep', reason: 'unknown' })
+  })
+
+  it('restores only a proven-unspent dropped output with no local owner', () => {
+    expect(
+      chooseUtxoEvidenceAction({
+        verdict: 'unspent',
+        spendable: false,
+        hasToolboxSpender: false,
+        blockedByLocalSpend: false,
+        itemTransferPending: false,
+      }),
+    ).toEqual({ action: 'restore', reason: 'proven-unspent-dropped' })
+    expect(
+      chooseUtxoEvidenceAction({
+        verdict: 'unspent',
+        spendable: false,
+        hasToolboxSpender: false,
+        blockedByLocalSpend: true,
+        itemTransferPending: false,
+      }),
+    ).toEqual({ action: 'keep', reason: 'local-spend' })
+  })
+})
 
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
   './utxoLockManager'
@@ -188,47 +233,85 @@ describe('restoreUnspentAssetOutpoint', () => {
 })
 
 describe('releaseStaleSpendableOutputs', () => {
+  const txid = 'ab'.repeat(32)
+  const updateOutput = vi.fn(async () => ({}))
+  const findOutputs = vi.fn()
+  const runAsStorageProvider = vi.fn(
+    async (fn: (sp: { findOutputs: typeof findOutputs; updateOutput: typeof updateOutput }) => Promise<unknown>) =>
+      fn({ findOutputs, updateOutput }),
+  )
+
   beforeEach(() => {
     mockReviewSpendableOutputs.mockReset()
     mockGetActiveWallet.mockReset()
+    findOutputs.mockReset()
+    updateOutput.mockClear()
+    runAsStorageProvider.mockClear()
+    spentStatusOfOutpoint.mockReset()
+    txExistsOnChain.mockReset()
+    overlayStore.clear()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
-      wallet: { reviewSpendableOutputs: mockReviewSpendableOutputs },
+      services: { isUtxo: vi.fn(async () => false) },
+      wallet: {
+        storage: { runAsStorageProvider },
+      },
     })
   })
 
-  it('releases across every basket and reports the count', async () => {
-    mockReviewSpendableOutputs.mockResolvedValue({
-      totalOutputs: 2,
-      outputs: [{ outpoint: 'aa.0' }, { outpoint: 'bb.1' }],
-    })
-
-    await expect(releaseStaleSpendableOutputs()).resolves.toBe(2)
-    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
-  })
-
-  it('falls back to the default basket when the all-basket filter is unsupported', async () => {
-    mockReviewSpendableOutputs
-      .mockRejectedValueOnce(
-        new Error('The args.partial.basketId parameter must be not undefined.'),
-      )
-      .mockResolvedValueOnce({ totalOutputs: 1, outputs: [{ outpoint: 'aa.0' }] })
+  it('removes a spendable output only after affirmative spent evidence', async () => {
+    findOutputs
+      .mockResolvedValueOnce([
+        {
+          outputId: 7,
+          txid,
+          vout: 0,
+          satoshis: 500,
+          spendable: true,
+          lockingScript: [81],
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          outputId: 7,
+          txid,
+          vout: 0,
+          satoshis: 500,
+          spendable: true,
+          lockingScript: [81],
+        },
+      ])
+    spentStatusOfOutpoint.mockResolvedValue('spent')
 
     await expect(releaseStaleSpendableOutputs()).resolves.toBe(1)
-    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(2, false, true)
+    expect(updateOutput).toHaveBeenCalledWith(7, { spendable: false })
   })
 
-  it('reports nothing released when the provider is down', async () => {
-    mockReviewSpendableOutputs.mockRejectedValue(new Error('provider down'))
+  it('keeps a spendable output when providers are inconclusive', async () => {
+    findOutputs
+      .mockResolvedValueOnce([
+        {
+          outputId: 8,
+          txid,
+          vout: 1,
+          satoshis: 500,
+          spendable: true,
+          lockingScript: [81],
+        },
+      ])
+      .mockResolvedValueOnce([])
+    spentStatusOfOutpoint.mockResolvedValue('unknown')
 
     await expect(releaseStaleSpendableOutputs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 
   it('does nothing without an unlocked wallet', async () => {
     mockGetActiveWallet.mockReturnValue(null)
 
     await expect(releaseStaleSpendableOutputs()).resolves.toBe(0)
-    expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
+    expect(runAsStorageProvider).not.toHaveBeenCalled()
   })
 })
 
@@ -1115,11 +1198,13 @@ describe('restoreOnChainLocalTx', () => {
 
 describe('reclaimSealedInputsNeverSpent', () => {
   const findTransactions = vi.fn()
+  const findOutputs = vi.fn()
   const updateOutput = vi.fn()
   const isUtxo = vi.fn()
 
   beforeEach(() => {
     findTransactions.mockReset()
+    findOutputs.mockReset()
     updateOutput.mockReset()
     isUtxo.mockReset()
     overlayStore.clear()
@@ -1139,8 +1224,9 @@ describe('reclaimSealedInputsNeverSpent', () => {
             fn: (sp: {
               updateOutput: typeof updateOutput
               findTransactions: typeof findTransactions
+              findOutputs: typeof findOutputs
             }) => Promise<unknown>,
-          ) => fn({ updateOutput, findTransactions }),
+          ) => fn({ updateOutput, findTransactions, findOutputs }),
         },
       },
     })
@@ -1209,5 +1295,41 @@ describe('reclaimSealedInputsNeverSpent', () => {
     ).resolves.toBe(0)
     expect(updateOutput).not.toHaveBeenCalled()
     expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
+  })
+
+  it('recovers only proven-unspent siblings of a failed multi-input spend', async () => {
+    const liveParent = '77'.repeat(32)
+    const spentParent = '88'.repeat(32)
+    const sealer = '99'.repeat(32)
+    hideUtxo(`${liveParent}_0`, { spentBy: sealer, satoshis: 400 })
+    hideUtxo(`${spentParent}_1`, { spentBy: sealer, satoshis: 600 })
+    findTransactions.mockResolvedValue([{ txid: sealer, status: 'failed' }])
+    isUtxo.mockImplementation(async ({ txid }: { txid: string }) => txid === liveParent)
+    spentStatusOfOutpoint.mockImplementation(async (outpoint: string) =>
+      outpoint.startsWith(spentParent) ? 'spent' : 'unspent',
+    )
+    findOutputs.mockImplementation(async ({ partial }: { partial?: { txid?: string } }) => {
+      if (partial?.txid === liveParent) {
+        return [{ outputId: 10, txid: liveParent, vout: 0, spendable: false }]
+      }
+      if (partial?.txid === spentParent) {
+        return [{ outputId: 11, txid: spentParent, vout: 1, spendable: false }]
+      }
+      return []
+    })
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(1)
+    expect(getUtxoLock(`${liveParent}_0`)?.spendable).toBe(true)
+    expect(getUtxoLock(`${spentParent}_1`)?.spendable).toBe(false)
+    expect(updateOutput).toHaveBeenCalledWith(10, {
+      spendable: true,
+      spentBy: undefined,
+    })
+    expect(updateOutput).not.toHaveBeenCalledWith(
+      11,
+      expect.objectContaining({ spendable: true }),
+    )
   })
 })

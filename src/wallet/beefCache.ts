@@ -715,6 +715,45 @@ export function classifyBeefAncestryGap(bin: number[]): BeefAncestryGap {
 }
 
 /**
+ * Fold locally held unconfirmed parents into this Atomic BEEF.
+ *
+ * A signed child is a cheque against change that is not mined yet. SPV for that
+ * cheque is the parent bodies we already signed, not a merkle proof the chain
+ * does not have. Indexers cannot supply those bodies; this wallet can.
+ */
+export async function mergeLocalUnconfirmedAncestry(
+  wallet: ActiveWallet,
+  atomic: number[],
+): Promise<number[]> {
+  if (!atomic.length) return atomic
+  try {
+    const work = Beef.fromBinary(atomic)
+    if (!work.txs?.length) return atomic
+    const subject = work.atomicTxid
+    work.atomicTxid = undefined
+    for (let pass = 0; pass < 16; pass += 1) {
+      const need = incompleteProofTxids(work)
+      if (need.length === 0) break
+      let added = false
+      for (const txid of need) {
+        const local = await getLocalBeefForTxid(wallet, txid)
+        const node = local?.findTxid(txid)
+        if (!node?.tx || node.isTxidOnly) continue
+        work.mergeBeef(local!.toBinary())
+        work.atomicTxid = undefined
+        added = true
+      }
+      if (!added) break
+    }
+    if (subject) work.atomicTxid = subject
+    const bin = work.toBinary()
+    return bin.length > 0 ? bin : atomic
+  } catch {
+    return atomic
+  }
+}
+
+/**
  * Ensure inputBEEF has raw tip bodies **and** full parent proofs (no txidOnly).
  * Safe for createAction trustSelf verify and for processAction broadcast verify.
  *
@@ -746,6 +785,14 @@ export async function hydrateInputBeef(
       for (const txid of need) {
         if (Date.now() >= deadline) break
         try {
+          const local = await getLocalBeefForTxid(wallet, txid)
+          const localNode = local?.findTxid(txid)
+          if (local && localNode?.tx && !localNode.isTxidOnly) {
+            work.mergeBeef(local.toBinary())
+            work.atomicTxid = undefined
+            added = true
+            continue
+          }
           const proved = await getBeefForTxidCached(wallet, txid, { needProof: true })
           // mergeBeef upgrades an existing txidOnly entry when raw+proof arrives.
           work.mergeBeef(proved.toBinary())

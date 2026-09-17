@@ -9,7 +9,6 @@ import { Beef, PrivateKey, type BEEF, type WalletInterface } from '@bsv/sdk'
 import { SetupClient } from '@bsv/wallet-toolbox-client'
 
 import { withVisibleOnChainBeef } from './legacyBeef'
-import { summarizePostBeef } from './postBeefResult'
 import type { ActiveWallet } from './session'
 
 export type P2pkhSweepResult = {
@@ -34,16 +33,16 @@ function packSweepAtomic(depositBeef: BEEF, signedAtomic: number[], sweepTxid: s
 }
 
 async function postSweep(
-  wallet: ActiveWallet,
+  _wallet: ActiveWallet,
   txid: string,
   atomic: number[],
 ): Promise<{ ok: boolean; detail: string }> {
-  if (!wallet.services?.postBeef) {
-    return { ok: false, detail: 'no postBeef service' }
+  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+  const result = await submitAtomicBeefToMiners(txid, atomic)
+  return {
+    ok: result.submitted,
+    detail: result.summary?.detail ?? 'propagation queued',
   }
-  const results = await wallet.services.postBeef(Beef.fromBinary(atomic), [txid])
-  const summary = summarizePostBeef(results as never)
-  return { ok: summary.accepted, detail: summary.detail }
 }
 
 async function signAndComplete(

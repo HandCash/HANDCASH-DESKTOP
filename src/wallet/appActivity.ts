@@ -4,7 +4,7 @@ import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { storageRegistry } from '../storage/registry'
 import { getItemArtDataUrl } from './localItemArt'
-import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
+import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
@@ -1165,7 +1165,7 @@ export function expireStaleOutboundPending(
   return expired
 }
 
-/** Drop every Activity row for these txids (ghost send / 404 prune). */
+/** Drop every Activity row for txids already proven invalid/ghosted. */
 export function removeActivityForTxids(txids: string[]): number {
   const missing = new Set(
     txids
@@ -1287,10 +1287,9 @@ export function collectActivityTxids(): {
 }
 
 /**
- * Remove Activity rows whose txid is confirmed missing on-chain (404).
- * Pending BSV Verifying…/Sending… are included — tip-hint polls otherwise
- * re-pin them forever when the inbox message is never ACKed.
- * Settled rows need a longer grace so mempool txs are not pruned early.
+ * Remove Activity rows only after another subsystem records explicit terminal
+ * invalidity (hard reject / proven conflict) in `ghostTxSuppress`.
+ * Explorer absence never enters that set and never removes history.
  *
  * Item rows are excluded at every status. A `peerDeliver` settle is broadcast by
  * the **payee**, so a 404 means they have not broadcast yet — not that the
@@ -1299,8 +1298,8 @@ export function collectActivityTxids(): {
  * falls back to "Transaction not found".
  */
 export async function pruneMissingOnChainActivity(
-  chain: import('./vault').Chain,
-  exists: (
+  _chain: import('./vault').Chain,
+  _exists: (
     txid: string,
     chain: import('./vault').Chain,
   ) => Promise<boolean | null>,
@@ -1331,17 +1330,6 @@ export async function pruneMissingOnChainActivity(
     if (txHadArcadeSubmitContact(txid)) continue
     if (isGhostTxSuppressed(txid)) {
       missing.add(txid)
-      continue
-    }
-    try {
-      const onChain = await exists(txid, chain)
-      if (onChain === false) {
-        if (txHadArcadeSubmitContact(txid)) continue
-        rememberGhostTx(txid)
-        missing.add(txid)
-      }
-    } catch {
-      // inconclusive — keep
     }
   }
   if (missing.size === 0) return 0
@@ -1410,6 +1398,42 @@ export function reconcilePendingActivityWithHeldItems(
         ...(entry.item?.app ? { app: entry.item.app } : {}),
       },
     }
+    changed += 1
+  }
+  if (changed > 0) writeAll(entries)
+  return changed
+}
+
+/**
+ * A pending item receive can outlive the tip: the user received it and later
+ * spent it before the authenticity/list pass settled its "Verifying…" row.
+ * Proven-spent means the receive happened; settle the history row rather than
+ * deleting it or leaving Activity inconsistent with Collectables.
+ */
+export function reconcilePendingItemActivityWithSpentOutpoints(
+  outpoints: string[],
+): number {
+  const spent = new Set(
+    outpoints.map(normalizeActivityOutpoint).filter(Boolean),
+  )
+  if (spent.size === 0) return 0
+
+  const entries = [...readAll()]
+  let changed = 0
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i]!
+    if (
+      entry.status !== 'pending' ||
+      entry.kind !== 'earned' ||
+      !activityRowIsItem(entry)
+    ) {
+      continue
+    }
+    const outpoint = entry.item?.outpoint
+      ? normalizeActivityOutpoint(entry.item.outpoint)
+      : ''
+    if (!outpoint || !spent.has(outpoint)) continue
+    entries[i] = { ...entry, status: undefined }
     changed += 1
   }
   if (changed > 0) writeAll(entries)

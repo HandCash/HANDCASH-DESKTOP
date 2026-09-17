@@ -72,7 +72,7 @@ describe('ownershipFate', () => {
     ).toBe('keepCovenant')
   })
 
-  it('ghost-drops our soft tips past grace when missing from the live set', () => {
+  it('keeps our soft tips when only address-scan absence is known', () => {
     expect(
       ownershipFate({
         tipKind: classifyTipKind(P2PKH),
@@ -81,10 +81,10 @@ describe('ownershipFate', () => {
         provenTier: 'brc150',
         paysOurAddress: true,
       }),
-    ).toBe('ghostDrop')
+    ).toBe('graceHold')
   })
 
-  it('ghost-drops soft P2PKH past grace when the locking script is unknown', () => {
+  it('keeps unknown-script tips when only address-scan absence is known', () => {
     expect(
       ownershipFate({
         tipKind: classifyTipKind(P2PKH),
@@ -92,7 +92,7 @@ describe('ownershipFate', () => {
         unjudged: false,
         provenTier: 'brc150',
       }),
-    ).toBe('ghostDrop')
+    ).toBe('graceHold')
   })
 
   it('ghost-drops when the script pays someone else', () => {

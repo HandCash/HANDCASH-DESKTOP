@@ -202,10 +202,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     expect(result.fundingSkippedKnown).toBe(1)
   })
 
-  it('re-sweeps when the recorded sweep tx is provably absent', async () => {
-    // The sweep is queued in delayed mode, so a reported success only means the
-    // toolbox accepted it. When it never reached a miner the deposit sits unspent
-    // behind a permanent mark, and nothing else in the wallet can free it.
+  it('does not double-sweep when explorers cannot find the signed sweep', async () => {
     const { markLegacyImported } = await import('./legacyImportGuard')
     markLegacyImported([{ outpoint: OUTPOINT, txid: SWEEP_TXID }])
     // Age the mark past SWEEP_RETRY_MS.
@@ -224,7 +221,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
     await ingestLegacyAddressUtxos({ active })
 
-    expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(2)
+    expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
   })
 

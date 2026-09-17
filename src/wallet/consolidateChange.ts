@@ -244,14 +244,10 @@ async function runSelfConsolidation(): Promise<string> {
         throw new Error('Consolidate signed but no transaction body was returned')
       }
       const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
-      // Ghost / service-only "submitted" must not internalize — that zeroed a
-      // phone wallet after hard-reject hide with no release (see lab logs).
-      if (
-        !miner.confirmed &&
-        (miner.summary?.doubleSpend ||
-          miner.summary?.missingInputs ||
-          miner.summary?.serviceOnlyErrors)
-      ) {
+      // Arcade 202 is not SPV. Internalize only when the BEEF itself verifies
+      // (unconfirmed parent bodies count). Service-only / incomplete ancestry
+      // must not mint phantom change.
+      if (!miner.confirmed) {
         throw new Error(
           miner.summary?.detail
             ? `Consolidate broadcast failed (${miner.summary.detail})`

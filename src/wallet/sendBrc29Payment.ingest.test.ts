@@ -423,7 +423,7 @@ describe('ingestPaymentsFromTipHints', () => {
     expect(result.importedTxids).toEqual([txid])
   })
 
-  it('ghosts a body-less tip after a durable raw-tx miss so unlock does not replay it', async () => {
+  it('keeps a body-less tip pending after a durable raw-tx miss', async () => {
     peekRawTxLookup.mockReturnValue('miss')
     internalizePeerItemSettle.mockResolvedValue({
       accepted: false,
@@ -433,7 +433,7 @@ describe('ingestPaymentsFromTipHints', () => {
     const txid = 'f'.repeat(64)
     const result = await ingestSkippingRetryDelay([{ txid, item: true }])
 
-    expect(result.ghostTxids).toEqual([txid])
-    expect(ghosts.has(txid)).toBe(true)
+    expect(result.ghostTxids).toEqual([])
+    expect(ghosts.has(txid)).toBe(false)
   })
 })

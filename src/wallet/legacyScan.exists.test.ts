@@ -25,7 +25,7 @@ function cloudSilentThen(
 }
 
 describe('txExistsOnChain', () => {
-  it('asks Bitails before WhatsOnChain when HandCash Chain is silent', async () => {
+  it('falls through a Bitails 404 and finds a WhatsOnChain hit', async () => {
     const order: string[] = []
     const fetchMock = cloudSilentThen(async (url) => {
       if (isBanana(url)) order.push('banana')
@@ -37,10 +37,8 @@ describe('txExistsOnChain', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
-    // Bitails is primary under phone WebView load; BananaBlocks is fallback.
-    expect(order).toEqual(['bitails'])
-    expect(fetchMock.mock.calls.some(([u]) => isWoc(u))).toBe(false)
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
+    expect(order).toEqual(['bitails', 'banana', 'woc'])
   })
 
   it('uses HandCash Chain when it has a definitive answer', async () => {
@@ -101,7 +99,7 @@ describe('txExistsOnChain', () => {
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
   })
 
-  it('treats Bitails 404 as unknown without calling WhatsOnChain', async () => {
+  it('does not let Bitails 404 hide a WhatsOnChain hit', async () => {
     const fetchMock = cloudSilentThen(async (url: string) => {
       if (isBanana(url)) return new Response('', { status: 500 })
       if (isBitails(url)) return new Response('', { status: 404 })
@@ -109,8 +107,8 @@ describe('txExistsOnChain', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
-    expect(fetchMock.mock.calls.some(([u]) => isWoc(u))).toBe(false)
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
+    expect(fetchMock.mock.calls.some(([u]) => isWoc(u))).toBe(true)
   })
 
   it('treats a WhatsOnChain 429 as no evidence, not absence', async () => {

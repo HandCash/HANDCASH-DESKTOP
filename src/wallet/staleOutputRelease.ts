@@ -45,6 +45,7 @@ import {
 } from './kernel/txLiveness'
 import {
   signedTxMayBeRemoved,
+  signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
 } from './arcadeSubmitGuard'
 
@@ -99,6 +100,246 @@ export function isNoLongerSpendableError(err: unknown): boolean {
   )
 }
 
+export type UtxoEvidenceHealResult = {
+  checked: number
+  hiddenSpent: number
+  restoredUnspent: number
+  unknown: number
+  spentOutpoints: string[]
+  restoredOutpoints: string[]
+}
+
+type EvidenceOutputRow = ChangeRow & {
+  basket?: string
+  spentBy?: number
+}
+
+export type UtxoEvidenceAction =
+  | { action: 'remove'; reason: 'proven-spent' }
+  | { action: 'restore'; reason: 'proven-unspent-dropped' }
+  | {
+      action: 'keep'
+      reason:
+        | 'unknown'
+        | 'already-correct'
+        | 'local-spend'
+        | 'item-transfer'
+    }
+
+/** Pure decision used by manual Heal; no boolean fallthrough around UTXO writes. */
+export function chooseUtxoEvidenceAction(args: {
+  verdict: 'spent' | 'unspent' | 'unknown'
+  spendable: boolean
+  hasToolboxSpender: boolean
+  blockedByLocalSpend: boolean
+  itemTransferPending: boolean
+}): UtxoEvidenceAction {
+  if (args.verdict === 'spent') {
+    return args.spendable
+      ? { action: 'remove', reason: 'proven-spent' }
+      : { action: 'keep', reason: 'already-correct' }
+  }
+  if (args.verdict === 'unknown') return { action: 'keep', reason: 'unknown' }
+  if (args.spendable) return { action: 'keep', reason: 'already-correct' }
+  if (args.hasToolboxSpender || args.blockedByLocalSpend) {
+    return { action: 'keep', reason: 'local-spend' }
+  }
+  if (args.itemTransferPending) {
+    return { action: 'keep', reason: 'item-transfer' }
+  }
+  return { action: 'restore', reason: 'proven-unspent-dropped' }
+}
+
+/**
+ * Reconcile the toolbox output set against affirmative outpoint evidence.
+ *
+ * This is the actual UTXO-heal contract:
+ * - `spent`   → hide the row (never delete history)
+ * - `unspent` → restore a dropped row only when no local spend/overlay owns it
+ * - `unknown` → do nothing
+ *
+ * `isUtxo === false`, tx absence, Arcade status, and explorer silence are not
+ * spend evidence. A locally signed unconfirmed cheque therefore survives this
+ * pass, while genuinely stale spendable rows are removed.
+ */
+export async function reconcileKnownUtxosByEvidence(opts?: {
+  maxOutputs?: number
+  /** Explicit Settings heal owns the ingest turn and completes its audit. */
+  forManualHeal?: boolean
+}): Promise<UtxoEvidenceHealResult> {
+  const empty: UtxoEvidenceHealResult = {
+    checked: 0,
+    hiddenSpent: 0,
+    restoredUnspent: 0,
+    unknown: 0,
+    spentOutpoints: [],
+    restoredOutpoints: [],
+  }
+  const active = getActiveWallet()
+  const storage = active?.wallet?.storage
+  if (!active || !storage?.runAsStorageProvider) return empty
+
+  // Cap per side so a large historical spent set cannot prevent current
+  // spendable coins (or vice versa) from ever reaching the audit.
+  const maxOutputs = Math.max(1, Math.min(4_000, opts?.maxOutputs ?? 2_000))
+  const rows: EvidenceOutputRow[] = []
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (typeof sp.findOutputs !== 'function') return
+      for (const spendable of [true, false]) {
+        let sideCount = 0
+        for (let offset = 0; sideCount < maxOutputs; offset += RESTORE_MAX) {
+          const batch = await sp.findOutputs({
+            partial: { spendable },
+            paged: {
+              limit: Math.min(RESTORE_MAX, maxOutputs - sideCount),
+              offset,
+            },
+          })
+          if (!Array.isArray(batch) || batch.length === 0) break
+          rows.push(...(batch as EvidenceOutputRow[]))
+          sideCount += batch.length
+          if (batch.length < RESTORE_MAX) break
+        }
+      }
+    })
+  } catch (err) {
+    console.warn('[stale-output] evidence snapshot failed', err)
+    return empty
+  }
+
+  const candidates = rows
+    .map((row) => ({ row, outpoint: outpointFromOutput(row) }))
+    .filter(
+      (candidate): candidate is { row: EvidenceOutputRow; outpoint: string } =>
+        Boolean(candidate.outpoint) && positiveId(candidate.row.outputId) != null,
+    )
+
+  const verdicts = new Map<string, 'spent' | 'unspent' | 'unknown'>()
+  const isUtxo = active.services?.isUtxo
+  const concurrency = 8
+  for (let offset = 0; offset < candidates.length; offset += concurrency) {
+    if (!opts?.forManualHeal && shouldYieldChainIngestToSpend()) break
+    const batch = candidates.slice(offset, offset + concurrency)
+    await Promise.all(
+      batch.map(async ({ outpoint }) => {
+        const parsed = parseOutpoint(outpoint)
+        if (!parsed) return
+
+        // A positive isUtxo answer is affirmative unspent evidence. A negative
+        // is only "this provider did not affirm", so ask the tri-state probe.
+        if (typeof isUtxo === 'function') {
+          try {
+            const result = await isUtxo({
+              txid: parsed.txid,
+              vout: parsed.vout,
+            } as never)
+            const alive =
+              result === true ||
+              (!!result &&
+                typeof result === 'object' &&
+                (result as { isUtxo?: unknown }).isUtxo === true)
+            if (alive) {
+              verdicts.set(outpoint, 'unspent')
+              return
+            }
+          } catch {
+            // Tri-state provider waterfall below.
+          }
+        }
+        const status = await spentStatusOfOutpoint(
+          outpoint,
+          active.chain,
+        ).catch(() => 'unknown' as const)
+        if (status === 'unspent') {
+          // A 404 on /spent is only meaningful when the source transaction is
+          // known. Otherwise the provider may simply have no record of either.
+          const sourceExists = await txExistsOnChain(
+            parsed.txid,
+            active.chain,
+          ).catch(() => null)
+          verdicts.set(outpoint, sourceExists === true ? 'unspent' : 'unknown')
+          return
+        }
+        verdicts.set(outpoint, status)
+      }),
+    )
+    await yieldToUi()
+  }
+
+  const spent = candidates
+    .filter(({ row, outpoint }) => {
+      const action = chooseUtxoEvidenceAction({
+        verdict: verdicts.get(outpoint) ?? 'unknown',
+        spendable: row.spendable === true,
+        hasToolboxSpender: positiveId(row.spentBy) != null,
+        blockedByLocalSpend: isUtxoBlockedFromRestore(outpoint),
+        itemTransferPending:
+          String(row.basket ?? '').toLowerCase() === '1sat' &&
+          isItemSent(outpoint),
+      })
+      return action.action === 'remove'
+    })
+    .map(({ outpoint }) => outpoint)
+  if (spent.length > 0) {
+    empty.hiddenSpent = await hideSpentOutpoints(spent)
+    empty.spentOutpoints = spent
+  }
+
+  const restorable = candidates.filter(({ row, outpoint }) => {
+    const action = chooseUtxoEvidenceAction({
+      verdict: verdicts.get(outpoint) ?? 'unknown',
+      spendable: row.spendable === true,
+      hasToolboxSpender: positiveId(row.spentBy) != null,
+      blockedByLocalSpend: isUtxoBlockedFromRestore(outpoint),
+      itemTransferPending:
+        String(row.basket ?? '').toLowerCase() === '1sat' &&
+        isItemSent(outpoint),
+    })
+    return action.action === 'restore'
+  })
+
+  if (restorable.length > 0) {
+    try {
+      await storage.runAsStorageProvider(async (activeSp) => {
+        const sp = activeSp as unknown as LocalStorage
+        const txCache = new Map<number, TxStatusRow | null>()
+        for (const { row, outpoint } of restorable) {
+          const outputId = positiveId(row.outputId)
+          if (outputId == null) continue
+          const basket = String(row.basket ?? '').toLowerCase()
+          let healed: number[] | null = null
+          if (basket !== '1sat' && basket !== 'bsv21') {
+            healed = await healLockingScript(sp, row, txCache, {
+              fromChain: false,
+            })
+            if (healed == null && !hasLockingScript(row)) continue
+          }
+          await sp.updateOutput(outputId, {
+            spendable: true,
+            spentBy: undefined,
+            ...(healed != null ? { lockingScript: healed } : {}),
+          })
+          const sats = Math.max(0, Math.trunc(Number(row.satoshis) || 0))
+          creditUtxo(outpoint, { satoshis: sats })
+          empty.restoredUnspent += 1
+          empty.restoredOutpoints.push(outpoint)
+        }
+      })
+    } catch (err) {
+      console.warn('[stale-output] evidence restore failed', err)
+    }
+  }
+
+  empty.checked = verdicts.size
+  empty.unknown = [...verdicts.values()].filter((v) => v === 'unknown').length
+  console.info(
+    `[stale-output] evidence heal checked=${empty.checked} spent=${empty.hiddenSpent} restored=${empty.restoredUnspent} unknown=${empty.unknown}`,
+  )
+  return empty
+}
+
 /**
  * Write off outputs the network refuses to spend. Prefer
  * {@link hideSpentOutpoints} with the rejected tx's inputs — a bulk review
@@ -107,31 +348,7 @@ export function isNoLongerSpendableError(err: unknown): boolean {
  * @returns how many outputs were released.
  */
 export async function releaseStaleSpendableOutputs(): Promise<number> {
-  const active = getActiveWallet()
-  if (!active) return 0
-  try {
-    let result
-    try {
-      result = await active.wallet.reviewSpendableOutputs(true, true)
-    } catch (err) {
-      if (!isUndefinedPartialFilterError(err)) throw err
-      result = await active.wallet.reviewSpendableOutputs(false, true)
-    }
-    const outputs = Array.isArray(result.outputs) ? result.outputs : []
-    const outpoints = outputs
-      .map((row) => outpointFromOutput(row as { txid?: unknown; vout?: unknown }))
-      .filter((op): op is string => Boolean(op))
-    if (outpoints.length > 0) await hideSpentOutpoints(outpoints)
-    if (outputs.length > 0) {
-      console.info(
-        `[stale-output] released ${outputs.length} output(s) the network rejected as spent`,
-      )
-    }
-    return outputs.length
-  } catch (err) {
-    console.warn('[stale-output] release failed', err)
-    return 0
-  }
+  return (await reconcileKnownUtxosByEvidence()).hiddenSpent
 }
 
 /**
@@ -753,13 +970,9 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
             paged: { limit: 1, offset: 0 },
           })
           const status = String(rows?.[0]?.status ?? '').toLowerCase()
-          // `noSend` item/BRC-29 rows stay `unsent` after createAction. Arcade
-          // contact means the signed tx was handed to miners — not a ghost.
-          if (txHadArcadeSubmitContact(txid)) {
-            liveSealers.add(txid)
-            deadSealers.delete(txid)
-            continue
-          }
+          // Arcade contact is propagation, not a competing spend. A pin still
+          // has to survive {@link signedTxMayBeRemoved} so a cheque whose
+          // inputs actually moved elsewhere can be failed.
           // Missing local row is common for app createAction seals — never treat
           // absence as a ghost (that revived spent inputs and bounced the hero
           // 47¢→23¢→70¢ with no Activity). Leave unclassified for Arcade/chain.
@@ -795,13 +1008,22 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
 
   const chain = active?.chain
   if (chain) {
-    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
     for (const txid of sealerIds) {
-      // Local `callback` / unmined / sending spends are already ours. Explorers
-      // often answer "not on chain" for minutes after Arcade accepts the BEEF;
-      // treating that as unsent un-deducts change (Plinko bets on a580) and
-      // un-spends item `noSend` rows (hc-ad7afb fox 3aba0b7a).
-      if (liveSealers.has(txid)) continue
+      // "Live" is a local status, not immunity from a proven competing spend.
+      // The poisoned 46-input consolidations stayed live forever and Heal
+      // resealed them on every pass. Promote to dead only on real conflict.
+      if (liveSealers.has(txid)) {
+        const conflict = await signedTxSpendConflictIsProven({
+          txid,
+          chain,
+        })
+        if (!conflict) continue
+        liveSealers.delete(txid)
+        deadSealers.add(txid)
+        await failUnsentLocalTx(txid, { force: true })
+        continue
+      }
+      if (deadSealers.has(txid)) continue
       if (!(await signedTxMayBeRemoved({ txid, chain }))) {
         liveSealers.add(txid)
         deadSealers.delete(txid)
@@ -816,53 +1038,9 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
         deadSealers.delete(txid)
         continue
       }
-      // Explorer 404 alone is lag. Only treat as ghost when a sealed *input*
-      // is still a UTXO — if the input is spent, keep the seal even when the
-      // sealer tx is invisible to explorers.
-      const sample = sealedNamed.find((rec) => rec.spentBy === txid)
-      const parsed = sample ? parseOutpoint(sample.outpoint) : null
-      if (!parsed) continue
-      let unspent = false
-      if (typeof isUtxo === 'function') {
-        try {
-          const result = await isUtxo({
-            txid: parsed.txid,
-            vout: parsed.vout,
-          } as never)
-          unspent =
-            result === true ||
-            (!!result &&
-              typeof result === 'object' &&
-              (result as { isUtxo?: unknown }).isUtxo === true)
-        } catch {
-          unspent = false
-        }
-      }
-      if (!unspent) {
-        const status = await spentStatusOfOutpoint(
-          sample!.outpoint,
-          chain,
-        ).catch(() => 'unknown' as const)
-        unspent = status === 'unspent'
-      }
-      // A descendant of a dead local chain: proven absent, but its inputs are
-      // outputs of an equally absent parent, so nothing here can be revived as a
-      // live coin. Stop it *looking* in flight anyway — otherwise every pass
-      // reseals its inputs and its change keeps counting, forever (lab
-      // hc-ad7afb: 87ce439f, whose ancestor Arcade rejected UTXO_SPENT).
-      // `signedTxMayBeRemoved` above already required the Arcade pin to yield to
-      // this proof, which is why forcing the fail is not a heuristic.
-      if (onChain === false && !unspent) {
-        await failUnsentLocalTx(txid, { force: true })
-        continue
-      }
-      // Pending broadcast looks identical to a ghost under explorer silence
-      // (inputs still UTXOs). Only a hard "sealer absent" + still-UTXO input
-      // is enough to revive — never inconclusive null.
-      if (!unspent || onChain !== false) continue
-      liveSealers.delete(txid)
-      deadSealers.add(txid)
-      await failUnsentLocalTx(txid)
+      // Missing local row + explorer absence is not cancellation evidence.
+      // Signed cheques survive; only explicit failed/invalid status above or a
+      // proven competing spend can make a named sealer reclaimable.
     }
     if (deadSealers.size > 0) {
       console.info(
@@ -875,12 +1053,41 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   for (const rec of sealedNamed) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
     const sealer = rec.spentBy as string
-    // Only revive when the sealer is proven dead. Speculative isUtxo=true on
-    // unclassified seals (missing local row / explorer lag) un-spent live
-    // app createAction inputs and bounced the hero (47¢→23¢→70¢).
-    if (deadSealers.has(sealer)) {
-      revive.push(rec.outpoint)
+    if (!deadSealers.has(sealer)) continue
+
+    // A conflicting multi-input transaction can have one input spent by the
+    // winner and many siblings still unspent. Verify every sibling; reviving
+    // the whole group reintroduced the actually-spent coin and poisoned the
+    // next consolidation.
+    const parsed = parseOutpoint(rec.outpoint)
+    if (!parsed) continue
+    let unspent = false
+    if (typeof isUtxo === 'function') {
+      try {
+        const result = await isUtxo({
+          txid: parsed.txid,
+          vout: parsed.vout,
+        } as never)
+        unspent =
+          result === true ||
+          (!!result &&
+            typeof result === 'object' &&
+            (result as { isUtxo?: unknown }).isUtxo === true)
+      } catch {
+        unspent = false
+      }
     }
+    if (!unspent && chain) {
+      const status = await spentStatusOfOutpoint(
+        rec.outpoint,
+        chain,
+      ).catch(() => 'unknown' as const)
+      if (status === 'unspent') {
+        unspent =
+          (await txExistsOnChain(parsed.txid, chain).catch(() => null)) === true
+      }
+    }
+    if (unspent) revive.push(rec.outpoint)
   }
   if (revive.length === 0) return revived
 
@@ -1130,11 +1337,10 @@ export async function listPendingLocalChangeTxids(): Promise<string[]> {
  */
 export async function promotePendingLocalChangeOutputs(opts?: {
   forSpendChain?: boolean
-  /** Skip explorer exists-checks — item send prepare cannot wait on 404 lag. */
+  /** Retained for caller compatibility; promotion is now always local-only. */
   localOnly?: boolean
 }): Promise<number> {
   const forSpendChain = opts?.forSpendChain === true
-  const localOnly = opts?.localOnly === true
   if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
   const active = getActiveWallet()
   const storage = active?.wallet?.storage
@@ -1143,31 +1349,12 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   const txids = new Set(await listPendingLocalChangeTxids())
   if (txids.size === 0) return 0
 
-  const chain = localOnly ? undefined : active?.chain
   let promoted = 0
   let sealedTotal = 0
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
-    // Arcade already accepted this spend — Bitails/WoC 404 is lag, not a
-    // fail signal. Skip the explorer probe so we do not re-hit 404 every poll.
-    const { txHadArcadeSubmitContact } = await import('./arcadeSubmitGuard')
-    if (chain && !txHadArcadeSubmitContact(txid)) {
-      try {
-        const { txExistsOnChain } = await import('./legacyScan')
-        const onChain = await txExistsOnChain(txid, chain)
-        if (onChain === false) {
-          // Submit already succeeded; indexer lag must not un-deduct change.
-          const failed = await failUnsentLocalTx(txid)
-          if (failed) continue
-        }
-      } catch (err) {
-        console.warn(
-          '[stale-output] pending on-chain check skipped',
-          txid.slice(0, 12),
-          err,
-        )
-      }
-    }
+    // Pending change is local signed state. Explorer absence cannot fail it;
+    // competing-spend reconciliation runs separately and proof-first.
     // Same order as utxoHealFromHistory: seal spent inputs FIRST, then keep
     // change. Promoting change while inputs are still spendable is the classic
     // ~2× balance (sibling-abort / Arcade-pin promote without reseal).
@@ -1536,50 +1723,12 @@ export async function restoreLiveSpendableOutputs(opts?: {
           const sealer =
             lock?.spentBy && /^[0-9a-f]{64}$/.test(lock.spentBy) ? lock.spentBy : null
           let deadSealer = false
-          if (sealer && active?.chain) {
-            const { txHadArcadeSubmitContact } = await import('./arcadeSubmitGuard')
-            if (txHadArcadeSubmitContact(sealer)) {
-              // Arcade already accepted this spend — explorer lag is not a restore signal.
-              keptSpent += 1
-              continue
-            }
-            const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
-            const onChain = await txExistsOnChain(sealer, active.chain).catch(() => null)
-            if (onChain === true) {
-              keptSpent += 1
-              continue
-            } else if (onChain === false) {
-              // Hard absent only — explorer 404 is null (lag), not a restore signal.
-              const parsed = parseOutpoint(overlayKey)
-              let unspent = false
-              const isUtxo = active.services?.isUtxo
-              if (parsed && typeof isUtxo === 'function') {
-                try {
-                  const result = await isUtxo({
-                    txid: parsed.txid,
-                    vout: parsed.vout,
-                  } as never)
-                  unspent =
-                    result === true ||
-                    (!!result &&
-                      typeof result === 'object' &&
-                      (result as { isUtxo?: unknown }).isUtxo === true)
-                } catch {
-                  unspent = false
-                }
-              }
-              if (!unspent) {
-                const status = await spentStatusOfOutpoint(
-                  overlayKey,
-                  active.chain,
-                ).catch(() => 'unknown' as const)
-                unspent = status === 'unspent'
-              }
-              if (unspent) {
-                releaseConsumedUtxo(overlayKey, 'restore:unspent-under-seal')
-                deadSealer = true
-              }
-            }
+          if (sealer) {
+            // Named seals are signed cheques. Only reclaimSealedInputsNeverSpent
+            // may clear them, after a proven conflict/failed sealer and an
+            // individual affirmative-unspent check.
+            keptSpent += 1
+            continue
           } else if (!sealer && active?.chain) {
             const parsed = parseOutpoint(overlayKey)
             const isUtxo = active.services?.isUtxo
@@ -1621,39 +1770,10 @@ export async function restoreLiveSpendableOutputs(opts?: {
         try {
           let spentBy = positiveId(output.spentBy)
           if (spentBy != null) {
-            const spender = await loadTxRow(sp, spentBy, txCache)
-            const spenderStatus = String(spender?.status ?? '').toLowerCase()
-            if (
-              !spender ||
-              spenderStatus === 'unsent' ||
-              spenderStatus === 'failed'
-            ) {
-              // Local ghost sealer — clear spentBy so change can be re-enabled.
-              spentBy = null
-            } else if (isLiveLocalTxStatus(spender?.status)) {
-              const spenderTxid = txidFromRow(spender ?? {})?.toLowerCase()
-              let keep = true
-              if (spenderTxid && active?.chain) {
-                const { txExistsOnChain } = await import(
-                  './legacyScan'
-                )
-                const onChain = await txExistsOnChain(
-                  spenderTxid,
-                  active.chain,
-                ).catch(() => null)
-                if (onChain === false) {
-                  keep = false
-                  // Retire the ghost so pendingChange stops crediting its outs.
-                  // Explorer 404 → null; do not unseal on lag + still-UTXO input.
-                  await failUnsentLocalTx(spenderTxid)
-                }
-              }
-              if (keep) {
-                keptSpent += 1
-                continue
-              }
-              spentBy = null
-            }
+            // Storage spentBy is also a signed-cheque claim. Evidence heal or
+            // reclaim clears it; generic change restore never guesses.
+            keptSpent += 1
+            continue
           }
 
           const creatorId = positiveId(output.transactionId)
