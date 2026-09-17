@@ -19,15 +19,33 @@ export type DurableSetOptions = {
  */
 const cache = new Map<string, string | null>()
 
+/**
+ * Largest value worth mirroring into `localStorage` when Electron already holds
+ * the durable copy.
+ *
+ * `localStorage.setItem` is synchronous on the renderer thread, and this store
+ * carries multi-megabyte values (chat, activity, item art). Mirroring those
+ * charged the renderer a megabyte-scale write per read-through and per write,
+ * on top of the synchronous IPC — and they exceed the origin quota anyway, so
+ * the write threw and was swallowed. The mirror exists for the dev browser and
+ * for migrating an old localStorage wallet, both of which only need small keys.
+ */
+const LOCAL_MIRROR_MAX_BYTES = 64 * 1024
+
+function mirrorLocally(key: string, value: string): void {
+  if (value.length > LOCAL_MIRROR_MAX_BYTES) return
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
 function readThrough(key: string): string | null {
   try {
     const fromElectron = window.handcash?.storageGetSync?.(key)
     if (typeof fromElectron === 'string') {
-      try {
-        localStorage.setItem(key, fromElectron)
-      } catch {
-        // ignore mirror failures
-      }
+      mirrorLocally(key, fromElectron)
       return fromElectron
     }
   } catch {
@@ -65,13 +83,10 @@ export function durableGetItem(key: string): string | null {
 
 export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
   try {
-    localStorage.setItem(key, value)
-  } catch {
-    // ignore quota / private mode
-  }
-  try {
     const ok = window.handcash?.storageSetSync?.(key, value, opts)
     if (typeof ok === 'boolean') {
+      // Electron owns the durable copy — localStorage is only a small-key mirror.
+      mirrorLocally(key, value)
       // A rejected write must not be cached as though it stuck.
       if (ok) cache.set(key, value)
       else cache.delete(key)
@@ -79,6 +94,12 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
     }
   } catch {
     // ignore
+  }
+  // No Electron bridge (dev browser): localStorage is the store, not a mirror.
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // ignore quota / private mode
   }
   // Browser / no Electron bridge — localStorage write is best-effort success.
   cache.set(key, value)

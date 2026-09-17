@@ -32,7 +32,13 @@ import {
   deviceAuthStatus,
   deviceAuthUnlock,
 } from './deviceAuth.js'
-import { durableGet, durableSafeStorageAvailable, durableSet, durableWipeWallet } from './durableStore.js'
+import {
+  durableGet,
+  durableSafeStorageAvailable,
+  durableSet,
+  durableWipeWallet,
+  flushDurableStore,
+} from './durableStore.js'
 import {
   brc39ArchiveRootPath,
   listArchiveForIdentity,
@@ -619,6 +625,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   quitting = true
+  // Preference writes are debounced off the renderer's synchronous path; the
+  // last burst has to reach disk before we go.
+  flushDurableStore()
   destroyAppTray()
   void bridge?.stop()
   bridge = null

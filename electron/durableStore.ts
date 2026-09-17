@@ -15,7 +15,26 @@ function storePath(): string {
   return path.join(app.getPath('userData'), 'durable-prefs.json')
 }
 
-function readStore(): Store {
+/**
+ * The whole store, held in memory.
+ *
+ * The renderer reads these prefs through `ipcRenderer.sendSync`, which parks
+ * the renderer thread until this process answers — no timers, no paint, and no
+ * stall warning, because the watchdog cannot run either. Re-reading and
+ * re-parsing the file per key therefore charged the renderer the cost of the
+ * entire store for one lookup. On a working wallet this file reaches several
+ * megabytes (item art, messages, activity, guard blobs), so ordinary preference
+ * traffic froze the window outright.
+ *
+ * This process is the only writer, so memory cannot drift from disk.
+ */
+let cache: Store | null = null
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Coalesce a burst of writes into one file replace. */
+const FLUSH_DEBOUNCE_MS = 150
+
+function loadFromDisk(): Store {
   try {
     const raw = fs.readFileSync(storePath(), 'utf8')
     const parsed = JSON.parse(raw) as unknown
@@ -30,13 +49,59 @@ function readStore(): Store {
   }
 }
 
-function writeStore(store: Store): void {
-  const file = storePath()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  // Atomic-ish replace to reduce torn writes.
-  const tmp = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8')
-  fs.renameSync(tmp, file)
+function readStore(): Store {
+  if (!cache) cache = loadFromDisk()
+  return cache
+}
+
+/**
+ * Replace the file from memory.
+ *
+ * Serialized compact: pretty-printing added roughly a fifth to a multi-megabyte
+ * write for a machine-read file, and every byte of it is paid while a renderer
+ * may be parked on the next synchronous read.
+ */
+export function flushDurableStore(): boolean {
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  if (!cache) return true
+  try {
+    const file = storePath()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    // Atomic-ish replace to reduce torn writes.
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(cache), 'utf8')
+    fs.renameSync(tmp, file)
+    return true
+  } catch (err) {
+    log.error('durable store flush failed', err)
+    return false
+  }
+}
+
+function scheduleFlush(): void {
+  if (flushTimer) return
+  flushTimer = setTimeout(() => {
+    flushTimer = null
+    flushDurableStore()
+  }, FLUSH_DEBOUNCE_MS)
+}
+
+/**
+ * `sync` is for state we cannot lose to a crash inside the debounce window —
+ * the vault and a factory reset. Caches and prefs ride the debounce.
+ */
+function writeStore(store: Store, opts?: { sync?: boolean }): boolean {
+  cache = store
+  if (opts?.sync === true) return flushDurableStore()
+  scheduleFlush()
+  return true
+}
+
+function isVaultKey(key: string): boolean {
+  return key.startsWith('handcash.brc100.vault')
 }
 
 function canSeal(): boolean {
@@ -53,7 +118,7 @@ function setVaultSealStatus(status: 'sealed' | 'unsealed'): void {
   try {
     const store = readStore()
     store[VAULT_SEAL_STATUS_KEY] = status
-    writeStore(store)
+    writeStore(store, { sync: true })
   } catch (err) {
     log.warn('could not persist vault seal status', err)
   }
@@ -167,8 +232,7 @@ export function durableSet(
     }
 
     store[key] = sealIfNeeded(key, value)
-    writeStore(store)
-    return true
+    return writeStore(store, { sync: isVaultKey(key) })
   } catch (err) {
     log.error('durableSet failed', err)
     return false
@@ -185,8 +249,7 @@ export function durableRemove(key: string): boolean {
       log.warn('durableRemove vault.v1 — preserved backup + history')
     }
     delete store[key]
-    writeStore(store)
-    return true
+    return writeStore(store, { sync: isVaultKey(key) })
   } catch (err) {
     log.error('durableRemove failed', err)
     return false
@@ -233,7 +296,7 @@ export function durableWipeWallet(): { removed: number } {
         removed++
       }
     }
-    writeStore(store)
+    writeStore(store, { sync: true })
     log.warn('durableWipeWallet removed keys', removed)
     return { removed }
   } catch (err) {
