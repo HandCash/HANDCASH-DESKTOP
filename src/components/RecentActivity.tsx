@@ -310,11 +310,14 @@ export function HistoryIconCluster({
   assets = [],
   batch = null,
   verifying = false,
+  stacked = true,
 }: {
   entry: ActivityEntry
   assets?: readonly ActivityEntry[]
   batch?: ActivityBatch | null
   verifying?: boolean
+  /** Parent batch only — line items are one subject, never a pile. */
+  stacked?: boolean
 }) {
   const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
@@ -352,9 +355,11 @@ export function HistoryIconCluster({
         ? 'Cancelling'
         : 'Sending'
 
+  const showStack = Boolean(stacked && batch && batch.count > 1 && assets.length > 0)
+
   return (
     <div className="history-icon-wrap">
-      {batch && assets.length > 0 ? (
+      {showStack ? (
         <span className="history-icon-stack" aria-hidden>
           {assets.slice(0, 2).map((asset, index) => {
             const face = asset.item ? viewActivityItem(asset.item) : null
@@ -433,12 +438,12 @@ export function HistoryIconCluster({
           <LoadingSpinner size="sm" />
         </span>
       ) : null}
-      {batch ? (
+      {showStack ? (
         <span
           className="history-batch-count"
-          aria-label={`${batch.count} collectables`}
+          aria-label={`${batch!.count} collectables`}
         >
-          {batch.count}
+          {batch!.count}
         </span>
       ) : null}
       <HistoryAppBadge entry={entry} />

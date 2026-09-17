@@ -45,7 +45,7 @@ function hopLabel(outpoint: string): string {
   return `${txid.slice(0, 8)}…${txid.slice(-6)}`
 }
 
-function contactForEntry(entry: ActivityEntry): HistoryContactLink | null {
+export function activityContactLink(entry: ActivityEntry): HistoryContactLink | null {
   const friends = listFriends()
   const friend = friends.find((row) => activityMatchesFriend(entry, row))
   if (friend) {
@@ -122,7 +122,7 @@ function fromActivity(
     title,
     detail,
     at: entry.at,
-    contact: contactForEntry(hydrated),
+    contact: activityContactLink(hydrated),
     asset: item
       ? {
           kind: 'collectable',

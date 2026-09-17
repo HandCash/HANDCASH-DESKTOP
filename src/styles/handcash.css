@@ -6448,26 +6448,32 @@ html[data-aeon-mode='light']
   }
 }
 
+.nav-child-panel.payment-details {
+  overflow: auto;
+  padding: 4px 8px 16px 10px;
+}
+
 .payment-details-hero {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+  padding: 10px 4px 8px 8px;
   overflow: visible;
 }
 
 .payment-details-hero .history-icon-wrap {
   --hc-mark-size: 16px;
   --hc-mark-outset: 4px;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   overflow: visible;
 }
 
 .payment-details-hero .history-icon {
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
 }
 
 .payment-details-hero .history-action-badge {
@@ -9278,7 +9284,7 @@ html[data-aeon-mode='light'] .skeleton {
 .payment-tx-breakdown {
   display: grid;
   gap: 0;
-  margin: 8px 0 12px;
+  margin: 4px 0 12px;
   padding: 0;
   list-style: none;
   border: 1px solid var(--hc-border);
@@ -9291,17 +9297,21 @@ html[data-aeon-mode='light'] .skeleton {
   grid-template-columns: 36px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  padding: 10px 12px 12px 14px;
-  border-top: 1px solid var(--hc-border);
+  padding: 8px 10px 10px 12px;
 }
 
 .payment-tx-breakdown > li:first-child {
   border-top: 0;
 }
 
+.payment-tx-breakdown .history-icon-stack,
+.payment-tx-breakdown .history-batch-count {
+  display: none;
+}
+
 .payment-tx-leg-copy {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -9314,17 +9324,45 @@ html[data-aeon-mode='light'] .skeleton {
   font: inherit;
   font-weight: 700;
   text-align: left;
-  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.payment-tx-leg-title:hover {
+.payment-tx-leg-title.is-link {
+  cursor: pointer;
   color: var(--hc-accent);
 }
 
-.payment-tx-leg-copy span {
+.payment-tx-leg-title.is-link:hover,
+.payment-tx-id.is-link:hover {
+  text-decoration: underline;
+}
+
+.payment-tx-leg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
   color: var(--hc-muted);
   font-size: 0.78rem;
-  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.payment-tx-id {
+  color: var(--hc-accent);
+  font-weight: 650;
+}
+
+button.payment-tx-id {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 650;
+  color: var(--hc-accent);
+  cursor: pointer;
 }
 
 .payment-tx-legs {

@@ -27,6 +27,7 @@ import {
   type ActivityItem,
 } from '../wallet/appActivity'
 import { viewActivityItem } from '../wallet/activityItemView'
+import { activityContactLink } from '../wallet/itemHistory'
 import {
   activityBatchName,
   composeActivityRecords,
@@ -57,9 +58,12 @@ import {
 import { isItemProven } from '../wallet/provenCache'
 import {
   clearNavChild,
+  openAddFriend,
   openCollectableDetails,
+  openFriendDetails,
   openFungibleDetails,
   openSendFlow,
+  setNavSection,
 } from '../wallet/navStore'
 import {
   clearSpendAttempt,
@@ -92,7 +96,7 @@ function openExplorer(url: string) {
   }
 }
 
-/** Prefer a tip we still hold for this origin; fall back to a received outpoint. */
+/** Open the collectable only when this wallet still holds that origin. */
 function itemLinkOutpoint(
   entry: ActivityEntry,
   item: ActivityItem | undefined,
@@ -103,19 +107,21 @@ function itemLinkOutpoint(
     .trim()
     .toLowerCase()
     .replace(/\.(\d+)$/, '_$1')
-  const held = getCachedCollectables().find(
-    (c) =>
-      c.origin
-        .trim()
-        .toLowerCase()
-        .replace(/\.(\d+)$/, '_$1') === originKey,
-  )
-  if (held) return held.outpoint
-  // A receive may not be in the Collect cache yet — the activity outpoint is live.
-  if (entry.kind === 'earned' && item.outpoint?.trim()) {
-    return normalizeOutpoint(item.outpoint)
-  }
-  return null
+  const pointKey = item.outpoint
+    ? normalizeOutpoint(item.outpoint)
+    : ''
+  const held = getCachedCollectables().find((c) => {
+    const heldOrigin = c.origin
+      .trim()
+      .toLowerCase()
+      .replace(/\.(\d+)$/, '_$1')
+    const heldPoint = normalizeOutpoint(c.outpoint)
+    return (
+      (pointKey && heldPoint === pointKey) ||
+      (originKey && heldOrigin === originKey)
+    )
+  })
+  return held?.outpoint ?? null
 }
 
 function tokenLinkId(item: ActivityItem | undefined): string | null {
@@ -168,6 +174,30 @@ function expandedActivityLegs(
   return rows
 }
 
+function IdentityMark({
+  label,
+  onClick,
+}: {
+  label: string
+  onClick?: () => void
+}) {
+  if (!onClick) {
+    return <span className="payment-tx-id">{label}</span>
+  }
+  return (
+    <button
+      type="button"
+      className="payment-tx-id is-link"
+      onClick={() => {
+        playWalletSound('soft')
+        onClick()
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 function PaymentBreakdownRow({
   entry,
   currency,
@@ -181,28 +211,17 @@ function PaymentBreakdownRow({
   const mark = activityActionMark(entry)
   const action = mark ? ACTION_MARK_LABEL[mark] : activityEntryTitle(entry)
   const title = activityEntryTitle(entry)
-  const peer = activityRecipientLabel(entry)
-  const counterparties: { label: string; value: string }[] = []
-  if (entry.kind === 'spent') {
-    counterparties.push({ label: 'From', value: 'You' })
-    if (peer) counterparties.push({ label: 'To', value: peer })
-  } else if (entry.kind === 'earned') {
-    if (peer) counterparties.push({ label: 'From', value: peer })
-    counterparties.push({ label: 'To', value: 'You' })
-  }
-  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) {
-    counterparties.push({ label: 'App', value: appDisplayName(entry.origin) })
-  }
+  const contact = activityContactLink(entry)
+  const peer = contact?.label ?? activityRecipientLabel(entry)
   const token = isTokenActivity(entry)
   const item = isItemActivity(entry)
   const named = shown ? { ...entry, item: shown } : entry
-  const amount = token
-    ? activityTokenAmountDisplay(named)
-    : item
-      ? action
-      : entry.sats > 0
-        ? `${entry.kind === 'spent' ? '−' : '+'}${formatPrimaryFromSats(entry.sats, currency, usdPerBsv)}`
-        : action
+  const amount =
+    token || (!item && entry.sats > 0)
+      ? token
+        ? activityTokenAmountDisplay(named)
+        : `${entry.kind === 'spent' ? '−' : '+'}${formatPrimaryFromSats(entry.sats, currency, usdPerBsv)}`
+      : null
   const itemOutpoint = itemLinkOutpoint(entry, shown)
   const tokenId = tokenLinkId(shown ?? entry.item)
   const openItem = tokenId
@@ -216,15 +235,24 @@ function PaymentBreakdownRow({
           openCollectableDetails(itemOutpoint)
         }
       : null
+  const openPeer = contact?.friendId
+    ? () => openFriendDetails(contact.friendId!)
+    : contact
+      ? () =>
+          openAddFriend({
+            identityKey: contact.identityKey,
+            label: contact.label,
+          })
+      : undefined
 
   return (
     <li data-aeon-part="tx-leg" data-aeon-state={mark ?? 'event'}>
-      <HistoryIconCluster entry={entry} />
+      <HistoryIconCluster entry={entry} stacked={false} />
       <div className="payment-tx-leg-copy">
         {openItem ? (
           <button
             type="button"
-            className="payment-tx-leg-title"
+            className="payment-tx-leg-title is-link"
             onClick={openItem}
           >
             {title}
@@ -232,14 +260,32 @@ function PaymentBreakdownRow({
         ) : (
           <strong>{title}</strong>
         )}
-        <span>{action}</span>
-        {counterparties.map((line) => (
-          <span key={`${line.label}:${line.value}`}>
-            {line.label} {line.value}
-          </span>
-        ))}
+        <span className="payment-tx-leg-meta">
+          <span>{action}</span>
+          {entry.kind === 'spent' ? (
+            <>
+              <IdentityMark
+                label="You"
+                onClick={() => setNavSection('identity')}
+              />
+              <span aria-hidden>→</span>
+              {peer ? <IdentityMark label={peer} onClick={openPeer} /> : null}
+            </>
+          ) : entry.kind === 'earned' ? (
+            <>
+              {peer ? <IdentityMark label={peer} onClick={openPeer} /> : null}
+              {peer ? <span aria-hidden>→</span> : null}
+              <IdentityMark
+                label="You"
+                onClick={() => setNavSection('identity')}
+              />
+            </>
+          ) : null}
+        </span>
       </div>
-      <span className="history-amount history-amount-item">{amount}</span>
+      {amount ? (
+        <span className="history-amount">{amount}</span>
+      ) : null}
     </li>
   )
 }
@@ -594,7 +640,13 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         <>
           <div className="payment-details-amount">
             <strong>
-              {token || item ? primary : spent ? `−${primary}` : `+${primary}`}
+              {batchName
+                ? batchName
+                : token || item
+                  ? primary
+                  : spent
+                    ? `−${primary}`
+                    : `+${primary}`}
             </strong>
             <span className="payment-details-secondary">{secondary}</span>
           </div>

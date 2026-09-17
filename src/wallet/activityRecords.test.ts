@@ -162,6 +162,38 @@ describe('composeActivityRecords', () => {
     expect(records[0]!.batch).toBeNull()
   })
 
+  it('does not treat a pending placeholder as a second collectable', () => {
+    const records = composeActivityRecords([
+      collectable('Pixel Foxes #8413557', 0),
+      entry({
+        method: 'receive-collectable',
+        txid: TXID,
+        status: 'pending',
+        item: { name: 'Pixel Foxes #8413557', origin: `${TXID}_pending` },
+      }),
+    ])
+    expect(records).toHaveLength(1)
+    expect(records[0]!.batch).toBeNull()
+    expect(records[0]!.assets).toEqual([])
+  })
+
+  it('treats origin dotted vs underscored as the same inscription', () => {
+    const records = composeActivityRecords([
+      collectable('Pixel Foxes #8413557', 0),
+      entry({
+        method: 'receive-collectable',
+        txid: TXID,
+        item: {
+          name: 'Pixel Foxes #8413557',
+          origin: `${OTHER_TXID}.0`,
+          outpoint: `${TXID}.0`,
+        },
+      }),
+    ])
+    expect(records[0]!.batch).toBeNull()
+    expect(records[0]!.assets).toEqual([])
+  })
+
   it('does not batch a market record around its money leg', () => {
     const records = composeActivityRecords([
       entry({ method: 'market-purchase', kind: 'spent', sats: 9_000, txid: TXID }),

@@ -64,13 +64,27 @@ const MARKET_METHODS = new Set([
   'market-sale-proceeds',
 ])
 
+function normalizeInscriptionKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+}
+
+function isPendingItemPlaceholder(entry: ActivityEntry): boolean {
+  const origin = (entry.item?.origin ?? '').trim().toLowerCase()
+  return origin.endsWith('_pending')
+}
+
 function assetIdentity(entry: ActivityEntry): string | null {
   const item = entry.item
   if (!item) return null
-  const point = (item.outpoint ?? '').trim().toLowerCase()
-  const origin = (item.origin ?? '').trim().toLowerCase()
   const tokenId = (item.tokenId ?? '').trim().toLowerCase()
-  return tokenId || origin || point || null
+  if (tokenId) return tokenId
+  const origin = (item.origin ?? '').trim()
+  if (origin && !origin.toLowerCase().endsWith('_pending')) {
+    return normalizeInscriptionKey(origin)
+  }
+  const point = (item.outpoint ?? '').trim()
+  if (point) return normalizeInscriptionKey(point)
+  return origin ? normalizeInscriptionKey(origin) : null
 }
 
 /**
@@ -149,7 +163,11 @@ function pluralOf(series: string): string {
 
 /** Collectables only: a BSV-21 row already states its own quantity. */
 function isCollectableAsset(entry: ActivityEntry): boolean {
-  return Boolean(entry.item && !entry.item.tokenId)
+  if (!entry.item || entry.item.tokenId) return false
+  // `${txid}_pending` is the same receive/send as the settled inscription, not a
+  // second fox — counting it made almost every item row wear a batch "2".
+  if (isPendingItemPlaceholder(entry)) return false
+  return true
 }
 
 function chooseActivityBatch(
@@ -286,6 +304,7 @@ export function composeActivityRecords(
       // A second row for the asset already named by the subject is the duplicate
       // this composition exists to remove (listing event + its held item).
       if (!asset || seen.has(asset)) continue
+      if (isPendingItemPlaceholder(entry)) continue
       seen.add(asset)
       assets.push(entry)
     }
