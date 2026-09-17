@@ -124,6 +124,14 @@ export function AuthScreen({
   const [unlockNudge, setUnlockNudge] = useState(false)
   const [deviceStatus, setDeviceStatus] = useState<DeviceAuthStatus | null>(null)
   const [deviceUnlockAttempted, setDeviceUnlockAttempted] = useState(false)
+  /**
+   * Synchronous twin of `deviceUnlockAttempted`.
+   *
+   * The state flag only bars a re-entry that happens after its commit, and the
+   * lock-screen effect can run again before then — which started a second
+   * Touch ID prompt and, behind it, a second unlock recompose.
+   */
+  const deviceUnlockStarted = useRef(false)
   const [pendingOnboard, setPendingOnboard] = useState<{
     profile: WalletProfile
     balanceSats: number
@@ -188,6 +196,7 @@ export function AuthScreen({
 
   useEffect(() => {
     if (mode !== 'locked' || formMode !== 'unlock' || deviceUnlockAttempted || preparing) return
+    if (deviceUnlockStarted.current) return
     if (shouldAutoUnlock()) return
     const factors = readVaultUnlockFactors()
     if (!factors.device) {
@@ -199,11 +208,26 @@ export function AuthScreen({
     // Never Touch-ID prompt while the window is hidden (close / alt-tab). Wait
     // until the user is looking at the lock screen again.
     let cancelled = false
+    /**
+     * Hand the guard back when this run is torn down.
+     *
+     * Cleanup makes the in-flight attempt discard its own result, so whatever
+     * replaces this run has to be allowed to start — holding the guard past
+     * teardown leaves the wallet on the lock screen with no attempt alive.
+     * Only one OS prompt happens either way: `deviceAuthUnlock` single-flights,
+     * so the replacement joins the prompt already on screen.
+     */
+    const release = () => {
+      cancelled = true
+      deviceUnlockStarted.current = false
+    }
     const run = () => {
       if (cancelled) return
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return
       }
+      if (deviceUnlockStarted.current) return
+      deviceUnlockStarted.current = true
       setDeviceUnlockAttempted(true)
       ;(async () => {
         send({ type: 'SUBMIT' })
@@ -237,15 +261,13 @@ export function AuthScreen({
       }
       document.addEventListener('visibilitychange', onVis)
       return () => {
-        cancelled = true
+        release()
         document.removeEventListener('visibilitychange', onVis)
       }
     }
 
     run()
-    return () => {
-      cancelled = true
-    }
+    return release
     // Intentionally once per lock screen mount when device factor exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, formMode])

@@ -24,13 +24,28 @@ function keyOf(outpoint: string): string {
   )
 }
 
+/**
+ * Parsed store and data URLs, keyed by the raw string they came from.
+ *
+ * The blob carries the icon bytes, so every token row that asked for its icon
+ * while rendering was parsing the whole cache. Read-only — `rememberTokenIcon`
+ * clones before `writeStore`, which prunes by deleting keys.
+ */
+let cachedRaw: string | null = null
+let cachedStore: Store = {}
+let cachedUrls = new Map<string, string>()
+
 function readStore(): Store {
   try {
     const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return {}
+    if (raw === cachedRaw) return cachedStore
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return parsed as Store
+    cachedRaw = raw
+    cachedStore = parsed as Store
+    cachedUrls = new Map()
+    return cachedStore
   } catch {
     return {}
   }
@@ -55,7 +70,7 @@ export function rememberTokenIcon(
   const mimeSafe = (mime || 'application/octet-stream').split(';')[0]!.trim() || 'application/octet-stream'
   // Cap ~96 KiB — ticker icons should stay small; refuse huge blobs.
   if (body.length > 512 * 1024) return
-  const store = readStore()
+  const store = { ...readStore() }
   store[key] = { mime: mimeSafe, b64: bytesToBase64(body), at: Date.now() }
   writeStore(store)
 }
@@ -66,9 +81,16 @@ export function getTokenIconRecord(outpoint: string | undefined | null): TokenIc
 }
 
 export function getTokenIconDataUrl(outpoint: string | undefined | null): string | undefined {
-  const rec = getTokenIconRecord(outpoint)
+  if (!outpoint?.trim()) return undefined
+  const key = keyOf(outpoint)
+  const store = readStore()
+  const hit = cachedUrls.get(key)
+  if (hit != null) return hit
+  const rec = store[key]
   if (!rec) return undefined
-  return `data:${rec.mime};base64,${rec.b64}`
+  const url = `data:${rec.mime};base64,${rec.b64}`
+  cachedUrls.set(key, url)
+  return url
 }
 
 export function tokenIconBytes(outpoint: string | undefined | null): Uint8Array | null {

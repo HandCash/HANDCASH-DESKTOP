@@ -46,17 +46,25 @@ function note(set: Set<string>, outpoint: string): boolean {
   return true
 }
 
+let cachedReceivesRaw: string | null = null
+let cachedReceives = new Set<string>()
+
+/** Read-only — `wasItemReceivedAnnounced` is asked once per arriving tip. */
 function loadDurableReceives(): Set<string> {
   try {
     const raw = durableGetItem(DURABLE_RECEIVE_KEY)
     if (!raw) return new Set()
+    if (raw === cachedReceivesRaw) return cachedReceives
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return new Set()
-    return new Set(
+    const set = new Set(
       parsed
         .filter((v): v is string => typeof v === 'string' && !!v.trim())
         .map(normalize),
     )
+    cachedReceivesRaw = raw
+    cachedReceives = set
+    return set
   } catch {
     return new Set()
   }
@@ -80,8 +88,9 @@ export function noteItemReceived(outpoint: string): boolean {
   const key = normalize(outpoint)
   if (!key) return false
   if (!note(receivedThisSession, key)) return false
-  const durable = loadDurableReceives()
-  if (durable.has(key)) return false
+  const stored = loadDurableReceives()
+  if (stored.has(key)) return false
+  const durable = new Set(stored)
   durable.add(key)
   persistDurableReceives(durable)
   return true

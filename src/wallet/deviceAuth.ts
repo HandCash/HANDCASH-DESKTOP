@@ -51,16 +51,43 @@ export async function deviceAuthEnroll(
   }
 }
 
+/**
+ * The prompt currently on screen, if any.
+ *
+ * The OS allows one presence prompt at a time: a second `promptPresence` while
+ * one is open resolves the *loser* as `cancelled`, and a caller that reads that
+ * as the user declining leaves the wallet locked. Two callers overlap in
+ * practice — React re-runs the lock-screen effect before its first
+ * `setDeviceUnlockAttempted` has committed — so concurrent callers share one
+ * prompt and one answer instead of racing for the OS.
+ */
+let inFlightUnlock:
+  | Promise<{ ok: true; secret: string } | { ok: false; error: string }>
+  | null = null
+
 /** Prompt native unlock and return the sealed base64 DEK. */
 export async function deviceAuthUnlock(
   reason = 'Unlock HandCash',
 ): Promise<{ ok: true; secret: string } | { ok: false; error: string }> {
   const api = bridge()?.deviceAuthUnlock
   if (!api) return { ok: false, error: 'Device unlock is not available on this build' }
+  if (inFlightUnlock) return inFlightUnlock
+  const attempt = (async () => {
+    try {
+      return await api(reason)
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  })()
+  inFlightUnlock = attempt
   try {
-    return await api(reason)
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return await attempt
+  } finally {
+    // Only the prompt we started clears the slot; a later unlock must re-prompt.
+    if (inFlightUnlock === attempt) inFlightUnlock = null
   }
 }
 

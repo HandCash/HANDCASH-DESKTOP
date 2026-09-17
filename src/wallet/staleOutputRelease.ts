@@ -49,8 +49,10 @@ import {
   isLiveLocalTxStatus,
   LIVE_LOCAL_TX_STATUSES,
   txLivenessFromStatus,
+  type TxLiveness,
 } from "./kernel/txLiveness";
 import {
+  forgetArcadeSubmitContact,
   signedTxMayBeRemoved,
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
@@ -744,8 +746,32 @@ export async function pinBroadcastLocalTx(txid: string): Promise<boolean> {
     if (!looked) return false;
     if (!isAppHeldTxStatus(looked.status)) {
       // Live or settled already — promotion is idempotent, status is not ours
-      // to rewrite. `failed`/unknown rows go through restoreOnChainLocalTx.
+      // to rewrite. An Arcade ACK outranks a stale local failed/doublespend
+      // label: older builds accepted these sends, then left their change
+      // stranded forever because restoreOnChainLocalTx required explorer proof.
       if (isLiveLocalTxStatus(looked.status)) {
+        await sealThenKeepSignedTx(id);
+        return true;
+      }
+      if (txHadArcadeSubmitContact(id)) {
+        const active = getActiveWallet();
+        if (
+          active?.chain &&
+          (await signedTxSpendConflictIsProven({
+            txid: id,
+            chain: active.chain,
+          }))
+        ) {
+          // A later proven competing spend overrides the old submit ACK.
+          forgetArcadeSubmitContact(id);
+          return false;
+        }
+        if (!(await coerceLocalTxToUnproven(id, looked))) return false;
+        console.info(
+          `[stale-output] restored Arcade-pinned local tx ${id.slice(0, 12)} ${
+            looked.status
+          } → unproven`
+        );
         await sealThenKeepSignedTx(id);
         return true;
       }
@@ -831,8 +857,13 @@ async function coerceLocalTxToUnproven(
   if (!storage?.runAsStorageProvider) return false;
   const coerced = await storage.runAsStorageProvider(async (activeSp) => {
     const sp = activeSp as unknown as LocalStorage;
-    if (row.status === "failed") {
-      // updateTransactionStatus refuses un-fail; write the row directly.
+    if (
+      row.status === "failed" ||
+      row.status === "doublespend" ||
+      row.status === "invalid"
+    ) {
+      // updateTransactionStatus refuses resurrection of terminal rows; an
+      // existing Arcade pin is the separate proof that authorizes this caller.
       if (typeof sp.updateTransaction !== "function") return false;
       await sp.updateTransaction(row.transactionId, { status: "unproven" });
       return true;
@@ -1328,6 +1359,209 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
 }
 
 /**
+ * Give back cash the toolbox still shows as spent by a transaction that died.
+ *
+ * {@link reclaimSealedInputsNeverSpent} reads the local `utxoLockManager`
+ * overlay, so it only ever sees coins this process sealed. A seal written by an
+ * earlier install — or one whose overlay record aged out — leaves a row that
+ * every balance path refuses:
+ *
+ *   toolbox `balance()`      ignores it, `spendable: false`
+ *   {@link classifyOwnedCash} excludes `notOurs` — a dead spender is not
+ *                            `spentLive`, and an input is not pending change
+ *
+ * So the coin is unspent on chain and counted nowhere, which is how a wallet
+ * ends up visibly short by exactly the inputs of a written-off send. This pass
+ * asks storage instead of the overlay, and restores only what an explorer
+ * affirms is still unspent.
+ *
+ * Rows linked to their transaction by numeric `transactionId` alone resolve
+ * their txid through the parent row — without that step a sealed coin has no
+ * outpoint to verify and would stay stranded.
+ */
+export async function reclaimOutputsSealedByDeadTxs(opts?: {
+  /** Spend-path reclaim — do not defer while a send holds spend priority. */
+  forSpendChain?: boolean;
+}): Promise<number> {
+  const forSpendChain = opts?.forSpendChain === true;
+  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0;
+  const active = getActiveWallet();
+  const storage = active?.wallet?.storage;
+  const chain = active?.chain;
+  if (!storage?.runAsStorageProvider || !chain) return 0;
+
+  type SealedRow = { outputId: number; outpoint: string; satoshis: number };
+  const sealed: SealedRow[] = [];
+  let deadSealers = 0;
+
+  // Storage session does DB reads only — the chain waterfall below must not
+  // hold the toolbox lock while it waits on explorers.
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage;
+      if (typeof sp.findOutputs !== "function") return;
+      const liveness = new Map<number, TxLiveness>();
+      const txidOf = new Map<number, string | null>();
+
+      const sealerOf = async (
+        transactionId: number
+      ): Promise<{ live: TxLiveness; txid: string | null }> => {
+        const cached = liveness.get(transactionId);
+        if (cached != null) {
+          return { live: cached, txid: txidOf.get(transactionId) ?? null };
+        }
+        if (typeof sp.findTransactions !== "function") {
+          liveness.set(transactionId, "none");
+          return { live: "none", txid: null };
+        }
+        let live: TxLiveness = "none";
+        let txid: string | null = null;
+        try {
+          const rows = await sp.findTransactions({
+            partial: { transactionId },
+            noRawTx: true,
+            paged: { limit: 1, offset: 0 },
+          });
+          const row = rows?.[0] as
+            | { status?: unknown; txid?: unknown }
+            | undefined;
+          if (row) {
+            live = txLivenessFromStatus(row.status);
+            txid = normalizedTxidOrNull(String(row.txid ?? ""));
+          }
+        } catch (err) {
+          if (!isUndefinedPartialFilterError(err)) {
+            console.warn("[stale-output] dead-sealer status skipped", err);
+          }
+        }
+        liveness.set(transactionId, live);
+        txidOf.set(transactionId, txid);
+        return { live, txid };
+      };
+
+      for (let offset = 0; offset < 4_000; offset += RESTORE_MAX) {
+        const batch = await sp.findOutputs({
+          partial: { spendable: false },
+          paged: { limit: RESTORE_MAX, offset },
+        });
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        for (const raw of batch as EvidenceOutputRow[]) {
+          const outputId = positiveId(raw.outputId);
+          const spentBy = positiveId(raw.spentBy);
+          if (outputId == null || spentBy == null) continue;
+          const basket = String(raw.basket ?? "").toLowerCase();
+          if (basket === "1sat" || basket === "bsv21") continue;
+          const satoshis = Math.max(0, Math.trunc(Number(raw.satoshis) || 0));
+          if (satoshis <= 0) continue;
+
+          const sealer = await sealerOf(spentBy);
+          // `none` means the sealer row is gone. Absence is not cancellation
+          // evidence — leave those to the Arcade / chain paths.
+          if (sealer.live !== "dead") continue;
+          deadSealers += 1;
+
+          const outpoint =
+            outpointFromOutput(raw) ??
+            (sealer.txid
+              ? outpointFromOutput({ ...raw, txid: sealer.txid })
+              : null);
+          if (!outpoint) continue;
+          sealed.push({ outputId, outpoint, satoshis });
+        }
+        if (batch.length < RESTORE_MAX) break;
+        await yieldToUi();
+      }
+    });
+  } catch (err) {
+    console.warn("[stale-output] dead-sealer snapshot skipped", err);
+    return 0;
+  }
+
+  if (sealed.length === 0) {
+    if (deadSealers > 0) {
+      console.info(
+        `[stale-output] ${deadSealers} coin(s) sealed by dead tx(s) had no resolvable outpoint`
+      );
+    }
+    return 0;
+  }
+
+  const isUtxo = active?.services?.isUtxo;
+  const revive: SealedRow[] = [];
+  for (const row of sealed) {
+    if (!forSpendChain && shouldYieldChainIngestToSpend()) break;
+    const parsed = parseOutpoint(row.outpoint);
+    if (!parsed) continue;
+    let unspent = false;
+    if (typeof isUtxo === "function") {
+      try {
+        const result = await isUtxo({
+          txid: parsed.txid,
+          vout: parsed.vout,
+        } as never);
+        unspent =
+          result === true ||
+          (!!result &&
+            typeof result === "object" &&
+            (result as { isUtxo?: unknown }).isUtxo === true);
+      } catch {
+        unspent = false;
+      }
+    }
+    if (!unspent) {
+      const status = await spentStatusOfOutpoint(row.outpoint, chain).catch(
+        () => "unknown" as const
+      );
+      // A 404 on /spent only means "unspent" once the funding tx is known.
+      if (status === "unspent") {
+        unspent =
+          (await txExistsOnChain(parsed.txid, chain).catch(() => null)) === true;
+      }
+    }
+    if (unspent) revive.push(row);
+    await yieldToUi();
+  }
+
+  if (revive.length === 0) {
+    console.info(
+      `[stale-output] ${sealed.length} coin(s) sealed by dead tx(s) — none affirmed unspent`
+    );
+    return 0;
+  }
+
+  for (const row of revive)
+    releaseConsumedUtxo(row.outpoint, "reclaim:dead-sealer");
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage;
+      for (const row of revive) {
+        try {
+          await sp.updateOutput(row.outputId, {
+            spendable: true,
+            spentBy: undefined,
+          });
+        } catch (err) {
+          console.warn(
+            "[stale-output] dead-sealer restore skipped",
+            row.outpoint,
+            err
+          );
+        }
+      }
+    });
+  } catch (err) {
+    console.warn("[stale-output] dead-sealer restore session skipped", err);
+    return 0;
+  }
+
+  const sats = revive.reduce((sum, row) => sum + row.satoshis, 0);
+  console.info(
+    `[stale-output] reclaimed ${revive.length} coin(s) (${sats} sats) sealed by dead tx(s)`
+  );
+  return revive.length;
+}
+
+/**
  * After an app `createAction`: hide spent inputs and promote this tx's unspent
  * outs so the next bet / payout spend can chain without waiting on confirmation.
  */
@@ -1454,7 +1688,9 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
   try {
     return (await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
-      const rows = await findOutputsForTxid(sp, id);
+      const rows = await findOutputsForTxid(sp, id, {
+        linkByTransactionId: true,
+      });
       const txCache = new Map<number, TxStatusRow | null>();
       let kept = 0;
       for (const row of rows) {
@@ -1496,6 +1732,51 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
     })) as number;
   } catch (err) {
     console.warn("[stale-output] keep change skipped", id.slice(0, 12), err);
+    return 0;
+  }
+}
+
+/**
+ * Satoshis of this signed tx's change that `allocateChangeInput` can actually
+ * select right now.
+ *
+ * `pinBroadcastLocalTx` answers "is the status pinned", which is not the same
+ * question: `keepChangeOfSignedTx` promotes nothing when the change row has no
+ * locking script and no raw tx to rebuild it from, yet the pin still reports
+ * success. A run leg funded by the previous leg's change must gate on this,
+ * not on the pin, or it signs into `WERR_INSUFFICIENT_FUNDS`.
+ */
+export async function spendableChangeSatsOfSignedTx(
+  txid: string
+): Promise<number> {
+  const id = txid.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(id)) return 0;
+  const storage = getActiveWallet()?.wallet?.storage;
+  if (!storage?.runAsStorageProvider) return 0;
+
+  try {
+    return (await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage;
+      let sats = 0;
+      const rows = await findOutputsForTxid(sp, id, {
+        linkByTransactionId: true,
+      });
+      for (const row of rows) {
+        if (row.spendable !== true) continue;
+        if (positiveId(row.spentBy) != null) continue;
+        const basket = String(row.basket ?? "").toLowerCase();
+        if (basket === "1sat" || basket === "bsv21") continue;
+        if (!hasLockingScript(row)) continue;
+        sats += Math.max(0, Math.trunc(Number(row.satoshis) || 0));
+      }
+      return sats;
+    })) as number;
+  } catch (err) {
+    console.warn(
+      "[stale-output] spendable change read skipped",
+      id.slice(0, 12),
+      err
+    );
     return 0;
   }
 }
@@ -1636,18 +1917,68 @@ async function loadLocalRawTx(txid: string): Promise<number[] | null> {
 }
 
 async function findOutputsForTxid(
-  sp: { findOutputs?: (args: unknown) => Promise<unknown> },
-  txid: string
+  sp: {
+    findOutputs?: (args: unknown) => Promise<unknown>;
+    findTransactions?: (
+      args: unknown
+    ) => Promise<TxStatusRow[] | undefined>;
+  },
+  txid: string,
+  /**
+   * Also return rows the storage links to this tx only by numeric
+   * `transactionId`. Costs an extra parent-row read plus a second output page,
+   * so only the change-promotion callers ask for it — the seal / hide / revive
+   * loops address outputs by exact outpoint and page this once per coin.
+   */
+  opts?: { linkByTransactionId?: boolean }
 ): Promise<
   Array<ChangeRow & { outputIndex?: number; basket?: string; spentBy?: number }>
 > {
   if (typeof sp.findOutputs !== "function") return [];
   try {
-    const rows = await sp.findOutputs({
+    const direct = await sp.findOutputs({
       partial: { txid },
       paged: { limit: 50, offset: 0 },
     });
-    return Array.isArray(rows) ? (rows as never) : [];
+    const rows = Array.isArray(direct)
+      ? (direct as Array<
+          ChangeRow & {
+            outputIndex?: number;
+            basket?: string;
+            spentBy?: number;
+          }
+        >)
+      : [];
+
+    // Fresh noSend outputs are commonly linked only by numeric transactionId;
+    // their txid is resolved through the parent transaction row. A txid-only
+    // lookup therefore found no change at the exact moment a bulk leg needed
+    // to promote it, despite the signed AtomicBEEF already being durable.
+    if (
+      opts?.linkByTransactionId === true &&
+      rows.length === 0 &&
+      typeof sp.findTransactions === "function"
+    ) {
+      const txRows = await sp.findTransactions({
+        partial: { txid },
+        noRawTx: true,
+        paged: { limit: 1, offset: 0 },
+      });
+      const transactionId = positiveId(txRows?.[0]?.transactionId);
+      if (transactionId != null) {
+        const linked = await sp.findOutputs({
+          partial: { transactionId },
+          paged: { limit: 50, offset: 0 },
+        });
+        if (Array.isArray(linked)) {
+          for (const linkedRow of linked as typeof rows) {
+            // Attach the parent txid so outpointFromOutput can address the row.
+            rows.push({ ...linkedRow, txid });
+          }
+        }
+      }
+    }
+    return rows;
   } catch (err) {
     if (!isUndefinedPartialFilterError(err)) {
       console.warn("[stale-output] findOutputs by txid skipped", err);

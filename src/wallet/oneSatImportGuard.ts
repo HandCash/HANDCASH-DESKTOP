@@ -18,15 +18,36 @@ export const HARD_FAIL_BACKOFF_MS = 60 * 60_000
 
 const inFlight = new Set<string>()
 
+/**
+ * Parsed views of the durable blobs, keyed by the raw string they came from.
+ *
+ * Classify asks these guards **per outpoint** — `filterNewOneSatOutpoints` is
+ * called once per candidate tip, and `isOneSatOutpointKnown` once per address
+ * UTXO. Re-parsing a 4000-entry blob and rebuilding a Set on each of those
+ * calls made one ingest pass spend tens of seconds of synchronous renderer time
+ * on a wallet with hundreds of tips. A write changes the raw string, so keying
+ * on it cannot serve a stale view.
+ *
+ * Both are read-only: mutators clone before changing anything.
+ */
+let importedRaw: string | null = null
+let importedCache = new Set<string>()
+let failuresRaw: string | null = null
+let failuresCache = new Map<string, number>()
+
 function readImported(): Set<string> {
   try {
     const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return new Set()
+    if (raw === importedRaw) return importedCache
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return new Set()
-    return new Set(
+    const set = new Set(
       parsed.filter((x): x is string => typeof x === 'string' && x.includes('.')),
     )
+    importedRaw = raw
+    importedCache = set
+    return set
   } catch {
     return new Set()
   }
@@ -42,11 +63,14 @@ function readFailures(): Map<string, number> {
   try {
     const raw = durableGetItem(FAIL_KEY)
     if (!raw) return map
+    if (raw === failuresRaw) return failuresCache
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object') return map
     for (const [op, at] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof at === 'number' && op.includes('.')) map.set(op, at)
     }
+    failuresRaw = raw
+    failuresCache = map
   } catch {
     // Corrupt blob must not stop imports.
   }
@@ -107,8 +131,8 @@ export function beginOneSatImport(outpoints: string[]): string[] {
 
 export function markOneSatImported(outpoints: string[]): void {
   if (outpoints.length === 0) return
-  const known = readImported()
-  const failures = readFailures()
+  const known = new Set(readImported())
+  const failures = new Map(readFailures())
   let failuresChanged = false
   for (const raw of outpoints) {
     const op = norm(raw)
@@ -133,7 +157,7 @@ export function markOneSatImportFailed(
   opts?: { hard?: boolean },
 ): void {
   if (outpoints.length === 0) return
-  const failures = readFailures()
+  const failures = new Map(readFailures())
   const stamp = opts?.hard
     ? Date.now() + HARD_FAIL_BACKOFF_MS
     : Date.now()
@@ -152,8 +176,8 @@ export function markOneSatImportFailed(
  */
 export function forgetOneSatImported(outpoints: string[]): void {
   if (outpoints.length === 0) return
-  const known = readImported()
-  const failures = readFailures()
+  const known = new Set(readImported())
+  const failures = new Map(readFailures())
   let knownChanged = false
   let failuresChanged = false
   for (const raw of outpoints) {
@@ -170,4 +194,8 @@ export function forgetOneSatImported(outpoints: string[]): void {
 /** Test hook. */
 export function resetOneSatImportGuardForTests(): void {
   inFlight.clear()
+  importedRaw = null
+  importedCache = new Set()
+  failuresRaw = null
+  failuresCache = new Map()
 }

@@ -96,6 +96,9 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
 
   let history: RecomposeResult['history'] = 'none'
   let historyError: string | null = null
+  // `skip` means the caller already replaced localState (file/URL restore or
+  // pair sync). An ordinary unlock/push does not invalidate the basket view.
+  let localStateWasReplaced = historyMode === 'skip'
 
   if (historyMode !== 'skip' && password && hasDeviceLinkBackupUrl()) {
     try {
@@ -103,6 +106,7 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
       const sync = await autoPushHistoryBackupIfConfigured(password, {
         reason: historyMode === 'forceCloud' ? 'recompose' : reason,
       })
+      localStateWasReplaced = sync.pulled
       if (sync.pulled || !sync.skipReason) {
         history = 'synced'
       } else if (sync.pullError) {
@@ -130,9 +134,16 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
   let chainError: string | null = null
   if (runChain) {
     try {
+      // Recompose is the unlock / restore critical path. Recover spendable
+      // legacy funding here, but leave ordinal discovery and AtomicBEEF
+      // internalization to the first background chain pass (or Refresh).
+      // Large item wallets otherwise hold the coordinator while several fat
+      // BEEFs synchronously parse on the renderer thread.
       spendableSats = (await refreshFromChainExclusive({
         forceReview: false,
         announceReceive: false,
+        audit: false,
+        fundingOnly: true,
       })).balanceSats
       if (spendableSats == null) {
         const active = getActiveWallet()
@@ -149,7 +160,9 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
     }
   }
 
-  await relistCollectablesAfterLocalStateReplace()
+  if (localStateWasReplaced) {
+    await relistCollectablesAfterLocalStateReplace()
+  }
 
   try {
     const { appendAppLog } = await import('./appLog')
@@ -163,10 +176,17 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
 
   if (spendableSats != null && spendableSats > 0) {
     try {
-      const { inspectLocalToolboxState } = await import('./layers')
-      const { noteSpendableHighWater } = await import('./historyBackupPrefs')
-      const state = await inspectLocalToolboxState()
-      noteSpendableHighWater(spendableSats, state.actionCount)
+      // Do not inspect all Toolbox baskets/actions again while recompose still
+      // owns the coordinator. The balance is already known, and backup
+      // push/restore refreshes the exact action count. Retaining the persisted
+      // action baseline keeps the thin-history guard fail-closed without five
+      // redundant IndexedDB reads on every unlock.
+      const {
+        getHistoryBackupPrefs,
+        noteSpendableHighWater,
+      } = await import('./historyBackupPrefs')
+      const priorActions = getHistoryBackupPrefs().highWaterActionCount ?? 0
+      noteSpendableHighWater(spendableSats, priorActions)
     } catch {
       /* high-water best-effort */
     }

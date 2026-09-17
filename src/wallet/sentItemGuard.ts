@@ -255,15 +255,23 @@ export function isItemSent(outpoint: string, now = Date.now()): boolean {
 const ABANDONED_KEY = 'handcash.collectables.abandonedOutpoints.v1'
 const MAX_ABANDONED = 2000
 
+let cachedAbandonedRaw: string | null = null
+let cachedAbandoned = new Set<string>()
+
+/** Read-only — `isItemAbandoned` runs per outpoint inside list loops. */
 function readAbandoned(): Set<string> {
   try {
     const raw = durableGetItem(ABANDONED_KEY)
     if (!raw) return new Set()
+    if (raw === cachedAbandonedRaw) return cachedAbandoned
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return new Set()
-    return new Set(
+    const set = new Set(
       parsed.filter((x): x is string => typeof x === 'string' && x.includes('.')),
     )
+    cachedAbandonedRaw = raw
+    cachedAbandoned = set
+    return set
   } catch {
     return new Set()
   }
@@ -272,7 +280,7 @@ function readAbandoned(): Set<string> {
 export function markItemAbandoned(outpoint: string): void {
   const op = key(outpoint)
   if (!op) return
-  const abandoned = readAbandoned()
+  const abandoned = new Set(readAbandoned())
   if (abandoned.has(op)) return
   abandoned.add(op)
   durableSetItem(

@@ -15,6 +15,10 @@ import {
   configurePostBeefServices,
   preferServiceOrder,
 } from './serviceOrder'
+import {
+  decideChainedChangeHeal,
+  type ChainedChangeHealState,
+} from './kernel/chainedChangeHeal'
 
 const { specOpWalletBalance } = sdk
 
@@ -556,25 +560,43 @@ export function bumpBalanceAfterHeal(): void {
 }
 
 /** Promote pending local change so the next spend can use it. Does not run UTXO heal. */
-let chainedBalanceHealAt = 0
 let chainedBalanceHealFlight: Promise<void> | null = null
-const CHAINED_BALANCE_HEAL_COOLDOWN_MS = 12_000
+const chainedBalanceHealState: ChainedChangeHealState = {
+  stuckSats: -1,
+  stuckAt: 0,
+  lastAttemptAt: 0,
+  inFlight: false,
+}
 
 function scheduleChainedBalanceHeal(pendingChange: number): void {
-  if (pendingChange <= 0) return
-  if (Date.now() - chainedBalanceHealAt < CHAINED_BALANCE_HEAL_COOLDOWN_MS) return
-  if (chainedBalanceHealFlight) return
+  const decision = decideChainedChangeHeal({
+    pendingChange,
+    now: Date.now(),
+    state: { ...chainedBalanceHealState, inFlight: !!chainedBalanceHealFlight },
+  })
+  if (!decision.run) return
   chainedBalanceHealFlight = (async () => {
-    chainedBalanceHealAt = Date.now()
+    chainedBalanceHealState.lastAttemptAt = Date.now()
     try {
       const { promotePendingLocalChangeOutputs } = await import(
         './staleOutputRelease'
       )
       // Promote pending change into spendable UTXOs only. Reclaim here used to
       // revive sealed spends (hero 47→23→70 with nothing new in Activity).
-      await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      lastBalanceBreakdown = ''
-      bumpBalanceAfterHeal()
+      const promoted = await promotePendingLocalChangeOutputs({
+        forSpendChain: true,
+      })
+      if (promoted > 0) {
+        chainedBalanceHealState.stuckSats = -1
+        chainedBalanceHealState.stuckAt = 0
+        lastBalanceBreakdown = ''
+        bumpBalanceAfterHeal()
+        return
+      }
+      // Nothing moved, so the breakdown we just logged is still accurate.
+      // Invalidating it here is what re-armed this pass every cooldown.
+      chainedBalanceHealState.stuckSats = pendingChange
+      chainedBalanceHealState.stuckAt = Date.now()
     } catch (err) {
       console.warn('[balance] chained change heal skipped', err)
     } finally {

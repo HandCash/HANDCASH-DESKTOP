@@ -11,7 +11,10 @@ import {
   UTXO_HEAL_METHOD,
   WALLET_ACTIVITY_ORIGIN,
 } from "./appActivity";
-import { hasArcadeSubmitContacts } from "./arcadeSubmitGuard";
+import {
+  hasArcadeSubmitContacts,
+  txHadArcadeSubmitContact,
+} from "./arcadeSubmitGuard";
 import { runChangeHeal, type ChangeHealStats } from "./chainedChangeHeal";
 import { logDiag, snapshotWalletBalance } from "./diagnosticLog";
 import { txExistsOnChain } from "./legacyScan";
@@ -23,6 +26,8 @@ import {
   listFailedLocalTxids,
   listPendingLocalChangeTxids,
   reconcileKnownUtxosByEvidence,
+  reclaimOutputsSealedByDeadTxs,
+  pinBroadcastLocalTx,
   restoreOnChainLocalTx,
   restoreFailedLocalTxsKnownOnChain,
   sealSpentInputsOfSignedTx,
@@ -254,8 +259,14 @@ async function processTxidBatch(
       const onChain = await txExistsOnChain(txid, chain).catch(() => null);
       if (onChain === false) {
         // Absence is not cancellation. Failed rows remain failed; signed local
-        // cheques stay sealed and retain their chainable change.
-        if (failed.has(txid)) continue;
+        // cheques stay sealed and retain their chainable change. Arcade-pinned
+        // rows are the exception to a stale local failure label: the miner ACK
+        // made the cheque non-cancelable, so restore its local change even
+        // before an explorer sees it.
+        if (failed.has(txid)) {
+          if (!txHadArcadeSubmitContact(txid)) continue;
+          await pinBroadcastLocalTx(txid);
+        }
       }
       if (onChain === true) {
         txidsOnChain += 1;
@@ -341,6 +352,25 @@ async function runHealCore(
 
   let heal = await runPendingChangeHeal(balanceBefore, opts);
   await restoreFailedLocalTxsKnownOnChain();
+
+  // Deliberately outside runPendingChangeHeal: that pass returns early when
+  // pendingChange is 0, and a coin sealed by a written-off tx is stranded
+  // *because* its change stopped counting. Gating this on pending credit is
+  // how the inputs of a dead send stay invisible to every heal.
+  try {
+    heal = mergeHealStats(heal, {
+      restored: 0,
+      scriptsLocal: 0,
+      scriptsChain: 0,
+      pendingPromoted: 0,
+      reclaimed: await reclaimOutputsSealedByDeadTxs({
+        forSpendChain: opts.source === "manual",
+      }),
+    });
+  } catch (err) {
+    console.warn("[utxo-heal] dead-sealer reclaim skipped", err);
+  }
+
   const evidence = await reconcileKnownUtxosByEvidence({
     forManualHeal: opts.source === "manual",
   });

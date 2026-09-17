@@ -38,7 +38,31 @@ export type LegacySweepRecord = {
 const inFlight = new Set<string>()
 let lastSuccessfulLegacyImportAt = 0
 
+/**
+ * Parsed marks, keyed by the raw blobs they came from.
+ *
+ * `isLegacyOutpointKnown` is asked once per address UTXO during classify, so on
+ * a wallet with hundreds of outs an unmemoized parse per call dominated the
+ * ingest pass. Both storage versions feed the signature because the v1 blob is
+ * a fallback, and a write to either must invalidate.
+ *
+ * Read-only: mutators clone before calling `writeRecords`.
+ */
+let cachedSig: string | null = null
+let cachedRecords = new Map<string, LegacySweepRecord>()
+
 function readRecords(): Map<string, LegacySweepRecord> {
+  const sig = `${durableGetItem(STORAGE_KEY) ?? ''}\u0000${
+    durableGetItem(LEGACY_STORAGE_KEY) ?? ''
+  }`
+  if (sig === cachedSig) return cachedRecords
+  const parsed = parseRecords()
+  cachedSig = sig
+  cachedRecords = parsed
+  return parsed
+}
+
+function parseRecords(): Map<string, LegacySweepRecord> {
   const records = new Map<string, LegacySweepRecord>()
   try {
     const raw = durableGetItem(STORAGE_KEY)
@@ -112,7 +136,7 @@ export function markLegacyImported(
   outpoints: Array<string | { outpoint: string; txid?: string }>,
 ): void {
   if (outpoints.length === 0) return
-  const known = readRecords()
+  const known = new Map(readRecords())
   const at = Date.now()
   let marked = 0
   for (const raw of outpoints) {
@@ -170,7 +194,7 @@ export function legacySweepRetryEligible(outpoint: string, now = Date.now()): bo
  */
 export function forgetLegacyImported(outpoints: string[]): void {
   if (outpoints.length === 0) return
-  const known = readRecords()
+  const known = new Map(readRecords())
   let changed = false
   for (const raw of outpoints) {
     const op = raw.trim().toLowerCase()

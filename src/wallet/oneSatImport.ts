@@ -407,8 +407,16 @@ const VIN_PROBE_LIMIT = 4
 
 /** Unknown one-satoshi outputs identified per classify pass. */
 export const MAX_UNKNOWN_RESOLVES_PER_PASS = 6
-/** Concurrent tip internalizations — BEEF + AtomicBEEF are heavy. */
-export const IMPORT_TX_CONCURRENCY = 3
+/**
+ * Tip internalizations per renderer turn.
+ *
+ * AtomicBEEF parsing and Toolbox internalization both contain synchronous CPU
+ * work. Multiple pool workers resume from `yieldToUi` on the same timer turn,
+ * so concurrency three combined three large parses into one 20–30 second main
+ * thread block on item-heavy wallets. Sequential groups retain network/cache
+ * reuse while the existing yields give input and paint a turn between them.
+ */
+export const IMPORT_TX_CONCURRENCY = 1
 
 /**
  * A mined transaction body never changes, so fetching one twice is pure latency.

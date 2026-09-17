@@ -54,13 +54,34 @@ export function originArtKey(origin: string): string {
   return origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
 }
 
+/**
+ * Parsed store, keyed by the raw string it came from.
+ *
+ * The blob holds the base64 bodies themselves — up to `MAX_ENTRIES` records of
+ * `MAX_BYTES` each — so parsing it is tens of megabytes of work. Every card
+ * asks for its art while rendering, which made a single navigation into the
+ * items list pay that parse once per card and freeze the renderer. A write
+ * changes the raw string, so keying on it cannot serve a stale store.
+ *
+ * Read-only: `rememberItemArt` clones before handing the store to `writeStore`,
+ * which prunes by deleting keys.
+ */
+let cachedRaw: string | null = null
+let cachedStore: Store = {}
+/** Data URLs are as large as the records; rebuild them only when the store changes. */
+let cachedUrls = new Map<string, string>()
+
 function readStore(): Store {
   try {
     const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return {}
+    if (raw === cachedRaw) return cachedStore
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return parsed as Store
+    cachedRaw = raw
+    cachedStore = parsed as Store
+    cachedUrls = new Map()
+    return cachedStore
   } catch {
     return {}
   }
@@ -85,7 +106,7 @@ export function rememberItemArt(origin: string, body: Uint8Array, mime: string):
   if (!key || body.length === 0 || body.length > MAX_BYTES) return
   const mimeSafe = mime.split(';')[0]!.trim()
   if (!mimeSafe) return
-  const store = readStore()
+  const store = { ...readStore() }
   store[key] = { mime: mimeSafe, b64: bytesToBase64(body), at: Date.now() }
   writeStore(store)
 }
@@ -96,9 +117,16 @@ export function getItemArtRecord(origin: string | undefined | null): ItemArtReco
 }
 
 export function getItemArtDataUrl(origin: string | undefined | null): string | undefined {
-  const rec = getItemArtRecord(origin)
+  if (!origin?.trim()) return undefined
+  const key = originArtKey(origin)
+  const store = readStore()
+  const hit = cachedUrls.get(key)
+  if (hit != null) return hit
+  const rec = store[key]
   if (!rec) return undefined
-  return `data:${rec.mime};base64,${rec.b64}`
+  const url = `data:${rec.mime};base64,${rec.b64}`
+  cachedUrls.set(key, url)
+  return url
 }
 
 export function hasItemArt(origin: string | undefined | null): boolean {

@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => {
   restoreFailedLocalTxsKnownOnChain: vi.fn(async () => 0),
   listFailedLocalTxids: vi.fn(async () => [] as string[]),
   listPendingLocalChangeTxids: vi.fn(async () => [] as string[]),
+  pinBroadcastLocalTx: vi.fn(async () => true),
+  hasArcadeSubmitContacts: vi.fn(() => false),
+  txHadArcadeSubmitContact: vi.fn(() => false),
   reconcileKnownUtxosByEvidence: vi.fn(async () => ({
     checked: 3,
     hiddenSpent: 0,
@@ -94,6 +97,13 @@ vi.mock('./staleOutputRelease', () => ({
     mocks.restoreOnChainLocalTx(...args),
   restoreFailedLocalTxsKnownOnChain: (...args: unknown[]) =>
     mocks.restoreFailedLocalTxsKnownOnChain(...args),
+  pinBroadcastLocalTx: (...args: unknown[]) =>
+    mocks.pinBroadcastLocalTx(...args),
+}))
+
+vi.mock('./arcadeSubmitGuard', () => ({
+  hasArcadeSubmitContacts: mocks.hasArcadeSubmitContacts,
+  txHadArcadeSubmitContact: mocks.txHadArcadeSubmitContact,
 }))
 
 vi.mock('./durableStorage', () => ({
@@ -282,6 +292,29 @@ describe('healUtxoFromActivityHistory', () => {
     await runUtxoHealPass({ source: 'send-cleanup', force: true })
 
     expect(mocks.restoreOnChainLocalTx).toHaveBeenCalledWith(TX)
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+  })
+
+  it('restores Arcade-pinned failed change while explorers still return absent', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.listFailedLocalTxids.mockResolvedValue([TX])
+    mocks.txHadArcadeSubmitContact.mockReturnValue(true)
+    mocks.getActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              getProvenOrRawTx: (id: string) => Promise<{ rawTx: number[] }>
+            }) => Promise<unknown>,
+          ) => fn({ getProvenOrRawTx: async () => ({ rawTx: [1, 2, 3] }) }),
+        },
+      },
+    })
+
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    expect(mocks.pinBroadcastLocalTx).toHaveBeenCalledWith(TX)
     expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
   })
 

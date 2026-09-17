@@ -6,6 +6,7 @@ const overlayStore = new Map<string, string>()
 
 vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
+  bumpBalanceAfterHeal: vi.fn(),
 }))
 
 vi.mock('./durableStorage', () => ({
@@ -43,6 +44,7 @@ const {
   releaseSealedInputsOfUnsentTx,
   failUnsentLocalTx,
   reclaimSealedInputsNeverSpent,
+  reclaimOutputsSealedByDeadTxs,
   restoreOnChainLocalTx,
   restoreUnspentAssetOutpoint,
   chooseUtxoEvidenceAction,
@@ -854,6 +856,7 @@ describe('pinBroadcastLocalTx', () => {
   const findOutputs = vi.fn()
   const updateOutput = vi.fn()
   const updateTransactionStatus = vi.fn()
+  const updateTransaction = vi.fn()
 
   beforeEach(() => {
     findTransactions.mockReset()
@@ -861,6 +864,7 @@ describe('pinBroadcastLocalTx', () => {
     findOutputs.mockResolvedValue([])
     updateOutput.mockReset()
     updateTransactionStatus.mockReset()
+    updateTransaction.mockReset()
     overlayStore.clear()
     __resetArcadeSubmitGuardForTests()
     __resetUtxoLocksForTests()
@@ -876,6 +880,7 @@ describe('pinBroadcastLocalTx', () => {
               findOutputs: typeof findOutputs
               findTransactions: typeof findTransactions
               updateTransactionStatus: typeof updateTransactionStatus
+              updateTransaction: typeof updateTransaction
               getProvenOrRawTx: () => Promise<undefined>
             }) => Promise<unknown>,
           ) =>
@@ -884,6 +889,7 @@ describe('pinBroadcastLocalTx', () => {
               findOutputs,
               findTransactions,
               updateTransactionStatus,
+              updateTransaction,
               getProvenOrRawTx: async () => undefined,
             }),
         },
@@ -924,6 +930,49 @@ describe('pinBroadcastLocalTx', () => {
 
     await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
     expect(updateTransactionStatus).not.toHaveBeenCalled()
+  })
+
+  it('finds fresh noSend change linked only by transactionId', async () => {
+    const txid = '5e'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 8, txid, status: 'nosend' },
+    ])
+    findOutputs.mockImplementation(
+      async (args: { partial?: { txid?: string; transactionId?: number } }) =>
+        args.partial?.transactionId === 8
+          ? [
+              {
+                outputId: 10,
+                transactionId: 8,
+                vout: 2,
+                change: true,
+                satoshis: 1_070_674,
+                lockingScript: [0x76, 0xa9],
+                spendable: false,
+              },
+            ]
+          : [],
+    )
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
+    expect(updateOutput).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
+  it('restores stale failed status when the same tx has an Arcade ACK', async () => {
+    const txid = '6f'.repeat(32)
+    rememberArcadeSubmitContact(txid)
+    findTransactions.mockResolvedValue([
+      { transactionId: 11, txid, status: 'failed' },
+    ])
+    findOutputs.mockResolvedValue([])
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
+    expect(updateTransaction).toHaveBeenCalledWith(11, {
+      status: 'unproven',
+    })
   })
 })
 
@@ -1481,5 +1530,210 @@ describe('reclaimSealedInputsNeverSpent', () => {
       11,
       expect.objectContaining({ spendable: true }),
     )
+  })
+})
+
+describe('reclaimOutputsSealedByDeadTxs', () => {
+  const findTransactions = vi.fn()
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const isUtxo = vi.fn()
+
+  /** Storage the overlay never knew about — a seal from an earlier install. */
+  const storageOnly = (
+    rows: Array<Record<string, unknown>>,
+    txRows: Record<number, { status: string; txid?: string }>,
+  ) => {
+    findOutputs.mockImplementation(
+      async ({
+        partial,
+        paged,
+      }: {
+        partial?: { spendable?: boolean }
+        paged?: { offset?: number }
+      }) => {
+        if (partial?.spendable !== false) return []
+        return (paged?.offset ?? 0) === 0 ? rows : []
+      },
+    )
+    findTransactions.mockImplementation(
+      async ({ partial }: { partial?: { transactionId?: number } }) => {
+        const id = partial?.transactionId
+        const row = id == null ? undefined : txRows[id]
+        return row ? [{ transactionId: id, ...row }] : []
+      },
+    )
+  }
+
+  beforeEach(() => {
+    findTransactions.mockReset()
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    isUtxo.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    __resetArcadeSubmitGuardForTests()
+    txExistsOnChain.mockReset()
+    spentStatusOfOutpoint.mockReset()
+    txExistsOnChain.mockResolvedValue(true)
+    spentStatusOfOutpoint.mockResolvedValue('unspent')
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      services: { isUtxo },
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findTransactions: typeof findTransactions
+              findOutputs: typeof findOutputs
+            }) => Promise<unknown>,
+          ) => fn({ updateOutput, findTransactions, findOutputs }),
+        },
+      },
+    })
+  })
+
+  it('restores cash the toolbox still shows spent by a doubleSpend tx', async () => {
+    const funder = 'a1'.repeat(32)
+    isUtxo.mockResolvedValue(true)
+    storageOnly(
+      [
+        {
+          outputId: 21,
+          txid: funder,
+          vout: 0,
+          satoshis: 8822,
+          spendable: false,
+          spentBy: 77,
+        },
+      ],
+      { 77: { status: 'doubleSpend' } },
+    )
+
+    await expect(reclaimOutputsSealedByDeadTxs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(21, {
+      spendable: true,
+      spentBy: undefined,
+    })
+  })
+
+  it('resolves a coin whose row links its sealer only by transactionId', async () => {
+    const funder = 'b2'.repeat(32)
+    isUtxo.mockResolvedValue(true)
+    storageOnly(
+      [
+        {
+          outputId: 22,
+          vout: 1,
+          satoshis: 4000,
+          spendable: false,
+          spentBy: 78,
+        },
+      ],
+      { 78: { status: 'failed', txid: funder } },
+    )
+
+    await expect(reclaimOutputsSealedByDeadTxs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(22, {
+      spendable: true,
+      spentBy: undefined,
+    })
+  })
+
+  it('leaves a coin sealed while its spend is still live', async () => {
+    const funder = 'c3'.repeat(32)
+    isUtxo.mockResolvedValue(true)
+    storageOnly(
+      [
+        {
+          outputId: 23,
+          txid: funder,
+          vout: 0,
+          satoshis: 9000,
+          spendable: false,
+          spentBy: 79,
+        },
+      ],
+      { 79: { status: 'nosend' } },
+    )
+
+    await expect(reclaimOutputsSealedByDeadTxs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('leaves a coin sealed when the sealer row is gone', async () => {
+    const funder = 'd4'.repeat(32)
+    isUtxo.mockResolvedValue(true)
+    storageOnly(
+      [
+        {
+          outputId: 24,
+          txid: funder,
+          vout: 0,
+          satoshis: 9000,
+          spendable: false,
+          spentBy: 80,
+        },
+      ],
+      {},
+    )
+
+    await expect(reclaimOutputsSealedByDeadTxs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('refuses a dead-sealed coin the chain says is already spent', async () => {
+    const funder = 'e5'.repeat(32)
+    isUtxo.mockResolvedValue(false)
+    spentStatusOfOutpoint.mockResolvedValue('spent')
+    storageOnly(
+      [
+        {
+          outputId: 25,
+          txid: funder,
+          vout: 0,
+          satoshis: 9000,
+          spendable: false,
+          spentBy: 81,
+        },
+      ],
+      { 81: { status: 'doubleSpend' } },
+    )
+
+    await expect(reclaimOutputsSealedByDeadTxs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('never reclaims items or tokens as cash', async () => {
+    const tip = 'f6'.repeat(32)
+    isUtxo.mockResolvedValue(true)
+    storageOnly(
+      [
+        {
+          outputId: 26,
+          txid: tip,
+          vout: 0,
+          satoshis: 1,
+          spendable: false,
+          spentBy: 82,
+          basket: '1sat',
+        },
+        {
+          outputId: 27,
+          txid: tip,
+          vout: 1,
+          satoshis: 1000,
+          spendable: false,
+          spentBy: 82,
+          basket: 'bsv21',
+        },
+      ],
+      { 82: { status: 'doubleSpend' } },
+    )
+
+    await expect(reclaimOutputsSealedByDeadTxs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 })
