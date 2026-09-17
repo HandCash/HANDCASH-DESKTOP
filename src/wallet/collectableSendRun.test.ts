@@ -4,6 +4,7 @@ import { MAX_ITEMS_PER_ONE_SAT_TX } from './collectableBatch'
 import {
   classifySendRunFailure,
   collectableSendRunItemCount,
+  failedSendAttemptActivity,
   planCollectableSendRun,
   summarizeCollectableSendRun,
   type CollectableSendRunResult,
@@ -52,23 +53,48 @@ describe('planCollectableSendRun', () => {
 })
 
 describe('classifySendRunFailure', () => {
-  it('treats wallet-wide faults as reasons to stop the run', () => {
+  it('stops once on wallet-wide faults', () => {
     for (const reason of [
       'Wallet locked',
       'Not enough spendable BSV',
       'insufficient funds for fee',
-      'You appear to be offline',
       'Invalid recipient address or identity key',
     ]) {
-      expect(classifySendRunFailure(new Error(reason))).toBe('wallet')
+      expect(classifySendRunFailure(new Error(reason))).toEqual({
+        action: 'stop',
+        reason: 'wallet',
+      })
     }
   })
 
-  it('treats a tip-specific rejection as a leg to split', () => {
+  it('splits only recognized item-local conflicts', () => {
     expect(
       classifySendRunFailure(new Error('Collectable is no longer in this wallet')),
-    ).toBe('leg')
-    expect(classifySendRunFailure(new Error('rejected by miner'))).toBe('leg')
+    ).toEqual({ action: 'split', reason: 'itemConflict' })
+    expect(
+      classifySendRunFailure(new Error('input already spent')),
+    ).toEqual({ action: 'split', reason: 'itemConflict' })
+  })
+
+  it('does not multiply transient or unfamiliar errors into split retries', () => {
+    expect(
+      classifySendRunFailure(new Error('You appear to be offline')),
+    ).toEqual({ action: 'stop', reason: 'network' })
+    expect(
+      classifySendRunFailure(new Error('indexer BEEF timed out after 8000ms')),
+    ).toEqual({ action: 'stop', reason: 'network' })
+    expect(
+      classifySendRunFailure(new Error('BEEF ancestry incomplete')),
+    ).toEqual({ action: 'stop', reason: 'ancestry' })
+    expect(
+      classifySendRunFailure(new Error('rejected by miner')),
+    ).toEqual({ action: 'stop', reason: 'unknown' })
+  })
+
+  it('discards intermediate batch failures but records terminal singles', () => {
+    expect(failedSendAttemptActivity(5)).toBe('discard')
+    expect(failedSendAttemptActivity(2)).toBe('discard')
+    expect(failedSendAttemptActivity(1)).toBe('record')
   })
 })
 
@@ -119,21 +145,25 @@ describe('collectableSendRunMachine', () => {
     const actor = createActor(collectableSendRunMachine).start()
     actor.send({ type: 'START', legs: 10 })
     actor.send({ type: 'LEG_SENT', items: 25 })
-    actor.send({ type: 'WALLET_FAULT', reason: 'Not enough spendable BSV' })
+    actor.send({
+      type: 'RUN_FAULT',
+      reason: 'Not enough spendable BSV',
+      remainingItems: 225,
+    })
 
     const snapshot = actor.getSnapshot()
     expect(snapshot.value).toBe('halted')
-    expect(snapshot.context.stopped).toBe('wallet')
+    expect(snapshot.context.stopped).toBe('fault')
     expect(snapshot.context.queued).toBe(0)
     expect(snapshot.context.sentItems).toBe(25)
-    // The nine legs never attempted are outstanding, not silently forgotten.
-    expect(snapshot.context.failedItems).toBe(9)
+    // Exact item count, not the old incorrect count of nine queued legs.
+    expect(snapshot.context.failedItems).toBe(225)
   })
 
   it('will not accept a leg outcome once halted', () => {
     const actor = createActor(collectableSendRunMachine).start()
     actor.send({ type: 'START', legs: 2 })
-    actor.send({ type: 'WALLET_FAULT', reason: 'Wallet locked' })
+    actor.send({ type: 'RUN_FAULT', reason: 'Wallet locked', remainingItems: 50 })
     actor.send({ type: 'LEG_SENT', items: 25 })
 
     expect(actor.getSnapshot().context.sentItems).toBe(0)
@@ -164,7 +194,7 @@ describe('summarizeCollectableSendRun', () => {
     const result: CollectableSendRunResult = {
       sent: [sent(25)],
       failed: [{ outpoints: selection(3), reason: 'Not enough spendable BSV' }],
-      stopped: 'wallet',
+      stopped: 'fault',
       lastError: 'Not enough spendable BSV',
     }
     expect(summarizeCollectableSendRun(result)).toContain('Stopped with 3 left')

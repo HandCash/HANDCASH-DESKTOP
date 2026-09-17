@@ -5,7 +5,7 @@
  * The chart owns the questions the loop must not answer for itself: may another
  * leg start, may a rejected leg be halved and retried, and is the run over. The
  * imperative sender signs inside `sending` and reports the outcome; it never
- * decides to keep going after a wallet-wide fault.
+ * decides to keep going after a non-item-local fault.
  *
  * Legs are counted, not held: `queued` is the chart's own view of outstanding
  * work, so a split (one leg becomes two) is a real transition rather than a
@@ -21,8 +21,8 @@ export type CollectableSendRunContext = {
   sentLegs: number
   sentItems: number
   failedItems: number
-  /** Set only when the wallet, not a tip, ended the run. */
-  stopped: 'wallet' | null
+  /** Set when a non-item-local fault ended the run. */
+  stopped: 'fault' | null
   error: string | null
 }
 
@@ -32,8 +32,8 @@ export type CollectableSendRunEvent =
   | { type: 'LEG_SENT'; items: number }
   /** Leg rejected. `items` decides whether halving is still possible. */
   | { type: 'LEG_REJECTED'; items: number; reason: string }
-  /** The wallet cannot continue — remaining legs would fail the same way. */
-  | { type: 'WALLET_FAULT'; reason: string }
+  /** The run cannot continue — remaining legs would fail the same way. */
+  | { type: 'RUN_FAULT'; reason: string; remainingItems: number }
   | { type: 'RESET' }
 
 const emptyContext: CollectableSendRunContext = {
@@ -87,12 +87,12 @@ export const collectableSendRunMachine = setup({
           }
         : {},
     ),
-    recordWalletFault: assign(({ context, event }) =>
-      event.type === 'WALLET_FAULT'
+    recordRunFault: assign(({ context, event }) =>
+      event.type === 'RUN_FAULT'
         ? {
-            failedItems: context.failedItems + context.queued,
+            failedItems: context.failedItems + event.remainingItems,
             queued: 0,
-            stopped: 'wallet' as const,
+            stopped: 'fault' as const,
             error: event.reason,
           }
         : {},
@@ -114,7 +114,7 @@ export const collectableSendRunMachine = setup({
           { guard: 'legDivisible', target: 'splitting', actions: 'recordSplit' },
           { target: 'checking', actions: 'recordFailed' },
         ],
-        WALLET_FAULT: { target: 'halted', actions: 'recordWalletFault' },
+        RUN_FAULT: { target: 'halted', actions: 'recordRunFault' },
       },
     },
     /** The halves are queued; sending resumes with the smaller legs. */

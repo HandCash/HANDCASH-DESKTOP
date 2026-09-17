@@ -37,6 +37,10 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
 - Ghost-relinquish covenant-locked tips because they are missing from the P2PKH scan
   (use `abandonCollectable` instead)
 - Decorative `chart.send` that the imperative code can ignore
+- Leave an Arcade-accepted `nosend` row app-held. Acceptance ends app-held:
+  `pinBroadcastLocalTx` seals inputs and frees change, and a bulk leg awaits
+  the pin of the leg that funds it. Gate heal on the Arcade pin, never on
+  projected `pendingChange` — `nosend` change is in neither balance bucket.
 - `postBeef` / delayed broadcast before peer delivery on a `peerDeliver` settle
   for **items** (`maySenderBroadcast` is false until remittance left
   `peerDeliver`; silent `confirmBroadcast` after inbox)

@@ -36,6 +36,13 @@ export function txHadArcadeSubmitContact(txid: string): boolean {
   return pins.has(txid)
 }
 
+/** Any pinned send at all. Heal uses this to decide the pending scan is worth
+ *  running when the projected balance shows no pending change — Arcade-pinned
+ *  `nosend` change is stranded outside both spendable and pendingChange. */
+export function hasArcadeSubmitContacts(): boolean {
+  return pins.size() > 0
+}
+
 export function forgetArcadeSubmitContact(txid: string): void {
   pins.forget(txid)
 }

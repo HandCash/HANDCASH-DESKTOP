@@ -20,6 +20,7 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
+  clearOutboundSendPending,
   failOutboundSendPending,
   reconcilePendingActivityWithHeldItems,
   upsertAppActivity,
@@ -4269,6 +4270,12 @@ export type SendCollectablesArgs = {
   toAddress: string
   recipientIdentityKey?: string | null
   friendLabel?: string | null
+  /**
+   * Bulk-run implementation detail: a rejected multi-tip probe is about to be
+   * split, so its temporary rows must disappear rather than become permanent
+   * failed Activity. A terminal single/ordinary send keeps the default record.
+   */
+  failureActivity?: 'record' | 'discard'
 }
 
 /**
@@ -4356,7 +4363,11 @@ export async function sendCollectables(
     const message = reason instanceof Error ? reason.message : String(reason)
     for (const send of pending) {
       clearPendingSend(send.id)
-      failOutboundSendPending({ pendingId: send.id, reason: message })
+      if (args.failureActivity === 'discard') {
+        clearOutboundSendPending(send.id)
+      } else {
+        failOutboundSendPending({ pendingId: send.id, reason: message })
+      }
     }
   }
 
@@ -4824,14 +4835,25 @@ export async function sendCollectables(
             startBackgroundMiner()
           }
 
-          for (let index = 0; index < prepared.length; index++) {
-            const item = prepared[index]!
-            if (!item.provenance || !parseProvenanceV2(item.provenance)) continue
-            void (async () => {
+          // One background worker per transaction. The old loop launched one
+          // BEEF/provenance walk per item at once, so leg N's post-processing
+          // fought leg N+1's signer for network, IndexedDB and the render thread.
+          const provenanceIndexes = prepared.flatMap((item, index) =>
+            item.provenance && parseProvenanceV2(item.provenance) ? [index] : [],
+          )
+          if (provenanceIndexes.length > 0) void (async () => {
+            let tipBeef: Awaited<ReturnType<typeof getBeefForTxidCached>>
+            try {
+              tipBeef = await getBeefForTxidCached(wallet, txid, {
+                allowUnprovenRawTx: true,
+              })
+            } catch (err) {
+              console.warn('[brc-150] post-batch tip BEEF fetch failed', err)
+              return
+            }
+            for (const index of provenanceIndexes) {
+              const item = prepared[index]!
               try {
-                const tipBeef = await getBeefForTxidCached(wallet, txid, {
-                  allowUnprovenRawTx: true,
-                })
                 const extended = await extendProvenanceV2({
                   prior: item.provenance!,
                   heldOutpoint: newTips[index]!.replace(/\.(\d+)$/, '_$1'),
@@ -4856,8 +4878,9 @@ export async function sendCollectables(
                   err,
                 )
               }
-            })()
-          }
+              await yieldToUi()
+            }
+          })()
 
           setPaymentProgress('finishing', 'Updating your collectables')
           scheduleHistoryBackupPush('sendCollectable')

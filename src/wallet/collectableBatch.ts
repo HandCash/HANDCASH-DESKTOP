@@ -16,13 +16,14 @@ export function normalizeCollectableBatchOutpoints(outpoints: string[]): string[
 /**
  * Tips one atomic 1-sat transaction may carry — send or burn.
  *
- * Same ceiling and same reason as `MAX_ITEMS_PER_MIGRATE_TX`: every extra input
- * adds a sighash to sign and a BEEF ancestor to carry, and a batch send is one
- * `createAction` on the render thread. Migrate can bundle 25 at a time because
- * it loops; an atomic selection cannot, so above this we refuse with a named
- * reason instead of building a transaction that never finishes signing.
+ * Five is the measured UI-safe ceiling for provenance-heavy tips.
+ *
+ * Twenty-five was inherited from phrase migration, whose inputs are simpler.
+ * A real collectable send at ten tips repeatedly blocked the renderer for
+ * 1.5–3.4 seconds and failed before being split; five signed successfully.
+ * Keep migration's independent ceiling there — these are different workloads.
  */
-export const MAX_ITEMS_PER_ONE_SAT_TX = 25
+export const MAX_ITEMS_PER_ONE_SAT_TX = 5
 
 /**
  * How a selection becomes one send transaction — never a silent fallthrough.

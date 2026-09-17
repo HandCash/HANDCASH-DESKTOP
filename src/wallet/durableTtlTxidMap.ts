@@ -7,6 +7,8 @@ export type DurableTtlTxidMap = {
   has(txid: string): boolean
   /** When this txid was remembered, or null when it is not held. */
   rememberedAt(txid: string): number | null
+  /** Live (un-expired) entry count. */
+  size(): number
   remember(txid: string): void
   forget(txid: string): void
   reset(): void
@@ -83,6 +85,12 @@ export function createDurableTtlTxidMap(opts: {
       const e = load().get(id)
       if (!e) return null
       return Date.now() - e.at > opts.ttlMs ? null : e.at
+    },
+    size(): number {
+      const now = Date.now()
+      let live = 0
+      for (const e of load().values()) if (now - e.at <= opts.ttlMs) live += 1
+      return live
     },
     remember(txid: string): void {
       const id = normalizeTxid(txid)

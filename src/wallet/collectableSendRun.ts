@@ -3,19 +3,18 @@
  *
  * `sendCollectables` is atomic and capped at `MAX_ITEMS_PER_ONE_SAT_TX` — every
  * extra input is another sighash to sign and another BEEF ancestor to carry, so
- * a 700-item selection cannot be one transaction. A run splits the selection
- * into legs of that size and sends them in order.
+ * a large selection cannot be one transaction. A run splits the selection into
+ * measured UI-safe legs and sends them in order.
  *
  * Two things make the loop reliable rather than 28 chances to lose the wallet:
  *
  * 1. **A leg is still atomic.** Each leg either signs completely or transfers
  *    nothing, so a partial run is a set of whole transactions, never a
  *    half-moved leg.
- * 2. **Failure is classified, never retried blindly.** A wallet-wide fault
- *    (locked, offline, out of fee money) stops the run at the current leg — the
- *    remaining legs would fail the same way. A leg-specific rejection halves
- *    the leg and retries down to singles (the migrate-bundle rule), so one
- *    unspendable tip cannot strand the other 699.
+ * 2. **Failure is classified, never retried blindly.** Only a recognized
+ *    item-local conflict may halve a leg and retry down to singles. Wallet,
+ *    network, timeout, ancestry and unknown faults stop the run once — an
+ *    unknown error must never multiply itself into a retry storm.
  *
  * The plan is a value, so the caller can say how many transactions a selection
  * costs before anyone signs anything.
@@ -59,14 +58,17 @@ export function planCollectableSendRun(
  * unlocks a locked one. `leg` is worth halving, because the rejection is about
  * one of the tips we cannot name from the error alone.
  */
-export type SendRunFailureScope = 'wallet' | 'leg'
+export type SendRunFailureDecision =
+  | { action: 'split'; reason: 'itemConflict' }
+  | {
+      action: 'stop'
+      reason: 'wallet' | 'network' | 'ancestry' | 'unknown'
+    }
 
-const WALLET_WIDE_FAILURES = [
+const WALLET_FAILURES = [
   'wallet locked',
   'wallet is locked',
   'no wallet',
-  'offline',
-  'no network',
   'not enough',
   'insufficient',
   'invalid recipient',
@@ -75,12 +77,69 @@ const WALLET_WIDE_FAILURES = [
   'canceled',
 ]
 
-export function classifySendRunFailure(reason: unknown): SendRunFailureScope {
+const NETWORK_FAILURES = [
+  'offline',
+  'no network',
+  'network',
+  'fetch failed',
+  'timed out',
+  'timeout',
+  'status 429',
+  'status 500',
+  'status 502',
+  'status 503',
+  'status 504',
+]
+
+const ANCESTRY_FAILURES = [
+  'ancestry incomplete',
+  'ancestry_incomplete',
+  'beef_ancestry_incomplete',
+  'without create transaction',
+  'missing source transaction',
+]
+
+const ITEM_CONFLICTS = [
+  'collectable is no longer in this wallet',
+  'collectable is no longer unspent',
+  'collectable utxo is not a 1-sat ordinal',
+  'is no longer spendable',
+  'input already spent',
+  'already-spent input',
+  'already spent input',
+  'double spend',
+  'doublespend',
+  'txn-mempool-conflict',
+  'bad-txns-inputs-missingorspent',
+]
+
+export function classifySendRunFailure(
+  reason: unknown,
+): SendRunFailureDecision {
   const message = (reason instanceof Error ? reason.message : String(reason ?? ''))
     .toLowerCase()
-  return WALLET_WIDE_FAILURES.some((needle) => message.includes(needle))
-    ? 'wallet'
-    : 'leg'
+  if (WALLET_FAILURES.some((needle) => message.includes(needle))) {
+    return { action: 'stop', reason: 'wallet' }
+  }
+  if (NETWORK_FAILURES.some((needle) => message.includes(needle))) {
+    return { action: 'stop', reason: 'network' }
+  }
+  if (ANCESTRY_FAILURES.some((needle) => message.includes(needle))) {
+    return { action: 'stop', reason: 'ancestry' }
+  }
+  if (ITEM_CONFLICTS.some((needle) => message.includes(needle))) {
+    return { action: 'split', reason: 'itemConflict' }
+  }
+  // Fail closed. The old default was `leg`, which turned one unfamiliar error
+  // into 2, 4, 8… attempts and one permanent failed Activity row per attempt.
+  return { action: 'stop', reason: 'unknown' }
+}
+
+/** Intermediate multi-tip failures are implementation detail, not Activity. */
+export function failedSendAttemptActivity(
+  itemCount: number,
+): 'discard' | 'record' {
+  return itemCount > 1 ? 'discard' : 'record'
 }
 
 export type CollectableSendRunResult = {
@@ -88,8 +147,8 @@ export type CollectableSendRunResult = {
   sent: Array<{ txid: string; outpoints: string[] }>
   /** Tips that refused even as a single send. */
   failed: Array<{ outpoints: string[]; reason: string }>
-  /** Set when a wallet-wide fault ended the run early. */
-  stopped: 'wallet' | null
+  /** Set when a non-item-local fault ended the run early. */
+  stopped: 'fault' | null
   lastError: string | null
 }
 
@@ -114,8 +173,8 @@ export function summarizeCollectableSendRun(
           txCount === 1 ? '' : 's'
         }.`
       : 'No collectables were sent.'
-  if (result.stopped === 'wallet') {
-    return `${head} Stopped with ${failed} left: ${result.lastError ?? 'wallet cannot continue'}`
+  if (result.stopped === 'fault') {
+    return `${head} Stopped with ${failed} left: ${result.lastError ?? 'run cannot continue'}`
   }
   if (failed > 0) {
     return `${head} ${failed} could not be sent: ${result.lastError ?? 'rejected'}`

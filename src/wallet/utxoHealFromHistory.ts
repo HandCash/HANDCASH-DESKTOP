@@ -11,6 +11,7 @@ import {
   UTXO_HEAL_METHOD,
   WALLET_ACTIVITY_ORIGIN,
 } from "./appActivity";
+import { hasArcadeSubmitContacts } from "./arcadeSubmitGuard";
 import { runChangeHeal, type ChangeHealStats } from "./chainedChangeHeal";
 import { logDiag, snapshotWalletBalance } from "./diagnosticLog";
 import { txExistsOnChain } from "./legacyScan";
@@ -475,12 +476,15 @@ export async function runUtxoHealPass(
   const failedTxids = includeActivity
     ? allFailed
     : allFailed.filter((id) => !checkpointed.has(id));
+  // Arcade-pinned `nosend` change counts as neither spendable nor pendingChange,
+  // so `pendingChange` alone cannot tell us the pending scan is pointless.
+  const maybePendingChange = pendingChange > 0 || hasArcadeSubmitContacts();
 
   const shouldSkip =
     !includeActivity &&
     healCheckpointFresh() &&
     missing.length === 0 &&
-    pendingChange <= 0 &&
+    !maybePendingChange &&
     failedTxids.length === 0;
 
   if (shouldSkip) {
@@ -508,7 +512,7 @@ export async function runUtxoHealPass(
 
   const txidList = orderTxidsForHeal({
     missing,
-    pendingLive: pendingChange > 0 ? await listPendingLocalChangeTxids() : [],
+    pendingLive: maybePendingChange ? await listPendingLocalChangeTxids() : [],
     failed: failedTxids,
     activity: txids,
     includeActivity,

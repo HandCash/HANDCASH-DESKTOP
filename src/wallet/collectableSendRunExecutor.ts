@@ -14,12 +14,14 @@ import {
 import {
   classifySendRunFailure,
   collectableSendRunItemCount,
+  failedSendAttemptActivity,
   planCollectableSendRun,
   type CollectableSendRunResult,
 } from './collectableSendRun'
 import { collectableSendRunMachine } from './collectableSendRunMachine'
 import { collectableSendBatchRefusal } from './collectableBatch'
 import { splitItemMigrateBundle } from './itemMigrateBundle'
+import { pinBroadcastLocalTx } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
 
 export type SendCollectablesRunArgs = SendCollectablesArgs & {
@@ -54,6 +56,9 @@ export async function sendCollectablesRun(
 
   const chart = createActor(collectableSendRunMachine).start()
   chart.send({ type: 'START', legs: plan.legs.length })
+  console.info(
+    `[collectables] send run start — ${plan.itemCount} items in ${plan.legs.length} atomic legs`,
+  )
 
   const queue = plan.legs.map((leg) => leg.outpoints)
   const result: CollectableSendRunResult = {
@@ -88,16 +93,39 @@ export async function sendCollectablesRun(
         toAddress: args.toAddress,
         recipientIdentityKey: args.recipientIdentityKey,
         friendLabel: args.friendLabel,
+        failureActivity: failedSendAttemptActivity(leg.length),
       })
       result.sent.push({ txid, outpoints: leg })
+      // Every leg after the first is funded by the previous leg's change, and a
+      // `peerDeliver` leg parks that change in an app-held `nosend` row. Pin it
+      // before signing the next leg or the run starves on its own money.
+      await pinBroadcastLocalTx(txid).catch(() => false)
       chart.send({ type: 'LEG_SENT', items: leg.length })
+      console.info(
+        `[collectables] send run leg accepted — ${leg.length} items by ${txid.slice(
+          0,
+          12,
+        )} (${chart.getSnapshot().context.sentItems}/${plan.itemCount})`,
+      )
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       result.lastError = reason
-      if (classifySendRunFailure(err) === 'wallet') {
-        result.failed.push({ outpoints: [...leg, ...queue.flat()], reason })
+      const decision = classifySendRunFailure(err)
+      console.warn(
+        `[collectables] send run leg rejected (${leg.length} item${
+          leg.length === 1 ? '' : 's'
+        }) — ${decision.action}:${decision.reason}`,
+        reason,
+      )
+      if (decision.action === 'stop') {
+        const remaining = [...leg, ...queue.flat()]
+        result.failed.push({ outpoints: remaining, reason })
         queue.length = 0
-        chart.send({ type: 'WALLET_FAULT', reason })
+        chart.send({
+          type: 'RUN_FAULT',
+          reason,
+          remainingItems: remaining.length,
+        })
         break
       }
       if (leg.length > 1) {

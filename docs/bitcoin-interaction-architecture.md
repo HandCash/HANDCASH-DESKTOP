@@ -83,6 +83,17 @@ The pass republishes the settled balance when the window closes, on the reject
 path as well as on success. A read failure is never a zero; a mid-rewrite read
 is never a balance.
 
+Change of an **app-held** tx is the other way to strand money. `noSend: true`
+(every `peerDeliver` item settle) leaves the row `nosend`, and `nosend` change
+must not fund the next spend while the app can still abort. Arcade acceptance
+ends app-held: `pinBroadcastLocalTx` moves the row off `nosend`, seals its
+inputs, and promotes its change. `isAppHeldTxStatus` in `kernel/txLiveness.ts`
+is the only definition of that state. The bulk item run awaits the pin of the
+leg that funds the next leg, because a run otherwise starves on its own change
+while the balance reads near zero. `nosend` change belongs to neither
+`spendable` nor `pendingChange`, so heal gates on the Arcade pin registry
+(`hasArcadeSubmitContacts`), never on projected pending change.
+
 ## Confirmation model
 
 - Soft locks + ARC status (`dualLayerSend`, `utxoLockManager`) are rumours.

@@ -44,6 +44,8 @@ import {
   type ChangeRow,
 } from "./changeScriptFate";
 import {
+  APP_HELD_TX_STATUSES,
+  isAppHeldTxStatus,
   isLiveLocalTxStatus,
   LIVE_LOCAL_TX_STATUSES,
   txLivenessFromStatus,
@@ -677,46 +679,18 @@ export async function failUnsentLocalTx(
  * statuses (unmined/callback/…) coerce to unproven without an explorer trip.
  */
 export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
-  const id = txid.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(id)) return false;
+  const id = normalizedTxidOrNull(txid);
+  if (!id) return false;
   const active = getActiveWallet();
-  const storage = active?.wallet?.storage;
-  if (!storage?.runAsStorageProvider) return false;
+  if (!active?.wallet?.storage?.runAsStorageProvider) return false;
 
   try {
-    const looked = await storage.runAsStorageProvider(async (activeSp) => {
-      const sp = activeSp as unknown as LocalStorage;
-      if (typeof sp.findTransactions !== "function") return null;
-      let rows: TxStatusRow[] | undefined;
-      try {
-        rows = await sp.findTransactions({
-          partial: { txid: id },
-          noRawTx: true,
-          paged: { limit: 1, offset: 0 },
-        });
-      } catch (err) {
-        if (!isUndefinedPartialFilterError(err)) {
-          console.warn(
-            "[stale-output] restore tx lookup skipped",
-            id.slice(0, 12),
-            err
-          );
-        }
-        return null;
-      }
-      const row = rows?.[0];
-      const transactionId = positiveId(row?.transactionId);
-      if (transactionId == null) return null;
-      return {
-        transactionId,
-        status: String(row?.status ?? "").toLowerCase(),
-      };
-    });
+    const looked = await lookupLocalTxRow(id);
     if (!looked) return false;
     if (INTERNALIZE_OK_TX.has(looked.status)) return false;
 
     if (looked.status === "failed") {
-      const chain = active?.chain;
+      const chain = active.chain;
       if (!chain) return false;
       const onChain = await txExistsOnChain(id, chain).catch(() => null);
       if (onChain !== true) {
@@ -730,33 +704,7 @@ export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
       }
     }
 
-    const restored = await storage.runAsStorageProvider(async (activeSp) => {
-      const sp = activeSp as unknown as LocalStorage;
-      if (looked.status === "failed") {
-        // updateTransactionStatus refuses un-fail; write the row directly.
-        if (typeof sp.updateTransaction !== "function") return false;
-        await sp.updateTransaction(looked.transactionId, {
-          status: "unproven",
-        });
-        return true;
-      }
-      if (typeof sp.updateTransactionStatus === "function") {
-        try {
-          await sp.updateTransactionStatus("unproven", looked.transactionId);
-          return true;
-        } catch (err) {
-          console.warn(
-            "[stale-output] restore status coerce skipped",
-            id.slice(0, 12),
-            err
-          );
-        }
-      }
-      if (typeof sp.updateTransaction !== "function") return false;
-      await sp.updateTransaction(looked.transactionId, { status: "unproven" });
-      return true;
-    });
-    if (!restored) return false;
+    if (!(await coerceLocalTxToUnproven(id, looked))) return false;
 
     console.info(
       `[stale-output] restored on-chain local tx ${id.slice(0, 12)} ${
@@ -766,15 +714,146 @@ export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
     void import("./appActivity")
       .then(({ reviveFailedOutboundByTxid }) => reviveFailedOutboundByTxid(id))
       .catch(() => undefined);
-    // Seal spent inputs first — keep-then-seal left inputs spendable while
-    // change was already counted (same ~2× class as sibling abort).
-    await sealSpentInputsOfSignedTx(id, undefined);
-    await keepChangeOfSignedTx(id);
+    await sealThenKeepSignedTx(id);
     return true;
   } catch (err) {
     console.warn("[stale-output] restore skipped", id.slice(0, 12), err);
     return false;
   }
+}
+
+/**
+ * Hand an app-held signed tx over to the network side of the ledger.
+ *
+ * `createAction({ noSend: true })` — every `peerDeliver` item settle — leaves
+ * the row `nosend`, and `nosend` change is deliberately withheld from the next
+ * spend while the app can still abort. Arcade acceptance ends that: the tx is
+ * no longer cancelable, so its inputs must stay sealed and its change must
+ * become spendable. Without this, a bulk item send burns its whole funding
+ * output into stranded `nosend` change and the next leg fails for want of a
+ * few satoshis while the balance reads near zero (bucket hc-ad7afbfaae0d,
+ * 05c22bf13b06 stranded 1,070,674 sats across 8 change outputs).
+ */
+export async function pinBroadcastLocalTx(txid: string): Promise<boolean> {
+  const id = normalizedTxidOrNull(txid);
+  if (!id) return false;
+  if (!getActiveWallet()?.wallet?.storage?.runAsStorageProvider) return false;
+
+  try {
+    const looked = await lookupLocalTxRow(id);
+    if (!looked) return false;
+    if (!isAppHeldTxStatus(looked.status)) {
+      // Live or settled already — promotion is idempotent, status is not ours
+      // to rewrite. `failed`/unknown rows go through restoreOnChainLocalTx.
+      if (isLiveLocalTxStatus(looked.status)) {
+        await sealThenKeepSignedTx(id);
+        return true;
+      }
+      return restoreOnChainLocalTx(id);
+    }
+
+    if (!(await coerceLocalTxToUnproven(id, looked))) return false;
+    console.info(
+      `[stale-output] pinned broadcast local tx ${id.slice(0, 12)} ${
+        looked.status
+      } → unproven`
+    );
+    await sealThenKeepSignedTx(id);
+    return true;
+  } catch (err) {
+    console.warn("[stale-output] pin broadcast skipped", id.slice(0, 12), err);
+    return false;
+  }
+}
+
+function normalizedTxidOrNull(txid: string): string | null {
+  const id = txid.trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(id) ? id : null;
+}
+
+/** Seal spent inputs first — keep-then-seal left inputs spendable while change
+ *  was already counted (the ~2× balance class, same as sibling abort). */
+async function sealThenKeepSignedTx(id: string): Promise<void> {
+  await sealSpentInputsOfSignedTx(id, undefined);
+  await keepChangeOfSignedTx(id);
+}
+
+type LocalTxRowRef = { transactionId: number; status: string };
+
+async function lookupLocalTxRow(id: string): Promise<LocalTxRowRef | null> {
+  const storage = getActiveWallet()?.wallet?.storage;
+  if (!storage?.runAsStorageProvider) return null;
+  return storage.runAsStorageProvider(async (activeSp) => {
+    const sp = activeSp as unknown as LocalStorage;
+    if (typeof sp.findTransactions !== "function") return null;
+    let rows: TxStatusRow[] | undefined;
+    try {
+      rows = await sp.findTransactions({
+        partial: { txid: id },
+        noRawTx: true,
+        paged: { limit: 1, offset: 0 },
+      });
+    } catch (err) {
+      if (!isUndefinedPartialFilterError(err)) {
+        console.warn(
+          "[stale-output] tx lookup skipped",
+          id.slice(0, 12),
+          err
+        );
+      }
+      return null;
+    }
+    const row = rows?.[0];
+    const transactionId = positiveId(row?.transactionId);
+    if (transactionId == null) return null;
+    return { transactionId, status: String(row?.status ?? "").toLowerCase() };
+  });
+}
+
+/** Move an Arcade-accepted `nosend` row to `unproven`. No-op otherwise. */
+async function coerceArcadePinnedAppHeldTx(id: string): Promise<void> {
+  if (!txHadArcadeSubmitContact(id)) return;
+  const row = await lookupLocalTxRow(id);
+  if (!row || !isAppHeldTxStatus(row.status)) return;
+  if (!(await coerceLocalTxToUnproven(id, row))) return;
+  console.info(
+    `[stale-output] pinned broadcast local tx ${id.slice(0, 12)} ${
+      row.status
+    } → unproven`
+  );
+}
+
+async function coerceLocalTxToUnproven(
+  id: string,
+  row: LocalTxRowRef
+): Promise<boolean> {
+  const storage = getActiveWallet()?.wallet?.storage;
+  if (!storage?.runAsStorageProvider) return false;
+  const coerced = await storage.runAsStorageProvider(async (activeSp) => {
+    const sp = activeSp as unknown as LocalStorage;
+    if (row.status === "failed") {
+      // updateTransactionStatus refuses un-fail; write the row directly.
+      if (typeof sp.updateTransaction !== "function") return false;
+      await sp.updateTransaction(row.transactionId, { status: "unproven" });
+      return true;
+    }
+    if (typeof sp.updateTransactionStatus === "function") {
+      try {
+        await sp.updateTransactionStatus("unproven", row.transactionId);
+        return true;
+      } catch (err) {
+        console.warn(
+          "[stale-output] status coerce skipped",
+          id.slice(0, 12),
+          err
+        );
+      }
+    }
+    if (typeof sp.updateTransaction !== "function") return false;
+    await sp.updateTransaction(row.transactionId, { status: "unproven" });
+    return true;
+  });
+  return coerced === true;
 }
 
 /** Failed local txids that may need an on-chain restore (capped). */
@@ -1436,7 +1515,13 @@ const PENDING_CHANGE_TX_STATUSES = [
   "unknown",
 ] as const;
 
-/** Live local send txids whose change may still be unspendable. */
+/** Live local send txids whose change may still be unspendable.
+ *
+ *  App-held (`nosend`) rows join the list only once Arcade has accepted them.
+ *  The pin, not the status, is what makes the change safe to spend — a pin lost
+ *  to a crash between `postBeef` and `pinBroadcastLocalTx` heals here instead of
+ *  stranding the funding output.
+ */
 export async function listPendingLocalChangeTxids(): Promise<string[]> {
   const active = getActiveWallet();
   const storage = active?.wallet?.storage;
@@ -1446,10 +1531,11 @@ export async function listPendingLocalChangeTxids(): Promise<string[]> {
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as LocalStorage;
-      if (typeof sp.findTransactions !== "function") return;
-      for (const status of PENDING_CHANGE_TX_STATUSES) {
+      const findTransactions = sp.findTransactions;
+      if (typeof findTransactions !== "function") return;
+      const scan = async (status: string, accept: (txid: string) => boolean) => {
         for (let page = 0; page < 5; page += 1) {
-          const rows = await sp.findTransactions({
+          const rows = await findTransactions.call(sp, {
             partial: {},
             status: [status],
             noRawTx: true,
@@ -1460,10 +1546,14 @@ export async function listPendingLocalChangeTxids(): Promise<string[]> {
             const txid = String(row.txid ?? "")
               .trim()
               .toLowerCase();
-            if (/^[0-9a-f]{64}$/.test(txid)) txids.add(txid);
+            if (/^[0-9a-f]{64}$/.test(txid) && accept(txid)) txids.add(txid);
           }
           if (rows.length < 25) break;
         }
+      };
+      for (const status of PENDING_CHANGE_TX_STATUSES) await scan(status, () => true);
+      for (const status of APP_HELD_TX_STATUSES) {
+        await scan(status, txHadArcadeSubmitContact);
       }
     });
   } catch (err) {
@@ -1506,6 +1596,9 @@ export async function promotePendingLocalChangeOutputs(opts?: {
     // ~2× balance (sibling-abort / Arcade-pin promote without reseal).
     // sealSpentInputsOfSignedTx also keepChange's when it finds inputs; the
     // second keep is a no-op once change is already spendable.
+    // An Arcade-pinned `nosend` row also leaves app-held state here, so proof
+    // monitors can finalize it instead of parking on it forever.
+    await coerceArcadePinnedAppHeldTx(txid);
     const sealed = await sealSpentInputsOfSignedTx(txid, undefined);
     sealedTotal += sealed;
     promoted += await keepChangeOfSignedTx(txid);

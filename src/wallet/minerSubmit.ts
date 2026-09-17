@@ -15,6 +15,7 @@ import {
 } from "./postBeefResult";
 import {
   onAlreadySpentSend,
+  pinBroadcastLocalTx,
   releaseSealedInputsOfUnsentTx,
   restoreOnChainLocalTx,
 } from "./staleOutputRelease";
@@ -174,9 +175,10 @@ async function applyArcadePostBeef(
     void import("./appActivity")
       .then(({ reviveFailedOutboundByTxid }) => reviveFailedOutboundByTxid(id))
       .catch(() => undefined);
-    void restoreOnChainLocalTx(id).catch((err) => {
+    // Arcade owns it now: leave app-held `nosend`, seal inputs, free change.
+    void pinBroadcastLocalTx(id).catch((err) => {
       console.warn(
-        "[minerSubmit] post-Arcade restore skipped",
+        "[minerSubmit] post-Arcade pin skipped",
         id.slice(0, 12),
         err
       );

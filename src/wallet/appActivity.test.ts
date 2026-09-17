@@ -28,6 +28,7 @@ import {
   noteInboundReceivePending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
+  clearOutboundSendPending,
   noteOutboundSendBroadcastFailed,
   failOutboundSendPending,
   reviveFailedOutboundByTxid,
@@ -581,6 +582,29 @@ describe("inbound receive activity", () => {
       rows.some((e) => e.status === "pending" && e.pendingId === "new-send")
     ).toBe(true);
     expect(rows.some((e) => e.status !== "pending" && e.txid)).toBe(true);
+  });
+
+  it("discards an intermediate batch attempt without leaving a failed row", () => {
+    noteOutboundSendPending({
+      pendingId: "batch-probe-1",
+      sendGroupId: "batch-probe",
+      sats: 1,
+      to: "1abc",
+      item: { name: "Fox #1", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
+    noteOutboundSendPending({
+      pendingId: "batch-probe-2",
+      sendGroupId: "batch-probe",
+      sats: 1,
+      to: "1abc",
+      item: { name: "Fox #2", origin: `${TX}_1`, outpoint: `${TX}.1` },
+    });
+
+    clearOutboundSendPending("batch-probe-1");
+    clearOutboundSendPending("batch-probe-2");
+
+    expect(listRecentActivity(10)).toEqual([]);
+    expect(countFailedActivity()).toBe(0);
   });
 
   it("persists the exact recipient details required to retry an item send", () => {

@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.3.225] - 2026-09-17
+
+### Fixed
+
+- **An Arcade-accepted item send no longer strands its own change.** Every
+  `peerDeliver` item settle is `createAction({ noSend: true })`, and app-held
+  `nosend` change is deliberately withheld from the next spend. Nothing moved
+  the row off `nosend` once Arcade accepted it, so change was withheld forever:
+  `05c22bf13b06` spent a 1,070,736 sat funding output and parked 1,070,674 sats
+  across eight confirmed change outputs that the wallet counted as neither
+  spendable nor pending. Balance read 8,626 sats and the next leg of the run
+  failed for want of 20. Arcade acceptance now pins the row — status leaves
+  app-held, inputs stay sealed, change becomes spendable — and the bulk run
+  awaits that pin before signing the leg it funds.
+- **Heal Balance can now see stranded app-held change.** The pending scan was
+  gated on projected `pendingChange`, which excludes `nosend` change, so a
+  wallet whose whole balance was stranded that way could not heal. The gate is
+  now the Arcade pin registry, and Arcade-pinned `nosend` rows join the pending
+  scan so a pin lost to a crash mid-broadcast still recovers.
+- **Bulk item failures no longer cascade into retry storms and failed-row
+  debris.** The real-device run showed a large leg failing, silently splitting,
+  and leaving every temporary attempt as a permanent failed Activity row before
+  smaller legs succeeded. Multi-tip probes are now ephemeral; only a terminal
+  single-tip failure is recorded.
+- **Unknown, network, timeout and incomplete-ancestry failures stop once.**
+  Only recognized item-local conflicts may split a leg. The old default treated
+  every unfamiliar exception as item-specific, multiplying one outage into
+  repeated 2/4/8-way attempts.
+- **Provenance-heavy atomic legs are capped at the measured safe size of five.**
+  The phrase-migration ceiling of 25 was not representative: a real ten-item
+  transfer blocked the renderer repeatedly for 1.5–3.4 seconds and failed,
+  while the five-item half signed. Post-send BRC-150 extension is now one
+  sequential worker per transaction rather than one competing BEEF walk per
+  item.
+- **Stopped-run progress counts items, not queued transactions.** Diagnostics
+  now name run start, each accepted leg, and each classified rejection.
+
 ## [1.3.224] - 2026-09-17
 
 ### Fixed

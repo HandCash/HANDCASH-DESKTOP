@@ -298,7 +298,7 @@ const SEND_COLLECTABLE_RUN = `stateDiagram-v2
   sending --> checking : LEG_SENT
   sending --> splitting : LEG_REJECTED (leg > 1 tip)
   sending --> checking : LEG_REJECTED (single tip failed)
-  sending --> halted : WALLET_FAULT
+  sending --> halted : RUN_FAULT
   splitting --> sending : halves queued
   checking --> sending : legs queued
   checking --> done : queue empty
@@ -1154,7 +1154,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'sendCollectableRun',
     label: 'Bulk item send',
     caption:
-      'collectableSendRunMachine — selection → atomic legs; split a rejected leg, halt on a wallet fault',
+      'collectableSendRunMachine — selection → atomic legs; split only an item conflict, halt on every other fault',
     source: SEND_COLLECTABLE_RUN,
   },
   {

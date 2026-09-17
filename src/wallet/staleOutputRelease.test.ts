@@ -46,6 +46,7 @@ const {
   restoreOnChainLocalTx,
   restoreUnspentAssetOutpoint,
   chooseUtxoEvidenceAction,
+  pinBroadcastLocalTx,
 } = await import('./staleOutputRelease')
 const sentItemGuard = await import('./sentItemGuard')
 
@@ -686,6 +687,7 @@ describe('promotePendingLocalChangeOutputs', () => {
     txExistsOnChain.mockReset()
     txExistsOnChain.mockResolvedValue(null)
     overlayStore.clear()
+    __resetArcadeSubmitGuardForTests()
     __resetUtxoLocksForTests()
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
@@ -799,6 +801,128 @@ describe('promotePendingLocalChangeOutputs', () => {
       promotePendingLocalChangeOutputs({ forSpendChain: true, localOnly: true }),
     ).resolves.toBe(1)
     expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+  })
+
+  it('frees change of an Arcade-pinned nosend leg so the next leg can spend it', async () => {
+    const txid = '1a'.repeat(32)
+    rememberArcadeSubmitContact(txid)
+    findTransactions.mockImplementation(async (args: {
+      status?: string[]
+      partial?: { txid?: string }
+    }) => {
+      if (args.partial?.txid === txid) {
+        return [{ transactionId: 7, txid, status: 'nosend' }]
+      }
+      return args.status?.includes('nosend') ? [{ txid, status: 'nosend' }] : []
+    })
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 9,
+        txid,
+        vout: 1,
+        change: true,
+        satoshis: 1_070_674,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+      },
+    ])
+
+    await expect(promotePendingLocalChangeOutputs()).resolves.toBe(1)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 7)
+    expect(updateOutput).toHaveBeenCalledWith(
+      9,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
+  it('leaves change of an unpinned nosend tx app-held', async () => {
+    const txid = '2b'.repeat(32)
+    findTransactions.mockImplementation(async (args: { status?: string[] }) =>
+      args.status?.includes('nosend') ? [{ txid, status: 'nosend' }] : [],
+    )
+    findOutputs.mockResolvedValue([])
+
+    await expect(promotePendingLocalChangeOutputs()).resolves.toBe(0)
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+})
+
+describe('pinBroadcastLocalTx', () => {
+  const findTransactions = vi.fn()
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const updateTransactionStatus = vi.fn()
+
+  beforeEach(() => {
+    findTransactions.mockReset()
+    findOutputs.mockReset()
+    findOutputs.mockResolvedValue([])
+    updateOutput.mockReset()
+    updateTransactionStatus.mockReset()
+    overlayStore.clear()
+    __resetArcadeSubmitGuardForTests()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      address: '1abc',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+              updateTransactionStatus: typeof updateTransactionStatus
+              getProvenOrRawTx: () => Promise<undefined>
+            }) => Promise<unknown>,
+          ) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              findTransactions,
+              updateTransactionStatus,
+              getProvenOrRawTx: async () => undefined,
+            }),
+        },
+      },
+    })
+  })
+
+  it('hands an app-held nosend row to the network side and frees its change', async () => {
+    const txid = '3c'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 4, txid, status: 'nosend' },
+    ])
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 5,
+        txid,
+        vout: 2,
+        change: true,
+        satoshis: 236_416,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+      },
+    ])
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 4)
+    expect(updateOutput).toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
+  it('does not rewrite the status of an already live row', async () => {
+    const txid = '4d'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 6, txid, status: 'unproven' },
+    ])
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
     expect(updateTransactionStatus).not.toHaveBeenCalled()
   })
 })
