@@ -275,6 +275,21 @@ const SEND_COLLECTABLE = `stateDiagram-v2
   failed --> idle : RESET
 `
 
+const SEND_COLLECTABLE_RUN = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> sending : START with planned legs
+  sending --> checking : LEG_SENT
+  sending --> splitting : LEG_REJECTED (leg > 1 tip)
+  sending --> checking : LEG_REJECTED (single tip failed)
+  sending --> halted : WALLET_FAULT
+  splitting --> sending : halves queued
+  checking --> sending : legs queued
+  checking --> done : queue empty
+  done --> idle : RESET
+  halted --> idle : RESET
+`
+
 const SEND_FUNGIBLE = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -1111,6 +1126,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Send item',
     caption: 'collectableSendMachine — classify → p2pkhSend | refuse',
     source: SEND_COLLECTABLE,
+  },
+  {
+    id: 'sendCollectableRun',
+    label: 'Bulk item send',
+    caption:
+      'collectableSendRunMachine — selection → atomic legs; split a rejected leg, halt on a wallet fault',
+    source: SEND_COLLECTABLE_RUN,
   },
   {
     id: 'sendFungible',

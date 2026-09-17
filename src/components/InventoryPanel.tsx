@@ -82,7 +82,10 @@ import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
 } from '../wallet/collectableSendReady'
-import { MAX_ITEMS_PER_ONE_SAT_TX } from '../wallet/collectableBatch'
+import {
+  collectableBurnBatchRefusal,
+  MAX_ITEMS_PER_ONE_SAT_TX,
+} from '../wallet/collectableBatch'
 import {
   reconcileCollectableSelection,
   selectableCollectables,
@@ -861,11 +864,8 @@ export function InventoryPanel() {
     setSelected((current) => reconcileCollectableSelection(current, availableItems))
   }, [availableItems])
 
-  /** One transaction cannot carry an unbounded selection — say so on the dock. */
-  const overOneSatCeiling = selectedCount > MAX_ITEMS_PER_ONE_SAT_TX
   const selectedCanSend =
     selectedCount > 0 &&
-    !overOneSatCeiling &&
     selectedItems.every((item) =>
       inspectCollectableSendReady({
         outpoint: item.outpoint,
@@ -873,13 +873,12 @@ export function InventoryPanel() {
         verifying: isOutpointVerifying(item.outpoint, verification),
       }).ready,
     )
+  /** Burn is a single atomic transaction — it has no leg loop to fall back on. */
+  const overBurnCeiling = selectedCount > MAX_ITEMS_PER_ONE_SAT_TX
   const selectedCanBurn =
     selectedCount > 0 &&
-    !overOneSatCeiling &&
+    !overBurnCeiling &&
     selectedItems.every((item) => !item.covenantLocked)
-  const ceilingTitle = `One transaction carries up to ${MAX_ITEMS_PER_ONE_SAT_TX} collectables — deselect ${
-    selectedCount - MAX_ITEMS_PER_ONE_SAT_TX
-  }`
 
   useWalletActionDock(
     selectedCount > 0
@@ -901,9 +900,8 @@ export function InventoryPanel() {
             icon: <FireIcon size={18} />,
             title: selectedCanBurn
               ? `Burn ${selectedCount} collectables`
-              : overOneSatCeiling
-                ? ceilingTitle
-                : 'A selected item cannot be burned',
+              : (collectableBurnBatchRefusal(selectedCount) ??
+                'A selected item cannot be burned'),
           },
           primary: {
             label: `Send (${selectedCount})`,
@@ -915,9 +913,7 @@ export function InventoryPanel() {
             icon: <SendIcon size={18} />,
             title: selectedCanSend
               ? `Send ${selectedCount} collectables`
-              : overOneSatCeiling
-                ? ceilingTitle
-                : 'Wait for selected items to finish verification',
+              : 'Wait for selected items to finish verification',
           },
         }
       : null,

@@ -24,7 +24,12 @@ export function normalizeCollectableBatchOutpoints(outpoints: string[]): string[
  */
 export const MAX_ITEMS_PER_ONE_SAT_TX = 25
 
-/** How a user selection becomes send transactions — never a silent fallthrough. */
+/**
+ * How a selection becomes one send transaction — never a silent fallthrough.
+ *
+ * This is the *atomic* decision. A selection above the ceiling refuses here;
+ * `planCollectableSendRun` is what turns it into a sequence of legs.
+ */
 export type CollectableSendBatch =
   /** One tip, one `sendCollectable`. */
   | { kind: 'single'; outpoint: string }
@@ -60,7 +65,7 @@ export function collectableSendBatchRefusal(
     case 'empty':
       return 'Select at least one collectable'
     case 'tooMany':
-      return `One transfer carries up to ${batch.max} collectables. Select ${batch.max} or fewer of the ${batch.count} and send the rest after.`
+      return `One transaction carries up to ${batch.max} collectables, not ${batch.count}. Send a larger selection as a run of legs (sendCollectablesRun).`
   }
 }
 

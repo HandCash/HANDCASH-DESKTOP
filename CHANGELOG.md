@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.220] - 2026-09-17
+
+### Added
+
+- **Bulk item send: a big selection is a run of atomic transactions.** Selecting
+  more than 25 collectables now sends them 25 at a time instead of refusing.
+  `collectableSendRunMachine` owns the loop's legality and each leg is still
+  all-or-nothing, so a partial run is a set of whole transactions. A leg the
+  miner rejects is halved and retried down to singles, so one unspendable tip
+  cannot strand the rest; a wallet-wide fault (locked, offline, out of fee
+  money) halts the run instead of failing 27 more times. The confirm screen
+  names the transaction count, the sidebar counts items sent, and the result
+  toast reports what actually signed. Burn keeps the hard 25 ceiling — it is a
+  single transaction with no leg loop.
+
 ## [1.3.219] - 2026-09-17
 
 ### Fixed

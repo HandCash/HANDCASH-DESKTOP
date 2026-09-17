@@ -7,6 +7,7 @@ import {
   listCollectables,
   sendCollectable,
   sendCollectables,
+  sendCollectablesRun,
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
@@ -35,9 +36,13 @@ import {
   inspectCollectableSendReady,
 } from '../wallet/collectableSendReady'
 import {
-  chooseCollectableSendBatch,
-  collectableSendBatchRefusal,
-} from '../wallet/collectableBatch'
+  planCollectableSendRun,
+  summarizeCollectableSendRun,
+} from '../wallet/collectableSendRun'
+import {
+  clearPaymentProgress,
+  setPaymentProgress,
+} from '../wallet/paymentProgress'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
@@ -97,13 +102,16 @@ export function SendCollectablePanel({
     [outpoint, outpoints],
   )
   const outpointKey = requestedOutpoints.join('|')
-  /** One atomic transaction has a tip ceiling — refuse here, not mid-signing. */
-  const sendBatch = useMemo(
-    () => chooseCollectableSendBatch(requestedOutpoints),
+  /**
+   * A selection larger than one transaction's tip ceiling is sent as a run of
+   * atomic legs, so the panel needs the leg count before anyone confirms.
+   */
+  const sendPlan = useMemo(
+    () => planCollectableSendRun(requestedOutpoints),
     [outpointKey],
   )
-  const batchRefusal =
-    sendBatch.kind === 'refuse' ? collectableSendBatchRefusal(sendBatch) : null
+  const legCount = sendPlan.kind === 'legs' ? sendPlan.legs.length : 0
+  const multiLeg = legCount > 1
   const [items, setItems] = useState<Collectable[]>(() =>
     requestedOutpoints
       .map((value) => getCachedCollectable(value))
@@ -137,9 +145,10 @@ export function SendCollectablePanel({
     setItems(cached)
     setStage('edit')
     setError(null)
-    // A refused selection never becomes a transaction, so do not resolve
-    // metadata for every tip — that walk is what stalls an oversized batch.
-    if (batchRefusal) {
+    // `getCollectable` enriches and re-verifies one tip: an indexer walk we must
+    // not fire hundreds of times to draw a count. A run paints from the cache
+    // the grid already filled; only a single-transaction selection resolves.
+    if (multiLeg) {
       setLoading(false)
     } else {
       setLoading(cached.length !== requestedOutpoints.length)
@@ -174,8 +183,7 @@ export function SendCollectablePanel({
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
-  const sendReady = batchRefusal == null
-    && items.length === requestedOutpoints.length && items.length > 0
+  const sendReady = items.length === requestedOutpoints.length && items.length > 0
     ? items
         .map((selected) =>
           inspectCollectableSendReady({
@@ -186,10 +194,13 @@ export function SendCollectablePanel({
         )
         .find((ready) => !ready.ready) ?? { ready: true as const }
     : { ready: false as const, reason: 'unproven' as const }
-  const sendBlocked = batchRefusal != null || !sendReady.ready
+  const sendBlocked = sendPlan.kind === 'refuse' || !sendReady.ready
   const sendBlockMessage =
-    batchRefusal ??
-    (sendReady.ready ? null : collectableSendReadyMessage(sendReady.reason))
+    sendPlan.kind === 'refuse'
+      ? 'Select at least one collectable'
+      : sendReady.ready
+        ? null
+        : collectableSendReadyMessage(sendReady.reason)
   const canReview = to.trim().length > 0 && !sendBlocked
 
   /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, $handle. */
@@ -288,10 +299,48 @@ export function SendCollectablePanel({
     const label = recipientLabel
     clearNavChild()
 
+    const total = requestedOutpoints.length
+
     // Deliberately not awaited: the panel is gone by the time this settles.
     void (async () => {
       try {
         // Activity is recorded inside finishSend as soon as the txid exists.
+        if (multiLeg) {
+          // Several atomic transactions, so the outcome can be partial — report
+          // what actually signed instead of a blanket "Sent".
+          const run = await sendCollectablesRun({
+            ...common,
+            outpoints: requestedOutpoints,
+            onProgress: ({ sentItems, itemCount }) =>
+              setPaymentProgress(
+                'preparing',
+                `Sent ${sentItems} of ${itemCount} collectables`,
+                requestedOutpoints[0],
+                null,
+                'item_transfer',
+              ),
+          })
+          clearPaymentProgress()
+          const summary = summarizeCollectableSendRun(run)
+          if (run.sent.length === 0) {
+            playWalletSound('error')
+            toastError('Send failed', summary)
+            return
+          }
+          playPaymentSuccessSound()
+          if (run.stopped || run.failed.length > 0) {
+            toastError(`Sent ${run.sent.length} of ${legCount} transactions`, summary)
+          } else {
+            toastSuccess('Sent', `${summary.replace(/\.$/, '')} to ${label}.`)
+          }
+          void listCollectables().catch(() => {})
+          try {
+            onSent?.(await fetchBalanceSats(getActiveWallet()?.wallet))
+          } catch (err) {
+            console.warn('[send-collectable] balance refresh failed', err)
+          }
+          return
+        }
         if (batch) {
           await sendCollectables({
             ...common,
@@ -304,7 +353,7 @@ export function SendCollectablePanel({
         toastSuccess(
           'Sent',
           batch
-            ? `${items.length} collectables on the way to ${label}.`
+            ? `${total} collectables on the way to ${label}.`
             : `${send.name} on the way to ${label}.`,
         )
         void listCollectables().catch(() => {})
@@ -573,6 +622,12 @@ export function SendCollectablePanel({
                 to <strong>{recipientLabel}</strong>
               </p>
               {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
+              {multiLeg ? (
+                <p className="friend-recipient-hint send-recipient-hint">
+                  Too many for one transaction — sent as {legCount} transactions,
+                  each one all-or-nothing. Progress shows in the sidebar.
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

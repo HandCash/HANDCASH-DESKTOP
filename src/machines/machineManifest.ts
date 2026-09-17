@@ -5,6 +5,7 @@ import { marketListingMachine } from './marketListingMachine'
 import { marketPurchaseMachine } from './marketPurchaseMachine'
 import { marketSellerSettlementMachine } from './marketSellerSettlementMachine'
 import { collectableSendMachine } from '../wallet/collectableSendMachine'
+import { collectableSendRunMachine } from '../wallet/collectableSendRunMachine'
 import { itemSendMachine } from '../wallet/itemSendMachine'
 import { brc29SendMachine } from '../wallet/brc29SendMachine'
 import { bsvSendMachine } from '../wallet/bsvSendMachine'
@@ -23,6 +24,7 @@ export const machineManifest = Object.freeze({
   marketPurchase: marketPurchaseMachine,
   marketSellerSettlement: marketSellerSettlementMachine,
   collectableSend: collectableSendMachine,
+  collectableSendRun: collectableSendRunMachine,
   itemSend: itemSendMachine,
   brc29Send: brc29SendMachine,
   bsvSend: bsvSendMachine,
