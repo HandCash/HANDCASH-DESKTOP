@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.213] - 2026-09-17
+
+### Fixed
+
+- **"Confirmation status is unavailable" is no longer a dead end.** A row whose
+  chain status cannot be read now still offers **Resubmit**: publishing the
+  transaction this wallet already signed cannot double-spend whatever the chain
+  turns out to say, because it is the same txid being re-announced. Clearing the
+  row and taking its coins back still require proof, and both stay closed. Only
+  a row with no signed transaction is left as-is, and it says so.
+- Coin payments are deliberately excluded — their retry builds a *new* payment,
+  which must never be offered without knowing the first one's fate.
+
+### Changed
+
+- HandCash Chain (BRC-CLOUD) no longer reports a transaction Arcade is merely
+  holding as being on chain. `PENDING_RETRY` means a child was parked because its
+  parent was never accepted; calling that "exists" told the wallet a parked send
+  had confirmed, and "on chain" is also the answer that forbids reclaiming its
+  coins — so the row had no way forward at all. Only `MINED`, `CONFIRMED`,
+  `SEEN_ON_NETWORK`, and `ACCEPTED_BY_NETWORK` count as present; `REJECTED` and
+  `DOUBLE_SPEND_ATTEMPTED` count as absent; queue states now fall through to a
+  chain provider.
+
 ## [1.3.212] - 2026-09-17
 
 ### Fixed

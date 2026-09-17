@@ -319,16 +319,33 @@ describe('resolveSpendAttemptFate — items', () => {
     expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
   })
 
-  it('fails closed and blocks clearing when confirmation cannot be checked', async () => {
+  it('blocks clearing when confirmation cannot be checked, but still publishes', async () => {
     mocks.txExistsOnChain.mockResolvedValue(null)
 
     const fate = await resolveSpendAttemptFate(itemAttempt(), 'main')
     expect(fate).toMatchObject({
-      kind: 'refuse',
-      reason: 'statusUnknown',
+      kind: 'retry',
+      action: 'rebroadcast',
       mayClear: false,
     })
+    expect(fate).not.toHaveProperty('mayReclaimInputs', true)
+    // Publishing the signed transfer needs no spendability check — the coins
+    // were sealed for it when it was built.
     expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
+  })
+
+  it('strands nothing but a row with no signed transaction', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(null)
+
+    expect(
+      await resolveSpendAttemptFate(
+        itemAttempt({ txid: undefined, retry: undefined }),
+        'main',
+      ),
+    ).toMatchObject({
+      kind: 'refuse',
+      reason: 'missingRetryDetails',
+    })
   })
 
   it('allows retry only when the original item output is spendable, and never clear while inputs live', async () => {
@@ -505,6 +522,21 @@ describe('a transfer the recipient can still settle', () => {
       mayClear: false,
       mayReclaimInputs: true,
       peerPublishes: true,
+    })
+  })
+
+  it('still offers the publish when no explorer can answer', async () => {
+    // Not knowing is not a reason to strand the row: republishing the same
+    // signed transaction cannot double-spend, whatever the chain turns out to say.
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+    mocks.txExistsOnChain.mockResolvedValue(null)
+
+    expect(
+      await resolveSpendAttemptFate(itemAttempt({ status: 'failed' }), 'main'),
+    ).toMatchObject({
+      kind: 'retry',
+      action: 'rebroadcast',
+      mayClear: false,
     })
   })
 

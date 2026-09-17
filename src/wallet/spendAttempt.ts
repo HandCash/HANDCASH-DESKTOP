@@ -190,6 +190,21 @@ function hasTxid(entry: ActivityEntry): boolean {
  * the recipient's copy and this one are one txid — while `peerDeliver` itself
  * still has no sender-broadcast edge.
  */
+/**
+ * The signed item / token transfer on this row, when this wallet is allowed to
+ * publish it. Coin payments are absent on purpose: their retry builds a *new*
+ * payment, which is not safe to offer without knowing the first one's fate.
+ */
+function publishableSignedTransfer(
+  entry: ActivityEntry,
+): Extract<ActivityRetry, { kind: 'send-collectable' | 'send-token' }> | null {
+  const retry = entry.retry
+  if (!retry) return null
+  if (retry.kind !== 'send-collectable' && retry.kind !== 'send-token') return null
+  if (!hasTxid(entry)) return null
+  return senderMayPublishSignedTransfer(entry) ? retry : null
+}
+
 function senderMayPublishSignedTransfer(entry: ActivityEntry): boolean {
   const chartKey =
     entry.retry?.kind === 'send-collectable'
@@ -317,11 +332,26 @@ export async function resolveSpendAttemptFate(
     ).catch(() => null)
     if (onChain === true) return { kind: 'confirmed' }
     if (onChain === null) {
+      // Not knowing must not strand the row. Publishing the transaction this
+      // attempt already signed is safe under uncertainty — if it turns out to be
+      // on chain already, the same txid is simply re-announced. Only clearing
+      // and reclaiming its coins need proof, and both stay closed here.
+      const publishable = publishableSignedTransfer(entry)
+      if (publishable) {
+        return {
+          kind: 'retry',
+          action: 'rebroadcast',
+          retry: publishable,
+          message:
+            'The chain could not be checked just now, so this row cannot be cleared. You can still publish the transfer it already signed — that is the same transaction, so it settles rather than duplicates.',
+          mayClear: false,
+        }
+      }
       return {
         kind: 'refuse',
         reason: 'statusUnknown',
         message:
-          'Confirmation status is unavailable. Retry stays disabled until the chain can be checked.',
+          'Confirmation status is unavailable, and this row has no signed transaction to publish. It stays as it is until the chain can be checked.',
         mayClear: false,
       }
     }
@@ -345,15 +375,12 @@ export async function resolveSpendAttemptFate(
   // as confirmed, and only a transfer that is genuinely absent is described as
   // theirs to publish.
   if (isCounterpartySettlePending(entry)) {
-    const senderMayPublish =
-      hasTxid(entry) &&
-      (retry?.kind === 'send-collectable' || retry?.kind === 'send-token') &&
-      senderMayPublishSignedTransfer(entry)
-    if (senderMayPublish) {
+    const publishable = publishableSignedTransfer(entry)
+    if (publishable) {
       return {
         kind: 'retry',
         action: 'rebroadcast',
-        retry: retry!,
+        retry: publishable,
         // Publishing this is not a race: it is the same signed transaction the
         // recipient holds, so both copies are one txid. It is the sender's own
         // silent postBeef, offered by hand because it has not landed.
