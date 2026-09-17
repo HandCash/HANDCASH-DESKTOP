@@ -369,6 +369,63 @@ async function fetchWocProvenBeef(
   }
 }
 
+/** How long the preferred source gets alone before a hedge joins it. */
+const BEEF_HEDGE_AFTER_MS = 1_200
+
+/**
+ * Resolve `preferred`, starting `hedge` if it has not answered in time.
+ *
+ * Neither loser is cancelled — a hedge that arrives second still lands in the
+ * session cache via its own writer, and the caller may await it rather than
+ * issuing a third request.
+ */
+async function firstBeefOrHedge(
+  preferred: Promise<Beef | null>,
+  hedge: () => Promise<Beef | null>,
+): Promise<Beef | null> {
+  const slow = Symbol('slow')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const tick = new Promise<typeof slow>((resolve) => {
+    timer = setTimeout(() => resolve(slow), BEEF_HEDGE_AFTER_MS)
+  })
+  try {
+    const early = await Promise.race([preferred, tick])
+    if (early !== slow) return early
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  return firstTruthyBeef([preferred, hedge()])
+}
+
+/** First source to answer with a BEEF wins; null only when all of them fail. */
+async function firstTruthyBeef(
+  sources: Promise<Beef | null>[],
+): Promise<Beef | null> {
+  return new Promise((resolve) => {
+    let outstanding = sources.length
+    if (outstanding === 0) {
+      resolve(null)
+      return
+    }
+    let done = false
+    for (const source of sources) {
+      void source
+        .then((beef) => {
+          if (done) return
+          if (beef) {
+            done = true
+            resolve(beef)
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          outstanding -= 1
+          if (!done && outstanding === 0) resolve(null)
+        })
+    }
+  })
+}
+
 async function getBeefFromRawTx(
   wallet: ActiveWallet,
   txid: string,
@@ -476,20 +533,35 @@ export async function getBeefForTxidCached(
     // get cached, then soft-latch internalize failed forever (0 BUMPS / missing
     // parents) — Desktop could not receive mobile→desktop item settles.
     let indexerErr: unknown = null
-    if (wallet.services?.getBeefForTxid) {
-      try {
-        const beef = await withTimeout(
-          wallet.services.getBeefForTxid(txid),
-          BEEF_FETCH_TIMEOUT_MS,
-          `indexer BEEF ${txid.slice(0, 8)}`,
-        )
-        if (beefHasSubjectTx(beef, key)) {
-          write(txid, beef)
-          return beef
+    let wocHedge: Promise<Beef | null> | null = null
+    const getIndexerBeef = wallet.services?.getBeefForTxid?.bind(wallet.services)
+    if (getIndexerBeef) {
+      // Both sources are proof-carrying, so the only reason to prefer the
+      // indexer is that it is usually first. Waiting out its full timeout before
+      // asking anyone else cost a receive-side verify 8s per cold path body on
+      // deep ordinal lineages. Hedge instead: keep the indexer's preference, and
+      // once it is visibly slow let WhatsOnChain race it.
+      const indexer = (async () => {
+        try {
+          const beef = await withTimeout(
+            getIndexerBeef(txid),
+            BEEF_FETCH_TIMEOUT_MS,
+            `indexer BEEF ${txid.slice(0, 8)}`,
+          )
+          return beefHasSubjectTx(beef, key) ? beef : null
+        } catch (err) {
+          indexerErr = err
+          console.warn('[beef] indexer fetch failed; trying WhatsOnChain', key.slice(0, 8), err)
+          return null
         }
-      } catch (err) {
-        indexerErr = err
-        console.warn('[beef] indexer fetch failed; trying WhatsOnChain', key.slice(0, 8), err)
+      })()
+      const raced = await firstBeefOrHedge(indexer, () => {
+        wocHedge = fetchWocProvenBeef(key, wallet.chain)
+        return wocHedge
+      })
+      if (raced) {
+        write(txid, raced)
+        return raced
       }
     } else if (!opts?.allowUnprovenRawTx) {
       throw new Error(
@@ -500,7 +572,7 @@ export async function getBeefForTxidCached(
     // Proof-carrying fallback. Runs even without `allowUnprovenRawTx` because it
     // returns a real merkle proof — this is what lets a BRC-150 lineage walk
     // finish when the toolbox service times out or GorillaPool 404s the BEEF.
-    const wocProven = await fetchWocProvenBeef(key, wallet.chain)
+    const wocProven = await (wocHedge ?? fetchWocProvenBeef(key, wallet.chain))
     if (wocProven) {
       write(txid, wocProven)
       return wocProven

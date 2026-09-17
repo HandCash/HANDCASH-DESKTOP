@@ -94,6 +94,22 @@ while the balance reads near zero. `nosend` change belongs to neither
 `spendable` nor `pendingChange`, so heal gates on the Arcade pin registry
 (`hasArcadeSubmitContacts`), never on projected pending change.
 
+## Proof fetch cost (receive-side verify)
+
+A receiver's BRC-150 verify is package work plus whatever path bodies the lean
+remittance shipped as txid-only. Both are latency, not correctness, and neither
+may change the verdict — verify still fails closed on a body that never arrives.
+
+- `beefCache.ts` prefers the indexer but hedges: WhatsOnChain joins after
+  `BEEF_HEDGE_AFTER_MS` and the first proof-carrying answer wins. Do not restore
+  a strict indexer-then-fallback chain; that charged one full
+  `BEEF_FETCH_TIMEOUT_MS` per cold body.
+- `hydrateMissingPathTxs` knows its whole missing set up front, so the fetches
+  overlap. **Merging stays sequential with `yieldToUi`** — parallel `mergeBeef`
+  of a fat mint origin is what freezes input, not the fetching.
+- One origin fetch is shared by every tip in a collection through
+  `getBeefForTxidCached` (session cache + in-flight dedupe + raw-miss memo).
+
 ## Confirmation model
 
 - Soft locks + ARC status (`dualLayerSend`, `utxoLockManager`) are rumours.

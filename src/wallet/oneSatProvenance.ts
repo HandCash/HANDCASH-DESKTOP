@@ -411,19 +411,25 @@ export async function hydrateMissingPathTxs(
   if (missing.length === 0) return { beef, fetched: [] }
   const merged = beef.clone()
   const fetched: string[] = []
-  // Sequential + yield: parallel mergeBeef of fat mint origins freezes input
-  // for seconds on Desktop (see [stall] / [longtask] during listing rebuild).
+  // The whole missing set is known up front, so the fetches have nothing to
+  // discover from each other and must not be serialized — that charged a
+  // receive-side verify one full round trip per cold body. Merging is the part
+  // that has to stay sequential and yield: parallel mergeBeef of fat mint
+  // origins freezes input for seconds ([stall] / [longtask] during rebuild).
+  const pieces = await Promise.allSettled(missing.map((txid) => getBeef(txid)))
   for (let i = 0; i < missing.length; i++) {
     if (i > 0) await yieldToUi()
     const txid = missing[i]!
+    const settled = pieces[i]!
+    // Verify will fail closed on a body that is still missing.
+    if (settled.status !== 'fulfilled') continue
+    if (!settled.value.findTxid(txid)?.tx) continue
+    await yieldToUi()
     try {
-      const piece = await getBeef(txid)
-      if (!piece.findTxid(txid)?.tx) continue
-      await yieldToUi()
-      merged.mergeBeef(piece.toBinary())
+      merged.mergeBeef(settled.value.toBinary())
       fetched.push(txid)
     } catch {
-      // Verify will fail closed on the still-missing body.
+      // A corrupt piece leaves the body missing; verify still fails closed.
     }
   }
   return { beef: merged, fetched }

@@ -199,6 +199,74 @@ describe('beefCache', () => {
     }
   })
 
+  it('hedges a slow indexer with WhatsOnChain instead of waiting out its timeout', async () => {
+    const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+    const parentProof = new MerklePath(800_002, [
+      [
+        { offset: 0, hash: parentId, txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ])
+    const tx = new Transaction()
+    tx.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const txid = tx.id('hex')
+    const wocBeef = new Beef()
+    wocBeef.mergeRawTx(parent.toBinary())
+    wocBeef.mergeBump(parentProof)
+    wocBeef.mergeTransaction(tx)
+    const wocHex = Buffer.from(wocBeef.toBinary()).toString('hex')
+
+    // The indexer never answers. Before hedging, this cost the caller the full
+    // 8s timeout before anyone else was asked.
+    const getBeefForTxid = vi.fn(
+      () =>
+        new Promise<Beef>(() => {
+          /* never resolves */
+        }),
+    )
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (url: string | URL | Request) => {
+        const href = String(url)
+        if (href.includes('/tx/') && href.endsWith('/beef')) {
+          return new Response(wocHex, { status: 200 })
+        }
+        return new Response('nope', { status: 404 })
+      })
+
+    try {
+      const wallet = {
+        chain: 'main',
+        wallet: { storage: { isActiveStorageProvider: () => false } },
+        services: { getBeefForTxid },
+      } as unknown as ActiveWallet
+
+      const started = Date.now()
+      const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
+      const elapsed = Date.now() - started
+
+      expect(beef.findTxid(txid)?.tx).toBeTruthy()
+      expect(fetchSpy).toHaveBeenCalled()
+      // Hedged, not timed out: well inside the 8s indexer ceiling.
+      expect(elapsed).toBeLessThan(5_000)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   it('times out a hung indexer fetch instead of hanging forever', async () => {
     const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
     resetBeefCacheForTests()

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.226] - 2026-09-17
+
+### Changed
+
+- **Receive-side BRC-150 verification stops paying full timeouts in series.**
+  Two costs dominated a cold verify. The BEEF fetch asked the indexer alone and
+  waited out its 8s ceiling before trying anyone else, even though WhatsOnChain
+  is equally proof-carrying and usually answers in a few hundred ms; the fetch
+  now keeps the indexer's preference but lets WhatsOnChain race it after 1.2s,
+  which turns an 8s stall into ~1.2s. And `hydrateMissingPathTxs` fetched lean
+  path bodies one at a time, although the whole missing set is known up front and
+  the requests have nothing to discover from each other; the round trips now
+  overlap. Merging stays sequential and yields between bodies — that is what
+  keeps a fat mint origin from freezing input, and it was the only reason the
+  loop was serial.
+
 ## [1.3.225] - 2026-09-17
 
 ### Fixed

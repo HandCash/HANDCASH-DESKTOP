@@ -460,3 +460,71 @@ describe('keeping a proven lineage for the next send', () => {
     fresh.clearRememberedProvenanceRemittances()
   })
 })
+
+describe('hydrating lean remittance path bodies', () => {
+  it('overlaps the fetches it already knows about and merges them in path order', async () => {
+    const { hydrateMissingPathTxs } = await import('./oneSatProvenance')
+
+    // Three independent bodies the receiver has to pull for itself.
+    const bodies = [0, 1, 2].map((i) => {
+      const tx = new Transaction()
+      tx.addOutput({ satoshis: 1 + i, lockingScript: LockingScript.fromHex('51') })
+      return tx
+    })
+    const path = bodies.map((tx) => `${tx.id('hex')}_0`)
+
+    const lean = new Beef()
+    for (const tx of bodies) lean.mergeTxidOnly(tx.id('hex'))
+
+    let inFlight = 0
+    let peakInFlight = 0
+    const getBeef = vi.fn(async (txid: string) => {
+      inFlight += 1
+      peakInFlight = Math.max(peakInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      inFlight -= 1
+      const tx = bodies.find((b) => b.id('hex') === txid)
+      const piece = new Beef()
+      if (tx) piece.mergeRawTx(tx.toBinary())
+      return piece
+    })
+
+    const started = Date.now()
+    const { beef, fetched } = await hydrateMissingPathTxs(lean, path, getBeef)
+    const elapsed = Date.now() - started
+
+    expect(getBeef).toHaveBeenCalledTimes(3)
+    // The whole missing set is known up front, so the round trips must overlap.
+    expect(peakInFlight).toBe(3)
+    expect(elapsed).toBeLessThan(90)
+    expect(fetched).toEqual(bodies.map((tx) => tx.id('hex')))
+    for (const tx of bodies) {
+      expect(beef.findTxid(tx.id('hex'))?.isTxidOnly).toBeFalsy()
+    }
+  })
+
+  it('keeps a failed body missing so verification still fails closed', async () => {
+    const { hydrateMissingPathTxs } = await import('./oneSatProvenance')
+
+    const ok = new Transaction()
+    ok.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const gone = new Transaction()
+    gone.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
+    const path = [`${ok.id('hex')}_0`, `${gone.id('hex')}_0`]
+
+    const lean = new Beef()
+    lean.mergeTxidOnly(ok.id('hex'))
+    lean.mergeTxidOnly(gone.id('hex'))
+
+    const { beef, fetched } = await hydrateMissingPathTxs(lean, path, async (txid) => {
+      if (txid === gone.id('hex')) throw new Error('indexer 404')
+      const piece = new Beef()
+      piece.mergeRawTx(ok.toBinary())
+      return piece
+    })
+
+    expect(fetched).toEqual([ok.id('hex')])
+    expect(beef.findTxid(ok.id('hex'))?.isTxidOnly).toBeFalsy()
+    expect(beef.findTxid(gone.id('hex'))?.isTxidOnly).toBe(true)
+  })
+})
