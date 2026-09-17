@@ -116,6 +116,22 @@ verdict — verify still fails closed on a body that never arrives.
 - One origin fetch is shared by every tip in a collection through
   `getBeefForTxidCached` (session cache + in-flight dedupe + raw-miss memo).
 
+### Inline envelopes are AtomicBEEF or nothing
+
+`internalizeAction` accepts **AtomicBEEF only**. `Beef.toBinary()` ignores
+`atomicTxid`, so assigning that field and serializing plainly yields a package
+that self-verifies and is still refused — *"The tx parameter must be valid
+AtomicBEEF"*. That downgrade in `mergeLocalUnconfirmedAncestry` made every inline
+peer delivery permanently un-internalizable: no item in the basket, no change
+back, an Activity row stuck on Receiving, and a balance short by the whole spend.
+
+- Serialize a subject package with `toBinaryAtomic(txid)`. Never set `atomicTxid`
+  and call `toBinary()`.
+- Ingest re-frames whatever arrives through `atomicBeefForSubject` before
+  internalize (`sendBrc29Payment.ts`, `ingestItemSettle.ts`). A binary that
+  cannot be framed falls through to the next source instead of failing the
+  settle — the sender may be an older build or another wallet.
+
 ## Confirmation model
 
 - Soft locks + ARC status (`dualLayerSend`, `utxoLockManager`) are rumours.

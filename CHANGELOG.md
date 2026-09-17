@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.229] - 2026-09-17
+
+### Fixed
+
+- **Peer and self receives no longer stall forever on a valid-looking BEEF.**
+  Merging local unconfirmed ancestry into a delivery package dropped its
+  AtomicBEEF framing, so `internalizeAction` refused every inline envelope with
+  "The tx parameter must be valid AtomicBEEF". The item never entered the basket,
+  the change never came back, and the Activity row sat on Receiving with no way to
+  retry — which is why a self-send left the balance short by the whole spend.
+  Subject packages are serialized as AtomicBEEF again, and ingest re-frames
+  whatever arrives so envelopes already sitting in an inbox recover on their own.
+- **A single listed collectable is no longer counted as two.** A listing folds
+  every leg of its transaction into one record, but the batch count counted legs,
+  so the listing event and the held row for the same item read as a pair. Legs are
+  now grouped by every key they state — origin, outpoint, token id — and counted
+  once per collectable.
+
 ## [1.3.228] - 2026-09-17
 
 ### Fixed

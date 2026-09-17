@@ -63,6 +63,28 @@ describe('composeActivityRecords', () => {
     expect(records[0]!.entries).toHaveLength(2)
   })
 
+  it('calls one listed item one item when its legs agree on only one key', () => {
+    // The listing event knows the genesis origin and the outpoint it created;
+    // the held leg only knows the outpoint. One fox, one key in common.
+    const records = composeActivityRecords([
+      entry({
+        method: 'market-list',
+        kind: 'event',
+        sats: 0,
+        txid: TXID,
+        item: { name: 'Fox #12', origin: `${OTHER_TXID}_0`, outpoint: `${TXID}.0` },
+      }),
+      entry({
+        method: 'receive-collectable',
+        txid: TXID,
+        item: { name: 'Fox #12', origin: '', outpoint: `${TXID}.0` },
+      }),
+    ])
+    expect(records).toHaveLength(1)
+    expect(records[0]!.assets).toEqual([])
+    expect(records[0]!.batch).toBeNull()
+  })
+
   it('prices a purchase from the money leg and names it from the received item', () => {
     const records = composeActivityRecords([
       entry({ method: 'market-purchase', kind: 'spent', sats: 9_000, txid: TXID }),

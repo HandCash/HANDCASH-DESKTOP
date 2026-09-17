@@ -401,6 +401,42 @@ describe('beefCache', () => {
     expect(out.findTxid(parentId)?.tx).toBeTruthy()
     expect(out.findTxid(parentId)?.isTxidOnly).toBeFalsy()
     expect(classifyBeefAncestryGap(merged)).not.toBe('missing-bodies')
+    // Still AtomicBEEF: internalizeAction takes nothing else, and returning a
+    // plain BEEF here stranded every inline peer delivery for good.
+    expect(out.atomicTxid).toBe(tip.id('hex'))
+  })
+
+  it('re-frames a plain BEEF envelope as AtomicBEEF for its subject', async () => {
+    const { atomicBeefForSubject } = await import('./beefCache')
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parent.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({ satoshis: 9_900, lockingScript: LockingScript.fromHex('51') })
+    const txid = tip.id('hex')
+
+    const plain = new Beef()
+    plain.mergeRawTx(parent.toBinary())
+    plain.mergeTransaction(tip)
+    expect(Beef.fromBinary(plain.toBinary()).atomicTxid).toBeUndefined()
+
+    const framed = atomicBeefForSubject(plain.toBinary(), txid)
+    expect(Beef.fromBinary(framed!).atomicTxid).toBe(txid)
+
+    // A package that does not carry the subject body is a real missing-BEEF case.
+    const other = new Beef()
+    other.mergeRawTx(parent.toBinary())
+    expect(atomicBeefForSubject(other.toBinary(), txid)).toBeUndefined()
+    expect(atomicBeefForSubject(undefined, txid)).toBeUndefined()
+    expect(atomicBeefForSubject([1, 2, 3], txid)).toBeUndefined()
   })
 
   it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {

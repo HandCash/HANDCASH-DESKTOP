@@ -20,7 +20,7 @@ import {
   noteOutboundSendPending,
   failOutboundSendPending,
 } from './appActivity'
-import { getBeefForTxidCached } from './beefCache'
+import { atomicBeefForSubject, getBeefForTxidCached } from './beefCache'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { parseProvenanceV2, type ProvenanceV2 } from './oneSatProvenance'
 import {
@@ -766,15 +766,18 @@ async function internalizeBrc29PaymentOnce(opts: {
   const balanceBefore = await fetchBalanceSats(active.wallet).catch(() => null)
 
   try {
-    let atomic = opts.tx
-    if (!atomic || atomic.length === 0) {
+    // An inline envelope is re-framed for this subject before internalize, which
+    // takes AtomicBEEF only. A plain BEEF here is not a dead payment: fall back
+    // to fetching the subject rather than retrying a shape that cannot be taken.
+    let atomic = atomicBeefForSubject(opts.tx, id)
+    if (atomic?.length) {
+      markIngest(`beef inline bytes=${atomic.length}`)
+    } else {
       const beef = await getBeefForTxidCached(active, id, {
         allowUnprovenRawTx: true,
       })
       atomic = Array.from(beef.toBinaryAtomic(id))
       markIngest(`beef bytes=${atomic.length}`)
-    } else {
-      markIngest(`beef inline bytes=${atomic.length}`)
     }
 
     if (atomic.length > 0) {

@@ -13,7 +13,7 @@
 import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
 import { getActiveWallet } from './session'
-import { rememberBeefTree } from './beefCache'
+import { atomicBeefForSubject, rememberBeefTree } from './beefCache'
 import { decodeBProtocol } from './bProtocol'
 import { decodeBsv21Binary } from './token'
 import { scriptPaysAddress } from './ordinalOwnership'
@@ -158,9 +158,12 @@ export async function internalizePeerItemSettle(opts: {
     if (proof) rememberProvenanceRemittance(proof)
   }
 
-  let atomic = opts.tx
-  if ((!atomic || !atomic.length) && opts.beefUrl) {
-    atomic = await fetchAtomicBeefFromUrl(opts.beefUrl)
+  // Every source is re-framed for this subject: internalize takes AtomicBEEF
+  // only, and a plain-BEEF envelope must fall through to the next source rather
+  // than fail the settle for good.
+  let atomic = atomicBeefForSubject(opts.tx, id)
+  if (!atomic?.length && opts.beefUrl) {
+    atomic = atomicBeefForSubject(await fetchAtomicBeefFromUrl(opts.beefUrl), id)
   }
   if (!atomic?.length) {
     try {

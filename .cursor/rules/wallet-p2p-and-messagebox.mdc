@@ -26,3 +26,4 @@ Full plan: [`docs/wallet-p2p-messagebox.md`](../../docs/wallet-p2p-messagebox.md
 4. Settings statecharts + `layers.ts` glossary must stay accurate if behaviour changes.
 5. Do not regress BRC-33 field names (`sender`, `messageIds`, `status: success`).
 6. Do not use messagebox `/files` as the item or BRC-29 delivery path. Remittance ± inline `beefB64` on `sendMessage`. If the box cap cannot take both, keep remittance (identity) over a second indexer walk; Atomic BEEF of this hop may SPV-fetch as it already does when omitted.
+7. Inline `beefB64` is **AtomicBEEF**, serialized with `toBinaryAtomic(txid)`. Setting `atomicTxid` and calling `toBinary()` ships a valid-looking BEEF that `internalizeAction` refuses forever. Ingest re-frames every source through `atomicBeefForSubject` and falls through to the next source when it cannot — never fail a settle on framing.

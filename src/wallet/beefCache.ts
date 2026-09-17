@@ -817,11 +817,42 @@ export async function mergeLocalUnconfirmedAncestry(
       }
       if (!added) break
     }
-    if (subject) work.atomicTxid = subject
-    const bin = work.toBinary()
+    // `toBinary` ignores `atomicTxid` — only `toBinaryAtomic` writes the prefix
+    // `internalizeAction` demands. Setting the field and serializing plainly
+    // returned a structurally valid BEEF that every peer ingest then refused
+    // with "The tx parameter must be valid AtomicBEEF", so an inline delivery
+    // could never be internalized: no item, no change, no way to retry.
+    const bin = subject ? work.toBinaryAtomic(subject) : work.toBinary()
     return bin.length > 0 ? bin : atomic
   } catch {
     return atomic
+  }
+}
+
+/**
+ * Re-frame any BEEF binary as AtomicBEEF for `txid`.
+ *
+ * `internalizeAction` accepts nothing else, and the binary reaching ingest came
+ * from a peer we do not control — an older build, another wallet, or a lean
+ * package assembled for a different subject. Re-framing at the boundary keeps a
+ * recoverable delivery out of the permanent-failure path; returns undefined when
+ * the subject body is absent, which is a genuine missing-BEEF case.
+ */
+export function atomicBeefForSubject(
+  binary: number[] | undefined,
+  txid: string,
+): number[] | undefined {
+  if (!binary?.length) return undefined
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return undefined
+  try {
+    const beef = Beef.fromBinary(binary)
+    if (!beef.findTxid(id)?.tx) return undefined
+    beef.atomicTxid = undefined
+    const bin = beef.toBinaryAtomic(id)
+    return bin.length > 0 ? bin : undefined
+  } catch {
+    return undefined
   }
 }
 

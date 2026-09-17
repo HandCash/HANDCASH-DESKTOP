@@ -52,6 +52,8 @@ vi.mock('./ingestItemSettle', () => ({
 }))
 
 vi.mock('./beefCache', () => ({
+  atomicBeefForSubject: (bin: number[] | undefined) =>
+    bin?.length ? bin : undefined,
   getBeefForTxidCached: async () => ({ toBinaryAtomic: () => [1, 2, 3] }),
   isAtomicBeefInBackoff: (txid: string) => isAtomicBeefInBackoff(txid),
   rememberBeefBinary: () => {},
