@@ -142,7 +142,7 @@ export function SendCollectablePanel({
     // not fire hundreds of times to draw a count. A run paints from the cache
     // the grid already filled; only a single-transaction selection resolves.
     if (multiLeg) {
-      setLoading(false)
+      setLoading(cached.length !== requestedOutpoints.length)
     } else {
       setLoading(cached.length !== requestedOutpoints.length)
       void Promise.all(
@@ -158,7 +158,20 @@ export function SendCollectablePanel({
     const wanted = new Set(requestedOutpoints)
     const unsubscribe = subscribeCollectables((list) => {
       const selected = list.filter((item) => wanted.has(item.outpoint))
-      if (selected.length > 0) setItems(selected)
+      if (selected.length > 0) {
+        // Ownership refreshes are streamed in partial pages. Replacing the
+        // selection with one page made a 25-item review silently shrink to the
+        // first five cached items. Merge evidence; never reduce the immutable
+        // payload the Inventory handed this panel.
+        setItems((current) => {
+          const merged = new Map(current.map((item) => [item.outpoint, item]))
+          for (const item of selected) merged.set(item.outpoint, item)
+          return requestedOutpoints
+            .map((value) => merged.get(value))
+            .filter((value): value is Collectable => value != null)
+        })
+        if (selected.length === requestedOutpoints.length) setLoading(false)
+      }
     })
     return () => {
       cancelled = true
@@ -195,7 +208,9 @@ export function SendCollectablePanel({
         ? 'Select at least one collectable'
         : `Send up to ${sendPlan.max} collectables at a time, not ${sendPlan.count}`
       : pathVerdict.error
-  const canReview = to.trim().length > 0 && !sendBlocked
+  const selectionReady = items.length === requestedOutpoints.length
+  const canReview =
+    to.trim().length > 0 && selectionReady && !loading && !sendBlocked
 
   useEffect(() => {
     sendUi({

@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.230] - 2026-09-17
+
+### Fixed
+
+- **A 25-item send now completes all five atomic legs.** The executor used to
+  check for promoted change once, racing the first leg's background Arcade
+  submit. When that check lost, leg two saw insufficient funds and the run
+  stopped after five items. Each leg now waits for its original transaction to
+  be pinned and its change promoted before the next leg may sign.
+- **Partial inventory refreshes no longer shrink a 25-item selection to five.**
+  The send panel merges paged ownership evidence into its immutable selection
+  and cannot advance until every selected item is present.
+- **Activity can settle old recipient-publish transfers in one pass.** “Publish
+  pending” submits each original signed transaction once (deduplicated by txid);
+  it never creates a replacement spend. Historical item rows without retry UX
+  metadata can use their saved outpoint and signed transaction body.
+- Signed peer transfers no longer offer the misleading “Unlock coins from
+  unfinished sends” action. That action only repairs unsigned reservations and
+  was timing out without changing the signed transaction or its pending change.
+
 ## [1.3.229] - 2026-09-17
 
 ### Fixed

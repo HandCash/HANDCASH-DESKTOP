@@ -24,6 +24,26 @@ import { splitItemMigrateBundle } from './itemMigrateBundle'
 import { pinBroadcastLocalTx } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
 
+const LEG_PIN_TIMEOUT_MS = 20_000
+
+/**
+ * A leg returns once its signed cheque and background miner submit exist. The
+ * next leg is normally funded by that cheque's change, so wait until Arcade has
+ * pinned it and local state has promoted the change. A single eager pin raced
+ * the background submit, returned false, and made a 25-item run stop after its
+ * first five items for "insufficient funds".
+ */
+async function awaitLegPin(txid: string): Promise<void> {
+  const deadline = Date.now() + LEG_PIN_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    if (await pinBroadcastLocalTx(txid).catch(() => false)) return
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(
+    `The first transaction is signed but its change is not ready after ${LEG_PIN_TIMEOUT_MS / 1000}s. The remaining collectables were left untouched.`,
+  )
+}
+
 export type SendCollectablesRunArgs = SendCollectablesArgs & {
   onProgress?: (progress: {
     /** Legs signed so far. */
@@ -101,7 +121,7 @@ export async function sendCollectablesRun(
       // Every leg after the first is funded by the previous leg's change, and a
       // `peerDeliver` leg parks that change in an app-held `nosend` row. Pin it
       // before signing the next leg or the run starves on its own money.
-      await pinBroadcastLocalTx(txid).catch(() => false)
+      await awaitLegPin(txid)
       chart.send({ type: 'LEG_SENT', items: leg.length })
       console.info(
         `[collectables] send run leg accepted — ${leg.length} items by ${txid.slice(

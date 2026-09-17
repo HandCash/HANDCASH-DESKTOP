@@ -57,7 +57,9 @@ import {
   clearAllFailedSpends,
   countClearableFailedSpends,
   countRebroadcastableFailedSpends,
+  countUnresolvedPeerTransfers,
   isCounterpartySettlePending,
+  publishUnresolvedPeerTransfers,
   rebroadcastAllFailedSpends,
 } from "../wallet/spendAttempt";
 import { toastError, toastSuccess } from "../wallet/toast";
@@ -960,6 +962,11 @@ export function ActivityFeed({
   const [rebroadcastingFailed, setRebroadcastingFailed] = useState(false);
   const [rebroadcastCount, setRebroadcastCount] = useState(0);
   const [clearableCount, setClearableCount] = useState(0);
+  const [publishingPending, setPublishingPending] = useState(false);
+  const pendingPeerCount = useMemo(
+    () => (showFilters ? countUnresolvedPeerTransfers() : 0),
+    [entries, showFilters]
+  );
 
   useEffect(() => {
     if (!showFilters || failedCount === 0) {
@@ -1070,6 +1077,29 @@ export function ActivityFeed({
     }
   };
 
+  const publishPending = async () => {
+    if (publishingPending || pendingPeerCount === 0) return;
+    setPublishingPending(true);
+    try {
+      const result = await publishUnresolvedPeerTransfers();
+      if (result.published > 0 || result.confirmed > 0) {
+        toastSuccess(
+          "Pending transfers submitted",
+          `${result.published} original signed transaction${
+            result.published === 1 ? "" : "s"
+          } published${result.confirmed ? `; ${result.confirmed} already confirmed` : ""}.`
+        );
+      } else {
+        toastError(
+          "No transfers submitted",
+          result.errors[0] ?? "The signed transaction bodies are not available yet."
+        );
+      }
+    } finally {
+      setPublishingPending(false);
+    }
+  };
+
   // Drop a selected app filter if that origin disappears.
   useEffect(() => {
     if (filters.origin === "all") return;
@@ -1159,6 +1189,22 @@ export function ActivityFeed({
       <div className="connected-panel-head-actions">
         {showCount ? (
           <span className="connected-count">{filtered.length}</span>
+        ) : null}
+        {showFilters && pendingPeerCount > 0 ? (
+          <button
+            type="button"
+            className="activity-rebroadcast-failed"
+            disabled={publishingPending}
+            title="Publish original signed peer transfers still waiting on recipients"
+            onClick={() => {
+              playWalletSound("soft");
+              void publishPending();
+            }}
+          >
+            {publishingPending
+              ? "Publishing…"
+              : `Publish pending ${pendingPeerCount}`}
+          </button>
         ) : null}
         {showFilters && rebroadcastCount > 0 ? (
           <button
