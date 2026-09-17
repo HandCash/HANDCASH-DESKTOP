@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.217] - 2026-09-17
+
+### Fixed
+
+- **UTXO overlay mutations are transaction-shaped.** Proven-spent coins are
+  adopted under a named spender or quarantined until that body exists — never
+  consumed with a blank `spentBy`. Draft reservations expire after 15 minutes;
+  quarantine is not thawed on a timer. A local `failed` row that is actually
+  on-chain is restored as that transaction.
+
 ## [1.3.216] - 2026-09-17
 
 ### Fixed

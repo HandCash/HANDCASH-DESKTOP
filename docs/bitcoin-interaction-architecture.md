@@ -59,6 +59,10 @@ Symptom: **displayed** balance > **spendable** (pending local change).
 Heal rules:
 - **Tri-state evidence only:** `spent` removes a spendable UTXO; `unspent`
   restores a dropped UTXO; `unknown` makes no mutation.
+- UTXO writes are transaction-shaped (Cloud lesson): revert or restore a local
+  tx, adopt a named spender, or quarantine when spent but the spender body is
+  unknown. Draft reservations expire; quarantine is not thawed on a timer.
+  Failed local rows that explorers prove on-chain restore as that transaction.
 - `isUtxo === false`, explorer 404, Arcade status, and transaction absence are
   not proof of a spend. Unconfirmed local cheques remain sealed.
 - Restoring requires affirmative UTXO evidence (or a known source transaction

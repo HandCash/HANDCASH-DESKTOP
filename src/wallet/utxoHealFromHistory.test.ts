@@ -23,15 +23,18 @@ const mocks = vi.hoisted(() => {
   }),
   failUnsentLocalTx: vi.fn(async () => false),
   restoreOnChainLocalTx: vi.fn(async () => false),
+  restoreFailedLocalTxsKnownOnChain: vi.fn(async () => 0),
   listFailedLocalTxids: vi.fn(async () => [] as string[]),
   listPendingLocalChangeTxids: vi.fn(async () => [] as string[]),
   reconcileKnownUtxosByEvidence: vi.fn(async () => ({
     checked: 3,
     hiddenSpent: 0,
     restoredUnspent: 0,
+    quarantined: 0,
     unknown: 0,
     spentOutpoints: [] as string[],
     restoredOutpoints: [] as string[],
+    quarantinedOutpoints: [] as string[],
   })),
   clearDurableStore: () => {
     for (const key of Object.keys(durableStore)) delete durableStore[key]
@@ -89,6 +92,8 @@ vi.mock('./staleOutputRelease', () => ({
   failUnsentLocalTx: (...args: unknown[]) => mocks.failUnsentLocalTx(...args),
   restoreOnChainLocalTx: (...args: unknown[]) =>
     mocks.restoreOnChainLocalTx(...args),
+  restoreFailedLocalTxsKnownOnChain: (...args: unknown[]) =>
+    mocks.restoreFailedLocalTxsKnownOnChain(...args),
 }))
 
 vi.mock('./durableStorage', () => ({

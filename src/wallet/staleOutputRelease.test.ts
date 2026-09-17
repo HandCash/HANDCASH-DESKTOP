@@ -50,7 +50,7 @@ const {
 const sentItemGuard = await import('./sentItemGuard')
 
 describe('chooseUtxoEvidenceAction', () => {
-  it('removes only a currently spendable output proven spent', () => {
+  it('quarantines a spent spendable output until a spender tx can be inserted', () => {
     expect(
       chooseUtxoEvidenceAction({
         verdict: 'spent',
@@ -59,7 +59,7 @@ describe('chooseUtxoEvidenceAction', () => {
         blockedByLocalSpend: false,
         itemTransferPending: false,
       }),
-    ).toEqual({ action: 'remove', reason: 'proven-spent' })
+    ).toEqual({ action: 'quarantine', reason: 'spent-spender-unknown' })
     expect(
       chooseUtxoEvidenceAction({
         verdict: 'unknown',
@@ -69,6 +69,30 @@ describe('chooseUtxoEvidenceAction', () => {
         itemTransferPending: false,
       }),
     ).toEqual({ action: 'keep', reason: 'unknown' })
+  })
+
+  it('adopts a named local spender instead of quarantining', () => {
+    expect(
+      chooseUtxoEvidenceAction({
+        verdict: 'spent',
+        spendable: true,
+        hasToolboxSpender: true,
+        blockedByLocalSpend: false,
+        itemTransferPending: false,
+      }),
+    ).toEqual({ action: 'remove', reason: 'proven-spent' })
+  })
+
+  it('keeps a live local cheque instead of writing off the coin', () => {
+    expect(
+      chooseUtxoEvidenceAction({
+        verdict: 'spent',
+        spendable: true,
+        hasToolboxSpender: false,
+        blockedByLocalSpend: true,
+        itemTransferPending: false,
+      }),
+    ).toEqual({ action: 'keep', reason: 'local-spend' })
   })
 
   it('restores only a proven-unspent dropped output with no local owner', () => {
@@ -813,6 +837,8 @@ describe('hideSpentOutpoints', () => {
 
     await expect(hideSpentOutpoints([`${txid}.1`])).resolves.toBe(1)
     expect(updateOutput).toHaveBeenCalledWith(3, { spendable: false })
+    expect(getUtxoLock(`${txid}.1`)?.spentBy).toBeNull()
+    expect(getUtxoLock(`${txid}.1`)?.diagnostic).toBe('quarantine:spent-unknown')
   })
 })
 

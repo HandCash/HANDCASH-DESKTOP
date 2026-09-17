@@ -5,40 +5,43 @@
  * advances MINED when BUMP verifies, rolls back rejects, thaws frozen UTXOs
  * that the indexer still shows as spendable.
  */
-import { tryFinalizeDualLayerTx } from './dualLayerSend'
-import { txExistsOnChain } from './legacyScan'
-import { getActiveWallet } from './session'
-import { listPendingConfirmation,
+import { tryFinalizeDualLayerTx } from "./dualLayerSend";
+import { txExistsOnChain } from "./legacyScan";
+import { getActiveWallet } from "./session";
+import {
+  listPendingConfirmation,
   listTxRecords,
   markTxFailed,
   transitionTx,
-} from './txStore'
-import { listUtxoLocks, rollbackLocks, thawUtxo } from './utxoLockManager'
-import { isUnspendable } from './utxoLifecycle'
-import { shouldYieldChainIngestToSpend } from './walletCoordinator'
-import { signedTxSpendConflictIsProven } from './arcadeSubmitGuard'
+} from "./txStore";
+import {
+  listUtxoLocks,
+  rollbackLocks,
+  thawUtxo,
+  expireStaleUtxoReservations,
+} from "./utxoLockManager";
+import { isQuarantined, isUnspendable } from "./utxoLifecycle";
+import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
+import { signedTxSpendConflictIsProven } from "./arcadeSubmitGuard";
 
 export type TxReconcileResult = {
-  checked: number
-  mined: number
-  failed: number
-  orphaned: number
-  thawed: number
-  rolledBack: number
-}
+  checked: number;
+  mined: number;
+  failed: number;
+  orphaned: number;
+  thawed: number;
+  rolledBack: number;
+};
 
-const MISSING_TX_CONFLICT_GRACE_MS = 30 * 60_000
+const MISSING_TX_CONFLICT_GRACE_MS = 30 * 60_000;
 
 /** Explorer absence is lag, not rejection; only a proven conflicting spend may fail. */
 export function missingTxMayReject(
   updatedAt: number,
   conflictProven: boolean,
-  now = Date.now(),
+  now = Date.now()
 ): boolean {
-  return (
-    conflictProven &&
-    now - updatedAt > MISSING_TX_CONFLICT_GRACE_MS
-  )
+  return conflictProven && now - updatedAt > MISSING_TX_CONFLICT_GRACE_MS;
 }
 
 /**
@@ -53,29 +56,29 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
     orphaned: 0,
     thawed: 0,
     rolledBack: 0,
-  }
+  };
 
-  const active = getActiveWallet()
-  const chain = active?.chain
-  if (!chain) return result
+  const active = getActiveWallet();
+  const chain = active?.chain;
+  if (!chain) return result;
 
-  const pending = listPendingConfirmation()
+  const pending = listPendingConfirmation();
   for (const rec of pending) {
-    if (shouldYieldChainIngestToSpend()) break
-    result.checked += 1
+    if (shouldYieldChainIngestToSpend()) break;
+    result.checked += 1;
     if (!rec.txid) {
       // Broadcasting without txid for > 10 minutes → fail + unlock.
       if (Date.now() - rec.updatedAt > 10 * 60_000) {
-        markTxFailed(rec.id, 'UNKNOWN', 'Broadcast never produced a txid')
-        result.rolledBack += rollbackLocks(rec.id)
-        result.failed += 1
+        markTxFailed(rec.id, "UNKNOWN", "Broadcast never produced a txid");
+        result.rolledBack += rollbackLocks(rec.id);
+        result.failed += 1;
       }
-      continue
+      continue;
     }
 
     try {
-      const onChain = await txExistsOnChain(rec.txid, chain)
-      if (onChain === false && rec.status === 'SEEN_IN_MEMPOOL') {
+      const onChain = await txExistsOnChain(rec.txid, chain);
+      if (onChain === false && rec.status === "SEEN_IN_MEMPOOL") {
         // Explorers can lag long after a miner accepts a signed transaction.
         // Fail only when the transaction is still absent and one of its inputs
         // is conclusively spent by another transaction.
@@ -85,24 +88,24 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
                 txid: rec.txid,
                 chain,
               })
-            : false
+            : false;
         if (missingTxMayReject(rec.updatedAt, conflictProven)) {
           markTxFailed(
             rec.id,
-            'ARC_REJECTED',
-            'A transaction input was spent by a conflicting transaction',
-          )
-          result.rolledBack += rollbackLocks(rec.id)
-          result.failed += 1
+            "ARC_REJECTED",
+            "A transaction input was spent by a conflicting transaction"
+          );
+          result.rolledBack += rollbackLocks(rec.id);
+          result.failed += 1;
         }
-        continue
+        continue;
       }
 
-      const before = rec.status
-      const after = await tryFinalizeDualLayerTx(rec.id)
-      if (after?.status === 'MINED' && before !== 'MINED') result.mined += 1
+      const before = rec.status;
+      const after = await tryFinalizeDualLayerTx(rec.id);
+      if (after?.status === "MINED" && before !== "MINED") result.mined += 1;
     } catch (err) {
-      console.warn('[tx-reconcile] pending check failed', rec.txid, err)
+      console.warn("[tx-reconcile] pending check failed", rec.txid, err);
     }
   }
 
@@ -111,29 +114,39 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
   // future MINED → REORG_ORPHANED transition.
 
   // Thaw frozen UTXOs after 24h with no owner (reconcile may re-lock later).
+  // Quarantine (spent, spender unknown) stays until a spending tx is inserted.
   for (const lock of listUtxoLocks()) {
-    if (!isUnspendable(lock)) continue
-    if (Date.now() - lock.updatedAt < 24 * 60 * 60_000) continue
-    thawUtxo(lock.outpoint)
-    result.thawed += 1
+    if (!isUnspendable(lock)) continue;
+    if (isQuarantined(lock)) continue;
+    if (Date.now() - lock.updatedAt < 24 * 60 * 60_000) continue;
+    thawUtxo(lock.outpoint);
+    result.thawed += 1;
   }
+
+  result.rolledBack += expireStaleUtxoReservations({
+    liveOwnerIds: listTxRecords()
+      .filter(
+        (rec) => rec.status !== "FAILED_REJECTED" && rec.status !== "MINED"
+      )
+      .map((rec) => rec.id),
+  });
 
   // Promote REORG_ORPHANED back toward mempool when still broadcastable.
   for (const rec of listTxRecords()) {
-    if (rec.status !== 'REORG_ORPHANED' || !rec.txid) continue
+    if (rec.status !== "REORG_ORPHANED" || !rec.txid) continue;
     try {
-      const onChain = await txExistsOnChain(rec.txid, chain)
+      const onChain = await txExistsOnChain(rec.txid, chain);
       if (onChain === true) {
-        transitionTx(rec.id, 'SEEN_IN_MEMPOOL', {
+        transitionTx(rec.id, "SEEN_IN_MEMPOOL", {
           diagnostic: null,
           diagnosticDetail: null,
-        })
-        await tryFinalizeDualLayerTx(rec.id)
+        });
+        await tryFinalizeDualLayerTx(rec.id);
       }
     } catch {
       // leave orphaned
     }
   }
 
-  return result
+  return result;
 }

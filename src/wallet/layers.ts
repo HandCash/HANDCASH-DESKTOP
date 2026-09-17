@@ -92,6 +92,10 @@
  *   beside settle-path machines; hard finality is MINED only after SPV-verified
  *   BUMP. Overlay uses BRC-38 `spendable` / `spentBy` so coins are hidden
  *   without deleting toolbox rows (`lockOwnerId` is a local send reservation).
+ *   UTXO writes follow Cloud's lesson: revert or restore a local tx, adopt a
+ *   named spender, or quarantine until that spender can be inserted — never
+ *   invent a competing spend by editing the UTXO set directly. Reservations
+ *   expire; quarantine is not thawed on a timer.
  *   Refresh never asks the indexer `isUtxo` to resurrect coins — only change of
  *   a live local tx is restored, and inputs of those txs are re-hidden.
  *   Never treat HTTP 200 / postBeef accept as mined. Activity never drops a signed send
@@ -126,139 +130,139 @@
  *   move recovered physical sats into managed change / `balanceView`.
  */
 
-import { fetchBalanceSats, getActiveWallet } from './session'
+import { fetchBalanceSats, getActiveWallet } from "./session";
 
 /** Named layers — use in comments, health aggregates, and new APIs. */
 export type WalletLayer =
-  | 'custody'
-  | 'localState'
-  | 'chainIngest'
-  | 'historyReplica'
-  | 'balanceView'
-  | 'health'
+  | "custody"
+  | "localState"
+  | "chainIngest"
+  | "historyReplica"
+  | "balanceView"
+  | "health";
 
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
-  custody: ['vault.ts', 'sessionBackupAuth.ts'],
+  custody: ["vault.ts", "sessionBackupAuth.ts"],
   localState: [
-    'session.ts',
-    'collectables.ts',
-    'token/index.ts',
-    'token/types.ts',
-    'token/decode162.ts',
-    'token/list.ts',
-    'token/listTips.ts',
-    'token/send.ts',
-    'token/sendEntry.ts',
-    'token/sendPlan.ts',
-    'token/burn.ts',
-    'token/prove176.ts',
-    'token/settle.ts',
-    'token/issuer.ts',
-    'retiredFungible.ts',
-    'token/sendMachine.ts',
-    'token/icons/cache.ts',
-    'token/icons/resolve.ts',
-    'token/marketView.ts',
-    'burnPlan.ts',
-    'burnMachine.ts',
-    'burn.ts',
-    'burnEconomics.ts',
-    'brc100Handler.ts',
-    'oneSatProvenance.ts',
-    'authenticityMachine.ts',
-    'collectableSendMachine.ts',
-    'itemSendMachine.ts',
-    'spendAttempt.ts',
-    'itemSettlePath.ts',
-    'ingestItemSettle.ts',
-    'bsvSendMachine.ts',
-    'brc29SettlePath.ts',
-    'brc29SendMachine.ts',
-    'collectableTipKind.ts',
-    'collectableOwnershipFate.ts',
-    'sentItemGuard.ts',
-    'pendingSend.ts',
-    'sendPayment.ts',
-    'sendBrc29Payment.ts',
-    'marketListing.ts',
-    'marketListingPath.ts',
-    'marketSettlement.ts',
-    'marketSettlementPath.ts',
-    'marketOverlayProtocol.ts',
-    'marketOffer/index.ts',
-    'spendVerdict/index.ts',
-    'chainProbe/index.ts',
-    'ingestPaymentByTxid.ts',
-    'inscriptionCache.ts',
-    'provenCache.ts',
-    'txLifecycle.ts',
-    'txLifecycleMachine.ts',
-    'txStore.ts',
-    'utxoLifecycle.ts',
-    'utxoLockManager.ts',
-    'protocolValidate.ts',
-    'arcStatusMap.ts',
-    'spvFinality.ts',
-    'dualLayerSend.ts',
+    "session.ts",
+    "collectables.ts",
+    "token/index.ts",
+    "token/types.ts",
+    "token/decode162.ts",
+    "token/list.ts",
+    "token/listTips.ts",
+    "token/send.ts",
+    "token/sendEntry.ts",
+    "token/sendPlan.ts",
+    "token/burn.ts",
+    "token/prove176.ts",
+    "token/settle.ts",
+    "token/issuer.ts",
+    "retiredFungible.ts",
+    "token/sendMachine.ts",
+    "token/icons/cache.ts",
+    "token/icons/resolve.ts",
+    "token/marketView.ts",
+    "burnPlan.ts",
+    "burnMachine.ts",
+    "burn.ts",
+    "burnEconomics.ts",
+    "brc100Handler.ts",
+    "oneSatProvenance.ts",
+    "authenticityMachine.ts",
+    "collectableSendMachine.ts",
+    "itemSendMachine.ts",
+    "spendAttempt.ts",
+    "itemSettlePath.ts",
+    "ingestItemSettle.ts",
+    "bsvSendMachine.ts",
+    "brc29SettlePath.ts",
+    "brc29SendMachine.ts",
+    "collectableTipKind.ts",
+    "collectableOwnershipFate.ts",
+    "sentItemGuard.ts",
+    "pendingSend.ts",
+    "sendPayment.ts",
+    "sendBrc29Payment.ts",
+    "marketListing.ts",
+    "marketListingPath.ts",
+    "marketSettlement.ts",
+    "marketSettlementPath.ts",
+    "marketOverlayProtocol.ts",
+    "marketOffer/index.ts",
+    "spendVerdict/index.ts",
+    "chainProbe/index.ts",
+    "ingestPaymentByTxid.ts",
+    "inscriptionCache.ts",
+    "provenCache.ts",
+    "txLifecycle.ts",
+    "txLifecycleMachine.ts",
+    "txStore.ts",
+    "utxoLifecycle.ts",
+    "utxoLockManager.ts",
+    "protocolValidate.ts",
+    "arcStatusMap.ts",
+    "spvFinality.ts",
+    "dualLayerSend.ts",
   ],
   chainIngest: [
-    'chainIngest.ts',
-    'chainProofKind.ts',
-    'blockHeaders.ts',
-    'chainTrackerFallback.ts',
-    'spvFinality.ts',
-    'walletProgress.ts',
-    'ingestLegacyAddress.ts',
-    'legacyScan.ts',
-    'legacySweepPath.ts',
-    'legacyStuckSweep.ts',
-    'legacyReceiptActivity.ts',
-    'ordinalMigratePath.ts',
-    'changeConsolidationPath.ts',
-    'consolidateChange.ts',
-    'oneSatImport.ts',
-    'asyncPool.ts',
-    'legacyImportGuard.ts',
-    'oneSatImportGuard.ts',
-    'oneSatCollectableGuard.ts',
-    'healMisfiledBsv21.ts',
-    'healMisfiledCollectables.ts',
-    'staleOutputRelease.ts',
-    'spendVerdict/index.ts',
-    'chainProbe/index.ts',
-    'txReconcile.ts',
+    "chainIngest.ts",
+    "chainProofKind.ts",
+    "blockHeaders.ts",
+    "chainTrackerFallback.ts",
+    "spvFinality.ts",
+    "walletProgress.ts",
+    "ingestLegacyAddress.ts",
+    "legacyScan.ts",
+    "legacySweepPath.ts",
+    "legacyStuckSweep.ts",
+    "legacyReceiptActivity.ts",
+    "ordinalMigratePath.ts",
+    "changeConsolidationPath.ts",
+    "consolidateChange.ts",
+    "oneSatImport.ts",
+    "asyncPool.ts",
+    "legacyImportGuard.ts",
+    "oneSatImportGuard.ts",
+    "oneSatCollectableGuard.ts",
+    "healMisfiledBsv21.ts",
+    "healMisfiledCollectables.ts",
+    "staleOutputRelease.ts",
+    "spendVerdict/index.ts",
+    "chainProbe/index.ts",
+    "txReconcile.ts",
   ],
   historyReplica: [
-    'historyBackup.ts',
-    'walletSetupApply.ts',
-    'deviceSync.ts',
-    'deviceWallets.ts',
-    'deviceKeyBackup.ts',
-    'phraseSweep.ts',
-    'cloudBackupHealth.ts',
-    'historyEmptyGuard.ts',
-    'recompose.ts',
+    "historyBackup.ts",
+    "walletSetupApply.ts",
+    "deviceSync.ts",
+    "deviceWallets.ts",
+    "deviceKeyBackup.ts",
+    "phraseSweep.ts",
+    "cloudBackupHealth.ts",
+    "historyEmptyGuard.ts",
+    "recompose.ts",
   ],
   balanceView: [
-    'balanceView.ts',
-    'session.ts#fetchBalanceSats',
-    'layers.ts#inspectLocalToolboxState',
+    "balanceView.ts",
+    "session.ts#fetchBalanceSats",
+    "layers.ts#inspectLocalToolboxState",
   ],
   health: [
-    'walletHealth.ts',
-    'walletProgress.ts',
-    'cloudBackupHealth.ts',
-    'backupStatus.ts',
-    'walletRuntimeStatus.ts',
+    "walletHealth.ts",
+    "walletProgress.ts",
+    "cloudBackupHealth.ts",
+    "backupStatus.ts",
+    "walletRuntimeStatus.ts",
   ],
   coordinator: [
-    'walletCoordinatorMachine.ts',
-    'walletCoordinator.ts',
-    'spendGuard.ts',
-    'spendLease.ts',
+    "walletCoordinatorMachine.ts",
+    "walletCoordinator.ts",
+    "spendGuard.ts",
+    "spendLease.ts",
   ],
-} as const satisfies Record<WalletLayer | 'coordinator', readonly string[]>
+} as const satisfies Record<WalletLayer | "coordinator", readonly string[]>;
 
 /**
  * Feature modules sit on top of layers. A layer answers *where money lives*;
@@ -272,66 +276,66 @@ export const WALLET_LAYER_MODULES = {
  * Template: `token/`. Callers import the module, never internals.
  */
 export const WALLET_FEATURE_MODULES = {
-  tokens: 'token/index.ts',
-  spendVerdict: 'spendVerdict/index.ts',
-  chainProbe: 'chainProbe/index.ts',
-  marketOffer: 'marketOffer/index.ts',
-  uiFeed: 'components/uiFeed/index.ts',
-} as const
+  tokens: "token/index.ts",
+  spendVerdict: "spendVerdict/index.ts",
+  chainProbe: "chainProbe/index.ts",
+  marketOffer: "marketOffer/index.ts",
+  uiFeed: "components/uiFeed/index.ts",
+} as const;
 
 /**
  * Composed recovery entry — prefer over calling history + chain separately.
  * Isolated from Refresh: do not call from Dashboard / spend paths.
  */
-export const RECOMPOSE_MODULE = 'recompose.ts' as const
+export const RECOMPOSE_MODULE = "recompose.ts" as const;
 
 /** Empty-local × remote clobber predicate — unit-tested in isolation. */
-export const HISTORY_EMPTY_GUARD_MODULE = 'historyEmptyGuard.ts' as const
+export const HISTORY_EMPTY_GUARD_MODULE = "historyEmptyGuard.ts" as const;
 
 /**
  * Snapshot of toolbox IndexedDB richness — not the same as spendable balance.
  * A fully spent wallet can still have actions + remittance metadata that BRC-39 must keep.
  */
 export type LocalToolboxState = {
-  spendableSats: number
-  defaultOutputCount: number
-  oneSatOutputCount: number
+  spendableSats: number;
+  defaultOutputCount: number;
+  oneSatOutputCount: number;
   /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
-  bsv21OutputCount: number
-  actionCount: number
+  bsv21OutputCount: number;
+  actionCount: number;
   /** True only when there is nothing worth restoring/pushing as history. */
-  looksEmpty: boolean
-}
+  looksEmpty: boolean;
+};
 
 async function countOutputs(basket: string): Promise<number> {
-  const active = getActiveWallet()
-  if (!active) return 0
+  const active = getActiveWallet();
+  if (!active) return 0;
   try {
-    const result = await active.wallet.listOutputs({ basket, limit: 1 })
+    const result = await active.wallet.listOutputs({ basket, limit: 1 });
     if (Number.isFinite(result.totalOutputs))
-      return Math.max(0, Math.trunc(result.totalOutputs))
-    return result.outputs?.length ?? 0
+      return Math.max(0, Math.trunc(result.totalOutputs));
+    return result.outputs?.length ?? 0;
   } catch {
-    return 0
+    return 0;
   }
 }
 
 async function countActions(): Promise<number> {
-  const active = getActiveWallet()
-  if (!active) return 0
+  const active = getActiveWallet();
+  if (!active) return 0;
   try {
-    const result = await active.wallet.listActions({ labels: [], limit: 1 })
-    const total = (result as { totalActions?: number }).totalActions
-    if (Number.isFinite(total)) return Math.max(0, Math.trunc(total!))
-    return (result as { actions?: unknown[] }).actions?.length ?? 0
+    const result = await active.wallet.listActions({ labels: [], limit: 1 });
+    const total = (result as { totalActions?: number }).totalActions;
+    if (Number.isFinite(total)) return Math.max(0, Math.trunc(total!));
+    return (result as { actions?: unknown[] }).actions?.length ?? 0;
   } catch {
-    return 0
+    return 0;
   }
 }
 
 /** Inspect toolbox localState (IndexedDB). Prefer this over balance for BRC-39 empty checks. */
 export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
-  const active = getActiveWallet()
+  const active = getActiveWallet();
   if (!active) {
     return {
       spendableSats: 0,
@@ -340,7 +344,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
       bsv21OutputCount: 0,
       actionCount: 0,
       looksEmpty: true,
-    }
+    };
   }
 
   const [
@@ -351,17 +355,17 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     actionCount,
   ] = await Promise.all([
     fetchBalanceSats(active.wallet).catch(() => 0),
-    countOutputs('default'),
-    countOutputs('1sat'),
-    countOutputs('bsv21'),
+    countOutputs("default"),
+    countOutputs("1sat"),
+    countOutputs("bsv21"),
     countActions(),
-  ])
+  ]);
 
   // Item/token outputs from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must
   // not block empty-local recovery of spendable balance + TX history.
   const looksEmpty =
-    spendableSats <= 0 && defaultOutputCount <= 0 && actionCount <= 0
+    spendableSats <= 0 && defaultOutputCount <= 0 && actionCount <= 0;
 
   return {
     spendableSats,
@@ -370,9 +374,9 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     bsv21OutputCount,
     actionCount,
     looksEmpty,
-  }
+  };
 }
 
 export async function localToolboxStateLooksEmpty(): Promise<boolean> {
-  return (await inspectLocalToolboxState()).looksEmpty
+  return (await inspectLocalToolboxState()).looksEmpty;
 }
