@@ -72,7 +72,8 @@ import {
 } from "../wallet/activityActionMark";
 import {
   activityBatchName,
-  composeActivityRecords,
+  ACTIVITY_COMPOSE_WINDOW,
+  previewActivityRecords,
   type ActivityBatch,
   type ActivityRecord,
 } from "../wallet/activityRecords";
@@ -702,6 +703,7 @@ function eventIcon(entry: ActivityEntry) {
 
 type FeedProps = {
   chain?: Chain;
+  /** Records shown after composing a full transaction window. */
   limit?: number;
   title?: string;
   embedded?: boolean;
@@ -881,7 +883,9 @@ export function ActivityFeed({
   viewAllLabel,
   onViewAll,
 }: FeedProps) {
-  const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit);
+  const { entries, usdPerBsv, currency, origins } = useActivityFeed(
+    ACTIVITY_COMPOSE_WINDOW,
+  );
   const [filters, setFilters] = useState<PaymentFilters>(
     DEFAULT_PAYMENT_FILTERS
   );
@@ -909,7 +913,10 @@ export function ActivityFeed({
   );
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
-  const records = useMemo(() => composeActivityRecords(filtered), [filtered]);
+  const records = useMemo(
+    () => previewActivityRecords(filtered, limit),
+    [filtered, limit],
+  );
   const recordKeys = useContinuousRecordKeys(records);
   const shownCount = useChunkedCount(records.length, RENDER_CHUNK, scrolling);
   const windowed = useWindowedRange({

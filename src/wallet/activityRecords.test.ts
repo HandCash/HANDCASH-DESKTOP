@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   activityBatchName,
-  batchSiblingsForEntry,
+  ACTIVITY_COMPOSE_WINDOW,
+  previewActivityRecords,
   composeActivityRecords,
+  batchSiblingsForEntry,
 } from './activityRecords'
 import type { ActivityEntry } from './appActivity'
 
@@ -368,5 +370,32 @@ describe('composeActivityRecords', () => {
       'market-purchase-receive',
       'receive',
     ])
+  })
+
+  it('names a full batch when the preview slices records, not entries', () => {
+    const foxes = Array.from({ length: 12 }, (_, i) =>
+      collectable(`Pixel Foxes #${i + 1}`, i, { at: 1 }),
+    )
+    const newer = Array.from({ length: 6 }, (_, i) =>
+      entry({
+        method: 'receive',
+        sats: 100,
+        txid: `${'c'.repeat(62)}${i.toString(16).padStart(2, '0')}`,
+        at: 10 + i,
+      }),
+    )
+    const newestFifteen = [...newer, ...foxes]
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 15)
+    const truncated = composeActivityRecords(newestFifteen)
+    const foxRow = truncated.find((row) => row.batch)
+    expect(foxRow?.batch?.count).toBe(9)
+
+    const preview = previewActivityRecords([...newer, ...foxes], 15)
+    expect(preview.find((row) => row.batch)?.batch).toEqual({
+      count: 12,
+      label: 'Pixel Foxes',
+    })
+    expect(ACTIVITY_COMPOSE_WINDOW).toBeGreaterThan(15)
   })
 })

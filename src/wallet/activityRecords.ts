@@ -336,3 +336,17 @@ export function composeActivityRecords(
     }
   })
 }
+
+/**
+ * How far a feed reads before composing. Preview columns must slice *records*,
+ * not raw entries — otherwise a 12-fox receive becomes "9 Pixel Foxes" when
+ * six newer coin rows already filled a 15-entry cap.
+ */
+export const ACTIVITY_COMPOSE_WINDOW = 200
+
+export function previewActivityRecords(
+  entries: readonly ActivityEntry[],
+  maxRecords: number,
+): ActivityRecord[] {
+  return composeActivityRecords(entries).slice(0, Math.max(0, maxRecords))
+}
