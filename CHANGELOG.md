@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.228] - 2026-09-17
+
+### Fixed
+
+- Updated the Linux Activity badge baseline to the intentional light-mode
+  subscript treatment already shipped in the UI. The snapshot now matches the
+  stable CI render instead of failing on the old glyph/color baseline.
+
 ## [1.3.227] - 2026-09-17
 
 ### Fixed
