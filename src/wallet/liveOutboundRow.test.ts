@@ -10,6 +10,7 @@ const OTHER = `${'b'.repeat(64)}.1`
 function sending(outpoint?: string): PaymentProgress {
   return {
     phase: 'broadcasting',
+    startedAt: NOW - 1_000,
     detail: 'Sending…',
     outpoint: outpoint ? outpoint.replace(/\./g, '_') : null,
   } as PaymentProgress
@@ -84,6 +85,33 @@ describe('mergeLiveOutbound', () => {
     expect(mergeLiveOutbound([settled], progress, NOW).map((e) => e.id)).toEqual([
       'durable',
     ])
+  })
+
+  it('does not paint a coin-send ghost after this operation settled', () => {
+    const settled = pendingRow({
+      status: undefined,
+      method: 'send',
+      item: undefined,
+      txid: 'c'.repeat(64),
+    })
+
+    expect(mergeLiveOutbound([settled], sending(), NOW).map((e) => e.id)).toEqual([
+      'durable',
+    ])
+  })
+
+  it('does not let a previous settled payment hide a new send', () => {
+    const previous = pendingRow({
+      status: undefined,
+      method: 'send',
+      item: undefined,
+      txid: 'c'.repeat(64),
+      at: NOW - 2_000,
+    })
+
+    expect(mergeLiveOutbound([previous], sending(), NOW)[0]?.id).toBe(
+      LIVE_OUTBOUND_ID,
+    )
   })
 
   it('drops a leftover live row when nothing is in flight', () => {

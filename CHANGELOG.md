@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.235] - 2026-09-18
+
+### Fixed
+
+- **Completed BRC-29 payments no longer leave a ghost "Sending…" Activity
+  row.** Payment progress now carries the current operation's start boundary,
+  and the live Activity projection stands down when a settled outbound row
+  from that operation exists. A prior payment cannot hide a genuinely new send.
+
 ## [1.3.234] - 2026-09-18
 
 ### Fixed

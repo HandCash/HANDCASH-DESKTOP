@@ -28,6 +28,8 @@ export type PaymentPhase =
 
 export type PaymentProgress = {
   phase: PaymentPhase
+  /** Identity boundary for the current operation, preserved across its phases. */
+  startedAt: number | null
   /** Short pill / title line. */
   label: string | null
   /** Longer subtitle. */
@@ -45,6 +47,7 @@ const listeners = new Set<Listener>()
 
 let progress: PaymentProgress = {
   phase: 'idle',
+  startedAt: null,
   label: null,
   detail: null,
   outpoint: null,
@@ -241,7 +244,13 @@ export function setPaymentProgress(
   flow?: TransactionFlow,
 ): void {
   if (phase === 'idle') {
-    progress = { phase: 'idle', label: null, detail: null, outpoint: null }
+    progress = {
+      phase: 'idle',
+      startedAt: null,
+      label: null,
+      detail: null,
+      outpoint: null,
+    }
     clearStuckWatchdog()
     emit()
     return
@@ -262,6 +271,8 @@ export function setPaymentProgress(
         : copy.label
   progress = {
     phase,
+    startedAt:
+      previousPhase === 'idle' ? Date.now() : progress.startedAt ?? Date.now(),
     label: nextLabel,
     detail: detail?.trim() || copy.detail,
     outpoint: nextOutpoint,

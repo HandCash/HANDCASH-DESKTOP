@@ -105,6 +105,33 @@ function hasDurableRowForSend(
   })
 }
 
+/**
+ * A completed durable row created during this progress run is the terminal
+ * projection of the same operation. This identity boundary prevents a stale
+ * global progress snapshot from painting a second zero-sat "Sending…" row
+ * above a send that has already settled.
+ */
+function hasSettledRowForSend(
+  entries: ActivityEntry[],
+  progress: PaymentProgress,
+): boolean {
+  if (progress.startedAt == null) return false
+  const sending = dottedOutpoint(progress.outpoint)
+  return entries.some((entry) => {
+    if (
+      entry.kind !== 'spent' ||
+      entry.status === 'pending' ||
+      entry.status === 'failed' ||
+      !entry.txid ||
+      entry.at < progress.startedAt!
+    ) {
+      return false
+    }
+    const outpoint = dottedOutpoint(entry.item?.outpoint)
+    return sending ? outpoint === sending : !outpoint
+  })
+}
+
 export function mergeLiveOutbound(
   entries: ActivityEntry[],
   progress: PaymentProgress,
@@ -116,6 +143,7 @@ export function mergeLiveOutbound(
   if (progress.phase === 'idle' || progress.phase === 'finishing') {
     return withoutLive
   }
+  if (hasSettledRowForSend(withoutLive, progress)) return withoutLive
   if (hasDurableRowForSend(withoutLive, progress, now)) return withoutLive
   return [liveOutboundActivityEntry(progress, now), ...withoutLive]
 }
