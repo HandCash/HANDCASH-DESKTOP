@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.236] - 2026-09-18
+
+### Fixed
+
+- **Transaction tracing stops dialling a telemetry sink that is not
+  deployed.** BRC-CLOUD has no `/v1/telemetry/events` route, so every boot,
+  `online` event, and 60s tick re-posted the same batch, took a 404, and kept
+  the queue — pinning `MAX_QUEUE` events in durable storage and burying real
+  warnings under ~50 `[tx-trace] flush deferred HTTP 404` lines per session.
+  A 404/410 now names the sink absent once and drops the queue; 5xx and
+  network errors still retry.
+
 ## [1.3.235] - 2026-09-18
 
 ### Fixed

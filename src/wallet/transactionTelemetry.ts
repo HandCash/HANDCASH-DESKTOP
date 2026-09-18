@@ -74,6 +74,12 @@ type DurationHistory = Record<string, number[]>
 let activeTrace: ActiveTrace | null = null
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let flushInFlight: Promise<void> | null = null
+/**
+ * A 404/410 sink is not deployed. Retrying it on every boot, `online`, and
+ * 60s tick never drains the queue — it just pins MAX_QUEUE events in durable
+ * storage and buries real warnings in the session log we debug from.
+ */
+let sinkAbsent = false
 
 function id(prefix: string): string {
   const random =
@@ -258,7 +264,7 @@ export async function flushTransactionTelemetry(): Promise<void> {
     const active = getActiveWallet()
     const base = DEFAULT_BRC_CLOUD_BASE_URL.trim().replace(/\/+$/, '')
     const queued = readQueue()
-    if (!active?.rootKeyHex || !base || queued.length === 0) return
+    if (sinkAbsent || !active?.rootKeyHex || !base || queued.length === 0) return
     const batch = queued.slice(0, BATCH_SIZE)
     const response = await fetch(`${base}/v1/telemetry/events`, {
       method: 'POST',
@@ -272,6 +278,12 @@ export async function flushTransactionTelemetry(): Promise<void> {
       },
       body: JSON.stringify({ version: 1, events: batch }),
     })
+    if (response.status === 404 || response.status === 410) {
+      sinkAbsent = true
+      writeQueue([])
+      console.info(`[tx-trace] no telemetry sink at ${base} (HTTP ${response.status}) — tracing off`)
+      return
+    }
     if (!response.ok) {
       throw new Error(`telemetry HTTP ${response.status}`)
     }
@@ -291,7 +303,7 @@ export async function flushTransactionTelemetry(): Promise<void> {
 }
 
 export function scheduleTransactionTelemetryFlush(delayMs = 750): void {
-  if (flushTimer) return
+  if (flushTimer || sinkAbsent) return
   flushTimer = setTimeout(() => {
     flushTimer = null
     void flushTransactionTelemetry().catch((error) => {
@@ -308,6 +320,7 @@ export function __resetTransactionTelemetryForTests(): void {
   if (flushTimer) clearTimeout(flushTimer)
   flushTimer = null
   flushInFlight = null
+  sinkAbsent = false
   durableSetItem(QUEUE_KEY, '[]')
   durableSetItem(HISTORY_KEY, '{}')
 }
