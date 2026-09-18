@@ -59,6 +59,12 @@ import {
   txHadArcadeSubmitContact,
 } from "./arcadeSubmitGuard";
 import { chooseSpentCoinMutation, isNamedSpenderTxid } from "./utxoTxMutation";
+import {
+  derivedChangeEchoLockKeys,
+  derivedChangeEchoSatoshis,
+  rememberDerivedChangeFromRows,
+} from "./derivedChangeEcho";
+import { pickReclaimSeals } from "./reclaimSealBatch";
 
 export { isAlreadySpentInputError } from "./spendVerdict";
 export { isLiveLocalTxStatus } from "./kernel/txLiveness";
@@ -1086,6 +1092,20 @@ export async function restoreUnspentAssetOutpoint(
 
 /** Sealed coins to re-check per pass, so a long-lived wallet cannot stall. */
 const RECLAIM_MAX = 200;
+/** Rotate through low-value blank seals so position 200+ is not permanently skipped. */
+let blankReclaimCursor = 0;
+let namedReclaimCursor = 0;
+
+/** Test-only */
+export function __resetReclaimSealCursorsForTests(): void {
+  blankReclaimCursor = 0;
+  namedReclaimCursor = 0;
+}
+
+function rankSealSatoshis(outpoint: string, satoshis: number): number {
+  if (satoshis > 0) return satoshis;
+  return derivedChangeEchoSatoshis(outpoint);
+}
 
 /**
  * Give back coins sealed for a spend that never made it onto the chain.
@@ -1111,16 +1131,43 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
 
-  const sealedNamed = listUtxoLocks()
+  const echoKeys = derivedChangeEchoLockKeys();
+  const namedAll = listUtxoLocks()
     .filter((rec) => !!rec.spentBy && /^[0-9a-f]{64}$/.test(rec.spentBy))
-    .slice(0, RECLAIM_MAX);
-  const sealedBlank = listUtxoLocks()
+    .map((rec) => ({
+      outpoint: rec.outpoint,
+      satoshis: rankSealSatoshis(rec.outpoint, rec.satoshis),
+    }));
+  const blankAll = listUtxoLocks()
     .filter(
       (rec) =>
         rec.spendable === false &&
         (!rec.spentBy || !/^[0-9a-f]{64}$/.test(rec.spentBy))
     )
-    .slice(0, RECLAIM_MAX);
+    .map((rec) => ({
+      outpoint: rec.outpoint,
+      satoshis: rankSealSatoshis(rec.outpoint, rec.satoshis),
+    }));
+  const namedPick = pickReclaimSeals(namedAll, {
+    max: RECLAIM_MAX,
+    cursor: namedReclaimCursor,
+    priorityOutpoints: echoKeys,
+  });
+  const blankPick = pickReclaimSeals(blankAll, {
+    max: RECLAIM_MAX,
+    cursor: blankReclaimCursor,
+    priorityOutpoints: echoKeys,
+  });
+  namedReclaimCursor = namedPick.nextCursor;
+  blankReclaimCursor = blankPick.nextCursor;
+  const namedWanted = new Set(namedPick.picked.map((row) => row.outpoint));
+  const blankWanted = new Set(blankPick.picked.map((row) => row.outpoint));
+  const sealedNamed = listUtxoLocks().filter((rec) =>
+    namedWanted.has(rec.outpoint)
+  );
+  const sealedBlank = listUtxoLocks().filter((rec) =>
+    blankWanted.has(rec.outpoint)
+  );
   if (sealedNamed.length === 0 && sealedBlank.length === 0) return 0;
 
   let revived = 0;
@@ -1149,26 +1196,32 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
       }
     }
     if (reviveBlank.length > 0) {
-      for (const outpoint of reviveBlank) {
-        releaseConsumedUtxo(outpoint, "reclaim:blank-sealer");
-      }
+      const missingRows: string[] = [];
       try {
         await storage.runAsStorageProvider(async (activeSp) => {
           const sp = activeSp as unknown as LocalStorage;
           for (const outpoint of reviveBlank) {
             const parsed = parseOutpoint(outpoint);
             if (!parsed) continue;
-            const rows = await findOutputsForTxid(sp, parsed.txid);
+            const rows = await findOutputsForTxid(sp, parsed.txid, {
+              linkByTransactionId: true,
+            });
+            rememberDerivedChangeFromRows(rows);
             const match = rows.find(
               (row) => Number(row.vout ?? row.outputIndex) === parsed.vout
             );
             const outputId = positiveId(match?.outputId);
-            if (outputId == null) continue;
+            if (outputId == null) {
+              missingRows.push(outpoint);
+              continue;
+            }
             try {
               await sp.updateOutput(outputId, {
                 spendable: true,
                 spentBy: undefined,
               });
+              releaseConsumedUtxo(outpoint, "reclaim:blank-sealer");
+              revived += 1;
             } catch (err) {
               console.warn(
                 "[stale-output] reclaim spendable=true skipped",
@@ -1181,10 +1234,22 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
       } catch (err) {
         console.warn("[stale-output] reclaim toolbox rows skipped", err);
       }
-      console.info(
-        `[stale-output] reclaimed ${reviveBlank.length} blank-sealer input(s) still unspent`
-      );
-      revived += reviveBlank.length;
+      if (missingRows.length > 0) {
+        try {
+          const { reimportDerivedChangeOutpoints } = await import(
+            "./reimportDerivedChange"
+          );
+          const imported = await reimportDerivedChangeOutpoints(missingRows);
+          revived += imported.imported;
+        } catch (err) {
+          console.warn("[stale-output] derived-change reimport skipped", err);
+        }
+      }
+      if (revived > 0) {
+        console.info(
+          `[stale-output] reclaimed ${revived} blank-sealer input(s) still unspent`
+        );
+      }
     }
   }
 
@@ -1374,7 +1439,10 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
       for (const outpoint of revive) {
         const parsed = parseOutpoint(outpoint);
         if (!parsed) continue;
-        const rows = await findOutputsForTxid(sp, parsed.txid);
+        const rows = await findOutputsForTxid(sp, parsed.txid, {
+          linkByTransactionId: true,
+        });
+        rememberDerivedChangeFromRows(rows);
         const match = rows.find(
           (row) => Number(row.vout ?? row.outputIndex) === parsed.vout
         );
@@ -1737,6 +1805,7 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
       const rows = await findOutputsForTxid(sp, id, {
         linkByTransactionId: true,
       });
+      rememberDerivedChangeFromRows(rows);
       const txCache = new Map<number, TxStatusRow | null>();
       let kept = 0;
       for (const row of rows) {

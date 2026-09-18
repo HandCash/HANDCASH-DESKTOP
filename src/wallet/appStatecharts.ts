@@ -994,6 +994,7 @@ const CHAIN_INGEST_CHART = `flowchart TB
   START([refreshFromChain]) --> PRE[pending sends + abort reserved]
   PRE --> MAINT[parallel maintenance\\ndual-layer · ghost-heal\\nactivity prune · restore]
   MAINT --> SCAN[legacy address UTXO scan\\nfinder — not a cheque judge]
+  MAINT -.-> REIMP["reimport derived change\\ninternalize wallet payment\\nwhen remittance echo exists"]
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
   CLASS --> TIPS[1sat tips → importOneSatOrdinals]

@@ -30,6 +30,16 @@ vi.mock('./legacyScan', async (importOriginal) => {
   }
 })
 
+const reimportDerivedChangeOutpoints = vi.fn(async () => ({
+  imported: 0,
+  skipped: 0,
+  failed: 0,
+}))
+vi.mock('./reimportDerivedChange', () => ({
+  reimportDerivedChangeOutpoints: (...args: unknown[]) =>
+    reimportDerivedChangeOutpoints(...(args as [string[]])),
+}))
+
 const {
   isAlreadySpentInputError,
   isNoLongerSpendableError,
@@ -49,6 +59,7 @@ const {
   restoreUnspentAssetOutpoint,
   chooseUtxoEvidenceAction,
   pinBroadcastLocalTx,
+  __resetReclaimSealCursorsForTests,
 } = await import('./staleOutputRelease')
 const sentItemGuard = await import('./sentItemGuard')
 
@@ -1409,6 +1420,13 @@ describe('reclaimSealedInputsNeverSpent', () => {
     overlayStore.clear()
     __resetUtxoLocksForTests()
     __resetArcadeSubmitGuardForTests()
+    __resetReclaimSealCursorsForTests()
+    reimportDerivedChangeOutpoints.mockReset()
+    reimportDerivedChangeOutpoints.mockResolvedValue({
+      imported: 0,
+      skipped: 0,
+      failed: 0,
+    })
     txExistsOnChain.mockReset()
     spentStatusOfOutpoint.mockReset()
     txExistsOnChain.mockResolvedValue(false)
@@ -1530,6 +1548,55 @@ describe('reclaimSealedInputsNeverSpent', () => {
       11,
       expect.objectContaining({ spendable: true }),
     )
+  })
+
+  it('reimports blank-sealed coins that are live on chain but have no toolbox row', async () => {
+    const txid = 'ab'.repeat(32)
+    hideUtxo(`${txid}_4`, { diagnostic: 'already-spent', satoshis: 575_245 })
+    isUtxo.mockResolvedValue(true)
+    findOutputs.mockResolvedValue([])
+    findTransactions.mockResolvedValue([])
+    reimportDerivedChangeOutpoints.mockResolvedValue({
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+    })
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(1)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(reimportDerivedChangeOutpoints).toHaveBeenCalledWith([`${txid}_4`])
+  })
+
+  it('updates a blank-sealed row linked only by transactionId', async () => {
+    const txid = 'cd'.repeat(32)
+    hideUtxo(`${txid}_2`, { diagnostic: 'already-spent', satoshis: 530_259 })
+    isUtxo.mockResolvedValue(true)
+    findOutputs.mockImplementation(
+      async ({
+        partial,
+      }: {
+        partial?: { txid?: string; transactionId?: number }
+      }) => {
+        if (partial?.txid === txid) return []
+        if (partial?.transactionId === 9) {
+          return [{ outputId: 22, transactionId: 9, vout: 2, spendable: false }]
+        }
+        return []
+      },
+    )
+    findTransactions.mockResolvedValue([{ txid, transactionId: 9 }])
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(22, {
+      spendable: true,
+      spentBy: undefined,
+    })
+    expect(reimportDerivedChangeOutpoints).not.toHaveBeenCalled()
+    expect(getUtxoLock(`${txid}_2`)?.spendable).toBe(true)
   })
 })
 

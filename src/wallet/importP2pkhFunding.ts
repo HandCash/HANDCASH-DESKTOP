@@ -138,7 +138,16 @@ async function sweepOne(
   if (!posted.ok) {
     throw new Error(`sweep not accepted by the network (${posted.detail})`)
   }
-  return { txid: sweepTxid }
+    return { txid: sweepTxid }
+}
+
+async function echoSweepChange(active: ActiveWallet, sweepTxid: string): Promise<void> {
+  try {
+    const { rememberDerivedChangeFromTxid } = await import('./derivedChangeEcho')
+    await rememberDerivedChangeFromTxid(sweepTxid, active)
+  } catch (err) {
+    console.warn('[legacy] derived-change echo skipped', sweepTxid.slice(0, 12), err)
+  }
 }
 
 export async function sweepVisibleP2pkhOutpoints(
@@ -156,6 +165,7 @@ export async function sweepVisibleP2pkhOutpoints(
     for (const outpoint of outpoints) {
       try {
         const { txid } = await sweepOne(wallet, depositBeef, inputBeef, outpoint, p2pkhKey)
+        await echoSweepChange(wallet, txid)
         results.push({ outpoint, txid, success: true })
         console.info(`[legacy] sweep ${outpoint} txid=${txid.slice(0, 12)}… posted`)
       } catch (err) {

@@ -5,6 +5,25 @@ coins are invisible to the wallet. This is not a stale flag; no existing
 recovery path can reach them. Everything below is verified against chain, not
 inferred.
 
+## Status (2026-09-17)
+
+Code now:
+
+- Echoes BRC-29 change remittance into durable prefs when a sweep lands and
+  whenever `keepChangeOfSignedTx` still has the toolbox row
+  (`derivedChangeEcho.ts`).
+- Re-imports a missing row with `internalizeAction` wallet-payment remittance
+  (`reimportDerivedChange.ts`) — not a second `importLegacyUtxos` sweep.
+- Reclaim looks up rows by `transactionId` when `txid` is blank, ranks by
+  value, always includes echo keys, and rotates past `RECLAIM_MAX`.
+
+**These twelve coins still cannot be spent on this install.** The sweep was
+2026-08-18 22:58. Cloud BRC-39 `lastUploadedAt` is 2026-08-17 21:18. Local
+archive and IndexedDB contain neither txid. Without `derivationPrefix` /
+`derivationSuffix` the locking scripts cannot be unlocked. The new path will
+recover the next wallet that still has the row long enough to echo it, or any
+device whose history replica still has those outputs.
+
 ## The coins
 
 Two legacy sweeps this wallet performed on 2026-08-17 split into eight derived
@@ -44,47 +63,22 @@ which `handcash.brc100.importedLegacyOutpoints.v2` records as a sweep this
 wallet performed. The wallet built the transaction and paid its own derived
 addresses, then sealed six of the resulting outputs as already-spent.
 
-## Why nothing recovers them
+## Why reclaim could not recover them
 
-The blank-sealer path in `reclaimSealedInputsNeverSpent` does examine these —
-they sit at indices 63–108 of 520 blank records, inside the `RECLAIM_MAX = 200`
-window — and `isUtxo` confirms them alive. It then gives up here:
+Reclaim only `updateOutput`s. There is no toolbox row (txid lookup *or*
+`transactionId` link). Un-sealing the overlay does not recreate BRC-29
+derivation. Chain ingest scans only the identity address; it never enumerates
+derived change.
 
-```ts
-const rows = await findOutputsForTxid(sp, parsed.txid);
-const match = rows.find((row) => Number(row.vout ?? row.outputIndex) === parsed.vout);
-const outputId = positiveId(match?.outputId);
-if (outputId == null) continue;
-```
+The sweep txids are also absent from local IDB and from BRC-39 (last cloud
+upload predates the sweep), so remittance cannot be reconstructed.
 
-There is no toolbox row to update, so the reclaim silently no-ops while the
-lock record stays. Un-sealing cannot help when the row does not exist.
+## What the code does now
 
-Nothing else finds them either. Chain ingest scans only the identity address
-(782 UTXOs / 786 sats — all one-sat items). No path enumerates derived change
-addresses. Once a derived output's toolbox row is missing, the coin is
-unreachable by every scan we have.
-
-## Suggested direction
-
-Reclaim is the wrong verb; these need **re-import**. Follow the
-`importLegacyUtxos` shape — create the output rows with the correct derived
-locking script and mark them spendable — rather than trying to un-seal a row
-that was never written.
-
-Two things to settle first:
-
-1. **Derivation.** We need the key path for each address to rebuild the
-   locking script and spend later. `d84527cb0f64` and `26164cd94e48` are both
-   recorded sweeps, so the derivation should be recoverable from the sweep
-   bookkeeping; confirm before writing anything.
-2. **Scope.** Decide whether to repair only verified outpoints or to add a
-   standing reconciliation that catches derived outputs whose toolbox row went
-   missing. The second is the actual structural fix.
-
-Also worth fixing while in here: `RECLAIM_MAX = 200` slices an unsorted list,
-so 320 of the 520 blank records are never examined on any pass. It did not
-cause this case, but it permanently hides anything past position 200.
+Re-import, not reclaim: `internalizeAction` as a self wallet-payment when a
+durable remittance echo exists. Echo is written at sweep success and from
+`keepChangeOfSignedTx`. Reclaim ranks by value, prefers echo keys, rotates
+past `RECLAIM_MAX`, and looks up rows by `transactionId`.
 
 ## Reproducing the audit
 
