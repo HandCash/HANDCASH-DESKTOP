@@ -1193,6 +1193,14 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   const sealerIds = [
     ...new Set(sealedNamed.map((rec) => rec.spentBy as string)),
   ];
+  /** Prevouts each sealer consumed — our record when the raw body is gone. */
+  const sealedInputsBySealer = new Map<string, string[]>();
+  for (const rec of sealedNamed) {
+    const sealer = rec.spentBy as string;
+    const list = sealedInputsBySealer.get(sealer);
+    if (list) list.push(rec.outpoint);
+    else sealedInputsBySealer.set(sealer, [rec.outpoint]);
+  }
   const liveSealers = new Set<string>();
   const deadSealers = new Set<string>();
   const sealerCreatedAt = new Map<string, number>();
@@ -1295,6 +1303,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
           chain,
           createdAt: sealerCreatedAt.get(txid) ?? 0,
           knownOnChain: onChain,
+          knownInputs: sealedInputsBySealer.get(txid),
         })
       ) {
         liveSealers.delete(txid);

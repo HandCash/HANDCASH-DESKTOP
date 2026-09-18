@@ -106,6 +106,14 @@ export async function signedTxLooksAbandoned(args: {
   chain: Chain
   createdAt: number
   knownOnChain?: boolean | null
+  /**
+   * Prevouts this transaction sealed, from our own lock records.
+   *
+   * A signed spend that never landed frequently has no raw body in storage —
+   * the same gap that leaves its change unscripted — so the BEEF/raw route
+   * returns nothing and the decision would stall on "inputs unknown" forever.
+   */
+  knownInputs?: string[]
 }): Promise<boolean> {
   const txid = normalizeTxid(args.txid)
   if (!txid) return false
@@ -127,11 +135,29 @@ export async function signedTxLooksAbandoned(args: {
       : await txExistsOnChain(txid, args.chain).catch(() => null)
   if (onChain !== false) return false
 
-  const outpoints = await inputOutpointsForSignedTx(txid, args.atomic)
+  const fromBody = await inputOutpointsForSignedTx(txid, args.atomic)
+  const outpoints = fromBody.length > 0 ? fromBody : (args.knownInputs ?? [])
+  // One lookup per funding tx, not per input — a bulk send names the same
+  // unlanded parent many times over.
+  const parentOnChain = new Map<string, Promise<boolean | null>>()
   const inputs = await Promise.all(
-    outpoints.map((op) =>
-      spentStatusOfOutpoint(op, args.chain).catch(() => 'unknown' as const),
-    ),
+    outpoints.map(async (op) => {
+      const status = await spentStatusOfOutpoint(op, args.chain).catch(
+        () => 'unknown' as const,
+      )
+      if (status !== 'unknown') return status
+      // An outpoint can read unknown because its funding tx never landed. That
+      // is not missing information — a nonexistent output is unspendable by
+      // anyone, so this spend can never become valid.
+      const parent = normalizeTxid(op.split(/[._:]/)[0] ?? '')
+      if (!parent) return status
+      let lookup = parentOnChain.get(parent)
+      if (!lookup) {
+        lookup = txExistsOnChain(parent, args.chain).catch(() => null)
+        parentOnChain.set(parent, lookup)
+      }
+      return (await lookup) === false ? ('phantom' as const) : status
+    }),
   )
 
   const fate = decideAbandonedSpend({

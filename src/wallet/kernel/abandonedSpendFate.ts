@@ -15,7 +15,16 @@
  * party who could ever broadcast that transaction is us.
  */
 
-export type InputSpentStatus = 'unspent' | 'spent' | 'unknown'
+/**
+ * `phantom` is an outpoint whose funding transaction is itself definitively
+ * absent from the chain — change from an earlier spend that never landed.
+ *
+ * It is not the same as `unknown`. An outpoint that does not exist can never be
+ * spent by anyone, so a transaction consuming one can never become valid. Left
+ * as `unknown` it froze whole chains of unbroadcast spends in place, and with
+ * them the real coins sealed alongside the phantom input.
+ */
+export type InputSpentStatus = 'unspent' | 'spent' | 'unknown' | 'phantom'
 
 export type AbandonedSpendFacts = {
   /** A broadcaster accepted this BEEF, so somebody else may still land it. */
@@ -64,8 +73,15 @@ export function decideAbandonedSpend(facts: AbandonedSpendFacts): AbandonedSpend
     return { kind: 'keep', reason: 'within grace window' }
   }
 
+  if (facts.inputs.every((s) => s === 'phantom')) {
+    return {
+      kind: 'abandoned',
+      reason: 'never broadcast — every input is change from a spend that never landed',
+    }
+  }
+
   return {
     kind: 'abandoned',
-    reason: 'never broadcast — no Arcade pin, absent on chain, every input still unspent',
+    reason: 'never broadcast — no Arcade pin, absent on chain, no input has moved',
   }
 }

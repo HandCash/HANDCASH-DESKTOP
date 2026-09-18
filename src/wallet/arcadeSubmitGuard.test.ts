@@ -144,3 +144,83 @@ describe('arcadeSubmitGuard', () => {
     ).resolves.toBe(true)
   })
 })
+
+/**
+ * The field case: a collectable send funded by change from an earlier spend
+ * that never landed. Neither transaction has a raw body in storage, so the
+ * inputs come from our own seal records and the unlanded parent reads phantom.
+ */
+describe('signedTxLooksAbandoned', () => {
+  const OLD = Date.now() - 24 * 60 * 60_000
+  const PHANTOM_PARENT = 'cc'.repeat(32)
+  const REAL_PARENT = 'dd'.repeat(32)
+
+  async function guard() {
+    vi.resetModules()
+    return import('./arcadeSubmitGuard')
+  }
+
+  beforeEach(async () => {
+    const legacyScan = await import('./legacyScan')
+    vi.mocked(legacyScan.txExistsOnChain).mockImplementation(
+      async (txid: string) => (txid === REAL_PARENT ? true : false),
+    )
+    vi.mocked(legacyScan.spentStatusOfOutpoint).mockImplementation(
+      async (outpoint: string) =>
+        outpoint.startsWith(PHANTOM_PARENT) ? ('unknown' as const) : ('unspent' as const),
+    )
+  })
+
+  it('reclaims a send whose funding change never landed', async () => {
+    const { signedTxLooksAbandoned } = await guard()
+    await expect(
+      signedTxLooksAbandoned({
+        txid: TX,
+        chain: 'main',
+        createdAt: OLD,
+        knownOnChain: false,
+        knownInputs: [`${PHANTOM_PARENT}.0`, `${REAL_PARENT}.1`],
+      }),
+    ).resolves.toBe(true)
+  })
+
+  it('keeps a cheque a broadcaster accepted, without probing the chain', async () => {
+    const { rememberArcadeSubmitContact, signedTxLooksAbandoned } = await guard()
+    rememberArcadeSubmitContact(TX)
+    await expect(
+      signedTxLooksAbandoned({
+        txid: TX,
+        chain: 'main',
+        createdAt: OLD,
+        knownOnChain: false,
+        knownInputs: [`${REAL_PARENT}.1`],
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it('keeps a spend still inside the grace window', async () => {
+    const { signedTxLooksAbandoned } = await guard()
+    await expect(
+      signedTxLooksAbandoned({
+        txid: TX,
+        chain: 'main',
+        createdAt: Date.now() - 60_000,
+        knownOnChain: false,
+        knownInputs: [`${REAL_PARENT}.1`],
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it('keeps a spend it cannot enumerate the inputs of', async () => {
+    const { signedTxLooksAbandoned } = await guard()
+    await expect(
+      signedTxLooksAbandoned({
+        txid: TX,
+        chain: 'main',
+        createdAt: OLD,
+        knownOnChain: false,
+        knownInputs: [],
+      }),
+    ).resolves.toBe(false)
+  })
+})

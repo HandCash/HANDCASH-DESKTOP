@@ -76,3 +76,37 @@ describe('abandoned spend fate', () => {
     })
   })
 })
+
+/**
+ * The field case: a collectable send whose funding was change from an earlier
+ * spend that never landed. The phantom input used to read `unknown` and froze
+ * the whole send, sealing four real one-sat items along with it.
+ */
+describe('chains of unlanded spends', () => {
+  it('collapses a spend funded by change that never landed', () => {
+    const fate = decideAbandonedSpend(
+      abandoned({ inputs: ['phantom', 'unspent', 'unspent', 'unspent', 'unspent'] }),
+    )
+    expect(fate.kind).toBe('abandoned')
+  })
+
+  it('collapses a spend whose every input is phantom', () => {
+    const fate = decideAbandonedSpend(abandoned({ inputs: ['phantom'] }))
+    expect(fate).toMatchObject({
+      kind: 'abandoned',
+      reason: 'never broadcast — every input is change from a spend that never landed',
+    })
+  })
+
+  it('still refuses when a real input moved alongside a phantom one', () => {
+    expect(
+      decideAbandonedSpend(abandoned({ inputs: ['phantom', 'spent'] })).kind,
+    ).toBe('keep')
+  })
+
+  it('still refuses while a sibling input is merely unconfirmed', () => {
+    expect(
+      decideAbandonedSpend(abandoned({ inputs: ['phantom', 'unknown'] })).kind,
+    ).toBe('keep')
+  })
+})
