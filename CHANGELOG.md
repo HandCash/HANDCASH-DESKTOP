@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.237] - 2026-09-18
+
+### Fixed
+
+- **Received BSV-21 tips are filed on Refresh** instead of waiting for a later
+  list, and peer token capability is resolved before the send offer.
+- **Token chrome no longer bleeds into labels** on the fungible face and the
+  Send panel.
+
 ## [1.3.236] - 2026-09-18
 
 ### Fixed
