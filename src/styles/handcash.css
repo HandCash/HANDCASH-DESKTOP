@@ -10288,30 +10288,16 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   color: #ff8e8e;
 }
 
-/* Square token face — override Aeon Avatar’s always-round clip. */
+/* Square token face — size comes from --fungible-face (the requested px).
+   Coarse sm/md/lg buckets used to round 72→112 and 120→160 and run the
+   icon over the symbol / balance. */
 .fungible-avatar {
-  width: 160px !important;
-  height: 160px !important;
-  border-radius: 12px !important;
+  width: var(--fungible-face, 48px) !important;
+  height: var(--fungible-face, 48px) !important;
+  border-radius: var(--fungible-face-radius, 8px) !important;
+  flex-shrink: 0;
   overflow: hidden;
-}
-
-.fungible-avatar--sm {
-  width: 48px !important;
-  height: 48px !important;
-  border-radius: 6px !important;
-}
-
-.fungible-avatar--md {
-  width: 112px !important;
-  height: 112px !important;
-  border-radius: 10px !important;
-}
-
-.fungible-avatar--lg {
-  width: 160px !important;
-  height: 160px !important;
-  border-radius: 12px !important;
+  background: var(--hc-sunken);
 }
 
 .fungible-avatar [data-aeon-part='image'],
@@ -10340,7 +10326,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .fungible-avatar > .deferred-image,
@@ -10348,7 +10334,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: inherit;
 }
 
@@ -10692,12 +10678,17 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 @media (max-width: 560px) {
   [data-aeon-scope='fungible-details'] .fungible-details-hero {
-    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  [data-aeon-scope='fungible-details'] .fungible-details-face {
+    width: 72px;
+    height: 72px;
   }
 
   [data-aeon-scope='fungible-details'] .fungible-details-hero .fungible-avatar {
-    width: 56px !important;
-    height: 56px !important;
+    width: 72px !important;
+    height: 72px !important;
   }
 
   .fungible-metrics {
@@ -10800,6 +10791,17 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   gap: 12px;
   min-width: 0;
   text-align: left;
+}
+
+.send-collectable-preview > .fungible-avatar,
+.send-collectable-preview > .burn-hero-media,
+.send-collectable-preview > .collectable-media {
+  flex: 0 0 auto;
+}
+
+.send-collectable-preview > div {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .send-collectable-preview .collectable-details-name {

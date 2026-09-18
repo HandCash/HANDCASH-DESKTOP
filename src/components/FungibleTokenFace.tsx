@@ -25,17 +25,20 @@ function TokenPlaceholder({ size }: { size: number }) {
  * local data: URLs from BEEF actually paint.
  */
 export function FungibleTokenFace({ tokenId: _tokenId, sym, iconUrl, size, className }: Props) {
-  const sizeClass =
-    size >= 120
-      ? 'fungible-avatar--lg'
-      : size <= 56
-        ? 'fungible-avatar--sm'
-        : 'fungible-avatar--md'
-  const cls = ['fungible-avatar', sizeClass, className].filter(Boolean).join(' ')
+  const radius = size >= 120 ? 12 : size <= 56 ? 6 : 10
+  const cls = ['fungible-avatar', className].filter(Boolean).join(' ')
   const local = Boolean(iconUrl && (iconUrl.startsWith('data:') || iconUrl.startsWith('blob:')))
+  const faceStyle = {
+    ['--fungible-face' as string]: `${size}px`,
+    ['--fungible-face-radius' as string]: `${radius}px`,
+  }
 
   return (
-    <span className={cls} data-aeon-state={iconUrl ? 'icon' : 'placeholder'}>
+    <span
+      className={cls}
+      data-aeon-state={iconUrl ? 'icon' : 'placeholder'}
+      style={faceStyle}
+    >
       {iconUrl && local ? (
         <img
           className="fungible-avatar-image"

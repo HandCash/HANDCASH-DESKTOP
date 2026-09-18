@@ -1217,7 +1217,10 @@ export async function importBsv21Tokens(
       // Prefer the session BEEF cache (8s cap). Raw chaintracks getBeefForTxid
       // has no deadline and was wedging Refresh behind Babbage timeouts.
       const { getBeefForTxidCached } = await import('../beefCache')
-      const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
+      const beef = await getBeefForTxidCached(wallet, txid, {
+        needProof: false,
+        allowUnprovenRawTx: true,
+      })
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)

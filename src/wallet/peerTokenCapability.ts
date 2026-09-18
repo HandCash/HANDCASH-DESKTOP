@@ -16,18 +16,21 @@
  * 3. **Store locally** — friends list (durable per vault account) MAY keep a
  *    copy of `protocols` beside `messagebox`, so the next send does not need
  *    another round trip.
- * 4. **Gate** — Send Fungible asks {@link assessPeerBsv21Support}. Missing or
- *    empty protocols ⇒ **unknown** ⇒ warn (still allow send). Explicit
- *    `bsv21` ⇒ supported. Bare address (no identity) ⇒ no-identity warn.
+ * 4. **Gate** — Send Fungible asks {@link assessPeerBsv21Support}. An empty
+ *    To field is **idle** (no warning). Missing or empty protocols ⇒
+ *    **unknown** ⇒ warn (still allow send). Explicit `bsv21` ⇒ supported.
+ *    A typed/resolved address with no identity ⇒ no-identity warn.
  *
- * Until hosts publish `protocols`, almost every peer is **unknown** — that is
- * intentional: warn by default; do not invent support.
+ * Until hosts publish `protocols`, almost every *chosen* peer is **unknown** —
+ * that is intentional: warn by default; do not invent support. Do not warn
+ * before the user has named a recipient.
  */
 import { getActiveWallet } from './session'
 
 export const BSV21_PROTOCOL_ID = 'bsv21'
 
 export type PeerBsv21Support =
+  | 'idle'
   | 'self'
   | 'supported'
   | 'unknown'
@@ -65,10 +68,18 @@ export function protocolsIncludeBsv21(protocols: readonly string[] | null | unde
  */
 export function assessPeerBsv21Support(args: {
   recipientIdentityKey?: string | null
+  /** Resolved lock / payment address. Empty with no identity is not a warning. */
+  destination?: string | null
   protocols?: readonly string[] | null
 }): PeerBsv21Support {
   const key = (args.recipientIdentityKey ?? '').trim().toLowerCase()
-  if (!key) return 'no-identity'
+  if (!key) {
+    const dest = (args.destination ?? '').trim()
+    // Incomplete To input is not a "plain address" yet — wait until it looks
+    // like a finished lock (same floor as send-panel address shortening).
+    if (dest.length < 26) return 'idle'
+    return 'no-identity'
+  }
 
   const self = getActiveWallet()?.identityKey?.trim().toLowerCase()
   if (self && self === key) return 'self'
@@ -81,6 +92,7 @@ export function assessPeerBsv21Support(args: {
 /** User-facing copy for Send Fungible (warn only — never blocks). */
 export function peerBsv21SupportWarning(status: PeerBsv21Support): string | null {
   switch (status) {
+    case 'idle':
     case 'self':
     case 'supported':
       return null

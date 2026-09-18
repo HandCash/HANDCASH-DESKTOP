@@ -22,8 +22,19 @@ describe('parseWalletProtocols', () => {
 })
 
 describe('assessPeerBsv21Support', () => {
-  it('flags bare addresses', () => {
-    expect(assessPeerBsv21Support({})).toBe('no-identity')
+  it('stays idle until a recipient is named', () => {
+    expect(assessPeerBsv21Support({})).toBe('idle')
+    expect(assessPeerBsv21Support({ destination: '   ' })).toBe('idle')
+    expect(assessPeerBsv21Support({ destination: '1abc' })).toBe('idle')
+    expect(peerBsv21SupportWarning('idle')).toBeNull()
+  })
+
+  it('flags a typed address with no identity', () => {
+    expect(
+      assessPeerBsv21Support({
+        destination: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
+      }),
+    ).toBe('no-identity')
   })
 
   it('treats self as supported path', () => {
@@ -55,7 +66,8 @@ describe('assessPeerBsv21Support', () => {
 })
 
 describe('peerBsv21SupportWarning', () => {
-  it('is silent when supported', () => {
+  it('is silent when idle or supported', () => {
+    expect(peerBsv21SupportWarning('idle')).toBeNull()
     expect(peerBsv21SupportWarning('supported')).toBeNull()
     expect(peerBsv21SupportWarning('self')).toBeNull()
   })

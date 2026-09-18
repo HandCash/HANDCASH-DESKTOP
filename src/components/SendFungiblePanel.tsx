@@ -165,6 +165,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const bsv21PeerWarning = peerBsv21SupportWarning(
     assessPeerBsv21Support({
       recipientIdentityKey,
+      destination: to,
       protocols:
         recipientProtocols.length > 0 ? recipientProtocols : friendProtocols,
     }),

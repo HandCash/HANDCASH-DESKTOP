@@ -10,7 +10,7 @@ import {
   type LegacyScanResult,
   type LegacyUtxo,
 } from './legacyScan'
-import { scanAddressOrdinalTxos } from './tokenAddressScan'
+import { scanAddressOrdinalTxos, scanAddressTokenTxos } from './tokenAddressScan'
 import { forgetLegacyImported } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import { recordFundingReceipts } from './legacyReceiptActivity'
@@ -363,14 +363,19 @@ export async function ingestLegacyAddressUtxos(
     })
   }
 
-  // Inscribed outputs (1Sat NFT) are P2PKH + ord envelope — absent from the
-  // plain address scan. Ordinal index covers NFT tips. Legacy BSV-21 is
-  // burn-only for tips already in basket `bsv21` — do not re-scan / import more.
-  const [addressScan, ordinalTxos, basketListed] = await Promise.all([
+  // Inscribed 1Sat NFTs and some BSV-21 tips are absent from a plain P2PKH
+  // address scan. Ordinal index covers NFT + JSON BSV-21. BRC-162 value locks
+  // that explorers still list as 1-sat P2PKH are classified below and imported
+  // into basket `bsv21` — that is how a token sent to this wallet's address
+  // lands in Tokens when peer remittance never arrived.
+  const [addressScan, ordinalTxos, tokenTxos, basketListed] = await Promise.all([
     scanLegacyAddress(active),
     fundingOnly
       ? Promise.resolve<LegacyUtxo[]>([])
       : scanAddressOrdinalTxos(active.address, active.chain),
+    fundingOnly
+      ? Promise.resolve<LegacyUtxo[]>([])
+      : scanAddressTokenTxos(active.address, active.chain),
     fundingOnly
       ? Promise.resolve<{ keys: Set<string>; fullyListed: boolean } | null>(null)
       : listOneSatBasketOutpointKeys(active).catch((err) => {
@@ -379,7 +384,7 @@ export async function ingestLegacyAddressUtxos(
         }),
   ])
 
-  const scan = mergeTokenTxos(addressScan, ordinalTxos)
+  const scan = mergeTokenTxos(mergeTokenTxos(addressScan, ordinalTxos), tokenTxos)
   if (scan.utxos.length > 0) {
     console.info(
       `[chain-ingest] legacy address scan: ${scan.utxos.length} UTXO(s), ${scan.sats} sats via ${scan.source}`,
@@ -461,11 +466,22 @@ export async function ingestLegacyAddressUtxos(
   let newOneSatOutpoints: string[] = []
   let partialWarn: string | null = null
 
-  // BSV-21 address-scan ingress is disabled — tokens arrive via remittance / settle.
-  if (bsv21.length > 0 && !fundingOnly) {
-    console.info(
-      `[chain-ingest] skipped ${bsv21.length} BSV-21 tip(s) on address scan — use remittance / settle`,
-    )
+  if (bsv21.length > 0 && !fundingOnly && !skipCollectableImport) {
+    yieldToSpendIfNeeded()
+    await yieldToUi()
+    const { importBsv21Tokens } = await import('./token/list')
+    const tokenResult = await importBsv21Tokens(bsv21, active)
+    if (tokenResult.imported > 0) {
+      console.info(
+        `[chain-ingest] imported ${tokenResult.imported} BSV-21 tip(s) from address scan`,
+      )
+    }
+    if (tokenResult.failed > 0) {
+      console.warn('[chain-ingest] BSV-21 import partial', tokenResult)
+      partialWarn =
+        partialWarn ??
+        `Some tokens didn’t import (${tokenResult.failed}). Retrying automatically.`
+    }
   }
 
   // In fundingOnly mode every 1-sat is held by design, so the count says nothing.

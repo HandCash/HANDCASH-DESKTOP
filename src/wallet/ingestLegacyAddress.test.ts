@@ -263,7 +263,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     vi.useRealTimers()
   })
 
-  it('does not import classified on-address BSV-21 fungibles into basket bsv21', async () => {
+  it('imports classified on-address BSV-21 fungibles into basket bsv21', async () => {
     const tipOp = `${'aa'.repeat(32)}.0`
     const tokenId = `${'aa'.repeat(32)}_0`
     mockScanLegacyAddress.mockResolvedValue({
@@ -305,10 +305,15 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
     await ingestLegacyAddressUtxos({ active })
 
-    expect(importBsv21Tokens).not.toHaveBeenCalled()
-    const { listRecentActivity } = await import('./appActivity')
-    expect(
-      listRecentActivity(10).some((e) => e.method === 'mint-token'),
-    ).toBe(false)
+    expect(importBsv21Tokens).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outpoint: tipOp,
+          tokenId,
+          amt: '1000',
+        }),
+      ]),
+      active,
+    )
   })
 })

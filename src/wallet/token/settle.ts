@@ -151,7 +151,7 @@ export async function internalizePeerFungibleSettle(opts: {
       }
       const binary = decodeBsv21Binary(scriptHex)
       if (binary && binary.amount > 0n) {
-        const binId = binary.tokenId
+        const binId = normalizeTokenId(binary.tokenId ?? '') ?? binary.tokenId
         if (binId === tokenId && binary.amount.toString() === amount) {
           if (tipVout >= 0) {
             clearInboundReceivePending(id)
