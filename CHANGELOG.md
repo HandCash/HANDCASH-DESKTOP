@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.232] - 2026-09-17
+
+### Fixed
+
+- **Restored the Linux activity visual baseline.** No product change. The v1.3.231
+  recovery took the whole v1.3.226 tree, which pulled the activity badge snapshot
+  back to a baseline that predates v1.3.228 — the release whose only content was
+  re-aligning that PNG to what the Linux CI runner actually renders. The smoke test
+  spec is byte-identical between v1.3.226 and v1.3.230 and the fixture is isolated
+  from the activity feed, so this is purely the newer reference image (334 pixels of
+  anti-aliasing, 2% of the fixture).
+
 ## [1.3.231] - 2026-09-17
 
 Recovery release. The tree is v1.3.226 — the last build confirmed working — plus
