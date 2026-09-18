@@ -53,6 +53,7 @@ import {
 } from "./kernel/txLiveness";
 import {
   forgetArcadeSubmitContact,
+  signedTxLooksAbandoned,
   signedTxMayBeRemoved,
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
@@ -70,7 +71,17 @@ type TxStatusRow = {
   rawTx?: number[];
   txid?: string;
   transactionId?: number;
+  created_at?: string | number | Date;
 };
+
+/** Toolbox rows carry `created_at` as a Date; snapshots round-trip it as text. */
+function rowCreatedAtMs(row: { created_at?: string | number | Date } | undefined): number {
+  const raw = row?.created_at;
+  if (raw == null) return 0;
+  if (raw instanceof Date) return raw.getTime();
+  const parsed = typeof raw === "number" ? raw : Date.parse(String(raw));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 /** Statuses toolbox `internalizeAction` will merge into an existing row. */
 const INTERNALIZE_OK_TX = new Set([
@@ -1184,6 +1195,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   ];
   const liveSealers = new Set<string>();
   const deadSealers = new Set<string>();
+  const sealerCreatedAt = new Map<string, number>();
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
@@ -1204,6 +1216,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
           if (!rows?.length) {
             continue;
           }
+          sealerCreatedAt.set(txid, rowCreatedAtMs(rows[0]));
           // `unsent` alone is not a ghost — app createAction / noSend often
           // stay unsent while Arcade already has the BEEF. Only hard-fail
           // statuses revive without explorers; unsent goes to Arcade/chain.
@@ -1267,9 +1280,33 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
         deadSealers.delete(txid);
         continue;
       }
+
       // Missing local row + explorer absence is not cancellation evidence.
       // Signed cheques survive; only explicit failed/invalid status above or a
       // proven competing spend can make a named sealer reclaimable.
+      //
+      // One exception, or the cheque is unclassified forever and its inputs and
+      // change sit outside both balances: we never handed this one to a
+      // broadcaster, so nobody else can present it. With every input still
+      // unspent on chain there is nothing to conflict with.
+      if (
+        await signedTxLooksAbandoned({
+          txid,
+          chain,
+          createdAt: sealerCreatedAt.get(txid) ?? 0,
+          knownOnChain: onChain,
+        })
+      ) {
+        liveSealers.delete(txid);
+        deadSealers.add(txid);
+        await failUnsentLocalTx(txid, { force: true });
+        console.info(
+          `[stale-output] reclaiming ${txid.slice(
+            0,
+            12
+          )} — signed but never broadcast, inputs still unspent`
+        );
+      }
     }
     if (deadSealers.size > 0) {
       console.info(

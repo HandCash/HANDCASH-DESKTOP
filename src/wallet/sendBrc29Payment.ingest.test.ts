@@ -467,13 +467,13 @@ describe('ingestPaymentsFromTipHints', () => {
       { txid, item: true, firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1 },
     ])
 
-    // Not an Arcade reject, so the inbox card is not ACKed away — but the sweep
-    // is done with it.
-    expect(result.ghostTxids).toEqual([])
-    expect(ghosts.has(txid)).toBe(false)
+    // Chat card goes terminal, and the inbox envelope is ACKed away so the
+    // messagebox stops re-delivering it as a fresh hint every poll.
     expect(updateMessage).toHaveBeenCalledWith('m1', {
       meta: { status: UNRESOLVABLE_HINT_STATUS },
     })
+    expect(result.ghostTxids).toEqual([txid])
+    expect(ghosts.has(txid)).toBe(true)
   })
 
   it('keeps chasing an old hint while an explorer cannot confirm absence', async () => {
@@ -487,11 +487,13 @@ describe('ingestPaymentsFromTipHints', () => {
       reason: 'Cannot prove the collectable input offline. Try again when connected.',
     })
 
-    await ingestSkippingRetryDelay([
+    const result = await ingestSkippingRetryDelay([
       { txid, item: true, firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1 },
     ])
 
     expect(updateMessage).not.toHaveBeenCalled()
+    expect(result.ghostTxids).toEqual([])
+    expect(ghosts.has(txid)).toBe(false)
   })
 
   it('revives a retired hint when a new AtomicBEEF arrives', async () => {

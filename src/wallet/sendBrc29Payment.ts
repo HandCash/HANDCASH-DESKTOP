@@ -26,6 +26,7 @@ import { withVisibleOnChainBeef } from './legacyBeef'
 import {
   forgetGhostTx,
   isGhostTxSuppressed,
+  rememberGhostTx,
 } from './ghostTxSuppress'
 import {
   beginPendingSend,
@@ -1129,6 +1130,20 @@ export async function ingestPaymentsFromTipHints(
     if (!ghostTxids.includes(id)) ghostTxids.push(id)
     return true
   }
+  /**
+   * Retire the inbox copy too.
+   *
+   * Marking the chat card terminal only takes it out of the local sweep. The
+   * messagebox still holds the envelope, so the next poll re-delivers it as a
+   * fresh hint and the chase starts over. Suppression is what makes the ACK
+   * happen — and the envelope carries no BEEF (that is why it is unresolvable),
+   * so nothing recoverable is discarded. A later AtomicBEEF calls forgetGhostTx.
+   */
+  const retireUnresolvable = (txid: string): void => {
+    const id = txid.trim().toLowerCase()
+    rememberGhostTx(id)
+    if (!ghostTxids.includes(id)) ghostTxids.push(id)
+  }
   const markGhostIfMissing = async (
     txid: string,
     hadLocalBeef: boolean,
@@ -1187,6 +1202,7 @@ export async function ingestPaymentsFromTipHints(
 
     console.warn(`[tip-ingest] tip ${txid.slice(0, 12)}… retired — ${fate.reason}`)
     markInboundPaymentStatus(txid, UNRESOLVABLE_HINT_STATUS)
+    retireUnresolvable(txid)
   }
 
   const { mapPool } = await import('./asyncPool')
