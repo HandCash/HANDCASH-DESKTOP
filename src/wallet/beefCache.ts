@@ -857,6 +857,41 @@ export function atomicBeefForSubject(
 }
 
 /**
+ * Inbox-sized AtomicBEEF: this hop plus its direct parents.
+ *
+ * `mergeLocalUnconfirmedAncestry` can pull in unrelated ghost txs (NFT mints,
+ * prior Arcade-acked spends). That package misses the 11k sendMessage cap, the
+ * BEEF is dropped, and the payee is forced onto an indexer that never saw the
+ * tx. BSV-21 settle only needs the subject lock + the tips it spends.
+ */
+export function inboxSubjectBeef(
+  binary: number[] | undefined,
+  txid: string,
+): number[] | undefined {
+  if (!binary?.length) return undefined
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return undefined
+  try {
+    const src = Beef.fromBinary(binary)
+    const tx = src.findTxid(id)?.tx ?? src.findAtomicTransaction(id)
+    if (!tx) return undefined
+    const slim = new Beef()
+    slim.mergeTransaction(tx)
+    for (const input of tx.inputs ?? []) {
+      const parentId = input.sourceTXID?.trim().toLowerCase()
+      if (!parentId || parentId === id) continue
+      const parent = src.findTxid(parentId)?.tx
+      if (parent) slim.mergeTransaction(parent)
+    }
+    slim.atomicTxid = undefined
+    const bin = slim.toBinaryAtomic(id)
+    return bin.length > 0 ? Array.from(bin) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Ensure inputBEEF has raw tip bodies **and** full parent proofs (no txidOnly).
  * Safe for createAction trustSelf verify and for processAction broadcast verify.
  *

@@ -38,6 +38,7 @@ import {
 import {
   buildMergedInputBeef,
   getBeefForTxidCached,
+  inboxSubjectBeef,
   mergeLocalUnconfirmedAncestry,
   rememberBeefTree,
 } from '../beefCache'
@@ -702,8 +703,10 @@ export async function sendBsv21Tokens(args: {
       if (plan.changeAmt > 0n && !remainingOp) {
         throw new Error('Token change missing from the signed transaction')
       }
+      const peerAtomic = inboxSubjectBeef(atomic, txid) ?? atomic
       atomic = await mergeLocalUnconfirmedAncestry(wallet, atomic)
       rememberBeefTree(atomic, txid)
+      rememberBeefTree(peerAtomic, txid)
 
       try {
         await wallet.wallet.actionBatch.abort()
@@ -745,9 +748,15 @@ export async function sendBsv21Tokens(args: {
             txid,
             itemName: sym,
             asset,
-            atomicBeef: atomic,
+            atomicBeef: peerAtomic,
           })
-          if (delivered.delivered === 'cloud' || delivered.delivered === 'direct') {
+          console.info(
+            `[bsv21] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
+          )
+          if (
+            (delivered.delivered === 'cloud' || delivered.delivered === 'direct') &&
+            delivered.beefInBox
+          ) {
             recordTransactionStage('peer_delivered', {
               flow: 'token_transfer',
               txid,
@@ -766,7 +775,9 @@ export async function sendBsv21Tokens(args: {
             recordTransactionStage('peer_delivery_queued', {
               flow: 'token_transfer',
               txid,
-              blockerCode: 'peer_box_unreachable',
+              blockerCode: delivered.beefInBox
+                ? 'peer_box_unreachable'
+                : 'beef_omitted_box_cap',
             })
           }
         } catch (error) {

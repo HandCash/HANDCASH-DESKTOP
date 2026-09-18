@@ -1326,8 +1326,21 @@ export async function notifyPeerItemIncoming(args: {
     ...withOptionalBeefB64(withProof.body, atomicBeef),
     provenanceInBox: withProof.provenanceInBox,
   }
+  // Fat merged ancestry blows the 11k cap. Ship this hop (+ direct parents)
+  // so BSV-21 settle does not fall back to WhatsOnChain.
+  if (!packed.beefInBox && atomicBeef?.length) {
+    const { inboxSubjectBeef } = await import('./beefCache')
+    const lean = inboxSubjectBeef(atomicBeef, txid)
+    if (lean?.length && lean.length < atomicBeef.length) {
+      packed = {
+        ...withOptionalBeefB64(withProof.body, lean),
+        provenanceInBox: withProof.provenanceInBox,
+      }
+    }
+  }
   // Identity before a second indexer walk. If both proofs cannot share the cap,
   // keep remittance and let this hop SPV-fetch the way omitted-beef already does.
+  // Fungible custody is the Atomic BEEF — never drop it to keep provenance.
   if (args.provenance && !packed.provenanceInBox) {
     const proofOnly = withOptionalProvenance(base, args.provenance)
     if (proofOnly.provenanceInBox) {
@@ -1341,6 +1354,11 @@ export async function notifyPeerItemIncoming(args: {
         '[messagebox] item remittance omitted — box cap; receiver identity falls back to indexer',
       )
     }
+  }
+  if (args.asset?.kind === 'fungible' && !packed.beefInBox) {
+    console.warn(
+      `[messagebox] BSV-21 AtomicBEEF omitted txid=${txid.slice(0, 12)} — payee cannot settle without an indexer`,
+    )
   }
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()

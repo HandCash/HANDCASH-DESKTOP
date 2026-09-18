@@ -439,6 +439,41 @@ describe('beefCache', () => {
     expect(atomicBeefForSubject([1, 2, 3], txid)).toBeUndefined()
   })
 
+  it('inboxSubjectBeef drops unrelated ancestry so the envelope stays small', async () => {
+    const { inboxSubjectBeef } = await import('./beefCache')
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parent.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({ satoshis: 9_900, lockingScript: LockingScript.fromHex('51') })
+    const txid = tip.id('hex')
+
+    const stray = new Transaction()
+    stray.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex('51'),
+    })
+
+    const fat = new Beef()
+    fat.mergeRawTx(parent.toBinary())
+    fat.mergeTransaction(tip)
+    fat.mergeTransaction(stray)
+
+    const inbox = inboxSubjectBeef(fat.toBinary(), txid)
+    const inboxBeef = Beef.fromBinary(inbox!)
+    expect(inboxBeef.findTxid(txid)?.tx).toBeTruthy()
+    expect(inboxBeef.findTxid(parent.id('hex'))?.tx).toBeTruthy()
+    expect(inboxBeef.findTxid(stray.id('hex'))?.tx).toBeFalsy()
+  })
+
   it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {
     const { hydrateInputBeef, resetBeefCacheForTests } = await import('./beefCache')
     resetBeefCacheForTests()

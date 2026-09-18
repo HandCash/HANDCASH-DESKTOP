@@ -4,6 +4,8 @@
  * This is the fungible twin of `internalizePeerItemSettle`: validate the
  * recipient output from Atomic BEEF, let the payee broadcast, then internalize
  * the exact BSV-21 tip into basket `bsv21`. No indexer decides custody.
+ * Inbox hints must carry Atomic BEEF; missing BEEF is `missing-beef`, not a
+ * WhatsOnChain walk. Miner postBeef runs after internalize.
  */
 import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from '../beefCache'
@@ -102,7 +104,10 @@ export async function internalizePeerFungibleSettle(opts: {
   if ((!atomic || !atomic.length) && opts.beefUrl) {
     atomic = await fetchAtomicBeefFromUrl(opts.beefUrl)
   }
-  if (!atomic?.length) {
+  // Inbox settle is remittance + Atomic BEEF. Do not walk WhatsOnChain / the
+  // ordinal indexer for a hop the sender already signed — that path 404s on
+  // unmined Arcade ghosts and is not how BSV-21 custody works.
+  if (!atomic?.length && opts.beefPurpose !== 'inboundItemHint') {
     try {
       const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
       atomic = await getAtomicBeefBinaryForTxid(active, id, {
@@ -252,8 +257,6 @@ export async function internalizePeerFungibleSettle(opts: {
   }
 
   try {
-    // peerDeliver: the payee is the intended first broadcaster.
-    await broadcastAtomicBeef(id, atomic)
     rememberBeefTree(atomic, id)
     await withRestoredInternalizeStatus(id, () =>
       active.wallet.internalizeAction({
@@ -308,6 +311,14 @@ export async function internalizePeerFungibleSettle(opts: {
     })
     scheduleHistoryBackupPush('internalizeFungibleAction')
     void listFungibles(active).catch(() => {})
+    // Payee broadcast is best-effort. Custody is the BEEF in basket `bsv21`.
+    void broadcastAtomicBeef(id, atomic).catch((err) => {
+      console.warn(
+        '[fungible-settle] post-internalize broadcast failed',
+        id.slice(0, 12),
+        err,
+      )
+    })
     return { accepted: true, outpoints: [tipOp] }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
@@ -326,6 +337,7 @@ export async function internalizePeerFungibleSettle(opts: {
         },
       })
       void listFungibles(active).catch(() => {})
+      void broadcastAtomicBeef(id, atomic).catch(() => {})
       return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }
     }
     markOneSatImportFailed([tipOp])

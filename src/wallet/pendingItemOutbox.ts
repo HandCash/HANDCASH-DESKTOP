@@ -130,6 +130,9 @@ export async function flushPendingItemOutbox(args: {
         atomicBeef,
       })
       if (result.delivered === 'cloud' || result.delivered === 'direct') {
+        if (row.asset?.kind === 'fungible' && !result.beefInBox) {
+          throw new Error('BSV-21 remittance missing AtomicBEEF')
+        }
         recordTransactionStage('peer_delivered', {
           flow: row.flow ?? 'item_transfer',
           traceId: row.traceId,
