@@ -1,5 +1,74 @@
 # Changelog
 
+## [1.3.231] - 2026-09-17
+
+Recovery release. The tree is v1.3.226 — the last build confirmed working — plus
+the fixes below. It **supersedes v1.3.227 through v1.3.230**, which is where the
+freezing, permanently-behind wallet and missing balance came from; that window
+also carried the bulk item-run work that lifted the 25-item send cap. Those four
+releases are still in history and their features come back once the regression in
+them is named, rather than being shipped again untested. Every source file touched
+below was byte-identical between v1.3.226 and v1.3.230, so none of these fixes are
+undoing that window's work.
+
+### Fixed
+
+- **Ordinary preference traffic no longer freezes the window.** `durableGet` /
+  `durableSet` re-read, re-parsed and re-serialized the whole of
+  `durable-prefs.json` to touch one key, and the renderer reaches them over
+  `ipcRenderer.sendSync` — so the entire store's cost was charged to the renderer
+  thread on every lookup, and no stall warning was possible because the watchdog
+  could not run either. On a working wallet that file is several megabytes. The
+  store is now held in memory (this process is its only writer), preference writes
+  coalesce into one debounced file replace, the vault and factory reset write
+  straight through, and quit flushes. The renderer only mirrors small values into
+  `localStorage`; multi-megabyte mirrors were synchronous there and over quota
+  regardless.
+- **Durable caches stopped re-parsing their whole JSON blob per call.** The reads
+  sat inside per-item loops and per-card renders, and `localItemArt` holds base64
+  image bodies, so a single navigation paid that cost once per card.
+- **Two Touch ID prompts no longer race each other.** The OS cancelled one and the
+  wallet simply stayed locked. `deviceAuthUnlock` now single-flights.
+- **Unpromotable change no longer loops forever.** A promotion that moved nothing
+  invalidated the balance breakdown log, and that log is what arms the promotion.
+- **Cash sealed by a written-off transaction is counted again.** It fell into
+  neither balance bucket and no path revived it from storage.
+- **A spend that never reached the network can now conclude.** A signed tx with
+  status `unsent`, no Arcade contact and no proven competing spend was left
+  unclassified — neither live nor dead — so its inputs stayed sealed and its change
+  stayed unpromotable, outside both spendable and `pendingChange`, permanently. The
+  Arcade pin is the exit: without one the cheque was never handed to a broadcaster,
+  so nobody else can present it, and with every input still verifiably unspent
+  there is nothing to conflict with. Reclaimed behind a six hour grace; any
+  genuinely unknown input still keeps the cheque.
+- **Chains of never-broadcast spends collapse instead of sealing each other.** The
+  stranded coins were not one stuck transaction but three, none on chain and none
+  Arcade-pinned, each sealing the next. An input whose funding tx is itself
+  definitively absent read as `unknown`, when it is not: a nonexistent output
+  cannot be spent by anyone, so a transaction consuming one can never become valid.
+  It is now `phantom` and collapses, while a merely unconfirmed or moved input still
+  keeps the cheque. Input enumeration also no longer stalls on `inputs unknown` when
+  the never-landed body is missing from storage — it falls back to the prevouts our
+  own lock records name.
+- **An inbound BRC-29 payment the sender never broadcast can be retired.** Tip
+  validity is Arcade's call, so a hint was only ever retired when Arcade hard
+  rejected *our* broadcast — a path an inbound payment never reaches, because we
+  hold no body to broadcast. The card sat on Receiving (SPV) while every poll re-ran
+  a full BEEF chase that could not succeed. Retirement now requires corroboration:
+  nothing deliverable on our side, a durable multi-provider body miss, a definite
+  on-chain absence, and a two hour grace. An unanswered explorer stays `unknown` and
+  keeps the hint pending, so a provider outage cannot discard real money, and a later
+  AtomicBEEF revives the card. Retiring also suppresses the txid so the inbox ACKs
+  the envelope away — it carries no BEEF, which is why it was unresolvable — instead
+  of the messagebox re-delivering it as a fresh hint on the next poll.
+- **Derived change whose toolbox row is gone can be re-imported.** Reclaim only
+  `updateOutput`s. After a BRC-39 restore from an older snapshot the coins stay
+  on chain at BRC-29 addresses while IndexedDB has nothing to spend with.
+  Successful sweeps and `keepChangeOfSignedTx` now echo prefix/suffix into
+  durable prefs; a missing row is internalized as a self wallet-payment instead
+  of un-sealing nothing. Reclaim also ranks by value and rotates past
+  `RECLAIM_MAX`, so 200+ blank seals are not permanently skipped.
+
 ## [1.3.226] - 2026-09-17
 
 ### Changed
