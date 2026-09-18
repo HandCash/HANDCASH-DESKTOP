@@ -56,6 +56,22 @@ export type ItemTransferAsset =
       issuer?: string
     }
 
+/** One collectable output in a multi-item transaction. */
+export type ItemTransferMember = {
+  outputIndex: number
+  name: string
+  origin: string
+  collectionId?: string
+  provenance?: {
+    v: 2
+    origin: string
+    tip: string
+    path: string[]
+    beefB64: string
+    contentType?: string
+  }
+}
+
 export type ChatMessage = {
   id: string
   peerId: string
@@ -94,8 +110,21 @@ export type ChatMessage = {
     item?: boolean
     itemOrigin?: string
     itemCollectionId?: string
+    /** Exact transaction output this item card describes. */
+    itemOutputIndex?: number
     /** Tagged asset grammar; absent on older collectable messages. */
     asset?: ItemTransferAsset
+    /** Per-output identity for a collectable batch sharing one txid. */
+    items?: ItemTransferMember[]
+    /** BRC-150 remittance from the sender — verify this hop without an indexer. */
+    provenance?: {
+      v: 2
+      origin: string
+      tip: string
+      path: string[]
+      beefB64: string
+      contentType?: string
+    }
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
     chatRef?: boolean
   }

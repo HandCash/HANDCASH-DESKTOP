@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   listFailedActivity: vi.fn(),
   releaseUnsignedSpendReservations: vi.fn(),
   counterpartyMaySettle: vi.fn(),
+  getSentItemRecord: vi.fn(),
   getProvenOrRawTx: vi.fn(),
   getTxByTxid: vi.fn(),
   keepChangeOfSignedTx: vi.fn(),
@@ -28,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./sentItemGuard", () => ({
   counterpartyMaySettle: mocks.counterpartyMaySettle,
+  getSentItemRecord: mocks.getSentItemRecord,
   forgetItemsSent: mocks.forgetItemsSent,
 }));
 

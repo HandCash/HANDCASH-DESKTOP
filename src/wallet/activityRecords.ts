@@ -73,20 +73,6 @@ function isPendingItemPlaceholder(entry: ActivityEntry): boolean {
   return origin.endsWith('_pending')
 }
 
-function assetIdentity(entry: ActivityEntry): string | null {
-  const item = entry.item
-  if (!item) return null
-  const tokenId = (item.tokenId ?? '').trim().toLowerCase()
-  if (tokenId) return tokenId
-  const origin = (item.origin ?? '').trim()
-  if (origin && !origin.toLowerCase().endsWith('_pending')) {
-    return normalizeInscriptionKey(origin)
-  }
-  const point = (item.outpoint ?? '').trim()
-  if (point) return normalizeInscriptionKey(point)
-  return origin ? normalizeInscriptionKey(origin) : null
-}
-
 /**
  * How far a leg may fold into the other legs of its transaction.
  *
@@ -188,14 +174,60 @@ export function activityBatchOf(
   return chooseActivityBatch(members)
 }
 
+/** Every key a leg states for its asset: token id, genesis origin, outpoint. */
+function assetKeys(entry: ActivityEntry): string[] {
+  const item = entry.item
+  if (!item) return []
+  const keys: string[] = []
+  const tokenId = (item.tokenId ?? '').trim().toLowerCase()
+  if (tokenId) keys.push(`token:${tokenId}`)
+  const origin = (item.origin ?? '').trim()
+  if (origin && !origin.toLowerCase().endsWith('_pending')) {
+    keys.push(`origin:${normalizeInscriptionKey(origin)}`)
+  }
+  const point = (item.outpoint ?? '').trim()
+  if (point) keys.push(`point:${normalizeInscriptionKey(point)}`)
+  return keys
+}
+
+/**
+ * How many collectables these legs actually name.
+ *
+ * One collectable reaches a record under more than one key: a listing names the
+ * genesis origin and the outpoint the listing created, while the held row for the
+ * same fox may only know one of the two. Counting legs made a single listed item
+ * wear a batch "2", so legs are grouped by every key they share and counted once
+ * per group. Distinct items share no key, so a real batch still counts in full.
+ */
+function distinctAssetGroups(items: readonly ActivityEntry[]): number {
+  const groups: Set<string>[] = []
+  for (const entry of items) {
+    const keys = assetKeys(entry)
+    if (keys.length === 0) {
+      groups.push(new Set())
+      continue
+    }
+    const merged = new Set(keys)
+    for (let i = groups.length - 1; i >= 0; i -= 1) {
+      if (keys.some((key) => groups[i]!.has(key))) {
+        for (const key of groups[i]!) merged.add(key)
+        groups.splice(i, 1)
+      }
+    }
+    groups.push(merged)
+  }
+  return groups.length
+}
+
 function chooseActivityBatch(
   members: readonly ActivityEntry[],
 ): ActivityBatch | null {
   const items = members.filter(isCollectableAsset)
-  if (items.length < 2) return null
+  const count = distinctAssetGroups(items)
+  if (count < 2) return null
   const series = new Set(items.map((entry) => seriesOf(entry) ?? ''))
   const shared = series.size === 1 ? [...series][0]! : ''
-  return { count: items.length, label: shared ? pluralOf(shared) : null }
+  return { count, label: shared ? pluralOf(shared) : null }
 }
 
 /** How a batched record names itself: "5 Pixel Foxes", "3 collectables". */
@@ -269,13 +301,13 @@ export function batchSiblingsForEntry(
   entries: readonly ActivityEntry[],
 ): ActivityEntry[] {
   if (!isCollectableAsset(entry)) return []
-  const seen = new Set([assetIdentity(entry)])
+  const seen = new Set(assetKeys(entry))
   const siblings: ActivityEntry[] = []
   for (const candidate of siblingsOf(entry, entries)) {
     if (!isCollectableAsset(candidate)) continue
-    const asset = assetIdentity(candidate)
-    if (!asset || seen.has(asset)) continue
-    seen.add(asset)
+    const keys = assetKeys(candidate)
+    if (keys.length === 0 || keys.some((key) => seen.has(key))) continue
+    for (const key of keys) seen.add(key)
     siblings.push(candidate)
   }
   return siblings
@@ -314,16 +346,16 @@ export function composeActivityRecords(
     const subject = [...bucket].sort((a, b) => subjectRank(a) - subjectRank(b))[0]!
     const rest = bucket.filter((entry) => entry !== subject)
     const money = pickMoneyLeg(rest)
-    const subjectAsset = assetIdentity(subject)
-    const seen = new Set(subjectAsset ? [subjectAsset] : [])
+    const seen = new Set(assetKeys(subject))
     const assets: ActivityEntry[] = []
     for (const entry of rest) {
-      const asset = assetIdentity(entry)
+      const keys = assetKeys(entry)
       // A second row for the asset already named by the subject is the duplicate
-      // this composition exists to remove (listing event + its held item).
-      if (!asset || seen.has(asset)) continue
+      // this composition exists to remove (listing event + its held item). The
+      // two legs need only agree on one key — origin or outpoint — to be one fox.
+      if (keys.length === 0 || keys.some((key) => seen.has(key))) continue
       if (isPendingItemPlaceholder(entry)) continue
-      seen.add(asset)
+      for (const key of keys) seen.add(key)
       assets.push(entry)
     }
     return {

@@ -90,6 +90,14 @@ vi.mock('./spendGuard', () => ({
 }))
 
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))
+
+// `[1, 2, 3]` stands in for signed tx bytes throughout this suite, so the real
+// subject re-framing has nothing to parse. Its behaviour is covered by
+// beefCache.test.ts; here it only needs to pass a present envelope through.
+vi.mock('./beefCache', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./beefCache')>()),
+  atomicBeefForSubject: (bin?: number[]) => (bin?.length ? bin : undefined),
+}))
 vi.mock('./deviceSync', () => ({ scheduleHistoryBackupPush: () => {} }))
 vi.mock('./appActivity', () => ({
   hasActivityTxid: () => false,

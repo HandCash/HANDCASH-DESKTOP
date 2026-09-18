@@ -15,6 +15,7 @@ import {
   publicMessageboxBase,
   uploadMessageboxBytes,
   withOptionalBeefB64,
+  withOptionalProvenance,
 } from './messageTransport'
 
 describe('message transport envelopes', () => {
@@ -486,42 +487,73 @@ describe('messagebox base URL', () => {
       atomicBeef: [1, 2, 3],
     })
 
-    expect(result).toEqual({ delivered: 'cloud', beefInBox: true })
+    expect(result).toEqual({
+      delivered: 'cloud',
+      beefInBox: true,
+      provenanceInBox: false,
+    })
     expect(urls.some((u) => u.includes('/files'))).toBe(false)
     expect(urls.some((u) => u.includes('/sendMessage'))).toBe(true)
   })
 
-  it('attaches large collectable BEEF instead of dropping the supplied proof', async () => {
+  it('puts BRC-150 remittance on the item inbox card so the peer can verify', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const { openPeerMessage } = await import('./messageEnvelope')
+    const root = PrivateKey.fromRandom()
+    const recipientKey = PrivateKey.fromRandom()
+    let sentBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        sentBody = String(init?.body ?? '')
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+    const provenance = {
+      v: 2 as const,
+      origin: `${'aa'.repeat(32)}_0`,
+      tip: `${'bb'.repeat(32)}_0`,
+      path: [`${'bb'.repeat(32)}_0`, `${'aa'.repeat(32)}_0`],
+      beefB64: btoa('beef'),
+    }
+    const result = await notifyPeerItemIncoming({
+      recipientIdentityKey: recipientKey.toPublicKey().toString(),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      txid: 'c'.repeat(64),
+      itemName: 'Fox',
+      itemOutputIndex: 2,
+      atomicBeef: [1, 2, 3],
+      provenance,
+    })
+    expect(result.provenanceInBox).toBe(true)
+    expect(result.beefInBox).toBe(true)
+    const opened = openPeerMessage({
+      body: JSON.parse(sentBody).message.body,
+      rootKeyHex: recipientKey.toHex(),
+    })
+    expect('plaintext' in opened).toBe(true)
+    const decoded = decodeMessageBody('plaintext' in opened ? opened.plaintext : '')
+    expect(decoded.meta?.provenance?.origin).toBe(provenance.origin)
+    expect(decoded.meta?.itemOutputIndex).toBe(2)
+    expect(withOptionalProvenance(encodeMessageBody({
+      kind: 'tip',
+      text: 'x',
+      meta: { item: true, txid: 'c'.repeat(64) },
+    }), provenance).provenanceInBox).toBe(true)
+  })
+
+  it('keeps oversized item BEEF off /files and still delivers the inbox card', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
     const recipientKey = PrivateKey.fromRandom()
     const recipient = recipientKey.toPublicKey().toString()
     const txid = 'a'.repeat(64)
     const urls: string[] = []
-    let sentBody = ''
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input)
-        urls.push(url)
-        if (url.endsWith('/files')) {
-          return new Response(
-            JSON.stringify({
-              status: 'success',
-              file: {
-                id: txid,
-                name: `${txid}.beef`,
-                contentType: 'application/octet-stream',
-                size: 20_000,
-                url: `https://mb.peer.example/v1/messagebox/files/${recipient}/${txid}`,
-                expiresAt: Date.now() + 60_000,
-              },
-            }),
-            { status: 200 },
-          )
-        }
-        sentBody = String(init?.body || '')
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
         return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
       }),
     )
@@ -536,17 +568,13 @@ describe('messagebox base URL', () => {
       atomicBeef: Array.from({ length: 20_000 }, (_, i) => i % 256),
     })
 
-    expect(result.delivered).toBe('cloud')
-    expect(urls[0]).toContain('/files')
-    expect(urls[1]).toContain('/sendMessage')
-    const opened = openPeerMessage({
-      body: JSON.parse(sentBody).message.body,
-      rootKeyHex: recipientKey.toHex(),
+    expect(result).toEqual({
+      delivered: 'cloud',
+      beefInBox: false,
+      provenanceInBox: false,
     })
-    expect('plaintext' in opened).toBe(true)
-    expect(
-      decodeMessageBody('plaintext' in opened ? opened.plaintext : '').meta?.attachment?.url,
-    ).toContain(`/files/${recipient}/${txid}`)
+    expect(urls.some((u) => u.includes('/files'))).toBe(false)
+    expect(urls.some((u) => u.includes('/sendMessage'))).toBe(true)
   })
 
   it('omits inline BEEF when it would exceed the sendMessage cap', async () => {
@@ -585,7 +613,11 @@ describe('messagebox base URL', () => {
       },
       atomicBeef: huge,
     })
-    expect(result).toEqual({ delivered: 'cloud', beefInBox: false })
+    expect(result).toEqual({
+      delivered: 'cloud',
+      beefInBox: false,
+      provenanceInBox: false,
+    })
   })
   it('notifyPeerItemIncoming sends X-BRC33 Identity, Timestamp, and Signature', async () => {
     const { PrivateKey } = await import('@bsv/sdk')

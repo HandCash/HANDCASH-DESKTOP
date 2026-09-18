@@ -13,7 +13,12 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
-type NotifyArgs = { txid: string; itemName: string; atomicBeef?: number[] }
+type NotifyArgs = {
+  txid: string
+  itemName: string
+  itemOutputIndex?: number
+  atomicBeef?: number[]
+}
 type NotifyResult = { delivered: 'local' | 'cloud'; beefInBox: boolean }
 
 const notifyPeerItemIncoming = vi.fn(
@@ -83,5 +88,21 @@ describe('flushPendingItemOutbox', () => {
 
     expect(await flushPendingItemOutbox({ rootKeyHex: ROOT })).toBe(0)
     expect(savedRows()).toEqual([expect.objectContaining({ attempts: 1 })])
+  })
+
+  it('keeps every failed batch remittance sharing one txid', async () => {
+    const { enqueuePendingItemRemit, flushPendingItemOutbox } = await import(
+      './pendingItemOutbox'
+    )
+    const base = row(7)
+    enqueuePendingItemRemit({ ...base, itemName: 'Fox 1', itemOutputIndex: 0 })
+    enqueuePendingItemRemit({ ...base, itemName: 'Fox 2', itemOutputIndex: 1 })
+    enqueuePendingItemRemit({ ...base, itemName: 'Fox 3', itemOutputIndex: 2 })
+
+    expect(savedRows()).toHaveLength(3)
+    expect(await flushPendingItemOutbox({ rootKeyHex: ROOT })).toBe(3)
+    expect(
+      notifyPeerItemIncoming.mock.calls.map(([args]) => args.itemOutputIndex),
+    ).toEqual(expect.arrayContaining([0, 1, 2]))
   })
 })

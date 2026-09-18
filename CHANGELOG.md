@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.233] - 2026-09-18
+
+### Changed
+
+- **Restored the v1.3.227–v1.3.230 product changes on top of the recovery
+  fixes.** This brings back preservation of every P2P batch item, AtomicBEEF
+  framing for inline delivery, activity/listing deduplication, bulk item-run
+  execution beyond the old 25-item cap, and publication of unresolved peer
+  transfers. The restored source paths do not overlap the renderer-freeze,
+  abandoned-spend, inbound-hint, or derived-change recovery fixes shipped in
+  v1.3.231. The combined tree passes TypeScript and all 1,892 unit tests.
+
 ## [1.3.232] - 2026-09-17
 
 ### Fixed

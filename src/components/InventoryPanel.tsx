@@ -84,6 +84,7 @@ import {
 } from '../wallet/collectableSendReady'
 import {
   collectableBurnBatchRefusal,
+  MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
   MAX_ITEMS_PER_ONE_SAT_TX,
 } from '../wallet/collectableBatch'
 import {
@@ -866,6 +867,7 @@ export function InventoryPanel() {
 
   const selectedCanSend =
     selectedCount > 0 &&
+    selectedCount <= MAX_ITEMS_PER_COLLECTABLE_SEND_RUN &&
     selectedItems.every((item) =>
       inspectCollectableSendReady({
         outpoint: item.outpoint,
@@ -913,7 +915,9 @@ export function InventoryPanel() {
             icon: <SendIcon size={18} />,
             title: selectedCanSend
               ? `Send ${selectedCount} collectables`
-              : 'Wait for selected items to finish verification',
+              : selectedCount > MAX_ITEMS_PER_COLLECTABLE_SEND_RUN
+                ? `Send up to ${MAX_ITEMS_PER_COLLECTABLE_SEND_RUN} collectables at a time`
+                : 'Wait for selected items to finish verification',
           },
         }
       : null,

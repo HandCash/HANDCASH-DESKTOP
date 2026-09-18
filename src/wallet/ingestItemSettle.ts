@@ -13,11 +13,16 @@
 import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
 import { getActiveWallet } from './session'
-import { rememberBeefTree } from './beefCache'
+import { atomicBeefForSubject, rememberBeefTree } from './beefCache'
 import { decodeBProtocol } from './bProtocol'
 import { decodeBsv21Binary } from './token'
 import { scriptPaysAddress } from './ordinalOwnership'
-import { buildInternalizeCustomInstructions } from './oneSatProvenance'
+import {
+  buildInternalizeCustomInstructions,
+  parseProvenanceV2,
+  rememberPeerRemittanceForHeldTips,
+  rememberProvenanceRemittance,
+} from './oneSatProvenance'
 import {
   beginOneSatImport,
   markOneSatImported,
@@ -43,6 +48,7 @@ import {
   withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
 import type { Chain } from './vault'
+import type { ItemTransferMember } from './messageStore'
 
 export type IngestItemSettleResult = {
   accepted: boolean
@@ -125,6 +131,10 @@ export async function internalizePeerItemSettle(opts: {
   origin?: string
   app?: string
   collectionId?: string
+  /** BRC-150 remittance from the inbox envelope — verify without an indexer walk. */
+  provenance?: unknown
+  /** Per-vout identities merged from every inbox card sharing this txid. */
+  items?: ItemTransferMember[]
   /** Inbox hints race sender postBeef and therefore use a short retry backoff. */
   beefPurpose?: AtomicBeefPurpose
 }): Promise<IngestItemSettleResult> {
@@ -141,9 +151,19 @@ export async function internalizePeerItemSettle(opts: {
     itemName: opts.name,
   })
 
-  let atomic = opts.tx
-  if ((!atomic || !atomic.length) && opts.beefUrl) {
-    atomic = await fetchAtomicBeefFromUrl(opts.beefUrl)
+  const parsedProof = parseProvenanceV2(opts.provenance)
+  if (parsedProof) rememberProvenanceRemittance(parsedProof)
+  for (const item of opts.items ?? []) {
+    const proof = parseProvenanceV2(item.provenance)
+    if (proof) rememberProvenanceRemittance(proof)
+  }
+
+  // Every source is re-framed for this subject: internalize takes AtomicBEEF
+  // only, and a plain-BEEF envelope must fall through to the next source rather
+  // than fail the settle for good.
+  let atomic = atomicBeefForSubject(opts.tx, id)
+  if (!atomic?.length && opts.beefUrl) {
+    atomic = atomicBeefForSubject(await fetchAtomicBeefFromUrl(opts.beefUrl), id)
   }
   if (!atomic?.length) {
     try {
@@ -230,6 +250,11 @@ export async function internalizePeerItemSettle(opts: {
   }
 
   const allOps = tipVouts.map((vout) => `${id}.${vout}`)
+  const members = new Map(
+    (opts.items ?? [])
+      .filter((item) => tipVouts.includes(item.outputIndex))
+      .map((item) => [item.outputIndex, item] as const),
+  )
   const claimed = beginOneSatImport(allOps)
   if (claimed.length === 0) {
     // Already in the basket — still (re)paint so a second batch notify can bind
@@ -241,6 +266,7 @@ export async function internalizePeerItemSettle(opts: {
       name,
       app,
       collectionId,
+      members,
       chain: active.chain,
     })
     return { accepted: true, outpoints: allOps, reason: 'already-imported' }
@@ -253,14 +279,22 @@ export async function internalizePeerItemSettle(opts: {
     rememberBeefTree(atomic, id)
 
     const remittanceOutputs = tipVouts.map((vout) => {
-      const origin = originForTipVout(id, vout, tipVouts, originHint)
+      const member = members.get(vout)
+      const memberOrigin = member?.origin?.trim()
+      const origin = memberOrigin
+        ? normalizeOriginHint(memberOrigin, id)!
+        : originForTipVout(id, vout, tipVouts, originHint)
       const priorByOrigin = getResolvedInscriptionByOrigin(origin)
       const tipName =
+        member?.name?.trim() ||
         (originHint && origin === normalizeOriginHint(originHint, id)
           ? name
           : priorByOrigin?.name?.trim()) || name
       const tipCollection =
-        collectionId || priorByOrigin?.collectionId || undefined
+        member?.collectionId?.trim() ||
+        collectionId ||
+        priorByOrigin?.collectionId ||
+        undefined
       const tipApp = app || priorByOrigin?.app || undefined
       return {
         outputIndex: vout,
@@ -298,6 +332,7 @@ export async function internalizePeerItemSettle(opts: {
 
     markOneSatImported(allOps)
     rememberBeefTree(atomic, id)
+    rememberReceivedProofs(id, tipVouts, members, opts.provenance)
     scheduleHistoryBackupPush('internalizeAction')
     paintReceivedTips({
       txid: id,
@@ -306,6 +341,7 @@ export async function internalizePeerItemSettle(opts: {
       name,
       app,
       collectionId,
+      members,
       chain: active.chain,
     })
     console.info(
@@ -315,6 +351,7 @@ export async function internalizePeerItemSettle(opts: {
   } catch (err) {
     if (alreadyInternalizedError(err)) {
       markOneSatImported(allOps)
+      rememberReceivedProofs(id, tipVouts, members, opts.provenance)
       paintReceivedTips({
         txid: id,
         tipVouts,
@@ -322,6 +359,7 @@ export async function internalizePeerItemSettle(opts: {
         name,
         app,
         collectionId,
+        members,
         chain: active.chain,
       })
       console.info(
@@ -339,6 +377,27 @@ export async function internalizePeerItemSettle(opts: {
   }
 }
 
+function rememberReceivedProofs(
+  txid: string,
+  tipVouts: number[],
+  members: ReadonlyMap<number, ItemTransferMember>,
+  fallback: unknown,
+): void {
+  if (members.size === 0) {
+    rememberPeerRemittanceForHeldTips(
+      tipVouts.map((vout) => `${txid}.${vout}`),
+      fallback,
+    )
+    return
+  }
+  for (const vout of tipVouts) {
+    rememberPeerRemittanceForHeldTips(
+      [`${txid}.${vout}`],
+      members.get(vout)?.provenance,
+    )
+  }
+}
+
 function paintReceivedTips(args: {
   txid: string
   tipVouts: number[]
@@ -346,9 +405,10 @@ function paintReceivedTips(args: {
   name: string
   app: string | undefined
   collectionId: string | undefined
+  members: ReadonlyMap<number, ItemTransferMember>
   chain: Chain
 }): void {
-  const { txid: id, tipVouts, originHint, app, collectionId, chain } = args
+  const { txid: id, tipVouts, originHint, app, collectionId, members, chain } = args
   let name = args.name
   const preferred = pickTipVoutForOriginHint(id, tipVouts, originHint)
   const hint = normalizeOriginHint(originHint, id)
@@ -360,16 +420,20 @@ function paintReceivedTips(args: {
   const paintedOps: string[] = []
   for (const vout of tipVouts) {
     const tipOp = `${id}.${vout}`
-    const origin = originForTipVout(id, vout, tipVouts, originHint)
+    const member = members.get(vout)
+    const origin = member?.origin?.trim()
+      ? normalizeOriginHint(member.origin, id)!
+      : originForTipVout(id, vout, tipVouts, originHint)
     const priorByOrigin = getResolvedInscriptionByOrigin(origin)
     const isHintTip = Boolean(hint && preferred === vout && origin === hint)
     if (isHintTip && priorByOrigin?.name?.trim()) {
       name = priorByOrigin.name.trim()
     }
-    const tipName = isHintTip
+    const tipName = member?.name?.trim() || (isHintTip
       ? name
-      : priorByOrigin?.name?.trim() || name
+      : priorByOrigin?.name?.trim() || name)
     const tipCollection =
+      member?.collectionId?.trim() ||
       (isHintTip ? collectionId : undefined) ||
       collectionId ||
       priorByOrigin?.collectionId

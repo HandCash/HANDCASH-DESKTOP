@@ -22,7 +22,9 @@ export type PendingItemRemit = {
   itemName: string
   itemOrigin?: string
   itemCollectionId?: string
+  itemOutputIndex?: number
   asset?: ItemTransferAsset
+  provenance?: import('./oneSatProvenance').ProvenanceV2
   messagebox?: string | null
   createdAt: number
   attempts: number
@@ -57,11 +59,26 @@ export function enqueuePendingItemRemit(
 ): void {
   const txid = row.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
-  const rows = load().filter((r) => r.txid !== txid)
+  const outputIndex =
+    Number.isInteger(row.itemOutputIndex) && row.itemOutputIndex! >= 0
+      ? row.itemOutputIndex
+      : undefined
+  // A batch has several remittances sharing one txid. Replacing by txid alone
+  // kept only the last item when the peer box was unavailable.
+  const rows = load().filter(
+    (r) =>
+      !(
+        r.txid === txid &&
+        (outputIndex != null
+          ? r.itemOutputIndex === outputIndex
+          : r.itemOrigin === row.itemOrigin)
+      ),
+  )
   const trace = activeTransactionTrace()
   rows.push({
     ...row,
     txid,
+    ...(outputIndex != null ? { itemOutputIndex: outputIndex } : {}),
     createdAt: row.createdAt ?? Date.now(),
     attempts: row.attempts ?? 0,
     traceId: row.traceId ?? trace?.traceId,
@@ -107,7 +124,9 @@ export async function flushPendingItemOutbox(args: {
         itemName: row.itemName,
         itemOrigin: row.itemOrigin,
         itemCollectionId: row.itemCollectionId,
+        itemOutputIndex: row.itemOutputIndex,
         asset: row.asset,
+        provenance: row.provenance,
         atomicBeef,
       })
       if (result.delivered === 'cloud' || result.delivered === 'direct') {

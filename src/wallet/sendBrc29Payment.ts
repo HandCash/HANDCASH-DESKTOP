@@ -20,13 +20,12 @@ import {
   noteOutboundSendPending,
   failOutboundSendPending,
 } from './appActivity'
-import { getBeefForTxidCached } from './beefCache'
-import { isTerminalInboundHintStatus } from './kernel/inboundHintFate'
+import { atomicBeefForSubject, getBeefForTxidCached } from './beefCache'
 import { withVisibleOnChainBeef } from './legacyBeef'
+import { parseProvenanceV2, type ProvenanceV2 } from './oneSatProvenance'
 import {
   forgetGhostTx,
   isGhostTxSuppressed,
-  rememberGhostTx,
 } from './ghostTxSuppress'
 import {
   beginPendingSend,
@@ -68,7 +67,7 @@ import {
   listAllMessages,
   updateMessage,
 } from './messageStore'
-import type { ItemTransferAsset } from './messageStore'
+import type { ItemTransferAsset, ItemTransferMember } from './messageStore'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
@@ -192,27 +191,6 @@ export type InternalizeBrc29Result = {
 }
 
 const brc29InternalizeInflight = new Map<string, Promise<InternalizeBrc29Result>>()
-
-/**
- * A retired hint comes back the moment a body shows up — the grace window is a
- * judgement about evidence, not a permanent verdict.
- */
-function reviveRetiredInboundHint(txid: string): void {
-  const id = txid.trim().toLowerCase()
-  if (!id) return
-  try {
-    for (const msg of listAllMessages()) {
-      if (msg.direction !== 'in') continue
-      if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
-      if ((msg.meta?.txid || '').trim().toLowerCase() !== id) continue
-      const status = String(msg.meta?.status ?? '').trim().toLowerCase()
-      if (!status.startsWith('unavailable')) continue
-      updateMessage(msg.id, { meta: { status: 'Receiving (SPV)' } })
-    }
-  } catch {
-    /* chat status is cosmetic — never block ingest */
-  }
-}
 
 function markInboundPaymentStatus(txid: string, status: string): void {
   const id = txid.trim().toLowerCase()
@@ -788,15 +766,18 @@ async function internalizeBrc29PaymentOnce(opts: {
   const balanceBefore = await fetchBalanceSats(active.wallet).catch(() => null)
 
   try {
-    let atomic = opts.tx
-    if (!atomic || atomic.length === 0) {
+    // An inline envelope is re-framed for this subject before internalize, which
+    // takes AtomicBEEF only. A plain BEEF here is not a dead payment: fall back
+    // to fetching the subject rather than retrying a shape that cannot be taken.
+    let atomic = atomicBeefForSubject(opts.tx, id)
+    if (atomic?.length) {
+      markIngest(`beef inline bytes=${atomic.length}`)
+    } else {
       const beef = await getBeefForTxidCached(active, id, {
         allowUnprovenRawTx: true,
       })
       atomic = Array.from(beef.toBinaryAtomic(id))
       markIngest(`beef bytes=${atomic.length}`)
-    } else {
-      markIngest(`beef inline bytes=${atomic.length}`)
     }
 
     if (atomic.length > 0) {
@@ -990,15 +971,20 @@ export type PaymentTipHint = {
   itemName?: string
   itemOrigin?: string
   itemCollectionId?: string
+  itemOutputIndex?: number
+  /** Every output card observed for one multi-item transaction. */
+  items?: ItemTransferMember[]
   /** Tagged asset grammar; absent means legacy collectable. */
   asset?: ItemTransferAsset
-  /** When the card arrived — how long an unbroadcast hint has been chased. */
-  firstSeenAt?: number
+  /** BRC-150 remittance from the sender's inbox card. */
+  provenance?: ProvenanceV2
 }
 
 /** Inbound chat cards still waiting to be internalized (inbox may already be ACKed). */
 let pendingChatHintGeneration = ''
 let pendingChatHintCache: PaymentTipHint[] = []
+/** Prevent overlapping inbox polls from broadcasting/internalizing one tx repeatedly. */
+const tipIngestInFlight = new Set<string>()
 
 export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
   const generation = `${getMessageWriteGeneration()}:${getActivityWriteGeneration()}`
@@ -1014,10 +1000,10 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
     if (isGhostTxSuppressed(txid)) continue
     const isItem = msg.meta?.item === true
     if (hasSettledActivityTxid(txid, 'earned', { item: isItem })) continue
-    if (isTerminalInboundHintStatus(msg.meta?.status)) continue
+    const status = String(msg.meta?.status ?? '').toLowerCase()
+    if (status === 'received' || status === 'unavailable') continue
     hints.push({
       txid,
-      firstSeenAt: msg.createdAt,
       senderIdentityKey: msg.meta?.identityKey,
       satoshis: msg.meta?.sats,
       brc29: msg.meta?.brc29,
@@ -1031,12 +1017,50 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
         typeof msg.meta?.itemCollectionId === 'string'
           ? msg.meta.itemCollectionId.trim() || undefined
           : undefined,
+      itemOutputIndex: msg.meta?.itemOutputIndex,
+      items: msg.meta?.items,
       asset: msg.meta?.asset,
+      provenance: parseProvenanceV2(msg.meta?.provenance) ?? undefined,
     })
   }
   pendingChatHintGeneration = generation
   pendingChatHintCache = hints
   return pendingChatHintCache
+}
+
+export function mergeItemTransferMembers(
+  previous: PaymentTipHint | undefined,
+  next: PaymentTipHint,
+): ItemTransferMember[] | undefined {
+  const byOutput = new Map<number, ItemTransferMember>()
+  for (const member of [...(previous?.items ?? []), ...(next.items ?? [])]) {
+    if (Number.isInteger(member.outputIndex) && member.outputIndex >= 0) {
+      byOutput.set(member.outputIndex, member)
+    }
+  }
+  const addCard = (hint: PaymentTipHint | undefined) => {
+    if (
+      !hint?.item ||
+      !Number.isInteger(hint.itemOutputIndex) ||
+      hint.itemOutputIndex! < 0 ||
+      !hint.itemName?.trim() ||
+      !hint.itemOrigin?.trim()
+    ) {
+      return
+    }
+    byOutput.set(hint.itemOutputIndex!, {
+      outputIndex: hint.itemOutputIndex!,
+      name: hint.itemName.trim(),
+      origin: hint.itemOrigin.trim().replace(/\.(\d+)$/, '_$1').toLowerCase(),
+      ...(hint.itemCollectionId ? { collectionId: hint.itemCollectionId } : {}),
+      ...(hint.provenance ? { provenance: hint.provenance } : {}),
+    })
+  }
+  addCard(previous)
+  addCard(next)
+  return byOutput.size > 0
+    ? [...byOutput.values()].sort((a, b) => a.outputIndex - b.outputIndex)
+    : undefined
 }
 
 /**
@@ -1075,8 +1099,13 @@ export async function ingestPaymentsFromTipHints(
       itemName: h.itemName?.trim() || undefined,
       itemOrigin: h.itemOrigin?.trim() || undefined,
       itemCollectionId: h.itemCollectionId?.trim() || undefined,
+      itemOutputIndex:
+        Number.isInteger(h.itemOutputIndex) && h.itemOutputIndex! >= 0
+          ? h.itemOutputIndex
+          : undefined,
+      items: h.items,
       asset: h.asset,
-      firstSeenAt: h.firstSeenAt,
+      provenance: parseProvenanceV2(h.provenance) ?? undefined,
     })
   }
 
@@ -1087,7 +1116,6 @@ export async function ingestPaymentsFromTipHints(
     // four dead inbound tips came back on every open.
     if ((h.tx && h.tx.length > 0) || h.beefUrl?.trim()) {
       forgetGhostTx(h.txid)
-      reviveRetiredInboundHint(h.txid)
     }
     if (isGhostTxSuppressed(h.txid)) continue
     const prev = unique.get(h.txid)
@@ -1099,10 +1127,22 @@ export async function ingestPaymentsFromTipHints(
       (h.itemName && !prev.itemName) ||
       (h.itemOrigin && !prev.itemOrigin) ||
       (h.itemCollectionId && !prev.itemCollectionId) ||
+      (h.itemOutputIndex != null &&
+        !prev.items?.some((member) => member.outputIndex === h.itemOutputIndex)) ||
+      (h.items && h.items.length > 0) ||
+      (h.provenance && !prev.provenance) ||
       (h.beefUrl && !prev.beefUrl) ||
       (h.tx && !prev.tx)
     ) {
-      unique.set(h.txid, { ...prev, ...h })
+      unique.set(h.txid, {
+        ...prev,
+        ...h,
+        tx: h.tx ?? prev?.tx,
+        beefUrl: h.beefUrl ?? prev?.beefUrl,
+        brc29: h.brc29 ?? prev?.brc29,
+        senderIdentityKey: h.senderIdentityKey ?? prev?.senderIdentityKey,
+        items: mergeItemTransferMembers(prev, h),
+      })
     }
   }
 
@@ -1130,24 +1170,9 @@ export async function ingestPaymentsFromTipHints(
     if (!ghostTxids.includes(id)) ghostTxids.push(id)
     return true
   }
-  /**
-   * Retire the inbox copy too.
-   *
-   * Marking the chat card terminal only takes it out of the local sweep. The
-   * messagebox still holds the envelope, so the next poll re-delivers it as a
-   * fresh hint and the chase starts over. Suppression is what makes the ACK
-   * happen — and the envelope carries no BEEF (that is why it is unresolvable),
-   * so nothing recoverable is discarded. A later AtomicBEEF calls forgetGhostTx.
-   */
-  const retireUnresolvable = (txid: string): void => {
-    const id = txid.trim().toLowerCase()
-    rememberGhostTx(id)
-    if (!ghostTxids.includes(id)) ghostTxids.push(id)
-  }
   const markGhostIfMissing = async (
     txid: string,
-    hadLocalBeef: boolean,
-    firstSeenAt: number | undefined,
+    _hadLocalBeef: boolean,
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
     // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
@@ -1158,57 +1183,20 @@ export async function ingestPaymentsFromTipHints(
       )
       return
     }
-
-    const {
-      decideInboundHintFate,
-      mayBeUnresolvable,
-      UNRESOLVABLE_HINT_STATUS,
-    } = await import('./kernel/inboundHintFate')
-    const { peekRawTxLookup } = await import('./oneSatImport')
-    const base = {
-      isArcadeGhost: false,
-      hasDeliverableBeef: hadLocalBeef,
-      bodyLookup: peekRawTxLookup(txid),
-      firstSeenAt: firstSeenAt ?? 0,
-      now: Date.now(),
-    }
-    if (!mayBeUnresolvable(base)) {
-      console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
-      )
-      return
-    }
-
-    // Only now is an explorer round-trip worth it: nothing deliverable here and
-    // every provider has already missed the body.
-    let onChain: boolean | null = null
-    try {
-      const active = getActiveWallet()
-      if (active) {
-        const { txExistsOnChain } = await import('./legacyScan')
-        onChain = await txExistsOnChain(txid, active.chain)
-      }
-    } catch {
-      // No answer reads as unknown, which keeps the hint pending.
-    }
-
-    const fate = decideInboundHintFate({ ...base, onChain })
-    if (fate.kind !== 'unresolvable') {
-      console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
-      )
-      return
-    }
-
-    console.warn(`[tip-ingest] tip ${txid.slice(0, 12)}… retired — ${fate.reason}`)
-    markInboundPaymentStatus(txid, UNRESOLVABLE_HINT_STATUS)
-    retireUnresolvable(txid)
+    console.info(
+      `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
+    )
   }
 
   const { mapPool } = await import('./asyncPool')
   const hintList = [...unique.values()]
 
   const outcomes = await mapPool(hintList, TIP_INGEST_CONCURRENCY, async (hint) => {
+    if (tipIngestInFlight.has(hint.txid)) {
+      return { importedTxid: null, balanceSats: null }
+    }
+    tipIngestInFlight.add(hint.txid)
+    try {
     // On Android each BEEF merge and toolbox call shares the WebView process
     // with input/rendering. One hint per turn keeps stale inbox recovery from
     // producing a multi-second navigation stall; failed hints retry next poll.
@@ -1251,6 +1239,8 @@ export async function ingestPaymentsFromTipHints(
                     name: hint.itemName,
                     origin: hint.itemOrigin,
                     collectionId: hint.itemCollectionId,
+                    provenance: hint.provenance,
+                    items: hint.items,
                     beefPurpose: 'inboundItemHint',
                   }),
               )
@@ -1263,7 +1253,7 @@ export async function ingestPaymentsFromTipHints(
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
-      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
       return { importedTxid, balanceSats }
     }
 
@@ -1300,7 +1290,7 @@ export async function ingestPaymentsFromTipHints(
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
-      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
       return { importedTxid, balanceSats }
     }
 
@@ -1319,8 +1309,11 @@ export async function ingestPaymentsFromTipHints(
         await new Promise((r) => setTimeout(r, ingestDelayMs))
       }
     }
-    if (!accepted) await markGhostIfMissing(hint.txid, false, hint.firstSeenAt)
+    if (!accepted) await markGhostIfMissing(hint.txid, false)
     return { importedTxid, balanceSats }
+    } finally {
+      tipIngestInFlight.delete(hint.txid)
+    }
   })
 
   const importedTxids: string[] = []

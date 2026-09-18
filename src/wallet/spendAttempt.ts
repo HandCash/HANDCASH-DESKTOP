@@ -16,6 +16,7 @@ import {
   isFailedActivity,
   isFailedMarketListingActivity,
   listFailedActivity,
+  listRecentActivity,
   removeActivityById,
   removeFailedActivity,
   type ActivityEntry,
@@ -26,7 +27,11 @@ import {
   sendCollectable,
 } from "./collectables";
 import { getCachedFungibles, getFungible, sendFungible } from "./token";
-import { counterpartyMaySettle, forgetItemsSent } from "./sentItemGuard";
+import {
+  counterpartyMaySettle,
+  forgetItemsSent,
+  getSentItemRecord,
+} from "./sentItemGuard";
 import { getBeefForTxidCached } from "./beefCache";
 import {
   parseOutpoint,
@@ -201,11 +206,32 @@ function publishableSignedTransfer(
   entry: ActivityEntry
 ): Extract<ActivityRetry, { kind: "send-collectable" | "send-token" }> | null {
   const retry = entry.retry;
-  if (!retry) return null;
-  if (retry.kind !== "send-collectable" && retry.kind !== "send-token")
-    return null;
   if (!hasTxid(entry)) return null;
-  return senderMayPublishSignedTransfer(entry) ? retry : null;
+  if (
+    retry?.kind === "send-collectable" ||
+    retry?.kind === "send-token"
+  ) {
+    return senderMayPublishSignedTransfer(entry) ? retry : null;
+  }
+  // Older item rows predate durable retry details, but rebroadcast needs only
+  // the original outpoint as the chart key and the already-signed tx body. Do
+  // not strand a perfectly recoverable peer-delivery cheque for absent UX data.
+  const outpoint = entry.item?.outpoint?.trim();
+  if (entry.method !== ITEM_METHOD || !outpoint) return null;
+  const synthesized: Extract<
+    ActivityRetry,
+    { kind: "send-collectable" }
+  > = {
+    kind: "send-collectable",
+    outpoint,
+    toAddress: "",
+  };
+  return senderMayPublishSignedTransfer({
+    ...entry,
+    retry: synthesized,
+  })
+    ? synthesized
+    : null;
 }
 
 function senderMayPublishSignedTransfer(entry: ActivityEntry): boolean {
@@ -407,7 +433,11 @@ export async function resolveSpendAttemptFate(
       message:
         "The item has left your wallet and the recipient has the signed transfer. Their wallet publishes it, so it confirms once they are online. This stays in your Activity as the record until then.",
       mayClear: false,
-      mayReleaseFunds: true,
+      // Unsigned debris may hold a reservation. A signed peer transfer does
+      // not: showing "Unlock coins" there ran unsigned repair for 30 seconds,
+      // changed nothing, and implied the transfer's real sealed inputs were
+      // released when they were not.
+      mayReleaseFunds: !hasTxid(entry),
       mayReclaimInputs: hasTxid(entry) && inputsFate === "unspent",
       peerPublishes: true,
     };
@@ -913,6 +943,76 @@ export async function rebroadcastAllFailedSpends(): Promise<{
   }
 
   return { rebroadcasted, skipped, failed, errors };
+}
+
+function unresolvedPeerTransferRows(): ActivityEntry[] {
+  const seen = new Set<string>();
+  const rows: ActivityEntry[] = [];
+  for (const row of listRecentActivity(1000)) {
+    const txid = row.txid?.trim().toLowerCase() ?? "";
+    const outpoint =
+      row.retry?.kind === "send-collectable"
+        ? row.retry.outpoint
+        : row.item?.outpoint;
+    if (
+      !/^[0-9a-f]{64}$/.test(txid) ||
+      !outpoint ||
+      seen.has(txid) ||
+      getSentItemRecord(outpoint)?.settle !== "peerDeliver" ||
+      !publishableSignedTransfer(row)
+    ) {
+      continue;
+    }
+    seen.add(txid);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** Signed peer-delivery transactions that this wallet can safely publish. */
+export function countUnresolvedPeerTransfers(): number {
+  return unresolvedPeerTransferRows().length;
+}
+
+/**
+ * Publish every unresolved peer-delivery cheque as its original transaction.
+ *
+ * This creates no replacement spend: sender and recipient hold the same txid.
+ * Rows are deduplicated by txid because one five-item leg writes five Activity
+ * members. Successful submission lets normal chain reconciliation settle them.
+ */
+export async function publishUnresolvedPeerTransfers(): Promise<{
+  published: number;
+  confirmed: number;
+  failed: number;
+  errors: string[];
+}> {
+  const active = getActiveWallet();
+  if (!active) throw new Error("Wallet is not unlocked.");
+  let published = 0;
+  let confirmed = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (const row of unresolvedPeerTransferRows()) {
+    const txid = row.txid!.trim().toLowerCase();
+    const onChain = await txExistsOnChain(txid, active.chain).catch(() => null);
+    if (onChain === true) {
+      confirmed += 1;
+      continue;
+    }
+    const chartKey =
+      row.retry?.kind === "send-collectable"
+        ? row.retry.outpoint
+        : row.item!.outpoint!;
+    try {
+      await rebroadcastSignedTransfer(row, chartKey);
+      published += 1;
+    } catch (err) {
+      failed += 1;
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return { published, confirmed, failed, errors };
 }
 
 /** Best-effort release of the local reservations a dead spend left behind. */

@@ -30,6 +30,7 @@ import {
   type ChatAttachment,
   type ChatMessage,
   type ItemTransferAsset,
+  type ItemTransferMember,
   type MessageKind,
 } from './messageStore'
 import { rememberBeefBinary } from './beefCache'
@@ -41,6 +42,11 @@ import type {
 } from './marketListing'
 import { bytesToBase64 } from './base64Binary'
 import { installElectronDirectSession } from './directSession/bridge'
+import {
+  encodeRemittanceForPeerBox,
+  parseProvenanceV2,
+  type ProvenanceV2,
+} from './oneSatProvenance'
 import {
   ensureDirectListener,
   ingestSessionOfferBody,
@@ -353,10 +359,15 @@ type WireMessage = {
     /** Genesis origin for collectable settle — helps payee paint art while verifying. */
     itemOrigin?: string
     itemCollectionId?: string
+    itemOutputIndex?: number
     /** Tagged asset grammar; absent means legacy collectable. */
     asset?: ItemTransferAsset
+    /** Per-output identity for a multi-item transaction. */
+    items?: ItemTransferMember[]
     /** Atomic BEEF as standard base64 when it fits in the 16KB sendMessage cap. */
     beefB64?: string
+    /** BRC-150 remittance for this hop — peer verifies identity from the package. */
+    provenance?: ProvenanceV2
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
     chatRef?: boolean
   }
@@ -372,7 +383,40 @@ export function decodeBeefB64(raw?: string | null): number[] | undefined {
   }
 }
 
-/** Attach inline Atomic BEEF when the JSON body still fits the box cap. */
+/** Attach inline BRC-150 remittance when the JSON body still fits the box cap. */
+export function withOptionalProvenance(
+  body: string,
+  provenance?: unknown,
+): { body: string; provenanceInBox: boolean } {
+  const parsedProof = parseProvenanceV2(provenance)
+  if (!parsedProof || !body.startsWith(WIRE_PREFIX)) {
+    return { body, provenanceInBox: false }
+  }
+  try {
+    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
+    const budgets = [
+      parsedProof.beefB64.length,
+      8_000,
+      4_000,
+      2_000,
+      800,
+    ]
+    for (const maxB64 of budgets) {
+      const fitted = encodeRemittanceForPeerBox(parsedProof, maxB64)
+      if (!fitted) continue
+      const encoded = `${WIRE_PREFIX}${JSON.stringify({
+        ...parsed,
+        meta: { ...parsed.meta, provenance: fitted },
+      } satisfies WireMessage)}`
+      if (encoded.length <= MESSAGEBOX_INNER_MAX) {
+        return { body: encoded, provenanceInBox: true }
+      }
+    }
+    return { body, provenanceInBox: false }
+  } catch {
+    return { body, provenanceInBox: false }
+  }
+}
 export function withOptionalBeefB64(
   body: string,
   atomicBeef?: number[],
@@ -451,9 +495,16 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
         typeof message.meta?.itemCollectionId === 'string'
           ? message.meta.itemCollectionId
           : undefined,
+      itemOutputIndex:
+        Number.isInteger(message.meta?.itemOutputIndex) &&
+        Number(message.meta?.itemOutputIndex) >= 0
+          ? Number(message.meta?.itemOutputIndex)
+          : undefined,
       asset: validItemTransferAsset(message.meta?.asset)
         ? message.meta.asset
         : undefined,
+      items: validItemTransferMembers(message.meta?.items),
+      provenance: parseProvenanceV2(message.meta?.provenance) ?? undefined,
       chatRef: message.meta?.chatRef === true ? true : undefined,
     },
   }
@@ -493,6 +544,42 @@ function validItemTransferAsset(value: unknown): value is ItemTransferAsset {
     asset.dec >= 0 &&
     asset.dec <= 18
   )
+}
+
+function validItemTransferMembers(value: unknown): ItemTransferMember[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 25) {
+    return undefined
+  }
+  const members: ItemTransferMember[] = []
+  const seen = new Set<number>()
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+    const row = raw as Partial<ItemTransferMember>
+    if (
+      !Number.isInteger(row.outputIndex) ||
+      row.outputIndex! < 0 ||
+      seen.has(row.outputIndex!) ||
+      typeof row.name !== 'string' ||
+      !row.name.trim() ||
+      typeof row.origin !== 'string' ||
+      !/^[0-9a-f]{64}[._]\d+$/i.test(row.origin.trim())
+    ) {
+      return undefined
+    }
+    seen.add(row.outputIndex!)
+    members.push({
+      outputIndex: row.outputIndex!,
+      name: row.name.trim().slice(0, 80),
+      origin: row.origin.trim().replace(/\.(\d+)$/, '_$1').toLowerCase(),
+      ...(typeof row.collectionId === 'string' && row.collectionId.trim()
+        ? { collectionId: row.collectionId.trim().slice(0, 80) }
+        : {}),
+      ...(parseProvenanceV2(row.provenance)
+        ? { provenance: parseProvenanceV2(row.provenance)! }
+        : {}),
+    })
+  }
+  return members
 }
 
 export function decodeMessageBody(body: string): {
@@ -557,13 +644,20 @@ export function decodeMessageBody(body: string): {
           typeof parsed.meta?.itemCollectionId === 'string'
             ? parsed.meta.itemCollectionId.trim() || undefined
             : undefined,
+        itemOutputIndex:
+          Number.isInteger(parsed.meta?.itemOutputIndex) &&
+          Number(parsed.meta?.itemOutputIndex) >= 0
+            ? Number(parsed.meta?.itemOutputIndex)
+            : undefined,
         asset: validItemTransferAsset(parsed.meta?.asset)
           ? parsed.meta.asset
           : undefined,
+        items: validItemTransferMembers(parsed.meta?.items),
         beefB64:
           typeof parsed.meta?.beefB64 === 'string' && parsed.meta.beefB64.trim()
             ? parsed.meta.beefB64.trim()
             : undefined,
+        provenance: parseProvenanceV2(parsed.meta?.provenance) ?? undefined,
         chatRef: parsed.meta?.chatRef === true ? true : undefined,
       },
     }
@@ -576,6 +670,8 @@ export type PeerBeefNotifyResult = {
   delivered: 'local' | 'cloud' | 'direct'
   /** True when Atomic BEEF rode along in sendMessage (payee can broadcast). */
   beefInBox: boolean
+  /** True when BRC-150 remittance rode along (payee can verify identity). */
+  provenanceInBox: boolean
 }
 
 function messageboxHostAllowsAuthrite(box: string): boolean {
@@ -915,7 +1011,10 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
                 itemName: decoded.meta?.memo?.trim() || undefined,
                 itemOrigin: decoded.meta?.itemOrigin,
                 itemCollectionId: decoded.meta?.itemCollectionId,
+                itemOutputIndex: decoded.meta?.itemOutputIndex,
                 asset: decoded.meta?.asset,
+                items: decoded.meta?.items,
+                provenance: decoded.meta?.provenance,
               },
             ],
           },
@@ -961,9 +1060,10 @@ export type InboundPaymentHint = {
   itemName?: string
   itemOrigin?: string
   itemCollectionId?: string
+  itemOutputIndex?: number
   asset?: ItemTransferAsset
-  /** When the card arrived — how long an unbroadcast hint has been chased. */
-  firstSeenAt?: number
+  items?: ItemTransferMember[]
+  provenance?: ProvenanceV2
 }
 
 const MARKET_RECOVERY_POLL_MS = 60_000
@@ -1117,7 +1217,6 @@ export async function pollInboundTipHints(args: {
         paymentTxids.push(txid)
         paymentHints.push({
           txid,
-          firstSeenAt: m.createdAt || Date.now(),
           messageId: m.messageId ? String(m.messageId) : undefined,
           senderIdentityKey: senderKey,
           satoshis: decoded.meta?.sats,
@@ -1128,7 +1227,10 @@ export async function pollInboundTipHints(args: {
           itemName,
           itemOrigin: decoded.meta?.itemOrigin,
           itemCollectionId: decoded.meta?.itemCollectionId,
+          itemOutputIndex: decoded.meta?.itemOutputIndex,
           asset: decoded.meta?.asset,
+          items: decoded.meta?.items,
+          provenance: decoded.meta?.provenance,
         })
         // Do not ACK until ingest succeeds — otherwise remittance is deleted
         // before Desktop can internalize.
@@ -1168,12 +1270,19 @@ export async function notifyPeerItemIncoming(args: {
   itemName: string
   itemOrigin?: string
   itemCollectionId?: string
+  itemOutputIndex?: number
   asset?: ItemTransferAsset
   atomicBeef?: number[]
+  provenance?: unknown
 }): Promise<PeerBeefNotifyResult> {
+  const none: PeerBeefNotifyResult = {
+    delivered: 'local',
+    beefInBox: false,
+    provenanceInBox: false,
+  }
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) {
-    return { delivered: 'local', beefInBox: false }
+    return none
   }
   let atomicBeef = args.atomicBeef
   if (atomicBeef?.length) {
@@ -1193,7 +1302,7 @@ export async function notifyPeerItemIncoming(args: {
   const name = args.itemName.trim() || 'item'
   const itemOrigin = args.itemOrigin?.trim() || undefined
   const itemCollectionId = args.itemCollectionId?.trim() || undefined
-  const itemMessage = (attachment?: ChatAttachment) =>
+  const itemMessage = () =>
     encodeMessageBody({
       kind: 'tip',
       text: `Sent you ${name}`,
@@ -1205,36 +1314,36 @@ export async function notifyPeerItemIncoming(args: {
         item: true,
         ...(itemOrigin ? { itemOrigin } : {}),
         ...(itemCollectionId ? { itemCollectionId } : {}),
+        ...(Number.isInteger(args.itemOutputIndex) && args.itemOutputIndex! >= 0
+          ? { itemOutputIndex: args.itemOutputIndex }
+          : {}),
         asset: args.asset ?? { kind: 'collectable' },
-        ...(attachment ? { attachment } : {}),
       },
     })
-  let packed = withOptionalBeefB64(
-    itemMessage(),
-    atomicBeef,
-  )
-
-  const recipient = args.recipientIdentityKey.trim().toLowerCase()
-  if (
-    !packed.beefInBox &&
-    Array.isArray(atomicBeef) &&
-    atomicBeef.length > 0
-  ) {
-    const attachment = await uploadMessageboxBytes({
-      bytes: Uint8Array.from(atomicBeef),
-      filename: `${txid}.beef`,
-      contentType: 'application/octet-stream',
-      recipientIdentityKey: recipient,
-      senderIdentityKey: args.senderIdentityKey,
-      rootKeyHex: args.rootKeyHex,
-      messagebox: args.messagebox,
-    })
-    packed = {
-      body: itemMessage(attachment),
-      beefInBox: Boolean(attachment),
+  const base = itemMessage()
+  const withProof = withOptionalProvenance(base, args.provenance)
+  let packed = {
+    ...withOptionalBeefB64(withProof.body, atomicBeef),
+    provenanceInBox: withProof.provenanceInBox,
+  }
+  // Identity before a second indexer walk. If both proofs cannot share the cap,
+  // keep remittance and let this hop SPV-fetch the way omitted-beef already does.
+  if (args.provenance && !packed.provenanceInBox) {
+    const proofOnly = withOptionalProvenance(base, args.provenance)
+    if (proofOnly.provenanceInBox) {
+      packed = {
+        body: proofOnly.body,
+        beefInBox: false,
+        provenanceInBox: true,
+      }
+    } else {
+      console.warn(
+        '[messagebox] item remittance omitted — box cap; receiver identity falls back to indexer',
+      )
     }
   }
 
+  const recipient = args.recipientIdentityKey.trim().toLowerCase()
   for (let attempt = 0; attempt < 5; attempt++) {
     const delivered = await deliverOutbound({
       recipientIdentityKey: recipient,
@@ -1246,11 +1355,15 @@ export async function notifyPeerItemIncoming(args: {
       peerId: recipient,
     })
     if (deliveryReachedPeer(delivered.delivered)) {
-      return { delivered: delivered.delivered, beefInBox: packed.beefInBox }
+      return {
+        delivered: delivered.delivered,
+        beefInBox: packed.beefInBox,
+        provenanceInBox: packed.provenanceInBox,
+      }
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
-  return { delivered: 'local', beefInBox: false }
+  return none
 }
 
 /**
@@ -1276,13 +1389,13 @@ export async function notifyPeerBrc29Payment(args: {
 }): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) {
-    return { delivered: 'local', beefInBox: false }
+    return { delivered: 'local', beefInBox: false, provenanceInBox: false }
   }
   if (
     !args.remittance.derivationPrefix?.trim() ||
     !args.remittance.derivationSuffix?.trim()
   ) {
-    return { delivered: 'local', beefInBox: false }
+    return { delivered: 'local', beefInBox: false, provenanceInBox: false }
   }
   const sats =
     Number.isFinite(args.satoshis) && args.satoshis > 0
@@ -1335,11 +1448,15 @@ export async function notifyPeerBrc29Payment(args: {
       peerId: recipient,
     })
     if (deliveryReachedPeer(delivered.delivered)) {
-      return { delivered: delivered.delivered, beefInBox: packed.beefInBox }
+      return {
+        delivered: delivered.delivered,
+        beefInBox: packed.beefInBox,
+        provenanceInBox: false,
+      }
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
-  return { delivered: 'local', beefInBox: false }
+  return { delivered: 'local', beefInBox: false, provenanceInBox: false }
 }
 
 export async function acknowledgeMessageIds(

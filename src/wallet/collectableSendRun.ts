@@ -20,6 +20,7 @@
  * costs before anyone signs anything.
  */
 import {
+  MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
   MAX_ITEMS_PER_ONE_SAT_TX,
   normalizeCollectableBatchOutpoints,
 } from './collectableBatch'
@@ -33,6 +34,12 @@ export type CollectableSendLeg = {
 
 export type CollectableSendRunPlan =
   | { kind: 'refuse'; reason: 'empty' }
+  | {
+      kind: 'refuse'
+      reason: 'tooMany'
+      count: number
+      max: number
+    }
   /** One leg means one ordinary atomic send; several means a run. */
   | { kind: 'legs'; legs: CollectableSendLeg[]; itemCount: number }
 
@@ -43,6 +50,14 @@ export function planCollectableSendRun(
 ): CollectableSendRunPlan {
   const normalized = normalizeCollectableBatchOutpoints(outpoints)
   if (normalized.length === 0) return { kind: 'refuse', reason: 'empty' }
+  if (normalized.length > MAX_ITEMS_PER_COLLECTABLE_SEND_RUN) {
+    return {
+      kind: 'refuse',
+      reason: 'tooMany',
+      count: normalized.length,
+      max: MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
+    }
+  }
   const size = Math.max(1, Math.min(Math.floor(perTx), MAX_ITEMS_PER_ONE_SAT_TX))
   const legs: CollectableSendLeg[] = []
   for (let at = 0; at < normalized.length; at += size) {
