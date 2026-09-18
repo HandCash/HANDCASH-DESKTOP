@@ -161,6 +161,56 @@ describe('cached fungible field migration', () => {
     expect(token?.encoding).toBeUndefined()
   })
 
+  it('re-proves a trusted legacy stamp against the local lock', async () => {
+    const txid = 'bb'.repeat(32)
+    store.set(
+      CACHE_KEY,
+      JSON.stringify({
+        at: Date.now(),
+        v: 2,
+        items: [
+          {
+            tokenId: KING_ORIGIN,
+            sym: 'KING',
+            amt: '1111111111',
+            dec: 0,
+            utxoCount: 1,
+            outpoint: `${txid}_0`,
+            spendKind: 'plain' as const,
+            encoding: 'legacy-json' as const,
+          },
+        ],
+      }),
+    )
+    const { encodeBsv21Binary } = await import('./token/decode162')
+    const lockingScript = encodeBsv21Binary({
+      tokenId: KING_ORIGIN,
+      amount: 1_111_111_111n,
+      rest: `76a914${'11'.repeat(20)}88ac`,
+    }).toHex()
+    vi.doMock('./beefCache', () => ({
+      getLocalBeefForTxid: async () => ({
+        findTxid: () => ({
+          tx: {
+            outputs: [
+              { satoshis: 1, lockingScript: { toHex: () => lockingScript } },
+            ],
+          },
+        }),
+      }),
+    }))
+    const { getCachedFungibles, proveCachedFungibleEncodings } = await import(
+      './token/list'
+    )
+    // A v2 cache keeps the stamp on read; only the local script may overturn it.
+    expect(getCachedFungibles()[0]?.encoding).toBe('legacy-json')
+    await proveCachedFungibleEncodings({
+      identityKey: 'ff'.repeat(33),
+    } as never)
+    expect(getCachedFungibles()[0]?.encoding).toBe('brc162')
+    expect(getCachedFungibles()[0]?.binarySupply).toBe('locked')
+  })
+
   it('does not call an unclassified old cache row legacy', async () => {
     const { classifyFungibleEncoding } = await import('./token/types')
     expect(

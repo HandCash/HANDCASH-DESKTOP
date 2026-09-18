@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.234] - 2026-09-18
+
+### Fixed
+
+- **A "Legacy BSV-21 — burn only" verdict is falsifiable again.** Only a proven
+  `binarySupply` is terminal; a bare `legacy-json` stamp is now re-checked
+  against the held tip's locally retained locking script. Earlier releases
+  tightened *who may write* that stamp, but a device that already carried one
+  could never re-examine it: the local script proof returned early on any
+  `encoding`, the v2 display cache treats the stamp as trusted, and the list
+  read counts a stamped row as classified and defers the live basket decode. A
+  token whose lock really is a JSON `application/bsv-20` inscription keeps the
+  same read-only verdict — sends stay retired for legacy JSON.
+
 ## [1.3.233] - 2026-09-18
 
 ### Changed

@@ -642,6 +642,16 @@ export function fungibleEncodingFromLockingScript(
 }
 
 /**
+ * `binarySupply` is the only verdict a local script read can never improve on.
+ * A bare `legacy-json` stamp stays falsifiable: it is the verdict that retires
+ * Send, and a row that acquired it from an earlier writer — or from a basket
+ * read that could not decode the BRC-162 prefix — has no other way back.
+ */
+function encodingVerdictIsFalsifiable(row: FungibleToken): boolean {
+  return !row.binarySupply
+}
+
+/**
  * Token equivalent of BRC-150's local proof-first lifecycle.
  *
  * Encoding is a property of the held locking script, so the locally retained
@@ -676,11 +686,17 @@ export function proveCachedFungibleEncoding(
     )
     if (rowIndex < 0 || epoch !== fungiblesAccountEpoch) return
     const row = cached[rowIndex]!
-    if (row.binarySupply || row.encoding) return
+    if (!encodingVerdictIsFalsifiable(row)) return
 
     const verdict = fungibleEncodingFromLockingScript(row, lockingScript, 1)
     if (!verdict) return
     encodingProofRetries.delete(point)
+    if (
+      verdict.encoding === row.encoding &&
+      verdict.binarySupply === row.binarySupply
+    ) {
+      return
+    }
     const proven: FungibleToken = { ...row, ...verdict }
     if (epoch !== fungiblesAccountEpoch || !proven) return
     const next = [...cached]
@@ -715,7 +731,7 @@ function scheduleEncodingProofRetry(
     const row = cached.find(
       (candidate) => normalizedDottedOutpoint(candidate.outpoint) === point,
     )
-    if (!row || row.binarySupply || row.encoding) {
+    if (!row || !encodingVerdictIsFalsifiable(row)) {
       encodingProofRetries.delete(point)
       return
     }
@@ -723,13 +739,13 @@ function scheduleEncodingProofRetry(
   }, ENCODING_PROOF_RETRY_MS[attempt])
 }
 
-/** Prove unknown cached rows independently of the slower basket list. */
+/** Prove unclassified and legacy-stamped rows independently of the slower basket list. */
 export async function proveCachedFungibleEncodings(
   active?: ActiveWallet | null,
 ): Promise<void> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) return
-  const unknown = cached.filter((row) => !row.binarySupply && !row.encoding)
+  const unknown = cached.filter(encodingVerdictIsFalsifiable)
   for (const row of unknown) {
     await proveCachedFungibleEncoding(row.outpoint, wallet)
     await yieldToUi()
