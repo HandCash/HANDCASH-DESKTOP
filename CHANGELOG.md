@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.238] - 2026-09-18
+
+### Fixed
+
+- **BSV-21 remittance stays on the inbox BEEF**, so the payee can settle from
+  the package without an indexer walk. Send still attaches provenance on the
+  envelope; receive and the pending outbox keep that hop's Atomic BEEF.
+
 ## [1.3.237] - 2026-09-18
 
 ### Fixed
