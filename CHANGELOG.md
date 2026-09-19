@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.239] - 2026-09-19
+
+### Fixed
+
+- **Token sends no longer select funding while local output promotion is still
+  mutating wallet storage.** The spend waits for that operation to settle,
+  preventing stale or already-spent funding from racing into `createAction`.
+- **Explicit Arcade `UTXO_SPENT` and `PARENT_REJECTED` verdicts override an
+  HTTP/service success envelope.** Rejected transactions are no longer logged
+  or pinned as accepted.
+
 ## [1.3.238] - 2026-09-18
 
 ### Fixed
