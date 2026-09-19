@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.245] - 2026-09-19
+
+### Changed
+
+- **Support tooling:** `npm run triage [bucket]` reads a device's uploaded
+  session logs, derives the facts in code (freezes by active wallet layer,
+  blocked milliseconds, grouped error families, coincidence with unexplained
+  freezes) and asks Jev for the judgments — user-visible freeze, primary
+  driver, custody risk, regression against the previous session, severity.
+  No wallet behaviour changes.
+
 ## [1.3.244] - 2026-09-19
 
 ### Fixed
