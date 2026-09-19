@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.243] - 2026-09-19
+
+### Fixed
+
+- **Every live signed cheque remains durably queued until an objective
+  accept/reject verdict.** The miner outbox no longer expires after forty
+  attempts or silently evicts its oldest row.
+- **Durable-write failures are explicit.** A cheque that could not be stored
+  returns `untracked`, keeps its inputs sealed, and warns immediately instead
+  of claiming automatic retry protection.
+- **The P2P cheque contract is explicit at the boundary:** signed BEEF is the
+  payment, dependent hops chain parent bodies, miner silence is not rejection,
+  and proven rejects update locks and Activity immediately.
+
 ## [1.3.242] - 2026-09-19
 
 ### Fixed
