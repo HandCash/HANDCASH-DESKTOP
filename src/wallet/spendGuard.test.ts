@@ -328,6 +328,26 @@ describe('refreshSpendableBalance', () => {
     })
   })
 
+  it('never selects inputs while light promotion is still mutating storage', async () => {
+    let finishPromotion!: () => void
+    promotePendingLocalChangeOutputs.mockImplementation(
+      () =>
+        new Promise<number>((resolve) => {
+          finishPromotion = () => resolve(0)
+        }),
+    )
+    const selectInputs = vi.fn(async () => 'sent')
+    const { runExclusiveSpend } = await import('./spendGuard')
+
+    const sending = runExclusiveSpend(selectInputs, undefined, { promote: 'light' })
+    await vi.waitFor(() => expect(promotePendingLocalChangeOutputs).toHaveBeenCalledOnce())
+    expect(selectInputs).not.toHaveBeenCalled()
+
+    finishPromotion()
+    await expect(sending).resolves.toBe('sent')
+    expect(selectInputs).toHaveBeenCalledOnce()
+  })
+
   it('assertSendableBalance refuses chaining credit without running chain heal', async () => {
     mockConfirmed(100)
     unconfirmedChangeSats.mockResolvedValue(500)

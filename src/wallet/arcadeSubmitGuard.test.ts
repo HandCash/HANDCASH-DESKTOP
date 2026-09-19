@@ -96,6 +96,30 @@ describe('arcadeSubmitGuard', () => {
     ).toBe(false)
   })
 
+  it('lets an explicit UTXO_SPENT row override Arcade envelope success', () => {
+    const results = [
+      {
+        name: 'ArcadeBeef',
+        status: 'success',
+        txidResults: [{ status: 'UTXO_SPENT' }],
+      },
+    ]
+    expect(postBeefResultsArcadeAccepted(results)).toBe(false)
+    expect(postBeefResultsArcadeHardReject(results)).toBe(true)
+  })
+
+  it('treats a rejected parent as a hard reject instead of pinning the child', () => {
+    const results = [
+      {
+        name: 'ArcadeBeef',
+        status: 'success',
+        txidResults: [{ status: 'PARENT_REJECTED' }],
+      },
+    ]
+    expect(postBeefResultsArcadeAccepted(results)).toBe(false)
+    expect(postBeefResultsArcadeHardReject(results)).toBe(true)
+  })
+
   it('pins txids that contacted Arcade', () => {
     rememberArcadeSubmitContact(TX)
     expect(txHadArcadeSubmitContact(TX)).toBe(true)

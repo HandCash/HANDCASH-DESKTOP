@@ -27,8 +27,6 @@ let spendRecoveryDisabled = false
 
 let liveSpendAbort: AbortController | null = null
 
-/** Light promote is local-only; this is a stuck-IDB backstop, not an explorer budget. */
-const LIGHT_PROMOTE_MS = 3_000
 let monitorPauseGeneration = 0
 
 /**
@@ -119,28 +117,12 @@ async function promoteSpendableChange(
   mode: SpendPromoteMode = 'full',
   signal?: AbortSignal,
 ): Promise<number> {
-  const run = () => promoteSpendableChangeBody(mode, signal)
-  if (mode !== 'light') return run()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      run(),
-      new Promise<never>((_, reject) => {
-        const fail = () =>
-          reject(new Error(signal?.aborted ? 'Send timed out' : 'Spend prepare timed out'))
-        timer = setTimeout(fail, LIGHT_PROMOTE_MS)
-        signal?.addEventListener('abort', fail, { once: true })
-      }),
-    ])
-  } catch (err) {
-    logDiag('spend-guard', 'warn', 'promote-skipped', {
-      error: err instanceof Error ? err.message : String(err),
-      mode,
-    })
-    return 0
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
+  // This mutates toolbox output state and is not cancellable. Never race it
+  // against a timer: a timed-out promise used to continue in the background
+  // while createAction selected inputs, allowing a stale/spent row to win that
+  // race. The coordinator watchdog may abort the send, but selection remains
+  // blocked until this storage mutation has settled.
+  return promoteSpendableChangeBody(mode, signal)
 }
 
 async function promoteSpendableChangeBody(

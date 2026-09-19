@@ -67,12 +67,28 @@ function txidRowLooksMissingInputs(t: TxidRow): boolean {
  */
 function txidRowLooksHardReject(t: TxidRow): boolean {
   if (t.doubleSpend) return true
-  if (noteWhat(t.notes).some((w) => /MissingInputs|AlreadySpent|Invalid|not.?found/i.test(w))) {
+  const status = String(t.status ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_')
+  if (
+    status === 'UTXO_SPENT' ||
+    status === 'MISSING_INPUTS' ||
+    status === 'PARENT_REJECTED' ||
+    status === 'INVALID' ||
+    status === 'REJECTED'
+  ) {
+    return true
+  }
+  if (
+    noteWhat(t.notes).some((w) =>
+      /MissingInputs|AlreadySpent|UTXO.?SPENT|Parent.?Rejected|Invalid|not.?found/i.test(w),
+    )
+  ) {
     return true
   }
   return (
     t.status === 'error' &&
-    /missing.?input|already.?spent|invalid/i.test(dataMessage(t.data))
+    /missing.?input|already.?spent|utxo.?spent|parent.?rejected|invalid/i.test(
+      dataMessage(t.data),
+    )
   )
 }
 
@@ -91,11 +107,22 @@ export function postBeefResultsArcadeAccepted(
   results: PostBeefServiceResult[] | null | undefined,
 ): boolean {
   if (!Array.isArray(results)) return false
+  // An HTTP/service-level success only says Arcade answered. An explicit tx
+  // verdict is authoritative and must never be overwritten by that envelope.
   for (const r of results) {
     if (!isArcadeNamedService(r.name)) continue
-    if (String(r.status ?? '').toLowerCase() === 'success') return true
+    if ((r.txidResults ?? []).some(txidRowLooksHardReject)) return false
+  }
+  for (const r of results) {
+    if (!isArcadeNamedService(r.name)) continue
     for (const t of r.txidResults ?? []) {
       if (txidRowLooksAccepted(t)) return true
+    }
+    if (
+      (r.txidResults?.length ?? 0) === 0 &&
+      String(r.status ?? '').toLowerCase() === 'success'
+    ) {
+      return true
     }
   }
   return false
