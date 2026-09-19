@@ -71,16 +71,26 @@ describe('pending miner outbox', () => {
   })
 
   it('refuses to store bytes that are not a BEEF carrying the subject body', async () => {
-    const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
-      './pendingMinerOutbox'
-    )
+    const {
+      classifyPendingMinerBody,
+      enqueuePendingMinerSubmit,
+      pendingMinerOutboxDepth,
+    } = await import('./pendingMinerOutbox')
     // Retrying these for hours can never make them valid; they only keep the
     // send looking in-flight.
+    expect(classifyPendingMinerBody('ab'.repeat(32), [1, 2, 3])).toEqual({
+      kind: 'refuse',
+      reason: 'malformed-beef',
+    })
     expect(enqueuePendingMinerSubmit('ab'.repeat(32), [1, 2, 3])).toBe(false)
 
     const tx = signedTx(1_000)
     const stub = new Beef()
     stub.mergeTxidOnly(tx.id('hex'))
+    expect(classifyPendingMinerBody(tx.id('hex'), stub.toBinary())).toEqual({
+      kind: 'refuse',
+      reason: 'subject-body-missing',
+    })
     expect(enqueuePendingMinerSubmit(tx.id('hex'), stub.toBinary())).toBe(false)
 
     const other = signedTx(2_000)
@@ -91,8 +101,29 @@ describe('pending miner outbox', () => {
     expect(pendingMinerOutboxDepth()).toBe(0)
   })
 
+  it('removes invalid rows persisted by older byte-range-only builds', async () => {
+    store.set(
+      'handcash.wallet.pendingMinerOutbox.v1',
+      JSON.stringify([
+        {
+          txid: 'ab'.repeat(32),
+          atomic: [1, 2, 3],
+          createdAt: 1,
+          attempts: 0,
+          nextAttemptAt: 1,
+        },
+      ]),
+    )
+    const { pendingMinerOutboxDepth } = await import('./pendingMinerOutbox')
+    expect(pendingMinerOutboxDepth()).toBe(0)
+    expect(
+      JSON.parse(store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]'),
+    ).toEqual([])
+  })
+
   it('upgrades a queued body once ancestry has been merged in', async () => {
     const {
+      classifyPendingMinerBody,
       enqueuePendingMinerSubmit,
       updatePendingMinerSubmitBody,
     } = await import('./pendingMinerOutbox')
@@ -110,12 +141,19 @@ describe('pending miner outbox', () => {
     const thin = new Beef()
     thin.mergeTxidOnly(parent.id('hex'))
     thin.mergeTransaction(tip)
-    expect(enqueuePendingMinerSubmit(txid, thin.toBinaryAtomic(txid))).toBe(true)
+    const thinAtomic = thin.toBinaryAtomic(txid)
+    expect(classifyPendingMinerBody(txid, thinAtomic)).toEqual({
+      kind: 'recoverable-ancestry',
+    })
+    expect(enqueuePendingMinerSubmit(txid, thinAtomic)).toBe(true)
 
     const merged = new Beef()
     merged.mergeRawTx(parent.toBinary())
     merged.mergeTransaction(tip)
     const mergedAtomic = merged.toBinaryAtomic(txid)
+    expect(classifyPendingMinerBody(txid, mergedAtomic)).toEqual({
+      kind: 'spv-ready',
+    })
     expect(updatePendingMinerSubmitBody(txid, mergedAtomic)).toBe(true)
 
     const rows = JSON.parse(

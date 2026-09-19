@@ -5,6 +5,7 @@
  * a provider acknowledges the transaction or returns a proven hard rejection.
  */
 import { Beef } from '@bsv/sdk'
+import { classifyBeefAncestryGap } from './beefCache'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   activeTransactionTrace,
@@ -28,16 +29,62 @@ export type PendingMinerSubmit = {
   flow?: TransactionFlow
 }
 
+export type PendingMinerBodyVerdict =
+  | { kind: 'refuse'; reason: 'invalid-shape' | 'malformed-beef' | 'subject-body-missing' }
+  | { kind: 'recoverable-ancestry' }
+  | { kind: 'spv-ready' }
+
+/**
+ * One verdict for the durable boundary:
+ *
+ * - refuse: no retry can turn these bytes into this signed transaction
+ * - recoverable-ancestry: subject is signed; parent bodies may still be hydrated
+ * - spv-ready: subject and required ancestry are already self-contained
+ */
+export function classifyPendingMinerBody(
+  txid: string,
+  atomic: number[],
+): PendingMinerBodyVerdict {
+  const id = txid.trim().toLowerCase()
+  if (
+    !/^[0-9a-f]{64}$/.test(id) ||
+    atomic.length === 0 ||
+    atomic.length > MAX_ATOMIC_BYTES ||
+    !atomic.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+  ) {
+    return { kind: 'refuse', reason: 'invalid-shape' }
+  }
+  try {
+    const found = Beef.fromBinary(atomic).findTxid(id)
+    if (!found?.tx || found.isTxidOnly) {
+      return { kind: 'refuse', reason: 'subject-body-missing' }
+    }
+  } catch {
+    return { kind: 'refuse', reason: 'malformed-beef' }
+  }
+  return classifyBeefAncestryGap(atomic) === 'missing-bodies'
+    ? { kind: 'recoverable-ancestry' }
+    : { kind: 'spv-ready' }
+}
+
 function load(): PendingMinerSubmit[] {
   try {
     const parsed = JSON.parse(durableGetItem(KEY) || '[]') as unknown
     if (!Array.isArray(parsed)) return []
-    return (parsed as PendingMinerSubmit[]).filter(
+    const candidates = (parsed as PendingMinerSubmit[]).filter(
       (row) =>
         /^[0-9a-f]{64}$/i.test(row?.txid || '') &&
         Array.isArray(row.atomic) &&
         row.atomic.length > 0,
     )
+    const rows = candidates.filter(
+      (row) => classifyPendingMinerBody(row.txid, row.atomic).kind !== 'refuse',
+    )
+    // Clean up rows written by older builds that only checked byte ranges.
+    if (rows.length !== candidates.length) {
+      durableSetItem(KEY, JSON.stringify(rows.slice(-MAX_ROWS)))
+    }
+    return rows
   } catch {
     return []
   }
@@ -47,40 +94,14 @@ function save(rows: PendingMinerSubmit[]): void {
   durableSetItem(KEY, JSON.stringify(rows.slice(-MAX_ROWS)))
 }
 
-/**
- * Can this body ever be the SPV subject of a retry?
- *
- * A queued row is a promise to keep re-posting for hours. Bytes that do not
- * parse, or that carry the subject only as a txid stub, have no signed body to
- * verify — no attempt can make them valid, so persisting them only burns
- * `MAX_ATTEMPTS` while the send still reads as in-flight.
- */
-function carriesSignedSubject(atomic: number[], txid: string): boolean {
-  try {
-    const found = Beef.fromBinary(atomic).findTxid(txid)
-    return Boolean(found?.tx) && !found?.isTxidOnly
-  } catch {
-    return false
-  }
-}
-
-function bodyShapeIsStorable(atomic: number[]): boolean {
-  return (
-    atomic.length > 0 &&
-    atomic.length <= MAX_ATOMIC_BYTES &&
-    atomic.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
-  )
-}
-
 export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boolean {
   const id = txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(id) || !bodyShapeIsStorable(atomic)) {
-    return false
-  }
-  if (!carriesSignedSubject(atomic, id)) {
+  const verdict = classifyPendingMinerBody(id, atomic)
+  if (verdict.kind === 'refuse') {
     console.warn(
-      '[minerOutbox] refusing to queue a body without the signed subject tx',
+      '[minerOutbox] refusing durable body',
       id.slice(0, 12),
+      verdict.reason,
     )
     return false
   }
@@ -124,9 +145,7 @@ export function updatePendingMinerSubmitBody(
   atomic: number[],
 ): boolean {
   const id = txid.trim().toLowerCase()
-  if (!bodyShapeIsStorable(atomic) || !carriesSignedSubject(atomic, id)) {
-    return false
-  }
+  if (classifyPendingMinerBody(id, atomic).kind === 'refuse') return false
   const rows = load()
   const row = rows.find((r) => r.txid === id)
   if (!row) return false
