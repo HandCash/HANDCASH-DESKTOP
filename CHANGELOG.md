@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.241] - 2026-09-19
+
+### Fixed
+
+- **Miner-outbox persistence now has one explicit verdict:** refuse,
+  recoverable ancestry, or SPV-ready. Old invalid rows written by byte-only
+  checks are removed on load, while signed transactions with recoverable
+  missing ancestry remain eligible for hydration and retry.
+
 ## [1.3.240] - 2026-09-19
 
 ### Fixed
