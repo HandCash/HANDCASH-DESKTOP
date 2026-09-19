@@ -4,6 +4,7 @@
  * Signing is the optimistic UI boundary; this queue survives process exit until
  * a provider acknowledges the transaction or returns a proven hard rejection.
  */
+import { Beef } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   activeTransactionTrace,
@@ -46,14 +47,41 @@ function save(rows: PendingMinerSubmit[]): void {
   durableSetItem(KEY, JSON.stringify(rows.slice(-MAX_ROWS)))
 }
 
+/**
+ * Can this body ever be the SPV subject of a retry?
+ *
+ * A queued row is a promise to keep re-posting for hours. Bytes that do not
+ * parse, or that carry the subject only as a txid stub, have no signed body to
+ * verify — no attempt can make them valid, so persisting them only burns
+ * `MAX_ATTEMPTS` while the send still reads as in-flight.
+ */
+function carriesSignedSubject(atomic: number[], txid: string): boolean {
+  try {
+    const found = Beef.fromBinary(atomic).findTxid(txid)
+    return Boolean(found?.tx) && !found?.isTxidOnly
+  } catch {
+    return false
+  }
+}
+
+function bodyShapeIsStorable(atomic: number[]): boolean {
+  return (
+    atomic.length > 0 &&
+    atomic.length <= MAX_ATOMIC_BYTES &&
+    atomic.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+  )
+}
+
 export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boolean {
   const id = txid.trim().toLowerCase()
-  if (
-    !/^[0-9a-f]{64}$/.test(id) ||
-    atomic.length === 0 ||
-    atomic.length > MAX_ATOMIC_BYTES ||
-    !atomic.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
-  ) {
+  if (!/^[0-9a-f]{64}$/.test(id) || !bodyShapeIsStorable(atomic)) {
+    return false
+  }
+  if (!carriesSignedSubject(atomic, id)) {
+    console.warn(
+      '[minerOutbox] refusing to queue a body without the signed subject tx',
+      id.slice(0, 12),
+    )
     return false
   }
   const rows = load()
@@ -82,6 +110,29 @@ export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boole
 export function removePendingMinerSubmit(txid: string): void {
   const id = txid.trim().toLowerCase()
   save(load().filter((row) => row.txid !== id))
+}
+
+/**
+ * Replace a queued body with a more complete one.
+ *
+ * The row is stored before ancestry is merged so a crash cannot lose the
+ * cheque. Without this the queue would keep re-posting the thinner body for
+ * every remaining attempt and discard the ancestry each retry rebuilt.
+ */
+export function updatePendingMinerSubmitBody(
+  txid: string,
+  atomic: number[],
+): boolean {
+  const id = txid.trim().toLowerCase()
+  if (!bodyShapeIsStorable(atomic) || !carriesSignedSubject(atomic, id)) {
+    return false
+  }
+  const rows = load()
+  const row = rows.find((r) => r.txid === id)
+  if (!row) return false
+  row.atomic = [...atomic]
+  save(rows)
+  return true
 }
 
 function backoffMs(attempt: number): number {

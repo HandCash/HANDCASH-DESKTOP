@@ -1,6 +1,20 @@
+import { Beef, LockingScript, Transaction } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const store = new Map<string, string>()
+
+function signedTx(satoshis: number): Transaction {
+  const tx = new Transaction()
+  tx.addOutput({ satoshis, lockingScript: LockingScript.fromHex('51') })
+  return tx
+}
+
+/** AtomicBEEF carrying the subject body — what a real send queues. */
+function atomicBeefFor(tx: Transaction): number[] {
+  const beef = new Beef()
+  beef.mergeRawTx(tx.toBinary())
+  return beef.toBinaryAtomic(tx.id('hex'))
+}
 
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
@@ -29,15 +43,17 @@ describe('pending miner outbox', () => {
     const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
       './pendingMinerOutbox'
     )
-    const txid = 'ab'.repeat(32)
-    expect(enqueuePendingMinerSubmit(txid, [1, 2, 3])).toBe(true)
-    expect(enqueuePendingMinerSubmit(txid, [4, 5, 6])).toBe(true)
+    const tx = signedTx(1_000)
+    const txid = tx.id('hex')
+    const atomic = atomicBeefFor(tx)
+    expect(enqueuePendingMinerSubmit(txid, atomic)).toBe(true)
+    expect(enqueuePendingMinerSubmit(txid, atomic)).toBe(true)
     expect(pendingMinerOutboxDepth()).toBe(1)
 
     const rows = JSON.parse(
       store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
     ) as Array<{ atomic: number[]; traceId?: string }>
-    expect(rows[0]?.atomic).toEqual([1, 2, 3])
+    expect(rows[0]?.atomic).toEqual(atomic)
     expect(rows[0]?.traceId).toBe('trace-test')
     expect(recordTransactionStage).toHaveBeenCalledWith(
       'propagation_queued',
@@ -52,5 +68,65 @@ describe('pending miner outbox', () => {
     expect(enqueuePendingMinerSubmit('bad', [1])).toBe(false)
     expect(enqueuePendingMinerSubmit('ab'.repeat(32), [256])).toBe(false)
     expect(pendingMinerOutboxDepth()).toBe(0)
+  })
+
+  it('refuses to store bytes that are not a BEEF carrying the subject body', async () => {
+    const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
+      './pendingMinerOutbox'
+    )
+    // Retrying these for hours can never make them valid; they only keep the
+    // send looking in-flight.
+    expect(enqueuePendingMinerSubmit('ab'.repeat(32), [1, 2, 3])).toBe(false)
+
+    const tx = signedTx(1_000)
+    const stub = new Beef()
+    stub.mergeTxidOnly(tx.id('hex'))
+    expect(enqueuePendingMinerSubmit(tx.id('hex'), stub.toBinary())).toBe(false)
+
+    const other = signedTx(2_000)
+    expect(
+      enqueuePendingMinerSubmit(tx.id('hex'), atomicBeefFor(other)),
+    ).toBe(false)
+
+    expect(pendingMinerOutboxDepth()).toBe(0)
+  })
+
+  it('upgrades a queued body once ancestry has been merged in', async () => {
+    const {
+      enqueuePendingMinerSubmit,
+      updatePendingMinerSubmitBody,
+    } = await import('./pendingMinerOutbox')
+
+    const parent = signedTx(10_000)
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parent.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({ satoshis: 9_900, lockingScript: LockingScript.fromHex('51') })
+    const txid = tip.id('hex')
+
+    const thin = new Beef()
+    thin.mergeTxidOnly(parent.id('hex'))
+    thin.mergeTransaction(tip)
+    expect(enqueuePendingMinerSubmit(txid, thin.toBinaryAtomic(txid))).toBe(true)
+
+    const merged = new Beef()
+    merged.mergeRawTx(parent.toBinary())
+    merged.mergeTransaction(tip)
+    const mergedAtomic = merged.toBinaryAtomic(txid)
+    expect(updatePendingMinerSubmitBody(txid, mergedAtomic)).toBe(true)
+
+    const rows = JSON.parse(
+      store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
+    ) as Array<{ atomic: number[] }>
+    expect(rows[0]?.atomic).toEqual(mergedAtomic)
+    expect(
+      Beef.fromBinary(rows[0]!.atomic).findTxid(parent.id('hex'))?.isTxidOnly,
+    ).toBeFalsy()
+
+    // An unknown txid must not silently create a row.
+    expect(updatePendingMinerSubmitBody('cd'.repeat(32), mergedAtomic)).toBe(false)
   })
 })

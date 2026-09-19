@@ -30,6 +30,7 @@ import {
 import {
   enqueuePendingMinerSubmit,
   removePendingMinerSubmit,
+  updatePendingMinerSubmitBody,
 } from "./pendingMinerOutbox";
 import {
   activeTransactionTrace,
@@ -344,6 +345,7 @@ export async function submitAtomicBeefToMiners(
     beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic);
     let gap = classifyBeefAncestryGap(beefBytes);
     applyGap(gap);
+    if (beefBytes !== atomic) updatePendingMinerSubmitBody(id, beefBytes);
     if (gap === "unconfirmed-parents") {
       console.info(
         "[minerSubmit] posting chained unconfirmed ancestry",
@@ -360,6 +362,7 @@ export async function submitAtomicBeefToMiners(
         beefBytes = shaped;
         gap = classifyBeefAncestryGap(shaped);
         applyGap(gap);
+        updatePendingMinerSubmitBody(id, shaped);
       } else {
         console.warn(
           "[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque",
