@@ -8,6 +8,25 @@ alwaysApply: true
 Devices POST session logs to BRC-CLOUD. **Do not ask the user to paste logs** when
 the upload URL / bucket is known — fetch `/latest` (and the bucket index) first.
 
+## Triage with Jev first, not by hand
+
+`npm run triage [phone|android|desktop|<bucket>]` pulls the bucket, derives the
+facts in code (freeze counts by active wallet layer, blocked milliseconds,
+grouped error families, how often each family coincides with an *unexplained*
+freeze), then asks Jev — TypeSafe System One — for the judgments: user-visible
+freeze, primary driver, custody at risk, regression against the previous
+session, severity.
+
+```bash
+npm run triage android          # verdict
+npm run triage android -- --state   # just the extracted facts, no model call
+npm run triage android -- --json    # facts + raw answers
+```
+
+Read a log by hand only to confirm something the triage flags. Never ask the
+model to count — counting, grouping and correlation stay in
+`scripts/triage-logs.mjs`. Needs `JEV_API_KEY` in `HANDCASH-DESKTOP/.env`.
+
 ## Endpoints
 
 | | |

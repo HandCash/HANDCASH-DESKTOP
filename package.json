@@ -8,6 +8,7 @@
   "license": "Open BSV License",
   "homepage": "https://handcash.io",
   "scripts": {
+    "triage": "node scripts/triage-logs.mjs",
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "wait-on tcp:5173 && npm run build:electron && electron .",
