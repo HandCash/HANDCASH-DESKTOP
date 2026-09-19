@@ -73,11 +73,15 @@
  *   cheque (`unconfirmed` while no header covers it; `headerProven` after BUMP
  *   verifies against the local header store). Account the cheque immediately.
  *   Explorer absence is latency, not a cancel. Undo only on a proven competing
- *   spend. Arcade `postBeef` / `/txs` is a propagation double-check, not a
- *   send gate and not confirmation. Unconfirmed spends must carry parent
- *   *bodies* (`mergeLocalUnconfirmedAncestry`); mined spends ride merkle
- *   paths against headers (`blockHeaders` / `chainTrackerFallback`). Keep
- *   posting until merkle proofs close. The merge is an outbound boundary:
+ *   spend. Arcade `postBeef` / `/txs` is a miner cashing the cheque plus a
+ *   reject oracle — not a send gate and not confirmation. Dependent economic
+ *   activity chains unconfirmed UTXOs (parent bodies in the BEEF) so the next
+ *   hop does not wait on ack. Proven miner reject / double-spend must rewrite
+ *   Activity and seals as soon as that fact exists (zero economic loss).
+ *   Unconfirmed spends must carry parent *bodies* (`mergeLocalUnconfirmedAncestry`);
+ *   mined spends ride merkle paths against headers (`blockHeaders` /
+ *   `chainTrackerFallback`). Keep posting until merkle proofs close. The merge
+ *   is an outbound boundary:
  *   miner posts, BRC-33 item/payment/market wires, BRC-100 createAction
  *   responses, token transfers, and legacy/phrase sweeps all use it.
  * - **Peer BSV pay (BRC-29)** → `brc29SettlePath` + `brc29SendMachine`. Sender

@@ -1,9 +1,18 @@
 /**
  * Submit signed Atomic BEEF to miners after createAction.
  *
- * A signed tx is a live cheque until Arcade hard-rejects it or chain proof shows
- * a competing spend. Transport silence queues it. Unproven miner conflicts do
- * not unlock inputs while the same body is still being retried.
+ * Bitcoin here is peer-to-peer: counterparties hand each other a signed
+ * transaction. That signed body is the cheque. Miners cash it when the
+ * economic activity needs to land; they are not the send gate.
+ *
+ * Dependent hops chain UTXOs (parent *bodies* in the BEEF) so the next
+ * signed spend does not wait on a miner ack — that is the latency window.
+ * Arcade / postBeef is cashing + a reject oracle, not confirmation.
+ *
+ * A live cheque stays sealed until Arcade hard-rejects it or chain proof
+ * shows a competing spend. Transport silence and unproven miner noise stay
+ * queued. Proven rejects must rewrite Activity and locks as soon as they
+ * exist so the failure is economic-zero, not a second spend of the same coins.
  */
 import { Beef } from "@bsv/sdk";
 import { getActiveWallet, type ActiveWallet } from "./session";
@@ -63,6 +72,22 @@ export type MinerSubmitResult =
   | {
       kind: "unproven-conflict";
       summary: PostBeefSummary;
+    }
+  | {
+      /**
+       * The cheque may have left this process, but its retry body was not
+       * durably stored. Keep inputs sealed and tell the user immediately.
+       */
+      kind: "untracked";
+      reason: "outbox-write-failed";
+      network:
+        | "offline"
+        | "transport"
+        | "service-error"
+        | "no-ack"
+        | "accepted-needs-proofs"
+        | "unproven-conflict";
+      summary?: PostBeefSummary;
     };
 
 /** Miner or Arcade accepted this body. Not the same as merkle-final. */
@@ -78,6 +103,31 @@ export function minerSubmitAncestryComplete(result: MinerSubmitResult): boolean 
 /** Hard reject throws; every remaining kind still owns the sealed spend. */
 export function minerSubmitKeepOutbox(result: MinerSubmitResult): boolean {
   return result.kind !== "accepted" || result.keepPropagating;
+}
+
+function untrackedMinerResult(
+  network: Extract<MinerSubmitResult, { kind: "untracked" }>["network"],
+  telemetry: SubmitTelemetry,
+  summary?: PostBeefSummary
+): MinerSubmitResult {
+  recordTransactionStage("propagation_queued", {
+    ...telemetry,
+    blockerCode: "outbox_write_failed",
+  });
+  void import("./toast")
+    .then(({ toastError }) =>
+      toastError(
+        "Send needs attention",
+        "The signed transaction could not be saved for automatic retry. Keep this wallet open."
+      )
+    )
+    .catch(() => undefined);
+  return {
+    kind: "untracked",
+    reason: "outbox-write-failed",
+    network,
+    summary,
+  };
 }
 
 type SubmitTelemetry = {
@@ -235,8 +285,9 @@ async function resolveMinerConflict(args: {
   active: ActiveWallet;
   summary: PostBeefSummary;
   telemetry: SubmitTelemetry;
+  outboxDurable: boolean;
 }): Promise<MinerSubmitResult> {
-  const { id, atomic, active, summary, telemetry } = args;
+  const { id, atomic, active, summary, telemetry, outboxDurable } = args;
   const arcadePinned = txHadArcadeSubmitContact(id);
   const conflictReal = await spendConflictIsProven({
     intent: arcadePinned ? "arcadePinRemoval" : "postBeefGhostCheck",
@@ -254,7 +305,9 @@ async function resolveMinerConflict(args: {
       arcadePinned ? "arcade-pin" : "no-pin",
       summary.detail
     );
-    return { kind: "unproven-conflict", summary };
+    return outboxDurable
+      ? { kind: "unproven-conflict", summary }
+      : untrackedMinerResult("unproven-conflict", telemetry, summary);
   }
 
   // Proven conflict — but only hide if OUR tx actually landed. Otherwise
@@ -307,7 +360,6 @@ export async function submitAtomicBeefToMiners(
       "Payment was signed but no transaction body was returned — try Send again."
     );
   }
-  if (!opts?.fromOutbox) enqueuePendingMinerSubmit(id, atomic);
   const trace = activeTransactionTrace();
   const telemetry: SubmitTelemetry = {
     traceId: opts?.traceId ?? trace?.traceId,
@@ -316,6 +368,8 @@ export async function submitAtomicBeefToMiners(
     retryCount: opts?.retryCount,
     txid: id,
   };
+  const outboxDurable =
+    opts?.fromOutbox === true || enqueuePendingMinerSubmit(id, atomic);
   recordTransactionStage("provider_attempt", telemetry);
   const active = getActiveWallet();
   if (!active?.services?.postBeef) {
@@ -327,7 +381,9 @@ export async function submitAtomicBeefToMiners(
       ...telemetry,
       blockerCode: "provider_offline",
     });
-    return { kind: "queued", reason: "offline" };
+    return outboxDurable
+      ? { kind: "queued", reason: "offline" }
+      : untrackedMinerResult("offline", telemetry);
   }
 
   let beefBytes = atomic;
@@ -419,7 +475,9 @@ export async function submitAtomicBeefToMiners(
       ...telemetry,
       blockerCode: "provider_transport",
     });
-    return { kind: "queued", reason: "transport" };
+    return outboxDurable
+      ? { kind: "queued", reason: "transport" }
+      : untrackedMinerResult("transport", telemetry);
   }
 
   if (rawResults) {
@@ -455,6 +513,13 @@ export async function submitAtomicBeefToMiners(
         /* background */
       });
     }
+    if (keepPropagating && !outboxDurable) {
+      return untrackedMinerResult(
+        "accepted-needs-proofs",
+        telemetry,
+        summary
+      );
+    }
     return {
       kind: "accepted",
       ancestryComplete,
@@ -473,7 +538,9 @@ export async function submitAtomicBeefToMiners(
       ...telemetry,
       blockerCode: "provider_service_error",
     });
-    return { kind: "queued", reason: "service-error", summary };
+    return outboxDurable
+      ? { kind: "queued", reason: "service-error", summary }
+      : untrackedMinerResult("service-error", telemetry, summary);
   }
   if (summary.missingInputs || summary.doubleSpend) {
     await failIfAncestryIncomplete({
@@ -484,7 +551,14 @@ export async function submitAtomicBeefToMiners(
       telemetry,
       proofsComplete,
     });
-    return resolveMinerConflict({ id, atomic, active, summary, telemetry });
+    return resolveMinerConflict({
+      id,
+      atomic,
+      active,
+      summary,
+      telemetry,
+      outboxDurable,
+    });
   }
 
   console.info(
@@ -496,7 +570,9 @@ export async function submitAtomicBeefToMiners(
     ...telemetry,
     blockerCode: "provider_no_ack",
   });
-  return { kind: "queued", reason: "no-ack", summary };
+  return outboxDurable
+    ? { kind: "queued", reason: "no-ack", summary }
+    : untrackedMinerResult("no-ack", telemetry, summary);
 }
 
 /** Surface a hard miner reject after optimistic send success. */

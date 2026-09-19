@@ -5,6 +5,8 @@ const postBeef = vi.fn()
 const releaseSealedInputsOfUnsentTx = vi.fn(async () => {})
 const onAlreadySpentSend = vi.fn(async () => {})
 const restoreOnChainLocalTx = vi.fn(async () => true)
+let outboxWritesSucceed = true
+const toastError = vi.fn()
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
@@ -17,6 +19,16 @@ vi.mock('./staleOutputRelease', () => ({
   releaseSealedInputsOfUnsentTx: (...a: unknown[]) => releaseSealedInputsOfUnsentTx(...a),
   onAlreadySpentSend: (...a: unknown[]) => onAlreadySpentSend(...a),
   restoreOnChainLocalTx: (...a: unknown[]) => restoreOnChainLocalTx(...a),
+}))
+
+vi.mock('./pendingMinerOutbox', () => ({
+  enqueuePendingMinerSubmit: vi.fn(() => outboxWritesSucceed),
+  removePendingMinerSubmit: vi.fn(),
+  updatePendingMinerSubmitBody: vi.fn(() => outboxWritesSucceed),
+}))
+
+vi.mock('./toast', () => ({
+  toastError: (...args: unknown[]) => toastError(...args),
 }))
 
 vi.mock('./arcadeSubmitGuard', async (importOriginal) => {
@@ -51,6 +63,7 @@ const ATOMIC = [1, 2, 3]
 
 describe('submitAtomicBeefToMiners', () => {
   beforeEach(async () => {
+    outboxWritesSucceed = true
     beefComplete = true
     beefGap = 'missing-bodies'
     vi.mocked((await import('./beefCache')).hydrateInputBeef).mockClear()
@@ -58,6 +71,7 @@ describe('submitAtomicBeefToMiners', () => {
     releaseSealedInputsOfUnsentTx.mockClear()
     onAlreadySpentSend.mockClear()
     restoreOnChainLocalTx.mockClear()
+    toastError.mockClear()
     const { __resetArcadeSubmitGuardForTests } = await import('./arcadeSubmitGuard')
     __resetArcadeSubmitGuardForTests()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
@@ -87,6 +101,26 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result).toEqual({ kind: 'queued', reason: 'transport' })
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('reports an untracked cheque when durable retry storage fails', async () => {
+    outboxWritesSucceed = false
+    postBeef.mockRejectedValueOnce(new Error('provider down'))
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result).toEqual({
+      kind: 'untracked',
+      reason: 'outbox-write-failed',
+      network: 'transport',
+      summary: undefined,
+    })
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+    await vi.waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'Send needs attention',
+        expect.stringMatching(/could not be saved/i),
+      ),
+    )
   })
 
   it('queues a signed cheque on service-only silence', async () => {

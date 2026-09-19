@@ -102,7 +102,14 @@ export type SendBrc29Result = {
   peerDelivered?: boolean
 }
 
-/** Payee (or sender fallback) submits the signed payment to the network. */
+/**
+ * Hand the signed cheque to miners (payee, or sender fallback).
+ *
+ * `true` means the cheque is still live (`accepted`, `queued`, or
+ * `unproven-conflict`). That is P2P success: peers already exchanged a signed
+ * body. `false` is only a hard reject — reflect that immediately; do not wait
+ * on explorer silence and do not treat it as "try a second payment".
+ */
 export async function broadcastAtomicBeef(
   txid: string,
   atomic: number[],

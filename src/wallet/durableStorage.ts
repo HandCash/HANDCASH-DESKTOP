@@ -96,14 +96,23 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
     // ignore
   }
   // No Electron bridge (dev browser): localStorage is the store, not a mirror.
+  // Hermetic/node tests have neither bridge nor localStorage; preserve the
+  // process-local cache there so independent wallet modules remain testable.
+  if (typeof localStorage === 'undefined') {
+    cache.set(key, value)
+    return true
+  }
   try {
     localStorage.setItem(key, value)
+    cache.set(key, value)
+    return true
   } catch {
-    // ignore quota / private mode
+    // A quota/private-mode failure is a failed durable write. Do not cache the
+    // value and report success: custody queues use this result to distinguish a
+    // retryable signed cheque from one that would disappear on process exit.
+    cache.delete(key)
+    return false
   }
-  // Browser / no Electron bridge — localStorage write is best-effort success.
-  cache.set(key, value)
-  return true
 }
 
 /**

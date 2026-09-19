@@ -2,6 +2,7 @@ import { Beef, LockingScript, Transaction } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const store = new Map<string, string>()
+let writesSucceed = true
 
 function signedTx(satoshis: number): Transaction {
   const tx = new Transaction()
@@ -19,11 +20,17 @@ function atomicBeefFor(tx: Transaction): number[] {
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
+    if (!writesSucceed) return false
     store.set(key, value)
+    return true
   },
 }))
 
 const recordTransactionStage = vi.fn()
+const submitAtomicBeefToMiners = vi.fn(async () => ({
+  kind: 'queued' as const,
+  reason: 'no-ack' as const,
+}))
 vi.mock('./transactionTelemetry', () => ({
   activeTransactionTrace: () => ({
     traceId: 'trace-test',
@@ -33,9 +40,19 @@ vi.mock('./transactionTelemetry', () => ({
   recordTransactionStage: (...args: unknown[]) => recordTransactionStage(...args),
 }))
 
+vi.mock('./minerSubmit', () => ({
+  submitAtomicBeefToMiners: (...args: unknown[]) =>
+    submitAtomicBeefToMiners(...args),
+  minerSubmitKeepOutbox: (result: { kind: string; keepPropagating?: boolean }) =>
+    result.kind !== 'accepted' || result.keepPropagating === true,
+  reportLateMinerSubmitFailure: vi.fn(async () => undefined),
+}))
+
 beforeEach(() => {
   store.clear()
+  writesSucceed = true
   recordTransactionStage.mockClear()
+  submitAtomicBeefToMiners.mockClear()
 })
 
 describe('pending miner outbox', () => {
@@ -119,6 +136,49 @@ describe('pending miner outbox', () => {
     expect(
       JSON.parse(store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]'),
     ).toEqual([])
+  })
+
+  it('never evicts an older live cheque to enforce a row cap', async () => {
+    const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
+      './pendingMinerOutbox'
+    )
+    for (let sats = 1; sats <= 30; sats += 1) {
+      const tx = signedTx(sats)
+      expect(enqueuePendingMinerSubmit(tx.id('hex'), atomicBeefFor(tx))).toBe(true)
+    }
+    expect(pendingMinerOutboxDepth()).toBe(30)
+  })
+
+  it('reports a durable write failure instead of claiming the cheque is queued', async () => {
+    const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
+      './pendingMinerOutbox'
+    )
+    const tx = signedTx(1_000)
+    writesSucceed = false
+    expect(enqueuePendingMinerSubmit(tx.id('hex'), atomicBeefFor(tx))).toBe(false)
+    expect(pendingMinerOutboxDepth()).toBe(0)
+  })
+
+  it('keeps retrying a live cheque beyond the old forty-attempt cutoff', async () => {
+    const {
+      enqueuePendingMinerSubmit,
+      flushPendingMinerOutbox,
+      pendingMinerOutboxDepth,
+    } = await import('./pendingMinerOutbox')
+    const tx = signedTx(2_000)
+    expect(enqueuePendingMinerSubmit(tx.id('hex'), atomicBeefFor(tx))).toBe(true)
+
+    for (let attempt = 0; attempt < 45; attempt += 1) {
+      const rows = JSON.parse(
+        store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
+      ) as Array<{ nextAttemptAt: number }>
+      rows[0]!.nextAttemptAt = 0
+      store.set('handcash.wallet.pendingMinerOutbox.v1', JSON.stringify(rows))
+      await flushPendingMinerOutbox()
+    }
+
+    expect(pendingMinerOutboxDepth()).toBe(1)
+    expect(submitAtomicBeefToMiners).toHaveBeenCalledTimes(45)
   })
 
   it('upgrades a queued body once ancestry has been merged in', async () => {

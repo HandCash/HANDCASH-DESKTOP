@@ -14,9 +14,7 @@ import {
 } from './transactionTelemetry'
 
 const KEY = 'handcash.wallet.pendingMinerOutbox.v1'
-const MAX_ROWS = 25
 const MAX_ATOMIC_BYTES = 2 * 1024 * 1024
-const MAX_ATTEMPTS = 40
 
 export type PendingMinerSubmit = {
   txid: string
@@ -82,7 +80,7 @@ function load(): PendingMinerSubmit[] {
     )
     // Clean up rows written by older builds that only checked byte ranges.
     if (rows.length !== candidates.length) {
-      durableSetItem(KEY, JSON.stringify(rows.slice(-MAX_ROWS)))
+      durableSetItem(KEY, JSON.stringify(rows))
     }
     return rows
   } catch {
@@ -90,8 +88,10 @@ function load(): PendingMinerSubmit[] {
   }
 }
 
-function save(rows: PendingMinerSubmit[]): void {
-  durableSetItem(KEY, JSON.stringify(rows.slice(-MAX_ROWS)))
+function save(rows: PendingMinerSubmit[]): boolean {
+  // Every row is a still-live signed cheque. Never cap by evicting the oldest:
+  // that strands its seal and permanently stops propagation with no verdict.
+  return durableSetItem(KEY, JSON.stringify(rows))
 }
 
 export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boolean {
@@ -118,7 +118,10 @@ export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boole
     requestId: trace?.requestId,
     flow: trace?.flow,
   })
-  save(rows)
+  if (!save(rows)) {
+    console.error('[minerOutbox] durable write refused', id.slice(0, 12))
+    return false
+  }
   recordTransactionStage('propagation_queued', {
     flow: trace?.flow,
     traceId: trace?.traceId,
@@ -130,7 +133,9 @@ export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boole
 
 export function removePendingMinerSubmit(txid: string): void {
   const id = txid.trim().toLowerCase()
-  save(load().filter((row) => row.txid !== id))
+  if (!save(load().filter((row) => row.txid !== id))) {
+    console.error('[minerOutbox] durable removal refused', id.slice(0, 12))
+  }
 }
 
 /**
@@ -150,8 +155,7 @@ export function updatePendingMinerSubmitBody(
   const row = rows.find((r) => r.txid === id)
   if (!row) return false
   row.atomic = [...atomic]
-  save(rows)
-  return true
+  return save(rows)
 }
 
 function backoffMs(attempt: number): number {
@@ -203,7 +207,7 @@ export async function flushPendingMinerOutbox(): Promise<number> {
           : ''
       // Incomplete ancestry is not a spent input. Keep the cheque and retry
       // once the parent bodies can ride with the subject.
-      if (code === 'BEEF_ANCESTRY_INCOMPLETE' && attempt < MAX_ATTEMPTS) {
+      if (code === 'BEEF_ANCESTRY_INCOMPLETE') {
         keep.push({
           ...row,
           attempts: attempt,
@@ -217,24 +221,15 @@ export async function flushPendingMinerOutbox(): Promise<number> {
       })
       continue
     }
-    if (attempt >= MAX_ATTEMPTS) {
-      recordTransactionStage('retry_exhausted', {
-        flow: row.flow,
-        traceId: row.traceId,
-        requestId: row.requestId,
-        retryCount: attempt,
-        blockerCode: 'provider_retry_exhausted',
-        txid: row.txid,
-      })
-      continue
-    }
     keep.push({
       ...row,
       attempts: attempt,
       nextAttemptAt: Date.now() + backoffMs(attempt),
     })
   }
-  save(keep)
+  if (!save(keep)) {
+    console.error('[minerOutbox] flush checkpoint refused; previous queue remains durable')
+  }
   return accepted
 }
 
