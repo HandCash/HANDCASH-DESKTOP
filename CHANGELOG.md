@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.242] - 2026-09-19
+
+### Fixed
+
+- **Miner submit now returns one tagged fate:** `accepted`, `queued`, or
+  `unproven-conflict`. Callers no longer infer success from overlapping
+  `submitted` / `confirmed` booleans.
+- **An unproven miner conflict keeps inputs sealed** while the same signed
+  body stays in the outbox, so a later send cannot pick those coins.
+
 ## [1.3.241] - 2026-09-19
 
 ### Fixed
