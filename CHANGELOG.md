@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.240] - 2026-09-19
+
+### Fixed
+
+- **The durable miner outbox no longer stores a body it cannot verify.** A row
+  is persisted only when the bytes parse as BEEF and carry the signed subject
+  transaction, so unparseable bytes, txid-only stubs, and bodies for a
+  different transaction are refused instead of retried for hours.
+- **A queued body is upgraded once ancestry is merged or hydrated**, so retries
+  post the complete package instead of repeatedly re-sending the thin one.
+
 ## [1.3.239] - 2026-09-19
 
 ### Fixed
