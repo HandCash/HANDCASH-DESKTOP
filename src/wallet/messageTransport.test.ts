@@ -9,6 +9,7 @@ import {
   encodeMessageBody,
   encodeMarketSettlementWire,
   isMessageboxFileUrl,
+  MESSAGEBOX_INNER_MAX,
   normalizeMessageboxBase,
   notifyPeerBrc29Payment,
   notifyPeerItemIncoming,
@@ -36,7 +37,7 @@ describe('message transport envelopes', () => {
         type: 'receipt',
         saleId: 'sale-2',
         txid: 'ab'.repeat(32),
-        atomicBeefB64: 'x'.repeat(16_000),
+        atomicBeefB64: 'x'.repeat(MESSAGEBOX_INNER_MAX + 1_000),
       }),
     ).toThrow(/body limit/i)
   })
@@ -65,7 +66,7 @@ describe('message transport envelopes', () => {
           type: 'receipt',
           saleId: 'sale-large',
           txid: 'ab'.repeat(32),
-          atomicBeefB64: 'x'.repeat(20_000),
+          atomicBeefB64: 'x'.repeat(MESSAGEBOX_INNER_MAX + 20_000),
         },
         recipientIdentityKey: recipient.toPublicKey().toString(),
         rootKeyHex: root.toHex(),
@@ -324,6 +325,7 @@ describe('messagebox base URL', () => {
     expect(result).toEqual({
       delivered: 'cloud',
       messagebox: 'https://mb.peer.example/v1/messagebox',
+      beefStripped: false,
     })
     expect(calls[0]?.url).toBe('https://mb.peer.example/v1/messagebox/sendMessage')
     expect(calls[0]?.headers.get('X-BRC33-Identity')).toBe(
@@ -565,7 +567,8 @@ describe('messagebox base URL', () => {
       messagebox: 'https://mb.peer.example/v1/messagebox',
       txid,
       itemName: 'Large proof item',
-      atomicBeef: Array.from({ length: 20_000 }, (_, i) => i % 256),
+      // Base64 inflates 4/3, so a raw BEEF of the inner budget always overruns it.
+      atomicBeef: Array.from({ length: MESSAGEBOX_INNER_MAX }, (_, i) => i % 256),
     })
 
     expect(result).toEqual({
@@ -577,6 +580,80 @@ describe('messagebox base URL', () => {
     expect(urls.some((u) => u.includes('/sendMessage'))).toBe(true)
   })
 
+  it('never trades a BSV-21 Atomic BEEF away for provenance', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ status: 'success' }), { status: 200 })),
+    )
+    // Provenance too fat to share the cap with the BEEF. A collectable may drop
+    // the BEEF here and let the payee SPV-fetch; a fungible payee cannot settle
+    // at all without it, so the BEEF must win.
+    const provenance = {
+      v: 2 as const,
+      origin: `${'aa'.repeat(32)}_0`,
+      tip: `${'bb'.repeat(32)}_0`,
+      path: [`${'bb'.repeat(32)}_0`, `${'aa'.repeat(32)}_0`],
+      beefB64: 'x'.repeat(MESSAGEBOX_INNER_MAX),
+    }
+    const args = {
+      recipientIdentityKey: PrivateKey.fromRandom().toPublicKey().toString(),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      txid: 'c'.repeat(64),
+      itemName: 'Token',
+      atomicBeef: [1, 2, 3],
+      provenance,
+    }
+
+    const fungible = await notifyPeerItemIncoming({
+      ...args,
+      asset: { kind: 'fungible', tokenId: `${'dd'.repeat(32)}_0`, amount: '100' },
+    })
+    expect(fungible.beefInBox).toBe(true)
+
+    const collectable = await notifyPeerItemIncoming({
+      ...args,
+      asset: { kind: 'collectable' },
+    })
+    expect(collectable.beefInBox).toBe(true)
+  })
+
+  it('sheds inline BEEF and reports it when the peer box caps lower', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    const bodies: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = String(init?.body ?? '')
+        bodies.push(body)
+        return bodies.length === 1
+          ? new Response(JSON.stringify({ status: 'error', error: 'too-large' }), {
+              status: 413,
+            })
+          : new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+
+    const result = await notifyPeerItemIncoming({
+      recipientIdentityKey: PrivateKey.fromRandom().toPublicKey().toString(),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      messagebox: 'https://small.peer.example/v1/messagebox',
+      txid: 'a'.repeat(64),
+      itemName: 'Item',
+      atomicBeef: [1, 2, 3],
+    })
+
+    // Card delivered, but the sender must not claim a BEEF the box rejected.
+    expect(result.delivered).toBe('cloud')
+    expect(result.beefInBox).toBe(false)
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1].length).toBeLessThan(bodies[0].length)
+  })
+
   it('omits inline BEEF when it would exceed the sendMessage cap', async () => {
     const base = encodeMessageBody({
       kind: 'pay-sent',
@@ -586,7 +663,7 @@ describe('messagebox base URL', () => {
         brc29: { derivationPrefix: 'pre', derivationSuffix: 'suf', outputIndex: 0 },
       },
     })
-    const huge = Array.from({ length: 20_000 }, (_, i) => i % 256)
+    const huge = Array.from({ length: MESSAGEBOX_INNER_MAX }, (_, i) => i % 256)
     expect(withOptionalBeefB64(base, huge)).toEqual({ body: base, beefInBox: false })
     expect(withOptionalBeefB64(base, [1, 2, 3]).beefInBox).toBe(true)
   })
@@ -599,7 +676,7 @@ describe('messagebox base URL', () => {
       vi.fn(async () => new Response(JSON.stringify({ status: 'success' }), { status: 200 })),
     )
     const recipient = PrivateKey.fromRandom()
-    const huge = Array.from({ length: 20_000 }, (_, i) => i % 256)
+    const huge = Array.from({ length: MESSAGEBOX_INNER_MAX }, (_, i) => i % 256)
     const result = await notifyPeerBrc29Payment({
       recipientIdentityKey: recipient.toPublicKey().toString(),
       rootKeyHex: root.toHex(),

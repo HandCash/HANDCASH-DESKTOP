@@ -90,6 +90,44 @@ describe('flushPendingItemOutbox', () => {
     expect(savedRows()).toEqual([expect.objectContaining({ attempts: 1 })])
   })
 
+  it('backs a failed row off instead of retrying it on the next flush', async () => {
+    store.set(KEY, JSON.stringify([row(1)]))
+    notifyPeerItemIncoming.mockResolvedValue({ delivered: 'local', beefInBox: false })
+    const { flushPendingItemOutbox } = await import('./pendingItemOutbox')
+
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+    expect(notifyPeerItemIncoming).toHaveBeenCalledTimes(1)
+
+    // Each attempt re-merges ancestry and base64s the BEEF on the main thread.
+    // An immediate re-flush must not pay that again.
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+    expect(notifyPeerItemIncoming).toHaveBeenCalledTimes(1)
+    expect(savedRows()).toEqual([expect.objectContaining({ attempts: 1 })])
+
+    vi.setSystemTime(Date.now() + 10_000)
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+    expect(notifyPeerItemIncoming).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('keeps a backed-off row while flushing one that is due', async () => {
+    store.set(KEY, JSON.stringify([row(1)]))
+    notifyPeerItemIncoming.mockResolvedValue({ delivered: 'local', beefInBox: false })
+    const { enqueuePendingItemRemit, flushPendingItemOutbox } = await import(
+      './pendingItemOutbox'
+    )
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+
+    enqueuePendingItemRemit(row(2))
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+
+    // The deferred row must survive the save that follows the due row's attempt.
+    expect(savedRows().map((r) => r.txid).sort()).toEqual(
+      [row(1).txid, row(2).txid].sort(),
+    )
+  })
+
   it('keeps every failed batch remittance sharing one txid', async () => {
     const { enqueuePendingItemRemit, flushPendingItemOutbox } = await import(
       './pendingItemOutbox'

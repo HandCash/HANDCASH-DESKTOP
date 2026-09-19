@@ -124,6 +124,19 @@ function asBool(v: boolean | undefined, fallback: boolean): boolean {
   return typeof v === "boolean" ? v : fallback;
 }
 
+/**
+ * Bumped whenever a coin becomes spendable again.
+ *
+ * Callers that memoize "these inputs are already sealed" must re-check this
+ * before trusting the memo — an un-seal is exactly the event that makes a
+ * skipped re-seal turn into a reselected, already-spent input.
+ */
+let unsealGeneration = 0;
+
+export function utxoUnsealGeneration(): number {
+  return unsealGeneration;
+}
+
 /** Hide a coin without deleting the toolbox row (BRC-38 `spendable: false`). */
 export function hideUtxo(
   outpoint: string,
@@ -165,6 +178,7 @@ export function releaseConsumedUtxo(
   const cur = load().get(key);
   if (!cur) return null;
   const now = Date.now();
+  unsealGeneration += 1;
   return put({
     ...cur,
     spendable: true,
@@ -182,6 +196,7 @@ export function creditUtxo(
 ): UtxoLockRecord | null {
   const cur = getUtxoLock(outpoint);
   if (cur && isConsumed(cur)) return cur;
+  unsealGeneration += 1;
   return upsertUtxoLock(outpoint, {
     spendable: true,
     spentBy: null,

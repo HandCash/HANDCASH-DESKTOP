@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.244] - 2026-09-19
+
+### Fixed
+
+- **Incoming BSV-21 sends settle again.** A token hop's Atomic BEEF no longer
+  overruns the messagebox body cap, so the payee gets the BEEF inline instead
+  of `beefInBox: false` and a fallback to an indexer that never saw the tx.
+  A BSV-21 envelope will never trade its BEEF away to fit provenance — for a
+  fungible payee the BEEF *is* custody. A peer box that still caps lower gets
+  the card without the BEEF, and the sender reports that honestly.
+- **The item outbox no longer thrashes the main thread.** A failed remittance
+  backs off instead of retrying the identical payload on every flush tick;
+  field logs showed 2–6s stalls interleaved one-for-one with those retries.
+- **"Preparing payment" no longer re-seals work it already did.** Promotion
+  skips live txs it has settled this session and redoes them whenever a coin
+  is un-sealed, cutting an 18.8s spend preparation without reintroducing the
+  timer race that let `createAction` reselect a spent input.
+
 ## [1.3.243] - 2026-09-19
 
 ### Fixed

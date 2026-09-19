@@ -62,10 +62,16 @@ export { bytesToBase64 }
 const WIRE_PREFIX = 'handcash-message:'
 const MARKET_WIRE_PREFIX = 'handcash-market-v2:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
-/** BRC-CLOUD sendMessage cap is 16_384 — stay under it for remittance ± inline BEEF. */
-export const MESSAGEBOX_BODY_MAX = 16_000
+/**
+ * BRC-CLOUD sendMessage cap is 262_144 — stay under it for remittance ± inline BEEF.
+ *
+ * This was 16_000/11_000, which no BSV-21 hop could clear once the Atomic BEEF
+ * was base64'd in: the sender shipped `beefInBox: false` and the payee had no
+ * way to settle except an indexer that had not seen the tx.
+ */
+export const MESSAGEBOX_BODY_MAX = 240_000
 /** Inner plaintext budget so a BRC-169 envelope still fits `MESSAGEBOX_BODY_MAX`. */
-export const MESSAGEBOX_INNER_MAX = 11_000
+export const MESSAGEBOX_INNER_MAX = 160_000
 
 export type MarketSettlementWire =
   | {
@@ -854,7 +860,12 @@ export async function preparePeerDirectPath(args: {
 /** Deliver outbound text. A live IPv6 session skips the box; otherwise the box is the path. */
 export async function deliverOutbound(
   env: OutboundEnvelope,
-): Promise<{ delivered: 'local' | 'cloud' | 'direct'; messagebox: string }> {
+): Promise<{
+  delivered: 'local' | 'cloud' | 'direct'
+  messagebox: string
+  /** The host refused the envelope and it went out without inline Atomic BEEF. */
+  beefStripped?: boolean
+}> {
   const box = normalizeMessageboxBase(env.messagebox)
   armDirectSession(env)
   let wireBody = env.body
@@ -881,8 +892,8 @@ export async function deliverOutbound(
     if (direct === 'direct') return { delivered: 'direct', messagebox: box }
   }
   const url = `${box}/sendMessage`
-  try {
-    const res = await fetch(url, {
+  const post = (body: string) =>
+    fetch(url, {
       method: 'POST',
       headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
         'Content-Type': 'application/json',
@@ -892,15 +903,37 @@ export async function deliverOutbound(
         message: {
           recipient: env.recipientIdentityKey,
           messageBox: 'inbox',
-          body: wireBody,
+          body,
           // Optional display claim only — server binds sender from auth.
           senderHandle: env.senderHandle,
         },
       }),
     })
+  try {
+    let res = await post(wireBody)
+    let beefStripped = false
+    // The peer's box may cap below ours (any BRC-33 host, not just BRC-CLOUD).
+    // Shed the inline BEEF rather than lose the card — but say so, because a
+    // BSV-21 payee cannot settle from remittance alone.
+    if (res.status === 413 && env.body) {
+      const lean = dropInnerBeef(env.body)
+      if (lean !== env.body) {
+        try {
+          const sealed = sealForPeer({
+            plaintext: lean,
+            rootKeyHex: env.rootKeyHex,
+            recipientIdentityKey: env.recipientIdentityKey,
+          })
+          res = await post(sealed)
+          beefStripped = res.ok
+        } catch {
+          /* keep the original 413 */
+        }
+      }
+    }
     if (res.ok) {
       void postSessionOffer(env, box)
-      return { delivered: 'cloud', messagebox: box }
+      return { delivered: 'cloud', messagebox: box, beefStripped }
     }
     const detail = await res.text().catch(() => '')
     console.warn(
@@ -1340,8 +1373,12 @@ export async function notifyPeerItemIncoming(args: {
   }
   // Identity before a second indexer walk. If both proofs cannot share the cap,
   // keep remittance and let this hop SPV-fetch the way omitted-beef already does.
-  // Fungible custody is the Atomic BEEF — never drop it to keep provenance.
-  if (args.provenance && !packed.provenanceInBox) {
+  // Fungible custody *is* the Atomic BEEF: a BSV-21 payee with provenance but no
+  // BEEF cannot settle at all, so that trade is only ever made for collectables,
+  // whose identity is the BRC-150 proof and whose tip can be SPV-fetched.
+  const mayTradeBeefForProvenance =
+    args.asset?.kind !== 'fungible' || !packed.beefInBox
+  if (args.provenance && !packed.provenanceInBox && mayTradeBeefForProvenance) {
     const proofOnly = withOptionalProvenance(base, args.provenance)
     if (proofOnly.provenanceInBox) {
       packed = {
@@ -1375,7 +1412,7 @@ export async function notifyPeerItemIncoming(args: {
     if (deliveryReachedPeer(delivered.delivered)) {
       return {
         delivered: delivered.delivered,
-        beefInBox: packed.beefInBox,
+        beefInBox: packed.beefInBox && delivered.beefStripped !== true,
         provenanceInBox: packed.provenanceInBox,
       }
     }
@@ -1468,7 +1505,7 @@ export async function notifyPeerBrc29Payment(args: {
     if (deliveryReachedPeer(delivered.delivered)) {
       return {
         delivered: delivered.delivered,
-        beefInBox: packed.beefInBox,
+        beefInBox: packed.beefInBox && delivered.beefStripped !== true,
         provenanceInBox: false,
       }
     }

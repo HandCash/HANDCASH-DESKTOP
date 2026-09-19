@@ -15,6 +15,20 @@ const KEY = 'handcash.item.pendingOutbox.v1'
 const MAX_ATTEMPTS = 20
 const OUTBOX_FLUSH_CONCURRENCY = 3
 
+/**
+ * Every retry re-merges ancestry and base64s the Atomic BEEF on the main
+ * thread. Without a floor between attempts a row that keeps failing renders the
+ * app unusable — field logs showed 2–6s `layers idle` stalls interleaved 1:1
+ * with `[item-outbox] retry failed`. Back off so a stuck row costs one attempt
+ * per window instead of one per flush tick.
+ */
+const RETRY_BACKOFF_MS = [0, 2_000, 8_000, 30_000, 120_000, 600_000] as const
+
+function nextAttemptDelayMs(attempts: number): number {
+  const i = Math.min(Math.max(attempts, 0), RETRY_BACKOFF_MS.length - 1)
+  return RETRY_BACKOFF_MS[i]
+}
+
 export type PendingItemRemit = {
   payeeIdentityKey: string
   senderIdentityKey: string
@@ -28,6 +42,8 @@ export type PendingItemRemit = {
   messagebox?: string | null
   createdAt: number
   attempts: number
+  /** Epoch ms before which a flush must skip this row (see RETRY_BACKOFF_MS). */
+  nextAttemptAt?: number
   traceId?: string
   requestId?: string
   flow?: TransactionFlow
@@ -91,7 +107,11 @@ export function enqueuePendingItemRemit(
 export async function flushPendingItemOutbox(args: {
   rootKeyHex: string
 }): Promise<number> {
-  const rows = load()
+  const all = load()
+  if (all.length === 0) return 0
+  const now = Date.now()
+  const rows = all.filter((r) => (r.nextAttemptAt ?? 0) <= now)
+  const waiting = all.filter((r) => (r.nextAttemptAt ?? 0) > now)
   if (rows.length === 0) return 0
   const { notifyPeerItemIncoming } = await import('./messageTransport')
   const { getActiveWallet } = await import('./session')
@@ -158,13 +178,20 @@ export async function flushPendingItemOutbox(args: {
     }
     const attempts = (row.attempts ?? 0) + 1
     if (attempts < MAX_ATTEMPTS) {
-      return { delivered: false as const, keep: { ...row, attempts } }
+      return {
+        delivered: false as const,
+        keep: {
+          ...row,
+          attempts,
+          nextAttemptAt: Date.now() + nextAttemptDelayMs(attempts),
+        },
+      }
     }
     return { delivered: false as const }
   })
 
   let delivered = 0
-  const keep: PendingItemRemit[] = []
+  const keep: PendingItemRemit[] = [...waiting]
   for (const o of outcomes) {
     if (o.delivered) {
       delivered += 1

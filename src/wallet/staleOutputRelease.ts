@@ -27,6 +27,7 @@ import {
   isUtxoBlockedFromRestore,
   listUtxoLocks,
   releaseConsumedUtxo,
+  utxoUnsealGeneration,
 } from "./utxoLockManager";
 import { isQuarantined } from "./utxoLifecycle";
 import {
@@ -1967,6 +1968,55 @@ export async function listPendingLocalChangeTxids(): Promise<string[]> {
  * Pay cannot select it. This walks pending local txids and calls
  * {@link keepChangeOfSignedTx} for each.
  */
+/**
+ * Live txids already sealed + change-kept for the signed-in wallet.
+ *
+ * Seal and keep are idempotent, so repeating them on an unchanged tx is pure
+ * cost — but the loop is serial and storage-bound (~1.5s per tx), so a wallet
+ * chaining eight unconfirmed txs paid ~19s of "Preparing payment" on *every*
+ * send, re-doing work it had already done. Skipping settled txids is the only
+ * safe way to bound this: the promotion itself cannot be raced against a timer
+ * without letting createAction reselect a stale row (that is the double-spend
+ * this guard exists to prevent).
+ *
+ * The memo is discarded whenever {@link utxoUnsealGeneration} moves, so any
+ * path that revives a coin automatically forces a re-seal on the next promote.
+ */
+let promotedLocalChange: {
+  identityKey: string;
+  generation: number;
+  txids: Set<string>;
+} | null = null;
+
+function promotedSetFor(identityKey: string): Set<string> {
+  const generation = utxoUnsealGeneration();
+  if (
+    promotedLocalChange?.identityKey !== identityKey ||
+    promotedLocalChange.generation !== generation
+  ) {
+    promotedLocalChange = { identityKey, generation, txids: new Set() };
+  }
+  return promotedLocalChange.txids;
+}
+
+/**
+ * Adopt the generation this promote just produced.
+ *
+ * `keepChangeOfSignedTx` credits the change it promotes, which bumps the
+ * counter. Without absorbing that here the promote would invalidate its own
+ * memo and the next send would redo every seal. An un-seal from any *other*
+ * path still lands past this value and forces the re-seal.
+ */
+function commitPromotedGeneration(identityKey: string): void {
+  if (promotedLocalChange?.identityKey !== identityKey) return;
+  promotedLocalChange.generation = utxoUnsealGeneration();
+}
+
+/** Drop the promote memo after anything un-seals or revives an output. */
+export function forgetPromotedLocalChange(): void {
+  promotedLocalChange = null;
+}
+
 export async function promotePendingLocalChangeOutputs(opts?: {
   forSpendChain?: boolean;
   /** Retained for caller compatibility; promotion is now always local-only. */
@@ -1978,7 +2028,14 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
 
-  const txids = new Set(await listPendingLocalChangeTxids());
+  const done = promotedSetFor(active?.identityKey ?? "");
+  const all = await listPendingLocalChangeTxids();
+  // A txid that left the live set is settled; stop tracking it so the memo
+  // cannot grow without bound across a long session.
+  const live = new Set(all);
+  for (const txid of done) if (!live.has(txid)) done.delete(txid);
+
+  const txids = new Set(all.filter((txid) => !done.has(txid)));
   if (txids.size === 0) return 0;
 
   let promoted = 0;
@@ -1998,7 +2055,11 @@ export async function promotePendingLocalChangeOutputs(opts?: {
     const sealed = await sealSpentInputsOfSignedTx(txid, undefined);
     sealedTotal += sealed;
     promoted += await keepChangeOfSignedTx(txid);
+    // Only after both halves ran: a throw must leave the txid unmemoized so the
+    // next send re-seals it rather than selecting an input we failed to hide.
+    done.add(txid);
   }
+  commitPromotedGeneration(active?.identityKey ?? "");
   if (promoted > 0 || sealedTotal > 0) {
     console.info(
       `[stale-output] promoted ${promoted} pending local change output(s), sealed ${sealedTotal} input(s) from ${txids.size} live tx(s)`
@@ -2399,6 +2460,8 @@ export async function restoreLiveSpendableOutputs(opts?: {
   try {
     const dead = await loadUnspendableChange(storage);
     if (!dead.length) return empty;
+    // About to make outputs spendable again — the promote memo is now stale.
+    forgetPromotedLocalChange();
 
     let restored = 0;
     let unscripted = 0;

@@ -131,9 +131,8 @@ describe('chooseUtxoEvidenceAction', () => {
   })
 })
 
-const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
-  './utxoLockManager'
-)
+const { creditUtxo, hideUtxo, getUtxoLock, __resetUtxoLocksForTests } =
+  await import('./utxoLockManager')
 const {
   rememberArcadeSubmitContact,
   __resetArcadeSubmitGuardForTests,
@@ -847,6 +846,43 @@ describe('promotePendingLocalChangeOutputs', () => {
       9,
       expect.objectContaining({ spendable: true }),
     )
+  })
+
+  it('does not re-seal a live tx it already promoted, until a coin is un-sealed', async () => {
+    const txid = '3c'.repeat(32)
+    txExistsOnChain.mockResolvedValue(true)
+    findTransactions.mockImplementation(async (args: { status?: string[] }) =>
+      args.status?.includes('unproven') ? [{ txid, status: 'unproven' }] : [],
+    )
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 5,
+        txid,
+        vout: 1,
+        change: true,
+        satoshis: 4200,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+      },
+    ])
+
+    await expect(
+      promotePendingLocalChangeOutputs({ forSpendChain: true }),
+    ).resolves.toBe(1)
+    const afterFirst = findOutputs.mock.calls.length
+    expect(afterFirst).toBeGreaterThan(0)
+
+    // Repeat sends must not pay the per-tx storage walk again — that is the
+    // ~19s "Preparing payment" seen in the field.
+    await expect(
+      promotePendingLocalChangeOutputs({ forSpendChain: true }),
+    ).resolves.toBe(0)
+    expect(findOutputs.mock.calls.length).toBe(afterFirst)
+
+    // An un-seal from any other path must force the walk again.
+    creditUtxo(`${'9f'.repeat(32)}.0`, { satoshis: 10 })
+    await promotePendingLocalChangeOutputs({ forSpendChain: true })
+    expect(findOutputs.mock.calls.length).toBeGreaterThan(afterFirst)
   })
 
   it('leaves change of an unpinned nosend tx app-held', async () => {
