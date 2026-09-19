@@ -128,8 +128,8 @@ export async function broadcastAtomicBeef(
 
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(id, atomic)
-    mark(`postBeef confirmed=${String(result.confirmed)} submitted=${String(result.submitted)}`)
-    return result.submitted
+    mark(`postBeef ${result.kind}`)
+    return true
   } catch (err) {
     console.warn(
       '[brc29] postBeef hard reject',
@@ -137,7 +137,7 @@ export async function broadcastAtomicBeef(
       err instanceof Error ? err.message : String(err),
     )
     // Arcade (via minerSubmit) flat-out rejected — discard. Explorer lag never
-    // throws here; soft/ghost conflicts return submitted:true instead.
+    // throws here; unproven conflicts keep the sealed cheque and queue retry.
     try {
       const { rememberGhostTx } = await import('./ghostTxSuppress')
       rememberGhostTx(id)

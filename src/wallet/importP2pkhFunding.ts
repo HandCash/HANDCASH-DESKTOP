@@ -40,8 +40,8 @@ async function postSweep(
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
   const result = await submitAtomicBeefToMiners(txid, atomic)
   return {
-    ok: result.submitted,
-    detail: result.summary?.detail ?? 'propagation queued',
+    ok: result.kind !== 'unproven-conflict',
+    detail: result.summary?.detail ?? result.kind,
   }
 }
 

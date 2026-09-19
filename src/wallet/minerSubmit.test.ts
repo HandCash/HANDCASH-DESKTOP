@@ -68,32 +68,32 @@ describe('submitAtomicBeefToMiners', () => {
     vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unspent')
   })
 
-  it('returns confirmed when miners accept', async () => {
+  it('returns accepted when miners accept', async () => {
     postBeef.mockResolvedValueOnce([
       { status: 'success', txidResults: [{ status: 'success' }] },
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.confirmed).toBe(true)
-    expect(result.submitted).toBe(true)
+    expect(result).toMatchObject({
+      kind: 'accepted',
+      ancestryComplete: true,
+    })
     expect(restoreOnChainLocalTx).toHaveBeenCalledWith(TXID)
   })
 
-  it('treats transport failure as submitted without releasing the seal', async () => {
+  it('queues a signed cheque on transport failure without releasing the seal', async () => {
     postBeef.mockRejectedValueOnce(new Error('provider down'))
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
-    expect(result.confirmed).toBe(false)
+    expect(result).toEqual({ kind: 'queued', reason: 'transport' })
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('treats service-only silence as submitted', async () => {
+  it('queues a signed cheque on service-only silence', async () => {
     postBeef.mockResolvedValueOnce(undefined)
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
-    expect(result.confirmed).toBe(false)
+    expect(result.kind).toBe('queued')
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
@@ -118,7 +118,7 @@ describe('submitAtomicBeefToMiners', () => {
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('treats unproven missing-inputs as submitted and releases the seal', async () => {
+  it('treats unproven missing-inputs as a sealed cheque, not a released spend', async () => {
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
@@ -133,12 +133,12 @@ describe('submitAtomicBeefToMiners', () => {
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
+    expect(result.kind).toBe('unproven-conflict')
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
-    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('treats ghost doubleSpend as submitted and releases the seal', async () => {
+  it('treats unproven doubleSpend as a sealed cheque, not a released spend', async () => {
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
@@ -147,9 +147,9 @@ describe('submitAtomicBeefToMiners', () => {
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
+    expect(result.kind).toBe('unproven-conflict')
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
-    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
   it('treats service-only endpoint errors as submitted without hiding coins', async () => {
@@ -161,8 +161,7 @@ describe('submitAtomicBeefToMiners', () => {
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
-    expect(result.confirmed).toBe(false)
+    expect(result).toMatchObject({ kind: 'queued', reason: 'service-error' })
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
@@ -223,8 +222,11 @@ describe('submitAtomicBeefToMiners', () => {
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.confirmed).toBe(true)
-    expect(result.keepPropagating).toBe(true)
+    expect(result).toMatchObject({
+      kind: 'accepted',
+      ancestryComplete: true,
+      keepPropagating: true,
+    })
     expect(hydrateInputBeef).not.toHaveBeenCalled()
   })
 
@@ -244,7 +246,7 @@ describe('submitAtomicBeefToMiners', () => {
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result.submitted).toBe(true)
+    expect(result.kind).toBe('queued')
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 

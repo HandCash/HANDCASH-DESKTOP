@@ -2027,22 +2027,8 @@ async function createMarketListingAdvertExclusive(
     const mined = await submitAtomicBeefToMiners(txid, atomic, {
       flow: 'market_listing',
     })
-    mark(
-      `miner answered submitted=${String(mined.submitted)} confirmed=${String(mined.confirmed)}`,
-    )
-    if (!mined.submitted && !mined.confirmed) {
-      chart.send({ type: 'RECOVER' })
-      throw new MarketListingError(
-        'MARKET_LISTING_BROADCAST_UNKNOWN',
-        'Listing was signed but Arcade did not accept the broadcast.',
-      )
-    }
-    // Ghost MissingInputs must not become a "listed" activity row. The tip is
-    // still ours; abort the noSend and let the seller retry with a fuller BEEF.
-    if (
-      !mined.confirmed &&
-      (mined.summary?.missingInputs || mined.summary?.doubleSpend)
-    ) {
+    mark(`miner ${mined.kind}`)
+    if (mined.kind === 'unproven-conflict') {
       const reason =
         'Not broadcast — miners could not see every parent input yet. Try listing again.'
       await abortUnsentMarketAction({

@@ -284,10 +284,11 @@ async function internalizeConsolidated(args: {
       throw new Error('Consolidate signed but no transaction body was returned')
     }
     const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
+    const { minerSubmitAncestryComplete } = await import('./minerSubmit')
     // Arcade 202 is not SPV. Internalize only when the BEEF itself verifies
     // (unconfirmed parent bodies count). Service-only / incomplete ancestry
     // must not mint phantom change.
-    if (!miner.confirmed) {
+    if (!minerSubmitAncestryComplete(miner)) {
       throw new Error(
         miner.summary?.detail
           ? `Consolidate broadcast failed (${miner.summary.detail})`

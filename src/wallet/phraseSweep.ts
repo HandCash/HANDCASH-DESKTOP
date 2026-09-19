@@ -1465,9 +1465,9 @@ async function signAndPostItemMigrate(
   const bin = packed.toBinaryAtomic(sweepTxid)
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
   const submitted = await submitAtomicBeefToMiners(sweepTxid, bin)
-  if (!submitted.submitted) {
+  if (submitted.kind === 'unproven-conflict') {
     throw new Error(
-      `Broadcast rejected (${submitted.summary?.detail ?? 'not submitted'})`,
+      `Broadcast rejected (${submitted.summary.detail ?? 'unproven conflict'})`,
     )
   }
   return sweepTxid

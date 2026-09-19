@@ -1,8 +1,9 @@
 /**
  * Submit signed Atomic BEEF to miners after createAction.
  *
- * A signed tx is a spendable promise — UI success should not block on miner ACK.
- * Only hard missing-inputs / double-spend responses roll back the seal.
+ * A signed tx is a live cheque until Arcade hard-rejects it or chain proof shows
+ * a competing spend. Transport silence queues it. Unproven miner conflicts do
+ * not unlock inputs while the same body is still being retried.
  */
 import { Beef } from "@bsv/sdk";
 import { getActiveWallet, type ActiveWallet } from "./session";
@@ -40,22 +41,44 @@ import {
 import { normalizeTxid } from "./txid";
 import { spendConflictIsProven } from "./spendVerdict";
 
-export type MinerSubmitResult = {
-  /**
-   * Local SPV of a complete-enough BEEF plus a miner accept. Unconfirmed
-   * parent *bodies* count — that is the cheque that negates explorer latency.
-   * Merkle-complete on-chain proofs are not required.
-   */
-  confirmed: boolean;
-  /** Signed tx was handed to miners (or transport failed after hand-off). */
-  submitted: boolean;
-  /**
-   * Keep the miner outbox until every ancestor has a merkle proof (the
-   * subject is then standing on mined parents). Arcade 202 is not that.
-   */
-  keepPropagating?: boolean;
-  summary?: PostBeefSummary;
-};
+/**
+ * One local fate for a signed body. Callers must switch on `kind` — overlapping
+ * booleans (`submitted` + `confirmed`) used to mean "Arcade accepted",
+ * "transport failed", and "unproven conflict, seals released" at once.
+ */
+export type MinerSubmitResult =
+  | {
+      kind: "accepted";
+      /** Subject + required ancestor *bodies* are in the BEEF (not merkle-final). */
+      ancestryComplete: boolean;
+      /** Keep the outbox until ancestor merkle proofs close. Arcade 202 is not that. */
+      keepPropagating: boolean;
+      summary?: PostBeefSummary;
+    }
+  | {
+      kind: "queued";
+      reason: "offline" | "transport" | "service-error" | "no-ack";
+      summary?: PostBeefSummary;
+    }
+  | {
+      kind: "unproven-conflict";
+      summary: PostBeefSummary;
+    };
+
+/** Miner or Arcade accepted this body. Not the same as merkle-final. */
+export function minerSubmitIsAccepted(result: MinerSubmitResult): boolean {
+  return result.kind === "accepted";
+}
+
+/** Local SPV of this BEEF (unconfirmed parent bodies count). */
+export function minerSubmitAncestryComplete(result: MinerSubmitResult): boolean {
+  return result.kind === "accepted" && result.ancestryComplete;
+}
+
+/** Hard reject throws; every remaining kind still owns the sealed spend. */
+export function minerSubmitKeepOutbox(result: MinerSubmitResult): boolean {
+  return result.kind !== "accepted" || result.keepPropagating;
+}
 
 type SubmitTelemetry = {
   traceId?: string;
@@ -223,27 +246,15 @@ async function resolveMinerConflict(args: {
   });
 
   if (!conflictReal) {
-    if (arcadePinned) {
-      console.info(
-        `[minerSubmit] ghost ${
-          summary.missingInputs ? "missing-inputs" : "doubleSpend"
-        } — Arcade pin holds seal`,
-        id.slice(0, 12),
-        summary.detail
-      );
-      return { confirmed: false, submitted: true, summary };
-    }
     console.info(
-      `[minerSubmit] ghost ${
+      `[minerSubmit] unproven ${
         summary.missingInputs ? "missing-inputs" : "doubleSpend"
-      } — releasing seal`,
+      } — keeping sealed cheque`,
       id.slice(0, 12),
+      arcadePinned ? "arcade-pin" : "no-pin",
       summary.detail
     );
-    await releaseSealedInputsOfUnsentTx(id, atomic);
-    // Still "submitted" for optimistic send UX; callers that need a hard ACK
-    // (consolidate) must check confirmed / catch their own release.
-    return { confirmed: false, submitted: true, summary };
+    return { kind: "unproven-conflict", summary };
   }
 
   // Proven conflict — but only hide if OUR tx actually landed. Otherwise
@@ -309,14 +320,14 @@ export async function submitAtomicBeefToMiners(
   const active = getActiveWallet();
   if (!active?.services?.postBeef) {
     console.info(
-      "[minerSubmit] offline — treating signed tx as submitted",
+      "[minerSubmit] offline — signed cheque queued",
       id.slice(0, 12)
     );
     recordTransactionStage("propagation_queued", {
       ...telemetry,
       blockerCode: "provider_offline",
     });
-    return { confirmed: false, submitted: true };
+    return { kind: "queued", reason: "offline" };
   }
 
   let beefBytes = atomic;
@@ -389,7 +400,7 @@ export async function submitAtomicBeefToMiners(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(
-      "[minerSubmit] postBeef transport failed — treating as submitted",
+      "[minerSubmit] postBeef transport failed — signed cheque queued",
       id.slice(0, 12),
       msg
     );
@@ -408,7 +419,7 @@ export async function submitAtomicBeefToMiners(
       ...telemetry,
       blockerCode: "provider_transport",
     });
-    return { confirmed: false, submitted: true };
+    return { kind: "queued", reason: "transport" };
   }
 
   if (rawResults) {
@@ -445,8 +456,8 @@ export async function submitAtomicBeefToMiners(
       });
     }
     return {
-      confirmed: ancestryComplete,
-      submitted: true,
+      kind: "accepted",
+      ancestryComplete,
       keepPropagating,
       summary,
     };
@@ -454,7 +465,7 @@ export async function submitAtomicBeefToMiners(
   // Pure transport / endpoint failures are not proof of a spent input.
   if (summary.serviceOnlyErrors) {
     console.info(
-      "[minerSubmit] no miner ack — signed tx treated as submitted",
+      "[minerSubmit] no miner ack — signed cheque queued",
       id.slice(0, 12),
       summary.detail
     );
@@ -462,7 +473,7 @@ export async function submitAtomicBeefToMiners(
       ...telemetry,
       blockerCode: "provider_service_error",
     });
-    return { confirmed: false, submitted: true, summary };
+    return { kind: "queued", reason: "service-error", summary };
   }
   if (summary.missingInputs || summary.doubleSpend) {
     await failIfAncestryIncomplete({
@@ -477,7 +488,7 @@ export async function submitAtomicBeefToMiners(
   }
 
   console.info(
-    "[minerSubmit] no miner ack — signed tx treated as submitted",
+    "[minerSubmit] no miner ack — signed cheque queued",
     id.slice(0, 12),
     summary.detail
   );
@@ -485,7 +496,7 @@ export async function submitAtomicBeefToMiners(
     ...telemetry,
     blockerCode: "provider_no_ack",
   });
-  return { confirmed: false, submitted: true, summary };
+  return { kind: "queued", reason: "no-ack", summary };
 }
 
 /** Surface a hard miner reject after optimistic send success. */

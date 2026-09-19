@@ -40,8 +40,9 @@ const sealSpentInputsOfSignedTx = vi.fn(async (..._a: unknown[]) => {
 })
 const releaseSealedInputsOfUnsentTx = vi.fn(async (..._a: unknown[]) => 1)
 const submitAtomicBeefToMiners = vi.fn(async (..._a: unknown[]) => ({
-  confirmed: true,
-  submitted: true,
+  kind: 'accepted' as const,
+  ancestryComplete: true,
+  keepPropagating: false,
 }))
 
 vi.mock('./session', () => ({
@@ -96,6 +97,8 @@ vi.mock('./sendBrc29Payment', () => ({
 
 vi.mock('./minerSubmit', () => ({
   submitAtomicBeefToMiners: (...a: unknown[]) => submitAtomicBeefToMiners(...a),
+  minerSubmitAncestryComplete: (result: { kind?: string; ancestryComplete?: boolean }) =>
+    result.kind === 'accepted' && result.ancestryComplete === true,
 }))
 
 vi.mock('./actionReview', () => ({
@@ -126,7 +129,11 @@ describe('maybeConsolidateChange', () => {
     recomposeActive.mockReturnValue(false)
     findOutputs.mockResolvedValue([])
     runAsStorageProvider.mockImplementation(async (fn) => fn({ findOutputs }))
-    submitAtomicBeefToMiners.mockResolvedValue({ confirmed: true, submitted: true })
+    submitAtomicBeefToMiners.mockResolvedValue({
+      kind: 'accepted' as const,
+      ancestryComplete: true,
+      keepPropagating: false,
+    })
     sealWindowWasOpen = false
     internalizeWindowWasOpen = false
     __resetSelfFundsRewriteForTests()
@@ -168,8 +175,8 @@ describe('maybeConsolidateChange', () => {
       offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
     )
     submitAtomicBeefToMiners.mockResolvedValue({
-      confirmed: false,
-      submitted: false,
+      kind: 'queued' as const,
+      reason: 'no-ack' as const,
     })
     const { maybeConsolidateChange } = await import('./consolidateChange')
 

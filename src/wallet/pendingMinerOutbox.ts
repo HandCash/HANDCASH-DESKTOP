@@ -164,9 +164,11 @@ export async function flushPendingMinerOutbox(): Promise<number> {
   if (rows.length === 0) return 0
   const keep: PendingMinerSubmit[] = []
   let accepted = 0
-  const { submitAtomicBeefToMiners, reportLateMinerSubmitFailure } = await import(
-    './minerSubmit'
-  )
+  const {
+    submitAtomicBeefToMiners,
+    minerSubmitKeepOutbox,
+    reportLateMinerSubmitFailure,
+  } = await import('./minerSubmit')
 
   for (const row of rows) {
     if (row.nextAttemptAt > now) {
@@ -190,7 +192,7 @@ export async function flushPendingMinerOutbox(): Promise<number> {
         flow: row.flow,
         retryCount: attempt,
       })
-      if (result.confirmed && !result.keepPropagating) {
+      if (!minerSubmitKeepOutbox(result)) {
         accepted += 1
         continue
       }
