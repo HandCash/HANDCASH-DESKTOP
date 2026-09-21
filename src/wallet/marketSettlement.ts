@@ -65,7 +65,6 @@ import {
   parseMarketOffer,
 } from './marketOverlayProtocol'
 import { bumpBalanceAfterHeal, getActiveWallet } from './session'
-import { broadcastAtomicBeef } from './sendBrc29Payment'
 import {
   decodeBeefB64,
   deliverMarketSettlementWire,
@@ -144,14 +143,31 @@ async function sellerHandoffOutcome(
 
 /**
  * Hand the signed settlement to miner propagation without making the purchase
- * UI wait indefinitely for provider acknowledgement. `broadcastAtomicBeef`
- * durably queues before posting, and continues handling a late hard rejection.
+ * UI wait indefinitely for provider acknowledgement. Market asset data uses
+ * the same signed-cheque lifecycle as every other Bitcoin transaction.
  */
 async function submitMarketSettlement(
   txid: string,
   atomic: number[],
 ): Promise<boolean> {
-  const pending = broadcastAtomicBeef(txid, atomic)
+  const { registerSignedSend, propagateSignedSend } = await import(
+    './signedSendLifecycle'
+  )
+  const signedSettlement = await registerSignedSend({
+    txid,
+    atomicBeef: atomic,
+    flow: 'market_purchase',
+  })
+  const pending = propagateSignedSend(signedSettlement)
+    .then(() => true)
+    .catch((err) => {
+      console.warn(
+        '[market-buy] signed settlement rejected',
+        txid,
+        err instanceof Error ? err.message : String(err),
+      )
+      return false
+    })
   let timer: ReturnType<typeof setTimeout> | undefined
   const outcome = await Promise.race([
     pending.then((accepted) => ({ kind: 'answered' as const, accepted })),

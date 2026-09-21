@@ -59,7 +59,6 @@ import {
 import { getCachedCollectables } from './collectables'
 import { rememberGhostTx } from './ghostTxSuppress'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { submitAtomicBeefToMiners } from './minerSubmit'
 import {
   encodeMarketOffer,
   MARKET_ITEM_VOUT,
@@ -2024,9 +2023,15 @@ async function createMarketListingAdvertExclusive(
     mark(`signed ${signedTxid.slice(0, 12)}`)
     // Accept on Arcade contact / non-immediate-fail — do not require SPV
     // "valid on chain main" before the listing is considered broadcast.
-    const mined = await submitAtomicBeefToMiners(txid, atomic, {
+    const { registerSignedSend, propagateSignedSend } = await import(
+      './signedSendLifecycle'
+    )
+    const signedListing = await registerSignedSend({
+      txid,
+      atomicBeef: atomic,
       flow: 'market_listing',
     })
+    const mined = await propagateSignedSend(signedListing)
     mark(`miner ${mined.kind}`)
     if (mined.kind === 'unproven-conflict') {
       const reason =
@@ -2878,6 +2883,14 @@ async function createCancelMarketListingAdvertExclusive(args: {
       chart.send({ type: 'RECOVER' })
       throw new Error('Cancellation broadcast result is unknown')
     }
+    const { registerSignedSend, startSignedSendPropagation } = await import(
+      './signedSendLifecycle'
+    )
+    const signedCancel = await registerSignedSend({
+      txid,
+      atomicBeef: beefBytes,
+      flow: 'market_cancel',
+    })
     chart.send({ type: 'BROADCASTED', txid })
     markMarketListingCancelled({
       outpoint: current.outpoint,
@@ -2885,6 +2898,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
       txid,
     })
     chart.send({ type: 'COMMITTED' })
+    startSignedSendPropagation(signedCancel)
     scheduleHistoryBackupPush('market-list')
     return {
       action: 'cancel',

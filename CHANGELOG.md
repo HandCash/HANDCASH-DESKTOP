@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.250] - 2026-09-21
+
+### Changed
+
+- **Marketplace assets use the same transaction lifecycle.** Listing, purchase,
+  settlement, and cancellation transactions now enter the shared sealed,
+  durable miner, Arcade rejection, and BUMP-finality path too.
+
 ## [1.3.249] - 2026-09-21
 
 ### Changed
