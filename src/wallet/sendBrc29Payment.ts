@@ -26,7 +26,9 @@ import { parseProvenanceV2, type ProvenanceV2 } from './oneSatProvenance'
 import {
   forgetGhostTx,
   isGhostTxSuppressed,
+  rememberGhostTx,
 } from './ghostTxSuppress'
+import { isTerminalInboundHintStatus } from './kernel/inboundHintFate'
 import {
   beginPendingSend,
   clearPendingSend,
@@ -198,6 +200,27 @@ export type InternalizeBrc29Result = {
 }
 
 const brc29InternalizeInflight = new Map<string, Promise<InternalizeBrc29Result>>()
+
+/**
+ * A retired hint becomes actionable again when a real AtomicBEEF arrives.
+ * Retirement is a verdict about the old body-less envelope, not the txid.
+ */
+function reviveRetiredInboundHint(txid: string): void {
+  const id = txid.trim().toLowerCase()
+  if (!id) return
+  try {
+    for (const msg of listAllMessages()) {
+      if (msg.direction !== 'in') continue
+      if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
+      if ((msg.meta?.txid || '').trim().toLowerCase() !== id) continue
+      const status = String(msg.meta?.status ?? '').trim().toLowerCase()
+      if (!status.startsWith('unavailable')) continue
+      updateMessage(msg.id, { meta: { status: 'Receiving (SPV)' } })
+    }
+  } catch {
+    /* chat status is cosmetic — never block ingest */
+  }
+}
 
 function markInboundPaymentStatus(txid: string, status: string): void {
   const id = txid.trim().toLowerCase()
@@ -965,6 +988,8 @@ export async function claimBrc29SettlementUri(
 
 export type PaymentTipHint = {
   txid: string
+  /** When the card arrived — how long an unbroadcast transfer has been chased. */
+  firstSeenAt?: number
   messageId?: string
   senderIdentityKey?: string
   satoshis?: number
@@ -1007,10 +1032,10 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
     if (isGhostTxSuppressed(txid)) continue
     const isItem = msg.meta?.item === true
     if (hasSettledActivityTxid(txid, 'earned', { item: isItem })) continue
-    const status = String(msg.meta?.status ?? '').toLowerCase()
-    if (status === 'received' || status === 'unavailable') continue
+    if (isTerminalInboundHintStatus(msg.meta?.status)) continue
     hints.push({
       txid,
+      firstSeenAt: msg.createdAt,
       senderIdentityKey: msg.meta?.identityKey,
       satoshis: msg.meta?.sats,
       brc29: msg.meta?.brc29,
@@ -1096,6 +1121,7 @@ export async function ingestPaymentsFromTipHints(
     if (!/^[0-9a-f]{64}$/.test(txid)) continue
     normalized.push({
       txid,
+      firstSeenAt: h.firstSeenAt,
       messageId: h.messageId,
       senderIdentityKey: h.senderIdentityKey,
       satoshis: h.satoshis,
@@ -1123,6 +1149,7 @@ export async function ingestPaymentsFromTipHints(
     // four dead inbound tips came back on every open.
     if ((h.tx && h.tx.length > 0) || h.beefUrl?.trim()) {
       forgetGhostTx(h.txid)
+      reviveRetiredInboundHint(h.txid)
     }
     if (isGhostTxSuppressed(h.txid)) continue
     const prev = unique.get(h.txid)
@@ -1177,9 +1204,20 @@ export async function ingestPaymentsFromTipHints(
     if (!ghostTxids.includes(id)) ghostTxids.push(id)
     return true
   }
+  /**
+   * Marking only the local card terminal is insufficient: the messagebox would
+   * redeliver the body-less envelope next poll. Suppression makes it ACKable;
+   * a later envelope carrying AtomicBEEF revives the txid above.
+   */
+  const retireUnresolvable = (txid: string): void => {
+    const id = txid.trim().toLowerCase()
+    rememberGhostTx(id)
+    if (!ghostTxids.includes(id)) ghostTxids.push(id)
+  }
   const markGhostIfMissing = async (
     txid: string,
-    _hadLocalBeef: boolean,
+    hadLocalBeef: boolean,
+    firstSeenAt: number | undefined,
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
     // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
@@ -1190,9 +1228,74 @@ export async function ingestPaymentsFromTipHints(
       )
       return
     }
-    console.info(
-      `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
-    )
+    const {
+      decideInboundHintFate,
+      mayBeUnresolvable,
+      UNRESOLVABLE_GRACE_MS,
+      UNRESOLVABLE_HINT_STATUS,
+    } = await import('./kernel/inboundHintFate')
+    const { fetchRawTxHex, peekRawTxLookup } = await import('./oneSatImport')
+    const now = Date.now()
+    let bodyLookup = peekRawTxLookup(txid)
+    const first = firstSeenAt ?? 0
+    // Fungible inbox settle intentionally refuses an indexer custody fallback,
+    // so it may never have asked for a raw body. Once the grace window expires,
+    // perform one durable multi-provider existence probe solely to decide
+    // whether the body-less envelope can be retired.
+    if (
+      !hadLocalBeef &&
+      bodyLookup === 'unknown' &&
+      first > 0 &&
+      now - first >= UNRESOLVABLE_GRACE_MS
+    ) {
+      try {
+        const active = getActiveWallet()
+        if (active) {
+          const raw = await fetchRawTxHex(txid, active.chain)
+          bodyLookup = raw ? 'hit' : peekRawTxLookup(txid)
+        }
+      } catch {
+        /* unknown keeps the hint pending */
+      }
+    }
+    const base = {
+      isArcadeGhost: false,
+      hasDeliverableBeef: hadLocalBeef,
+      bodyLookup,
+      firstSeenAt: first,
+      now,
+    }
+    if (!mayBeUnresolvable(base)) {
+      console.info(
+        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
+      )
+      return
+    }
+
+    // Only spend the explorer round trip once durable provider misses and age
+    // make terminal retirement possible. Silence remains unknown and retries.
+    let onChain: boolean | null = null
+    try {
+      const active = getActiveWallet()
+      if (active) {
+        const { txExistsOnChain } = await import('./legacyScan')
+        onChain = await txExistsOnChain(txid, active.chain)
+      }
+    } catch {
+      /* unknown keeps the hint pending */
+    }
+
+    const fate = decideInboundHintFate({ ...base, onChain })
+    if (fate.kind !== 'unresolvable') {
+      console.info(
+        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
+      )
+      return
+    }
+
+    console.warn(`[tip-ingest] tip ${txid.slice(0, 12)}… retired — ${fate.reason}`)
+    markInboundPaymentStatus(txid, UNRESOLVABLE_HINT_STATUS)
+    retireUnresolvable(txid)
   }
 
   const { mapPool } = await import('./asyncPool')
@@ -1260,7 +1363,9 @@ export async function ingestPaymentsFromTipHints(
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
-      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
+      if (!accepted) {
+        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+      }
       return { importedTxid, balanceSats }
     }
 
@@ -1297,7 +1402,9 @@ export async function ingestPaymentsFromTipHints(
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
-      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
+      if (!accepted) {
+        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+      }
       return { importedTxid, balanceSats }
     }
 
@@ -1316,7 +1423,9 @@ export async function ingestPaymentsFromTipHints(
         await new Promise((r) => setTimeout(r, ingestDelayMs))
       }
     }
-    if (!accepted) await markGhostIfMissing(hint.txid, false)
+    if (!accepted) {
+      await markGhostIfMissing(hint.txid, false, hint.firstSeenAt)
+    }
     return { importedTxid, balanceSats }
     } finally {
       tipIngestInFlight.delete(hint.txid)

@@ -1082,6 +1082,8 @@ export async function pollInbound(args: {
  */
 export type InboundPaymentHint = {
   txid: string
+  /** When the inbox card arrived — how long a body-less transfer has been chased. */
+  firstSeenAt?: number
   messageId?: string
   senderIdentityKey: string
   satoshis?: number
@@ -1250,6 +1252,7 @@ export async function pollInboundTipHints(args: {
         paymentTxids.push(txid)
         paymentHints.push({
           txid,
+          firstSeenAt: m.createdAt || Date.now(),
           messageId: m.messageId ? String(m.messageId) : undefined,
           senderIdentityKey: senderKey,
           satoshis: decoded.meta?.sats,

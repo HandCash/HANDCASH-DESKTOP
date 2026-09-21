@@ -10,9 +10,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef } from '@bsv/sdk'
 
-const { peekRawTxLookup, ghosts } = vi.hoisted(() => ({
+const {
+  peekRawTxLookup,
+  fetchRawTxHex,
+  ghosts,
+  chatMessages,
+  updateMessage,
+} = vi.hoisted(() => ({
   peekRawTxLookup: vi.fn((): 'hit' | 'miss' | 'unknown' => 'unknown'),
+  fetchRawTxHex: vi.fn(async (): Promise<string | null> => null),
   ghosts: new Set<string>(),
+  chatMessages: [] as Array<Record<string, unknown>>,
+  updateMessage: vi.fn(),
 }))
 const postBeef = vi.fn(async () => [
   { status: 'success', txidResults: [{ status: 'success' }] },
@@ -72,6 +81,7 @@ vi.mock('./ghostTxSuppress', () => ({
 
 vi.mock('./oneSatImport', () => ({
   peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
+  fetchRawTxHex: (txid: string, chain: string) => fetchRawTxHex(txid, chain),
 }))
 
 describe('multi-item inbox identity', () => {
@@ -117,7 +127,8 @@ vi.mock('./appActivity', () => ({
 vi.mock('./messageStore', () => ({
   listThreads: () => [],
   listMessages: () => [],
-  updateMessage: () => null,
+  listAllMessages: () => chatMessages,
+  updateMessage: (id: string, patch: unknown) => updateMessage(id, patch),
 }))
 
 vi.mock('./friends', () => ({
@@ -162,9 +173,16 @@ const SENDER = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709e
 const ATOMIC = [1, 2, 3]
 
 beforeEach(() => {
+  chatMessages.length = 0
+  updateMessage.mockClear()
   ghosts.clear()
   peekRawTxLookup.mockReset()
   peekRawTxLookup.mockReturnValue('unknown')
+  fetchRawTxHex.mockReset()
+  fetchRawTxHex.mockImplementation(async () => {
+    peekRawTxLookup.mockReturnValue('miss')
+    return null
+  })
   postBeef.mockClear()
   txExistsOnChain.mockClear()
   txExistsOnChain.mockResolvedValue(null)
@@ -466,5 +484,105 @@ describe('ingestPaymentsFromTipHints', () => {
 
     expect(result.ghostTxids).toEqual([])
     expect(ghosts.has(txid)).toBe(false)
+  })
+
+  it('retires an old fungible hint with no body anywhere', async () => {
+    const { UNRESOLVABLE_GRACE_MS, UNRESOLVABLE_HINT_STATUS } = await import(
+      './kernel/inboundHintFate'
+    )
+    const txid = '9'.repeat(64)
+    peekRawTxLookup.mockReturnValue('miss')
+    txExistsOnChain.mockResolvedValue(false)
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'Cannot prove the collectable input offline. Try again when connected.',
+    })
+    chatMessages.push({
+      id: 'm1',
+      direction: 'in',
+      kind: 'tip',
+      createdAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1,
+      meta: { txid, status: 'Receiving (SPV)' },
+    })
+
+    const result = await ingestSkippingRetryDelay([
+      {
+        txid,
+        item: true,
+        firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1,
+      },
+    ])
+
+    expect(updateMessage).toHaveBeenCalledWith('m1', {
+      meta: { status: UNRESOLVABLE_HINT_STATUS },
+    })
+    expect(result.ghostTxids).toEqual([txid])
+    expect(ghosts.has(txid)).toBe(true)
+  })
+
+  it('establishes a durable body miss before retiring an old fungible hint', async () => {
+    const { UNRESOLVABLE_GRACE_MS } = await import('./kernel/inboundHintFate')
+    const txid = '6'.repeat(64)
+    txExistsOnChain.mockResolvedValue(false)
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'missing-beef',
+    })
+
+    const result = await ingestSkippingRetryDelay([
+      {
+        txid,
+        item: true,
+        firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1,
+      },
+    ])
+
+    expect(fetchRawTxHex).toHaveBeenCalledWith(txid, 'main')
+    expect(result.ghostTxids).toEqual([txid])
+  })
+
+  it('keeps an old body-less hint when explorers cannot establish absence', async () => {
+    const { UNRESOLVABLE_GRACE_MS } = await import('./kernel/inboundHintFate')
+    const txid = '7'.repeat(64)
+    peekRawTxLookup.mockReturnValue('miss')
+    txExistsOnChain.mockResolvedValue(null)
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'Cannot prove the collectable input offline. Try again when connected.',
+    })
+
+    const result = await ingestSkippingRetryDelay([
+      {
+        txid,
+        item: true,
+        firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1,
+      },
+    ])
+
+    expect(updateMessage).not.toHaveBeenCalled()
+    expect(result.ghostTxids).toEqual([])
+    expect(ghosts.has(txid)).toBe(false)
+  })
+
+  it('revives a retired hint when a new AtomicBEEF arrives', async () => {
+    const txid = '8'.repeat(64)
+    ghosts.add(txid)
+    chatMessages.push({
+      id: 'm2',
+      direction: 'in',
+      kind: 'tip',
+      createdAt: Date.now(),
+      meta: { txid, status: 'Unavailable — sender never broadcast' },
+    })
+
+    await ingestSkippingRetryDelay([{ txid, item: true, tx: ATOMIC }])
+
+    expect(ghosts.has(txid)).toBe(false)
+    expect(updateMessage).toHaveBeenCalledWith('m2', {
+      meta: { status: 'Receiving (SPV)' },
+    })
   })
 })

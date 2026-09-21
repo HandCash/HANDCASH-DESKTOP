@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetBlockHeaderCacheForTests,
   fetchBlockHeaderForHeight,
+  peekHighestCachedHeader,
 } from './blockHeaders'
 
 vi.mock('./appLog', () => ({ appendAppLog: () => {} }))
@@ -170,5 +171,18 @@ describe('fetchBlockHeaderForHeight', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('peekHighestCachedHeader', () => {
+  it('returns the highest verified header already in cache', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => respondWith({ ...BLOCK_961050, height })),
+    )
+    const header = await fetchBlockHeaderForHeight('main', height)
+    expect(header?.height).toBe(height)
+    expect(peekHighestCachedHeader('main')?.height).toBe(height)
+    expect(peekHighestCachedHeader('test')).toBeUndefined()
   })
 })

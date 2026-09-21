@@ -1,6 +1,7 @@
 import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
+import { wrapFindChainTipHeader } from './tipHeaderFailover'
 import { installRawTxFallback } from './rawTxFallback'
 import { installArcadeV2Services } from './arcadeV2'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
@@ -8,7 +9,6 @@ import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
-import { appendAppLog } from './appLog'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
 import { selfFundsRewriteActive } from './selfFundsRewrite'
 import {
@@ -226,10 +226,9 @@ function installPostBeefPreferFast(services: Services): void {
 }
 
 /**
- * TaskNewHeader polls `findChainTipHeader`. That call skipped our height/header
- * failover and died whenever Chaintracks 500'd — flooding the log with
- * `Failed to fetch` while proofs never solicited. Fall through to Bitails tip
- * + self-proving public headers (same path as ordinal header ingest).
+ * TaskNewHeader polls `findChainTipHeader`. Live tip prefers Bitails + the
+ * same self-proving public headers as ordinal ingest; when every host is
+ * down, hold the last known header instead of throwing every poll.
  */
 function installTipHeaderFailover(services: Services, chain: Chain): void {
   try {
@@ -237,67 +236,10 @@ function installTipHeaderFailover(services: Services, chain: Chain): void {
       | { findChainTipHeader?: () => Promise<unknown> }
       | undefined
     if (typeof chaintracks?.findChainTipHeader !== 'function') return
-    const original = chaintracks.findChainTipHeader.bind(chaintracks)
-    let logged = false
-    const withTimeout = async <T,>(work: Promise<T>, ms: number): Promise<T> => {
-      let timer: ReturnType<typeof setTimeout> | undefined
-      try {
-        return await Promise.race([
-          work,
-          new Promise<T>((_, reject) => {
-            timer = setTimeout(() => reject(new Error('timeout')), ms)
-          }),
-        ])
-      } finally {
-        if (timer != null) clearTimeout(timer)
-      }
-    }
-    chaintracks.findChainTipHeader = async () => {
-      const tipUrl =
-        chain === 'main'
-          ? 'https://api.bitails.io/block/latest'
-          : chain === 'test'
-            ? 'https://test-api.bitails.io/block/latest'
-            : null
-      if (tipUrl != null) {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 8_000)
-        try {
-          const res = await fetch(tipUrl, {
-            signal: controller.signal,
-            headers: { Accept: 'application/json' },
-          })
-          if (res.ok) {
-            const body = (await res.json()) as { height?: number }
-            const height = body.height
-            if (typeof height === 'number' && Number.isFinite(height)) {
-              const header = await fetchBlockHeaderForHeight(chain, height)
-              if (header != null) {
-                if (!logged) {
-                  logged = true
-                  appendAppLog(
-                    'info',
-                    `[headers] NewHeader tip from Bitails height ${height}`,
-                  )
-                }
-                return header
-              }
-            }
-          }
-        } catch {
-          /* try chaintracks below */
-        } finally {
-          clearTimeout(timer)
-        }
-      }
-      try {
-        const tip = await withTimeout(original(), 3_000)
-        if (tip != null) return tip
-      } catch {
-        /* public paths exhausted */
-      }
-      throw new Error('No chain tip header provider')
-    }
+    chaintracks.findChainTipHeader = wrapFindChainTipHeader(
+      chain,
+      chaintracks.findChainTipHeader.bind(chaintracks),
+    )
   } catch (err) {
     console.warn('[chaintracker] could not install tip-header failover', err)
   }

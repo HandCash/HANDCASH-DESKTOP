@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.246] - 2026-09-21
+
+### Fixed
+
+- **Body-less fungible transfers stop loading forever.** After a two-hour
+  grace, a BSV-21 inbox hint with no AtomicBEEF is retired only when the durable
+  multi-provider body lookup misses and an explorer confirms the tx is absent.
+  The messagebox envelope is then acknowledged; a later real AtomicBEEF revives
+  the transfer.
+- **Header monitoring rides through network outages.** `TaskNewHeader` holds
+  the last verified chain tip while every live provider is unreachable instead
+  of emitting `WERR_UNKNOWN No chain tip header provider` every poll.
+
 ## [1.3.245] - 2026-09-19
 
 ### Changed

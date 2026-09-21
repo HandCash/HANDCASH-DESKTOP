@@ -283,6 +283,22 @@ export function __resetBlockHeaderCacheForTests(): void {
 }
 
 /**
+ * Highest self-proving header already in the session/durable cache for `chain`.
+ * TaskNewHeader must return a header object; when every live tip host is down
+ * this is last known chain, not a fabricated tip.
+ */
+export function peekHighestCachedHeader(chain: Chain): FetchedBlockHeader | undefined {
+  hydrateDurable()
+  const prefix = `${chain}:`
+  let best: FetchedBlockHeader | undefined
+  for (const [key, header] of cache) {
+    if (!key.startsWith(prefix)) continue
+    if (best == null || header.height > best.height) best = header
+  }
+  return best
+}
+
+/**
  * The header at `height` from durable cache or a public source, or undefined if
  * none can prove one.
  *
