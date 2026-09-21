@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.251] - 2026-09-21
+
+### Changed
+
+- **Unified finality is now ratcheted.** A repository test requires every
+  outbound payment, token, collectable, burn, and marketplace module to use
+  `signedSendLifecycle` and rejects direct sealing or miner-submit copies.
+
 ## [1.3.250] - 2026-09-21
 
 ### Changed
