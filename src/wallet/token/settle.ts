@@ -16,7 +16,7 @@ import {
   normalizeTokenId,
   parseBsv21Json,
 } from './types'
-import { rememberBeefTree } from '../beefCache'
+import { atomicBeefForSubject, rememberBeefTree } from '../beefCache'
 import { scheduleHistoryBackupPush } from '../deviceSync'
 import {
   fungibleFromImport,
@@ -100,9 +100,14 @@ export async function internalizePeerFungibleSettle(opts: {
     token: opts.token,
   })
 
-  let atomic = opts.tx
-  if ((!atomic || !atomic.length) && opts.beefUrl) {
-    atomic = await fetchAtomicBeefFromUrl(opts.beefUrl)
+  // Every supplied source is re-framed for this subject. `internalizeAction`
+  // accepts AtomicBEEF only, while older peers may send a valid plain BEEF.
+  let atomic = atomicBeefForSubject(opts.tx, id)
+  if (!atomic?.length && opts.beefUrl) {
+    atomic = atomicBeefForSubject(
+      await fetchAtomicBeefFromUrl(opts.beefUrl),
+      id,
+    )
   }
   // Inbox settle is remittance + Atomic BEEF. Do not walk WhatsOnChain / the
   // ordinal indexer for a hop the sender already signed — that path 404s on
@@ -110,9 +115,12 @@ export async function internalizePeerFungibleSettle(opts: {
   if (!atomic?.length && opts.beefPurpose !== 'inboundItemHint') {
     try {
       const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
-      atomic = await getAtomicBeefBinaryForTxid(active, id, {
-        purpose: opts.beefPurpose,
-      })
+      atomic = atomicBeefForSubject(
+        await getAtomicBeefBinaryForTxid(active, id, {
+          purpose: opts.beefPurpose,
+        }),
+        id,
+      )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (!/AtomicBEEF backoff/i.test(msg)) {

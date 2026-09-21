@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.247] - 2026-09-21
+
+### Fixed
+
+- **Older fungible envelopes internalize correctly.** BSV-21 receive now
+  re-frames every supplied BEEF as AtomicBEEF for the transfer txid before
+  calling `internalizeAction`, matching the collectable boundary and falling
+  through when a source does not contain the subject.
+
 ## [1.3.246] - 2026-09-21
 
 ### Fixed
