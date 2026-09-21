@@ -846,7 +846,16 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
         (async () => {
           throwIfYieldToSpend()
           try {
-            const { releaseStuckNosends } = await import('./actionReview')
+            const {
+              releaseStuckNosends,
+              settleArcadeRejectedProvenTxReqs,
+            } = await import('./actionReview')
+            const spvFailed = await settleArcadeRejectedProvenTxReqs()
+            if (spvFailed > 0) {
+              console.info(
+                `[chain-ingest] retired ${spvFailed} Arcade-rejected proof request(s)`,
+              )
+            }
             await releaseStuckNosends()
           } catch (err) {
             console.warn('[chain-ingest] release stuck nosends skipped', err)

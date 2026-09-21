@@ -3,6 +3,7 @@ import {
   ARCADE_V2_DEV_PROXY_MAIN,
   ARCADE_V2_DEV_PROXY_TEST,
   arcadeV2BaseUrl,
+  classifyArcadeTxStatus,
   stripArcadeCorsForbiddenHeaders,
 } from './arcadeV2'
 
@@ -34,5 +35,27 @@ describe('stripArcadeCorsForbiddenHeaders', () => {
       'Content-Type': 'application/json',
       'X-CallbackToken': 'tok',
     })
+  })
+})
+
+describe('classifyArcadeTxStatus', () => {
+  it('treats parent rejection as an authoritative SPV failure', () => {
+    expect(
+      classifyArcadeTxStatus({
+        txStatus: 'REJECTED',
+        extraInfo: 'parent rejected (ancestor abc)',
+      }),
+    ).toEqual({
+      kind: 'rejected',
+      status: 'REJECTED',
+      reason: 'parent rejected (ancestor abc)',
+    })
+  })
+
+  it('does not turn an unknown response into a failure', () => {
+    expect(classifyArcadeTxStatus({ txStatus: 'UNKNOWN' })).toEqual({
+      kind: 'unknown',
+    })
+    expect(classifyArcadeTxStatus(null)).toEqual({ kind: 'unknown' })
   })
 })

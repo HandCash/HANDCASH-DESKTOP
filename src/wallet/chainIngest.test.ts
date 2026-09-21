@@ -94,6 +94,7 @@ vi.mock('./dependencyHealth', () => ({
 vi.mock('./actionReview', () => ({
   abortReservedActionBatches: vi.fn(async () => undefined),
   releaseStuckNosends: vi.fn(async () => undefined),
+  settleArcadeRejectedProvenTxReqs: vi.fn(async () => 0),
 }))
 
 vi.mock('./changeScriptFate', () => ({

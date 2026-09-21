@@ -200,6 +200,106 @@ type ProvenTxReqRow = {
   status?: string;
 };
 
+const PROOF_PENDING_STATUSES = [
+  "callback",
+  "unmined",
+  "sending",
+  "unknown",
+  "unconfirmed",
+  "nosend",
+  "unsent",
+  "doubleSpend",
+] as const;
+
+/**
+ * Give old proof requests an objective terminal state.
+ *
+ * Bitails/WoC 404 is not a verdict, so toolbox correctly keeps polling. Arcade
+ * `REJECTED`, however, is authoritative (including `parent rejected`). Mark
+ * those requests invalid so TaskCheckForProofs/TaskCheckNoSends stop forever.
+ * Accepted/unknown rows remain untouched.
+ */
+export async function settleArcadeRejectedProvenTxReqs(
+  active?: ActiveWallet | null
+): Promise<number> {
+  const resolved = active ?? getActiveWallet();
+  const chain = resolved?.chain;
+  const storage = resolved?.wallet?.storage;
+  if (!chain || !storage?.runAsStorageProvider) return 0;
+
+  try {
+    const reqs = await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as {
+        findProvenTxReqs?: (args: {
+          partial: { status: string };
+          paged: { limit: number; offset: number };
+        }) => Promise<ProvenTxReqRow[]>;
+      };
+      if (typeof sp.findProvenTxReqs !== "function") return [];
+      const byId = new Map<number, ProvenTxReqRow>();
+      for (const status of PROOF_PENDING_STATUSES) {
+        const rows = await sp.findProvenTxReqs({
+          partial: { status },
+          paged: { limit: 100, offset: 0 },
+        });
+        for (const row of rows ?? []) byId.set(row.provenTxReqId, row);
+      }
+      return [...byId.values()];
+    });
+
+    const byTxid = new Map<string, number[]>();
+    for (const req of reqs) {
+      const txid = req.txid?.trim().toLowerCase() ?? "";
+      if (!/^[0-9a-f]{64}$/.test(txid)) continue;
+      const ids = byTxid.get(txid) ?? [];
+      ids.push(req.provenTxReqId);
+      byTxid.set(txid, ids);
+    }
+    if (byTxid.size === 0) return 0;
+
+    const { fetchArcadeTxFate } = await import("./arcadeV2");
+    const { mapPool } = await import("./asyncPool");
+    const checked = await mapPool(
+      [...byTxid.entries()],
+      3,
+      async ([txid, ids]) => ({
+        txid,
+        ids,
+        fate: await fetchArcadeTxFate(chain, txid),
+      })
+    );
+    const rejected = checked.filter((row) => row.fate.kind === "rejected");
+    const invalidIds = rejected.flatMap((row) => row.ids);
+    if (invalidIds.length === 0) return 0;
+
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as {
+        updateProvenTxReq?: (
+          ids: number[],
+          update: { status: string }
+        ) => Promise<unknown>;
+      };
+      await sp.updateProvenTxReq?.(invalidIds, { status: "invalid" });
+    });
+
+    const { failUnsentLocalTx } = await import("./staleOutputRelease");
+    for (const row of rejected) {
+      // TaskSendWaiting keys off the local transaction row, while proof tasks
+      // key off provenTxReq. Retire both halves of the same SPV failure.
+      await failUnsentLocalTx(row.txid, { force: true });
+      const reason =
+        row.fate.kind === "rejected" ? row.fate.reason : "Arcade rejected";
+      console.warn(
+        `[action-review] SPV failed ${row.txid.slice(0, 12)} — ${reason}`
+      );
+    }
+    return invalidIds.length;
+  } catch (err) {
+    console.warn("[action-review] Arcade proof-request settle skipped", err);
+    return 0;
+  }
+}
+
 /**
  * Clear provenTxReq rows stuck in `doubleSpend` when HandCash Chain proves the
  * tx never landed. Arcade status alone leaves them forever (unknown → no unfail).

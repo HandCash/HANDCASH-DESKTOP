@@ -7,6 +7,7 @@ import {
   releaseUnsignedSpendReservations,
   repairFailedSpendState,
   sendWithHasFailure,
+  settleArcadeRejectedProvenTxReqs,
 } from "./actionReview";
 
 const updateTransactionStatus = vi.fn(async () => {});
@@ -97,6 +98,9 @@ describe("actionReview", () => {
     findOutputs.mockClear();
     findExpiredActionBatches.mockClear();
     abortActionBatch.mockClear();
+    findProvenTxReqs.mockReset();
+    findProvenTxReqs.mockResolvedValue([]);
+    updateProvenTxReq.mockClear();
   });
 
   it("does not release reservations while a spend is signing", async () => {
@@ -195,6 +199,43 @@ describe("actionReview", () => {
     const { releaseGhostDoubleSpendReqs } = await import("./actionReview");
     await expect(releaseGhostDoubleSpendReqs()).resolves.toBe(0);
     expect(updateProvenTxReq).not.toHaveBeenCalled();
+  });
+
+  it("retires old proof requests only when Arcade explicitly rejected them", async () => {
+    const rejected = "aa".repeat(32);
+    const accepted = "bb".repeat(32);
+    findProvenTxReqs.mockImplementation(async (args) => {
+      const status = (args as { partial?: { status?: string } }).partial?.status;
+      if (status === "unmined") {
+        return [
+          { provenTxReqId: 102, txid: rejected, status },
+          { provenTxReqId: 121, txid: accepted, status },
+        ];
+      }
+      if (status === "nosend") {
+        return [{ provenTxReqId: 101, txid: rejected, status }];
+      }
+      return [];
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const txid = String(url).split("/").at(-1);
+      return new Response(
+        JSON.stringify(
+          txid === rejected
+            ? { txStatus: "REJECTED", extraInfo: "parent rejected" }
+            : { txStatus: "SEEN_ON_NETWORK" }
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+    try {
+      await expect(settleArcadeRejectedProvenTxReqs()).resolves.toBe(2);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    expect(updateProvenTxReq).toHaveBeenCalledWith([102, 101], {
+      status: "invalid",
+    });
   });
 
   it("repairFailedSpendState includes change-script sweep", async () => {

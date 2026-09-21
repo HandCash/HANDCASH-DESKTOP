@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.248] - 2026-09-21
+
+### Fixed
+
+- **Rejected transactions no longer ingest forever.** Old proof, no-send, and
+  send-waiting rows now consult Arcade for an explicit transaction verdict.
+  `REJECTED` transactions transition to SPV-failed/invalid and stop polling;
+  explorer 404s and unavailable providers remain safely retryable.
+
 ## [1.3.247] - 2026-09-21
 
 ### Fixed

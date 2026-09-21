@@ -50,6 +50,63 @@ export function arcadeV2BaseUrl(chain: Chain): string | null {
   }
 }
 
+export type ArcadeTxFate =
+  | { kind: 'accepted'; status: string }
+  | { kind: 'rejected'; status: string; reason: string }
+  | { kind: 'unknown' }
+
+/** Interpret Arcade's authoritative transaction lifecycle response. */
+export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
+  if (body == null || typeof body !== 'object') return { kind: 'unknown' }
+  const record = body as { txStatus?: unknown; extraInfo?: unknown }
+  const status = String(record.txStatus ?? '').trim().toUpperCase()
+  if (!status) return { kind: 'unknown' }
+  if (
+    status === 'REJECTED' ||
+    status === 'INVALID' ||
+    status === 'DOUBLE_SPEND_ATTEMPTED'
+  ) {
+    return {
+      kind: 'rejected',
+      status,
+      reason: String(record.extraInfo ?? status).trim().slice(0, 240),
+    }
+  }
+  if (
+    status === 'MINED' ||
+    status === 'SEEN_ON_NETWORK' ||
+    status === 'ANNOUNCED_TO_NETWORK' ||
+    status === 'STORED' ||
+    status === 'ACCEPTED'
+  ) {
+    return { kind: 'accepted', status }
+  }
+  return { kind: 'unknown' }
+}
+
+/**
+ * Arcade `/tx/{txid}` is the objective exit for old proof requests.
+ * Explorer 404 only means "not found"; Arcade `REJECTED` names an SPV failure.
+ */
+export async function fetchArcadeTxFate(
+  chain: Chain,
+  txid: string,
+): Promise<ArcadeTxFate> {
+  const id = txid.trim().toLowerCase()
+  const base = arcadeV2BaseUrl(chain)
+  if (!base || !/^[0-9a-f]{64}$/.test(id)) return { kind: 'unknown' }
+  try {
+    const res = await fetch(`${base}/tx/${id}`, {
+      signal: AbortSignal.timeout(8_000),
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) return { kind: 'unknown' }
+    return classifyArcadeTxStatus(await res.json())
+  } catch {
+    return { kind: 'unknown' }
+  }
+}
+
 /** Arcade preflight rejects this header from https://localhost (Capacitor / Vite). */
 export function stripArcadeCorsForbiddenHeaders(
   headers?: Record<string, string>,
