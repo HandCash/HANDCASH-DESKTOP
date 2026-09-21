@@ -2,28 +2,22 @@ import { describe, expect, it } from 'vitest'
 import {
   chooseItemSettlePath,
   isPeerDeliverSettle,
-  isSenderBroadcastSettle,
 } from './itemSettlePath'
 
 const IDENTITY =
   '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
 
 describe('chooseItemSettlePath', () => {
-  it('self-pay always settles locally (broadcast here)', () => {
+  it('self-pay always settles metadata locally', () => {
     expect(
       chooseItemSettlePath({
         paysOurAddress: true,
         recipientIdentityKey: IDENTITY,
       }),
     ).toEqual({ settle: 'selfReceive' })
-    expect(
-      isSenderBroadcastSettle(
-        chooseItemSettlePath({ paysOurAddress: true, recipientIdentityKey: null }),
-      ),
-    ).toBe(true)
   })
 
-  it('HandCash peer → deliver Atomic BEEF, no sender broadcast', () => {
+  it('HandCash peer → notify with Atomic BEEF metadata', () => {
     const path = chooseItemSettlePath({
       paysOurAddress: false,
       recipientIdentityKey: IDENTITY,
@@ -33,7 +27,6 @@ describe('chooseItemSettlePath', () => {
       recipientIdentityKey: IDENTITY.toLowerCase(),
     })
     expect(isPeerDeliverSettle(path)).toBe(true)
-    expect(isSenderBroadcastSettle(path)).toBe(false)
   })
 
   it('pasted address / missing identity → sender broadcast only', () => {
@@ -51,7 +44,7 @@ describe('chooseItemSettlePath', () => {
     ).toEqual({ settle: 'externalBroadcast', reason: 'no-peer-identity' })
   })
 
-  it('never invents broadcast-then-notify', () => {
+  it('keeps peer metadata routing distinct from address-only routing', () => {
     const path = chooseItemSettlePath({
       paysOurAddress: false,
       recipientIdentityKey: IDENTITY,

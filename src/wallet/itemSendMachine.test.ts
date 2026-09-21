@@ -32,12 +32,12 @@ function start(settlePath = peerSettle) {
 }
 
 describe('itemSendMachine', () => {
-  it('createAction with txid goes to peerDeliver (not broadcast)', () => {
+  it('peer metadata does not change the common broadcast rule', () => {
     const actor = start(peerSettle)
     actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })
     expect(actor.getSnapshot().matches('peerDeliver')).toBe(true)
     expect(mustDeliverToPeer(actor.getSnapshot())).toBe(true)
-    expect(maySenderBroadcast(actor.getSnapshot())).toBe(false)
+    expect(maySenderBroadcast(actor.getSnapshot())).toBe(true)
   })
 
   it('createAction without txid requires signing before settle', () => {
@@ -48,21 +48,10 @@ describe('itemSendMachine', () => {
     expect(actor.getSnapshot().matches('peerDeliver')).toBe(true)
   })
 
-  it('peerDeliver ignores BROADCASTED — P2P first', () => {
+  it('peer transfer completes its transaction lifecycle on BROADCASTED', () => {
     const actor = start(peerSettle)
     actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })
     actor.send({ type: 'BROADCASTED' })
-    expect(actor.getSnapshot().matches('peerDeliver')).toBe(true)
-    expect(actor.getSnapshot().matches('done')).toBe(false)
-  })
-
-  it('DELIVERED → silent confirmBroadcast (does not fail the send)', () => {
-    const actor = start(peerSettle)
-    actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })
-    actor.send({ type: 'DELIVERED' })
-    expect(actor.getSnapshot().matches('confirmBroadcast')).toBe(true)
-    expect(maySenderBroadcast(actor.getSnapshot())).toBe(true)
-    actor.send({ type: 'SKIPPED' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 
@@ -76,16 +65,6 @@ describe('itemSendMachine', () => {
     expect(actor.getSnapshot().matches('confirmBroadcast')).toBe(true)
     expect(maySenderBroadcast(actor.getSnapshot())).toBe(true)
     expect(actor.getSnapshot().context.txid).toBe('b'.repeat(64))
-    actor.send({ type: 'BROADCASTED' })
-    expect(actor.getSnapshot().matches('done')).toBe(true)
-  })
-
-  it('sender broadcast only after DELIVER_FAILED', () => {
-    const actor = start(peerSettle)
-    actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })
-    actor.send({ type: 'DELIVER_FAILED' })
-    expect(actor.getSnapshot().matches('senderFallback')).toBe(true)
-    expect(maySenderBroadcast(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'BROADCASTED' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })

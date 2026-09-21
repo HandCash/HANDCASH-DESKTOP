@@ -135,7 +135,6 @@ import {
 } from './itemSendMachine'
 import { chooseItemSettlePath, isPeerDeliverSettle } from './itemSettlePath'
 import { createActor } from 'xstate'
-import { broadcastAtomicBeef } from './sendBrc29Payment'
 import {
   chooseCollectableSendBatch,
   collectableBatchOutputOutpoint,
@@ -3159,8 +3158,8 @@ async function signOrdinalTransfer(args: {
     spends[vin] = { unlockingScript }
   }
 
-  // noSend: toolbox must not TaskSendWaiting-broadcast. Settle chart owns who
-  // posts — peerDeliver has no sender broadcast edge until DELIVER_FAILED.
+  // noSend gives the shared lifecycle the signed body so it can seal, durably
+  // queue, and propagate exactly once for every asset/payment data type.
   let signed
   try {
     signed = await args.wallet.wallet.signAction({
@@ -3767,11 +3766,9 @@ export async function sendCollectable(args: {
             // Hide spent tip + outbound remittance tip immediately. Post-send we
             // invalidate the live address scan; without a fresh scan, ownership fate is
             // skipped and the filed tip would toast "Item received" on the sender.
-            // The settle path rides along: on peerDeliver the payee broadcasts, so the
-            // ghost heal must not read an early 404 as a send that never happened.
-            const settle: SentItemSettle = isPeerDeliverSettle(settlePath)
-              ? 'peerDeliver'
-              : 'senderBroadcast'
+            // Asset metadata routing does not alter the underlying transaction:
+            // every newly signed transfer enters the sender lifecycle.
+            const settle: SentItemSettle = 'senderBroadcast'
             markItemsSent([
               { outpoint, txid, settle },
               ...(!selfReceive ? [{ outpoint: newTip, txid, settle }] : []),
@@ -4051,39 +4048,24 @@ export async function sendCollectable(args: {
           } catch {
             /* unused funding reservations only */
           }
-          // Retire the funding coins this transfer just consumed. Every other
-          // spend path does this the moment it holds a signed transaction, and
-          // an item send that skipped it left its fee inputs reading spendable:
-          // the next BSV send reselected them, every broadcaster answered
-          // "Missing inputs", and the send failed "Already spent" while the
-          // balance dropped by whatever that attempt wrote off.
-          const { sealSpentInputsOfSignedTx } = await import('./staleOutputRelease')
-          await sealSpentInputsOfSignedTx(txid, atomicBeef)
+          const {
+            registerSignedSend,
+            startSignedSendPropagation,
+          } = await import('./signedSendLifecycle')
+          const signedSend = await registerSignedSend({
+            txid,
+            atomicBeef,
+            flow: 'item_transfer',
+            satoshis: 1,
+            to,
+          })
           inputsSealedForRelease = true
 
           const settleSnap = itemChart.getSnapshot()
-          const reportBroadcastFailure = (reason: unknown) => {
-            void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
-              reportLateMinerSubmitFailure({
-                pendingId: outboundPending.id,
-                txid,
-                reason,
-              }),
-            )
-          }
           const startBackgroundMiner = () => {
-            void broadcastAtomicBeef(txid, atomicBeef)
-              .then((ok) => {
-                if (!ok) reportBroadcastFailure('Not sent')
-              })
-              .catch((err) => {
-                console.warn(
-                  '[collectables] broadcast failed after send success',
-                  txid.slice(0, 12),
-                  err instanceof Error ? err.message : String(err),
-                )
-                reportBroadcastFailure(err)
-              })
+            startSignedSendPropagation(signedSend, {
+              pendingId: outboundPending.id,
+            })
           }
           try {
             if (mustDeliverToPeer(settleSnap)) {
@@ -4093,10 +4075,10 @@ export async function sendCollectable(args: {
                   new Error('itemSendMachine peerDeliver without settle path')
                 )
               }
-              // Optimistic peer deliver — custody is sealed; inbox + miner are best-effort.
-              itemChart.send({ type: 'DELIVERED' })
-              startBackgroundMiner()
-              itemChart.send({ type: 'SKIPPED' })
+              // Item identity is metadata over the same signed Bitcoin tx.
+              // Notify the peer separately; common propagation starts after
+              // Activity owns the signed cheque, exactly like BSV payments.
+              itemChart.send({ type: 'BROADCASTED' })
               void (async () => {
                 const { notifyPeerItemIncoming } = await import(
                   './messageTransport'
@@ -4186,7 +4168,6 @@ export async function sendCollectable(args: {
               })()
             } else if (maySenderBroadcast(settleSnap)) {
               setPaymentProgress('finishing', undefined, outpoint)
-              startBackgroundMiner()
               itemChart.send({ type: 'BROADCASTED' })
             } else {
               itemChart.stop()
@@ -4235,9 +4216,11 @@ export async function sendCollectable(args: {
               }
             })()
           }
-          return await finishSend(txid, {
+          const finished = await finishSend(txid, {
             remittanceBuilt: Boolean(provenance),
           })
+          startBackgroundMiner()
+          return finished
         } finally {
           pauseCollectableArrivalToasts = Math.max(
             0,
@@ -4692,17 +4675,22 @@ export async function sendCollectables(
           } catch {
             /* unused funding reservations only */
           }
-          const { sealSpentInputsOfSignedTx } = await import(
-            './staleOutputRelease'
-          )
-          await sealSpentInputsOfSignedTx(txid, atomicBeef)
+          const {
+            registerSignedSend,
+            startSignedSendPropagation,
+          } = await import('./signedSendLifecycle')
+          const signedSend = await registerSignedSend({
+            txid,
+            atomicBeef,
+            flow: 'item_transfer',
+            satoshis: prepared.length,
+            to,
+          })
           sealedTxid = txid
           sealedBeef = atomicBeef
 
           const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
-          const settle: SentItemSettle = isPeerDeliverSettle(settlePath)
-            ? 'peerDeliver'
-            : 'senderBroadcast'
+          const settle: SentItemSettle = 'senderBroadcast'
           const newTips = prepared.map((_, index) =>
             collectableBatchOutputOutpoint(txid, index),
           )
@@ -4773,27 +4761,11 @@ export async function sendCollectables(
             announceItemsReceived(newTips)
           }
 
-          const reportBroadcastFailure = (reason: unknown) => {
-            void import('./minerSubmit').then(
-              ({ reportLateMinerSubmitFailure }) =>
-                Promise.all(
-                  pending.map((send) =>
-                    reportLateMinerSubmitFailure({
-                      pendingId: send.id,
-                      txid,
-                      reason,
-                    }),
-                  ),
-                ),
-            )
-          }
           const startBackgroundMiner = () => {
             broadcastStarted = true
-            void broadcastAtomicBeef(txid, atomicBeef)
-              .then((ok) => {
-                if (!ok) reportBroadcastFailure('Not sent')
-              })
-              .catch(reportBroadcastFailure)
+            startSignedSendPropagation(signedSend, {
+              pendingIds: pending.map((send) => send.id),
+            })
           }
           if (isPeerDeliverSettle(settlePath)) {
             startBackgroundMiner()

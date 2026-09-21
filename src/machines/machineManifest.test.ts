@@ -38,6 +38,7 @@ describe('machine manifest', () => {
         'itemSend',
         'brc29Send',
         'bsvSend',
+        'bsv21Send',
         'burn',
         'walletCoordinator',
       ]),

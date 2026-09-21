@@ -39,8 +39,8 @@ export function parseArcStatus(raw: string | null | undefined): ArcStatus | null
  * Accepted → SEEN_ON_NETWORK (optimistic mempool); never MINED from postBeef alone.
  */
 export function arcStatusFromPostBeef(summary: PostBeefSummary): ArcStatus {
-  if (summary.doubleSpend || summary.missingInputs) return 'DOUBLE_SPEND_ATTEMPTED'
   if (summary.accepted) return 'SEEN_ON_NETWORK'
+  if (summary.doubleSpend || summary.missingInputs) return 'DOUBLE_SPEND_ATTEMPTED'
   return 'REJECTED'
 }
 

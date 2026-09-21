@@ -59,7 +59,6 @@ import {
   clearPendingSend,
   completePendingSend,
 } from '../pendingSend'
-import { broadcastAtomicBeef } from '../sendBrc29Payment'
 import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
   withFungibleCreateActionTimeout,
@@ -714,21 +713,22 @@ export async function sendBsv21Tokens(args: {
         /* unused funding reservations only */
       }
 
-      const { sealSpentInputsOfSignedTx, releaseSealedInputsOfUnsentTx } =
-        await import('../staleOutputRelease')
-      await sealSpentInputsOfSignedTx(txid, atomic)
+      const { registerSignedSend, startSignedSendPropagation } =
+        await import('../signedSendLifecycle')
+      const signedSend = await registerSignedSend({
+        txid,
+        atomicBeef: atomic,
+        flow: 'token_transfer',
+        satoshis: selected.length,
+        to: args.toAddress,
+      })
       // Signed — settle owns broadcast; do not abort this reference on peer miss.
       actionReference = undefined
-
       if (peerKey) {
         setPaymentProgress(
           'finishing',
-          'Delivering token to recipient',
+          'Notifying token recipient',
           primary.outpoint,
-        )
-        const { notifyPeerItemIncoming } = await import('../messageTransport')
-        const friend = listFriends().find(
-          (f) => f.identityKey.toLowerCase() === peerKey,
         )
         const asset = {
           kind: 'fungible' as const,
@@ -738,30 +738,36 @@ export async function sendBsv21Tokens(args: {
           dec: 0,
           ...(args.icon ? { icon: args.icon } : {}),
         }
-        const { recordTransactionStage } = await import('../transactionTelemetry')
-        try {
-          const delivered = await notifyPeerItemIncoming({
-            recipientIdentityKey: peerKey,
-            rootKeyHex: wallet.rootKeyHex,
-            senderIdentityKey: wallet.identityKey,
-            messagebox: friend?.messagebox,
-            txid,
-            itemName: sym,
-            asset,
-            atomicBeef: peerAtomic,
-          })
-          console.info(
-            `[bsv21] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
+        void (async () => {
+          const { notifyPeerItemIncoming } = await import('../messageTransport')
+          const { recordTransactionStage } = await import('../transactionTelemetry')
+          const friend = listFriends().find(
+            (f) => f.identityKey.toLowerCase() === peerKey,
           )
-          if (
-            (delivered.delivered === 'cloud' || delivered.delivered === 'direct') &&
-            delivered.beefInBox
-          ) {
-            recordTransactionStage('peer_delivered', {
-              flow: 'token_transfer',
+          try {
+            const delivered = await notifyPeerItemIncoming({
+              recipientIdentityKey: peerKey,
+              rootKeyHex: wallet.rootKeyHex,
+              senderIdentityKey: wallet.identityKey,
+              messagebox: friend?.messagebox,
               txid,
+              itemName: sym,
+              asset,
+              atomicBeef: peerAtomic,
             })
-          } else {
+            console.info(
+              `[bsv21] peer notify box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
+            )
+            if (
+              (delivered.delivered === 'cloud' || delivered.delivered === 'direct') &&
+              delivered.beefInBox
+            ) {
+              recordTransactionStage('peer_delivered', {
+                flow: 'token_transfer',
+                txid,
+              })
+              return
+            }
             const { enqueuePendingItemRemit } = await import('../pendingItemOutbox')
             enqueuePendingItemRemit({
               payeeIdentityKey: peerKey,
@@ -779,43 +785,38 @@ export async function sendBsv21Tokens(args: {
                 ? 'peer_box_unreachable'
                 : 'beef_omitted_box_cap',
             })
+          } catch (error) {
+            const { enqueuePendingItemRemit } = await import('../pendingItemOutbox')
+            enqueuePendingItemRemit({
+              payeeIdentityKey: peerKey,
+              senderIdentityKey: wallet.identityKey,
+              txid,
+              itemName: sym,
+              messagebox: friend?.messagebox,
+              asset,
+              flow: 'token_transfer',
+            })
+            recordTransactionStage('peer_delivery_queued', {
+              flow: 'token_transfer',
+              txid,
+              blockerCode: 'peer_delivery_error',
+            })
+            console.warn(
+              '[bsv21-send] peer notification queued',
+              error instanceof Error ? error.message : String(error),
+            )
           }
-        } catch (error) {
-          const { enqueuePendingItemRemit } = await import('../pendingItemOutbox')
-          enqueuePendingItemRemit({
-            payeeIdentityKey: peerKey,
-            senderIdentityKey: wallet.identityKey,
-            txid,
-            itemName: sym,
-            messagebox: friend?.messagebox,
-            asset,
-            flow: 'token_transfer',
-          })
-          recordTransactionStage('peer_delivery_queued', {
-            flow: 'token_transfer',
-            txid,
-            blockerCode: 'peer_delivery_error',
-          })
-          console.warn(
-            '[bsv21-send] peer delivery queued',
-            error instanceof Error ? error.message : String(error),
-          )
-        }
+        })()
       }
 
       setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
-      const ok = await broadcastAtomicBeef(txid, atomic)
-      if (!ok) {
-        await releaseSealedInputsOfUnsentTx(txid, atomic)
-        throw new Error('Token transfer was not accepted by the network')
-      }
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
       markItemsSent([
         ...spent.map((outpoint) => ({ outpoint, txid })),
         ...payeeOutpoints.map((outpoint) => ({
           outpoint,
           txid,
-          settle: 'peerDeliver' as const,
+          settle: 'senderBroadcast' as const,
         })),
       ])
       for (const op of payeeOutpoints) {
@@ -840,6 +841,11 @@ export async function sendBsv21Tokens(args: {
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
       scheduleHistoryBackupPush('sendBsv21Tokens')
+      // Exactly like a BSV payment: Activity owns the signed cheque before
+      // background propagation can report a late hard rejection.
+      startSignedSendPropagation(signedSend, {
+        pendingId: outboundPending.id,
+      })
       const { paintFungibleAfterSpend, getFungible } = await import('./list')
       paintFungibleAfterSpend({
         tokenId,

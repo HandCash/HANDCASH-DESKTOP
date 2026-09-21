@@ -41,9 +41,10 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
   `pinBroadcastLocalTx` seals inputs and frees change, and a bulk leg awaits
   the pin of the leg that funds it. Gate heal on the Arcade pin, never on
   projected `pendingChange` — `nosend` change is in neither balance bucket.
-- `postBeef` / delayed broadcast before peer delivery on a `peerDeliver` settle
-  for **items** (`maySenderBroadcast` is false until remittance left
-  `peerDeliver`; silent `confirmBroadcast` after inbox)
+- Asset metadata changing Bitcoin communication rules. Every signed BSV,
+  BSV-21, and item transfer goes through `signedSendLifecycle` for sealing,
+  durable miner retry, Arcade reject, and BUMP finality. `peerDeliver` only
+  routes optional metadata; inbox failure never gates propagation.
 - BRC-29 `noSend` + abort + a second payment tx (double-spend). BRC-29 BSV
   `createAction` broadcasts immediately; inbox miss → remittance outbox retry
 - ACKing a payment/item inbox message before ingest succeeds

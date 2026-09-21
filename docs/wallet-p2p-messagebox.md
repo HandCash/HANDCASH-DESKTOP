@@ -49,7 +49,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | Chat delivery | Resolved peer **messagebox URL**; BRC-CLOUD fallback; live draft-BRC-246 IPv6 session when both wallets are reachable | Keep box as rendezvous + offline inbox; socket is the hot path |
 | Chat encryption | BRC-169 §7 envelope + BRC-78 content (legacy plaintext inbound still accepted) | Tolls / reachability policy; full Authrite Peer sessions |
 | Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |
-| Item send | Plain P2PKH tip + local BRC-150 provenance | `ItemSettlePath` owns who broadcasts; no latch output or fallback path |
+| Item/token send | Plain P2PKH transaction + asset metadata | `signedSendLifecycle` owns the same durable miner/Arcade/BUMP relationship as BSV; `ItemSettlePath` only routes optional remittance/internalization |
 | Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback (grade C) |
 | Inscription media | GP `/content/<origin>` | Keep as C; optional “fetch origin tx + parse” path when offline to GP |
 

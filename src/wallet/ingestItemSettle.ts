@@ -1,8 +1,9 @@
 /**
  * Payee ingest of a P2P item settle (Atomic BEEF from messagebox).
  *
- * Internalize every 1-sat tip that pays this wallet, then the **payee** broadcasts.
- * If the box has no Atomic BEEF, SPV-fetch by txid (sender-broadcast fallback).
+ * Internalize every 1-sat tip that pays this wallet. Re-posting the same signed
+ * BEEF is harmless redundancy; the sender already owns normal propagation.
+ * If the box has no Atomic BEEF, SPV-fetch by txid.
  * Address scan remains the last-resort custody path. Item identity is BRC-150
  * (offline tip→origin proof) resolved from the origin hint + normal inscription
  * resolution — no on-chain latch companion.
@@ -273,9 +274,15 @@ export async function internalizePeerItemSettle(opts: {
   }
 
   try {
-    // Payee is the intended broadcaster on peerDeliver — confirm network first.
-    // Do not existence-check first: that adds RTT on the common payee-first path.
-    await broadcastAtomicBeef(id, atomic)
+    // Re-post the same signed cheque as best-effort redundancy. Asset
+    // internalization is not gated by miner transport or metadata type.
+    void broadcastAtomicBeef(id, atomic).catch((err) => {
+      console.warn(
+        '[item-settle] redundant broadcast failed',
+        id.slice(0, 12),
+        err,
+      )
+    })
     rememberBeefTree(atomic, id)
 
     const remittanceOutputs = tipVouts.map((vout) => {

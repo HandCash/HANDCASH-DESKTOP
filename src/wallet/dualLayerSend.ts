@@ -12,6 +12,7 @@ import type { ArcStatus, TxDiagnosticCode, TxRecord } from './txLifecycle'
 import {
   applyArcStatus,
   createDraftTx,
+  getTxByTxid,
   getTxRecord,
   markTxFailed,
   markTxMined,
@@ -86,6 +87,41 @@ export function beginDualLayerSend(args: BeginDualLayerSendArgs): BeginDualLayer
 
 export function noteDualLayerTxid(id: string, txid: string): TxRecord | null {
   return transitionTx(id, 'BROADCASTING', { txid: txid.toLowerCase() })
+}
+
+/**
+ * Register a transaction that was validated and signed by a protocol-specific
+ * builder (items/tokens/market) rather than the ordinary payment preflight.
+ *
+ * Output construction remains in that protocol. From this point onward every
+ * signed transaction has the same ARC + BUMP lifecycle as a BSV payment.
+ */
+export function beginSignedTxLifecycle(args: {
+  txid: string
+  satoshis: number
+  to?: string | null
+}): TxRecord {
+  const existing = getTxByTxid(args.txid)
+  if (existing) return existing
+  const draft = createDraftTx({
+    satoshis: args.satoshis,
+    to: args.to,
+  })
+  transitionTx(draft.id, 'VALIDATING')
+  transitionTx(draft.id, 'BROADCASTING', {
+    txid: args.txid.trim().toLowerCase(),
+  })
+  return (
+    transitionTx(draft.id, 'SEEN_IN_MEMPOOL') ??
+    getTxRecord(draft.id)!
+  )
+}
+
+/** The common signed-cheque boundary for preflighted payment lifecycles. */
+export function noteDualLayerSigned(id: string, txid: string): TxRecord | null {
+  const withTxid = noteDualLayerTxid(id, txid)
+  if (!withTxid) return null
+  return transitionTx(id, 'SEEN_IN_MEMPOOL')
 }
 
 /** Advance from postBeef summary — mempool accept or hard reject + lock rollback. */

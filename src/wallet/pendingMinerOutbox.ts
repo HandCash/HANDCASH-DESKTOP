@@ -94,7 +94,11 @@ function save(rows: PendingMinerSubmit[]): boolean {
   return durableSetItem(KEY, JSON.stringify(rows))
 }
 
-export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boolean {
+export function enqueuePendingMinerSubmit(
+  txid: string,
+  atomic: number[],
+  opts?: { flow?: TransactionFlow },
+): boolean {
   const id = txid.trim().toLowerCase()
   const verdict = classifyPendingMinerBody(id, atomic)
   if (verdict.kind === 'refuse') {
@@ -116,14 +120,14 @@ export function enqueuePendingMinerSubmit(txid: string, atomic: number[]): boole
     nextAttemptAt: Date.now(),
     traceId: trace?.traceId,
     requestId: trace?.requestId,
-    flow: trace?.flow,
+    flow: opts?.flow ?? trace?.flow,
   })
   if (!save(rows)) {
     console.error('[minerOutbox] durable write refused', id.slice(0, 12))
     return false
   }
   recordTransactionStage('propagation_queued', {
-    flow: trace?.flow,
+    flow: opts?.flow ?? trace?.flow,
     traceId: trace?.traceId,
     requestId: trace?.requestId,
     txid: id,

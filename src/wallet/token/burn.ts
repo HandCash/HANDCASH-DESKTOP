@@ -17,14 +17,13 @@ import { markItemsSent } from '../sentItemGuard'
 import { stampBrc164Id } from '../itemAccess'
 import { withVisibleOnChainBeef } from '../legacyBeef'
 import { assertOnlineForPayment } from '../paymentPolicy'
-import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from '../sendBrc29Payment'
+import { BRC29_PROTOCOL_ID } from '../sendBrc29Payment'
 import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
   withFungibleCreateActionTimeout,
 } from './sendEntry'
 import { getActiveWallet, type ActiveWallet } from '../session'
 import { runExclusiveBurn } from '../spendGuard'
-import { sealSpentInputsOfSignedTx } from '../staleOutputRelease'
 import { estimateBurnEconomics, type BurnEconomics } from '../burnEconomics'
 
 function parseBurnUnits(amount: string): number {
@@ -292,8 +291,18 @@ export async function burnBsv21Tokens(args: {
       /* unused funding */
     }
 
-    await sealSpentInputsOfSignedTx(txid, atomic)
-    await ensurePaymentBroadcasted(txid, atomic)
+    const {
+      registerSignedSend,
+      startSignedSendPropagation,
+    } = await import('../signedSendLifecycle')
+    const signedBurn = await registerSignedSend({
+      txid,
+      atomicBeef: atomic,
+      flow: 'burn',
+      satoshis: 1,
+      to: active.address,
+    })
+    startSignedSendPropagation(signedBurn)
 
     try {
       await withVisibleOnChainBeef(() =>

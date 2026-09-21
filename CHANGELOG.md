@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.249] - 2026-09-21
+
+### Changed
+
+- **One transaction lifecycle for BSV and assets.** BSV, BRC-29, BSV-21,
+  collectable, and burn transactions now share input sealing, durable Atomic
+  BEEF submission, Arcade acceptance/rejection, late-failure reporting, and
+  header-verified BUMP finality. Asset remittance is asynchronous metadata and
+  no longer changes or gates the underlying Bitcoin communication rules.
+
 ## [1.3.248] - 2026-09-21
 
 ### Fixed

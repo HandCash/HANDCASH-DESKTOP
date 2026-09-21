@@ -296,11 +296,9 @@ export function isItemAbandoned(outpoint: string): boolean {
 }
 
 /**
- * What this wallet recorded when it sent the tip — who was going to broadcast,
- * and when. Callers deciding whether a stalled send may be retried or cleared
- * need the settle path: a `peerDeliver` transfer is the payee's to broadcast, so
- * it is legitimately absent from the chain long after a sender-broadcast one
- * would be a ghost.
+ * What this wallet recorded when it sent the tip. New sends are always
+ * `senderBroadcast`; `peerDeliver` remains only for rows written by older
+ * builds whose payee-first grace must be preserved during migration.
  */
 export function getSentItemRecord(outpoint: string): SentItemRecord | null {
   const op = key(outpoint)

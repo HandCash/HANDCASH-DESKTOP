@@ -55,10 +55,9 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { markItemsConsumed } from './sentItemGuard'
-import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from './sendBrc29Payment'
+import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
 import { getActiveWallet, type ActiveWallet } from './session'
-import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
 type SelfPayment = {
   lockingScript: string
@@ -512,8 +511,18 @@ async function executeBurnPlan(args: {
           'Burning…',
         )
       }
-      await sealSpentInputsOfSignedTx(signed.txid, signed.atomicBeef)
-      await ensurePaymentBroadcasted(signed.txid, signed.atomicBeef)
+      const {
+        registerSignedSend,
+        startSignedSendPropagation,
+      } = await import('./signedSendLifecycle')
+      const signedBurn = await registerSignedSend({
+        txid: signed.txid,
+        atomicBeef: signed.atomicBeef,
+        flow: 'burn',
+        satoshis: burnRecoveryOutputSatoshis(args.plan),
+        to: args.active.address,
+      })
+      startSignedSendPropagation(signedBurn)
     },
     internalize: async () => {
       if (!signed) throw new Error('Burn internalize phase has no signed BEEF')

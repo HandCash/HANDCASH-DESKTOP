@@ -2,9 +2,9 @@
  * Exhaustive settle path for a signed collectable transfer.
  *
  * Spend classification (`SendPath`) decides *whether* the tip can be spent.
- * This union decides *who broadcasts* after `createAction({ noSend: true })`.
- * Broadcast-before-P2P is not a variant — peerDeliver has no sender-broadcast
- * edge. After inbox delivery the sender silently `postBeef` (`confirmBroadcast`).
+ * This union decides where the asset metadata/remittance goes after signing.
+ * It does not alter transaction propagation: every signed transfer uses the
+ * same durable miner + SPV lifecycle as an ordinary BSV payment.
  */
 import { validateIdentityKey } from './friends'
 
@@ -20,9 +20,8 @@ export type ChooseItemSettlePathArgs = {
 }
 
 /**
- * Classify once. Self-pay broadcasts locally. HandCash peers get Atomic BEEF
- * first (they broadcast). Pasted/external addresses have no identity box —
- * sender broadcasts. Never returns a "broadcast then maybe notify" path.
+ * Classify once. Self-pay internalizes locally. HandCash peers get an Atomic
+ * BEEF notification. Pasted/external addresses have no identity box.
  */
 export function chooseItemSettlePath(
   args: ChooseItemSettlePathArgs,
@@ -42,10 +41,4 @@ export function isPeerDeliverSettle(
   path: ItemSettlePath | null | undefined,
 ): path is Extract<ItemSettlePath, { settle: 'peerDeliver' }> {
   return path?.settle === 'peerDeliver'
-}
-
-export function isSenderBroadcastSettle(
-  path: ItemSettlePath | null | undefined,
-): boolean {
-  return path?.settle === 'selfReceive' || path?.settle === 'externalBroadcast'
 }

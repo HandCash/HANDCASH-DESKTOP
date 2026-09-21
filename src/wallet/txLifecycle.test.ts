@@ -17,6 +17,7 @@ import {
   parseArcStatus,
 } from "./arcStatusMap";
 import {
+  beginSignedTxLifecycle,
   beginDualLayerSend,
   failDualLayerSend,
   noteDualLayerPostBeef,
@@ -185,6 +186,16 @@ describe("arcStatusMap", () => {
         competingTxs: [],
       })
     ).toBe("SEEN_ON_NETWORK");
+    expect(
+      arcStatusFromPostBeef({
+        accepted: true,
+        doubleSpend: true,
+        missingInputs: true,
+        serviceOnlyErrors: false,
+        detail: "Arcade accepted; lagging provider said missing inputs",
+        competingTxs: [],
+      })
+    ).toBe("SEEN_ON_NETWORK");
   });
 
   it("double-spend policy hides inputs, does not unlock them", () => {
@@ -200,6 +211,21 @@ describe("utxoLockManager + dualLayerSend", () => {
     store.clear();
     __resetTxStoreForTests();
     __resetUtxoLocksForTests();
+  });
+
+  it("tracks protocol data transactions on the same signed lifecycle", () => {
+    const txid = "ab".repeat(32);
+    const token = beginSignedTxLifecycle({
+      txid,
+      satoshis: 1,
+      to: "token recipient",
+    });
+    expect(token).toMatchObject({
+      txid,
+      satoshis: 1,
+      status: "SEEN_IN_MEMPOOL",
+    });
+    expect(beginSignedTxLifecycle({ txid, satoshis: 1 }).id).toBe(token.id);
   });
 
   it("soft-locks deduct optimistic balance and roll back on fail", () => {

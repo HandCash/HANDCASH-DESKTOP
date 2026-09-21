@@ -49,7 +49,6 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
-  sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
   clearPaymentProgress,
@@ -154,31 +153,6 @@ export async function broadcastAtomicBeef(
       /* discard is best-effort */
     }
     return false
-  }
-}
-
-/**
- * Hand signed BEEF to miners after createAction. Signed txs are treated as
- * spent immediately; only hard missing-inputs / double-spend failures throw.
- */
-export async function ensurePaymentBroadcasted(
-  txid: string,
-  atomic: number[] | undefined,
-): Promise<void> {
-  if (!atomic?.length) {
-    throw new Error(
-      'Payment was signed but no transaction body was returned — try Send again.',
-    )
-  }
-  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-  const result = await submitAtomicBeefToMiners(txid, atomic)
-  if (result.summary) {
-    const { getTxByTxid } = await import('./txStore')
-    const record = getTxByTxid(txid)
-    if (record) {
-      const { noteDualLayerPostBeef } = await import('./dualLayerSend')
-      noteDualLayerPostBeef(record.id, result.summary)
-    }
   }
 }
 
@@ -441,11 +415,18 @@ export async function sendBrc29ToIdentityKey(opts: {
           const { noteDualLayerTxid } = await import('./dualLayerSend')
           noteDualLayerTxid(dualId, txid)
           mark(`createAction ${txid.slice(0, 12)}…`)
-          // Retire the coins this transaction just consumed before the next send
-          // can pick them. Chain-ingest's rehide pass yields while a spend is
-          // queued, so a burst of sends would otherwise reselect a spent input
-          // and get rejected as a double spend.
-          await sealSpentInputsOfSignedTx(txid, atomicBeef)
+          const {
+            registerSignedSend,
+            startSignedSendPropagation,
+          } = await import('./signedSendLifecycle')
+          const signedSend = await registerSignedSend({
+            txid,
+            atomicBeef: atomicBeef ?? [],
+            flow: 'brc29',
+            lifecycleId: dualId,
+            satoshis,
+            to: payee,
+          })
           mark('inputs sealed')
           chart.send({ type: 'BROADCASTED', txid })
           completePendingSend(pending.id, txid)
@@ -459,23 +440,8 @@ export async function sendBrc29ToIdentityKey(opts: {
           clearPendingSend(pending.id)
           setPaymentProgress('finishing')
           scheduleHistoryBackupPush('send')
-          // Miner submit is best-effort — signed tx is already spent for UI.
-          void ensurePaymentBroadcasted(txid, atomicBeef)
-            .then(() => mark('broadcast'))
-            .catch((err) => {
-              console.warn(
-                '[brc29] miner submit failed after send success',
-                txid.slice(0, 12),
-                err instanceof Error ? err.message : String(err),
-              )
-              void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
-                reportLateMinerSubmitFailure({
-                  pendingId: pending.id,
-                  txid,
-                  reason: err,
-                }),
-              )
-            })
+          startSignedSendPropagation(signedSend, { pendingId: pending.id })
+          mark('broadcast queued')
 
           let selfReceived = false
           let peerDelivered = false
@@ -994,7 +960,7 @@ export type PaymentTipHint = {
   senderIdentityKey?: string
   satoshis?: number
   brc29?: Brc29Remittance
-  /** Messagebox file URL for the signed Atomic BEEF (payee broadcasts). */
+  /** Legacy messagebox URL for the signed Atomic BEEF. */
   beefUrl?: string
   tx?: number[]
   /** Item/token settle — not a BSV payment. */

@@ -63,15 +63,18 @@ describe('pending miner outbox', () => {
     const tx = signedTx(1_000)
     const txid = tx.id('hex')
     const atomic = atomicBeefFor(tx)
-    expect(enqueuePendingMinerSubmit(txid, atomic)).toBe(true)
+    expect(
+      enqueuePendingMinerSubmit(txid, atomic, { flow: 'token_transfer' }),
+    ).toBe(true)
     expect(enqueuePendingMinerSubmit(txid, atomic)).toBe(true)
     expect(pendingMinerOutboxDepth()).toBe(1)
 
     const rows = JSON.parse(
       store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
-    ) as Array<{ atomic: number[]; traceId?: string }>
+    ) as Array<{ atomic: number[]; traceId?: string; flow?: string }>
     expect(rows[0]?.atomic).toEqual(atomic)
     expect(rows[0]?.traceId).toBe('trace-test')
+    expect(rows[0]?.flow).toBe('token_transfer')
     expect(recordTransactionStage).toHaveBeenCalledWith(
       'propagation_queued',
       expect.objectContaining({ txid }),

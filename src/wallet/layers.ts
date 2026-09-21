@@ -45,15 +45,13 @@
  *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
  *     spend does not wait on an indexer.
  *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).
- *   - **Item P2P settle** (`itemSettlePath.ts` + `itemSendMachine`): sender
- *     signs `noSend` and classifies once — `peerDeliver` (Atomic BEEF to peer;
- *     **payee** broadcasts), `selfReceive`, or `externalBroadcast` (pasted
- *     address). There is no broadcast-then-notify path; `peerDeliver` has no
- *     sender-broadcast edge. After inbox delivery, sender silently `postBeef`
- *     (`confirmBroadcast`) so the tx is on-chain even if the payee never
- *     broadcasts. A user retry re-enters `confirmBroadcast` with the same signed
- *     BEEF only when the original tip remains unspent; it never creates a
- *     competing spend. Remittance ± inline BEEF on `sendMessage`. A live pair
+ *   - **Item/token P2P settle** (`signedSendLifecycle.ts` +
+ *     `itemSettlePath.ts`): assets are data over the same signed Bitcoin
+ *     transaction lifecycle as BSV. Signing seals inputs and starts the durable
+ *     miner/Arcade + BUMP path. `peerDeliver`, `selfReceive`, and
+ *     `externalBroadcast` classify only metadata delivery/internalization; a
+ *     messagebox miss never changes transaction propagation or creates a second
+ *     spend. Remittance ± inline BEEF rides `sendMessage`. A live pair
  *     may skip the box for that session after a signed IPv6 offer (draft
  *     BRC-246, `directSession/`). The box stays the rendezvous and the offline inbox.
  *   - **1Sat market** (`marketListing.ts` + `marketSettlement.ts`): listing

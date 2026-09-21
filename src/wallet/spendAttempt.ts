@@ -190,12 +190,10 @@ function hasTxid(entry: ActivityEntry): boolean {
 /**
  * May this wallet publish the transfer it already signed?
  *
- * Asked of {@link itemSendMachine} rather than answered here: `RETRY_BROADCAST`
- * enters `confirmBroadcast`, the state whose whole purpose is the sender's
- * postBeef after the remittance left `peerDeliver`. That is why publishing a
- * peer-settled transfer by hand is legal — it is the identical transaction, so
- * the recipient's copy and this one are one txid — while `peerDeliver` itself
- * still has no sender-broadcast edge.
+ * Asked of {@link itemSendMachine} rather than answered here:
+ * `RETRY_BROADCAST` enters `confirmBroadcast` for the identical signed tx.
+ * Asset metadata never authorizes a competing spend or changes who propagates
+ * the underlying transaction.
  */
 /**
  * The signed item / token transfer on this row, when this wallet is allowed to

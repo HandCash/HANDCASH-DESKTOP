@@ -2,10 +2,10 @@
  * Collectable item send phases (BRC-150 remittance + P2PKH tip).
  *
  * Parent: `collectableSendMachine` (p2pkhSend state). createAction is always
- * `noSend` — the settle chart (`ItemSettlePath`) owns who may broadcast.
- * `peerDeliver` has no `BROADCASTED` edge. After inbox delivery, sender
- * silently `postBeef` (`confirmBroadcast`) so the tx is on-chain even if the
- * payee never broadcasts. Required sender broadcast is `senderFallback`.
+ * `noSend` only gives the wallet the signed Atomic BEEF. From that boundary
+ * every item uses the same durable miner lifecycle as a BSV payment.
+ * `ItemSettlePath` controls optional remittance/internalization, never whether
+ * the underlying Bitcoin transaction may propagate.
  */
 import { assign, setup, type SnapshotFrom } from 'xstate'
 import type { ItemSettlePath } from './itemSettlePath'
@@ -20,7 +20,6 @@ export type ItemSendPhase =
   | 'selfReceive'
   | 'externalBroadcast'
   | 'confirmBroadcast'
-  | 'senderFallback'
   | 'done'
   | 'failed'
 
@@ -37,8 +36,6 @@ export type ItemSendEvent =
   | { type: 'BUILT' }
   | { type: 'CREATED'; txid?: string }
   | { type: 'SIGNED'; txid: string }
-  | { type: 'DELIVERED' }
-  | { type: 'DELIVER_FAILED' }
   | { type: 'BROADCASTED' }
   | { type: 'SKIPPED' }
   | { type: 'FAIL'; error: string }
@@ -151,11 +148,10 @@ export const itemSendMachine = setup({
         },
       ],
     },
-    /** Atomic BEEF / remittance to peer — sender must not broadcast from this state. */
+    /** Peer notification is metadata; the signed tx propagates independently. */
     peerDeliver: {
       on: {
-        DELIVERED: 'confirmBroadcast',
-        DELIVER_FAILED: 'senderFallback',
+        BROADCASTED: 'done',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
@@ -179,12 +175,6 @@ export const itemSendMachine = setup({
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
-    senderFallback: {
-      on: {
-        BROADCASTED: 'done',
-        FAIL: { target: 'failed', actions: 'setError' },
-      },
-    },
     done: {
       on: { RESET: { target: 'idle', actions: 'clear' } },
     },
@@ -196,13 +186,13 @@ export const itemSendMachine = setup({
 
 export type ItemSendSnapshot = SnapshotFrom<typeof itemSendMachine>
 
-/** Sender postBeef is legal only in these states — never `peerDeliver`. */
+/** Every classified signed item uses the common miner relationship. */
 export function maySenderBroadcast(snapshot: ItemSendSnapshot): boolean {
   return (
+    snapshot.matches('peerDeliver') ||
     snapshot.matches('selfReceive') ||
     snapshot.matches('externalBroadcast') ||
-    snapshot.matches('confirmBroadcast') ||
-    snapshot.matches('senderFallback')
+    snapshot.matches('confirmBroadcast')
   )
 }
 

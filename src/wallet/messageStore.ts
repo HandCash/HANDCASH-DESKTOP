@@ -106,7 +106,7 @@ export type ChatMessage = {
       derivationSuffix: string
       outputIndex?: number
     }
-    /** Item/token settle — Atomic BEEF rides inline; payee broadcasts. */
+    /** Optional item/token metadata notification with inline Atomic BEEF. */
     item?: boolean
     itemOrigin?: string
     itemCollectionId?: string

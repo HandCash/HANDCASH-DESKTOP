@@ -423,19 +423,16 @@ const ITEM_SEND = `stateDiagram-v2
   chooseSettle --> peerDeliver : peerDeliver
   chooseSettle --> selfReceive : selfReceive
   chooseSettle --> externalBroadcast : externalBroadcast
-  peerDeliver --> confirmBroadcast : DELIVERED
-  peerDeliver --> senderFallback : DELIVER_FAILED
+  peerDeliver --> done : BROADCASTED\\npeer notify is metadata
   confirmBroadcast --> done : BROADCASTED / SKIPPED
-  senderFallback --> done : BROADCASTED
   selfReceive --> done : BROADCASTED
   externalBroadcast --> done : BROADCASTED
   note right of confirmBroadcast
-    Initial send: silent postBeef after inbox.
     Retry: same signed BEEF, never a competing spend.
   end note
   note right of peerDeliver
-    No BROADCASTED edge.
-    Silent sender postBeef after inbox.
+    Same signed-send miner + BUMP lifecycle as BSV.
+    Messagebox notification never controls propagation.
   end note
   createAction --> failed : FAIL
   signing --> failed : FAIL
@@ -916,7 +913,7 @@ const COORDINATOR = `stateDiagram-v2
   nestedIngest --> spend : CHAIN_INGEST_END
 `
 
-/** Signing + settle — noSend create/sign; ItemSettlePath owns who broadcasts. */
+/** Signing + settle — one Bitcoin lifecycle; asset paths only route metadata. */
 const SPEND_SIGN = `stateDiagram-v2
   direction LR
   [*] --> prepare
@@ -929,13 +926,16 @@ const SPEND_SIGN = `stateDiagram-v2
   signedNoSend --> selfReceive : selfReceive
   signedNoSend --> externalBroadcast : pasted address
   prepare --> confirmBroadcast : retry unconfirmed signed BEEF\\nsource still unspent
-  peerDeliver --> confirmBroadcast : messagebox accepted
+  peerDeliver --> postBeef : common signed-send propagation\\nnotify async
   confirmBroadcast --> postBeef : silent sender postBeef
-  peerDeliver --> senderFallback : DELIVER_FAILED
-  senderFallback --> postBeef : sender fallback
   selfReceive --> postBeef
   externalBroadcast --> postBeef
   postBeef --> done : accepted
+  note right of signedNoSend
+    registerSignedSend seals + queues before settle metadata.
+    Asset data does not alter Bitcoin communication:
+    same Arcade reject, retry, and BUMP finality as BSV.
+  end note
   signedNoSend --> sendWithOk : BSV BRC-29 same pattern
   sendWithOk --> done : no failure
   postBeef --> failed : missing-inputs / reject
@@ -1067,7 +1067,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'spendSign',
     label: 'Sign / broadcast',
     caption:
-      'noSend sign → ItemSettlePath (peer first) → optional sender postBeef',
+      'signedSendLifecycle — seal → durable miner queue → Arcade reject oracle → BUMP finality; metadata routes separately',
     source: SPEND_SIGN,
   },
   {
@@ -1162,7 +1162,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'sendFungible',
     label: 'Send token',
     caption:
-      'bsv21SendMachine parent — plainSend invokes shared itemSendMachine settle',
+      'bsv21SendMachine builds asset outputs; signedSendLifecycle owns the same miner + BUMP path as BSV',
     source: SEND_FUNGIBLE,
   },
   {

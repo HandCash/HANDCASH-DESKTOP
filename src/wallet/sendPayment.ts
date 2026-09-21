@@ -31,7 +31,6 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
-  sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
   clearPaymentProgress,
@@ -42,7 +41,6 @@ import { bsvSendMachine } from './bsvSendMachine'
 import {
   beginDualLayerSend,
   failDualLayerSend,
-  noteDualLayerPostBeef,
   noteDualLayerTxid,
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
@@ -199,11 +197,18 @@ export async function sendSatsToAddress(opts: {
                   : undefined
             if (atomic?.length && realTxid) {
               signedAtomic = atomic
-              // Retire the consumed coins before the next send can pick them —
-              // chain-ingest's rehide pass defers while a spend is queued.
-              await sealSpentInputsOfSignedTx(realTxid, atomic)
-              // Signed tx is spent for UI — miner ACK is best-effort background work.
-              transitionTx(dualId, 'SEEN_IN_MEMPOOL')
+              const {
+                registerSignedSend,
+                startSignedSendPropagation,
+              } = await import('./signedSendLifecycle')
+              const signedSend = await registerSignedSend({
+                txid: realTxid,
+                atomicBeef: atomic,
+                flow: 'p2pkh',
+                lifecycleId: dualId,
+                satoshis,
+                to,
+              })
               chart.send({ type: 'BROADCASTED', txid })
               completePendingSend(pending.id, txid)
 
@@ -229,30 +234,9 @@ export async function sendSatsToAddress(opts: {
               setPaymentProgress('finishing')
               scheduleHistoryBackupPush('send')
 
-              void (async () => {
-                try {
-                  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-                  const miner = await submitAtomicBeefToMiners(realTxid, atomic)
-                  if (miner.summary) noteDualLayerPostBeef(dualId, miner.summary)
-                  void tryFinalizeDualLayerTx(dualId).catch((err) => {
-                    console.warn('[send] SPV finality deferred', realTxid, err)
-                  })
-                } catch (err) {
-                  failDualLayerSend(
-                    dualId,
-                    'UNKNOWN',
-                    err instanceof Error ? err.message : String(err),
-                    { hideInputs: isAlreadySpentInputError(err) },
-                  )
-                  void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
-                    reportLateMinerSubmitFailure({
-                      pendingId: pending.id,
-                      txid: realTxid,
-                      reason: err,
-                    }),
-                  )
-                }
-              })()
+              startSignedSendPropagation(signedSend, {
+                pendingId: pending.id,
+              })
 
               const balanceSats = Math.max(
                 0,
