@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.277] - 2026-09-22
+
+### Fixed
+
+- Restored mobile's real in-app browser route. Android does not host Electron's
+  `<webview>` tabs, but it does expose `DappBrowserActivity`: a native WebView
+  with an anti-phishing host bar and a CWI proxy to the wallet's local BRC-100
+  bridge on `127.0.0.1:3321`. The UI now treats that native surface as a real
+  in-app option instead of falling through to the system browser. The companion
+  Mobile release repairs the native plugin that had bypassed the Activity.
+
 ## [1.3.276] - 2026-09-22
 
 ### Fixed

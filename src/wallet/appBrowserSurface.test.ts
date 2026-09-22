@@ -12,9 +12,8 @@ describe('chooseAppBrowserSurface', () => {
   })
 
   /**
-   * Both shells expose `openAppBrowser`; on mobile it hands off to the system
-   * browser. Reading it as proof of a `<webview>` host is what put a dead
-   * in-app tab on the phone — it mounted, never loaded, and never errored.
+   * Mobile exposes `openAppBrowser` for DappBrowserActivity. That is native,
+   * not proof that the shell can host an Electron `<webview>` tab.
    */
   it('does not infer an embedded tab from openAppBrowser alone', () => {
     expect(chooseAppBrowserSurface({ openAppBrowser: () => undefined })).toEqual({
@@ -40,10 +39,9 @@ describe('chooseAppBrowserSurface', () => {
     ).toEqual({ surface: 'embedded' })
   })
 
-  it('never promises an in-app tab the surface cannot deliver', () => {
+  it('labels both real wallet-owned surfaces as in-app', () => {
     expect(appBrowserSurfaceLabel({ surface: 'embedded' }).label).toBe('Open in-app')
-    for (const surface of ['native', 'external'] as const) {
-      expect(appBrowserSurfaceLabel({ surface }).label).not.toMatch(/in-app/i)
-    }
+    expect(appBrowserSurfaceLabel({ surface: 'native' }).label).toBe('Open in-app')
+    expect(appBrowserSurfaceLabel({ surface: 'external' }).label).not.toMatch(/in-app/i)
   })
 })

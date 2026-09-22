@@ -31,15 +31,24 @@ export async function openAppInWalletBrowser(args: {
   url: string
   /** Only when the user explicitly asked for the in-app browser. */
   preferInApp?: boolean
-}): Promise<'embedded' | 'window' | 'external' | 'unavailable'> {
+}): Promise<'embedded' | 'native' | 'external' | 'unavailable'> {
   const target = decideAppBrowserTarget(args.url)
   if (target.kind !== 'open') return 'unavailable'
 
-  // Only a shell that hosts `<webview>` gets an embedded tab; asking for one
-  // on mobile mounts a guest that never loads.
-  if (args.preferInApp && chooseAppBrowserSurface(window.handcash).surface === 'embedded') {
-    openEmbeddedAppBrowser(args.origin, target.url)
-    return 'embedded'
+  if (args.preferInApp) {
+    const surface = chooseAppBrowserSurface(window.handcash)
+    if (surface.surface === 'embedded') {
+      openEmbeddedAppBrowser(args.origin, target.url)
+      return 'embedded'
+    }
+    if (surface.surface === 'native') {
+      try {
+        const result = await window.handcash?.openAppBrowser?.(target.url)
+        if (result?.ok) return 'native'
+      } catch {
+        /* fall through to the system browser */
+      }
+    }
   }
 
   if (await openSystemBrowser(target.url)) return 'external'

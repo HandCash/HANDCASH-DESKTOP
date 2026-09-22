@@ -44,8 +44,8 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       openEmbeddedAppBrowser(origin, safeUrl)
       return
     }
-    // Mobile: the shell owns the browser. Stepping aside beats mounting a
-    // `<webview>` tab that Android can never load.
+    // Mobile: the shell owns the in-app browser (DappBrowserActivity), which
+    // Android can render and a `<webview>` tab could never load.
     if (surface.surface === 'native') {
       clearNavChild()
       try {
@@ -111,11 +111,9 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       </div>
 
       <p className="permission-note">
-        {surface.surface === 'embedded'
+        {inAppAvailable
           ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
-          : surface.surface === 'native'
-            ? 'Opens in your system browser either way — this device cannot keep an app tab inside HandCash. Same wallet permissions.'
-            : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
+          : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
       </p>
     </WalletRequestTemplate>
   )
