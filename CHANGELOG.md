@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.254] - 2026-09-22
+
+### Fixed
+
+- **BSV-21 sends now fail closed before signing when token ancestry is
+  rejected.** The pre-sign gate first proves BRC-176 token grammar and
+  conservation, then checks only the token transaction lineage against Arcade.
+  A hard-rejected token ancestor refuses the send before `createAction`;
+  unrelated cash-history noise cannot veto it, and complete unknown/unconfirmed
+  ancestry remains valid SPV state.
+- **Retryable parent rejection now resolves to its root cause.** Arcade's
+  `parent rejected … retryable` response is followed through the ancestor chain
+  instead of being mistaken first for acceptance and later for a generic hard
+  rejection. A truly rejected root retires descendant proof requests and false
+  spend history; a genuinely pending parent stays retryable.
+- **Exact-amount token sends require the signed subject body.** The no-change
+  path can no longer bypass the final signed-output and BRC-176 proof gate.
+
 ## [1.3.253] - 2026-09-22
 
 ### Fixed
