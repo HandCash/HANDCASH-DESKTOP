@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.264] - 2026-09-22
+
+### Fixed
+
+- Receiving another BSV-21 tip now adds its amount to the held token balance
+  instead of replacing the aggregate with the newest tip.
+- Token aggregates persist their exact held outpoints, making repeated inbox
+  paint idempotent while authoritative spend/change projections still replace
+  consumed tips without double-counting.
+- Token diagnostics now report both token-card and held-tip counts so custody
+  projection disagreements are visible in support logs.
+
 ## [1.3.263] - 2026-09-22
 
 ### Fixed

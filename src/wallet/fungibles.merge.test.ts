@@ -405,4 +405,69 @@ describe('mergeLiveFungibles', () => {
     expect(merged[0]!.amt).toBe('69240')
     expect(merged[0]!.icon).toBe(`${'5a'.repeat(32)}_1`)
   })
+
+  it('adds distinct received tips and deduplicates a retried paint', async () => {
+    const {
+      getCachedFungibles,
+      rememberFungibleToken,
+    } = await import('./token/list')
+    const first = row({
+      tokenId: KING_ORIGIN,
+      amt: '40',
+      outpoint: RECEIVE_A,
+    })
+    const second = row({
+      tokenId: KING_ORIGIN,
+      amt: '2',
+      outpoint: `${'22'.repeat(32)}_1`,
+    })
+
+    rememberFungibleToken(first)
+    rememberFungibleToken(second)
+    rememberFungibleToken(second)
+
+    expect(getCachedFungibles()).toMatchObject([
+      {
+        tokenId: KING_ORIGIN,
+        amt: '42',
+        utxoCount: 2,
+        tipOutpoints: [RECEIVE_A, `${'22'.repeat(32)}_1`].sort(),
+      },
+    ])
+  })
+
+  it('replaces the aggregate after a spend instead of double-counting change', async () => {
+    const {
+      getCachedFungibles,
+      paintFungibleAfterSpend,
+      rememberFungibleToken,
+    } = await import('./token/list')
+    rememberFungibleToken(row({
+      tokenId: KING_ORIGIN,
+      amt: '40',
+      outpoint: RECEIVE_A,
+    }))
+    rememberFungibleToken(row({
+      tokenId: KING_ORIGIN,
+      amt: '2',
+      outpoint: `${'22'.repeat(32)}_1`,
+    }))
+
+    paintFungibleAfterSpend({
+      tokenId: KING_ORIGIN,
+      remainingAmt: 35,
+      outpoint: LIVE_CHANGE,
+      sym: 'KING',
+      binarySupply: 'locked',
+    })
+
+    expect(getCachedFungibles()).toMatchObject([
+      {
+        amt: '35',
+        utxoCount: 1,
+        outpoint: LIVE_CHANGE,
+        tipOutpoints: [LIVE_CHANGE],
+      },
+    ])
+  })
 })

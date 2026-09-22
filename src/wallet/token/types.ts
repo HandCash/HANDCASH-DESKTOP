@@ -125,6 +125,8 @@ export type FungibleToken = {
   utxoCount: number
   /** Representative tip outpoint (first UTXO). */
   outpoint: string
+  /** Exact held tips represented by this aggregate; used to dedupe receive paint. */
+  tipOutpoints?: string[]
   /**
    * Spend gate for held tips of this token id.
    * `mixed` = some tips plain, some cosigned (should not combine blindly).
@@ -445,6 +447,7 @@ function mergeFungibleRows(
     _plain: boolean
     _cosigned: boolean
     _ids: Set<string>
+    _tips: Set<string>
     _bestAmt: bigint
   },
   from: FungibleToken & {
@@ -452,12 +455,14 @@ function mergeFungibleRows(
     _plain: boolean
     _cosigned: boolean
     _ids: Set<string>
+    _tips: Set<string>
     _bestAmt: bigint
   },
 ): void {
   into._sum += from._sum
   into.utxoCount += from.utxoCount
   for (const id of from._ids) into._ids.add(id)
+  for (const tip of from._tips) into._tips.add(tip)
   if (from.sym) into.sym = into.sym || from.sym
   if (into.dec === 0 && from.dec > 0) into.dec = from.dec
   if (!into.issuer && from.issuer) into.issuer = from.issuer
@@ -487,6 +492,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     _plain: boolean
     _cosigned: boolean
     _ids: Set<string>
+    _tips: Set<string>
     _bestAmt: bigint
   }
   const byId = new Map<string, Acc>()
@@ -517,6 +523,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
         _ids: new Set([u.tokenId]),
+        _tips: new Set([u.outpoint]),
         _bestAmt: add,
       })
       continue
@@ -524,6 +531,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     existing._sum += add
     existing.utxoCount += 1
     existing._ids.add(u.tokenId)
+    existing._tips.add(u.outpoint)
     if (u.sym) existing.sym = existing.sym || u.sym
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
@@ -565,12 +573,14 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
   }
 
   return [...singles, ...bySoft.values()]
-    .map(({ _sum, _plain, _cosigned, _ids, _bestAmt: _b, ...row }) => {
+    .map(({ _sum, _plain, _cosigned, _ids, _tips, _bestAmt: _b, ...row }) => {
       const tokenIds = [..._ids].sort()
+      const tipOutpoints = [..._tips].sort()
       return {
         ...row,
         sym: row.sym || shortTokenLabel(row.tokenId),
         amt: _sum.toString(),
+        tipOutpoints,
         ...(tokenIds.length > 1 ? { tokenIds } : {}),
         spendKind:
           _plain && _cosigned

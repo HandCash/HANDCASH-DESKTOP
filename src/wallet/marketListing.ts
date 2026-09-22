@@ -2149,13 +2149,14 @@ async function createMarketListingAdvertExclusive(
     // a market attempt or an unavailable indexer must never make owned assets
     // disappear while listOutputs catches up.
     if (listedAsset === 'bsv21' && amt != null) {
-      void import('./token/list').then(({ rememberFungibleToken }) => {
-        rememberFungibleToken({
+      void import('./token/list').then(({ replaceFungibleToken }) => {
+        replaceFungibleToken({
           tokenId: origin,
           sym: lockTip?.sym || identity.name,
           amt: String(amt),
           dec: lockTip?.dec ?? 0,
           utxoCount: 1,
+          tipOutpoints: [listedOutpoint],
           outpoint: listedOutpoint.replace('_', '.'),
           spendKind: 'plain',
           ...(lockTip?.icon ? { icon: lockTip.icon } : {}),

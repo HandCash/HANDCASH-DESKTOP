@@ -183,6 +183,7 @@ function persistDurableList(items: FungibleToken[]): void {
           dec: t.dec,
           utxoCount: t.utxoCount,
           outpoint: t.outpoint,
+          ...(t.tipOutpoints ? { tipOutpoints: t.tipOutpoints } : {}),
           spendKind: t.spendKind,
           ...(t.icon ? { icon: t.icon } : {}),
           ...(t.iconUrl ? { iconUrl: t.iconUrl } : {}),
@@ -381,12 +382,71 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   return out
 }
 
+function normalizedTokenTipOutpoint(raw: string): string {
+  const dotted = normalizedDottedOutpoint(raw)
+  return dotted ? dotted.replace(/\.(\d+)$/, '_$1') : raw.trim().toLowerCase()
+}
+
 export function rememberFungibleToken(token: FungibleToken): void {
-  setFungiblesCache(mergeLiveFungibles([token], cached))
+  const key = tokenKey(token)
+  const prior = cached.find((row) => tokenKey(row) === key)
+  if (!prior) {
+    setFungiblesCache(mergeLiveFungibles([{
+      ...token,
+      tipOutpoints: token.tipOutpoints ?? [token.outpoint],
+    }], cached))
+  } else {
+    const priorTips = new Set(
+      (prior.tipOutpoints?.length ? prior.tipOutpoints : [prior.outpoint])
+        .map(normalizedTokenTipOutpoint),
+    )
+    const incomingTips = (token.tipOutpoints?.length
+      ? token.tipOutpoints
+      : [token.outpoint]
+    ).map(normalizedTokenTipOutpoint)
+    const newTips = incomingTips.filter((tip) => tip && !priorTips.has(tip))
+    if (newTips.length === 0) {
+      // A retry of the same receive may improve metadata, but it must not
+      // replace or re-add the aggregate amount.
+      replaceFungibleToken({
+        ...token,
+        amt: prior.amt,
+        utxoCount: prior.utxoCount,
+        outpoint: prior.outpoint,
+        tipOutpoints: [...priorTips],
+      })
+    } else {
+      let total = 0n
+      try {
+        total = BigInt(prior.amt) + BigInt(token.amt)
+      } catch {
+        // Malformed paint never reduces a previously known holding.
+        total = BigInt(prior.amt.replace(/\D/g, '') || '0')
+      }
+      replaceFungibleToken({
+        ...prior,
+        ...token,
+        amt: total.toString(),
+        utxoCount: prior.utxoCount + Math.max(1, token.utxoCount),
+        outpoint: prior.outpoint,
+        tipOutpoints: [...priorTips, ...newTips],
+      })
+      console.info(
+        `[bsv21] added ${newTips.length} held tip(s) to ${key} — ` +
+          `${prior.amt}+${token.amt}=${total.toString()} across ` +
+          `${prior.utxoCount + Math.max(1, token.utxoCount)} tip(s)`,
+      )
+    }
+  }
   if (!token.binarySupply && !token.encoding) {
     const wallet = getActiveWallet()
     if (wallet) void proveCachedFungibleEncoding(token.outpoint, wallet)
   }
+}
+
+/** Replace one token aggregate from an authoritative spend/list projection. */
+export function replaceFungibleToken(token: FungibleToken): void {
+  setFungiblesCache(mergeLiveFungibles([token], cached))
 }
 
 export function forgetFungibleToken(tokenId: string): void {
@@ -418,13 +478,14 @@ export function paintFungibleAfterSpend(args: {
     return
   }
   const prior = cached.find((t) => tokenKey(t) === args.tokenId.trim().toLowerCase())
-  rememberFungibleToken({
+  replaceFungibleToken({
     tokenId: args.tokenId,
     sym: args.sym || prior?.sym || 'Token',
     amt: remainingAmt,
     dec: args.dec ?? prior?.dec ?? 0,
     utxoCount: Math.max(1, Math.trunc(args.utxoCount ?? 1)),
     outpoint: args.outpoint || prior?.outpoint || args.tokenId,
+    tipOutpoints: [args.outpoint || prior?.outpoint || args.tokenId],
     spendKind: 'plain',
     binarySupply: args.binarySupply ?? prior?.binarySupply,
     encoding:
@@ -1112,8 +1173,13 @@ async function listFungiblesNow(
       runStartedAt,
     )
     setFungiblesCache(merged, { forEpoch: epoch, forRun: run })
+    const liveTipCount = liveRows.reduce(
+      (sum, token) => sum + Math.max(1, token.utxoCount),
+      0,
+    )
     console.info(
-      `[bsv21] listOutputs done ${Date.now() - startedAt}ms — live ${liveRows.length}, showing ${merged.length}`,
+      `[bsv21] listOutputs done ${Date.now() - startedAt}ms — ` +
+        `live ${liveRows.length} token(s) / ${liveTipCount} tip(s), showing ${merged.length}`,
     )
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
