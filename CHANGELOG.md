@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.252] - 2026-09-22
+
+### Fixed
+
+- **Undeliverable inbound transfers stop burning the UI thread.** A tip card
+  whose sender never broadcast used to be re-chased on every five-second poll,
+  because messagebox redelivery reset the card's arrival time and the
+  two-hour retirement grace never expired. First-seen is now durable and only
+  ever moves backwards, a body-less miss backs off for fifteen minutes, and the
+  hint retires once the grace window closes with no body at any provider.
+- **Token change stays in inventory right after a send.** When `listOutputs`
+  has not projected the BRC-162 lock yet, the just-signed change output is
+  recovered from local BEEF instead of being read as spent.
+- **Sending tokens to your own address no longer empties the card.** The payee
+  output of a self-addressed transfer is not marked sent or relinquished.
+
 ## [1.3.251] - 2026-09-21
 
 ### Changed
