@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => {
   keepChangeOfSignedTx: vi.fn(),
   sealSpentInputsOfSignedTx: vi.fn(async () => 0),
   rehideInputsOfLiveLocalTxs: vi.fn(async () => 0),
+  listSignedChequeTxids: vi.fn(() => [] as string[]),
+  signedChequeAtomic: vi.fn(() => null as number[] | null),
+  enqueuePendingMinerSubmit: vi.fn(() => true),
   durableGetItem: vi.fn((key: string) => durableStore[key] ?? ''),
   durableSetItem: vi.fn((key: string, value: string) => {
     if (value) durableStore[key] = value
@@ -106,6 +109,16 @@ vi.mock('./arcadeSubmitGuard', () => ({
   txHadArcadeSubmitContact: mocks.txHadArcadeSubmitContact,
 }))
 
+vi.mock('./signedChequeArchive', () => ({
+  listSignedChequeTxids: () => mocks.listSignedChequeTxids(),
+  signedChequeAtomic: (txid: string) => mocks.signedChequeAtomic(txid),
+}))
+
+vi.mock('./pendingMinerOutbox', () => ({
+  enqueuePendingMinerSubmit: (...args: unknown[]) =>
+    mocks.enqueuePendingMinerSubmit(...args),
+}))
+
 vi.mock('./durableStorage', () => ({
   durableGetItem: mocks.durableGetItem,
   durableSetItem: mocks.durableSetItem,
@@ -143,6 +156,10 @@ function mockHealSuccess() {
   })
   mocks.getActiveWallet.mockReturnValue({ chain: 'main' })
   mocks.txExistsOnChain.mockResolvedValue(true)
+  mocks.listSignedChequeTxids.mockReturnValue([TX])
+  mocks.signedChequeAtomic.mockImplementation((txid: string) =>
+    txid === TX ? [1, 2, 3] : null,
+  )
   mocks.keepChangeOfSignedTx.mockResolvedValue(1)
   mocks.runChangeHeal.mockResolvedValue({
     restored: 0,
@@ -316,6 +333,21 @@ describe('healUtxoFromActivityHistory', () => {
 
     expect(mocks.pinBroadcastLocalTx).toHaveBeenCalledWith(TX)
     expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+  })
+
+  it('does not heal activity hashes that have no signed template', async () => {
+    mocks.listSignedChequeTxids.mockReturnValue([])
+    mocks.signedChequeAtomic.mockReturnValue(null)
+    mocks.collectActivityTxids.mockReturnValue({
+      txids: new Set([TX]),
+      archived: 0,
+      total: 1,
+    })
+
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled()
+    expect(mocks.sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
   })
 
   it('does not start a background ingest heal from auto checkpoint', async () => {

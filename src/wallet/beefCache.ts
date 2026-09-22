@@ -271,6 +271,19 @@ export async function getLocalBeefForTxid(
   const key = keyOf(txid)
   const cached = findSessionBeef(key)
   if (cached) return cached
+  try {
+    const { signedChequeAtomic } = await import('./signedChequeArchive')
+    const archived = signedChequeAtomic(key)
+    if (archived?.length) {
+      const beef = Beef.fromBinary(archived)
+      if (beef.findTxid(key)?.tx) {
+        indexBeefTree(beef)
+        return beef
+      }
+    }
+  } catch {
+    /* archive is optional for inbound lookups */
+  }
   const durable = findDurableBeef(key)
   if (durable) {
     indexBeefTree(durable)

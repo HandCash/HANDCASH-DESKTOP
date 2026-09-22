@@ -20,6 +20,7 @@ const prepareBroadcastCheque = vi.fn(async (_w: unknown, _id: string, atomic: nu
 }))
 
 const enqueuePendingMinerSubmit = vi.fn(() => true)
+const archiveSignedCheque = vi.fn(() => true)
 
 vi.mock('./beefCache', () => ({
   prepareBroadcastCheque: (...args: unknown[]) => prepareBroadcastCheque(...args),
@@ -57,6 +58,10 @@ vi.mock('./pendingMinerOutbox', () => ({
     enqueuePendingMinerSubmit(...args),
 }))
 
+vi.mock('./signedChequeArchive', () => ({
+  archiveSignedCheque: (...args: unknown[]) => archiveSignedCheque(...args),
+}))
+
 const TXID = 'ab'.repeat(32)
 const ATOMIC = [1, 2, 3]
 
@@ -76,6 +81,9 @@ describe('signedSendLifecycle', () => {
     })
 
     expect(sealSpentInputsOfSignedTx).toHaveBeenCalledWith(TXID, ATOMIC)
+    expect(archiveSignedCheque).toHaveBeenCalledWith(TXID, ATOMIC, {
+      flow: 'token_transfer',
+    })
     expect(enqueuePendingMinerSubmit).toHaveBeenCalledWith(TXID, ATOMIC, {
       flow: 'token_transfer',
     })
@@ -102,6 +110,7 @@ describe('signedSendLifecycle', () => {
       }),
     ).rejects.toThrow(/parent transaction bodies are missing/)
     expect(sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
+    expect(archiveSignedCheque).not.toHaveBeenCalled()
     expect(enqueuePendingMinerSubmit).not.toHaveBeenCalled()
   })
 

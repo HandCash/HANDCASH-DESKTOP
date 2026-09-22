@@ -85,6 +85,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  signedChequeArchive: defineStorage({
+    key: 'handcash.wallet.signedChequeArchive.v1',
+    owner: 'transactions',
+    scope: 'wallet',
+    version: 1,
+  }),
   pendingBrc29Outbox: defineStorage({
     key: 'handcash.brc29.pendingOutbox.v1',
     owner: 'propagation',

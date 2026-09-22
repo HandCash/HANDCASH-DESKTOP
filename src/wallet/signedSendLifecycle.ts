@@ -51,9 +51,10 @@ export async function registerSignedSend(args: {
   // Seal first. A lifecycle must never advertise a signed cheque while its
   // inputs remain selectable by a second send.
   await sealSpentInputsOfSignedTx(txid, atomicBeef)
-  // Persist before any Activity/remittance work. `submitAtomicBeefToMiners`
-  // is idempotent over this row, so the later network attempt cannot create a
-  // second lifecycle and a crash cannot lose the only signed body.
+  // Persist before any Activity/remittance work. The cheque archive is what
+  // heal replays; the miner outbox is only the still-propagating subset.
+  const { archiveSignedCheque } = await import('./signedChequeArchive')
+  archiveSignedCheque(txid, atomicBeef, { flow: args.flow })
   const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
   enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow })
 

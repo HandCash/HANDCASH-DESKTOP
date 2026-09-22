@@ -1,0 +1,197 @@
+/**
+ * Durable archive of every locally signed transaction template.
+ *
+ * The miner outbox may drop a body after Arcade accepts it. Heal must still
+ * be able to reseal inputs and keep change from the exact signed Atomic BEEF,
+ * so this store is the cheque itself — not Activity hashes or explorer lookups.
+ */
+import { Beef, Utils } from '@bsv/sdk'
+import { accountLocalKey } from './accountLocalKeys'
+import { durableGetItem, durableSetItem } from './durableStorage'
+import { storageRegistry } from '../storage/registry'
+import type { TransactionFlow } from './transactionTelemetry'
+
+const KEY_BASE = storageRegistry.signedChequeArchive.key
+const CREATED_BEEF_INDEX = storageRegistry.createdBeefIndex.key
+const CREATED_BEEF_PREFIX = storageRegistry.createdBeefPrefix.key
+const PENDING_MINER_KEY = storageRegistry.pendingMinerOutbox.key
+const MAX_ROWS = 500
+
+export type SignedCheque = {
+  txid: string
+  atomic: number[]
+  createdAt: number
+  flow?: TransactionFlow
+}
+
+type StoredCheque = {
+  txid: string
+  atomicB64: string
+  createdAt: number
+  flow?: TransactionFlow
+}
+
+function storageKey(): string {
+  return accountLocalKey(KEY_BASE)
+}
+
+function bodyIsSignedCheque(txid: string, atomic: number[]): boolean {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id) || atomic.length === 0) return false
+  try {
+    const found = Beef.fromBinary(atomic).findTxid(id)
+    return !!found?.tx && found.isTxidOnly !== true
+  } catch {
+    return false
+  }
+}
+
+function decodeAtomic(b64: string): number[] | null {
+  try {
+    const bytes = Utils.toArray(b64, 'base64')
+    return Array.isArray(bytes) && bytes.length > 0 ? [...bytes] : null
+  } catch {
+    return null
+  }
+}
+
+function toCheque(row: StoredCheque): SignedCheque | null {
+  const txid = String(row.txid ?? '').trim().toLowerCase()
+  const atomic = decodeAtomic(String(row.atomicB64 ?? ''))
+  if (!atomic || !bodyIsSignedCheque(txid, atomic)) {
+    return null
+  }
+  return {
+    txid,
+    atomic,
+    createdAt:
+      typeof row.createdAt === 'number' && Number.isFinite(row.createdAt)
+        ? row.createdAt
+        : Date.now(),
+    flow: row.flow,
+  }
+}
+
+function migrateLegacyBodies(): StoredCheque[] {
+  const extra: StoredCheque[] = []
+  const seen = new Set<string>()
+  const take = (txid: string, atomic: number[], flow?: TransactionFlow) => {
+    const id = txid.trim().toLowerCase()
+    if (seen.has(id) || !bodyIsSignedCheque(id, atomic)) {
+      return
+    }
+    seen.add(id)
+    extra.push({
+      txid: id,
+      atomicB64: Utils.toBase64(atomic),
+      createdAt: Date.now(),
+      flow,
+    })
+  }
+  try {
+    const pending = JSON.parse(
+      durableGetItem(accountLocalKey(PENDING_MINER_KEY)) || '[]',
+    ) as unknown
+    if (Array.isArray(pending)) {
+      for (const row of pending) {
+        const rec = row as { txid?: unknown; atomic?: unknown; flow?: unknown }
+        if (!Array.isArray(rec.atomic)) continue
+        take(
+          String(rec.txid ?? ''),
+          rec.atomic as number[],
+          typeof rec.flow === 'string' ? (rec.flow as TransactionFlow) : undefined,
+        )
+      }
+    }
+  } catch {
+    /* miner outbox is a source, not a requirement */
+  }
+  try {
+    const index = JSON.parse(durableGetItem(CREATED_BEEF_INDEX) || '[]') as unknown
+    if (Array.isArray(index)) {
+      for (const txid of index) {
+        const b64 = durableGetItem(CREATED_BEEF_PREFIX + String(txid))
+        if (!b64) continue
+        const atomic = decodeAtomic(b64)
+        if (atomic) take(String(txid), atomic)
+      }
+    }
+  } catch {
+    /* 16-slot createdBeef was the previous leaky backup */
+  }
+  return extra
+}
+
+function loadStored(): StoredCheque[] {
+  try {
+    const parsed = JSON.parse(durableGetItem(storageKey()) || '[]') as unknown
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      const migrated = migrateLegacyBodies()
+      if (migrated.length > 0) saveStored(migrated)
+      return migrated
+    }
+    return parsed.filter(
+      (row): row is StoredCheque =>
+        !!row &&
+        typeof row === 'object' &&
+        typeof (row as StoredCheque).txid === 'string' &&
+        typeof (row as StoredCheque).atomicB64 === 'string',
+    )
+  } catch {
+    return []
+  }
+}
+
+function saveStored(rows: StoredCheque[]): boolean {
+  const trimmed = rows.slice(-MAX_ROWS)
+  return durableSetItem(storageKey(), JSON.stringify(trimmed))
+}
+
+export function archiveSignedCheque(
+  txid: string,
+  atomic: number[],
+  opts?: { flow?: TransactionFlow },
+): boolean {
+  if (!bodyIsSignedCheque(txid, atomic)) return false
+  const id = txid.trim().toLowerCase()
+  const rows = loadStored()
+  const next: StoredCheque = {
+    txid: id,
+    atomicB64: Utils.toBase64(atomic),
+    createdAt: Date.now(),
+    flow: opts?.flow,
+  }
+  const existing = rows.find((row) => row.txid === id)
+  if (existing) {
+    const prev = decodeAtomic(existing.atomicB64) ?? []
+    if (atomic.length < prev.length) return true
+    existing.atomicB64 = next.atomicB64
+    existing.flow = opts?.flow ?? existing.flow
+    return saveStored(rows)
+  }
+  rows.push(next)
+  if (!saveStored(rows)) {
+    console.error('[signed-cheque] durable write refused', id.slice(0, 12))
+    return false
+  }
+  return true
+}
+
+export function signedChequeAtomic(txid: string): number[] | null {
+  const id = txid.trim().toLowerCase()
+  const row = loadStored().find((item) => item.txid === id)
+  if (!row) return null
+  return toCheque(row)?.atomic ?? null
+}
+
+export function listSignedChequeTxids(): string[] {
+  return loadStored()
+    .map((row) => toCheque(row)?.txid)
+    .filter((txid): txid is string => !!txid)
+}
+
+export function listSignedCheques(): SignedCheque[] {
+  return loadStored()
+    .map(toCheque)
+    .filter((row): row is SignedCheque => row != null)
+}

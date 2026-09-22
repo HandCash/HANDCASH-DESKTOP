@@ -24,6 +24,10 @@ import { bumpBalanceAfterHeal} from "./session";
 import type { Chain } from "./vault";
 import { releaseSpendAttemptFunds } from "./spendAttempt";
 import {
+  listSignedChequeTxids,
+  signedChequeAtomic,
+} from "./signedChequeArchive";
+import {
   keepChangeOfSignedTx,
   listFailedLocalTxids,
   listPendingLocalChangeTxids,
@@ -142,7 +146,8 @@ function collectCandidateTxids(): {
   activity: ReturnType<typeof collectActivityTxids>;
 } {
   const activity = collectActivityTxids();
-  return { txids: activity.txids, activity };
+  const txids = new Set(listSignedChequeTxids());
+  return { txids, activity };
 }
 
 function orderTxidsForHeal(args: {
@@ -167,25 +172,6 @@ function orderTxidsForHeal(args: {
     for (const txid of args.activity) push(txid);
   }
   return out;
-}
-
-async function hasLocalSignedTx(txid: string): Promise<boolean> {
-  const storage = getActiveWallet()?.wallet?.storage;
-  if (!storage?.runAsStorageProvider) return false;
-  try {
-    return await storage.runAsStorageProvider(async (activeSp) => {
-      const sp = activeSp as {
-        getProvenOrRawTx?: (
-          id: string
-        ) => Promise<{ rawTx?: number[] } | undefined>;
-      };
-      if (typeof sp.getProvenOrRawTx !== "function") return false;
-      const found = await sp.getProvenOrRawTx(txid);
-      return Array.isArray(found?.rawTx) && found.rawTx.length > 0;
-    });
-  } catch {
-    return false;
-  }
 }
 
 async function healShouldYieldToSpend(
@@ -256,33 +242,29 @@ async function processTxidBatch(
   const processed: string[] = [];
   for (const txid of batch) {
     processed.push(txid);
-    const local = await hasLocalSignedTx(txid);
+    const atomic = signedChequeAtomic(txid);
+    if (!atomic?.length) continue;
     if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null);
       if (onChain === false) {
-        // Absence is not cancellation. Failed rows remain failed; signed local
-        // cheques stay sealed and retain their chainable change. Arcade-pinned
-        // rows are the exception to a stale local failure label: the miner ACK
-        // made the cheque non-cancelable, so restore its local change even
-        // before an explorer sees it.
+        // Absence is not cancellation. The signed template stays sealed and
+        // retains its change. Re-queue miner propagation from the archive.
         if (failed.has(txid)) {
           if (!txHadArcadeSubmitContact(txid)) continue;
           await pinBroadcastLocalTx(txid);
+        } else {
+          const { enqueuePendingMinerSubmit } = await import(
+            "./pendingMinerOutbox"
+          );
+          enqueuePendingMinerSubmit(txid, atomic);
         }
       }
       if (onChain === true) {
         txidsOnChain += 1;
         if (failed.has(txid)) await restoreOnChainLocalTx(txid);
-      } else if (!local) {
-        continue;
       }
-    } else if (!local) {
-      continue;
     }
-    // v1.3.146 sibling credit aborted the sender's reserved batch after a live
-    // root→child send — inputs flipped spendable again while change stayed.
-    // Heal used to only promote change → permanent ~2×. Seal inputs first.
-    await sealSpentInputsOfSignedTx(txid, undefined);
+    await sealSpentInputsOfSignedTx(txid, atomic);
     changeKept += await keepChangeOfSignedTx(txid);
   }
   return { changeKept, txidsOnChain, processed };
@@ -490,8 +472,8 @@ async function runHealCore(
 }
 
 /**
- * One heal pass. Activity + toolbox rows are the candidate set; the checkpoint
- * is only a skip list (already healed), never a work list of old hashes.
+ * One heal pass. Signed cheque templates are the candidate set; Activity is
+ * only a display count. The checkpoint is a skip list of already-healed txids.
  */
 export async function runUtxoHealPass(
   opts: UtxoHealPassOpts
@@ -503,7 +485,7 @@ export async function runUtxoHealPass(
   const checkpointed = new Set(
     (readHealCheckpoint()?.txids ?? []).map((t) => t.toLowerCase())
   );
-  const allFailed = await listFailedLocalTxids();
+  const allFailed = (await listFailedLocalTxids()).filter((id) => txids.has(id));
   const includeActivity = opts.force === true || opts.source === "manual";
   const failedTxids = includeActivity
     ? allFailed
@@ -544,7 +526,9 @@ export async function runUtxoHealPass(
 
   const txidList = orderTxidsForHeal({
     missing,
-    pendingLive: maybePendingChange ? await listPendingLocalChangeTxids() : [],
+    pendingLive: maybePendingChange
+      ? (await listPendingLocalChangeTxids()).filter((id) => txids.has(id))
+      : [],
     failed: failedTxids,
     activity: txids,
     includeActivity,

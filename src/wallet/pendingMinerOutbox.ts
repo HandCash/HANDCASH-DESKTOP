@@ -138,6 +138,9 @@ export function enqueuePendingMinerSubmit(
     console.error('[minerOutbox] durable write refused', id.slice(0, 12))
     return false
   }
+  void import('./signedChequeArchive').then(({ archiveSignedCheque }) => {
+    archiveSignedCheque(id, atomic, { flow: opts?.flow ?? trace?.flow })
+  })
   recordTransactionStage('propagation_queued', {
     flow: opts?.flow ?? trace?.flow,
     traceId: trace?.traceId,
@@ -171,7 +174,11 @@ export function updatePendingMinerSubmitBody(
   const row = rows.find((r) => r.txid === id)
   if (!row) return false
   row.atomic = [...atomic]
-  return save(rows)
+  if (!save(rows)) return false
+  void import('./signedChequeArchive').then(({ archiveSignedCheque }) => {
+    archiveSignedCheque(id, atomic, { flow: row.flow })
+  })
+  return true
 }
 
 function backoffMs(attempt: number): number {

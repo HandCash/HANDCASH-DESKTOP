@@ -96,6 +96,7 @@ import {
 import { spendBlockedMessage } from './walletCoordinator'
 import { canAutoProcessPayment } from './autoPay'
 import { withImmediateAppBroadcast } from './appCreateAction'
+import { funnelAppSignedCheque } from './appSignedCheque'
 import {
   isAlreadySpentInputError,
   keepChangeOfSignedTx,
@@ -1061,16 +1062,31 @@ async function handleBrc100RequestInner(
       if (funds > 0 || items > 0) playWalletSound('receive')
       else playWalletSound('soft')
     } else if (method === 'processAction') {
-      // App finished broadcast of a prior noSend — change can join the UTXO set.
       const txid = extractTxid(result) ?? extractTxid(args)
       if (txid) {
-        try {
-          await keepChangeOfSignedTx(txid)
-        } catch (err) {
-          console.warn('[brc100] keep change after processAction skipped', err)
+        const completed = await cacheCreateActionBeef(active, txid, result)
+        if (completed) {
+          const funneled = await funnelAppSignedCheque({
+            txid,
+            atomicBeef: completed,
+            satoshis: extractSatsFromArgs(method, args),
+          })
+          if (!funneled) {
+            try {
+              await keepChangeOfSignedTx(txid)
+            } catch (err) {
+              console.warn('[brc100] keep change after processAction skipped', err)
+            }
+          }
+        } else {
+          try {
+            await keepChangeOfSignedTx(txid)
+          } catch (err) {
+            console.warn('[brc100] keep change after processAction skipped', err)
+          }
         }
       }
-    } else if (method === 'createAction') {
+    } else if (method === 'createAction' || method === 'signAction') {
       const txid = extractTxid(result)
       if (txid) {
         const completed = await cacheCreateActionBeef(active, txid, result)
@@ -1079,16 +1095,27 @@ async function handleBrc100RequestInner(
           // spend/post, including every locally-known unconfirmed parent body.
           result = { ...(result as Record<string, unknown>), tx: completed }
         }
-        cacheImageIconsFromCreateAction(txid, args, result)
-        void import('./token/list').then(({ proveCachedFungibleEncodings }) =>
-          proveCachedFungibleEncodings(active),
-        )
-        // Await so the HTTP response lands after spent inputs are sealed.
-        // Unsent/noSend change stays unspendable until Arcade/processAction so
-        // the next app prefers fresh UTXOs over chaining an unbroadcast parent.
-        await sealAfterAppCreateAction(txid, result)
+        if (completed) {
+          const funneled = await funnelAppSignedCheque({
+            txid,
+            atomicBeef: completed,
+            satoshis: extractSatsFromArgs(method, args),
+          })
+          if (!funneled) await sealAfterAppCreateAction(txid, result)
+        } else {
+          await sealAfterAppCreateAction(txid, result)
+        }
+        if (method === 'createAction') {
+          cacheImageIconsFromCreateAction(txid, args, result)
+          void import('./token/list').then(({ proveCachedFungibleEncodings }) =>
+            proveCachedFungibleEncodings(active),
+          )
+        }
       }
-      if (isBsv21IdentityMintArgs(method, args) && txid) {
+      if (method === 'signAction') {
+        playWalletSound('soft')
+        scheduleHistoryBackupPush('signAction')
+      } else if (isBsv21IdentityMintArgs(method, args) && txid) {
         recordIdentityMintActivity(txid, args, originator)
         paintAfterCreateActionBsv21Mint(
           active,
@@ -1127,11 +1154,10 @@ async function handleBrc100RequestInner(
           playWalletSound('soft')
         }
       }
-      // P2P createAction mutates toolbox outs + remittance metadata — backup BRC-39.
-      scheduleHistoryBackupPush('createAction')
-    } else if (method === 'signAction') {
-      playWalletSound('soft')
-      scheduleHistoryBackupPush('signAction')
+      // P2P createAction / signAction mutates toolbox outs — backup BRC-39.
+      scheduleHistoryBackupPush(
+        method === 'signAction' ? 'signAction' : 'createAction',
+      )
     } else if (method === 'internalizeAction') {
       // BSV the app just credited must be selectable for the next createAction.
       const receivedTxid = extractTxid(result) ?? extractTxid(args)

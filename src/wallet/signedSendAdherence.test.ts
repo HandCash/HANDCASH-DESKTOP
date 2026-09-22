@@ -13,6 +13,7 @@ const outboundModules = [
   'token/burn.ts',
   'marketListing.ts',
   'marketSettlement.ts',
+  'appSignedCheque.ts',
 ] as const
 
 const lifecycleOnlyModules = outboundModules.filter(
@@ -44,8 +45,14 @@ describe('signed send lifecycle adherence', () => {
   it('keeps the low-level transaction relationship in one module', () => {
     const text = source('signedSendLifecycle.ts')
     expect(text).toContain('sealSpentInputsOfSignedTx(')
+    expect(text).toContain('archiveSignedCheque(')
     expect(text).toContain('enqueuePendingMinerSubmit(')
     expect(text).toContain('submitAtomicBeefToMiners(')
     expect(text).toContain('tryFinalizeDualLayerTx(')
+  })
+
+  it('puts app createAction and signAction on the same cheque funnel', () => {
+    expect(source('brc100Handler.ts')).toContain('funnelAppSignedCheque(')
+    expect(source('appSignedCheque.ts')).toContain('registerSignedSend')
   })
 })
