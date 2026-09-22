@@ -501,6 +501,17 @@ export async function sendBsv21Tokens(args: {
             const ancestor = validity.txid
               ? ` ${validity.txid.slice(0, 12)}`
               : ''
+            // A rejected ancestor is terminal. Record it so the cheque that
+            // produced this tip stops holding its own inputs sealed.
+            if (validity.reason === 'ancestor-rejected' && validity.txid) {
+              const { noteArcadeRejectedTx } = await import(
+                '../arcadeSubmitGuard'
+              )
+              noteArcadeRejectedTx(validity.txid)
+            }
+            console.warn(
+              `[bsv21] pre-sign refuse ${validity.reason}${ancestor} — ${validity.detail}`,
+            )
             throw new Error(
               `BSV-21 send refused (${validity.reason}${ancestor}): ${validity.detail}`,
             )

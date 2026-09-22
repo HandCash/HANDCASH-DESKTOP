@@ -24,7 +24,9 @@ const mocks = vi.hoisted(() => ({
   sendFungible: vi.fn(),
   releaseSealedInputsOfUnsentTx: vi.fn(),
   forgetItemsSent: vi.fn(),
-  txHadArcadeSubmitContact: vi.fn(),
+  failUnsentLocalTx: vi.fn(),
+  arcadePinStillBinds: vi.fn(),
+  txIsArcadeRejected: vi.fn(),
 }));
 
 vi.mock("./sentItemGuard", () => ({
@@ -34,7 +36,8 @@ vi.mock("./sentItemGuard", () => ({
 }));
 
 vi.mock("./arcadeSubmitGuard", () => ({
-  txHadArcadeSubmitContact: mocks.txHadArcadeSubmitContact,
+  arcadePinStillBinds: mocks.arcadePinStillBinds,
+  txIsArcadeRejected: mocks.txIsArcadeRejected,
 }));
 
 vi.mock("./legacyScan", async (importOriginal) => ({
@@ -74,6 +77,7 @@ vi.mock("./staleOutputRelease", () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
   hideSpentOutpoints: mocks.hideSpentOutpoints,
   releaseSealedInputsOfUnsentTx: mocks.releaseSealedInputsOfUnsentTx,
+  failUnsentLocalTx: mocks.failUnsentLocalTx,
 }));
 
 vi.mock("./session", () => ({
@@ -229,7 +233,9 @@ beforeEach(() => {
   });
   mocks.sendFungible.mockResolvedValue({ txid: TX });
   mocks.releaseSealedInputsOfUnsentTx.mockResolvedValue(2);
-  mocks.txHadArcadeSubmitContact.mockReturnValue(false);
+  mocks.arcadePinStillBinds.mockResolvedValue(false);
+  mocks.txIsArcadeRejected.mockReturnValue(false);
+  mocks.failUnsentLocalTx.mockResolvedValue(true);
 });
 
 describe("reclaimSpendAttempt", () => {
@@ -272,7 +278,7 @@ describe("reclaimSpendAttempt", () => {
     mocks.txExistsOnChain.mockResolvedValue(false);
     mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() });
     mocks.spentStatusOfOutpoint.mockResolvedValue("unspent");
-    mocks.txHadArcadeSubmitContact.mockReturnValue(true);
+    mocks.arcadePinStillBinds.mockResolvedValue(true);
 
     await expect(reclaimSpendAttempt(itemAttempt(), "main")).rejects.toThrow(
       /Arcade/
@@ -868,11 +874,32 @@ describe("rebroadcastAllFailedSpends", () => {
   });
 
   it("does not count an Arcade-pinned signed failure as clearable", async () => {
-    mocks.txHadArcadeSubmitContact.mockReturnValue(true);
+    mocks.arcadePinStillBinds.mockResolvedValue(true);
     mocks.listFailedActivity.mockReturnValue([
       itemAttempt({ id: "item", status: "failed" }),
     ]);
     await expect(countClearableFailedSpends("main")).resolves.toBe(0);
     await expect(countRebroadcastableFailedSpends("main")).resolves.toBe(1);
+  });
+
+  /**
+   * The field case: Arcade rejected the transfer because a token ancestor was
+   * double spent. Its inputs can never be spent by it, so the row and the coins
+   * it sealed were held on proof that could not arrive.
+   */
+  it("clears an Arcade-rejected transfer and frees the coins it sealed", async () => {
+    mocks.arcadePinStillBinds.mockResolvedValue(false);
+    mocks.txIsArcadeRejected.mockReturnValue(true);
+    mocks.listFailedActivity.mockReturnValue([
+      itemAttempt({ id: "item", status: "failed" }),
+    ]);
+    mocks.countFailedActivity.mockReturnValue(1);
+    mocks.removeFailedActivity.mockReturnValue(1);
+
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 1,
+      kept: 0,
+    });
+    expect(mocks.failUnsentLocalTx).toHaveBeenCalledWith(TX, { force: true });
   });
 });

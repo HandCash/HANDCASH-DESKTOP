@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ArcadeTxFate } from './arcadeV2'
 import {
   __resetArcadeSubmitGuardForTests,
+  arcadePinStillBinds,
   postBeefResultsArcadeAccepted,
   postBeefResultsArcadeHardReject,
   postBeefResultsHitArcade,
@@ -8,6 +10,7 @@ import {
   signedTxMayBeRemoved,
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
+  txIsArcadeRejected,
 } from './arcadeSubmitGuard'
 
 const store = new Map<string, string>()
@@ -33,11 +36,21 @@ vi.mock('./txOutpoints', () => ({
   inputOutpointsFromRawTx: () => [],
 }))
 
+const arcadeFate = vi.fn<[], Promise<ArcadeTxFate>>(async () => ({
+  kind: 'unknown',
+}))
+
+vi.mock('./arcadeV2', () => ({
+  fetchArcadeTxFate: (..._args: unknown[]) => arcadeFate(),
+}))
+
 const TX = 'aa'.repeat(32)
 
 beforeEach(() => {
   store.clear()
   __resetArcadeSubmitGuardForTests()
+  arcadeFate.mockReset()
+  arcadeFate.mockResolvedValue({ kind: 'unknown' })
 })
 
 describe('arcadeSubmitGuard', () => {
@@ -153,6 +166,42 @@ describe('arcadeSubmitGuard', () => {
     await expect(
       signedTxMayBeRemoved({ txid: TX, chain: 'main' }),
     ).resolves.toBe(false)
+  })
+
+  it('keeps the pin while Arcade cannot be reached', async () => {
+    rememberArcadeSubmitContact(TX)
+    await expect(arcadePinStillBinds(TX, 'main')).resolves.toBe(true)
+    expect(txIsArcadeRejected(TX)).toBe(false)
+  })
+
+  it('retires a pin Arcade itself rejected, so the row and coins can go', async () => {
+    rememberArcadeSubmitContact(TX)
+    arcadeFate.mockResolvedValue({
+      kind: 'rejected',
+      status: 'REJECTED',
+      reason: 'ancestor 68ba7d rejected: UTXO_SPENT (70)',
+    })
+
+    await expect(arcadePinStillBinds(TX, 'main')).resolves.toBe(false)
+    await expect(signedTxMayBeRemoved({ txid: TX, chain: 'main' })).resolves.toBe(
+      true,
+    )
+    // Terminal: remembered, pin dropped, and Arcade is not asked twice.
+    expect(txIsArcadeRejected(TX)).toBe(true)
+    expect(txHadArcadeSubmitContact(TX)).toBe(false)
+    expect(arcadeFate).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a pin whose parent Arcade is still working', async () => {
+    rememberArcadeSubmitContact(TX)
+    arcadeFate.mockResolvedValue({
+      kind: 'retryable',
+      status: 'REJECTED',
+      reason: 'parent rejected (ancestor …): retryable — resubmit',
+    })
+    await expect(signedTxMayBeRemoved({ txid: TX, chain: 'main' })).resolves.toBe(
+      false,
+    )
   })
 
   it('treats spent inputs as proven conflict', async () => {

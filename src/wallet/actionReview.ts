@@ -283,9 +283,12 @@ export async function settleArcadeRejectedProvenTxReqs(
     });
 
     const { failUnsentLocalTx } = await import("./staleOutputRelease");
+    const { noteArcadeRejectedTx } = await import("./arcadeSubmitGuard");
     for (const row of rejected) {
       // TaskSendWaiting keys off the local transaction row, while proof tasks
-      // key off provenTxReq. Retire both halves of the same SPV failure.
+      // key off provenTxReq. Retire both halves of the same SPV failure — and
+      // the Arcade pin, or Activity and the sealed inputs stay held by it.
+      noteArcadeRejectedTx(row.txid);
       await failUnsentLocalTx(row.txid, { force: true });
       const reason =
         row.fate.kind === "rejected" ? row.fate.reason : "Arcade rejected";

@@ -19,6 +19,7 @@ import {
 } from "./legacyScan";
 import { logDiag } from "./diagnosticLog";
 import { getActiveWallet, type ActiveWallet } from "./session";
+import type { Chain } from "./vault";
 import { isItemSent } from "./sentItemGuard";
 import {
   creditUtxo,
@@ -53,11 +54,13 @@ import {
   type TxLiveness,
 } from "./kernel/txLiveness";
 import {
+  arcadeVerdictFor,
   forgetArcadeSubmitContact,
   signedTxLooksAbandoned,
   signedTxMayBeRemoved,
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
+  txIsArcadeRejected,
 } from "./arcadeSubmitGuard";
 import { chooseSpentCoinMutation, isNamedSpenderTxid } from "./utxoTxMutation";
 import { isLocalUnconfirmedTxid } from "./txStore";
@@ -1331,6 +1334,17 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   const chain = active?.chain;
   if (chain) {
     for (const txid of sealerIds) {
+      // Arcade rejected the cheque it pinned, so no chain evidence is coming:
+      // a rejected transaction is never mined and never spends these inputs.
+      if (await arcadeRejectedSealer(txid, chain)) {
+        liveSealers.delete(txid);
+        deadSealers.add(txid);
+        await failUnsentLocalTx(txid, { force: true });
+        console.info(
+          `[stale-output] reclaiming ${txid.slice(0, 12)} — Arcade rejected it`
+        );
+        continue;
+      }
       // "Live" is a local status, not immunity from a proven competing spend.
       // The poisoned 46-input consolidations stayed live forever and Heal
       // resealed them on every pass. Promote to dead only on real conflict.
@@ -1477,6 +1491,25 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
     `[stale-output] reclaimed ${revive.length} sealed input(s) never spent on chain`
   );
   return revived + revive.length;
+}
+
+/**
+ * Did Arcade reject the sealer itself?
+ *
+ * Only pinned transactions are worth asking about: without a pin nobody
+ * submitted this cheque, so Arcade has no verdict to give and the abandoned /
+ * conflict paths own the decision.
+ */
+async function arcadeRejectedSealer(
+  txid: string,
+  chain: Chain
+): Promise<boolean> {
+  if (txIsArcadeRejected(txid)) return true;
+  if (!txHadArcadeSubmitContact(txid)) return false;
+  const verdict = await arcadeVerdictFor(txid, chain).catch(
+    () => "unknown" as const
+  );
+  return verdict === "rejected";
 }
 
 /**

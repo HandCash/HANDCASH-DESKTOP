@@ -8,6 +8,7 @@
 import { spentStatusOfOutpoint, txExistsOnChain } from './legacyScan'
 import type { Chain } from './vault'
 import { createDurableTtlTxidMap } from './durableTtlTxidMap'
+import { decideArcadePinFate, type ArcadeVerdict } from './kernel/arcadePinFate'
 import { inputOutpointsForSignedTx } from './signedTxInputs'
 import { normalizeTxid } from './txid'
 import {
@@ -28,12 +29,96 @@ const pins = createDurableTtlTxidMap({
   ttlMs: 14 * 24 * 60 * 60_000,
 })
 
+/**
+ * Transactions Arcade has objectively rejected. Terminal, so it is remembered
+ * rather than re-asked: a rejected transaction never becomes mineable.
+ */
+const rejections = createDurableTtlTxidMap({
+  key: 'handcash.wallet.arcadeRejected.v1',
+  max: 500,
+  ttlMs: 30 * 24 * 60 * 60_000,
+})
+
+/** Non-terminal verdicts, cached briefly so a sweep does not re-ask per row. */
+const verdictProbe = new Map<string, { at: number; verdict: ArcadeVerdict }>()
+const VERDICT_PROBE_TTL_MS = 10 * 60_000
+
 export function rememberArcadeSubmitContact(txid: string): void {
   pins.remember(txid)
 }
 
 export function txHadArcadeSubmitContact(txid: string): boolean {
   return pins.has(txid)
+}
+
+/**
+ * Record Arcade's rejection of a transaction we submitted, and retire the pin
+ * it issued. Both halves matter: the pin is what holds the Activity row and
+ * the sealed inputs, and nothing else will ever release it for this tx.
+ */
+export function noteArcadeRejectedTx(txid: string): void {
+  const id = normalizeTxid(txid)
+  if (!id) return
+  rejections.remember(id)
+  verdictProbe.delete(id)
+  pins.forget(id)
+}
+
+export function txIsArcadeRejected(txid: string): boolean {
+  return rejections.has(txid)
+}
+
+/** Arcade's verdict on a transaction, memoised. Network silence is `unknown`. */
+export async function arcadeVerdictFor(
+  txid: string,
+  chain: Chain,
+): Promise<ArcadeVerdict> {
+  const id = normalizeTxid(txid)
+  if (!id) return 'unknown'
+  if (rejections.has(id)) return 'rejected'
+  const cached = verdictProbe.get(id)
+  if (cached && Date.now() - cached.at < VERDICT_PROBE_TTL_MS) {
+    return cached.verdict
+  }
+
+  const { fetchArcadeTxFate } = await import('./arcadeV2')
+  const fate = await fetchArcadeTxFate(chain, id)
+  const verdict: ArcadeVerdict =
+    fate.kind === 'rejected'
+      ? 'rejected'
+      : fate.kind === 'accepted'
+        ? 'accepted'
+        : fate.kind === 'retryable'
+          ? 'pending'
+          : 'unknown'
+  if (verdict === 'rejected') {
+    console.warn(
+      `[arcade] ${id.slice(0, 12)} rejected — ${fate.kind === 'rejected' ? fate.reason : ''}`,
+    )
+    noteArcadeRejectedTx(id)
+    return verdict
+  }
+  verdictProbe.set(id, { at: Date.now(), verdict })
+  return verdict
+}
+
+/**
+ * Whether the Arcade pin still holds this signed transaction in place.
+ *
+ * Asked before any path that keeps a row or its sealed coins on the strength
+ * of the pin alone. Arcade is only consulted when a pin exists.
+ */
+export async function arcadePinStillBinds(
+  txid: string,
+  chain: Chain,
+): Promise<boolean> {
+  const id = normalizeTxid(txid)
+  if (!id || !pins.has(id)) return false
+  if (rejections.has(id)) return false
+  const verdict = await arcadeVerdictFor(id, chain).catch(
+    () => 'unknown' as const,
+  )
+  return decideArcadePinFate({ hasPin: true, verdict }).kind === 'binds'
 }
 
 /** Any pinned send at all. Heal uses this to decide the pending scan is worth
@@ -81,8 +166,9 @@ export async function signedTxSpendConflictIsProven(args: {
  * Whether Activity / sealed inputs may treat this signed send as dead.
  *
  * A locally SPV-valid signed transaction is a cheque. Explorer absence is
- * latency, not a cancel. Only a proven competing spend (our tx not on chain
- * and an input spent by someone else) undoes it.
+ * latency, not a cancel. A proven competing spend (our tx not on chain and an
+ * input spent by someone else) undoes it — and so does Arcade rejecting the
+ * cheque it pinned, which is the one refusal no chain evidence can ever show.
  */
 export async function signedTxMayBeRemoved(args: {
   txid: string
@@ -90,6 +176,7 @@ export async function signedTxMayBeRemoved(args: {
   chain: Chain
 }): Promise<boolean> {
   if (!txHadArcadeSubmitContact(args.txid)) return true
+  if (!(await arcadePinStillBinds(args.txid, args.chain))) return true
   return signedTxSpendConflictIsProven(args)
 }
 
@@ -172,4 +259,6 @@ export async function signedTxLooksAbandoned(args: {
 
 export function __resetArcadeSubmitGuardForTests(): void {
   pins.reset()
+  rejections.reset()
+  verdictProbe.clear()
 }

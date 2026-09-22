@@ -40,7 +40,10 @@ import {
 } from "./legacyScan";
 import { broadcastAtomicBeef } from "./sendBrc29Payment";
 import { getActiveWallet } from "./session";
-import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
+import {
+  arcadePinStillBinds,
+  txIsArcadeRejected,
+} from "./arcadeSubmitGuard";
 import { itemSendMachine, maySenderBroadcast } from "./itemSendMachine";
 import type { SignedInputsFate as KernelSignedInputsFate } from "./kernel/signedInputsFate";
 import {
@@ -315,16 +318,25 @@ async function signedTxInputsFate(
 function mayClearSignedInputs(
   fate: SignedInputsFate,
   txConfirmedOnChain: boolean | null = null,
-  txid?: string | null
+  arcadePinBinds = false
 ): boolean {
   if (fate === "unsigned" || fate === "spent") return true;
   // Signed but never broadcast — inputs still local; safe to drop the history row
-  // unless Arcade already saw the tx (may still be processing).
+  // unless Arcade holds the tx (accepted, or still working it). A rejection
+  // voids that hold: nothing on chain will ever settle a tx Arcade refused.
   if (fate === "unspent" && txConfirmedOnChain === false) {
-    if (txid && txHadArcadeSubmitContact(txid)) return false;
-    return true;
+    return !arcadePinBinds;
   }
   return false;
+}
+
+/** Does the Arcade pin still hold this row? Asked only when a txid exists. */
+async function pinBindsRow(
+  entry: ActivityEntry,
+  chain: Chain
+): Promise<boolean> {
+  if (!hasTxid(entry)) return false;
+  return arcadePinStillBinds(entry.txid!, chain);
 }
 
 /** True when the wallet still holds enough of this token to recreate the send. */
@@ -400,6 +412,7 @@ export async function resolveSpendAttemptFate(
     };
   }
 
+  const pinBinds = await pinBindsRow(entry, chain);
   const retry = entry.retry;
 
   // Checked *after* the chain: a transfer the recipient already published reads
@@ -448,7 +461,7 @@ export async function resolveSpendAttemptFate(
       message: isFailedActivity(entry)
         ? "This send failed and cannot be retried — its original recipient details were not saved."
         : "This send did not confirm and cannot be retried — its original recipient details were not saved.",
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
     };
   }
 
@@ -460,7 +473,7 @@ export async function resolveSpendAttemptFate(
       message: hasTxid(entry)
         ? "This payment never landed on chain. You can send it again from the Send screen."
         : "This payment failed before it reached the network. You can send it again from the Send screen, or clear it.",
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
     };
   }
 
@@ -481,7 +494,7 @@ export async function resolveSpendAttemptFate(
         reason: "sourceNotSpendable",
         message:
           "This send cannot be retried — there is no longer enough of this token spendable in this wallet.",
-        mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
+        mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
       };
     }
     return {
@@ -491,7 +504,7 @@ export async function resolveSpendAttemptFate(
       message: hasTxid(entry)
         ? "This send did not confirm. The token tips are still unspent, so the signed transfer can be broadcast again."
         : "This send failed before it produced a transaction. The token is still spendable and can be retried.",
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
     };
   }
 
@@ -513,7 +526,7 @@ export async function resolveSpendAttemptFate(
       reason: "sourceNotSpendable",
       message:
         "This send cannot be retried — the original item output is no longer spendable in this wallet.",
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
     };
   }
 
@@ -524,7 +537,7 @@ export async function resolveSpendAttemptFate(
     message: hasTxid(entry)
       ? "This send did not confirm. The item is still unspent, so the signed transfer can be broadcast again."
       : "This send failed before it produced a transaction. The item is still spendable and can be retried.",
-    mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
+    mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
   };
 }
 
@@ -696,9 +709,31 @@ export async function clearSpendAttempt(
       const inputs = await loadSignedInputOutpoints(entry.txid!);
       if (inputs.length > 0) await hideSpentOutpoints(inputs);
       await keepChangeOfSignedTx(entry.txid!);
+    } else if (txIsArcadeRejected(entry.txid!)) {
+      await retireArcadeRejectedTx(entry.txid!);
     }
   }
   return { removed: removeActivityById(entry.id) };
+}
+
+/**
+ * Write off a cheque Arcade refused, so the coins it sealed come back.
+ *
+ * Dropping the Activity row alone would leave the inputs sealed by a
+ * transaction that no longer has a row to explain them — visibly short by
+ * exactly the size of the dead send.
+ */
+async function retireArcadeRejectedTx(txid: string): Promise<void> {
+  try {
+    const { failUnsentLocalTx } = await import("./staleOutputRelease");
+    await failUnsentLocalTx(txid, { force: true });
+  } catch (err) {
+    console.warn(
+      "[spend-attempt] Arcade-rejected retire skipped",
+      txid.slice(0, 12),
+      err
+    );
+  }
 }
 
 /**
@@ -745,7 +780,8 @@ export async function reclaimSpendAttempt(
   const path = chooseLocalTxReclaimPath({
     onChain,
     inputsFate: await signedTxInputsFate(entry, chain),
-    arcadeContacted: txHadArcadeSubmitContact(txid),
+    // A rejected cheque is not one a broadcaster can still present.
+    arcadeContacted: await arcadePinStillBinds(txid, chain),
   });
   if (path.path === "refuse") {
     console.info(
@@ -795,6 +831,8 @@ export async function clearAllFailedSpends(): Promise<{
   let unsignedToClear = false;
 
   const toKeepChange: string[] = [];
+  /** Arcade-rejected cheques — dropping the row must also free their coins. */
+  const toRetire: string[] = [];
 
   for (const row of listFailedActivity()) {
     if (isFailedMarketListingActivity(row)) {
@@ -825,12 +863,17 @@ export async function clearAllFailedSpends(): Promise<{
       }
     }
     const inputsFate = await signedTxInputsFate(row, chain);
-    if (!mayClearSignedInputs(inputsFate, txOnChain, row.txid))
+    const pinBinds = await pinBindsRow(row, chain);
+    if (!mayClearSignedInputs(inputsFate, txOnChain, pinBinds)) {
       keepIds.add(row.id);
-    else if (inputsFate === "spent") toKeepChange.push(row.txid!);
+      continue;
+    }
+    if (inputsFate === "spent") toKeepChange.push(row.txid!);
+    else if (txIsArcadeRejected(row.txid!)) toRetire.push(row.txid!);
   }
 
   if (unsignedToClear) await releaseLocalSpendReservations();
+  for (const txid of toRetire) await retireArcadeRejectedTx(txid);
   if (toKeepChange.length > 0) {
     const { keepChangeOfSignedTx, hideSpentOutpoints } = await import(
       "./staleOutputRelease"
@@ -858,7 +901,12 @@ export async function clearAllFailedSpends(): Promise<{
     }
   }
   const removed = removeFailedActivity((entry) => keepIds.has(entry.id));
-  if (removed > 0 || toKeepChange.length > 0 || unsignedToClear) {
+  if (
+    removed > 0 ||
+    toKeepChange.length > 0 ||
+    toRetire.length > 0 ||
+    unsignedToClear
+  ) {
     const { scheduleHealAfterSendCleanup } = await import(
       "./chainedChangeHeal"
     );

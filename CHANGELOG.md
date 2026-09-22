@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.255] - 2026-09-22
+
+### Fixed
+
+- **A transfer Arcade rejected can now be cleared, and gives its coins back.**
+  The Arcade submit pin held the Activity row and the inputs it sealed until
+  chain proof showed the spend had failed — proof that can never arrive for a
+  transaction that will never be mined. Arcade issued the pin, so Arcade's own
+  root-resolved rejection now retires it: the row clears, the sealed inputs are
+  written off, and the cash returns to spendable. Acceptance, a parent Arcade is
+  still working, and silence all keep the cheque exactly as before.
+- **Rejection is recorded where it is discovered.** The proof-request settle and
+  the BSV-21 pre-sign gate both remember a rejected txid, so Activity, the
+  sealer sweep, and reclaim agree without re-asking Arcade per row.
+
 ## [1.3.254] - 2026-09-22
 
 ### Fixed
