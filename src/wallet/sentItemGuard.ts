@@ -17,16 +17,33 @@
  * receiving the same ordinal back (a new outpoint) still shows up. Entries
  * expire in case the send never confirmed and the item really is still ours.
  */
+import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
 } from './arcadeSubmitGuard'
 
-const STORAGE_KEY = 'handcash.collectables.sentOutpoints.v1'
+/**
+ * Scoped per vault account. These marks say what *this* account did with an
+ * outpoint — sent it, burned it, abandoned it — and every one of them hides
+ * the outpoint from inventory. Shared across accounts they crossed the wires
+ * of a same-device transfer: account A sending to account B recorded B's tip
+ * as "sent", so B's own basket read filtered out the tip it had just received
+ * and the card could never paint.
+ */
+const STORAGE_KEY_BASE = 'handcash.collectables.sentOutpoints.v1'
 const MAX_ENTRIES = 500
-const CONSUMED_KEY = 'handcash.collectables.consumedOutpoints.v1'
+const CONSUMED_KEY_BASE = 'handcash.collectables.consumedOutpoints.v1'
 const MAX_CONSUMED = 2000
+
+function storageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
+
+function consumedKey(): string {
+  return accountLocalKey(CONSUMED_KEY_BASE)
+}
 
 /** A send that never landed has to give the item back rather than hide it forever. */
 export const SENT_HIDE_MS = 24 * 60 * 60_000
@@ -101,7 +118,7 @@ let cachedRecords = new Map<string, SentItemRecord>()
 function readSent(): Map<string, SentItemRecord> {
   const records = new Map<string, SentItemRecord>()
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(storageKey())
     if (!raw) return records
     if (raw === cachedRaw) return cachedRecords
     const parsed = JSON.parse(raw) as unknown
@@ -142,7 +159,7 @@ function writeSent(records: Map<string, SentItemRecord>): void {
     .filter(([, r]) => now - r.at < SENT_HIDE_MS)
     .sort((a, b) => a[1].at - b[1].at)
     .slice(-MAX_ENTRIES)
-  durableSetItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(live)))
+  durableSetItem(storageKey(), JSON.stringify(Object.fromEntries(live)))
 }
 
 function key(outpoint: string): string {
@@ -154,7 +171,7 @@ let cachedConsumed = new Set<string>()
 
 function readConsumed(): Set<string> {
   try {
-    const raw = durableGetItem(CONSUMED_KEY)
+    const raw = durableGetItem(consumedKey())
     if (!raw) return new Set()
     if (raw === cachedConsumedRaw) return cachedConsumed
     const parsed = JSON.parse(raw) as unknown
@@ -188,7 +205,7 @@ export function markItemsConsumed(outpoints: string[]): void {
   }
   if (!changed) return
   durableSetItem(
-    CONSUMED_KEY,
+    consumedKey(),
     JSON.stringify([...consumed].slice(-MAX_CONSUMED)),
   )
 }
@@ -252,8 +269,12 @@ export function isItemSent(outpoint: string, now = Date.now()): boolean {
  * re-claims live-on-address orphans, abandon needs a record of its own or the
  * tip walks back in a day later.
  */
-const ABANDONED_KEY = 'handcash.collectables.abandonedOutpoints.v1'
+const ABANDONED_KEY_BASE = 'handcash.collectables.abandonedOutpoints.v1'
 const MAX_ABANDONED = 2000
+
+function abandonedKey(): string {
+  return accountLocalKey(ABANDONED_KEY_BASE)
+}
 
 let cachedAbandonedRaw: string | null = null
 let cachedAbandoned = new Set<string>()
@@ -261,7 +282,7 @@ let cachedAbandoned = new Set<string>()
 /** Read-only — `isItemAbandoned` runs per outpoint inside list loops. */
 function readAbandoned(): Set<string> {
   try {
-    const raw = durableGetItem(ABANDONED_KEY)
+    const raw = durableGetItem(abandonedKey())
     if (!raw) return new Set()
     if (raw === cachedAbandonedRaw) return cachedAbandoned
     const parsed = JSON.parse(raw) as unknown
@@ -284,7 +305,7 @@ export function markItemAbandoned(outpoint: string): void {
   if (abandoned.has(op)) return
   abandoned.add(op)
   durableSetItem(
-    ABANDONED_KEY,
+    abandonedKey(),
     JSON.stringify([...abandoned].slice(-MAX_ABANDONED)),
   )
 }
@@ -419,8 +440,19 @@ export async function healGhostSentItems(
   return healed
 }
 
+/** Swap the hide marks to the active vault account. */
+export function rebindSentItemGuardForAccount(): void {
+  cachedRaw = null
+  cachedRecords = new Map()
+  cachedConsumedRaw = null
+  cachedConsumed = new Set()
+  cachedAbandonedRaw = null
+  cachedAbandoned = new Set()
+}
+
 /** Test-only */
 export function resetSentItemsForTests(): void {
-  durableSetItem(STORAGE_KEY, '{}')
-  durableSetItem(CONSUMED_KEY, '[]')
+  durableSetItem(storageKey(), '{}')
+  durableSetItem(consumedKey(), '[]')
+  rebindSentItemGuardForAccount()
 }

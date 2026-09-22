@@ -45,6 +45,13 @@ vi.mock('../staleOutputRelease', () => ({
 
 vi.mock('../txStore', () => ({ isLocalUnconfirmedTxid: () => false }))
 
+/** Awaited while the list decides whether to retire an aged card. */
+const chainProbe = { run: async (): Promise<boolean | null> => false }
+
+vi.mock('../legacyScan', () => ({
+  txExistsOnChain: () => chainProbe.run(),
+}))
+
 vi.mock('../beefCache', () => ({
   getLocalBeefForTxid: async () => null,
   rememberBeef: () => {},
@@ -54,6 +61,7 @@ vi.mock('../beefCache', () => ({
 vi.mock('../yieldToUi', () => ({ yieldToUi: async () => {} }))
 
 const TOKEN = `${'ab'.repeat(32)}_0`
+const OTHER = `${'cd'.repeat(32)}_0`
 
 function card(): FungibleToken {
   return {
@@ -78,6 +86,7 @@ describe('listFungibles coalescing', () => {
     vi.useFakeTimers()
     liveRead.run = async () => []
     restoreAsset.run = async () => false
+    chainProbe.run = async () => false
   })
 
   afterEach(() => {
@@ -117,6 +126,31 @@ describe('listFungibles coalescing', () => {
     expect(fresh).not.toBe(stalled)
     await vi.advanceTimersByTimeAsync(100)
     expect((await fresh).map((t) => t.tokenId)).toEqual([TOKEN])
+  })
+
+  /**
+   * A receive can internalize and paint in the middle of a read. The read's
+   * own snapshot predates that card, and the basket has not projected it yet,
+   * so publishing the snapshot used to delete the transfer the wallet had
+   * just accepted.
+   */
+  it('keeps a card painted while the read was in flight', async () => {
+    const { listFungibles, rememberFungibleToken, getCachedFungibles } =
+      await import('./list')
+    // An aged card absent from the basket makes the list pay for a chain
+    // probe — the await during which a receive can land.
+    rememberFungibleToken({ ...card(), tokenId: OTHER, seenAt: 1 })
+    let paint: () => void = () => {}
+    chainProbe.run = async () => {
+      paint()
+      return false
+    }
+    paint = () => rememberFungibleToken(card())
+
+    const rows = await listFungibles()
+
+    expect(rows.map((t) => t.tokenId)).toContain(TOKEN)
+    expect(getCachedFungibles().map((t) => t.tokenId)).toContain(TOKEN)
   })
 
   it('joins a read that is still within the deadline', async () => {

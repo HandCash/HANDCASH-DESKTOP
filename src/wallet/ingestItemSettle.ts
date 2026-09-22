@@ -24,6 +24,7 @@ import {
   rememberPeerRemittanceForHeldTips,
   rememberProvenanceRemittance,
 } from './oneSatProvenance'
+import { forgetItemsSent } from './sentItemGuard'
 import {
   beginOneSatImport,
   markOneSatImported,
@@ -256,6 +257,10 @@ export async function internalizePeerItemSettle(opts: {
       .filter((item) => tipVouts.includes(item.outputIndex))
       .map((item) => [item.outputIndex, item] as const),
   )
+  // Tips this account is internalizing are tips this account holds. Hide
+  // marks written by another wallet on this device (builds before the guards
+  // were scoped per account) would otherwise keep them out of Collect.
+  forgetItemsSent(allOps)
   const claimed = beginOneSatImport(allOps)
   if (claimed.length === 0) {
     // Already in the basket — still (re)paint so a second batch notify can bind

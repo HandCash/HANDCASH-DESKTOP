@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.3.259] - 2026-09-22
+
+### Fixed
+
+- **A transfer between two wallets on the same device now paints for the
+  receiver.** The marks that hide an outpoint from inventory — sent, burned,
+  abandoned, already-imported — were stored once per device while every basket
+  and inventory is per account. Account A sending to account B recorded B's
+  incoming tip as "sent", so B's own basket read filtered out the tip it had
+  just internalized (`live 0`) and the merge deleted the card paint had put
+  there. The transfer was on chain, in B's basket, and invisible. All four
+  marks are now scoped to the vault account that made them, and the scope is
+  rebound on account switch before the inventories reload.
+- **A receive heals a stale mark left by an older build.** Internalizing a tip
+  is this account holding it, so the receive path drops any hide mark standing
+  against that outpoint, and re-claims an import the device-wide guard had
+  already marked done when this account's basket does not actually hold it.
+  Both the token and item receive paths do this.
+- **A card the read never saw is no longer a card the read refuted.** Cards
+  painted while a basket read was in flight are carried onto the published
+  list instead of being erased by a merge computed before they existed.
+- The probe that retires a mint no chain has ever seen was unreachable: it
+  asked for the fate with `onChain: null`, which always answers
+  `chain-unknown`, so the lookup it guards never ran. It now asks with the
+  answer that would retire the card, which is what "only pay for a lookup when
+  absence would otherwise retire it" meant.
+
 ## [1.3.258] - 2026-09-22
 
 ### Fixed

@@ -26,13 +26,15 @@ import {
 } from './list'
 import {
   beginOneSatImport,
+  forgetOneSatImported,
   markOneSatImported,
   markOneSatImportFailed,
 } from '../oneSatImportGuard'
+import { forgetItemsSent } from '../sentItemGuard'
 import { decodeBsv21Binary } from './decode162'
 import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { broadcastAtomicBeef } from '../sendBrc29Payment'
-import { getActiveWallet } from '../session'
+import { getActiveWallet, type ActiveWallet } from '../session'
 import { stampBrc164Id } from '../itemAccess'
 import {
   clearInboundReceivePending,
@@ -246,7 +248,16 @@ export async function internalizePeerFungibleSettle(opts: {
     rememberFungibleToken(painted)
     void hydrateCachedTokenIcons(active, [painted]).catch(() => {})
   }
-  const claimed = beginOneSatImport([tipOp])
+  // A tip we are internalizing now is a tip this account holds, so any hide
+  // mark or import claim standing against it is stale. Builds before the
+  // guards were scoped per account wrote both device-wide, which is how a
+  // same-device transfer arrived hidden from the very wallet that accepted it.
+  forgetItemsSent([tipOp])
+  let claimed = beginOneSatImport([tipOp])
+  if (claimed.length === 0 && !(await basketHoldsTip(active, tipOp))) {
+    forgetOneSatImported([tipOp])
+    claimed = beginOneSatImport([tipOp])
+  }
   if (claimed.length === 0) {
     paintReceivedToken()
     noteInboundReceiveComplete({
@@ -357,3 +368,23 @@ export async function internalizePeerFungibleSettle(opts: {
     }
   }
 }
+
+/** Does this account's own `bsv21` basket already hold the tip? */
+async function basketHoldsTip(
+  active: ActiveWallet,
+  tipOp: string,
+): Promise<boolean> {
+  const wanted = tipOp.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+  try {
+    const { listBsv21BinaryTips } = await import('./listTips')
+    const tips = await listBsv21BinaryTips(active)
+    return tips.some(
+      (tip) => tip.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') === wanted,
+    )
+  } catch {
+    // Unknown is not "held": re-claiming an import we already made is safe,
+    // internalizeAction refuses a duplicate on its own.
+    return false
+  }
+}
+

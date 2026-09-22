@@ -930,13 +930,16 @@ async function dropUnconfirmedFungibles(
   for (const row of prior) {
     const point = normalizedDottedOutpoint(row.outpoint)
     const inLiveBasket = point == null || liveOutpoints.has(point)
+    // Only pay for a lookup when absence would otherwise retire the card —
+    // so ask with the answer that retires it. Asking with `null` could only
+    // ever return `chain-unknown`, which kept every card and made the probe
+    // below, and the retirement it guards, unreachable.
     const preliminary = chooseFungibleChainFate({
       inLiveBasket,
       liveReadUsable: args.liveReadUsable,
-      onChain: null,
+      onChain: false,
       ageMs: now - (row.seenAt ?? 0),
     })
-    // Only pay for a lookup when absence would otherwise retire the card.
     if (preliminary.kind !== 'unconfirmed') {
       kept.push(row)
       continue
@@ -956,6 +959,34 @@ async function dropUnconfirmedFungibles(
     )
   }
   return kept
+}
+
+/**
+ * Carry over cards painted while this read was in flight.
+ *
+ * A read takes seconds; a receive can internalize and paint in the middle of
+ * one. Publishing a merge computed before that paint deleted the transfer the
+ * wallet had just accepted — the basket had not projected it yet, so the next
+ * read could not bring it back either. A card the read never saw is not a
+ * card the read refuted.
+ */
+function withCardsPaintedDuringRead(
+  merged: FungibleToken[],
+  readStartedAt: number,
+): FungibleToken[] {
+  const shown = new Set(
+    merged
+      .map((token) => normalizeTokenId(token.tokenId))
+      .filter((id): id is string => Boolean(id)),
+  )
+  const late = cached.filter((token) => {
+    if ((token.seenAt ?? 0) < readStartedAt) return false
+    const id = normalizeTokenId(token.tokenId)
+    return id != null && !shown.has(id)
+  })
+  if (late.length === 0) return merged
+  console.info(`[bsv21] keeping ${late.length} card(s) painted during the read`)
+  return [...merged, ...late]
 }
 
 class LiveReadTimeout extends Error {
@@ -988,6 +1019,7 @@ async function listFungiblesNow(
 ): Promise<FungibleToken[]> {
   const epoch = fungiblesAccountEpoch
   const run = ++listRunSeq
+  const runStartedAt = Date.now()
   const wallet = active ?? getActiveWallet()
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
@@ -1069,7 +1101,10 @@ async function listFungiblesNow(
       liveRows,
       liveReadUsable,
     })
-    const merged = mergeLiveFungibles(liveRows, prior)
+    const merged = withCardsPaintedDuringRead(
+      mergeLiveFungibles(liveRows, prior),
+      runStartedAt,
+    )
     setFungiblesCache(merged, { forEpoch: epoch, forRun: run })
     console.info(
       `[bsv21] listOutputs done ${Date.now() - startedAt}ms — live ${liveRows.length}, showing ${merged.length}`,

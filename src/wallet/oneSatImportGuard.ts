@@ -6,10 +6,25 @@
  * block the UI on every Dashboard poll — but keep it short enough that a
  * transient Chaintracks/header miss does not hide a real ordinal for minutes.
  */
+import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
-const STORAGE_KEY = 'handcash.brc100.importedOneSatOutpoints.v1'
-const FAIL_KEY = 'handcash.brc100.failedOneSatOutpoints.v1'
+/**
+ * Scoped per vault account. "Already imported" is a claim about one account's
+ * basket, and two accounts on one device do not share a basket: when the mark
+ * was global, a tip account A had imported made account B skip the
+ * internalization that would have put the same outpoint in B's own basket.
+ */
+const STORAGE_KEY_BASE = 'handcash.brc100.importedOneSatOutpoints.v1'
+const FAIL_KEY_BASE = 'handcash.brc100.failedOneSatOutpoints.v1'
+
+function importedKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
+
+function failKey(): string {
+  return accountLocalKey(FAIL_KEY_BASE)
+}
 const MAX_ENTRIES = 4000
 /** Do not retry a failed internalization until this elapses. */
 export const FAIL_BACKOFF_MS = 10 * 60_000
@@ -37,7 +52,7 @@ let failuresCache = new Map<string, number>()
 
 function readImported(): Set<string> {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(importedKey())
     if (!raw) return new Set()
     if (raw === importedRaw) return importedCache
     const parsed = JSON.parse(raw) as unknown
@@ -55,13 +70,13 @@ function readImported(): Set<string> {
 
 function writeImported(set: Set<string>): void {
   const list = [...set].slice(-MAX_ENTRIES)
-  durableSetItem(STORAGE_KEY, JSON.stringify(list))
+  durableSetItem(importedKey(), JSON.stringify(list))
 }
 
 function readFailures(): Map<string, number> {
   const map = new Map<string, number>()
   try {
-    const raw = durableGetItem(FAIL_KEY)
+    const raw = durableGetItem(failKey())
     if (!raw) return map
     if (raw === failuresRaw) return failuresCache
     const parsed = JSON.parse(raw) as unknown
@@ -86,7 +101,7 @@ function writeFailures(map: Map<string, number>): void {
         : now - at < FAIL_BACKOFF_MS * 4,
     )
     .slice(-MAX_ENTRIES)
-  durableSetItem(FAIL_KEY, JSON.stringify(Object.fromEntries(kept)))
+  durableSetItem(failKey(), JSON.stringify(Object.fromEntries(kept)))
 }
 
 function norm(outpoint: string): string {
@@ -189,6 +204,11 @@ export function forgetOneSatImported(outpoints: string[]): void {
   }
   if (knownChanged) writeImported(known)
   if (failuresChanged) writeFailures(failures)
+}
+
+/** Swap the import marks to the active vault account. */
+export function rebindOneSatImportGuardForAccount(): void {
+  resetOneSatImportGuardForTests()
 }
 
 /** Test hook. */

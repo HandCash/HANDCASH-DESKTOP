@@ -11,6 +11,8 @@ import { rebindFriendsForAccount } from './friends'
 import { rebindMessagesForAccount } from './messageStore'
 import { rebindConnectedAppsForAccount } from './permissions'
 import { clearPaymentProgress } from './paymentProgress'
+import { rebindOneSatImportGuardForAccount } from './oneSatImportGuard'
+import { rebindSentItemGuardForAccount } from './sentItemGuard'
 import { rebindFungiblesForAccount } from './token/list'
 import { assertNeverOutcome, type WalletOutcome } from './kernel/outcomes'
 
@@ -22,6 +24,11 @@ export function applyWalletOutcome(outcome: WalletOutcome): void {
       rebindConnectedAppsForAccount()
       rebindActivitySeenForAccount()
       rebindMessagesForAccount()
+      // Before the inventories: both guards answer "is this outpoint mine to
+      // show", and a stale parse from the previous account would hide the new
+      // account's own tips.
+      rebindSentItemGuardForAccount()
+      rebindOneSatImportGuardForAccount()
       rebindCollectablesForAccount()
       rebindFungiblesForAccount()
       clearPaymentProgress()
