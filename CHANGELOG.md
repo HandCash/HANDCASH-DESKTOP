@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.258] - 2026-09-22
+
+### Fixed
+
+- **Tokens can no longer stop tracking the wallet for a whole session.** Reads
+  of basket `bsv21` were coalesced without a deadline, so one read that never
+  settled — a basket call parked behind a spend, an account switch taken
+  mid-send — was handed to every later caller forever. Collect kept refreshing
+  beside it while Tokens showed whatever it held at the moment of the stall,
+  including nothing for an account that had just received a transfer. A caller
+  now waits on someone else's read for at most 20s before running its own.
+- **A basket read that stalls is unavailable, not empty.** The live read is
+  bounded at 12s and a timeout resolves to `live-read-unavailable`, which keeps
+  every cached card instead of retiring cards a silent read never spoke about.
+  An abandoned read may still finish; it observes and never publishes, so a
+  late answer cannot overwrite the list that replaced it.
+- Tokens now logs each completed read (`listOutputs done … live N, showing M`)
+  and names a timed-out one, so a stalled list is visible in a session log
+  rather than absent from it.
+
 ## [1.3.257] - 2026-09-22
 
 ### Changed

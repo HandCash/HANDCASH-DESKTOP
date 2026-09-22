@@ -66,6 +66,13 @@ function listCacheKey(): string {
 let cached: FungibleToken[] = []
 let hydrated = false
 let listInFlight: Promise<FungibleToken[]> | null = null
+let listInFlightAt = 0
+/** Newest started read. Older runs may finish, but must not publish. */
+let listRunSeq = 0
+/** How long a caller will wait on someone else's read before running its own. */
+const LIST_JOIN_DEADLINE_MS = 20_000
+/** A basket read that takes longer than this is treated as unavailable. */
+const LIVE_READ_TIMEOUT_MS = 12_000
 /** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
 let fungiblesAccountEpoch = 0
 const listeners = new Set<Listener>()
@@ -214,7 +221,7 @@ function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {
 
 function setFungiblesCache(
   items: FungibleToken[],
-  options: { forEpoch?: number } = {},
+  options: { forEpoch?: number; forRun?: number } = {},
 ): void {
   if (
     options.forEpoch !== undefined &&
@@ -222,6 +229,9 @@ function setFungiblesCache(
   ) {
     return
   }
+  // A read the wallet gave up waiting on may still return later. Its answer is
+  // older than the one that replaced it, so it observes and never publishes.
+  if (options.forRun !== undefined && options.forRun !== listRunSeq) return
   const paintedAt = Date.now()
   cached = items
     .filter(cacheExtraLooksLikeFungible)
@@ -599,13 +609,7 @@ export function rebindFungiblesForAccount(): void {
     hydrated = true
   }
   notify()
-  const run = listFungiblesNow(undefined)
-  listInFlight = run
-  void run
-    .catch(() => {})
-    .then(() => {
-      if (listInFlight === run) listInFlight = null
-    })
+  void startFungiblesList(undefined)
 }
 
 export function getCachedFungibles(): FungibleToken[] {
@@ -849,11 +853,32 @@ function parseListedOutput(
 /**
  * Every Collect visit lists `bsv21` alongside `1sat`. Coalesce identical reads
  * (same pattern as collectables) so nav flips do not stack listOutputs.
+ *
+ * Coalescing has a deadline. A read that never settles — a basket call parked
+ * behind a send, an account rebind mid-spend — used to be joined by every
+ * later caller forever, so the Tokens list stopped tracking the wallet for the
+ * rest of the session while Collect kept refreshing beside it. After the
+ * deadline a new caller starts its own read; the abandoned one can no longer
+ * write, because {@link listFungiblesNow} only publishes for the newest run.
  */
 export function listFungibles(active?: ActiveWallet | null): Promise<FungibleToken[]> {
-  if (listInFlight) return listInFlight
+  if (listInFlight && Date.now() - listInFlightAt < LIST_JOIN_DEADLINE_MS) {
+    return listInFlight
+  }
+  if (listInFlight) {
+    console.warn(
+      `[bsv21] previous list never settled after ${Math.round((Date.now() - listInFlightAt) / 1000)}s — starting a fresh read`,
+    )
+  }
+  return startFungiblesList(active)
+}
+
+function startFungiblesList(
+  active?: ActiveWallet | null,
+): Promise<FungibleToken[]> {
   const run = listFungiblesNow(active)
   listInFlight = run
+  listInFlightAt = Date.now()
   void run
     .catch(() => {})
     .then(() => {
@@ -933,6 +958,28 @@ async function dropUnconfirmedFungibles(
   return kept
 }
 
+class LiveReadTimeout extends Error {
+  constructor() {
+    super(`basket read exceeded ${LIVE_READ_TIMEOUT_MS}ms`)
+  }
+}
+
+function withLiveReadTimeout<T>(work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new LiveReadTimeout()), LIVE_READ_TIMEOUT_MS)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
+
 /**
  * List live BSV-21 tips from basket `bsv21` and aggregate by token id.
  */
@@ -940,6 +987,7 @@ async function listFungiblesNow(
   active?: ActiveWallet | null,
 ): Promise<FungibleToken[]> {
   const epoch = fungiblesAccountEpoch
+  const run = ++listRunSeq
   const wallet = active ?? getActiveWallet()
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
@@ -950,7 +998,7 @@ async function listFungiblesNow(
   const repaired = await recoverReceivedTokensFromActivity(beforeRepair)
   if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
   if (fungibleProjectionChanged(repaired, beforeRepair)) {
-    setFungiblesCache(repaired, { forEpoch: epoch })
+    setFungiblesCache(repaired, { forEpoch: epoch, forRun: run })
     if (repaired.length > beforeRepair.length) {
       void import('../healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
         healMisfiledBsv21(wallet),
@@ -984,14 +1032,24 @@ async function listFungiblesNow(
 
   try {
     await yieldToUi()
+    const startedAt = Date.now()
     let liveRows: FungibleToken[] = []
     let liveReadUsable = true
     try {
       const { listBsv21BinaryTokens } = await import('./listTips')
-      liveRows = await listBsv21BinaryTokens(wallet)
+      // The basket read is the one call that can park behind a spend or an
+      // account rebind. Absence it never answered is not absence: time out
+      // into `live-read-unavailable`, which keeps every cached card.
+      liveRows = await withLiveReadTimeout(listBsv21BinaryTokens(wallet))
     } catch (err) {
       liveReadUsable = false
-      console.warn('[bsv21] list failed', err)
+      if (err instanceof LiveReadTimeout) {
+        console.warn(
+          `[bsv21] listOutputs timed out after ${LIVE_READ_TIMEOUT_MS}ms — keeping ${cached.length} cached token(s)`,
+        )
+      } else {
+        console.warn('[bsv21] list failed', err)
+      }
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
     const recoveredHeld = await recoverCachedLegacyTips(
@@ -1012,7 +1070,10 @@ async function listFungiblesNow(
       liveReadUsable,
     })
     const merged = mergeLiveFungibles(liveRows, prior)
-    setFungiblesCache(merged, { forEpoch: epoch })
+    setFungiblesCache(merged, { forEpoch: epoch, forRun: run })
+    console.info(
+      `[bsv21] listOutputs done ${Date.now() - startedAt}ms — live ${liveRows.length}, showing ${merged.length}`,
+    )
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
     return merged
