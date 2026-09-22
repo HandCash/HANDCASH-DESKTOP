@@ -1,12 +1,14 @@
+import { useEffect, useRef } from 'react'
 import type { EmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { AppAvatar } from './AppAvatar'
-import { CloseIcon } from './icons'
+import { BackIcon, CloseIcon } from './icons'
 
 type Props = {
   tabs: readonly EmbeddedAppBrowser[]
   activeOrigin: string | null
   appName: (origin: string) => string
+  previews: Readonly<Record<string, string>>
   onSelect: (origin: string) => void
   onClose: (origin: string) => void
   onDone: () => void
@@ -16,10 +18,27 @@ export function AppBrowserTabSwitcher({
   tabs,
   activeOrigin,
   appName,
+  previews,
   onSelect,
   onClose,
   onDone,
 }: Props) {
+  const carouselRef = useRef<HTMLDivElement>(null)
+  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.origin === activeOrigin))
+
+  useEffect(() => {
+    carouselRef.current
+      ?.querySelector<HTMLElement>('[data-active]')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+  }, [activeOrigin])
+
+  const move = (direction: -1 | 1) => {
+    const next = tabs[Math.max(0, Math.min(tabs.length - 1, activeIndex + direction))]
+    if (!next || next.origin === activeOrigin) return
+    playWalletSound('soft')
+    onSelect(next.origin)
+  }
+
   return (
     <section
       className="app-browser-tab-switcher"
@@ -29,18 +48,37 @@ export function AppBrowserTabSwitcher({
     >
       <header className="app-browser-tab-switcher-head">
         <div>
-          <span>Open apps</span>
-          <strong>{tabs.length} tabs</strong>
+          <span>Open web pages</span>
+          <strong>{tabs.length} {tabs.length === 1 ? 'page' : 'pages'}</strong>
         </div>
-        <button type="button" className="btn btn-ghost" onClick={onDone}>
-          Done
-        </button>
+        <div className="app-browser-tab-switcher-actions">
+          <button
+            type="button"
+            aria-label="Previous page"
+            disabled={activeIndex === 0}
+            onClick={() => move(-1)}
+          >
+            <BackIcon size={18} />
+          </button>
+          <button
+            type="button"
+            aria-label="Next page"
+            disabled={activeIndex >= tabs.length - 1}
+            onClick={() => move(1)}
+          >
+            <BackIcon size={18} />
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={onDone}>
+            Done
+          </button>
+        </div>
       </header>
 
-      <div className="app-browser-tab-grid">
+      <div ref={carouselRef} className="app-browser-tab-carousel">
         {tabs.map((tab) => {
           const name = appName(tab.origin)
           const active = tab.origin === activeOrigin
+          const preview = previews[tab.origin]
           return (
             <article
               key={tab.origin}
@@ -54,11 +92,18 @@ export function AppBrowserTabSwitcher({
                 onClick={() => {
                   playWalletSound('soft')
                   onSelect(tab.origin)
+                  if (active) onDone()
                 }}
               >
                 <div className="app-browser-tab-preview" aria-hidden>
-                  <AppAvatar origin={tab.origin} name={name} size="md" />
-                  <span>{name}</span>
+                  {preview ? (
+                    <img src={preview} alt="" />
+                  ) : (
+                    <span className="app-browser-tab-preview-fallback">
+                      <AppAvatar origin={tab.origin} name={name} size="md" />
+                      <span>{name}</span>
+                    </span>
+                  )}
                 </div>
                 <span className="app-browser-tab-copy">
                   <strong>{name}</strong>

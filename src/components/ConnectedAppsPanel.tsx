@@ -31,11 +31,13 @@ import {
 import { openAppDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
-import { AppsIcon, SettingsIcon } from './icons'
+import { AppsIcon, SettingsIcon, ViewGridIcon } from './icons'
 import { AppLaunchMenu } from './AppLaunchMenu'
 
 type Props = {
   apps: ConnectedApp[]
+  openTabCount: number
+  onShowTabs: () => void
 }
 
 function AppSpendLimit({
@@ -199,7 +201,7 @@ function AppGridItem({
   )
 }
 
-export function ConnectedAppsPanel({ apps }: Props) {
+export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [view, setView] = useState<CollectionView>(() => getCollectionView('apps'))
@@ -242,7 +244,23 @@ export function ConnectedAppsPanel({ apps }: Props) {
     >
       <div className="connected-panel-head">
         <h2>Connected apps</h2>
-        <CollectionViewToggle label="Connected apps view" scope="apps" />
+        <div className="connected-panel-head-actions">
+          <button
+            type="button"
+            className="connected-app-tabs-button"
+            aria-label={`Show ${openTabCount} open web ${openTabCount === 1 ? 'page' : 'pages'}`}
+            title="Open web pages"
+            disabled={openTabCount === 0}
+            onClick={() => {
+              playWalletSound('soft')
+              onShowTabs()
+            }}
+          >
+            <ViewGridIcon size={16} />
+            <span>{openTabCount}</span>
+          </button>
+          <CollectionViewToggle label="Connected apps view" scope="apps" />
+        </div>
       </div>
       {apps.length === 0 ? (
         <EmptyState

@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
 import { closeEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { BackIcon, CloseIcon, LaunchIcon, RefreshIcon, ViewGridIcon } from './icons'
+import { BackIcon, CloseIcon, LaunchIcon, RefreshIcon } from './icons'
 
 type Props = {
   name: string
   origin: string
   url: string
-  tabCount: number
-  onShowTabs: () => void
+  previewRequested: boolean
+  onPreview: (origin: string, dataUrl: string) => void
+}
+
+type CapturedImage = {
+  resize: (options: { width: number; quality?: 'good' | 'better' | 'best' }) => CapturedImage
+  toDataURL: () => string
 }
 
 type WebviewElement = HTMLElement & {
@@ -19,9 +24,16 @@ type WebviewElement = HTMLElement & {
   goBack: () => void
   goForward: () => void
   reload: () => void
+  capturePage: () => Promise<CapturedImage>
 }
 
-export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Props) {
+export function AppBrowserPanel({
+  name,
+  origin,
+  url,
+  previewRequested,
+  onPreview,
+}: Props) {
   const target = decideAppBrowserTarget(url)
   const safeUrl = target.kind === 'open' ? target.url : null
   const hostRef = useRef<HTMLDivElement>(null)
@@ -29,6 +41,20 @@ export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Pro
   const [currentUrl, setCurrentUrl] = useState(safeUrl ?? '')
   const [loading, setLoading] = useState(Boolean(safeUrl))
   const [history, setHistory] = useState({ back: false, forward: false })
+  const captureTimerRef = useRef(0)
+  const capturePreview = useCallback(() => {
+    const view = webviewRef.current
+    if (!view) return
+    window.clearTimeout(captureTimerRef.current)
+    captureTimerRef.current = window.setTimeout(() => {
+      void view
+        .capturePage()
+        .then((image) =>
+          onPreview(origin, image.resize({ width: 720, quality: 'better' }).toDataURL()),
+        )
+        .catch(() => undefined)
+    }, 180)
+  }, [onPreview, origin])
 
   useEffect(() => {
     const host = hostRef.current
@@ -50,6 +76,7 @@ export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Pro
     const stop = () => {
       setLoading(false)
       syncNavigation()
+      capturePreview()
     }
 
     view.addEventListener('did-start-loading', start)
@@ -60,6 +87,7 @@ export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Pro
     webviewRef.current = view
 
     return () => {
+      window.clearTimeout(captureTimerRef.current)
       view.removeEventListener('did-start-loading', start)
       view.removeEventListener('did-stop-loading', stop)
       view.removeEventListener('did-navigate', syncNavigation)
@@ -67,7 +95,11 @@ export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Pro
       webviewRef.current = null
       view.remove()
     }
-  }, [safeUrl])
+  }, [capturePreview, safeUrl])
+
+  useEffect(() => {
+    if (previewRequested) capturePreview()
+  }, [capturePreview, previewRequested])
 
   const openExternal = () => {
     if (!currentUrl) return
@@ -130,19 +162,6 @@ export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Pro
         <div className="app-browser-navigation">
           <button type="button" aria-label="Open in system browser" onClick={openExternal}>
             <LaunchIcon size={16} />
-          </button>
-          <button
-            type="button"
-            className="app-browser-tabs-button"
-            aria-label={`Show ${tabCount} open app ${tabCount === 1 ? 'tab' : 'tabs'}`}
-            title="Open app tabs"
-            onClick={() => {
-              playWalletSound('soft')
-              onShowTabs()
-            }}
-          >
-            <ViewGridIcon size={16} />
-            <span>{tabCount}</span>
           </button>
           <button
             type="button"

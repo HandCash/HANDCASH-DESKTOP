@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.270] - 2026-09-22
+
+### Changed
+
+- Open web pages are managed from a tab-count button in the Connected apps
+  label bar, immediately left of the list/grid selector. The browser toolbar no
+  longer repeats that control.
+- The page switcher is now a horizontal, screen-proportioned carousel. It
+  captures each live webview when opened, centers and enlarges the selected
+  page, leaves neighboring pages visible at a smaller scale, and provides
+  previous/next controls alongside direct card selection.
+
 ## [1.3.269] - 2026-09-22
 
 ### Added

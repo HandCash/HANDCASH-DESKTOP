@@ -181,6 +181,7 @@ export const WalletNav = memo(function WalletNav({
     activeOrigin: getEmbeddedAppBrowser()?.origin ?? null,
   }))
   const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false)
+  const [browserPreviews, setBrowserPreviews] = useState<Record<string, string>>({})
   const embeddedBrowser =
     browserState.tabs.find((tab) => tab.origin === browserState.activeOrigin) ??
     browserState.tabs[0] ??
@@ -236,6 +237,20 @@ export const WalletNav = memo(function WalletNav({
       }),
     [],
   )
+  const rememberBrowserPreview = useCallback((origin: string, dataUrl: string) => {
+    setBrowserPreviews((current) =>
+      current[origin] === dataUrl ? current : { ...current, [origin]: dataUrl },
+    )
+  }, [])
+  useEffect(() => {
+    const openOrigins = new Set(browserState.tabs.map((tab) => tab.origin))
+    setBrowserPreviews((current) => {
+      const entries = Object.entries(current).filter(([origin]) => openOrigins.has(origin))
+      return entries.length === Object.keys(current).length
+        ? current
+        : Object.fromEntries(entries)
+    })
+  }, [browserState.tabs])
   useEffect(
     () =>
       subscribeEmbeddedAppBrowserTabs((tabs, activeOrigin) => {
@@ -554,8 +569,8 @@ export const WalletNav = memo(function WalletNav({
                         origin={tab.origin}
                         name={app?.name || appDisplayName(tab.origin)}
                         url={tab.url}
-                        tabCount={browserState.tabs.length}
-                        onShowTabs={() => setTabSwitcherOpen(true)}
+                        previewRequested={tabSwitcherOpen}
+                        onPreview={rememberBrowserPreview}
                     />
                     </div>
                   </div>
@@ -567,11 +582,11 @@ export const WalletNav = memo(function WalletNav({
             <AppBrowserTabSwitcher
               tabs={browserState.tabs}
               activeOrigin={browserState.activeOrigin}
+              previews={browserPreviews}
               appName={(origin) =>
                 apps.find((app) => app.origin === origin)?.name || appDisplayName(origin)
               }
               onSelect={(origin) => {
-                setTabSwitcherOpen(false)
                 focusEmbeddedAppBrowser(origin)
               }}
               onClose={(origin) => closeEmbeddedAppBrowser(origin)}
@@ -735,7 +750,11 @@ export const WalletNav = memo(function WalletNav({
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'apps' || mobileInlinePermission}
               >
-                <ConnectedAppsPanel apps={apps} />
+                <ConnectedAppsPanel
+                  apps={apps}
+                  openTabCount={browserState.tabs.length}
+                  onShowTabs={() => setTabSwitcherOpen(true)}
+                />
               </div>
             )}
             {/* Unmount Collect when leaving to free ordinal images; show as
