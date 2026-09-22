@@ -53,14 +53,27 @@ export function arcadeV2BaseUrl(chain: Chain): string | null {
 export type ArcadeTxFate =
   | { kind: 'accepted'; status: string }
   | { kind: 'rejected'; status: string; reason: string }
+  | { kind: 'retryable'; status: string; reason: string; ancestorTxid?: string }
   | { kind: 'unknown' }
+
+const PARENT_REJECTED_RE =
+  /parent rejected \(ancestor ([0-9a-f]{64})\): retryable/i
 
 /** Interpret Arcade's authoritative transaction lifecycle response. */
 export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
   if (body == null || typeof body !== 'object') return { kind: 'unknown' }
   const record = body as { txStatus?: unknown; extraInfo?: unknown }
   const status = String(record.txStatus ?? '').trim().toUpperCase()
+  const reason = String(record.extraInfo ?? status).trim().slice(0, 240)
   if (!status) return { kind: 'unknown' }
+  if (status === 'REJECTED' && /parent rejected/i.test(reason) && /retryable/i.test(reason)) {
+    return {
+      kind: 'retryable',
+      status,
+      reason,
+      ancestorTxid: PARENT_REJECTED_RE.exec(reason)?.[1]?.toLowerCase(),
+    }
+  }
   if (
     status === 'REJECTED' ||
     status === 'INVALID' ||
@@ -69,7 +82,7 @@ export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
     return {
       kind: 'rejected',
       status,
-      reason: String(record.extraInfo ?? status).trim().slice(0, 240),
+      reason,
     }
   }
   if (
@@ -92,16 +105,42 @@ export async function fetchArcadeTxFate(
   chain: Chain,
   txid: string,
 ): Promise<ArcadeTxFate> {
+  return fetchArcadeTxFateRecursive(chain, txid, new Set(), 0)
+}
+
+async function fetchArcadeTxFateRecursive(
+  chain: Chain,
+  txid: string,
+  seen: Set<string>,
+  depth: number,
+): Promise<ArcadeTxFate> {
   const id = txid.trim().toLowerCase()
   const base = arcadeV2BaseUrl(chain)
   if (!base || !/^[0-9a-f]{64}$/.test(id)) return { kind: 'unknown' }
+  if (seen.has(id) || depth > 12) return { kind: 'unknown' }
+  seen.add(id)
   try {
     const res = await fetch(`${base}/tx/${id}`, {
       signal: AbortSignal.timeout(8_000),
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) return { kind: 'unknown' }
-    return classifyArcadeTxStatus(await res.json())
+    const fate = classifyArcadeTxStatus(await res.json())
+    if (fate.kind !== 'retryable' || !fate.ancestorTxid) return fate
+    const ancestor = await fetchArcadeTxFateRecursive(
+      chain,
+      fate.ancestorTxid,
+      seen,
+      depth + 1,
+    )
+    if (ancestor.kind === 'rejected') {
+      return {
+        kind: 'rejected',
+        status: fate.status,
+        reason: `ancestor ${fate.ancestorTxid} rejected: ${ancestor.reason}`.slice(0, 240),
+      }
+    }
+    return fate
   } catch {
     return { kind: 'unknown' }
   }

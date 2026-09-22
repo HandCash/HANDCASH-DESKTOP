@@ -488,6 +488,26 @@ export async function sendBsv21Tokens(args: {
             (txid) => fetchRawTokenBody(wallet, txid),
             knownTxids,
           )
+          const { checkBsv21BroadcastValidity } = await import(
+            './broadcastValidity'
+          )
+          const validity = await checkBsv21BroadcastValidity({
+            beef,
+            outpoints: selected.map((tip) => tip.outpoint),
+            tokenId,
+            chain: wallet.chain,
+          })
+          if (validity.kind === 'refuse') {
+            const ancestor = validity.txid
+              ? ` ${validity.txid.slice(0, 12)}`
+              : ''
+            throw new Error(
+              `BSV-21 send refused (${validity.reason}${ancestor}): ${validity.detail}`,
+            )
+          }
+          console.info(
+            `[bsv21] pre-sign valid token ancestry=${validity.ancestryTxids.length}`,
+          )
           if (icon) await mergeIconTxIntoBeef(wallet, beef, icon)
           inputBEEF = beef.toBinary()
         }
@@ -658,7 +678,10 @@ export async function sendBsv21Tokens(args: {
         )
         const signedTx =
           withParents.findTxid(txid)?.tx ?? withParents.findAtomicTransaction(txid)
-        if (signedTx) {
+        if (!signedTx) {
+          throw new Error('Signed token transaction body is missing')
+        }
+        {
           const classified = classifyBsv21SendOutputs({
             tx: signedTx,
             tokenId,

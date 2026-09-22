@@ -313,7 +313,13 @@ const SEND_FUNGIBLE = `stateDiagram-v2
   classifying --> plainSend : plain
   classifying --> refusing : refuse / cosigned
   refusing --> failed
-  plainSend --> done : SUCCESS
+  plainSend --> proving : load complete BRC-176 ancestry
+  proving --> refusing : invalid token proof
+  proving --> ancestorCheck : token proof valid
+  ancestorCheck --> refusing : Arcade ancestor rejected / pending
+  ancestorCheck --> signing : no hard ancestor rejection
+  signing --> done : SUCCESS
+  signing --> failed : FAIL
   plainSend --> failed : FAIL
   done --> idle : RESET
   failed --> idle : RESET

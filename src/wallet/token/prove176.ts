@@ -305,3 +305,53 @@ export function prove(
   if (!parsedBeef) return fail('invalid BEEF')
   return walk(parsedBeef, parsed.txid, parsed.vout, new Set(), 0)
 }
+
+/**
+ * Exact transaction chain whose BSV-21 outputs authorize these spend tips.
+ *
+ * Funding ancestors are deliberately excluded. Callers use this before
+ * signing to ask Arcade whether any token ancestor is objectively rejected;
+ * an unrelated cash-history row must not make token validity fail.
+ */
+export function collectBsv21TokenAncestryTxids(args: {
+  outpoints: string[]
+  tokenId: string
+  beef: Beef | number[] | Uint8Array
+}): string[] {
+  const parsedBeef = asBeef(args.beef)
+  if (!parsedBeef) throw new Error('invalid token-parent BEEF')
+  const tokenId = args.tokenId.trim().toLowerCase()
+  const queue: string[] = []
+  for (const outpoint of args.outpoints) {
+    const proof = prove(outpoint, parsedBeef)
+    if (!proof.ok) throw new Error(`BRC-176 prove failed: ${proof.reason}`)
+    if (proof.tokenId !== tokenId) {
+      throw new Error(`token tip is ${proof.tokenId}, expected ${tokenId}`)
+    }
+    const parsed = parseDisplayOutpoint(toUnderscoreOutpoint(outpoint))
+    if (!parsed) throw new Error(`invalid outpoint ${outpoint}`)
+    queue.push(parsed.txid)
+  }
+
+  const ancestry = new Set<string>()
+  while (queue.length > 0 && ancestry.size < MAX_HOPS) {
+    const txid = queue.shift()
+    if (!txid || ancestry.has(txid)) continue
+    ancestry.add(txid)
+    const tx = txBody(parsedBeef, txid)
+    if (!tx) throw new Error(`missing token transaction body ${txid}`)
+    for (const input of tx.inputs) {
+      const parentTxid = sourceTxid(input)
+      const parentVout = input.sourceOutputIndex
+      const parentTx = txBody(parsedBeef, parentTxid)
+      if (!parentTx) continue
+      const decoded = decodeOutput(parentTx, parentVout)
+      if (!decoded) continue
+      if (tokenIdOf(decoded, parentTxid, parentVout) === tokenId) {
+        queue.push(parentTxid)
+      }
+    }
+  }
+  if (queue.length > 0) throw new Error('token ancestry exceeded hop limit')
+  return [...ancestry]
+}

@@ -4,6 +4,7 @@ import {
   ARCADE_V2_DEV_PROXY_TEST,
   arcadeV2BaseUrl,
   classifyArcadeTxStatus,
+  fetchArcadeTxFate,
   stripArcadeCorsForbiddenHeaders,
 } from './arcadeV2'
 
@@ -50,6 +51,56 @@ describe('classifyArcadeTxStatus', () => {
       status: 'REJECTED',
       reason: 'parent rejected (ancestor abc)',
     })
+  })
+
+  it('keeps an explicitly retryable parent rejection out of the hard-reject path', () => {
+    const ancestor = 'ab'.repeat(32)
+    expect(
+      classifyArcadeTxStatus({
+        txStatus: 'REJECTED',
+        extraInfo: `parent rejected (ancestor ${ancestor}): retryable — resubmit`,
+      }),
+    ).toEqual({
+      kind: 'retryable',
+      status: 'REJECTED',
+      reason: `parent rejected (ancestor ${ancestor}): retryable — resubmit`,
+      ancestorTxid: ancestor,
+    })
+  })
+
+  it('resolves a retryable parent chain to its hard-rejected root', async () => {
+    const child = '11'.repeat(32)
+    const parent = '22'.repeat(32)
+    const root = '33'.repeat(32)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const txid = String(url).split('/').at(-1)
+      const body =
+        txid === child
+          ? {
+              txStatus: 'REJECTED',
+              extraInfo: `parent rejected (ancestor ${parent}): retryable — resubmit`,
+            }
+          : txid === parent
+            ? {
+                txStatus: 'REJECTED',
+                extraInfo: `parent rejected (ancestor ${root}): retryable — resubmit`,
+              }
+            : {
+                txStatus: 'REJECTED',
+                extraInfo: 'UTXO_SPENT: already spent',
+              }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    try {
+      const fate = await fetchArcadeTxFate('main', child)
+      expect(fate.kind).toBe('rejected')
+      expect(fate.kind === 'rejected' && fate.reason).toContain(root)
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   it('does not turn an unknown response into a failure', () => {

@@ -123,7 +123,17 @@ export { bsv21SendMachine, interpretBsv21SendPath } from './sendMachine'
 export { burnBsv21Tokens, previewBsv21Burn } from './burn'
 
 // BRC-176 prove
-export { fillTokenParentBodies, prove, type Bsv21ProofResult } from './prove176'
+export {
+  collectBsv21TokenAncestryTxids,
+  fillTokenParentBodies,
+  prove,
+  type Bsv21ProofResult,
+} from './prove176'
+export {
+  assertBsv21BroadcastValidity,
+  checkBsv21BroadcastValidity,
+  type Bsv21BroadcastValidity,
+} from './broadcastValidity'
 
 // Settle (P2P receive)
 export { internalizePeerFungibleSettle } from './settle'

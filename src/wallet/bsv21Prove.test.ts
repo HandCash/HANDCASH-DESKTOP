@@ -1,7 +1,11 @@
 import { Beef, LockingScript, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { encodeBsv21Binary } from './token'
-import { fillTokenParentBodies, prove } from './token'
+import {
+  collectBsv21TokenAncestryTxids,
+  fillTokenParentBodies,
+  prove,
+} from './token'
 
 const P2PKH_REST = `76a914${'11'.repeat(20)}88ac`
 
@@ -118,6 +122,33 @@ describe('bsv21Prove', () => {
       amount: 100n,
       deployOutpoint: id,
     })
+  })
+
+  it('collects only token ancestors for pre-sign validity checks', () => {
+    const deploy = deployTx(100n)
+    const id = tokenIdOf(deploy)
+    const fundingTxid = 'fa'.repeat(32)
+    const split = spend(
+      [{ tx: deploy, vout: 0 }],
+      [valueScript(id, 60n), valueScript(id, 40n)],
+      { txid: fundingTxid },
+    )
+    const tip = `${split.id('hex')}_0`
+
+    expect(
+      collectBsv21TokenAncestryTxids({
+        outpoints: [tip],
+        tokenId: id,
+        beef: beefOf(split),
+      }),
+    ).toEqual(expect.arrayContaining([split.id('hex'), deploy.id('hex')]))
+    expect(
+      collectBsv21TokenAncestryTxids({
+        outpoints: [tip],
+        tokenId: id,
+        beef: beefOf(split),
+      }),
+    ).not.toContain(fundingTxid)
   })
 
   it('fails over-transfer (outputs exceed inputs)', () => {
