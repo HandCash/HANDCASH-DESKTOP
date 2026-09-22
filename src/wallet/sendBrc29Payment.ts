@@ -30,6 +30,7 @@ import {
 } from './ghostTxSuppress'
 import { isTerminalInboundHintStatus } from './kernel/inboundHintFate'
 import {
+  clearInboundHintIngestFail,
   inboundHintLastFailAt,
   noteInboundHintIngestFail,
   stampInboundHintFirstSeen,
@@ -1128,9 +1129,12 @@ export async function ingestPaymentsFromTipHints(
     // Revive a prior ghost only when this poll has a new AtomicBEEF body.
     // Chat-only `{txid, item}` cards used to forgetGhostTx every unlock, so
     // four dead inbound tips came back on every open.
-    if ((h.tx && h.tx.length > 0) || h.beefUrl?.trim()) {
+    // A URL pointer is not a body. Retired legacy cards often redeliver the
+    // same dead URL forever; only an actual package proves new evidence.
+    if (h.tx && h.tx.length > 0) {
       forgetGhostTx(h.txid)
       reviveRetiredInboundHint(h.txid)
+      clearInboundHintIngestFail(h.txid)
     }
     if (isGhostTxSuppressed(h.txid)) continue
     const prev = unique.get(h.txid)
@@ -1203,6 +1207,7 @@ export async function ingestPaymentsFromTipHints(
     txid: string,
     hadLocalBeef: boolean,
     firstSeenAt: number | undefined,
+    rawBodyCanRecover: boolean,
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
     // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
@@ -1216,6 +1221,7 @@ export async function ingestPaymentsFromTipHints(
     const {
       decideInboundHintFate,
       mayBeUnresolvable,
+      UNDELIVERABLE_HINT_STATUS,
       UNRESOLVABLE_GRACE_MS,
       UNRESOLVABLE_HINT_STATUS,
     } = await import('./kernel/inboundHintFate')
@@ -1247,6 +1253,7 @@ export async function ingestPaymentsFromTipHints(
       isArcadeGhost: false,
       hasDeliverableBeef: hadLocalBeef,
       bodyLookup,
+      rawBodyCanRecover,
       firstSeenAt: first,
       now,
     }
@@ -1260,14 +1267,18 @@ export async function ingestPaymentsFromTipHints(
     // Only spend the explorer round trip once durable provider misses and age
     // make terminal retirement possible. Silence remains unknown and retries.
     let onChain: boolean | null = null
-    try {
-      const active = getActiveWallet()
-      if (active) {
-        const { txExistsOnChain } = await import('./legacyScan')
-        onChain = await txExistsOnChain(txid, active.chain)
+    // A raw-only item envelope is already classified: chain presence cannot
+    // manufacture the missing AtomicBEEF, so no existence probe is useful.
+    if (!(bodyLookup === 'hit' && !rawBodyCanRecover)) {
+      try {
+        const active = getActiveWallet()
+        if (active) {
+          const { txExistsOnChain } = await import('./legacyScan')
+          onChain = await txExistsOnChain(txid, active.chain)
+        }
+      } catch {
+        /* unknown keeps the hint pending */
       }
-    } catch {
-      /* unknown keeps the hint pending */
     }
 
     const fate = decideInboundHintFate({ ...base, onChain })
@@ -1279,7 +1290,12 @@ export async function ingestPaymentsFromTipHints(
     }
 
     console.warn(`[tip-ingest] tip ${txid.slice(0, 12)}… retired — ${fate.reason}`)
-    markInboundPaymentStatus(txid, UNRESOLVABLE_HINT_STATUS)
+    markInboundPaymentStatus(
+      txid,
+      bodyLookup === 'hit' && !rawBodyCanRecover
+        ? UNDELIVERABLE_HINT_STATUS
+        : UNRESOLVABLE_HINT_STATUS,
+    )
     retireUnresolvable(txid)
   }
 
@@ -1294,7 +1310,9 @@ export async function ingestPaymentsFromTipHints(
     try {
     const firstSeenAt = stampInboundHintFirstSeen(hint.txid, hint.firstSeenAt)
     hint = { ...hint, firstSeenAt }
-    const hasDeliverableBeef = !!(hint.tx && hint.tx.length > 0) || !!hint.beefUrl?.trim()
+    // A legacy beefUrl is merely a pointer. It becomes deliverable only after
+    // fetchAtomicBeefFromUrl returns bytes and subject framing succeeds.
+    const hasDeliverableBeef = !!(hint.tx && hint.tx.length > 0)
     if (!hasDeliverableBeef) {
       const { shouldDeferBodylessHintRetry, UNRESOLVABLE_GRACE_MS } = await import(
         './kernel/inboundHintFate'
@@ -1305,7 +1323,7 @@ export async function ingestPaymentsFromTipHints(
         lastFailAt != null &&
         now - firstSeenAt >= UNRESOLVABLE_GRACE_MS
       ) {
-        await markGhostIfMissing(hint.txid, false, firstSeenAt)
+        await markGhostIfMissing(hint.txid, false, firstSeenAt, !hint.item)
         return { importedTxid: null, balanceSats: null }
       }
       if (
@@ -1337,6 +1355,7 @@ export async function ingestPaymentsFromTipHints(
       }
       const hadLocalBeef = !!(atomic && atomic.length > 0)
       let accepted = false
+      let lastReason = 'settle-refused'
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         const asset = hint.asset
         const result =
@@ -1368,14 +1387,19 @@ export async function ingestPaymentsFromTipHints(
         if (result.accepted) {
           importedTxid = hint.txid
           accepted = true
+          clearInboundHintIngestFail(hint.txid)
           break
         }
+        lastReason = result.reason ?? lastReason
         if (attempt < ingestAttempts - 1) {
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
       if (!accepted) {
-        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+        console.warn(
+          `[tip-ingest] item settle refused ${hint.txid.slice(0, 12)}… — ${lastReason}`,
+        )
+        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt, false)
         if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
       return { importedTxid, balanceSats }
@@ -1408,6 +1432,7 @@ export async function ingestPaymentsFromTipHints(
         if (result.accepted) {
           importedTxid = hint.txid
           accepted = true
+          clearInboundHintIngestFail(hint.txid)
           break
         }
         if (attempt < ingestAttempts - 1) {
@@ -1415,7 +1440,7 @@ export async function ingestPaymentsFromTipHints(
         }
       }
       if (!accepted) {
-        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt, true)
         if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
       return { importedTxid, balanceSats }
@@ -1430,6 +1455,7 @@ export async function ingestPaymentsFromTipHints(
       if (result.imported > 0 || result.reason === 'already-imported') {
         importedTxid = hint.txid
         accepted = true
+        clearInboundHintIngestFail(hint.txid)
         break
       }
       if (attempt < ingestAttempts - 1) {
@@ -1437,7 +1463,7 @@ export async function ingestPaymentsFromTipHints(
       }
     }
     if (!accepted) {
-      await markGhostIfMissing(hint.txid, false, hint.firstSeenAt)
+      await markGhostIfMissing(hint.txid, false, hint.firstSeenAt, true)
       noteInboundHintIngestFail(hint.txid)
     }
     return { importedTxid, balanceSats }

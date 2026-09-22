@@ -26,6 +26,12 @@ export type InboundHintFacts = {
   hasDeliverableBeef: boolean
   /** Durable multi-provider raw-transaction lookup. */
   bodyLookup: 'hit' | 'miss' | 'unknown'
+  /**
+   * True for payment paths that can rebuild settlement from a raw body.
+   * Item/token custody requires the sender's AtomicBEEF package; a raw tx hit
+   * proves broadcast, but cannot replace that package.
+   */
+  rawBodyCanRecover: boolean
   /** Explorer existence. `null` when no explorer could answer. */
   onChain: boolean | null
   /** When the hint first arrived. */
@@ -63,7 +69,8 @@ function ageMs(facts: Pick<InboundHintFacts, 'firstSeenAt' | 'now'>): number {
 export function mayBeUnresolvable(facts: Omit<InboundHintFacts, 'onChain'>): boolean {
   if (facts.isArcadeGhost) return false
   if (facts.hasDeliverableBeef) return false
-  if (facts.bodyLookup !== 'miss') return false
+  if (facts.bodyLookup === 'unknown') return false
+  if (facts.bodyLookup === 'hit' && facts.rawBodyCanRecover) return false
   return ageMs(facts) >= UNRESOLVABLE_GRACE_MS
 }
 
@@ -73,13 +80,23 @@ export function decideInboundHintFate(facts: InboundHintFacts): InboundHintFate 
   // We could still rescue this by broadcasting it ourselves.
   if (facts.hasDeliverableBeef) return { kind: 'retry' }
 
-  // Never asked every provider, or one of them has the body.
+  if (ageMs(facts) < UNRESOLVABLE_GRACE_MS) return { kind: 'retry' }
+
+  // A raw transaction is not an AtomicBEEF. Item/token receive cannot prove
+  // ancestry or internalize custody from this envelope after the package is
+  // gone, even when an explorer can see the broadcast transaction.
+  if (facts.bodyLookup === 'hit' && !facts.rawBodyCanRecover) {
+    return {
+      kind: 'unresolvable',
+      reason: 'sender did not deliver usable AtomicBEEF for this transfer',
+    }
+  }
+
+  // Never asked every provider, or the payment path can rebuild from the body.
   if (facts.bodyLookup !== 'miss') return { kind: 'retry' }
 
   // Absence has to be positively established; `null` is "nobody answered".
   if (facts.onChain !== false) return { kind: 'retry' }
-
-  if (ageMs(facts) < UNRESOLVABLE_GRACE_MS) return { kind: 'retry' }
 
   return {
     kind: 'unresolvable',
@@ -89,6 +106,8 @@ export function decideInboundHintFate(facts: InboundHintFacts): InboundHintFate 
 
 /** Chat status pinned on a hint we have stopped chasing. */
 export const UNRESOLVABLE_HINT_STATUS = 'Unavailable — sender never broadcast'
+export const UNDELIVERABLE_HINT_STATUS =
+  'Unavailable — sender did not deliver spend proof'
 
 /**
  * Skip another heavy ingest while the hint is still inside the retirement

@@ -17,6 +17,7 @@ function unbroadcast(over: Partial<InboundHintFacts> = {}): InboundHintFacts {
     isArcadeGhost: false,
     hasDeliverableBeef: false,
     bodyLookup: 'miss',
+    rawBodyCanRecover: true,
     onChain: false,
     firstSeenAt: NOW - UNRESOLVABLE_GRACE_MS - 1,
     now: NOW,
@@ -46,6 +47,18 @@ describe('inbound hint fate', () => {
   it('keeps chasing when the providers were never all asked', () => {
     expect(decideInboundHintFate(unbroadcast({ bodyLookup: 'unknown' })).kind).toBe('retry')
     expect(decideInboundHintFate(unbroadcast({ bodyLookup: 'hit' })).kind).toBe('retry')
+  })
+
+  it('retires an old item hint when only a raw body exists', () => {
+    const fate = decideInboundHintFate(
+      unbroadcast({
+        bodyLookup: 'hit',
+        rawBodyCanRecover: false,
+        onChain: true,
+      }),
+    )
+    expect(fate.kind).toBe('unresolvable')
+    expect(fate.kind === 'unresolvable' && fate.reason).toContain('AtomicBEEF')
   })
 
   it('treats an unanswered explorer as no evidence, not as absence', () => {
@@ -93,6 +106,12 @@ describe('inbound hint fate', () => {
     expect(mayBeUnresolvable(unbroadcast())).toBe(true)
     expect(mayBeUnresolvable(unbroadcast({ hasDeliverableBeef: true }))).toBe(false)
     expect(mayBeUnresolvable(unbroadcast({ bodyLookup: 'unknown' }))).toBe(false)
+    expect(
+      mayBeUnresolvable(
+        unbroadcast({ bodyLookup: 'hit', rawBodyCanRecover: false }),
+      ),
+    ).toBe(true)
+    expect(mayBeUnresolvable(unbroadcast({ bodyLookup: 'hit' }))).toBe(false)
     expect(mayBeUnresolvable(unbroadcast({ isArcadeGhost: true }))).toBe(false)
     expect(
       mayBeUnresolvable(unbroadcast({ firstSeenAt: NOW - 60_000 })),

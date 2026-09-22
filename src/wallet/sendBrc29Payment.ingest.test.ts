@@ -539,6 +539,41 @@ describe('ingestPaymentsFromTipHints', () => {
     expect(ghosts.has(txid)).toBe(true)
   })
 
+  it('retires an old item envelope when raw tx exists but AtomicBEEF does not', async () => {
+    const { UNDELIVERABLE_HINT_STATUS, UNRESOLVABLE_GRACE_MS } = await import(
+      './kernel/inboundHintFate'
+    )
+    const txid = '4'.repeat(64)
+    peekRawTxLookup.mockReturnValue('hit')
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'missing-beef',
+    })
+    chatMessages.push({
+      id: 'm-raw-only',
+      direction: 'in',
+      kind: 'tip',
+      createdAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1,
+      meta: { txid, status: 'Receiving (SPV)' },
+    })
+
+    const result = await ingestSkippingRetryDelay([
+      {
+        txid,
+        item: true,
+        firstSeenAt: Date.now() - UNRESOLVABLE_GRACE_MS - 1,
+      },
+    ])
+
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateMessage).toHaveBeenCalledWith('m-raw-only', {
+      meta: { status: UNDELIVERABLE_HINT_STATUS },
+    })
+    expect(result.ghostTxids).toEqual([txid])
+    expect(ghosts.has(txid)).toBe(true)
+  })
+
   it('establishes a durable body miss before retiring an old fungible hint', async () => {
     const { UNRESOLVABLE_GRACE_MS } = await import('./kernel/inboundHintFate')
     const txid = '6'.repeat(64)
