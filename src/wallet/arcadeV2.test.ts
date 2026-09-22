@@ -40,6 +40,23 @@ describe('stripArcadeCorsForbiddenHeaders', () => {
 })
 
 describe('classifyArcadeTxStatus', () => {
+  it.each([
+    'RECEIVED',
+    'STORED',
+    'ACCEPTED',
+    'ANNOUNCED_TO_NETWORK',
+    'ACCEPTED_BY_NETWORK',
+    'SEEN_ON_NETWORK',
+    'SEEN_MULTIPLE_NODES',
+    'IMMUTABLE',
+    'MINED',
+  ])('treats Arcade propagation status %s as accepted', (txStatus) => {
+    expect(classifyArcadeTxStatus({ txStatus })).toEqual({
+      kind: 'accepted',
+      status: txStatus,
+    })
+  })
+
   it('treats parent rejection as an authoritative SPV failure', () => {
     expect(
       classifyArcadeTxStatus({

@@ -87,9 +87,13 @@ export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
   }
   if (
     status === 'MINED' ||
+    status === 'IMMUTABLE' ||
     status === 'SEEN_ON_NETWORK' ||
+    status === 'SEEN_MULTIPLE_NODES' ||
+    status === 'ACCEPTED_BY_NETWORK' ||
     status === 'ANNOUNCED_TO_NETWORK' ||
     status === 'STORED' ||
+    status === 'RECEIVED' ||
     status === 'ACCEPTED'
   ) {
     return { kind: 'accepted', status }
