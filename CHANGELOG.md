@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.278] - 2026-09-22
+
+### Fixed
+
+- Treat Arcade's propagated lifecycle states, including
+  `SEEN_MULTIPLE_NODES`, as accepted. A valid BRC-100 payment no longer looks
+  stuck while it waits for its mined proof.
+
 ## [1.3.277] - 2026-09-22
 
 ### Fixed
