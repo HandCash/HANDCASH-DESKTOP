@@ -238,6 +238,23 @@ export function openEmbeddedAppBrowser(origin: string, url: string) {
   openNavChild('apps', { type: 'app-browser', origin, url })
 }
 
+/**
+ * Record where a tab has browsed to.
+ *
+ * A tab only ever held its entry URL, so closing one and opening the app again
+ * dropped the user back at the landing page. The panel keys its `<webview>` on
+ * the URL it mounted with, not on this, so recording here must never rebuild
+ * the guest — that would reload the page on every navigation.
+ */
+export function noteEmbeddedAppBrowserUrl(origin: string, url: string) {
+  const tab = embeddedAppBrowsers.find((entry) => entry.origin === origin)
+  if (!tab || tab.url === url) return
+  embeddedAppBrowsers = embeddedAppBrowsers.map((entry) =>
+    entry.origin === origin ? { ...entry, url } : entry,
+  )
+  emitEmbeddedBrowser()
+}
+
 export function openPermissionDetails(origin: string, scopeId: string) {
   openNavChild('apps', { type: 'permission', origin, scopeId })
 }

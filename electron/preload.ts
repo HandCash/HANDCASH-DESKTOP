@@ -95,6 +95,8 @@ const handcash = {
     ipcRenderer.invoke('app:open-in-app-browser', url) as Promise<
       { ok: true } | { ok: false; error: string }
     >,
+  // This window enables `webviewTag`, so the core may host embedded app tabs.
+  embeddedAppBrowser: true,
   getLogInfo: () =>
     ipcRenderer.invoke('app:get-log-info') as Promise<{
       file: string | null

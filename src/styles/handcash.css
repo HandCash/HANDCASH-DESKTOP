@@ -14641,6 +14641,23 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   height: 100%;
 }
 
+.app-browser-failure {
+  position: absolute;
+  inset: 45px 0 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: var(--hc-surface);
+}
+
+.app-browser-failure > span {
+  max-width: 46ch;
+  color: var(--hc-muted);
+}
+
 .app-browser-loading {
   position: absolute;
   top: 45px;

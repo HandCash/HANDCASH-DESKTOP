@@ -30,8 +30,9 @@ describe('openAppInWalletBrowser', () => {
     vi.mocked(openEmbeddedAppBrowser).mockClear()
     vi.mocked(decideAppBrowserTarget).mockClear()
     openExternal.mockClear()
+    // Desktop shell: hosts `<webview>`, so an embedded tab is real.
     vi.stubGlobal('window', {
-      handcash: { openExternal },
+      handcash: { openExternal, embeddedAppBrowser: true },
     })
   })
 
@@ -63,6 +64,25 @@ describe('openAppInWalletBrowser', () => {
       'https://pixelwar.click/',
     )
     expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Mobile exposes `openAppBrowser` but has no `<webview>`. Honouring
+   * preferInApp there mounted a guest that never loaded and never errored.
+   */
+  it('ignores preferInApp on a shell that cannot host a tab', async () => {
+    vi.stubGlobal('window', {
+      handcash: { openExternal, openAppBrowser: vi.fn() },
+    })
+    await expect(
+      openAppInWalletBrowser({
+        origin: 'https://pixelwar.click',
+        url: 'https://pixelwar.click/',
+        preferInApp: true,
+      }),
+    ).resolves.toBe('external')
+    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
+    expect(openExternal).toHaveBeenCalledWith('https://pixelwar.click/')
   })
 
   it('refuses invalid targets', async () => {

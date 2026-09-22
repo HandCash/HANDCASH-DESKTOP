@@ -104,6 +104,11 @@ interface HandCashBridge {
   openAppBrowser?: (
     url: string,
   ) => Promise<{ ok: true } | { ok: false; error: string }>
+  /**
+   * Shell can host embedded `<webview>` app tabs. Desktop only — mobile's
+   * `openAppBrowser` hands off to the system browser instead.
+   */
+  embeddedAppBrowser?: boolean
   getLogInfo?: () => Promise<{ file: string | null; dir: string | null }>
   openLogs?: () => Promise<{ ok: true; file: string } | { ok: false; error: string }>
   readLogs?: (opts?: {

@@ -1,4 +1,5 @@
 import { decideAppBrowserTarget } from './appBrowserUrl'
+import { chooseAppBrowserSurface } from './appBrowserSurface'
 import { openEmbeddedAppBrowser } from './navStore'
 
 async function openSystemBrowser(url: string): Promise<boolean> {
@@ -34,7 +35,9 @@ export async function openAppInWalletBrowser(args: {
   const target = decideAppBrowserTarget(args.url)
   if (target.kind !== 'open') return 'unavailable'
 
-  if (args.preferInApp) {
+  // Only a shell that hosts `<webview>` gets an embedded tab; asking for one
+  // on mobile mounts a guest that never loads.
+  if (args.preferInApp && chooseAppBrowserSurface(window.handcash).surface === 'embedded') {
     openEmbeddedAppBrowser(args.origin, target.url)
     return 'embedded'
   }

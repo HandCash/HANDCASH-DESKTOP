@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.276] - 2026-09-22
+
+### Fixed
+
+- The in-app browser never loaded on mobile. "Open in-app" was enabled
+  whenever the shell exposed `openAppBrowser`, but both shells do — on mobile
+  it hands the URL to the system browser. The embedded tab is an Electron
+  `<webview>`, which Android has no element for, so the tab mounted as an
+  inert node that never loaded and never errored and the panel sat on its
+  spinner. The shell now declares `embeddedAppBrowser`, and `AppLaunchPanel`
+  routes mobile to the system browser instead.
+- A browser tab only ever remembered the URL it was opened with, so closing a
+  tab and reopening the app dropped you back on its landing page. Tabs now
+  record where they browsed to. The `<webview>` stays keyed to the URL it
+  mounted with, so this never rebuilds the guest mid-session.
+- A tab that fails to load says so, with an "Open in browser" escape, instead
+  of showing an endless loading bar. `did-fail-load` was not handled at all.
+
 ## [1.3.275] - 2026-09-22
 
 ### Changed
