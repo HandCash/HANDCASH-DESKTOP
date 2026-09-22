@@ -19,6 +19,7 @@
  */
 import {
   activityEntryKey,
+  isBurnActivity,
   isEventActivity,
   isFailedActivity,
   type ActivityEntry,
@@ -121,8 +122,15 @@ export function chooseActivityFold(
   entry: ActivityEntry,
   marketKeys: ReadonlySet<string>,
 ): ActivityFold {
-  // A failed leg must stay its own row: it is cleared and retried on its own.
-  if (isFailedActivity(entry)) return { kind: 'solo' }
+  // Failed send legs are cleared and retried independently. A grouped burn is
+  // one atomic transaction attempt with no per-NFT retry, so its members must
+  // remain one truthful failed record rather than exploding into N rows.
+  if (isFailedActivity(entry)) {
+    const group = (entry.sendGroupId ?? '').trim()
+    return isBurnActivity(entry) && group
+      ? { kind: 'sendGroup', key: `${entry.origin}|send-group:${group}` }
+      : { kind: 'solo' }
+  }
   const txid = txidOf(entry)
   if (!txid) {
     // No txid yet — the send group is the transaction's identity in flight.

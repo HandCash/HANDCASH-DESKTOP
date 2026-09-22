@@ -172,6 +172,40 @@ describe('composeActivityRecords', () => {
     expect(activityBatchName(records[0]!.batch!)).toBe('2 Foxes')
   })
 
+  it.each([
+    ['pending', undefined],
+    ['complete', TXID],
+    ['failed', undefined],
+  ] as const)(
+    'keeps a grouped NFT burn as one %s record with every member',
+    (status, txid) => {
+      const legs = ['Pixel Foxes #1', 'Pixel Foxes #2', 'Pixel Foxes #3'].map(
+        (name, vout) =>
+          entry({
+            method: 'burn-collectable',
+            kind: 'spent',
+            status,
+            ...(txid ? { txid } : {}),
+            pendingId: `burn-group-${vout}`,
+            sendGroupId: 'burn-group',
+            burn: { asset: '1sat', destroyedAmount: '1' },
+            item: {
+              name,
+              origin: `${OTHER_TXID}_${vout}`,
+              outpoint: `${OTHER_TXID}.${vout}`,
+            },
+          }),
+      )
+
+      const records = composeActivityRecords(legs)
+
+      expect(records).toHaveLength(1)
+      expect(records[0]!.entries).toHaveLength(3)
+      expect(records[0]!.batch).toEqual({ count: 3, label: 'Pixel Foxes' })
+      expect(activityBatchName(records[0]!.batch!)).toBe('3 Pixel Foxes')
+    },
+  )
+
   it('will not claim a series the members do not share', () => {
     const records = composeActivityRecords([
       collectable('Fox #1', 0),

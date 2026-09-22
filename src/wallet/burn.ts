@@ -10,7 +10,12 @@ import {
   type Transaction,
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
-import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import {
+  upsertAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
+  type ActivityItem,
+  type ActivityStatus,
+} from './appActivity'
 import { getBeefForTxidCached, rememberBeefTree } from './beefCache'
 import {
   type BurnInput,
@@ -890,33 +895,67 @@ export async function burnOneSat(
   const pendingId = `burn-${Date.now()}-${Math.random()
     .toString(16)
     .slice(2, 8)}`
-  const firstHeld = getCachedCollectables().find(
-    (candidate) => wireOutpoint(candidate.outpoint) === wanted[0]
+  const cachedByOutpoint = new Map(
+    getCachedCollectables().map((held) => [wireOutpoint(held.outpoint), held]),
   )
-  const item = {
-    name:
-      outpoints.length === 1
-        ? firstHeld?.name ?? 'Collectable'
-        : `${outpoints.length} collectables`,
-    origin:
-      firstHeld?.origin ?? wireOutpoint(outpoints[0] ?? '').replace('.', '_'),
-    outpoint: outpoints[0],
-    ...(firstHeld?.imageUrl ? { imageUrl: firstHeld.imageUrl } : {}),
-    ...(firstHeld?.app ? { app: firstHeld.app } : {}),
+  const activityLegs: Array<{ pendingId: string; item: ActivityItem }> =
+    wanted.map((outpoint, index) => {
+      const held = cachedByOutpoint.get(outpoint)
+      return {
+        pendingId:
+          wanted.length === 1 ? pendingId : `${pendingId}-${index}`,
+        item: {
+          name: held?.name ?? 'Collectable',
+          origin: held?.origin ?? outpoint.replace('.', '_'),
+          outpoint,
+          ...(held?.imageUrl ? { imageUrl: held.imageUrl } : {}),
+          ...(held?.app ? { app: held.app } : {}),
+        },
+      }
+    })
+  const writeActivityLegs = (args: {
+    status: ActivityStatus
+    txid?: string
+    failureReason?: string
+    recoveredSatoshis?: number
+    feeSatoshis?: number
+  }) => {
+    for (const leg of activityLegs) {
+      const verb =
+        args.status === 'pending'
+          ? `Burning ${leg.item.name}`
+          : args.status === 'failed'
+            ? `${leg.item.name} was not burned`
+            : `Burned ${leg.item.name}`
+      upsertAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        kind: 'spent',
+        sats: 1,
+        method: 'burn-collectable',
+        note: verb,
+        ...(args.txid ? { txid: args.txid } : {}),
+        item: leg.item,
+        burn: {
+          asset: '1sat',
+          destroyedAmount: '1',
+          ...(args.recoveredSatoshis != null
+            ? { recoveredSatoshis: args.recoveredSatoshis }
+            : {}),
+          ...(args.feeSatoshis != null
+            ? { feeSatoshis: args.feeSatoshis }
+            : {}),
+        },
+        status: args.status,
+        pendingId: leg.pendingId,
+        ...(wanted.length > 1 ? { sendGroupId: pendingId } : {}),
+        ...(args.failureReason ? { failureReason: args.failureReason } : {}),
+      })
+    }
   }
-  // The panel hands off immediately. Persist its pending row before queueing or
-  // fetching source BEEF so Activity always explains what is happening.
-  upsertAppActivity({
-    origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'spent',
-    sats: outpoints.length,
-    method: 'burn-collectable',
-    note: `Burning ${item.name}`,
-    item,
-    burn: { asset: '1sat', destroyedAmount: String(outpoints.length) },
-    status: 'pending',
-    pendingId,
-  })
+  // One durable leg per NFT lets Activity compose a truthful transaction:
+  // count, shared collection name, and icon cluster. A synthetic "N items" leg
+  // lost every member except the first and linked details to that one NFT.
+  writeActivityLegs({ status: 'pending' })
   console.info(
     `[burn] queued collectable=${wanted[0]?.slice(0, 16)}… count=${
       wanted.length
@@ -1006,24 +1045,13 @@ export async function burnOneSat(
         plan.inputs.map((input) => wireOutpoint(input.outpoint)),
         result.txid,
       )
-      upsertAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'spent',
-        sats: outpoints.length,
-        method: 'burn-collectable',
-        note: `Burned ${item.name}`,
-        txid: result.txid,
-        item,
-        burn: {
-          asset: '1sat',
-          destroyedAmount: String(outpoints.length),
-          recoveredSatoshis: result.recoveredSatoshis,
-          ...(result.feeSatoshis != null
-            ? { feeSatoshis: result.feeSatoshis }
-            : {}),
-        },
+      writeActivityLegs({
         status: 'complete',
-        pendingId,
+        txid: result.txid,
+        recoveredSatoshis: result.recoveredSatoshis,
+        ...(result.feeSatoshis != null
+          ? { feeSatoshis: result.feeSatoshis }
+          : {}),
       })
       console.info(
         `[burn] complete collectable count=${wanted.length} txid=${result.txid}`
@@ -1034,18 +1062,8 @@ export async function burnOneSat(
   } catch (error) {
     const active = getActiveWallet()
     const reason = await formatBurnFailureReason(error, active)
-    upsertAppActivity({
-      origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'spent',
-      sats: outpoints.length,
-      method: 'burn-collectable',
-      note: `${item.name} ${
-        outpoints.length === 1 ? 'was' : 'were'
-      } not burned`,
-      item,
-      burn: { asset: '1sat', destroyedAmount: String(outpoints.length) },
+    writeActivityLegs({
       status: 'failed',
-      pendingId,
       failureReason: reason,
     })
     console.error(`[burn] failed collectable count=${wanted.length}`, reason)

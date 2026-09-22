@@ -771,7 +771,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               <>
                 <dt>Destroyed</dt>
                 <dd>
-                  {entry.burn.destroyedAmount}{' '}
+                  {entry.burn.asset === '1sat' && batch
+                    ? batch.count
+                    : entry.burn.destroyedAmount}{' '}
                   {entry.burn.asset === 'bsv21' ? shownItem?.name ?? 'token units' : 'items'}
                 </dd>
                 {entry.burn.recoveredSatoshis != null ? (

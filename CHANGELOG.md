@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.267] - 2026-09-22
+
+### Fixed
+
+- Grouped NFT burns now persist one Activity leg per destroyed NFT and compose
+  those legs into one transaction record. The feed can therefore show the
+  correct count, shared collection name, icon cluster, and member breakdown
+  instead of a synthetic row linked only to the first NFT.
+- Pending, completed, and failed grouped burns remain grouped consistently, and
+  burn details report the composed item count.
+
 ## [1.3.266] - 2026-09-22
 
 ### Fixed
