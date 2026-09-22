@@ -558,7 +558,11 @@ function setCollectablesCache(
   // Durable dedupe in announceItemsReceived skips unlock rediscovery.
   if (arrived.length === 0 || options.announceArrivals === false) return
   if (pauseCollectableArrivalToasts > 0) return
+  const announcementEpoch = collectablesAccountEpoch
   void yieldToUi().then(() => {
+    // Account-local key scope may have changed while yielding. Never write the
+    // prior wallet's receive/activity announcement into the newly bound wallet.
+    if (announcementEpoch !== collectablesAccountEpoch) return
     const toasted = announceItemsReceived(arrived)
     if (!toasted) return
     try {
@@ -670,7 +674,7 @@ export function rebindCollectablesForAccount(): void {
   }
   notifyCollectables(cachedCollectables)
   // Authoritative list so short-page "keep cached" cannot retain the prior wallet.
-  const run = listCollectablesNow(undefined, false, true)
+  const run = listCollectablesNow(undefined, false, true, false)
   listInFlight = run
   void run
     .catch(() => {})
@@ -2522,7 +2526,8 @@ function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
 async function listCollectablesNow(
   active?: ActiveWallet | null,
   append = false,
-  authoritativeAfterReplace = false
+  authoritativeAfterReplace = false,
+  announceArrivals = true,
 ): Promise<Collectable[]> {
   const epoch = collectablesAccountEpoch
   const wallet = active ?? getActiveWallet()
@@ -2640,7 +2645,7 @@ async function listCollectablesNow(
           lastItemOutputs = [...byOp.values()]
           lastItemChain = wallet.chain
         }
-        setCollectablesCache(merged, { announceArrivals: true, forEpoch: epoch })
+        setCollectablesCache(merged, { announceArrivals, forEpoch: epoch })
         return getCachedCollectables()
       }
       console.info(
@@ -2800,7 +2805,10 @@ async function listCollectablesNow(
   // Everything the list renders (name, app, image) comes from the output itself
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
-  setCollectablesCache(deduped, { announceArrivals: !append, forEpoch: epoch })
+  setCollectablesCache(deduped, {
+    announceArrivals: announceArrivals && !append,
+    forEpoch: epoch,
+  })
   // Art the device already holds, before any indexer is asked for a picture.
   void hydrateLocalItemArt(outputs, wallet).catch((err) => {
     console.warn('[items] local art hydrate failed', err)

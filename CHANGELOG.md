@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.263] - 2026-09-22
+
+### Fixed
+
+- Vault switching now replaces the entire account projection in one render.
+  Inventory subscriptions/timers remount for the selected runtime, and the
+  prior wallet's balance is hidden until the selected Toolbox answers.
+- Deferred item-arrival notifications are fenced by account generation, so a
+  primary-wallet receive cannot resume after a switch and write false Activity
+  or toast state into a secondary wallet.
+- Initial account inventory reconciliation no longer announces existing
+  holdings as newly received, and post-switch chain catch-up stays silent.
+
 ## [1.3.262] - 2026-09-22
 
 ### Fixed

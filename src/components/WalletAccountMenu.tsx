@@ -12,6 +12,7 @@ import { copyText } from '../wallet/clipboard'
 import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
 import {
   createVaultAccount,
   ensureVaultAccounts,
@@ -25,6 +26,7 @@ type Props = {
   profile: WalletProfile
   identityLabel: string
   identityCopy: string
+  onAccountSwitchStarted: (profile: WalletProfile) => void
   onAccountSwitched: (profile: WalletProfile, balanceSats: number) => void
 }
 
@@ -41,6 +43,7 @@ export function WalletAccountMenu({
   profile,
   identityLabel,
   identityCopy,
+  onAccountSwitchStarted,
   onAccountSwitched,
 }: Props) {
   const [snapshot, send] = useMachine(walletAccountMenuMachine)
@@ -111,27 +114,34 @@ export function WalletAccountMenu({
         mnemonic: active.mnemonic,
         accountIndex: index,
       })
+      const runtime = getWalletRuntime()
+      if (!runtime || runtime.instance !== next) {
+        throw new Error('Selected wallet runtime was replaced')
+      }
+      const nextProfile: WalletProfile = {
+        handle: next.handle,
+        identityKey: next.identityKey,
+        address: next.address,
+        chain: next.chain,
+      }
+      // Runtime, identity projection, and inventory must change in one beat.
+      // The balance is explicitly pending until this wallet's Toolbox answers;
+      // never leave the prior wallet's amount beside the new identity.
+      onAccountSwitchStarted(nextProfile)
       let balanceSats = readTrustedBalance(next.identityKey, next.chain) ?? 0
       try {
         balanceSats = await fetchBalanceSats(next.wallet, {
           creditUnconfirmed: false,
         })
-        writeTrustedBalance(next.identityKey, next.chain, balanceSats)
       } catch (error) {
         console.warn('[vault-account] local balance read failed', messageOf(error))
       }
-      onAccountSwitched(
-        {
-          handle: next.handle,
-          identityKey: next.identityKey,
-          address: next.address,
-          chain: next.chain,
-        },
-        balanceSats,
-      )
+      if (!runtimeIsCurrent(runtime)) return
+      writeTrustedBalance(next.identityKey, next.chain, balanceSats)
+      onAccountSwitched(nextProfile, balanceSats)
       playWalletSound('soft')
       send({ type: 'SWITCHED' })
-      void refreshFromChain({ announceReceive: true }).catch((error) => {
+      void refreshFromChain({ announceReceive: false }).catch((error) => {
         console.warn('[vault-account] post-switch chain ingest failed', messageOf(error))
       })
     } catch (error) {

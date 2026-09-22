@@ -98,6 +98,8 @@ const APP_SESSION = `stateDiagram-v2
 
   onboarding --> ready : CREATED
   locked --> ready : UNLOCKED / CREATED
+  ready --> ready : ACCOUNT_SWITCH_STARTED / balance pending
+  ready --> ready : ACCOUNT_SWITCHED / exact balance
   ready --> locked : LOCK
   ready --> sending : OPEN_SEND
   sending --> ready : SENT
@@ -115,6 +117,8 @@ const APP_SESSION = `stateDiagram-v2
     UNLOCKED/CREATED publishes one WalletRuntime.
     Account switch and LOCK abort/dispose that runtime first;
     stale feature completions are fenced by runtime generation.
+    A switched identity paints before balance; balance remains
+    explicitly pending until that runtime's Toolbox answers.
   end note
 `
 

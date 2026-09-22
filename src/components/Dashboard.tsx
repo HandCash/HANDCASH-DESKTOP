@@ -132,9 +132,11 @@ function nextChainPollMs(): number {
 type Props = {
   profile: WalletProfile
   balanceSats: number
+  balancePending: boolean
   onSent: (balanceSats: number) => void
   onRefreshBalance: (balanceSats: number) => void
   onFail: (error: string) => void
+  onAccountSwitchStarted: (profile: WalletProfile) => void
   onAccountSwitched: (profile: WalletProfile, balanceSats: number) => void
 }
 
@@ -169,9 +171,11 @@ function walletIdentityChip(
 export function Dashboard({
   profile,
   balanceSats,
+  balancePending,
   onSent,
   onRefreshBalance,
   onFail,
+  onAccountSwitchStarted,
   onAccountSwitched,
 }: Props) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
@@ -252,6 +256,10 @@ export function Dashboard({
 
   const usdLabel = formatUsdFromSats(balanceSats, usdPerBsv)
   const bsvLabel = formatBsvSignificant(balanceSats, 5)
+  const primaryBalanceLabel =
+    currency === 'usd' ? usdLabel : bsvLabel
+  const secondaryBalanceLabel =
+    currency === 'usd' ? bsvLabel : usdLabel
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
@@ -695,6 +703,7 @@ export function Dashboard({
                   profile={profile}
                   identityLabel={identity.label}
                   identityCopy={identity.copy}
+                  onAccountSwitchStarted={onAccountSwitchStarted}
                   onAccountSwitched={onAccountSwitched}
                 />
               )
@@ -708,27 +717,39 @@ export function Dashboard({
                   type="button"
                   className="wallet-balance"
                   data-aeon-part="balance"
-                  data-aeon-state={currency}
+                  data-aeon-state={balancePending ? 'pending' : currency}
+                  aria-busy={balancePending || undefined}
                   aria-label={
-                    currency === 'usd'
+                    balancePending
+                      ? 'Reading the selected wallet balance'
+                      : currency === 'usd'
                       ? 'Balance in USD. Click to show BSV first.'
                       : 'Balance in BSV. Click to show USD first.'
                   }
                   title="Click to swap currency"
+                  disabled={balancePending}
                   onClick={() => {
                     playWalletSound('soft')
                     toggleDisplayCurrency()
                   }}
                 >
-                  {currency === 'usd' ? (
+                  {balancePending ? (
                     <>
-                      <span className="balance balance-primary balance-fiat">{usdLabel}</span>
-                      <span className="balance-secondary balance-bsv">{bsvLabel}</span>
+                      <span className="balance balance-primary">—</span>
+                      <span className="balance-secondary">Reading this wallet…</span>
                     </>
                   ) : (
                     <>
-                      <span className="balance balance-primary balance-bsv">{bsvLabel}</span>
-                      <span className="balance-secondary balance-fiat">{usdLabel}</span>
+                      <span
+                        className={`balance balance-primary balance-${currency === 'usd' ? 'fiat' : 'bsv'}`}
+                      >
+                        {primaryBalanceLabel}
+                      </span>
+                      <span
+                        className={`balance-secondary balance-${currency === 'usd' ? 'bsv' : 'fiat'}`}
+                      >
+                        {secondaryBalanceLabel}
+                      </span>
                     </>
                   )}
                 </button>

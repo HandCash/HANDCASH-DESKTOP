@@ -248,8 +248,8 @@ export function App() {
 
   const walletUnlocked = snapshot.matches('ready') || snapshot.matches('sending')
   useEffect(() => {
-    const { profile, balanceSats } = snapshot.context
-    if (!walletUnlocked || !profile) return
+    const { profile, balanceSats, balancePending } = snapshot.context
+    if (!walletUnlocked || !profile || balancePending) return
     // Persist every balance the session chart actually accepts — refreshes and
     // sends included. Cold launch can then paint this identity's last confirmed
     // UI value before IndexedDB/history work finishes.
@@ -258,13 +258,19 @@ export function App() {
     walletUnlocked,
     snapshot.context.profile,
     snapshot.context.balanceSats,
+    snapshot.context.balancePending,
   ])
 
   useEffect(() => {
-    if (!walletUnlocked) return
+    if (!walletUnlocked || snapshot.context.balancePending) return
     const ik = snapshot.context.profile?.identityKey
     publishDisplayBalanceRefresh(snapshot.context.balanceSats, ik)
-  }, [walletUnlocked, snapshot.context.balanceSats, snapshot.context.profile?.identityKey])
+  }, [
+    walletUnlocked,
+    snapshot.context.balancePending,
+    snapshot.context.balanceSats,
+    snapshot.context.profile?.identityKey,
+  ])
 
   const onSent = useCallback(
     (balanceSats: number) => send({ type: 'SENT', balanceSats }),
@@ -444,11 +450,16 @@ export function App() {
 
           {(snapshot.matches('ready') || snapshot.matches('sending')) && snapshot.context.profile && (
             <Dashboard
+              key={snapshot.context.profile.identityKey}
               profile={snapshot.context.profile}
               balanceSats={snapshot.context.balanceSats}
+              balancePending={snapshot.context.balancePending}
               onSent={onSent}
               onRefreshBalance={handleBalanceRefresh}
               onFail={onWalletFail}
+              onAccountSwitchStarted={(profile) =>
+                send({ type: 'ACCOUNT_SWITCH_STARTED', profile })
+              }
               onAccountSwitched={(profile, balanceSats) =>
                 send({ type: 'ACCOUNT_SWITCHED', profile, balanceSats })
               }

@@ -12,6 +12,8 @@ export type WalletProfile = {
 export type AppContext = {
   profile: WalletProfile | null
   balanceSats: number
+  /** True while the newly selected wallet's Toolbox balance is being read. */
+  balancePending: boolean
   error: string | null
   bridgeOnline: boolean
   version: string
@@ -31,6 +33,7 @@ export type AppEvent =
   | { type: 'OPEN_SEND' }
   | { type: 'CLOSE_SEND' }
   | { type: 'SENT'; balanceSats: number }
+  | { type: 'ACCOUNT_SWITCH_STARTED'; profile: WalletProfile }
   | { type: 'ACCOUNT_SWITCHED'; profile: WalletProfile; balanceSats: number }
 
 /**
@@ -49,6 +52,7 @@ export const appMachine = setup({
   context: {
     profile: null,
     balanceSats: 0,
+    balancePending: false,
     error: null,
     bridgeOnline: false,
     version: '0.0.0',
@@ -105,6 +109,7 @@ export const appMachine = setup({
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
             recoveryOnly: false,
             error: null,
           }),
@@ -124,6 +129,7 @@ export const appMachine = setup({
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
             error: null,
           }),
         },
@@ -133,6 +139,7 @@ export const appMachine = setup({
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
             recoveryOnly: false,
             error: null,
           }),
@@ -149,16 +156,28 @@ export const appMachine = setup({
       on: {
         LOCK: {
           target: 'locked',
-          actions: assign({ profile: null, balanceSats: 0 }),
+          actions: assign({ profile: null, balanceSats: 0, balancePending: false }),
         },
         OPEN_SEND: 'sending',
         REFRESHED: {
-          actions: assign({ balanceSats: ({ event }) => event.balanceSats }),
+          actions: assign({
+            balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
+          }),
+        },
+        ACCOUNT_SWITCH_STARTED: {
+          actions: assign({
+            profile: ({ event }) => event.profile,
+            balanceSats: 0,
+            balancePending: true,
+            error: null,
+          }),
         },
         ACCOUNT_SWITCHED: {
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
             error: null,
           }),
         },
@@ -181,12 +200,25 @@ export const appMachine = setup({
           }),
         },
         REFRESHED: {
-          actions: assign({ balanceSats: ({ event }) => event.balanceSats }),
+          actions: assign({
+            balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
+          }),
+        },
+        ACCOUNT_SWITCH_STARTED: {
+          target: 'ready',
+          actions: assign({
+            profile: ({ event }) => event.profile,
+            balanceSats: 0,
+            balancePending: true,
+            error: null,
+          }),
         },
         ACCOUNT_SWITCHED: {
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
             error: null,
           }),
         },
