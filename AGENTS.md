@@ -52,7 +52,8 @@
 
 - Add a second UI framework (Tailwind, shadcn, MUI, …).
 - Invent a non–BRC-100 connect path for web apps.
-- Change migrate APIs without updating `items-market` `src/lib/brc100/*` and docs.
+- Change migrate APIs without updating `items-market` `src/lib/brc100/*` and docs (legacy `/migrate` site — not BRC-MARKET).
+- Open `items-market` for storefront work. Live market is `handcash-market/` (`HandCash/BRC-MARKET`); wallet list/buy/settle is `src/wallet/market*`.
 - Treat missing cloud BRC-39 as “out of sync” with the chain, or treat Refresh as device history sync.
 
 ## Commands

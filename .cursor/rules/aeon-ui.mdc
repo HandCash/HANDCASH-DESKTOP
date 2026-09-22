@@ -54,7 +54,7 @@ Prefer Aeon: `Button`, `Field`, `Dialog`/`Prompt`, `StatusBanner`, `Accordion`, 
 - Tailwind, shadcn, Chakra, MUI, Bootstrap, or a second design-token sheet.
 - `useState('edit' | 'confirm' | 'loading')` beside a machine. The ratchet `src/machines/aeonAdherence.test.ts` allowlist **only shrinks**.
 - Grow `RAW_IMAGE_RENDERERS`. Domain `src/wallet/**` must not import `src/components/`.
-- Copy items-market Tailwind/shadcn patterns here.
+- Copy `items-market` Tailwind/shadcn patterns here. Live market UI is Aeon in `handcash-market/` (`HandCash/BRC-MARKET`).
 - Drive overlay/prompt/nav from booleans that the chart already names.
 - Put market/buy/send legality in CSS. Charts fail closed with named reasons; CSS only reflects `data-aeon-state`.
 

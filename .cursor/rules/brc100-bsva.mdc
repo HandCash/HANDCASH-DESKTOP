@@ -31,13 +31,15 @@ Methods (migration origins only): `getLegacyAddress`, `refreshLegacyAddress({ tx
 
 Allowed hosts: `handcash.io`, `market.handcash.io`, `preprod-market.handcash.io`, localhost.
 
-**Mirror types/docs** in items-market:
+**Mirror types/docs** in the legacy migrate app (`items-market` — not BRC-MARKET):
 
 - `items-market/src/lib/brc100/types.ts`
 - `items-market/src/lib/brc100/handcashBrcClient.ts`
 - `items-market/docs/migrate-brc100.md`
 
 Changing method names, payloads, or origin rules **requires updating both repos in the same change set**.
+
+The live marketplace is **`handcash-market/`** (`HandCash/BRC-MARKET`). Wallet list / buy / settle lives here in `src/wallet/market*` and `src/machines/market*Machine.ts`. Do not open `items-market` for storefront work.
 
 ## Wallet layers (do not conflate)
 
@@ -60,7 +62,7 @@ Canonical SSoT: `src/wallet/layers.ts`.
 
 ## Do not
 
-- Change ports/paths without updating market client + migrate docs.
+- Change ports/paths without updating the migrate client + `items-market/docs/migrate-brc100.md`.
 - Allow migrate methods from arbitrary origins.
 - Bypass permission prompts for `createAction` / `signAction` / `internalizeAction`.
 - Put ordinals outside basket `1sat` without an explicit BSVA/HandCash decision.
