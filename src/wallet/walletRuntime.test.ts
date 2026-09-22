@@ -80,7 +80,7 @@ describe('wallet runtime architecture ratchet', () => {
           !/\.(ts|tsx)$/.test(name) ||
           name.endsWith('.test.ts') ||
           name.endsWith('.test.tsx') ||
-          path.endsWith('/wallet/session.ts')
+          path.replaceAll('\\', '/').endsWith('/wallet/session.ts')
         ) {
           continue
         }

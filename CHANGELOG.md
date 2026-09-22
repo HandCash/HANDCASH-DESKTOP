@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.262] - 2026-09-22
+
+### Fixed
+
+- The architecture ratchet now normalizes Windows path separators, so Release
+  Windows excludes `session.ts` exactly as macOS/Linux do.
+
 ## [1.3.261] - 2026-09-22
 
 ### Changed
