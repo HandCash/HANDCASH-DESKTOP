@@ -13,7 +13,12 @@ import {
 import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { tipFromBsv21Script } from './sendPlan'
 import { durableGetItem, durableSetItem } from '../durableStorage'
-import { isItemSent } from '../sentItemGuard'
+import {
+  forgetItemsSent,
+  getSentItemRecord,
+  isItemSent,
+} from '../sentItemGuard'
+import { scriptPaysAddress } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
@@ -197,6 +202,32 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
   }
 }
 
+/**
+ * Un-hide a tip whose hide mark can only have been written by a different
+ * wallet on this device.
+ *
+ * The guard exists because `listOutputs` keeps returning a tip a send already
+ * spent, so "in our basket" alone cannot clear a mark. Two facts together can:
+ * the tip pays **us**, and the hiding transaction is the tip's *own* — a spent
+ * input is never an output of the transaction that spent it, and a payee
+ * output the sender hid pays the payee, not the sender. What remains is the
+ * receiving account reading a mark the sending account wrote when both shared
+ * one device-wide store.
+ *
+ * Returns true when the tip may be listed.
+ */
+function healStaleReceivedHide(tip: Bsv21Utxo, wallet: ActiveWallet): boolean {
+  const record = getSentItemRecord(tip.outpoint)
+  const txid = tip.outpoint.split(/[._]/)[0]?.toLowerCase()
+  if (!record?.txid || !txid || record.txid !== txid) return false
+  if (!scriptPaysAddress(tip.lockingScript, wallet.address)) return false
+  console.info(
+    `[bsv21] clearing a hide mark on a tip we hold and are paid by — ${tip.outpoint}`,
+  )
+  forgetItemsSent([tip.outpoint])
+  return true
+}
+
 export async function listBsv21BinaryTips(
   wallet: ActiveWallet,
   opts: { includeCustomInstructions?: boolean } = {},
@@ -209,7 +240,9 @@ export async function listBsv21BinaryTips(
   for (const row of rows) {
     const tip = decodeListedBsv21Tip(row, wallet.identityKey)
     if (!tip) continue
-    if (isItemSent(tip.outpoint)) continue
+    if (isItemSent(tip.outpoint) && !healStaleReceivedHide(tip, wallet)) {
+      continue
+    }
     if (seen.has(tip.outpoint)) continue
     seen.add(tip.outpoint)
     tips.push(tip)

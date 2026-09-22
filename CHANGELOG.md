@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.260] - 2026-09-22
+
+### Fixed
+
+- **Tokens already received under the shared guard heal on the next read.**
+  Scoping the marks per account fixes new transfers, but the primary account
+  keeps the historical unscoped key, so a tip it received before the fix stayed
+  hidden until the 24h expiry. A mark is now cleared when two facts make it
+  impossible: the basket returned the tip, it pays **us**, and the hiding
+  transaction is the tip's *own*. A spent input is never an output of the
+  transaction that spent it, and a payee output a sender hid pays the payee —
+  so nothing a send legitimately hides can match.
+
 ## [1.3.259] - 2026-09-22
 
 ### Fixed
