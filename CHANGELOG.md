@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.272] - 2026-09-22
+
+### Fixed
+
+- The collectables gem icon is the real Material `diamond` again. Its path had
+  MDI's *stroke* facet lines spliced onto a filled outline, so with
+  `fill="currentColor"` each open subpath closed itself into a blob and the
+  facets punched notches out of a solid diamond. Market's `search_off` is now
+  the official glyph too, rather than a hand-drawn approximation.
+
 ## [1.3.271] - 2026-09-22
 
 ### Changed
