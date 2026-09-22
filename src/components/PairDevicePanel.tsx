@@ -1,8 +1,10 @@
+import { getActiveWallet } from '../wallet/session'
+
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { useMachine } from '@xstate/react'
 import { ListRow, StatusBanner } from '@aeon-ui/react'
-import { getActiveWallet } from '../wallet/session'
+
 import {
   buildPairPayload,
   choosePairAcceptancePath,

@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Heal BSV-21 fungibles that Refresh/import painted into basket `1sat` (NFT).
  * Local basket move only — no broadcast.
@@ -26,7 +28,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
 import { wireCollectableOutpoint } from './oneSatCollectableGuard'
 import { parseOrdEnvelope } from './ordinalOwnership'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 
 /**
  * `encoding` names how the holding was proven by the locking script: `binary`

@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 import { P2PKH } from '@bsv/sdk'
 import {
   cloudAddressUnspent,
@@ -5,7 +7,7 @@ import {
   cloudTxExists,
 } from './chainProbeClient'
 import type { Services } from '@bsv/wallet-toolbox-client'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import type { Chain } from './vault'
 import { getDependencyHealthSnapshot } from './dependencyHealth'
 import { isPhoneShell, isViteDevBrowser } from './runtimePlatform'

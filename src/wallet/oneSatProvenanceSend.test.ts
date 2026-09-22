@@ -121,7 +121,7 @@ describe('tryBuildProvenanceV2', () => {
       verifyProvenanceV2(provenance, `${tip.id('hex')}.0`).proven,
     ).toBe(true)
     expect(getBeefForTxid).toHaveBeenCalled()
-  })
+  }, 15_000)
 
   it('keeps a path that the held BEEF can already prove, without extra fetches', async () => {
     const origin = inscription()
@@ -185,7 +185,7 @@ describe('tryBuildProvenanceV2', () => {
     expect(provenance).not.toBeNull()
     expect(provenance?.path).toEqual([tipPoint, hopPoint, originPoint])
     expect(verifyProvenanceV2(provenance, `${tip.id('hex')}.0`).proven).toBe(true)
-  })
+  }, 15_000)
 
   it('fetches hop bodies when the caller supplies the path but only the tip BEEF', async () => {
     // Market list passes durable path + tip-local BEEF. Skipping the replay

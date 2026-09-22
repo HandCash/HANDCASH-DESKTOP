@@ -1,3 +1,6 @@
+import { getActiveWallet } from './session'
+import { storageRegistry } from '../storage/registry'
+
 /**
  * Import another BIP39 phrase into the unlocked wallet.
  *
@@ -9,6 +12,7 @@
  */
 import { Beef, P2PKH, PrivateKey, type BEEF, type LockingScript } from '@bsv/sdk'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import {
   keyFromMnemonicHdPath,
   rootKeyFromMnemonicBrc75,
@@ -16,7 +20,7 @@ import {
   type Chain,
 } from './vault'
 import { appendAppLog } from './appLog'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import {
   importLegacyUtxos,
   scanAddressViaBitails,
@@ -58,7 +62,7 @@ import {
   updateWalletProgress,
 } from './walletProgress'
 
-const ITEM_CURSOR_KEY = 'handcash.brc100.phraseSweepItemCursor.v1'
+const ITEM_CURSOR_KEY = storageRegistry.phraseSweepCursor.key
 const GP_PAGE = 50
 /** Soft preview cap — full count continues during migrate. */
 const PREVIEW_ITEM_CAP = 5_000
@@ -808,7 +812,7 @@ export async function sweepPhraseFunding(args: {
 
 function readItemCursor(): PhraseItemMigrateCursor | null {
   try {
-    const raw = durableGetItem(ITEM_CURSOR_KEY)
+    const raw = durableGetItem(accountLocalKey(ITEM_CURSOR_KEY))
     if (!raw) return null
     const p = JSON.parse(raw) as PhraseItemMigrateCursor
     if (!p?.sourceAddress || typeof p.offset !== 'number') return null
@@ -820,9 +824,9 @@ function readItemCursor(): PhraseItemMigrateCursor | null {
 
 function writeItemCursor(cursor: PhraseItemMigrateCursor | null) {
   if (!cursor) {
-    durableRemoveItem(ITEM_CURSOR_KEY)
+    durableRemoveItem(accountLocalKey(ITEM_CURSOR_KEY))
   } else {
-    durableSetItem(ITEM_CURSOR_KEY, JSON.stringify(cursor))
+    durableSetItem(accountLocalKey(ITEM_CURSOR_KEY), JSON.stringify(cursor))
   }
   for (const listener of itemCursorListeners) listener(cursor)
 }

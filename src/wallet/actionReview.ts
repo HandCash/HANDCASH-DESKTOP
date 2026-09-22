@@ -1,8 +1,10 @@
+import { getActiveWallet } from './session'
+
 /**
  * Handle toolbox `WERR_REVIEW_ACTIONS` (undelayed create/sign failures) and
  * local failed actions that block later spends after ghost broadcasts.
  */
-import { getActiveWallet, type ActiveWallet } from "./session";
+import { type ActiveWallet } from "./session"
 import {
   getSpendPriorityDepth,
   shouldYieldChainIngestToSpend,

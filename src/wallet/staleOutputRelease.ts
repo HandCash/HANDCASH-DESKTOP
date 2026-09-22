@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Writing off spendable outputs — the only path allowed to do it.
  *
@@ -18,7 +20,7 @@ import {
   txExistsOnChain,
 } from "./legacyScan";
 import { logDiag } from "./diagnosticLog";
-import { getActiveWallet, type ActiveWallet } from "./session";
+import { type ActiveWallet } from "./session"
 import type { Chain } from "./vault";
 import { isItemSent } from "./sentItemGuard";
 import {
@@ -1105,6 +1107,12 @@ const RECLAIM_MAX = 200;
 /** Rotate through low-value blank seals so position 200+ is not permanently skipped. */
 let blankReclaimCursor = 0;
 let namedReclaimCursor = 0;
+
+export function rebindStaleOutputReleaseForAccount(): void {
+  blankReclaimCursor = 0;
+  namedReclaimCursor = 0;
+  promotedLocalChange = null;
+}
 
 /** Test-only */
 export function __resetReclaimSealCursorsForTests(): void {

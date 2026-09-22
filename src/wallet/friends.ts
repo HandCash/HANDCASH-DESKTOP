@@ -5,8 +5,9 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { formatHandCashHandle } from './handleFormat'
 import { tryParsePeerPayUri } from './peerPayUri'
 import { parseHandleInput, resolveHandle } from './handleResolve'
+import { storageRegistry } from '../storage/registry'
 
-const STORAGE_KEY_BASE = 'handcash.brc100.friends'
+const STORAGE_KEY_BASE = storageRegistry.friends.key
 
 function friendsStorageKey(): string {
   return accountLocalKey(STORAGE_KEY_BASE)

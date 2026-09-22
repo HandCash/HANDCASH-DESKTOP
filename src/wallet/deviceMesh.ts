@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Poll paired same-identity peers: friends merge + local-item snapshots.
  * Recovery-only peers skip LAN mesh (different identities; no shared state).
@@ -14,7 +16,7 @@ import {
   probeDevicePeer,
   type DevicePeerSnapshot,
 } from './devicePeer'
-import { getActiveWallet } from './session'
+
 
 const POLL_MS = 8_000
 

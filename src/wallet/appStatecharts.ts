@@ -110,6 +110,12 @@ const APP_SESSION = `stateDiagram-v2
   ready : Ready
   sending : Sending
   failure : Failure
+
+  note right of ready
+    UNLOCKED/CREATED publishes one WalletRuntime.
+    Account switch and LOCK abort/dispose that runtime first;
+    stale feature completions are fenced by runtime generation.
+  end note
 `
 
 const UNLOCK = `stateDiagram-v2

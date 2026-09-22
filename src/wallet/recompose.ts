@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Device recompose tool — **isolated** from Dashboard Refresh / spend paths.
  *
@@ -25,7 +27,13 @@ import {
   hasDeviceLinkBackupUrl,
 } from './deviceSync'
 import { getSessionBackupPassword, setSessionBackupPassword } from './sessionBackupAuth'
-import { fetchBalanceSats, getActiveWallet } from './session'
+import { fetchBalanceSats} from './session'
+import {
+  assertRuntimeCurrent,
+  getWalletRuntime,
+  type WalletRuntime,
+  type WalletRuntimeId,
+} from './walletRuntime'
 
 export type RecomposeHistoryMode = 'auto' | 'skip' | 'forceCloud'
 
@@ -50,7 +58,10 @@ export type RecomposeResult = {
   chainError: string | null
 }
 
-let inFlight: Promise<RecomposeResult> | null = null
+let inFlight: {
+  runtimeId: WalletRuntimeId | 'test'
+  promise: Promise<RecomposeResult>
+} | null = null
 
 export function isRecomposeInFlight(): boolean {
   return inFlight != null || isRecomposeCoordinatorActive()
@@ -58,7 +69,7 @@ export function isRecomposeInFlight(): boolean {
 
 /** Join the current unlock/restore heal without starting another pass. */
 export async function whenRecomposeIdle(): Promise<void> {
-  const current = inFlight
+  const current = inFlight?.promise
   if (!current) return
   await current.then(
     () => undefined,
@@ -71,23 +82,31 @@ export async function whenRecomposeIdle(): Promise<void> {
  * Serialized — concurrent unlock/restore calls share one flight.
  */
 export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<RecomposeResult> {
-  if (inFlight) {
+  const runtime = getWalletRuntime()
+  if (!runtime && import.meta.env?.MODE !== 'test') throw new Error('WALLET_LOCKED')
+  const runtimeId = runtime?.runtimeId ?? 'test'
+  if (inFlight?.runtimeId === runtimeId) {
     try {
       const { appendAppLog } = await import('./appLog')
       appendAppLog('info', `[recompose] join in-flight (${opts.reason ?? 'recompose'})`)
     } catch {
       /* ignore */
     }
-    return inFlight
+    return inFlight.promise
   }
 
-  inFlight = runRecompose(() => runRecomposeBody(opts)).finally(() => {
-    inFlight = null
+  const promise = runRecompose(() => runRecomposeBody(opts, runtime)).finally(() => {
+    if (inFlight?.promise === promise) inFlight = null
   })
-  return inFlight
+  inFlight = { runtimeId, promise }
+  return promise
 }
 
-async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
+async function runRecomposeBody(
+  opts: RecomposeOpts,
+  runtime: WalletRuntime | null,
+): Promise<RecomposeResult> {
+  if (runtime) assertRuntimeCurrent(runtime)
   const reason = opts.reason ?? 'recompose'
   const historyMode = opts.history ?? 'auto'
   const runChain = opts.chain !== false
@@ -106,6 +125,7 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
       const sync = await autoPushHistoryBackupIfConfigured(password, {
         reason: historyMode === 'forceCloud' ? 'recompose' : reason,
       })
+      if (runtime) assertRuntimeCurrent(runtime)
       localStateWasReplaced = sync.pulled
       if (sync.pulled || !sync.skipReason) {
         history = 'synced'
@@ -145,6 +165,7 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
         audit: false,
         fundingOnly: true,
       })).balanceSats
+      if (runtime) assertRuntimeCurrent(runtime)
       if (spendableSats == null) {
         const active = getActiveWallet()
         spendableSats = active ? await fetchBalanceSats(active.wallet) : 0
@@ -161,6 +182,7 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
   }
 
   if (localStateWasReplaced) {
+    if (runtime) assertRuntimeCurrent(runtime)
     await relistCollectablesAfterLocalStateReplace()
   }
 

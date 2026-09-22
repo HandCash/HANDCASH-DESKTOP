@@ -1,5 +1,7 @@
+import { getActiveWallet } from '../session'
+
 /** List BRC-162 value tips from basket `bsv21` (BRC-163). */
-import { getActiveWallet, type ActiveWallet } from '../session'
+import { type ActiveWallet } from '../session'
 import {
   aggregateFungibles,
   BSV21_BASKET,

@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Submit signed Atomic BEEF to miners after createAction.
  *
@@ -15,7 +17,11 @@
  * exist so the failure is economic-zero, not a second spend of the same coins.
  */
 import { Beef } from "@bsv/sdk";
-import { getActiveWallet, type ActiveWallet } from "./session";
+import { type ActiveWallet } from "./session"
+import {
+  assertRuntimeCurrent,
+  type WalletRuntime,
+} from "./walletRuntime";
 import {
   formatPostBeefFailure,
   isInvalidBeefTransport,
@@ -352,6 +358,7 @@ export async function submitAtomicBeefToMiners(
     requestId?: string;
     flow?: TransactionFlow;
     retryCount?: number;
+    runtime?: WalletRuntime;
   }
 ): Promise<MinerSubmitResult> {
   const id = normalizeTxid(txid);
@@ -361,6 +368,7 @@ export async function submitAtomicBeefToMiners(
     );
   }
   const trace = activeTransactionTrace();
+  if (opts?.runtime) assertRuntimeCurrent(opts.runtime);
   const telemetry: SubmitTelemetry = {
     traceId: opts?.traceId ?? trace?.traceId,
     requestId: opts?.requestId ?? trace?.requestId,
@@ -371,7 +379,7 @@ export async function submitAtomicBeefToMiners(
   const outboxDurable =
     opts?.fromOutbox === true || enqueuePendingMinerSubmit(id, atomic);
   recordTransactionStage("provider_attempt", telemetry);
-  const active = getActiveWallet();
+  const active = opts?.runtime?.instance ?? getActiveWallet();
   if (!active?.services?.postBeef) {
     console.info(
       "[minerSubmit] offline — signed cheque queued",

@@ -7,7 +7,6 @@
  */
 import { appendAppLog, type AppLogLevel } from './appLog'
 import { formatLogFields } from './logFormat'
-import { fetchBalanceRead, getActiveWallet } from './session'
 
 export type WalletBalanceSnapshot = {
   spendable: number | null
@@ -49,6 +48,7 @@ export function logDiag(
 }
 
 export async function snapshotWalletBalance(): Promise<WalletBalanceSnapshot> {
+  const { fetchBalanceRead, getActiveWallet } = await import('./session')
   const active = getActiveWallet()
   if (!active) {
     return { spendable: null, pendingChange: null, displayed: null, unavailable: 'locked' }

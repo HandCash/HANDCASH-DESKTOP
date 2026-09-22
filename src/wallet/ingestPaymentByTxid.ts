@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * SPV-first funding ingest from a known payment txid (DM tip / pay-sent).
  *
@@ -13,7 +15,7 @@ import {
 import { importLegacyUtxos, type LegacyUtxo } from './legacyScan'
 import { isSweepableFunding } from './legacySweepPath'
 import { scriptPaysAddress } from './ordinalOwnership'
-import { fetchBalanceSats, getActiveWallet, invalidateBalanceReads } from './session'
+import { fetchBalanceSats, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'

@@ -1,3 +1,6 @@
+import { getActiveWallet } from './session'
+import { storageRegistry } from '../storage/registry'
+import { type WalletRuntime } from './walletRuntime'
 import {
   Beef,
   Hash,
@@ -64,7 +67,7 @@ import {
   MARKET_OFFER_DEPOSIT_SATS,
   parseMarketOffer,
 } from './marketOverlayProtocol'
-import { bumpBalanceAfterHeal, getActiveWallet } from './session'
+import { bumpBalanceAfterHeal} from './session'
 import {
   decodeBeefB64,
   deliverMarketSettlementWire,
@@ -73,6 +76,7 @@ import {
   type MarketSettlementWire,
 } from './messageTransport'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import { createDurableTtlTxidMap } from './durableTtlTxidMap'
 import {
   describeInsufficientFunds,
@@ -96,8 +100,22 @@ import {
   PUBLIC_BRC_CLOUD_ORIGIN,
 } from './walletConfig'
 
-const PENDING_KEY = 'handcash.market.pending.v2'
-const RESPONSE_KEY = 'handcash.market.responses.v2'
+const PENDING_KEY = storageRegistry.marketPending.key
+const RESPONSE_KEY = storageRegistry.marketResponses.key
+
+function pendingStorageKey(): string {
+  return accountLocalKey(PENDING_KEY)
+}
+
+function responseStorageKey(): string {
+  return accountLocalKey(RESPONSE_KEY)
+}
+
+/**
+ * Pending purchases and responses are read through the current account key on
+ * every access. Receipt-miss backoff is a chain-fact cache and stays global.
+ */
+export function rebindMarketSettlementForAccount(): void {}
 /**
  * List-time `settlementUnlocks` are the purchase path. Live seller sign is
  * not required: messagebox is store-and-forward for remittance after pay.
@@ -198,7 +216,7 @@ async function submitMarketSettlement(
  * of launching indexer walks against a transaction that just entered mempool.
  */
 async function provePurchasedMarketTip(args: {
-  active: NonNullable<ReturnType<typeof getActiveWallet>>
+  active: WalletRuntime['instance']
   provenance: NonNullable<ReturnType<typeof parseProvenanceV2>>
   outpoint: string
   atomic: number[]
@@ -344,11 +362,11 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 function writePending(pending: PendingPurchase[]): void {
-  durableSetItem(PENDING_KEY, JSON.stringify(pending))
+  durableSetItem(pendingStorageKey(), JSON.stringify(pending))
 }
 
 function savePending(record: PendingPurchase): void {
-  const records = readJson<PendingPurchase[]>(PENDING_KEY, []).filter(
+  const records = readJson<PendingPurchase[]>(pendingStorageKey(), []).filter(
     (item) => item.saleId !== record.saleId
   )
   writePending([...records, record])
@@ -370,7 +388,7 @@ export function mergePendingPurchase(
 /** Nosend references that a later send/refresh must not abort. */
 export function protectedMarketActionReferences(): Set<string> {
   return new Set(
-    readJson<PendingPurchase[]>(PENDING_KEY, [])
+    readJson<PendingPurchase[]>(pendingStorageKey(), [])
       .filter((item) => item.phase !== 'preSignAbortable' || Date.now() < item.expiresAt)
       .map((item) => item.reference)
       .filter(Boolean),
@@ -379,30 +397,32 @@ export function protectedMarketActionReferences(): Set<string> {
 
 function removePending(saleId: string): void {
   writePending(
-    readJson<PendingPurchase[]>(PENDING_KEY, []).filter(
+    readJson<PendingPurchase[]>(pendingStorageKey(), []).filter(
       (item) => item.saleId !== saleId
     )
   )
 }
 
 function saveResponse(response: StoredResponse): void {
-  const responses = readJson<StoredResponse[]>(RESPONSE_KEY, []).filter(
+  const key = responseStorageKey()
+  const responses = readJson<StoredResponse[]>(key, []).filter(
     (item) => item.saleId !== response.saleId
   )
-  durableSetItem(RESPONSE_KEY, JSON.stringify([...responses, response]))
+  durableSetItem(key, JSON.stringify([...responses, response]))
 }
 
 function takeResponse(
   saleId: string,
   type: StoredResponse['type']
 ): StoredResponse | null {
-  const responses = readJson<StoredResponse[]>(RESPONSE_KEY, [])
+  const key = responseStorageKey()
+  const responses = readJson<StoredResponse[]>(key, [])
   const found =
     responses.find((item) => item.saleId === saleId && item.type === type) ??
     null
   if (found) {
     durableSetItem(
-      RESPONSE_KEY,
+      key,
       JSON.stringify(responses.filter((item) => item.saleId !== saleId))
     )
   }
@@ -1143,7 +1163,7 @@ export async function recoverPendingMarketPurchases(): Promise<void> {
   const active = getActiveWallet()
   if (!active) return
   const { isGhostTxSuppressed } = await import('./ghostTxSuppress')
-  for (const record of readJson<PendingPurchase[]>(PENDING_KEY, [])) {
+  for (const record of readJson<PendingPurchase[]>(pendingStorageKey(), [])) {
     const receiptPath = choosePendingMarketReceiptPath({
       activeIdentityKey: active.identityKey,
       buyerIdentityKey: record.intent.buyer,
@@ -1237,7 +1257,7 @@ export async function recoverMarketSettlementReceipt(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
   await recoverPendingMarketPurchases()
-  const pending = readJson<PendingPurchase[]>(PENDING_KEY, []).find(
+  const pending = readJson<PendingPurchase[]>(pendingStorageKey(), []).find(
     (item) =>
       item.saleId === args.intent.intentId &&
       item.sellerIdentityKey.toLowerCase() === args.intent.seller.toLowerCase()
@@ -1448,7 +1468,7 @@ export async function handleInboundMarketSettlementWire(args: {
   ) {
     if (
       args.senderIdentityKey.toLowerCase() !==
-      readJson<PendingPurchase[]>(PENDING_KEY, [])
+      readJson<PendingPurchase[]>(pendingStorageKey(), [])
         .find((item) => item.saleId === args.wire.saleId)
         ?.sellerIdentityKey.toLowerCase()
     ) {

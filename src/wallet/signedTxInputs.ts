@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 import { inputOutpointsFromAtomicBeef, inputOutpointsFromRawTx } from './txOutpoints'
 import { normalizeTxid } from './txid'
 
@@ -12,7 +14,6 @@ export async function inputOutpointsForSignedTx(
     const fromBeef = inputOutpointsFromAtomicBeef(atomic, id)
     if (fromBeef.length > 0) return fromBeef
   }
-  const { getActiveWallet } = await import('./session')
   const storage = getActiveWallet()?.wallet?.storage
   if (!storage?.runAsStorageProvider) return []
   try {

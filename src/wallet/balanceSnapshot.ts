@@ -10,8 +10,9 @@
  */
 import type { Chain } from './vault'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { storageRegistry } from '../storage/registry'
 
-const LEGACY_BALANCE_KEY = 'handcash.balance.lastTrusted'
+const LEGACY_BALANCE_KEY = storageRegistry.balanceLastTrusted.key
 
 type TrustedBalanceSnapshot = {
   identityKey: string
@@ -21,7 +22,7 @@ type TrustedBalanceSnapshot = {
 }
 
 function balanceKey(identityKey: string, chain: Chain): string {
-  return `handcash.balance.lastTrusted:${chain}:${identityKey}`
+  return `${storageRegistry.balanceLastTrustedPrefix.key}${chain}:${identityKey}`
 }
 
 function parseSnapshot(raw: string | null): TrustedBalanceSnapshot | null {

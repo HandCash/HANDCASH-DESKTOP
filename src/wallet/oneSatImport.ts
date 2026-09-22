@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Import 1Sat ordinals into BRC-100 basket `1sat` via internalizeAction.
  *
@@ -13,7 +15,7 @@
 import { Beef, Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { getActiveWallet } from './session'
+
 import type { Chain } from './vault'
 import type { LegacyUtxo } from './legacyScan'
 import { chooseLegacySweepPath } from './legacySweepPath'

@@ -19,6 +19,12 @@ import {
   decideChainedChangeHeal,
   type ChainedChangeHealState,
 } from './kernel/chainedChangeHeal'
+import {
+  disposeWalletRuntime,
+  getWalletRuntime,
+  installWalletRuntime,
+  type WalletRuntime,
+} from './walletRuntime'
 
 const { specOpWalletBalance } = sdk
 
@@ -268,14 +274,21 @@ function syncMonitorChaintracks(monitor: unknown, chaintracks: unknown): void {
 }
 
 export function getActiveWallet(): ActiveWallet | null {
-  return active
+  return (getWalletRuntime()?.instance ?? null) ?? active
 }
 
 export function setActiveWallet(next: ActiveWallet | null): void {
+  if (!next) {
+    disposeWalletRuntime('test')
+    active = null
+    return
+  }
   active = next
+  installWalletRuntime(next)
 }
 
 export function clearActiveWallet(): void {
+  disposeWalletRuntime('locked')
   active = null
   clearSessionBackupPassword()
   void import('./walletHealth').then(({ bindSyncHealthAccount }) => {
@@ -288,9 +301,9 @@ export function clearActiveWallet(): void {
 
 let propagationRecoveryStarted = false
 
-async function flushDurablePropagation(): Promise<void> {
-  const wallet = active
-  if (!wallet?.rootKeyHex) return
+async function flushDurablePropagation(runtime = getWalletRuntime()): Promise<void> {
+  if (!runtime || runtime.signal.aborted) return
+  const wallet = runtime.instance
   const [
     { flushPendingMinerOutbox },
     { flushPendingBrc29Outbox },
@@ -302,16 +315,17 @@ async function flushDurablePropagation(): Promise<void> {
     import('./pendingItemOutbox'),
     import('./transactionTelemetry'),
   ])
-  await flushPendingMinerOutbox()
+  if (runtime.signal.aborted) return
+  await flushPendingMinerOutbox({ runtime })
   await Promise.all([
-    flushPendingBrc29Outbox({ rootKeyHex: wallet.rootKeyHex }),
-    flushPendingItemOutbox({ rootKeyHex: wallet.rootKeyHex }),
-    flushTransactionTelemetry(),
+    flushPendingBrc29Outbox({ rootKeyHex: wallet.rootKeyHex, runtime }),
+    flushPendingItemOutbox({ rootKeyHex: wallet.rootKeyHex, runtime }),
+    flushTransactionTelemetry({ runtime }),
   ])
 }
 
-function startDurablePropagationRecovery(): void {
-  void flushDurablePropagation().catch((error) => {
+function startDurablePropagationRecovery(runtime: WalletRuntime): void {
+  void flushDurablePropagation(runtime).catch((error) => {
     console.warn(
       '[propagation] boot flush deferred',
       error instanceof Error ? error.message : String(error),
@@ -346,6 +360,8 @@ export async function bootWallet(args: {
   /** BRC-146 account index. Defaults to 0 (primary). */
   accountIndex?: number
 }): Promise<ActiveWallet> {
+  disposeWalletRuntime('replaced')
+  active = null
   const { toolboxDatabaseName } = await import('./vaultAccounts')
   const accountIndex = args.accountIndex ?? 0
   const masterRootKeyHex = args.masterRootKeyHex ?? args.rootKeyHex
@@ -409,7 +425,7 @@ export async function bootWallet(args: {
     setTimeout(startMonitor, 400)
   }
 
-  active = {
+  const wallet: ActiveWallet = {
     wallet: setup.wallet,
     services: setup.services as Services,
     monitor: setup.monitor
@@ -427,22 +443,25 @@ export async function bootWallet(args: {
     masterRootKeyHex,
     accountIndex,
   }
+  active = wallet
+  // Bind the namespace and compose feature lifecycle before publishing. The
+  // runtime start hook then rebinds every feature as one atomic account switch.
+  const { prepareAccountLocalStores } = await import('./accountLocalStores')
+  prepareAccountLocalStores(wallet)
+  const runtime = installWalletRuntime(wallet)
   // Cold start begins with the last balance actually read for this identity,
   // never another wallet's figure and never a fabricated address balance.
   lastKnownBalanceSats = readTrustedBalance(active.identityKey, active.chain)
   lastBalanceBreakdown = ''
-  startDurablePropagationRecovery()
-  // Isolate friends / activity / apps / inventory to this vault account.
-  const { rebindAccountLocalStores } = await import('./accountLocalStores')
-  rebindAccountLocalStores(active)
+  startDurablePropagationRecovery(runtime)
   // Sync pill + chain-ingest status are per vault account — never leave root's
   // Synced painted on a cold child toolbox.
   const { bindSyncHealthAccount } = await import('./walletHealth')
   bindSyncHealthAccount({
-    identityKey: active.identityKey,
-    accountIndex: active.accountIndex,
+    identityKey: wallet.identityKey,
+    accountIndex: wallet.accountIndex,
   })
-  return active
+  return wallet
 }
 
 /**
@@ -900,6 +919,7 @@ export async function switchVaultAccount(args: {
   } catch {
     // optional
   }
+  disposeWalletRuntime('account-changed')
   active = null
   const rootKeyHex = rootKeyHexForAccount(args.masterRootKeyHex, args.accountIndex)
   return bootWallet({

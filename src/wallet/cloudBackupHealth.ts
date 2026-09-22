@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Cloud BRC-39 historyReplica health (BRC-CLOUD / compatible servers).
  * Pending = URL configured but no remote blob yet (optional multi-device parity).
@@ -11,7 +13,7 @@ import {
   resolveHistoryBackupBaseUrl,
   setHistoryBackupPrefs,
 } from './historyBackupPrefs'
-import { getActiveWallet } from './session'
+
 import { getWalletConfigPrefs } from './walletConfig'
 import { ensureHandCashServiceDefaults } from './walletSetupApply'
 

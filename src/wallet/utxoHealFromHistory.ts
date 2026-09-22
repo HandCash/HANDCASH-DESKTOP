@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Reconcile local toolbox UTXOs from Activity + live/failed toolbox rows.
  * Do not scrape the app-log ring — that is 800+ lines of support noise, not a
@@ -18,7 +20,7 @@ import {
 import { runChangeHeal, type ChangeHealStats } from "./chainedChangeHeal";
 import { logDiag, snapshotWalletBalance } from "./diagnosticLog";
 import { txExistsOnChain } from "./legacyScan";
-import { bumpBalanceAfterHeal, getActiveWallet } from "./session";
+import { bumpBalanceAfterHeal} from "./session";
 import type { Chain } from "./vault";
 import { releaseSpendAttemptFunds } from "./spendAttempt";
 import {

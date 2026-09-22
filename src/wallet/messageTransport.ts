@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Message transport — local-first with optional messagebox (BRC-33 semantics).
  *
@@ -204,7 +206,7 @@ export async function deliverMarketSettlementWire(args: {
   let wire = args.wire
   if (wire.type === 'receipt' && wire.atomicBeefB64) {
     try {
-      const active = (await import('./session')).getActiveWallet()
+      const active = getActiveWallet()
       if (active) {
         const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
           './beefCache'
@@ -1323,7 +1325,7 @@ export async function notifyPeerItemIncoming(args: {
   let atomicBeef = args.atomicBeef
   if (atomicBeef?.length) {
     try {
-      const active = (await import('./session')).getActiveWallet()
+      const active = getActiveWallet()
       if (active) {
         const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
           './beefCache'
@@ -1462,7 +1464,7 @@ export async function notifyPeerBrc29Payment(args: {
   let atomicBeef = args.atomicBeef
   if (atomicBeef?.length) {
     try {
-      const active = (await import('./session')).getActiveWallet()
+      const active = getActiveWallet()
       if (active) {
         const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
           './beefCache'

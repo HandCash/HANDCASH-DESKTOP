@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Durable + in-flight guards for 1sat basket internalization.
  * Same outpoint must never be imported twice (migration ↔ chain sync race).
@@ -15,8 +16,8 @@ import { durableGetItem, durableSetItem } from './durableStorage'
  * was global, a tip account A had imported made account B skip the
  * internalization that would have put the same outpoint in B's own basket.
  */
-const STORAGE_KEY_BASE = 'handcash.brc100.importedOneSatOutpoints.v1'
-const FAIL_KEY_BASE = 'handcash.brc100.failedOneSatOutpoints.v1'
+const STORAGE_KEY_BASE = storageRegistry.importedOneSatOutpoints.key
+const FAIL_KEY_BASE = storageRegistry.failedOneSatOutpoints.key
 
 function importedKey(): string {
   return accountLocalKey(STORAGE_KEY_BASE)

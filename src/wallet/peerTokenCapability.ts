@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Peer BSV-21 capability — warn before token sends when the recipient may not
  * settle tips into basket `bsv21` (and could sweep them as ordinary 1-sat dust).
@@ -25,7 +27,7 @@
  * that is intentional: warn by default; do not invent support. Do not warn
  * before the user has named a recipient.
  */
-import { getActiveWallet } from './session'
+
 
 export const BSV21_PROTOCOL_ID = 'bsv21'
 

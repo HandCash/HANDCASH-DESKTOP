@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../wallet/session'
+
 import {
   useEffect,
   useMemo,
@@ -130,7 +132,7 @@ import {
   subscribePhraseItemMigrateCursor,
   type PhraseItemMigrateCursor,
 } from "../wallet/phraseSweep";
-import { getActiveWallet } from "../wallet/session";
+
 import { EmptyState } from "./EmptyState";
 import { AppAvatar } from "./AppAvatar";
 import { appDisplayName } from "../wallet/appIdentity";

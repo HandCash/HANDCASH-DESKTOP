@@ -1,18 +1,22 @@
+import { getActiveWallet } from './session'
+import { storageRegistry } from '../storage/registry'
+
 /**
  * HandCash migration helpers exposed over the BRC-100 HTTP bridge.
  * Hosts: handcash.io / market.handcash.io (+ localhost / preprod).
  * Methods: getLegacyAddress, refreshLegacyAddress, listMigrationTxids.
  * Handle claim (separate): claimCloudHandle, getClaimedCloudHandle — see handleClaim.ts.
  */
-import { getActiveWallet } from './session'
+
 import { normalizeAppHost } from './appIdentity'
 import { brc100Contract } from '../contracts/brc100'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { accountLocalKey } from './accountLocalKeys'
 import { refreshFromChainExclusive } from './chainIngest'
 import { runChainIngest } from './walletCoordinator'
 
-const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
+const TXID_STORAGE_KEY = storageRegistry.migrationTxids.key
 const MAX_TXIDS = 200
 
 export type LegacyAddressPayload = {
@@ -59,7 +63,7 @@ export function isMigrationMethod(method: string): boolean {
 
 function readTxidLog(): string[] {
   try {
-    const raw = durableGetItem(TXID_STORAGE_KEY)
+    const raw = durableGetItem(accountLocalKey(TXID_STORAGE_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -70,7 +74,10 @@ function readTxidLog(): string[] {
 }
 
 function writeTxidLog(txids: string[]): void {
-  durableSetItem(TXID_STORAGE_KEY, JSON.stringify(txids.slice(0, MAX_TXIDS)))
+  durableSetItem(
+    accountLocalKey(TXID_STORAGE_KEY),
+    JSON.stringify(txids.slice(0, MAX_TXIDS)),
+  )
 }
 
 /** Prepend unique txids (newest first). */

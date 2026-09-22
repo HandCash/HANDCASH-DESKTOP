@@ -1,3 +1,4 @@
+import { getWalletRuntime } from './walletRuntime'
 /**
  * Vault custody: DEK-wrapped root key + BIP39 mnemonic, durable across origins.
  *
@@ -918,7 +919,7 @@ export async function unlockVaultWithDevice(
 
 /** Reveal mnemonic from the unlocked session — never gated on HandCash password. */
 export async function revealMnemonic(_password?: string | null): Promise<string> {
-  const active = (await import('./session.js')).getActiveWallet()
+  const active = getWalletRuntime()?.instance ?? null
   if (active?.mnemonic) return active.mnemonic
   // Locked: device factor only (not the in-app password).
   const unlocked = await unlockVaultWithDevice('Reveal recovery phrase')
@@ -932,7 +933,7 @@ export async function revealMnemonic(_password?: string | null): Promise<string>
 
 /** Reveal root key from the unlocked session — never gated on HandCash password. */
 export async function revealRootKeyHex(_password?: string | null): Promise<string> {
-  const active = (await import('./session.js')).getActiveWallet()
+  const active = getWalletRuntime()?.instance ?? null
   if (active?.rootKeyHex) return active.rootKeyHex
   const unlocked = await unlockVaultWithDevice('Reveal emergency key')
   return unlocked.rootKeyHex

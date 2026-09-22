@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Auto-pay — user opt-in silent createAction within limits.
  *
@@ -10,12 +11,13 @@ import { normalizeAppHost } from './appIdentity'
 import { getSpentSatsSince } from './appActivity'
 import { getCachedUsdPerBsv, satsToUsd } from './fx'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { accountLocalKey } from './accountLocalKeys'
 import {
   getSpendingAuthorizationGrant,
   spendingAuthorizationAllowsPayment,
 } from './spendingAuthorization'
 
-const STORAGE_KEY = 'handcash.brc100.autoPay'
+const STORAGE_KEY = storageRegistry.autoPay.key
 
 export const DEFAULT_AUTO_PAY_MAX_USD = 10
 export const DEFAULT_AUTO_PAY_WINDOW_HOURS = 24
@@ -49,7 +51,7 @@ function usdToSats(usd: number, usdPerBsv: number): number {
 
 function readStore(): Store {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(accountLocalKey(STORAGE_KEY))
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
@@ -85,7 +87,7 @@ function readStore(): Store {
 }
 
 function writeStore(store: Store): void {
-  durableSetItem(STORAGE_KEY, JSON.stringify(store))
+  durableSetItem(accountLocalKey(STORAGE_KEY), JSON.stringify(store))
   for (const cb of listeners) cb()
 }
 

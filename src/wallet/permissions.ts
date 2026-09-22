@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 import {
   appDisplayName,
   normalizeAppHost,
@@ -36,7 +38,7 @@ import {
   type TokenAccess,
   type TokenViewRequest,
 } from './itemAccess'
-import { formatBsvSignificant, getActiveWallet } from './session'
+import { formatBsvSignificant} from './session'
 import {
   bsv21IdentityMintHints,
   isBsv21IdentityMintArgs,
@@ -164,7 +166,7 @@ function readConnected(): ConnectedApp[] {
   const next = durableGetItem(connectedAppsStorageKey())
   if (next) return migrateRaw(next)
   if (peekAccountLocalKeyScope().accountIndex === 0) {
-    const legacy = durableGetItem('handcash.brc100.allowedOrigins')
+    const legacy = durableGetItem(storageRegistry.legacyAllowedOrigins.key)
     if (legacy) {
       const apps = migrateRaw(legacy)
       writeConnected(apps)
@@ -356,6 +358,8 @@ export function isOriginAllowed(origin: string | undefined): boolean {
 
 /** Reload Connected apps for the active vault account. */
 export function rebindConnectedAppsForAccount(): void {
+  cancelPendingPermissions('account-changed')
+  clearPermissionSession()
   emitConnected()
 }
 

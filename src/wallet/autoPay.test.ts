@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { bindAccountLocalKeyScope } from './accountLocalKeys'
 
 const durableStore = new Map<string, string>()
 const getSpentSatsSince = vi.fn((_origin?: string, _since?: number) => 0)
@@ -99,5 +100,18 @@ describe('autoPay', () => {
     setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 12 })
     expect(getAutoPaySettings('game.example')?.maxSats).toBe(20_000_000)
     expect(getAutoPaySettings('game.example')?.windowHours).toBe(12)
+  })
+
+  it('keeps Auto-pay settings isolated by vault account', async () => {
+    const { setAutoPaySettings, getAutoPaySettings } = await import('./autoPay')
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    setAutoPaySettings('game.example', { enabled: true, maxUsd: 5, windowHours: 24 })
+
+    bindAccountLocalKeyScope({ accountIndex: 2, identityKey: 'account-two' })
+    expect(getAutoPaySettings('game.example')).toBeNull()
+    setAutoPaySettings('game.example', { enabled: true, maxUsd: 9, windowHours: 24 })
+
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    expect(getAutoPaySettings('game.example')?.maxUsd).toBe(5)
   })
 })

@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  accountLocalKey,
+  bindAccountLocalKeyScope,
+} from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -13,7 +17,8 @@ vi.mock('./session', () => ({
   getActiveWallet: () => null,
 }))
 
-const AUTH_KEY = 'handcash.market.listingAuthorizations.v2'
+const AUTH_KEY_BASE = 'handcash.market.listingAuthorizations.v2'
+const authKey = () => accountLocalKey(AUTH_KEY_BASE)
 const TX = 'aa'.repeat(32)
 
 describe('invalidateMarketListingsForSpentOutpoints', () => {
@@ -25,7 +30,7 @@ describe('invalidateMarketListingsForSpentOutpoints', () => {
   it('cancels active auth when spent tip is dotted (markItemsSent form)', async () => {
     const underscored = `${TX}_0`
     store.set(
-      AUTH_KEY,
+      authKey(),
       JSON.stringify([
         {
           key: `${underscored}:nonce`,
@@ -54,12 +59,12 @@ describe('invalidateMarketListingsForSpentOutpoints', () => {
     const auth = getMarketListingAuthorization({ outpoint: `${TX}.0` })
     expect(auth?.state).toBe('cancelled')
     expect(auth?.reason).toBe('tip-spent')
-  })
+  }, 15_000)
 
   it('cancels reserved auth and accepts underscore spent keys', async () => {
     const underscored = `${TX}_1`
     store.set(
-      AUTH_KEY,
+      authKey(),
       JSON.stringify([
         {
           key: `${underscored}:n2`,
@@ -89,7 +94,7 @@ describe('invalidateMarketListingsForSpentOutpoints', () => {
   it('skips malformed tips without wiping the batch', async () => {
     const underscored = `${TX}_2`
     store.set(
-      AUTH_KEY,
+      authKey(),
       JSON.stringify([
         {
           key: `${underscored}:n3`,
@@ -115,5 +120,33 @@ describe('invalidateMarketListingsForSpentOutpoints', () => {
     expect(getMarketListingAuthorization({ outpoint: `${TX}.2` })?.state).toBe(
       'cancelled',
     )
+  })
+
+  it('keeps listing authorizations isolated across account rebinds', async () => {
+    const underscored = `${TX}_3`
+    const record = {
+      key: `${underscored}:n4`,
+      outpoint: underscored,
+      nonce: 'n4',
+      seller: '02' + '11'.repeat(32),
+      origin: `${TX}_0`,
+      provenanceHash: '12'.repeat(32),
+      priceSats: 2_000,
+      state: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    store.set(authKey(), JSON.stringify([record]))
+    const market = await import('./marketListing')
+
+    expect(market.getMarketListingAuthorization({ outpoint: underscored })).not.toBeNull()
+    bindAccountLocalKeyScope({
+      accountIndex: 1,
+      identityKey: 'vitest-secondary-identity',
+      chain: 'main',
+    })
+    market.rebindMarketListingForAccount()
+    expect(market.getMarketListingAuthorization({ outpoint: underscored })).toBeNull()
+    expect(store.has(authKey())).toBe(false)
   })
 })

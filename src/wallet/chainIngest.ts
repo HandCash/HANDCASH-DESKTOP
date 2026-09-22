@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+import { getWalletRuntime } from './walletRuntime'
 /**
  * Chain ingest — finder of coins that are not yet in localState.
  *
@@ -26,7 +28,7 @@
  * our own unconfirmed change is expected — that coin is `unconfirmed`, not spent.
  */
 import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend, shouldYieldChainIngestToUi } from './walletCoordinator'
-import { getActiveWallet, fetchBalanceSats, invalidateBalanceReads } from './session'
+import { fetchBalanceSats, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { reconcilePendingSends } from './pendingSend'
 import { playWalletSound } from './soundService'
@@ -237,7 +239,7 @@ let lastMaintenanceKey = ''
 let lastMaintenanceAt = 0
 
 function maintenanceDue(
-  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  active: NonNullable<ReturnType<typeof getWalletRuntime>>['instance'],
   force: boolean,
 ): boolean {
   const key = `${active.chain}:${active.identityKey}`
@@ -727,7 +729,7 @@ export async function refreshFromChainExclusive(
 }
 
 async function finishEarlyForSpend(
-  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  active: NonNullable<ReturnType<typeof getWalletRuntime>>['instance'],
   partial: {
     heldCount: number
     pendingTips: number

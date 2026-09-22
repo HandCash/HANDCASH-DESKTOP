@@ -8,7 +8,7 @@ import { storageRegistry } from '../storage/registry'
 import { listFriends, type Friend } from './friends'
 
 const STORAGE_KEY_BASE = storageRegistry.messages.key
-const LEGACY_KEY = 'handcash.brc100.chat.v1'
+const LEGACY_KEY = storageRegistry.legacyChat.key
 
 function messagesStorageKey(): string {
   return accountLocalKey(STORAGE_KEY_BASE)

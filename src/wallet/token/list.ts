@@ -1,9 +1,12 @@
+import { getActiveWallet } from '../session'
+import { storageRegistry } from '../../storage/registry'
+
 /**
  * Tokens list: basket `bsv21` BRC-162 value tips, aggregated by deploy outpoint.
  * Never included in fetchBalanceSats / Pay.
  */
 
-import { getActiveWallet, type ActiveWallet } from '../session'
+import { type ActiveWallet } from '../session'
 import type { Chain } from '../vault'
 import {
   aggregateFungibles,
@@ -57,7 +60,7 @@ export { formatFungibleAmount, BSV21_BASKET }
 
 type Listener = (tokens: FungibleToken[]) => void
 
-const LIST_CACHE_KEY_BASE = 'handcash.tokens.list.v1'
+const LIST_CACHE_KEY_BASE = storageRegistry.tokensList.key
 
 function listCacheKey(): string {
   return accountLocalKey(LIST_CACHE_KEY_BASE)
@@ -603,6 +606,9 @@ export function rebindFungiblesForAccount(): void {
   cached = []
   hydrated = false
   listInFlight = null
+  listInFlightAt = 0
+  encodingProofInFlight.clear()
+  encodingProofRetries.clear()
   const durable = loadDurableList()
   if (durable.length > 0) {
     cached = durable

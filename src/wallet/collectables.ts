@@ -1,3 +1,6 @@
+import { getActiveWallet } from './session'
+import { storageRegistry } from '../storage/registry'
+
 /**
  * Collectables = tips this device still holds as 1-sat UTXOs on its receive
  * address, surfaced through BRC-100 basket `1sat`.
@@ -16,7 +19,7 @@ import {
   type Transaction,
 } from '@bsv/sdk'
 import { SetupClient } from '@bsv/wallet-toolbox-client'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
@@ -229,8 +232,8 @@ export type Collectable = {
 
 type CollectablesListener = (items: Collectable[]) => void
 
-const LIST_CACHE_KEY_BASE = 'handcash.collectables.list.v1'
-const SEEDED_ITEMS_KEY_BASE = 'handcash.collectables.seeded.v1'
+const LIST_CACHE_KEY_BASE = storageRegistry.collectablesList.key
+const SEEDED_ITEMS_KEY_BASE = storageRegistry.collectablesSeeded.key
 
 function listCacheKey(): string {
   return accountLocalKey(LIST_CACHE_KEY_BASE)
@@ -628,6 +631,12 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
 export function rebindCollectablesForAccount(): void {
   collectablesAccountEpoch += 1
   explicitVerificationRequests.clear()
+  if (durableListTimer) clearTimeout(durableListTimer)
+  durableListTimer = null
+  pendingDurableLists.clear()
+  pauseCollectableArrivalToasts = 0
+  skipArrivalToast.clear()
+  ghostDropProtectUntil.clear()
   cachedCollectables = []
   collectablesHydrated = false
   listedOutputCursor = 0
@@ -637,6 +646,12 @@ export function rebindCollectablesForAccount(): void {
   firstSeenAt.clear()
   seededItems.clear()
   loadedSeedIdentity = null
+  lastItemOutputs = []
+  resolvingOrigins = false
+  liveScan = null
+  genesisWalkTimes = []
+  provingGenesis = false
+  collectableVerifyWalkDeferred = false
   listInFlight = null
   listMoreInFlight = null
   const durable = loadDurableList().filter(

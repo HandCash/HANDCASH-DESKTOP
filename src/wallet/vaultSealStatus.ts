@@ -1,6 +1,7 @@
+import { storageRegistry } from '../storage/registry'
 import { durableGetItem } from './durableStorage'
 
-const KEY = 'handcash.brc100.vaultSealStatus'
+const KEY = storageRegistry.vaultSealStatus.key
 
 /** Electron sets this when OS seal fails and vault is stored unsealed. */
 export function isVaultStoredUnsealed(): boolean {

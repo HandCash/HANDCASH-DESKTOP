@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * What the user may do about a spend that never confirmed — items and payments.
  *
@@ -39,7 +41,7 @@ import {
   txExistsOnChain,
 } from "./legacyScan";
 import { broadcastAtomicBeef } from "./sendBrc29Payment";
-import { getActiveWallet } from "./session";
+
 import {
   arcadePinStillBinds,
   txIsArcadeRejected,

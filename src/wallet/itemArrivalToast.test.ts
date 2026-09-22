@@ -1,4 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import {
+  accountLocalKey,
+  bindAccountLocalKeyScope,
+} from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -114,5 +118,26 @@ describe('itemArrivalToast', () => {
     const second = await import('./itemArrivalToast')
     second.announceItemsReceived([op])
     expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('clears session caches and reads the newly bound account', async () => {
+    const op = `${'d'.repeat(64)}.0`
+    const toast = await import('./itemArrivalToast')
+    toast.announceItemsReceived([op])
+    const primaryKey = accountLocalKey('handcash.items.receiveAnnounced.v1')
+
+    bindAccountLocalKeyScope({
+      accountIndex: 1,
+      identityKey: 'vitest-secondary-identity',
+      chain: 'main',
+    })
+    toast.rebindItemArrivalToastForAccount()
+
+    expect(toast.announceItemsReceived([op])).toBe(true)
+    expect(toastSuccess).toHaveBeenCalledTimes(2)
+    expect(store.has(primaryKey)).toBe(true)
+    expect(
+      store.has(accountLocalKey('handcash.items.receiveAnnounced.v1')),
+    ).toBe(true)
   })
 })

@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../session'
+
 /**
  * Burn BRC-162 value tips: destroy face-value units, keep optional token
  * change, and pack the physical tip sats into managed recovery.
@@ -22,7 +24,7 @@ import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
   withFungibleCreateActionTimeout,
 } from './sendEntry'
-import { getActiveWallet, type ActiveWallet } from '../session'
+import { type ActiveWallet } from '../session'
 import { runExclusiveBurn } from '../spendGuard'
 import { estimateBurnEconomics, type BurnEconomics } from '../burnEconomics'
 

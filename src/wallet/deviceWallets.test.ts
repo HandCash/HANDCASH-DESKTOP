@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { accountLocalKey } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -201,7 +202,7 @@ describe('deviceWallets backup links', () => {
 
   it('rejects legacy v2 link when local backup URL differs', async () => {
     store.set(
-      'handcash.brc100.historyBackup.v1',
+      accountLocalKey('handcash.brc100.historyBackup.v1'),
       JSON.stringify({ baseUrl: 'https://a.example', lastUploadedAt: null, lastError: null }),
     )
     const { assertPairBackupUrlCompatible } = await import('./deviceWallets')
@@ -304,7 +305,7 @@ describe('verifyAndEnrichPair payload verification', () => {
 
   it('rejects legacy v2 when identity differs', async () => {
     store.set(
-      'handcash.brc100.historyBackup.v1',
+      accountLocalKey('handcash.brc100.historyBackup.v1'),
       JSON.stringify({ baseUrl: 'https://backup.example', lastUploadedAt: null, lastError: null }),
     )
     const { verifyAndEnrichPair } = await import('./devicePeer')
@@ -329,7 +330,7 @@ describe('verifyAndEnrichPair payload verification', () => {
 
   it('rejects legacy v2 backup URL mismatch', async () => {
     store.set(
-      'handcash.brc100.historyBackup.v1',
+      accountLocalKey('handcash.brc100.historyBackup.v1'),
       JSON.stringify({ baseUrl: 'https://mine.example', lastUploadedAt: null, lastError: null }),
     )
     const { verifyAndEnrichPair } = await import('./devicePeer')

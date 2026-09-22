@@ -10,15 +10,45 @@ import { rebindCollectablesForAccount } from './collectables'
 import { rebindFriendsForAccount } from './friends'
 import { rebindMessagesForAccount } from './messageStore'
 import { rebindConnectedAppsForAccount } from './permissions'
+import { cancelPendingPermissions } from './permissions'
 import { clearPaymentProgress } from './paymentProgress'
 import { rebindOneSatImportGuardForAccount } from './oneSatImportGuard'
 import { rebindSentItemGuardForAccount } from './sentItemGuard'
 import { rebindFungiblesForAccount } from './token/list'
 import { assertNeverOutcome, type WalletOutcome } from './kernel/outcomes'
+import { rebindTxStoreForAccount } from './txStore'
+import { rebindUtxoLocksForAccount } from './utxoLockManager'
+import { rebindLegacyImportGuardForAccount } from './legacyImportGuard'
+import { rebindDerivedChangeEchoForAccount } from './derivedChangeEcho'
+import { rebindTransactionTelemetryForAccount } from './transactionTelemetry'
+import { rebindBrc29IngestForAccount } from './sendBrc29Payment'
+import { rebindWalletCoordinatorForRuntime } from './walletCoordinator'
+import { rebindDeviceSyncForAccount } from './deviceSync'
+import { rebindStaleOutputReleaseForAccount } from './staleOutputRelease'
+import { rebindOneSatProvenanceForAccount } from './oneSatProvenance'
+import { rebindItemArrivalToastForAccount } from './itemArrivalToast'
+import { rebindBackupStatusForAccount } from './backupStatus'
+import { rebindHandleClaimForAccount } from './handleClaim'
+import { rebindUtxoHealCheckpointForAccount } from './utxoHealCheckpoint'
 
 export function applyWalletOutcome(outcome: WalletOutcome): void {
   switch (outcome.type) {
     case 'AccountChanged':
+      rebindWalletCoordinatorForRuntime()
+      cancelPendingPermissions('account-changed')
+      rebindTxStoreForAccount()
+      rebindUtxoLocksForAccount()
+      rebindLegacyImportGuardForAccount()
+      rebindDerivedChangeEchoForAccount()
+      rebindTransactionTelemetryForAccount()
+      rebindBrc29IngestForAccount()
+      rebindDeviceSyncForAccount()
+      rebindStaleOutputReleaseForAccount()
+      rebindOneSatProvenanceForAccount()
+      rebindItemArrivalToastForAccount()
+      rebindBackupStatusForAccount()
+      rebindHandleClaimForAccount()
+      rebindUtxoHealCheckpointForAccount()
       rebindFriendsForAccount()
       rebindAppActivityForAccount()
       rebindConnectedAppsForAccount()

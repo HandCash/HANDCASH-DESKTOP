@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { accountLocalKey } from './accountLocalKeys'
 
 /**
  * Destination change pays the fee for every collectable, so a large collection
@@ -160,7 +161,7 @@ describe('migratePhraseItemsBatch funds stop', () => {
 
   it('repairs an old moved cursor against the mutable unspent list', async () => {
     stored.set(
-      'handcash.brc100.phraseSweepItemCursor.v1',
+      accountLocalKey('handcash.brc100.phraseSweepItemCursor.v1'),
       JSON.stringify({
         sourceAddress: CANDIDATE.address,
         destIdentityKey: '02'.repeat(33),
@@ -203,7 +204,7 @@ describe('migratePhraseItemsBatch funds stop', () => {
 
   it('removes a forgotten cursor and immediately clears Activity subscribers', async () => {
     stored.set(
-      'handcash.brc100.phraseSweepItemCursor.v1',
+      accountLocalKey('handcash.brc100.phraseSweepItemCursor.v1'),
       JSON.stringify({
         sourceAddress: CANDIDATE.address,
         destIdentityKey: '02'.repeat(33),

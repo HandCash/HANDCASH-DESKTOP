@@ -1,3 +1,4 @@
+import { storageRegistry } from '../../../storage/registry'
 /**
  * Local BSV-21 icon bytes — P2P / own-tx path, not HTTP content indexers.
  * Keyed by icon outpoint (`txid_vout` or `txid.vout`).
@@ -6,7 +7,7 @@ import { durableGetItem, durableSetItem } from '../../durableStorage'
 import { normalizeTokenId } from '../types'
 import { base64ToBytes, bytesToBase64 } from '../../base64Binary'
 
-const STORAGE_KEY = 'handcash.bsv21.tokenIcons'
+const STORAGE_KEY = storageRegistry.tokenIcons.key
 
 export type TokenIconRecord = {
   mime: string

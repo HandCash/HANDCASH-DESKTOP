@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Interpret toolbox `postBeef` / `postRaws` results.
  *
@@ -263,7 +265,6 @@ export async function deliverSignedTxBestEffort(args: {
     return { outcome: 'conflict_real', detail: 'invalid txid' }
   }
 
-  const { getActiveWallet } = await import('./session')
   const postBeef = getActiveWallet()?.services?.postBeef
   if (!postBeef) {
     console.info(`${prefix} no postBeef — signed tx valid locally; monitor may broadcast`)

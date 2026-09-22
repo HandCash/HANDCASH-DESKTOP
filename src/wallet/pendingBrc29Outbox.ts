@@ -3,6 +3,8 @@
  * box missed the first delivery. Never creates a second payment tx.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
 import type { Brc29Remittance } from './sendBrc29Payment'
 import { mapPool } from './asyncPool'
 import {
@@ -10,8 +12,13 @@ import {
   recordTransactionStage,
   type TransactionFlow,
 } from './transactionTelemetry'
+import {
+  assertRuntimeCurrent,
+  getWalletRuntime,
+  type WalletRuntime,
+} from './walletRuntime'
 
-const KEY = 'handcash.brc29.pendingOutbox.v1'
+const KEY_BASE = storageRegistry.pendingBrc29Outbox.key
 const MAX_ATTEMPTS = 20
 /** Concurrent remittance retries — BEEF fetch + box POST are independent per row. */
 const OUTBOX_FLUSH_CONCURRENCY = 3
@@ -31,9 +38,13 @@ export type PendingBrc29Remit = {
   flow?: TransactionFlow
 }
 
+function storageKey(): string {
+  return accountLocalKey(KEY_BASE)
+}
+
 function load(): PendingBrc29Remit[] {
   try {
-    const raw = durableGetItem(KEY)
+    const raw = durableGetItem(storageKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     return Array.isArray(parsed) ? (parsed as PendingBrc29Remit[]) : []
@@ -43,7 +54,7 @@ function load(): PendingBrc29Remit[] {
 }
 
 function save(rows: PendingBrc29Remit[]): void {
-  durableSetItem(KEY, JSON.stringify(rows.slice(0, 50)))
+  durableSetItem(storageKey(), JSON.stringify(rows.slice(0, 50)))
 }
 
 /** Cheap peek for Dashboard tip-poll backoff — no network. */
@@ -73,15 +84,20 @@ export function enqueuePendingBrc29Remit(
 
 export async function flushPendingBrc29Outbox(args: {
   rootKeyHex: string
+  runtime?: WalletRuntime
 }): Promise<number> {
+  const runtime = args.runtime ?? getWalletRuntime()
+  if (!runtime && import.meta.env?.MODE !== 'test') throw new Error('WALLET_LOCKED')
+  if (runtime) assertRuntimeCurrent(runtime)
   const rows = load()
   if (rows.length === 0) return 0
   const { notifyPeerBrc29Payment } = await import('./messageTransport')
-  const { getActiveWallet } = await import('./session')
   const { getBeefForTxidCached } = await import('./beefCache')
-  const active = getActiveWallet()
+  const active =
+    runtime?.instance ?? (await import('./session')).getActiveWallet()
 
   const outcomes = await mapPool(rows, OUTBOX_FLUSH_CONCURRENCY, async (row) => {
+    if (runtime) assertRuntimeCurrent(runtime)
     try {
       let atomicBeef: number[] | undefined
       if (active) {

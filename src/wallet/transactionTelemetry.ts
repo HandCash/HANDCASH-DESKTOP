@@ -1,12 +1,26 @@
 import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
 import { freshMessageboxAuthHeaders } from './messageboxAuth'
-import { getActiveWallet } from './session'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import { logDiag } from './diagnosticLog'
+import {
+  assertRuntimeCurrent,
+  getWalletRuntime,
+  type WalletRuntime,
+} from './walletRuntime'
 
-const QUEUE_KEY = 'handcash.wallet.transactionTelemetry.v1'
-const HISTORY_KEY = 'handcash.wallet.transactionTelemetryDurations.v1'
+const QUEUE_KEY_BASE = storageRegistry.transactionTelemetry.key
+const HISTORY_KEY_BASE = storageRegistry.transactionTelemetryDurations.key
+function queueKey(): string {
+  return accountLocalKey(QUEUE_KEY_BASE)
+}
+
+function historyKey(): string {
+  return accountLocalKey(HISTORY_KEY_BASE)
+}
+
 const MAX_QUEUE = 500
 const MAX_HISTORY_PER_FLOW = 50
 const BATCH_SIZE = 50
@@ -101,7 +115,7 @@ function platformTag(): string {
 
 function readQueue(): TransactionTelemetryEvent[] {
   try {
-    const parsed = JSON.parse(durableGetItem(QUEUE_KEY) || '[]') as unknown
+    const parsed = JSON.parse(durableGetItem(queueKey()) || '[]') as unknown
     return Array.isArray(parsed) ? (parsed as TransactionTelemetryEvent[]) : []
   } catch {
     return []
@@ -109,12 +123,12 @@ function readQueue(): TransactionTelemetryEvent[] {
 }
 
 function writeQueue(events: TransactionTelemetryEvent[]): void {
-  durableSetItem(QUEUE_KEY, JSON.stringify(events.slice(-MAX_QUEUE)))
+  durableSetItem(queueKey(), JSON.stringify(events.slice(-MAX_QUEUE)))
 }
 
 function readHistory(): DurationHistory {
   try {
-    const parsed = JSON.parse(durableGetItem(HISTORY_KEY) || '{}') as unknown
+    const parsed = JSON.parse(durableGetItem(historyKey()) || '{}') as unknown
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as DurationHistory)
       : {}
@@ -127,7 +141,7 @@ function rememberCompletedDuration(flow: TransactionFlow, durationMs: number): v
   const history = readHistory()
   const values = Array.isArray(history[flow]) ? history[flow]! : []
   history[flow] = [...values, durationMs].slice(-MAX_HISTORY_PER_FLOW)
-  durableSetItem(HISTORY_KEY, JSON.stringify(history))
+  durableSetItem(historyKey(), JSON.stringify(history))
 }
 
 function projectedRemaining(flow: TransactionFlow, elapsedMs: number): number | undefined {
@@ -258,13 +272,23 @@ export function recordPaymentProgressStage(
   recordTransactionStage(mapped, { flow })
 }
 
-export async function flushTransactionTelemetry(): Promise<void> {
+export async function flushTransactionTelemetry(args?: {
+  runtime: WalletRuntime
+}): Promise<void> {
+  const runtime = args?.runtime ?? getWalletRuntime()
+  const active =
+    runtime?.instance ??
+    (import.meta.env?.MODE === 'test'
+      ? (await import('./session')).getActiveWallet()
+      : null)
+  if (!active) return
+  if (runtime) assertRuntimeCurrent(runtime)
   if (flushInFlight) return flushInFlight
   const run = (async () => {
-    const active = getActiveWallet()
     const base = DEFAULT_BRC_CLOUD_BASE_URL.trim().replace(/\/+$/, '')
     const queued = readQueue()
-    if (sinkAbsent || !active?.rootKeyHex || !base || queued.length === 0) return
+    if (sinkAbsent || !active.rootKeyHex || !base || queued.length === 0) return
+    if (runtime) assertRuntimeCurrent(runtime)
     const batch = queued.slice(0, BATCH_SIZE)
     const response = await fetch(`${base}/v1/telemetry/events`, {
       method: 'POST',
@@ -306,7 +330,9 @@ export function scheduleTransactionTelemetryFlush(delayMs = 750): void {
   if (flushTimer || sinkAbsent) return
   flushTimer = setTimeout(() => {
     flushTimer = null
-    void flushTransactionTelemetry().catch((error) => {
+    const runtime = getWalletRuntime()
+    if (!runtime) return
+    void flushTransactionTelemetry({ runtime }).catch((error) => {
       console.warn(
         '[tx-trace] flush deferred',
         error instanceof Error ? error.message : String(error),
@@ -316,11 +342,15 @@ export function scheduleTransactionTelemetryFlush(delayMs = 750): void {
 }
 
 export function __resetTransactionTelemetryForTests(): void {
+  rebindTransactionTelemetryForAccount()
+  sinkAbsent = false
+  durableSetItem(queueKey(), '[]')
+  durableSetItem(historyKey(), '{}')
+}
+
+export function rebindTransactionTelemetryForAccount(): void {
   activeTrace = null
   if (flushTimer) clearTimeout(flushTimer)
   flushTimer = null
   flushInFlight = null
-  sinkAbsent = false
-  durableSetItem(QUEUE_KEY, '[]')
-  durableSetItem(HISTORY_KEY, '{}')
 }

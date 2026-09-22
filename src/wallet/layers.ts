@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Wallet layers — HandCash Desktop SSoT for how funds exist on a device.
  *
@@ -14,9 +16,13 @@
  *                never 1sat / bsv21). See `balanceView.ts`.
  * health         chain ingest health ⊕ history replica health ⊕ bridge
  * coordinator    walletCoordinatorMachine — legal overlaps between layers (UTXO safety)
+ * runtime        one account instance + namespace + generation + abort signal;
+ *                every feature cache/queue/lease is owned by this boundary
  * ```
  *
  * Glossary:
+ * - **Wallet runtime** → the sole account feature root (`walletRuntime.ts`).
+ *   Switch/lock aborts and disposes it before another account is published.
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Finder of coins
  *   not yet in localState. Does not pull BRC-39. Does not reclassify a live
  *   unconfirmed cheque as dead because an indexer has not listed it.
@@ -132,7 +138,7 @@
  *   move recovered physical sats into managed change / `balanceView`.
  */
 
-import { fetchBalanceSats, getActiveWallet } from "./session";
+import { fetchBalanceSats} from "./session";
 
 /** Named layers — use in comments, health aggregates, and new APIs. */
 export type WalletLayer =

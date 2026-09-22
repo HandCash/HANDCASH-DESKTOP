@@ -19,10 +19,17 @@ import {
 } from './walletCoordinatorMachine'
 
 /** One FIFO per region — serialize same-region work; machine owns cross-region exclusion. */
-const chainIngestQueue = createSerialQueue()
-const spendQueue = createSerialQueue()
-const historyReplicaQueue = createSerialQueue()
-const recomposeQueue = createSerialQueue()
+let chainIngestQueue = createSerialQueue()
+let spendQueue = createSerialQueue()
+let historyReplicaQueue = createSerialQueue()
+let recomposeQueue = createSerialQueue()
+let coordinatorEpoch = 0
+
+function assertCoordinatorEpoch(epoch: number): void {
+  if (epoch !== coordinatorEpoch) {
+    throw new DOMException('Wallet coordinator runtime changed', 'AbortError')
+  }
+}
 
 let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinatorMachine).start()
 
@@ -68,6 +75,20 @@ function emitCoordinator(): void {
 export function resetWalletCoordinatorForTests(): void {
   actor.stop()
   actor = createActor(walletCoordinatorMachine).start()
+  spendPriorityHolds = []
+  lastUiScrollAt = 0
+  emitCoordinator()
+}
+
+/** Give each wallet runtime fresh queues and a fresh statechart actor. */
+export function rebindWalletCoordinatorForRuntime(): void {
+  coordinatorEpoch += 1
+  actor.stop()
+  actor = createActor(walletCoordinatorMachine).start()
+  chainIngestQueue = createSerialQueue()
+  spendQueue = createSerialQueue()
+  historyReplicaQueue = createSerialQueue()
+  recomposeQueue = createSerialQueue()
   spendPriorityHolds = []
   lastUiScrollAt = 0
   emitCoordinator()
@@ -222,8 +243,10 @@ export function describeWalletCoordinator(): WalletCoordinatorLiveStatus {
   }
 }
 
-function context(): WalletCoordinatorContext {
-  return actor.getSnapshot().context
+function context(
+  coordinatorActor: Actor<typeof walletCoordinatorMachine> = actor,
+): WalletCoordinatorContext {
+  return coordinatorActor.getSnapshot().context
 }
 
 export function getWalletCoordinatorSnapshot(): WalletCoordinatorSnapshot {
@@ -249,7 +272,11 @@ export function isRecomposeCoordinatorActive(): boolean {
   return context().recomposeDepth > 0
 }
 
-function waitFor(predicate: () => boolean, maxWaitMs?: number): Promise<void> {
+function waitFor(
+  coordinatorActor: Actor<typeof walletCoordinatorMachine>,
+  predicate: () => boolean,
+  maxWaitMs?: number,
+): Promise<void> {
   if (predicate()) return Promise.resolve()
   return new Promise((resolve) => {
     let settled = false
@@ -260,7 +287,7 @@ function waitFor(predicate: () => boolean, maxWaitMs?: number): Promise<void> {
       if (timer != null) clearTimeout(timer)
       resolve()
     }
-    const sub = actor.subscribe(() => {
+    const sub = coordinatorActor.subscribe(() => {
       if (predicate()) finish()
     })
     const timer =
@@ -293,9 +320,10 @@ export function spendBlockedMessage(err: unknown): string | null {
 async function acquire(
   event: WalletCoordinatorEvent,
   endEvent: WalletCoordinatorEvent,
-  canBegin: () => boolean,
+  canBegin: (ctx: WalletCoordinatorContext) => boolean,
   options?: { maxWaitMs?: number },
 ): Promise<() => void> {
+  const coordinatorActor = actor
   const started = Date.now()
   let loggedWait = false
   while (true) {
@@ -307,9 +335,9 @@ async function acquire(
         describeWalletCoordinator().summary,
       )
     }
-    const before = JSON.stringify(context())
-    actor.send(event)
-    const after = JSON.stringify(context())
+    const before = JSON.stringify(context(coordinatorActor))
+    coordinatorActor.send(event)
+    const after = JSON.stringify(context(coordinatorActor))
     if (before !== after) break
     if (!loggedWait && waited > 5_000) {
       loggedWait = true
@@ -328,10 +356,14 @@ async function acquire(
         describeWalletCoordinator().summary,
       )
     }
-    await waitFor(canBegin, remaining)
+    await waitFor(
+      coordinatorActor,
+      () => canBegin(context(coordinatorActor)),
+      remaining,
+    )
   }
   return () => {
-    actor.send(endEvent)
+    coordinatorActor.send(endEvent)
   }
 }
 
@@ -339,7 +371,7 @@ async function acquireChainIngest(nested: boolean): Promise<() => void> {
   return acquire(
     { type: 'CHAIN_INGEST_BEGIN', nested },
     { type: 'CHAIN_INGEST_END' },
-    () => canBeginChainIngest(context(), nested),
+    (ctx) => canBeginChainIngest(ctx, nested),
   )
 }
 
@@ -347,7 +379,7 @@ async function acquireSpend(): Promise<() => void> {
   return acquire(
     { type: 'SPEND_BEGIN' },
     { type: 'SPEND_END' },
-    () => canBeginSpend(context()),
+    (ctx) => canBeginSpend(ctx),
     { maxWaitMs: SPEND_ACQUIRE_MAX_MS },
   )
 }
@@ -356,7 +388,7 @@ async function acquireHistoryReplica(): Promise<() => void> {
   return acquire(
     { type: 'HISTORY_BEGIN' },
     { type: 'HISTORY_END' },
-    () => canBeginHistoryReplica(context()),
+    (ctx) => canBeginHistoryReplica(ctx),
   )
 }
 
@@ -364,7 +396,7 @@ async function acquireRecompose(): Promise<() => void> {
   return acquire(
     { type: 'RECOMPOSE_BEGIN' },
     { type: 'RECOMPOSE_END' },
-    () => canBeginRecompose(context()),
+    (ctx) => canBeginRecompose(ctx),
   )
 }
 
@@ -373,9 +405,13 @@ async function acquireRecompose(): Promise<() => void> {
  * during spend (except nested spend heal) and historyReplica by the machine.
  */
 export function runChainIngest<T>(fn: () => Promise<T>): Promise<T> {
-  return chainIngestQueue(async () => {
+  const epoch = coordinatorEpoch
+  const queue = chainIngestQueue
+  return queue(async () => {
+    assertCoordinatorEpoch(epoch)
     const release = await acquireChainIngest(false)
     try {
+      assertCoordinatorEpoch(epoch)
       return await fn()
     } finally {
       release()
@@ -502,6 +538,8 @@ export function runExclusiveSpend<T>(
   onSpendRegion?: () => void,
   opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
 ): Promise<T> {
+  const epoch = coordinatorEpoch
+  const queue = spendQueue
   // Before the region waits — so a running refresh can yield ordinal work now.
   const priority = leaseSpendPriority('runExclusiveSpend')
   // A mint or a legacy sweep can outlive the expiry while doing real work. The
@@ -511,13 +549,15 @@ export function runExclusiveSpend<T>(
     clearInterval(heartbeat)
     priority.release()
   }
-  return spendQueue(async () => {
+  return queue(async () => {
     try {
+      assertCoordinatorEpoch(epoch)
       const releaseSpend = await acquireSpend()
       // Region acquired — drop "Waiting to send…" before the cross-device lease RTT.
       onSpendRegion?.()
       const releaseLease = await acquireLease()
       try {
+        assertCoordinatorEpoch(epoch)
         return await runSpendBody(fn, opts)
       } finally {
         await releaseLease()
@@ -565,12 +605,15 @@ export function runHistoryReplica<T>(
   fn: () => Promise<T>,
   priority: HistoryReplicaPriority = 'yieldToSpend',
 ): Promise<T> {
+  const epoch = coordinatorEpoch
+  const queue = historyReplicaQueue
   if (context().recomposeDepth > 0) {
     return fn()
   }
   const yieldsToSpend = priority === 'yieldToSpend'
   const spendWantsIn = () => yieldsToSpend && shouldYieldChainIngestToSpend()
-  return historyReplicaQueue(async () => {
+  return queue(async () => {
+    assertCoordinatorEpoch(epoch)
     // Spends raise priority before enqueueing. Exit without holding history so
     // the waiting spend can acquire as soon as chain/history peers free the machine.
     while (true) {
@@ -578,13 +621,17 @@ export function runHistoryReplica<T>(
         throw new HistoryDeferredForSpendError()
       }
       if (canBeginHistoryReplica(context())) break
-      await waitFor(() => canBeginHistoryReplica(context()) || spendWantsIn())
+      await waitFor(
+        actor,
+        () => canBeginHistoryReplica(context()) || spendWantsIn(),
+      )
     }
     if (spendWantsIn()) {
       throw new HistoryDeferredForSpendError()
     }
     const release = await acquireHistoryReplica()
     try {
+      assertCoordinatorEpoch(epoch)
       if (spendWantsIn()) {
         throw new HistoryDeferredForSpendError()
       }
@@ -597,9 +644,13 @@ export function runHistoryReplica<T>(
 
 /** Unlock / restore recompose — owns the session; internal history + chain skip sub-acquires. */
 export function runRecompose<T>(fn: () => Promise<T>): Promise<T> {
-  return recomposeQueue(async () => {
+  const epoch = coordinatorEpoch
+  const queue = recomposeQueue
+  return queue(async () => {
+    assertCoordinatorEpoch(epoch)
     const release = await acquireRecompose()
     try {
+      assertCoordinatorEpoch(epoch)
       return await fn()
     } finally {
       release()

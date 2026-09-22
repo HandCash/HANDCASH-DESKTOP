@@ -1,7 +1,12 @@
+import {
+  getWalletRuntime,
+  runtimeIsCurrent,
+  type WalletRuntime,
+} from './walletRuntime'
 import type { WalletInterface } from '@bsv/sdk'
 import { Beef, Transaction } from '@bsv/sdk'
 import { brc100HandlerOwner } from '../contracts/brc100Handlers'
-import { getActiveWallet, fetchFastBalanceSats } from './session'
+import { fetchFastBalanceSats } from './session'
 import {
   filterItemOutputsForOrigin,
   filterTokenOutputsForOrigin,
@@ -331,7 +336,7 @@ async function verifyP1SatSpendLabels(
 
 /** Keep AtomicBEEF / tx bytes from createAction so a follow-up spend can prove inputs. */
 async function cacheCreateActionBeef(
-  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  active: NonNullable<ReturnType<typeof getWalletRuntime>>['instance'],
   txid: string,
   result: unknown,
 ): Promise<number[] | null> {
@@ -436,7 +441,7 @@ async function dispatchWalletMethod(
       ) {
         throw new Error('Invalid or expired operations login challenge')
       }
-      const active = getActiveWallet()
+      const active = (getWalletRuntime()?.instance ?? null)
       if (!active?.rootKeyHex) throw new Error('Wallet locked')
       return signIdentityText(active.rootKeyHex, challenge)
     }
@@ -468,7 +473,7 @@ async function dispatchWalletMethod(
       const dataUrl = await resolveBsv21IconDataUrl({
         icon: icon || undefined,
         origin: origin || (typeof body.outpoint === 'string' ? body.outpoint : undefined),
-        wallet: getActiveWallet(),
+        wallet: (getWalletRuntime()?.instance ?? null),
       })
       return { dataUrl: dataUrl ?? null }
     }
@@ -582,7 +587,10 @@ async function dispatchWalletMethod(
   }
 }
 
-export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ status: number; body: string }> {
+export async function handleBrc100Request(
+  event: HttpRequestEvent,
+  runtime: WalletRuntime | null,
+): Promise<{ status: number; body: string }> {
   const releaseInbound = noteInboundWalletRequest()
   const method = methodFromPath(event.path)
   const originator = parseOrigin(event.headers)
@@ -597,7 +605,13 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     }
   }
   try {
-    const result = await handleBrc100RequestInner(event)
+    const result = await handleBrc100RequestInner(event, runtime)
+    if (runtime && !runtimeIsCurrent(runtime)) {
+      return {
+        status: 409,
+        body: JSON.stringify({ error: 'Wallet account changed during request' }),
+      }
+    }
     if (diag && method) {
       try {
         logBrc100Response(method, originator, result, Date.now() - t0, args)
@@ -614,7 +628,10 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   }
 }
 
-async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ status: number; body: string }> {
+async function handleBrc100RequestInner(
+  event: HttpRequestEvent,
+  runtime: WalletRuntime | null,
+): Promise<{ status: number; body: string }> {
   if (event.method === 'OPTIONS') {
     return { status: 200, body: '' }
   }
@@ -636,7 +653,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
     }
   }
 
-  const active = getActiveWallet()
+  const active = runtime?.instance ?? null
   if (!active) {
     requestUnlockForBridge()
     return {

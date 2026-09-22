@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Heal 1sat collectables that Refresh/import painted into basket `bsv21`
  * (Collect → Tokens / NFT). Local basket move only — no broadcast.
@@ -20,7 +22,7 @@ import { markOneSatImported } from './oneSatImportGuard'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { normalizeLockingScriptHex } from './collectableTipKind'
 import { parseOrdEnvelope } from './ordinalOwnership'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import {
   applyCollectableRemittance,
   wireCollectableOutpoint,

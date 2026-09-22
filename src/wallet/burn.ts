@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 import {
   Beef,
   createNonce,
@@ -57,7 +59,7 @@ import {
 import { markItemsConsumed } from './sentItemGuard'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 
 type SelfPayment = {
   lockingScript: string

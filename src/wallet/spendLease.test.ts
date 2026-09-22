@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { accountLocalKey } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -22,7 +23,7 @@ describe('spendLease', () => {
     vi.resetModules()
     vi.unstubAllGlobals()
     store.set(
-      'handcash.brc100.historyBackup.v1',
+      accountLocalKey('handcash.brc100.historyBackup.v1'),
       JSON.stringify({ baseUrl: 'https://backup.example', lastUploadedAt: null, lastError: null }),
     )
     store.set('handcash.brc100.deviceId.v1', 'local-device')

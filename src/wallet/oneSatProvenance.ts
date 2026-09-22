@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * BRC-150 provenance remittance for basket `1sat` (+ recursive inscription tips).
  *
@@ -15,6 +16,7 @@ import { Beef, type Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { hasOrdEnvelope } from './ordinalOwnership'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
 import { yieldToUi } from './yieldToUi'
@@ -582,7 +584,7 @@ export function rememberPeerRemittanceForHeldTips(
  * always travel so offline detail badges and send rebuilds survive restarts.
  */
 const remittanceByTip = new Map<string, ProvenanceV2>()
-const REMITTANCE_DURABLE_KEY = 'handcash.brc150.remittance.v1'
+const REMITTANCE_DURABLE_KEY = storageRegistry.remittance.key
 const REMITTANCE_DURABLE_MAX_ENTRIES = 800
 /** ~36KB binary — keeps many slim proofs without blowing localStorage. */
 const REMITTANCE_DURABLE_MAX_BEEF_B64 = 48_000
@@ -597,11 +599,15 @@ type StoredRemittance = {
 
 let durableRemittanceLoaded = false
 
+function remittanceStorageKey(): string {
+  return accountLocalKey(REMITTANCE_DURABLE_KEY)
+}
+
 function loadDurableRemittances(): void {
   if (durableRemittanceLoaded) return
   durableRemittanceLoaded = true
   try {
-    const raw = durableGetItem(REMITTANCE_DURABLE_KEY)
+    const raw = durableGetItem(remittanceStorageKey())
     if (!raw) return
     const parsed = JSON.parse(raw) as Record<string, StoredRemittance>
     for (const entry of Object.values(parsed)) {
@@ -623,7 +629,7 @@ function loadDurableRemittances(): void {
 
 function persistDurableRemittance(p: ProvenanceV2): void {
   try {
-    const raw = durableGetItem(REMITTANCE_DURABLE_KEY)
+    const raw = durableGetItem(remittanceStorageKey())
     const map: Record<string, StoredRemittance> = raw ? JSON.parse(raw) : {}
     const tip = toUnderscore(p.tip).toLowerCase()
     const beefB64 =
@@ -644,7 +650,7 @@ function persistDurableRemittance(p: ProvenanceV2): void {
         delete map[sorted[i]!]
       }
     }
-    durableSetItem(REMITTANCE_DURABLE_KEY, JSON.stringify(map))
+    durableSetItem(remittanceStorageKey(), JSON.stringify(map))
   } catch {
     // Optimisation only.
   }
@@ -685,12 +691,17 @@ export function getRememberedProvenanceRemittance(
   return remittanceByTip.get(toUnderscore(tipOutpoint).toLowerCase()) ?? null
 }
 
-/** Test / logout helper. */
-export function clearRememberedProvenanceRemittances(): void {
+/** Drop account-owned memory before reading the newly bound account. */
+export function rebindOneSatProvenanceForAccount(): void {
   remittanceByTip.clear()
   durableRemittanceLoaded = false
+}
+
+/** Test / explicit wipe helper. */
+export function clearRememberedProvenanceRemittances(): void {
+  rebindOneSatProvenanceForAccount()
   try {
-    durableRemoveItem(REMITTANCE_DURABLE_KEY)
+    durableRemoveItem(remittanceStorageKey())
   } catch {
     // Optimisation only.
   }

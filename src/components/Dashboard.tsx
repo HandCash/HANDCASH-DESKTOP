@@ -1,3 +1,4 @@
+import { getActiveWallet } from '../wallet/session'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { refreshFromChain } from '../wallet/chainIngest'
@@ -53,7 +54,8 @@ import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
-import { getActiveWallet } from '../wallet/session'
+
+import { getWalletRuntime } from '../wallet/walletRuntime'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { whenRecomposeIdle } from '../wallet/recompose'
 
@@ -346,8 +348,9 @@ export function Dashboard({
       }
       let chaseable: string[] = []
       try {
-        const active = getActiveWallet()
-        if (!active?.rootKeyHex) return
+        const runtime = getWalletRuntime()
+        const active = runtime?.instance
+        if (!runtime || !active?.rootKeyHex) return
         const { pollInboundTipHints } = await import('../wallet/messageTransport')
         const { listFriends } = await import('../wallet/friends')
         const map = new Map(
@@ -363,8 +366,8 @@ export function Dashboard({
         } = await import('../wallet/pendingItemOutbox')
         const outboxBusy =
           pendingBrc29OutboxCount() > 0 || pendingItemOutboxCount() > 0
-        await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex })
-        await flushPendingItemOutbox({ rootKeyHex: active.rootKeyHex })
+        await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex, runtime })
+        await flushPendingItemOutbox({ rootKeyHex: active.rootKeyHex, runtime })
         const hints = await pollInboundTipHints({
           rootKeyHex: active.rootKeyHex,
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,

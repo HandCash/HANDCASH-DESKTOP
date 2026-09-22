@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
@@ -7,7 +8,7 @@ import {
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 
-const STORAGE_KEY_BASE = 'handcash.brc100.pendingSend'
+const STORAGE_KEY_BASE = storageRegistry.pendingSend.key
 
 function pendingStorageKey(): string {
   return accountLocalKey(STORAGE_KEY_BASE)

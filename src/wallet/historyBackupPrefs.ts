@@ -1,7 +1,9 @@
+import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import { DEFAULT_HISTORY_BACKUP_SETUP_URL, getWalletConfigPrefs } from './walletConfig'
 
-const KEY = 'handcash.brc100.historyBackup.v1'
+const KEY = storageRegistry.historyBackup.key
 
 /**
  * HandCash BRC-39 host (BRC-CLOUD). Applied automatically unless the user
@@ -52,7 +54,7 @@ function normalizeBaseUrl(raw: string): string {
 
 export function getHistoryBackupPrefs(): HistoryBackupPrefs {
   try {
-    const raw = durableGetItem(KEY)
+    const raw = durableGetItem(accountLocalKey(KEY))
     if (!raw) return { ...DEFAULTS }
     const parsed = JSON.parse(raw) as Partial<HistoryBackupPrefs> & {
       customBaseUrl?: string
@@ -93,7 +95,7 @@ export function setHistoryBackupPrefs(patch: Partial<HistoryBackupPrefs>): Histo
     baseUrl:
       patch.baseUrl !== undefined ? normalizeBaseUrl(patch.baseUrl) : current.baseUrl,
   }
-  durableSetItem(KEY, JSON.stringify(next))
+  durableSetItem(accountLocalKey(KEY), JSON.stringify(next))
   return next
 }
 

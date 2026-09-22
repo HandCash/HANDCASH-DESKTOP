@@ -8,12 +8,19 @@ import {
   UnlockingScript,
 } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
+import {
+  accountLocalKey,
+  bindAccountLocalKeyScope,
+} from './accountLocalKeys'
+import { durableRemoveItem, durableSetItem } from './durableStorage'
 import type { MarketListingAdvert } from './marketListing'
 import {
   listingHasBuyerCompletableSettlement,
   marketSettlementCommitment,
   mergePendingPurchase,
   overlayListingBeefBinary,
+  protectedMarketActionReferences,
+  rebindMarketSettlementForAccount,
   hydrateMarketListingForPurchase,
   validateMarketSettlementOutputs,
 } from './marketSettlement'
@@ -423,5 +430,34 @@ describe('hydrateMarketListingForPurchase', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+})
+
+describe('market settlement account storage', () => {
+  it('does not expose pending references to another account', () => {
+    const base = 'handcash.market.pending.v2'
+    const primaryKey = accountLocalKey(base)
+    durableSetItem(
+      primaryKey,
+      JSON.stringify([
+        {
+          saleId: 'sale-primary',
+          reference: 'ref-primary',
+          phase: 'signedUnknown',
+          expiresAt: Date.now() + 60_000,
+        },
+      ]),
+    )
+    expect(protectedMarketActionReferences()).toEqual(new Set(['ref-primary']))
+
+    bindAccountLocalKeyScope({
+      accountIndex: 1,
+      identityKey: 'vitest-secondary-identity',
+      chain: 'main',
+    })
+    rebindMarketSettlementForAccount()
+    expect(protectedMarketActionReferences()).toEqual(new Set())
+
+    durableRemoveItem(primaryKey)
   })
 })

@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../session'
+
 /**
  * Payee ingest of a P2P BSV-21 settle.
  *
@@ -34,7 +36,7 @@ import { forgetItemsSent } from '../sentItemGuard'
 import { decodeBsv21Binary } from './decode162'
 import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { broadcastAtomicBeef } from '../sendBrc29Payment'
-import { getActiveWallet, type ActiveWallet } from '../session'
+import { type ActiveWallet } from '../session'
 import { stampBrc164Id } from '../itemAccess'
 import {
   clearInboundReceivePending,

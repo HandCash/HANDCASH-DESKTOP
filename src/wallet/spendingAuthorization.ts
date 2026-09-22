@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * BRC-73 / BRC-116 spendingAuthorization — monthly satoshis grant per origin.
  *
@@ -10,8 +11,9 @@
 import { normalizeAppHost } from './appIdentity'
 import { getSpentSatsSince } from './appActivity'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { accountLocalKey } from './accountLocalKeys'
 
-const STORAGE_KEY = 'handcash.brc100.spendingAuthorization'
+const STORAGE_KEY = storageRegistry.spendingAuthorization.key
 /** Keep short — Connect must never wait on this (see requestOriginPermission). */
 const MANIFEST_FETCH_MS = 1_500
 
@@ -28,7 +30,7 @@ type Store = Record<string, SpendingAuthorizationGrant>
 
 function readStore(): Store {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(accountLocalKey(STORAGE_KEY))
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
@@ -54,7 +56,7 @@ function readStore(): Store {
 }
 
 function writeStore(store: Store): void {
-  durableSetItem(STORAGE_KEY, JSON.stringify(store))
+  durableSetItem(accountLocalKey(STORAGE_KEY), JSON.stringify(store))
 }
 
 /** Parse spendingAuthorization from a web app manifest body. */

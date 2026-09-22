@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../wallet/session'
+
 import { useEffect, useRef, useState } from 'react'
 import { clearBackupBackoff } from '../wallet/backupWatchdog'
 import {
@@ -6,7 +8,7 @@ import {
 } from '../wallet/historyBackup'
 import { ensureSuggestedHistoryBackupUrl } from '../wallet/historyBackupPrefs'
 import { recomposeWallet } from '../wallet/recompose'
-import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
+import { fetchBalanceSats} from '../wallet/session'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { playWalletSound } from '../wallet/soundService'
 import { PasswordField } from './PasswordField'

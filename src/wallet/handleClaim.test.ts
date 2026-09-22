@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { accountLocalKey } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 const acquireCertificate = vi.fn(async () => ({ type: 'ok' }))
@@ -153,7 +154,7 @@ describe('claimCloudHandlePayload', () => {
 describe('getClaimedCloudHandleVerified', () => {
   it('returns the certificate so an app can verify without listCertificates', async () => {
     store.set(
-      'handcash.brc169.claimedHandle.v1',
+      accountLocalKey('handcash.brc169.claimedHandle.v1'),
       JSON.stringify({
         handle: 'alice',
         display: '@alice@handcash.io',
@@ -171,7 +172,7 @@ describe('getClaimedCloudHandleVerified', () => {
 
   it('clears a stale claim when the registry binding moved', async () => {
     store.set(
-      'handcash.brc169.claimedHandle.v1',
+      accountLocalKey('handcash.brc169.claimedHandle.v1'),
       JSON.stringify({
         handle: 'alice',
         display: '@alice@handcash.io',

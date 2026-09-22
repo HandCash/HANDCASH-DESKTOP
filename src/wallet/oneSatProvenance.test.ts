@@ -6,6 +6,10 @@ import {
   UnlockingScript,
 } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  accountLocalKey,
+  bindAccountLocalKeyScope,
+} from './accountLocalKeys'
 
 const durableStore = new Map<string, string>()
 
@@ -32,6 +36,7 @@ import {
   rememberProvenLineage,
   encodeRemittanceForPeerBox,
   rememberPeerRemittanceForHeldTips,
+  rebindOneSatProvenanceForAccount,
   REMITTANCE_MAX_BEEF_B64_CHARS,
   REMITTANCE_MAX_BEEF_BYTES,
   verifyProvenanceV2,
@@ -460,6 +465,30 @@ describe('keeping a proven lineage for the next send', () => {
     expect(found).not.toBeNull()
     expect(fresh.verifyProvenanceV2(found, held).proven).toBe(true)
     fresh.clearRememberedProvenanceRemittances()
+  })
+
+  it('rebinds remittance memory without deleting the prior account', () => {
+    const { provenance } = buildV2Fixture()
+    rememberProvenLineage({
+      tipOutpoint: provenance.tip,
+      origin: provenance.origin,
+      path: provenance.path,
+      beef: bytesOf(provenance.beefB64),
+    })
+    const primaryKey = accountLocalKey('handcash.brc150.remittance.v1')
+
+    bindAccountLocalKeyScope({
+      accountIndex: 1,
+      identityKey: 'vitest-secondary-identity',
+      chain: 'main',
+    })
+    rebindOneSatProvenanceForAccount()
+
+    expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
+    expect(durableStore.has(primaryKey)).toBe(true)
+    expect(
+      durableStore.has(accountLocalKey('handcash.brc150.remittance.v1')),
+    ).toBe(false)
   })
 })
 

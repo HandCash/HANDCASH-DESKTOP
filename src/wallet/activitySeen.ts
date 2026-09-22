@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Remembers which activity entries have already been shown to the user.
  *
@@ -15,7 +16,7 @@ import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 /** v2 keys rows by event identity; v1 ids can never match again. */
-const KEY_BASE = 'handcash.activitySeen.v2'
+const KEY_BASE = storageRegistry.activitySeen.key
 
 function activitySeenKey(): string {
   return accountLocalKey(KEY_BASE)

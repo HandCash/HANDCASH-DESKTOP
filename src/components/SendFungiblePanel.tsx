@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../wallet/session'
+
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { ListRow } from '@aeon-ui/react'
@@ -32,7 +34,7 @@ import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
-import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
+import { fetchBalanceSats} from '../wallet/session'
 import { CopyableError } from './CopyableError'
 import {
   parseFungibleSendAmount,

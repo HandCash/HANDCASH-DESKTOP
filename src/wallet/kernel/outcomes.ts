@@ -1,9 +1,12 @@
+import type { WalletRuntime } from '../walletRuntime'
+
 /** Facts emitted by the kernel after state has changed. */
 export type WalletOutcome =
   | {
       type: 'AccountChanged'
       accountIndex: number
       identityKey: string
+      runtime: WalletRuntime
     }
   | {
       type: 'SpendCompleted'

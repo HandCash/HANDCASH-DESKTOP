@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { accountLocalKey } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -214,7 +215,7 @@ describe('sentItemGuard', () => {
 
   it('cancels market listing auth when a listed tip is spent', { timeout: 20_000 }, async () => {
     const TX = 'aa'.repeat(32)
-    const AUTH_KEY = 'handcash.market.listingAuthorizations.v2'
+    const AUTH_KEY = accountLocalKey('handcash.market.listingAuthorizations.v2')
     store.set(
       AUTH_KEY,
       JSON.stringify([

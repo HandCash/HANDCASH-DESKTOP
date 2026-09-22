@@ -1,10 +1,12 @@
+import { getActiveWallet } from './session'
+
 /**
  * SPV finality gate — MINED only after BUMP/TSC verifies against local headers.
  *
  * Uses the wallet's chainTracker (Chaintracks + failover). Unknown height ≠
  * forged proof; callers treat `unknown` as "keep SEEN_IN_MEMPOOL".
  */
-import { getActiveWallet } from './session'
+
 
 export type SpvFinalityResult =
   | { ok: true; height: number }

@@ -1,8 +1,10 @@
+import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 
-const KEYS_KEY = 'handcash.brc100.backupConfirmed'
-const HISTORY_KEY = 'handcash.brc100.historyBackupConfirmed'
-const BACKUP_LATER_KEY = 'handcash.brc100.backupDeferred'
+const KEYS_KEY = storageRegistry.backupConfirmed.key
+const HISTORY_KEY = storageRegistry.historyBackupConfirmed.key
+const BACKUP_LATER_KEY = storageRegistry.backupDeferred.key
 
 export type BackupStep = 'keys' | 'history'
 
@@ -22,28 +24,31 @@ function notify() {
 }
 
 export function isKeysBackupConfirmed(): boolean {
-  return durableGetItem(KEYS_KEY) === '1'
+  return durableGetItem(accountLocalKey(KEYS_KEY)) === '1'
 }
 
 export function isKeysBackupDeferred(): boolean {
-  return durableGetItem(BACKUP_LATER_KEY) === '1' && !isKeysBackupConfirmed()
+  return (
+    durableGetItem(accountLocalKey(BACKUP_LATER_KEY)) === '1' &&
+    !isKeysBackupConfirmed()
+  )
 }
 
 /** Onboarding "I'll do this later" — Settings still nags until confirmed. */
 export function markKeysBackupDeferred(): void {
   if (isKeysBackupConfirmed()) return
-  durableSetItem(BACKUP_LATER_KEY, '1')
+  durableSetItem(accountLocalKey(BACKUP_LATER_KEY), '1')
   notify()
 }
 
 export function clearKeysBackupDeferred(): void {
-  durableRemoveItem(BACKUP_LATER_KEY)
+  durableRemoveItem(accountLocalKey(BACKUP_LATER_KEY))
   notify()
 }
 
 
 export function isHistoryBackupConfirmed(): boolean {
-  return durableGetItem(HISTORY_KEY) === '1'
+  return durableGetItem(accountLocalKey(HISTORY_KEY)) === '1'
 }
 
 /** Both keys and history backups are confirmed. */
@@ -109,8 +114,8 @@ export function canConfirmKeysBackup(kind: 'split' | 'phrase' | 'key'): boolean 
 
 export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boolean {
   if (!canConfirmKeysBackup(kind)) return false
-  durableSetItem(KEYS_KEY, '1')
-  durableRemoveItem(BACKUP_LATER_KEY)
+  durableSetItem(accountLocalKey(KEYS_KEY), '1')
+  durableRemoveItem(accountLocalKey(BACKUP_LATER_KEY))
   notify()
   return true
 }
@@ -126,15 +131,24 @@ export function canConfirmHistoryBackup(): boolean {
 
 export function markHistoryBackupConfirmed(): boolean {
   if (!historyExported) return false
-  durableSetItem(HISTORY_KEY, '1')
+  durableSetItem(accountLocalKey(HISTORY_KEY), '1')
   notify()
   return true
 }
 
 export function clearBackupConfirmed(): void {
-  durableRemoveItem(KEYS_KEY)
-  durableRemoveItem(HISTORY_KEY)
-  durableRemoveItem(BACKUP_LATER_KEY)
+  durableRemoveItem(accountLocalKey(KEYS_KEY))
+  durableRemoveItem(accountLocalKey(HISTORY_KEY))
+  durableRemoveItem(accountLocalKey(BACKUP_LATER_KEY))
+  keysHandoffs = 0
+  keysHandoffSliceIndices.clear()
+  keysSingleHandoff = false
+  historyExported = false
+  notify()
+}
+
+/** Drop account-bound session evidence after the active vault account changes. */
+export function rebindBackupStatusForAccount(): void {
   keysHandoffs = 0
   keysHandoffSliceIndices.clear()
   keysSingleHandoff = false

@@ -7,6 +7,7 @@ import { clearActiveWallet } from './wallet/session'
 import { finishPendingWalletWipe } from './wallet/wipeWallet'
 import { handleBrc100Request } from './wallet/brc100Handler'
 import { handleDevicePeerRequest } from './wallet/devicePeerHandler'
+import { getWalletRuntime } from './wallet/walletRuntime'
 import { clearRemoteSnapshots } from './wallet/deviceMesh'
 import {
   resolvePermission,
@@ -177,7 +178,7 @@ export function App() {
       const releaseInbound = noteInboundWalletRequest()
       void (async () => {
         try {
-          const result = await handleBrc100Request(event)
+          const result = await handleBrc100Request(event, getWalletRuntime())
           window.handcash?.respondHttp({
             request_id: event.request_id,
             status: result.status,

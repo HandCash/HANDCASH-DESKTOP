@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * BAP identity for the active vault account (1sat/Yours-compatible).
  *
@@ -15,7 +17,7 @@ import {
   Signature,
   Utils,
 } from '@bsv/sdk'
-import { getActiveWallet } from './session'
+
 
 export const BAP_PROTOCOL_ID: [1, 'sigma'] = [1, 'sigma']
 export const BAP_KEY_ID = 'identity'

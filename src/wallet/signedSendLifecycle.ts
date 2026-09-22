@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * One lifecycle for every locally signed outbound transaction.
  *
@@ -38,7 +40,6 @@ export async function registerSignedSend(args: {
     throw new Error('Signed send is missing its transaction body')
   }
 
-  const { getActiveWallet } = await import('./session')
   const { prepareBroadcastCheque } = await import('./beefCache')
   const prepared = await prepareBroadcastCheque(
     getActiveWallet(),

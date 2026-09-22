@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Multi-device **historyReplica** via shared BRC-39 backup URL (+ friends sidecar).
  * Optional for single-device recovery / same-identity installs — not required to
@@ -31,7 +33,7 @@ import {
   resolveHistoryBackupBaseUrl,
   setHistoryBackupPrefs,
 } from './historyBackupPrefs'
-import { getActiveWallet } from './session'
+
 import { getSessionBackupPassword } from './sessionBackupAuth'
 import { localToolboxStateLooksEmpty } from './layers'
 import {
@@ -48,6 +50,16 @@ import type { HistoryReplicaPriority } from './walletCoordinator'
 let historyDirty = false
 let pushTimer: ReturnType<typeof setTimeout> | null = null
 let pushInFlight: Promise<void> | null = null
+
+export function rebindDeviceSyncForAccount(): void {
+  historyDirty = false
+  if (pushTimer) clearTimeout(pushTimer)
+  pushTimer = null
+  // A prior account's upload may finish against its captured wallet, but the
+  // new runtime must never join that promise or treat it as its own backup.
+  pushInFlight = null
+  deferStreak = 0
+}
 
 const PUSH_DEBOUNCE_MS = 2_500
 /**

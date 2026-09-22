@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Single authenticity policy for every collectable receive.
  *
@@ -7,7 +9,7 @@
  */
 import { verifyProvenanceV2 } from './oneSatProvenance'
 import { Hash, Transaction, Utils } from '@bsv/sdk'
-import { getActiveWallet } from './session'
+
 import { hasOrdEnvelope } from './ordinalOwnership'
 import {
   getOriginCommitment,

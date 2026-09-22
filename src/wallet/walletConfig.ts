@@ -1,10 +1,11 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Wallet configuration chosen at setup (and editable later in Settings).
  * History backup on BRC-CLOUD is the default. Custody keys remain local.
  */
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
-const KEY = 'handcash.brc100.walletConfig.v1'
+const KEY = storageRegistry.walletConfig.key
 const DEPRECATED_CLOUD_KEY_STORAGE_KEYS = [
   'handcash.brc100.trustholderEnrollments.v1',
   'handcash.brc100.trustholderSharePlan.v1',

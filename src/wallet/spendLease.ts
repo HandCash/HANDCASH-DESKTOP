@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Cross-device advisory spend lease on the shared BRC-39 backup host.
  * Mirrors cloud UTXO reservation at device scope: one install spends at a time.
@@ -8,7 +10,7 @@ import {
   hasDeviceLinkBackupUrl,
 } from './deviceSync'
 import { getHistoryBackupPrefs, resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
-import { getActiveWallet } from './session'
+
 
 const LEASE_TTL_MS = 45_000
 /** Backup host fetch cannot sit in front of createAction with no deadline. */

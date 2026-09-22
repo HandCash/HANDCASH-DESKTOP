@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * User-facing toasts for collectable landings.
  *
@@ -10,6 +11,7 @@
  * Authenticity verified" for foxes that were proven days ago.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import { toastSuccess } from './toast'
 import { isItemProven } from './provenCache'
 import {
@@ -22,7 +24,7 @@ import {
 } from './appActivity'
 
 const ANNOUNCED_MAX = 500
-const DURABLE_RECEIVE_KEY = 'handcash.items.receiveAnnounced.v1'
+const DURABLE_RECEIVE_KEY = storageRegistry.itemReceiveAnnounced.key
 const DURABLE_RECEIVE_MAX = 2_000
 
 const receivedThisSession = new Set<string>()
@@ -49,10 +51,14 @@ function note(set: Set<string>, outpoint: string): boolean {
 let cachedReceivesRaw: string | null = null
 let cachedReceives = new Set<string>()
 
+function durableReceiveKey(): string {
+  return accountLocalKey(DURABLE_RECEIVE_KEY)
+}
+
 /** Read-only — `wasItemReceivedAnnounced` is asked once per arriving tip. */
 function loadDurableReceives(): Set<string> {
   try {
-    const raw = durableGetItem(DURABLE_RECEIVE_KEY)
+    const raw = durableGetItem(durableReceiveKey())
     if (!raw) return new Set()
     if (raw === cachedReceivesRaw) return cachedReceives
     const parsed = JSON.parse(raw) as unknown
@@ -77,7 +83,7 @@ function persistDurableReceives(set: Set<string>): void {
       values.length > DURABLE_RECEIVE_MAX
         ? values.slice(values.length - DURABLE_RECEIVE_MAX)
         : values
-    durableSetItem(DURABLE_RECEIVE_KEY, JSON.stringify(trimmed))
+    durableSetItem(durableReceiveKey(), JSON.stringify(trimmed))
   } catch {
     // Toast dedupe must never break ingest.
   }
@@ -174,12 +180,19 @@ export function announceItemVerified(
   toastSuccess('Item verified', detail?.trim() || 'Authenticity proven on chain')
 }
 
-/** Test helper — clear session + durable announce state. */
-export function resetItemArrivalAnnouncementsForTests(): void {
+/** Drop account-owned toast memory without deleting either account's history. */
+export function rebindItemArrivalToastForAccount(): void {
   receivedThisSession.clear()
   verifiedThisSession.clear()
+  cachedReceivesRaw = null
+  cachedReceives = new Set()
+}
+
+/** Test helper — clear session + current account's durable announce state. */
+export function resetItemArrivalAnnouncementsForTests(): void {
+  rebindItemArrivalToastForAccount()
   try {
-    durableSetItem(DURABLE_RECEIVE_KEY, '[]')
+    durableSetItem(durableReceiveKey(), '[]')
   } catch {
     // ignore
   }

@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Background reconciliation — converge optimistic Tx/UTXO layer with chain truth.
  *
@@ -7,7 +9,7 @@
  */
 import { tryFinalizeDualLayerTx } from "./dualLayerSend";
 import { txExistsOnChain } from "./legacyScan";
-import { getActiveWallet } from "./session";
+
 import {
   listPendingConfirmation,
   listTxRecords,

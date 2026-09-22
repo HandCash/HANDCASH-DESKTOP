@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { bindAccountLocalKeyScope } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -19,12 +20,14 @@ import {
   canConfirmKeysBackup,
   clearBackupConfirmed,
   isBackupConfirmed,
+  isKeysBackupConfirmed,
   markHistoryBackupConfirmed,
   isKeysBackupDeferred,
   markKeysBackupConfirmed,
   markKeysBackupDeferred,
   noteHistoryBackupExport,
   noteKeysBackupHandoff,
+  rebindBackupStatusForAccount,
 } from './backupStatus'
 
 describe('backupStatus evidence gates', () => {
@@ -94,5 +97,22 @@ describe('backupStatus evidence gates', () => {
     noteKeysBackupHandoff()
     expect(markKeysBackupConfirmed('phrase')).toBe(true)
     expect(isKeysBackupDeferred()).toBe(false)
+  })
+
+  it('isolates durable status and resets session evidence on account rebind', () => {
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    noteKeysBackupHandoff()
+    expect(markKeysBackupConfirmed('phrase')).toBe(true)
+
+    bindAccountLocalKeyScope({ accountIndex: 2, identityKey: 'account-two' })
+    rebindBackupStatusForAccount()
+    expect(isBackupConfirmed()).toBe(false)
+    expect(canConfirmKeysBackup('phrase')).toBe(false)
+
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    rebindBackupStatusForAccount()
+    expect(isKeysBackupConfirmed()).toBe(true)
+    expect(isKeysBackupDeferred()).toBe(false)
+    expect(canConfirmKeysBackup('phrase')).toBe(false)
   })
 })

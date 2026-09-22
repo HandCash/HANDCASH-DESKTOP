@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../session'
+
 /**
  * Send BRC-162 value tips: spend 162 inputs, emit payee (+ change) 162 value
  * outputs with conserved `amt`. Dust/fees from ordinary BSV.
@@ -63,7 +65,7 @@ import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
   withFungibleCreateActionTimeout,
 } from './sendEntry'
-import { getActiveWallet, type ActiveWallet } from '../session'
+import { type ActiveWallet } from '../session'
 import { markItemsSent } from '../sentItemGuard'
 import { runExclusiveSpend } from '../spendGuard'
 import { leaseSpendPriority } from '../walletCoordinator'

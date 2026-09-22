@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.3.261] - 2026-09-22
+
+### Changed
+
+- **Every wallet feature now belongs to one account runtime.** Unlock publishes
+  a `WalletRuntime` containing the toolbox instance, account storage namespace,
+  generation, abort signal, and feature lifecycle. Switch and lock dispose the
+  old runtime before publishing another, abort live spends/direct sessions,
+  reset prompts, timers, caches and coordinator queues, and fence queued work
+  from completing into the next account.
+- **Wallet-owned durable state is namespaced for every account, including the
+  primary.** Transaction/UTXO overlays, miner and remittance outboxes, import
+  guards, market state, remittance, backup preferences, permissions, arrivals,
+  and recovery checkpoints no longer share device-global ownership. Legacy
+  primary and child keys migrate once into their owning namespace.
+- **Storage ownership is now mechanically enforced.** The registry declares
+  `device`, `chain`, or `wallet` scope for every production HandCash key, and
+  architecture ratchets reject unregistered keys or wallet key literals outside
+  that authority.
+
+### Fixed
+
+- Switching accounts while ingest, recompose, backup, or a send is queued can
+  no longer let stale work mutate the newly selected wallet.
+- Same-device accounts cannot see or flush each other's BRC-29/item/miner
+  outboxes, transaction records, UTXO locks, or inventory hide/import marks.
+
 ## [1.3.260] - 2026-09-22
 
 ### Fixed

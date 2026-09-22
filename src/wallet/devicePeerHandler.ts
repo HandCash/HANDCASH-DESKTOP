@@ -1,7 +1,9 @@
+import { getActiveWallet } from './session'
+
 /**
  * Handles /handcash-device/v1/* for paired same-identity peers on the LAN.
  */
-import { getActiveWallet, fetchBalanceSats } from './session'
+import { fetchBalanceSats } from './session'
 import { listFriends } from './friends'
 import {
   buildPairPayload,

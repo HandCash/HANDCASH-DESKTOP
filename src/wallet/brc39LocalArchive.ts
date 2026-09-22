@@ -1,8 +1,10 @@
+import { getActiveWallet } from './session'
+
 /**
  * Renderer bridge for the append-only on-device BRC-39 (UTXO) archive.
  * Snapshots are write-once under Electron userData — never overwritten.
  */
-import { getActiveWallet } from './session'
+
 import { appendAppLog } from './appLog'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
 

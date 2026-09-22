@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Durable copy of wallet-managed BRC-29 change remittance.
  *
@@ -14,11 +16,17 @@
  */
 import { Utils } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
 import { parseOutpoint } from './legacyScan'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import { normalizeOutpointKey } from './txLifecycle'
 
-const STORAGE_KEY = 'handcash.brc100.derivedChangeEcho.v1'
+const STORAGE_KEY_BASE = storageRegistry.derivedChangeEcho.key
+function storageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
+
 const MAX_ENTRIES = 2000
 
 export type DerivedChangeEcho = {
@@ -99,7 +107,7 @@ export function derivedChangeEchoFromRow(row: DerivedChangeRow): DerivedChangeEc
 }
 
 function readEcho(): Map<string, DerivedChangeEcho> {
-  const raw = durableGetItem(STORAGE_KEY) ?? ''
+  const raw = durableGetItem(storageKey()) ?? ''
   if (raw === cachedSig) return cached
   const next = new Map<string, DerivedChangeEcho>()
   try {
@@ -124,7 +132,7 @@ function writeEcho(map: Map<string, DerivedChangeEcho>): void {
     .sort((a, b) => a[1].satoshis - b[1].satoshis)
     .slice(-MAX_ENTRIES)
   const body = JSON.stringify(Object.fromEntries(trimmed))
-  durableSetItem(STORAGE_KEY, body)
+  durableSetItem(storageKey(), body)
   cachedSig = body
   cached = new Map(trimmed)
 }
@@ -167,6 +175,11 @@ export function derivedChangeEchoFor(outpoint: string): DerivedChangeEcho | null
 
 export function listDerivedChangeEcho(): DerivedChangeEcho[] {
   return [...readEcho().values()]
+}
+
+export function rebindDerivedChangeEchoForAccount(): void {
+  cachedSig = null
+  cached = new Map()
 }
 
 /** Overlay keys (`txid_vout`) that have remittance we can re-import with. */
@@ -235,5 +248,5 @@ export async function rememberDerivedChangeFromTxid(
 export function resetDerivedChangeEchoForTests(): void {
   cachedSig = null
   cached = new Map()
-  durableSetItem(STORAGE_KEY, '{}')
+  durableSetItem(storageKey(), '{}')
 }

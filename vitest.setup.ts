@@ -6,8 +6,18 @@
  * closed — they must not escape onto the real network.
  */
 import { beforeEach, vi } from 'vitest'
+import {
+  bindAccountLocalKeyScope,
+  resetAccountLocalKeyScopeForTests,
+} from './src/wallet/accountLocalKeys'
 
 beforeEach(() => {
+  resetAccountLocalKeyScopeForTests()
+  bindAccountLocalKeyScope({
+    accountIndex: 0,
+    identityKey: 'vitest-primary-identity',
+    chain: 'main',
+  })
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {

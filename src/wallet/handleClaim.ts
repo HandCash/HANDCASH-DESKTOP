@@ -1,3 +1,6 @@
+import { getActiveWallet } from './session'
+import { storageRegistry } from '../storage/registry'
+
 /**
  * BRC-169 cloud handle claim — separate from balance migration.
  *
@@ -11,12 +14,13 @@
  * can answer the silent standards path.
  */
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
-import { getActiveWallet } from './session'
+import { accountLocalKey } from './accountLocalKeys'
+
 import { claimHandle, resolveHandle } from './handleResolve'
 import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
 import { isMigrationOrigin } from './migration'
 
-const STORAGE_KEY = 'handcash.brc169.claimedHandle.v1'
+const STORAGE_KEY = storageRegistry.claimedHandle.key
 
 /** BRC-169 §4.5 handle-certificate type. */
 export const BRC169_HANDLE_CERT_TYPE =
@@ -131,7 +135,7 @@ async function tryAcquireHandleCertificate(
 
 export function readClaimedCloudHandle(): ClaimedHandleState | null {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(accountLocalKey(STORAGE_KEY))
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<ClaimedHandleState>
     if (
@@ -192,13 +196,13 @@ export function getClaimedCloudHandlePayload(): ClaimedHandleState | null {
 
 /** Drop local claim cache (does not revoke on BRC-CLOUD). */
 export function clearClaimedCloudHandlePayload(): { cleared: true } {
-  durableRemoveItem(STORAGE_KEY)
+  durableRemoveItem(accountLocalKey(STORAGE_KEY))
   notifyClaimListeners()
   return { cleared: true }
 }
 
 function persistClaim(state: ClaimedHandleState): void {
-  durableSetItem(STORAGE_KEY, JSON.stringify(state))
+  durableSetItem(accountLocalKey(STORAGE_KEY), JSON.stringify(state))
   notifyClaimListeners()
 }
 
@@ -234,13 +238,22 @@ export async function getClaimedCloudHandleVerified(): Promise<ClaimedHandleStat
 }
 
 let claimInFlight: Promise<ClaimedHandleState> | null = null
+let claimBindingGeneration = 0
+
+/** Do not share a pending claim promise across active vault accounts. */
+export function rebindHandleClaimForAccount(): void {
+  claimBindingGeneration += 1
+  claimInFlight = null
+  notifyClaimListeners()
+}
 
 export async function claimCloudHandlePayload(args: {
   handle: string
   claimTicket?: string
 }): Promise<ClaimedHandleState> {
   if (claimInFlight) return claimInFlight
-  claimInFlight = (async () => {
+  const bindingGeneration = claimBindingGeneration
+  const pending = (async () => {
     const active = getActiveWallet()
     if (!active) throw new Error('Wallet locked')
 
@@ -267,11 +280,17 @@ export async function claimCloudHandlePayload(args: {
       claimedAt: Date.now(),
       certificate,
     }
+    if (bindingGeneration !== claimBindingGeneration) {
+      throw new Error('Active wallet account changed during handle claim')
+    }
     persistClaim(state)
     if (certificate) await tryAcquireHandleCertificate(certificate)
     return state
-  })().finally(() => {
-    claimInFlight = null
-  })
-  return claimInFlight
+  })()
+  claimInFlight = pending
+  try {
+    return await pending
+  } finally {
+    if (claimInFlight === pending) claimInFlight = null
+  }
 }

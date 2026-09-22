@@ -31,6 +31,7 @@ const cache = new Map<string, string | null>()
  * for migrating an old localStorage wallet, both of which only need small keys.
  */
 const LOCAL_MIRROR_MAX_BYTES = 64 * 1024
+const WALLET_KEY_RE = /^(.*):wallet:(main|test):(\d+):([^:]+)$/
 
 function mirrorLocally(key: string, value: string): void {
   if (value.length > LOCAL_MIRROR_MAX_BYTES) return
@@ -75,7 +76,26 @@ export function durableGetItem(key: string): string | null {
     // confuse a wiped key with a stored empty payload.
     return cached === '' ? null : cached
   }
-  const value = readThrough(key)
+  let value = readThrough(key)
+  if (value === '') value = null
+  // Account-local storage used two historical shapes: an unscoped primary
+  // key and `base:identityKey` for children. A runtime always reads its fully
+  // namespaced key. On the first read only, import the one legacy source that
+  // can belong to this runtime; never fan a device-global blob into multiple
+  // wallets.
+  if (value == null) {
+    const scoped = WALLET_KEY_RE.exec(key)
+    if (scoped) {
+      const [, base, , rawIndex, identityKey] = scoped
+      const legacyKey = Number(rawIndex) === 0 ? base! : `${base}:${identityKey}`
+      const cachedLegacy = cache.get(legacyKey)
+      const legacy =
+        cachedLegacy !== undefined ? cachedLegacy : readThrough(legacyKey)
+      if (legacy != null && legacy !== '') {
+        if (durableSetItem(key, legacy)) value = legacy
+      }
+    }
+  }
   const normalized = value === '' ? null : value
   cache.set(key, normalized)
   return normalized

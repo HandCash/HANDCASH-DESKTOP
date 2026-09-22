@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 import type { ActivityItem } from './appActivity'
 import { getCachedCollectables } from './collectables'
 import { getCachedFungibles, getTokenIconDataUrl } from './token'
@@ -8,7 +10,7 @@ import {
 } from './inscriptionCache'
 import { contentUrlForOrigin } from './oneSatImport'
 import { getProvenVerdict } from './provenCache'
-import { getActiveWallet } from './session'
+
 
 const asOutpoint = (v: string) => v.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 const asOrigin = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')

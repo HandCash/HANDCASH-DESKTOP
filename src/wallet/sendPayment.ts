@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 import { P2PKH } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
@@ -14,7 +16,7 @@ import {
   completePendingSend,
 } from './pendingSend'
 import { resolvePaymentRecipient } from './friends'
-import { fetchBalanceSats, getActiveWallet } from './session'
+import { fetchBalanceSats} from './session'
 import {
   describeInsufficientFunds,
   isInsufficientFundsError,

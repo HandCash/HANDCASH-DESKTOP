@@ -1,3 +1,6 @@
+import { getActiveWallet } from './session'
+import { storageRegistry } from '../storage/registry'
+
 import {
   Beef,
   BigNumber,
@@ -14,8 +17,9 @@ import {
 import { createActor } from 'xstate'
 import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
 import { normalizeAppHost } from './appIdentity'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import { runExclusiveSpend } from './spendGuard'
 import { isAlreadySpentListingFailure } from './spendVerdict'
 import {
@@ -81,7 +85,17 @@ export const MARKET_PURCHASE_INTENT_PROTOCOL =
 export const MARKET_SETTLEMENT_RECEIPT_PROTOCOL =
   'HandCash-Market-Settlement-Receipt-v1'
 export const MARKET_PROVENANCE_VERSION = 2 as const
-const LISTING_AUTH_STORAGE_KEY = 'handcash.market.listingAuthorizations.v2'
+const LISTING_AUTH_STORAGE_KEY = storageRegistry.listingAuthorizations.key
+
+function listingAuthorizationStorageKey(): string {
+  return accountLocalKey(LISTING_AUTH_STORAGE_KEY)
+}
+
+/**
+ * Listing authorizations have no account-owned in-memory cache. Kept as the
+ * standard account-switch hook so callers can rebind every market surface.
+ */
+export function rebindMarketListingForAccount(): void {}
 
 export type MarketListingAdvert = {
   outpoint: string
@@ -773,7 +787,7 @@ export function listMarketListingAuthorizations(): MarketListingAuthorization[] 
 function readAuthorizations(): MarketListingAuthorization[] {
   try {
     const parsed = JSON.parse(
-      durableGetItem(LISTING_AUTH_STORAGE_KEY) ?? '[]'
+      durableGetItem(listingAuthorizationStorageKey()) ?? '[]'
     ) as unknown
     return Array.isArray(parsed)
       ? parsed.filter(
@@ -789,7 +803,7 @@ function readAuthorizations(): MarketListingAuthorization[] {
 }
 
 function writeAuthorizations(records: MarketListingAuthorization[]): void {
-  durableSetItem(LISTING_AUTH_STORAGE_KEY, JSON.stringify(records))
+  durableSetItem(listingAuthorizationStorageKey(), JSON.stringify(records))
 }
 
 function saveAuthorization(record: MarketListingAuthorization): void {

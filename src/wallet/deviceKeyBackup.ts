@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Directional sealed device-key backups (cold only).
  *
@@ -11,7 +13,7 @@
 import { EncryptedMessage, PrivateKey, PublicKey, Utils } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { unlockVault } from './vault'
-import { getActiveWallet } from './session'
+
 
 const STORE_KEY = 'handcash.brc100.deviceKeyBackups.v1'
 /** Local attestation that we sealed+handed our spare to this peer (they can recover us). */

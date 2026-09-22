@@ -1,8 +1,9 @@
+import { storageRegistry } from '../storage/registry'
 import { type DisplayCurrency } from './displayCurrency'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import { formatBsvSignificant } from './session'
 
-const CACHE_KEY = 'handcash.brc100.bsvUsd'
+const CACHE_KEY = storageRegistry.bsvUsd.key
 const CACHE_TTL_MS = 5 * 60_000
 const RATE_BACKOFF_MS = 15 * 60_000
 let rateBackoffUntil = 0

@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../wallet/session'
+
 import { stateToAttr } from '@aeon-ui/core'
 import { PrivateKey } from '@bsv/sdk'
 import { useMachine } from '@xstate/react'
@@ -7,7 +9,7 @@ import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
 import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { copyText } from '../wallet/clipboard'
-import { fetchBalanceSats, getActiveWallet, switchVaultAccount } from '../wallet/session'
+import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {

@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * BRC-29 peer payments (HandCash ↔ HandCash) — Babbage / wallet-toolbox shape.
  *
@@ -40,7 +42,7 @@ import {
   clearPendingSend,
   completePendingSend,
 } from './pendingSend'
-import { fetchBalanceSats, getActiveWallet, invalidateBalanceReads } from './session'
+import { fetchBalanceSats, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import {
   describeInsufficientFunds,
@@ -999,6 +1001,13 @@ let pendingChatHintGeneration = ''
 let pendingChatHintCache: PaymentTipHint[] = []
 /** Prevent overlapping inbox polls from broadcasting/internalizing one tx repeatedly. */
 const tipIngestInFlight = new Set<string>()
+
+export function rebindBrc29IngestForAccount(): void {
+  brc29InternalizeInflight.clear()
+  pendingChatHintGeneration = ''
+  pendingChatHintCache = []
+  tipIngestInFlight.clear()
+}
 
 export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
   const generation = `${getMessageWriteGeneration()}:${getActivityWriteGeneration()}`

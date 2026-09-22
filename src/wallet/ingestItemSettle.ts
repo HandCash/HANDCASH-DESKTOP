@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Payee ingest of a P2P item settle (Atomic BEEF from messagebox).
  *
@@ -13,7 +15,7 @@
  */
 import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
-import { getActiveWallet } from './session'
+
 import { atomicBeefForSubject, rememberBeefTree } from './beefCache'
 import { decodeBProtocol } from './bProtocol'
 import { decodeBsv21Binary } from './token'

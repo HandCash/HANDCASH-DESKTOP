@@ -1,9 +1,11 @@
+import { getActiveWallet } from './session'
+
 /**
  * Legacy receive-address ingest — scan → classify → import.
  * Shared by chainIngest (Refresh) and migration (refreshLegacyAddress).
  * See `layers.ts` chainIngest pipeline steps 2–3.
  */
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 import {
   scanLegacyAddress,
   importLegacyUtxos,

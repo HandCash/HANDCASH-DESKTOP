@@ -3,6 +3,8 @@
  * ACID-ish via single-key rewrite; all mutations go through transition helpers.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
 import {
   canTransitionTx,
   diagnosticFromArc,
@@ -14,7 +16,7 @@ import {
   txStatusFromArc,
 } from './txLifecycle'
 
-const KEY = 'handcash.wallet.txLifecycle.v1'
+const KEY_BASE = storageRegistry.txLifecycle.key
 const MAX_ENTRIES = 500
 
 type Listener = (records: TxRecord[]) => void
@@ -22,11 +24,15 @@ type Listener = (records: TxRecord[]) => void
 const listeners = new Set<Listener>()
 let cache: Map<string, TxRecord> | null = null
 
+function storageKey(): string {
+  return accountLocalKey(KEY_BASE)
+}
+
 function load(): Map<string, TxRecord> {
   if (cache) return cache
   cache = new Map()
   try {
-    const raw = durableGetItem(KEY)
+    const raw = durableGetItem(storageKey())
     if (!raw) return cache
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return cache
@@ -106,7 +112,7 @@ function persist(): void {
     const drop = rows.pop()
     if (drop) map.delete(drop.id)
   }
-  durableSetItem(KEY, JSON.stringify(rows))
+  durableSetItem(storageKey(), JSON.stringify(rows))
   for (const listener of listeners) listener(rows)
 }
 
@@ -137,6 +143,12 @@ export function subscribeTxStore(listener: Listener): () => void {
   return () => {
     listeners.delete(listener)
   }
+}
+
+export function rebindTxStoreForAccount(): void {
+  cache = null
+  const rows = listTxRecords()
+  for (const listener of listeners) listener(rows)
 }
 
 export function createDraftTx(args: {
@@ -285,5 +297,5 @@ export function listPendingConfirmation(): TxRecord[] {
 /** Test helper — wipe in-memory + durable store. */
 export function __resetTxStoreForTests(): void {
   cache = new Map()
-  durableSetItem(KEY, '[]')
+  durableSetItem(storageKey(), '[]')
 }

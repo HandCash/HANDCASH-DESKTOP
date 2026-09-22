@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const store = new Map<string, string>()
 let writesSucceed = true
+const KEY = 'handcash.wallet.pendingMinerOutbox.v1'
 
 function signedTx(satoshis: number): Transaction {
   const tx = new Transaction()
@@ -70,7 +71,7 @@ describe('pending miner outbox', () => {
     expect(pendingMinerOutboxDepth()).toBe(1)
 
     const rows = JSON.parse(
-      store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
+      store.get(KEY) || '[]',
     ) as Array<{ atomic: number[]; traceId?: string; flow?: string }>
     expect(rows[0]?.atomic).toEqual(atomic)
     expect(rows[0]?.traceId).toBe('trace-test')
@@ -123,7 +124,7 @@ describe('pending miner outbox', () => {
 
   it('removes invalid rows persisted by older byte-range-only builds', async () => {
     store.set(
-      'handcash.wallet.pendingMinerOutbox.v1',
+      KEY,
       JSON.stringify([
         {
           txid: 'ab'.repeat(32),
@@ -137,7 +138,7 @@ describe('pending miner outbox', () => {
     const { pendingMinerOutboxDepth } = await import('./pendingMinerOutbox')
     expect(pendingMinerOutboxDepth()).toBe(0)
     expect(
-      JSON.parse(store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]'),
+      JSON.parse(store.get(KEY) || '[]'),
     ).toEqual([])
   })
 
@@ -173,10 +174,10 @@ describe('pending miner outbox', () => {
 
     for (let attempt = 0; attempt < 45; attempt += 1) {
       const rows = JSON.parse(
-        store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
+        store.get(KEY) || '[]',
       ) as Array<{ nextAttemptAt: number }>
       rows[0]!.nextAttemptAt = 0
-      store.set('handcash.wallet.pendingMinerOutbox.v1', JSON.stringify(rows))
+      store.set(KEY, JSON.stringify(rows))
       await flushPendingMinerOutbox()
     }
 
@@ -220,7 +221,7 @@ describe('pending miner outbox', () => {
     expect(updatePendingMinerSubmitBody(txid, mergedAtomic)).toBe(true)
 
     const rows = JSON.parse(
-      store.get('handcash.wallet.pendingMinerOutbox.v1') || '[]',
+      store.get(KEY) || '[]',
     ) as Array<{ atomic: number[] }>
     expect(rows[0]?.atomic).toEqual(mergedAtomic)
     expect(

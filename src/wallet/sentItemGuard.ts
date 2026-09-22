@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Outpoints a send just spent (or filed as outbound remittance), hidden from
  * inventory until the chain agrees.
@@ -32,9 +33,9 @@ import {
  * as "sent", so B's own basket read filtered out the tip it had just received
  * and the card could never paint.
  */
-const STORAGE_KEY_BASE = 'handcash.collectables.sentOutpoints.v1'
+const STORAGE_KEY_BASE = storageRegistry.sentOutpoints.key
 const MAX_ENTRIES = 500
-const CONSUMED_KEY_BASE = 'handcash.collectables.consumedOutpoints.v1'
+const CONSUMED_KEY_BASE = storageRegistry.consumedOutpoints.key
 const MAX_CONSUMED = 2000
 
 function storageKey(): string {
@@ -269,7 +270,7 @@ export function isItemSent(outpoint: string, now = Date.now()): boolean {
  * re-claims live-on-address orphans, abandon needs a record of its own or the
  * tip walks back in a day later.
  */
-const ABANDONED_KEY_BASE = 'handcash.collectables.abandonedOutpoints.v1'
+const ABANDONED_KEY_BASE = storageRegistry.abandonedOutpoints.key
 const MAX_ABANDONED = 2000
 
 function abandonedKey(): string {

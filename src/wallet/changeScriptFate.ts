@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Change rows with no locking script — the only thing that can crash
  * `createAction` as `Array.from(undefined)`.
@@ -23,7 +25,7 @@
  * on-chain evidence, which is `restoreLiveSpendableOutputs`' job.
  */
 import { P2PKH, Transaction } from '@bsv/sdk'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { type ActiveWallet } from './session'
 
 export type ChangeRow = {
   outputId?: number

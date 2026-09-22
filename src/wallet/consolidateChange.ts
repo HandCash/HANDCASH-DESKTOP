@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Background change consolidation.
  *
@@ -24,7 +26,6 @@
 import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import {
   bumpBalanceAfterHeal,
-  getActiveWallet,
   invalidateBalanceReads,
   type ActiveWallet,
 } from './session'

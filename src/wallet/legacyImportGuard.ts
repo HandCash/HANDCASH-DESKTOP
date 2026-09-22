@@ -10,10 +10,20 @@
  * sweep, and reclaiming it would reopen the double-deposit hole.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
 
-const STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v2'
+const STORAGE_KEY_BASE = storageRegistry.importedLegacyOutpoints.key
 /** v1 kept a bare outpoint array with no sweep time. */
-const LEGACY_STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v1'
+const LEGACY_STORAGE_KEY_BASE = storageRegistry.importedLegacyOutpointsLegacy.key
+function storageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
+
+function legacyStorageKey(): string {
+  return accountLocalKey(LEGACY_STORAGE_KEY_BASE)
+}
+
 const MAX_ENTRIES = 2000
 
 /** Skip spendable review briefly after a successful sweep while indexers catch up. */
@@ -52,8 +62,8 @@ let cachedSig: string | null = null
 let cachedRecords = new Map<string, LegacySweepRecord>()
 
 function readRecords(): Map<string, LegacySweepRecord> {
-  const sig = `${durableGetItem(STORAGE_KEY) ?? ''}\u0000${
-    durableGetItem(LEGACY_STORAGE_KEY) ?? ''
+  const sig = `${durableGetItem(storageKey()) ?? ''}\u0000${
+    durableGetItem(legacyStorageKey()) ?? ''
   }`
   if (sig === cachedSig) return cachedRecords
   const parsed = parseRecords()
@@ -65,7 +75,7 @@ function readRecords(): Map<string, LegacySweepRecord> {
 function parseRecords(): Map<string, LegacySweepRecord> {
   const records = new Map<string, LegacySweepRecord>()
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(storageKey())
     if (raw) {
       const parsed = JSON.parse(raw) as unknown
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -85,7 +95,7 @@ function parseRecords(): Map<string, LegacySweepRecord> {
   }
 
   try {
-    const raw = durableGetItem(LEGACY_STORAGE_KEY)
+    const raw = durableGetItem(legacyStorageKey())
     if (!raw) return records
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return records
@@ -102,7 +112,7 @@ function writeRecords(records: Map<string, LegacySweepRecord>): void {
   const trimmed = [...records.entries()]
     .sort((a, b) => a[1].at - b[1].at)
     .slice(-MAX_ENTRIES)
-  durableSetItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(trimmed)))
+  durableSetItem(storageKey(), JSON.stringify(Object.fromEntries(trimmed)))
 }
 
 export function isLegacyOutpointKnown(outpoint: string): boolean {
@@ -216,4 +226,11 @@ export function releaseLegacyImport(outpoints: string[]): void {
 export function resetLegacyImportGraceForTests(): void {
   lastSuccessfulLegacyImportAt = 0
   inFlight.clear()
+}
+
+export function rebindLegacyImportGuardForAccount(): void {
+  inFlight.clear()
+  lastSuccessfulLegacyImportAt = 0
+  cachedSig = null
+  cachedRecords = new Map()
 }

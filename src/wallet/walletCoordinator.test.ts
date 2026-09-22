@@ -19,6 +19,7 @@ import {
   describeSpendPriorityHolds,
   SpendRegionAbandonedError,
   SPEND_REGION_ABANDONED,
+  rebindWalletCoordinatorForRuntime,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -70,6 +71,31 @@ describe('walletCoordinator runtime', () => {
     await Promise.all([first, second])
     expect(order).toEqual(['a-start', 'a-end', 'b'])
     expect(getWalletCoordinatorSnapshot().chainIngest).toBe('idle')
+  })
+
+  it('fences queued work when the wallet runtime changes', async () => {
+    let releaseFirst!: () => void
+    let markStarted!: () => void
+    const hold = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const first = runChainIngest(async () => {
+      markStarted()
+      await hold
+    })
+    await started
+    const stale = runChainIngest(async () => 'stale')
+
+    rebindWalletCoordinatorForRuntime()
+    const fresh = runChainIngest(async () => 'fresh')
+    releaseFirst()
+
+    await expect(stale).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(fresh).resolves.toBe('fresh')
+    await first
   })
 
   it('blocks external chain ingest during spend', async () => {

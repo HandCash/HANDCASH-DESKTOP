@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Block headers for heights the Chaintracks host has not reached yet.
  *
@@ -45,7 +46,7 @@ const SOURCE_COOLDOWN_MS = 60_000
 /** Session + durable cap — mirrors inscriptionCache hit ceiling style. */
 const HEADER_CACHE_MAX = 200
 /** Durable verified headers so cold start does not re-hit lagging Chain. */
-const DURABLE_KEY = 'handcash.blockHeaders.v1'
+const DURABLE_KEY = storageRegistry.blockHeaders.key
 /** HandCash Chain (BRC-CLOUD) often 404s behind tip — demote after streaks. */
 const HANDCASH_CHAIN_SOURCE = 'HandCash Chain'
 const SOURCE_FAIL_STREAK_DEMOTE = 3

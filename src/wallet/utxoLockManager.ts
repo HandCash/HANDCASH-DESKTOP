@@ -7,6 +7,8 @@
  * On ambiguous error: `spendable: false` with no `spentBy` (hidden until thaw).
  */
 import { durableGetItem, durableSetItem } from "./durableStorage";
+import { accountLocalKey } from "./accountLocalKeys";
+import { storageRegistry } from "../storage/registry";
 import {
   canMarkSpendable,
   coerceUtxoLock,
@@ -19,7 +21,7 @@ import {
 } from "./utxoLifecycle";
 import { normalizeOutpointKey } from "./txLifecycle";
 
-const KEY = "handcash.wallet.utxoLocks.v1";
+const KEY_BASE = storageRegistry.utxoLocks.key;
 const MAX_ENTRIES = 2_000;
 
 type Listener = (locks: UtxoLockRecord[]) => void;
@@ -27,11 +29,15 @@ type Listener = (locks: UtxoLockRecord[]) => void;
 const listeners = new Set<Listener>();
 let cache: Map<string, UtxoLockRecord> | null = null;
 
+function storageKey(): string {
+  return accountLocalKey(KEY_BASE);
+}
+
 function load(): Map<string, UtxoLockRecord> {
   if (cache) return cache;
   cache = new Map();
   try {
-    const raw = durableGetItem(KEY);
+    const raw = durableGetItem(storageKey());
     if (!raw) return cache;
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return cache;
@@ -55,7 +61,7 @@ function persist(): void {
     if (drop && isConsumed(drop)) map.delete(drop.outpoint);
     else if (drop) break;
   }
-  durableSetItem(KEY, JSON.stringify([...map.values()]));
+  durableSetItem(storageKey(), JSON.stringify([...map.values()]));
   for (const listener of listeners) listener([...map.values()]);
 }
 
@@ -229,6 +235,13 @@ export function subscribeUtxoLocks(listener: Listener): () => void {
   };
 }
 
+export function rebindUtxoLocksForAccount(): void {
+  cache = null;
+  unsealGeneration = 0;
+  const rows = listUtxoLocks();
+  for (const listener of listeners) listener(rows);
+}
+
 /** Reserve inputs for a draft tx. Fails closed if any input already reserved/spent. */
 export function softLockInputs(args: {
   lockOwnerId: string;
@@ -394,5 +407,6 @@ export function optimisticSpendableSats(toolboxSpendableSats: number): number {
 
 export function __resetUtxoLocksForTests(): void {
   cache = new Map();
-  durableSetItem(KEY, "[]");
+  durableSetItem(storageKey(), "[]");
+  unsealGeneration = 0;
 }

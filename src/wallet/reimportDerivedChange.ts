@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Re-create toolbox rows for wallet-owned derived change whose IndexedDB
  * row is gone but whose BRC-29 remittance we still have.
@@ -16,7 +18,7 @@ import {
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { parseOutpoint } from './legacyScan'
 import { withRestoredInternalizeStatus } from './peerIngestHelpers'
-import { getActiveWallet } from './session'
+
 import { creditUtxo, releaseConsumedUtxo } from './utxoLockManager'
 
 export type ReimportDerivedChangeResult = {

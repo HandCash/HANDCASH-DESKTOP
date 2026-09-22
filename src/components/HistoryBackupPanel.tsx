@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../wallet/session'
+
 import { useEffect, useRef, useState } from 'react'
 import {
   exportBrc39ToFile,
@@ -9,7 +11,7 @@ import {
 } from '../wallet/historyBackup'
 import type { LocalBrc39ArchiveMeta } from '../wallet/brc39LocalArchive'
 import { clearBackupBackoff } from '../wallet/backupWatchdog'
-import { getActiveWallet } from '../wallet/session'
+
 import {
   displayHistoryBackupBaseUrl,
   ensureSuggestedHistoryBackupUrl,

@@ -1,6 +1,8 @@
+import { getActiveWallet } from '../wallet/session'
+
 import { useEffect, useRef, useState } from 'react'
 import { Progress } from '@aeon-ui/react'
-import { formatBsv, formatSats, getActiveWallet } from '../wallet/session'
+import { formatBsv, formatSats} from '../wallet/session'
 import {
   clearPhraseItemMigrateCursor,
   estimateItemMigrateCost,

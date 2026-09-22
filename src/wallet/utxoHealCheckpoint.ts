@@ -1,10 +1,12 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Durable heal checkpoint — overlap window so we never drop a txid mid-flight.
  * Mirrors consolidateChange cooldown pattern: silent auto passes, manual can force.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 
-const CHECKPOINT_KEY = 'handcash.utxoHeal.checkpoint.v1'
+const CHECKPOINT_KEY = storageRegistry.utxoHealCheckpoint.key
 const MAX_STORED_TXIDS = 256
 
 /** Settings checkmark + skip full pass when clean within this window. */
@@ -30,12 +32,17 @@ let lastAutoAttemptAt = 0
 
 export function __resetHealCheckpointForTests(): void {
   lastAutoAttemptAt = 0
-  durableSetItem(CHECKPOINT_KEY, '')
+  durableSetItem(accountLocalKey(CHECKPOINT_KEY), '')
+}
+
+/** Reset the account-local auto-attempt cooldown when switching vault accounts. */
+export function rebindUtxoHealCheckpointForAccount(): void {
+  lastAutoAttemptAt = 0
 }
 
 export function readHealCheckpoint(): UtxoHealCheckpoint | null {
   try {
-    const raw = durableGetItem(CHECKPOINT_KEY)
+    const raw = durableGetItem(accountLocalKey(CHECKPOINT_KEY))
     if (!raw) return null
     const parsed = JSON.parse(raw) as UtxoHealCheckpoint
     if (!parsed || typeof parsed.at !== 'number' || !Array.isArray(parsed.txids)) {
@@ -60,7 +67,7 @@ export function writeHealCheckpoint(next: UtxoHealCheckpoint): void {
     -MAX_STORED_TXIDS,
   )
   durableSetItem(
-    CHECKPOINT_KEY,
+    accountLocalKey(CHECKPOINT_KEY),
     JSON.stringify({
       ...next,
       txids,

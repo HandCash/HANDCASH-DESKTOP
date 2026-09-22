@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * historyReplica — export/import/upload/download BRC-39 (AES-256-GCM + Argon2id).
  * Replicates toolbox localState (managed change, baskets, remittance metadata).
@@ -23,7 +25,7 @@ import {
   setHistoryBackupPrefs,
   setSpendableHighWaterFromPush,
 } from './historyBackupPrefs'
-import { getActiveWallet, clearActiveWallet, bootWallet } from './session'
+import { clearActiveWallet, bootWallet } from './session'
 import { revealRootKeyHex } from './vault'
 import { refreshCloudBackupHealth } from './cloudBackupHealth'
 import {

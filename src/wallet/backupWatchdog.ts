@@ -1,3 +1,4 @@
+import { storageRegistry } from '../storage/registry'
 /**
  * Crash-loop breaker for BRC-39 auto-backup.
  *
@@ -20,8 +21,9 @@
  */
 import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 
-const KEY = 'handcash.cloudBackup.watchdog.v1'
+const KEY = storageRegistry.backupWatchdog.key
 
 /** Delay after 1, 2, 3… consecutive failed attempts. Last value repeats. */
 const BACKOFF_MS = [
@@ -52,7 +54,7 @@ const EMPTY: WatchdogState = {
 
 function read(): WatchdogState {
   try {
-    const raw = durableGetItem(KEY)
+    const raw = durableGetItem(accountLocalKey(KEY))
     if (!raw) return { ...EMPTY }
     const parsed = JSON.parse(raw) as Partial<WatchdogState>
     return {
@@ -72,7 +74,7 @@ function read(): WatchdogState {
 
 function write(state: WatchdogState): void {
   try {
-    durableSetItem(KEY, JSON.stringify(state))
+    durableSetItem(accountLocalKey(KEY), JSON.stringify(state))
   } catch {
     // A wallet that cannot persist the guard must still be usable.
   }

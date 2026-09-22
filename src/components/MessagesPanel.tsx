@@ -1,3 +1,5 @@
+import { getActiveWallet } from '../wallet/session'
+
 import {
   useEffect,
   useMemo,
@@ -42,7 +44,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { sendSatsToAddress } from '../wallet/sendPayment'
 import { sendBrc29ToIdentityKey } from '../wallet/sendBrc29Payment'
-import { getActiveWallet } from '../wallet/session'
+
 import {
   getPaymentProgress,
   subscribePaymentProgress,

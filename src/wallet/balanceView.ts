@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Owned-cash heuristic for the displayed BSV balance (`balanceView`).
  *
@@ -14,7 +16,7 @@
  * Payment outputs are not ours. Inputs of a live local send are not ours.
  * 1-sat items and BSV-21 stay out of Pay.
  */
-import { getActiveWallet } from './session'
+
 import { hasLockingScript, type ChangeRow } from './changeScriptFate'
 import {
   txLivenessFromStatus,

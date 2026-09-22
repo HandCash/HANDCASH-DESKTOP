@@ -7,13 +7,20 @@
 import { Beef } from '@bsv/sdk'
 import { classifyBeefAncestryGap } from './beefCache'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
+import {
+  assertRuntimeCurrent,
+  getWalletRuntime,
+  type WalletRuntime,
+} from './walletRuntime'
 import {
   activeTransactionTrace,
   recordTransactionStage,
   type TransactionFlow,
 } from './transactionTelemetry'
 
-const KEY = 'handcash.wallet.pendingMinerOutbox.v1'
+const KEY_BASE = storageRegistry.pendingMinerOutbox.key
 const MAX_ATOMIC_BYTES = 2 * 1024 * 1024
 
 export type PendingMinerSubmit = {
@@ -65,9 +72,14 @@ export function classifyPendingMinerBody(
     : { kind: 'spv-ready' }
 }
 
+function storageKey(): string {
+  return accountLocalKey(KEY_BASE)
+}
+
 function load(): PendingMinerSubmit[] {
   try {
-    const parsed = JSON.parse(durableGetItem(KEY) || '[]') as unknown
+    const key = storageKey()
+    const parsed = JSON.parse(durableGetItem(key) || '[]') as unknown
     if (!Array.isArray(parsed)) return []
     const candidates = (parsed as PendingMinerSubmit[]).filter(
       (row) =>
@@ -80,7 +92,7 @@ function load(): PendingMinerSubmit[] {
     )
     // Clean up rows written by older builds that only checked byte ranges.
     if (rows.length !== candidates.length) {
-      durableSetItem(KEY, JSON.stringify(rows))
+      durableSetItem(key, JSON.stringify(rows))
     }
     return rows
   } catch {
@@ -91,7 +103,7 @@ function load(): PendingMinerSubmit[] {
 function save(rows: PendingMinerSubmit[]): boolean {
   // Every row is a still-live signed cheque. Never cap by evicting the oldest:
   // that strands its seal and permanently stops propagation with no verdict.
-  return durableSetItem(KEY, JSON.stringify(rows))
+  return durableSetItem(storageKey(), JSON.stringify(rows))
 }
 
 export function enqueuePendingMinerSubmit(
@@ -166,7 +178,12 @@ function backoffMs(attempt: number): number {
   return Math.min(15 * 60_000, 2_000 * 2 ** Math.min(9, attempt))
 }
 
-export async function flushPendingMinerOutbox(): Promise<number> {
+export async function flushPendingMinerOutbox(args?: {
+  runtime: WalletRuntime
+}): Promise<number> {
+  const runtime = args?.runtime ?? getWalletRuntime()
+  if (!runtime && import.meta.env?.MODE !== 'test') throw new Error('WALLET_LOCKED')
+  if (runtime) assertRuntimeCurrent(runtime)
   const now = Date.now()
   const rows = load()
   if (rows.length === 0) return 0
@@ -179,6 +196,7 @@ export async function flushPendingMinerOutbox(): Promise<number> {
   } = await import('./minerSubmit')
 
   for (const row of rows) {
+    if (runtime) assertRuntimeCurrent(runtime)
     if (row.nextAttemptAt > now) {
       keep.push(row)
       continue
@@ -195,6 +213,7 @@ export async function flushPendingMinerOutbox(): Promise<number> {
     try {
       const result = await submitAtomicBeefToMiners(row.txid, row.atomic, {
         fromOutbox: true,
+        ...(runtime ? { runtime } : {}),
         traceId: row.traceId,
         requestId: row.requestId,
         flow: row.flow,

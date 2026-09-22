@@ -1,3 +1,5 @@
+import { getActiveWallet } from './session'
+
 /**
  * Spend guard:
  * - serialize spends on this device (wallet coordinator spend region)
@@ -13,12 +15,15 @@ import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
   fetchBalanceRead,
-  getActiveWallet,
   peekProvenConfirmedSpendable,
 } from './session'
 import { acquireSpendLease } from './spendLease'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
+import {
+  assertRuntimeCurrent,
+  getWalletRuntime,
+} from './walletRuntime'
 
 /** True while {@link runExclusiveSpend} already promoted chained change. */
 let spendChainPromoted = false
@@ -213,12 +218,18 @@ export function runExclusiveSpend<T>(
   onSpendRegion?: () => void,
   opts?: { promote?: SpendPreparation },
 ): Promise<T> {
+  const runtime = getWalletRuntime()
+  if (!runtime && import.meta.env?.MODE !== 'test') {
+    throw new Error('WALLET_LOCKED')
+  }
   // Spending known local UTXOs is the wallet's primary path. Maintenance is
   // demand-driven: only a real local-balance shortage may promote chained
   // change. Callers doing explicit-input work (items/burns) use `false`; repair
   // and migration callers may still request `full` or bounded `light`.
   const promote = opts?.promote ?? 'on-demand'
   const abort = new AbortController()
+  const abortForRuntime = () => abort.abort('Wallet account changed')
+  runtime?.signal.addEventListener('abort', abortForRuntime, { once: true })
   liveSpendAbort = abort
   const throwIfAborted = () => {
     if (!abort.signal.aborted) return
@@ -231,6 +242,7 @@ export function runExclusiveSpend<T>(
   }
   return runExclusiveSpendCoordinated(
     async () => {
+      if (runtime) assertRuntimeCurrent(runtime)
       throwIfAborted()
       await reviewAfterAbandonedSpend()
       throwIfAborted()
@@ -242,6 +254,7 @@ export function runExclusiveSpend<T>(
         throwIfAborted()
         spendChainPromoted = promote === 'full' || promote === 'light'
         spendRecoveryDisabled = promote === false
+        if (runtime) assertRuntimeCurrent(runtime)
         return await fn()
       } finally {
         spendChainPromoted = false
@@ -261,6 +274,7 @@ export function runExclusiveSpend<T>(
       throw err
     })
     .finally(() => {
+      runtime?.signal.removeEventListener('abort', abortForRuntime)
       if (liveSpendAbort === abort) liveSpendAbort = null
     })
 }

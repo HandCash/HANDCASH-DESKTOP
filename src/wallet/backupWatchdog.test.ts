@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { accountLocalKey, bindAccountLocalKeyScope } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 
@@ -135,8 +136,20 @@ describe('backupWatchdog', () => {
   })
 
   it('survives a corrupt record', async () => {
-    store.set('handcash.cloudBackup.watchdog.v1', '{not json')
+    store.set(accountLocalKey('handcash.cloudBackup.watchdog.v1'), '{not json')
     const wd = await load()
     expect(wd.backupBlockedReason(T0)).toBeNull()
+  })
+
+  it('keeps backup backoff isolated by vault account', async () => {
+    const wd = await load()
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    wd.openBackupAttempt(T0)
+
+    bindAccountLocalKeyScope({ accountIndex: 2, identityKey: 'account-two' })
+    expect(wd.backupBlockedReason(T0)).toBeNull()
+
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    expect(wd.backupBlockedReason(T0)).toMatch(/already open/)
   })
 })
