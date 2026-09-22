@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.266] - 2026-09-22
+
+### Fixed
+
+- Burning a BSV-21 token no longer reports "Waiting to send" in the status
+  pill. That path took the spend-priority hold without publishing progress of
+  its own, so the pill fell through to the coordinator, which labels every
+  priority hold as a queued send. Burns now announce "Burning" from before the
+  spend region is acquired until the destroy settles or fails.
+- Burn reconciliation no longer pays for the report-only spendable audit, which
+  costs one indexer request per spendable output and never writes anything
+  back. Sends already refuse it; the burn was holding both the spend region and
+  the pill while it ran.
+
 ## [1.3.265] - 2026-09-22
 
 ### Fixed

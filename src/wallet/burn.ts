@@ -565,6 +565,11 @@ async function executeBurnPlan(args: {
       await refreshFromChainDuringSpend({
         forceReview: true,
         announceReceive: false,
+        // The spendable audit costs one indexer request per spendable output
+        // and never writes anything back, so it reports rather than settles.
+        // A send already refuses to pay for it; the burn was holding both the
+        // spend region and the Burning pill while it ran.
+        audit: false,
       })
     },
     backup: () => scheduleHistoryBackupPush('burn'),

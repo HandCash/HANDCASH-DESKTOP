@@ -19,6 +19,7 @@ import { markItemsSent } from '../sentItemGuard'
 import { stampBrc164Id } from '../itemAccess'
 import { withVisibleOnChainBeef } from '../legacyBeef'
 import { assertOnlineForPayment } from '../paymentPolicy'
+import { clearPaymentProgress, setPaymentProgress } from '../paymentProgress'
 import { BRC29_PROTOCOL_ID } from '../sendBrc29Payment'
 import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
@@ -136,6 +137,17 @@ export async function burnBsv21Tokens(args: {
   }
   const sym = args.sym?.trim() || 'Token'
 
+  // The spend-priority hold is taken by runExclusiveBurn before the FIFO
+  // releases. Without a burn label of our own the pill falls through to the
+  // coordinator, which reports every priority hold as "Waiting to send" — so a
+  // destroy announced itself as a queued payment for its whole run.
+  setPaymentProgress(
+    'preparing',
+    `Waiting to burn ${sym}`,
+    args.item.outpoint ?? null,
+    'Burning…',
+    'burn',
+  )
   return runExclusiveBurn('burn-bsv21', async () => {
     assertOnlineForPayment()
     const active = getActiveWallet()
@@ -223,6 +235,7 @@ export async function burnBsv21Tokens(args: {
       }),
     })
 
+    setPaymentProgress('building', 'Destroying on chain')
     console.info(
       `[bsv21-burn] createAction start tips=${selected.length} amount=${amount} change=${change}`,
     )
@@ -257,6 +270,7 @@ export async function burnBsv21Tokens(args: {
     if (!txid) {
       const signable = created.signableTransaction
       if (!signable) throw new Error('Token burn produced no txid')
+      setPaymentProgress('signing', 'Signing the burn transaction')
       console.info('[bsv21-burn] createAction returned signable — unlocking tip(s)')
       const { signBsv21TipTransfer } = await import('./send')
       try {
@@ -293,6 +307,7 @@ export async function burnBsv21Tokens(args: {
       /* unused funding */
     }
 
+    setPaymentProgress('broadcasting', 'Broadcasting the burn')
     const {
       registerSignedSend,
       startSignedSendPropagation,
@@ -375,5 +390,7 @@ export async function burnBsv21Tokens(args: {
       })
       .catch(() => {})
     return { txid, recoveredSatoshis: recoverSatoshis }
+  }).finally(() => {
+    clearPaymentProgress()
   })
 }
