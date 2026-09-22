@@ -75,6 +75,7 @@ import {
   type MarketOfferFields,
 } from './marketOverlayProtocol'
 import {
+  chooseBsv21ListingLock,
   chooseMarketCancelPath,
   chooseMarketListingPath,
 } from './marketListingPath'
@@ -274,17 +275,14 @@ export function buildBsv21ListingProof(args: {
   customInstructions?: string
   beef?: Parameters<typeof prove>[1]
 }): Bsv21ListingProof {
-  const decoded = decodeBsv21Binary(args.lockingScriptHex)
-  if (!decoded || decoded.amount <= 0n || decoded.role === 'authority') {
-    throw new MarketListingError(
-      'MARKET_ASSET_UNSUPPORTED',
-      'BSV-21 listing requires a 162 value lock.',
-    )
+  const lock = chooseBsv21ListingLock(args.lockingScriptHex)
+  if (lock.lock === 'refuse') {
+    console.warn(`[market-list] refuse bsv21 proof — ${lock.reason}`)
+    throw new MarketListingError('MARKET_ASSET_UNSUPPORTED', lock.message)
   }
+  const decoded = decodeBsv21Binary(args.lockingScriptHex)!
   const tip = normalizeOutpoint(args.outpoint)
-  const tokenId =
-    decoded.tokenId?.toLowerCase() ??
-    (decoded.role === 'deploy' ? tip : null)
+  const tokenId = lock.tokenId ?? (decoded.role === 'deploy' ? tip : null)
   if (!tokenId) {
     throw new MarketListingError(
       'MARKET_ASSET_UNSUPPORTED',
@@ -1606,10 +1604,17 @@ async function createMarketListingAdvertExclusive(
   const listedAsset: MarketAssetType =
     askedBsv21 || lockIsBsv21 ? 'bsv21' : 'ordinal'
   if (askedBsv21 && !lockIsBsv21) {
-    throw new MarketListingError(
-      'MARKET_ASSET_UNSUPPORTED',
-      'BSV-21 listing requires a 162 value lock.',
+    const refusal = chooseBsv21ListingLock(lockingScriptHex)
+    const message =
+      refusal.lock === 'refuse'
+        ? refusal.message
+        : 'BSV-21 listing requires a 162 value lock.'
+    console.warn(
+      `[market-list] refuse ${outpoint} — asked bsv21, lock is ${
+        refusal.lock === 'refuse' ? refusal.reason : 'unclassified'
+      }`,
     )
+    throw new MarketListingError('MARKET_ASSET_UNSUPPORTED', message)
   }
   const origin =
     listedAsset === 'bsv21'
@@ -1623,10 +1628,12 @@ async function createMarketListingAdvertExclusive(
   let amt = listedAsset === 'bsv21' ? classifiedAmt : undefined
   let tipAmt = classifiedAmt
   if (listedAsset === 'bsv21') {
-    if (!lockingScriptHex) {
+    const listedLock = chooseBsv21ListingLock(lockingScriptHex)
+    if (listedLock.lock === 'refuse') {
+      console.warn(`[market-list] refuse ${outpoint} — ${listedLock.reason}`)
       throw new MarketListingError(
         'MARKET_ASSET_UNSUPPORTED',
-        'BSV-21 listing requires a 162 value lock.',
+        listedLock.message,
       )
     }
     let beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
@@ -1637,7 +1644,7 @@ async function createMarketListingAdvertExclusive(
     }
     provenance = buildBsv21ListingProof({
       outpoint: listingOutpoint,
-      lockingScriptHex,
+      lockingScriptHex: listedLock.lockingScriptHex,
       customInstructions: output.customInstructions,
       ...(beef ? { beef } : {}),
     })
@@ -1666,7 +1673,7 @@ async function createMarketListingAdvertExclusive(
           outpoint: listingOutpoint,
           tokenId: origin,
           amt: BigInt(provenAmt),
-          lockingScript: lockingScriptHex,
+          lockingScript: listedLock.lockingScriptHex,
         })
       }
       let plan
@@ -1724,7 +1731,7 @@ async function createMarketListingAdvertExclusive(
           {
             outpoint: listingOutpoint,
             amt: BigInt(provenAmt),
-            lockingScript: lockingScriptHex,
+            lockingScript: listedLock.lockingScriptHex,
           },
           ...extraCoverTips,
         ],

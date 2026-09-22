@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.273] - 2026-09-22
+
+### Fixed
+
+- A refused BSV-21 listing now says which refusal it is. Three unrelated
+  causes — the basket row carrying no locking script, a read-only legacy JSON
+  `bsv-20` inscription, and an output that is not a token — all reported
+  "BSV-21 listing requires a 162 value lock", which reads as a transient
+  wallet fault when a legacy JSON holding can never be listed: settlement
+  builds the buyer output with `buildBsv21ValueLock`, so only a BRC-162 tip
+  has a listing to publish. `chooseBsv21ListingLock` now names the reason and
+  logs it.
+
 ## [1.3.272] - 2026-09-22
 
 ### Fixed
