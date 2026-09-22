@@ -1,4 +1,5 @@
 /** Origin-independent prefs via Electron userData (falls back to localStorage). */
+import { storageRegistry } from '../storage/registry'
 
 export type DurableSetOptions = {
   /** Recovery-only: replace vault when identityKey changes (archives previous). */
@@ -32,6 +33,51 @@ const cache = new Map<string, string | null>()
  */
 const LOCAL_MIRROR_MAX_BYTES = 64 * 1024
 const WALLET_KEY_RE = /^(.*):wallet:(main|test):(\d+):([^:]+)$/
+const PROBE_KEY = storageRegistry.durableStoreProbe.key
+
+/**
+ * Which process holds the durable copy.
+ *
+ * `shell` — the host app owns a file store; origin storage is only a mirror for
+ * small keys, because writing multi-megabyte values there costs the renderer a
+ * synchronous write it does not need.
+ * `origin` — the WebView's own storage *is* the store (mobile shell, dev
+ * browser), so every value must be written there in full.
+ *
+ * A shell that answers `storageSetSync` with `true` while storing nothing is
+ * indistinguishable from Electron by return value alone: writes report success,
+ * anything over the mirror cap reaches no store at all, and Activity, chat and
+ * inventory silently reset on relaunch. Verify the claim once by reading a
+ * write back instead of trusting it.
+ */
+type DurableStoreOwner = 'shell' | 'origin'
+
+let storeOwner: DurableStoreOwner | null = null
+
+function durableStoreOwner(): DurableStoreOwner {
+  if (storeOwner) return storeOwner
+  const bridge = typeof window === 'undefined' ? undefined : window.handcash
+  if (!bridge?.storageSetSync || !bridge.storageGetSync) return (storeOwner = 'origin')
+  try {
+    const token = `probe:${Date.now()}:${Math.random().toString(36).slice(2)}`
+    const accepted = bridge.storageSetSync(PROBE_KEY, token)
+    storeOwner =
+      accepted === true && bridge.storageGetSync(PROBE_KEY) === token
+        ? 'shell'
+        : 'origin'
+  } catch {
+    storeOwner = 'origin'
+  }
+  if (storeOwner === 'origin') {
+    console.info('[durable] shell store does not read back — origin storage owns wallet state')
+  }
+  return storeOwner
+}
+
+/** Re-probe after a test swaps the bridge. */
+export function __resetDurableStoreOwnerForTests(): void {
+  storeOwner = null
+}
 
 function mirrorLocally(key: string, value: string): void {
   if (value.length > LOCAL_MIRROR_MAX_BYTES) return
@@ -43,27 +89,35 @@ function mirrorLocally(key: string, value: string): void {
 }
 
 function readThrough(key: string): string | null {
-  try {
-    const fromElectron = window.handcash?.storageGetSync?.(key)
-    if (typeof fromElectron === 'string') {
-      mirrorLocally(key, fromElectron)
-      return fromElectron
+  if (durableStoreOwner() === 'shell') {
+    try {
+      const fromShell = window.handcash?.storageGetSync?.(key)
+      if (typeof fromShell === 'string') {
+        mirrorLocally(key, fromShell)
+        return fromShell
+      }
+    } catch {
+      // fall through
     }
-  } catch {
-    // fall through
+
+    try {
+      const local = localStorage.getItem(key)
+      if (local != null) {
+        // Migrate a pre-Electron browser wallet up into the shell store.
+        try {
+          window.handcash?.storageSetSync?.(key, local)
+        } catch {
+          // ignore
+        }
+      }
+      return local
+    } catch {
+      return null
+    }
   }
 
   try {
-    const local = localStorage.getItem(key)
-    if (local != null) {
-      // Migrate browser/dev localStorage into Electron durable store when available.
-      try {
-        window.handcash?.storageSetSync?.(key, local)
-      } catch {
-        // ignore
-      }
-    }
-    return local
+    return localStorage.getItem(key)
   } catch {
     return null
   }
@@ -102,20 +156,23 @@ export function durableGetItem(key: string): string | null {
 }
 
 export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
-  try {
-    const ok = window.handcash?.storageSetSync?.(key, value, opts)
-    if (typeof ok === 'boolean') {
-      // Electron owns the durable copy — localStorage is only a small-key mirror.
-      mirrorLocally(key, value)
-      // A rejected write must not be cached as though it stuck.
-      if (ok) cache.set(key, value)
-      else cache.delete(key)
-      return ok
+  if (durableStoreOwner() === 'shell') {
+    try {
+      const ok = window.handcash?.storageSetSync?.(key, value, opts)
+      if (typeof ok === 'boolean') {
+        // The shell owns the durable copy — localStorage is only a small-key mirror.
+        mirrorLocally(key, value)
+        // A rejected write must not be cached as though it stuck.
+        if (ok) cache.set(key, value)
+        else cache.delete(key)
+        return ok
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
-  // No Electron bridge (dev browser): localStorage is the store, not a mirror.
+  // No shell store (mobile shell, dev browser): localStorage is the store, not
+  // a mirror, so the whole value goes in regardless of size.
   // Hermetic/node tests have neither bridge nor localStorage; preserve the
   // process-local cache there so independent wallet modules remain testable.
   if (typeof localStorage === 'undefined') {
@@ -147,11 +204,13 @@ export function durableRemoveItem(key: string): void {
   } catch {
     // ignore
   }
-  try {
-    // The bridge has no delete — empty reads as absent everywhere we use it.
-    window.handcash?.storageSetSync?.(key, '')
-  } catch {
-    // ignore
+  if (durableStoreOwner() === 'shell') {
+    try {
+      // The bridge has no delete — empty reads as absent everywhere we use it.
+      window.handcash?.storageSetSync?.(key, '')
+    } catch {
+      // ignore
+    }
   }
   cache.set(key, null)
 }

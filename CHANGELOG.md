@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.268] - 2026-09-22
+
+### Fixed
+
+- Activity, chat, and inventory survive a mobile relaunch again. The mobile
+  shell answered `storageSetSync` with `true` while storing nothing, so the
+  shared durable layer treated it as the owner of a file store: every write
+  reported success, and anything over the 64KB small-key mirror cap — Activity
+  first, at several hundred KB — reached no store at all. Durable storage now
+  verifies the claim once by reading a write back, and treats origin storage as
+  the store (no size cap) whenever the shell cannot.
+- The mobile shell no longer advertises the synchronous storage bridge it does
+  not implement.
+
 ## [1.3.267] - 2026-09-22
 
 ### Fixed

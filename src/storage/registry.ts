@@ -577,6 +577,12 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  durableStoreProbe: defineStorage({
+    key: 'handcash.durableStore.probe.v1',
+    owner: 'shell',
+    scope: 'device',
+    version: 1,
+  }),
 })
 
 export type VersionedEnvelope<T> = Readonly<{
