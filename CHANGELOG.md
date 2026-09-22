@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.265] - 2026-09-22
+
+### Fixed
+
+- BSV-21 inventory is now projected from an exact per-outpoint holding ledger
+  instead of mutating aggregate cards. Receive, live basket, send, and burn
+  paths therefore share one custody representation.
+- A basket read that began before a receive now reconciles newly painted tips
+  even when it already returned the same token ID, preventing a received
+  amount such as `+50` from appearing and then reverting to the older balance.
+- Authoritative spend and burn paint now replaces the ledger with the exact
+  surviving tips and change, while durable UI state omits bulky locking scripts.
+
 ## [1.3.264] - 2026-09-22
 
 ### Fixed

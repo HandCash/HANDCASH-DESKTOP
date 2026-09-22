@@ -88,7 +88,12 @@ export type Bsv21Utxo = {
   /** Positive wire classification. Absence means an old cache row is unclassified. */
   encoding?: 'brc162' | 'legacy-json'
   maxSupply?: number | null
+  /** Local projection time; never serialized onto the Bitcoin output. */
+  seenAt?: number
 }
+
+/** Minimal durable custody fact; locking scripts remain in Toolbox, not UI state. */
+export type FungibleHeldTip = Omit<Bsv21Utxo, 'lockingScript'>
 
 /** Candidate tip ready to internalize into basket `bsv21`. */
 export type Bsv21ImportItem = {
@@ -127,6 +132,8 @@ export type FungibleToken = {
   outpoint: string
   /** Exact held tips represented by this aggregate; used to dedupe receive paint. */
   tipOutpoints?: string[]
+  /** Outpoint-level custody ledger. Token cards are derived from these tips. */
+  heldTips?: FungibleHeldTip[]
   /**
    * Spend gate for held tips of this token id.
    * `mixed` = some tips plain, some cosigned (should not combine blindly).
@@ -479,6 +486,7 @@ function mergeFungibleRows(
     into.tokenId = from.tokenId
     into.outpoint = from.outpoint
   }
+  if ((from.seenAt ?? 0) > (into.seenAt ?? 0)) into.seenAt = from.seenAt
   if (from._cosigned) {
     into._cosigned = true
     if (!into.cosign && from.cosign) into.cosign = from.cosign
@@ -519,6 +527,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.binarySupply ? { binarySupply: u.binarySupply } : {}),
         ...(u.encoding ? { encoding: u.encoding } : {}),
         ...(u.maxSupply != null ? { maxSupply: u.maxSupply } : {}),
+        ...(u.seenAt != null ? { seenAt: u.seenAt } : {}),
         _sum: add,
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
@@ -541,6 +550,9 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (!existing.encoding && u.encoding) existing.encoding = u.encoding
     if (existing.maxSupply == null && u.maxSupply != null) {
       existing.maxSupply = u.maxSupply
+    }
+    if ((u.seenAt ?? 0) > (existing.seenAt ?? 0)) {
+      existing.seenAt = u.seenAt
     }
     if (add > existing._bestAmt) {
       existing._bestAmt = add
@@ -581,6 +593,9 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         sym: row.sym || shortTokenLabel(row.tokenId),
         amt: _sum.toString(),
         tipOutpoints,
+        heldTips: utxos
+          .filter((tip) => _tips.has(tip.outpoint))
+          .map(({ lockingScript: _lockingScript, ...tip }) => tip),
         ...(tokenIds.length > 1 ? { tokenIds } : {}),
         spendKind:
           _plain && _cosigned

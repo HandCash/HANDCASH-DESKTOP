@@ -184,6 +184,7 @@ function persistDurableList(items: FungibleToken[]): void {
           utxoCount: t.utxoCount,
           outpoint: t.outpoint,
           ...(t.tipOutpoints ? { tipOutpoints: t.tipOutpoints } : {}),
+          ...(t.heldTips ? { heldTips: t.heldTips } : {}),
           spendKind: t.spendKind,
           ...(t.icon ? { icon: t.icon } : {}),
           ...(t.iconUrl ? { iconUrl: t.iconUrl } : {}),
@@ -322,6 +323,83 @@ function isGenesisRow(t: Pick<FungibleToken, 'tokenId' | 'outpoint'>): boolean {
   return Boolean(op) && op === tokenId
 }
 
+function tipFromProjection(token: FungibleToken): Bsv21Utxo {
+  const outpoint = token.outpoint
+  return {
+    outpoint,
+    tokenId: token.tokenId,
+    amt: token.amt,
+    op: isGenesisRow(token) ? 'deploy+mint' : 'transfer',
+    sym: token.sym,
+    dec: token.dec,
+    satoshis: 1,
+    ...(token.cosign ? { cosign: token.cosign } : {}),
+    ...(token.issuer ? { issuer: token.issuer } : {}),
+    ...(token.issuerAttested ? { issuerAttested: true } : {}),
+    ...(token.icon ? { icon: token.icon } : {}),
+    ...(token.binarySupply ? { binarySupply: token.binarySupply } : {}),
+    ...(token.encoding ? { encoding: token.encoding } : {}),
+    ...(token.maxSupply != null ? { maxSupply: token.maxSupply } : {}),
+    ...(token.seenAt != null ? { seenAt: token.seenAt } : {}),
+  }
+}
+
+function heldTipsOf(token: FungibleToken): Bsv21Utxo[] {
+  if (token.heldTips?.length) {
+    return token.heldTips.map((tip) => ({ ...tip }))
+  }
+  return [tipFromProjection(token)]
+}
+
+function overlayFungibleMetadata(
+  projected: FungibleToken,
+  preferred: FungibleToken,
+  fallback?: FungibleToken,
+): FungibleToken {
+  const preferredSymIsFallback =
+    !preferred.sym.trim() || preferred.sym === shortTokenLabel(preferred.tokenId)
+  const fallbackSymIsUseful =
+    fallback?.sym && fallback.sym !== shortTokenLabel(fallback.tokenId)
+  return {
+    ...projected,
+    ...(!preferredSymIsFallback
+      ? { sym: preferred.sym, dec: preferred.dec }
+      : fallbackSymIsUseful
+        ? { sym: fallback.sym, dec: fallback.dec }
+        : {}),
+    ...(!projected.icon && (preferred.icon || fallback?.icon)
+      ? { icon: preferred.icon || fallback?.icon }
+      : {}),
+    ...(!projected.iconUrl && (preferred.iconUrl || fallback?.iconUrl)
+      ? { iconUrl: preferred.iconUrl || fallback?.iconUrl }
+      : {}),
+    ...(!projected.issuer && (preferred.issuer || fallback?.issuer)
+      ? { issuer: preferred.issuer || fallback?.issuer }
+      : {}),
+    ...((preferred.issuerAttested || fallback?.issuerAttested) &&
+    !projected.issuerAttested
+      ? { issuerAttested: true }
+      : {}),
+    ...(projected.maxSupply == null &&
+    (preferred.maxSupply != null || fallback?.maxSupply != null)
+      ? { maxSupply: preferred.maxSupply ?? fallback?.maxSupply }
+      : {}),
+  }
+}
+
+function projectHeldTips(
+  tips: Bsv21Utxo[],
+  preferred: FungibleToken,
+  fallback?: FungibleToken,
+): FungibleToken {
+  const projected =
+    aggregateFungibles(tips).find((row) => tokenKey(row) === tokenKey(preferred)) ??
+    aggregateFungibles(tips)[0]
+  return projected
+    ? overlayFungibleMetadata(projected, preferred, fallback)
+    : preferred
+}
+
 export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]): FungibleToken[] {
   const byId = new Map<string, FungibleToken>()
   const liveIds = new Set<string>()
@@ -335,26 +413,23 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
-    const liveSymIsFallback =
-      !t.sym.trim() || t.sym === shortTokenLabel(t.tokenId)
-    const priorSymIsUseful =
-      priorRow?.sym &&
-      priorRow.sym !== shortTokenLabel(priorRow.tokenId)
-    // Live listing already overlays leftovers and aggregates by origin.
-    // amt comes from live. Never leftover+live across refreshes.
-    byId.set(k, {
-      ...t,
-      ...(liveSymIsFallback && priorSymIsUseful
-        ? { sym: priorRow.sym, dec: priorRow.dec }
-        : {}),
-      ...(priorRow && !t.icon && priorRow.icon ? { icon: priorRow.icon } : {}),
-      ...(priorRow && !t.iconUrl && priorRow.iconUrl ? { iconUrl: priorRow.iconUrl } : {}),
-      ...(priorRow && !t.issuer && priorRow.issuer ? { issuer: priorRow.issuer } : {}),
-      ...(priorRow?.issuerAttested && !t.issuerAttested ? { issuerAttested: true } : {}),
-      ...(priorRow && t.maxSupply == null && priorRow.maxSupply != null
-        ? { maxSupply: priorRow.maxSupply }
-        : {}),
-    })
+    const ledger = new Map(
+      heldTipsOf(t).map((tip) => [normalizedTokenTipOutpoint(tip.outpoint), tip]),
+    )
+    // The basket can lag an inbox/internalize paint. Carry only freshly seen
+    // absent tips; older absence is reconciled by the authoritative live set.
+    if (priorRow) {
+      const now = Date.now()
+      for (const tip of heldTipsOf(priorRow)) {
+        const point = normalizedTokenTipOutpoint(tip.outpoint)
+        if (ledger.has(point) || isItemSent(point)) continue
+        if (now - (tip.seenAt ?? priorRow.seenAt ?? 0) >= FUNGIBLE_SETTLE_GRACE_MS) {
+          continue
+        }
+        ledger.set(point, tip)
+      }
+    }
+    byId.set(k, projectHeldTips([...ledger.values()], t, priorRow))
   }
   // Live listing is source of truth when it returned rows. An empty live list
   // is usually toolbox lag right after mint (or a flake) — keep prior paint,
@@ -390,53 +465,24 @@ function normalizedTokenTipOutpoint(raw: string): string {
 export function rememberFungibleToken(token: FungibleToken): void {
   const key = tokenKey(token)
   const prior = cached.find((row) => tokenKey(row) === key)
-  if (!prior) {
-    setFungiblesCache(mergeLiveFungibles([{
-      ...token,
-      tipOutpoints: token.tipOutpoints ?? [token.outpoint],
-    }], cached))
-  } else {
-    const priorTips = new Set(
-      (prior.tipOutpoints?.length ? prior.tipOutpoints : [prior.outpoint])
-        .map(normalizedTokenTipOutpoint),
+  const ledger = new Map<string, Bsv21Utxo>()
+  for (const tip of prior ? heldTipsOf(prior) : []) {
+    ledger.set(normalizedTokenTipOutpoint(tip.outpoint), tip)
+  }
+  const paintedAt = Date.now()
+  let added = 0
+  for (const tip of heldTipsOf(token)) {
+    const point = normalizedTokenTipOutpoint(tip.outpoint)
+    if (!ledger.has(point)) added += 1
+    ledger.set(point, { ...tip, seenAt: tip.seenAt ?? paintedAt })
+  }
+  const projected = projectHeldTips([...ledger.values()], token, prior)
+  replaceFungibleToken(projected)
+  if (added > 0 && prior) {
+    console.info(
+      `[bsv21] added ${added} held tip(s) to ${key} — ` +
+        `${projected.amt} across ${projected.utxoCount} tip(s)`,
     )
-    const incomingTips = (token.tipOutpoints?.length
-      ? token.tipOutpoints
-      : [token.outpoint]
-    ).map(normalizedTokenTipOutpoint)
-    const newTips = incomingTips.filter((tip) => tip && !priorTips.has(tip))
-    if (newTips.length === 0) {
-      // A retry of the same receive may improve metadata, but it must not
-      // replace or re-add the aggregate amount.
-      replaceFungibleToken({
-        ...token,
-        amt: prior.amt,
-        utxoCount: prior.utxoCount,
-        outpoint: prior.outpoint,
-        tipOutpoints: [...priorTips],
-      })
-    } else {
-      let total = 0n
-      try {
-        total = BigInt(prior.amt) + BigInt(token.amt)
-      } catch {
-        // Malformed paint never reduces a previously known holding.
-        total = BigInt(prior.amt.replace(/\D/g, '') || '0')
-      }
-      replaceFungibleToken({
-        ...prior,
-        ...token,
-        amt: total.toString(),
-        utxoCount: prior.utxoCount + Math.max(1, token.utxoCount),
-        outpoint: prior.outpoint,
-        tipOutpoints: [...priorTips, ...newTips],
-      })
-      console.info(
-        `[bsv21] added ${newTips.length} held tip(s) to ${key} — ` +
-          `${prior.amt}+${token.amt}=${total.toString()} across ` +
-          `${prior.utxoCount + Math.max(1, token.utxoCount)} tip(s)`,
-      )
-    }
   }
   if (!token.binarySupply && !token.encoding) {
     const wallet = getActiveWallet()
@@ -446,7 +492,12 @@ export function rememberFungibleToken(token: FungibleToken): void {
 
 /** Replace one token aggregate from an authoritative spend/list projection. */
 export function replaceFungibleToken(token: FungibleToken): void {
-  setFungiblesCache(mergeLiveFungibles([token], cached))
+  const key = tokenKey(token)
+  const exact = projectHeldTips(heldTipsOf(token), token)
+  setFungiblesCache([
+    ...cached.filter((row) => tokenKey(row) !== key),
+    exact,
+  ])
 }
 
 export function forgetFungibleToken(tokenId: string): void {
@@ -461,6 +512,7 @@ export function paintFungibleAfterSpend(args: {
   sym?: string
   dec?: number
   utxoCount?: number
+  heldTips?: Bsv21Utxo[]
   binarySupply?: FungibleToken['binarySupply']
   maxSupply?: number | null
   icon?: string
@@ -478,14 +530,36 @@ export function paintFungibleAfterSpend(args: {
     return
   }
   const prior = cached.find((t) => tokenKey(t) === args.tokenId.trim().toLowerCase())
+  const outpoint = args.outpoint || prior?.outpoint || args.tokenId
+  const heldTips =
+    args.heldTips?.length
+      ? args.heldTips
+      : [{
+          outpoint,
+          tokenId: args.tokenId,
+          amt: remainingAmt,
+          op: isGenesisRow({ tokenId: args.tokenId, outpoint })
+            ? 'deploy+mint' as const
+            : 'transfer' as const,
+          sym: args.sym || prior?.sym || 'Token',
+          dec: args.dec ?? prior?.dec ?? 0,
+          satoshis: 1,
+          binarySupply: args.binarySupply ?? prior?.binarySupply,
+          encoding:
+            args.binarySupply != null
+              ? 'brc162' as const
+              : prior?.encoding,
+          seenAt: Date.now(),
+        }]
   replaceFungibleToken({
     tokenId: args.tokenId,
     sym: args.sym || prior?.sym || 'Token',
     amt: remainingAmt,
     dec: args.dec ?? prior?.dec ?? 0,
-    utxoCount: Math.max(1, Math.trunc(args.utxoCount ?? 1)),
-    outpoint: args.outpoint || prior?.outpoint || args.tokenId,
-    tipOutpoints: [args.outpoint || prior?.outpoint || args.tokenId],
+    utxoCount: heldTips.length,
+    outpoint,
+    tipOutpoints: heldTips.map((tip) => normalizedTokenTipOutpoint(tip.outpoint)),
+    heldTips,
     spendKind: 'plain',
     binarySupply: args.binarySupply ?? prior?.binarySupply,
     encoding:
@@ -1041,19 +1115,16 @@ function withCardsPaintedDuringRead(
   merged: FungibleToken[],
   readStartedAt: number,
 ): FungibleToken[] {
-  const shown = new Set(
-    merged
-      .map((token) => normalizeTokenId(token.tokenId))
-      .filter((id): id is string => Boolean(id)),
-  )
-  const late = cached.filter((token) => {
-    if ((token.seenAt ?? 0) < readStartedAt) return false
-    const id = normalizeTokenId(token.tokenId)
-    return id != null && !shown.has(id)
-  })
+  const late = cached.filter((token) => (token.seenAt ?? 0) >= readStartedAt)
   if (late.length === 0) return merged
-  console.info(`[bsv21] keeping ${late.length} card(s) painted during the read`)
-  return [...merged, ...late]
+  const tips = late.reduce(
+    (sum, token) => sum + heldTipsOf(token).length,
+    0,
+  )
+  console.info(
+    `[bsv21] reconciling ${tips} tip(s) painted during the read`,
+  )
+  return mergeLiveFungibles(merged, late)
 }
 
 class LiveReadTimeout extends Error {

@@ -61,7 +61,7 @@ vi.mock('../beefCache', () => ({
 vi.mock('../yieldToUi', () => ({ yieldToUi: async () => {} }))
 
 const TOKEN = `${'ab'.repeat(32)}_0`
-const OTHER = `${'cd'.repeat(32)}_0`
+const OTHER = `${'dd'.repeat(32)}_0`
 
 function card(): FungibleToken {
   return {
@@ -139,7 +139,12 @@ describe('listFungibles coalescing', () => {
       await import('./list')
     // An aged card absent from the basket makes the list pay for a chain
     // probe — the await during which a receive can land.
-    rememberFungibleToken({ ...card(), tokenId: OTHER, seenAt: 1 })
+    rememberFungibleToken({
+      ...card(),
+      tokenId: OTHER,
+      outpoint: OTHER,
+      seenAt: 1,
+    })
     let paint: () => void = () => {}
     chainProbe.run = async () => {
       paint()
@@ -151,6 +156,44 @@ describe('listFungibles coalescing', () => {
 
     expect(rows.map((t) => t.tokenId)).toContain(TOKEN)
     expect(getCachedFungibles().map((t) => t.tokenId)).toContain(TOKEN)
+  })
+
+  it('keeps a new tip for a token already present in the stale live read', async () => {
+    const { listFungibles, rememberFungibleToken, getCachedFungibles } =
+      await import('./list')
+    const old = card()
+    rememberFungibleToken(old)
+    rememberFungibleToken({
+      ...card(),
+      tokenId: OTHER,
+      outpoint: OTHER,
+      seenAt: 1,
+    })
+    liveRead.run = async () => [old]
+    let paint: () => void = () => {}
+    chainProbe.run = async () => {
+      paint()
+      return false
+    }
+    paint = () => {
+      rememberFungibleToken({
+        ...card(),
+        amt: '50',
+        outpoint: `${'ef'.repeat(32)}.0`,
+      })
+      expect(
+        getCachedFungibles().find((row) => row.tokenId === TOKEN),
+      ).toMatchObject({ amt: '550', utxoCount: 2 })
+    }
+
+    const rows = await listFungibles()
+    const token = rows.find((row) => row.tokenId === TOKEN)
+
+    expect(token).toMatchObject({ amt: '550', utxoCount: 2 })
+    expect(token?.tipOutpoints).toHaveLength(2)
+    expect(getCachedFungibles().find((row) => row.tokenId === TOKEN)?.amt).toBe(
+      '550',
+    )
   })
 
   it('joins a read that is still within the deadline', async () => {

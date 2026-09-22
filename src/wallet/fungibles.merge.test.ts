@@ -282,7 +282,28 @@ describe('mergeLiveFungibles', () => {
       tokenId: KING_ORIGIN,
       remainingAmt: 900719925474099299n,
       outpoint: RECEIVE_A,
-      utxoCount: 2,
+      heldTips: [
+        {
+          outpoint: RECEIVE_A,
+          tokenId: KING_ORIGIN,
+          amt: '900719925474099298',
+          op: 'transfer',
+          sym: 'KING',
+          dec: 0,
+          satoshis: 1,
+          binarySupply: 'locked',
+        },
+        {
+          outpoint: `${'ff'.repeat(32)}_0`,
+          tokenId: KING_ORIGIN,
+          amt: '1',
+          op: 'transfer',
+          sym: 'KING',
+          dec: 0,
+          satoshis: 1,
+          binarySupply: 'locked',
+        },
+      ],
     })
 
     expect(getCachedFungibles()[0]).toMatchObject({

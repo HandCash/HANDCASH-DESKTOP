@@ -799,6 +799,24 @@ export async function burnBsv21(args: {
       const remainingAmount =
         tips.reduce((sum, tip) => sum + BigInt(tip.amt), 0n) -
         plan.burnAmount
+      const heldTips = [
+        ...untouched,
+        ...(plan.changeAmount > 0n
+          ? [{
+              outpoint: `${result.txid}_1`,
+              tokenId,
+              amt: plan.changeAmount.toString(),
+              op: 'transfer' as const,
+              sym: token.sym,
+              icon: token.icon,
+              dec: token.dec,
+              satoshis: 1,
+              binarySupply: 'locked' as const,
+              encoding: 'brc162' as const,
+              seenAt: Date.now(),
+            }]
+          : []),
+      ]
       paintFungibleAfterSpend({
         tokenId,
         remainingAmt: remainingAmount,
@@ -809,7 +827,7 @@ export async function burnBsv21(args: {
         sym: token.sym,
         dec: token.dec,
         icon: token.icon,
-        utxoCount: untouched.length + (plan.changeAmount > 0n ? 1 : 0),
+        heldTips,
       })
       upsertAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
