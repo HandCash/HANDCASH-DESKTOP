@@ -25,7 +25,10 @@ import {
   type FungibleToken,
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
-import { chooseFungibleChainFate } from './fungibleChainFate'
+import {
+  chooseFungibleChainFate,
+  FUNGIBLE_SETTLE_GRACE_MS,
+} from './fungibleChainFate'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
 import { accountLocalKey } from '../accountLocalKeys'
 import {
@@ -344,9 +347,15 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   // especially genesis deploy+mint tips that would otherwise vanish until the
   // next listOutputs. When live is non-empty, drop genesis / legacy ghosts
   // absent from it; token tips may stay on partial flakes.
+  const now = Date.now()
   for (const [k, t] of [...byId.entries()]) {
     if (liveIds.has(k)) continue
     if (live.length === 0) continue
+    // A card the basket has not projected *yet* is settling, not a ghost.
+    // Retirement belongs to `chooseFungibleChainFate`, which also weighs the
+    // chain; deleting a freshly minted genesis row here retired it seconds
+    // after paint, before any basket read could ever have included it.
+    if (now - (t.seenAt ?? 0) < FUNGIBLE_SETTLE_GRACE_MS) continue
     if (isGenesisRow(t)) {
       byId.delete(k)
       continue

@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.256] - 2026-09-22
+
+### Fixed
+
+- **A freshly minted token no longer flashes onto Tokens and vanishes.** The
+  card painted from the mint's own `createAction` was deleted by the first
+  basket read that returned any other token — a read that could not have
+  included a mint the toolbox had not projected yet. Retirement now belongs to
+  `chooseFungibleChainFate` alone: a card keeps its settle grace, and only an
+  aged card the chain has never seen is dropped.
+- **A legacy JSON `deploy+mint` is read from its own inscription.** The
+  one-sat probe recognised the `application/bsv-20` mime but returned no token
+  id or amount, so our own JSON mints fell past token import into the
+  unrecognized one-sat pile and never reached basket `bsv21`.
+- **A proven BSV-21 tip is never rescued into the collectable route.** A stale
+  one-sat mark could outrank the inscription itself and file a fungible as an
+  NFT, which hides it from Tokens and corrupts that token's balance. The
+  decoded locking script now wins, and the rescue log names the outpoints.
+
 ## [1.3.255] - 2026-09-22
 
 ### Fixed

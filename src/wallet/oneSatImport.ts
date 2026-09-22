@@ -1048,6 +1048,16 @@ function isRetiredFungibleTickerIcon(tx: Transaction, vout: number): boolean {
   return false
 }
 
+/** Inscription body as JSON, for envelopes that carry a bsv-20 payload. */
+function jsonBody(body: Uint8Array | undefined): unknown {
+  if (!body || body.length === 0) return null
+  try {
+    return JSON.parse(new TextDecoder().decode(body))
+  } catch {
+    return null
+  }
+}
+
 async function probeOrdinalTransfer(
   txid: string,
   vout: number,
@@ -1057,6 +1067,8 @@ async function probeOrdinalTransfer(
   origin?: string
   tokenId?: string
   amt?: string
+  /** Wire format proven by the script we just decoded. */
+  encoding?: 'brc162' | 'legacy-json'
 }> {
   const hex = await fetchRawTxHex(txid, chain)
   if (!hex) return { kind: 'unknown' }
@@ -1080,12 +1092,31 @@ async function probeOrdinalTransfer(
       origin: tokenId,
       tokenId,
       amt: binary.amount.toString(),
+      encoding: 'brc162',
     }
   }
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
     // BSV-21 enters its token basket; removed protocols are quarantined.
-    if (isBsv21Mime(envelope.contentType)) return { kind: 'bsv21' }
+    if (isBsv21Mime(envelope.contentType)) {
+      // Name it from the inscription we already hold. Returning a bare verdict
+      // left the caller with no id or amount, so our own legacy JSON mints were
+      // filed as unrecognized one-sats and never reached basket `bsv21`.
+      const payload = parseBsv21Json(jsonBody(envelope.body))
+      const tokenId = payload
+        ? tokenIdForPayload(payload, txidVoutUnderscore(txid, vout))
+        : null
+      if (payload?.amt && tokenId) {
+        return {
+          kind: 'bsv21',
+          origin: tokenId,
+          tokenId,
+          amt: payload.amt,
+          encoding: 'legacy-json',
+        }
+      }
+      return { kind: 'bsv21' }
+    }
     if (
       isRetiredFungibleMime(envelope.contentType) ||
       looksLikeRetiredFungibleTip({ lockingScriptHex: scriptHex })
@@ -1296,6 +1327,7 @@ export async function classifyLegacyUtxos(
                 op: tokenId === txidVoutUnderscore(u.txid, u.vout)
                   ? 'deploy+mint'
                   : 'transfer',
+                ...(probe.encoding ? { encoding: probe.encoding } : {}),
               })
               claimed.add(liveKey)
               continue

@@ -449,6 +449,61 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  /**
+   * Our own legacy JSON mints carry the holding in the inscription. Reading it
+   * is what keeps a fresh `deploy+mint` out of the unrecognized one-sat pile
+   * while no indexer has heard of the transaction yet.
+   */
+  it('names a legacy JSON deploy+mint from its own inscription', async () => {
+    const payload = JSON.stringify({
+      p: 'bsv-20',
+      op: 'deploy+mint',
+      sym: 'COPE',
+      amt: '4444444',
+      dec: 0,
+    })
+    const hex = (text: string): string =>
+      Array.from(new TextEncoder().encode(text))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    const bodyHex = hex(payload)
+    const envelope =
+      '0063036f726451' +
+      '12' +
+      hex('application/bsv-20') +
+      '00' +
+      '4c' +
+      (bodyHex.length / 2).toString(16).padStart(2, '0') +
+      bodyHex +
+      '68'
+    const funding = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 10_000 }])
+    const mint = buildTx(
+      [{ scriptHex: envelope + P2PKH_HEX, satoshis: 1 }],
+      [{ txid: funding.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(funding, mint)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${mint.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.heldOneSats).toEqual([])
+    expect(result.oneSats).toEqual([])
+    expect(result.bsv21).toEqual([
+      expect.objectContaining({
+        outpoint: tipOutpoint,
+        tokenId: `${mint.id('hex')}_0`,
+        amt: '4444444',
+        op: 'deploy+mint',
+        encoding: 'legacy-json',
+      }),
+    ])
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
   it('never routes a latched 1sat collectable to bsv21 even if the indexer answers', async () => {
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)

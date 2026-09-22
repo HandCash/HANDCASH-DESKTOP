@@ -429,7 +429,8 @@ export async function ingestLegacyAddressUtxos(
   bsv21 = latched.tokenTips
   if (latched.rescued.length > 0) {
     console.info(
-      `[chain-ingest] kept ${latched.rescued.length} 1sat collectable(s) out of BSV-21 / NFT`,
+      `[chain-ingest] kept ${latched.rescued.length} 1sat collectable(s) out of BSV-21 / NFT: ` +
+        latched.rescued.map((op) => op.slice(0, 14)).join(', '),
     )
   }
   if (basketListed?.keys) {

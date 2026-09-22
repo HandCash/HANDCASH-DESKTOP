@@ -94,6 +94,22 @@ describe('mergeLiveFungibles', () => {
     expect(merged.some((t) => t.tokenId === KING_ORIGIN)).toBe(true)
   })
 
+  /**
+   * A mint painted from its own createAction cannot be in the basket yet, and
+   * another token being live said nothing about it. Retiring it on that read
+   * made a fresh mint flash onto the Tokens list and vanish.
+   */
+  it('keeps a just-painted genesis tip the basket has not projected yet', async () => {
+    const { mergeLiveFungibles } = await import('./token/list')
+    const prior = [
+      { ...row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN }), seenAt: Date.now() },
+    ]
+    const live = [row({ tokenId: KING_ORIGIN, amt: '1', outpoint: RECEIVE_A })]
+
+    const merged = mergeLiveFungibles(live, prior)
+    expect(merged.some((t) => t.tokenId === ORIGIN)).toBe(true)
+  })
+
   it('uses live aggregated amt — leftover 68862 + live 69000 is 69000 not 137862', async () => {
     const { mergeLiveFungibles } = await import('./token/list')
     const prior = [

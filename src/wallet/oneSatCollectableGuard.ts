@@ -67,7 +67,15 @@ export function applyCollectableRemittance<T extends CollectableRemittance>(
   }
 }
 
-export type TokenRoutedTip = { outpoint: string }
+export type TokenRoutedTip = {
+  outpoint: string
+  /**
+   * Wire format proven by decoding this tip's own locking script. Present only
+   * when the script itself is a BSV-21 holding (BRC-162 lock or bsv-20
+   * inscription) — never inferred from an indexer or a cache row.
+   */
+  encoding?: 'brc162' | 'legacy-json'
+}
 
 /**
  * After classify: pull known collectables out of the BSV-21 / NFT bucket.
@@ -95,6 +103,14 @@ export function keepCollectablesOutOfTokenRoute<
   for (const tip of tokenTips) {
     const op = wireCollectableOutpoint(tip.outpoint)
     if (!op || !known.has(op)) {
+      kept.push(tip)
+      continue
+    }
+    // A decoded BSV-21 lock outranks a collectable mark. The mark can be stale
+    // (an earlier pass held the same outpoint as an unnamed one-sat); the
+    // script cannot. Filing a fungible as an NFT hides it from Tokens and
+    // corrupts the balance it belongs to.
+    if (tip.encoding) {
       kept.push(tip)
       continue
     }

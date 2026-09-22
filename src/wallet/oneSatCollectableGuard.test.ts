@@ -52,6 +52,19 @@ describe('oneSatCollectableGuard', () => {
     expect(result.oneSats[0]!.name).toBe('Pixel Fox')
   })
 
+  /**
+   * A legacy JSON mint is held as an unnamed one-sat on the pass before it can
+   * be read, and that mark must not outrank the inscription itself.
+   */
+  it('never rescues a tip whose own script proves it is BSV-21', () => {
+    const tip = { outpoint: OP, tokenId: ORIGIN, amt: '1', encoding: 'legacy-json' as const }
+    const result = keepCollectablesOutOfTokenRoute([], [tip], [OP])
+
+    expect(result.tokenTips).toEqual([tip])
+    expect(result.rescued).toEqual([])
+    expect(result.oneSats).toEqual([])
+  })
+
   it('leaves unknown token tips alone', () => {
     const tip = { outpoint: OTHER, tokenId: 'tok', amt: '10' }
     const result = keepCollectablesOutOfTokenRoute(
