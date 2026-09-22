@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.275] - 2026-09-22
+
+### Changed
+
+- Reverted the wallet's own collectables gem to the `diamond-stone` it has
+  always used. 1.3.272 changed two separate icon sets; only the Aeon engine's
+  is the market's, and the app's was never meant to move. The market keeps the
+  corrected `diamond` and `search_off`.
+
 ## [1.3.274] - 2026-09-22
 
 ### Fixed

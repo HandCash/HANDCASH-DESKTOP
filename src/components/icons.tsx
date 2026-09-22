@@ -253,17 +253,11 @@ export function ActivityIcon(props: IconProps) {
   )
 }
 
-/**
- * Material Icons — `diamond`
- *
- * Five filled facets. The previous path spliced MDI's *stroke* facet lines onto
- * a filled outline, so each open subpath closed itself into a blob over a solid
- * diamond.
- */
+/** Material Design Icons — `diamond-stone` */
 export function CollectablesIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M12.16 3 11.84 3 9.21 8.25 14.79 8.25ZM16.46 8.25 21.62 8.25 19 3 13.84 3ZM21.38 9.75 12.75 9.75 12.75 20.1ZM11.25 20.1 11.25 9.75 2.62 9.75ZM7.54 8.25 10.16 3 5 3 2.38 8.25Z" />
+      <path d="M16 9h3l-5 7M10 9h4l-2 8M5 9h3l2 7M15 4h2l2 3h-3M11 4h2l1 3h-4M7 4h2L8 7H5M6 2 2 8l10 14L22 8l-4-6H6z" />
     </Icon>
   )
 }
