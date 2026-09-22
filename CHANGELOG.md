@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.253] - 2026-09-22
+
+### Fixed
+
+- **Raw-only inbound token envelopes now retire.** A stale BEEF URL is no
+  longer treated as delivered AtomicBEEF, and an explorer raw-transaction hit
+  no longer keeps an item/token card alive when the sender failed to deliver
+  the spend proof required for internalization. Old envelopes retire as
+  unavailable and are ACKed instead of re-running settle work during unlock.
+- **Failed inbound settlement is observable.** Logs now include the exact
+  item/token settle refusal, while a newly delivered inline AtomicBEEF revives
+  a retired transfer and clears its retry backoff.
+
 ## [1.3.252] - 2026-09-22
 
 ### Fixed
