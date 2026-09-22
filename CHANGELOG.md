@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.3.269] - 2026-09-22
+
+### Added
+
+- The in-app browser keeps every launched app open. Each origin is its own live
+  tab: leaving Apps, opening a wallet flow, or answering a request parks the
+  webview at full size instead of tearing it down, so app state survives. The
+  browser toolbar carries the open-tab count and opens a card switcher for
+  changing tabs or closing one; closing the foreground tab falls through to the
+  next open app rather than ending the session.
+- Approval flows have their own resolution sound, distinct from connect.
+
+### Changed
+
+- Desktop wallet requests raised by an in-app app now float above the browser
+  on a translucent scrim instead of shrinking it into a side column. The
+  requesting app is brought to the foreground first, so the prompt is always
+  over the app that asked.
+- Activity filters open as an anchored overlay hanging from the toolbar button,
+  so the label bar and the rows beneath it no longer shift when filters open.
+  End-aligned placement is now supported by the Aeon anchor primitive.
+- Root-page search fields (Collectables, Friends, Apps, Chat) share one field
+  shape, rhythm, and focus treatment.
+- Recipient suggestion lists in the send flows use the available vertical space
+  instead of capping at a short scroll region.
+
+### Fixed
+
+- Send and Receive in the balance hero, and asset links in Activity, now
+  navigate from any section. Cross-section navigation read a stale snapshot
+  inside a transition, so the first click could be dropped.
+- Approving a permission no longer redirects to the app's homepage in the
+  system browser.
+- Launching a connected app asks again where to open it (browser, in-app, or
+  cancel) instead of going straight to the system browser.
+- Identity no longer squeezes its QR into a strip or breaks the copy action
+  across lines on compact and mid-width windows: the QR column holds its size,
+  the hero stacks below the compact breakpoint, and the scroll body clears the
+  tab dock.
+
 ## [1.3.268] - 2026-09-22
 
 ### Fixed

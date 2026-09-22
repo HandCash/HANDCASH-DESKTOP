@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  closeEmbeddedAppBrowser,
+  closeAllEmbeddedAppBrowsers,
   getNavState,
   openEmbeddedAppBrowser,
   openBurnCollectables,
@@ -9,7 +9,7 @@ import {
 } from './navStore'
 
 afterEach(() => {
-  closeEmbeddedAppBrowser()
+  closeAllEmbeddedAppBrowsers()
   setNavSection('activity')
 })
 

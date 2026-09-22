@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
 import { closeEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { BackIcon, CloseIcon, LaunchIcon, RefreshIcon } from './icons'
+import { BackIcon, CloseIcon, LaunchIcon, RefreshIcon, ViewGridIcon } from './icons'
 
 type Props = {
   name: string
   origin: string
   url: string
+  tabCount: number
+  onShowTabs: () => void
 }
 
 type WebviewElement = HTMLElement & {
@@ -19,7 +21,7 @@ type WebviewElement = HTMLElement & {
   reload: () => void
 }
 
-export function AppBrowserPanel({ name, origin, url }: Props) {
+export function AppBrowserPanel({ name, origin, url, tabCount, onShowTabs }: Props) {
   const target = decideAppBrowserTarget(url)
   const safeUrl = target.kind === 'open' ? target.url : null
   const hostRef = useRef<HTMLDivElement>(null)
@@ -77,7 +79,11 @@ export function AppBrowserPanel({ name, origin, url }: Props) {
     return (
       <div className="nav-child-panel app-browser-panel app-browser-unavailable">
         <strong>App URL unavailable</strong>
-        <button type="button" className="btn btn-ghost" onClick={closeEmbeddedAppBrowser}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => closeEmbeddedAppBrowser(origin)}
+        >
           Close
         </button>
       </div>
@@ -125,7 +131,24 @@ export function AppBrowserPanel({ name, origin, url }: Props) {
           <button type="button" aria-label="Open in system browser" onClick={openExternal}>
             <LaunchIcon size={16} />
           </button>
-          <button type="button" aria-label="Close app browser" onClick={closeEmbeddedAppBrowser}>
+          <button
+            type="button"
+            className="app-browser-tabs-button"
+            aria-label={`Show ${tabCount} open app ${tabCount === 1 ? 'tab' : 'tabs'}`}
+            title="Open app tabs"
+            onClick={() => {
+              playWalletSound('soft')
+              onShowTabs()
+            }}
+          >
+            <ViewGridIcon size={16} />
+            <span>{tabCount}</span>
+          </button>
+          <button
+            type="button"
+            aria-label={`Close ${name} tab`}
+            onClick={() => closeEmbeddedAppBrowser(origin)}
+          >
             <CloseIcon size={16} />
           </button>
         </div>

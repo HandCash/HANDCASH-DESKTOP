@@ -11,8 +11,7 @@ import { getSideScanOpen, subscribeSideScan } from '../wallet/navStore'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
-import { appDisplayName, appHomepage } from '../wallet/appIdentity'
-import { launchConnectedApp } from '../wallet/openAppInWalletBrowser'
+import { appDisplayName } from '../wallet/appIdentity'
 import { setAutoPaySettings } from '../wallet/autoPay'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { ScanPanel } from './ScanPanel'
@@ -115,13 +114,11 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
         clearPaymentProgress()
         setLastApproved(null)
       }
-      playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
+        playWalletSound('connect')
         toastSuccess('Connected', `${name} can use your wallet`)
-        const origin = pendingPrompt.origin
-        const home = appHomepage(origin)
-        window.setTimeout(() => launchConnectedApp(origin, home), 0)
       } else {
+        playWalletSound('approve')
         toastSuccess('Approved', pendingPrompt.title || name)
       }
       return true

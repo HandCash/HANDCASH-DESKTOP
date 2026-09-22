@@ -1452,6 +1452,7 @@ html[data-aeon-mode='light'] .wallet-balance .balance-primary {
 }
 
 .dashboard {
+  position: relative;
   max-width: none;
   width: min(100%, 1280px);
   margin: 0 auto;
@@ -2746,6 +2747,7 @@ button.wallet-detail-value.is-copied {
 }
 
 .wallet-nav-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -4240,9 +4242,11 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .identity-qr {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  min-width: 124px;
 }
 
 .identity-qr-frame {
@@ -4271,8 +4275,11 @@ button.identity-qr-copy:focus-visible {
 
 .identity-qr-frame img {
   display: block;
+  max-width: none;
   width: 112px;
   height: 112px;
+  aspect-ratio: 1;
+  object-fit: contain;
   border-radius: 4px;
 }
 
@@ -4287,10 +4294,12 @@ button.identity-qr-copy:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   min-height: 30px;
   padding: 4px 8px;
   font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .identity-qr-hint {
@@ -4700,6 +4709,34 @@ button.identity-qr-copy:focus-visible {
   color: var(--hc-accent);
   border-color: color-mix(in srgb, var(--hc-accent) 55%, transparent);
   background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
+}
+
+.activity-filter-popover {
+  display: inline-flex;
+}
+
+.activity-filter-popover[data-aeon-state='open'] .activity-filter-toggle {
+  z-index: 1;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.activity-filter-popover-content {
+  width: min(420px, calc(100vw - 24px));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
+  border-radius: var(--radius) 0 var(--radius) var(--radius);
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 16px 44px rgb(0 0 0 / 38%);
+}
+
+.activity-filter-popover-content .payment-filters {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .activity-filter-dot {
@@ -8618,7 +8655,7 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
  */
 .send-friend-suggest.friend-suggest-list {
   z-index: 6;
-  max-height: min(160px, 28vh);
+  max-height: min(320px, 48vh);
 }
 
 .send-layout-confirm .send-confirm-to,
@@ -13074,19 +13111,32 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-scope='messages
   display: none;
 }
 
-/*
- * In-app browser + wallet request: keep the browser fullscreen stage, but bring
- * back the same right-column permission real estate over/beside it.
- */
+/* In-app browser requests float above the unchanged full-size webview. */
 .dashboard.dashboard--chat-fullscreen.dashboard--browser-permission {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .dashboard.dashboard--chat-fullscreen.dashboard--browser-permission .dashboard-side {
-  display: flex;
-  flex-direction: column;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
   min-height: 0;
-  z-index: 3;
+  padding: clamp(14px, 4vw, 42px);
+  z-index: 20;
+  background: color-mix(in srgb, var(--hc-bg, #050806) 54%, transparent);
+  backdrop-filter: blur(9px) saturate(0.82);
+  -webkit-backdrop-filter: blur(9px) saturate(0.82);
+}
+
+.dashboard.dashboard--chat-fullscreen.dashboard--browser-permission
+  .dashboard-side
+  > .permission-side-panel {
+  width: min(100%, 560px);
+  height: min(100%, 720px);
+  max-height: 100%;
+  background: color-mix(in srgb, var(--hc-bg-elevated, #0c1210) 88%, transparent);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
 }
 
 html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen .what-is-bsv {
@@ -14459,18 +14509,18 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   scrollbar-gutter: auto;
 }
 
-/* Parked session: keep the webview mounted off-flow so section changes and
-   request overlays do not destroy the in-app browser. */
+/* Parked tabs stay mounted at full stage dimensions so responsive apps keep
+   their viewport and state; visibility prevents paint and pointer capture. */
 .nav-child-stage--browser-parked {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
   border: 0;
+  visibility: hidden;
   pointer-events: none;
   z-index: 0;
 }
@@ -14513,6 +14563,21 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 .app-browser-navigation button:disabled {
   opacity: 0.32;
   cursor: default;
+}
+
+.app-browser-navigation .app-browser-tabs-button {
+  width: auto;
+  min-width: 36px;
+  padding-inline: 7px;
+  gap: 4px;
+  grid-auto-flow: column;
+}
+
+.app-browser-tabs-button span {
+  min-width: 1.2em;
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1;
 }
 
 .app-browser-forward svg {
@@ -14573,6 +14638,152 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   place-content: center;
   justify-items: center;
   gap: 12px;
+}
+
+.app-browser-tab-switcher {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(14px, 3vw, 30px);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--hc-bg, #050806) 70%, transparent);
+  backdrop-filter: blur(16px) saturate(0.78);
+  -webkit-backdrop-filter: blur(16px) saturate(0.78);
+}
+
+.app-browser-tab-switcher-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  margin: 0 auto 18px;
+  width: min(100%, 980px);
+}
+
+.app-browser-tab-switcher-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.app-browser-tab-switcher-head span {
+  color: var(--hc-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-browser-tab-switcher-head strong {
+  font-size: 1.15rem;
+}
+
+.app-browser-tab-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  align-content: start;
+  gap: clamp(12px, 2vw, 20px);
+  width: min(100%, 980px);
+  margin: 0 auto;
+  padding: 4px 4px 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.app-browser-tab-card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--hc-border);
+  border-radius: calc(var(--hc-radius) + 8px);
+  background: color-mix(in srgb, var(--hc-bg-elevated) 92%, transparent);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 28%);
+  transform: scale(0.98);
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.app-browser-tab-card[data-active] {
+  border-color: color-mix(in srgb, var(--hc-accent) 62%, var(--hc-border));
+  transform: scale(1);
+}
+
+.app-browser-tab-card:hover {
+  transform: translateY(-2px) scale(1);
+}
+
+.app-browser-tab-card-main {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-browser-tab-preview {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  min-height: clamp(150px, 24vh, 250px);
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--hc-accent) 22%, transparent), transparent 54%),
+    var(--hc-sunken);
+}
+
+.app-browser-tab-preview > span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-browser-tab-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 12px 46px 13px 14px;
+}
+
+.app-browser-tab-copy strong,
+.app-browser-tab-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-browser-tab-copy small {
+  color: var(--hc-muted);
+}
+
+.app-browser-tab-close {
+  position: absolute;
+  right: 9px;
+  bottom: 10px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--hc-hover);
+  color: var(--hc-text);
+  cursor: pointer;
+}
+
+.app-browser-tab-close:hover {
+  color: var(--hc-danger);
 }
 
 @keyframes app-browser-loading {
@@ -14767,5 +14978,36 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 
 .collectable-details-media-actions {
   margin-top: 6px;
+}
+
+/* Root-page search contract: one field shape, rhythm, and focus treatment. */
+.nav-section-scroll-body > .root-search {
+  margin: 2px 0 14px;
+  padding: 0 2px;
+}
+
+.root-search input,
+.chat-shell[data-aeon-scope='messages'] .root-search input,
+.chat-shell--fullscreen .root-search input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--secondary));
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 0.82rem;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.root-search input:focus,
+.root-search input:focus-visible,
+.chat-shell[data-aeon-scope='messages'] .root-search input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 45%, transparent);
+  outline-offset: 0;
+  border-color: color-mix(in srgb, var(--hc-accent) 60%, hsl(var(--border)));
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, type RefObject } from 'react'
 
-export type AnchorPlacement = 'bottom-start' | 'top-start'
+export type AnchorPlacement = 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
 
 export interface AnchorPositionOptions {
   /** Match floating width to anchor (select listboxes). */
@@ -27,7 +27,9 @@ export function useAnchorPosition(
 
       const rect = anchor.getBoundingClientRect()
       floating.style.position = 'fixed'
-      floating.style.left = `${rect.left}px`
+      const floatingWidth = floating.offsetWidth || floating.getBoundingClientRect().width
+      const left = placement.endsWith('end') ? rect.right - floatingWidth : rect.left
+      floating.style.left = `${Math.max(4, left)}px`
       floating.style.bottom = ''
       floating.style.right = ''
       floating.style.zIndex = '50'
@@ -40,7 +42,7 @@ export function useAnchorPosition(
         floating.style.minWidth = ''
       }
 
-      if (placement === 'top-start') {
+      if (placement.startsWith('top')) {
         const height = floating.offsetHeight || floating.getBoundingClientRect().height
         floating.style.top = `${rect.top - height - 4}px`
       } else {

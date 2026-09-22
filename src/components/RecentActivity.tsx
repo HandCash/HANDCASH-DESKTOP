@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { PaymentFiltersPanel } from "./PaymentFiltersPanel";
+import { TopBarPopover } from "./TopBarPopover";
 import {
   ActivityIcon,
   AppsIcon,
@@ -895,7 +896,6 @@ export function ActivityFeed({
   const [filters, setFilters] = useState<PaymentFilters>(
     DEFAULT_PAYMENT_FILTERS
   );
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [verification, setVerification] = useState(() =>
     getVerificationProgress()
   );
@@ -1239,53 +1239,41 @@ export function ActivityFeed({
           </button>
         ) : null}
         {showFilters ? (
-          <button
-            type="button"
-            className="activity-filter-toggle"
-            aria-label={filtersOpen ? "Hide filters" : "Show filters"}
-            aria-expanded={filtersOpen}
-            aria-controls="activity-filters"
+          <TopBarPopover
+            ariaLabel="Activity filters"
             title="Filters"
-            data-active={filtersOpen || filtersActive ? "" : undefined}
-            onClick={() => {
-              playWalletSound("soft");
-              setFiltersOpen((open) => !open);
-            }}
+            className="activity-filter-popover"
+            triggerClassName="activity-filter-toggle"
+            contentClassName="activity-filter-popover-content"
+            active={filtersActive}
+            onTrigger={() => playWalletSound("soft")}
+            trigger={
+              <>
+                <FilterIcon size={16} />
+                {filtersActive ? (
+                  <span className="activity-filter-dot" aria-hidden />
+                ) : null}
+              </>
+            }
           >
-            <FilterIcon size={16} />
-            {filtersActive ? (
-              <span className="activity-filter-dot" aria-hidden />
-            ) : null}
-          </button>
+            <PaymentFiltersPanel
+              id="activity-filters"
+              value={filters}
+              origins={origins}
+              onChange={setFilters}
+            />
+          </TopBarPopover>
         ) : null}
       </div>
     </div>
   );
 
-  const filtersPanel =
-    showFilters && filtersOpen ? (
-      <PaymentFiltersPanel
-        id="activity-filters"
-        value={filters}
-        origins={origins}
-        onChange={setFilters}
-      />
-    ) : null;
-
   if (embedded) {
     return (
       <div
-        className={
-          showFilters
-            ? `history-embedded history-with-filters${
-                filtersOpen ? " filters-open" : ""
-              }`
-            : "history-embedded"
-        }
+        className={showFilters ? "history-embedded history-with-filters" : "history-embedded"}
         data-aeon-scope="activity-feed"
-        data-aeon-state={filtersOpen ? "filters-open" : "filters-closed"}
       >
-        {filtersPanel}
         {head}
         {body}
       </div>
@@ -1294,7 +1282,6 @@ export function ActivityFeed({
 
   return (
     <section className="history-panel panel" data-aeon-scope="recent-activity">
-      {filtersPanel}
       {head}
       {body}
     </section>

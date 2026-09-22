@@ -5,6 +5,7 @@ export type WalletSound =
   | 'error'
   | 'copy'
   | 'connect'
+  | 'approve'
   | 'deny'
   | 'unlock'
   | 'receive'
@@ -146,6 +147,12 @@ const PATTERNS: Record<WalletSound, Tone[]> = {
   connect: [
     { freq: 660, start: 0, duration: 0.08, gain: 0.06 },
     { freq: 990, start: 0.08, duration: 0.14, gain: 0.055 },
+  ],
+  // Crisp three-note approval resolution.
+  approve: [
+    { freq: 523.25, start: 0, duration: 0.08, gain: 0.055, type: 'triangle' },
+    { freq: 783.99, start: 0.07, duration: 0.11, gain: 0.06 },
+    { freq: 1046.5, start: 0.16, duration: 0.2, gain: 0.05 },
   ],
   // Soft reject
   deny: [{ freq: 360, start: 0, duration: 0.16, gain: 0.05, type: 'triangle' }],

@@ -147,7 +147,7 @@ export function FriendsPanel({ chain: _chain }: Props) {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          <div className="friends-search" role="search">
+          <div className="root-search friends-search" role="search">
             <label className="sr-only" htmlFor="friends-search-input">
               Search friends
             </label>

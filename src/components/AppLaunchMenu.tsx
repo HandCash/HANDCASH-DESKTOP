@@ -1,5 +1,5 @@
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
-import { launchConnectedApp } from '../wallet/openAppInWalletBrowser'
+import { openAppLaunch } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { LaunchIcon } from './icons'
 
@@ -18,11 +18,11 @@ export function AppLaunchMenu({ url, origin, name }: Props) {
     <button
       type="button"
       className="btn btn-primary btn-icon connected-app-icon-action"
-      aria-label={`Open ${name} in browser`}
-      title={`Open ${name} in browser`}
+      aria-label={`Launch ${name}`}
+      title={`Launch ${name}`}
       onClick={() => {
         playWalletSound('soft')
-        launchConnectedApp(origin, target.url)
+        openAppLaunch(origin, target.url)
       }}
     >
       <LaunchIcon size={17} />

@@ -252,7 +252,7 @@ export function ConnectedAppsPanel({ apps }: Props) {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          <div className="friends-search" role="search">
+          <div className="root-search friends-search" role="search">
             <label className="sr-only" htmlFor="apps-search-input">
               Search connected apps
             </label>

@@ -509,7 +509,7 @@ export function App() {
                 if (autoPay) {
                   setAutoPaySettings(pendingAction.origin, autoPay)
                 }
-                playWalletSound('connect')
+                playWalletSound('approve')
                 toastSuccess(
                   'Approved',
                   pendingAction.title || appDisplayName(pendingAction.origin),

@@ -949,7 +949,7 @@ export function InventoryPanel() {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          <div className="friends-search" role="search">
+          <div className="root-search friends-search" role="search">
             <label className="sr-only" htmlFor="collectables-search-input">
               Search collectables
             </label>

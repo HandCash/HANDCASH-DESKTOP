@@ -1229,7 +1229,7 @@ export function MessagesPanel({
           </button>
         </div>
         )}
-        <div className="chat-search">
+        <div className="root-search chat-search" role="search">
           <input
             type="search"
             placeholder="Search conversations"

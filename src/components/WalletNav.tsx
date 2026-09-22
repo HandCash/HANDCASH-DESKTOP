@@ -16,8 +16,7 @@ import {
   type ConnectedApp,
   type PendingPrompt,
 } from '../wallet/permissions'
-import { appDisplayName, appHomepage, getPermissionScope } from '../wallet/appIdentity'
-import { launchConnectedApp } from '../wallet/openAppInWalletBrowser'
+import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
 import { activityNavLabel, getActivityById } from '../wallet/appActivity'
 import { getFriendById } from '../wallet/friends'
 import { useCompactShell } from '../wallet/isCompactShell'
@@ -27,6 +26,7 @@ import {
   closeEmbeddedAppBrowser,
   focusEmbeddedAppBrowser,
   getEmbeddedAppBrowser,
+  getEmbeddedAppBrowserTabs,
   getNavState,
   getSettingBackStack,
   openAppDetails,
@@ -36,7 +36,7 @@ import {
   openNavChild,
   popSettingTo,
   setNavSection,
-  subscribeEmbeddedAppBrowser,
+  subscribeEmbeddedAppBrowserTabs,
   subscribeNav,
   type EmbeddedAppBrowser,
   type NavSection,
@@ -60,6 +60,7 @@ import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { AppLaunchPanel } from './AppLaunchPanel'
 import { AppBrowserPanel } from './AppBrowserPanel'
+import { AppBrowserTabSwitcher } from './AppBrowserTabSwitcher'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
@@ -171,9 +172,19 @@ export const WalletNav = memo(function WalletNav({
 }: Props) {
   const compact = useCompactShell()
   const [nav, setNav] = useState<NavState>(() => getNavState())
-  const [embeddedBrowser, setEmbeddedBrowser] = useState<EmbeddedAppBrowser | null>(() =>
-    getEmbeddedAppBrowser(),
-  )
+  const navRef = useRef(nav)
+  const [browserState, setBrowserState] = useState<{
+    tabs: readonly EmbeddedAppBrowser[]
+    activeOrigin: string | null
+  }>(() => ({
+    tabs: getEmbeddedAppBrowserTabs(),
+    activeOrigin: getEmbeddedAppBrowser()?.origin ?? null,
+  }))
+  const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false)
+  const embeddedBrowser =
+    browserState.tabs.find((tab) => tab.origin === browserState.activeOrigin) ??
+    browserState.tabs[0] ??
+    null
   const [optimisticSection, setOptimisticSection] = useState<NavSection | null>(null)
   const clickSoundArmed = useRef(false)
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
@@ -185,10 +196,10 @@ export const WalletNav = memo(function WalletNav({
   } | null>(null)
   const mobileInlinePermission = compact && pendingPrompt != null
   const contextualDock = mobileInlinePermission || registeredDock != null
-  const browserUnderPermission = mobileInlinePermission && embeddedBrowser != null
+  const browserUnderPermission = pendingPrompt != null && embeddedBrowser != null
   const browserForeground = nav.child?.type === 'app-browser'
   const browserVisible = browserForeground || browserUnderPermission
-  const mountEmbeddedBrowser = embeddedBrowser != null
+  const mountEmbeddedBrowser = browserState.tabs.length > 0
 
   const registerDock = useCallback(
     (owner: symbol, actions: WalletDockActions | null) => {
@@ -212,25 +223,42 @@ export const WalletNav = memo(function WalletNav({
   useEffect(
     () =>
       subscribeNav((next) => {
-        setNav((prev) => {
-          const panelOnly =
-            next.section === prev.section &&
-            childPanelKey(next) !== childPanelKey(prev)
-          if (panelOnly) return next
-          startTransition(() => setNav(next))
-          return prev
-        })
+        const prev = navRef.current
+        navRef.current = next
+        const panelOnly =
+          next.section === prev.section &&
+          childPanelKey(next) !== childPanelKey(prev)
+        if (panelOnly) {
+          setNav(next)
+          return
+        }
+        startTransition(() => setNav(next))
       }),
     [],
   )
-  useEffect(() => subscribeEmbeddedAppBrowser(setEmbeddedBrowser), [])
+  useEffect(
+    () =>
+      subscribeEmbeddedAppBrowserTabs((tabs, activeOrigin) => {
+        setBrowserState({ tabs, activeOrigin })
+        if (tabs.length === 0) setTabSwitcherOpen(false)
+      }),
+    [],
+  )
   useEffect(() => {
     setOptimisticSection(null)
   }, [nav.section, nav.child?.type])
   useEffect(() => {
-    if (!compact) return
     return subscribePermissionRequests(setPendingPrompt)
-  }, [compact])
+  }, [])
+
+  useEffect(() => {
+    if (!pendingPrompt) return
+    const requestingTab = browserState.tabs.find(
+      (tab) => tab.origin === pendingPrompt.origin,
+    )
+    if (!requestingTab || requestingTab.origin === browserState.activeOrigin) return
+    focusEmbeddedAppBrowser(requestingTab.origin)
+  }, [pendingPrompt?.id, pendingPrompt?.origin, browserState.tabs, browserState.activeOrigin])
 
   // Incoming requests must not tear down the in-app browser — keep the webview
   // mounted and show the permission panel over it (layout-compact stack CSS).
@@ -263,15 +291,11 @@ export const WalletNav = memo(function WalletNav({
       if (!resolvePermission(pendingPrompt.id, 'allow')) return false
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
-      playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
+        playWalletSound('connect')
         toastSuccess('Connected', `${name} can use your wallet`)
-        // Defer so the bridge can finish waitForAuthentication, then return
-        // the user to the system browser (not the in-app webview).
-        const origin = pendingPrompt.origin
-        const home = appHomepage(origin)
-        window.setTimeout(() => launchConnectedApp(origin, home), 0)
       } else {
+        playWalletSound('approve')
         toastSuccess('Approved', pendingPrompt.title || name)
       }
       return true
@@ -494,13 +518,14 @@ export const WalletNav = memo(function WalletNav({
     }
     startTransition(() => {
       if (next !== nav.section) setNavSection(next)
-      else if (nav.child?.type === 'app-browser') closeEmbeddedAppBrowser()
+      else if (nav.child?.type === 'app-browser') setNavSection('apps')
       else clearNavChild()
     })
   }
 
   const hideSectionPanel =
-    (stageChild != null || browserForeground) && !mobileInlinePermission
+    ((stageChild != null || browserForeground) && !mobileInlinePermission) ||
+    (browserUnderPermission && !compact)
 
   return (
     <WalletActionDockProvider register={registerDock}>
@@ -511,27 +536,47 @@ export const WalletNav = memo(function WalletNav({
     >
       <div className="wallet-nav">
         <div className="wallet-nav-stage">
-          {mountEmbeddedBrowser && embeddedBrowser ? (
-            <div
-              className={`wallet-nav-panel nav-child-stage nav-child-stage--browser${
-                browserVisible ? '' : ' nav-child-stage--browser-parked'
-              }`}
-              aria-hidden={browserVisible ? undefined : true}
-              data-parked={browserVisible ? undefined : ''}
-            >
-              <div className="nav-child-body nav-child-body--browser">
-                {(() => {
-                  const app = apps.find((a) => a.origin === embeddedBrowser.origin)
-                  return (
+          {mountEmbeddedBrowser
+            ? browserState.tabs.map((tab) => {
+                const visible = browserVisible && tab.origin === embeddedBrowser?.origin
+                const app = apps.find((a) => a.origin === tab.origin)
+                return (
+                  <div
+                    key={tab.origin}
+                    className={`wallet-nav-panel nav-child-stage nav-child-stage--browser${
+                      visible ? '' : ' nav-child-stage--browser-parked'
+                    }`}
+                    aria-hidden={visible ? undefined : true}
+                    data-parked={visible ? undefined : ''}
+                  >
+                    <div className="nav-child-body nav-child-body--browser">
                     <AppBrowserPanel
-                      origin={embeddedBrowser.origin}
-                      name={app?.name || appDisplayName(embeddedBrowser.origin)}
-                      url={embeddedBrowser.url}
+                        origin={tab.origin}
+                        name={app?.name || appDisplayName(tab.origin)}
+                        url={tab.url}
+                        tabCount={browserState.tabs.length}
+                        onShowTabs={() => setTabSwitcherOpen(true)}
                     />
-                  )
-                })()}
-              </div>
-            </div>
+                    </div>
+                  </div>
+                )
+              })
+            : null}
+
+          {tabSwitcherOpen && browserState.tabs.length > 0 ? (
+            <AppBrowserTabSwitcher
+              tabs={browserState.tabs}
+              activeOrigin={browserState.activeOrigin}
+              appName={(origin) =>
+                apps.find((app) => app.origin === origin)?.name || appDisplayName(origin)
+              }
+              onSelect={(origin) => {
+                setTabSwitcherOpen(false)
+                focusEmbeddedAppBrowser(origin)
+              }}
+              onClose={(origin) => closeEmbeddedAppBrowser(origin)}
+              onDone={() => setTabSwitcherOpen(false)}
+            />
           ) : null}
 
           {stageChild ? (

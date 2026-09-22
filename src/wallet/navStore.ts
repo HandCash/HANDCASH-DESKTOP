@@ -59,12 +59,18 @@ export type EmbeddedAppBrowser = {
 
 type Listener = (state: NavState) => void
 type EmbeddedBrowserListener = (session: EmbeddedAppBrowser | null) => void
+type EmbeddedBrowserTabsListener = (
+  tabs: readonly EmbeddedAppBrowser[],
+  activeOrigin: string | null,
+) => void
 
 const listeners = new Set<Listener>()
 const embeddedBrowserListeners = new Set<EmbeddedBrowserListener>()
+const embeddedBrowserTabsListeners = new Set<EmbeddedBrowserTabsListener>()
 
 let state: NavState = { section: 'activity', child: null }
-let embeddedAppBrowser: EmbeddedAppBrowser | null = null
+let embeddedAppBrowsers: EmbeddedAppBrowser[] = []
+let activeEmbeddedBrowserOrigin: string | null = null
 
 let navLogTimer: ReturnType<typeof setTimeout> | null = null
 let pendingNavLog: string | null = null
@@ -97,40 +103,75 @@ export function subscribeNav(cb: Listener): () => void {
 }
 
 function emitEmbeddedBrowser() {
-  for (const cb of embeddedBrowserListeners) cb(embeddedAppBrowser)
-}
-
-function setEmbeddedAppBrowser(session: EmbeddedAppBrowser | null) {
-  const prev = embeddedAppBrowser
-  if (
-    prev?.origin === session?.origin &&
-    prev?.url === session?.url &&
-    Boolean(prev) === Boolean(session)
-  ) {
-    return
-  }
-  embeddedAppBrowser = session
-  emitEmbeddedBrowser()
+  const active = getEmbeddedAppBrowser()
+  for (const cb of embeddedBrowserListeners) cb(active)
+  const tabs = getEmbeddedAppBrowserTabs()
+  for (const cb of embeddedBrowserTabsListeners) cb(tabs, activeEmbeddedBrowserOrigin)
 }
 
 export function getEmbeddedAppBrowser(): EmbeddedAppBrowser | null {
-  return embeddedAppBrowser
+  return (
+    embeddedAppBrowsers.find((tab) => tab.origin === activeEmbeddedBrowserOrigin) ??
+    embeddedAppBrowsers[0] ??
+    null
+  )
+}
+
+export function getEmbeddedAppBrowserTabs(): readonly EmbeddedAppBrowser[] {
+  return embeddedAppBrowsers.slice()
 }
 
 export function subscribeEmbeddedAppBrowser(cb: EmbeddedBrowserListener): () => void {
   embeddedBrowserListeners.add(cb)
-  cb(embeddedAppBrowser)
+  cb(getEmbeddedAppBrowser())
   return () => {
     embeddedBrowserListeners.delete(cb)
   }
 }
 
+export function subscribeEmbeddedAppBrowserTabs(cb: EmbeddedBrowserTabsListener): () => void {
+  embeddedBrowserTabsListeners.add(cb)
+  cb(getEmbeddedAppBrowserTabs(), activeEmbeddedBrowserOrigin)
+  return () => {
+    embeddedBrowserTabsListeners.delete(cb)
+  }
+}
+
 /**
- * End the in-app browser session (Close). Section changes and request overlays
- * must not call this — they only park the session so the webview stays alive.
+ * Close one in-app browser tab. Section changes and request overlays only park
+ * tabs so every webview remains mounted and keeps its app state.
  */
-export function closeEmbeddedAppBrowser() {
-  setEmbeddedAppBrowser(null)
+export function closeEmbeddedAppBrowser(origin = activeEmbeddedBrowserOrigin ?? undefined) {
+  if (!origin) return
+  const closingIndex = embeddedAppBrowsers.findIndex((tab) => tab.origin === origin)
+  if (closingIndex < 0) return
+  const closingForeground =
+    state.child?.type === 'app-browser' && state.child.origin === origin
+  embeddedAppBrowsers = embeddedAppBrowsers.filter((tab) => tab.origin !== origin)
+  if (activeEmbeddedBrowserOrigin === origin) {
+    const fallback =
+      embeddedAppBrowsers[Math.min(closingIndex, embeddedAppBrowsers.length - 1)] ?? null
+    activeEmbeddedBrowserOrigin = fallback?.origin ?? null
+  }
+  emitEmbeddedBrowser()
+  if (closingForeground) {
+    settingBackStack = []
+    const next = getEmbeddedAppBrowser()
+    state = next
+      ? {
+          section: 'apps',
+          child: { type: 'app-browser', origin: next.origin, url: next.url },
+        }
+      : { ...state, child: null }
+    emit()
+  }
+}
+
+export function closeAllEmbeddedAppBrowsers() {
+  if (embeddedAppBrowsers.length === 0) return
+  embeddedAppBrowsers = []
+  activeEmbeddedBrowserOrigin = null
+  emitEmbeddedBrowser()
   if (state.child?.type === 'app-browser') {
     settingBackStack = []
     state = { ...state, child: null }
@@ -138,13 +179,16 @@ export function closeEmbeddedAppBrowser() {
   }
 }
 
-/** Bring a parked browser session back to the Apps foreground. */
-export function focusEmbeddedAppBrowser() {
-  if (!embeddedAppBrowser) return
+/** Bring a parked browser tab back to the Apps foreground. */
+export function focusEmbeddedAppBrowser(origin = activeEmbeddedBrowserOrigin ?? undefined) {
+  const tab = embeddedAppBrowsers.find((candidate) => candidate.origin === origin)
+  if (!tab) return
+  activeEmbeddedBrowserOrigin = tab.origin
+  emitEmbeddedBrowser()
   openNavChild('apps', {
     type: 'app-browser',
-    origin: embeddedAppBrowser.origin,
-    url: embeddedAppBrowser.url,
+    origin: tab.origin,
+    url: tab.url,
   })
 }
 
@@ -160,7 +204,12 @@ export function openNavChild(section: NavSection, child: NavChild) {
     settingBackStack = []
   }
   if (child.type === 'app-browser') {
-    setEmbeddedAppBrowser({ origin: child.origin, url: child.url })
+    const existing = embeddedAppBrowsers.find((tab) => tab.origin === child.origin)
+    if (!existing) {
+      embeddedAppBrowsers = [...embeddedAppBrowsers, { origin: child.origin, url: child.url }]
+    }
+    activeEmbeddedBrowserOrigin = child.origin
+    emitEmbeddedBrowser()
   }
   state = { section, child }
   emit()
@@ -169,10 +218,9 @@ export function openNavChild(section: NavSection, child: NavChild) {
 export function clearNavChild() {
   if (!state.child) return
   settingBackStack = []
-  // Explicit dismiss of the browser child ends the session; other children only
-  // leave the foreground (session stays parked if one exists).
   if (state.child.type === 'app-browser') {
-    setEmbeddedAppBrowser(null)
+    closeEmbeddedAppBrowser(state.child.origin)
+    return
   }
   state = { ...state, child: null }
   emit()
@@ -187,7 +235,6 @@ export function openAppLaunch(origin: string, url: string) {
 }
 
 export function openEmbeddedAppBrowser(origin: string, url: string) {
-  setEmbeddedAppBrowser({ origin, url })
   openNavChild('apps', { type: 'app-browser', origin, url })
 }
 

@@ -1075,10 +1075,17 @@ html:is(.platform-mobile, .layout-compact) .identity-card {
 
 html:is(.platform-mobile, .layout-compact) .identity-hero {
   gap: 10px;
+  flex-direction: column;
+  align-items: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame {
   padding: 6px;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-qr {
+  width: 160px;
+  min-width: 160px;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame img,
@@ -1110,4 +1117,8 @@ html:is(.platform-mobile, .layout-compact) .identity-hero-meta {
 html:is(.platform-mobile, .layout-compact) .identity-card.identity-compose {
   width: 100%;
   max-width: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-scroll {
+  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
 }
