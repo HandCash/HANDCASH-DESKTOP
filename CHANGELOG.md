@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.271] - 2026-09-22
+
+### Changed
+
+- Agent docs now name `handcash-market` (`HandCash/BRC-MARKET`) as the live
+  storefront. `items-market` remains the `/migrate` client only; wallet list,
+  buy, and settle stay in this repo.
+
 ## [1.3.270] - 2026-09-22
 
 ### Changed
