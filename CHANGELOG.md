@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.274] - 2026-09-22
+
+### Fixed
+
+- The app-browser tab switcher painted each tab screenshot through a bare
+  `<img>`, so a card flashed an empty frame before the bitmap decoded. It now
+  goes through `DeferredImage`, falling back to the app avatar. This also
+  un-breaks the release build: the Aeon ratchet had been failing on it since
+  the tab switcher landed in 1.3.270.
+
 ## [1.3.273] - 2026-09-22
 
 ### Fixed

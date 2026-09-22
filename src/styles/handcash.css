@@ -14804,7 +14804,15 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
     var(--hc-sunken);
 }
 
-.app-browser-tab-preview > img {
+/* The screenshot is a DeferredImage, so it paints inside its own frame span. */
+.app-browser-tab-preview > .deferred-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Scoped to the frame's own img — the fallback's AppAvatar favicon sizes itself. */
+.app-browser-tab-preview > .deferred-image > img {
   display: block;
   width: 100%;
   height: 100%;

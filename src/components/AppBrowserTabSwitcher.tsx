@@ -2,7 +2,18 @@ import { useEffect, useRef } from 'react'
 import type { EmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { AppAvatar } from './AppAvatar'
+import { DeferredImage } from './DeferredImage'
 import { BackIcon, CloseIcon } from './icons'
+
+/** Shown until a tab's screenshot decodes, and in place of one that never does. */
+function tabFallback(origin: string, name: string) {
+  return (
+    <span className="app-browser-tab-preview-fallback">
+      <AppAvatar origin={origin} name={name} size="md" />
+      <span>{name}</span>
+    </span>
+  )
+}
 
 type Props = {
   tabs: readonly EmbeddedAppBrowser[]
@@ -97,12 +108,14 @@ export function AppBrowserTabSwitcher({
               >
                 <div className="app-browser-tab-preview" aria-hidden>
                   {preview ? (
-                    <img src={preview} alt="" />
+                    <DeferredImage
+                      src={preview}
+                      alt=""
+                      retainDecoded
+                      fallback={tabFallback(tab.origin, name)}
+                    />
                   ) : (
-                    <span className="app-browser-tab-preview-fallback">
-                      <AppAvatar origin={tab.origin} name={name} size="md" />
-                      <span>{name}</span>
-                    </span>
+                    tabFallback(tab.origin, name)
                   )}
                 </div>
                 <span className="app-browser-tab-copy">
