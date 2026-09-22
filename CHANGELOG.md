@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.281] - 2026-09-22
+
+### Fixed
+
+- Every locally signed transaction now keeps its Atomic BEEF in a durable
+  cheque archive. The miner outbox dropped the body once Arcade accepted it,
+  so balance heal had to guess a transaction's fate from Activity hashes and
+  explorer lookups — which is how a valid payment's change could stop being
+  counted. Heal replays the archived templates instead: it reseals the exact
+  inputs of each signed cheque, promotes that transaction's change, and
+  re-queues propagation when no explorer has seen it yet. An Activity row
+  with no signed template is no longer treated as something to heal.
+- App `createAction`, `signAction`, and `processAction` go through that same
+  funnel. BRC-100 spends used to seal locally and keep their body in a
+  16-slot cache, so an app payment left no template for heal to work from.
+  Bodies already held by the miner outbox or the old cache are absorbed into
+  the archive on first read.
+
 ## [1.3.280] - 2026-09-22
 
 ### Changed
