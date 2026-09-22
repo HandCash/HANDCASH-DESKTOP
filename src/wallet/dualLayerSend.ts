@@ -112,7 +112,7 @@ export function beginSignedTxLifecycle(args: {
     txid: args.txid.trim().toLowerCase(),
   })
   return (
-    transitionTx(draft.id, 'SEEN_IN_MEMPOOL') ??
+    transitionTx(draft.id, 'SEEN_IN_MEMPOOL', { chainProof: 'unconfirmed' }) ??
     getTxRecord(draft.id)!
   )
 }
@@ -121,7 +121,7 @@ export function beginSignedTxLifecycle(args: {
 export function noteDualLayerSigned(id: string, txid: string): TxRecord | null {
   const withTxid = noteDualLayerTxid(id, txid)
   if (!withTxid) return null
-  return transitionTx(id, 'SEEN_IN_MEMPOOL')
+  return transitionTx(id, 'SEEN_IN_MEMPOOL', { chainProof: 'unconfirmed' })
 }
 
 /** Advance from postBeef summary — mempool accept or hard reject + lock rollback. */

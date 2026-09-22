@@ -97,6 +97,14 @@ vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))
 vi.mock('./beefCache', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./beefCache')>()),
   atomicBeefForSubject: (bin?: number[]) => (bin?.length ? bin : undefined),
+  prepareBroadcastCheque: async (
+    _wallet: unknown,
+    _txid: string,
+    atomic: number[],
+  ) => ({
+    atomic,
+    decision: { kind: 'broadcast' as const, parents: 'unconfirmed-bodies' as const },
+  }),
 }))
 vi.mock('./deviceSync', () => ({ scheduleHistoryBackupPush: () => {} }))
 vi.mock('./appActivity', () => ({

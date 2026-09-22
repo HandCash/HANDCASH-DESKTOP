@@ -74,9 +74,29 @@ function coerceRecord(row: unknown): TxRecord | null {
       typeof r.minedHeight === 'number' && Number.isFinite(r.minedHeight)
         ? Math.trunc(r.minedHeight)
         : null,
+    chainProof:
+      r.chainProof === 'unconfirmed' || r.chainProof === 'headerProven'
+        ? r.chainProof
+        : status === 'MINED'
+          ? 'headerProven'
+          : status === 'SEEN_IN_MEMPOOL' || status === 'BROADCASTING'
+            ? 'unconfirmed'
+            : null,
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
     updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : Date.now(),
   }
+}
+
+/** Outputs of this tx are chain-unconfirmed on this device — not indexer poison. */
+export function isLocalUnconfirmedTxid(txid: string): boolean {
+  const rec = getTxByTxid(txid)
+  if (!rec) return false
+  if (rec.chainProof === 'headerProven' || rec.status === 'MINED') return false
+  return (
+    rec.chainProof === 'unconfirmed' ||
+    rec.status === 'SEEN_IN_MEMPOOL' ||
+    rec.status === 'BROADCASTING'
+  )
 }
 
 function persist(): void {
@@ -137,6 +157,7 @@ export function createDraftTx(args: {
     diagnostic: null,
     diagnosticDetail: null,
     minedHeight: null,
+    chainProof: null,
     createdAt: now,
     updatedAt: now,
   }
@@ -156,6 +177,7 @@ export function transitionTx(
       | 'diagnostic'
       | 'diagnosticDetail'
       | 'minedHeight'
+      | 'chainProof'
       | 'inputOutpoints'
       | 'satoshis'
       | 'to'
@@ -224,6 +246,7 @@ export function applyArcStatus(id: string, arc: ArcStatus): TxRecord | null {
 export function markTxMined(id: string, height: number): TxRecord | null {
   return transitionTx(id, 'MINED', {
     minedHeight: Math.trunc(height),
+    chainProof: 'headerProven',
     arcStatus: 'MINED',
     diagnostic: null,
     diagnosticDetail: null,

@@ -15,6 +15,7 @@
 import { Beef, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { decideChequeBroadcast, type ChequeBroadcastDecision } from './kernel/chequeBroadcast'
 
 export type GetBeefOpts = {
   /**
@@ -784,6 +785,62 @@ export function classifyBeefAncestryGap(bin: number[]): BeefAncestryGap {
   } catch {
     return 'missing-bodies'
   }
+}
+
+export type PreparedBroadcastCheque = {
+  atomic: number[]
+  decision: Extract<ChequeBroadcastDecision, { kind: 'broadcast' }>
+}
+
+/**
+ * Cheap local SPV before a signed cheque may seal inputs or hit miners.
+ *
+ * Merges parent bodies this wallet already signed. Refuses stub parents so we
+ * never fire a package miners will call MissingInputs and heal will read as
+ * poison. Does not fetch merkle — that is not cheap and cannot exist yet for
+ * unconfirmed parents.
+ */
+export async function prepareBroadcastCheque(
+  wallet: ActiveWallet | null | undefined,
+  txid: string,
+  atomic: number[],
+): Promise<PreparedBroadcastCheque> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id) || atomic.length === 0) {
+    throw new Error('Signed send is missing its transaction body')
+  }
+  let subjectPresent = false
+  try {
+    const found = Beef.fromBinary(atomic).findTxid(id)
+    subjectPresent = Boolean(found?.tx) && !found?.isTxidOnly
+  } catch {
+    subjectPresent = false
+  }
+  const merged =
+    wallet && subjectPresent
+      ? await mergeLocalUnconfirmedAncestry(wallet, atomic)
+      : atomic
+  if (wallet && subjectPresent && merged !== atomic) {
+    try {
+      const found = Beef.fromBinary(merged).findTxid(id)
+      subjectPresent = Boolean(found?.tx) && !found?.isTxidOnly
+    } catch {
+      subjectPresent = false
+    }
+  }
+  const gap = classifyBeefAncestryGap(merged)
+  const decision = decideChequeBroadcast({
+    subjectBodyPresent: subjectPresent,
+    gap,
+  })
+  if (decision.kind === 'refuse') {
+    const detail =
+      decision.reason === 'subject-missing'
+        ? 'Signed send is missing its transaction body'
+        : 'Cannot broadcast: parent transaction bodies are missing (unconfirmed chain, not a spent coin)'
+    throw new Error(detail)
+  }
+  return { atomic: merged, decision }
 }
 
 /**

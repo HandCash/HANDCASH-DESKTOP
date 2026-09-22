@@ -349,6 +349,17 @@ describe('beefCache', () => {
     ready.mergeTransaction(tip)
     expect(classifyBeefAncestryGap(ready.toBinary())).toBe('none')
 
+    const { prepareBroadcastCheque } = await import('./beefCache')
+    const prepared = await prepareBroadcastCheque(
+      null,
+      tip.id('hex'),
+      ready.toBinaryAtomic(tip.id('hex')),
+    )
+    expect(prepared.decision).toEqual({
+      kind: 'broadcast',
+      parents: 'header-proven',
+    })
+
     // Parent reduced to a txid stub — a fetch can still supply the body.
     const stubbed = new Beef()
     stubbed.mergeTxidOnly(parentId)
@@ -356,6 +367,16 @@ describe('beefCache', () => {
     expect(classifyBeefAncestryGap(stubbed.toBinary())).toBe('missing-bodies')
 
     expect(classifyBeefAncestryGap([1, 2, 3])).toBe('missing-bodies')
+    await expect(
+      prepareBroadcastCheque(null, 'ab'.repeat(32), [1, 2, 3]),
+    ).rejects.toThrow(/missing its transaction body/)
+    await expect(
+      prepareBroadcastCheque(
+        null,
+        tip.id('hex'),
+        stubbed.toBinaryAtomic(tip.id('hex')),
+      ),
+    ).rejects.toThrow(/parent transaction bodies are missing/)
   })
 
   it('merges a locally held unconfirmed parent body into the child BEEF', async () => {

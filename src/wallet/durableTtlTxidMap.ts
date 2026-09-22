@@ -10,6 +10,8 @@ export type DurableTtlTxidMap = {
   /** Live (un-expired) entry count. */
   size(): number
   remember(txid: string): void
+  /** Stamp `at` only when missing or older — never moves a first-seen forward. */
+  rememberOldest(txid: string, at: number): number | null
   forget(txid: string): void
   reset(): void
 }
@@ -97,6 +99,17 @@ export function createDurableTtlTxidMap(opts: {
       if (!id) return
       load().set(id, { at: Date.now() })
       persist()
+    },
+    rememberOldest(txid: string, at: number): number | null {
+      const id = normalizeTxid(txid)
+      if (!id || !Number.isFinite(at) || at <= 0) return this.rememberedAt(txid)
+      const map = load()
+      const existing = map.get(id)?.at
+      const next = existing != null && existing > 0 ? Math.min(existing, at) : at
+      if (existing === next) return existing
+      map.set(id, { at: next })
+      persist()
+      return next
     },
     forget(txid: string): void {
       const id = normalizeTxid(txid)

@@ -811,22 +811,28 @@ export async function sendBsv21Tokens(args: {
 
       setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
+      const payeeIsSelf =
+        args.toAddress.trim().toLowerCase() === wallet.address.trim().toLowerCase()
       markItemsSent([
         ...spent.map((outpoint) => ({ outpoint, txid })),
-        ...payeeOutpoints.map((outpoint) => ({
-          outpoint,
-          txid,
-          settle: 'senderBroadcast' as const,
-        })),
+        ...(payeeIsSelf
+          ? []
+          : payeeOutpoints.map((outpoint) => ({
+              outpoint,
+              txid,
+              settle: 'senderBroadcast' as const,
+            }))),
       ])
-      for (const op of payeeOutpoints) {
-        try {
-          await wallet.wallet.relinquishOutput({
-            basket: BSV21_BASKET,
-            output: wireOutpoint(op),
-          } as never)
-        } catch {
-          /* createAction may already have dropped it */
+      if (!payeeIsSelf) {
+        for (const op of payeeOutpoints) {
+          try {
+            await wallet.wallet.relinquishOutput({
+              basket: BSV21_BASKET,
+              output: wireOutpoint(op),
+            } as never)
+          } catch {
+            /* createAction may already have dropped it */
+          }
         }
       }
       noteOutboundSendComplete({

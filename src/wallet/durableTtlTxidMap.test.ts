@@ -30,6 +30,18 @@ describe('createDurableTtlTxidMap', () => {
     expect(map.has(TX)).toBe(false)
   })
 
+  it('rememberOldest never moves a first-seen forward', () => {
+    const map = createDurableTtlTxidMap({
+      key: 'test.oldest',
+      max: 10,
+      ttlMs: 60_000,
+    })
+    const early = Date.now() - 10_000
+    expect(map.rememberOldest(TX, early)).toBe(early)
+    expect(map.rememberOldest(TX, Date.now())).toBe(early)
+    expect(map.rememberedAt(TX)).toBe(early)
+  })
+
   it('accepts legacy number timestamps', () => {
     store.set('test.legacy', JSON.stringify({ [TX]: Date.now() }))
     const map = createDurableTtlTxidMap({

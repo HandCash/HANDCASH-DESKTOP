@@ -172,7 +172,9 @@ vi.mock('./pendingBrc29Outbox', () => ({
 const SENDER = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
 const ATOMIC = [1, 2, 3]
 
-beforeEach(() => {
+beforeEach(async () => {
+  const { __resetInboundHintClockForTests } = await import('./inboundHintClock')
+  __resetInboundHintClockForTests()
   chatMessages.length = 0
   updateMessage.mockClear()
   ghosts.clear()
@@ -484,6 +486,22 @@ describe('ingestPaymentsFromTipHints', () => {
 
     expect(result.ghostTxids).toEqual([])
     expect(ghosts.has(txid)).toBe(false)
+  })
+
+  it('does not re-chase a body-less miss on the next poll', async () => {
+    const txid = '5'.repeat(64)
+    internalizePeerItemSettle.mockResolvedValue({
+      accepted: false,
+      outpoints: [],
+      reason: 'missing-beef',
+    })
+
+    await ingestSkippingRetryDelay([{ txid, item: true, firstSeenAt: Date.now() }])
+    const firstCalls = internalizePeerItemSettle.mock.calls.length
+    expect(firstCalls).toBeGreaterThan(0)
+
+    await ingestSkippingRetryDelay([{ txid, item: true, firstSeenAt: Date.now() }])
+    expect(internalizePeerItemSettle).toHaveBeenCalledTimes(firstCalls)
   })
 
   it('retires an old fungible hint with no body anywhere', async () => {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BODYLESS_HINT_RETRY_MS,
   UNRESOLVABLE_GRACE_MS,
   decideInboundHintFate,
   isTerminalInboundHintStatus,
   mayBeUnresolvable,
+  shouldDeferBodylessHintRetry,
   type InboundHintFacts,
 } from './inboundHintFate'
 
@@ -61,6 +63,30 @@ describe('inbound hint fate', () => {
 
   it('reads an unknown arrival time as brand new', () => {
     expect(decideInboundHintFate(unbroadcast({ firstSeenAt: 0 })).kind).toBe('retry')
+  })
+
+  it('defers a recent body-less miss until grace, then allows the retirement probe', () => {
+    expect(
+      shouldDeferBodylessHintRetry({
+        lastFailAt: NOW - 60_000,
+        firstSeenAt: NOW - 60_000,
+        now: NOW,
+      }),
+    ).toBe(true)
+    expect(
+      shouldDeferBodylessHintRetry({
+        lastFailAt: NOW - BODYLESS_HINT_RETRY_MS - 1,
+        firstSeenAt: NOW - 60_000,
+        now: NOW,
+      }),
+    ).toBe(false)
+    expect(
+      shouldDeferBodylessHintRetry({
+        lastFailAt: NOW - 60_000,
+        firstSeenAt: NOW - UNRESOLVABLE_GRACE_MS - 1,
+        now: NOW,
+      }),
+    ).toBe(false)
   })
 
   it('spends an explorer round-trip only when retirement is actually possible', () => {

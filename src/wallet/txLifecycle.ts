@@ -63,6 +63,12 @@ export type TxRecord = {
   diagnosticDetail: string | null
   /** Block height when SPV-verified mined (null until MINED). */
   minedHeight: number | null
+  /**
+   * How this device knows the tx on chain.
+   * `unconfirmed` — signed cheque; parents complete; not header-final.
+   * `headerProven` — BUMP verified against local headers.
+   */
+  chainProof: 'unconfirmed' | 'headerProven' | null
   createdAt: number
   updatedAt: number
 }

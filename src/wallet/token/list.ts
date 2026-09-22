@@ -6,6 +6,7 @@
 import { getActiveWallet, type ActiveWallet } from '../session'
 import type { Chain } from '../vault'
 import {
+  aggregateFungibles,
   buildBsv21CustomInstructions,
   BSV21_BASKET,
   bsv21Tags,
@@ -44,7 +45,9 @@ import { stampBrc164Id } from '../itemAccess'
 import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
 import { parseOrdEnvelope } from '../ordinalOwnership'
+import { decodeBsv21Binary } from './decode162'
 import { restoreUnspentAssetOutpoint } from '../staleOutputRelease'
+import { isLocalUnconfirmedTxid } from '../txStore'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -408,6 +411,7 @@ export function paintFungibleAfterSpend(args: {
         : prior?.encoding,
     maxSupply: args.maxSupply ?? prior?.maxSupply ?? null,
     provenanceOk: prior?.provenanceOk ?? true,
+    seenAt: Date.now(),
     ...(args.icon || prior?.icon ? { icon: args.icon || prior?.icon } : {}),
     ...(prior?.iconUrl ? { iconUrl: prior.iconUrl } : {}),
     ...(prior?.issuer ? { issuer: prior.issuer } : {}),
@@ -981,6 +985,18 @@ async function listFungiblesNow(
       console.warn('[bsv21] list failed', err)
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
+    const recoveredHeld = await recoverCachedLegacyTips(
+      wallet,
+      new Set(
+        cached
+          .map((token) => normalizeTokenId(token.tokenId))
+          .filter((id): id is string => Boolean(id)),
+      ),
+    )
+    if (recoveredHeld.length > 0) {
+      liveRows = mergeLiveFungibles(aggregateFungibles(recoveredHeld), liveRows)
+    }
+    if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
     // Live BRC-162 rows win over stale JSON BSV-21 rows.
     const prior = await dropUnconfirmedFungibles(cached, wallet, {
       liveRows,
@@ -1028,11 +1044,42 @@ async function recoverCachedLegacyTips(
       // A failed/aborted spend can leave this asset row locally retired. Never
       // feed a display-cache outpoint back into createAction unless a live UTXO
       // source proves it still exists and the toolbox row is restored first.
-      if (!(await restoreUnspentAssetOutpoint(active, point))) continue
+      // Local unconfirmed change (just signed) is held in txStore, not yet in
+      // the basket — treating that as gone is what emptied inventory after send.
+      if (
+        !isLocalUnconfirmedTxid(txid) &&
+        !(await restoreUnspentAssetOutpoint(active, point))
+      ) {
+        continue
+      }
       const beef = await getLocalBeefForTxid(active, txid)
       const output = beef?.findTxid(txid)?.tx?.outputs[vout]
       const lockingScript = output?.lockingScript?.toHex()
       if (!lockingScript || (output?.satoshis ?? 1) !== 1) continue
+      const binary = decodeBsv21Binary(lockingScript)
+      const fromScript = binary
+        ? tipFromBsv21Script({
+            outpoint: point,
+            lockingScript,
+            satoshis: 1,
+          })
+        : null
+      if (fromScript && normalizeTokenId(fromScript.tokenId) === tokenId) {
+        recovered.push({
+          outpoint: point,
+          tokenId,
+          amt: fromScript.amt.toString(),
+          op: 'transfer',
+          dec: token.dec,
+          satoshis: 1,
+          encoding: 'brc162',
+          binarySupply: 'locked',
+          ...(token.sym ? { sym: token.sym } : {}),
+          ...(token.icon ? { icon: token.icon } : {}),
+          lockingScript,
+        })
+        continue
+      }
       const envelope = parseOrdEnvelope(lockingScript)
       const payload = envelope?.body?.length
         ? parseBsv21Json(JSON.parse(new TextDecoder().decode(envelope.body)))

@@ -38,14 +38,23 @@ export async function registerSignedSend(args: {
     throw new Error('Signed send is missing its transaction body')
   }
 
+  const { getActiveWallet } = await import('./session')
+  const { prepareBroadcastCheque } = await import('./beefCache')
+  const prepared = await prepareBroadcastCheque(
+    getActiveWallet(),
+    txid,
+    args.atomicBeef,
+  )
+  const atomicBeef = prepared.atomic
+
   // Seal first. A lifecycle must never advertise a signed cheque while its
   // inputs remain selectable by a second send.
-  await sealSpentInputsOfSignedTx(txid, args.atomicBeef)
+  await sealSpentInputsOfSignedTx(txid, atomicBeef)
   // Persist before any Activity/remittance work. `submitAtomicBeefToMiners`
   // is idempotent over this row, so the later network attempt cannot create a
   // second lifecycle and a crash cannot lose the only signed body.
   const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
-  enqueuePendingMinerSubmit(txid, args.atomicBeef, { flow: args.flow })
+  enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow })
 
   const lifecycle = args.lifecycleId
     ? noteDualLayerSigned(args.lifecycleId, txid)
@@ -59,7 +68,7 @@ export async function registerSignedSend(args: {
   return {
     lifecycleId: lifecycle.id,
     txid,
-    atomicBeef: args.atomicBeef,
+    atomicBeef,
     flow: args.flow,
   }
 }

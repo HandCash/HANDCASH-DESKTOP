@@ -26,7 +26,7 @@ import {
 import { validateBeforeOptimisticLock } from "./protocolValidate";
 import { canTransitionTx, txStatusFromArc, type TxStatus } from "./txLifecycle";
 import { txLifecycleMachine } from "./txLifecycleMachine";
-import { __resetTxStoreForTests, getTxRecord, markTxMined } from "./txStore";
+import { __resetTxStoreForTests, getTxRecord, isLocalUnconfirmedTxid, markTxMined } from "./txStore";
 import {
   __resetUtxoLocksForTests,
   confirmSpentLocks,
@@ -224,7 +224,9 @@ describe("utxoLockManager + dualLayerSend", () => {
       txid,
       satoshis: 1,
       status: "SEEN_IN_MEMPOOL",
+      chainProof: "unconfirmed",
     });
+    expect(isLocalUnconfirmedTxid(txid)).toBe(true);
     expect(beginSignedTxLifecycle({ txid, satoshis: 1 }).id).toBe(token.id);
   });
 
@@ -285,6 +287,8 @@ describe("utxoLockManager + dualLayerSend", () => {
     markTxMined(id, 900_000);
     confirmSpentLocks(id, txid);
     expect(getTxRecord(id)?.status).toBe("MINED");
+    expect(getTxRecord(id)?.chainProof).toBe("headerProven");
+    expect(isLocalUnconfirmedTxid(txid)).toBe(false);
     expect(listUtxoLocks().find((l) => l.spentBy != null)?.spentBy).toBe(txid);
   });
 

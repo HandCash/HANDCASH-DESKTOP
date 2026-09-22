@@ -60,6 +60,7 @@ import {
   txHadArcadeSubmitContact,
 } from "./arcadeSubmitGuard";
 import { chooseSpentCoinMutation, isNamedSpenderTxid } from "./utxoTxMutation";
+import { isLocalUnconfirmedTxid } from "./txStore";
 import {
   derivedChangeEchoLockKeys,
   derivedChangeEchoSatoshis,
@@ -279,6 +280,11 @@ export async function reconcileKnownUtxosByEvidence(opts?: {
       batch.map(async ({ outpoint }) => {
         const parsed = parseOutpoint(outpoint);
         if (!parsed) return;
+
+        if (isLocalUnconfirmedTxid(parsed.txid)) {
+          verdicts.set(outpoint, "unknown");
+          return;
+        }
 
         // A positive isUtxo answer is affirmative unspent evidence. A negative
         // is only "this provider did not affirm", so ask the tri-state probe.

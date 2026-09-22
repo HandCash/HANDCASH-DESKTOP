@@ -30,6 +30,11 @@ import {
 } from './ghostTxSuppress'
 import { isTerminalInboundHintStatus } from './kernel/inboundHintFate'
 import {
+  inboundHintLastFailAt,
+  noteInboundHintIngestFail,
+  stampInboundHintFirstSeen,
+} from './inboundHintClock'
+import {
   beginPendingSend,
   clearPendingSend,
   completePendingSend,
@@ -952,6 +957,16 @@ export async function claimBrc29SettlementUri(
   })
 }
 
+function oldestPositive(...times: Array<number | undefined>): number | undefined {
+  let best: number | undefined
+  for (const t of times) {
+    if (typeof t === 'number' && Number.isFinite(t) && t > 0) {
+      best = best == null ? t : Math.min(best, t)
+    }
+  }
+  return best
+}
+
 export type PaymentTipHint = {
   txid: string
   /** When the card arrived — how long an unbroadcast transfer has been chased. */
@@ -1001,7 +1016,7 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
     if (isTerminalInboundHintStatus(msg.meta?.status)) continue
     hints.push({
       txid,
-      firstSeenAt: msg.createdAt,
+      firstSeenAt: stampInboundHintFirstSeen(txid, msg.createdAt),
       senderIdentityKey: msg.meta?.identityKey,
       satoshis: msg.meta?.sats,
       brc29: msg.meta?.brc29,
@@ -1137,6 +1152,10 @@ export async function ingestPaymentsFromTipHints(
       unique.set(h.txid, {
         ...prev,
         ...h,
+        firstSeenAt: stampInboundHintFirstSeen(
+          h.txid,
+          oldestPositive(prev?.firstSeenAt, h.firstSeenAt),
+        ),
         tx: h.tx ?? prev?.tx,
         beefUrl: h.beefUrl ?? prev?.beefUrl,
         brc29: h.brc29 ?? prev?.brc29,
@@ -1203,7 +1222,7 @@ export async function ingestPaymentsFromTipHints(
     const { fetchRawTxHex, peekRawTxLookup } = await import('./oneSatImport')
     const now = Date.now()
     let bodyLookup = peekRawTxLookup(txid)
-    const first = firstSeenAt ?? 0
+    const first = stampInboundHintFirstSeen(txid, firstSeenAt)
     // Fungible inbox settle intentionally refuses an indexer custody fallback,
     // so it may never have asked for a raw body. Once the grace window expires,
     // perform one durable multi-provider existence probe solely to decide
@@ -1233,7 +1252,7 @@ export async function ingestPaymentsFromTipHints(
     }
     if (!mayBeUnresolvable(base)) {
       console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
+        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — lookup=${bodyLookup} age=${Math.round((now - first) / 1000)}s`,
       )
       return
     }
@@ -1254,7 +1273,7 @@ export async function ingestPaymentsFromTipHints(
     const fate = decideInboundHintFate({ ...base, onChain })
     if (fate.kind !== 'unresolvable') {
       console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — tx-body lookup absence ignored`,
+        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — fate=${fate.kind} lookup=${bodyLookup}`,
       )
       return
     }
@@ -1273,6 +1292,32 @@ export async function ingestPaymentsFromTipHints(
     }
     tipIngestInFlight.add(hint.txid)
     try {
+    const firstSeenAt = stampInboundHintFirstSeen(hint.txid, hint.firstSeenAt)
+    hint = { ...hint, firstSeenAt }
+    const hasDeliverableBeef = !!(hint.tx && hint.tx.length > 0) || !!hint.beefUrl?.trim()
+    if (!hasDeliverableBeef) {
+      const { shouldDeferBodylessHintRetry, UNRESOLVABLE_GRACE_MS } = await import(
+        './kernel/inboundHintFate'
+      )
+      const now = Date.now()
+      const lastFailAt = inboundHintLastFailAt(hint.txid)
+      if (
+        lastFailAt != null &&
+        now - firstSeenAt >= UNRESOLVABLE_GRACE_MS
+      ) {
+        await markGhostIfMissing(hint.txid, false, firstSeenAt)
+        return { importedTxid: null, balanceSats: null }
+      }
+      if (
+        shouldDeferBodylessHintRetry({
+          lastFailAt,
+          firstSeenAt,
+          now,
+        })
+      ) {
+        return { importedTxid: null, balanceSats: null }
+      }
+    }
     // On Android each BEEF merge and toolbox call shares the WebView process
     // with input/rendering. One hint per turn keeps stale inbox recovery from
     // producing a multi-second navigation stall; failed hints retry next poll.
@@ -1331,6 +1376,7 @@ export async function ingestPaymentsFromTipHints(
       }
       if (!accepted) {
         await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+        if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
       return { importedTxid, balanceSats }
     }
@@ -1370,6 +1416,7 @@ export async function ingestPaymentsFromTipHints(
       }
       if (!accepted) {
         await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt)
+        if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
       return { importedTxid, balanceSats }
     }
@@ -1391,6 +1438,7 @@ export async function ingestPaymentsFromTipHints(
     }
     if (!accepted) {
       await markGhostIfMissing(hint.txid, false, hint.firstSeenAt)
+      noteInboundHintIngestFail(hint.txid)
     }
     return { importedTxid, balanceSats }
     } finally {

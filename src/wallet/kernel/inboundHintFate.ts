@@ -40,6 +40,13 @@ export type InboundHintFacts = {
  */
 export const UNRESOLVABLE_GRACE_MS = 2 * 60 * 60_000
 
+/**
+ * After a body-less ingest miss, wait this long before chasing the same hint
+ * again. The 2h grace still has to expire before we retire it; this only
+ * stops a 5-second poll from re-running BEEF/postBeef on the main thread.
+ */
+export const BODYLESS_HINT_RETRY_MS = 15 * 60_000
+
 function ageMs(facts: Pick<InboundHintFacts, 'firstSeenAt' | 'now'>): number {
   const first = Number.isFinite(facts.firstSeenAt) ? facts.firstSeenAt : 0
   // An unknown arrival time reads as brand new, which keeps it retrying.
@@ -82,6 +89,25 @@ export function decideInboundHintFate(facts: InboundHintFacts): InboundHintFate 
 
 /** Chat status pinned on a hint we have stopped chasing. */
 export const UNRESOLVABLE_HINT_STATUS = 'Unavailable — sender never broadcast'
+
+/**
+ * Skip another heavy ingest while the hint is still inside the retirement
+ * grace window and we already failed recently with nothing to broadcast.
+ */
+export function shouldDeferBodylessHintRetry(args: {
+  lastFailAt: number | null
+  firstSeenAt: number
+  now: number
+  graceMs?: number
+  retryMs?: number
+}): boolean {
+  if (args.lastFailAt == null) return false
+  const grace = args.graceMs ?? UNRESOLVABLE_GRACE_MS
+  if (ageMs({ firstSeenAt: args.firstSeenAt, now: args.now }) >= grace) {
+    return false
+  }
+  return args.now - args.lastFailAt < (args.retryMs ?? BODYLESS_HINT_RETRY_MS)
+}
 
 /**
  * Statuses that take a card out of the pending-hint sweep.

@@ -14,7 +14,20 @@ const tryFinalizeDualLayerTx = vi.fn(async () => null)
 const failDualLayerSend = vi.fn()
 const submitAtomicBeefToMiners = vi.fn()
 const reportLateMinerSubmitFailure = vi.fn(async () => undefined)
+const prepareBroadcastCheque = vi.fn(async (_w: unknown, _id: string, atomic: number[]) => ({
+  atomic,
+  decision: { kind: 'broadcast', parents: 'unconfirmed-bodies' },
+}))
+
 const enqueuePendingMinerSubmit = vi.fn(() => true)
+
+vi.mock('./beefCache', () => ({
+  prepareBroadcastCheque: (...args: unknown[]) => prepareBroadcastCheque(...args),
+}))
+
+vi.mock('./session', () => ({
+  getActiveWallet: () => ({ chain: 'main' }),
+}))
 
 vi.mock('./staleOutputRelease', () => ({
   sealSpentInputsOfSignedTx: (...args: unknown[]) =>
@@ -72,6 +85,24 @@ describe('signedSendLifecycle', () => {
       to: 'recipient',
     })
     expect(handle.lifecycleId).toBe('token-life')
+  })
+
+  it('does not seal or queue a package with missing parent bodies', async () => {
+    prepareBroadcastCheque.mockRejectedValueOnce(
+      new Error(
+        'Cannot broadcast: parent transaction bodies are missing (unconfirmed chain, not a spent coin)',
+      ),
+    )
+    const { registerSignedSend } = await import('./signedSendLifecycle')
+    await expect(
+      registerSignedSend({
+        txid: TXID,
+        atomicBeef: ATOMIC,
+        flow: 'token_transfer',
+      }),
+    ).rejects.toThrow(/parent transaction bodies are missing/)
+    expect(sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
+    expect(enqueuePendingMinerSubmit).not.toHaveBeenCalled()
   })
 
   it('reuses a regular payment preflight lifecycle', async () => {

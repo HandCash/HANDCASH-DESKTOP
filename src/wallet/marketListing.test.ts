@@ -78,6 +78,14 @@ vi.mock('./beefCache', () => ({
     const { Beef } = await import('@bsv/sdk')
     return new Beef()
   },
+  prepareBroadcastCheque: async (
+    _wallet: unknown,
+    _txid: string,
+    atomic: number[],
+  ) => ({
+    atomic,
+    decision: { kind: 'broadcast' as const, parents: 'unconfirmed-bodies' as const },
+  }),
 }))
 
 vi.mock('./legacyScan', async (importOriginal) => {

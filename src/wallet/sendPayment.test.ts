@@ -94,6 +94,20 @@ vi.mock('./actionReview', () => ({
 vi.mock('./spvFinality', () => ({
   verifyBumpFinality: async () => ({ ok: false, reason: 'unknown' }),
 }))
+vi.mock('./beefCache', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./beefCache')>()
+  return {
+    ...actual,
+    prepareBroadcastCheque: async (
+      _wallet: unknown,
+      _txid: string,
+      atomic: number[],
+    ) => ({
+      atomic,
+      decision: { kind: 'broadcast' as const, parents: 'unconfirmed-bodies' as const },
+    }),
+  }
+})
 
 const ADDRESS = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
 
