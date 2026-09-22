@@ -172,6 +172,7 @@ export {
   isBsv21IdentityMintArgs,
   sigmaSignDeployLockingScript,
 } from './issuer'
+export { planBsv21MintWire, type Bsv21MintWire } from './mintWire'
 
 // Legacy JSON inscribe helpers (burn path)
 export {

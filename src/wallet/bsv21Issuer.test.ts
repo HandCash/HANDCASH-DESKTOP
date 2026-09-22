@@ -158,6 +158,65 @@ describe('bsv21Issuer', () => {
     })
   })
 
+  /**
+   * A JSON genesis is unprovable for the life of the token, so the bridge
+   * re-expresses it before signing rather than minting something the wallet
+   * will forever badge "Legacy" and refuse to send.
+   */
+  it('issues an app JSON deploy+mint as a BRC-162 genesis', async () => {
+    const { enrichCreateActionForBsv21Issuer } = await import('./token')
+    const { decodeBsv21Binary } = await import('./token')
+    const hex = (text: string): string =>
+      Array.from(new TextEncoder().encode(text))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    const body = hex(
+      JSON.stringify({ p: 'bsv-20', op: 'deploy+mint', sym: 'COPE', amt: '4444444' }),
+    )
+    const p2pkh = `76a914${'2e'.repeat(20)}88ac`
+    const jsonDeploy =
+      '0063036f726451' +
+      '12' +
+      hex('application/bsv-20') +
+      '00' +
+      `4c${(body.length / 2).toString(16).padStart(2, '0')}` +
+      body +
+      '68' +
+      p2pkh
+
+    const active = {
+      identityKey: issuer,
+      rootKeyHex: root.toHex(),
+      chain: 'main',
+      wallet: { listOutputs: async () => ({ outputs: [] }) },
+    }
+    const enriched = await enrichCreateActionForBsv21Issuer(active as never, {
+      description: 'Mint COPE',
+      outputs: [
+        {
+          satoshis: 1,
+          basket: 'bsv21',
+          lockingScript: jsonDeploy,
+          tags: ['bsv21', 'op:deploy+mint', 'sym:COPE', 'amt:4444444'],
+          customInstructions: JSON.stringify({
+            p: 'bsv-20',
+            op: 'deploy+mint',
+            sym: 'COPE',
+            amt: '4444444',
+          }),
+        },
+      ],
+    })
+
+    const issued = enriched.outputs?.[0]?.lockingScript ?? ''
+    const decoded = decodeBsv21Binary(issued)
+    expect(decoded?.role).toBe('deploy')
+    expect(decoded?.amount).toBe(4_444_444n)
+    expect(decoded?.restScriptHex).toBe(p2pkh)
+    // Issuer attribution still rides the remittance mirror.
+    expect(enriched.outputs?.[0]?.tags).toContain(`issuer:${issuer}`)
+  })
+
   it('unlocks inscription‖P2PKH‖Sigma tips with full locking-script sighash', async () => {
     const plain = new P2PKH().lock(root.toAddress())
     const json = new TextEncoder().encode(

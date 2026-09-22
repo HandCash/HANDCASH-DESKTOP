@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.257] - 2026-09-22
+
+### Changed
+
+- **A mint is now born provable.** An app `deploy+mint` written as a legacy
+  JSON inscription can never be proven — BRC-176 reads BRC-162 locks, so a JSON
+  genesis paints as "Legacy" and offers Burn where Send belongs, for the life
+  of the token. The bridge now re-expresses that genesis as a BRC-162 lock
+  before signing, carrying the same supply, symbol, decimals, icon and P2PKH
+  owner, so `prove` succeeds the moment the transaction exists. The wire cannot
+  be repaired after signing, which is why the decision moved to issuance.
+- A genesis that cannot be re-expressed exactly — an authority deploy, a
+  non-integer amount, a non-P2PKH tail — is issued as the app wrote it and the
+  refusal is logged with its reason. Round-trip is verified before use: supply,
+  role and spend conditions must decode back identically.
+
 ## [1.3.256] - 2026-09-22
 
 ### Fixed

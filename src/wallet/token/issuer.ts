@@ -9,6 +9,7 @@ import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sd
 import { Algorithm, Sigma } from 'sigma-protocol'
 import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../beefCache'
 import { normalizeTokenId } from './types'
+import { planBsv21MintWire } from './mintWire'
 import { fetchRawTxHex } from '../oneSatImport'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import type { ActiveWallet } from '../session'
@@ -472,6 +473,28 @@ export async function enrichCreateActionForBsv21Issuer(
       customInstructions: mergeIssuerIntoCi(out.customInstructions, issuer, {
         icon: prior,
       }),
+    }
+  }
+
+  // Issue the genesis on a provable wire. A JSON `deploy+mint` can never be
+  // proven by BRC-176, so the card it creates is stuck at "Legacy" for the
+  // life of the token; the same holding as a BRC-162 lock is verifiable the
+  // moment it is signed. Runs after icon resolution (the icon rides along) and
+  // before Sigma, which appends to whichever script we end up issuing.
+  for (const i of nextOutputs.map((o, i) => (isBsv21DeployMintOutput(o) ? i : -1))) {
+    if (i < 0) continue
+    const out = nextOutputs[i]!
+    if (!out.lockingScript) continue
+    const wire = planBsv21MintWire(out.lockingScript)
+    if (wire.kind === 'upgrade') {
+      nextOutputs[i] = { ...out, lockingScript: wire.lockingScript }
+      console.info(
+        `[bsv21-issuer] genesis ${wire.sym ?? 'token'} issued as BRC-162 (amt ${wire.amount}) — legacy JSON deploy upgraded`,
+      )
+    } else if (wire.kind === 'keep') {
+      console.warn(
+        `[bsv21-issuer] genesis stays legacy JSON and cannot be proven — ${wire.reason}`,
+      )
     }
   }
 
