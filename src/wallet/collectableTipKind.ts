@@ -9,7 +9,7 @@
  * the UI offers abandon instead of send. Item identity is BRC-150 (offline
  * tip->origin proof); there is no on-chain latch companion.
  */
-import { Beef } from '@bsv/sdk'
+import { Beef, P2PKH, type LockingScript, type PrivateKey } from '@bsv/sdk'
 import {
   collectableSendReadyMessage,
   type CollectableSendReady,
@@ -28,6 +28,26 @@ export type ProvenTier = 'brc150' | 'unproven'
 
 /** Bare or embedded P2PKH locking branch: `OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG`. */
 const P2PKH_BRANCH = /76a914[0-9a-f]{40}88ac/i
+
+/**
+ * Sign a spendable item tip against its complete locking script.
+ *
+ * Ordinal/data envelopes are part of scriptCode. Reconstructing bare P2PKH
+ * changes the sighash and yields a locally invalid CHECKSIG unlock.
+ */
+export function unlockSpendableTip(
+  privateKey: PrivateKey,
+  satoshis: number,
+  lockingScript: LockingScript,
+) {
+  return new P2PKH().unlock(
+    privateKey,
+    'all',
+    false,
+    satoshis,
+    lockingScript,
+  )
+}
 
 /**
  * Coerce wallet / SDK locking scripts to lowercase hex.

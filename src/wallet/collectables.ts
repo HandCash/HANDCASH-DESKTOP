@@ -18,7 +18,6 @@ import {
   type SignableTransaction,
   type Transaction,
 } from '@bsv/sdk'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { type ActiveWallet } from './session'
 import {
   noteOutboundSendComplete,
@@ -124,6 +123,7 @@ import {
   isCovenantLockedScript,
   normalizeLockingScriptHex,
   resolveTipLockingScriptHex,
+  unlockSpendableTip,
 } from './collectableTipKind'
 import {
   collectableSendReadyMessage,
@@ -3163,14 +3163,22 @@ async function signOrdinalTransfer(args: {
     // The sighash covers the source value, so read each value from its source
     // transaction instead of assuming one.
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
-    const satoshis =
-      input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
-    if (typeof satoshis !== 'number') {
+    const source =
+      input.sourceTransaction?.outputs[input.sourceOutputIndex]
+    const satoshis = source?.satoshis
+    const lockingScript = source?.lockingScript
+    if (typeof satoshis !== 'number' || !lockingScript) {
       throw new Error('Collectable input is missing its source transaction')
     }
-    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+    // Ordinal tips are inscription/data envelopes plus a P2PKH branch. The
+    // signature commits to the *entire* source locking script. Toolbox's
+    // getUnlockP2PKH hashes a reconstructed bare P2PKH script, producing the
+    // exact CHECKSIG failure seen on Pixel Fox ("top stack element must be
+    // truthy") before the transaction ever reaches propagation.
+    input.unlockingScriptTemplate = unlockSpendableTip(
       rootKey,
-      satoshis
+      satoshis,
+      lockingScript,
     )
   }
   await unsigned.sign()

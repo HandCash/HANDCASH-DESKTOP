@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { Beef, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import {
+  Beef,
+  LockingScript,
+  P2PKH,
+  PrivateKey,
+  Spend,
+  Transaction,
+} from '@bsv/sdk'
 import {
   chooseSendPath,
   classifyTipKind,
@@ -9,6 +16,7 @@ import {
   lockingScriptHexFromBeef,
   normalizeLockingScriptHex,
   resolveTipLockingScriptHex,
+  unlockSpendableTip,
 } from './collectableTipKind'
 
 const P2PKH_HEX = `76a914${'ab'.repeat(20)}88ac`
@@ -85,6 +93,45 @@ describe('classifyTipKind', () => {
   it('returns unknown for empty script', () => {
     expect(classifyTipKind('')).toEqual({ kind: 'unknown' })
     expect(classifyTipKind(null)).toEqual({ kind: 'unknown' })
+  })
+})
+
+describe('unlockSpendableTip', () => {
+  it('commits the signature to the complete ordinal locking script', async () => {
+    const key = PrivateKey.fromRandom()
+    const p2pkh = new P2PKH().lock(key.toAddress()).toHex()
+    const lockingScript = LockingScript.fromHex(
+      // ord envelope ‖ P2PKH branch ‖ legacy metadata
+      `0063036f72645103666f6f68${p2pkh}6a03626172`,
+    )
+    const source = new Transaction()
+    source.addOutput({ satoshis: 1, lockingScript })
+    const spend = new Transaction()
+    spend.addInput({
+      sourceTransaction: source,
+      sourceOutputIndex: 0,
+      unlockingScriptTemplate: unlockSpendableTip(key, 1, lockingScript),
+    })
+    spend.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(key.toAddress()),
+    })
+    await spend.sign()
+
+    const check = new Spend({
+      sourceTXID: source.id('hex'),
+      sourceOutputIndex: 0,
+      sourceSatoshis: 1,
+      lockingScript,
+      transactionVersion: spend.version,
+      otherInputs: [],
+      inputIndex: 0,
+      unlockingScript: spend.inputs[0]!.unlockingScript!,
+      outputs: spend.outputs,
+      inputSequence: spend.inputs[0]!.sequence ?? 0xffffffff,
+      lockTime: spend.lockTime,
+    })
+    expect(check.validate()).toBe(true)
   })
 })
 
