@@ -7,7 +7,9 @@ import {
   getWalletRuntime,
   installWalletRuntime,
   registerWalletRuntimeLifecycle,
+  retainWalletRuntime,
   resetWalletRuntimeForTests,
+  runtimeCanRunInBackground,
   runtimeIsCurrent,
 } from './walletRuntime'
 
@@ -55,6 +57,33 @@ describe('WalletRuntime', () => {
     disposeWalletRuntime('account-changed')
 
     expect(calls).toEqual(['second', 'first'])
+  })
+
+  it('lets an explicitly retained signed action finish after account switch', () => {
+    const first = installWalletRuntime(wallet('first', 0))
+    const retained = retainWalletRuntime(first)
+
+    disposeWalletRuntime('account-changed')
+    const second = installWalletRuntime(wallet('second', 1))
+
+    expect(runtimeIsCurrent(first)).toBe(false)
+    expect(runtimeCanRunInBackground(first)).toBe(true)
+    expect(runtimeIsCurrent(second)).toBe(true)
+    retained.release()
+    expect(runtimeCanRunInBackground(first)).toBe(false)
+    expect(first.signal.aborted).toBe(true)
+  })
+
+  it('still aborts every retained action when the wallet locks', () => {
+    const first = installWalletRuntime(wallet('first', 0))
+    retainWalletRuntime(first)
+    disposeWalletRuntime('account-changed')
+    installWalletRuntime(wallet('second', 1))
+
+    disposeWalletRuntime('locked')
+
+    expect(first.signal.aborted).toBe(true)
+    expect(runtimeCanRunInBackground(first)).toBe(false)
   })
 
   it('refuses duplicate feature ownership', () => {

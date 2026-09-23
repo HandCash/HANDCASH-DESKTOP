@@ -79,11 +79,24 @@ vi.mock('./session', () => ({
 
 vi.mock('./walletRuntime', () => ({
   requireWalletRuntime: () => ({ instance: runtimeWallet }),
+  getWalletRuntime: () => ({ instance: runtimeWallet }),
+  retainWalletRuntime: (runtime: unknown) => ({
+    runtime,
+    release: () => undefined,
+  }),
   assertRuntimeCurrent: () => {},
+  assertRuntimeAvailable: () => {},
+  runtimeIsCurrent: () => true,
 }))
 
 vi.mock('./signedChequeArchive', () => ({
   archiveSignedCheque: () => true,
+}))
+
+vi.mock('./pendingMinerOutbox', () => ({
+  enqueuePendingMinerSubmit: () => true,
+  removePendingMinerSubmit: () => undefined,
+  updatePendingMinerSubmitBody: () => true,
 }))
 
 vi.mock('./messageTransport', () => ({

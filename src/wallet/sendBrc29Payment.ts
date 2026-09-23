@@ -71,6 +71,7 @@ import {
   mustBrc29SelfReceive,
 } from './brc29SendMachine'
 import { enqueuePendingBrc29Remit } from './pendingBrc29Outbox'
+import { accountKeyScopeFor } from './accountLocalKeys'
 import {
   getMessageWriteGeneration,
   listAllMessages,
@@ -551,7 +552,7 @@ export async function sendBrc29ToIdentityKey(opts: {
                   remittance,
                   messagebox: friend?.messagebox,
                   amountLabel: opts.friendLabel ?? undefined,
-                })
+                }, accountKeyScopeFor(active))
               }
             } catch (err) {
               console.warn(
@@ -568,7 +569,7 @@ export async function sendBrc29ToIdentityKey(opts: {
                 remittance,
                 messagebox: friend?.messagebox,
                 amountLabel: opts.friendLabel ?? undefined,
-              })
+              }, accountKeyScopeFor(active))
               recordTransactionStage('peer_delivery_queued', {
                 flow: 'brc29',
                 txid,

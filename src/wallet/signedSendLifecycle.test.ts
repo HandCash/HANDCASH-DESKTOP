@@ -22,6 +22,8 @@ const prepareBroadcastCheque = vi.fn(async (_w: unknown, _id: string, atomic: nu
 const enqueuePendingMinerSubmit = vi.fn(() => true)
 const archiveSignedCheque = vi.fn(() => true)
 const assertRuntimeCurrent = vi.fn()
+const releaseRuntime = vi.fn()
+let runtimeCurrent = true
 const runtime = {
   instance: {
     chain: 'main',
@@ -42,7 +44,9 @@ vi.mock('./session', () => ({
 
 vi.mock('./walletRuntime', () => ({
   requireWalletRuntime: () => runtime,
-  assertRuntimeCurrent: (...args: unknown[]) => assertRuntimeCurrent(...args),
+  retainWalletRuntime: () => ({ runtime, release: releaseRuntime }),
+  assertRuntimeAvailable: (...args: unknown[]) => assertRuntimeCurrent(...args),
+  runtimeIsCurrent: () => runtimeCurrent,
 }))
 
 vi.mock('./staleOutputRelease', () => ({
@@ -83,6 +87,7 @@ const ATOMIC = [1, 2, 3]
 describe('signedSendLifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    runtimeCurrent = true
   })
 
   it('registers token sends on the same lifecycle after sealing inputs', async () => {
@@ -95,7 +100,12 @@ describe('signedSendLifecycle', () => {
       to: 'recipient',
     })
 
-    expect(sealSpentInputsOfSignedTx).toHaveBeenCalledWith(TXID, ATOMIC)
+    expect(sealSpentInputsOfSignedTx).toHaveBeenCalledWith(
+      TXID,
+      ATOMIC,
+      runtime.instance,
+      true,
+    )
     expect(archiveSignedCheque).toHaveBeenCalledWith(TXID, ATOMIC, {
       flow: 'token_transfer',
       owner: {
@@ -106,6 +116,11 @@ describe('signedSendLifecycle', () => {
     })
     expect(enqueuePendingMinerSubmit).toHaveBeenCalledWith(TXID, ATOMIC, {
       flow: 'token_transfer',
+      owner: {
+        accountIndex: 2,
+        identityKey: 'identity-two',
+        chain: 'main',
+      },
     })
     expect(beginSignedTxLifecycle).toHaveBeenCalledWith({
       txid: TXID,
@@ -145,6 +160,43 @@ describe('signedSendLifecycle', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
     expect(archiveSignedCheque).not.toHaveBeenCalled()
+  })
+
+  it('finishes registration in the captured owner after the foreground account changes', async () => {
+    prepareBroadcastCheque.mockImplementationOnce(async (_w, _id, atomic) => {
+      runtimeCurrent = false
+      return {
+        atomic,
+        decision: { kind: 'broadcast', parents: 'unconfirmed-bodies' },
+      }
+    })
+    const { registerSignedSend } = await import('./signedSendLifecycle')
+
+    const handle = await registerSignedSend({
+      txid: TXID,
+      atomicBeef: ATOMIC,
+      flow: 'item_transfer',
+    })
+
+    expect(sealSpentInputsOfSignedTx).toHaveBeenCalledWith(
+      TXID,
+      ATOMIC,
+      runtime.instance,
+      false,
+    )
+    expect(enqueuePendingMinerSubmit).toHaveBeenCalledWith(
+      TXID,
+      ATOMIC,
+      expect.objectContaining({
+        owner: {
+          accountIndex: 2,
+          identityKey: 'identity-two',
+          chain: 'main',
+        },
+      }),
+    )
+    expect(beginSignedTxLifecycle).not.toHaveBeenCalled()
+    expect(handle.lifecycleId).toBe(`background:${TXID}`)
   })
 
   it('does not seal or queue a package with missing parent bodies', async () => {

@@ -908,6 +908,11 @@ export async function switchVaultAccount(args: {
   mnemonic?: string | null
   accountIndex: number
 }): Promise<ActiveWallet> {
+  // Do not rebind account-local Activity/inventory while a send continuation
+  // still owns those foreground projections. Its signed miner submission is
+  // retained separately and continues in the background after this fence.
+  const { waitForForegroundSpendIdle } = await import('./walletCoordinator')
+  await waitForForegroundSpendIdle()
   const {
     rootKeyHexForAccount,
     setActiveVaultAccountIndex,

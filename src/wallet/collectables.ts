@@ -193,7 +193,7 @@ import {
   durableRemoveItem,
   durableSetItem,
 } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import { accountKeyScopeFor, accountLocalKey } from './accountLocalKeys'
 import {
   isAlreadySpentInputError,
   hideSpentOutpoints,
@@ -1803,6 +1803,8 @@ async function proveHeldGenesis(
   wallet: ActiveWallet,
   ownRead: Promise<Collectable[]> | null
 ): Promise<void> {
+  const epoch = collectablesAccountEpoch
+  const owner = accountKeyScopeFor(wallet)
   const settleAwaitingOutsideQueue = (queued: Set<string>) => {
     settleStaleAwaitingVerification((outpoint) => queued.has(outpoint))
   }
@@ -1941,6 +1943,7 @@ async function proveHeldGenesis(
       // until tomorrow. Aborted walks also must not burn the session budget —
       // opening details mid-walk used to exhaust the budget and strand the tip.
       if (outcome.kind !== 'proven') {
+        if (epoch !== collectablesAccountEpoch) return
         // Say which tip and why. Without this every failure looked the same in
         // the log, so "stuck on the network" and "not a provable item" were
         // indistinguishable to anyone reading it.
@@ -1982,6 +1985,7 @@ async function proveHeldGenesis(
         continue
       }
       const proof = outcome.proof
+      if (epoch !== collectablesAccountEpoch) return
       noteGenesisWalk()
       rememberGenesisAttempt(outpoint)
       clearGenesisFailure(outpoint)
@@ -2020,15 +2024,20 @@ async function proveHeldGenesis(
       )
       await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
       await yieldToUi()
-      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+      if (epoch !== collectablesAccountEpoch) return
+      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain), {
+        forEpoch: epoch,
+      })
       await yieldToUi()
+      if (epoch !== collectablesAccountEpoch) return
       // Toast + drop spinner in one beat — no idle gap before the checkmark.
-      announceItemVerified(outpoint, 'BRC-150 lineage proven')
+      announceItemVerified(outpoint, 'BRC-150 lineage proven', owner)
       clearVerificationProgress(outpoint)
       await yieldToUi()
     }
   } finally {
     provingGenesis = false
+    if (epoch !== collectablesAccountEpoch) return
     clearVerificationProgress()
     // Tips left in the queue were aborted / budget-cut — keep their spinner only
     // if we still plan to retry (shouldAttemptGenesis). Everything else → Unverified.
@@ -2294,6 +2303,13 @@ export async function verifyItemAuthenticity(
       reason: !wallet ? 'Wallet locked' : 'Origin missing',
     }
   }
+  const epoch = collectablesAccountEpoch
+  const owner = accountKeyScopeFor(wallet)
+  const accountChanged = (): AuthenticityResult => ({
+    tier: 'unproven',
+    proven: false,
+    reason: 'Wallet account changed during verification',
+  })
 
   try {
     const listed = await wallet.wallet.listOutputs({
@@ -2305,6 +2321,7 @@ export async function verifyItemAuthenticity(
       include: 'locking scripts',
       seekPermission: false,
     })
+    if (epoch !== collectablesAccountEpoch) return accountChanged()
     const match = (listed.outputs ?? []).find(
       (o) => normalizeOutpoint(o.outpoint) === target
     )
@@ -2396,6 +2413,7 @@ export async function verifyItemAuthenticity(
       provenOrigin = custom.origin ?? tag
     }
 
+    if (epoch !== collectablesAccountEpoch) return accountChanged()
     rememberProvenVerdict(target, {
       ...authenticityResultToVerdict(authenticity),
       ...(provenOrigin ? { origin: originKey(provenOrigin) } : {}),
@@ -2403,11 +2421,24 @@ export async function verifyItemAuthenticity(
     })
     if (provenOrigin) {
       await adoptProvenOrigin(target, provenOrigin, wallet.chain)
-      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+      if (epoch !== collectablesAccountEpoch) return accountChanged()
+      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain), {
+        forEpoch: epoch,
+      })
     }
     if (authenticity.proven) {
       await yieldToUi()
-      announceItemVerified(target, 'BRC-150 tip-to-origin proven')
+      if (epoch !== collectablesAccountEpoch) {
+        // Settle the row in its owner store without touching the new wallet's
+        // progress/toast state.
+        announceItemVerified(
+          target,
+          'BRC-150 tip-to-origin proven',
+          owner,
+        )
+        return authenticity
+      }
+      announceItemVerified(target, 'BRC-150 tip-to-origin proven', owner)
     }
     return authenticity
   } catch (err) {
@@ -2646,49 +2677,36 @@ async function listCollectablesNow(
     // this page is short. Mobile sync/soft pull is often NOT the recompose
     // coordinator, so that flag must not be required.
     //
-    // Exception: a fresh address UTXO scan proves which tips are still live.
-    // Then a short basket page is real shrinkage (spent ghosts left), not a
-    // recompose glitch — fall through so ownership fate can drop the rest.
+    // A live-set *count* is not an ownership verdict for omitted rows. During
+    // createAction Toolbox can return a short page while the input is reserved,
+    // and ordinal index cooldown can make the merged live set temporarily
+    // smaller at the same time. The old cardinality shortcut replaced seven
+    // cards with two during a send, then painted them back on the next read.
+    // Keep every omitted card until its exact outpoint is positively spent or
+    // a known signed transaction retires it.
     if (
       !append &&
       cachedCollectables.length > 0 &&
       !authoritativeAfterReplace &&
       page.length < cachedCollectables.length
     ) {
-      const liveNow = resolveLiveOneSatKeys(wallet)
-      const liveFresh =
-        liveNow != null &&
-        Date.now() - liveNow.at < LIVE_ONE_SAT_TTL_MS &&
-        liveNow.keys.size > 0
-      // Empty page is still the recompose hazard — only skip keep-cache when
-      // the basket returned *some* tips and the live set is far smaller than
-      // the painted inventory (spent ghosts).
-      const liveProvesShrink =
-        liveFresh &&
-        page.length > 0 &&
-        liveNow!.keys.size < Math.max(16, Math.floor(cachedCollectables.length / 4))
-      if (!liveProvesShrink) {
-        const seeded = pendingSeededItems(page, Date.now(), wallet.identityKey)
-        const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain)
-        console.info(
-          `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
-        )
-        if (page.length > 0) {
-          const byOp = new Map(
-            lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
-          )
-          for (const o of [...page, ...seeded]) {
-            byOp.set(outpointKey(o.outpoint), o)
-          }
-          lastItemOutputs = [...byOp.values()]
-          lastItemChain = wallet.chain
-        }
-        setCollectablesCache(merged, { announceArrivals, forEpoch: epoch })
-        return getCachedCollectables()
-      }
+      const seeded = pendingSeededItems(page, Date.now(), wallet.identityKey)
+      const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain)
       console.info(
-        `[collectables] short basket page (${page.length}) with fresh live set (${liveNow!.keys.size}) — reconciling ownership`,
+        `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
       )
+      if (page.length > 0) {
+        const byOp = new Map(
+          lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
+        )
+        for (const o of [...page, ...seeded]) {
+          byOp.set(outpointKey(o.outpoint), o)
+        }
+        lastItemOutputs = [...byOp.values()]
+        lastItemChain = wallet.chain
+      }
+      setCollectablesCache(merged, { announceArrivals, forEpoch: epoch })
+      return getCachedCollectables()
     }
     listedOutputTotal = inferCollectableOutputTotal({
       offset: pageOffset,
@@ -4202,7 +4220,7 @@ export async function sendCollectable(args: {
                       itemOutputIndex: 0,
                       messagebox: friend?.messagebox,
                       provenance: parseProvenanceV2(provenance) ?? undefined,
-                    })
+                    }, accountKeyScopeFor(wallet))
                   } else {
                     recordTransactionStage('peer_delivered', {
                       flow: 'item_transfer',
@@ -4227,7 +4245,7 @@ export async function sendCollectable(args: {
                     itemCollectionId: collectionId,
                     messagebox: friend?.messagebox,
                     provenance: parseProvenanceV2(provenance) ?? undefined,
-                  })
+                  }, accountKeyScopeFor(wallet))
                   recordTransactionStage('peer_delivery_queued', {
                     flow: 'item_transfer',
                     txid,
@@ -4878,7 +4896,7 @@ export async function sendCollectables(
                   itemOutputIndex,
                   messagebox: friend?.messagebox,
                   provenance: parseProvenanceV2(item.provenance) ?? undefined,
-                })
+                }, accountKeyScopeFor(wallet))
               }
             })()
           } else {

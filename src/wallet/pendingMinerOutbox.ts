@@ -7,7 +7,12 @@
 import { Beef } from '@bsv/sdk'
 import { classifyBeefAncestryGap } from './beefCache'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import {
+  accountKeyScopeFor,
+  accountLocalKey,
+  accountLocalKeyFor,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 import { storageRegistry } from '../storage/registry'
 import {
   assertRuntimeCurrent,
@@ -72,13 +77,13 @@ export function classifyPendingMinerBody(
     : { kind: 'spv-ready' }
 }
 
-function storageKey(): string {
-  return accountLocalKey(KEY_BASE)
+function storageKey(owner?: BoundAccountKeyScope): string {
+  return owner ? accountLocalKeyFor(KEY_BASE, owner) : accountLocalKey(KEY_BASE)
 }
 
-function load(): PendingMinerSubmit[] {
+function load(owner?: BoundAccountKeyScope): PendingMinerSubmit[] {
   try {
-    const key = storageKey()
+    const key = storageKey(owner)
     const parsed = JSON.parse(durableGetItem(key) || '[]') as unknown
     if (!Array.isArray(parsed)) return []
     const candidates = (parsed as PendingMinerSubmit[]).filter(
@@ -100,16 +105,19 @@ function load(): PendingMinerSubmit[] {
   }
 }
 
-function save(rows: PendingMinerSubmit[]): boolean {
+function save(
+  rows: PendingMinerSubmit[],
+  owner?: BoundAccountKeyScope,
+): boolean {
   // Every row is a still-live signed cheque. Never cap by evicting the oldest:
   // that strands its seal and permanently stops propagation with no verdict.
-  return durableSetItem(storageKey(), JSON.stringify(rows))
+  return durableSetItem(storageKey(owner), JSON.stringify(rows))
 }
 
 export function enqueuePendingMinerSubmit(
   txid: string,
   atomic: number[],
-  opts?: { flow?: TransactionFlow },
+  opts?: { flow?: TransactionFlow; owner?: BoundAccountKeyScope },
 ): boolean {
   const id = txid.trim().toLowerCase()
   const verdict = classifyPendingMinerBody(id, atomic)
@@ -121,7 +129,7 @@ export function enqueuePendingMinerSubmit(
     )
     return false
   }
-  const rows = load()
+  const rows = load(opts?.owner)
   if (rows.some((row) => row.txid === id)) return true
   const trace = activeTransactionTrace()
   rows.push({
@@ -134,12 +142,15 @@ export function enqueuePendingMinerSubmit(
     requestId: trace?.requestId,
     flow: opts?.flow ?? trace?.flow,
   })
-  if (!save(rows)) {
+  if (!save(rows, opts?.owner)) {
     console.error('[minerOutbox] durable write refused', id.slice(0, 12))
     return false
   }
   void import('./signedChequeArchive').then(({ archiveSignedCheque }) => {
-    archiveSignedCheque(id, atomic, { flow: opts?.flow ?? trace?.flow })
+    archiveSignedCheque(id, atomic, {
+      flow: opts?.flow ?? trace?.flow,
+      owner: opts?.owner,
+    })
   })
   recordTransactionStage('propagation_queued', {
     flow: opts?.flow ?? trace?.flow,
@@ -150,9 +161,12 @@ export function enqueuePendingMinerSubmit(
   return true
 }
 
-export function removePendingMinerSubmit(txid: string): void {
+export function removePendingMinerSubmit(
+  txid: string,
+  owner?: BoundAccountKeyScope,
+): void {
   const id = txid.trim().toLowerCase()
-  if (!save(load().filter((row) => row.txid !== id))) {
+  if (!save(load(owner).filter((row) => row.txid !== id), owner)) {
     console.error('[minerOutbox] durable removal refused', id.slice(0, 12))
   }
 }
@@ -167,16 +181,17 @@ export function removePendingMinerSubmit(txid: string): void {
 export function updatePendingMinerSubmitBody(
   txid: string,
   atomic: number[],
+  owner?: BoundAccountKeyScope,
 ): boolean {
   const id = txid.trim().toLowerCase()
   if (classifyPendingMinerBody(id, atomic).kind === 'refuse') return false
-  const rows = load()
+  const rows = load(owner)
   const row = rows.find((r) => r.txid === id)
   if (!row) return false
   row.atomic = [...atomic]
-  if (!save(rows)) return false
+  if (!save(rows, owner)) return false
   void import('./signedChequeArchive').then(({ archiveSignedCheque }) => {
-    archiveSignedCheque(id, atomic, { flow: row.flow })
+    archiveSignedCheque(id, atomic, { flow: row.flow, owner })
   })
   return true
 }
@@ -192,7 +207,8 @@ export async function flushPendingMinerOutbox(args?: {
   if (!runtime && import.meta.env?.MODE !== 'test') throw new Error('WALLET_LOCKED')
   if (runtime) assertRuntimeCurrent(runtime)
   const now = Date.now()
-  const rows = load()
+  const owner = runtime ? accountKeyScopeFor(runtime.instance) : undefined
+  const rows = load(owner)
   if (rows.length === 0) return 0
   const keep: PendingMinerSubmit[] = []
   let accepted = 0
@@ -257,7 +273,7 @@ export async function flushPendingMinerOutbox(args?: {
       nextAttemptAt: Date.now() + backoffMs(attempt),
     })
   }
-  if (!save(keep)) {
+  if (!save(keep, owner)) {
     console.error('[minerOutbox] flush checkpoint refused; previous queue remains durable')
   }
   return accepted

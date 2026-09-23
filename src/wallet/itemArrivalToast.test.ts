@@ -140,4 +140,37 @@ describe('itemArrivalToast', () => {
       store.has(accountLocalKey('handcash.items.receiveAnnounced.v1')),
     ).toBe(true)
   })
+
+  it('settles late verification in its owner wallet without populating the selected wallet', async () => {
+    const primary = {
+      accountIndex: 0,
+      identityKey: 'vitest-primary-identity',
+      chain: 'main' as const,
+    }
+    bindAccountLocalKeyScope(primary)
+    const toast = await import('./itemArrivalToast')
+    const activity = await import('./appActivity')
+    const txid = 'f'.repeat(64)
+    const op = `${txid}.0`
+    toast.announceItemsReceived([op], primary)
+
+    bindAccountLocalKeyScope({
+      accountIndex: 1,
+      identityKey: 'vitest-secondary-identity',
+      chain: 'main',
+    })
+    toast.rebindItemArrivalToastForAccount()
+    activity.rebindAppActivityForAccount()
+    toastSuccess.mockClear()
+
+    toast.announceItemVerified(op, 'BRC-150 lineage proven', primary)
+
+    expect(activity.listRecentActivity(20)).toEqual([])
+    expect(toastSuccess).not.toHaveBeenCalled()
+    bindAccountLocalKeyScope(primary)
+    activity.rebindAppActivityForAccount()
+    const settled = activity.listRecentActivity(20).find((r) => r.txid === txid)
+    expect(settled).toBeDefined()
+    expect(settled?.status).toBeUndefined()
+  })
 })

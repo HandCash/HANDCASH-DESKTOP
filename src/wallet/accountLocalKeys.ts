@@ -17,6 +17,16 @@ export type BoundAccountKeyScope = {
   chain: 'main' | 'test'
 }
 
+export function accountKeyScopeFor(
+  wallet: BoundAccountKeyScope,
+): BoundAccountKeyScope {
+  return {
+    accountIndex: wallet.accountIndex,
+    identityKey: wallet.identityKey,
+    chain: wallet.chain,
+  }
+}
+
 const SCOPE_SYMBOL = Symbol.for('handcash.wallet.account-key-scope')
 const globalScopes = globalThis as typeof globalThis & {
   [SCOPE_SYMBOL]?: AccountKeyScope

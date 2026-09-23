@@ -35,12 +35,15 @@ export async function funnelAppSignedCheque(args: {
   try {
     const { registerSignedSend } = await import('./signedSendLifecycle')
     assertRuntimeCurrent(runtime)
-    await registerSignedSend({
+    const handle = await registerSignedSend({
       txid,
       atomicBeef: args.atomicBeef,
       flow: 'brc100_action',
       satoshis: Math.max(0, Math.trunc(args.satoshis ?? 0)),
     })
+    // The app owns propagation after processAction. Registration only needs
+    // the retention through its durable archive/outbox boundary.
+    handle.releaseRuntime?.()
     return true
   } catch (err) {
     console.warn(

@@ -11,7 +11,12 @@ import { storageRegistry } from '../storage/registry'
  * Authenticity verified" for foxes that were proven days ago.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import {
+  accountLocalKey,
+  accountLocalKeyFor,
+  peekAccountLocalKeyScope,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 import { toastSuccess } from './toast'
 import { isItemProven } from './provenCache'
 import {
@@ -51,14 +56,26 @@ function note(set: Set<string>, outpoint: string): boolean {
 let cachedReceivesRaw: string | null = null
 let cachedReceives = new Set<string>()
 
-function durableReceiveKey(): string {
-  return accountLocalKey(DURABLE_RECEIVE_KEY)
+function ownerIsCurrent(owner?: BoundAccountKeyScope): boolean {
+  if (!owner) return true
+  const current = peekAccountLocalKeyScope()
+  return (
+    current.accountIndex === owner.accountIndex &&
+    current.identityKey === owner.identityKey &&
+    current.chain === owner.chain
+  )
+}
+
+function durableReceiveKey(owner?: BoundAccountKeyScope): string {
+  return owner
+    ? accountLocalKeyFor(DURABLE_RECEIVE_KEY, owner)
+    : accountLocalKey(DURABLE_RECEIVE_KEY)
 }
 
 /** Read-only — `wasItemReceivedAnnounced` is asked once per arriving tip. */
-function loadDurableReceives(): Set<string> {
+function loadDurableReceives(owner?: BoundAccountKeyScope): Set<string> {
   try {
-    const raw = durableGetItem(durableReceiveKey())
+    const raw = durableGetItem(durableReceiveKey(owner))
     if (!raw) return new Set()
     if (raw === cachedReceivesRaw) return cachedReceives
     const parsed = JSON.parse(raw) as unknown
@@ -76,29 +93,36 @@ function loadDurableReceives(): Set<string> {
   }
 }
 
-function persistDurableReceives(set: Set<string>): void {
+function persistDurableReceives(
+  set: Set<string>,
+  owner?: BoundAccountKeyScope,
+): void {
   try {
     const values = [...set]
     const trimmed =
       values.length > DURABLE_RECEIVE_MAX
         ? values.slice(values.length - DURABLE_RECEIVE_MAX)
         : values
-    durableSetItem(durableReceiveKey(), JSON.stringify(trimmed))
+    durableSetItem(durableReceiveKey(owner), JSON.stringify(trimmed))
   } catch {
     // Toast dedupe must never break ingest.
   }
 }
 
 /** True the first time this tip is announced as received (session + durable). */
-export function noteItemReceived(outpoint: string): boolean {
+export function noteItemReceived(
+  outpoint: string,
+  owner?: BoundAccountKeyScope,
+): boolean {
+  if (!ownerIsCurrent(owner)) return false
   const key = normalize(outpoint)
   if (!key) return false
   if (!note(receivedThisSession, key)) return false
-  const stored = loadDurableReceives()
+  const stored = loadDurableReceives(owner)
   if (stored.has(key)) return false
   const durable = new Set(stored)
   durable.add(key)
-  persistDurableReceives(durable)
+  persistDurableReceives(durable, owner)
   return true
 }
 
@@ -113,10 +137,14 @@ export function wasItemReceivedAnnounced(outpoint: string): boolean {
  * tips. Call from the collectables cache once the card is on the list — not
  * from address classify / ingest.
  */
-export function announceItemsReceived(outpoints: string[]): boolean {
+export function announceItemsReceived(
+  outpoints: string[],
+  owner?: BoundAccountKeyScope,
+): boolean {
+  if (!ownerIsCurrent(owner)) return false
   const fresh: string[] = []
   for (const op of outpoints) {
-    if (!noteItemReceived(op)) continue
+    if (!noteItemReceived(op, owner)) continue
     const key = normalize(op)
     fresh.push(key)
     const txid = key.split('.')[0] ?? ''
@@ -124,13 +152,13 @@ export function announceItemsReceived(outpoints: string[]): boolean {
       note(verifiedThisSession, op)
       clearAwaitingVerification(key)
       // Card landed already proven — settle the Activity row in one step.
-      noteInboundReceiveComplete({ txid, item: true, outpoint: key })
+      noteInboundReceiveComplete({ txid, item: true, outpoint: key }, owner)
     } else {
       noteAwaitingVerification(key)
       // Open the receive row now so Activity shows "Verifying…" while BRC-150
       // settles. announceItemVerified promotes it to complete later; upsert
       // refuses to take an already-settled row back to pending.
-      noteInboundReceivePending({ txid, item: true, outpoint: key })
+      noteInboundReceivePending({ txid, item: true, outpoint: key }, owner)
     }
   }
   if (fresh.length === 0) return false
@@ -158,18 +186,31 @@ export function announceItemsReceived(outpoints: string[]): boolean {
 export function announceItemVerified(
   outpoint: string,
   detail?: string | null,
+  owner?: BoundAccountKeyScope,
 ): void {
   const key = normalize(outpoint)
   if (!key) return
-  clearAwaitingVerification(key)
   // Inventory authenticity is settled — Activity must not stay on Verifying…
   const txid = key.split('.')[0] ?? ''
+  if (!ownerIsCurrent(owner)) {
+    if (/^[0-9a-f]{64}$/i.test(txid)) {
+      noteInboundReceiveComplete(
+        { txid: txid.toLowerCase(), item: true, outpoint: key },
+        owner,
+      )
+    }
+    return
+  }
+  clearAwaitingVerification(key)
   if (/^[0-9a-f]{64}$/i.test(txid)) {
-    noteInboundReceiveComplete({
-      txid: txid.toLowerCase(),
-      item: true,
-      outpoint: key,
-    })
+    noteInboundReceiveComplete(
+      {
+        txid: txid.toLowerCase(),
+        item: true,
+        outpoint: key,
+      },
+      owner,
+    )
   }
   if (!wasItemReceivedAnnounced(outpoint)) {
     // Receive toast still ahead — do not toast verify first.

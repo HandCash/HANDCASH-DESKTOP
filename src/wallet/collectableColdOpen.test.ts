@@ -147,6 +147,39 @@ describe('collectables across a cold open', () => {
     expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
   })
 
+  it('does not collapse inventory to a transient short page during a send', async () => {
+    const tips = Array.from({ length: 7 }, (_, index) => ({
+      ...itemRow(`${(index + 1).toString(16).padStart(2, '0').repeat(32)}.0`, `Item ${index + 1}`),
+    }))
+    seedDurableList(IDENTITY, tips)
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: tips.slice(0, 2).map((item) => ({
+        outpoint: item.outpoint,
+        satoshis: 1,
+        tags: ['ordinal', `origin:${item.origin}`, `name:${item.name}`],
+      })),
+      totalOutputs: 2,
+    })
+    const {
+      listCollectables,
+      rememberLiveOneSatOutpoints,
+      getCachedCollectables,
+    } = await import('./collectables')
+    // This exact count shortcut used to turn seven cards into two, even though
+    // omission from a scan says nothing about any specific outpoint.
+    rememberLiveOneSatOutpoints(
+      tips.slice(0, 2).map((item) => ({
+        outpoint: item.outpoint,
+        satoshis: 1,
+      })),
+      IDENTITY,
+    )
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables()).toHaveLength(7)
+  })
+
   it('paints new 1sat tips listed during recompose instead of hiding them', async () => {
     seedDurableList(IDENTITY)
     recomposeActive = true

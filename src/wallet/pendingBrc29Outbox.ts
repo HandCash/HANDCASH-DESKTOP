@@ -3,7 +3,12 @@
  * box missed the first delivery. Never creates a second payment tx.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import {
+  accountKeyScopeFor,
+  accountLocalKey,
+  accountLocalKeyFor,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 import { storageRegistry } from '../storage/registry'
 import type { Brc29Remittance } from './sendBrc29Payment'
 import { mapPool } from './asyncPool'
@@ -38,13 +43,13 @@ export type PendingBrc29Remit = {
   flow?: TransactionFlow
 }
 
-function storageKey(): string {
-  return accountLocalKey(KEY_BASE)
+function storageKey(owner?: BoundAccountKeyScope): string {
+  return owner ? accountLocalKeyFor(KEY_BASE, owner) : accountLocalKey(KEY_BASE)
 }
 
-function load(): PendingBrc29Remit[] {
+function load(owner?: BoundAccountKeyScope): PendingBrc29Remit[] {
   try {
-    const raw = durableGetItem(storageKey())
+    const raw = durableGetItem(storageKey(owner))
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     return Array.isArray(parsed) ? (parsed as PendingBrc29Remit[]) : []
@@ -53,8 +58,8 @@ function load(): PendingBrc29Remit[] {
   }
 }
 
-function save(rows: PendingBrc29Remit[]): void {
-  durableSetItem(storageKey(), JSON.stringify(rows.slice(0, 50)))
+function save(rows: PendingBrc29Remit[], owner?: BoundAccountKeyScope): void {
+  durableSetItem(storageKey(owner), JSON.stringify(rows.slice(0, 50)))
 }
 
 /** Cheap peek for Dashboard tip-poll backoff — no network. */
@@ -65,10 +70,11 @@ export function pendingBrc29OutboxCount(): number {
 export function enqueuePendingBrc29Remit(
   row: Omit<PendingBrc29Remit, 'createdAt' | 'attempts'> &
     Partial<Pick<PendingBrc29Remit, 'createdAt' | 'attempts'>>,
+  owner?: BoundAccountKeyScope,
 ): void {
   const txid = row.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
-  const rows = load().filter((r) => r.txid !== txid)
+  const rows = load(owner).filter((r) => r.txid !== txid)
   const trace = activeTransactionTrace()
   rows.push({
     ...row,
@@ -79,7 +85,7 @@ export function enqueuePendingBrc29Remit(
     requestId: row.requestId ?? trace?.requestId,
     flow: row.flow ?? trace?.flow ?? 'brc29',
   })
-  save(rows)
+  save(rows, owner)
 }
 
 export async function flushPendingBrc29Outbox(args: {
@@ -89,7 +95,8 @@ export async function flushPendingBrc29Outbox(args: {
   const runtime = args.runtime ?? getWalletRuntime()
   if (!runtime && import.meta.env?.MODE !== 'test') throw new Error('WALLET_LOCKED')
   if (runtime) assertRuntimeCurrent(runtime)
-  const rows = load()
+  const owner = runtime ? accountKeyScopeFor(runtime.instance) : undefined
+  const rows = load(owner)
   if (rows.length === 0) return 0
   const { notifyPeerBrc29Payment } = await import('./messageTransport')
   const { getBeefForTxidCached } = await import('./beefCache')
@@ -165,6 +172,6 @@ export async function flushPendingBrc29Outbox(args: {
     }
     if ('keep' in o && o.keep) keep.push(o.keep)
   }
-  save(keep)
+  save(keep, owner)
   return delivered
 }

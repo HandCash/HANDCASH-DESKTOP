@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.286] - 2026-09-23
+
+### Fixed
+
+- Signed transactions now retain their originating wallet runtime while miner
+  propagation continues in the background. Account switching waits only for
+  the foreground spend critical section, then leaves the signed cheque running
+  without allowing its late callbacks to mutate the newly selected wallet.
+- Miner, item-remittance, and BRC-29 retry queues are keyed to the immutable
+  signing account. Receive verification and Activity completion carry the same
+  captured ownership, so a late result settles the correct wallet without
+  showing a toast or progress state in another account.
+- Collectable inventory no longer collapses when Toolbox briefly returns a
+  short basket page during a send. A card remains visible until its exact
+  outpoint is positively spent or retired by the wallet's signed transaction.
+- Received collectables remain in Activity while BRC-150 verification is
+  pending. Verification work is fenced by the account epoch, preventing stale
+  cache, progress, and Activity writes after an account switch.
+
 ## [1.3.285] - 2026-09-23
 
 ### Fixed

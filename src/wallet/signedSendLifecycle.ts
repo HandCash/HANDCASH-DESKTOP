@@ -1,7 +1,14 @@
 import {
-  assertRuntimeCurrent,
+  assertRuntimeAvailable,
   requireWalletRuntime,
+  retainWalletRuntime,
+  runtimeIsCurrent,
+  type WalletRuntime,
 } from './walletRuntime'
+import {
+  accountKeyScopeFor,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 
 /**
  * One lifecycle for every locally signed outbound transaction.
@@ -27,6 +34,10 @@ export type SignedSendHandle = {
   txid: string
   atomicBeef: number[]
   flow: TransactionFlow
+  /** Immutable signer and storage owner; never replaced by an account switch. */
+  runtime?: WalletRuntime
+  owner?: BoundAccountKeyScope
+  releaseRuntime?: () => void
 }
 
 export async function registerSignedSend(args: {
@@ -46,49 +57,63 @@ export async function registerSignedSend(args: {
   // Freeze the signer/account identity before the first await. Derivation
   // scope must never follow a later account switch halfway through a cheque.
   const runtime = requireWalletRuntime()
-  const owner = {
-    accountIndex: runtime.instance.accountIndex,
-    identityKey: runtime.instance.identityKey,
-    chain: runtime.instance.chain,
-  } as const
-  const { prepareBroadcastCheque } = await import('./beefCache')
-  const prepared = await prepareBroadcastCheque(
-    runtime.instance,
-    txid,
-    args.atomicBeef,
-  )
-  assertRuntimeCurrent(runtime)
-  const atomicBeef = prepared.atomic
+  const retention = retainWalletRuntime(runtime)
+  const owner = accountKeyScopeFor(runtime.instance)
+  try {
+    const { prepareBroadcastCheque } = await import('./beefCache')
+    const prepared = await prepareBroadcastCheque(
+      runtime.instance,
+      txid,
+      args.atomicBeef,
+    )
+    assertRuntimeAvailable(runtime)
+    const atomicBeef = prepared.atomic
 
-  // Seal first. A lifecycle must never advertise a signed cheque while its
-  // inputs remain selectable by a second send.
-  await sealSpentInputsOfSignedTx(txid, atomicBeef)
-  assertRuntimeCurrent(runtime)
-  // Persist before any Activity/remittance work. The cheque archive is what
-  // heal replays; the miner outbox is only the still-propagating subset.
-  const { archiveSignedCheque } = await import('./signedChequeArchive')
-  assertRuntimeCurrent(runtime)
-  if (!archiveSignedCheque(txid, atomicBeef, { flow: args.flow, owner })) {
-    throw new Error('Signed transaction template could not be archived')
-  }
-  const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
-  assertRuntimeCurrent(runtime)
-  enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow })
+    // Seal first. A lifecycle must never advertise a signed cheque while its
+    // inputs remain selectable by a second send. Use the captured Toolbox even
+    // if the user selected another account while BEEF hydration was running.
+    await sealSpentInputsOfSignedTx(
+      txid,
+      atomicBeef,
+      runtime.instance,
+      runtimeIsCurrent(runtime),
+    )
+    assertRuntimeAvailable(runtime)
+    // Persist before any Activity/remittance work. Every key is resolved from
+    // the immutable owner, never the mutable foreground account.
+    const { archiveSignedCheque } = await import('./signedChequeArchive')
+    if (!archiveSignedCheque(txid, atomicBeef, { flow: args.flow, owner })) {
+      throw new Error('Signed transaction template could not be archived')
+    }
+    const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
+    if (!enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow, owner })) {
+      throw new Error('Signed transaction could not be queued for propagation')
+    }
 
-  const lifecycle = args.lifecycleId
-    ? noteDualLayerSigned(args.lifecycleId, txid)
-    : beginSignedTxLifecycle({
-        txid,
-        satoshis: args.satoshis ?? 0,
-        to: args.to,
-      })
-  if (!lifecycle) throw new Error('Could not register signed transaction')
+    // Foreground-only projections must not land in the newly selected wallet.
+    const lifecycle = runtimeIsCurrent(runtime)
+      ? args.lifecycleId
+        ? noteDualLayerSigned(args.lifecycleId, txid)
+        : beginSignedTxLifecycle({
+            txid,
+            satoshis: args.satoshis ?? 0,
+            to: args.to,
+          })
+      : { id: args.lifecycleId ?? `background:${txid}` }
+    if (!lifecycle) throw new Error('Could not register signed transaction')
 
-  return {
-    lifecycleId: lifecycle.id,
-    txid,
-    atomicBeef,
-    flow: args.flow,
+    return {
+      lifecycleId: lifecycle.id,
+      txid,
+      atomicBeef,
+      flow: args.flow,
+      runtime,
+      owner,
+      releaseRuntime: retention.release,
+    }
+  } catch (error) {
+    retention.release()
+    throw error
   }
 }
 
@@ -105,39 +130,51 @@ export async function propagateSignedSend(
     const result = await submitAtomicBeefToMiners(
       handle.txid,
       handle.atomicBeef,
-      { flow: handle.flow },
+      {
+        flow: handle.flow,
+        runtime: handle.runtime,
+        owner: handle.owner,
+      },
     )
-    if (result.kind === 'accepted' && result.summary) {
+    const foreground =
+      !handle.runtime || runtimeIsCurrent(handle.runtime)
+    if (foreground && result.kind === 'accepted' && result.summary) {
       noteDualLayerPostBeef(handle.lifecycleId, result.summary)
     }
-    void tryFinalizeDualLayerTx(handle.lifecycleId).catch((err) => {
-      console.warn(
-        '[signed-send] SPV finality deferred',
-        handle.txid.slice(0, 12),
-        err,
-      )
-    })
+    if (foreground) {
+      void tryFinalizeDualLayerTx(handle.lifecycleId).catch((err) => {
+        console.warn(
+          '[signed-send] SPV finality deferred',
+          handle.txid.slice(0, 12),
+          err,
+        )
+      })
+    }
     return result
   } catch (reason) {
-    failDualLayerSend(
-      handle.lifecycleId,
-      'ARC_REJECTED',
-      reason instanceof Error ? reason.message : String(reason),
-    )
-    const { reportLateMinerSubmitFailure } = await import('./minerSubmit')
-    const pendingIds = opts?.pendingIds?.length
-      ? opts.pendingIds
-      : [opts?.pendingId]
-    await Promise.all(
-      pendingIds.map((pendingId) =>
-        reportLateMinerSubmitFailure({
-          pendingId,
-          txid: handle.txid,
-          reason,
-        }),
-      ),
-    )
+    if (!handle.runtime || runtimeIsCurrent(handle.runtime)) {
+      failDualLayerSend(
+        handle.lifecycleId,
+        'ARC_REJECTED',
+        reason instanceof Error ? reason.message : String(reason),
+      )
+      const { reportLateMinerSubmitFailure } = await import('./minerSubmit')
+      const pendingIds = opts?.pendingIds?.length
+        ? opts.pendingIds
+        : [opts?.pendingId]
+      await Promise.all(
+        pendingIds.map((pendingId) =>
+          reportLateMinerSubmitFailure({
+            pendingId,
+            txid: handle.txid,
+            reason,
+          }),
+        ),
+      )
+    }
     throw reason
+  } finally {
+    handle.releaseRuntime?.()
   }
 }
 

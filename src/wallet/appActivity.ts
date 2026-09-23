@@ -1,6 +1,11 @@
 import { errorText } from "./errorText";
 import { appDisplayName, normalizeAppHost } from "./appIdentity";
-import { accountLocalKey } from "./accountLocalKeys";
+import {
+  accountLocalKey,
+  accountLocalKeyFor,
+  peekAccountLocalKeyScope,
+  type BoundAccountKeyScope,
+} from "./accountLocalKeys";
 import { durableGetItem, durableSetItem } from "./durableStorage";
 import { storageRegistry } from "../storage/registry";
 import { getItemArtDataUrl } from "./localItemArt";
@@ -10,8 +15,10 @@ import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
-function activityStorageKey(): string {
-  return accountLocalKey(STORAGE_KEY_BASE);
+function activityStorageKey(owner?: BoundAccountKeyScope): string {
+  return owner
+    ? accountLocalKeyFor(STORAGE_KEY_BASE, owner)
+    : accountLocalKey(STORAGE_KEY_BASE);
 }
 
 /** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
@@ -179,9 +186,9 @@ const DAY_MS = 24 * 60 * 60_000;
 let parsedRaw: string | null = null;
 let parsedEntries: ActivityEntry[] = [];
 
-function readAll(): ActivityEntry[] {
+function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
   try {
-    const raw = durableGetItem(activityStorageKey());
+    const raw = durableGetItem(activityStorageKey(owner));
     if (!raw) return [];
     if (raw === parsedRaw) return parsedEntries;
     const decoded = JSON.parse(raw) as unknown;
@@ -324,15 +331,30 @@ export function getActivityWriteGeneration(): number {
   return writeGeneration;
 }
 
-function writeAll(entries: ActivityEntry[]): void {
+function ownerIsCurrent(owner?: BoundAccountKeyScope): boolean {
+  if (!owner) return true;
+  const current = peekAccountLocalKeyScope();
+  return (
+    current.accountIndex === owner.accountIndex &&
+    current.identityKey === owner.identityKey &&
+    current.chain === owner.chain
+  );
+}
+
+function writeAll(
+  entries: ActivityEntry[],
+  owner?: BoundAccountKeyScope,
+): void {
   // Cap history so storage stays small.
   const trimmed = entries.slice(-2000);
-  writeGeneration += 1;
+  if (ownerIsCurrent(owner)) writeGeneration += 1;
   durableSetItem(
-    activityStorageKey(),
+    activityStorageKey(owner),
     JSON.stringify({ v: storageRegistry.activity.version, data: trimmed })
   );
-  for (const cb of listeners) cb();
+  if (ownerIsCurrent(owner)) {
+    for (const cb of listeners) cb();
+  }
 }
 
 function activityRowIsItem(row: {
@@ -590,7 +612,7 @@ export function upsertAppActivity(args: {
   failureReason?: string;
   retry?: ActivityRetry;
   burn?: ActivityBurn;
-}): void {
+}, owner?: BoundAccountKeyScope): void {
   const sats = Math.max(0, Math.trunc(args.sats));
   const item = normalizeActivityItem(args.item);
   const isEvent = args.kind === "event";
@@ -607,7 +629,7 @@ export function upsertAppActivity(args: {
   const txid = args.txid?.trim() || undefined;
   const pendingId = args.pendingId?.trim() || undefined;
   const sendGroupId = args.sendGroupId?.trim() || undefined;
-  const entries = [...readAll()];
+  const entries = [...readAll(owner)];
   const idx = findActivityMatchIndex(entries, {
     kind: args.kind,
     txid,
@@ -671,7 +693,7 @@ export function upsertAppActivity(args: {
       ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
       ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
     };
-    writeAll(entries);
+    writeAll(entries, owner);
     return;
   }
   writeAll([
@@ -698,7 +720,7 @@ export function upsertAppActivity(args: {
         : {}),
       ...(args.burn ? { burn: args.burn } : {}),
     },
-  ]);
+  ], owner);
 }
 
 /** Activity row as soon as a peer tip/pay lands — before internalize finishes. */
@@ -716,7 +738,7 @@ export function noteInboundReceivePending(args: {
     dec: number;
     icon?: string;
   };
-}): void {
+}, owner?: BoundAccountKeyScope): void {
   const txid = args.txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(txid)) return;
   if (isGhostTxSuppressed(txid)) return;
@@ -757,7 +779,7 @@ export function noteInboundReceivePending(args: {
             }
           : {}),
       },
-    });
+    }, owner);
     return;
   }
   upsertAppActivity({
@@ -768,7 +790,7 @@ export function noteInboundReceivePending(args: {
     note: "Received coins",
     txid,
     status: "pending",
-  });
+  }, owner);
 }
 
 /** Mark a verifying receive as settled (or create the row if ingest skipped pending). */
@@ -786,7 +808,7 @@ export function noteInboundReceiveComplete(args: {
     dec: number;
     icon?: string;
   };
-}): void {
+}, owner?: BoundAccountKeyScope): void {
   const txid = args.txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(txid)) return;
   if (args.item) {
@@ -824,7 +846,7 @@ export function noteInboundReceiveComplete(args: {
             }
           : {}),
       },
-    });
+    }, owner);
     return;
   }
   upsertAppActivity({
@@ -835,7 +857,7 @@ export function noteInboundReceiveComplete(args: {
     note: "Received coins",
     txid,
     status: "complete",
-  });
+  }, owner);
 }
 
 /** Activity row the moment an outbound send starts — survives Back / navigate away. */

@@ -19,9 +19,14 @@ import { getActiveWallet } from './session'
 import { Beef } from "@bsv/sdk";
 import { type ActiveWallet } from "./session"
 import {
-  assertRuntimeCurrent,
+  assertRuntimeAvailable,
+  runtimeIsCurrent,
   type WalletRuntime,
 } from "./walletRuntime";
+import {
+  accountKeyScopeFor,
+  type BoundAccountKeyScope,
+} from "./accountLocalKeys";
 import {
   formatPostBeefFailure,
   isInvalidBeefTransport,
@@ -217,14 +222,15 @@ async function dropLocalSpendForArcadeReject(
   id: string,
   atomic: number[],
   telemetry: SubmitTelemetry,
-  summary: PostBeefSummary
+  summary: PostBeefSummary,
+  owner?: BoundAccountKeyScope,
 ): Promise<never> {
   console.warn(
     "[minerSubmit] Arcade hard-reject — dropping local spend",
     id.slice(0, 12),
     summary.detail
   );
-  removePendingMinerSubmit(id);
+  removePendingMinerSubmit(id, owner);
   recordTransactionStage("hard_rejected", {
     ...telemetry,
     blockerCode: summary.missingInputs
@@ -243,7 +249,9 @@ async function applyArcadePostBeef(
   summary: PostBeefSummary,
   telemetry: SubmitTelemetry,
   active: ActiveWallet,
-  proofsComplete: boolean
+  proofsComplete: boolean,
+  owner?: BoundAccountKeyScope,
+  detached = false,
 ): Promise<PostBeefSummary> {
   const arcadeOk = postBeefResultsArcadeAccepted(rawResults);
   const arcadeHardReject = postBeefResultsArcadeHardReject(rawResults);
@@ -252,20 +260,31 @@ async function applyArcadePostBeef(
   if (arcadeOk) {
     rememberArcadeSubmitContact(id);
     console.info("[minerSubmit] Arcade accepted — tx pinned", id.slice(0, 12));
-    void import("./appActivity")
-      .then(({ reviveFailedOutboundByTxid }) => reviveFailedOutboundByTxid(id))
-      .catch(() => undefined);
+    if (!detached) {
+      void import("./appActivity")
+        .then(({ reviveFailedOutboundByTxid }) => reviveFailedOutboundByTxid(id))
+        .catch(() => undefined);
+    }
     // Arcade owns it now: leave app-held `nosend`, seal inputs, free change.
-    void pinBroadcastLocalTx(id).catch((err) => {
-      console.warn(
-        "[minerSubmit] post-Arcade pin skipped",
-        id.slice(0, 12),
-        err
-      );
-    });
+    if (!detached) {
+      void pinBroadcastLocalTx(id).catch((err) => {
+        console.warn(
+          "[minerSubmit] post-Arcade pin skipped",
+          id.slice(0, 12),
+          err
+        );
+      });
+    }
     return summary.accepted ? summary : { ...summary, accepted: true };
   }
   if (arcadeHardReject) {
+    if (detached) {
+      console.info(
+        "[minerSubmit] hard reject deferred to owner wallet",
+        id.slice(0, 12),
+      );
+      return summary;
+    }
     await failIfAncestryIncomplete({
       id,
       atomic,
@@ -274,7 +293,7 @@ async function applyArcadePostBeef(
       telemetry,
       proofsComplete,
     });
-    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary);
+    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary, owner);
   }
   if (postBeefResultsHitArcade(rawResults)) {
     console.info(
@@ -292,8 +311,19 @@ async function resolveMinerConflict(args: {
   summary: PostBeefSummary;
   telemetry: SubmitTelemetry;
   outboxDurable: boolean;
+  owner?: BoundAccountKeyScope;
+  detached?: boolean;
 }): Promise<MinerSubmitResult> {
-  const { id, atomic, active, summary, telemetry, outboxDurable } = args;
+  const { id, atomic, active, summary, telemetry, outboxDurable, owner } = args;
+  if (args.detached) {
+    console.info(
+      "[minerSubmit] conflict verdict deferred to owner wallet",
+      id.slice(0, 12),
+    );
+    return outboxDurable
+      ? { kind: "unproven-conflict", summary }
+      : untrackedMinerResult("unproven-conflict", telemetry, summary);
+  }
   const arcadePinned = txHadArcadeSubmitContact(id);
   const conflictReal = await spendConflictIsProven({
     intent: arcadePinned ? "arcadePinRemoval" : "postBeefGhostCheck",
@@ -320,7 +350,7 @@ async function resolveMinerConflict(args: {
   // miner noise emptied a phone wallet (119 sealed → spendable=0).
   const { txExistsOnChain } = await import("./legacyScan");
   const onChain = await txExistsOnChain(id, active.chain).catch(() => null);
-  removePendingMinerSubmit(id);
+  removePendingMinerSubmit(id, owner);
   recordTransactionStage("hard_rejected", {
     ...telemetry,
     blockerCode: summary.doubleSpend
@@ -359,6 +389,7 @@ export async function submitAtomicBeefToMiners(
     flow?: TransactionFlow;
     retryCount?: number;
     runtime?: WalletRuntime;
+    owner?: BoundAccountKeyScope;
   }
 ): Promise<MinerSubmitResult> {
   const id = normalizeTxid(txid);
@@ -368,7 +399,15 @@ export async function submitAtomicBeefToMiners(
     );
   }
   const trace = activeTransactionTrace();
-  if (opts?.runtime) assertRuntimeCurrent(opts.runtime);
+  if (opts?.runtime) assertRuntimeAvailable(opts.runtime);
+  const owner =
+    opts?.owner ??
+    (opts?.runtime ? accountKeyScopeFor(opts.runtime.instance) : undefined);
+  const detached = !!opts?.runtime && !runtimeIsCurrent(opts.runtime);
+  const recordStage = detached
+    ? (_stage: Parameters<typeof recordTransactionStage>[0],
+       _fields: Parameters<typeof recordTransactionStage>[1]) => undefined
+    : recordTransactionStage;
   const telemetry: SubmitTelemetry = {
     traceId: opts?.traceId ?? trace?.traceId,
     requestId: opts?.requestId ?? trace?.requestId,
@@ -377,15 +416,16 @@ export async function submitAtomicBeefToMiners(
     txid: id,
   };
   const outboxDurable =
-    opts?.fromOutbox === true || enqueuePendingMinerSubmit(id, atomic);
-  recordTransactionStage("provider_attempt", telemetry);
+    opts?.fromOutbox === true ||
+    enqueuePendingMinerSubmit(id, atomic, { flow: opts?.flow, owner });
+  recordStage("provider_attempt", telemetry);
   const active = opts?.runtime?.instance ?? getActiveWallet();
   if (!active?.services?.postBeef) {
     console.info(
       "[minerSubmit] offline — signed cheque queued",
       id.slice(0, 12)
     );
-    recordTransactionStage("propagation_queued", {
+    recordStage("propagation_queued", {
       ...telemetry,
       blockerCode: "provider_offline",
     });
@@ -420,7 +460,7 @@ export async function submitAtomicBeefToMiners(
     beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic);
     let gap = classifyBeefAncestryGap(beefBytes);
     applyGap(gap);
-    if (beefBytes !== atomic) updatePendingMinerSubmitBody(id, beefBytes);
+    if (beefBytes !== atomic) updatePendingMinerSubmitBody(id, beefBytes, owner);
     if (gap === "unconfirmed-parents") {
       console.info(
         "[minerSubmit] posting chained unconfirmed ancestry",
@@ -437,7 +477,7 @@ export async function submitAtomicBeefToMiners(
         beefBytes = shaped;
         gap = classifyBeefAncestryGap(shaped);
         applyGap(gap);
-        updatePendingMinerSubmitBody(id, shaped);
+        updatePendingMinerSubmitBody(id, shaped, owner);
       } else {
         console.warn(
           "[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque",
@@ -469,7 +509,16 @@ export async function submitAtomicBeefToMiners(
       msg
     );
     if (isInvalidBeefTransport(msg)) {
-      removePendingMinerSubmit(id);
+      if (detached) {
+        console.info(
+          "[minerSubmit] invalid body verdict deferred to owner wallet",
+          id.slice(0, 12),
+        );
+        return outboxDurable
+          ? { kind: "queued", reason: "transport" }
+          : untrackedMinerResult("transport", telemetry);
+      }
+      removePendingMinerSubmit(id, owner);
       recordTransactionStage("hard_rejected", {
         ...telemetry,
         blockerCode: "invalid_beef",
@@ -479,7 +528,7 @@ export async function submitAtomicBeefToMiners(
         "Payment was signed but the transaction body is invalid — try Send again."
       );
     }
-    recordTransactionStage("propagation_queued", {
+    recordStage("propagation_queued", {
       ...telemetry,
       blockerCode: "provider_transport",
     });
@@ -496,27 +545,29 @@ export async function submitAtomicBeefToMiners(
       summary,
       telemetry,
       active,
-      proofsComplete
+      proofsComplete,
+      owner,
+      detached,
     );
   }
 
   if (summary.accepted) {
-    recordTransactionStage("provider_accepted", telemetry);
+    recordStage("provider_accepted", telemetry);
     // Arcade 202 is not the chain. Keep posting until merkle proofs close.
     // Local SPV of unconfirmed parent bodies is still a valid cheque — that
     // is how we negate explorer latency.
     const keepPropagating = !proofsComplete;
     if (!keepPropagating) {
-      removePendingMinerSubmit(id);
+      removePendingMinerSubmit(id, owner);
       if (
         telemetry.flow !== "brc29" &&
         telemetry.flow !== "item_transfer" &&
         telemetry.flow !== "token_transfer"
       ) {
-        recordTransactionStage("completed", telemetry);
+        recordStage("completed", telemetry);
       }
     }
-    if (!txHadArcadeSubmitContact(id) || keepPropagating) {
+    if (!detached && (!txHadArcadeSubmitContact(id) || keepPropagating)) {
       void restoreOnChainLocalTx(id).catch(() => {
         /* background */
       });
@@ -542,7 +593,7 @@ export async function submitAtomicBeefToMiners(
       id.slice(0, 12),
       summary.detail
     );
-    recordTransactionStage("propagation_queued", {
+    recordStage("propagation_queued", {
       ...telemetry,
       blockerCode: "provider_service_error",
     });
@@ -566,6 +617,8 @@ export async function submitAtomicBeefToMiners(
       summary,
       telemetry,
       outboxDurable,
+      owner,
+      detached,
     });
   }
 
@@ -574,7 +627,7 @@ export async function submitAtomicBeefToMiners(
     id.slice(0, 12),
     summary.detail
   );
-  recordTransactionStage("propagation_queued", {
+  recordStage("propagation_queued", {
     ...telemetry,
     blockerCode: "provider_no_ack",
   });

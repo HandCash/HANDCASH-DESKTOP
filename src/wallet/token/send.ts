@@ -1,4 +1,5 @@
 import { getActiveWallet } from '../session'
+import { accountKeyScopeFor } from '../accountLocalKeys'
 
 /**
  * Send BRC-162 value tips: spend 162 inputs, emit payee (+ change) 162 value
@@ -813,7 +814,7 @@ export async function sendBsv21Tokens(args: {
               messagebox: friend?.messagebox,
               asset,
               flow: 'token_transfer',
-            })
+            }, accountKeyScopeFor(wallet))
             recordTransactionStage('peer_delivery_queued', {
               flow: 'token_transfer',
               txid,
@@ -831,7 +832,7 @@ export async function sendBsv21Tokens(args: {
               messagebox: friend?.messagebox,
               asset,
               flow: 'token_transfer',
-            })
+            }, accountKeyScopeFor(wallet))
             recordTransactionStage('peer_delivery_queued', {
               flow: 'token_transfer',
               txid,

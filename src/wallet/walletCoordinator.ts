@@ -253,6 +253,19 @@ export function getWalletCoordinatorSnapshot(): WalletCoordinatorSnapshot {
   return snapshotFromContext(context())
 }
 
+/**
+ * Account switching fence.
+ *
+ * A send owns mutable inventory/Activity projections until its signed cheque
+ * and remittance bookkeeping are durably filed. Switching the global account
+ * namespace in the middle would make the continuation write into the next
+ * wallet. Wait only for that foreground critical section; miner propagation
+ * retains its immutable runtime and continues after the switch.
+ */
+export function waitForForegroundSpendIdle(): Promise<void> {
+  return waitFor(actor, () => context().spendDepth === 0)
+}
+
 /** Notify when region depths change — status pill must not claim Synced on a stale snapshot. */
 export function subscribeWalletCoordinator(
   listener: (snap: WalletCoordinatorLiveStatus) => void,

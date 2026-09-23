@@ -20,6 +20,7 @@ import {
   SpendRegionAbandonedError,
   SPEND_REGION_ABANDONED,
   rebindWalletCoordinatorForRuntime,
+  waitForForegroundSpendIdle,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -71,6 +72,36 @@ describe('walletCoordinator runtime', () => {
     await Promise.all([first, second])
     expect(order).toEqual(['a-start', 'a-end', 'b'])
     expect(getWalletCoordinatorSnapshot().chainIngest).toBe('idle')
+  })
+
+  it('holds an account switch fence only until foreground spend bookkeeping ends', async () => {
+    let releaseSpend!: () => void
+    let started!: () => void
+    const hold = new Promise<void>((resolve) => {
+      releaseSpend = resolve
+    })
+    const active = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const spend = runExclusiveSpend(
+      async () => {
+        started()
+        await hold
+      },
+      async () => async () => undefined,
+    )
+    await active
+    let switched = false
+    const fence = waitForForegroundSpendIdle().then(() => {
+      switched = true
+    })
+
+    await Promise.resolve()
+    expect(switched).toBe(false)
+    releaseSpend()
+    await spend
+    await fence
+    expect(switched).toBe(true)
   })
 
   it('fences queued work when the wallet runtime changes', async () => {

@@ -478,7 +478,9 @@ export async function releaseThenRestoreStaleOutputs(): Promise<void> {
  */
 export async function sealSpentInputsOfSignedTx(
   txid: string | undefined,
-  atomic: number[] | undefined
+  atomic: number[] | undefined,
+  active: ActiveWallet | null = getActiveWallet(),
+  updateForegroundOverlay = true,
 ): Promise<number> {
   const id = txid?.trim().toLowerCase();
   if (!id || !/^[0-9a-f]{64}$/.test(id)) return 0;
@@ -491,7 +493,12 @@ export async function sealSpentInputsOfSignedTx(
   }
   if (inputs.length === 0) return 0;
 
-  const hidden = await hideSpentOutpoints(inputs, id);
+  const hidden = await hideSpentOutpoints(
+    inputs,
+    id,
+    active,
+    updateForegroundOverlay,
+  );
   if (hidden > 0) {
     console.info(
       `[stale-output] sealed ${hidden} input(s) spent by ${id.slice(
@@ -503,7 +510,7 @@ export async function sealSpentInputsOfSignedTx(
   // Promote this tx's change immediately so the spend queue can chain the next
   // payment without waiting for chain ingest (restoreLiveSpendableOutputs yields
   // while a spend holds priority).
-  await keepChangeOfSignedTx(id);
+  await keepChangeOfSignedTx(id, active, updateForegroundOverlay);
   return hidden;
 }
 
@@ -970,7 +977,9 @@ export async function restoreFailedLocalTxsKnownOnChain(): Promise<number> {
  */
 export async function hideSpentOutpoints(
   outpoints: string[],
-  spentBy?: string
+  spentBy?: string,
+  active: ActiveWallet | null = getActiveWallet(),
+  updateForegroundOverlay = true,
 ): Promise<number> {
   if (!isNamedSpenderTxid(spentBy)) {
     return quarantineSpentOutpoints(outpoints);
@@ -980,12 +989,17 @@ export async function hideSpentOutpoints(
   const id = spentBy!.trim().toLowerCase();
   for (let i = 0; i < unique.length; i++) {
     if (i > 0 && i % 8 === 0) await yieldToUi();
-    hideUtxo(unique[i]!, {
-      spentBy: id,
-      diagnostic: `spent-by:${id.slice(0, 12)}`,
-    });
+    // The optimistic overlay is bound to the foreground account. A detached
+    // send must never write its seals into the newly selected wallet; its own
+    // Toolbox row is still updated below and remains authoritative.
+    if (updateForegroundOverlay) {
+      hideUtxo(unique[i]!, {
+        spentBy: id,
+        diagnostic: `spent-by:${id.slice(0, 12)}`,
+      });
+    }
   }
-  return hideToolboxOutputs(unique);
+  return hideToolboxOutputs(unique, active);
 }
 
 /** Freeze coins the chain shows spent until the spender body can be inserted. */
@@ -1001,8 +1015,10 @@ export async function quarantineSpentOutpoints(
   return hideToolboxOutputs(unique);
 }
 
-async function hideToolboxOutputs(unique: string[]): Promise<number> {
-  const active = getActiveWallet();
+async function hideToolboxOutputs(
+  unique: string[],
+  active: ActiveWallet | null = getActiveWallet(),
+): Promise<number> {
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return unique.length;
   try {
@@ -1857,10 +1873,13 @@ export async function sealAfterAppCreateAction(
  *
  * Item / BSV-21 basket tips stay untouched (identity remittance path).
  */
-export async function keepChangeOfSignedTx(txid: string): Promise<number> {
+export async function keepChangeOfSignedTx(
+  txid: string,
+  active: ActiveWallet | null = getActiveWallet(),
+  updateForegroundOverlay = true,
+): Promise<number> {
   const id = txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(id)) return 0;
-  const active = getActiveWallet();
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
 
@@ -1897,7 +1916,9 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
           spentBy: undefined,
           ...(healed != null ? { lockingScript: healed } : {}),
         });
-        creditUtxo(outpoint, { satoshis: sats });
+        if (updateForegroundOverlay) {
+          creditUtxo(outpoint, { satoshis: sats });
+        }
         kept += 1;
       }
       if (kept > 0) {

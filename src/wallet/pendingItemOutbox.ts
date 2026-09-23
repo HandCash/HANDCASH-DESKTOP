@@ -3,7 +3,12 @@
  * box missed the first delivery. Never creates a second payment tx.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import {
+  accountKeyScopeFor,
+  accountLocalKey,
+  accountLocalKeyFor,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 import { storageRegistry } from '../storage/registry'
 import { mapPool } from './asyncPool'
 import {
@@ -56,13 +61,13 @@ export type PendingItemRemit = {
   flow?: TransactionFlow
 }
 
-function storageKey(): string {
-  return accountLocalKey(KEY_BASE)
+function storageKey(owner?: BoundAccountKeyScope): string {
+  return owner ? accountLocalKeyFor(KEY_BASE, owner) : accountLocalKey(KEY_BASE)
 }
 
-function load(): PendingItemRemit[] {
+function load(owner?: BoundAccountKeyScope): PendingItemRemit[] {
   try {
-    const raw = durableGetItem(storageKey())
+    const raw = durableGetItem(storageKey(owner))
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     return Array.isArray(parsed) ? (parsed as PendingItemRemit[]) : []
@@ -71,8 +76,8 @@ function load(): PendingItemRemit[] {
   }
 }
 
-function save(rows: PendingItemRemit[]): void {
-  durableSetItem(storageKey(), JSON.stringify(rows.slice(0, 50)))
+function save(rows: PendingItemRemit[], owner?: BoundAccountKeyScope): void {
+  durableSetItem(storageKey(owner), JSON.stringify(rows.slice(0, 50)))
 }
 
 /** Cheap peek for Dashboard tip-poll backoff — no network. */
@@ -83,6 +88,7 @@ export function pendingItemOutboxCount(): number {
 export function enqueuePendingItemRemit(
   row: Omit<PendingItemRemit, 'createdAt' | 'attempts'> &
     Partial<Pick<PendingItemRemit, 'createdAt' | 'attempts'>>,
+  owner?: BoundAccountKeyScope,
 ): void {
   const txid = row.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
@@ -92,7 +98,7 @@ export function enqueuePendingItemRemit(
       : undefined
   // A batch has several remittances sharing one txid. Replacing by txid alone
   // kept only the last item when the peer box was unavailable.
-  const rows = load().filter(
+  const rows = load(owner).filter(
     (r) =>
       !(
         r.txid === txid &&
@@ -112,7 +118,7 @@ export function enqueuePendingItemRemit(
     requestId: row.requestId ?? trace?.requestId,
     flow: row.flow ?? trace?.flow ?? 'item_transfer',
   })
-  save(rows)
+  save(rows, owner)
 }
 
 export async function flushPendingItemOutbox(args: {
@@ -122,7 +128,8 @@ export async function flushPendingItemOutbox(args: {
   const runtime = args.runtime ?? getWalletRuntime()
   if (!runtime && import.meta.env?.MODE !== 'test') throw new Error('WALLET_LOCKED')
   if (runtime) assertRuntimeCurrent(runtime)
-  const all = load()
+  const owner = runtime ? accountKeyScopeFor(runtime.instance) : undefined
+  const all = load(owner)
   if (all.length === 0) return 0
   const now = Date.now()
   const rows = all.filter((r) => (r.nextAttemptAt ?? 0) <= now)
@@ -215,6 +222,6 @@ export async function flushPendingItemOutbox(args: {
     }
     if ('keep' in o && o.keep) keep.push(o.keep)
   }
-  save(keep)
+  save(keep, owner)
   return delivered
 }
