@@ -22,6 +22,20 @@ describe('BRC-100 handler manifest', () => {
     }
   })
 
+  it('publishes a fresh hero balance after an app internalizes value', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/wallet/brc100Handler.ts'),
+      'utf8',
+    )
+    const start = source.lastIndexOf("} else if (method === 'internalizeAction') {")
+    const end = source.indexOf('} else if (isActionMethod(method)) {', start)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    // Without this the credited output is spendable but the hero keeps the
+    // pre-receive figure until an unrelated chain ingest publishes.
+    expect(source.slice(start, end)).toContain('bumpBalanceAfterHeal()')
+  })
+
   it('does not allow a switch-only handler', () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), 'src/wallet/brc100Handler.ts'),

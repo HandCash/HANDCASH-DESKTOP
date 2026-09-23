@@ -6,7 +6,7 @@ import {
 import type { WalletInterface } from '@bsv/sdk'
 import { Beef, Transaction } from '@bsv/sdk'
 import { brc100HandlerOwner } from '../contracts/brc100Handlers'
-import { fetchFastBalanceSats } from './session'
+import { bumpBalanceAfterHeal, fetchFastBalanceSats } from './session'
 import {
   filterItemOutputsForOrigin,
   filterTokenOutputsForOrigin,
@@ -1195,6 +1195,10 @@ async function handleBrc100RequestInner(
           playWalletSound('soft')
         }
       }
+      // A send publishes a fresh hero after its seal pass; a bridge receive had
+      // no equivalent, so money an app credited stayed invisible until an
+      // unrelated chain ingest happened to publish (issue #2).
+      bumpBalanceAfterHeal()
       scheduleHistoryBackupPush('internalizeAction')
     } else if (isActionMethod(method)) {
       playWalletSound('soft')

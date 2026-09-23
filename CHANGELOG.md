@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.292] - 2026-09-23
+
+### Fixed
+
+- The hero balance now updates when a connected app credits BSV through the
+  BRC-100 bridge. The output was accepted and spendable, but nothing published
+  a fresh balance, so the wallet kept painting the pre-receive figure — through
+  Refresh and restart — until an unrelated chain ingest happened to publish
+  ([#2](https://github.com/HandCash/HANDCASH-DESKTOP/issues/2)).
+
 ## [1.3.291] - 2026-09-23
 
 ### Fixed
