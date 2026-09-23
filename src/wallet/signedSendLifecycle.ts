@@ -27,7 +27,10 @@ import {
   noteDualLayerSigned,
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
-import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
+import {
+  releaseSealedInputsOfUnsentTx,
+  sealSpentInputsOfSignedTx,
+} from './staleOutputRelease'
 
 export type SignedSendHandle = {
   lifecycleId: string
@@ -59,6 +62,8 @@ export async function registerSignedSend(args: {
   const runtime = requireWalletRuntime()
   const retention = retainWalletRuntime(runtime)
   const owner = accountKeyScopeFor(runtime.instance)
+  let sealed = false
+  let preparedAtomic = args.atomicBeef
   try {
     const { prepareBroadcastCheque } = await import('./beefCache')
     const prepared = await prepareBroadcastCheque(
@@ -68,6 +73,7 @@ export async function registerSignedSend(args: {
     )
     assertRuntimeAvailable(runtime)
     const atomicBeef = prepared.atomic
+    preparedAtomic = atomicBeef
 
     // Seal first. A lifecycle must never advertise a signed cheque while its
     // inputs remain selectable by a second send. Use the captured Toolbox even
@@ -78,6 +84,7 @@ export async function registerSignedSend(args: {
       runtime.instance,
       runtimeIsCurrent(runtime),
     )
+    sealed = true
     assertRuntimeAvailable(runtime)
     // Persist before any Activity/remittance work. Every key is resolved from
     // the immutable owner, never the mutable foreground account.
@@ -112,6 +119,13 @@ export async function registerSignedSend(args: {
       releaseRuntime: retention.release,
     }
   } catch (error) {
+    // Storage refusal is not a broadcast verdict. Undo the seal before the
+    // error reaches feature-level cleanup so an NFT cannot transiently vanish.
+    if (sealed && runtimeIsCurrent(runtime)) {
+      await releaseSealedInputsOfUnsentTx(txid, preparedAtomic).catch(
+        () => undefined,
+      )
+    }
     retention.release()
     throw error
   }

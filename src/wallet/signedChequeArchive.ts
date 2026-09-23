@@ -164,8 +164,25 @@ function saveStored(
   owner?: BoundAccountKeyScope,
 ): boolean {
   const key = scopedKey(KEY_BASE, owner)
+  const protectedTxids = new Set<string>()
+  try {
+    const pending = JSON.parse(
+      durableGetItem(scopedKey(PENDING_MINER_KEY, owner)) || '[]',
+    ) as unknown
+    if (Array.isArray(pending)) {
+      for (const row of pending) {
+        const txid = String((row as { txid?: unknown })?.txid ?? '')
+          .trim()
+          .toLowerCase()
+        if (/^[0-9a-f]{64}$/.test(txid)) protectedTxids.add(txid)
+      }
+    }
+  } catch {
+    /* a malformed old queue must not block archiving the new cheque */
+  }
   // Oldest first. Callers append, so the cheque being archived is last and is
-  // the one row never dropped to make the write fit.
+  // the one row never dropped to make the write fit. Cheques still referenced
+  // by the compact miner queue are also non-evictable.
   let kept = rows.slice(-MAX_ROWS)
   for (;;) {
     const body = JSON.stringify(kept)
@@ -179,14 +196,24 @@ function saveStored(
       return true
     }
     if (kept.length <= 1) return false
-    kept = kept.slice(1)
+    const removable = kept.findIndex(
+      (row, index) =>
+        index < kept.length - 1 && !protectedTxids.has(row.txid),
+    )
+    if (removable < 0) return false
+    kept = kept.filter((_, index) => index !== removable)
   }
 }
 
 export function archiveSignedCheque(
   txid: string,
   atomic: number[],
-  opts?: { flow?: TransactionFlow; owner?: BoundAccountKeyScope },
+  opts?: {
+    flow?: TransactionFlow
+    owner?: BoundAccountKeyScope
+    /** Caller proved this body supersedes the queued version (e.g. ancestry merge). */
+    replace?: boolean
+  },
 ): boolean {
   if (!bodyIsSignedCheque(txid, atomic)) return false
   const id = txid.trim().toLowerCase()
@@ -200,7 +227,7 @@ export function archiveSignedCheque(
   const existing = rows.find((row) => row.txid === id)
   if (existing) {
     const prev = decodeAtomic(existing.atomicB64) ?? []
-    if (atomic.length < prev.length) return true
+    if (!opts?.replace && atomic.length < prev.length) return true
     existing.atomicB64 = next.atomicB64
     existing.flow = opts?.flow ?? existing.flow
     return saveStored(rows, opts?.owner)
@@ -213,21 +240,24 @@ export function archiveSignedCheque(
   return true
 }
 
-export function signedChequeAtomic(txid: string): number[] | null {
+export function signedChequeAtomic(
+  txid: string,
+  owner?: BoundAccountKeyScope,
+): number[] | null {
   const id = txid.trim().toLowerCase()
-  const row = loadStored().find((item) => item.txid === id)
+  const row = loadStored(owner).find((item) => item.txid === id)
   if (!row) return null
   return toCheque(row)?.atomic ?? null
 }
 
-export function listSignedChequeTxids(): string[] {
-  return loadStored()
+export function listSignedChequeTxids(owner?: BoundAccountKeyScope): string[] {
+  return loadStored(owner)
     .map((row) => toCheque(row)?.txid)
     .filter((txid): txid is string => !!txid)
 }
 
-export function listSignedCheques(): SignedCheque[] {
-  return loadStored()
+export function listSignedCheques(owner?: BoundAccountKeyScope): SignedCheque[] {
+  return loadStored(owner)
     .map(toCheque)
     .filter((row): row is SignedCheque => row != null)
 }

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sealSpentInputsOfSignedTx = vi.fn(async () => 1)
+const releaseSealedInputsOfUnsentTx = vi.fn(async () => 1)
 const beginSignedTxLifecycle = vi.fn(() => ({
   id: 'token-life',
   status: 'SEEN_IN_MEMPOOL',
@@ -52,6 +53,8 @@ vi.mock('./walletRuntime', () => ({
 vi.mock('./staleOutputRelease', () => ({
   sealSpentInputsOfSignedTx: (...args: unknown[]) =>
     sealSpentInputsOfSignedTx(...args),
+  releaseSealedInputsOfUnsentTx: (...args: unknown[]) =>
+    releaseSealedInputsOfUnsentTx(...args),
 }))
 
 vi.mock('./dualLayerSend', () => ({
@@ -142,6 +145,22 @@ describe('signedSendLifecycle', () => {
       }),
     ).rejects.toThrow(/could not be archived/)
     expect(enqueuePendingMinerSubmit).not.toHaveBeenCalled()
+    expect(beginSignedTxLifecycle).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TXID, ATOMIC)
+  })
+
+  it('unseals immediately when the propagation queue refuses the cheque', async () => {
+    enqueuePendingMinerSubmit.mockReturnValueOnce(false)
+    const { registerSignedSend } = await import('./signedSendLifecycle')
+
+    await expect(
+      registerSignedSend({
+        txid: TXID,
+        atomicBeef: ATOMIC,
+        flow: 'item_transfer',
+      }),
+    ).rejects.toThrow(/could not be queued for propagation/)
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TXID, ATOMIC)
     expect(beginSignedTxLifecycle).not.toHaveBeenCalled()
   })
 

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const store = new Map<string, string>()
 let writesSucceed = true
+let maxWriteBytes = Number.POSITIVE_INFINITY
 const KEY = 'handcash.wallet.pendingMinerOutbox.v1'
+const ARCHIVE_KEY = 'handcash.wallet.signedChequeArchive.v1'
 
 function signedTx(satoshis: number): Transaction {
   const tx = new Transaction()
@@ -21,7 +23,7 @@ function atomicBeefFor(tx: Transaction): number[] {
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
-    if (!writesSucceed) return false
+    if (!writesSucceed || value.length > maxWriteBytes) return false
     store.set(key, value)
     return true
   },
@@ -52,12 +54,13 @@ vi.mock('./minerSubmit', () => ({
 beforeEach(() => {
   store.clear()
   writesSucceed = true
+  maxWriteBytes = Number.POSITIVE_INFINITY
   recordTransactionStage.mockClear()
   submitAtomicBeefToMiners.mockClear()
 })
 
 describe('pending miner outbox', () => {
-  it('persists Atomic BEEF before provider submission and deduplicates by txid', async () => {
+  it('persists one archived body and compact retry metadata', async () => {
     const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
       './pendingMinerOutbox'
     )
@@ -72,8 +75,15 @@ describe('pending miner outbox', () => {
 
     const rows = JSON.parse(
       store.get(KEY) || '[]',
-    ) as Array<{ atomic: number[]; traceId?: string; flow?: string }>
-    expect(rows[0]?.atomic).toEqual(atomic)
+    ) as Array<{
+      atomic?: number[]
+      bodyInArchive?: boolean
+      traceId?: string
+      flow?: string
+    }>
+    expect(rows[0]?.atomic).toBeUndefined()
+    expect(rows[0]?.bodyInArchive).toBe(true)
+    expect(store.get(ARCHIVE_KEY)).toContain(txid)
     expect(rows[0]?.traceId).toBe('trace-test')
     expect(rows[0]?.flow).toBe('token_transfer')
     expect(recordTransactionStage).toHaveBeenCalledWith(
@@ -163,6 +173,42 @@ describe('pending miner outbox', () => {
     expect(pendingMinerOutboxDepth()).toBe(0)
   })
 
+  it('queues under quota pressure without duplicating the Atomic BEEF', async () => {
+    const { enqueuePendingMinerSubmit, pendingMinerOutboxDepth } = await import(
+      './pendingMinerOutbox'
+    )
+    const tx = signedTx(1_000)
+    const atomic = atomicBeefFor(tx)
+    const compactBudget = JSON.stringify([
+      {
+        txid: tx.id('hex'),
+        bodyInArchive: true,
+        createdAt: Date.now(),
+        attempts: 0,
+        nextAttemptAt: Date.now(),
+        traceId: 'trace-test',
+        requestId: 'request-test',
+        flow: 'item_transfer',
+      },
+    ]).length + 100
+    // A duplicated number[] body cannot fit, while archive base64 and compact
+    // queue writes can each fit independently.
+    maxWriteBytes = Math.max(compactBudget, JSON.stringify(atomic).length - 1)
+
+    expect(
+      enqueuePendingMinerSubmit(tx.id('hex'), atomic, {
+        flow: 'item_transfer',
+      }),
+    ).toBe(true)
+    expect(pendingMinerOutboxDepth()).toBe(1)
+    const rows = JSON.parse(store.get(KEY) || '[]') as Array<{
+      atomic?: number[]
+      bodyInArchive?: boolean
+    }>
+    expect(rows[0]).toMatchObject({ bodyInArchive: true })
+    expect(rows[0]?.atomic).toBeUndefined()
+  })
+
   it('keeps retrying a live cheque beyond the old forty-attempt cutoff', async () => {
     const {
       enqueuePendingMinerSubmit,
@@ -222,10 +268,19 @@ describe('pending miner outbox', () => {
 
     const rows = JSON.parse(
       store.get(KEY) || '[]',
-    ) as Array<{ atomic: number[] }>
-    expect(rows[0]?.atomic).toEqual(mergedAtomic)
+    ) as Array<{ atomic?: number[]; bodyInArchive?: boolean }>
+    expect(rows[0]?.bodyInArchive).toBe(true)
+    expect(rows[0]?.atomic).toBeUndefined()
+    const archive = JSON.parse(store.get(ARCHIVE_KEY) || '[]') as Array<{
+      txid: string
+      atomicB64: string
+    }>
+    const archived = archive.find((row) => row.txid === txid)
+    expect(archived).toBeTruthy()
     expect(
-      Beef.fromBinary(rows[0]!.atomic).findTxid(parent.id('hex'))?.isTxidOnly,
+      Beef.fromBinary(
+        Array.from(Buffer.from(archived!.atomicB64, 'base64')),
+      ).findTxid(parent.id('hex'))?.isTxidOnly,
     ).toBeFalsy()
 
     // An unknown txid must not silently create a row.

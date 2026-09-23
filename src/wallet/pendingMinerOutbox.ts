@@ -24,13 +24,19 @@ import {
   recordTransactionStage,
   type TransactionFlow,
 } from './transactionTelemetry'
+import {
+  archiveSignedCheque,
+  signedChequeAtomic,
+} from './signedChequeArchive'
 
 const KEY_BASE = storageRegistry.pendingMinerOutbox.key
 const MAX_ATOMIC_BYTES = 2 * 1024 * 1024
 
 export type PendingMinerSubmit = {
   txid: string
-  atomic: number[]
+  /** Legacy fallback. New rows reference the body in signedChequeArchive. */
+  atomic?: number[]
+  bodyInArchive?: true
   createdAt: number
   attempts: number
   nextAttemptAt: number
@@ -89,11 +95,20 @@ function load(owner?: BoundAccountKeyScope): PendingMinerSubmit[] {
     const candidates = (parsed as PendingMinerSubmit[]).filter(
       (row) =>
         /^[0-9a-f]{64}$/i.test(row?.txid || '') &&
-        Array.isArray(row.atomic) &&
-        row.atomic.length > 0,
+        ((Array.isArray(row.atomic) && row.atomic.length > 0) ||
+          row.bodyInArchive === true),
     )
     const rows = candidates.filter(
-      (row) => classifyPendingMinerBody(row.txid, row.atomic).kind !== 'refuse',
+      (row) => {
+        const atomic = pendingAtomic(row, owner)
+        // Never delete a live retry reference merely because the archive is
+        // temporarily unreadable. Flush keeps it and reports the missing body.
+        if (row.bodyInArchive && !atomic) return true
+        return (
+          !!atomic &&
+          classifyPendingMinerBody(row.txid, atomic).kind !== 'refuse'
+        )
+      },
     )
     // Clean up rows written by older builds that only checked byte ranges.
     if (rows.length !== candidates.length) {
@@ -103,6 +118,25 @@ function load(owner?: BoundAccountKeyScope): PendingMinerSubmit[] {
   } catch {
     return []
   }
+}
+
+function pendingAtomic(
+  row: PendingMinerSubmit,
+  owner?: BoundAccountKeyScope,
+): number[] | null {
+  if (row.bodyInArchive) return signedChequeAtomic(row.txid, owner)
+  return Array.isArray(row.atomic) && row.atomic.length > 0 ? row.atomic : null
+}
+
+function compactArchivedRows(
+  rows: PendingMinerSubmit[],
+  owner?: BoundAccountKeyScope,
+): PendingMinerSubmit[] {
+  return rows.map((row) => {
+    if (!signedChequeAtomic(row.txid, owner)) return row
+    const { atomic: _atomic, ...compact } = row
+    return { ...compact, bodyInArchive: true }
+  })
 }
 
 function save(
@@ -132,26 +166,30 @@ export function enqueuePendingMinerSubmit(
   const rows = load(opts?.owner)
   if (rows.some((row) => row.txid === id)) return true
   const trace = activeTransactionTrace()
-  rows.push({
+  const archived = archiveSignedCheque(id, atomic, {
+    flow: opts?.flow ?? trace?.flow,
+    owner: opts?.owner,
+  })
+  const next: PendingMinerSubmit = {
     txid: id,
-    atomic: [...atomic],
+    ...(archived
+      ? { bodyInArchive: true as const }
+      : { atomic: [...atomic] }),
     createdAt: Date.now(),
     attempts: 0,
     nextAttemptAt: Date.now(),
     traceId: trace?.traceId,
     requestId: trace?.requestId,
     flow: opts?.flow ?? trace?.flow,
-  })
-  if (!save(rows, opts?.owner)) {
+  }
+  // Older builds duplicated every Atomic BEEF in both stores. Compact those
+  // rows now, before adding the new one, to recover origin quota in-place.
+  const nextRows = compactArchivedRows(rows, opts?.owner)
+  nextRows.push(next)
+  if (!save(nextRows, opts?.owner)) {
     console.error('[minerOutbox] durable write refused', id.slice(0, 12))
     return false
   }
-  void import('./signedChequeArchive').then(({ archiveSignedCheque }) => {
-    archiveSignedCheque(id, atomic, {
-      flow: opts?.flow ?? trace?.flow,
-      owner: opts?.owner,
-    })
-  })
   recordTransactionStage('propagation_queued', {
     flow: opts?.flow ?? trace?.flow,
     traceId: trace?.traceId,
@@ -188,12 +226,20 @@ export function updatePendingMinerSubmitBody(
   const rows = load(owner)
   const row = rows.find((r) => r.txid === id)
   if (!row) return false
-  row.atomic = [...atomic]
-  if (!save(rows, owner)) return false
-  void import('./signedChequeArchive').then(({ archiveSignedCheque }) => {
-    archiveSignedCheque(id, atomic, { flow: row.flow, owner })
-  })
-  return true
+  if (
+    archiveSignedCheque(id, atomic, {
+      flow: row.flow,
+      owner,
+      replace: true,
+    })
+  ) {
+    delete row.atomic
+    row.bodyInArchive = true
+  } else {
+    row.atomic = [...atomic]
+    delete row.bodyInArchive
+  }
+  return save(compactArchivedRows(rows, owner), owner)
 }
 
 function backoffMs(attempt: number): number {
@@ -220,6 +266,12 @@ export async function flushPendingMinerOutbox(args?: {
 
   for (const row of rows) {
     if (runtime) assertRuntimeCurrent(runtime)
+    const atomic = pendingAtomic(row, owner)
+    if (!atomic) {
+      console.error('[minerOutbox] archived body missing', row.txid.slice(0, 12))
+      keep.push(row)
+      continue
+    }
     if (row.nextAttemptAt > now) {
       keep.push(row)
       continue
@@ -234,7 +286,7 @@ export async function flushPendingMinerOutbox(args?: {
       txid: row.txid,
     })
     try {
-      const result = await submitAtomicBeefToMiners(row.txid, row.atomic, {
+      const result = await submitAtomicBeefToMiners(row.txid, atomic, {
         fromOutbox: true,
         ...(runtime ? { runtime } : {}),
         traceId: row.traceId,

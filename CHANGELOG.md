@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.287] - 2026-09-23
+
+### Fixed
+
+- Miner retry rows no longer duplicate the full Atomic BEEF already held by
+  the signed-cheque archive. On Android that duplicate exhausted origin
+  storage, refused the propagation queue after signing, and temporarily hid
+  the sealed collectable.
+- Existing full-body retry rows compact in place to recover storage. Archived
+  cheques referenced by a live retry are protected from eviction.
+- If any durable registration step still fails, the wallet now unseals the
+  transaction inputs before returning the error, so the collectable remains
+  visible and spendable.
+
 ## [1.3.286] - 2026-09-23
 
 ### Fixed
