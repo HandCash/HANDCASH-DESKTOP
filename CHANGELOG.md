@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.283] - 2026-09-23
+
+### Fixed
+
+- Signed transaction recovery is now bound to the immutable chain, vault
+  account index, and identity key captured before async send preparation.
+  Changing accounts while a cheque is being prepared aborts the lifecycle
+  rather than sealing, archiving, or replaying it under another derivation
+  scope.
+- Outbound signing now fails closed when the durable Atomic BEEF archive
+  refuses a write. A signed transaction can no longer continue into Activity
+  and miner propagation without the exact template heal requires.
+
 ## [1.3.282] - 2026-09-23
 
 ### Fixed
