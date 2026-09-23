@@ -1033,6 +1033,46 @@ async function hideToolboxOutputs(unique: string[]): Promise<number> {
 }
 
 /**
+ * Affirmative proof that `outpoint` is still unspent on chain.
+ *
+ * Fails closed: an unreachable or ambiguous provider answers `false`. Callers
+ * use this to gate re-enabling a coin, where a wrong `true` builds a tx the
+ * network rejects as a double spend and takes the honest inputs down with it.
+ */
+export async function outpointProvenUnspent(
+  active: ActiveWallet,
+  outpoint: string
+): Promise<boolean> {
+  const parsed = parseOutpoint(outpoint);
+  if (!parsed) return false;
+
+  const isUtxo = active.services?.isUtxo;
+  if (typeof isUtxo === "function") {
+    try {
+      const result = await isUtxo({
+        txid: parsed.txid,
+        vout: parsed.vout,
+      } as never);
+      if (
+        result === true ||
+        (!!result &&
+          typeof result === "object" &&
+          (result as { isUtxo?: unknown }).isUtxo === true)
+      ) {
+        return true;
+      }
+    } catch {
+      // fall through to the explorer cascade
+    }
+  }
+  return (
+    (await spentStatusOfOutpoint(outpoint, active.chain).catch(
+      () => "unknown" as const
+    )) === "unspent"
+  );
+}
+
+/**
  * Re-enable one asset basket row only after a live UTXO service proves the
  * outpoint is unspent. Failed/aborted asset spends can leave `spentBy` on the
  * toolbox row, while the inscription remains on chain and in the display cache.
@@ -1045,30 +1085,7 @@ export async function restoreUnspentAssetOutpoint(
   const parsed = parseOutpoint(outpoint);
   if (!parsed) return false;
 
-  let unspent = false;
-  const isUtxo = active.services?.isUtxo;
-  if (typeof isUtxo === "function") {
-    try {
-      const result = await isUtxo({
-        txid: parsed.txid,
-        vout: parsed.vout,
-      } as never);
-      unspent =
-        result === true ||
-        (!!result &&
-          typeof result === "object" &&
-          (result as { isUtxo?: unknown }).isUtxo === true);
-    } catch {
-      unspent = false;
-    }
-  }
-  if (!unspent) {
-    unspent =
-      (await spentStatusOfOutpoint(outpoint, active.chain).catch(
-        () => "unknown" as const
-      )) === "unspent";
-  }
-  if (!unspent) return false;
+  if (!(await outpointProvenUnspent(active, outpoint))) return false;
   // A spend may have completed while the provider check was in flight. Local
   // confirmed-consumption state always outranks a lagging "unspent" response.
   if (isItemSent(outpoint)) return false;
@@ -2513,7 +2530,21 @@ export async function restoreLiveSpendableOutputs(opts?: {
     let restored = 0;
     let unscripted = 0;
     let keptSpent = 0;
+    let phantom = 0;
     const txCache = new Map<number, TxStatusRow | null>();
+
+    // Three phases: classify (IndexedDB only), prove (chain, batched), write
+    // (IndexedDB only). Probing the chain from inside a storage session held
+    // the provider open across explorer latency and stalled the UI thread.
+    type RestoreCandidate = {
+      outputId: number;
+      healed: number[] | null;
+      /** Outpoint that must be proven unspent first, else null. */
+      proofOutpoint: string | null;
+      /** Blank overlay seal to release once the coin is proven unspent. */
+      blankSealKey: string | null;
+    };
+    const candidates: RestoreCandidate[] = [];
 
     // One storage session for the whole sweep. Re-entering the provider per
     // output cost a session apiece — on a phone carrying a few hundred
@@ -2525,7 +2556,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
       for (const raw of dead.slice(0, RESTORE_MAX)) {
         if (!forSpendChain && shouldYieldChainIngestToSpend()) {
           console.info(
-            `[stale-output] restore yielded to spend after ${restored} restore(s)`
+            `[stale-output] restore yielded to spend after ${candidates.length} candidate(s)`
           );
           break;
         }
@@ -2547,55 +2578,20 @@ export async function restoreLiveSpendableOutputs(opts?: {
           keptSpent += 1;
           continue;
         }
+        let blankSealKey: string | null = null;
         if (overlayKey && isUtxoBlockedFromRestore(overlayKey)) {
-          const lock = overlay;
           const sealer =
-            lock?.spentBy && /^[0-9a-f]{64}$/.test(lock.spentBy)
-              ? lock.spentBy
+            overlay?.spentBy && /^[0-9a-f]{64}$/.test(overlay.spentBy)
+              ? overlay.spentBy
               : null;
-          let deadSealer = false;
-          if (sealer) {
+          if (sealer || !active?.chain) {
             // Named seals are signed cheques. Only reclaimSealedInputsNeverSpent
             // may clear them, after a proven conflict/failed sealer and an
             // individual affirmative-unspent check.
             keptSpent += 1;
             continue;
-          } else if (!sealer && active?.chain) {
-            const parsed = parseOutpoint(overlayKey);
-            const isUtxo = active.services?.isUtxo;
-            let unspent = false;
-            if (parsed && typeof isUtxo === "function") {
-              try {
-                const result = await isUtxo({
-                  txid: parsed.txid,
-                  vout: parsed.vout,
-                } as never);
-                unspent =
-                  result === true ||
-                  (!!result &&
-                    typeof result === "object" &&
-                    (result as { isUtxo?: unknown }).isUtxo === true);
-              } catch {
-                unspent = false;
-              }
-            }
-            if (!unspent) {
-              const { spentStatusOfOutpoint } = await import("./legacyScan");
-              const status = await spentStatusOfOutpoint(
-                overlayKey,
-                active.chain
-              ).catch(() => "unknown" as const);
-              unspent = status === "unspent";
-            }
-            if (unspent) {
-              releaseConsumedUtxo(overlayKey, "restore:blank-seal-unspent");
-              deadSealer = true;
-            }
           }
-          if (!deadSealer) {
-            keptSpent += 1;
-            continue;
-          }
+          blankSealKey = overlayKey;
         }
 
         try {
@@ -2610,10 +2606,8 @@ export async function restoreLiveSpendableOutputs(opts?: {
           const creatorId = positiveId(output.transactionId);
           const creator =
             creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null;
-          if (creatorTxid) {
-            const rowTxid = txidFromRow(creator ?? {})?.toLowerCase();
-            if (rowTxid !== creatorTxid) continue;
-          }
+          const creatorRowTxid = txidFromRow(creator ?? {})?.toLowerCase();
+          if (creatorTxid && creatorRowTxid !== creatorTxid) continue;
           const creatorLiveness = txLivenessFromStatus(creator?.status);
           const sats = Math.max(0, Math.trunc(Number(output.satoshis) || 0));
           const isChangeOutput = output.change === true || sats > 1;
@@ -2646,6 +2640,73 @@ export async function restoreLiveSpendableOutputs(opts?: {
             continue;
           }
 
+          // A settled/orphan creator means the local row lost the spend that
+          // consumed this coin — `spentBy == null` is silence, not evidence.
+          // Restoring on silence resurrected coins the chain had spent
+          // hundreds of blocks earlier; the next createAction swept them in
+          // and the whole tx came back UTXO_SPENT, which marked the honest
+          // change in that tx dead too. Only an affirmative unspent proof
+          // re-enables these. Live local change keeps the offline path: its
+          // creator is still in flight, so no confirmed spend can exist.
+          // The row's own txid, else the creator tx that minted it.
+          const proofOutpoint =
+            localChange && !blankSealKey
+              ? null
+              : (overlayKey ??
+                (creatorRowTxid
+                  ? outpointFromOutput({ ...output, txid: creatorRowTxid })
+                  : null));
+          if (!localChange && !proofOutpoint) {
+            phantom += 1;
+            continue;
+          }
+
+          candidates.push({ outputId, healed, proofOutpoint, blankSealKey });
+        } catch (err) {
+          console.warn(
+            "[stale-output] restore skipped",
+            outputId,
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+      }
+    });
+
+    // Prove outside the storage session, batched, so explorer latency never
+    // holds the provider open.
+    const verdicts = new Map<string, boolean>();
+    const toProve = [
+      ...new Set(
+        candidates
+          .map((c) => c.proofOutpoint)
+          .filter((op): op is string => op != null)
+      ),
+    ];
+    const PROOF_CONCURRENCY = 8;
+    for (let i = 0; i < toProve.length; i += PROOF_CONCURRENCY) {
+      if (!forSpendChain && shouldYieldChainIngestToSpend()) break;
+      const batch = toProve.slice(i, i + PROOF_CONCURRENCY);
+      await Promise.all(
+        batch.map(async (outpoint) => {
+          verdicts.set(outpoint, await outpointProvenUnspent(active, outpoint));
+        })
+      );
+      await yieldToUi();
+    }
+
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage;
+      for (const candidate of candidates) {
+        const { outputId, healed, proofOutpoint, blankSealKey } = candidate;
+        if (proofOutpoint && verdicts.get(proofOutpoint) !== true) {
+          if (blankSealKey) keptSpent += 1;
+          else phantom += 1;
+          continue;
+        }
+        if (blankSealKey) {
+          releaseConsumedUtxo(blankSealKey, "restore:blank-seal-unspent");
+        }
+        try {
           await sp.updateOutput(outputId, {
             spendable: true,
             spentBy: undefined,
@@ -2671,6 +2732,11 @@ export async function restoreLiveSpendableOutputs(opts?: {
       console.info(
         `[stale-output] left ${keptSpent} locally-spent input(s) unspendable (network lag)`
       );
+    }
+    if (phantom > 0) {
+      logDiag("stale-output", "warn", "phantom-restore-refused", {
+        count: phantom,
+      });
     }
     if (unscripted > 0) {
       logDiag("stale-output", "warn", "unscripted-skipped", {

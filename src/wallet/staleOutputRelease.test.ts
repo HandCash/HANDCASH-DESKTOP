@@ -460,16 +460,19 @@ describe('restoreLiveSpendableOutputs', () => {
     expect(isUtxo).not.toHaveBeenCalled()
   })
 
-  it('restores orphan BRC-39 change rows that lack creator tx status', async () => {
+  it('restores orphan BRC-39 change rows proven unspent on chain', async () => {
     findOutputs.mockResolvedValue([
       {
         outputId: 4,
+        txid: 'a'.repeat(64),
+        outputIndex: 1,
         change: true,
         spendable: false,
         satoshis: 2614,
         lockingScript: [118, 169],
       },
     ])
+    isUtxo.mockResolvedValue(true)
 
     await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
       restored: 1,
@@ -481,10 +484,12 @@ describe('restoreLiveSpendableOutputs', () => {
     })
   })
 
-  it('restores change from a locally completed spend left unspendable', async () => {
+  it('restores change from a locally completed spend proven unspent on chain', async () => {
     findOutputs.mockResolvedValue([
       {
         outputId: 3,
+        txid: 'b'.repeat(64),
+        outputIndex: 1,
         transactionId: 10,
         change: true,
         spendable: false,
@@ -492,6 +497,8 @@ describe('restoreLiveSpendableOutputs', () => {
       },
     ])
     findTransactions.mockResolvedValue([{ status: 'completed' }])
+    isUtxo.mockResolvedValue(false)
+    spentStatusOfOutpoint.mockResolvedValue('unspent')
 
     await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
       restored: 1,
@@ -501,6 +508,57 @@ describe('restoreLiveSpendableOutputs', () => {
       spendable: true,
       spentBy: undefined,
     })
+  })
+
+  // Regression: heal resurrected three coins the chain had spent ~200 blocks
+  // earlier, the next createAction swept them in, ARC answered UTXO_SPENT, and
+  // the doubleSpend mark took the honest change in that same tx down with it.
+  it('refuses to restore a settled-creator coin already spent on chain', async () => {
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 5,
+        txid: 'c'.repeat(64),
+        outputIndex: 5,
+        transactionId: 11,
+        change: true,
+        spendable: false,
+        satoshis: 5000,
+        lockingScript: [118, 169],
+      },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+    isUtxo.mockResolvedValue(false)
+    spentStatusOfOutpoint.mockResolvedValue('spent')
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('refuses a settled-creator coin when no provider can prove it unspent', async () => {
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 6,
+        txid: 'd'.repeat(64),
+        outputIndex: 0,
+        transactionId: 12,
+        change: true,
+        spendable: false,
+        satoshis: 5000,
+        lockingScript: [118, 169],
+      },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+    isUtxo.mockRejectedValue(new Error('offline'))
+    spentStatusOfOutpoint.mockResolvedValue('unknown')
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 
   it('skips rows with no locking script instead of asking isUtxo', async () => {
@@ -581,7 +639,7 @@ describe('restoreLiveSpendableOutputs', () => {
     expect(updateOutput).not.toHaveBeenCalled()
   })
 
-  it('sweeps a large unspendable set in one storage session', async () => {
+  it('sweeps a large unspendable set in a fixed number of storage sessions', async () => {
     findOutputs.mockResolvedValue(
       Array.from({ length: 60 }, (_, i) => ({
         outputId: i + 1,
@@ -597,8 +655,9 @@ describe('restoreLiveSpendableOutputs', () => {
       restored: 60,
       unscripted: 0,
     })
-    // Re-entering the provider per row is what made this seconds long on a phone.
-    expect(runAsStorageProvider).toHaveBeenCalledTimes(1)
+    // Re-entering the provider per row is what made this seconds long on a
+    // phone. Classify and write are one session each, whatever the row count.
+    expect(runAsStorageProvider).toHaveBeenCalledTimes(2)
   })
 
   it('does nothing without an unlocked wallet', async () => {
