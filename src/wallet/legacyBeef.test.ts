@@ -127,7 +127,7 @@ describe('buildLegacyInputBeef', () => {
     expect(proofCalls).toEqual([])
   })
 
-  it('treats a visible unconfirmed deposit body as enough for Beef.verify', async () => {
+  it('does not bypass BEEF verification for a visible transaction body', async () => {
     const [tip] = buildChain(3)
     const beef = new Beef()
     beef.mergeRawTx(tip.toBinary())
@@ -137,18 +137,8 @@ describe('buildLegacyInputBeef', () => {
     }
     expect(await beef.verify(tracker, true)).toBe(false)
     const ok = await withVisibleOnChainBeef(() => beef.verify(tracker, true))
-    expect(ok).toBe(true)
+    expect(ok).toBe(false)
     expect(await beef.verify(tracker, true)).toBe(false)
-  })
-
-  it('sets a process flag the toolbox patches honor', async () => {
-    expect(globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE).toBeUndefined()
-    await withVisibleOnChainBeef(async () => {
-      expect(globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE).toBe(
-        'wallet-visible-p2pkh',
-      )
-    })
-    expect(globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE).toBeUndefined()
   })
 
   it('reports a malformed outpoint without asking the network', async () => {

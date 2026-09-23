@@ -10,6 +10,9 @@ const pkg = JSON.parse(
 
 export default defineConfig({
   plugins: [react()],
+  worker: {
+    format: 'es',
+  },
   base: './',
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

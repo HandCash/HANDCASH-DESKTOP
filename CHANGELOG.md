@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.293] - 2026-09-23
+
+### Security
+
+- Upgraded `@bsv/sdk` to 2.8.1 and `@bsv/wallet-toolbox-client` to 2.13.2,
+  remediating GHSA-5vmp-9hjc-rfwp.
+- Removed the global `Beef.prototype.verify` override and every Toolbox
+  verification bypass keyed by `__HANDCASH_INTERNAL_BEEF_SCOPE`. A transaction
+  body is no longer treated as proof that a BEEF package is valid.
+- Added a negative control that keeps invalid BEEF invalid through the legacy
+  compatibility wrapper.
+
+### Changed
+
+- Retained only the Toolbox input-reservation and change-script hydration
+  compatibility patches, re-derived against Toolbox 2.13.2.
+
 ## [1.3.292] - 2026-09-23
 
 ### Fixed

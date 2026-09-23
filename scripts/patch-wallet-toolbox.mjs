@@ -23,10 +23,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkgDir = path.join(root, 'node_modules/@bsv/wallet-toolbox-client')
 const bundles = ['out/index.client.mjs', 'out/index.client.cjs']
 
-/** Set only by the wallet's scoped unconfirmed-P2PKH ingest path. */
-const SWEEPING =
-  'globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh"'
-
 /**
  * Each edit is `find` → `replace`, applied to both bundles. `find` must be
  * present exactly once before the edit and absent after it, so re-running is a
@@ -66,60 +62,6 @@ const edits = [
       '\t\t\t}\n' +
       '\t\t\treturn output;',
   },
-  {
-    name: 'allow an unconfirmed dependency graph while sweeping',
-    find:
-      'if (!await beef.verify(await storage.getServices().getChainTracker(), true)) ' +
-      'throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");',
-    replace:
-      'if (!await beef.verify(await storage.getServices().getChainTracker(), true) && ' +
-      `!(${SWEEPING})) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");`,
-  },
-  {
-    name: 'skip merkle proofs for visible P2PKH funding inputs',
-    // A UTXO seen on chain seconds ago has no merkle proof yet, so requiring one
-    // makes importing visible legacy funds impossible.
-    find:
-      '\tif (!await beef.verify(await storage.getServices().getChainTracker(), true)) {\n' +
-      '\t\tconsole.log(`verifyInputBeef failed, inputBEEF failed to verify.\\n${beef.toLogString()}\\n`);',
-    replace:
-      `\tconst __handcashSkipMerkle = ${SWEEPING};\n` +
-      '\tif (!__handcashSkipMerkle && !await beef.verify(await storage.getServices().getChainTracker(), true)) {\n' +
-      '\t\tconsole.log(`verifyInputBeef failed, inputBEEF failed to verify.\\n${beef.toLogString()}\\n`);',
-  },
-  {
-    name: 'signer internalizeAction accepts an unproven BRC-29 payment',
-    find:
-      '\t\tif (!await ab.verify(await wallet.getServices().getChainTracker(), false) || !ab.atomicTxid) {\n' +
-      '\t\t\tconsole.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);',
-    replace:
-      `\t\tconst __handcashSkipMerkle = ${SWEEPING};\n` +
-      '\t\tif ((!__handcashSkipMerkle && !await ab.verify(await wallet.getServices().getChainTracker(), false)) || !ab.atomicTxid) {\n' +
-      '\t\t\tconsole.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);',
-  },
-  {
-    name: 'storage internalizeAction accepts an unproven BRC-29 payment',
-    find:
-      '\t\tif (!await ab.verify(await this.storage.getServices().getChainTracker(), false) || !ab.atomicTxid) ' +
-      'throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");',
-    replace:
-      `\t\tconst __handcashSkipMerkle = ${SWEEPING};\n` +
-      '\t\tif ((!__handcashSkipMerkle && !await ab.verify(await this.storage.getServices().getChainTracker(), false)) || !ab.atomicTxid) ' +
-      'throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");',
-  },
-  {
-    name: 'post a swept transaction whose parents are still unconfirmed',
-    find:
-      '\tif (!await r.beef.verify(await storage.getServices().getChainTracker())) {\n' +
-      '\t\tlogger?.error(`VERIFY FALSE BEEF: ${r.beef.toLogString()}`);',
-    replace:
-      '\tif (!await r.beef.verify(await storage.getServices().getChainTracker())) {\n' +
-      `\t\tif (${SWEEPING}) {\n` +
-      "\t\t\tlogger?.log('visible unconfirmed P2PKH — posting without merkle');\n" +
-      '\t\t\treturn;\n' +
-      '\t\t}\n' +
-      '\t\tlogger?.error(`VERIFY FALSE BEEF: ${r.beef.toLogString()}`);',
-  },
 ]
 
 function occurrences(haystack, needle) {
@@ -137,27 +79,6 @@ for (const bundle of bundles) {
   const file = path.join(pkgDir, bundle)
   const before = fs.readFileSync(file, 'utf8')
   let source = before
-  // Migrate bundles patched by the previous label-based bypass. Labels are
-  // application-controlled BRC-100 input and therefore cannot authorize an
-  // SPV bypass; only the wallet-scoped process flag may do so.
-  source = source
-    .replaceAll(
-      '(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0',
-      SWEEPING,
-    )
-    .replaceAll(
-      ' || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"))',
-      '',
-    )
-    .replaceAll(
-      ' || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"))',
-      '',
-    )
-    .replaceAll(
-      ' || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"))',
-      '',
-    )
-
   for (const edit of edits) {
     if (occurrences(source, edit.replace) === 1) continue // already applied
     const found = occurrences(source, edit.find)
