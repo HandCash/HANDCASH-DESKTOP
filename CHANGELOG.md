@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.284] - 2026-09-23
+
+### Fixed
+
+- Collectable transfers now sign against the complete source locking script,
+  including inscription and legacy metadata envelopes. The remaining ordinary
+  item-send path used a bare-P2PKH helper, so locally valid items failed
+  CHECKSIG before reaching the signed-cheque/miner propagation lifecycle with
+  “the top stack element must be truthy.”
+
 ## [1.3.283] - 2026-09-23
 
 ### Fixed
