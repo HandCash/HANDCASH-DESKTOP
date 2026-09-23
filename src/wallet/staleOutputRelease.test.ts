@@ -1124,6 +1124,45 @@ describe('pinBroadcastLocalTx', () => {
     )
   })
 
+  it('reconnects detached self-send change from the signed body', async () => {
+    const { P2PKH, Transaction } = await import('@bsv/sdk')
+    const body = new Transaction()
+    body.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock('1BitcoinEaterAddressDontSendf59kuE'),
+    })
+    body.addOutput({
+      satoshis: 899_280,
+      lockingScript: new P2PKH().lock('1CounterpartyXXXXXXXXXXXXXXXUWLpVr'),
+    })
+    const txid = body.id('hex')
+    findTransactions.mockResolvedValue([])
+    findOutputs.mockImplementation(
+      async (args: { partial?: { txid?: string; spendable?: boolean } }) => {
+        if (args.partial?.txid) return []
+        if (args.partial?.spendable === false) {
+          return [
+            {
+              outputId: 22,
+              vout: 1,
+              change: true,
+              satoshis: 899_280,
+              lockingScript: body.outputs[1]!.lockingScript.toBinary(),
+              spendable: false,
+            },
+          ]
+        }
+        return []
+      },
+    )
+
+    await expect(pinBroadcastLocalTx(txid, body.toBinary())).resolves.toBe(true)
+    expect(updateOutput).toHaveBeenCalledWith(
+      22,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
   it('does not rewrite the status of an already live row', async () => {
     const txid = '4d'.repeat(32)
     findTransactions.mockResolvedValue([

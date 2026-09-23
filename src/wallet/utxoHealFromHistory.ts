@@ -345,38 +345,24 @@ async function runHealCore(
     };
   }
 
-  let heal = await runPendingChangeHeal(balanceBefore, opts);
-  await restoreFailedLocalTxsKnownOnChain();
-
-  // Deliberately outside runPendingChangeHeal: that pass returns early when
-  // pendingChange is 0, and a coin sealed by a written-off tx is stranded
-  // *because* its change stopped counting. Gating this on pending credit is
-  // how the inputs of a dead send stay invisible to every heal.
-  try {
-    heal = mergeHealStats(heal, {
-      restored: 0,
-      scriptsLocal: 0,
-      scriptsChain: 0,
-      pendingPromoted: 0,
-      reclaimed: await reclaimOutputsSealedByDeadTxs({
-        forSpendChain: opts.source === "manual",
-      }),
-    });
-  } catch (err) {
-    console.warn("[utxo-heal] dead-sealer reclaim skipped", err);
-  }
-
-  const evidence = await reconcileKnownUtxosByEvidence({
-    forManualHeal: opts.source === "manual",
-  });
-
   const chain = getActiveWallet()?.chain;
   let changeKept = 0;
   let txidsOnChain = 0;
   let txidsChecked = 0;
   const allProcessed: string[] = [];
   const runAllBatches = opts.force || opts.source === "manual";
+  let heal: ChangeHealStats = {
+    restored: 0,
+    scriptsLocal: 0,
+    scriptsChain: 0,
+    pendingPromoted: 0,
+    reclaimed: 0,
+  };
+  let evidence = emptyEvidence();
 
+  // Recover the two or three signed transactions named by the checkpoint
+  // before auditing years of output history. On hc-a580a the old order spent
+  // 195 seconds probing 873 rows before it reached the missing change.
   for (let offset = 0; offset < orderedTxids.length; ) {
     if (await healShouldYieldToSpend(opts)) {
       logDiag("utxo-heal", "info", "yield-to-spend", {
@@ -406,17 +392,48 @@ async function runHealCore(
       source: opts.source,
     });
 
-    if (
-      (mid?.pendingChange ?? 0) <= 0 &&
-      (balanceBefore?.pendingChange ?? 0) > 0
-    ) {
-      heal = mergeHealStats(
-        heal,
-        await runChangeHeal({ path: "spendGatePartialRetry" })
-      );
-      break;
-    }
     if (!runAllBatches) break;
+  }
+
+  const fastBalance = toBalanceSnapshot(await snapshotWalletBalance());
+  const recoveredCurrentBalance =
+    (balanceBefore?.spendable ?? 0) === 0 &&
+    (fastBalance?.spendable ?? 0) > 0;
+
+  if (recoveredCurrentBalance) {
+    logDiag("utxo-heal", "info", "fast-recovery", {
+      spendable: fastBalance?.spendable ?? 0,
+      txidsChecked,
+      changeKept,
+    });
+  } else {
+    heal = await runPendingChangeHeal(balanceBefore, opts);
+    await restoreFailedLocalTxsKnownOnChain();
+
+    // Deliberately outside runPendingChangeHeal: that pass returns early when
+    // pendingChange is 0, and a coin sealed by a written-off tx is stranded
+    // *because* its change stopped counting.
+    try {
+      heal = mergeHealStats(heal, {
+        restored: 0,
+        scriptsLocal: 0,
+        scriptsChain: 0,
+        pendingPromoted: 0,
+        reclaimed: await reclaimOutputsSealedByDeadTxs({
+          forSpendChain: opts.source === "manual",
+        }),
+      });
+    } catch (err) {
+      console.warn("[utxo-heal] dead-sealer reclaim skipped", err);
+    }
+
+    evidence = await reconcileKnownUtxosByEvidence({
+      forManualHeal: opts.source === "manual",
+      // A manual button must finish promptly. Background reconciliation can
+      // continue paging old history; this pass checks both sides of the current
+      // output set without turning Settings into a multi-minute lock.
+      ...(opts.source === "manual" ? { maxOutputs: 48 } : {}),
+    });
   }
 
   if (

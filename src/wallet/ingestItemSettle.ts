@@ -53,11 +53,16 @@ import {
 } from './peerIngestHelpers'
 import type { Chain } from './vault'
 import type { ItemTransferMember } from './messageStore'
+import { signedChequeAtomic } from './signedChequeArchive'
 
 export type IngestItemSettleResult = {
   accepted: boolean
   outpoints: string[]
   reason?: string
+}
+
+export function itemSettleIsSelfSend(txid: string): boolean {
+  return Boolean(signedChequeAtomic(txid.trim().toLowerCase())?.length)
 }
 
 function normalizeOriginHint(hint: string | undefined, txid: string): string | undefined {
@@ -263,6 +268,30 @@ export async function internalizePeerItemSettle(opts: {
   // marks written by another wallet on this device (builds before the guards
   // were scoped per account) would otherwise keep them out of Collect.
   forgetItemsSent(allOps)
+  // A messagebox copy of our own item send can arrive before the sender pin
+  // finishes. createAction already filed the self-owned tip in `1sat`; calling
+  // internalizeAction on the same noSend transaction again can detach its
+  // managed-change row and make the cash balance disappear until a deep heal.
+  // The signed archive is account-scoped, so this is specifically a self-send,
+  // not another wallet on the same device receiving the transaction.
+  if (itemSettleIsSelfSend(id)) {
+    markOneSatImported(allOps)
+    rememberReceivedProofs(id, tipVouts, members, opts.provenance)
+    paintReceivedTips({
+      txid: id,
+      tipVouts,
+      originHint,
+      name,
+      app,
+      collectionId,
+      members,
+      chain: active.chain,
+    })
+    console.info(
+      `[item-settle] accepted self-send ${allOps.join(', ')} from existing basket`,
+    )
+    return { accepted: true, outpoints: allOps, reason: 'already-imported' }
+  }
   const claimed = beginOneSatImport(allOps)
   if (claimed.length === 0) {
     // Already in the basket — still (re)paint so a second batch notify can bind

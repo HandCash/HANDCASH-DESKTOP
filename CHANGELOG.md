@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.294] - 2026-09-23
+
+### Fixed
+
+- A self-send no longer internalizes its own item transaction a second time.
+  That merge detached the managed-change row and made the cash balance return
+  to zero after restart even though 899,280 sats were still owned.
+- Arcade pin and Heal can reconnect a detached managed-change row to the exact
+  transaction body the wallet signed, rebuilding its script and restoring it
+  durably.
+- Wallet health checks archived signed transactions before auditing old output
+  history, probes failed transactions concurrently, and caps the interactive
+  evidence pass. The affected wallet previously checked 873 outputs for 195
+  seconds before reaching its current change.
+- Activity filters now flip and clamp inside the viewport, with a bounded
+  scroll area instead of opening mostly below the phone screen.
+
 ## [1.3.293] - 2026-09-23
 
 ### Security

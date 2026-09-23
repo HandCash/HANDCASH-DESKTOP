@@ -73,6 +73,7 @@ import {
   rememberDerivedChangeFromRows,
 } from "./derivedChangeEcho";
 import { pickReclaimSeals } from "./reclaimSealBatch";
+import { Transaction } from "@bsv/sdk";
 
 export { isAlreadySpentInputError } from "./spendVerdict";
 export { isLiveLocalTxStatus } from "./kernel/txLiveness";
@@ -986,8 +987,17 @@ export async function listFailedLocalTxids(): Promise<string[]> {
 export async function restoreFailedLocalTxsKnownOnChain(): Promise<number> {
   const txids = await listFailedLocalTxids();
   let restored = 0;
-  for (const txid of txids) {
-    if (await restoreOnChainLocalTx(txid)) restored += 1;
+  // Explorer probes are independent. Serially checking an old wallet's failed
+  // history made Settings → Heal spend minutes on rows unrelated to the
+  // current balance (40 rows took ~50 seconds on hc-a580a).
+  const concurrency = 8;
+  for (let offset = 0; offset < txids.length; offset += concurrency) {
+    const batch = txids.slice(offset, offset + concurrency);
+    const results = await Promise.all(
+      batch.map((txid) => restoreOnChainLocalTx(txid))
+    );
+    restored += results.filter(Boolean).length;
+    await yieldToUi();
   }
   return restored;
 }
@@ -1919,6 +1929,9 @@ export async function keepChangeOfSignedTx(
       const rows = await findOutputsForTxid(sp, id, {
         linkByTransactionId: true,
       });
+      if (rows.length === 0 && bodyRawTx?.length) {
+        rows.push(...(await findDetachedChangeRows(sp, id, bodyRawTx)));
+      }
       rememberDerivedChangeFromRows(rows);
       const txCache = new Map<number, TxStatusRow | null>();
       let kept = 0;
@@ -1996,6 +2009,94 @@ function changeScriptFromSignedBody(
   if (!resolved) return null;
   const fate = classifyChangeScript(resolved, rawTx);
   return fate.kind === "heal" ? fate.lockingScript : null;
+}
+
+/**
+ * A self-send can internalize the item side of a noSend transaction before the
+ * sender's pin pass runs. Toolbox then loses the parent transaction link while
+ * leaving the managed-change output row behind. Match that detached row back to
+ * the body we just signed; prefer exact script equality and only accept a
+ * script-less amount/vout match when it is unique across the whole wallet.
+ */
+async function findDetachedChangeRows(
+  sp: LocalStorage,
+  txid: string,
+  rawTx: number[]
+): Promise<
+  Array<ChangeRow & { outputIndex?: number; basket?: string; spentBy?: number }>
+> {
+  if (typeof sp.findOutputs !== "function") return [];
+  let tx: Transaction;
+  try {
+    tx = Transaction.fromBinary(rawTx);
+  } catch {
+    return [];
+  }
+
+  type Candidate = ChangeRow & {
+    outputIndex?: number;
+    basket?: string;
+    spentBy?: number;
+  };
+  const exact: Candidate[] = [];
+  const weak: Candidate[] = [];
+  const seen = new Set<number>();
+
+  for (const spendable of [false, true]) {
+    for (let offset = 0; offset < 2_000; offset += 200) {
+      const batch = await sp.findOutputs({
+        partial: { spendable },
+        paged: { limit: 200, offset },
+      });
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      for (const row of batch as Candidate[]) {
+        const outputId = positiveId(row.outputId);
+        if (outputId == null || seen.has(outputId)) continue;
+        seen.add(outputId);
+        if (row.change !== true || positiveId(row.spentBy) != null) continue;
+        const basket = String(row.basket ?? "").toLowerCase();
+        if (basket === "1sat" || basket === "bsv21") continue;
+        const vout = Number(row.vout ?? row.outputIndex);
+        if (!Number.isInteger(vout) || vout < 0) continue;
+        const out = tx.outputs[vout];
+        if (!out || Number(out.satoshis) !== Number(row.satoshis)) continue;
+
+        const bodyHex = out.lockingScript.toHex().toLowerCase();
+        const rowHex = lockingScriptHex(row.lockingScript);
+        const attached = { ...row, txid, vout };
+        if (rowHex && rowHex === bodyHex) exact.push(attached);
+        else if (!rowHex) weak.push(attached);
+      }
+      if (batch.length < 200) break;
+    }
+  }
+
+  const matches = exact.length > 0 ? exact : weak.length === 1 ? weak : [];
+  if (matches.length > 0) {
+    console.info(
+      `[stale-output] matched ${matches.length} detached change output(s) to ${txid.slice(
+        0,
+        12
+      )}`
+    );
+  }
+  return matches;
+}
+
+function lockingScriptHex(script: unknown): string | null {
+  if (typeof script === "string") {
+    const hex = script.trim().toLowerCase();
+    return /^[0-9a-f]+$/.test(hex) && hex.length % 2 === 0 ? hex : null;
+  }
+  const bytes =
+    script instanceof Uint8Array
+      ? Array.from(script)
+      : Array.isArray(script) && script.every((n) => typeof n === "number")
+      ? (script as number[])
+      : null;
+  return bytes?.length
+    ? bytes.map((n) => n.toString(16).padStart(2, "0")).join("")
+    : null;
 }
 
 /**

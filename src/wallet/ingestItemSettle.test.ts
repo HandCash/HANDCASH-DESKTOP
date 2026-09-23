@@ -1,11 +1,20 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   internalizePeerItemSettle,
+  itemSettleIsSelfSend,
   pickTipVoutForOriginHint,
 } from './ingestItemSettle'
 
+const mocks = vi.hoisted(() => ({
+  signedChequeAtomic: vi.fn(() => null as number[] | null),
+}))
+
 vi.mock('./session', () => ({
   getActiveWallet: () => null,
+}))
+
+vi.mock('./signedChequeArchive', () => ({
+  signedChequeAtomic: mocks.signedChequeAtomic,
 }))
 
 vi.mock('./inscriptionCache', () => ({
@@ -15,6 +24,11 @@ vi.mock('./inscriptionCache', () => ({
 }))
 
 describe('internalizePeerItemSettle', () => {
+  beforeEach(() => {
+    mocks.signedChequeAtomic.mockReset()
+    mocks.signedChequeAtomic.mockReturnValue(null)
+  })
+
   it('refuses an invalid txid without touching the wallet', async () => {
     expect(await internalizePeerItemSettle({ txid: 'nope' })).toEqual({
       accepted: false,
@@ -30,6 +44,13 @@ describe('internalizePeerItemSettle', () => {
       outpoints: [],
       reason: 'locked',
     })
+  })
+
+  it('recognizes an account-scoped signed cheque as a self-send', () => {
+    const txid = 'b'.repeat(64)
+    mocks.signedChequeAtomic.mockReturnValue([1, 2, 3])
+    expect(itemSettleIsSelfSend(txid)).toBe(true)
+    expect(mocks.signedChequeAtomic).toHaveBeenCalledWith(txid)
   })
 })
 

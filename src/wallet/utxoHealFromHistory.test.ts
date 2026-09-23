@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
   failUnsentLocalTx: vi.fn(async () => false),
   restoreOnChainLocalTx: vi.fn(async () => false),
   restoreFailedLocalTxsKnownOnChain: vi.fn(async () => 0),
+  reclaimOutputsSealedByDeadTxs: vi.fn(async () => 0),
   listFailedLocalTxids: vi.fn(async () => [] as string[]),
   listPendingLocalChangeTxids: vi.fn(async () => [] as string[]),
   pinBroadcastLocalTx: vi.fn(async () => true),
@@ -100,6 +101,8 @@ vi.mock('./staleOutputRelease', () => ({
     mocks.restoreOnChainLocalTx(...args),
   restoreFailedLocalTxsKnownOnChain: (...args: unknown[]) =>
     mocks.restoreFailedLocalTxsKnownOnChain(...args),
+  reclaimOutputsSealedByDeadTxs: (...args: unknown[]) =>
+    mocks.reclaimOutputsSealedByDeadTxs(...args),
   pinBroadcastLocalTx: (...args: unknown[]) =>
     mocks.pinBroadcastLocalTx(...args),
 }))
@@ -192,9 +195,29 @@ describe('healUtxoFromActivityHistory', () => {
     expect(mocks.releaseSpendAttemptFunds).not.toHaveBeenCalled()
     expect(mocks.reconcileKnownUtxosByEvidence).toHaveBeenCalledWith({
       forManualHeal: true,
+      maxOutputs: 48,
     })
     expect(result.recoveredSats).toBe(2614)
     expect(formatUtxoHealResult(result)).toBe('Recovered 2,614 sats')
+  })
+
+  it('recovers signed change before auditing old output history', async () => {
+    mocks.snapshotWalletBalance.mockReset()
+    mocks.snapshotWalletBalance
+      .mockResolvedValueOnce({ spendable: 0, pendingChange: 0, displayed: 0 })
+      .mockResolvedValue({
+        spendable: 899_280,
+        pendingChange: 0,
+        displayed: 899_280,
+      })
+    mocks.keepChangeOfSignedTx.mockResolvedValue(1)
+
+    const result = await runUtxoHealPass({ source: 'manual', force: true })
+
+    expect(result.recoveredSats).toBe(899_280)
+    expect(mocks.reconcileKnownUtxosByEvidence).not.toHaveBeenCalled()
+    expect(mocks.restoreFailedLocalTxsKnownOnChain).not.toHaveBeenCalled()
+    expect(mocks.reclaimOutputsSealedByDeadTxs).not.toHaveBeenCalled()
   })
 
   it('skips auto pass when checkpoint is fresh and clean', async () => {

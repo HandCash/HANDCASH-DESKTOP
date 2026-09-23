@@ -4723,8 +4723,10 @@ button.identity-qr-copy:focus-visible {
 
 .activity-filter-popover-content {
   width: min(420px, calc(100vw - 24px));
+  max-height: min(440px, var(--aeon-available-height, calc(100dvh - 24px)));
   padding: 0;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
   border-radius: var(--radius) 0 var(--radius) var(--radius);
   background: hsl(var(--popover));
