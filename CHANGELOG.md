@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.290] - 2026-09-23
+
+### Changed
+
+- A new toast now replaces the one on screen instead of queueing behind it, so
+  an older message can no longer reappear after a newer one expires.
+- Inventory selection checkboxes moved to the right edge beside the Send
+  button, in list rows and collection headers as well as grid cards.
+
+### Fixed
+
+- The inventory and friends search fields no longer let list content paint
+  through them while scrolling.
+
 ## [1.3.289] - 2026-09-23
 
 ### Fixed

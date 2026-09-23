@@ -57,7 +57,10 @@ export function showToast(input: {
     durationMs,
     createdAt: Date.now(),
   }
-  items = [...items, item].slice(-4)
+  // A newer toast supersedes whatever is on screen. Queuing older ones brought
+  // a stale toast back when the newer one expired — the wallet could report
+  // "Verifying authenticity…" after it had already said "Item verified".
+  items = [item]
   emit()
   if (durationMs > 0) {
     const schedule =

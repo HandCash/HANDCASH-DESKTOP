@@ -238,13 +238,6 @@ function CollectableGridItem({
         </span>
       </button>
       <div className="collectable-card-actions">
-        <SelectionCheckbox
-          className="collect-select--inline"
-          checked={selected}
-          disabled={sending}
-          label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
-          onChange={onSelectedChange}
-        />
         <button
           type="button"
           className="collectable-send-btn"
@@ -261,6 +254,13 @@ function CollectableGridItem({
           <SendIcon size={14} />
           {sending ? verb : 'Send'}
         </button>
+        <SelectionCheckbox
+          className="collect-select--inline"
+          checked={selected}
+          disabled={sending}
+          label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
+          onChange={onSelectedChange}
+        />
       </div>
     </li>
   )
@@ -287,13 +287,6 @@ function CollectableListItem({
       className="connected-app-row collectable-row"
       data-sending={sending ? 'true' : undefined}
     >
-      <SelectionCheckbox
-        className="collect-select--row"
-        checked={selected}
-        disabled={sending}
-        label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
-        onChange={onSelectedChange}
-      />
       <button
         type="button"
         className="connected-app-main collectable-row-main"
@@ -335,20 +328,29 @@ function CollectableListItem({
           </span>
         </div>
       </button>
-      <button
-        type="button"
-        className="collectable-send-btn collectable-send-btn--row"
-        title={sendUi.title}
-        aria-label={sendUi.title}
-        disabled={sendUi.disabled}
-        onClick={() => {
-          if (sendUi.disabled) return
-          playWalletSound('soft')
-          openSendCollectable(item.outpoint)
-        }}
-      >
-        <SendIcon size={14} />
-      </button>
+      <div className="collectable-row-actions">
+        <button
+          type="button"
+          className="collectable-send-btn collectable-send-btn--row"
+          title={sendUi.title}
+          aria-label={sendUi.title}
+          disabled={sendUi.disabled}
+          onClick={() => {
+            if (sendUi.disabled) return
+            playWalletSound('soft')
+            openSendCollectable(item.outpoint)
+          }}
+        >
+          <SendIcon size={14} />
+        </button>
+        <SelectionCheckbox
+          className="collect-select--row"
+          checked={selected}
+          disabled={sending}
+          label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
+          onChange={onSelectedChange}
+        />
+      </div>
     </li>
   )
 }
@@ -472,14 +474,6 @@ function IssuerGroupItem({
       data-selected={state === 'none' ? undefined : state}
     >
       <div className="collect-collection-head">
-        <SelectionCheckbox
-          className="collect-select--group"
-          checked={state === 'all'}
-          mixed={state === 'some'}
-          disabled={available.length === 0}
-          label={`${state === 'all' ? 'Deselect' : 'Select'} ${issuer.label}`}
-          onChange={(checked) => onSelectionChange(available, checked)}
-        />
         <Accordion.ItemTrigger value={issuer.key} className="collect-collection-trigger">
           <CollectableFacepile group={faceGroup} />
           <span className="collect-collection-body">
@@ -495,6 +489,14 @@ function IssuerGroupItem({
             ▾
           </Accordion.ItemIndicator>
         </Accordion.ItemTrigger>
+        <SelectionCheckbox
+          className="collect-select--group"
+          checked={state === 'all'}
+          mixed={state === 'some'}
+          disabled={available.length === 0}
+          label={`${state === 'all' ? 'Deselect' : 'Select'} ${issuer.label}`}
+          onChange={(checked) => onSelectionChange(available, checked)}
+        />
       </div>
       <Accordion.ItemContent value={issuer.key} className="collect-collection-body-content">
         {issuer.collections.map((collection) => (

@@ -7715,11 +7715,13 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .friends-search {
   position: sticky;
-  z-index: 2;
+  /* Above row content (checkboxes, send buttons) so nothing paints through
+     the pinned field while the list scrolls under it. */
+  z-index: 6;
   top: 0;
   margin: 0 0 10px;
   padding: 0;
-  background: transparent;
+  background: hsl(var(--card));
 }
 
 .friends-search input {
@@ -9965,7 +9967,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 .collectable-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.35rem;
 }
@@ -10028,7 +10030,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 .collect-collection-head {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
 
@@ -10100,12 +10102,24 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   left: 6px;
 }
 
+/* List rows carry the same pairing as a grid card: Send, then its checkbox. */
+.collectable-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}
+
+.collectable-row-actions .collectable-send-btn--row {
+  margin: 0;
+}
+
 .collect-select--row {
-  margin-left: 4px;
+  margin: 0;
 }
 
 .collect-select--group {
-  margin-left: 4px;
+  margin-right: 6px;
 }
 
 @media (hover: hover) and (pointer: fine) {
