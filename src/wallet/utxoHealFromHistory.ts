@@ -243,7 +243,16 @@ async function processTxidBatch(
   for (const txid of batch) {
     processed.push(txid);
     const atomic = signedChequeAtomic(txid);
-    if (!atomic?.length) continue;
+    if (!atomic?.length) {
+      // Durable pressure evicts old templates, but an Arcade-pinned send is
+      // still this wallet's spend: its change must not stay app-held just
+      // because the retry body aged out of the archive.
+      if (txHadArcadeSubmitContact(txid)) {
+        await pinBroadcastLocalTx(txid);
+        changeKept += await keepChangeOfSignedTx(txid);
+      }
+      continue;
+    }
     if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null);
       if (onChain === false) {
@@ -251,7 +260,7 @@ async function processTxidBatch(
         // retains its change. Re-queue miner propagation from the archive.
         if (failed.has(txid)) {
           if (!txHadArcadeSubmitContact(txid)) continue;
-          await pinBroadcastLocalTx(txid);
+          await pinBroadcastLocalTx(txid, atomic);
         } else {
           const { enqueuePendingMinerSubmit } = await import(
             "./pendingMinerOutbox"
@@ -265,7 +274,9 @@ async function processTxidBatch(
       }
     }
     await sealSpentInputsOfSignedTx(txid, atomic);
-    changeKept += await keepChangeOfSignedTx(txid);
+    // The archived template is the body that created this change — heal can
+    // rebuild a script-less row from it instead of refusing the coin.
+    changeKept += await keepChangeOfSignedTx(txid, undefined, true, atomic);
   }
   return { changeKept, txidsOnChain, processed };
 }

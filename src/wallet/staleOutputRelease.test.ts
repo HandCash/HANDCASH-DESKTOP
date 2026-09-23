@@ -722,6 +722,75 @@ describe('keepChangeOfSignedTx', () => {
     })
   })
 
+  it('rebuilds a script-less change row from the body it just signed', async () => {
+    const { P2PKH, Transaction } = await import('@bsv/sdk')
+    const body = new Transaction()
+    body.addOutput({
+      satoshis: 55_515,
+      lockingScript: new P2PKH().lock('1BitcoinEaterAddressDontSendf59kuE'),
+    })
+    const txid = body.id('hex')
+
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 12,
+        txid,
+        vout: 0,
+        change: true,
+        satoshis: 55_515,
+        spendable: false,
+      },
+    ])
+
+    await expect(
+      keepChangeOfSignedTx(txid, undefined, true, body.toBinary()),
+    ).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(
+      12,
+      expect.objectContaining({
+        spendable: true,
+        lockingScript: body.outputs[0]!.lockingScript.toBinary(),
+      }),
+    )
+  })
+
+  it('refuses a script-less row whose body does not match, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { P2PKH, Transaction } = await import('@bsv/sdk')
+      const body = new Transaction()
+      body.addOutput({
+        satoshis: 55_515,
+        lockingScript: new P2PKH().lock('1BitcoinEaterAddressDontSendf59kuE'),
+      })
+      const txid = body.id('hex')
+
+      findOutputs.mockResolvedValue([
+        {
+          outputId: 13,
+          txid,
+          vout: 0,
+          change: true,
+          // Not the amount this body pays — the script would be another coin's.
+          satoshis: 999,
+          spendable: false,
+        },
+      ])
+
+      await expect(
+        keepChangeOfSignedTx(txid, undefined, true, body.toBinary()),
+      ).resolves.toBe(0)
+      expect(updateOutput).not.toHaveBeenCalled()
+      expect(
+        warn.mock.calls.some((call) =>
+          String(call[0]).includes('have no locking script'),
+        ),
+      ).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('promotes received (non-change) BSV outs so apps can chain them', async () => {
     const txid = 'ab'.repeat(32)
     findOutputs.mockResolvedValue([
@@ -1024,6 +1093,33 @@ describe('pinBroadcastLocalTx', () => {
     expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 4)
     expect(updateOutput).toHaveBeenCalledWith(
       5,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
+  it('still frees change when the broadcast tx has no local row yet', async () => {
+    const { P2PKH, Transaction } = await import('@bsv/sdk')
+    const body = new Transaction()
+    body.addOutput({
+      satoshis: 74_082,
+      lockingScript: new P2PKH().lock('1BitcoinEaterAddressDontSendf59kuE'),
+    })
+    const txid = body.id('hex')
+    findTransactions.mockResolvedValue([])
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 21,
+        txid,
+        vout: 0,
+        change: true,
+        satoshis: 74_082,
+        spendable: false,
+      },
+    ])
+
+    await expect(pinBroadcastLocalTx(txid, body.toBinary())).resolves.toBe(true)
+    expect(updateOutput).toHaveBeenCalledWith(
+      21,
       expect.objectContaining({ spendable: true }),
     )
   })

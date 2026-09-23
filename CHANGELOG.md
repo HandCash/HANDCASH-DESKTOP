@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.291] - 2026-09-23
+
+### Fixed
+
+- A run of item transfers no longer drains the spendable balance. Each send
+  withholds its change until the broadcast is accepted, and the change row of a
+  freshly signed transaction has no locking script yet, so promotion skipped it
+  and the whole funding coin vanished from both the spendable and pending
+  buckets. Change is now rebuilt from the transaction the wallet just signed.
+- Heal frees the change of an accepted send whose signed template was evicted
+  from the archive under storage pressure.
+
+### Changed
+
+- Every path that declines to promote change now says so in the log instead of
+  returning silently.
+
 ## [1.3.290] - 2026-09-23
 
 ### Changed

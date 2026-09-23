@@ -37,6 +37,7 @@ import {
   inputOutpointsFromAtomicBeef,
   inputOutpointsFromRawTx,
   outpointFromOutput,
+  subjectRawTxFromAtomicBeef,
 } from "./txOutpoints";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 import { yieldToUi } from "./yieldToUi";
@@ -509,8 +510,9 @@ export async function sealSpentInputsOfSignedTx(
   }
   // Promote this tx's change immediately so the spend queue can chain the next
   // payment without waiting for chain ingest (restoreLiveSpendableOutputs yields
-  // while a spend holds priority).
-  await keepChangeOfSignedTx(id, active, updateForegroundOverlay);
+  // while a spend holds priority). The signed body travels with the seal so a
+  // script-less change row is rebuilt from the transaction itself.
+  await keepChangeOfSignedTx(id, active, updateForegroundOverlay, atomic);
   return hidden;
 }
 
@@ -772,21 +774,36 @@ export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
  * few satoshis while the balance reads near zero (bucket hc-ad7afbfaae0d,
  * 05c22bf13b06 stranded 1,070,674 sats across 8 change outputs).
  */
-export async function pinBroadcastLocalTx(txid: string): Promise<boolean> {
+export async function pinBroadcastLocalTx(
+  txid: string,
+  /** Atomic BEEF of this transaction, when the broadcaster still holds it. */
+  signedBody?: number[],
+): Promise<boolean> {
   const id = normalizedTxidOrNull(txid);
   if (!id) return false;
   if (!getActiveWallet()?.wallet?.storage?.runAsStorageProvider) return false;
 
   try {
     const looked = await lookupLocalTxRow(id);
-    if (!looked) return false;
+    if (!looked) {
+      // No row to re-status, but Arcade owns the spend and the change is this
+      // wallet's. Returning quietly here stranded it in neither balance bucket.
+      const kept = await keepChangeOfSignedTx(id, undefined, true, signedBody);
+      console.info(
+        `[stale-output] pin found no local row for ${id.slice(
+          0,
+          12
+        )} — kept ${kept} change output(s)`
+      );
+      return kept > 0;
+    }
     if (!isAppHeldTxStatus(looked.status)) {
       // Live or settled already — promotion is idempotent, status is not ours
       // to rewrite. An Arcade ACK outranks a stale local failed/doublespend
       // label: older builds accepted these sends, then left their change
       // stranded forever because restoreOnChainLocalTx required explorer proof.
       if (isLiveLocalTxStatus(looked.status)) {
-        await sealThenKeepSignedTx(id);
+        await sealThenKeepSignedTx(id, signedBody);
         return true;
       }
       if (txHadArcadeSubmitContact(id)) {
@@ -808,7 +825,7 @@ export async function pinBroadcastLocalTx(txid: string): Promise<boolean> {
             looked.status
           } → unproven`
         );
-        await sealThenKeepSignedTx(id);
+        await sealThenKeepSignedTx(id, signedBody);
         return true;
       }
       return restoreOnChainLocalTx(id);
@@ -820,7 +837,7 @@ export async function pinBroadcastLocalTx(txid: string): Promise<boolean> {
         looked.status
       } → unproven`
     );
-    await sealThenKeepSignedTx(id);
+    await sealThenKeepSignedTx(id, signedBody);
     return true;
   } catch (err) {
     console.warn("[stale-output] pin broadcast skipped", id.slice(0, 12), err);
@@ -835,9 +852,14 @@ function normalizedTxidOrNull(txid: string): string | null {
 
 /** Seal spent inputs first — keep-then-seal left inputs spendable while change
  *  was already counted (the ~2× balance class, same as sibling abort). */
-async function sealThenKeepSignedTx(id: string): Promise<void> {
-  await sealSpentInputsOfSignedTx(id, undefined);
-  await keepChangeOfSignedTx(id);
+async function sealThenKeepSignedTx(
+  id: string,
+  signedBody?: number[],
+): Promise<void> {
+  await sealSpentInputsOfSignedTx(id, signedBody);
+  // Seal skips promotion when it could not read the inputs; this second pass is
+  // idempotent and is the only one that runs in that case.
+  await keepChangeOfSignedTx(id, undefined, true, signedBody);
 }
 
 type LocalTxRowRef = { transactionId: number; status: string };
@@ -1877,11 +1899,19 @@ export async function keepChangeOfSignedTx(
   txid: string,
   active: ActiveWallet | null = getActiveWallet(),
   updateForegroundOverlay = true,
+  /**
+   * Atomic BEEF of this very transaction, when the caller still holds it.
+   * The signed body is the one source that cannot be missing at seal time.
+   */
+  signedBody?: number[],
 ): Promise<number> {
   const id = txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(id)) return 0;
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
+  const bodyRawTx = signedBody?.length
+    ? subjectRawTxFromAtomicBeef(signedBody, id)
+    : null;
 
   try {
     return (await storage.runAsStorageProvider(async (activeSp) => {
@@ -1892,6 +1922,7 @@ export async function keepChangeOfSignedTx(
       rememberDerivedChangeFromRows(rows);
       const txCache = new Map<number, TxStatusRow | null>();
       let kept = 0;
+      let unscripted = 0;
       for (const row of rows) {
         const outputId = positiveId(row.outputId);
         const outpoint = outpointFromOutput(row);
@@ -1907,9 +1938,16 @@ export async function keepChangeOfSignedTx(
         // (Arcade-pinned sends with explorer 404 were promoting forever).
         if (row.spendable === true) continue;
 
-        const healed = await healLockingScript(sp, row, txCache);
-        const scripted = healed != null || hasLockingScript(row);
-        if (!scripted) continue;
+        let healed = await healLockingScript(sp, row, txCache);
+        if (healed == null && !hasLockingScript(row)) {
+          healed = changeScriptFromSignedBody(row, id, bodyRawTx);
+        }
+        if (healed == null && !hasLockingScript(row)) {
+          // The coin is real and this wallet owns it, but `allocateChangeInput`
+          // crashes on a script-less row, so it cannot be promoted yet.
+          unscripted += 1;
+          continue;
+        }
 
         await sp.updateOutput(outputId, {
           spendable: true,
@@ -1929,12 +1967,35 @@ export async function keepChangeOfSignedTx(
           )}`
         );
       }
+      if (unscripted > 0) {
+        // Silence here is how a burst of sends drained the displayed balance:
+        // every send sealed its funding coin and returned nothing.
+        console.warn(
+          `[stale-output] ${unscripted} change output(s) of ${id.slice(
+            0,
+            12
+          )} have no locking script — that change is not spendable yet`
+        );
+      }
       return kept;
     })) as number;
   } catch (err) {
     console.warn("[stale-output] keep change skipped", id.slice(0, 12), err);
     return 0;
   }
+}
+
+/** Rebuild a change row's locking script from the body this wallet just signed. */
+function changeScriptFromSignedBody(
+  row: ChangeRow & { outputIndex?: number },
+  txid: string,
+  rawTx: number[] | null
+): number[] | null {
+  if (!rawTx?.length) return null;
+  const resolved = resolveChangeRowOutpoint({ ...row, txid }, { txid, rawTx });
+  if (!resolved) return null;
+  const fate = classifyChangeScript(resolved, rawTx);
+  return fate.kind === "heal" ? fate.lockingScript : null;
 }
 
 /**

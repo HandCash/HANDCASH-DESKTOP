@@ -60,6 +60,35 @@ export function inputOutpointsFromAtomicBeef(
   }
 }
 
+/**
+ * Body of the named tx inside Atomic BEEF.
+ *
+ * Change promotion needs the transaction it just signed to rebuild a
+ * script-less change row. Hunting for that body in storage fails exactly when
+ * it matters — a fresh `noSend` row whose raw tx is not queryable by txid yet —
+ * and the coin then stays unspendable with nothing in the log to say so.
+ */
+export function subjectRawTxFromAtomicBeef(
+  atomic: number[],
+  txid: string,
+): number[] | null {
+  const id = txid.trim().toLowerCase()
+  if (!atomic.length || !/^[0-9a-f]{64}$/.test(id)) return null
+  try {
+    const beef = Beef.fromBinary(atomic)
+    const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
+    if (tx) return tx.toBinary()
+  } catch {
+    // Fall through: the payload may already be a bare raw transaction.
+  }
+  try {
+    const tx = Transaction.fromBinary(atomic)
+    return tx.id('hex') === id ? atomic : null
+  } catch {
+    return null
+  }
+}
+
 export function outpointFromOutput(row: {
   txid?: unknown
   vout?: unknown

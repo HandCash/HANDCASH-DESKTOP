@@ -248,8 +248,18 @@ describe('healUtxoFromActivityHistory', () => {
     const saved = mocks.durableSetItem.mock.calls.at(-1)?.[1] as string
     expect(saved).toContain(other)
     expect(saved).toContain(TX)
-    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
-    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalledWith(other)
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(
+      TX,
+      undefined,
+      true,
+      [1, 2, 3],
+    )
+    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalledWith(
+      other,
+      undefined,
+      true,
+      expect.anything(),
+    )
   })
 
   it('does not restack change-heal scans when pending change is already 0', async () => {
@@ -287,7 +297,14 @@ describe('healUtxoFromActivityHistory', () => {
     await runUtxoHealPass({ source: 'send-cleanup', force: true })
 
     expect(mocks.failUnsentLocalTx).not.toHaveBeenCalled()
-    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+    // The archived template rides along so a script-less change row can be
+    // rebuilt from the body that created it.
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(
+      TX,
+      undefined,
+      true,
+      [1, 2, 3],
+    )
   })
 
   it('restores a ghost-failed local tx once explorers see it on chain', async () => {
@@ -309,7 +326,12 @@ describe('healUtxoFromActivityHistory', () => {
     await runUtxoHealPass({ source: 'send-cleanup', force: true })
 
     expect(mocks.restoreOnChainLocalTx).toHaveBeenCalledWith(TX)
-    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(
+      TX,
+      undefined,
+      true,
+      [1, 2, 3],
+    )
   })
 
   it('restores Arcade-pinned failed change while explorers still return absent', async () => {
@@ -331,8 +353,13 @@ describe('healUtxoFromActivityHistory', () => {
 
     await runUtxoHealPass({ source: 'manual', force: true })
 
-    expect(mocks.pinBroadcastLocalTx).toHaveBeenCalledWith(TX)
-    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+    expect(mocks.pinBroadcastLocalTx).toHaveBeenCalledWith(TX, [1, 2, 3])
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(
+      TX,
+      undefined,
+      true,
+      [1, 2, 3],
+    )
   })
 
   it('does not heal activity hashes that have no signed template', async () => {
@@ -348,6 +375,20 @@ describe('healUtxoFromActivityHistory', () => {
 
     expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled()
     expect(mocks.sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
+  })
+
+  it('frees change of an Arcade-pinned send whose template was evicted', async () => {
+    mocks.listSignedChequeTxids.mockReturnValue([TX])
+    mocks.signedChequeAtomic.mockReturnValue(null)
+    mocks.txHadArcadeSubmitContact.mockReturnValue(true)
+
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    expect(mocks.pinBroadcastLocalTx).toHaveBeenCalledWith(TX)
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+    // No body to replay, so nothing is re-sealed or re-submitted.
+    expect(mocks.sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
+    expect(mocks.enqueuePendingMinerSubmit).not.toHaveBeenCalled()
   })
 
   it('does not start a background ingest heal from auto checkpoint', async () => {

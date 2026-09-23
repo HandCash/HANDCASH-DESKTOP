@@ -266,14 +266,25 @@ async function applyArcadePostBeef(
         .catch(() => undefined);
     }
     // Arcade owns it now: leave app-held `nosend`, seal inputs, free change.
+    // The body goes with it — a fresh `noSend` change row is often not
+    // queryable by txid yet, and without a script it cannot be promoted.
     if (!detached) {
-      void pinBroadcastLocalTx(id).catch((err) => {
-        console.warn(
-          "[minerSubmit] post-Arcade pin skipped",
-          id.slice(0, 12),
-          err
-        );
-      });
+      void pinBroadcastLocalTx(id, atomic)
+        .then((pinned) => {
+          if (!pinned) {
+            console.warn(
+              "[minerSubmit] post-Arcade pin did not free change",
+              id.slice(0, 12)
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            "[minerSubmit] post-Arcade pin skipped",
+            id.slice(0, 12),
+            err
+          );
+        });
     }
     return summary.accepted ? summary : { ...summary, accepted: true };
   }
