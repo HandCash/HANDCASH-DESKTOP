@@ -21,6 +21,16 @@ const prepareBroadcastCheque = vi.fn(async (_w: unknown, _id: string, atomic: nu
 
 const enqueuePendingMinerSubmit = vi.fn(() => true)
 const archiveSignedCheque = vi.fn(() => true)
+const assertRuntimeCurrent = vi.fn()
+const runtime = {
+  instance: {
+    chain: 'main',
+    accountIndex: 2,
+    identityKey: 'identity-two',
+  },
+  runtimeId: 'runtime-two',
+  signal: new AbortController().signal,
+}
 
 vi.mock('./beefCache', () => ({
   prepareBroadcastCheque: (...args: unknown[]) => prepareBroadcastCheque(...args),
@@ -28,6 +38,11 @@ vi.mock('./beefCache', () => ({
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({ chain: 'main' }),
+}))
+
+vi.mock('./walletRuntime', () => ({
+  requireWalletRuntime: () => runtime,
+  assertRuntimeCurrent: (...args: unknown[]) => assertRuntimeCurrent(...args),
 }))
 
 vi.mock('./staleOutputRelease', () => ({
@@ -83,6 +98,11 @@ describe('signedSendLifecycle', () => {
     expect(sealSpentInputsOfSignedTx).toHaveBeenCalledWith(TXID, ATOMIC)
     expect(archiveSignedCheque).toHaveBeenCalledWith(TXID, ATOMIC, {
       flow: 'token_transfer',
+      owner: {
+        accountIndex: 2,
+        identityKey: 'identity-two',
+        chain: 'main',
+      },
     })
     expect(enqueuePendingMinerSubmit).toHaveBeenCalledWith(TXID, ATOMIC, {
       flow: 'token_transfer',
@@ -93,6 +113,38 @@ describe('signedSendLifecycle', () => {
       to: 'recipient',
     })
     expect(handle.lifecycleId).toBe('token-life')
+  })
+
+  it('fails closed when the durable cheque archive refuses the write', async () => {
+    archiveSignedCheque.mockReturnValueOnce(false)
+    const { registerSignedSend } = await import('./signedSendLifecycle')
+
+    await expect(
+      registerSignedSend({
+        txid: TXID,
+        atomicBeef: ATOMIC,
+        flow: 'token_transfer',
+      }),
+    ).rejects.toThrow(/could not be archived/)
+    expect(enqueuePendingMinerSubmit).not.toHaveBeenCalled()
+    expect(beginSignedTxLifecycle).not.toHaveBeenCalled()
+  })
+
+  it('refuses to cross a derivation scope changed during preparation', async () => {
+    assertRuntimeCurrent.mockImplementationOnce(() => {
+      throw new DOMException('Wallet runtime disposed', 'AbortError')
+    })
+    const { registerSignedSend } = await import('./signedSendLifecycle')
+
+    await expect(
+      registerSignedSend({
+        txid: TXID,
+        atomicBeef: ATOMIC,
+        flow: 'token_transfer',
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
+    expect(archiveSignedCheque).not.toHaveBeenCalled()
   })
 
   it('does not seal or queue a package with missing parent bodies', async () => {

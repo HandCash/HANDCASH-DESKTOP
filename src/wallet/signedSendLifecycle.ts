@@ -1,4 +1,7 @@
-import { getActiveWallet } from './session'
+import {
+  assertRuntimeCurrent,
+  requireWalletRuntime,
+} from './walletRuntime'
 
 /**
  * One lifecycle for every locally signed outbound transaction.
@@ -40,22 +43,36 @@ export async function registerSignedSend(args: {
     throw new Error('Signed send is missing its transaction body')
   }
 
+  // Freeze the signer/account identity before the first await. Derivation
+  // scope must never follow a later account switch halfway through a cheque.
+  const runtime = requireWalletRuntime()
+  const owner = {
+    accountIndex: runtime.instance.accountIndex,
+    identityKey: runtime.instance.identityKey,
+    chain: runtime.instance.chain,
+  } as const
   const { prepareBroadcastCheque } = await import('./beefCache')
   const prepared = await prepareBroadcastCheque(
-    getActiveWallet(),
+    runtime.instance,
     txid,
     args.atomicBeef,
   )
+  assertRuntimeCurrent(runtime)
   const atomicBeef = prepared.atomic
 
   // Seal first. A lifecycle must never advertise a signed cheque while its
   // inputs remain selectable by a second send.
   await sealSpentInputsOfSignedTx(txid, atomicBeef)
+  assertRuntimeCurrent(runtime)
   // Persist before any Activity/remittance work. The cheque archive is what
   // heal replays; the miner outbox is only the still-propagating subset.
   const { archiveSignedCheque } = await import('./signedChequeArchive')
-  archiveSignedCheque(txid, atomicBeef, { flow: args.flow })
+  assertRuntimeCurrent(runtime)
+  if (!archiveSignedCheque(txid, atomicBeef, { flow: args.flow, owner })) {
+    throw new Error('Signed transaction template could not be archived')
+  }
   const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
+  assertRuntimeCurrent(runtime)
   enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow })
 
   const lifecycle = args.lifecycleId

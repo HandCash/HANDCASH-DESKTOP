@@ -7,6 +7,14 @@ const registerSignedSend = vi.fn(async () => ({
   atomicBeef: [1, 2, 3],
   flow: 'brc100_action',
 }))
+const assertRuntimeCurrent = vi.fn()
+const runtime = {
+  instance: {
+    chain: 'main',
+    accountIndex: 3,
+    identityKey: 'identity-three',
+  },
+}
 
 vi.mock('./signedChequeArchive', () => ({
   archiveSignedCheque: (...args: unknown[]) => archiveSignedCheque(...args),
@@ -14,6 +22,11 @@ vi.mock('./signedChequeArchive', () => ({
 
 vi.mock('./signedSendLifecycle', () => ({
   registerSignedSend: (...args: unknown[]) => registerSignedSend(...args),
+}))
+
+vi.mock('./walletRuntime', () => ({
+  requireWalletRuntime: () => runtime,
+  assertRuntimeCurrent: (...args: unknown[]) => assertRuntimeCurrent(...args),
 }))
 
 const TXID = 'ab'.repeat(32)
@@ -36,6 +49,11 @@ describe('funnelAppSignedCheque', () => {
 
     expect(archiveSignedCheque).toHaveBeenCalledWith(TXID, ATOMIC, {
       flow: 'brc100_action',
+      owner: {
+        accountIndex: 3,
+        identityKey: 'identity-three',
+        chain: 'main',
+      },
     })
     expect(registerSignedSend).toHaveBeenCalledWith({
       txid: TXID,
@@ -52,5 +70,15 @@ describe('funnelAppSignedCheque', () => {
       funnelAppSignedCheque({ txid: TXID, atomicBeef: ATOMIC }),
     ).resolves.toBe(false)
     expect(archiveSignedCheque).toHaveBeenCalled()
+  })
+
+  it('does not enter the lifecycle when durable archive storage refuses', async () => {
+    archiveSignedCheque.mockReturnValueOnce(false)
+    const { funnelAppSignedCheque } = await import('./appSignedCheque')
+
+    await expect(
+      funnelAppSignedCheque({ txid: TXID, atomicBeef: ATOMIC }),
+    ).resolves.toBe(false)
+    expect(registerSignedSend).not.toHaveBeenCalled()
   })
 })

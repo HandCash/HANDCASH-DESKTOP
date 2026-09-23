@@ -11,6 +11,12 @@ type AccountKeyScope = {
   chain: 'main' | 'test'
 }
 
+export type BoundAccountKeyScope = {
+  identityKey: string
+  accountIndex: number
+  chain: 'main' | 'test'
+}
+
 const SCOPE_SYMBOL = Symbol.for('handcash.wallet.account-key-scope')
 const globalScopes = globalThis as typeof globalThis & {
   [SCOPE_SYMBOL]?: AccountKeyScope
@@ -52,16 +58,32 @@ export function accountLocalKey(base: string): string {
   if (!scope.identityKey) {
     throw new Error(`Wallet storage requested without a bound runtime: ${base}`)
   }
+  return accountLocalKeyFor(base, {
+    accountIndex: scope.accountIndex,
+    identityKey: scope.identityKey,
+    chain: scope.chain,
+  })
+}
+
+/** Resolve against an immutable wallet identity captured before async work. */
+export function accountLocalKeyFor(
+  base: string,
+  owner: BoundAccountKeyScope,
+): string {
+  const identityKey = owner.identityKey.trim()
+  if (!identityKey) {
+    throw new Error(`Wallet storage requested without an identity: ${base}`)
+  }
   // Existing unit suites intentionally mock raw durable keys. Keep that
   // hermetic fixture shape only for the setup identity; isolation/migration
   // tests bind real identities and exercise the production namespace.
   if (
     import.meta.env?.MODE === 'test' &&
-    scope.identityKey === 'vitest-primary-identity'
+    identityKey === 'vitest-primary-identity'
   ) {
     return base
   }
-  return `${base}:wallet:${scope.chain}:${scope.accountIndex}:${scope.identityKey}`
+  return `${base}:wallet:${owner.chain}:${owner.accountIndex}:${identityKey}`
 }
 
 /** Test / wipe helper — treat unbound as primary (legacy keys). */

@@ -1,6 +1,7 @@
 import { Beef, LockingScript, Transaction, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { storageRegistry } from '../storage/registry'
+import { bindAccountLocalKeyScope } from './accountLocalKeys'
 
 const store = new Map<string, string>()
 const ARCHIVE_KEY = storageRegistry.signedChequeArchive.key
@@ -88,5 +89,31 @@ describe('signedChequeArchive', () => {
       atomicB64: string
     }>
     expect(Utils.toArray(saved[0]!.atomicB64, 'base64')).toEqual(atomic)
+  })
+
+  it('writes to the captured derivation scope even after the global scope moves', async () => {
+    const { archiveSignedCheque, listSignedChequeTxids } = await import(
+      './signedChequeArchive'
+    )
+    const tx = signedTx(777)
+    const txid = tx.id('hex')
+    const owner = {
+      accountIndex: 4,
+      identityKey: 'identity-four',
+      chain: 'main' as const,
+    }
+
+    bindAccountLocalKeyScope({
+      accountIndex: 5,
+      identityKey: 'identity-five',
+      chain: 'main',
+    })
+    expect(
+      archiveSignedCheque(txid, atomicBeefFor(tx), { flow: 'payment', owner }),
+    ).toBe(true)
+    expect(listSignedChequeTxids()).toEqual([])
+
+    bindAccountLocalKeyScope(owner)
+    expect(listSignedChequeTxids()).toEqual([txid])
   })
 })

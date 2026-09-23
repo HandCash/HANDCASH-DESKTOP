@@ -14,6 +14,13 @@ const postBeef = vi.fn(async () => [
 ])
 
 const durable = new Map<string, string>()
+const runtimeWallet = {
+  chain: 'main' as const,
+  accountIndex: 0,
+  identityKey: 'payment-test-identity',
+  services: { postBeef },
+  wallet: { createAction: (args: CreateActionArgs) => createAction(args) },
+}
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => durable.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
@@ -23,12 +30,17 @@ vi.mock('./durableStorage', () => ({
 }))
 
 vi.mock('./session', () => ({
-  getActiveWallet: () => ({
-    chain: 'main',
-    services: { postBeef },
-    wallet: { createAction: (args: CreateActionArgs) => createAction(args) },
-  }),
+  getActiveWallet: () => runtimeWallet,
   fetchBalanceSats: async () => 90_000,
+}))
+
+vi.mock('./walletRuntime', () => ({
+  requireWalletRuntime: () => ({ instance: runtimeWallet }),
+  assertRuntimeCurrent: () => {},
+}))
+
+vi.mock('./signedChequeArchive', () => ({
+  archiveSignedCheque: () => true,
 }))
 
 vi.mock('./spendGuard', () => ({

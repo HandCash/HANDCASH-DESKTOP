@@ -51,26 +51,39 @@ vi.mock('./legacyScan', () => ({
 const walletState = {
   identityKey: '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 }
+const runtimeWallet = {
+  chain: 'main' as const,
+  accountIndex: 0,
+  get identityKey() {
+    return walletState.identityKey
+  },
+  rootKeyHex: 'ab'.repeat(32),
+  services: { postBeef },
+  wallet: {
+    createAction: (args: CreateActionArgs) => createAction(args),
+    abortAction,
+    listNoSendActions,
+    actionBatch: { abort: () => actionBatchAbort() },
+    internalizeAction,
+    getPublicKey: (...args: unknown[]) => getPublicKey(...args),
+    createHmac: (...args: unknown[]) => createHmac(...args),
+  },
+}
 
 vi.mock('./session', () => ({
-  getActiveWallet: () => ({
-    chain: 'main',
-    identityKey: walletState.identityKey,
-    rootKeyHex: 'ab'.repeat(32),
-    services: { postBeef },
-    wallet: {
-      createAction: (args: CreateActionArgs) => createAction(args),
-      abortAction,
-      listNoSendActions,
-      actionBatch: { abort: () => actionBatchAbort() },
-      internalizeAction,
-      getPublicKey: (...args: unknown[]) => getPublicKey(...args),
-      createHmac: (...args: unknown[]) => createHmac(...args),
-    },
-  }),
+  getActiveWallet: () => runtimeWallet,
   fetchBalanceSats: async () => 90_000,
   invalidateBalanceReads: () => {},
   bumpBalanceAfterHeal: () => {},
+}))
+
+vi.mock('./walletRuntime', () => ({
+  requireWalletRuntime: () => ({ instance: runtimeWallet }),
+  assertRuntimeCurrent: () => {},
+}))
+
+vi.mock('./signedChequeArchive', () => ({
+  archiveSignedCheque: () => true,
 }))
 
 vi.mock('./messageTransport', () => ({

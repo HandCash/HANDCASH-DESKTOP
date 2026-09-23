@@ -6,7 +6,11 @@
  * so this store is the cheque itself — not Activity hashes or explorer lookups.
  */
 import { Beef, Utils } from '@bsv/sdk'
-import { accountLocalKey } from './accountLocalKeys'
+import {
+  accountLocalKey,
+  accountLocalKeyFor,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { storageRegistry } from '../storage/registry'
 import type { TransactionFlow } from './transactionTelemetry'
@@ -31,8 +35,8 @@ type StoredCheque = {
   flow?: TransactionFlow
 }
 
-function storageKey(): string {
-  return accountLocalKey(KEY_BASE)
+function scopedKey(base: string, owner?: BoundAccountKeyScope): string {
+  return owner ? accountLocalKeyFor(base, owner) : accountLocalKey(base)
 }
 
 function bodyIsSignedCheque(txid: string, atomic: number[]): boolean {
@@ -72,7 +76,7 @@ function toCheque(row: StoredCheque): SignedCheque | null {
   }
 }
 
-function migrateLegacyBodies(): StoredCheque[] {
+function migrateLegacyBodies(owner?: BoundAccountKeyScope): StoredCheque[] {
   const extra: StoredCheque[] = []
   const seen = new Set<string>()
   const take = (txid: string, atomic: number[], flow?: TransactionFlow) => {
@@ -90,7 +94,7 @@ function migrateLegacyBodies(): StoredCheque[] {
   }
   try {
     const pending = JSON.parse(
-      durableGetItem(accountLocalKey(PENDING_MINER_KEY)) || '[]',
+      durableGetItem(scopedKey(PENDING_MINER_KEY, owner)) || '[]',
     ) as unknown
     if (Array.isArray(pending)) {
       for (const row of pending) {
@@ -122,12 +126,14 @@ function migrateLegacyBodies(): StoredCheque[] {
   return extra
 }
 
-function loadStored(): StoredCheque[] {
+function loadStored(owner?: BoundAccountKeyScope): StoredCheque[] {
   try {
-    const parsed = JSON.parse(durableGetItem(storageKey()) || '[]') as unknown
+    const parsed = JSON.parse(
+      durableGetItem(scopedKey(KEY_BASE, owner)) || '[]',
+    ) as unknown
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      const migrated = migrateLegacyBodies()
-      if (migrated.length > 0) saveStored(migrated)
+      const migrated = migrateLegacyBodies(owner)
+      if (migrated.length > 0) saveStored(migrated, owner)
       return migrated
     }
     return parsed.filter(
@@ -142,19 +148,22 @@ function loadStored(): StoredCheque[] {
   }
 }
 
-function saveStored(rows: StoredCheque[]): boolean {
+function saveStored(
+  rows: StoredCheque[],
+  owner?: BoundAccountKeyScope,
+): boolean {
   const trimmed = rows.slice(-MAX_ROWS)
-  return durableSetItem(storageKey(), JSON.stringify(trimmed))
+  return durableSetItem(scopedKey(KEY_BASE, owner), JSON.stringify(trimmed))
 }
 
 export function archiveSignedCheque(
   txid: string,
   atomic: number[],
-  opts?: { flow?: TransactionFlow },
+  opts?: { flow?: TransactionFlow; owner?: BoundAccountKeyScope },
 ): boolean {
   if (!bodyIsSignedCheque(txid, atomic)) return false
   const id = txid.trim().toLowerCase()
-  const rows = loadStored()
+  const rows = loadStored(opts?.owner)
   const next: StoredCheque = {
     txid: id,
     atomicB64: Utils.toBase64(atomic),
@@ -167,10 +176,10 @@ export function archiveSignedCheque(
     if (atomic.length < prev.length) return true
     existing.atomicB64 = next.atomicB64
     existing.flow = opts?.flow ?? existing.flow
-    return saveStored(rows)
+    return saveStored(rows, opts?.owner)
   }
   rows.push(next)
-  if (!saveStored(rows)) {
+  if (!saveStored(rows, opts?.owner)) {
     console.error('[signed-cheque] durable write refused', id.slice(0, 12))
     return false
   }
