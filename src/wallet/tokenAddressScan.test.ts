@@ -6,11 +6,18 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  mergeTokenTxos,
   resetTokenAddressScanCooldownForTests,
   scanAddressOrdinalTxos,
   scanAddressTokenTxos,
+  scanLiveTipUtxos,
 } from './tokenAddressScan'
-import { mergeTokenTxos } from './ingestLegacyAddress'
+import type { ActiveWallet } from './session'
+
+const scanLegacyAddressMock = vi.fn()
+vi.mock('./legacyScan', () => ({
+  scanLegacyAddress: (...args: unknown[]) => scanLegacyAddressMock(...args),
+}))
 
 const ADDRESS = '19aXSPsoR45Uuxk4LUonJ672zGFf57wfrD'
 const TXID = '1a985778ab19fade1eecc04558793fbb4bc1cb66062baa9bf2068d198aacb313'
@@ -187,5 +194,40 @@ describe('mergeTokenTxos', () => {
   it('returns the scan untouched when the index found nothing', () => {
     const base = scan([{ vout: 5, satoshis: 5_000 }])
     expect(mergeTokenTxos(base, [])).toBe(base)
+  })
+})
+
+describe('scanLiveTipUtxos', () => {
+  const wallet = { address: ADDRESS, chain: 'main' } as ActiveWallet
+
+  // Every ownership judgement reads this set. Built from the address provider
+  // alone it omits every inscribed tip, and the send gate then called them
+  // spent and hid them.
+  it('carries index-only tips the address provider cannot see', async () => {
+    scanLegacyAddressMock.mockResolvedValue({
+      address: ADDRESS,
+      chain: 'main',
+      sats: 3,
+      utxos: [{ outpoint: `${TXID}.7`, txid: TXID, vout: 7, satoshis: 3 }],
+      source: 'bitails',
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) =>
+        String(url).includes('bsv20=true')
+          ? new Response('[]', { status: 200 })
+          : new Response(
+              JSON.stringify([tokenRow({ txid: NFT_TXID, outpoint: `${NFT_TXID}_0` })]),
+              { status: 200 },
+            ),
+      ),
+    )
+
+    const scan = await scanLiveTipUtxos(wallet)
+
+    expect(scan.utxos.map((u) => u.outpoint)).toEqual([
+      `${TXID}.7`,
+      `${NFT_TXID}.0`,
+    ])
   })
 })

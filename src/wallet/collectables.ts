@@ -143,13 +143,15 @@ import {
   collectableBatchOutputOutpoint,
   collectableSendBatchRefusal,
 } from './collectableBatch'
-import { scanLegacyAddress } from './legacyScan'
+import { spentStatusOfOutpoint } from './legacyScan'
+import { scanLiveTipUtxos } from './tokenAddressScan'
 import {
   isItemAbandoned,
   isItemSent,
   markItemAbandoned,
   markItemsSent,
   forgetItemsSent,
+  SCAN_SPENT_MARK_PREFIX,
   type SentItemSettle,
 } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
@@ -1147,7 +1149,7 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
   ) {
     return
   }
-  const promise = scanLegacyAddress(wallet)
+  const promise = scanLiveTipUtxos(wallet)
     .then((scan) => {
       if (epoch !== collectablesAccountEpoch) return
       rememberLiveOneSatOutpoints(scan.utxos, wallet.identityKey)
@@ -1191,6 +1193,42 @@ function cachedLiveOutpoints(
   }
 }
 
+/**
+ * Second opinion before the send gate calls a tip spent.
+ *
+ * The live set is a heuristic, not a verdict. The ordinal index answers with
+ * an empty list for 45s after any failure, and every inscribed tip — which no
+ * address provider can see — leaves the merged set at once. Acting on that
+ * silence hid good collectables behind a `spent-on-chain:` mark, which carries
+ * no txid, so {@link healGhostSentItems} can never give them back.
+ *
+ * Only a positive spend hides a tip. An inconclusive chain still stops the
+ * send: building on an input we cannot vouch for risks the UTXO_SPENT
+ * rejection that also kills the honest change in the same transaction.
+ */
+async function assertTipNotProvenSpent(
+  wallet: ActiveWallet,
+  outpoint: string,
+  refusal: string,
+): Promise<void> {
+  const status = await spentStatusOfOutpoint(outpoint, wallet.chain)
+  if (status === 'spent') {
+    markItemsSent([
+      { outpoint, txid: `${SCAN_SPENT_MARK_PREFIX}${outpoint}` },
+    ])
+    void listCollectables(wallet).catch(() => {})
+    throw new Error(refusal)
+  }
+  if (status === 'unknown') {
+    throw new Error(
+      'Could not confirm this collectable is still unspent on chain. Try again in a moment.',
+    )
+  }
+  console.info(
+    `[collectables] live scan missed ${outpointKey(outpoint)} — chain says unspent, continuing send`,
+  )
+}
+
 async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
   oneSats: Set<string>
   all: Set<string>
@@ -1203,7 +1241,7 @@ async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
     return cachedLiveOutpoints(true)
   }
   try {
-    const scan = await scanLegacyAddress(wallet)
+    const scan = await scanLiveTipUtxos(wallet)
     rememberLiveOneSatOutpoints(scan.utxos, wallet.identityKey)
     if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
     return {
@@ -3695,9 +3733,9 @@ export async function sendCollectable(args: {
               walletAddress: wallet.address,
             })
           if (rejectForLiveScan) {
-            markItemsSent([{ outpoint, txid: `spent-on-chain:${outpoint}` }])
-            void listCollectables(wallet).catch(() => {})
-            throw new Error(
+            await assertTipNotProvenSpent(
+              wallet,
+              outpoint,
               'This collectable is no longer unspent on your address (already sent). Inventory refreshed.'
             )
           }
@@ -4479,11 +4517,9 @@ export async function sendCollectables(
                 walletAddress: wallet.address,
               })
             ) {
-              markItemsSent([
-                { outpoint, txid: `spent-on-chain:${outpoint}` },
-              ])
-              void listCollectables(wallet).catch(() => {})
-              throw new Error(
+              await assertTipNotProvenSpent(
+                wallet,
+                outpoint,
                 'A selected collectable is no longer unspent on your address. Inventory refreshed.',
               )
             }

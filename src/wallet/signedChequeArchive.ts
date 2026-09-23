@@ -20,6 +20,17 @@ const CREATED_BEEF_INDEX = storageRegistry.createdBeefIndex.key
 const CREATED_BEEF_PREFIX = storageRegistry.createdBeefPrefix.key
 const PENDING_MINER_KEY = storageRegistry.pendingMinerOutbox.key
 const MAX_ROWS = 500
+/**
+ * Byte ceiling for the serialized archive.
+ *
+ * On the mobile shell, origin storage *is* the durable store, and its
+ * whole-origin quota is a few megabytes shared with Activity, chat and item
+ * art. An unbounded row count of full Atomic BEEFs filled it, every write
+ * threw `QuotaExceededError`, and — because a refused archive fails the send
+ * closed — the wallet stopped signing anything at all. A cheque is only needed
+ * until its transaction is proven, so budget the store and evict the oldest.
+ */
+const MAX_BYTES = 1024 * 1024
 
 export type SignedCheque = {
   txid: string
@@ -152,8 +163,24 @@ function saveStored(
   rows: StoredCheque[],
   owner?: BoundAccountKeyScope,
 ): boolean {
-  const trimmed = rows.slice(-MAX_ROWS)
-  return durableSetItem(scopedKey(KEY_BASE, owner), JSON.stringify(trimmed))
+  const key = scopedKey(KEY_BASE, owner)
+  // Oldest first. Callers append, so the cheque being archived is last and is
+  // the one row never dropped to make the write fit.
+  let kept = rows.slice(-MAX_ROWS)
+  for (;;) {
+    const body = JSON.stringify(kept)
+    if (body.length <= MAX_BYTES && durableSetItem(key, body)) {
+      const evicted = rows.length - kept.length
+      if (evicted > 0) {
+        console.warn(
+          `[signed-cheque] evicted ${evicted} archived cheque(s) to fit durable storage`,
+        )
+      }
+      return true
+    }
+    if (kept.length <= 1) return false
+    kept = kept.slice(1)
+  }
 }
 
 export function archiveSignedCheque(

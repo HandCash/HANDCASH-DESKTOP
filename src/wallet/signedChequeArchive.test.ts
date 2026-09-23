@@ -19,9 +19,13 @@ function atomicBeefFor(tx: Transaction): number[] {
   return beef.toBinaryAtomic(tx.id('hex'))
 }
 
+/** Origin-storage quota, the way a phone imposes it: refuse oversized writes. */
+let storeByteCap = Number.POSITIVE_INFINITY
+
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
+    if (value.length > storeByteCap) return false
     store.set(key, value)
     return true
   },
@@ -30,6 +34,7 @@ vi.mock('./durableStorage', () => ({
 describe('signedChequeArchive', () => {
   beforeEach(() => {
     store.clear()
+    storeByteCap = Number.POSITIVE_INFINITY
   })
 
   it('keeps the signed Atomic BEEF after the miner outbox would drop it', async () => {
@@ -116,4 +121,46 @@ describe('signedChequeArchive', () => {
     bindAccountLocalKeyScope(owner)
     expect(listSignedChequeTxids()).toEqual([txid])
   })
+
+  // A full archive refused every write, and because a refused archive fails
+  // the send closed, the wallet stopped signing anything at all.
+  it('evicts the oldest cheques rather than refuse a write to a full store', async () => {
+    bindAccountLocalKeyScope({
+      accountIndex: 0,
+      identityKey: 'identity-quota',
+      chain: 'main',
+    })
+    const { archiveSignedCheque, listSignedChequeTxids } = await import(
+      './signedChequeArchive'
+    )
+    const cheques = [11, 22, 33].map((sats) => {
+      const tx = signedTx(sats)
+      return { txid: tx.id('hex'), atomic: atomicBeefFor(tx) }
+    })
+
+    expect(archiveSignedCheque(cheques[0]!.txid, cheques[0]!.atomic)).toBe(true)
+    expect(archiveSignedCheque(cheques[1]!.txid, cheques[1]!.atomic)).toBe(true)
+    // Room for two rows, not three.
+    storeByteCap = (store.get(listArchiveKey()) ?? '').length
+
+    expect(archiveSignedCheque(cheques[2]!.txid, cheques[2]!.atomic)).toBe(true)
+    expect(listSignedChequeTxids()).toEqual([cheques[1]!.txid, cheques[2]!.txid])
+  })
+
+  it('refuses only when the newest cheque alone cannot be stored', async () => {
+    bindAccountLocalKeyScope({
+      accountIndex: 0,
+      identityKey: 'identity-tiny',
+      chain: 'main',
+    })
+    const { archiveSignedCheque } = await import('./signedChequeArchive')
+    const tx = signedTx(99)
+    storeByteCap = 8
+
+    expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(false)
+  })
 })
+
+function listArchiveKey(): string {
+  return [...store.keys()].find((key) => key.startsWith(ARCHIVE_KEY)) ?? ARCHIVE_KEY
+}

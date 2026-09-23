@@ -19,6 +19,7 @@ const mockReconcileDualLayerState = vi.fn(async () => ({
   orphaned: 0,
 }))
 const mockHealGhostSentItems = vi.fn(async (): Promise<string[]> => [])
+const mockHealScanHiddenSentItems = vi.fn(async (): Promise<string[]> => [])
 const mockPruneMissingOnChainActivity = vi.fn(async () => 0)
 const mockExpireStaleInboundPending = vi.fn(() => 0)
 const mockRehideInputsOfLiveLocalTxs = vi.fn(async () => undefined)
@@ -42,6 +43,7 @@ vi.mock('./legacyScan', () => ({
   scanLegacyAddress: (...args: unknown[]) => mockScanLegacyAddress(...args),
   importLegacyUtxos: (...args: unknown[]) => mockImportLegacyUtxos(...args),
   txExistsOnChain: vi.fn(async () => null),
+  spentStatusOfOutpoint: vi.fn(async () => 'unknown' as const),
 }))
 
 vi.mock('./txReconcile', () => ({
@@ -50,6 +52,8 @@ vi.mock('./txReconcile', () => ({
 
 vi.mock('./sentItemGuard', () => ({
   healGhostSentItems: (...args: unknown[]) => mockHealGhostSentItems(...(args as [])),
+  healScanHiddenSentItems: (...args: unknown[]) =>
+    mockHealScanHiddenSentItems(...(args as [])),
 }))
 
 vi.mock('./appActivity', () => ({
@@ -82,7 +86,8 @@ vi.mock('./oneSatImportGuard', () => ({
   isOneSatOutpointKnown: vi.fn(() => false),
 }))
 
-vi.mock('./tokenAddressScan', () => ({
+vi.mock('./tokenAddressScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tokenAddressScan')>()),
   scanAddressOrdinalTxos: vi.fn(async () => []),
   scanAddressTokenTxos: vi.fn(async () => []),
 }))
@@ -319,6 +324,18 @@ describe('refreshFromChain pre-scan maintenance', () => {
 
     const { forgetOneSatImported } = await import('./oneSatImportGuard')
     expect(forgetOneSatImported).toHaveBeenCalledWith(['aa.0', 'bb.1'])
+  })
+
+  // Scan-hidden tips carry no txid, so ghost heal cannot see them. Without
+  // its own pass an item hidden by a wrong scan stays gone for a day.
+  it('returns tips a scan hid but the chain does not show spent', async () => {
+    mockHealScanHiddenSentItems.mockResolvedValue(['cc.0'])
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+
+    const { forgetOneSatImported } = await import('./oneSatImportGuard')
+    expect(forgetOneSatImported).toHaveBeenCalledWith(['cc.0'])
   })
 
   it('skips maintenance while a send is already waiting', async () => {

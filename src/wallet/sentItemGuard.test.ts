@@ -32,6 +32,40 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent('aa_0')).toBe(true)
   })
 
+  // The send gate hid these on a scan verdict, with no txid to group by, so
+  // the txid-keyed ghost heal could never reach them and good collectables
+  // stayed invisible for a full day.
+  it('returns scan-hidden tips the chain does not show spent', async () => {
+    const guard = await import('./sentItemGuard')
+    guard.markItemsSent([
+      { outpoint: 'aa.0', txid: `${guard.SCAN_SPENT_MARK_PREFIX}aa.0` },
+      { outpoint: 'bb.0', txid: `${guard.SCAN_SPENT_MARK_PREFIX}bb.0` },
+      { outpoint: 'cc.0', txid: 'd'.repeat(64) },
+    ])
+
+    const restored = await guard.healScanHiddenSentItems('main', async (op) =>
+      op === 'bb.0' ? 'spent' : 'unspent',
+    )
+
+    expect(restored).toEqual(['aa.0'])
+    expect(guard.isItemSent('aa.0')).toBe(false)
+    expect(guard.isItemSent('bb.0')).toBe(true)
+    // A real broadcast keeps its hide — only the heuristic marks are revisited.
+    expect(guard.isItemSent('cc.0')).toBe(true)
+  })
+
+  it('returns a scan-hidden tip the chain cannot answer for', async () => {
+    const guard = await import('./sentItemGuard')
+    guard.markItemsSent([
+      { outpoint: 'aa.0', txid: `${guard.SCAN_SPENT_MARK_PREFIX}aa.0` },
+    ])
+
+    expect(
+      await guard.healScanHiddenSentItems('main', async () => 'unknown'),
+    ).toEqual(['aa.0'])
+    expect(guard.isItemSent('aa.0')).toBe(false)
+  })
+
   it('never restores a tip consumed by a completed burn', async () => {
     const guard = await import('./sentItemGuard')
     guard.markItemsSent([{ outpoint: 'aa.0', txid: 'b'.repeat(64) }])

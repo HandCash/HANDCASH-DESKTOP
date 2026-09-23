@@ -39,7 +39,8 @@ vi.mock('./oneSatImport', () => ({
   contentUrlForOrigin: (origin: string) => `https://example.test/content/${origin}`,
 }))
 
-vi.mock('./tokenAddressScan', () => ({
+vi.mock('./tokenAddressScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tokenAddressScan')>()),
   scanAddressOrdinalTxos: vi.fn(async () => []),
   scanAddressTokenTxos: vi.fn(async () => []),
 }))

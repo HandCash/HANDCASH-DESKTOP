@@ -12,7 +12,8 @@
  * HARD RULE: only 1-satoshi outputs — never spend real funds from an indexer hint.
  */
 import type { Chain } from './vault'
-import type { LegacyUtxo } from './legacyScan'
+import type { ActiveWallet } from './session'
+import { scanLegacyAddress, type LegacyScanResult, type LegacyUtxo } from './legacyScan'
 
 type TokenTxoRow = {
   txid?: unknown
@@ -179,4 +180,53 @@ export async function scanAddressOrdinalTxos(
       ordinalCooldownUntil = until
     },
   })
+}
+
+/** Normalize outpoint keys the same way import guards do. */
+function outpointKey(outpoint: string): string {
+  return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+}
+
+/**
+ * Fold ordinal-index tips into the provider scan.
+ *
+ * The sources answer different questions, so rows only ever get added —
+ * a tip the address provider already listed keeps the provider's row, and
+ * an empty index result leaves the scan untouched.
+ */
+export function mergeTokenTxos(
+  scan: LegacyScanResult,
+  tokenTxos: LegacyUtxo[],
+): LegacyScanResult {
+  if (tokenTxos.length === 0) return scan
+  const seen = new Set(scan.utxos.map((u) => outpointKey(u.outpoint)))
+  const extra = tokenTxos.filter((u) => !seen.has(outpointKey(u.outpoint)))
+  if (extra.length === 0) return scan
+
+  console.info(
+    `[chain-ingest] ordinal index added ${extra.length} tip(s) the address scan could not see`,
+  )
+  const utxos = [...scan.utxos, ...extra]
+  return { ...scan, utxos, sats: utxos.reduce((s, u) => s + u.satoshis, 0) }
+}
+
+/**
+ * The live tip set: address provider ∪ ordinal index ∪ token index.
+ *
+ * Every ownership judgement runs against this, so it has exactly one
+ * definition. `scanLegacyAddress` alone cannot see an inscription envelope —
+ * providers call it `nonstandard` — so a provider-only scan is silence about
+ * inscribed tips, not a statement that they are gone. Refreshing the cached
+ * ownership set from the bare provider scan let the send gate call index-only
+ * tips spent and hide them.
+ */
+export async function scanLiveTipUtxos(
+  active: ActiveWallet,
+): Promise<LegacyScanResult> {
+  const [addressScan, ordinalTxos, tokenTxos] = await Promise.all([
+    scanLegacyAddress(active),
+    scanAddressOrdinalTxos(active.address, active.chain),
+    scanAddressTokenTxos(active.address, active.chain),
+  ])
+  return mergeTokenTxos(mergeTokenTxos(addressScan, ordinalTxos), tokenTxos)
 }

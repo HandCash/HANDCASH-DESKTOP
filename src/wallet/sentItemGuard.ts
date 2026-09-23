@@ -216,6 +216,15 @@ export function isItemConsumed(outpoint: string): boolean {
   return Boolean(op) && readConsumed().has(op)
 }
 
+/**
+ * Marker the send gate writes when a scan, not a broadcast, judged a tip gone.
+ *
+ * It occupies the `txid` slot but is not one, so every txid-keyed heal skips
+ * it. Kept as a constant because releasing these marks is the only way an
+ * item hidden by a wrong scan comes back.
+ */
+export const SCAN_SPENT_MARK_PREFIX = 'spent-on-chain:'
+
 /** Hide outpoints a send just spent. Call only once the send has a txid. */
 export function markItemsSent(
   outpoints: Array<
@@ -358,6 +367,47 @@ export function forgetItemsSent(outpoints: string[]): void {
     if (records.delete(key(raw))) changed = true
   }
   if (changed) writeSent(records)
+}
+
+/**
+ * Give back tips the send gate hid on a scan verdict alone.
+ *
+ * {@link SCAN_SPENT_MARK_PREFIX} marks carry no transaction, so the txid-keyed
+ * {@link healGhostSentItems} cannot reach them and the item stays invisible
+ * for a full {@link SENT_HIDE_MS} day. Re-ask the chain per outpoint and
+ * release every tip that is not positively spent — these marks only ever come
+ * from a heuristic, and the send path re-verifies before it spends anything.
+ */
+export async function healScanHiddenSentItems(
+  chain: import('./vault').Chain,
+  spentStatus: (
+    outpoint: string,
+    chain: import('./vault').Chain,
+  ) => Promise<'spent' | 'unspent' | 'unknown'>,
+): Promise<string[]> {
+  const suspects = [...readSent().entries()]
+    .filter(([, rec]) => rec.txid?.startsWith(SCAN_SPENT_MARK_PREFIX))
+    .map(([op]) => op)
+  if (suspects.length === 0) return []
+
+  const restored: string[] = []
+  const CONCURRENCY = 4
+  for (let i = 0; i < suspects.length; i += CONCURRENCY) {
+    const batch = suspects.slice(i, i + CONCURRENCY)
+    const verdicts = await Promise.all(
+      batch.map((op) => spentStatus(op, chain).catch(() => 'unknown' as const)),
+    )
+    batch.forEach((op, index) => {
+      if (verdicts[index] !== 'spent') restored.push(op)
+    })
+  }
+  if (restored.length > 0) {
+    console.info(
+      `[sent-item-guard] restore ${restored.length} scan-hidden tip(s) the chain does not show spent`,
+    )
+    forgetItemsSent(restored)
+  }
+  return restored
 }
 
 /**

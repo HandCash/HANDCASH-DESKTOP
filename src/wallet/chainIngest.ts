@@ -784,10 +784,10 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
 
   const [
     { reconcileDualLayerState },
-    { healGhostSentItems },
+    { healGhostSentItems, healScanHiddenSentItems },
     { pruneMissingOnChainActivity, expireStaleInboundPending },
     { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs, reclaimSealedInputsNeverSpent, promotePendingLocalChangeOutputs },
-    { txExistsOnChain },
+    { txExistsOnChain, spentStatusOfOutpoint },
     { forgetOneSatImported },
   ] = await Promise.all([
     import('./txReconcile'),
@@ -831,6 +831,19 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
             forgetOneSatImported(healed)
             console.info(
               `[chain-ingest] restored ${healed.length} tip(s) whose send never landed on-chain`,
+              healed,
+            )
+          }
+        })(),
+        (async () => {
+          const healed = await healScanHiddenSentItems(
+            chain,
+            spentStatusOfOutpoint,
+          )
+          if (healed.length > 0) {
+            forgetOneSatImported(healed)
+            console.info(
+              `[chain-ingest] restored ${healed.length} tip(s) hidden by a scan that the chain does not show spent`,
               healed,
             )
           }

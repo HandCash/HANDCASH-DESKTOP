@@ -12,7 +12,11 @@ import {
   type LegacyScanResult,
   type LegacyUtxo,
 } from './legacyScan'
-import { scanAddressOrdinalTxos, scanAddressTokenTxos } from './tokenAddressScan'
+import {
+  mergeTokenTxos,
+  scanAddressOrdinalTxos,
+  scanAddressTokenTxos,
+} from './tokenAddressScan'
 import { forgetLegacyImported } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import { recordFundingReceipts } from './legacyReceiptActivity'
@@ -151,29 +155,6 @@ function emptyIngest(scan: LegacyScanResult): LegacyAddressIngestResult {
 /** Normalize outpoint keys the same way import guards do. */
 function outpointKey(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
-}
-
-/**
- * Fold ordinal-index tips into the provider scan.
- *
- * The sources answer different questions, so rows only ever get added —
- * a tip the address provider already listed keeps the provider's row, and
- * an empty index result leaves the scan untouched.
- */
-export function mergeTokenTxos(
-  scan: LegacyScanResult,
-  tokenTxos: LegacyUtxo[],
-): LegacyScanResult {
-  if (tokenTxos.length === 0) return scan
-  const seen = new Set(scan.utxos.map((u) => outpointKey(u.outpoint)))
-  const extra = tokenTxos.filter((u) => !seen.has(outpointKey(u.outpoint)))
-  if (extra.length === 0) return scan
-
-  console.info(
-    `[chain-ingest] ordinal index added ${extra.length} tip(s) the address scan could not see`,
-  )
-  const utxos = [...scan.utxos, ...extra]
-  return { ...scan, utxos, sats: utxos.reduce((s, u) => s + u.satoshis, 0) }
 }
 
 /** One page — same bound as Collect so large inventories heal completely. */

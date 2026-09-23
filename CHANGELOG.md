@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.285] - 2026-09-23
+
+### Fixed
+
+- Collectable sends no longer refuse every item with "no longer unspent on
+  your address". The ownership set behind that gate was refreshed from the
+  bare address-provider scan, which cannot see an inscription envelope, so
+  every index-only tip dropped out at once. The provider scan, ordinal index
+  and token index are now merged in one place (`scanLiveTipUtxos`) that both
+  chain ingest and the send gate read.
+- Absence from that scan no longer hides a collectable. The send gate now
+  demands a positive on-chain spend before marking a tip sent, and refuses
+  without hiding anything when the chain is inconclusive. Tips already hidden
+  this way are given back by a new chain-ingest heal — their marks carry no
+  txid, so the existing ghost heal could never reach them.
+- The signed-cheque archive evicts its oldest cheques instead of refusing a
+  write to a full store. Origin storage is the durable store on mobile, and an
+  unbounded archive of Atomic BEEFs exhausted the quota; since the archive
+  became fail-closed in 1.3.283 that stopped the wallet signing at all.
+
 ## [1.3.284] - 2026-09-23
 
 ### Fixed
