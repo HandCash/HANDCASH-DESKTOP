@@ -1,5 +1,4 @@
 import {
-  assertRuntimeAvailable,
   requireWalletRuntime,
   retainWalletRuntime,
   runtimeIsCurrent,
@@ -27,10 +26,7 @@ import {
   noteDualLayerSigned,
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
-import {
-  releaseSealedInputsOfUnsentTx,
-  sealSpentInputsOfSignedTx,
-} from './staleOutputRelease'
+import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
 export type SignedSendHandle = {
   lifecycleId: string
@@ -62,39 +58,64 @@ export async function registerSignedSend(args: {
   const runtime = requireWalletRuntime()
   const retention = retainWalletRuntime(runtime)
   const owner = accountKeyScopeFor(runtime.instance)
-  let sealed = false
-  let preparedAtomic = args.atomicBeef
   try {
-    const { prepareBroadcastCheque } = await import('./beefCache')
-    const prepared = await prepareBroadcastCheque(
-      runtime.instance,
-      txid,
-      args.atomicBeef,
-    )
-    assertRuntimeAvailable(runtime)
-    const atomicBeef = prepared.atomic
-    preparedAtomic = atomicBeef
+    let atomicBeef = args.atomicBeef
+    try {
+      const { prepareBroadcastCheque } = await import('./beefCache')
+      const prepared = await prepareBroadcastCheque(
+        runtime.instance,
+        txid,
+        args.atomicBeef,
+      )
+      atomicBeef = prepared.atomic
+    } catch (error) {
+      // The subject is already signed. Missing ancestry may delay propagation,
+      // but it must never turn the cheque back into an unsigned/failed action.
+      console.warn(
+        '[signed-send] BEEF preparation deferred; preserving signed cheque',
+        txid.slice(0, 12),
+        error,
+      )
+    }
 
     // Seal first. A lifecycle must never advertise a signed cheque while its
     // inputs remain selectable by a second send. Use the captured Toolbox even
     // if the user selected another account while BEEF hydration was running.
-    await sealSpentInputsOfSignedTx(
-      txid,
-      atomicBeef,
-      runtime.instance,
-      runtimeIsCurrent(runtime),
-    )
-    sealed = true
-    assertRuntimeAvailable(runtime)
+    try {
+      await sealSpentInputsOfSignedTx(
+        txid,
+        atomicBeef,
+        runtime.instance,
+        runtimeIsCurrent(runtime),
+      )
+    } catch (error) {
+      // createAction/signAction already committed the signed transaction to the
+      // wallet. A projection failure cannot authorize abandoning it.
+      console.error(
+        '[signed-send] input seal projection failed; cheque remains signed',
+        txid.slice(0, 12),
+        error,
+      )
+    }
     // Persist before any Activity/remittance work. Every key is resolved from
     // the immutable owner, never the mutable foreground account.
     const { archiveSignedCheque } = await import('./signedChequeArchive')
     if (!archiveSignedCheque(txid, atomicBeef, { flow: args.flow, owner })) {
-      throw new Error('Signed transaction template could not be archived')
+      // Toolbox still owns the signed transaction. Continue to the retry queue
+      // (which can carry its own body) and immediate propagation.
+      console.error(
+        '[signed-send] auxiliary archive refused; preserving wallet cheque',
+        txid.slice(0, 12),
+      )
     }
     const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
     if (!enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow, owner })) {
-      throw new Error('Signed transaction could not be queued for propagation')
+      // Immediate propagation still has the in-memory body. Never unseal or
+      // rewrite the send as unsigned merely because secondary storage is full.
+      console.error(
+        '[signed-send] durable retry unavailable; propagating signed cheque now',
+        txid.slice(0, 12),
+      )
     }
 
     // Foreground-only projections must not land in the newly selected wallet.
@@ -107,10 +128,11 @@ export async function registerSignedSend(args: {
             to: args.to,
           })
       : { id: args.lifecycleId ?? `background:${txid}` }
-    if (!lifecycle) throw new Error('Could not register signed transaction')
+    const lifecycleId =
+      lifecycle?.id ?? args.lifecycleId ?? `signed:${txid}`
 
     return {
-      lifecycleId: lifecycle.id,
+      lifecycleId,
       txid,
       atomicBeef,
       flow: args.flow,
@@ -119,13 +141,8 @@ export async function registerSignedSend(args: {
       releaseRuntime: retention.release,
     }
   } catch (error) {
-    // Storage refusal is not a broadcast verdict. Undo the seal before the
-    // error reaches feature-level cleanup so an NFT cannot transiently vanish.
-    if (sealed && runtimeIsCurrent(runtime)) {
-      await releaseSealedInputsOfUnsentTx(txid, preparedAtomic).catch(
-        () => undefined,
-      )
-    }
+    // Nothing in this catch authorizes unsealing: the transaction was signed
+    // before this function was entered and remains wallet history.
     retention.release()
     throw error
   }

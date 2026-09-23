@@ -4,7 +4,6 @@
  * `createAction` / `signAction` / `processAction` already produce a signed
  * body. That body is the template heal needs — not a second 16-slot cache.
  */
-import { archiveSignedCheque } from './signedChequeArchive'
 import {
   assertRuntimeCurrent,
   requireWalletRuntime,
@@ -18,20 +17,6 @@ export async function funnelAppSignedCheque(args: {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid) || args.atomicBeef.length === 0) return false
   const runtime = requireWalletRuntime()
-  const owner = {
-    accountIndex: runtime.instance.accountIndex,
-    identityKey: runtime.instance.identityKey,
-    chain: runtime.instance.chain,
-  } as const
-  if (
-    !archiveSignedCheque(txid, args.atomicBeef, {
-      flow: 'brc100_action',
-      owner,
-    })
-  ) {
-    console.error('[brc100] signed cheque archive refused', txid.slice(0, 12))
-    return false
-  }
   try {
     const { registerSignedSend } = await import('./signedSendLifecycle')
     assertRuntimeCurrent(runtime)

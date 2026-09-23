@@ -22,7 +22,6 @@ const prepareBroadcastCheque = vi.fn(async (_w: unknown, _id: string, atomic: nu
 
 const enqueuePendingMinerSubmit = vi.fn(() => true)
 const archiveSignedCheque = vi.fn(() => true)
-const assertRuntimeCurrent = vi.fn()
 const releaseRuntime = vi.fn()
 let runtimeCurrent = true
 const runtime = {
@@ -46,7 +45,6 @@ vi.mock('./session', () => ({
 vi.mock('./walletRuntime', () => ({
   requireWalletRuntime: () => runtime,
   retainWalletRuntime: () => ({ runtime, release: releaseRuntime }),
-  assertRuntimeAvailable: (...args: unknown[]) => assertRuntimeCurrent(...args),
   runtimeIsCurrent: () => runtimeCurrent,
 }))
 
@@ -133,52 +131,50 @@ describe('signedSendLifecycle', () => {
     expect(handle.lifecycleId).toBe('token-life')
   })
 
-  it('fails closed when the durable cheque archive refuses the write', async () => {
+  it('preserves and queues the signed cheque when the auxiliary archive refuses', async () => {
     archiveSignedCheque.mockReturnValueOnce(false)
     const { registerSignedSend } = await import('./signedSendLifecycle')
 
-    await expect(
-      registerSignedSend({
-        txid: TXID,
-        atomicBeef: ATOMIC,
-        flow: 'token_transfer',
-      }),
-    ).rejects.toThrow(/could not be archived/)
-    expect(enqueuePendingMinerSubmit).not.toHaveBeenCalled()
-    expect(beginSignedTxLifecycle).not.toHaveBeenCalled()
-    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TXID, ATOMIC)
+    const handle = await registerSignedSend({
+      txid: TXID,
+      atomicBeef: ATOMIC,
+      flow: 'token_transfer',
+    })
+    expect(handle.txid).toBe(TXID)
+    expect(enqueuePendingMinerSubmit).toHaveBeenCalled()
+    expect(beginSignedTxLifecycle).toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('unseals immediately when the propagation queue refuses the cheque', async () => {
+  it('keeps the signed cheque sealed when durable retry storage refuses', async () => {
     enqueuePendingMinerSubmit.mockReturnValueOnce(false)
     const { registerSignedSend } = await import('./signedSendLifecycle')
 
-    await expect(
-      registerSignedSend({
-        txid: TXID,
-        atomicBeef: ATOMIC,
-        flow: 'item_transfer',
-      }),
-    ).rejects.toThrow(/could not be queued for propagation/)
-    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TXID, ATOMIC)
-    expect(beginSignedTxLifecycle).not.toHaveBeenCalled()
+    const handle = await registerSignedSend({
+      txid: TXID,
+      atomicBeef: ATOMIC,
+      flow: 'item_transfer',
+    })
+    expect(handle.txid).toBe(TXID)
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+    expect(beginSignedTxLifecycle).toHaveBeenCalled()
   })
 
-  it('refuses to cross a derivation scope changed during preparation', async () => {
-    assertRuntimeCurrent.mockImplementationOnce(() => {
-      throw new DOMException('Wallet runtime disposed', 'AbortError')
-    })
+  it('does not discard a signed cheque when BEEF preparation is deferred', async () => {
+    prepareBroadcastCheque.mockRejectedValueOnce(
+      new Error('parent transaction bodies are temporarily unavailable'),
+    )
     const { registerSignedSend } = await import('./signedSendLifecycle')
 
-    await expect(
-      registerSignedSend({
-        txid: TXID,
-        atomicBeef: ATOMIC,
-        flow: 'token_transfer',
-      }),
-    ).rejects.toMatchObject({ name: 'AbortError' })
-    expect(sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
-    expect(archiveSignedCheque).not.toHaveBeenCalled()
+    const handle = await registerSignedSend({
+      txid: TXID,
+      atomicBeef: ATOMIC,
+      flow: 'token_transfer',
+    })
+    expect(handle.atomicBeef).toEqual(ATOMIC)
+    expect(sealSpentInputsOfSignedTx).toHaveBeenCalled()
+    expect(archiveSignedCheque).toHaveBeenCalled()
+    expect(enqueuePendingMinerSubmit).toHaveBeenCalled()
   })
 
   it('finishes registration in the captured owner after the foreground account changes', async () => {
@@ -218,23 +214,22 @@ describe('signedSendLifecycle', () => {
     expect(handle.lifecycleId).toBe(`background:${TXID}`)
   })
 
-  it('does not seal or queue a package with missing parent bodies', async () => {
+  it('retains a signed package with missing parent bodies for later hydration', async () => {
     prepareBroadcastCheque.mockRejectedValueOnce(
       new Error(
         'Cannot broadcast: parent transaction bodies are missing (unconfirmed chain, not a spent coin)',
       ),
     )
     const { registerSignedSend } = await import('./signedSendLifecycle')
-    await expect(
-      registerSignedSend({
-        txid: TXID,
-        atomicBeef: ATOMIC,
-        flow: 'token_transfer',
-      }),
-    ).rejects.toThrow(/parent transaction bodies are missing/)
-    expect(sealSpentInputsOfSignedTx).not.toHaveBeenCalled()
-    expect(archiveSignedCheque).not.toHaveBeenCalled()
-    expect(enqueuePendingMinerSubmit).not.toHaveBeenCalled()
+    const handle = await registerSignedSend({
+      txid: TXID,
+      atomicBeef: ATOMIC,
+      flow: 'token_transfer',
+    })
+    expect(handle.txid).toBe(TXID)
+    expect(sealSpentInputsOfSignedTx).toHaveBeenCalled()
+    expect(archiveSignedCheque).toHaveBeenCalled()
+    expect(enqueuePendingMinerSubmit).toHaveBeenCalled()
   })
 
   it('reuses a regular payment preflight lifecycle', async () => {

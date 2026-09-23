@@ -49,6 +49,11 @@ describe('signed send lifecycle adherence', () => {
     expect(text).toContain('enqueuePendingMinerSubmit(')
     expect(text).toContain('submitAtomicBeefToMiners(')
     expect(text).toContain('tryFinalizeDualLayerTx(')
+    // Signing is the irreversible wallet boundary. Auxiliary persistence
+    // pressure may degrade retry durability, never abandon or unseal a cheque.
+    expect(text).not.toContain('releaseSealedInputsOfUnsentTx(')
+    expect(text).not.toContain('could not be queued for propagation')
+    expect(text).not.toContain('could not be archived')
   })
 
   it('puts app createAction and signAction on the same cheque funnel', () => {

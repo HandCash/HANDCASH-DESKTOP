@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.288] - 2026-09-23
+
+### Fixed
+
+- Signing is now an irreversible wallet boundary. Archive pressure, retry-queue
+  pressure, temporarily missing parent bodies, or a projection failure can no
+  longer rewrite a signed transaction as unsigned, unseal its inputs, or remove
+  it from the wallet lifecycle.
+- Signed transactions continue immediate propagation even when auxiliary retry
+  persistence is degraded. The Toolbox transaction remains wallet history and
+  later ancestry/retry work may recover around it.
+- BRC-100 app actions now enter the same invariant directly instead of refusing
+  the signed action when the auxiliary archive cannot accept another copy.
+
 ## [1.3.287] - 2026-09-23
 
 ### Fixed

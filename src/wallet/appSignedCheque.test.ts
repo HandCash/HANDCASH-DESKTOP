@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const archiveSignedCheque = vi.fn(() => true)
 const registerSignedSend = vi.fn(async () => ({
   lifecycleId: 'app-life',
   txid: 'ab'.repeat(32),
@@ -15,10 +14,6 @@ const runtime = {
     identityKey: 'identity-three',
   },
 }
-
-vi.mock('./signedChequeArchive', () => ({
-  archiveSignedCheque: (...args: unknown[]) => archiveSignedCheque(...args),
-}))
 
 vi.mock('./signedSendLifecycle', () => ({
   registerSignedSend: (...args: unknown[]) => registerSignedSend(...args),
@@ -37,7 +32,7 @@ describe('funnelAppSignedCheque', () => {
     vi.clearAllMocks()
   })
 
-  it('archives then registers an app createAction on the shared lifecycle', async () => {
+  it('registers an app createAction on the shared signed lifecycle', async () => {
     const { funnelAppSignedCheque } = await import('./appSignedCheque')
     await expect(
       funnelAppSignedCheque({
@@ -47,14 +42,6 @@ describe('funnelAppSignedCheque', () => {
       }),
     ).resolves.toBe(true)
 
-    expect(archiveSignedCheque).toHaveBeenCalledWith(TXID, ATOMIC, {
-      flow: 'brc100_action',
-      owner: {
-        accountIndex: 3,
-        identityKey: 'identity-three',
-        chain: 'main',
-      },
-    })
     expect(registerSignedSend).toHaveBeenCalledWith({
       txid: TXID,
       atomicBeef: ATOMIC,
@@ -63,22 +50,12 @@ describe('funnelAppSignedCheque', () => {
     })
   })
 
-  it('keeps the archived template when lifecycle registration throws', async () => {
+  it('leaves the app-owned signed transaction intact when registration throws', async () => {
     registerSignedSend.mockRejectedValueOnce(new Error('ancestry incomplete'))
     const { funnelAppSignedCheque } = await import('./appSignedCheque')
     await expect(
       funnelAppSignedCheque({ txid: TXID, atomicBeef: ATOMIC }),
     ).resolves.toBe(false)
-    expect(archiveSignedCheque).toHaveBeenCalled()
-  })
-
-  it('does not enter the lifecycle when durable archive storage refuses', async () => {
-    archiveSignedCheque.mockReturnValueOnce(false)
-    const { funnelAppSignedCheque } = await import('./appSignedCheque')
-
-    await expect(
-      funnelAppSignedCheque({ txid: TXID, atomicBeef: ATOMIC }),
-    ).resolves.toBe(false)
-    expect(registerSignedSend).not.toHaveBeenCalled()
+    expect(registerSignedSend).toHaveBeenCalled()
   })
 })
