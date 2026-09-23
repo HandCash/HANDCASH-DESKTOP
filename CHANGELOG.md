@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.289] - 2026-09-23
+
+### Fixed
+
+- Self-sends now retain both the outbound and inbound Activity perspectives,
+  including when the send finishes after switching to another wallet.
+- Receive Activity is no longer suppressed by toast deduplication; notification
+  state can stay quiet while the wallet-owned custody record is repaired.
+
 ## [1.3.288] - 2026-09-23
 
 ### Fixed

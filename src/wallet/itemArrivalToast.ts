@@ -141,24 +141,31 @@ export function announceItemsReceived(
   outpoints: string[],
   owner?: BoundAccountKeyScope,
 ): boolean {
-  if (!ownerIsCurrent(owner)) return false
+  const canPresent = ownerIsCurrent(owner)
   const fresh: string[] = []
   for (const op of outpoints) {
-    if (!noteItemReceived(op, owner)) continue
     const key = normalize(op)
-    fresh.push(key)
     const txid = key.split('.')[0] ?? ''
-    if (isItemProven(op) || verifiedThisSession.has(key)) {
-      note(verifiedThisSession, op)
-      clearAwaitingVerification(key)
-      // Card landed already proven — settle the Activity row in one step.
+    const proven = isItemProven(op) || verifiedThisSession.has(key)
+
+    // Activity is the durable custody projection, not notification state.
+    // Always ensure the receive row exists, even when a prior toast consumed
+    // the durable dedupe key or this wallet's send finished in the background.
+    // The Activity upsert is idempotent and cannot demote a settled row.
+    if (proven) {
       noteInboundReceiveComplete({ txid, item: true, outpoint: key }, owner)
     } else {
-      noteAwaitingVerification(key)
-      // Open the receive row now so Activity shows "Verifying…" while BRC-150
-      // settles. announceItemVerified promotes it to complete later; upsert
-      // refuses to take an already-settled row back to pending.
       noteInboundReceivePending({ txid, item: true, outpoint: key }, owner)
+    }
+
+    // Foreground spinner/toast state belongs only to the selected wallet.
+    if (!canPresent || !noteItemReceived(op, owner)) continue
+    fresh.push(key)
+    if (proven) {
+      note(verifiedThisSession, op)
+      clearAwaitingVerification(key)
+    } else {
+      noteAwaitingVerification(key)
     }
   }
   if (fresh.length === 0) return false

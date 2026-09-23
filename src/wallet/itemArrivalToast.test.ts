@@ -120,6 +120,29 @@ describe('itemArrivalToast', () => {
     expect(toastSuccess).not.toHaveBeenCalled()
   })
 
+  it('repairs missing Activity even when receive toast was already deduped', async () => {
+    const txid = '1'.repeat(64)
+    const op = `${txid}.0`
+    const first = await import('./itemArrivalToast')
+    first.announceItemsReceived([op])
+    expect(toastSuccess).toHaveBeenCalledTimes(1)
+
+    store.delete(accountLocalKey('handcash.brc100.appActivity'))
+    vi.resetModules()
+    toastSuccess.mockReset()
+
+    const second = await import('./itemArrivalToast')
+    const activity = await import('./appActivity')
+    second.announceItemsReceived([op])
+
+    expect(toastSuccess).not.toHaveBeenCalled()
+    const repaired = activity
+      .listRecentActivity(20)
+      .find((entry) => entry.txid === txid && entry.kind === 'earned')
+    expect(repaired?.status).toBe('pending')
+    expect(repaired?.item?.outpoint).toBe(op)
+  })
+
   it('clears session caches and reads the newly bound account', async () => {
     const op = `${'d'.repeat(64)}.0`
     const toast = await import('./itemArrivalToast')
@@ -172,5 +195,39 @@ describe('itemArrivalToast', () => {
     const settled = activity.listRecentActivity(20).find((r) => r.txid === txid)
     expect(settled).toBeDefined()
     expect(settled?.status).toBeUndefined()
+  })
+
+  it('records a background receive in its owner wallet without notifying the selected wallet', async () => {
+    const primary = {
+      accountIndex: 0,
+      identityKey: 'vitest-primary-identity',
+      chain: 'main' as const,
+    }
+    bindAccountLocalKeyScope(primary)
+    const toast = await import('./itemArrivalToast')
+    const activity = await import('./appActivity')
+    const txid = '2'.repeat(64)
+    const op = `${txid}.1`
+
+    bindAccountLocalKeyScope({
+      accountIndex: 1,
+      identityKey: 'vitest-secondary-identity',
+      chain: 'main',
+    })
+    toast.rebindItemArrivalToastForAccount()
+    activity.rebindAppActivityForAccount()
+    toastSuccess.mockClear()
+
+    toast.announceItemsReceived([op], primary)
+
+    expect(activity.listRecentActivity(20)).toEqual([])
+    expect(toastSuccess).not.toHaveBeenCalled()
+    bindAccountLocalKeyScope(primary)
+    activity.rebindAppActivityForAccount()
+    const received = activity
+      .listRecentActivity(20)
+      .find((entry) => entry.txid === txid && entry.kind === 'earned')
+    expect(received?.status).toBe('pending')
+    expect(received?.item?.outpoint).toBe(op)
   })
 })
