@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.282] - 2026-09-23
+
+### Fixed
+
+- Balance heal no longer resurrects coins the chain has already spent. When a
+  change row's creating transaction is mined (or missing) locally, an empty
+  `spentBy` means the wallet lost track of the spend, not that the coin is
+  still there — heal read that silence as "unspent" and re-enabled it. The
+  next payment swept those phantoms in, the network answered `UTXO_SPENT`, and
+  the resulting double-spend mark took the honest change in that same
+  transaction down with it, showing a zero balance. Heal now requires
+  affirmative proof from a UTXO service that the outpoint is unspent before
+  re-enabling it, and refuses when no provider can confirm.
+- Proving those coins runs in a batch between storage sessions instead of
+  inside one, so explorer latency no longer holds the wallet database open or
+  stalls a send.
+
 ## [1.3.281] - 2026-09-22
 
 ### Fixed
