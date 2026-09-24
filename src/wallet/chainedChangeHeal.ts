@@ -40,6 +40,12 @@ export type ChangeHealStats = {
   scriptsChain: number
   pendingPromoted: number
   reclaimed: number
+  /**
+   * Rows the last restore refused for want of a locking script. A script-less
+   * change row counts in neither balance bucket, so this is the only signal
+   * that a chain script sweep is still owed.
+   */
+  unscripted: number
 }
 
 function emptyStats(): ChangeHealStats {
@@ -49,6 +55,7 @@ function emptyStats(): ChangeHealStats {
     scriptsChain: 0,
     pendingPromoted: 0,
     reclaimed: 0,
+    unscripted: 0,
   }
 }
 
@@ -62,6 +69,7 @@ async function retryRestoreAfterScriptHeal(
   stats.pendingPromoted += await promotePendingLocalChangeOutputs()
   const next = await restoreLiveSpendableOutputs()
   stats.restored += next.restored
+  stats.unscripted = next.unscripted
   return next
 }
 
@@ -95,7 +103,9 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
 
     case 'spendGatePartialRetry': {
       stats.pendingPromoted = await promotePendingLocalChangeOutputs()
-      stats.restored = (await restoreLiveSpendableOutputs()).restored
+      const retry = await restoreLiveSpendableOutputs()
+      stats.restored = retry.restored
+      stats.unscripted = retry.unscripted
       noteHeal(stats)
       return stats
     }
@@ -108,13 +118,16 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
         stats.pendingPromoted = await promotePendingLocalChangeOutputs()
         restoreResult = await restoreLiveSpendableOutputs()
         stats.restored = restoreResult.restored
+        stats.unscripted = restoreResult.unscripted
       }
-      if (restoreStillStuck(restoreResult)) {
+      // The chain sweep is budgeted (CHAIN_FETCH_MAX raw-tx fetches per call),
+      // so a wallet whose whole balance lost its scripts needs more than one
+      // pass. Keep going only while a pass still heals something.
+      for (let pass = 0; pass < 4 && restoreStillStuck(restoreResult); pass += 1) {
         const chainSweep = await sweepChangeScripts({ fromChain: true })
-        stats.scriptsChain = chainSweep.healed
-        if (chainSweep.healed > 0) {
-          restoreResult = await retryRestoreAfterScriptHeal(stats)
-        }
+        stats.scriptsChain += chainSweep.healed
+        if (chainSweep.healed === 0) break
+        restoreResult = await retryRestoreAfterScriptHeal(stats)
       }
       noteHeal(stats)
       return stats
@@ -129,7 +142,9 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
         await rehideInputsOfLiveLocalTxs()
         stats.reclaimed = await reclaimSealedInputsNeverSpent()
         stats.pendingPromoted = await promotePendingLocalChangeOutputs()
-        stats.restored = (await restoreLiveSpendableOutputs()).restored
+        const gateRestore = await restoreLiveSpendableOutputs()
+        stats.restored = gateRestore.restored
+        stats.unscripted = gateRestore.unscripted
       } catch (err) {
         logDiag('change-heal', 'warn', 'spend-gate-skipped', {
           error: err instanceof Error ? err.message : String(err),
@@ -161,6 +176,7 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       for (let pass = 0; pass < 5; pass += 1) {
         throwIfYield()
         const batch = await restoreLiveSpendableOutputs()
+        stats.unscripted = batch.unscripted
         if (batch.restored === 0) break
         stats.restored += batch.restored
       }

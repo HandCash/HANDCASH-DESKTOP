@@ -115,6 +115,8 @@ function mergeHealStats(
     scriptsChain: a.scriptsChain + b.scriptsChain,
     pendingPromoted: a.pendingPromoted + b.pendingPromoted,
     reclaimed: a.reclaimed + b.reclaimed,
+    // Refusals are a running state, not a tally: the later pass is the truth.
+    unscripted: b.unscripted,
   };
 }
 
@@ -199,6 +201,7 @@ async function runPendingChangeHeal(
     scriptsChain: 0,
     pendingPromoted: 0,
     reclaimed: 0,
+    unscripted: 0,
   };
   if (await healShouldYieldToSpend(opts)) return empty;
 
@@ -214,11 +217,17 @@ async function runPendingChangeHeal(
   if (await healShouldYieldToSpend(opts)) return heal;
 
   const pending = balanceBefore?.pendingChange ?? 0;
-  if (pending <= 0) return heal;
+  // A change row with no locking script is counted in neither balance bucket,
+  // so `pendingChange === 0` is exactly what a wallet looks like when every
+  // coin it owns is waiting on a script rebuild. Bailing out here left a phone
+  // with 40 script-less rows — its whole confirmed balance — reading zero
+  // forever, because `chainingScriptHeal` is the only path that refetches the
+  // creating raw tx. Escalate on the refusal count, not on pending credit.
+  if (pending <= 0 && heal.unscripted === 0) return heal;
   // spendGate already paged unspendable change. Extra restore / script-sweep
   // passes are only for leftover pending credit — not a second copy of the
   // same 200-row scan (hc-a580a: 21s + 20s restoreLiveSpendableOutputs).
-  if (heal.pendingPromoted === 0 && heal.restored === 0) {
+  if (pending > 0 && heal.pendingPromoted === 0 && heal.restored === 0) {
     heal = mergeHealStats(
       heal,
       await runChangeHeal({ path: "spendGatePartialRetry" })
@@ -309,6 +318,7 @@ async function runHealCore(
         scriptsChain: 0,
         pendingPromoted: 0,
         reclaimed: 0,
+        unscripted: 0,
       },
       balanceAfter,
       recoveredSats: 0,
@@ -338,6 +348,7 @@ async function runHealCore(
         scriptsChain: 0,
         pendingPromoted: 0,
         reclaimed: 0,
+        unscripted: 0,
       },
       balanceAfter,
       recoveredSats: 0,
@@ -357,6 +368,7 @@ async function runHealCore(
     scriptsChain: 0,
     pendingPromoted: 0,
     reclaimed: 0,
+    unscripted: 0,
   };
   let evidence = emptyEvidence();
 
@@ -419,6 +431,9 @@ async function runHealCore(
         scriptsLocal: 0,
         scriptsChain: 0,
         pendingPromoted: 0,
+        // Reclaim does not run a restore, so it cannot change the refusal
+        // count — carry the last one rather than reporting a clean slate.
+        unscripted: heal.unscripted,
         reclaimed: await reclaimOutputsSealedByDeadTxs({
           forSpendChain: opts.source === "manual",
         }),
@@ -545,6 +560,7 @@ export async function runUtxoHealPass(
         scriptsChain: 0,
         pendingPromoted: 0,
         reclaimed: 0,
+        unscripted: 0,
       },
       recoveredSats: 0,
       balanceBefore,

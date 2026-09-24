@@ -4577,8 +4577,19 @@ button.identity-qr-copy:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  /*
+   * Activity can show Publish / Rebroadcast / Clear alongside the filter
+   * toggle. On a phone those labels are wider than the row, and a rigid
+   * inline-flex pushed the trailing toggle off the right edge. Wrap instead.
+   */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
   margin-left: auto;
+}
+
+.connected-panel-head-actions > * {
+  flex-shrink: 0;
 }
 
 .activity-clear-failed {
@@ -5287,6 +5298,7 @@ html[data-aeon-mode='light'] .history-batch-count {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
   margin: 0 0 10px;
   padding: 0 0 8px;

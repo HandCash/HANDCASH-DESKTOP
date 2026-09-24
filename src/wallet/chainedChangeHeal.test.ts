@@ -67,6 +67,7 @@ describe('runChangeHeal', () => {
       scriptsChain: 0,
       pendingPromoted: 3,
       reclaimed: 0,
+      unscripted: 0,
     })
     expect(rehideInputsOfLiveLocalTxs).toHaveBeenCalledOnce()
     expect(reclaimSealedInputsNeverSpent).toHaveBeenCalled()
@@ -119,6 +120,42 @@ describe('runChangeHeal', () => {
     expect(sweepChangeScripts).not.toHaveBeenCalledWith({ fromChain: true })
   })
 
+  /**
+   * hc-a580a: 40 confirmed change rows lost their locking scripts, so restore
+   * refused every one and the wallet read zero. The refusal has to leave the
+   * gate so heal knows a chain sweep is still owed.
+   */
+  it('spendGate reports change rows restore refused for want of a script', async () => {
+    restoreLiveSpendableOutputs.mockResolvedValueOnce({ restored: 0, unscripted: 40 })
+
+    const { runChangeHeal } = await import('./chainedChangeHeal')
+    const stats = await runChangeHeal({ path: 'spendGate' })
+
+    expect(stats.unscripted).toBe(40)
+    expect(stats.restored).toBe(0)
+  })
+
+  it('chainingScriptHeal keeps sweeping the chain while passes still heal', async () => {
+    // Local sweep finds nothing — the creating raw txs aged out of storage.
+    sweepChangeScripts
+      .mockResolvedValueOnce({ scanned: 40, healed: 0, quarantined: 0, refused: 40 })
+      .mockResolvedValueOnce({ scanned: 40, healed: 32, quarantined: 0, refused: 8 })
+      .mockResolvedValueOnce({ scanned: 8, healed: 8, quarantined: 0, refused: 0 })
+      .mockResolvedValueOnce({ scanned: 0, healed: 0, quarantined: 0, refused: 0 })
+    restoreLiveSpendableOutputs
+      .mockResolvedValueOnce({ restored: 32, unscripted: 8 })
+      .mockResolvedValueOnce({ restored: 8, unscripted: 0 })
+
+    const { runChangeHeal } = await import('./chainedChangeHeal')
+    const stats = await runChangeHeal({ path: 'chainingScriptHeal' })
+
+    expect(stats.scriptsChain).toBe(40)
+    expect(stats.restored).toBe(40)
+    expect(stats.unscripted).toBe(0)
+    expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: false })
+    expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
+  })
+
   it('displayBackground only promotes pending change locally', async () => {
     promotePendingLocalChangeOutputs.mockResolvedValueOnce(2)
 
@@ -165,6 +202,7 @@ describe('runExclusiveBurn', () => {
         scriptsChain: 0,
         pendingPromoted: 0,
         reclaimed: 0,
+        unscripted: 0,
       })),
     }))
     vi.doMock('./spendLease', () => ({

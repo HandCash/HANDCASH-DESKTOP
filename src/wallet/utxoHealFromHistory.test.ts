@@ -170,6 +170,7 @@ function mockHealSuccess() {
     scriptsChain: 0,
     pendingPromoted: 0,
     reclaimed: 0,
+    unscripted: 0,
   })
 }
 
@@ -218,6 +219,57 @@ describe('healUtxoFromActivityHistory', () => {
     expect(mocks.reconcileKnownUtxosByEvidence).not.toHaveBeenCalled()
     expect(mocks.restoreFailedLocalTxsKnownOnChain).not.toHaveBeenCalled()
     expect(mocks.reclaimOutputsSealedByDeadTxs).not.toHaveBeenCalled()
+  })
+
+  /**
+   * hc-a580a: spendable 0 *and* pendingChange 0, because the 40 change rows
+   * holding the whole balance had lost their locking scripts and so counted
+   * in neither bucket. Heal used to stop after spendGate on `pendingChange
+   * <= 0` and never reach the only path that refetches the creating raw tx.
+   */
+  it('escalates to the chain script heal when restore refused script-less change', async () => {
+    mocks.snapshotWalletBalance.mockReset()
+    mocks.snapshotWalletBalance.mockResolvedValue({
+      spendable: 0,
+      pendingChange: 0,
+      displayed: 0,
+    })
+    mocks.keepChangeOfSignedTx.mockResolvedValue(0)
+    mocks.runChangeHeal.mockReset()
+    mocks.runChangeHeal.mockImplementation(async (path: { path: string }) => ({
+      restored: 0,
+      scriptsLocal: 0,
+      scriptsChain: 0,
+      pendingPromoted: 0,
+      reclaimed: 0,
+      unscripted: path.path === 'spendGate' ? 40 : 0,
+    }))
+
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    const paths = mocks.runChangeHeal.mock.calls.map(
+      ([arg]) => (arg as { path: string }).path,
+    )
+    expect(paths).toContain('chainingScriptHeal')
+    // No pending credit to retry — the partial retry is pure duplicated paging.
+    expect(paths).not.toContain('spendGatePartialRetry')
+  })
+
+  it('stops after spendGate when nothing is stranded', async () => {
+    mocks.snapshotWalletBalance.mockReset()
+    mocks.snapshotWalletBalance.mockResolvedValue({
+      spendable: 0,
+      pendingChange: 0,
+      displayed: 0,
+    })
+    mocks.keepChangeOfSignedTx.mockResolvedValue(0)
+
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    const paths = mocks.runChangeHeal.mock.calls.map(
+      ([arg]) => (arg as { path: string }).path,
+    )
+    expect(paths).toEqual(['spendGate'])
   })
 
   it('skips auto pass when checkpoint is fresh and clean', async () => {

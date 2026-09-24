@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.295] - 2026-09-23
+
+### Fixed
+
+- Wallet health now rebuilds locking scripts from the chain when change rows
+  have lost them. A change row with no script counts as neither spendable nor
+  pending, so a wallet in that state shows zero for both — and the previous
+  pass read that zero as "nothing to repair" and stopped before the only step
+  that refetches the transaction that created the coin. One affected phone had
+  its entire confirmed balance in 40 such rows.
+- The chain script sweep now runs until it stops making progress, instead of
+  once, so a wallet with more script-less rows than a single pass can fetch
+  recovers in one health check.
+- Activity toolbar buttons wrap instead of pushing the filters button off the
+  right edge of the screen.
+
 ## [1.3.294] - 2026-09-23
 
 ### Fixed
