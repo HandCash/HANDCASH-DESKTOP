@@ -620,11 +620,20 @@ export function runHistoryReplica<T>(
 ): Promise<T> {
   const epoch = coordinatorEpoch
   const queue = historyReplicaQueue
-  if (context().recomposeDepth > 0) {
-    return fn()
-  }
   const yieldsToSpend = priority === 'yieldToSpend'
   const spendWantsIn = () => yieldsToSpend && shouldYieldChainIngestToSpend()
+  // Nested under recompose: skip the FIFO acquire (recompose owns the session)
+  // but still step aside for a waiting permission prompt / spend so Argon2 and
+  // IDB encrypt cannot pin the main thread while Approve is waiting to paint
+  // (lab: `active: recompose · spend waiting: permission-prompt`).
+  if (context().recomposeDepth > 0) {
+    return (async () => {
+      if (spendWantsIn()) {
+        throw new HistoryDeferredForSpendError()
+      }
+      return fn()
+    })()
+  }
   return queue(async () => {
     assertCoordinatorEpoch(epoch)
     // Spends raise priority before enqueueing. Exit without holding history so

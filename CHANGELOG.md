@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.330] - 2026-09-24
+
+### Fixed
+
+- Permission prompts and app requests no longer sit behind unlock recompose /
+  BRC-39 work: history yields when a spend/permission hold is raised, and
+  recompose yields paint turns around history and funding ingest.
+- Stop re-sealing the same signed tx on every createAction. Crediting new
+  change no longer invalidates the seal memo, and an already-sealed overlay
+  skips the IndexedDB hide walk (lab: one tx sealed 16× while the UI lagged).
+
 ## [1.3.329] - 2026-09-24
 
 ### Fixed

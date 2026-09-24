@@ -253,7 +253,7 @@ let releasePermissionSpendPriority: (() => void) | null = null
 let inboundWalletRequests = 0
 function syncPermissionSpendPriority(): void {
   void import('./walletCoordinator')
-    .then(({ requestSpendPriority }) => {
+    .then(async ({ requestSpendPriority }) => {
       // Re-read intent inside the callback: the prompt may have resolved while
       // the dynamic import was in flight.
       // Inbound BRC-100 reads must not masquerade as a permission prompt — a
@@ -261,6 +261,14 @@ function syncPermissionSpendPriority(): void {
       const want = current != null || queue.length > 0
       if (want && !releasePermissionSpendPriority) {
         releasePermissionSpendPriority = requestSpendPriority('permission-prompt')
+        // Let unlock recompose / chain ingest observe the hold and yield a paint
+        // turn before Argon2 or IDB work continues.
+        try {
+          const { yieldToUi } = await import('./yieldToUi')
+          await yieldToUi()
+        } catch {
+          /* ignore */
+        }
       } else if (!want && releasePermissionSpendPriority) {
         releasePermissionSpendPriority()
         releasePermissionSpendPriority = null

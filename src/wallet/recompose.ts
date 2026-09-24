@@ -21,6 +21,7 @@ import { refreshFromChainExclusive } from './chainIngest'
 import {
   isRecomposeCoordinatorActive,
   runRecompose,
+  shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
 import {
   autoPushHistoryBackupIfConfigured,
@@ -34,6 +35,7 @@ import {
   type WalletRuntime,
   type WalletRuntimeId,
 } from './walletRuntime'
+import { yieldToUi } from './yieldToUi'
 
 export type RecomposeHistoryMode = 'auto' | 'skip' | 'forceCloud'
 
@@ -119,36 +121,74 @@ async function runRecomposeBody(
   // pair sync). An ordinary unlock/push does not invalidate the basket view.
   let localStateWasReplaced = historyMode === 'skip'
 
+  // Bridge apps often fire BRC-100 requests the moment unlock finishes painting.
+  // Yield once so a queued permission prompt can render before Argon2 / IDB work.
+  await yieldToUi()
+
   if (historyMode !== 'skip' && password && hasDeviceLinkBackupUrl()) {
-    try {
-      // allowEmptyPull derived inside autoPush from reason via historyEmptyGuard.
-      const sync = await autoPushHistoryBackupIfConfigured(password, {
-        reason: historyMode === 'forceCloud' ? 'recompose' : reason,
-      })
-      if (runtime) assertRuntimeCurrent(runtime)
-      localStateWasReplaced = sync.pulled
-      if (sync.pulled || !sync.skipReason) {
-        history = 'synced'
-      } else if (sync.pullError) {
-        history = 'failed'
-        historyError = sync.pullError
-      } else {
-        history = 'skipped'
-        historyError = sync.skipReason
-      }
-    } catch (err) {
-      history = 'failed'
-      historyError = err instanceof Error ? err.message : String(err)
+    if (shouldYieldChainIngestToSpend()) {
+      history = 'skipped'
+      historyError = 'deferred-for-spend'
       try {
         const { appendAppLog } = await import('./appLog')
-        appendAppLog('warn', `[recompose] history failed (${reason}): ${historyError}`)
+        appendAppLog(
+          'info',
+          `[recompose] defer history (${reason}) — spend/permission waiting`,
+        )
       } catch {
         /* ignore */
+      }
+    } else {
+      try {
+        // allowEmptyPull derived inside autoPush from reason via historyEmptyGuard.
+        const sync = await autoPushHistoryBackupIfConfigured(password, {
+          reason: historyMode === 'forceCloud' ? 'recompose' : reason,
+        })
+        if (runtime) assertRuntimeCurrent(runtime)
+        localStateWasReplaced = sync.pulled
+        if (sync.pulled || !sync.skipReason) {
+          history = 'synced'
+        } else if (sync.pullError) {
+          history = 'failed'
+          historyError = sync.pullError
+        } else {
+          history = 'skipped'
+          historyError = sync.skipReason
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (
+          err instanceof Error &&
+          err.name === 'HistoryDeferredForSpendError'
+        ) {
+          history = 'skipped'
+          historyError = 'deferred-for-spend'
+          try {
+            const { appendAppLog } = await import('./appLog')
+            appendAppLog(
+              'info',
+              `[recompose] history yielded to spend/permission (${reason})`,
+            )
+          } catch {
+            /* ignore */
+          }
+        } else {
+          history = 'failed'
+          historyError = msg
+          try {
+            const { appendAppLog } = await import('./appLog')
+            appendAppLog('warn', `[recompose] history failed (${reason}): ${historyError}`)
+          } catch {
+            /* ignore */
+          }
+        }
       }
     }
   } else if (historyMode === 'skip') {
     history = 'skipped'
   }
+
+  await yieldToUi()
 
   let spendableSats: number | null = null
   let chainError: string | null = null
@@ -159,6 +199,8 @@ async function runRecomposeBody(
       // internalization to the first background chain pass (or Refresh).
       // Large item wallets otherwise hold the coordinator while several fat
       // BEEFs synchronously parse on the renderer thread.
+      // When a permission prompt is already waiting, funding-only still runs
+      // so Pay has coins, but ingest aborts early via shouldYield checks.
       spendableSats = (await refreshFromChainExclusive({
         forceReview: false,
         announceReceive: false,
@@ -180,6 +222,8 @@ async function runRecomposeBody(
       }
     }
   }
+
+  await yieldToUi()
 
   if (localStateWasReplaced) {
     if (runtime) assertRuntimeCurrent(runtime)

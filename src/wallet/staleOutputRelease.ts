@@ -478,6 +478,20 @@ export async function releaseThenRestoreStaleOutputs(): Promise<void> {
  * maintenance that may defer. Rows are hidden, never deleted, so a transaction
  * that ultimately fails can still have its change and inputs recovered.
  */
+function overlayAlreadySealedForSpender(
+  inputs: string[],
+  spentBy: string,
+): boolean {
+  if (inputs.length === 0) return false;
+  for (const op of inputs) {
+    const lock = getUtxoLock(op);
+    if (!lock || lock.spendable !== false) return false;
+    const by = typeof lock.spentBy === "string" ? lock.spentBy.trim().toLowerCase() : "";
+    if (by !== spentBy) return false;
+  }
+  return true;
+}
+
 export async function sealSpentInputsOfSignedTx(
   txid: string | undefined,
   atomic: number[] | undefined,
@@ -494,6 +508,17 @@ export async function sealSpentInputsOfSignedTx(
     if (raw?.length) inputs = inputOutpointsFromRawTx(raw);
   }
   if (inputs.length === 0) return 0;
+
+  // Repeat seals are pure cost once the overlay already names this spender.
+  // Keep-change still runs so a partial first pass can finish promoting.
+  if (overlayAlreadySealedForSpender(inputs, id)) {
+    const done = promotedSetFor(active?.identityKey ?? "");
+    if (done.has(id)) return 0;
+    await keepChangeOfSignedTx(id, active, updateForegroundOverlay, atomic);
+    done.add(id);
+    commitPromotedGeneration(active?.identityKey ?? "");
+    return 0;
+  }
 
   const hidden = await hideSpentOutpoints(
     inputs,
@@ -514,6 +539,9 @@ export async function sealSpentInputsOfSignedTx(
   // while a spend holds priority). The signed body travels with the seal so a
   // script-less change row is rebuilt from the transaction itself.
   await keepChangeOfSignedTx(id, active, updateForegroundOverlay, atomic);
+  const done = promotedSetFor(active?.identityKey ?? "");
+  done.add(id);
+  commitPromotedGeneration(active?.identityKey ?? "");
   return hidden;
 }
 

@@ -202,14 +202,21 @@ export function creditUtxo(
 ): UtxoLockRecord | null {
   const cur = getUtxoLock(outpoint);
   if (cur && isConsumed(cur)) return cur;
-  unsealGeneration += 1;
-  return upsertUtxoLock(outpoint, {
+  // Only a true revive must bump {@link utxoUnsealGeneration}. Crediting a
+  // brand-new change outpoint (or re-touching an already-spendable row) used
+  // to invalidate the seal/promote memo on every createAction — lab phone
+  // hc-a580a re-sealed the same txid 16× in a few seconds and stalled the
+  // renderer while permission prompts waited to paint.
+  const revivedUnspendable = cur != null && isUnspendable(cur);
+  const next = upsertUtxoLock(outpoint, {
     spendable: true,
     spentBy: null,
     lockOwnerId: null,
     diagnostic: null,
     satoshis: opts?.satoshis,
   });
+  if (revivedUnspendable) unsealGeneration += 1;
+  return next;
 }
 
 export function listUtxoLocks(): UtxoLockRecord[] {

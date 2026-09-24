@@ -412,6 +412,22 @@ describe('walletCoordinator runtime', () => {
     releaseSpendPriority()
   })
 
+  it('defers nested recompose history when a permission prompt is waiting', async () => {
+    const {
+      HistoryDeferredForSpendError,
+      runHistoryReplica,
+      runRecompose,
+    } = await import('./walletCoordinator')
+    await runRecompose(async () => {
+      requestSpendPriority('permission-prompt')
+      await expect(runHistoryReplica(async () => 'backed-up')).rejects.toBeInstanceOf(
+        HistoryDeferredForSpendError,
+      )
+      releaseSpendPriority()
+      return 'ok'
+    })
+  })
+
   it('runs a starved historyReplica without yielding to a queued spend', async () => {
     const { runHistoryReplica } = await import('./walletCoordinator')
     requestSpendPriority('runExclusiveSpend')

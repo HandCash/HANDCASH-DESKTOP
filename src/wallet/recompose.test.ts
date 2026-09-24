@@ -20,6 +20,7 @@ vi.mock('./chainIngest', () => ({
 vi.mock('./walletCoordinator', () => ({
   isRecomposeCoordinatorActive: () => false,
   runRecompose: <T>(fn: () => Promise<T>) => fn(),
+  shouldYieldChainIngestToSpend: () => false,
 }))
 
 vi.mock('./deviceSync', () => ({

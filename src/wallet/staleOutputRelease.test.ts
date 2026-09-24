@@ -1103,6 +1103,9 @@ describe('promotePendingLocalChangeOutputs', () => {
     expect(findOutputs.mock.calls.length).toBe(afterFirst)
 
     // An un-seal from any other path must force the walk again.
+    // Crediting a never-seen outpoint must not — only reviving an unspendable
+    // overlay row bumps the generation (field: 16× re-seal of one txid).
+    hideUtxo(`${'9f'.repeat(32)}.0`, { diagnostic: 'test-quarantine' })
     creditUtxo(`${'9f'.repeat(32)}.0`, { satoshis: 10 })
     await promotePendingLocalChangeOutputs({ forSpendChain: true })
     expect(findOutputs.mock.calls.length).toBeGreaterThan(afterFirst)
@@ -1623,6 +1626,23 @@ describe('sealSpentInputsOfSignedTx', () => {
     await sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary())
 
     expect(getUtxoLock(`${prevTxid}_0`)?.spentBy).toBe(tx.id('hex'))
+  })
+
+  it('does not re-walk toolbox rows when the overlay already sealed the inputs', async () => {
+    const prevTxid = '66'.repeat(32)
+    const tx = await signedTx(prevTxid, 0)
+    findOutputs.mockResolvedValue([
+      { outputId: 11, txid: prevTxid, vout: 0, satoshis: 5000, spendable: true },
+    ])
+
+    await sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary())
+    const afterFirst = updateOutput.mock.calls.length
+    expect(afterFirst).toBeGreaterThan(0)
+
+    await expect(
+      sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary()),
+    ).resolves.toBe(0)
+    expect(updateOutput.mock.calls.length).toBe(afterFirst)
   })
 
   it('gives the coin back when the spend never reached a node', async () => {
