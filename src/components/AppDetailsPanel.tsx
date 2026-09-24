@@ -5,12 +5,17 @@ import { AppLaunchMenu } from './AppLaunchMenu'
 import {
   acceptsIncomingFunds,
   getItemAccess,
+  getTokenAccess,
   setAcceptIncomingFunds,
   subscribeConnectedApps,
   type ConnectedApp,
 } from '../wallet/permissions'
-import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
-import type { ItemAccess } from '../wallet/itemAccess'
+import {
+  appDisplayName,
+  appHomepage,
+  grantedPermissionScopes,
+} from '../wallet/appIdentity'
+import type { ItemAccess, TokenAccess } from '../wallet/itemAccess'
 import {
   getAppMoneySummary,
   subscribeAppActivity,
@@ -49,14 +54,16 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
     getAutoPaySettings(app.origin),
   )
   const [itemAccess, setItemAccess] = useState<ItemAccess>(() => getItemAccess(app.origin))
+  const [tokenAccess, setTokenAccess] = useState<TokenAccess>(() => getTokenAccess(app.origin))
   const [acceptIncoming, setAcceptIncoming] = useState(() =>
     acceptsIncomingFunds(app.origin),
   )
 
   useEffect(() => {
     setItemAccess(getItemAccess(app.origin))
+    setTokenAccess(getTokenAccess(app.origin))
     setAcceptIncoming(acceptsIncomingFunds(app.origin))
-  }, [app.origin, app.acceptIncomingFunds])
+  }, [app.origin, app.acceptIncomingFunds, app.itemAccess, app.tokenAccess])
 
   useEffect(
     () =>
@@ -64,6 +71,7 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
         const hit = apps.find((a) => a.origin === app.origin)
         if (hit) {
           setItemAccess(getItemAccess(hit.origin))
+          setTokenAccess(getTokenAccess(hit.origin))
           setAcceptIncoming(acceptsIncomingFunds(hit.origin))
         }
       }),
@@ -87,6 +95,12 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
 
   const name = app.name || appDisplayName(app.origin)
   const home = appHomepage(app.origin)
+  const permissionScopes = grantedPermissionScopes({
+    acceptIncomingFunds: acceptIncoming,
+    itemAccess,
+    tokenAccess,
+    autoPayEnabled: autoPay?.enabled === true,
+  })
 
   return (
     <div
@@ -116,49 +130,24 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
       <div className="app-details-section">
         <p className="scope-list-label">Permissions</p>
         <div className="permission-chips" aria-label="Permissions">
-          {CONNECT_SCOPES.map((scope) => {
-            const itemGranted =
-              scope.id === 'items-view'
-                ? itemAccess.view !== 'none'
-                : scope.id === 'items-send'
-                  ? true
-                  : scope.id === 'items-receive'
-                    ? itemAccess.canReceive
-                    : scope.id === 'receive'
-                      ? acceptIncoming
-                      : true
-            return (
-              <button
-                key={scope.id}
-                type="button"
-                className={
-                  itemGranted
-                    ? 'permission-chip'
-                    : 'permission-chip permission-chip-muted'
-                }
-                title={
-                  itemGranted
-                    ? scope.description
-                    : `${scope.description} (not granted yet)`
-                }
-                onClick={() => openPermissionDetails(app.origin, scope.id)}
-              >
-                <ScopeIcon scopeId={scope.id} size={13} />
-                {scope.label}
-              </button>
-            )
-          })}
-          {autoPay?.enabled ? (
+          {permissionScopes.map((scope) => (
             <button
+              key={scope.id}
               type="button"
-              className="permission-chip permission-chip-accent"
-              title={`Up to $${autoPay.maxUsd} every ${autoPay.windowHours} hours`}
-              onClick={() => openPermissionDetails(app.origin, 'auto-pay')}
+              className={
+                scope.id === 'auto-pay'
+                  ? 'permission-chip permission-chip-accent'
+                  : 'permission-chip'
+              }
+              title={scope.description}
+              onClick={() => openPermissionDetails(app.origin, scope.id)}
             >
-              <ScopeIcon scopeId="auto-pay" size={13} />
-              Auto-pay · ${autoPay.maxUsd}/{autoPay.windowHours}h
+              <ScopeIcon scopeId={scope.id} size={13} />
+              {scope.id === 'auto-pay' && autoPay
+                ? `Auto-pay · $${autoPay.maxUsd}/${autoPay.windowHours}h`
+                : scope.label}
             </button>
-          ) : null}
+          ))}
         </div>
       </div>
 

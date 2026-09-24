@@ -5,88 +5,132 @@ export type AppPermissionScope = {
   description: string
   /** Short bullets for the detail subcontext. */
   allows: string[]
+  /** BRC-100 methods whose access this scope describes. */
+  methods: string[]
 }
 
-/** High-level scopes shown on connect — mirrors HandCash Connect language. */
-export const CONNECT_SCOPES: AppPermissionScope[] = [
-  {
-    id: 'public-profile',
-    label: 'Public profile',
-    description:
-      'Read your public identity key and request an origin-bound proof. Proofs require separate approval.',
-    allows: ['Identity key', 'Public recognition in the app', 'Short-lived identity proof requests'],
-  },
-  {
-    id: 'pay',
-    label: 'Pay',
-    description:
-      'Request BSV payments. You approve each one unless auto-pay is on. Does not include collectables.',
-    allows: ['BSV payment requests', 'Amounts shown for confirmation', 'Never spends NFTs / items'],
-  },
-  {
-    id: 'receive',
-    label: 'Receive',
-    description:
-      'Accept plain BSV this app sends you automatically. Does not include collectables.',
-    allows: [
-      'Incoming BSV payments from this app',
-      'Accepted without a second prompt',
-      'Never receives NFTs / items',
-    ],
-  },
-  {
-    id: 'wallet',
-    label: 'Wallet activity',
-    description: 'Read balance and activity. Does not approve payments or show item inventory.',
-    allows: ['Balance & status', 'Related activity'],
-  },
-  {
-    id: 'encrypt',
-    label: 'Encrypt & decrypt',
-    description: 'Encrypt or decrypt with keys for this app. Plaintext stays in the wallet.',
-    allows: ['Encrypt for this app', 'Decrypt for this app'],
-  },
-  {
-    id: 'items-view',
-    label: 'View items',
-    description:
-      'See collectables on this device when you approve. Local only — not other phones or desktops.',
-    allows: [
-      'List 1Sat inventory on this wallet',
-      'Optional collection filter',
-      'Optional creator filter',
-    ],
-  },
-  {
-    id: 'items-send',
-    label: 'Send items',
-    description:
-      'Transfer a collectable or fungible token. Separate from Pay — auto-pay never applies.',
-    allows: ['Send 1Sat ordinals', 'Send BSV-21 tokens', 'Release item / token outputs'],
-  },
-  {
-    id: 'items-receive',
-    label: 'Receive items',
-    description: 'Accept collectables and tokens into your inventory when you approve.',
-    allows: ['Receive 1Sat ordinals', 'Receive BSV-21 tokens'],
-  },
+const WALLET_ACCESS_SCOPE: AppPermissionScope = {
+  id: 'wallet-access',
+  label: 'Wallet access',
+  description:
+    'Use connected, non-spending wallet APIs. Spending, signatures, encryption, identity proofs, and protected inventory require separate approval.',
+  allows: [
+    'App-specific public keys',
+    'Balance, app activity, and ordinary outputs',
+    'HMAC creation and signature verification',
+    'No silent spending, signing, encryption, or protected inventory',
+  ],
+  methods: [
+    'getPublicKey',
+    'getBalance',
+    'listActions',
+    'abortAction',
+    'listOutputs',
+    'listCertificates',
+    'discoverByIdentityKey',
+    'discoverByAttributes',
+    'createHmac',
+    'verifyHmac',
+    'verifySignature',
+  ],
+}
+
+const RECEIVE_SCOPE: AppPermissionScope = {
+  id: 'receive',
+  label: 'Receive BSV',
+  description:
+    'Accept plain BSV this app sends you automatically. Items and tokens require a separate grant.',
+  allows: [
+    'Incoming plain BSV from this app',
+    'Accepted without a second prompt',
+    'No collectables or tokens',
+  ],
+  methods: ['internalizeAction'],
+}
+
+const ITEM_VIEW_SCOPE: AppPermissionScope = {
+  id: 'items-view',
+  label: 'View collectables',
+  description:
+    'List only the collectables covered by the inventory grant you approved for this app.',
+  allows: ['Approved 1Sat inventory', 'Approved collection, app, creator, or item filters'],
+  methods: ['listOutputs'],
+}
+
+const TOKEN_VIEW_SCOPE: AppPermissionScope = {
+  id: 'tokens-view',
+  label: 'View tokens',
+  description:
+    'List only the BSV-21 tokens covered by the inventory grant you approved for this app.',
+  allows: ['Approved BSV-21 inventory', 'Approved token filters'],
+  methods: ['listOutputs'],
+}
+
+const ITEM_RECEIVE_SCOPE: AppPermissionScope = {
+  id: 'items-receive',
+  label: 'Receive items & tokens',
+  description:
+    'Accept collectables and BSV-21 tokens into your inventory without another receive prompt.',
+  allows: ['Receive 1Sat collectables', 'Receive BSV-21 tokens', 'No permission to send them'],
+  methods: ['internalizeAction'],
+}
+
+/** Capabilities granted by a fresh Connect authorization. */
+export const CONNECT_GRANTED_SCOPES: AppPermissionScope[] = [
+  WALLET_ACCESS_SCOPE,
+  RECEIVE_SCOPE,
 ]
+
+const PERSISTED_PERMISSION_SCOPES = [
+  ITEM_VIEW_SCOPE,
+  TOKEN_VIEW_SCOPE,
+  ITEM_RECEIVE_SCOPE,
+] as const
 
 export const AUTO_PAY_SCOPE: AppPermissionScope = {
   id: 'auto-pay',
   label: 'Auto-pay',
   description:
-    'Auto-approve matching BSV payments within your limits. Never covers collectables. Turn off anytime.',
-  allows: ['BSV payments under your max', 'Within your time window', 'Never spends NFTs / items'],
+    'Auto-approve matching BSV payments within your limits. Never covers collectables or tokens. Turn off anytime.',
+  allows: ['BSV payments under your max', 'Within your time window', 'Never spends items or tokens'],
+  methods: ['createAction', 'signAction'],
 }
 
-export function getPermissionScope(scopeId: string): AppPermissionScope | null {
-  if (scopeId === AUTO_PAY_SCOPE.id) return AUTO_PAY_SCOPE
-  // Legacy alias — auto-accept funds is the Connect "receive" scope.
-  if (scopeId === 'accept-incoming') {
-    return CONNECT_SCOPES.find((s) => s.id === 'receive') ?? null
+export type PermissionGrantSnapshot = {
+  acceptIncomingFunds: boolean
+  itemAccess: {
+    view: 'none' | 'all' | 'filtered'
+    canReceive: boolean
   }
-  return CONNECT_SCOPES.find((s) => s.id === scopeId) ?? null
+  tokenAccess: {
+    view: 'none' | 'all' | 'filtered'
+  }
+  autoPayEnabled: boolean
+}
+
+/** Return only permissions currently persisted for a connected app. */
+export function grantedPermissionScopes(
+  grants: PermissionGrantSnapshot,
+): AppPermissionScope[] {
+  const scopes = [WALLET_ACCESS_SCOPE]
+  if (grants.acceptIncomingFunds) scopes.push(RECEIVE_SCOPE)
+  if (grants.itemAccess.view !== 'none') scopes.push(ITEM_VIEW_SCOPE)
+  if (grants.tokenAccess.view !== 'none') scopes.push(TOKEN_VIEW_SCOPE)
+  if (grants.itemAccess.canReceive) scopes.push(ITEM_RECEIVE_SCOPE)
+  if (grants.autoPayEnabled) scopes.push(AUTO_PAY_SCOPE)
+  return scopes
+}
+
+const ALL_PERMISSION_SCOPES: AppPermissionScope[] = [
+  ...CONNECT_GRANTED_SCOPES,
+  ...PERSISTED_PERMISSION_SCOPES,
+  AUTO_PAY_SCOPE,
+]
+
+export function getPermissionScope(scopeId: string): AppPermissionScope | null {
+  // Legacy alias — auto-accept funds is the Connect "receive" scope.
+  const normalized = scopeId === 'accept-incoming' ? 'receive' : scopeId
+  return ALL_PERMISSION_SCOPES.find((scope) => scope.id === normalized) ?? null
 }
 
 export function normalizeAppHost(origin: string | undefined): string {

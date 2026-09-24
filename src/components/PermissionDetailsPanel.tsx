@@ -4,6 +4,7 @@ import { clearAutoPaySettings, getAutoPaySettings } from '../wallet/autoPay'
 import {
   acceptsIncomingFunds,
   getItemAccess,
+  getTokenAccess,
   setAcceptIncomingFunds,
 } from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
@@ -25,13 +26,20 @@ function itemGrantCopy(scopeId: string, origin: string): string | null {
     if (access.ids.length) bits.push(`${access.ids.length} item id${access.ids.length === 1 ? '' : 's'}`)
     return `Granted (filtered): ${bits.join(' · ') || 'limited'}`
   }
-  if (scopeId === 'items-send') {
-    return 'Every collectable send requires per-action approval.'
+  if (scopeId === 'tokens-view') {
+    const tokenAccess = getTokenAccess(origin)
+    if (tokenAccess.view === 'none') {
+      return 'Not granted — the app cannot list token inventory.'
+    }
+    if (tokenAccess.view === 'all') return 'Granted: all BSV-21 tokens.'
+    return `Granted (filtered): ${tokenAccess.ids.length} token id${
+      tokenAccess.ids.length === 1 ? '' : 's'
+    }`
   }
   if (scopeId === 'items-receive') {
     return access.canReceive
-      ? 'Granted — this app may receive collectables you approve.'
-      : 'Not granted yet — approved when the app asks to receive an item.'
+      ? 'Granted — this app may receive collectables and tokens without another receive prompt.'
+      : 'Not granted — item and token receives require approval.'
   }
   if (scopeId === 'receive' || scopeId === 'accept-incoming') {
     return acceptsIncomingFunds(origin)

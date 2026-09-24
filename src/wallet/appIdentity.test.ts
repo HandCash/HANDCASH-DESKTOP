@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CONNECT_GRANTED_SCOPES,
   appDisplayName,
   appFaviconCandidates,
+  grantedPermissionScopes,
   normalizeAppHost,
 } from './appIdentity'
 
@@ -45,5 +47,52 @@ describe('appFaviconCandidates', () => {
   it('retains favicon proxy fallbacks for ordinary app domains', () => {
     const candidates = appFaviconCandidates('https://example.com')
     expect(candidates.some((candidate) => candidate.includes('google.com'))).toBe(true)
+  })
+})
+
+describe('permission scope mapping', () => {
+  const noOptionalGrants = {
+    acceptIncomingFunds: true,
+    itemAccess: { view: 'none' as const, canReceive: false },
+    tokenAccess: { view: 'none' as const },
+    autoPayEnabled: false,
+  }
+
+  it('shows only capabilities actually granted by Connect', () => {
+    expect(CONNECT_GRANTED_SCOPES.map((scope) => scope.id)).toEqual([
+      'wallet-access',
+      'receive',
+    ])
+
+    const methods = CONNECT_GRANTED_SCOPES.flatMap((scope) => scope.methods)
+    expect(methods).not.toContain('createAction')
+    expect(methods).not.toContain('encrypt')
+    expect(methods).not.toContain('decrypt')
+    expect(methods).not.toContain('createSignature')
+    expect(methods).not.toContain('relinquishOutput')
+  })
+
+  it('does not invent optional grants for a fresh connected app', () => {
+    expect(grantedPermissionScopes(noOptionalGrants).map((scope) => scope.id)).toEqual([
+      'wallet-access',
+      'receive',
+    ])
+  })
+
+  it('adds only optional grants that are actually persisted', () => {
+    expect(
+      grantedPermissionScopes({
+        acceptIncomingFunds: false,
+        itemAccess: { view: 'filtered', canReceive: true },
+        tokenAccess: { view: 'all' },
+        autoPayEnabled: true,
+      }).map((scope) => scope.id),
+    ).toEqual([
+      'wallet-access',
+      'items-view',
+      'tokens-view',
+      'items-receive',
+      'auto-pay',
+    ])
   })
 })

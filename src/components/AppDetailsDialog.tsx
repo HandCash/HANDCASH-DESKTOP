@@ -7,10 +7,17 @@ import { AppLaunchMenu } from './AppLaunchMenu'
 import type { ConnectedApp } from '../wallet/permissions'
 import {
   acceptsIncomingFunds,
+  getItemAccess,
+  getTokenAccess,
   setAcceptIncomingFunds,
   subscribeConnectedApps,
 } from '../wallet/permissions'
-import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
+import {
+  appDisplayName,
+  appHomepage,
+  grantedPermissionScopes,
+} from '../wallet/appIdentity'
+import type { ItemAccess, TokenAccess } from '../wallet/itemAccess'
 import {
   getAppMoneySummary,
   subscribeAppActivity,
@@ -45,6 +52,12 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
   const [acceptIncoming, setAcceptIncoming] = useState(() =>
     app ? acceptsIncomingFunds(app.origin) : false,
   )
+  const [itemAccess, setItemAccess] = useState<ItemAccess | null>(() =>
+    app ? getItemAccess(app.origin) : null,
+  )
+  const [tokenAccess, setTokenAccess] = useState<TokenAccess | null>(() =>
+    app ? getTokenAccess(app.origin) : null,
+  )
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
 
@@ -65,9 +78,15 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
   useEffect(() => {
     if (!app) return
     setAcceptIncoming(acceptsIncomingFunds(app.origin))
+    setItemAccess(getItemAccess(app.origin))
+    setTokenAccess(getTokenAccess(app.origin))
     return subscribeConnectedApps((apps) => {
       const hit = apps.find((a) => a.origin === app.origin)
-      if (hit) setAcceptIncoming(acceptsIncomingFunds(hit.origin))
+      if (hit) {
+        setAcceptIncoming(acceptsIncomingFunds(hit.origin))
+        setItemAccess(getItemAccess(hit.origin))
+        setTokenAccess(getTokenAccess(hit.origin))
+      }
     })
   }, [app])
 
@@ -75,6 +94,15 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
 
   const name = app.name || appDisplayName(app.origin)
   const home = appHomepage(app.origin)
+  const permissionScopes =
+    itemAccess && tokenAccess
+      ? grantedPermissionScopes({
+          acceptIncomingFunds: acceptIncoming,
+          itemAccess,
+          tokenAccess,
+          autoPayEnabled: autoPay?.enabled === true,
+        })
+      : []
 
   return (
     <ModalPortal>
@@ -110,21 +138,22 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
           <div className="app-details-section">
             <p className="scope-list-label">Permissions</p>
             <div className="permission-chips" aria-label="Permissions">
-              {CONNECT_SCOPES.map((scope) => (
-                <span key={scope.id} className="permission-chip" title={scope.description}>
+              {permissionScopes.map((scope) => (
+                <span
+                  key={scope.id}
+                  className={
+                    scope.id === 'auto-pay'
+                      ? 'permission-chip permission-chip-accent'
+                      : 'permission-chip'
+                  }
+                  title={scope.description}
+                >
                   <ScopeIcon scopeId={scope.id} size={13} />
-                  {scope.label}
+                  {scope.id === 'auto-pay' && autoPay
+                    ? `Auto-pay · $${autoPay.maxUsd}/${autoPay.windowHours}h`
+                    : scope.label}
                 </span>
               ))}
-              {autoPay?.enabled ? (
-                <span
-                  className="permission-chip permission-chip-accent"
-                  title={`Up to $${autoPay.maxUsd} every ${autoPay.windowHours} hours`}
-                >
-                  <ScopeIcon scopeId="auto-pay" size={13} />
-                  Auto-pay · ${autoPay.maxUsd}/{autoPay.windowHours}h
-                </span>
-              ) : null}
             </div>
           </div>
 
