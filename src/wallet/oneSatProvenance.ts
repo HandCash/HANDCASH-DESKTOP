@@ -586,10 +586,12 @@ export function rememberPeerRemittanceForHeldTips(
 const remittanceByTip = new Map<string, ProvenanceV2>()
 const REMITTANCE_DURABLE_KEY = storageRegistry.remittance.key
 const REMITTANCE_DURABLE_MAX_ENTRIES = 800
+/** Optimisation cache gets a bounded share of mobile's 5MB origin store. */
+export const REMITTANCE_DURABLE_MAX_BYTES = 384 * 1024
 /** ~36KB binary — keeps many slim proofs without blowing localStorage. */
 const REMITTANCE_DURABLE_MAX_BEEF_B64 = 48_000
 
-type StoredRemittance = {
+export type StoredRemittance = {
   tip: string
   origin: string
   path: string[]
@@ -603,6 +605,38 @@ function remittanceStorageKey(): string {
   return accountLocalKey(REMITTANCE_DURABLE_KEY)
 }
 
+export function compactStoredRemittances(
+  source: Record<string, StoredRemittance>,
+): { map: Record<string, StoredRemittance>; body: string; dropped: number } {
+  const newest = Object.entries(source)
+    .filter(([, entry]) => Boolean(entry?.tip && entry.origin && Array.isArray(entry.path)))
+    .sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0))
+    .slice(0, REMITTANCE_DURABLE_MAX_ENTRIES)
+
+  const encode = (count: number) =>
+    JSON.stringify(Object.fromEntries(newest.slice(0, count)))
+  let low = 0
+  let high = newest.length
+  let keep = 0
+  let body = '{}'
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2)
+    const candidate = encode(count)
+    if (candidate.length <= REMITTANCE_DURABLE_MAX_BYTES) {
+      keep = count
+      body = candidate
+      low = count + 1
+    } else {
+      high = count - 1
+    }
+  }
+  return {
+    map: Object.fromEntries(newest.slice(0, keep)),
+    body,
+    dropped: Object.keys(source).length - keep,
+  }
+}
+
 function loadDurableRemittances(): void {
   if (durableRemittanceLoaded) return
   durableRemittanceLoaded = true
@@ -610,7 +644,8 @@ function loadDurableRemittances(): void {
     const raw = durableGetItem(remittanceStorageKey())
     if (!raw) return
     const parsed = JSON.parse(raw) as Record<string, StoredRemittance>
-    for (const entry of Object.values(parsed)) {
+    const compacted = compactStoredRemittances(parsed)
+    for (const entry of Object.values(compacted.map)) {
       if (!entry?.tip || !entry.origin || !Array.isArray(entry.path)) continue
       const tip = toUnderscore(entry.tip).toLowerCase()
       if (remittanceByTip.has(tip)) continue
@@ -621,6 +656,14 @@ function loadDurableRemittances(): void {
         path: entry.path.map((x) => toUnderscore(x).toLowerCase()),
         beefB64: entry.beefB64 ?? '',
       })
+    }
+    if (compacted.dropped > 0) {
+      durableSetItem(remittanceStorageKey(), compacted.body)
+      console.info(
+        `[brc150] dropped ${compacted.dropped} oldest cached remittance(s) to keep durable cache under ${Math.round(
+          REMITTANCE_DURABLE_MAX_BYTES / 1024,
+        )}KB`,
+      )
     }
   } catch {
     // Optimisation only.
@@ -643,14 +686,8 @@ function persistDurableRemittance(p: ProvenanceV2): void {
       ...(beefB64 ? { beefB64 } : {}),
       at: Date.now(),
     }
-    const keys = Object.keys(map)
-    if (keys.length > REMITTANCE_DURABLE_MAX_ENTRIES) {
-      const sorted = keys.sort((a, b) => (map[a]!.at ?? 0) - (map[b]!.at ?? 0))
-      for (let i = 0; i < keys.length - REMITTANCE_DURABLE_MAX_ENTRIES; i++) {
-        delete map[sorted[i]!]
-      }
-    }
-    durableSetItem(remittanceStorageKey(), JSON.stringify(map))
+    const compacted = compactStoredRemittances(map)
+    durableSetItem(remittanceStorageKey(), compacted.body)
   } catch {
     // Optimisation only.
   }

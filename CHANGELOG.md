@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.311] - 2026-09-24
+
+### Fixed
+
+- Mobile now reclaims every duplicate left by the old copy-only account
+  migration as soon as any store for that account is read. Cleanup no longer
+  waits for each feature to open, so cold stores such as the 536KB BRC-150
+  remittance copy cannot keep the WebView pinned at its 5MB origin quota.
+- Activity, Messages, and the BRC-150 remittance cache now have independent
+  serialized-size budgets (512KB, 768KB, and 384KB). They retain the newest
+  complete records and compact before writing, rather than discovering the
+  limit only after origin storage refuses custody queues, miner retries, or
+  diagnostics. Activity and Messages remain projections/history; transaction
+  custody stays in Toolbox, signed outboxes, and BRC-39.
+
 ## [1.3.310] - 2026-09-24
 
 ### Fixed

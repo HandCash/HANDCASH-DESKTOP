@@ -6,6 +6,10 @@ const BIG = 'x'.repeat(200 * 1024)
 function installLocalStorage(): Map<string, string> {
   const store = new Map<string, string>()
   vi.stubGlobal('localStorage', {
+    get length() {
+      return store.size
+    },
+    key: (index: number) => [...store.keys()][index] ?? null,
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => {
       store.set(key, value)
@@ -67,6 +71,31 @@ describe('durable store ownership', () => {
 
     expect(durableGetItem(scoped)).toBe('current')
     expect(local.has(base)).toBe(false)
+  })
+
+  it('sweeps cold legacy copies when any key in the account is read', async () => {
+    const local = installLocalStorage()
+    vi.stubGlobal('window', { handcash: undefined })
+    const suffix = ':wallet:main:0:identity-root'
+    local.set('handcash.brc100.appActivity', 'old activity')
+    local.set(`handcash.brc100.appActivity${suffix}`, 'current activity')
+    local.set('handcash.brc150.remittance.v1', BIG)
+    local.set(`handcash.brc150.remittance.v1${suffix}`, 'current remittance')
+    local.set('handcash.messages.v1', BIG)
+    local.set(`handcash.messages.v1${suffix}`, 'current messages')
+    const { durableGetItem } = await loadDurable()
+
+    // Activity is the first feature mounted. Its read reclaims cold BRC-150
+    // and Messages duplicates too, rather than waiting for those panels.
+    expect(durableGetItem(`handcash.brc100.appActivity${suffix}`)).toBe(
+      'current activity',
+    )
+    expect(local.has('handcash.brc100.appActivity')).toBe(false)
+    expect(local.has('handcash.brc150.remittance.v1')).toBe(false)
+    expect(local.has('handcash.messages.v1')).toBe(false)
+    expect(local.get(`handcash.brc150.remittance.v1${suffix}`)).toBe(
+      'current remittance',
+    )
   })
 
   it('does not believe a shell that reports success and stores nothing', async () => {

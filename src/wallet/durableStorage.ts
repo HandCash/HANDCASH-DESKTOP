@@ -21,6 +21,8 @@ export type DurableSetOptions = {
 const cache = new Map<string, string | null>()
 /** Legacy wallet keys already checked in this renderer. */
 const cleanedLegacyKeys = new Set<string>()
+/** Account namespaces whose complete legacy-copy sweep has run. */
+const cleanedLegacyScopes = new Set<string>()
 
 /**
  * Largest value worth mirroring into `localStorage` when Electron already holds
@@ -126,6 +128,7 @@ function readThrough(key: string): string | null {
 }
 
 export function durableGetItem(key: string): string | null {
+  cleanupMigratedLegacyCopiesForScope(key)
   const cached = cache.get(key)
   if (cached !== undefined) {
     // Electron delete writes '' — treat empty as absent so callers do not
@@ -183,6 +186,60 @@ export function durableGetItem(key: string): string | null {
   const normalized = value === '' ? null : value
   cache.set(key, normalized)
   return normalized
+}
+
+/**
+ * Remove every duplicate left by the old copy-only account migration at once.
+ *
+ * Cleaning a key only when its owning feature happened to read it left large,
+ * cold stores behind indefinitely. On the affected phone the old BRC-150
+ * remittance alone held another 536KB; no collectable action occurred in that
+ * session, so the lazy cleanup never reached it and origin storage remained at
+ * its 5MB limit. One scoped read proves the active account and gives us the
+ * exact suffix. Any scoped value with that suffix is authoritative over its
+ * one historical source, so sweep the whole namespace without parsing or
+ * mutating either value.
+ */
+function cleanupMigratedLegacyCopiesForScope(key: string): void {
+  if (durableStoreOwner() !== 'origin') return
+  const scoped = WALLET_KEY_RE.exec(key)
+  if (!scoped || typeof localStorage === 'undefined') return
+  const [, , chain, rawIndex, identityKey] = scoped
+  const suffix = `:wallet:${chain}:${rawIndex}:${identityKey}`
+  if (cleanedLegacyScopes.has(suffix)) return
+  cleanedLegacyScopes.add(suffix)
+
+  try {
+    const scopedKeys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const candidate = localStorage.key(i)
+      if (candidate?.endsWith(suffix)) scopedKeys.push(candidate)
+    }
+    let removed = 0
+    let bytes = 0
+    for (const scopedKey of scopedKeys) {
+      const base = scopedKey.slice(0, -suffix.length)
+      const legacyKey =
+        Number(rawIndex) === 0 ? base : `${base}:${identityKey}`
+      const legacy = localStorage.getItem(legacyKey)
+      if (legacy == null || legacy === '') {
+        cleanedLegacyKeys.add(legacyKey)
+        continue
+      }
+      bytes += legacy.length + legacyKey.length
+      removed += 1
+      removeMigratedLegacyKey(legacyKey, legacy.length)
+    }
+    if (removed > 0) {
+      console.info(
+        `[storage] reclaimed ${Math.round(
+          bytes / 1024,
+        )}KB from ${removed} migrated legacy copy/copies`,
+      )
+    }
+  } catch {
+    // A blocked origin store is handled by the normal per-key migration.
+  }
 }
 
 function removeMigratedLegacyKey(key: string, bytes: number): void {
@@ -305,6 +362,7 @@ export function durableForgetCached(key?: string): void {
   if (key == null) {
     cache.clear()
     cleanedLegacyKeys.clear()
+    cleanedLegacyScopes.clear()
   }
   else cache.delete(key)
 }

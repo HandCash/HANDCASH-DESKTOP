@@ -52,6 +52,7 @@ import {
   reconcilePendingItemActivityWithSpentOutpoints,
   sameActivityRow,
   upsertAppActivity,
+  ACTIVITY_DURABLE_MAX_BYTES,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from "./appActivity";
@@ -429,6 +430,26 @@ describe("inbound receive activity", () => {
     expect(archiveOversizedBulkSendDebris(2)).toBe(3);
     expect(listRecentActivity(10)).toEqual([]);
     expect(listArchivedActivity()).toHaveLength(3);
+  });
+
+  it("bounds rich Activity history before origin storage reaches quota", () => {
+    const rows = Array.from({ length: 180 }, (_, i) =>
+      entry({
+        id: `rich-${i}`,
+        at: i,
+        txid: i.toString(16).padStart(64, "0"),
+        note: `row ${i} ${"x".repeat(4_000)}`,
+      })
+    );
+
+    mergeActivityEntries(rows);
+
+    const raw = store.get("handcash.brc100.appActivity");
+    expect(raw).toBeDefined();
+    expect(raw!.length).toBeLessThanOrEqual(ACTIVITY_DURABLE_MAX_BYTES);
+    const ids = exportAllActivity().map((row) => row.id);
+    expect(ids).toContain("rich-179");
+    expect(ids).not.toContain("rich-0");
   });
 
   it("shows a verifying payment in Activity before internalize finishes", () => {

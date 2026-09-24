@@ -361,12 +361,53 @@ function ownerIsCurrent(owner?: BoundAccountKeyScope): boolean {
   );
 }
 
+/**
+ * Activity is a projection, not the custody ledger. Keep enough recent history
+ * for the feed without letting rich item metadata consume a WebView's entire
+ * 5MB origin quota. Full wallet history remains in Toolbox/BRC-39.
+ */
+export const ACTIVITY_DURABLE_MAX_BYTES = 512 * 1024;
+const ACTIVITY_DURABLE_MAX_ROWS = 1000;
+
+function activityBodyWithinBudget(entries: ActivityEntry[]): {
+  body: string;
+  kept: ActivityEntry[];
+} {
+  const candidates = entries.slice(-ACTIVITY_DURABLE_MAX_ROWS);
+  const encode = (rows: ActivityEntry[]) =>
+    JSON.stringify({ v: storageRegistry.activity.version, data: rows });
+  let body = encode(candidates);
+  if (body.length <= ACTIVITY_DURABLE_MAX_BYTES) {
+    return { body, kept: candidates };
+  }
+
+  // Find the largest newest suffix that fits. Repeatedly halving after a quota
+  // exception discarded far more history than necessary and only ran once the
+  // whole origin was already full.
+  let low = 1;
+  let high = candidates.length;
+  let best = candidates.slice(-1);
+  let bestBody = encode(best);
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2);
+    const rows = candidates.slice(-count);
+    const encoded = encode(rows);
+    if (encoded.length <= ACTIVITY_DURABLE_MAX_BYTES) {
+      best = rows;
+      bestBody = encoded;
+      low = count + 1;
+    } else {
+      high = count - 1;
+    }
+  }
+  return { body: bestBody, kept: best };
+}
+
 function writeAll(
   entries: ActivityEntry[],
   owner?: BoundAccountKeyScope,
 ): void {
-  // Cap history so storage stays small.
-  const trimmed = entries.slice(-2000);
+  const trimmed = entries.slice(-ACTIVITY_DURABLE_MAX_ROWS);
   if (ownerIsCurrent(owner)) writeGeneration += 1;
   const key = activityStorageKey(owner);
   // A refused write was silent, and the refusal drops the cached value — so on
@@ -374,12 +415,8 @@ function writeAll(
   // really happened left no trace, and a Sending… row marked failed reverted to
   // pending forever. Shed the oldest history instead: it is also in the BRC-39
   // replica, and losing the newest row is what makes the feed look broken.
-  let kept = trimmed;
+  let { body, kept } = activityBodyWithinBudget(trimmed);
   for (;;) {
-    const body = JSON.stringify({
-      v: storageRegistry.activity.version,
-      data: kept,
-    });
     if (durableSetItem(key, body)) {
       if (kept.length < trimmed.length) {
         console.warn(
@@ -397,6 +434,10 @@ function writeAll(
       break;
     }
     kept = kept.slice(-Math.max(1, Math.floor(kept.length / 2)));
+    body = JSON.stringify({
+      v: storageRegistry.activity.version,
+      data: kept,
+    });
   }
   if (ownerIsCurrent(owner)) {
     for (const cb of listeners) cb();

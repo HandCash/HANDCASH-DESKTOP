@@ -37,12 +37,43 @@ import {
   encodeRemittanceForPeerBox,
   rememberPeerRemittanceForHeldTips,
   rebindOneSatProvenanceForAccount,
+  compactStoredRemittances,
+  REMITTANCE_DURABLE_MAX_BYTES,
   REMITTANCE_MAX_BEEF_B64_CHARS,
   REMITTANCE_MAX_BEEF_BYTES,
   verifyProvenanceV2,
   extendProvenanceV2,
   type ProvenanceV2,
 } from './oneSatProvenance'
+
+describe('durable remittance retention', () => {
+  it('keeps the newest complete cache entries within its byte budget', () => {
+    const source = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => {
+        const tip = `${i.toString(16).padStart(64, '0')}_0`
+        return [
+          tip,
+          {
+            tip,
+            origin: `${'f'.repeat(64)}_0`,
+            path: [tip],
+            beefB64: 'A'.repeat(40_000),
+            at: i,
+          },
+        ]
+      }),
+    )
+
+    const compacted = compactStoredRemittances(source)
+
+    expect(compacted.body.length).toBeLessThanOrEqual(
+      REMITTANCE_DURABLE_MAX_BYTES,
+    )
+    expect(compacted.dropped).toBeGreaterThan(0)
+    expect(compacted.map[`${(19).toString(16).padStart(64, '0')}_0`]).toBeDefined()
+    expect(compacted.map[`${(0).toString(16).padStart(64, '0')}_0`]).toBeUndefined()
+  })
+})
 
 const ORD_ENVELOPE =
   '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'

@@ -177,6 +177,56 @@ type ChatState = {
   messages: ChatMessage[]
 }
 
+/**
+ * Messages are local conversation history, not the messagebox ACK/custody
+ * queue. Bound their share of the mobile WebView's 5MB origin store; inline
+ * Atomic BEEF/provenance can otherwise make a handful of old item cards crowd
+ * out signed-cheque and miner-retry state.
+ */
+export const MESSAGES_DURABLE_MAX_BYTES = 768 * 1024
+const MESSAGES_DURABLE_MAX_ENTRIES = 2000
+
+function compactMessages(state: ChatState): {
+  state: ChatState
+  body: string
+  dropped: number
+} {
+  const newest = state.messages
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, MESSAGES_DURABLE_MAX_ENTRIES)
+  const encode = (count: number) => {
+    const messages = newest
+      .slice(0, count)
+      .sort((a, b) => a.createdAt - b.createdAt)
+    return {
+      state: { messages },
+      body: JSON.stringify({
+        v: storageRegistry.messages.version,
+        data: { messages },
+      }),
+    }
+  }
+
+  let low = newest.length > 0 ? 1 : 0
+  let high = newest.length
+  let best = encode(low)
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2)
+    const candidate = encode(count)
+    if (candidate.body.length <= MESSAGES_DURABLE_MAX_BYTES || count === 1) {
+      best = candidate
+      low = count + 1
+    } else {
+      high = count - 1
+    }
+  }
+  return {
+    ...best,
+    dropped: state.messages.length - best.state.messages.length,
+  }
+}
+
 type Listener = () => void
 
 const listeners = new Set<Listener>()
@@ -224,17 +274,31 @@ function readState(): ChatState {
         ? (record.data as ChatState)
         : (decoded as ChatState)
     if (!parsed || !Array.isArray(parsed.messages)) return { messages: [] }
-    return { messages: parsed.messages }
+    const compacted = compactMessages({ messages: parsed.messages })
+    if (compacted.dropped > 0) {
+      durableSetItem(messagesStorageKey(), compacted.body)
+      console.info(
+        `[messages] dropped ${compacted.dropped} oldest message(s) to keep durable history under ${Math.round(
+          MESSAGES_DURABLE_MAX_BYTES / 1024,
+        )}KB`,
+      )
+    }
+    return compacted.state
   } catch {
     return { messages: [] }
   }
 }
 
 function writeState(state: ChatState) {
-  durableSetItem(
-    messagesStorageKey(),
-    JSON.stringify({ v: storageRegistry.messages.version, data: state }),
-  )
+  const compacted = compactMessages(state)
+  durableSetItem(messagesStorageKey(), compacted.body)
+  if (compacted.dropped > 0) {
+    console.info(
+      `[messages] dropped ${compacted.dropped} oldest message(s) to keep durable history under ${Math.round(
+        MESSAGES_DURABLE_MAX_BYTES / 1024,
+      )}KB`,
+    )
+  }
   messageWriteGeneration += 1
   notify()
 }
