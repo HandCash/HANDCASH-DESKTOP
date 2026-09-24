@@ -1,3 +1,4 @@
+import { pinAccountKeyScope } from '../accountLocalKeys'
 import { getActiveWallet } from '../session'
 
 /**
@@ -97,12 +98,16 @@ export async function internalizePeerFungibleSettle(opts: {
   const active = getActiveWallet()
   if (!active) return { accepted: false, outpoints: [], reason: 'locked' }
 
+  // Per-account Activity: pin the owner before the awaits below, so switching
+  // wallets mid-ingest cannot file the row under the account that is open
+  // instead of the one holding the tokens.
+  const owner = pinAccountKeyScope(active)
   noteInboundReceivePending({
     txid: id,
     item: true,
     itemName: opts.token.sym,
     token: opts.token,
-  })
+  }, owner)
 
   // Every supplied source is re-framed for this subject. `internalizeAction`
   // accepts AtomicBEEF only, while older peers may send a valid plain BEEF.
@@ -273,7 +278,7 @@ export async function internalizePeerFungibleSettle(opts: {
         ...(resolvedIcon ? { icon: resolvedIcon } : {}),
         ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
       },
-    })
+    }, owner)
     return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }
   }
 
@@ -329,7 +334,7 @@ export async function internalizePeerFungibleSettle(opts: {
         ...(resolvedIcon ? { icon: resolvedIcon } : {}),
         ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
       },
-    })
+    }, owner)
     scheduleHistoryBackupPush('internalizeFungibleAction')
     void listFungibles(active).catch(() => {})
     // Payee broadcast is best-effort. Custody is the BEEF in basket `bsv21`.
@@ -356,7 +361,7 @@ export async function internalizePeerFungibleSettle(opts: {
           ...(resolvedIcon ? { icon: resolvedIcon } : {}),
           ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
         },
-      })
+      }, owner)
       void listFungibles(active).catch(() => {})
       void broadcastAtomicBeef(id, atomic).catch(() => {})
       return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }

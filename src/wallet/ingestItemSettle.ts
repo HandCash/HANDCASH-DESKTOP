@@ -43,6 +43,7 @@ import {
   noteInboundReceivePending,
   clearInboundReceivePending,
 } from './appActivity'
+import { pinAccountKeyScope, type BoundAccountKeyScope } from './accountLocalKeys'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { stampBrc164Id } from './itemAccess'
@@ -154,11 +155,15 @@ export async function internalizePeerItemSettle(opts: {
   const active = getActiveWallet()
   if (!active) return { accepted: false, outpoints: [], reason: 'locked' }
 
+  // Per-account Activity: pin the owner before the awaits below, so switching
+  // wallets mid-ingest cannot file the row under the account that is open
+  // instead of the one holding the item.
+  const owner = pinAccountKeyScope(active)
   noteInboundReceivePending({
     txid: id,
     item: true,
     itemName: opts.name,
-  })
+  }, owner)
 
   const parsedProof = parseProvenanceV2(opts.provenance)
   if (parsedProof) rememberProvenanceRemittance(parsedProof)
@@ -278,6 +283,7 @@ export async function internalizePeerItemSettle(opts: {
     markOneSatImported(allOps)
     rememberReceivedProofs(id, tipVouts, members, opts.provenance)
     paintReceivedTips({
+      owner,
       txid: id,
       tipVouts,
       originHint,
@@ -297,6 +303,7 @@ export async function internalizePeerItemSettle(opts: {
     // Already in the basket — still (re)paint so a second batch notify can bind
     // its genesis origin onto the next tip instead of overwriting tip .0.
     paintReceivedTips({
+      owner,
       txid: id,
       tipVouts,
       originHint,
@@ -378,6 +385,7 @@ export async function internalizePeerItemSettle(opts: {
     rememberReceivedProofs(id, tipVouts, members, opts.provenance)
     scheduleHistoryBackupPush('internalizeAction')
     paintReceivedTips({
+      owner,
       txid: id,
       tipVouts,
       originHint,
@@ -396,6 +404,7 @@ export async function internalizePeerItemSettle(opts: {
       markOneSatImported(allOps)
       rememberReceivedProofs(id, tipVouts, members, opts.provenance)
       paintReceivedTips({
+        owner,
         txid: id,
         tipVouts,
         originHint,
@@ -450,8 +459,10 @@ function paintReceivedTips(args: {
   collectionId: string | undefined
   members: ReadonlyMap<number, ItemTransferMember>
   chain: Chain
+  /** Account the tips landed in — Activity is per-account, pinned by the caller. */
+  owner: BoundAccountKeyScope | undefined
 }): void {
-  const { txid: id, tipVouts, originHint, app, collectionId, members, chain } = args
+  const { txid: id, tipVouts, originHint, app, collectionId, members, chain, owner } = args
   let name = args.name
   const preferred = pickTipVoutForOriginHint(id, tipVouts, originHint)
   const hint = normalizeOriginHint(originHint, id)
@@ -497,7 +508,7 @@ function paintReceivedTips(args: {
       itemName: tipName,
       itemOrigin: origin,
       outpoint: tipOp,
-    })
+    }, owner)
     paintedOps.push(tipOp)
   }
 

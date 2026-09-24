@@ -36,11 +36,19 @@ const internalizePeerItemSettle = vi.fn(async (_opts: unknown) => ({
 const isAtomicBeefInBackoff = vi.fn((_txid: string) => false)
 const restoreOnChainLocalTx = vi.fn(async () => false)
 
+/** The subwallet the coin lands in — Activity must be filed against this. */
+const RECEIVING_ACCOUNT = {
+  chain: 'main' as const,
+  identityKey: '03' + 'aa'.repeat(32),
+  accountIndex: 3,
+}
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
-    chain: 'main',
+    chain: RECEIVING_ACCOUNT.chain,
     address: '1someaddress',
-    identityKey: '03' + 'aa'.repeat(32),
+    identityKey: RECEIVING_ACCOUNT.identityKey,
+    accountIndex: RECEIVING_ACCOUNT.accountIndex,
     services: { postBeef },
     wallet: { internalizeAction },
   }),
@@ -113,11 +121,16 @@ describe('multi-item inbox identity', () => {
   })
 })
 
+const noteInboundReceivePending = vi.fn()
+const noteInboundReceiveComplete = vi.fn()
+
 vi.mock('./appActivity', () => ({
   hasActivityTxid: () => false,
   hasSettledActivityTxid: () => false,
-  noteInboundReceivePending: () => {},
-  noteInboundReceiveComplete: () => {},
+  noteInboundReceivePending: (args: unknown, owner?: unknown) =>
+    noteInboundReceivePending(args, owner),
+  noteInboundReceiveComplete: (args: unknown, owner?: unknown) =>
+    noteInboundReceiveComplete(args, owner),
   noteOutboundSendPending: () => {},
   noteOutboundSendComplete: () => {},
   failOutboundSendPending: () => {},
@@ -314,6 +327,34 @@ describe('internalizeBrc29Payment broadcast overlap', () => {
     expect(result.accepted).toBe(true)
     expect(attempts).toBe(2)
     expect(restoreOnChainLocalTx).toHaveBeenCalledWith('d'.repeat(64))
+  })
+
+  /**
+   * Activity is stored per account. Receiving a payment sent from a subwallet
+   * is exactly when the bound account moves during the seconds ingest spends
+   * awaiting, and an unpinned write filed the row under whichever wallet was
+   * open — money in, balance right, nothing in Activity.
+   */
+  it('files the receive against the account the coin landed in', async () => {
+    noteInboundReceivePending.mockClear()
+    noteInboundReceiveComplete.mockClear()
+    internalizeAction.mockResolvedValue({ accepted: true })
+
+    const { internalizeBrc29Payment } = await import('./sendBrc29Payment')
+    await internalizeBrc29Payment({
+      txid: 'e'.repeat(64),
+      remittance: { derivationPrefix: 'pre', derivationSuffix: 'suf', outputIndex: 0 },
+      senderIdentityKey: SENDER,
+      satoshis: 500,
+      tx: ATOMIC,
+    })
+
+    for (const spy of [noteInboundReceivePending, noteInboundReceiveComplete]) {
+      expect(spy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining(RECEIVING_ACCOUNT),
+      )
+    }
   })
 })
 

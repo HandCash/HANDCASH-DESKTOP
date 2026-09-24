@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.303] - 2026-09-24
+
+### Fixed
+
+- A payment received from a subwallet no longer goes missing from Activity.
+  Activity is stored per account, and with no owner given it resolves against
+  whichever account is bound at the instant of the write. Ingest spans seconds
+  of awaits, so switching wallets during it filed the row under the account
+  that was open rather than the one the coin landed in — balance correct, no
+  row. Receive ingest now pins the owning account up front, as it already did
+  for sync health and balance, across BSV, SPV-by-txid, item and BSV-21
+  settles.
+- `pinAccountKeyScope` returns no scope rather than throwing when a wallet
+  carries no identity, so an inbound row can never be lost to account scoping.
+
 ## [1.3.302] - 2026-09-24
 
 ### Fixed

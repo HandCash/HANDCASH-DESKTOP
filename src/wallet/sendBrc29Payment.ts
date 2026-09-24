@@ -71,7 +71,7 @@ import {
   mustBrc29SelfReceive,
 } from './brc29SendMachine'
 import { enqueuePendingBrc29Remit } from './pendingBrc29Outbox'
-import { accountKeyScopeFor } from './accountLocalKeys'
+import { accountKeyScopeFor, pinAccountKeyScope } from './accountLocalKeys'
 import {
   getMessageWriteGeneration,
   listAllMessages,
@@ -754,13 +754,21 @@ async function internalizeBrc29PaymentOnce(opts: {
     )
   }
 
+  // Activity is stored per account (`…:wallet:<chain>:<index>:<identityKey>`)
+  // and, given no owner, resolves against whichever account is bound at the
+  // moment of the write. Ingest spans seconds of awaits, and a payment sent
+  // from a subwallet is exactly when the bound account moves underneath it —
+  // the coin landed here and the balance rose, but the row was filed under the
+  // wallet that happened to be open. Pin the owner once, as the sync-health
+  // and balance publishes below already do.
+  const owner = pinAccountKeyScope(active)
+  const startedIk = active.identityKey
+  const startedIdx = active.accountIndex
   markInboundPaymentStatus(id, 'Receiving')
   noteInboundReceivePending({
     txid: id,
     sats: typeof opts.satoshis === 'number' ? opts.satoshis : undefined,
-  })
-  const startedIk = active.identityKey
-  const startedIdx = active.accountIndex
+  }, owner)
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing BRC-29 payment',
@@ -855,8 +863,8 @@ async function internalizeBrc29PaymentOnce(opts: {
         ? Math.floor(opts.satoshis)
         : 0
 
-    if (satoshis > 0 || hasActivityTxid(id, 'earned')) {
-      noteInboundReceiveComplete({ txid: id, sats: satoshis })
+    if (satoshis > 0 || hasActivityTxid(id, 'earned', owner)) {
+      noteInboundReceiveComplete({ txid: id, sats: satoshis }, owner)
     }
 
     scheduleHistoryBackupPush('internalizeAction')
@@ -906,8 +914,8 @@ async function internalizeBrc29PaymentOnce(opts: {
         typeof opts.satoshis === 'number' && opts.satoshis > 0
           ? Math.floor(opts.satoshis)
           : 0
-      if (satoshis > 0 || hasActivityTxid(id, 'earned')) {
-        noteInboundReceiveComplete({ txid: id, sats: satoshis })
+      if (satoshis > 0 || hasActivityTxid(id, 'earned', owner)) {
+        noteInboundReceiveComplete({ txid: id, sats: satoshis }, owner)
       }
       invalidateBalanceReads(active.wallet)
       const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)

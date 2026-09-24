@@ -18,6 +18,7 @@ import { scriptPaysAddress } from './ordinalOwnership'
 import { fetchBalanceSats, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { setSyncHealth } from './walletHealth'
+import { pinAccountKeyScope } from './accountLocalKeys'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
 import { getDisplayCurrency } from './displayCurrency'
@@ -64,10 +65,14 @@ export async function ingestPaymentByTxid(
     return { imported: 0, satoshis: 0, balanceSats: null, reason: 'locked' }
   }
 
-  markInboundPaymentStatus(id, 'Receiving (SPV)')
-  noteInboundReceivePending({ txid: id })
+  // Per-account Activity: pin the owner before any await, or a wallet switch
+  // mid-ingest files the row under the account that is open rather than the
+  // one the coin landed in.
+  const owner = pinAccountKeyScope(active)
   const startedIk = active.identityKey
   const startedIdx = active.accountIndex
+  markInboundPaymentStatus(id, 'Receiving (SPV)')
+  noteInboundReceivePending({ txid: id }, owner)
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing payment (SPV)',
@@ -117,7 +122,7 @@ export async function ingestPaymentByTxid(
       noteInboundReceiveComplete({
         txid: receiveTxid,
         sats: receipt.satoshis,
-      })
+      }, owner)
     }
 
     invalidateBalanceReads(active.wallet)

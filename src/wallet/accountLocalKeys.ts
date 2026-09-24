@@ -27,6 +27,29 @@ export function accountKeyScopeFor(
   }
 }
 
+/**
+ * Pin an account for work that spans awaits (ingest, heal, backup).
+ *
+ * Returns `undefined` when the wallet carries no usable identity so the caller
+ * falls back to the ambient scope instead of throwing: an inbound payment must
+ * never be lost to a scoping detail. Prefer this over {@link accountKeyScopeFor}
+ * anywhere the value is optional.
+ */
+export function pinAccountKeyScope(
+  wallet:
+    | { identityKey?: string; accountIndex?: number; chain?: 'main' | 'test' }
+    | null
+    | undefined,
+): BoundAccountKeyScope | undefined {
+  const identityKey = wallet?.identityKey?.trim()
+  if (!identityKey || typeof wallet?.accountIndex !== 'number') return undefined
+  return {
+    identityKey,
+    accountIndex: wallet.accountIndex,
+    chain: wallet.chain ?? 'main',
+  }
+}
+
 const SCOPE_SYMBOL = Symbol.for('handcash.wallet.account-key-scope')
 const globalScopes = globalThis as typeof globalThis & {
   [SCOPE_SYMBOL]?: AccountKeyScope
