@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.319] - 2026-09-24
+
+### Fixed
+
+- Identity proofs bind to the requesting host again. `normalizeOrigin`
+  collapses every HandCash catalog host onto `handcash.io` so one view grant
+  covers the market; handing that alias to the proof validator rejected honest
+  proofs (`INVALID_IDENTITY_PROOF` from `brc-cloud.bcryderman.workers.dev`) and
+  would have let a proof minted for one catalog host verify as another.
+- Activity filters panel is sized to the header in JS (`matchAnchorWidth`)
+  rather than through a CSS variable the positioner writes after measuring. A
+  panel that missed that pass collapsed to the width of the toggle.
+
+### Added
+
+- `matchAnchorWidth` on Aeon `Popover.Positioner`.
+
 ## [1.3.318] - 2026-09-24
 
 ### Changed

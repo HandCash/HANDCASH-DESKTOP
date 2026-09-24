@@ -4755,9 +4755,16 @@ button.identity-qr-copy:focus-visible {
   border-radius: var(--radius);
 }
 
+/*
+ * The positioner is sized to the header in JS (`matchAnchorWidth`), so the
+ * panel just fills it. Deriving the width from `--aeon-anchor-width` instead
+ * needed the measure pass to land before the paint, and a panel that missed it
+ * collapsed to the width of the toggle.
+ */
 .activity-filter-popover-content.is-panel-anchored {
-  width: var(--aeon-anchor-width, min(420px, calc(100vw - 24px)));
+  width: 100%;
   max-width: calc(100vw - 24px);
+  box-sizing: border-box;
   border-radius: var(--radius);
 }
 

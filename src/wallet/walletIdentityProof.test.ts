@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { normalizeAppHost } from './appIdentity'
+import { normalizeOrigin } from './permissions'
 import {
   serializeWalletIdentityChallenge,
   validateWalletIdentityProofRequest,
@@ -100,5 +102,45 @@ describe('wallet identity proof validation', () => {
         NOW,
       ),
     ).toEqual({ kind: 'not-identity-proof' })
+  })
+
+  /**
+   * `normalizeOrigin` collapses every HandCash catalog host onto `handcash.io`
+   * so one view grant covers the market. Handing that alias to the proof
+   * validator rejected honest proofs from those hosts
+   * (`code=INVALID_IDENTITY_PROOF` from brc-cloud) and would have let a proof
+   * minted for one catalog host verify as another. Identity proofs bind to the
+   * requesting host — `normalizeAppHost`.
+   */
+  it('binds a catalog host to itself, never to the shared view-grant alias', () => {
+    const CATALOG = 'brc-cloud.bcryderman.workers.dev'
+    expect(normalizeAppHost(CATALOG)).toBe(CATALOG)
+    expect(normalizeOrigin(CATALOG)).toBe('handcash.io')
+
+    const proof = {
+      data: Array.from(
+        new TextEncoder().encode(
+          serializeWalletIdentityChallenge({
+            domain: WALLET_IDENTITY_PROOF_DOMAIN,
+            version: 1,
+            origin: CATALOG,
+            nonce: 'AQEBAQEBAQEBAQEBAQEBAQ',
+            issuedAt: NOW - 1_000,
+            expiresAt: NOW + 60_000,
+            purpose: 'Run the HandCash BRC-100 reference implementation',
+          }),
+        ),
+      ),
+      protocolID: [...WALLET_IDENTITY_PROOF_PROTOCOL],
+      keyID: walletIdentityProofKeyID(CATALOG),
+      counterparty: 'anyone',
+    }
+
+    expect(
+      validateWalletIdentityProofRequest(proof, normalizeAppHost(CATALOG), NOW),
+    ).toMatchObject({ kind: 'valid' })
+    expect(
+      validateWalletIdentityProofRequest(proof, normalizeOrigin(CATALOG), NOW),
+    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/keyID/i) })
   })
 })

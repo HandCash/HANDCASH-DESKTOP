@@ -20,6 +20,7 @@ import {
   requestItemViewApproval,
   requestTokenViewApproval,
 } from './permissions'
+import { normalizeAppHost } from './appIdentity'
 import {
   isBsv21ReceiveArgs,
   isItemBasket,
@@ -773,9 +774,15 @@ async function handleBrc100RequestInner(
   }
 
   if (method === 'createSignature') {
+    // The real requesting host, not `normalizeOrigin`. That collapses every
+    // HandCash catalog host onto `handcash.io` so one view grant covers the
+    // market, which is the opposite of what an identity proof needs: binding
+    // to the origin *is* the proof. Aliasing rejected honest proofs from
+    // catalog hosts and would have let a proof minted for one of them verify
+    // as another.
     const proof = validateWalletIdentityProofRequest(
       args,
-      normalizeOrigin(originator),
+      normalizeAppHost(originator),
     )
     if (proof.kind === 'invalid') {
       return {

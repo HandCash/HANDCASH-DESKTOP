@@ -1265,6 +1265,7 @@ export function ActivityFeed({
             // hang a 420px panel off. Anchor to the activity header so the
             // panel covers the list it filters.
             anchorRef={compactShell ? headRef : undefined}
+            matchAnchorWidth={compactShell}
             onTrigger={() => playWalletSound("soft")}
             trigger={
               <>

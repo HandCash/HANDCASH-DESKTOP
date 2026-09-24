@@ -135,11 +135,21 @@ export interface PopoverPositionerProps extends HTMLAttributes<HTMLDivElement> {
   placement?: AnchorPlacement
   /** Align to this region rather than the trigger. See `FloatingPositioner`. */
   anchorRef?: RefObject<HTMLElement | null>
+  /** Size the panel to the anchor, so it spans the region it belongs to. */
+  matchAnchorWidth?: boolean
   children?: ReactNode
 }
 
 const Positioner = forwardRef<HTMLDivElement, PopoverPositionerProps>(function PopoverPositioner(
-  { portalled = true, placement = 'bottom-start', anchorRef, children, className, ...rest },
+  {
+    portalled = true,
+    placement = 'bottom-start',
+    anchorRef,
+    matchAnchorWidth = false,
+    children,
+    className,
+    ...rest
+  },
   ref,
 ) {
   const { open, triggerRef, positionerRef } = usePopoverCtx()
@@ -153,6 +163,7 @@ const Positioner = forwardRef<HTMLDivElement, PopoverPositionerProps>(function P
       triggerRef={triggerRef}
       positionerRef={positionerRef}
       anchorRef={anchorRef}
+      matchAnchorWidth={matchAnchorWidth}
       portalled={portalled}
       placement={placement}
       className={className}

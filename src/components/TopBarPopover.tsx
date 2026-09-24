@@ -17,6 +17,8 @@ type Props = {
    * bar rather than off the edge the toggle is pinned to.
    */
   anchorRef?: RefObject<HTMLElement | null>
+  /** Span the anchor rather than shrink-wrapping the panel's own content. */
+  matchAnchorWidth?: boolean
 }
 
 /**
@@ -35,6 +37,7 @@ export function TopBarPopover({
   contentClassName,
   onTrigger,
   anchorRef,
+  matchAnchorWidth = false,
 }: Props) {
   return (
     <Popover.Root className={className}>
@@ -47,7 +50,11 @@ export function TopBarPopover({
       >
         {trigger}
       </Popover.Trigger>
-      <Popover.Positioner placement="bottom-end" anchorRef={anchorRef}>
+      <Popover.Positioner
+        placement="bottom-end"
+        anchorRef={anchorRef}
+        matchAnchorWidth={matchAnchorWidth}
+      >
         <Popover.Content className={contentClassName}>{children}</Popover.Content>
       </Popover.Positioner>
     </Popover.Root>
