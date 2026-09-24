@@ -33,6 +33,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { AppsIcon, SettingsIcon, ViewGridIcon } from './icons'
 import { AppLaunchMenu } from './AppLaunchMenu'
+import { AppBrowserLauncher } from './AppBrowserLauncher'
 
 type Props = {
   apps: ConnectedApp[]
@@ -262,6 +263,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           <CollectionViewToggle label="Connected apps view" scope="apps" />
         </div>
       </div>
+      <AppBrowserLauncher />
       {apps.length === 0 ? (
         <EmptyState
           icon={<AppsIcon size={28} />}

@@ -36,7 +36,7 @@ import {
 import { announceItemsReceived } from './itemArrivalToast'
 import { contentUrlForOrigin } from './oneSatImport'
 import { rememberResolvedInscription } from './inscriptionCache'
-import { rememberItemArtFromScript } from './localItemArt'
+import { rememberItemArtFromScript, getItemArtDataUrl } from './localItemArt'
 import {
   classifyOneSatAsBsv21,
   isBsv21OneSatLock,
@@ -64,6 +64,7 @@ export type InternalizedItemTip = {
   name?: string
   app?: string
   collectionId?: string
+  imageUrl?: string
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -656,6 +657,7 @@ export function paintAfterCreateActionIssuance(
       outpoint: op,
       origin,
       name: issuanceNameFromArgs(args, out.vout) || 'Collectable',
+      imageUrl: getItemArtDataUrl(origin),
     })
   }
   if (itemTips.length === 0) return tokenPainted
@@ -684,7 +686,10 @@ export function paintAfterCreateActionIssuance(
           name,
           origin,
           outpoint: op,
-          imageUrl: contentUrlForOrigin(origin, active.chain),
+          imageUrl:
+            tip.imageUrl ||
+            getItemArtDataUrl(origin) ||
+            contentUrlForOrigin(origin, active.chain),
         },
       })
     }

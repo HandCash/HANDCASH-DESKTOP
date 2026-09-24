@@ -929,7 +929,8 @@ async function handleBrc100RequestInner(
     let result: unknown
     if (method === 'createAction' || method === 'signAction') {
       try {
-        setPaymentProgress('preparing', 'Waiting to send…')
+        // Pill only — never paint a Signed/Approving Activity ghost for app mints.
+        setPaymentProgress('preparing', 'Waiting to send…', null, 'Working…')
         result = await runExclusiveSpend(
           async () => {
             // Local balance check only — never block on address scan / chain ingest.
@@ -937,7 +938,7 @@ async function handleBrc100RequestInner(
             let actionArgs = args
             if (method === 'createAction' && args && typeof args === 'object') {
               try {
-                setPaymentProgress('preparing', 'Preparing payment')
+                setPaymentProgress('preparing', 'Preparing payment', null, 'Working…')
                 actionArgs = await enrichCreateActionForBsv21Issuer(
                   active,
                   args as Parameters<typeof enrichCreateActionForBsv21Issuer>[1],
@@ -955,6 +956,8 @@ async function handleBrc100RequestInner(
             setPaymentProgress(
               'broadcasting',
               'Signing and sending to the network',
+              null,
+              'Working…',
             )
             const created = await dispatchAppActionFundedFromHeldChange(
               active.wallet,
@@ -979,13 +982,13 @@ async function handleBrc100RequestInner(
             return created
           },
           () => {
-            setPaymentProgress('preparing', 'Preparing payment')
+            setPaymentProgress('preparing', 'Preparing payment', null, 'Working…')
           },
           // Apps must never wait for explorer/UTXO recovery. Local spendable
           // state decides now; reconciliation and healing remain asynchronous.
           { promote: false },
         )
-        setPaymentProgress('finishing', 'Updating your balance')
+        setPaymentProgress('finishing', 'Updating your balance', null, 'Working…')
       } catch (err) {
         clearPaymentProgress()
         const blocked = spendBlockedMessage(err)

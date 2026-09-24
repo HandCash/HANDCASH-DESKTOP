@@ -87,6 +87,41 @@ describe('mergeLiveOutbound', () => {
     ])
   })
 
+  it('does not paint Approving for app-bridge Working… progress', () => {
+    const progress = {
+      phase: 'broadcasting',
+      startedAt: NOW - 1_000,
+      label: 'Working…',
+      detail: 'Signing and sending to the network',
+      outpoint: null,
+    } as PaymentProgress
+
+    expect(mergeLiveOutbound([], progress, NOW)).toEqual([])
+  })
+
+  it('stands down once a mint earned row lands for this progress run', () => {
+    const progress = {
+      phase: 'broadcasting',
+      startedAt: NOW - 1_000,
+      detail: 'Signing…',
+      outpoint: null,
+      label: 'Sending…',
+    } as PaymentProgress
+    const minted = pendingRow({
+      id: 'minted',
+      kind: 'earned',
+      method: 'mint-collectable',
+      status: undefined,
+      txid: 'c'.repeat(64),
+      sats: 1,
+      item: { name: 'Robot', origin: OUTPOINT, outpoint: OUTPOINT },
+    })
+
+    expect(mergeLiveOutbound([minted], progress, NOW).map((e) => e.id)).toEqual([
+      'minted',
+    ])
+  })
+
   it('recognizes the exact settled item even when its row retained an older timestamp', () => {
     const settled = pendingRow({
       status: undefined,

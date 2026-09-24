@@ -44,6 +44,16 @@ function marketMethod(progress: PaymentProgress): 'market-list' | 'market-cancel
   return null
 }
 
+/**
+ * App-bridge createAction/signAction progress is for the status pill only.
+ * Painting it into Activity as Signed/Approving made mint and bounce rows
+ * stick after the real mint/payment row had already landed.
+ */
+function isAppBridgeProgress(progress: PaymentProgress): boolean {
+  const label = (progress.label || '').replace(/…/g, '').trim()
+  return /^working$/i.test(label)
+}
+
 export function liveOutboundActivityEntry(
   progress: PaymentProgress,
   now = Date.now(),
@@ -117,22 +127,33 @@ function hasSettledRowForSend(
 ): boolean {
   if (progress.startedAt == null) return false
   const sending = dottedOutpoint(progress.outpoint)
+  const startedAt = progress.startedAt
   return entries.some((entry) => {
-    if (
-      entry.kind !== 'spent' ||
-      entry.status === 'pending' ||
-      entry.status === 'failed' ||
-      !entry.txid
-    ) {
+    if (entry.status === 'pending' || entry.status === 'failed' || !entry.txid) {
       return false
     }
+    // App mint / issuance settles as earned rows. Matching only spent sends
+    // left the Approving projection on screen after Minted had already landed.
+    if (
+      !sending &&
+      entry.kind === 'earned' &&
+      entry.at >= startedAt &&
+      (entry.method === 'mint-token' ||
+        entry.method === 'mint-collectable' ||
+        entry.method === 'createAction' ||
+        entry.method === 'internalizeAction')
+    ) {
+      return true
+    }
+    if (entry.kind !== 'spent') return false
     const outpoint = dottedOutpoint(entry.item?.outpoint)
     // Item identity is exact and survives activity-row merges that deliberately
     // retain the row's original timestamp. Coin sends have no equivalent key,
     // so keep their time boundary to avoid matching an earlier payment.
-    return sending
-      ? outpoint === sending
-      : !outpoint && entry.at >= progress.startedAt!
+    if (sending) return outpoint === sending
+    if (outpoint) return false
+    if (entry.at < startedAt) return false
+    return true
   })
 }
 
@@ -147,6 +168,8 @@ export function mergeLiveOutbound(
   if (progress.phase === 'idle' || progress.phase === 'finishing') {
     return withoutLive
   }
+  // Bridge createAction uses the pill only — never a Signed/Approving Activity row.
+  if (isAppBridgeProgress(progress)) return withoutLive
   if (hasSettledRowForSend(withoutLive, progress)) return withoutLive
   if (hasDurableRowForSend(withoutLive, progress, now)) return withoutLive
   return [liveOutboundActivityEntry(progress, now), ...withoutLive]
