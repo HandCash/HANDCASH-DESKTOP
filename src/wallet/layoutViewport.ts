@@ -28,7 +28,12 @@ function measureCompact(
 
 function applyClass(next: boolean) {
   if (typeof document === 'undefined') return
-  document.documentElement.classList.toggle(LAYOUT_COMPACT_CLASS, next)
+  const root = document.documentElement
+  // Only touch the class when it actually differs. Writing it on every resize
+  // invalidates style for the whole document, and Android fires resize
+  // constantly for the URL bar, keyboard and system insets.
+  if (root.classList.contains(LAYOUT_COMPACT_CLASS) === next) return
+  root.classList.toggle(LAYOUT_COMPACT_CLASS, next)
 }
 
 function emit() {
@@ -52,9 +57,14 @@ export function isCompactLayout(): boolean {
   return compact
 }
 
+/**
+ * Register a listener. Deliberately does **not** call it on subscribe:
+ * `useSyncExternalStore` treats that as a store change during commit and
+ * answers with a synchronous, non-interruptible re-render of the subscribing
+ * subtree. Callers read the current value with {@link isCompactLayout}.
+ */
 export function subscribeCompactLayout(listener: Listener): () => void {
   listeners.add(listener)
-  listener(isCompactLayout())
   return () => {
     listeners.delete(listener)
   }

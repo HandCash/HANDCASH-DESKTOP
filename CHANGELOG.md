@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.320] - 2026-09-24
+
+### Fixed
+
+- UI lag introduced in 1.3.314. The compact-layout store notified its
+  listeners once on subscribe, which `useSyncExternalStore` reads as a store
+  change during commit and answers with a synchronous, non-interruptible
+  re-render of the subscribing subtree — in this case the whole activity feed.
+  It also rewrote `layout-compact` on the document element on every resize,
+  invalidating style for the entire document, and Android fires resize
+  constantly for the URL bar, keyboard and system insets.
+
+### Changed
+
+- The compact-shell subscription moved from `ActivityFeed` down into
+  `TopBarPopover`, so a layout change re-renders the popover rather than a long
+  activity list. Panels hand the popover a `compactAnchorRef` and it owns its
+  own positioning policy.
+
 ## [1.3.319] - 2026-09-24
 
 ### Fixed

@@ -1,5 +1,6 @@
 import { Popover } from '@aeon-ui/react'
 import type { ReactNode, RefObject } from 'react'
+import { useCompactShell } from '../wallet/isCompactShell'
 
 type Props = {
   ariaLabel: string
@@ -12,13 +13,19 @@ type Props = {
   contentClassName?: string
   onTrigger?: () => void
   /**
-   * Align the panel to this region instead of the trigger. A narrow shell can
-   * hand over the bar the toggle sits in, so the panel hangs under the whole
-   * bar rather than off the edge the toggle is pinned to.
+   * Region to anchor and size the panel to **on a compact shell**.
+   *
+   * A top bar toggle is a ~28px control pinned to one edge. On a phone that is
+   * the wrong thing to hang a wide panel off: it lands against the screen edge
+   * and the clamp can only push it back. Given the bar the toggle sits in, the
+   * panel spans that bar instead. Roomy shells keep the trigger-anchored
+   * default.
    */
-  anchorRef?: RefObject<HTMLElement | null>
-  /** Span the anchor rather than shrink-wrapping the panel's own content. */
-  matchAnchorWidth?: boolean
+  compactAnchorRef?: RefObject<HTMLElement | null>
+}
+
+function withPanelAnchored(base: string | undefined): string | undefined {
+  return base ? `${base} is-panel-anchored` : 'is-panel-anchored'
 }
 
 /**
@@ -36,11 +43,17 @@ export function TopBarPopover({
   triggerClassName,
   contentClassName,
   onTrigger,
-  anchorRef,
-  matchAnchorWidth = false,
+  compactAnchorRef,
 }: Props) {
+  // Subscribed here rather than in the owning panel: this is a leaf, so a
+  // layout change re-renders a popover instead of a long activity list.
+  const compact = useCompactShell()
+  const panelAnchored = compact && compactAnchorRef != null
+
   return (
-    <Popover.Root className={className}>
+    <Popover.Root
+      className={panelAnchored ? withPanelAnchored(className) : className}
+    >
       <Popover.Trigger
         className={triggerClassName}
         aria-label={ariaLabel}
@@ -52,10 +65,16 @@ export function TopBarPopover({
       </Popover.Trigger>
       <Popover.Positioner
         placement="bottom-end"
-        anchorRef={anchorRef}
-        matchAnchorWidth={matchAnchorWidth}
+        anchorRef={panelAnchored ? compactAnchorRef : undefined}
+        matchAnchorWidth={panelAnchored}
       >
-        <Popover.Content className={contentClassName}>{children}</Popover.Content>
+        <Popover.Content
+          className={
+            panelAnchored ? withPanelAnchored(contentClassName) : contentClassName
+          }
+        >
+          {children}
+        </Popover.Content>
       </Popover.Positioner>
     </Popover.Root>
   )

@@ -121,7 +121,6 @@ import {
   type PaymentProgress,
 } from "../wallet/paymentProgress";
 import { LIVE_OUTBOUND_ID, mergeLiveOutbound } from "../wallet/liveOutboundRow";
-import { useCompactShell } from "../wallet/isCompactShell";
 import {
   openPaymentDetails,
   openSetting,
@@ -895,7 +894,6 @@ export function ActivityFeed({
   viewAllLabel,
   onViewAll,
 }: FeedProps) {
-  const compactShell = useCompactShell();
   const headRef = useRef<HTMLDivElement | null>(null);
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
@@ -1249,23 +1247,13 @@ export function ActivityFeed({
           <TopBarPopover
             ariaLabel="Activity filters"
             title="Filters"
-            className={
-              compactShell
-                ? "activity-filter-popover is-panel-anchored"
-                : "activity-filter-popover"
-            }
+            className="activity-filter-popover"
             triggerClassName="activity-filter-toggle"
-            contentClassName={
-              compactShell
-                ? "activity-filter-popover-content is-panel-anchored"
-                : "activity-filter-popover-content"
-            }
+            contentClassName="activity-filter-popover-content"
             active={filtersActive}
-            // A 28px toggle at the right edge of a phone is the wrong thing to
-            // hang a 420px panel off. Anchor to the activity header so the
-            // panel covers the list it filters.
-            anchorRef={compactShell ? headRef : undefined}
-            matchAnchorWidth={compactShell}
+            // Phone: span the activity header, so the panel covers the list it
+            // filters instead of hanging off the toggle at the screen edge.
+            compactAnchorRef={headRef}
             onTrigger={() => playWalletSound("soft")}
             trigger={
               <>

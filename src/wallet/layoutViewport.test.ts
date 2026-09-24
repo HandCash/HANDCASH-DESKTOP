@@ -82,6 +82,47 @@ describe('layoutViewport', () => {
     unsub()
   })
 
+  /**
+   * `useSyncExternalStore` answers a store change with a synchronous,
+   * non-interruptible re-render of the subscribing subtree. Notifying on
+   * subscribe made every mount pay for one, which showed up as multi-second
+   * main-thread stalls once the activity feed subscribed.
+   */
+  it('does not notify on subscribe — only on a real layout change', () => {
+    const ctx = stubViewport(1180, 760)
+    startLayoutViewport()
+    const seen: boolean[] = []
+    const unsub = subscribeCompactLayout((c) => seen.push(c))
+    expect(seen).toEqual([])
+
+    ctx.setSize(500, 900)
+    window.dispatchEvent(new Event('resize'))
+    expect(seen).toEqual([true])
+    unsub()
+  })
+
+  /**
+   * Writing the class on every resize invalidates style for the whole
+   * document, and Android fires resize constantly for the URL bar and
+   * keyboard.
+   */
+  it('leaves the root class alone while the layout mode is unchanged', () => {
+    const ctx = stubViewport(600, 900)
+    startLayoutViewport()
+    const toggle = vi.spyOn(ctx.root.classList, 'toggle')
+
+    ctx.setSize(610, 910)
+    window.dispatchEvent(new Event('resize'))
+    ctx.setSize(620, 920)
+    window.dispatchEvent(new Event('resize'))
+    expect(toggle).not.toHaveBeenCalled()
+
+    ctx.setSize(1180, 760)
+    window.dispatchEvent(new Event('resize'))
+    expect(toggle).toHaveBeenCalledTimes(1)
+    toggle.mockRestore()
+  })
+
   it('start is idempotent', () => {
     stubViewport(1180, 760)
     const add = vi.spyOn(window, 'addEventListener')
