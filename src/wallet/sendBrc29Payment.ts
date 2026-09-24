@@ -81,6 +81,7 @@ import type { ItemTransferAsset, ItemTransferMember } from './messageStore'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
+import { announceCoinsReceived } from './receiveAnnounce'
 import { getDisplayCurrency } from './displayCurrency'
 import {
   alreadyInternalizedError,
@@ -895,6 +896,7 @@ async function internalizeBrc29PaymentOnce(opts: {
         'Payment received',
         formatPrimaryFromSats(gained, getDisplayCurrency()),
       )
+      announceCoinsReceived(gained)
     } else if (opts.announce !== false && gained <= 0) {
       console.info(
         `[brc29] internalized ${id.slice(0, 12)}… without a balance rise — no receive toast`,

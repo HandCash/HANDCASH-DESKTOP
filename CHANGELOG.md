@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.306] - 2026-09-24
+
+### Fixed
+
+- Money an app credited raised the balance but wrote no Activity row. A BRC-29
+  remittance names the output it is paying into but not its value, and the
+  toolbox answers a bare `{ accepted: true }`, so the bridge could not tell how
+  much had landed and skipped the row, the receive sound, and the notification
+  — only the balance moved. The credited amount was reported on one path only:
+  re-internalizing a transaction the wallet already had. `internalizeAction`
+  now prices the requested outputs from the BEEF it already parsed and reports
+  the txid and amount on every path, which also lets change from the receive be
+  kept for the next spend.
+- Receiving coins raised no notification on Android. The shell turns a
+  `handcash:receive` event into a system notification, but only legacy-address
+  sweeps and item arrivals ever dispatched one; coin receives merely raised an
+  in-app toast, which is invisible when the wallet is in the background. BRC-29
+  receives, receives resolved by txid, and app-credited funds now announce
+  themselves through `announceCoinsReceived`.
+
 ## [1.3.305] - 2026-09-24
 
 ### Added

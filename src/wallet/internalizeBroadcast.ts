@@ -23,6 +23,21 @@ function atomicBytes(args: unknown): number[] {
   return value.map(Number)
 }
 
+/** What this call credits: the requested output indexes, priced from the BEEF. */
+function creditedSatoshis(transaction: Transaction, args: unknown): number {
+  const outputs =
+    args && typeof args === 'object' && Array.isArray((args as { outputs?: unknown }).outputs)
+      ? (args as { outputs: Array<{ outputIndex?: unknown }> }).outputs
+      : []
+  let total = 0
+  for (const output of outputs) {
+    const index = Number(output?.outputIndex)
+    if (!Number.isInteger(index) || index < 0) continue
+    total += Number(transaction.outputs[index]?.satoshis || 0)
+  }
+  return total
+}
+
 /**
  * Import an app-supplied Atomic BEEF. The BEEF (plus remittance on the
  * BRC-100 call) is the exchange — SPV-valid locally. Arcade postBeef is a
@@ -36,24 +51,28 @@ export async function internalizeActionWithBroadcast(
   const atomic = atomicBytes(args)
   const transaction = Transaction.fromAtomicBEEF(Uint8Array.from(atomic))
   const txid = transaction.id('hex')
+  // A BRC-29 remittance names the output but not its value, and the toolbox
+  // answers a bare `{ accepted: true }`. Activity, the receive sound and the
+  // mobile notification are all driven off the credited amount, so a reply
+  // without it left money that had already landed with no row and no
+  // notification — the balance moved and nothing else did. We parsed the BEEF
+  // to get here, so say what this call actually credited on every path.
+  const satoshis = creditedSatoshis(transaction, args)
 
   let result: unknown
   try {
-    result = await withVisibleOnChainBeef(() =>
+    const accepted = await withVisibleOnChainBeef(() =>
       wallet.internalizeAction(args as never, originator),
     )
+    result = {
+      ...(accepted && typeof accepted === 'object' && !Array.isArray(accepted)
+        ? (accepted as unknown as Record<string, unknown>)
+        : { accepted: true }),
+      txid,
+      satoshis,
+    }
   } catch (error) {
     if (!alreadyInternalizedError(error)) throw error
-    const outputIndexes =
-      args && typeof args === 'object' && Array.isArray((args as { outputs?: unknown }).outputs)
-        ? ((args as { outputs: Array<{ outputIndex?: unknown }> }).outputs)
-            .map((output) => Number(output?.outputIndex))
-            .filter((index) => Number.isInteger(index) && index >= 0)
-        : []
-    const satoshis = outputIndexes.reduce(
-      (sum, index) => sum + Number(transaction.outputs[index]?.satoshis || 0),
-      0,
-    )
     result = { accepted: true, isMerge: true, txid, satoshis }
   }
 

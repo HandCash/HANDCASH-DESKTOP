@@ -21,6 +21,7 @@ import { setSyncHealth } from './walletHealth'
 import { pinAccountKeyScope } from './accountLocalKeys'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
+import { announceCoinsReceived } from './receiveAnnounce'
 import { getDisplayCurrency } from './displayCurrency'
 import { updateMessage, listMessages, listThreads } from './messageStore'
 
@@ -149,6 +150,7 @@ export async function ingestPaymentByTxid(
           'Payment received',
           formatPrimaryFromSats(gained, getDisplayCurrency()),
         )
+        announceCoinsReceived(gained)
       } else {
         console.info(
           `[payment-spv] swept ${id.slice(0, 12)}… without a balance rise — no receive toast`,

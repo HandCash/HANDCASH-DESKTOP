@@ -47,6 +47,7 @@ import {
   stampBsv21IconOnListedOutputs,
 } from './token'
 import { cacheCreateActionBeef } from './beefCache'
+import { announceCoinsReceived } from './receiveAnnounce'
 import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
   claimCloudHandlePayload,
@@ -1137,6 +1138,7 @@ async function handleBrc100RequestInner(
                 : undefined,
           })
           playWalletSound('receive')
+          announceCoinsReceived(sats)
         } else {
           playWalletSound('soft')
         }

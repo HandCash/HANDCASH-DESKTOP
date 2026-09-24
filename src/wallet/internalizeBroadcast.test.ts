@@ -70,13 +70,39 @@ describe('internalizeActionWithBroadcast', () => {
 
     await expect(
       internalizeActionWithBroadcast(wallet, args, 'example.com'),
-    ).resolves.toEqual({ accepted: true })
+    ).resolves.toEqual({ accepted: true, txid: fixture.txid, satoshis: 0 })
 
     expect(calls).toEqual(['validate', 'internalize', 'broadcast'])
     expect(broadcastAtomicBeef).toHaveBeenCalledWith(
       fixture.txid,
       fixture.atomic,
     )
+  })
+
+  it('reports the credited value on the ordinary accept, not just on a merge', async () => {
+    const { internalizeActionWithBroadcast } = await import(
+      './internalizeBroadcast'
+    )
+    const fixture = atomicFixture()
+    // What the toolbox actually answers: acceptance, and nothing about value.
+    // A BRC-29 remittance names the output but omits its amount, so without
+    // pricing the BEEF here the caller cannot tell how much landed — which
+    // left app payouts with a rising balance and no Activity row.
+    const wallet = {
+      internalizeAction: vi.fn(async () => ({ accepted: true })),
+    } as unknown as WalletInterface
+
+    await expect(
+      internalizeActionWithBroadcast(
+        wallet,
+        { tx: fixture.atomic, outputs: [{ outputIndex: 0 }] },
+        'example.com',
+      ),
+    ).resolves.toEqual({
+      accepted: true,
+      txid: fixture.txid,
+      satoshis: 1_000,
+    })
   })
 
   it('refuses malformed Atomic BEEF before wallet mutation or broadcast', async () => {
