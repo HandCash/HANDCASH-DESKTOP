@@ -23,7 +23,7 @@ import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
 import { announceCoinsReceived } from './receiveAnnounce'
 import { getDisplayCurrency } from './displayCurrency'
-import { updateMessage, listMessages, listThreads } from './messageStore'
+import { updateMessage, listAllMessages } from './messageStore'
 
 export type IngestPaymentByTxidResult = {
   imported: number
@@ -36,14 +36,15 @@ function markInboundPaymentStatus(txid: string, status: string): void {
   const id = txid.trim().toLowerCase()
   if (!id) return
   try {
-    for (const thread of listThreads()) {
-        for (const msg of listMessages(thread.peerId)) {
-        if (msg.direction !== 'in') continue
-        if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
-        if ((msg.meta?.txid || '').trim().toLowerCase() !== id) continue
-        updateMessage(msg.id, { meta: { status } })
-      }
-    }
+    // One flat pass. Walking threads re-read history per thread, and each
+    // update invalidates that history for the next one.
+    const matches = listAllMessages().filter(
+      (msg) =>
+        msg.direction === 'in' &&
+        (msg.kind === 'tip' || msg.kind === 'pay-sent') &&
+        (msg.meta?.txid || '').trim().toLowerCase() === id,
+    )
+    for (const msg of matches) updateMessage(msg.id, { meta: { status } })
   } catch {
     /* chat UI is optional */
   }

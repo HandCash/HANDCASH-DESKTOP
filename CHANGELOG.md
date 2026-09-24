@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.321] - 2026-09-24
+
+### Fixed
+
+- The real UI lag regression from 1.3.314. Chat history was re-serialized on
+  every read and every write to decide whether it needed trimming, and that
+  decision is a binary search that re-encodes on each probe — a `log2(n)`
+  multiple of a `JSON.stringify` over history allowed to reach 768KB. History
+  that already fits is now returned after a single encode, and the trim search
+  runs only when the blob is actually over budget.
+- Parsed chat history is cached against the exact stored blob, so callers that
+  walk every thread parse it once instead of once per thread.
+- `markInboundPaymentStatus` makes one flat pass over history rather than
+  reading it again for every thread while invalidating it on every update.
+  This ran per transaction during chain ingest, which is what the multi-second
+  `active: chainIngest` stalls were.
+
 ## [1.3.320] - 2026-09-24
 
 ### Fixed

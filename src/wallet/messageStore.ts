@@ -186,11 +186,36 @@ type ChatState = {
 export const MESSAGES_DURABLE_MAX_BYTES = 768 * 1024
 const MESSAGES_DURABLE_MAX_ENTRIES = 2000
 
+function encodeMessages(messages: ChatMessage[]): string {
+  return JSON.stringify({
+    v: storageRegistry.messages.version,
+    data: { messages },
+  })
+}
+
+/**
+ * Serialize history, dropping the oldest entries only when the blob would
+ * exceed the budget.
+ *
+ * The whole list is encoded once up front and returned as-is when it fits.
+ * Deciding *how much* to drop re-encodes on every probe of the search below,
+ * so running that unconditionally charged every read and write a `log2(n)`
+ * multiple of a JSON.stringify over history that is allowed to reach 768KB.
+ * Trimming is the rare case; it alone should pay for the search.
+ */
 function compactMessages(state: ChatState): {
   state: ChatState
   body: string
   dropped: number
 } {
+  const full = encodeMessages(state.messages)
+  if (
+    full.length <= MESSAGES_DURABLE_MAX_BYTES &&
+    state.messages.length <= MESSAGES_DURABLE_MAX_ENTRIES
+  ) {
+    return { state, body: full, dropped: 0 }
+  }
+
   const newest = state.messages
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -199,13 +224,7 @@ function compactMessages(state: ChatState): {
     const messages = newest
       .slice(0, count)
       .sort((a, b) => a.createdAt - b.createdAt)
-    return {
-      state: { messages },
-      body: JSON.stringify({
-        v: storageRegistry.messages.version,
-        data: { messages },
-      }),
-    }
+    return { state: { messages }, body: encodeMessages(messages) }
   }
 
   let low = newest.length > 0 ? 1 : 0
@@ -254,9 +273,29 @@ function migrateLegacy(): ChatState | null {
   }
 }
 
+/**
+ * Parsed history, keyed on the exact blob it came from. `durableGetItem` is an
+ * in-memory lookup; the cost worth avoiding is the `JSON.parse` behind it, and
+ * callers that walk every thread pay it repeatedly — `markInboundPaymentStatus`
+ * on the chain-ingest path reads history once per thread. Keying on the raw
+ * string rather than a write counter means anything that changes the store,
+ * including paths outside this module, invalidates it.
+ */
+let readCache: { key: string; raw: string | null; state: ChatState } | null =
+  null
+
 function readState(): ChatState {
+  const key = messagesStorageKey()
+  const raw = durableGetItem(key)
+  const cached = readCache
+  if (cached && cached.key === key && cached.raw === raw) return cached.state
+  const state = parseState(key, raw)
+  readCache = { key, raw, state }
+  return state
+}
+
+function parseState(key: string, raw: string | null): ChatState {
   try {
-    const raw = durableGetItem(messagesStorageKey())
     if (!raw) {
       const legacy = migrateLegacy()
       if (legacy) return legacy
@@ -274,9 +313,17 @@ function readState(): ChatState {
         ? (record.data as ChatState)
         : (decoded as ChatState)
     if (!parsed || !Array.isArray(parsed.messages)) return { messages: [] }
+    // The stored blob is its own size check, so history that is already in
+    // budget needs no re-encode to prove it.
+    if (
+      raw.length <= MESSAGES_DURABLE_MAX_BYTES &&
+      parsed.messages.length <= MESSAGES_DURABLE_MAX_ENTRIES
+    ) {
+      return { messages: parsed.messages }
+    }
     const compacted = compactMessages({ messages: parsed.messages })
     if (compacted.dropped > 0) {
-      durableSetItem(messagesStorageKey(), compacted.body)
+      durableSetItem(key, compacted.body)
       console.info(
         `[messages] dropped ${compacted.dropped} oldest message(s) to keep durable history under ${Math.round(
           MESSAGES_DURABLE_MAX_BYTES / 1024,
@@ -290,8 +337,9 @@ function readState(): ChatState {
 }
 
 function writeState(state: ChatState) {
+  const key = messagesStorageKey()
   const compacted = compactMessages(state)
-  durableSetItem(messagesStorageKey(), compacted.body)
+  durableSetItem(key, compacted.body)
   if (compacted.dropped > 0) {
     console.info(
       `[messages] dropped ${compacted.dropped} oldest message(s) to keep durable history under ${Math.round(
@@ -300,6 +348,7 @@ function writeState(state: ChatState) {
     )
   }
   messageWriteGeneration += 1
+  readCache = { key, raw: compacted.body, state: compacted.state }
   notify()
 }
 
