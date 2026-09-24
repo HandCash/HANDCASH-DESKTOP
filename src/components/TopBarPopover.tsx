@@ -11,6 +11,8 @@ type Props = {
   triggerClassName?: string
   contentClassName?: string
   onTrigger?: () => void
+  /** Keep the panel in layout flow so a compact shell can align it to its owning panel. */
+  portalled?: boolean
 }
 
 /**
@@ -28,6 +30,7 @@ export function TopBarPopover({
   triggerClassName,
   contentClassName,
   onTrigger,
+  portalled = true,
 }: Props) {
   return (
     <Popover.Root className={className}>
@@ -40,7 +43,7 @@ export function TopBarPopover({
       >
         {trigger}
       </Popover.Trigger>
-      <Popover.Positioner placement="bottom-end">
+      <Popover.Positioner placement="bottom-end" portalled={portalled}>
         <Popover.Content className={contentClassName}>{children}</Popover.Content>
       </Popover.Positioner>
     </Popover.Root>

@@ -4745,6 +4745,34 @@ button.identity-qr-copy:focus-visible {
   box-shadow: 0 16px 44px rgb(0 0 0 / 38%);
 }
 
+/*
+ * Compact shells keep the Aeon positioner inside the activity header. Treat
+ * the header as the anchor and use the whole panel below it, rather than
+ * growing rightward from a 28px button at the screen edge.
+ */
+.activity-filter-popover > [data-aeon-scope='popover'][data-aeon-part='positioner'] {
+  position: absolute;
+  inset: 100% 0 auto;
+  z-index: 8;
+  width: auto;
+}
+
+.activity-filter-popover
+  > [data-aeon-scope='popover'][data-aeon-part='positioner']
+  .activity-filter-popover-content {
+  width: 100%;
+  max-height: min(440px, 55dvh);
+  box-sizing: border-box;
+  border-radius: var(--radius);
+}
+
+.activity-filter-popover:has(
+    > [data-aeon-scope='popover'][data-aeon-part='positioner']
+  )[data-aeon-state='open']
+  .activity-filter-toggle {
+  border-radius: var(--radius);
+}
+
 .activity-filter-popover-content .payment-filters {
   margin: 0;
   border: 0;

@@ -121,6 +121,7 @@ import {
   type PaymentProgress,
 } from "../wallet/paymentProgress";
 import { LIVE_OUTBOUND_ID, mergeLiveOutbound } from "../wallet/liveOutboundRow";
+import { useCompactShell } from "../wallet/isCompactShell";
 import {
   openPaymentDetails,
   openSetting,
@@ -894,6 +895,7 @@ export function ActivityFeed({
   viewAllLabel,
   onViewAll,
 }: FeedProps) {
+  const compactShell = useCompactShell();
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
@@ -1250,6 +1252,7 @@ export function ActivityFeed({
             triggerClassName="activity-filter-toggle"
             contentClassName="activity-filter-popover-content"
             active={filtersActive}
+            portalled={!compactShell}
             onTrigger={() => playWalletSound("soft")}
             trigger={
               <>
