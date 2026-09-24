@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const store = new Map<string, string>();
+const announceSpendCompleted = vi.hoisted(() => vi.fn());
 
 vi.mock("./durableStorage", () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
@@ -8,6 +9,10 @@ vi.mock("./durableStorage", () => ({
     store.set(key, value);
     return true;
   },
+}));
+
+vi.mock("./spendAnnounce", () => ({
+  announceSpendCompleted,
 }));
 
 import {
@@ -405,6 +410,7 @@ describe("inbound receive activity", () => {
 
   beforeEach(() => {
     store.clear();
+    announceSpendCompleted.mockReset();
     clearAppActivity();
     __resetGhostTxSuppressForTests();
     __resetArcadeSubmitGuardForTests();
@@ -475,6 +481,30 @@ describe("inbound receive activity", () => {
     expect(rows[0]?.status).toBeUndefined();
     expect(rows[0]?.sats).toBe(100);
     expect(hasSettledActivityTxid(TX, "earned", { item: false })).toBe(true);
+  });
+
+  it("announces a completed spend, never its pending approval", () => {
+    noteOutboundSendPending({
+      pendingId: "notify-spend",
+      sats: 1000,
+      to: "1abc",
+    });
+    expect(announceSpendCompleted).not.toHaveBeenCalled();
+
+    noteOutboundSendComplete({
+      pendingId: "notify-spend",
+      txid: TX,
+      sats: 1000,
+      to: "1abc",
+    });
+    expect(announceSpendCompleted).toHaveBeenCalledOnce();
+    expect(announceSpendCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txid: TX,
+        sats: 1000,
+        method: "send",
+      })
+    );
   });
 
   it("keeps item and BSV receives on the same txid as separate rows", () => {

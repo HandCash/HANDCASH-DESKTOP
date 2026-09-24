@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.312] - 2026-09-24
+
+### Added
+
+- Every completed outgoing transaction now emits one wallet-level spend
+  announcement. BSV, collectable, token, market, and BRC-100 app spends all
+  converge at the settled Activity boundary, with transaction-id deduplication
+  so a multi-item batch produces one notification rather than one per leg.
+- The Mobile shell turns spend announcements into audible Wallet activity
+  notifications while HandCash is backgrounded, matching existing receive
+  notifications.
+
 ## [1.3.311] - 2026-09-24
 
 ### Fixed

@@ -12,6 +12,7 @@ import { getItemArtDataUrl } from "./localItemArt";
 import { isGhostTxSuppressed } from "./ghostTxSuppress";
 import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
+import { announceSpendCompleted } from "./spendAnnounce";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
@@ -359,6 +360,28 @@ function ownerIsCurrent(owner?: BoundAccountKeyScope): boolean {
     current.identityKey === owner.identityKey &&
     current.chain === owner.chain
   );
+}
+
+function announceSettledSpend(
+  entry: ActivityEntry,
+  owner?: BoundAccountKeyScope
+): void {
+  if (
+    !ownerIsCurrent(owner) ||
+    entry.kind !== "spent" ||
+    entry.status === "pending" ||
+    entry.status === "failed" ||
+    !entry.txid
+  ) {
+    return;
+  }
+  announceSpendCompleted({
+    txid: entry.txid,
+    sats: entry.sats,
+    method: entry.method,
+    note: entry.note,
+    item: entry.item,
+  });
 }
 
 /**
@@ -798,6 +821,7 @@ export function upsertAppActivity(args: {
       ).toISOString()}`
     );
     writeAll(entries, owner);
+    announceSettledSpend(entries[idx]!, owner);
     return;
   }
   logActivityWrite(
@@ -805,31 +829,30 @@ export function upsertAppActivity(args: {
     { kind: args.kind, method: args.method, sats, txid },
     `${entries.length + 1} row(s) held`
   );
-  writeAll([
-    ...entries,
-    {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-      origin,
-      kind: args.kind,
-      sats: isEvent ? 0 : sats,
-      at: Date.now(),
-      method: args.method,
-      note: args.note,
-      txid,
-      ...(item ? { item } : {}),
-      ...(pending ? { status: "pending" as const } : {}),
-      ...(failed ? { status: "failed" as const } : {}),
-      ...(failed
-        ? { failureReason: normalizeFailureReason(args.failureReason) }
-        : {}),
-      ...((pending || failed) && pendingId ? { pendingId } : {}),
-      ...(sendGroupId ? { sendGroupId } : {}),
-      ...(normalizeActivityRetry(args.retry)
-        ? { retry: normalizeActivityRetry(args.retry) }
-        : {}),
-      ...(args.burn ? { burn: args.burn } : {}),
-    },
-  ], owner);
+  const next: ActivityEntry = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    origin,
+    kind: args.kind,
+    sats: isEvent ? 0 : sats,
+    at: Date.now(),
+    method: args.method,
+    note: args.note,
+    txid,
+    ...(item ? { item } : {}),
+    ...(pending ? { status: "pending" as const } : {}),
+    ...(failed ? { status: "failed" as const } : {}),
+    ...(failed
+      ? { failureReason: normalizeFailureReason(args.failureReason) }
+      : {}),
+    ...((pending || failed) && pendingId ? { pendingId } : {}),
+    ...(sendGroupId ? { sendGroupId } : {}),
+    ...(normalizeActivityRetry(args.retry)
+      ? { retry: normalizeActivityRetry(args.retry) }
+      : {}),
+    ...(args.burn ? { burn: args.burn } : {}),
+  };
+  writeAll([...entries, next], owner);
+  announceSettledSpend(next, owner);
 }
 
 /** Activity row as soon as a peer tip/pay lands — before internalize finishes. */
