@@ -368,10 +368,36 @@ function writeAll(
   // Cap history so storage stays small.
   const trimmed = entries.slice(-2000);
   if (ownerIsCurrent(owner)) writeGeneration += 1;
-  durableSetItem(
-    activityStorageKey(owner),
-    JSON.stringify({ v: storageRegistry.activity.version, data: trimmed })
-  );
+  const key = activityStorageKey(owner);
+  // A refused write was silent, and the refusal drops the cached value — so on
+  // a full device the row was simply gone at the next read. A payment that had
+  // really happened left no trace, and a Sending… row marked failed reverted to
+  // pending forever. Shed the oldest history instead: it is also in the BRC-39
+  // replica, and losing the newest row is what makes the feed look broken.
+  let kept = trimmed;
+  for (;;) {
+    const body = JSON.stringify({
+      v: storageRegistry.activity.version,
+      data: kept,
+    });
+    if (durableSetItem(key, body)) {
+      if (kept.length < trimmed.length) {
+        console.warn(
+          `[activity] dropped ${
+            trimmed.length - kept.length
+          } oldest row(s) to fit durable storage`
+        );
+      }
+      break;
+    }
+    if (kept.length <= 1) {
+      console.error(
+        "[activity] durable write refused — storage is full; this row lives only until reload"
+      );
+      break;
+    }
+    kept = kept.slice(-Math.max(1, Math.floor(kept.length / 2)));
+  }
   if (ownerIsCurrent(owner)) {
     for (const cb of listeners) cb();
   }
@@ -1265,6 +1291,48 @@ export function expireStaleInboundPending(
   return removed;
 }
 
+/** Last time the stuck-row census was printed, so a busy feed says it once. */
+let lastStuckReportAt = 0;
+const STUCK_REPORT_INTERVAL_MS = 60_000;
+
+/**
+ * Name the Sending… rows that outlived their send, and say why they are still
+ * on screen.
+ *
+ * Stuck rows read as "Signed / Approving" forever, which is exactly what a live
+ * send looks like, so there is no way to tell a hung spend from debris left by
+ * one that succeeded without knowing when each row was written and whether the
+ * expiry pass is even reaching it.
+ */
+function reportStuckOutbound(
+  rows: ActivityEntry[],
+  now: number,
+  outcome: string
+): void {
+  const stuck = rows.filter(
+    (e) =>
+      e.status === "pending" &&
+      e.kind === "spent" &&
+      !e.txid &&
+      now - e.at >= 90_000
+  );
+  if (stuck.length === 0) return;
+  if (now - lastStuckReportAt < STUCK_REPORT_INTERVAL_MS) return;
+  lastStuckReportAt = now;
+  const detail = stuck
+    .slice(0, 6)
+    .map(
+      (e) =>
+        `${e.method}/${e.sats}sat age=${Math.round(
+          (now - e.at) / 1000
+        )}s id=${e.id} pending=${e.pendingId ?? "none"}`
+    )
+    .join(" · ");
+  console.warn(
+    `[activity] ${stuck.length} outbound row(s) stuck past 90s — ${outcome}: ${detail}`
+  );
+}
+
 /**
  * Mark Sending… rows older than `maxAgeMs` as failed when they never reached a
  * txid / complete. Matches the payment-progress stuck watchdog so Activity
@@ -1277,8 +1345,12 @@ export function expireStaleOutboundPending(
   // A hung send still holds spend priority after the pill watchdog fires.
   // Failing the Activity row while that work is alive made Sending… vanish
   // and look like a timeout even though nothing had returned yet.
-  if (shouldYieldChainIngestToSpend()) return 0;
+  if (shouldYieldChainIngestToSpend()) {
+    reportStuckOutbound(readAll(), now, "a spend holds priority");
+    return 0;
+  }
   const prev = readAll();
+  reportStuckOutbound(prev, now, "expiry ran");
   let expired = 0;
   const entries = prev.map((e) => {
     if (e.status !== "pending" || e.kind !== "spent") return e;

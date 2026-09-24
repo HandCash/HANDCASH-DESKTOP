@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.3.308] - 2026-09-24
+
+### Fixed
+
+- Signing for a connected app is seconds faster on a device whose storage is
+  full. The signed-cheque archive shed one cheque per attempt when a write was
+  refused, re-serializing the whole megabyte-capped archive each time. A full
+  store refuses every write regardless of size, so a single failed archive cost
+  hundreds of serialize-and-throw passes — around four seconds of blocked main
+  thread, twice per send, inside a `createAction` the app was waiting on. It now
+  halves the archive per pass and gives up in under a dozen.
+- Activity rows are no longer lost without a word when durable storage is full.
+  The write result was discarded and the refusal also drops the cached value, so
+  a payment that really happened could leave no row at all, and a stuck
+  `Sending…` row marked failed reverted to pending on the next read. The oldest
+  history is shed to make room instead — it is also in the BRC-39 replica — and
+  a genuinely unstorable row says so.
+
+### Added
+
+- A refused durable write now reports storage pressure once a minute: total
+  bytes held, key count, and the five largest keys. Below that layer callers
+  only see `false`, so a full device surfaced as unrelated custody and Activity
+  symptoms with nothing naming the cause.
+- Outbound Activity rows stuck past 90 seconds are logged with their age,
+  method, and whether the expiry pass reached them or yielded to a live spend.
+  A stuck row is drawn exactly like a live send, so there was no way to tell
+  debris from a hung spend.
+
 ## [1.3.307] - 2026-09-24
 
 ### Added

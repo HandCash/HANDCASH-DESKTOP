@@ -188,7 +188,51 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
     // value and report success: custody queues use this result to distinguish a
     // retryable signed cheque from one that would disappear on process exit.
     cache.delete(key)
+    reportStoragePressure(key, value.length)
     return false
+  }
+}
+
+/** Last time the store was reported full, so a burst of refusals says it once. */
+let lastPressureReportAt = 0
+const PRESSURE_REPORT_INTERVAL_MS = 60_000
+
+/**
+ * Name what filled the store when a durable write is refused.
+ *
+ * Callers below this layer only see `false`, so a full store surfaced as
+ * unrelated symptoms — cheques that would not archive, Activity rows that
+ * vanished on reload — with nothing saying the device had simply run out of
+ * room, or which key to blame.
+ */
+function reportStoragePressure(key: string, wanted: number): void {
+  const now = Date.now()
+  if (now - lastPressureReportAt < PRESSURE_REPORT_INTERVAL_MS) return
+  lastPressureReportAt = now
+  try {
+    let total = 0
+    const sizes: Array<{ key: string; bytes: number }> = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const name = localStorage.key(i)
+      if (name == null) continue
+      const bytes = (localStorage.getItem(name)?.length ?? 0) + name.length
+      total += bytes
+      sizes.push({ key: name, bytes })
+    }
+    sizes.sort((a, b) => b.bytes - a.bytes)
+    const worst = sizes
+      .slice(0, 5)
+      .map((row) => `${row.key}=${Math.round(row.bytes / 1024)}KB`)
+      .join(' ')
+    console.error(
+      `[storage] durable write refused for ${key} (${Math.round(
+        wanted / 1024,
+      )}KB) — ${Math.round(total / 1024)}KB held across ${
+        sizes.length
+      } keys · largest: ${worst}`,
+    )
+  } catch {
+    console.error(`[storage] durable write refused for ${key}`)
   }
 }
 

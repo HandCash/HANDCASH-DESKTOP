@@ -7,6 +7,7 @@ vi.mock('./durableStorage', () => ({
   durableGetItem: (k: string) => store.get(k) ?? null,
   durableSetItem: (k: string, v: string) => {
     store.set(k, v)
+    return true
   },
 }))
 

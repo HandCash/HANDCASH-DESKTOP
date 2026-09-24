@@ -12,6 +12,9 @@ vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
     store.set(key, value)
+    // The real one reports whether the write stuck; callers shed history when
+    // it did not. Returning `undefined` read as a full store.
+    return true
   },
 }))
 

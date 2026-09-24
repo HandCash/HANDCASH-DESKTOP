@@ -21,10 +21,13 @@ function atomicBeefFor(tx: Transaction): number[] {
 
 /** Origin-storage quota, the way a phone imposes it: refuse oversized writes. */
 let storeByteCap = Number.POSITIVE_INFINITY
+/** Serialize + write attempts, which is what the stall was made of. */
+let writeAttempts = 0
 
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
+    writeAttempts += 1
     if (value.length > storeByteCap) return false
     store.set(key, value)
     return true
@@ -35,6 +38,7 @@ describe('signedChequeArchive', () => {
   beforeEach(() => {
     store.clear()
     storeByteCap = Number.POSITIVE_INFINITY
+    writeAttempts = 0
   })
 
   it('keeps the signed Atomic BEEF after the miner outbox would drop it', async () => {
@@ -145,6 +149,29 @@ describe('signedChequeArchive', () => {
 
     expect(archiveSignedCheque(cheques[2]!.txid, cheques[2]!.atomic)).toBe(true)
     expect(listSignedChequeTxids()).toEqual([cheques[1]!.txid, cheques[2]!.txid])
+  })
+
+  // Shedding one cheque per pass meant a full store cost one megabyte-scale
+  // `JSON.stringify` per archived row before it gave up — several seconds of
+  // blocked main thread inside a send an app was waiting on, twice per send.
+  it('gives up on a full store in a handful of passes, not one per cheque', async () => {
+    bindAccountLocalKeyScope({
+      accountIndex: 0,
+      identityKey: 'identity-full',
+      chain: 'main',
+    })
+    const { archiveSignedCheque } = await import('./signedChequeArchive')
+    for (let index = 0; index < 120; index++) {
+      const tx = signedTx(1_000 + index)
+      expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(true)
+    }
+
+    storeByteCap = 0
+    writeAttempts = 0
+    const tx = signedTx(99_999)
+    expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(false)
+    // Halving 121 rows bottoms out in ~8 passes; one-at-a-time took 120.
+    expect(writeAttempts).toBeLessThanOrEqual(12)
   })
 
   it('refuses only when the newest cheque alone cannot be stored', async () => {

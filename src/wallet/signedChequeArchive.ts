@@ -195,13 +195,20 @@ function saveStored(
       }
       return true
     }
-    if (kept.length <= 1) return false
-    const removable = kept.findIndex(
-      (row, index) =>
-        index < kept.length - 1 && !protectedTxids.has(row.txid),
+    const evictable: number[] = []
+    for (let index = 0; index < kept.length - 1; index++) {
+      if (!protectedTxids.has(kept[index]!.txid)) evictable.push(index)
+    }
+    if (evictable.length === 0) return false
+    // Halve, rather than shedding one cheque per pass. When the store is full
+    // every write is refused whatever the body, so dropping a single row and
+    // re-serializing turned one failed archive into hundreds of megabyte
+    // `JSON.stringify` + throwing `setItem` pairs — seconds of main-thread
+    // stall inside a send a BRC-100 app is blocked on.
+    const drop = new Set(
+      evictable.slice(0, Math.max(1, Math.ceil(evictable.length / 2))),
     )
-    if (removable < 0) return false
-    kept = kept.filter((_, index) => index !== removable)
+    kept = kept.filter((_, index) => !drop.has(index))
   }
 }
 
