@@ -83,21 +83,16 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     icon: <LaunchIcon size={18} />,
   }
 
-  // Mobile's system browser cannot reach the local BRC-100 bridge, so in-app
-  // is the primary path there. Desktop keeps the system browser as default.
-  const preferInAppPrimary = surface.surface === 'native'
+  // System browser is the default return path after connect. In-app only when
+  // the user explicitly picks it here.
   const actions = {
     ariaLabel: `Launch ${name}`,
     tertiary: cancelAction,
-    secondary: preferInAppPrimary
-      ? { ...browserAction, tone: 'secondary' as const }
-      : inAppAction,
-    primary: preferInAppPrimary
-      ? { ...inAppAction, tone: 'primary' as const }
-      : {
-          ...browserAction,
-          tone: 'primary' as const,
-        },
+    secondary: inAppAction,
+    primary: {
+      ...browserAction,
+      tone: 'primary' as const,
+    },
   }
 
   return (
@@ -116,11 +111,9 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       </div>
 
       <p className="permission-note">
-        {surface.surface === 'native'
-          ? 'Opens inside HandCash so the app can reach your wallet. Use the system browser only when you do not need the bridge.'
-          : inAppAvailable
-            ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
-            : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
+        {inAppAvailable
+          ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
+          : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
       </p>
     </WalletRequestTemplate>
   )

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.328] - 2026-09-24
+
+### Fixed
+
+- Reverts accidental launch-default changes. Open in browser stays the default;
+  Open in-app remains an explicit choice on every surface.
+
 ## [1.3.327] - 2026-09-24
 
 ### Fixed
@@ -7,9 +14,8 @@
 - App `createAction` / mint progress no longer paints a stuck `Signed` /
   `Approving` Activity row. Bridge work uses a Working… pill only, and a
   completed mint earned row retires any leftover live outbound projection.
-- Mobile Apps restores the in-app URL launcher and defaults launch / Visit
-  site to the native wallet browser (Chrome cannot reach loopback `:3321`).
-  Desktop still defaults to the system browser; Open in-app stays available.
+- Mobile Apps restores the in-app URL launcher and adds Back/Forward to the
+  native wallet browser toolbar (same controls as Desktop's in-app panel).
 - Fresh mint activity prefers the local inscription bytes for the card image.
 
 ## [1.3.326] - 2026-09-24

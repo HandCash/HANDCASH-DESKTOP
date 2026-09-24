@@ -70,23 +70,7 @@ describe('openAppInWalletBrowser', () => {
    * Mobile has no Electron `<webview>`, but `openAppBrowser` launches its
    * native DappBrowserActivity with the CWI bridge to :3321.
    */
-  it('opens the native in-app browser on mobile by default', async () => {
-    const openAppBrowser = vi.fn(async () => ({ ok: true as const }))
-    vi.stubGlobal('window', {
-      handcash: { openExternal, openAppBrowser },
-    })
-    await expect(
-      openAppInWalletBrowser({
-        origin: 'https://pixelwar.click',
-        url: 'https://pixelwar.click/',
-      }),
-    ).resolves.toBe('native')
-    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
-    expect(openAppBrowser).toHaveBeenCalledWith('https://pixelwar.click/')
-    expect(openExternal).not.toHaveBeenCalled()
-  })
-
-  it('opens the native in-app browser on mobile when preferInApp is set', async () => {
+  it('opens the native in-app browser on mobile', async () => {
     const openAppBrowser = vi.fn(async () => ({ ok: true as const }))
     vi.stubGlobal('window', {
       handcash: { openExternal, openAppBrowser },
@@ -98,7 +82,9 @@ describe('openAppInWalletBrowser', () => {
         preferInApp: true,
       }),
     ).resolves.toBe('native')
+    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
     expect(openAppBrowser).toHaveBeenCalledWith('https://pixelwar.click/')
+    expect(openExternal).not.toHaveBeenCalled()
   })
 
   it('falls back to the system browser when the native browser refuses', async () => {

@@ -22,26 +22,21 @@ async function openSystemBrowser(url: string): Promise<boolean> {
 /**
  * Open a connected-app URL.
  *
- * Desktop may hand off to the system browser. On mobile the system browser
- * cannot reach loopback `:3321`, so the wallet's native in-app browser is the
- * default whenever that surface exists — pass `preferInApp: false` only when
- * the user explicitly chose "Open in browser".
+ * Default is the **system browser** so connect / launch returns the user to
+ * Chrome (or their default). Pass `preferInApp: true` only when the user
+ * explicitly chose the in-app browser.
  */
 export async function openAppInWalletBrowser(args: {
   origin: string
   url: string
-  /** Force in-app (true) or system browser (false). Omit to pick by surface. */
+  /** Only when the user explicitly asked for the in-app browser. */
   preferInApp?: boolean
 }): Promise<'embedded' | 'native' | 'external' | 'unavailable'> {
   const target = decideAppBrowserTarget(args.url)
   if (target.kind !== 'open') return 'unavailable'
 
-  const surface = chooseAppBrowserSurface(window.handcash)
-  // Mobile's system browser cannot reach loopback `:3321`, so in-app is the
-  // default there. Desktop keeps the system browser unless preferInApp is set.
-  const preferInApp = args.preferInApp ?? surface.surface === 'native'
-
-  if (preferInApp) {
+  if (args.preferInApp) {
+    const surface = chooseAppBrowserSurface(window.handcash)
     if (surface.surface === 'embedded') {
       openEmbeddedAppBrowser(args.origin, target.url)
       return 'embedded'
