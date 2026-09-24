@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
   ARCADE_V2_DEV_PROXY_MAIN,
   ARCADE_V2_DEV_PROXY_TEST,
+  arcadeBoundFetch,
   arcadeV2BaseUrl,
   classifyArcadeTxStatus,
   fetchArcadeTxFate,
@@ -36,6 +37,34 @@ describe('stripArcadeCorsForbiddenHeaders', () => {
       'Content-Type': 'application/json',
       'X-CallbackToken': 'tok',
     })
+  })
+})
+
+describe('arcadeBoundFetch', () => {
+  it('survives toolbox-style unbound call sites (Android WebView)', async () => {
+    const native = function (
+      this: unknown,
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> {
+      // Chromium/WebView: window.fetch requires its Window receiver.
+      if (this !== globalThis) {
+        throw new TypeError('Illegal invocation')
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }))
+    }
+    vi.stubGlobal('fetch', native)
+    try {
+      const unboundNative = globalThis.fetch
+      expect(() => unboundNative('https://example.test/getChain')).toThrow(
+        /Illegal invocation/,
+      )
+      await expect(arcadeBoundFetch('https://example.test/getChain')).resolves.toBeInstanceOf(
+        Response,
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

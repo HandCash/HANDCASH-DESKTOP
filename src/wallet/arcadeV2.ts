@@ -150,6 +150,31 @@ async function fetchArcadeTxFateRecursive(
   }
 }
 
+/**
+ * Fetch that never depends on call-site `this`.
+ *
+ * `GoChaintracksServiceClient` stores `options.fetch ?? fetch` and later calls
+ * `this.fetcher(url, init)`. On Android WebView, an unbound window `fetch`
+ * throws `TypeError: Illegal invocation` (lab phone hc-a580a: monitor
+ * `_init` → `getChain` → `consumeWithTimeout`). An arrow wrapper always
+ * reaches `globalThis.fetch` with the right receiver.
+ */
+export const arcadeBoundFetch: typeof fetch = (input, init) =>
+  globalThis.fetch(input, init)
+
+/** Options shared by every Arcade go-chaintracks client we install. */
+function goChaintracksOptions(): {
+  apiPrefix: '/chaintracks/v2'
+  requestTimeoutMsecs: number
+  fetch: typeof fetch
+} {
+  return {
+    apiPrefix: '/chaintracks/v2',
+    requestTimeoutMsecs: 8_000,
+    fetch: arcadeBoundFetch,
+  }
+}
+
 /** Arcade preflight rejects this header from https://localhost (Capacitor / Vite). */
 export function stripArcadeCorsForbiddenHeaders(
   headers?: Record<string, string>,
@@ -208,10 +233,11 @@ export function installArcadeV2ChaintracksOnly(services: Services, chain: Chain)
 
   try {
     const s = services as unknown as ServicesPatchTarget
-    s.options.chaintracks = new GoChaintracksServiceClient(chain, base, {
-      apiPrefix: '/chaintracks/v2',
-      requestTimeoutMsecs: 8_000,
-    })
+    s.options.chaintracks = new GoChaintracksServiceClient(
+      chain,
+      base,
+      goChaintracksOptions(),
+    )
     console.info('[arcade-v2] chaintracks on', base)
   } catch (err) {
     console.warn('[arcade-v2] chaintracks install failed', err)
@@ -235,10 +261,11 @@ export function installArcadeV2Services(services: Services, chain: Chain): void 
   try {
     const s = services as unknown as ServicesPatchTarget
 
-    s.options.chaintracks = new GoChaintracksServiceClient(chain, base, {
-      apiPrefix: '/chaintracks/v2',
-      requestTimeoutMsecs: 8_000,
-    })
+    s.options.chaintracks = new GoChaintracksServiceClient(
+      chain,
+      base,
+      goChaintracksOptions(),
+    )
     s.options.arcadeUrl = base
     s.options.arcadeConfig = {
       ...(s.options.arcadeConfig ?? {}),

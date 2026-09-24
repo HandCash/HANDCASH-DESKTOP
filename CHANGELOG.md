@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.329] - 2026-09-24
+
+### Fixed
+
+- Arcade go-chaintracks no longer throws `TypeError: Illegal invocation` on
+  Android WebView. Monitor `_init` → `getChain` was calling unbound window
+  `fetch`; the client now uses a bound fetch wrapper.
+
 ## [1.3.328] - 2026-09-24
 
 ### Fixed
