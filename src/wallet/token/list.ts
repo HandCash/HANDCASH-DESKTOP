@@ -68,12 +68,18 @@ function listCacheKey(): string {
 
 let cached: FungibleToken[] = []
 let hydrated = false
+/** Public, deadline-bounded view of the current refresh. */
 let listInFlight: Promise<FungibleToken[]> | null = null
-let listInFlightAt = 0
+/**
+ * Actual wallet work. `listOutputs` cannot be cancelled: a timeout may release
+ * the UI caller, but this marker must stay occupied until the SDK really
+ * settles or a second read will pile onto the same IndexedDB/crypto queue.
+ */
+let listWorkInFlight: Promise<FungibleToken[]> | null = null
 /** Newest started read. Older runs may finish, but must not publish. */
 let listRunSeq = 0
-/** How long a caller will wait on someone else's read before running its own. */
-const LIST_JOIN_DEADLINE_MS = 20_000
+/** UI callers get durable paint instead of waiting indefinitely on wallet work. */
+const LIST_CALL_TIMEOUT_MS = 13_000
 /** A basket read that takes longer than this is treated as unavailable. */
 const LIVE_READ_TIMEOUT_MS = 12_000
 /** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
@@ -731,6 +737,7 @@ export function clearFungiblesCache(options?: { notify?: boolean }): void {
   cached = []
   hydrated = false
   listInFlight = null
+  listWorkInFlight = null
   durableRemoveItem(listCacheKey())
   if (options?.notify !== false) notify()
 }
@@ -741,7 +748,7 @@ export function rebindFungiblesForAccount(): void {
   cached = []
   hydrated = false
   listInFlight = null
-  listInFlightAt = 0
+  listWorkInFlight = null
   encodingProofInFlight.clear()
   encodingProofRetries.clear()
   const durable = loadDurableList()
@@ -995,35 +1002,49 @@ function parseListedOutput(
  * Every Collect visit lists `bsv21` alongside `1sat`. Coalesce identical reads
  * (same pattern as collectables) so nav flips do not stack listOutputs.
  *
- * Coalescing has a deadline. A read that never settles — a basket call parked
- * behind a send, an account rebind mid-spend — used to be joined by every
- * later caller forever, so the Tokens list stopped tracking the wallet for the
- * rest of the session while Collect kept refreshing beside it. After the
- * deadline a new caller starts its own read; the abandoned one can no longer
- * write, because {@link listFungiblesNow} only publishes for the newest run.
+ * Wallet basket reads are not cancellable. A deadline therefore releases only
+ * the UI caller to durable cache; it must not release the single-flight lock.
+ * Starting a replacement while the old call is alive piles synchronous
+ * IndexedDB/crypto work onto Android (the field trace showed 36s, 62s and 83s
+ * reads alive together, each blocking the renderer in four-second chunks).
  */
 export function listFungibles(active?: ActiveWallet | null): Promise<FungibleToken[]> {
-  if (listInFlight && Date.now() - listInFlightAt < LIST_JOIN_DEADLINE_MS) {
-    return listInFlight
-  }
-  if (listInFlight) {
-    console.warn(
-      `[bsv21] previous list never settled after ${Math.round((Date.now() - listInFlightAt) / 1000)}s — starting a fresh read`,
-    )
-  }
+  if (listInFlight) return listInFlight
   return startFungiblesList(active)
 }
 
 function startFungiblesList(
   active?: ActiveWallet | null,
 ): Promise<FungibleToken[]> {
-  const run = listFungiblesNow(active)
+  const work = listFungiblesNow(active)
+  listWorkInFlight = work
+  const run = new Promise<FungibleToken[]>((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(
+        `[bsv21] refresh still running after ${LIST_CALL_TIMEOUT_MS}ms — serving durable cache without starting another read`,
+      )
+      resolve(getCachedFungibles())
+    }, LIST_CALL_TIMEOUT_MS)
+    work.then(
+      (rows) => {
+        clearTimeout(timer)
+        resolve(rows)
+      },
+      (err) => {
+        clearTimeout(timer)
+        console.warn('[bsv21] list failed', err)
+        resolve(getCachedFungibles())
+      },
+    )
+  })
   listInFlight = run
-  listInFlightAt = Date.now()
-  void run
+  void work
     .catch(() => {})
     .then(() => {
-      if (listInFlight === run) listInFlight = null
+      if (listWorkInFlight === work) {
+        listWorkInFlight = null
+        listInFlight = null
+      }
     })
   return run
 }
@@ -1183,12 +1204,8 @@ async function listFungiblesNow(
   } = await import('../walletCoordinator')
   const coord = getWalletCoordinatorSnapshot()
   const cachedRows = getCachedFungibles()
-  const cacheNeedsWireClassification = cachedRows.some(
-    (row) => row.binarySupply == null && row.encoding == null,
-  )
   if (
     cachedRows.length > 0 &&
-    !cacheNeedsWireClassification &&
     (coord.chainIngest === 'active' ||
       coord.spend === 'active' ||
       shouldYieldChainIngestToSpend() ||
@@ -1222,14 +1239,29 @@ async function listFungiblesNow(
       }
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
-    const recoveredHeld = await recoverCachedLegacyTips(
-      wallet,
-      new Set(
-        cached
-          .map((token) => normalizeTokenId(token.tokenId))
-          .filter((id): id is string => Boolean(id)),
-      ),
+    // Recovery is a spendability repair, not a timeout fallback. On Android
+    // each restore can synchronously decrypt/index the wallet for seconds. A
+    // live read that never answered supplied no evidence that any cached tip is
+    // missing, so walking every cached token here only amplifies the outage.
+    const liveTokenIds = new Set(
+      liveRows
+        .map((token) => normalizeTokenId(token.tokenId))
+        .filter((id): id is string => Boolean(id)),
     )
+    const missingTokenIds = new Set(
+      liveReadUsable
+        ? cached
+            .map((token) => normalizeTokenId(token.tokenId))
+            .filter(
+              (id): id is string =>
+                typeof id === 'string' && !liveTokenIds.has(id),
+            )
+        : [],
+    )
+    const recoveredHeld =
+      missingTokenIds.size > 0
+        ? await recoverCachedLegacyTips(wallet, missingTokenIds)
+        : []
     if (recoveredHeld.length > 0) {
       liveRows = mergeLiveFungibles(aggregateFungibles(recoveredHeld), liveRows)
     }

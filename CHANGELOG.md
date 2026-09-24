@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.325] - 2026-09-24
+
+### Fixed
+
+- Timed-out Collect and Tokens basket reads no longer create replacement
+  `listOutputs` calls while the uncancellable Toolbox work is still alive.
+  Android had three reads stacked at 36s, 62s, and 83s; each repeatedly walked
+  cached token restoration and blocked the renderer in four-second chunks.
+  Callers now fall back to durable paint while the one raw read retains the
+  single-flight lock, busy chain-ingest/recompose always serves cache, and a
+  timed-out token read does not run evidence repair without live evidence.
+- Collectables issued by an app `createAction` are recorded as `Minted`, and a
+  later chain-ingest receipt merge preserves that classification instead of
+  rewriting it to `Received`.
+
 ## [1.3.324] - 2026-09-24
 
 ### Changed

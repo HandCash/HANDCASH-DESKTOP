@@ -276,6 +276,32 @@ describe('collectables across a cold open', () => {
     expect(getCachedCollectables()[0]?.name).toBe('Test Item')
   })
 
+  it('does not replace a timed-out raw basket read with another live read', async () => {
+    vi.useFakeTimers()
+    try {
+      seedDurableList(IDENTITY)
+      const stalledWallet = {
+        ...active,
+        wallet: {
+          listOutputs: vi.fn(() => new Promise<never>(() => {})),
+        },
+      }
+      const { listCollectables } = await import('./collectables')
+
+      const first = listCollectables(stalledWallet as never)
+      await vi.advanceTimersByTimeAsync(21_000)
+      await first
+      expect(stalledWallet.wallet.listOutputs).toHaveBeenCalledTimes(1)
+
+      const second = listCollectables(stalledWallet as never)
+      await vi.advanceTimersByTimeAsync(21_000)
+      await second
+      expect(stalledWallet.wallet.listOutputs).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('drops hashed origin-only cards from the durable list', async () => {
     store.set(
       LIST_CACHE_KEY,

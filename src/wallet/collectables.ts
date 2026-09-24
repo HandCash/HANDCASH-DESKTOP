@@ -2248,6 +2248,11 @@ async function walkInscription(
 
 let listInFlight: Promise<Collectable[]> | null = null
 let listMoreInFlight: Promise<Collectable[]> | null = null
+let collectableBasketReadInFlight: {
+  wallet: ActiveWallet['wallet']
+  offset: number
+  promise: ReturnType<ActiveWallet['wallet']['listOutputs']>
+} | null = null
 
 /**
  * Ceiling on one basket read.
@@ -2270,6 +2275,49 @@ export async function listOutputsWithTimeout(
       setTimeout(() => reject(new Error('listOutputs timed out')), timeoutMs),
     ),
   ])
+}
+
+/**
+ * The timeout above cannot cancel Toolbox work. Keep the raw basket read
+ * single-flight after a caller times out, otherwise every Collect re-entry
+ * starts another synchronous IndexedDB/crypto walk behind the first.
+ */
+function listCollectableBasketPage(
+  wallet: ActiveWallet['wallet'],
+  offset: number,
+): ReturnType<ActiveWallet['wallet']['listOutputs']> {
+  const current = collectableBasketReadInFlight
+  if (current && current.wallet === wallet && current.offset === offset) {
+    return current.promise
+  }
+  const promise = wallet.listOutputs({
+    basket: '1sat',
+    limit: LIST_PAGE_SIZE,
+    // Negative offsets are newest-first. Keep a raw-output cursor because
+    // sent/non-item rows may be filtered after the wallet page returns.
+    offset: -(offset + 1),
+    includeTags: true,
+    // Locking scripts are small and let us spare covenant tips from
+    // address-scan ghosting. Never pull customInstructions for a whole
+    // basket: remittance BEEF (~400k chars each) crashed phones.
+    includeCustomInstructions: false,
+    include: 'locking scripts',
+    seekPermission: false,
+  })
+  collectableBasketReadInFlight = { wallet, offset, promise }
+  void promise.then(
+    () => {
+      if (collectableBasketReadInFlight?.promise === promise) {
+        collectableBasketReadInFlight = null
+      }
+    },
+    () => {
+      if (collectableBasketReadInFlight?.promise === promise) {
+        collectableBasketReadInFlight = null
+      }
+    },
+  )
+  return promise
 }
 
 /**
@@ -2632,20 +2680,7 @@ async function listCollectablesNow(
 
   try {
     const result = await Promise.race([
-      wallet.wallet.listOutputs({
-        basket: '1sat',
-        limit: LIST_PAGE_SIZE,
-        // Negative offsets are newest-first. Keep a raw-output cursor because
-        // sent/non-item rows may be filtered after the wallet page returns.
-        offset: -(pageOffset + 1),
-        includeTags: true,
-        // Locking scripts are small and let us spare covenant tips from
-        // address-scan ghosting. Never pull customInstructions for a whole
-        // basket: remittance BEEF (~400k chars each) crashed phones.
-        includeCustomInstructions: false,
-        include: 'locking scripts',
-        seekPermission: false,
-      }),
+      listCollectableBasketPage(wallet.wallet, pageOffset),
       new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('listOutputs timed out')),

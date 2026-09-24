@@ -769,6 +769,9 @@ export function upsertAppActivity(args: {
       prev.method === "receive-token" ||
       prev.method === "send-token" ||
       prev.method === "mint-token";
+    const preserveCollectableMint =
+      prev.method === "mint-collectable" &&
+      args.method === "receive-collectable";
     const nextItem =
       prevIsToken && args.method === "receive-collectable"
         ? prev.item
@@ -778,7 +781,8 @@ export function upsertAppActivity(args: {
           : item
         : prev.item;
     const nextMethod =
-      prevIsToken && args.method === "receive-collectable"
+      (prevIsToken && args.method === "receive-collectable") ||
+      preserveCollectableMint
         ? prev.method
         : args.method || prev.method;
     const nextPendingId = pendingId || prev.pendingId;
@@ -793,7 +797,7 @@ export function upsertAppActivity(args: {
       origin: origin || prev.origin,
       sats: isEvent ? 0 : sats > 0 ? sats : prev.sats,
       method: nextMethod,
-      note: args.note ?? prev.note,
+      note: preserveCollectableMint ? prev.note : args.note ?? prev.note,
       txid: txid || prev.txid,
       ...(nextItem ? { item: nextItem } : {}),
       ...(nextStatus === "pending" || nextStatus === "failed"
@@ -2344,6 +2348,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   }
   if (entry.item?.name) {
     const name = entry.item.name;
+    if (entry.method === "mint-collectable") return `Minted ${name}`;
     if (isBurnActivity(entry)) return `Burned ${name}`;
     if (entry.method === "market-sale") return `Sold ${name}`;
     if (entry.method === "market-purchase-receive") return `Bought ${name}`;

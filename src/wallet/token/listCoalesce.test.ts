@@ -7,6 +7,7 @@ const store = new Map<string, string>()
 const liveRead = { run: async (): Promise<unknown[]> => [] }
 /** Unbounded await inside the list, used to simulate a stalled read. */
 const restoreAsset = { run: async (): Promise<boolean> => false }
+let restoreCalls = 0
 
 vi.mock('../durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
@@ -40,7 +41,10 @@ vi.mock('./listTips', () => ({
 }))
 
 vi.mock('../staleOutputRelease', () => ({
-  restoreUnspentAssetOutpoint: () => restoreAsset.run(),
+  restoreUnspentAssetOutpoint: () => {
+    restoreCalls += 1
+    return restoreAsset.run()
+  },
 }))
 
 vi.mock('../txStore', () => ({ isLocalUnconfirmedTxid: () => false }))
@@ -86,6 +90,7 @@ describe('listFungibles coalescing', () => {
     vi.useFakeTimers()
     liveRead.run = async () => []
     restoreAsset.run = async () => false
+    restoreCalls = 0
     chainProbe.run = async () => false
   })
 
@@ -109,23 +114,21 @@ describe('listFungibles coalescing', () => {
   })
 
   /**
-   * The field case: an account rebind started a read that never settled, so
-   * every later caller joined it and the Tokens list stopped tracking the
-   * wallet while Collect kept refreshing beside it.
+   * Toolbox work cannot be cancelled. Timing out releases the UI to cache, but
+   * a later caller must not stack another crypto/IDB walk behind the first.
    */
-  it('starts a fresh read instead of joining one that never settled', async () => {
+  it('serves cache without replacing wallet work that never settled', async () => {
     const { listFungibles, rememberFungibleToken } = await import('./list')
     rememberFungibleToken(card())
     restoreAsset.run = never
 
     const stalled = listFungibles()
     await vi.advanceTimersByTimeAsync(21_000)
-    restoreAsset.run = async () => false
+    expect((await stalled).map((t) => t.tokenId)).toEqual([TOKEN])
 
     const fresh = listFungibles()
-    expect(fresh).not.toBe(stalled)
-    await vi.advanceTimersByTimeAsync(100)
     expect((await fresh).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(restoreCalls).toBe(1)
   })
 
   /**

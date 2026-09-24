@@ -676,8 +676,8 @@ export function paintAfterCreateActionIssuance(
         origin: originator || WALLET_ACTIVITY_ORIGIN,
         kind: 'earned',
         sats: 1,
-        method: 'receive-collectable',
-        note: `Received ${name}`,
+        method: 'mint-collectable',
+        note: `Minted ${name}`,
         txid,
         status: 'complete',
         item: {

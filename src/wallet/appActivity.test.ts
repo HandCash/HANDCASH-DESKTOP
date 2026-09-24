@@ -176,6 +176,20 @@ describe("activityEntryTitle", () => {
       activityEntryTitle(
         entry({
           kind: "earned",
+          method: "mint-collectable",
+          note: "Minted Reference Robot",
+          item: {
+            name: "Reference Robot",
+            origin: `${"ab".repeat(32)}_0`,
+            outpoint: `${"ab".repeat(32)}.0`,
+          },
+        })
+      )
+    ).toBe("Minted Reference Robot");
+    expect(
+      activityEntryTitle(
+        entry({
+          kind: "earned",
           method: "mint-token",
           item: {
             name: "DEMO",
@@ -414,6 +428,37 @@ describe("inbound receive activity", () => {
     clearAppActivity();
     __resetGhostTxSuppressForTests();
     __resetArcadeSubmitGuardForTests();
+  });
+
+  it("keeps a self-issued collectable labelled Minted after ingest sees it", () => {
+    const item = {
+      name: "Reference Robot",
+      origin: `${TX}_0`,
+      outpoint: `${TX}.0`,
+    };
+    upsertAppActivity({
+      origin: "demo.example",
+      kind: "earned",
+      sats: 1,
+      method: "mint-collectable",
+      note: "Minted Reference Robot",
+      txid: TX,
+      item,
+    });
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: "earned",
+      sats: 1,
+      method: "receive-collectable",
+      note: "Received Reference Robot",
+      txid: TX,
+      item,
+    });
+
+    const rows = listRecentActivity(10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.method).toBe("mint-collectable");
+    expect(activityEntryTitle(rows[0]!)).toBe("Minted Reference Robot");
   });
 
   it("archives legacy oversized unsigned bulk-send debris only", () => {
