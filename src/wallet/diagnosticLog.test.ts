@@ -67,4 +67,16 @@ describe('diagnosticLog', () => {
     expect(line?.message).toContain('code=INSUFFICIENT_OR_STALE_FUNDS')
     expect(line?.message).toContain('sats=5000')
   })
+
+  /**
+   * The quiet list exists to keep chatty reads out of the tail. Suppressing
+   * their failures too left a failed `listOutputs` with no trace anywhere,
+   * which is exactly when the support tail is the only evidence.
+   */
+  it('keeps chatty reads quiet only while they succeed', async () => {
+    const { isQuietBrc100Success } = await import('./diagnosticLog')
+    expect(isQuietBrc100Success('listOutputs')).toBe(true)
+    expect(isQuietBrc100Success('createAction')).toBe(false)
+    expect(isQuietBrc100Success(undefined)).toBe(false)
+  })
 })

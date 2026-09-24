@@ -107,7 +107,7 @@ import {
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
-import { logBrc100Response, shouldLogBrc100Method } from './diagnosticLog'
+import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
 import {
   paintAfterCreateActionBsv21Mint,
   paintAfterCreateActionIssuance,
@@ -576,8 +576,8 @@ export async function handleBrc100Request(
   const releaseInbound = noteInboundWalletRequest()
   const method = methodFromPath(event.path)
   const originator = parseOrigin(event.headers)
-  const diag = shouldLogBrc100Method(method)
-  const t0 = diag ? Date.now() : 0
+  const quiet = isQuietBrc100Success(method)
+  const t0 = Date.now()
   let args: unknown
   if (event.body) {
     try {
@@ -594,19 +594,49 @@ export async function handleBrc100Request(
         body: JSON.stringify({ error: 'Wallet account changed during request' }),
       }
     }
-    if (diag && method) {
-      try {
-        logBrc100Response(method, originator, result, Date.now() - t0, args)
-      } catch (err) {
-        appendAppLog(
-          'warn',
-          `[brc100] diagnostic log skipped: ${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
+    const ok = result.status >= 200 && result.status < 300
+    if (method && !(quiet && ok)) {
+      safeLogBrc100(method, originator, result, Date.now() - t0, args)
     }
     return result
+  } catch (err) {
+    // The caller turns a throw into a 500 and never sees this frame, so a
+    // failure logged only on the return path leaves no trace at all.
+    if (method) {
+      safeLogBrc100(
+        method,
+        originator,
+        {
+          status: 500,
+          body: JSON.stringify({
+            code: 'WALLET_HANDLER_ERROR',
+            description: err instanceof Error ? err.message : String(err),
+          }),
+        },
+        Date.now() - t0,
+        args,
+      )
+    }
+    throw err
   } finally {
     releaseInbound()
+  }
+}
+
+function safeLogBrc100(
+  method: string,
+  originator: string | undefined,
+  response: { status: number; body: string },
+  ms: number,
+  args: unknown,
+): void {
+  try {
+    logBrc100Response(method, originator, response, ms, args)
+  } catch (err) {
+    appendAppLog(
+      'warn',
+      `[brc100] diagnostic log skipped: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
 }
 

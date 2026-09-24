@@ -13,6 +13,12 @@ import {
 import { yieldToUi } from './yieldToUi'
 
 const MARKET_LIST_TIMEOUT_MS = 20_000
+/**
+ * Ceiling for a cold basket with no paint to fall back on. Must stay under the
+ * shell's 120s bridge timeout so the caller gets our named error, not a
+ * transport one.
+ */
+const MARKET_LIST_COLD_CEILING_MS = 90_000
 const MARKET_VERDICT_CHUNK = 64
 
 function normalizeOutpoint(value: unknown): string | null {
@@ -124,12 +130,15 @@ export async function listMarketBasketOutputs(
     )
   }
 
+  // Hold the read itself, not just a race against it: `listOutputsWithTimeout`
+  // abandons the timer's loser, and the scan keeps going regardless.
+  const live = (wallet as ActiveWallet['wallet']).listOutputs(
+    inventoryReadArgs(args),
+  )
+  live.catch(() => {})
+
   try {
-    return await listOutputsWithTimeout(
-      wallet as ActiveWallet['wallet'],
-      inventoryReadArgs(args),
-      MARKET_LIST_TIMEOUT_MS,
-    )
+    return await raceTimeout(live, MARKET_LIST_TIMEOUT_MS)
   } catch (err) {
     const fallback = cachedMarketListOutputs(basket)
     if (fallback && fallback.outputs.length > 0) {
@@ -138,8 +147,34 @@ export async function listMarketBasketOutputs(
       )
       return fallback as ListOutputsResult
     }
-    throw err
+    if (!isListTimeout(err)) throw err
+    // Nothing painted to serve and the scan is still running. Failing here
+    // would only push the caller into a retry that waits on this same scan,
+    // so wait it out instead — a cold basket on a busy wallet has taken
+    // upwards of 40s while chain ingest holds the main thread.
+    console.info(
+      `[market-inventory] ${String(basket ?? 'basket')} cold and slow — waiting out the live read`,
+    )
+    return await raceTimeout(live, MARKET_LIST_COLD_CEILING_MS)
   }
+}
+
+function isListTimeout(err: unknown): boolean {
+  return err instanceof Error && err.message === 'listOutputs timed out'
+}
+
+/**
+ * Race without abandoning the work. The timer is always cleared, so a slow
+ * basket cannot leave a pending timeout alive for the rest of the session.
+ */
+function raceTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('listOutputs timed out')), ms)
+  })
+  return Promise.race([work, expiry]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  }) as Promise<T>
 }
 
 async function refreshMarketBasketInBackground(

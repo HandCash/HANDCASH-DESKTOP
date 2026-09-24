@@ -121,22 +121,64 @@ describe('market inventory listOutputs fast path', () => {
 
   it('never forwards remittance BEEF on a live inventory read', async () => {
     getCachedCollectables.mockReturnValue([])
-    listOutputsWithTimeout.mockResolvedValue({ outputs: [], totalOutputs: 0 })
-    const wallet = { listOutputs: vi.fn() }
+    const listOutputs = vi.fn().mockResolvedValue({ outputs: [], totalOutputs: 0 })
+    const wallet = { listOutputs }
     await listMarketBasketOutputs(wallet as never, {
       basket: '1sat',
       includeCustomInstructions: true,
       include: 'locking scripts',
     })
-    expect(listOutputsWithTimeout).toHaveBeenCalledWith(
-      wallet,
+    expect(listOutputs).toHaveBeenCalledWith(
       expect.objectContaining({
         basket: '1sat',
         includeTags: true,
         includeCustomInstructions: false,
       }),
-      expect.any(Number),
     )
+  })
+
+  /**
+   * A cold basket on a busy wallet has taken upwards of 40s. The short cap
+   * exists so a concurrent refresh can fill the paint; with nothing painted,
+   * abandoning a scan that is still running only fails the caller.
+   */
+  it('waits out a cold read that outruns the short cap', async () => {
+    vi.useFakeTimers()
+    try {
+      getCachedCollectables.mockReturnValue([])
+      const rows = { outputs: [{ outpoint: `${'a'.repeat(64)}.0` }], totalOutputs: 1 }
+      let settle: (v: unknown) => void = () => undefined
+      const listOutputs = vi.fn(
+        () => new Promise((resolve) => { settle = resolve }),
+      )
+
+      const pending = listMarketBasketOutputs({ listOutputs } as never, {
+        basket: '1sat',
+      })
+      await vi.advanceTimersByTimeAsync(25_000)
+      settle(rows)
+
+      await expect(pending).resolves.toEqual(rows)
+      expect(listOutputs).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still gives up on a read that never lands', async () => {
+    vi.useFakeTimers()
+    try {
+      getCachedCollectables.mockReturnValue([])
+      const listOutputs = vi.fn(() => new Promise(() => undefined))
+      const pending = listMarketBasketOutputs({ listOutputs } as never, {
+        basket: '1sat',
+      })
+      const assertion = expect(pending).rejects.toThrow('listOutputs timed out')
+      await vi.advanceTimersByTimeAsync(120_000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('falls back to cached bsv21 rows after a live read times out', async () => {

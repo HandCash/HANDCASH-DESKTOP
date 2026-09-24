@@ -33,8 +33,13 @@ const QUIET_BRC100 = new Set([
   'getIdentity',
 ])
 
-export function shouldLogBrc100Method(method: string | null | undefined): boolean {
-  return !!method && !QUIET_BRC100.has(method)
+/**
+ * Chatty reads whose *successes* are noise. Failures are never quiet: a method
+ * on this list is one an app calls constantly, so when it finally breaks the
+ * support tail is the only place the reason exists.
+ */
+export function isQuietBrc100Success(method: string | null | undefined): boolean {
+  return !!method && QUIET_BRC100.has(method)
 }
 
 export function logDiag(

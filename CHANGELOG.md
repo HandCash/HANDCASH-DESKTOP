@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.322] - 2026-09-24
+
+### Fixed
+
+- Protected-basket `listOutputs` no longer fails a cold read that is still
+  running. The 20s cap exists so a concurrent refresh can fill the durable
+  paint; with nothing painted it abandoned a scan that does finish — a cold
+  basket on a busy wallet has taken over 40s. The read is now held rather than
+  raced away, and waited out to a 90s ceiling when there is no paint to serve.
+- BRC-100 failures are always logged. `listOutputs` and the other chatty reads
+  were on a quiet list that suppressed the line entirely, so a failed
+  inventory read left no trace in the support tail.
+- A BRC-100 handler that throws is logged before the shell turns it into a
+  500. Previously only the return path logged, so thrown failures were silent.
+
 ## [1.3.321] - 2026-09-24
 
 ### Fixed
