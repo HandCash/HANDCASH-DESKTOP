@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.304] - 2026-09-24
+
+### Fixed
+
+- Apps could not parse the transaction `createAction` handed back. The reply is
+  packaged as AtomicBEEF, then passed through `hydrateInputBeef` to fill in any
+  missing parent bodies — but that shaper exists to build an `inputBEEF`, so it
+  clears `atomicTxid` and returns plain BEEF. Those bytes were accepted
+  unframed, dropping the BRC-95 prefix, and hydration returns on its first pass
+  whenever the package is already broadcast-safe, so this was the common path
+  rather than an edge case. Verifiers that re-derive the subject rejected the
+  reply with "BEEF must conform to BRC-95 and must contain the subject txid".
+  The hydrated package is now re-framed through `atomicBeefForSubject` before
+  it is accepted, and the merged atomic package is kept when it will not
+  re-frame. The same bytes feed `funnelAppSignedCheque` and the BEEF cache, so
+  app-signed cheques and follow-up spends were carrying the unframed package
+  too.
+- Transaction details stayed on a skeleton forever for app transactions. The
+  panel gated its whole body on an `iconReady` flag that only the event branch
+  ever set, and that branch returns before the gate — so a row that was neither
+  wallet-origin nor an item could never become ready. The panel now renders
+  immediately and the avatar skeletons only its own slot, per `deferred-images`.
+
 ## [1.3.303] - 2026-09-24
 
 ### Fixed

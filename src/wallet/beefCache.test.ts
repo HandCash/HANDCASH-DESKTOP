@@ -598,6 +598,67 @@ describe('beefCache', () => {
     expect(beef.verifyValid(false).valid).toBe(true)
   })
 
+  it('replies to createAction with AtomicBEEF even when hydration returns plain BEEF', async () => {
+    const { cacheCreateActionBeef, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+    const parentProof = new MerklePath(800_001, [
+      [
+        { offset: 0, hash: parentId, txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ])
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({
+      satoshis: 9_900,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tipId = tip.id('hex')
+
+    // Already broadcast-safe, so hydration succeeds on its first pass and hands
+    // back plain bytes — the common case that used to strip the BRC-95 prefix.
+    const ready = new Beef()
+    ready.mergeRawTx(parent.toBinary())
+    ready.mergeBump(parentProof)
+    ready.mergeTransaction(tip)
+
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: {
+        getBeefForTxid: vi.fn(async () => {
+          throw new Error('indexer should not be called')
+        }),
+      },
+    } as unknown as ActiveWallet
+
+    // The trap this guards: the shaper drops the prefix, so accepting its
+    // bytes unframed is what handed apps a package they could not parse.
+    const { hydrateInputBeef } = await import('./beefCache')
+    const shaped = await hydrateInputBeef(wallet, Beef.fromBinary(ready.toBinary()))
+    expect(shaped).toBeTruthy()
+    expect(Beef.fromBinary(shaped!).atomicTxid).toBeUndefined()
+
+    const packed = await cacheCreateActionBeef(wallet, tipId, { tx: ready.toBinary() })
+    expect(packed).toBeTruthy()
+
+    const reply = Beef.fromBinary(packed!)
+    expect(reply.atomicTxid).toBe(tipId)
+    expect(reply.isAtomic(tipId)).toBe(true)
+    expect(reply.findTxid(tipId)?.tx).toBeTruthy()
+  })
+
   it('remembers a just-created settle BEEF so the next send skips the indexer', async () => {
     const { getBeefForTxidCached, rememberBeefBinary, resetBeefCacheForTests } =
       await import('./beefCache')

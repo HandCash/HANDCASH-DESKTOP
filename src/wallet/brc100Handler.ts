@@ -4,7 +4,6 @@ import {
   type WalletRuntime,
 } from './walletRuntime'
 import type { WalletInterface } from '@bsv/sdk'
-import { Beef, Transaction } from '@bsv/sdk'
 import { brc100HandlerOwner } from '../contracts/brc100Handlers'
 import { bumpBalanceAfterHeal, fetchFastBalanceSats } from './session'
 import {
@@ -47,11 +46,7 @@ import {
   resolveBsv21IconDataUrl,
   stampBsv21IconOnListedOutputs,
 } from './token'
-import {
-  hydrateInputBeef,
-  mergeLocalUnconfirmedAncestry,
-  rememberBeefBinary,
-} from './beefCache'
+import { cacheCreateActionBeef } from './beefCache'
 import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
   claimCloudHandlePayload,
@@ -333,55 +328,6 @@ async function verifyP1SatSpendLabels(
       throw new Error(`BRC-165 item id "${id}" is not an input in this action`)
     }
   }
-}
-
-/** Keep AtomicBEEF / tx bytes from createAction so a follow-up spend can prove inputs. */
-async function cacheCreateActionBeef(
-  active: NonNullable<ReturnType<typeof getWalletRuntime>>['instance'],
-  txid: string,
-  result: unknown,
-): Promise<number[] | null> {
-  if (!result || typeof result !== 'object') return null
-  const raw = (result as { tx?: unknown }).tx
-  let binary: number[] | null = null
-  if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
-    binary = raw as number[]
-  } else if (raw instanceof Uint8Array) {
-    binary = Array.from(raw)
-  } else if (typeof raw === 'string' && raw.trim()) {
-    try {
-      const bin = atob(raw.trim())
-      binary = Array.from(bin, (c) => c.charCodeAt(0))
-    } catch {
-      binary = null
-    }
-  }
-  if (!binary?.length) return null
-  const id = txid.trim().toLowerCase()
-  let packed = binary
-  try {
-    const asBeef = Beef.fromBinary(binary)
-    asBeef.atomicTxid = undefined
-    packed = asBeef.toBinaryAtomic(id)
-  } catch {
-    try {
-      const wrapped = new Beef()
-      wrapped.mergeTransaction(Transaction.fromBinary(binary))
-      wrapped.atomicTxid = undefined
-      packed = wrapped.toBinaryAtomic(id)
-    } catch {
-      return null
-    }
-  }
-  packed = await mergeLocalUnconfirmedAncestry(active, packed)
-  try {
-    const shaped = await hydrateInputBeef(active, Beef.fromBinary(packed))
-    if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) packed = shaped
-  } catch {
-    // Complete unconfirmed bodies are enough; merkle hydration may be pending.
-  }
-  rememberBeefBinary(id, packed)
-  return packed
 }
 
 async function dispatchWalletMethod(

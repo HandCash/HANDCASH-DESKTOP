@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { ReceiveIcon } from './icons'
 import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
-import { SkeletonLine } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
   activityEntryKey,
@@ -300,7 +299,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [currency, setCurrency] = useState<DisplayCurrency>(() =>
     getDisplayCurrency(),
   )
-  const [iconReady, setIconReady] = useState(false)
   const [attemptFate, setAttemptFate] = useState<SpendAttemptFate>({
     kind: 'notAttempt',
   })
@@ -313,7 +311,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => {
-    setIconReady(false)
     // Keep the previous object when nothing the screen reads changed: the fate
     // effect below keys on this row, and resolving a fate can itself write to
     // Activity — a fresh identity per notification made those chase each other.
@@ -371,7 +368,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   origin={entry.origin}
                   name={appDisplayName(entry.origin)}
                   size="sm"
-                  onReady={() => setIconReady(true)}
                 />
               )}
             </div>
@@ -486,7 +482,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const explorer = isExplorerTxid(entry.txid)
     ? txExplorerUrl(entry.txid!, chain)
     : null
-  const ready = isWallet || item || iconReady
 
   const retryAttempt = async () => {
     if (!entry || attemptFate.kind !== 'retry' || retrying) return
@@ -584,7 +579,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     <div
       className="nav-child-panel payment-details"
       data-aeon-scope="payment-details"
-      data-aeon-state={ready ? undefined : 'loading'}
     >
       <div className="payment-details-hero">
         <HistoryIconCluster
@@ -592,305 +586,287 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           assets={assets}
           batch={batch}
         />
-        {ready ? (
-          <div className="payment-details-copy">
-            <div className="payment-details-title-row">
-              <strong className="payment-details-title">
-                {activityEntryTitle(
-                  batchName && subject.item
-                    ? {
-                        ...subject,
-                        item: {
-                          ...viewActivityItem(subject.item),
-                          name: batchName,
-                        },
-                      }
-                    : subject.item
-                      ? { ...subject, item: viewActivityItem(subject.item) }
-                      : subject,
-                )}
-              </strong>
-              {explorer ? (
-                <button
-                  type="button"
-                  className="payment-details-woc"
-                  onClick={() => openExplorer(explorer)}
-                >
-                  Open in WhatsOnChain
-                </button>
-              ) : null}
-            </div>
-            <p className="history-when">
-              {showPending
-                ? pendingLabel
-                : failed && failureReason
+        <div className="payment-details-copy">
+          <div className="payment-details-title-row">
+            <strong className="payment-details-title">
+              {activityEntryTitle(
+                batchName && subject.item
+                  ? {
+                      ...subject,
+                      item: {
+                        ...viewActivityItem(subject.item),
+                        name: batchName,
+                      },
+                    }
+                  : subject.item
+                    ? { ...subject, item: viewActivityItem(subject.item) }
+                    : subject,
+              )}
+            </strong>
+            {explorer ? (
+              <button
+                type="button"
+                className="payment-details-woc"
+                onClick={() => openExplorer(explorer)}
+              >
+                Open in WhatsOnChain
+              </button>
+            ) : null}
+          </div>
+          <p className="history-when">
+            {showPending
+              ? pendingLabel
+              : failed && failureReason
                 ? failureReason
                 : new Date(entry.at).toLocaleString(undefined, {
                     dateStyle: 'medium',
                     timeStyle: 'short',
                   })}
-            </p>
-          </div>
-        ) : (
-          <div className="payment-details-copy">
-            <SkeletonLine width="55%" height={14} />
-            <SkeletonLine width="40%" height={10} />
-          </div>
-        )}
+          </p>
+        </div>
       </div>
 
-      {!ready ? (
-        <div className="app-details-section">
-          <SkeletonLine width="35%" height={22} />
-          <SkeletonLine width="28%" height={12} />
-          <SkeletonLine width="70%" height={12} />
-          <SkeletonLine width="60%" height={12} />
-        </div>
-      ) : (
-        <>
-          <div className="payment-details-amount">
-            <strong>
-              {batchName
-                ? batchName
-                : token || item
-                  ? primary
-                  : spent
-                    ? `−${primary}`
-                    : `+${primary}`}
-            </strong>
-            <span className="payment-details-secondary">{secondary}</span>
+      <div className="payment-details-amount">
+        <strong>
+          {batchName
+            ? batchName
+            : token || item
+              ? primary
+              : spent
+                ? `−${primary}`
+                : `+${primary}`}
+        </strong>
+        <span className="payment-details-secondary">{secondary}</span>
+      </div>
+
+      {showBreakdown ? (
+        <ol className="payment-tx-breakdown" data-aeon-part="tx-legs">
+          {breakdown.map((leg) => (
+            <PaymentBreakdownRow
+              key={activityEntryKey(leg)}
+              entry={leg}
+              currency={currency}
+              usdPerBsv={usdPerBsv}
+            />
+          ))}
+        </ol>
+      ) : null}
+
+      {item && shownItem?.imageUrl && !showBreakdown ? (
+        openItem ? (
+          <button
+            type="button"
+            className="payment-details-item-media collectable-media collectable-media-md payment-details-item-link"
+            onClick={openItem}
+            aria-label={`Open ${shownItem.name}`}
+          >
+            <DeferredImage
+              src={shownItem.imageUrl}
+              alt={shownItem.name}
+              skeletonRadius={8}
+              skeletonClassName="skeleton-qr"
+              decoding="async"
+            />
+          </button>
+        ) : (
+          <div className="payment-details-item-media collectable-media collectable-media-md">
+            <DeferredImage
+              src={shownItem.imageUrl}
+              alt={shownItem.name}
+              skeletonRadius={8}
+              skeletonClassName="skeleton-qr"
+              decoding="async"
+            />
           </div>
+        )
+      ) : null}
 
-          {showBreakdown ? (
-            <ol className="payment-tx-breakdown" data-aeon-part="tx-legs">
-              {breakdown.map((leg) => (
-                <PaymentBreakdownRow
-                  key={activityEntryKey(leg)}
-                  entry={leg}
-                  currency={currency}
-                  usdPerBsv={usdPerBsv}
-                />
-              ))}
-            </ol>
+      <dl className="payment-details-meta">
+        <dt>Type</dt>
+        <dd>{detailLabel}</dd>
+        {moneyLeg ? (
+          <>
+            <dt>{moneyLeg.kind === 'spent' ? 'Paid' : 'Proceeds'}</dt>
+            <dd>{formatPrimaryFromSats(moneyLeg.sats, currency, usdPerBsv)}</dd>
+          </>
+        ) : null}
+        {!isWallet && (
+          <>
+            <dt>App</dt>
+            <dd>{appDisplayName(entry.origin)}</dd>
+          </>
+        )}
+        {shownItem ? (
+          <>
+            <dt>Item</dt>
+            <dd>
+              {openItem ? (
+                <button
+                  type="button"
+                  className="payment-details-item-name"
+                  onClick={openItem}
+                >
+                  {shownItem.name}
+                </button>
+              ) : (
+                shownItem.name
+              )}
+            </dd>
+            {assets.length > 0 && !showBreakdown ? (
+              <>
+                <dt>{spent ? 'Also sent' : 'Also received'}</dt>
+                <dd>
+                  {assets
+                    .map(
+                      (sibling) =>
+                        viewActivityItem(sibling.item!).name?.trim() ||
+                        'Collectable',
+                    )
+                    .join(', ')}
+                </dd>
+              </>
+            ) : null}
+            <dt>Origin</dt>
+            <dd className="mono">{shownItem.origin}</dd>
+            {shownItem.outpoint ? (
+              <>
+                <dt>Outpoint</dt>
+                <dd className="mono">{shownItem.outpoint}</dd>
+              </>
+            ) : null}
+          </>
+        ) : null}
+        <dt>Method</dt>
+        <dd className="mono">{entry.method}</dd>
+        {recipientLabel ? (
+          <>
+            <dt>Recipient</dt>
+            <dd>{recipientLabel}</dd>
+          </>
+        ) : null}
+        {entry.note &&
+        !(
+          recipientLabel &&
+          (entry.note.startsWith('Sent to ') || entry.note.startsWith('Sending to '))
+        ) ? (
+          <>
+            <dt>Note</dt>
+            <dd>{entry.note}</dd>
+          </>
+        ) : null}
+        {entry.burn ? (
+          <>
+            <dt>Destroyed</dt>
+            <dd>
+              {entry.burn.asset === '1sat' && batch
+                ? batch.count
+                : entry.burn.destroyedAmount}{' '}
+              {entry.burn.asset === 'bsv21' ? shownItem?.name ?? 'token units' : 'items'}
+            </dd>
+            {entry.burn.recoveredSatoshis != null ? (
+              <>
+                <dt>Recovered to Pay</dt>
+                <dd>{entry.burn.recoveredSatoshis.toLocaleString()} sats</dd>
+              </>
+            ) : null}
+            {entry.burn.feeSatoshis != null ? (
+              <>
+                <dt>Network fee</dt>
+                <dd>{entry.burn.feeSatoshis.toLocaleString()} sats</dd>
+              </>
+            ) : null}
+          </>
+        ) : null}
+        {entry.txid ? (
+          <>
+            <dt>Txid</dt>
+            <dd className="mono">{entry.txid}</dd>
+          </>
+        ) : null}
+      </dl>
+
+      {attemptFate.kind !== 'notAttempt' &&
+      attemptFate.kind !== 'confirmed' ? (
+        <section
+          className="payment-attempt-actions"
+          aria-live="polite"
+          data-aeon-part="spend-attempt"
+          data-aeon-state={spendAttemptState(attemptFate)}
+        >
+          <strong>
+            {spendAttemptState(attemptFate) === SPEND_ATTEMPT_PEER_PUBLISHES
+              ? 'Sent — the recipient publishes it'
+              : isFailedActivity(entry)
+              ? 'Failed send'
+              : 'Unconfirmed send'}
+          </strong>
+          <p>
+            {attemptFate.kind === 'checking'
+              ? 'Checking confirmation and whether the funds are still spendable…'
+              : attemptFate.message}
+          </p>
+          {attemptError ? (
+            <p className="form-error">{attemptError}</p>
           ) : null}
-
-          {item && shownItem?.imageUrl && !showBreakdown ? (
-            openItem ? (
+          <div className="payment-attempt-buttons">
+            {attemptFate.kind === 'retry' ? (
               <button
                 type="button"
-                className="payment-details-item-media collectable-media collectable-media-md payment-details-item-link"
-                onClick={openItem}
-                aria-label={`Open ${shownItem.name}`}
+                className="btn btn-primary"
+                disabled={retrying || clearing}
+                onClick={() => void retryAttempt()}
               >
-                <DeferredImage
-                  src={shownItem.imageUrl}
-                  alt={shownItem.name}
-                  skeletonRadius={8}
-                  skeletonClassName="skeleton-qr"
-                  decoding="async"
-                />
+                {retrying
+                  ? attemptFate.action === 'rebroadcast'
+                    ? 'Resubmitting…'
+                    : 'Retrying…'
+                  : attemptFate.action === 'reopenPayment'
+                  ? 'Send again'
+                  : attemptFate.action === 'rebroadcast'
+                  ? 'Resubmit'
+                  : 'Retry send'}
               </button>
-            ) : (
-              <div className="payment-details-item-media collectable-media collectable-media-md">
-                <DeferredImage
-                  src={shownItem.imageUrl}
-                  alt={shownItem.name}
-                  skeletonRadius={8}
-                  skeletonClassName="skeleton-qr"
-                  decoding="async"
-                />
-              </div>
-            )
-          ) : null}
-
-          <dl className="payment-details-meta">
-            <dt>Type</dt>
-            <dd>{detailLabel}</dd>
-            {moneyLeg ? (
-              <>
-                <dt>{moneyLeg.kind === 'spent' ? 'Paid' : 'Proceeds'}</dt>
-                <dd>{formatPrimaryFromSats(moneyLeg.sats, currency, usdPerBsv)}</dd>
-              </>
             ) : null}
-            {!isWallet && (
-              <>
-                <dt>App</dt>
-                <dd>{appDisplayName(entry.origin)}</dd>
-              </>
+            {((attemptFate.kind === 'retry' && attemptFate.mayClear) ||
+              (attemptFate.kind === 'refuse' && attemptFate.mayClear)) && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={retrying || clearing || releasing}
+                onClick={() => void clearAttempt()}
+              >
+                {clearing ? 'Clearing…' : 'Clear from Activity'}
+              </button>
             )}
-            {shownItem ? (
-              <>
-                <dt>Item</dt>
-                <dd>
-                  {openItem ? (
-                    <button
-                      type="button"
-                      className="payment-details-item-name"
-                      onClick={openItem}
-                    >
-                      {shownItem.name}
-                    </button>
-                  ) : (
-                    shownItem.name
-                  )}
-                </dd>
-                {assets.length > 0 && !showBreakdown ? (
-                  <>
-                    <dt>{spent ? 'Also sent' : 'Also received'}</dt>
-                    <dd>
-                      {assets
-                        .map(
-                          (sibling) =>
-                            viewActivityItem(sibling.item!).name?.trim() ||
-                            'Collectable',
-                        )
-                        .join(', ')}
-                    </dd>
-                  </>
-                ) : null}
-                <dt>Origin</dt>
-                <dd className="mono">{shownItem.origin}</dd>
-                {shownItem.outpoint ? (
-                  <>
-                    <dt>Outpoint</dt>
-                    <dd className="mono">{shownItem.outpoint}</dd>
-                  </>
-                ) : null}
-              </>
+            {(attemptFate.kind === 'refuse' ||
+              attemptFate.kind === 'retry') &&
+            attemptFate.mayReclaimInputs ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={retrying || clearing || releasing || reclaiming}
+                onClick={() => void reclaimAttempt()}
+                title="Spend these coins again. Only possible while the transaction is absent from the chain, and it cancels the transfer."
+              >
+                {reclaiming ? 'Taking back…' : 'Take the coins back'}
+              </button>
             ) : null}
-            <dt>Method</dt>
-            <dd className="mono">{entry.method}</dd>
-            {recipientLabel ? (
-              <>
-                <dt>Recipient</dt>
-                <dd>{recipientLabel}</dd>
-              </>
+            {attemptFate.kind === 'refuse' &&
+            !attemptFate.mayClear &&
+            attemptFate.mayReleaseFunds ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={retrying || clearing || releasing || reclaiming}
+                onClick={() => void releaseFunds()}
+                title="Frees coins held by sends that were never signed. This transfer is not affected."
+              >
+                {releasing ? 'Unlocking…' : 'Unlock coins from unfinished sends'}
+              </button>
             ) : null}
-            {entry.note &&
-            !(
-              recipientLabel &&
-              (entry.note.startsWith('Sent to ') || entry.note.startsWith('Sending to '))
-            ) ? (
-              <>
-                <dt>Note</dt>
-                <dd>{entry.note}</dd>
-              </>
-            ) : null}
-            {entry.burn ? (
-              <>
-                <dt>Destroyed</dt>
-                <dd>
-                  {entry.burn.asset === '1sat' && batch
-                    ? batch.count
-                    : entry.burn.destroyedAmount}{' '}
-                  {entry.burn.asset === 'bsv21' ? shownItem?.name ?? 'token units' : 'items'}
-                </dd>
-                {entry.burn.recoveredSatoshis != null ? (
-                  <>
-                    <dt>Recovered to Pay</dt>
-                    <dd>{entry.burn.recoveredSatoshis.toLocaleString()} sats</dd>
-                  </>
-                ) : null}
-                {entry.burn.feeSatoshis != null ? (
-                  <>
-                    <dt>Network fee</dt>
-                    <dd>{entry.burn.feeSatoshis.toLocaleString()} sats</dd>
-                  </>
-                ) : null}
-              </>
-            ) : null}
-            {entry.txid ? (
-              <>
-                <dt>Txid</dt>
-                <dd className="mono">{entry.txid}</dd>
-              </>
-            ) : null}
-          </dl>
-
-          {attemptFate.kind !== 'notAttempt' &&
-          attemptFate.kind !== 'confirmed' ? (
-            <section
-              className="payment-attempt-actions"
-              aria-live="polite"
-              data-aeon-part="spend-attempt"
-              data-aeon-state={spendAttemptState(attemptFate)}
-            >
-              <strong>
-                {spendAttemptState(attemptFate) === SPEND_ATTEMPT_PEER_PUBLISHES
-                  ? 'Sent — the recipient publishes it'
-                  : isFailedActivity(entry)
-                  ? 'Failed send'
-                  : 'Unconfirmed send'}
-              </strong>
-              <p>
-                {attemptFate.kind === 'checking'
-                  ? 'Checking confirmation and whether the funds are still spendable…'
-                  : attemptFate.message}
-              </p>
-              {attemptError ? (
-                <p className="form-error">{attemptError}</p>
-              ) : null}
-              <div className="payment-attempt-buttons">
-                {attemptFate.kind === 'retry' ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={retrying || clearing}
-                    onClick={() => void retryAttempt()}
-                  >
-                    {retrying
-                      ? attemptFate.action === 'rebroadcast'
-                        ? 'Resubmitting…'
-                        : 'Retrying…'
-                      : attemptFate.action === 'reopenPayment'
-                      ? 'Send again'
-                      : attemptFate.action === 'rebroadcast'
-                      ? 'Resubmit'
-                      : 'Retry send'}
-                  </button>
-                ) : null}
-                {((attemptFate.kind === 'retry' && attemptFate.mayClear) ||
-                  (attemptFate.kind === 'refuse' && attemptFate.mayClear)) && (
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    disabled={retrying || clearing || releasing}
-                    onClick={() => void clearAttempt()}
-                  >
-                    {clearing ? 'Clearing…' : 'Clear from Activity'}
-                  </button>
-                )}
-                {(attemptFate.kind === 'refuse' ||
-                  attemptFate.kind === 'retry') &&
-                attemptFate.mayReclaimInputs ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={retrying || clearing || releasing || reclaiming}
-                    onClick={() => void reclaimAttempt()}
-                    title="Spend these coins again. Only possible while the transaction is absent from the chain, and it cancels the transfer."
-                  >
-                    {reclaiming ? 'Taking back…' : 'Take the coins back'}
-                  </button>
-                ) : null}
-                {attemptFate.kind === 'refuse' &&
-                !attemptFate.mayClear &&
-                attemptFate.mayReleaseFunds ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={retrying || clearing || releasing || reclaiming}
-                    onClick={() => void releaseFunds()}
-                    title="Frees coins held by sends that were never signed. This transfer is not affected."
-                  >
-                    {releasing ? 'Unlocking…' : 'Unlock coins from unfinished sends'}
-                  </button>
-                ) : null}
-              </div>
-            </section>
-          ) : null}
-        </>
-      )}
+          </div>
+        </section>
+      ) : null}
     </div>
   )
 }

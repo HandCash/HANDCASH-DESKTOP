@@ -12,7 +12,7 @@
  * delayed broadcast is not yet in the indexer, and toolbox storage may not
  * expose `getBeefForTransaction` until proven.
  */
-import { Beef, Utils } from '@bsv/sdk'
+import { Beef, Transaction, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { decideChequeBroadcast, type ChequeBroadcastDecision } from './kernel/chequeBroadcast'
@@ -924,6 +924,72 @@ export function atomicBeefForSubject(
   } catch {
     return undefined
   }
+}
+
+/**
+ * Package the `tx` an app gets back from `createAction` / `processAction`.
+ *
+ * The reply is the app's only copy of the transaction, so it must be AtomicBEEF
+ * for `txid` (BRC-95): prefix, subject, and nothing outside the subject's
+ * dependency closure. Callers that hand these bytes to `internalizeAction`, or
+ * to any verifier that re-derives the subject, reject anything else outright.
+ *
+ * Returns null when no transaction body can be recovered from `result`.
+ */
+export async function cacheCreateActionBeef(
+  wallet: ActiveWallet,
+  txid: string,
+  result: unknown,
+): Promise<number[] | null> {
+  if (!result || typeof result !== 'object') return null
+  const raw = (result as { tx?: unknown }).tx
+  let binary: number[] | null = null
+  if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
+    binary = raw as number[]
+  } else if (raw instanceof Uint8Array) {
+    binary = Array.from(raw)
+  } else if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const bin = atob(raw.trim())
+      binary = Array.from(bin, (c) => c.charCodeAt(0))
+    } catch {
+      binary = null
+    }
+  }
+  if (!binary?.length) return null
+  const id = txid.trim().toLowerCase()
+  let packed = binary
+  try {
+    const asBeef = Beef.fromBinary(binary)
+    asBeef.atomicTxid = undefined
+    packed = asBeef.toBinaryAtomic(id)
+  } catch {
+    try {
+      const wrapped = new Beef()
+      wrapped.mergeTransaction(Transaction.fromBinary(binary))
+      wrapped.atomicTxid = undefined
+      packed = wrapped.toBinaryAtomic(id)
+    } catch {
+      return null
+    }
+  }
+  packed = await mergeLocalUnconfirmedAncestry(wallet, packed)
+  try {
+    // `hydrateInputBeef` shapes an `inputBEEF`: it clears `atomicTxid` and
+    // returns plain BEEF. Taking those bytes as-is stripped the BRC-95 prefix
+    // off the reply, and hydration succeeds on its first pass whenever the
+    // package is already broadcast-safe — so the common path handed apps a
+    // bare BEEF that every subject-txid verifier rejects. Re-frame before
+    // accepting; keep the merged atomic package when the subject will not
+    // re-frame, since a hydrated body is worth less than a parseable one.
+    const shaped = await hydrateInputBeef(wallet, Beef.fromBinary(packed))
+    const reframed = shaped ? atomicBeefForSubject(shaped, id) : undefined
+    if (reframed) packed = reframed
+  } catch {
+    // Complete unconfirmed bodies are enough; merkle hydration may be pending.
+  }
+  rememberBeefBinary(id, packed)
+  return packed
 }
 
 /**
