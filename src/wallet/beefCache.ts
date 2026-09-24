@@ -927,6 +927,25 @@ export function atomicBeefForSubject(
 }
 
 /**
+ * True when these bytes really are AtomicBEEF for `txid`.
+ *
+ * Checks the serialized form, not what a `Beef` could produce: the prefix must
+ * be present (`fromBinary` only sets `atomicTxid` when it parsed one) and the
+ * BRC-95 inclusion rule must hold. A package that merely *could* be re-framed
+ * is not one a peer can parse.
+ */
+export function isAtomicBeefFor(binary: number[] | undefined, txid: string): boolean {
+  if (!binary?.length) return false
+  const id = keyOf(txid)
+  try {
+    const beef = Beef.fromBinary(binary)
+    return beef.atomicTxid === id && beef.isAtomic(id)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Package the `tx` an app gets back from `createAction` / `processAction`.
  *
  * The reply is the app's only copy of the transaction, so it must be AtomicBEEF
@@ -987,6 +1006,21 @@ export async function cacheCreateActionBeef(
     if (reframed) packed = reframed
   } catch {
     // Complete unconfirmed bodies are enough; merkle hydration may be pending.
+  }
+  // Check our own work. A structurally wrong reply still answers 200, so it is
+  // invisible here and shows up only in the app's verifier — which is how a
+  // dropped BRC-95 prefix shipped unnoticed. Repair it if the subject is still
+  // there, and say so loudly when it cannot be repaired.
+  if (!isAtomicBeefFor(packed, id)) {
+    const repaired = atomicBeefForSubject(packed, id)
+    if (repaired && isAtomicBeefFor(repaired, id)) {
+      console.warn(`[beef] ${id.slice(0, 12)} reply was not AtomicBEEF — re-framed`)
+      packed = repaired
+    } else {
+      console.error(
+        `[beef] ${id.slice(0, 12)} reply is not AtomicBEEF — the app cannot parse this transaction`,
+      )
+    }
   }
   rememberBeefBinary(id, packed)
   return packed

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.305] - 2026-09-24
+
+### Added
+
+- The bridge now checks its own `createAction` / `processAction` reply before
+  returning it. A structurally wrong package still answers `200`, so it was
+  invisible in our logs and surfaced only in the calling app's verifier — which
+  is exactly how the dropped BRC-95 prefix in 1.3.304 went unnoticed. The reply
+  is verified to be AtomicBEEF for its subject txid, re-framed when the subject
+  is still recoverable, and logged as an error when it is not.
+
 ## [1.3.304] - 2026-09-24
 
 ### Fixed

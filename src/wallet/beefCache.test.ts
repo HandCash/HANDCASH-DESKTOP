@@ -653,10 +653,44 @@ describe('beefCache', () => {
     const packed = await cacheCreateActionBeef(wallet, tipId, { tx: ready.toBinary() })
     expect(packed).toBeTruthy()
 
-    const reply = Beef.fromBinary(packed!)
-    expect(reply.atomicTxid).toBe(tipId)
-    expect(reply.isAtomic(tipId)).toBe(true)
-    expect(reply.findTxid(tipId)?.tx).toBeTruthy()
+    const { isAtomicBeefFor } = await import('./beefCache')
+    expect(isAtomicBeefFor(packed!, tipId)).toBe(true)
+    expect(Beef.fromBinary(packed!).findTxid(tipId)?.tx).toBeTruthy()
+  })
+
+  it('tells an AtomicBEEF reply apart from a plain BEEF carrying the same txs', async () => {
+    const { isAtomicBeefFor } = await import('./beefCache')
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({
+      satoshis: 9_900,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tipId = tip.id('hex')
+
+    const beef = new Beef()
+    beef.mergeRawTx(parent.toBinary())
+    beef.mergeTransaction(tip)
+
+    // Same transactions either way — only the framing differs, which is
+    // precisely what a subject-txid verifier rejects.
+    expect(isAtomicBeefFor(beef.toBinary(), tipId)).toBe(false)
+    expect(isAtomicBeefFor(beef.toBinaryAtomic(tipId), tipId)).toBe(true)
+    // Framed for a different subject is not framed for this one.
+    expect(isAtomicBeefFor(beef.toBinaryAtomic(tipId), parentId)).toBe(false)
+    expect(isAtomicBeefFor([], tipId)).toBe(false)
   })
 
   it('remembers a just-created settle BEEF so the next send skips the indexer', async () => {
