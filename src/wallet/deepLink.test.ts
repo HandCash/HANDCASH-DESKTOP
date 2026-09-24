@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
 import { decideWalletDeepLink } from './deepLink'
+import { buildBrc29SettlementUri } from './brc29Uri'
 import { buildPeerPayUri } from './peerPayUri'
 
 const identityKey = PrivateKey.fromRandom().toPublicKey().toString()
+const senderKey = PrivateKey.fromRandom().toPublicKey().toString()
+const txid = 'a'.repeat(64)
+
+function receiptUri(sats?: number | null): string {
+  return buildBrc29SettlementUri({
+    payeeIdentityKey: identityKey,
+    senderIdentityKey: senderKey,
+    txid,
+    remittance: { derivationPrefix: 'pre', derivationSuffix: 'suf', outputIndex: 1 },
+    sats,
+  })
+}
 
 describe('decideWalletDeepLink', () => {
   it('turns a PeerPay request into a Send prefill, amount included', () => {
@@ -44,9 +57,38 @@ describe('decideWalletDeepLink', () => {
   })
 
   it('refuses schemes this wallet has not claimed', () => {
-    for (const uri of [`brc29:${identityKey}`, `bitcoin:1abc`, 'https://handcash.io']) {
+    for (const uri of ['bitcoin:1abc', 'paymail:me@example.com', 'https://handcash.io']) {
       const decision = decideWalletDeepLink(uri)
       expect(decision.kind === 'refuse' && decision.reason).toBe('unknown-scheme')
+    }
+  })
+
+  it('turns a BRC-29 receipt into a claim, not a second payment', () => {
+    const decision = decideWalletDeepLink(receiptUri(1200))
+
+    expect(decision).toEqual({
+      kind: 'settlement-receipt',
+      uri: receiptUri(1200),
+      identityKey: identityKey.toLowerCase(),
+      txid,
+      sats: 1200,
+    })
+  })
+
+  it('accepts a receipt that names no amount', () => {
+    const decision = decideWalletDeepLink(receiptUri())
+
+    expect(decision.kind === 'settlement-receipt' && decision.sats).toBe(null)
+  })
+
+  it('refuses a BRC-29 link missing the parts needed to internalize it', () => {
+    for (const uri of [
+      `brc29:${identityKey}`,
+      `brc29:${identityKey}?txid=${txid}&dp=pre&ds=suf`,
+      receiptUri().replace(`txid=${txid}`, 'txid=nope'),
+    ]) {
+      const decision = decideWalletDeepLink(uri)
+      expect(decision.kind === 'refuse' && decision.reason).toBe('malformed-brc29')
     }
   })
 

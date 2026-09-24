@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.301] - 2026-09-24
+
+### Added
+
+- Deep links now cover both vendor-neutral BRC schemes the wallet already reads
+  from Scan and paste. A tapped `brc29:` settlement receipt opens the claim path
+  (SPV internalize) alongside the existing `peerpay:` pay request; Android
+  registers both. A malformed receipt refuses as `malformed-brc29` rather than
+  falling through to `unknown-scheme`.
+
 ## [1.3.300] - 2026-09-23
 
 ### Fixed
