@@ -1,12 +1,12 @@
 # Changelog
 
-## [1.3.323] - 2026-09-24
+## [1.3.324] - 2026-09-24
 
 ### Changed
 
 - Patch release (every push must ship a new version).
 
-## [1.3.322] - 2026-09-24
+## [1.3.323] - 2026-09-24
 
 ### Fixed
 
@@ -19,6 +19,10 @@
   is held in memory instead of parsed per tip, and the write is coalesced to
   one per burst. A deferred write is keyed to the account it was read from, so
   an account switch cannot land one account's cache under another's key.
+
+## [1.3.322] - 2026-09-24
+
+### Fixed
 
 - Protected-basket `listOutputs` no longer fails a cold read that is still
   running. The 20s cap exists so a concurrent refresh can fill the durable
