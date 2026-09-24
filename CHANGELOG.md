@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.298] - 2026-09-23
+
+### Fixed
+
+- Build: drop the burn / list / cancel pending-label locals the settlement copy
+  replaced. 1.3.297 failed typecheck, so it has no installers — use this.
+
 ## [1.3.297] - 2026-09-23
 
 ### Changed

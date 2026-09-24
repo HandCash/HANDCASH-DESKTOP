@@ -504,7 +504,6 @@ function HistoryRow({
   const event = isEventActivity(entry);
   const item = isItemActivity(entry);
   const token = isTokenActivity(entry);
-  const burned = isBurnActivity(entry);
   const pending = isPendingActivity(entry);
   const failed = isFailedActivity(entry);
   const failureReason = failed ? activityFailureLabel(entry) : null;
@@ -518,8 +517,6 @@ function HistoryRow({
   const utxoHeal = isUtxoHealActivity(entry);
   const utxoHealDone = utxoHeal && !failed && entry.sats > 0;
   const showPending = pending && (spent || !inventoryProven || indexInstall);
-  const listing = entry.method === "market-list";
-  const cancelling = entry.method === "market-cancel";
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined;
   const named = shown ? { ...entry, item: shown } : entry;
