@@ -1,3 +1,4 @@
+import { P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockReviewSpendableOutputs = vi.fn()
@@ -29,6 +30,16 @@ vi.mock('./legacyScan', async (importOriginal) => {
       spentStatusOfOutpoint(...(a as [string, never])),
   }
 })
+
+const fetchRawTxHex = vi.fn(async () => null as string | null)
+const peekRawTxLookup = vi.fn(() => 'unknown' as 'hit' | 'miss' | 'unknown')
+
+// Stubbed whole, not spread from the original: `oneSatImport` imports this
+// module back, so loading it inside the factory deadlocks the dynamic import.
+vi.mock('./oneSatImport', () => ({
+  fetchRawTxHex: (...a: unknown[]) => fetchRawTxHex(...(a as [])),
+  peekRawTxLookup: (...a: unknown[]) => peekRawTxLookup(...(a as [])),
+}))
 
 const reimportDerivedChangeOutpoints = vi.fn(async () => ({
   imported: 0,
@@ -399,6 +410,10 @@ describe('restoreLiveSpendableOutputs', () => {
     spentStatusOfOutpoint.mockReset()
     txExistsOnChain.mockResolvedValue(null)
     spentStatusOfOutpoint.mockResolvedValue('unknown')
+    fetchRawTxHex.mockReset()
+    fetchRawTxHex.mockResolvedValue(null)
+    peekRawTxLookup.mockReset()
+    peekRawTxLookup.mockReturnValue('unknown')
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
@@ -571,6 +586,85 @@ describe('restoreLiveSpendableOutputs', () => {
     })
     expect(isUtxo).not.toHaveBeenCalled()
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  /**
+   * hc-a580a: `sweep ... refused=118 noRawtx=118` then `unscripted-skipped`.
+   * The sweep quarantines change whose raw tx the device never kept so
+   * `allocateChangeInput` cannot crash on it, and restore then skipped exactly
+   * those rows — so real, unspent coins left the spendable balance for good.
+   */
+  describe('change whose raw tx only the chain still has', () => {
+    const address = PrivateKey.fromRandom().toPublicKey().toAddress('mainnet')
+    const creator = new Transaction()
+    creator.addOutput({ lockingScript: new P2PKH().lock(address), satoshis: 2614 })
+
+    function quarantinedScriptlessChange() {
+      findOutputs.mockResolvedValue([
+        {
+          outputId: 7,
+          txid: creator.id('hex'),
+          outputIndex: 0,
+          transactionId: 21,
+          change: true,
+          spendable: false,
+          satoshis: 2614,
+        },
+      ])
+      findTransactions.mockResolvedValue([{ status: 'completed' }])
+      isUtxo.mockResolvedValue(false)
+      spentStatusOfOutpoint.mockResolvedValue('unspent')
+    }
+
+    it('writes the coin off when only local storage may be consulted', async () => {
+      quarantinedScriptlessChange()
+
+      await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+        restored: 0,
+        unscripted: 1,
+      })
+      expect(fetchRawTxHex).not.toHaveBeenCalled()
+      expect(updateOutput).not.toHaveBeenCalled()
+    })
+
+    it('rebuilds the script from the chain on Refresh and restores the coin', async () => {
+      quarantinedScriptlessChange()
+      fetchRawTxHex.mockResolvedValue(creator.toHex())
+
+      await expect(
+        restoreLiveSpendableOutputs({ fromChain: true }),
+      ).resolves.toEqual({ restored: 1, unscripted: 0 })
+      expect(updateOutput).toHaveBeenCalledWith(7, {
+        spendable: true,
+        spentBy: undefined,
+        lockingScript: creator.outputs[0].lockingScript.toBinary(),
+      })
+    })
+
+    it('never takes a script from a transaction that pays a different amount', async () => {
+      quarantinedScriptlessChange()
+      const impostor = new Transaction()
+      impostor.addOutput({
+        lockingScript: new P2PKH().lock(address),
+        satoshis: 9999,
+      })
+      fetchRawTxHex.mockResolvedValue(impostor.toHex())
+
+      await expect(
+        restoreLiveSpendableOutputs({ fromChain: true }),
+      ).resolves.toEqual({ restored: 0, unscripted: 1 })
+      expect(updateOutput).not.toHaveBeenCalled()
+    })
+
+    it('keeps the spend path local even when a caller asks for the chain', async () => {
+      quarantinedScriptlessChange()
+      fetchRawTxHex.mockResolvedValue(creator.toHex())
+
+      await expect(
+        restoreLiveSpendableOutputs({ fromChain: true, forSpendChain: true }),
+      ).resolves.toEqual({ restored: 0, unscripted: 1 })
+      expect(fetchRawTxHex).not.toHaveBeenCalled()
+    })
   })
 
   it('does not restore blank-seal overlay coins the indexer still marks spent', async () => {

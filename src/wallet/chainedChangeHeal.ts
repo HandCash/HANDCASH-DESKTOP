@@ -67,7 +67,7 @@ async function retryRestoreAfterScriptHeal(
   stats: ChangeHealStats,
 ): Promise<RestoreLiveSpendableResult> {
   stats.pendingPromoted += await promotePendingLocalChangeOutputs()
-  const next = await restoreLiveSpendableOutputs()
+  const next = await restoreLiveSpendableOutputs({ fromChain: true })
   stats.restored += next.restored
   stats.unscripted = next.unscripted
   return next
@@ -116,7 +116,7 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       let restoreResult: RestoreLiveSpendableResult = { restored: 0, unscripted: 0 }
       if (localSweep.healed > 0) {
         stats.pendingPromoted = await promotePendingLocalChangeOutputs()
-        restoreResult = await restoreLiveSpendableOutputs()
+        restoreResult = await restoreLiveSpendableOutputs({ fromChain: true })
         stats.restored = restoreResult.restored
         stats.unscripted = restoreResult.unscripted
       }
@@ -185,7 +185,7 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       stats.pendingPromoted = await promotePendingLocalChangeOutputs()
       for (let pass = 0; pass < 5; pass += 1) {
         throwIfYield()
-        const batch = await restoreLiveSpendableOutputs()
+        const batch = await restoreLiveSpendableOutputs({ fromChain: true })
         stats.unscripted = batch.unscripted
         if (batch.restored === 0) break
         stats.restored += batch.restored

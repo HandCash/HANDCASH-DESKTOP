@@ -913,7 +913,10 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
           let restored = 0
           for (let pass = 0; pass < 5; pass += 1) {
             throwIfYieldToSpend()
-            const batch = await restoreLiveSpendableOutputs()
+            // Refresh is the one path allowed to buy a missing raw tx, so
+            // change the device never kept a body for can be scripted and
+            // counted again instead of staying quarantined forever.
+            const batch = await restoreLiveSpendableOutputs({ fromChain: true })
             if (batch.restored === 0) break
             restored += batch.restored
           }

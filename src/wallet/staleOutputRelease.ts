@@ -2810,6 +2810,74 @@ export type RestoreLiveSpendableResult = {
   unscripted: number;
 };
 
+/** Chain raw-tx fetches one restore pass may pay for. */
+const RESTORE_SCRIPT_FETCH_MAX = 24;
+const RESTORE_SCRIPT_CONCURRENCY = 4;
+
+/**
+ * Rebuild locking scripts from the chain for rows local storage cannot script.
+ *
+ * Runs between the classify and write sessions so explorer latency never holds
+ * the storage provider open. One fetch per transaction serves every row it
+ * created, and {@link classifyChangeScript} still matches each row's own
+ * satoshis, so a script is never taken from the wrong output.
+ */
+async function rebuildScriptsFromChain(
+  active: ActiveWallet,
+  work: Array<{ outputId: number; needsScript: ChangeRow | null }>
+): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  const byTxid = new Map<string, Array<{ outputId: number; row: ChangeRow }>>();
+  for (const item of work) {
+    const row = item.needsScript;
+    const txid = row?.txid?.trim().toLowerCase();
+    if (!row || !txid) continue;
+    const group = byTxid.get(txid);
+    if (group) group.push({ outputId: item.outputId, row });
+    else byTxid.set(txid, [{ outputId: item.outputId, row }]);
+  }
+  if (byTxid.size === 0) return out;
+
+  const { fetchRawTxHex, peekRawTxLookup } = await import("./oneSatImport");
+  const { Transaction } = await import("@bsv/sdk");
+  // Biggest coin first: a budgeted pass should recover the most value it can.
+  const txids = [...byTxid.entries()]
+    .sort(
+      (a, b) =>
+        Math.max(...b[1].map((r) => Number(r.row.satoshis) || 0)) -
+        Math.max(...a[1].map((r) => Number(r.row.satoshis) || 0))
+    )
+    .map(([txid]) => txid)
+    .filter((txid) => peekRawTxLookup(txid) !== "miss")
+    .slice(0, RESTORE_SCRIPT_FETCH_MAX);
+
+  for (let i = 0; i < txids.length; i += RESTORE_SCRIPT_CONCURRENCY) {
+    if (shouldYieldChainIngestToSpend()) break;
+    await Promise.all(
+      txids.slice(i, i + RESTORE_SCRIPT_CONCURRENCY).map(async (txid) => {
+        let rawTx: number[] | null = null;
+        try {
+          const hex = await fetchRawTxHex(txid, active.chain);
+          if (hex) rawTx = Transaction.fromHex(hex).toBinary();
+        } catch (err) {
+          console.warn(
+            "[stale-output] restore script fetch skipped",
+            txid.slice(0, 12),
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+        if (!rawTx?.length) return;
+        for (const { outputId, row } of byTxid.get(txid) ?? []) {
+          const fate = classifyChangeScript(row, rawTx);
+          if (fate.kind === "heal") out.set(outputId, fate.lockingScript);
+        }
+      })
+    );
+    await yieldToUi();
+  }
+  return out;
+}
+
 export async function restoreLiveSpendableOutputs(opts?: {
   onlyLiveChange?: boolean;
   /**
@@ -2823,11 +2891,23 @@ export async function restoreLiveSpendableOutputs(opts?: {
    * tx must run inside that same region.
    */
   forSpendChain?: boolean;
+  /**
+   * Rebuild a missing locking script from the chain when local storage has no
+   * raw tx. Refresh only: the fetch runs in the batched prove phase, never
+   * inside a storage session and never on the spend path.
+   *
+   * Without this a change row whose raw tx the device never kept had no way
+   * back. `sweepChangeScripts` quarantines it so `allocateChangeInput` cannot
+   * crash on a script-less row, restore then skipped it as `unscripted`, and
+   * the coin stayed out of the spendable balance permanently.
+   */
+  fromChain?: boolean;
 }): Promise<RestoreLiveSpendableResult> {
   const empty: RestoreLiveSpendableResult = { restored: 0, unscripted: 0 };
   const onlyLiveChange = opts?.onlyLiveChange === true;
   const creatorTxid = opts?.creatorTxid?.trim().toLowerCase() || null;
   const forSpendChain = opts?.forSpendChain === true;
+  const fromChain = opts?.fromChain === true && !forSpendChain;
   if (!forSpendChain && shouldYieldChainIngestToSpend()) return empty;
   const active = getActiveWallet();
   if (!active) return empty;
@@ -2857,6 +2937,12 @@ export async function restoreLiveSpendableOutputs(opts?: {
       proofOutpoint: string | null;
       /** Blank overlay seal to release once the coin is proven unspent. */
       blankSealKey: string | null;
+      /**
+       * Script-less row awaiting a chain raw-tx rebuild in the prove phase.
+       * The row carries its resolved outpoint so the rebuilt script is still
+       * checked against this output's own satoshis before it is written.
+       */
+      needsScript: ChangeRow | null;
     };
     const candidates: RestoreCandidate[] = [];
 
@@ -2943,9 +3029,20 @@ export async function restoreLiveSpendableOutputs(opts?: {
           const healed = await healLockingScript(sp, output, txCache, {
             fromChain: false,
           });
+          let needsScript: ChangeRow | null = null;
           if (healed == null && !hasLockingScript(output)) {
-            unscripted += 1;
-            continue;
+            // Queue the outpoint for the chain rebuild in phase 2. Carrying the
+            // whole row keeps the satoshis check on the rebuilt script, so a
+            // wrong transaction can never lend this coin its lock.
+            const resolved =
+              fromChain && isChangeOutput
+                ? resolveChangeRowOutpoint(output, creator)
+                : null;
+            if (!resolved) {
+              unscripted += 1;
+              continue;
+            }
+            needsScript = resolved;
           }
 
           if (onlyLiveChange) {
@@ -2975,7 +3072,13 @@ export async function restoreLiveSpendableOutputs(opts?: {
             continue;
           }
 
-          candidates.push({ outputId, healed, proofOutpoint, blankSealKey });
+          candidates.push({
+            outputId,
+            healed,
+            proofOutpoint,
+            blankSealKey,
+            needsScript,
+          });
         } catch (err) {
           console.warn(
             "[stale-output] restore skipped",
@@ -3008,10 +3111,28 @@ export async function restoreLiveSpendableOutputs(opts?: {
       await yieldToUi();
     }
 
+    // Rebuild the scripts local storage could not supply. Budgeted, batched,
+    // and outside the storage session — the same contract as proving.
+    const scriptWork = candidates.filter((c) => c.needsScript != null);
+    if (scriptWork.length > 0) {
+      const rebuilt = await rebuildScriptsFromChain(active, scriptWork);
+      for (const candidate of scriptWork) {
+        const script = rebuilt.get(candidate.outputId);
+        if (script) candidate.healed = script;
+      }
+    }
+
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
       for (const candidate of candidates) {
         const { outputId, healed, proofOutpoint, blankSealKey } = candidate;
+        // The chain could not supply this row's script. Promoting it now would
+        // hand `allocateChangeInput` the script-less row quarantine exists to
+        // keep away from it; the next pass tries again.
+        if (candidate.needsScript != null && healed == null) {
+          unscripted += 1;
+          continue;
+        }
         if (proofOutpoint && verdicts.get(proofOutpoint) !== true) {
           if (blankSealKey) keptSpent += 1;
           else phantom += 1;
