@@ -14,6 +14,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { FloatingPositioner } from '../floating/FloatingPositioner.js'
 import { useAeonMachine } from '../hooks/use-aeon-machine.js'
@@ -132,11 +133,13 @@ export interface PopoverPositionerProps extends HTMLAttributes<HTMLDivElement> {
   /** Mount panel in document.body (default true). */
   portalled?: boolean
   placement?: AnchorPlacement
+  /** Align to this region rather than the trigger. See `FloatingPositioner`. */
+  anchorRef?: RefObject<HTMLElement | null>
   children?: ReactNode
 }
 
 const Positioner = forwardRef<HTMLDivElement, PopoverPositionerProps>(function PopoverPositioner(
-  { portalled = true, placement = 'bottom-start', children, className, ...rest },
+  { portalled = true, placement = 'bottom-start', anchorRef, children, className, ...rest },
   ref,
 ) {
   const { open, triggerRef, positionerRef } = usePopoverCtx()
@@ -149,6 +152,7 @@ const Positioner = forwardRef<HTMLDivElement, PopoverPositionerProps>(function P
       part={popoverAnatomy.positioner}
       triggerRef={triggerRef}
       positionerRef={positionerRef}
+      anchorRef={anchorRef}
       portalled={portalled}
       placement={placement}
       className={className}

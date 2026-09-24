@@ -10,6 +10,15 @@ export interface FloatingPositionerProps extends HTMLAttributes<HTMLDivElement> 
   part: string
   triggerRef: RefObject<HTMLElement | null>
   positionerRef: RefObject<HTMLDivElement | null>
+  /**
+   * Position against this element instead of the trigger.
+   *
+   * A trigger is often a small icon button pinned to one edge of a much larger
+   * region. Aligning to the button then throws a wide surface off-screen, and
+   * clamping only slides it back to the viewport edge. Anchoring to the region
+   * the surface belongs to puts it where the eye already is.
+   */
+  anchorRef?: RefObject<HTMLElement | null>
   portalled?: boolean
   placement?: AnchorPlacement
   matchAnchorWidth?: boolean
@@ -24,6 +33,7 @@ export const FloatingPositioner = forwardRef<HTMLDivElement, FloatingPositionerP
       part,
       triggerRef,
       positionerRef,
+      anchorRef,
       portalled = true,
       placement = 'bottom-start',
       matchAnchorWidth = false,
@@ -34,7 +44,7 @@ export const FloatingPositioner = forwardRef<HTMLDivElement, FloatingPositionerP
     ref,
   ) {
     const mounted = usePortalledMount()
-    useAnchorPosition(triggerRef, positionerRef, open && portalled, placement, {
+    useAnchorPosition(anchorRef ?? triggerRef, positionerRef, open && portalled, placement, {
       matchWidth: matchAnchorWidth,
     })
 

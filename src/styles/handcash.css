@@ -4746,30 +4746,18 @@ button.identity-qr-copy:focus-visible {
 }
 
 /*
- * Compact shells keep the Aeon positioner inside the activity header. Treat
- * the header as the anchor and use the whole panel below it, rather than
- * growing rightward from a 28px button at the screen edge.
+ * Compact shells anchor the panel to the activity header instead of the 28px
+ * toggle (see RecentActivity), so it hangs under the whole card. It is no
+ * longer tucked into the toggle's corner, so both stay fully rounded.
  */
-.activity-filter-popover > [data-aeon-scope='popover'][data-aeon-part='positioner'] {
-  position: absolute;
-  inset: 100% 0 auto;
-  z-index: 8;
-  width: auto;
-}
-
-.activity-filter-popover
-  > [data-aeon-scope='popover'][data-aeon-part='positioner']
-  .activity-filter-popover-content {
-  width: 100%;
-  max-height: min(440px, 55dvh);
-  box-sizing: border-box;
+.activity-filter-popover.is-panel-anchored[data-aeon-state='open']
+  .activity-filter-toggle {
   border-radius: var(--radius);
 }
 
-.activity-filter-popover:has(
-    > [data-aeon-scope='popover'][data-aeon-part='positioner']
-  )[data-aeon-state='open']
-  .activity-filter-toggle {
+.activity-filter-popover-content.is-panel-anchored {
+  width: var(--aeon-anchor-width, min(420px, calc(100vw - 24px)));
+  max-width: calc(100vw - 24px);
   border-radius: var(--radius);
 }
 

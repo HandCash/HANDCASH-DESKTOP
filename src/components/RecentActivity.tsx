@@ -896,6 +896,7 @@ export function ActivityFeed({
   onViewAll,
 }: FeedProps) {
   const compactShell = useCompactShell();
+  const headRef = useRef<HTMLDivElement | null>(null);
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
@@ -1192,7 +1193,7 @@ export function ActivityFeed({
     );
 
   const head = (
-    <div className="connected-panel-head">
+    <div className="connected-panel-head" ref={headRef}>
       <h2>{title}</h2>
       <div className="connected-panel-head-actions">
         {showCount ? (
@@ -1248,11 +1249,22 @@ export function ActivityFeed({
           <TopBarPopover
             ariaLabel="Activity filters"
             title="Filters"
-            className="activity-filter-popover"
+            className={
+              compactShell
+                ? "activity-filter-popover is-panel-anchored"
+                : "activity-filter-popover"
+            }
             triggerClassName="activity-filter-toggle"
-            contentClassName="activity-filter-popover-content"
+            contentClassName={
+              compactShell
+                ? "activity-filter-popover-content is-panel-anchored"
+                : "activity-filter-popover-content"
+            }
             active={filtersActive}
-            portalled={!compactShell}
+            // A 28px toggle at the right edge of a phone is the wrong thing to
+            // hang a 420px panel off. Anchor to the activity header so the
+            // panel covers the list it filters.
+            anchorRef={compactShell ? headRef : undefined}
             onTrigger={() => playWalletSound("soft")}
             trigger={
               <>
