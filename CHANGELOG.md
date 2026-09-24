@@ -1,28 +1,52 @@
 # Changelog
 
-## [1.3.316] - 2026-09-24
+## [1.3.317] - 2026-09-24
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Replaced the placeholder changelog entries for 1.3.313 through 1.3.316 with
+  what those releases actually changed.
+
+## [1.3.316] - 2026-09-24
+
+### Added
+
+- Aeon `FloatingPositioner` / `Popover.Positioner` accept an `anchorRef`, so a
+  floating surface can align to the region it belongs to rather than to its
+  trigger.
+
+### Fixed
+
+- Activity filters anchor to the activity header on compact shells. Hanging a
+  420px panel off a 28px toggle pinned to the screen edge left the panel
+  starting off-screen; the viewport clamp could only slide it back to the edge.
 
 ## [1.3.315] - 2026-09-24
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- Change outputs whose raw transaction the device never kept are no longer
+  written off permanently. `sweepChangeScripts` still quarantines a script-less
+  row so `allocateChangeInput` cannot crash on it, but Refresh now rebuilds the
+  locking script from the chain and returns the coin to the spendable balance.
+  The rebuild runs between storage sessions, so explorer latency never holds the
+  provider open, and each script is matched against its row's own satoshis. The
+  spend path stays local-only.
 
 ## [1.3.314] - 2026-09-24
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- Activity filters panel no longer renders off the right edge of a phone.
 
 ## [1.3.313] - 2026-09-24
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Connect and connected-app screens show the permissions the wallet actually
+  grants. The static eight-scope list advertised spending, signing, encryption
+  and identity proofs as standing grants; those are per-action approvals.
+  `grantedPermissionScopes()` is now the single source for what is displayed.
 
 ## [1.3.312] - 2026-09-24
 
