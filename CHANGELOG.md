@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.300] - 2026-09-23
+
+### Fixed
+
+- Wallet repair now finishes. The change-script sweep ordered every pass by
+  coin size, so a block of rows whose raw transaction nobody has took the whole
+  batch, and the rows behind them were never reached — each pass redid the same
+  refusals. Refused rows now sort last, so every pass moves the sweep forward.
+- A pass that healed nothing no longer ends the sweep while script-less rows
+  remain unattempted; the diagnostic reports `attempted` and `remaining`.
+
 ## [1.3.299] - 2026-09-23
 
 ### Fixed

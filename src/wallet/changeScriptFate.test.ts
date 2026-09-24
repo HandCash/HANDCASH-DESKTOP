@@ -7,6 +7,11 @@ vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
 }))
 
+const shouldYieldChainIngestToSpend = vi.fn(() => false)
+vi.mock('./walletCoordinator', () => ({
+  shouldYieldChainIngestToSpend: () => shouldYieldChainIngestToSpend(),
+}))
+
 const fetchRawTxHex = vi.fn()
 const peekRawTxLookup = vi.fn(() => 'unknown' as 'hit' | 'miss' | 'unknown')
 vi.mock('./oneSatImport', () => ({
@@ -14,7 +19,7 @@ vi.mock('./oneSatImport', () => ({
   peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
-const { classifyChangeScript, findMatchingVout, hasLockingScript, isWalletChangeRow, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow, walletChangeLockingScript } =
+const { classifyChangeScript, findMatchingVout, forgetChangeScriptRefusals, hasLockingScript, isWalletChangeRow, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow, walletChangeLockingScript } =
   await import('./changeScriptFate')
 
 /** A one-output tx we can point a change row at. */
@@ -117,6 +122,9 @@ describe('sweepChangeScripts', () => {
   const updateOutput = vi.fn()
 
   beforeEach(() => {
+    forgetChangeScriptRefusals()
+    shouldYieldChainIngestToSpend.mockReset()
+    shouldYieldChainIngestToSpend.mockReturnValue(false)
     findOutputs.mockReset()
     getProvenOrRawTx.mockReset()
     findTransactions.mockReset()
@@ -339,6 +347,70 @@ describe('sweepChangeScripts', () => {
       healed: 0,
       quarantined: 0,
       refused: 0,
+      unscripted: 0,
+      attempted: 0,
+      remaining: 0,
     })
+  })
+
+  /**
+   * The sweep is batched and yields to waiting sends, so one call sees only
+   * part of the list. Ordering by satoshis alone replayed the same refusals
+   * every pass and never reached the rows behind them.
+   */
+  it('carries on past rows an earlier pass refused', async () => {
+    const healable = fixtureTx(10)
+    // Big rows whose raw tx nobody has sort first on satoshis, so they would
+    // otherwise monopolise the batch of every pass.
+    const stuck = Array.from({ length: 45 }, (_, i) => ({
+      outputId: i + 1,
+      change: true,
+      spendable: false,
+      txid: fixtureTx(1).id('hex'),
+      vout: 0,
+      satoshis: 1_000_000 + i,
+    }))
+    pageOnce([], [
+      ...stuck,
+      {
+        outputId: 500,
+        change: true,
+        spendable: false,
+        txid: healable.id('hex'),
+        vout: 0,
+        satoshis: 10,
+      },
+    ])
+    getProvenOrRawTx.mockImplementation(async (txid: string) =>
+      txid === healable.id('hex') ? { rawTx: healable.toBinary() } : {},
+    )
+    // A send arrives once the first batch is done, exactly as on the phone.
+    shouldYieldChainIngestToSpend
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false)
+
+    const first = await sweepChangeScripts()
+    expect(first.healed).toBe(0)
+    expect(first.remaining).toBeGreaterThan(0)
+
+    const second = await sweepChangeScripts()
+    expect(second.healed).toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(500, {
+      lockingScript: healable.outputs[0].lockingScript.toBinary(),
+    })
+  })
+
+  it('reports how much of the script-less set it reached', async () => {
+    pageOnce([], [
+      { outputId: 31, change: true, spendable: false, satoshis: 900 },
+      { outputId: 32, change: true, spendable: false, lockingScript: [118] },
+    ])
+
+    const r = await sweepChangeScripts()
+
+    expect(r.unscripted).toBe(1)
+    expect(r.attempted).toBe(1)
+    expect(r.remaining).toBe(0)
   })
 })

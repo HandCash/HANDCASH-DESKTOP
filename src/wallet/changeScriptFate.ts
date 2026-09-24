@@ -310,6 +310,33 @@ export type ChangeScriptSweep = {
   quarantined: number
   refused: number
   addressFallback?: number
+  /** Script-less rows found by this scan. */
+  unscripted: number
+  /** Rows this call actually classified (bounded by batching and yields). */
+  attempted: number
+  /** Script-less rows this call never reached — the next pass starts there. */
+  remaining: number
+}
+
+/**
+ * Rows a previous pass already refused.
+ *
+ * Without this the sweep re-attempts the same head of the list forever: the
+ * order is satoshis-descending, so a block of rows whose raw tx nobody has
+ * consumes every batch, and the rows behind them are never reached. Refused
+ * rows are not skipped — new evidence can still arrive — they simply sort
+ * last, which is what makes each pass carry the sweep forward.
+ */
+const refusedBefore = new Set<number>()
+
+/** New account / restored history: prior refusals say nothing about these rows. */
+export function forgetChangeScriptRefusals(): void {
+  refusedBefore.clear()
+}
+
+function outputIdOf(row: ChangeRow): number {
+  const id = Number(row.outputId)
+  return Number.isFinite(id) && id > 0 ? id : -1
 }
 
 /** Change rows the wallet created — not 1-sat item tips. */
@@ -346,6 +373,9 @@ export async function sweepChangeScripts(args?: {
     healed: 0,
     quarantined: 0,
     refused: 0,
+    unscripted: 0,
+    attempted: 0,
+    remaining: 0,
   }
   if (!active?.wallet?.storage) return empty
 
@@ -366,12 +396,20 @@ export async function sweepChangeScripts(args?: {
     quarantined: 0,
     refused: 0,
     addressFallback: 0,
+    unscripted: unscripted.length,
+    attempted: 0,
+    remaining: unscripted.length,
   }
   const refuseReasons: Partial<Record<ChangeRefuseReason, number>> = {}
   const fromChain = args?.fromChain === true
-  const ordered = [...unscripted].sort(
-    (a, b) => Math.max(0, Number(b.satoshis) || 0) - Math.max(0, Number(a.satoshis) || 0),
-  )
+  // Biggest coin first is the right priority, but only among rows a previous
+  // pass has not already refused. Otherwise the sweep never advances past them.
+  const ordered = [...unscripted].sort((a, b) => {
+    const staleA = refusedBefore.has(outputIdOf(a)) ? 1 : 0
+    const staleB = refusedBefore.has(outputIdOf(b)) ? 1 : 0
+    if (staleA !== staleB) return staleA - staleB
+    return Math.max(0, Number(b.satoshis) || 0) - Math.max(0, Number(a.satoshis) || 0)
+  })
 
   const rawTxCache = new Map<string, number[] | null>()
   const txByIdCache = new Map<number, TxStatusRow | null>()
@@ -401,6 +439,7 @@ export async function sweepChangeScripts(args?: {
       for (const row of batch) {
         const outputId = Number(row.outputId)
         if (!Number.isFinite(outputId) || outputId <= 0) continue
+        result.attempted += 1
 
         const transactionId = Number(row.transactionId)
         const txRow =
@@ -409,8 +448,12 @@ export async function sweepChangeScripts(args?: {
             : null
         const resolved = resolveChangeRowOutpoint(row, txRow)
         if (!resolved?.txid) {
-          if (await tryAddressFallback(row, outputId)) continue
+          if (await tryAddressFallback(row, outputId)) {
+            refusedBefore.delete(outputId)
+            continue
+          }
           result.refused += 1
+          refusedBefore.add(outputId)
           refuseReasons['no-outpoint'] = (refuseReasons['no-outpoint'] ?? 0) + 1
           if (row.spendable === true) {
             try {
@@ -440,12 +483,14 @@ export async function sweepChangeScripts(args?: {
           try {
             await sp.updateOutput(outputId, { lockingScript: fate.lockingScript })
             result.healed += 1
+            refusedBefore.delete(outputId)
             continue
           } catch (err) {
             console.warn('[change-script] heal skipped', outputId, err)
           }
         } else {
           result.refused += 1
+          refusedBefore.add(outputId)
           refuseReasons[fate.reason] = (refuseReasons[fate.reason] ?? 0) + 1
         }
 
@@ -478,8 +523,10 @@ export async function sweepChangeScripts(args?: {
     }
   } catch (err) {
     console.warn('[change-script] sweep session failed', err)
+    result.remaining = Math.max(0, ordered.length - result.attempted)
     return result
   }
+  result.remaining = Math.max(0, ordered.length - result.attempted)
 
   if (result.healed > 0) {
     const viaFallback = result.addressFallback ?? 0
@@ -508,6 +555,8 @@ export async function sweepChangeScripts(args?: {
         healed: result.healed,
         quarantined: result.quarantined,
         refused: result.refused,
+        attempted: result.attempted,
+        remaining: result.remaining,
         fromChain,
         ...(result.addressFallback ? { addressFallback: result.addressFallback } : {}),
         ...(refuseReasons['no-outpoint']

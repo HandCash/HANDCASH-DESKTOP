@@ -882,7 +882,7 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
               throwIfYieldToSpend()
               const sweep = await sweepChangeScripts({ fromChain: true })
               scriptsHealed += sweep.healed
-              if (sweep.healed === 0) break
+              if (sweep.healed === 0 && sweep.remaining === 0) break
             }
             if (scriptsHealed > 0) {
               console.info(
