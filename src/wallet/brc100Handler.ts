@@ -1140,6 +1140,11 @@ async function handleBrc100RequestInner(
           playWalletSound('receive')
           announceCoinsReceived(sats)
         } else {
+          console.info(
+            `[brc100] internalizeAction credited no measurable amount — no Activity row (${
+              receivedTxid ? `${receivedTxid.slice(0, 12)}…` : 'no txid'
+            })`,
+          )
           playWalletSound('soft')
         }
       }

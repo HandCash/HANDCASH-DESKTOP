@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.307] - 2026-09-24
+
+### Added
+
+- Activity writes are traced. Every money row now logs whether it was written
+  as a new row, merged into an existing one, or skipped — with the reason, the
+  txid, and, for a merge, which row it landed in and when that row was first
+  seen. A merge keeps the matched row's timestamp, so a receive folded into an
+  older row does not surface at the top of the feed and is indistinguishable
+  from a row that was never written at all. `internalizeAction` also says so
+  explicitly when it credits no measurable amount and therefore writes nothing.
+
 ## [1.3.306] - 2026-09-24
 
 ### Fixed

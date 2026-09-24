@@ -331,6 +331,26 @@ export function getActivityWriteGeneration(): number {
   return writeGeneration;
 }
 
+/**
+ * Trace money rows in and out of storage.
+ *
+ * Activity writes were silent, so "the balance moved but no row appeared" could
+ * not be told apart from "a row was written and never drawn" without a
+ * screenshot and a guess. Events are omitted — they are frequent and never the
+ * thing in question.
+ */
+function logActivityWrite(
+  outcome: "new" | "merged" | "skipped",
+  row: { kind: ActivityKind; method: string; sats: number; txid?: string },
+  detail: string
+): void {
+  if (row.kind === "event") return;
+  const id = row.txid ? `${row.txid.slice(0, 12)}…` : "no-txid";
+  console.info(
+    `[activity] ${outcome} ${row.kind}/${row.method} ${row.sats} sat ${id} — ${detail}`
+  );
+}
+
 function ownerIsCurrent(owner?: BoundAccountKeyScope): boolean {
   if (!owner) return true;
   const current = peekAccountLocalKeyScope();
@@ -624,7 +644,14 @@ export function upsertAppActivity(args: {
   // Pending BSV receives may not know sats yet — still show Verifying… in Activity.
   // Pending outbound sends (sats > 0 or item) must show before a txid exists.
   // A failed send must survive even with no amount — it is the only trace left.
-  if (sats <= 0 && !item && !isEvent && !pending && !failed) return;
+  if (sats <= 0 && !item && !isEvent && !pending && !failed) {
+    logActivityWrite(
+      "skipped",
+      { kind: args.kind, method: args.method, sats, txid: args.txid },
+      "no amount, item, or status"
+    );
+    return;
+  }
   if (isEvent && !(args.note?.trim() || args.method.trim())) return;
   const origin = normalizeAppHost(args.origin);
   const txid = args.txid?.trim() || undefined;
@@ -694,9 +721,23 @@ export function upsertAppActivity(args: {
       ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
       ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
     };
+    // A merge keeps the matched row's `at`, so it stays where it was in the
+    // feed rather than appearing as something that just happened.
+    logActivityWrite(
+      "merged",
+      { kind: args.kind, method: args.method, sats, txid },
+      `into row ${idx + 1} of ${entries.length}, first seen ${new Date(
+        prev.at
+      ).toISOString()}`
+    );
     writeAll(entries, owner);
     return;
   }
+  logActivityWrite(
+    "new",
+    { kind: args.kind, method: args.method, sats, txid },
+    `${entries.length + 1} row(s) held`
+  );
   writeAll([
     ...entries,
     {
