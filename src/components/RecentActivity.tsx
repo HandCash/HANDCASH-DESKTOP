@@ -763,8 +763,14 @@ function useActivityFeed(limit: number) {
     };
     const unsubItems = subscribeCollectables(refreshAfterAssetPaint);
     const unsubTokens = subscribeFungibles(refreshAfterAssetPaint);
+    // Activity writes usually happen while spend priority is held, which makes
+    // stale-row expiry correctly yield. Without a later tick there may be no
+    // event after the spend releases, so an old approval placeholder can stay
+    // painted forever beside the successful transaction row.
+    const staleTimer = window.setInterval(refresh, 5_000);
     return () => {
       window.clearTimeout(assetTimer);
+      window.clearInterval(staleTimer);
       unsubActivity();
       unsubApps();
       unsubItems();

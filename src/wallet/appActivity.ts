@@ -1334,9 +1334,12 @@ function reportStuckOutbound(
 }
 
 /**
- * Mark Sending… rows older than `maxAgeMs` as failed when they never reached a
- * txid / complete. Matches the payment-progress stuck watchdog so Activity
- * cannot spin forever — and, unlike the old prune, says what happened.
+ * Resolve Sending… rows older than `maxAgeMs` when they never reached a txid.
+ *
+ * A priced row is a real attempted send, so keep it as a terminal failure with
+ * the reason. A zero-sat, item-less row is only an approval placeholder: it
+ * names no transaction, amount, or custody event, and old builds could strand
+ * it after the successful transaction row arrived. Drop that UI phantom.
  */
 export function expireStaleOutboundPending(
   maxAgeMs = 90_000,
@@ -1352,19 +1355,27 @@ export function expireStaleOutboundPending(
   const prev = readAll();
   reportStuckOutbound(prev, now, "expiry ran");
   let expired = 0;
-  const entries = prev.map((e) => {
+  const entries = prev.flatMap((e) => {
     if (e.status !== "pending" || e.kind !== "spent") return e;
     if (e.txid) return e;
     if (now - e.at < maxAgeMs) return e;
     expired += 1;
+    if (e.sats <= 0 && !e.item) {
+      console.info(
+        `[activity] removed orphan approval placeholder id=${e.id} pending=${
+          e.pendingId ?? "none"
+        }`
+      );
+      return [];
+    }
     const name = e.item?.name?.trim();
-    return {
+    return [{
       ...e,
       status: "failed" as const,
       failureReason:
         "Send timed out — signing took too long and nothing was broadcast",
       note: name ? `${name} was not sent` : "Collectable was not sent",
-    };
+    }];
   });
   if (expired > 0) {
     writeAll(entries);

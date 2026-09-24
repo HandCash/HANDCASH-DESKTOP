@@ -43,6 +43,32 @@ describe('durable store ownership', () => {
     expect(durableGetItem('handcash.brc100.appActivity')).toBe(BIG)
   })
 
+  it('removes the unscoped wallet copy after account migration', async () => {
+    const local = installLocalStorage()
+    vi.stubGlobal('window', { handcash: undefined })
+    const { durableGetItem } = await loadDurable()
+    const base = 'handcash.brc150.remittance.v1'
+    const scoped = `${base}:wallet:main:0:identity-root`
+    local.set(base, BIG)
+
+    expect(durableGetItem(scoped)).toBe(BIG)
+    expect(local.get(scoped)).toBe(BIG)
+    expect(local.has(base)).toBe(false)
+  })
+
+  it('removes a leftover legacy copy when the scoped value already exists', async () => {
+    const local = installLocalStorage()
+    vi.stubGlobal('window', { handcash: undefined })
+    const base = 'handcash.messages.v1'
+    const scoped = `${base}:wallet:main:0:identity-root`
+    local.set(base, 'old')
+    local.set(scoped, 'current')
+    const { durableGetItem } = await loadDurable()
+
+    expect(durableGetItem(scoped)).toBe('current')
+    expect(local.has(base)).toBe(false)
+  })
+
   it('does not believe a shell that reports success and stores nothing', async () => {
     const local = installLocalStorage()
     // The mobile shell answered these to avoid a duplicate WebView write. Every

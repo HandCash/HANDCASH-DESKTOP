@@ -19,6 +19,8 @@ export type DurableSetOptions = {
  * what we stored. `null` means "known absent"; a cache miss is `undefined`.
  */
 const cache = new Map<string, string | null>()
+/** Legacy wallet keys already checked in this renderer. */
+const cleanedLegacyKeys = new Set<string>()
 
 /**
  * Largest value worth mirroring into `localStorage` when Electron already holds
@@ -146,13 +148,52 @@ export function durableGetItem(key: string): string | null {
       const legacy =
         cachedLegacy !== undefined ? cachedLegacy : readThrough(legacyKey)
       if (legacy != null && legacy !== '') {
-        if (durableSetItem(key, legacy)) value = legacy
+        if (durableSetItem(key, legacy)) {
+          value = legacy
+          removeMigratedLegacyKey(legacyKey, legacy.length)
+        }
+      }
+    }
+  }
+  // Earlier migrations copied into the account namespace but retained the old
+  // value forever. On mobile that doubled the largest stores (BRC-150 and
+  // messages alone consumed another megabyte) until the 5MB WebView quota
+  // rejected custody queues and logs. A present scoped value is authoritative,
+  // so the old account-0 / identity-suffixed copy is safe to remove.
+  if (value != null) {
+    const scoped = WALLET_KEY_RE.exec(key)
+    if (scoped) {
+      const [, base, , rawIndex, identityKey] = scoped
+      const legacyKey = Number(rawIndex) === 0 ? base! : `${base}:${identityKey}`
+      if (!cleanedLegacyKeys.has(legacyKey)) {
+        let legacy: string | null = null
+        try {
+          legacy = readThrough(legacyKey)
+        } catch {
+          // ignore an unreadable old copy
+        }
+        if (legacy != null && legacy !== '') {
+          removeMigratedLegacyKey(legacyKey, legacy.length)
+        } else {
+          cleanedLegacyKeys.add(legacyKey)
+        }
       }
     }
   }
   const normalized = value === '' ? null : value
   cache.set(key, normalized)
   return normalized
+}
+
+function removeMigratedLegacyKey(key: string, bytes: number): void {
+  if (cleanedLegacyKeys.has(key)) return
+  cleanedLegacyKeys.add(key)
+  durableRemoveItem(key)
+  console.info(
+    `[storage] removed migrated legacy copy ${key} (${Math.round(
+      bytes / 1024,
+    )}KB)`,
+  )
 }
 
 export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
@@ -261,6 +302,9 @@ export function durableRemoveItem(key: string): void {
 
 /** Drop cached reads when something outside this renderer may have written. */
 export function durableForgetCached(key?: string): void {
-  if (key == null) cache.clear()
+  if (key == null) {
+    cache.clear()
+    cleanedLegacyKeys.clear()
+  }
   else cache.delete(key)
 }

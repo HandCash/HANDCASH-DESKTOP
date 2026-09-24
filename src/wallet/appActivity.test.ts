@@ -763,6 +763,21 @@ describe("inbound receive activity", () => {
     expect(activityEntryTitle(row)).toBe("Send failed");
   });
 
+  it("removes a stale zero-sat approval placeholder with no transaction", () => {
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: "spent",
+      sats: 0,
+      method: "send",
+      note: "Signed",
+      status: "pending",
+      pendingId: "orphan-approval",
+    });
+    expect(listRecentActivity(10)).toHaveLength(1);
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1);
+    expect(listRecentActivity(10)).toHaveLength(0);
+  });
+
   it("keeps Sending… while a spend is still in flight", async () => {
     const { leaseSpendPriority, resetWalletCoordinatorForTests } = await import(
       "./walletCoordinator"

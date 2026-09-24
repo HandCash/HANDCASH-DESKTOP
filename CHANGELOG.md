@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.309] - 2026-09-24
+
+### Fixed
+
+- Old zero-sat `Signed / APPROVING` placeholders are now removed after 90
+  seconds. They name no amount, item, or transaction and are only abandoned UI
+  state; priced sends still become explicit failed rows with their reason. The
+  Activity feed retries cleanup every five seconds after spend priority is
+  released, so a successful row arriving during a live spend cannot leave its
+  approval placeholder painted forever.
+- Mobile origin storage now removes old unscoped wallet values after their
+  account-scoped replacement is present. Earlier migration copied rather than
+  moved them; on the affected phone duplicate BRC-150 and message stores used
+  over 1 MB and pushed the WebView to its exact 5 MB quota. That made custody
+  retry queues, Activity cleanup, and diagnostic logs refuse writes.
+
 ## [1.3.308] - 2026-09-24
 
 ### Fixed
