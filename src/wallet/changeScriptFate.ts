@@ -61,6 +61,17 @@ const MAX_PAGES = 40
 const CHAIN_FETCH_MAX = 32
 /** Rows per IDB session — long single sessions block listOutputs during sync. */
 const SWEEP_BATCH_SIZE = 40
+/**
+ * Smallest batch a pass will still run while a send is waiting.
+ *
+ * Yielding *before* the first batch made a pass pure loss: it had already paid
+ * for the full output scan, then returned having classified nothing, so the
+ * next pass started from exactly the same place. A wallet with a send in flight
+ * therefore never repaired at all. Every pass now classifies at least this many
+ * rows — short enough that the spend barely waits, but enough that repair
+ * always advances.
+ */
+const MIN_PROGRESS_BATCH = 8
 
 type TxStatusRow = { status?: string; rawTx?: number[]; txid?: string }
 
@@ -316,6 +327,12 @@ export type ChangeScriptSweep = {
   attempted: number
   /** Script-less rows this call never reached — the next pass starts there. */
   remaining: number
+  /**
+   * A send cut this pass short. `remaining > 0` here means repair is *owed*,
+   * not that the sweep has nothing left to rebuild — callers must not read it
+   * as completion.
+   */
+  deferred: boolean
 }
 
 /**
@@ -376,6 +393,7 @@ export async function sweepChangeScripts(args?: {
     unscripted: 0,
     attempted: 0,
     remaining: 0,
+    deferred: false,
   }
   if (!active?.wallet?.storage) return empty
 
@@ -399,6 +417,7 @@ export async function sweepChangeScripts(args?: {
     unscripted: unscripted.length,
     attempted: 0,
     remaining: unscripted.length,
+    deferred: false,
   }
   const refuseReasons: Partial<Record<ChangeRefuseReason, number>> = {}
   const fromChain = args?.fromChain === true
@@ -508,18 +527,31 @@ export async function sweepChangeScripts(args?: {
   try {
     for (let offset = 0; offset < ordered.length; offset += SWEEP_BATCH_SIZE) {
       const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
-      if (shouldYieldChainIngestToSpend()) {
+      const spendWaiting = shouldYieldChainIngestToSpend()
+      // A send outranks repair, but only once this pass has actually moved the
+      // sweep forward. Yielding on the first batch costs a full output scan and
+      // buys nothing, so the first batch runs anyway — just a short one.
+      if (spendWaiting && result.attempted > 0) {
         console.info(
           `[change-script] yielding mid-sweep — send waiting (scanned ${offset}/${ordered.length})`,
         )
+        result.deferred = true
         break
       }
       if (offset > 0) {
         const { yieldToUi } = await import('./yieldToUi')
         await yieldToUi()
       }
-      const batch = ordered.slice(offset, offset + SWEEP_BATCH_SIZE)
-      await processBatch(batch)
+      const size = spendWaiting ? MIN_PROGRESS_BATCH : SWEEP_BATCH_SIZE
+      await processBatch(ordered.slice(offset, offset + size))
+      if (spendWaiting) {
+        console.info(
+          `[change-script] send waiting — kept repair moving with a short batch ` +
+            `(scanned ${offset + size}/${ordered.length})`,
+        )
+        result.deferred = true
+        break
+      }
     }
   } catch (err) {
     console.warn('[change-script] sweep session failed', err)
@@ -547,7 +579,10 @@ export async function sweepChangeScripts(args?: {
       `[change-script] quarantined ${result.quarantined} change output(s) with no rebuildable script`,
     )
   }
-  if (result.refused > 0 || result.quarantined > 0 || result.healed > 0) {
+  // Log every pass that had work to do, including one that healed nothing.
+  // A silent no-progress pass is exactly what made "wallet health stuck"
+  // undiagnosable — the sweep looked idle when it was starving.
+  if (unscripted.length > 0) {
     void import('./diagnosticLog').then(({ logDiag }) => {
       logDiag('change-script', result.healed > 0 ? 'info' : 'warn', 'sweep', {
         scanned: result.scanned,
@@ -557,6 +592,7 @@ export async function sweepChangeScripts(args?: {
         refused: result.refused,
         attempted: result.attempted,
         remaining: result.remaining,
+        ...(result.deferred ? { deferred: true } : {}),
         fromChain,
         ...(result.addressFallback ? { addressFallback: result.addressFallback } : {}),
         ...(refuseReasons['no-outpoint']

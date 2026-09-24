@@ -126,13 +126,17 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       for (let pass = 0; pass < 4 && restoreStillStuck(restoreResult); pass += 1) {
         const chainSweep = await sweepChangeScripts({ fromChain: true })
         stats.scriptsChain += chainSweep.healed
+        if (chainSweep.healed > 0) {
+          restoreResult = await retryRestoreAfterScriptHeal(stats)
+        }
+        // A send cut the pass short. Re-scanning every output to squeeze in one
+        // more short batch would just tax the spend; the post-send cleanup heal
+        // picks the sweep up where this left it.
+        if (chainSweep.deferred) break
         // A pass that healed nothing is not proof the sweep is finished: it
         // may have spent its whole batch on rows it had to refuse. Stop only
         // when no script-less row is left unattempted.
         if (chainSweep.healed === 0 && chainSweep.remaining === 0) break
-        if (chainSweep.healed > 0) {
-          restoreResult = await retryRestoreAfterScriptHeal(stats)
-        }
       }
       noteHeal(stats)
       return stats
@@ -172,6 +176,7 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
         throwIfYield()
         const sweep = await sweepChangeScripts({ fromChain: true })
         stats.scriptsChain += sweep.healed
+        if (sweep.deferred) break
         if (sweep.healed === 0 && sweep.remaining === 0) break
       }
       throwIfYield()

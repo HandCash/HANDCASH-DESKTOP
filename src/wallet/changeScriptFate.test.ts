@@ -350,6 +350,7 @@ describe('sweepChangeScripts', () => {
       unscripted: 0,
       attempted: 0,
       remaining: 0,
+      deferred: false,
     })
   })
 
@@ -399,6 +400,51 @@ describe('sweepChangeScripts', () => {
     expect(updateOutput).toHaveBeenCalledWith(500, {
       lockingScript: healable.outputs[0].lockingScript.toBinary(),
     })
+  })
+
+  /**
+   * hc-a580a, v0.1.480: `yielding mid-sweep — send waiting (scanned 0/168)`.
+   * The pass paid for the whole 806-row output scan, then yielded before its
+   * first batch, so it classified nothing and the next pass started in exactly
+   * the same place. With a send in flight the wallet never repaired at all.
+   */
+  it('keeps repairing while a send waits instead of starving at batch zero', async () => {
+    const tx = fixtureTx(500)
+    const rows: Array<Record<string, unknown>> = Array.from({ length: 20 }, (_, i) => ({
+      outputId: i + 1,
+      change: true,
+      spendable: false,
+      txid: tx.id('hex'),
+      vout: 0,
+      satoshis: 500,
+    }))
+    // Write-through, so a healed row is scripted on the next scan like real IDB.
+    updateOutput.mockImplementation(
+      async (outputId: number, patch: Record<string, unknown>) => {
+        Object.assign(
+          rows.find((row) => row.outputId === outputId) ?? {},
+          patch,
+        )
+        return 1
+      },
+    )
+    findOutputs.mockImplementation(
+      async (args: { partial: { spendable: boolean }; paged: { offset: number } }) =>
+        args.paged.offset > 0 || args.partial.spendable ? [] : rows,
+    )
+    getProvenOrRawTx.mockResolvedValue({ rawTx: tx.toBinary() })
+    // The phone's condition: a send is waiting for the whole sweep.
+    shouldYieldChainIngestToSpend.mockReturnValue(true)
+
+    const first = await sweepChangeScripts()
+    expect(first.deferred).toBe(true)
+    expect(first.attempted).toBeGreaterThan(0)
+    expect(first.healed).toBe(first.attempted)
+
+    for (let pass = 0; pass < 10 && rows.some((row) => !row.lockingScript); pass += 1) {
+      expect((await sweepChangeScripts()).attempted).toBeGreaterThan(0)
+    }
+    expect(rows.every((row) => row.lockingScript)).toBe(true)
   })
 
   it('reports how much of the script-less set it reached', async () => {

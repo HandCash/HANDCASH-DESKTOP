@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.302] - 2026-09-24
+
+### Fixed
+
+- Wallet repair no longer starves while a send is in flight. The change-script
+  sweep checked the yield before its first batch, so a pass paid for the whole
+  output scan and then returned having classified nothing — the next pass began
+  in exactly the same place (`yielding mid-sweep — send waiting (scanned
+  0/168)`). Every pass now classifies a short batch before it yields, so repair
+  always moves forward; callers see `deferred` and stop reading a cut-short
+  pass as completion.
+- A sweep pass that healed nothing is logged instead of dropped, so a stalled
+  repair is visible in diagnostics rather than looking idle.
+
 ## [1.3.301] - 2026-09-24
 
 ### Added
