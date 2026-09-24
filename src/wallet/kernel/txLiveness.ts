@@ -10,6 +10,8 @@ export const LIVE_LOCAL_TX_STATUSES = Object.freeze([
   'unproven',
   'completed',
   'nosend',
+  /** Signed `noSend` row still in the miner queue. The cheque is already SPV. */
+  'unsent',
   'nonfinal',
   'unfail',
   'unmined',
@@ -21,11 +23,12 @@ export const LIVE_LOCAL_TX_STATUSES = Object.freeze([
 const liveStatuses: ReadonlySet<string> = new Set(LIVE_LOCAL_TX_STATUSES)
 
 /**
- * Statuses meaning the app still holds the signed tx and no miner has it.
+ * Broadcast-hold: signed, not yet offered to a miner.
  *
- * `createAction({ noSend: true })` — every `peerDeliver` item settle — parks
- * here. Change of an app-held tx must not feed the next spend, because the app
- * may still abort it. Once Arcade accepts, it is no longer app-held.
+ * SPV already owns this cheque (`unconfirmed` / bodies-complete). `nosend` /
+ * `unsent` only means we have not cashed it yet — so the next `createAction`
+ * must not select its change as a parent Arcade has never seen. Pin ends the
+ * hold. It does not create ownership; the signed Atomic BEEF already did.
  */
 export const APP_HELD_TX_STATUSES = Object.freeze(['nosend', 'unsent'] as const)
 
@@ -38,7 +41,7 @@ export function isLiveLocalTxStatus(status: unknown): boolean {
   return liveStatuses.has(String(status ?? '').toLowerCase())
 }
 
-/** True while the app, not a miner, decides whether this tx lands. */
+/** True while we are still holding the cheque back from miners. */
 export function isAppHeldTxStatus(status: unknown): boolean {
   return appHeldStatuses.has(String(status ?? '').toLowerCase())
 }

@@ -767,13 +767,13 @@ export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
  * Hand an app-held signed tx over to the network side of the ledger.
  *
  * `createAction({ noSend: true })` — every `peerDeliver` item settle — leaves
- * the row `nosend`, and `nosend` change is deliberately withheld from the next
- * spend while the app can still abort. Arcade acceptance ends that: the tx is
- * no longer cancelable, so its inputs must stay sealed and its change must
- * become spendable. Without this, a bulk item send burns its whole funding
- * output into stranded `nosend` change and the next leg fails for want of a
- * few satoshis while the balance reads near zero (bucket hc-ad7afbfaae0d,
- * 05c22bf13b06 stranded 1,070,674 sats across 8 change outputs).
+ * the row `nosend`. SPV already owns the cheque; the hold is only so the next
+ * `createAction` does not select a parent no miner has seen. Arcade acceptance
+ * ends the broadcast-hold: inputs stay sealed and change becomes selectable.
+ * Without this, a bulk item send burns its funding into stranded `nosend`
+ * change and the next leg fails for want of a few satoshis while Pay reads
+ * near zero (bucket hc-ad7afbfaae0d, 05c22bf13b06 stranded 1,070,674 sats
+ * across 8 change outputs).
  */
 export async function pinBroadcastLocalTx(
   txid: string,
@@ -1793,9 +1793,10 @@ export async function reclaimOutputsSealedByDeadTxs(opts?: {
  * outs so the next bet / payout spend can chain without waiting on confirmation.
  */
 /**
- * App `noSend` / `unsent` change must not become the next app's fee input —
- * that chains an unbroadcast parent and Arcade rejects with missing-inputs.
- * Promote only once the wallet (or Arcade) has taken the tx past that hold.
+ * App `noSend` / `unsent` change is already ours (local SPV). It must not
+ * become the next app's fee input until we have offered this parent to a
+ * miner — otherwise Arcade rejects the child for missing-inputs. Pin ends
+ * that broadcast-hold. It does not create the coin.
  */
 async function appCreateActionChangeReadyToPromote(
   txid: string

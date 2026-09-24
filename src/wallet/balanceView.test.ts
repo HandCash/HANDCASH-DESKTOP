@@ -15,6 +15,7 @@ describe('txLivenessFromStatus', () => {
       'sending',
       'unproven',
       'nosend',
+      'unsent',
       'nonfinal',
       'unmined',
       'callback',

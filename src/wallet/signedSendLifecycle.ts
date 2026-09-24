@@ -12,10 +12,14 @@ import {
 /**
  * One lifecycle for every locally signed outbound transaction.
  *
- * Protocol modules own output construction and peer-remittance ordering. This
- * module alone owns the shared boundary after signing: seal inputs, register
- * ARC/BUMP tracking, durably submit to miners, classify hard rejection, and
- * attempt header-verified SPV finality.
+ * The signed Atomic BEEF is the cheque. SPV is primary: seal inputs, archive
+ * the body, and account the cheque as an unconfirmed spend (`bodies-complete`
+ * until a header covers it; `headerProven` after BUMP vs local headers).
+ * Broadcasting — Arcade / miner retry — is how we cash that cheque. It is
+ * required, and it is secondary. HTTP 200 and Arcade accept are transmission,
+ * not finality. Only a proven hard reject or a competing spend rewrites the
+ * cheque. Protocol modules own output construction and remittance; they do
+ * not invent a second spend.
  */
 import type { MinerSubmitResult } from './minerSubmit'
 import type { TransactionFlow } from './transactionTelemetry'

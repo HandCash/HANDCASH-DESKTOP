@@ -2,10 +2,11 @@
  * Dual-layer transaction lifecycle — optimistic UI vs cryptographic finality.
  *
  * Sit *beside* BRC-29 / BSV send machines (who broadcasts / peer deliver).
- * This module owns network confirmation: ARC status is a rumour;
- * unconfirmed cheques stay `SEEN_IN_MEMPOOL` and may be chained (parent bodies);
+ * This module owns confirmation kinds: ARC status is a rumour;
+ * a signed cheque is already `SEEN_IN_MEMPOOL` from local SPV (parent bodies);
  * MINED only after a verified BUMP against local headers (`chainProofKind`).
  *
+ * Broadcast is how miners cash the cheque. It is required and secondary.
  * Never treat HTTP 200 / postBeef accept as hard finality.
  */
 
@@ -75,7 +76,7 @@ export type TxRecord = {
 
 const TX_FORWARD: Readonly<Record<TxStatus, ReadonlySet<TxStatus>>> = {
   DRAFT: new Set(['VALIDATING', 'FAILED_REJECTED']),
-  VALIDATING: new Set(['BROADCASTING', 'FAILED_REJECTED']),
+  VALIDATING: new Set(['BROADCASTING', 'SEEN_IN_MEMPOOL', 'FAILED_REJECTED']),
   BROADCASTING: new Set(['SEEN_IN_MEMPOOL', 'FAILED_REJECTED']),
   SEEN_IN_MEMPOOL: new Set(['MINED', 'FAILED_REJECTED', 'REORG_ORPHANED']),
   MINED: new Set(['REORG_ORPHANED']),

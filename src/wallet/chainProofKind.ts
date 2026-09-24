@@ -1,15 +1,17 @@
 /**
  * How a transaction is known on this device — header digest vs unconfirmed cheque.
  *
- * Ingest finds coins. Digest classifies them. Mixing the two is how P2P chaining
- * dies: an indexer that has not seen a just-signed child answers "absent", and
- * Refresh treats that as a cancel. Unconfirmed txs are a different kind of
- * object. They have no merkle root in a header yet. The only SPV for them is
- * the signed body plus every unconfirmed ancestor body.
+ * Minimum SPV store: the header chain, and the full body of every unconfirmed
+ * transaction in this wallet's history. Headers are inclusion. The BEEF is
+ * authority. Arcade `/txs`, Bitails `/spent`, and indexer `isUtxo` are rumours
+ * — they may cash or recover a lost projection; they never reclassify a
+ * signed cheque as absent.
  *
- * Scale: peers exchange BEEF, not UTXO-set RPC. Headers are the compact shared
- * truth for mined txs. Unconfirmed chains ride as bodies until a header covers
- * them.
+ * Ingest finds coins. Digest classifies them. Mixing the two is how P2P
+ * chaining dies: an indexer that has not seen a just-signed child answers
+ * "absent", and Refresh treats that as a cancel. Unconfirmed txs have no
+ * merkle root yet. The only SPV for them is the signed body plus every
+ * unconfirmed ancestor body.
  */
 
 export type ChainProofKind =

@@ -108,12 +108,13 @@ export function beginSignedTxLifecycle(args: {
     to: args.to,
   })
   transitionTx(draft.id, 'VALIDATING')
-  transitionTx(draft.id, 'BROADCASTING', {
-    txid: args.txid.trim().toLowerCase(),
-  })
+  // The signed body is already an unconfirmed cheque. Broadcast is how we
+  // cash it; it is not a prerequisite for accounting the spend.
   return (
-    transitionTx(draft.id, 'SEEN_IN_MEMPOOL', { chainProof: 'unconfirmed' }) ??
-    getTxRecord(draft.id)!
+    transitionTx(draft.id, 'SEEN_IN_MEMPOOL', {
+      txid: args.txid.trim().toLowerCase(),
+      chainProof: 'unconfirmed',
+    }) ?? getTxRecord(draft.id)!
   )
 }
 

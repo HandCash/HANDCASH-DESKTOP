@@ -233,7 +233,7 @@ export function applyArcStatus(id: string, arc: ArcStatus): TxRecord | null {
   }
   // ARC MINED → stay SEEN_IN_MEMPOOL until BUMP verifies.
   const target: TxStatus =
-    cur.status === 'DRAFT' || cur.status === 'VALIDATING'
+    cur.status === 'DRAFT'
       ? mapped === 'SEEN_IN_MEMPOOL'
         ? 'BROADCASTING'
         : mapped

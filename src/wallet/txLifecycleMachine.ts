@@ -1,8 +1,10 @@
 /**
  * XState chart for the dual-layer tx confirmation lifecycle.
  *
- * Send-path machines (bsv / soft-latch / BRC-29) still own *who* broadcasts.
- * This chart owns DRAFT → … → MINED / FAILED / REORG after dispatch starts.
+ * Send-path machines still own *who* offers the cheque to miners.
+ * This chart owns DRAFT → … → MINED / FAILED / REORG. A signed body may
+ * enter mempool from local SPV without a miner ACK; broadcast stays the
+ * cashing loop, not the ownership gate.
  */
 import { assign, setup } from 'xstate'
 import type { ArcStatus, TxDiagnosticCode, TxStatus } from './txLifecycle'
@@ -156,6 +158,8 @@ export const txLifecycleMachine = setup({
     validating: {
       on: {
         DISPATCH: { target: 'broadcasting', actions: 'toBroadcasting' },
+        TXID: { actions: 'setTxid' },
+        MEMPOOL: { target: 'seenInMempool', actions: 'toMempool' },
         VALIDATE_FAIL: { target: 'failed', actions: 'toFailed' },
       },
     },

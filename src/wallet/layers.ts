@@ -73,14 +73,18 @@ import { getActiveWallet } from './session'
  *   (Desktop Electron and Android Capacitor). BRC-CLOUD hosts a convenience box;
  *   resolve may return any box URL.
  * - **BRC-100 app exchange** — the signed Atomic BEEF (+ remittance) *is* the
- *   payment. `chainProofKind.ts`: a locally SPV-valid signed transaction is a
- *   cheque (`unconfirmed` while no header covers it; `headerProven` after BUMP
- *   verifies against the local header store). Account the cheque immediately.
- *   Explorer absence is latency, not a cancel. Undo only on a proven competing
- *   spend. Arcade `postBeef` / `/txs` is a miner cashing the cheque plus a
- *   reject oracle — not a send gate and not confirmation. Dependent economic
- *   activity chains unconfirmed UTXOs (parent bodies in the BEEF) so the next
- *   hop does not wait on ack. Proven miner reject / double-spend must rewrite
+ *   payment. SPV is primary; broadcast is how we cash it (required, secondary).
+ *   The device must keep the header store and the full body of every
+ *   unconfirmed local tx. `chainProofKind.ts`: a locally SPV-valid signed
+ *   transaction is a cheque (`unconfirmed` while no header covers it;
+ *   `headerProven` after BUMP vs local headers). Account the cheque at sign.
+ *   Explorer / Arcade `/txs` / Bitails `/spent` / indexer `isUtxo` are rumours
+ *   — latency, not a cancel. Undo only on a proven competing spend. Arcade
+ *   `postBeef` is a miner cashing the cheque plus a reject oracle. Heal
+ *   fetching a raw tx restores a lost locking-script projection; it does not
+ *   ask the network whether the cheque happened. Dependent economic activity
+ *   chains unconfirmed UTXOs (parent bodies in the BEEF) so the next hop
+ *   does not wait on ack. Proven miner reject / double-spend must rewrite
  *   Activity and seals as soon as that fact exists (zero economic loss).
  *   Unconfirmed spends must carry parent *bodies* (`mergeLocalUnconfirmedAncestry`);
  *   mined spends ride merkle paths against headers (`blockHeaders` /

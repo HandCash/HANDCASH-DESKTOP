@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.296] - 2026-09-23
+
+### Changed
+
+- A signed cheque is now accounted from local SPV at sign (`unsent` is live
+  change for Pay; the dual-layer chart may enter mempool without a miner hop).
+  Arcade pin remains the broadcast-hold so the next spend does not chain a
+  parent no miner has seen. Headers plus unconfirmed bodies stay the store;
+  explorers stay rumours.
+
 ## [1.3.295] - 2026-09-23
 
 ### Fixed

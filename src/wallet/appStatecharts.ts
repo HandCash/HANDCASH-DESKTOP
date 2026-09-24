@@ -972,16 +972,12 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
   direction LR
   [*] --> DRAFT
   DRAFT --> VALIDATING : protocolValidate
-  VALIDATING --> BROADCASTING : soft-lock + dispatch
+  VALIDATING --> BROADCASTING : offer cheque to miners
+  VALIDATING --> SEEN_IN_MEMPOOL : signed Atomic BEEF\\n(local SPV cheque)
   VALIDATING --> FAILED_REJECTED : dust / funds / refuse
-  BROADCASTING --> SEEN_IN_MEMPOOL : ARC SEEN_ON_NETWORK\\nor local SPV cheque
+  BROADCASTING --> SEEN_IN_MEMPOOL : ARC rumour / still posting
   BROADCASTING --> FAILED_REJECTED : proven competing spend
   SEEN_IN_MEMPOOL --> MINED : BUMP verified vs headers
-  note right of SEEN_IN_MEMPOOL
-    unconfirmed — chain with
-    ancestor bodies in BEEF
-    (chainProofKind)
-  end note
   SEEN_IN_MEMPOOL --> FAILED_REJECTED : eviction / reject
   MINED --> REORG_ORPHANED : reorg
   REORG_ORPHANED --> SEEN_IN_MEMPOOL : re-announced
@@ -994,9 +990,13 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
     no mutation until VALIDATING ok
   end note
   note right of BROADCASTING
-    lockOwnerId reserved
+    miner cashing loop
+    (secondary to SPV)
+  end note
+  note right of SEEN_IN_MEMPOOL
     owned cash = spendable
     + live unconfirmed change
+    headers + unconfirmed bodies
   end note
   note right of MINED
     spendable false + spentBy

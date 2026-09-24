@@ -62,6 +62,10 @@ describe("txLifecycle transitions", () => {
     }
   });
 
+  it("lets a signed cheque enter mempool from local SPV without a miner hop", () => {
+    expect(canTransitionTx("VALIDATING", "SEEN_IN_MEMPOOL")).toBe(true);
+  });
+
   it("forbids MINED → SEEN_IN_MEMPOOL (must go via REORG_ORPHANED)", () => {
     expect(canTransitionTx("MINED", "SEEN_IN_MEMPOOL")).toBe(false);
     expect(canTransitionTx("MINED", "REORG_ORPHANED")).toBe(true);
