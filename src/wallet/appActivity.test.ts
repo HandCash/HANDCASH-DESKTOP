@@ -42,6 +42,7 @@ import {
   removeActivityById,
   removeFailedActivity,
   exportAllActivity,
+  mergeActivityEntries,
   listArchivedActivity,
   countFailedActivity,
   recordWalletEvent,
@@ -776,6 +777,61 @@ describe("inbound receive activity", () => {
     expect(listRecentActivity(10)).toHaveLength(1);
     expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1);
     expect(listRecentActivity(10)).toHaveLength(0);
+  });
+
+  it("never projects a stale approval placeholder, even before expiry runs", () => {
+    // The feed is what the user sees. Expiry needs a storage write a full store
+    // refuses, and it yields while a spend holds priority, so neither can be a
+    // precondition for "Approving" leaving the screen.
+    mergeActivityEntries([
+      entry({
+        id: "phantom",
+        origin: WALLET_ACTIVITY_ORIGIN,
+        sats: 0,
+        at: Date.now() - 120_000,
+        status: "pending",
+        pendingId: "phantom",
+      }),
+    ]);
+    expect(listRecentActivity(10)).toHaveLength(0);
+  });
+
+  it("still projects a stale pending spend that names an amount", () => {
+    // A priced row is an attempted payment, not an approval placeholder: it has
+    // to stay visible so the user learns it failed.
+    mergeActivityEntries([
+      entry({
+        id: "priced",
+        origin: WALLET_ACTIVITY_ORIGIN,
+        sats: 1000,
+        at: Date.now() - 120_000,
+        status: "pending",
+        pendingId: "priced",
+      }),
+    ]);
+    expect(listRecentActivity(10)).toHaveLength(1);
+  });
+
+  it("sweeps an approval placeholder while a spend holds priority", async () => {
+    const { leaseSpendPriority, resetWalletCoordinatorForTests } = await import(
+      "./walletCoordinator"
+    );
+    resetWalletCoordinatorForTests();
+    const hold = leaseSpendPriority("send-collectable");
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: "spent",
+      sats: 0,
+      method: "send",
+      status: "pending",
+      pendingId: "orphan-under-spend",
+    });
+    // Activity writes land while spend priority is held, so a placeholder that
+    // only ever gets one tick would otherwise be painted for the whole session.
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1);
+    expect(listRecentActivity(10)).toHaveLength(0);
+    hold.release();
+    resetWalletCoordinatorForTests();
   });
 
   it("keeps Sending… while a spend is still in flight", async () => {

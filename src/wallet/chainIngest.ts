@@ -344,6 +344,18 @@ export async function refreshFromChainExclusive(
   // Failed item creates leave tips spent inside noSend. Free them before ingest.
   if (forceReview) {
     try {
+      // Promote before aborting. An app-held parent the network already took is
+      // a settled spend holding this wallet's change hostage, not debris: the
+      // toolbox only funds from completed / unproven / sending parents, so
+      // leaving it `nosend` hides the whole managed balance from the next
+      // payment. Aborting it instead would try to restore inputs the chain has
+      // already consumed.
+      const { healAppHeldChange } = await import('./staleOutputRelease')
+      await healAppHeldChange()
+    } catch (err) {
+      console.warn('[chain-ingest] app-held change heal skipped', err)
+    }
+    try {
       const { releaseStuckNosends, abortReservedActionBatches } =
         await import('./actionReview')
       await releaseStuckNosends(active)

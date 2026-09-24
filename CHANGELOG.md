@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.3.310] - 2026-09-24
+
+### Fixed
+
+- A BRC-100 app payment no longer refuses with "insufficient funds" on a
+  funded wallet. Toolbox funding only draws on outputs whose parent
+  transaction is `completed`, `unproven` or `sending`; an app that signs with
+  `noSend` and never finalizes left that parent `nosend`, hiding the wallet's
+  entire managed change while the balance still counted it. The wallet now
+  frees change held behind any app parent the network has already accepted,
+  before a Refresh aborts it and again if an app action cannot be funded.
+- The transaction lookup behind every pin and change-promotion gate now uses
+  the `txid_userId` index. A txid-only query degraded to a full cursor scan of
+  every stored transaction and its raw body, which on a loaded phone came back
+  empty; each gate read that silence as proof the transaction did not exist and
+  gave up permanently, stranding the change of a broadcast payment. An
+  unreadable store is now retried and never treated as an answer.
+- Activity never projects a stale `Signed / APPROVING` placeholder, instead of
+  relying on a cleanup pass that yields to live spends and needs a storage
+  write a full store refuses. Those placeholders are also swept while a spend
+  holds priority now; only priced rows wait, since only they could be the send
+  still in flight.
+
+### Changed
+
+- The Transaction Bounce app and the BRC-100 reference demo let the wallet
+  broadcast their BRC-29 deposit. `signAndProcess` returns no reference, so a
+  `noSend` deposit could never be released by `processAction` — it is not a
+  pattern other apps should copy.
+
 ## [1.3.309] - 2026-09-24
 
 ### Fixed

@@ -331,6 +331,39 @@ async function verifyP1SatSpendLabels(
   }
 }
 
+/**
+ * Run an app spend, freeing change held behind an unfinished app parent first
+ * if the toolbox cannot fund it.
+ *
+ * Toolbox funding only draws on outputs whose parent transaction is
+ * `completed` / `unproven` / `sending`. An app that signs with `noSend` and
+ * never finalizes leaves that parent `nosend`, which hides the wallet's whole
+ * managed change from the next payment while the balance still shows it — the
+ * "insufficient funds on a funded wallet" refusal. The heal only touches
+ * parents the network has already accepted, so this cannot chain an
+ * unbroadcast transaction; a genuine shortfall still refuses, unchanged.
+ */
+async function dispatchAppActionFundedFromHeldChange(
+  wallet: WalletInterface,
+  method: string,
+  args: unknown,
+  originator?: string,
+): Promise<unknown> {
+  try {
+    return await dispatchWalletMethod(wallet, method, args, originator)
+  } catch (err) {
+    if (!isInsufficientFundsError(err)) throw err
+    const { healAppHeldChange } = await import('./staleOutputRelease')
+    const freed = await healAppHeldChange()
+    if (freed <= 0) throw err
+    console.info(
+      `[brc100] retrying ${method} after freeing ${freed} app-held parent(s)`,
+    )
+    setPaymentProgress('broadcasting', 'Signing and sending to the network')
+    return dispatchWalletMethod(wallet, method, args, originator)
+  }
+}
+
 async function dispatchWalletMethod(
   wallet: WalletInterface,
   method: string,
@@ -886,7 +919,7 @@ async function handleBrc100RequestInner(
               'broadcasting',
               'Signing and sending to the network',
             )
-            const created = await dispatchWalletMethod(
+            const created = await dispatchAppActionFundedFromHeldChange(
               active.wallet,
               method,
               actionArgs,

@@ -1295,6 +1295,34 @@ export function expireStaleInboundPending(
 let lastStuckReportAt = 0;
 const STUCK_REPORT_INTERVAL_MS = 60_000;
 
+/** Same window the stuck-payment watchdog uses before a Sending… row is dead. */
+const STALE_OUTBOUND_MS = 90_000;
+
+/**
+ * Debris from an approval that is over, not a send in flight.
+ *
+ * A zero-sat, item-less, txid-less pending spend names no transaction, amount
+ * or custody event — it is only the "Approving" line painted while the user is
+ * still in the permission prompt. Past the watchdog window it is a phantom,
+ * and it reads exactly like a live send, so a feed must never project it. That
+ * has to be decided at read time: the durable cleanup pass yields while a
+ * spend holds priority, and it needs a storage write that a full store
+ * refuses, so neither can be a precondition for the row disappearing.
+ */
+export function isStaleApprovalPlaceholder(
+  entry: ActivityEntry,
+  now = Date.now()
+): boolean {
+  return (
+    entry.status === "pending" &&
+    entry.kind === "spent" &&
+    !entry.txid &&
+    !entry.item &&
+    entry.sats <= 0 &&
+    now - entry.at >= STALE_OUTBOUND_MS
+  );
+}
+
 /**
  * Name the Sending… rows that outlived their send, and say why they are still
  * on screen.
@@ -1346,21 +1374,25 @@ export function expireStaleOutboundPending(
   now = Date.now()
 ): number {
   // A hung send still holds spend priority after the pill watchdog fires.
-  // Failing the Activity row while that work is alive made Sending… vanish
-  // and look like a timeout even though nothing had returned yet.
-  if (shouldYieldChainIngestToSpend()) {
-    reportStuckOutbound(readAll(), now, "a spend holds priority");
-    return 0;
-  }
+  // Failing a *priced* Activity row while that work is alive made Sending…
+  // vanish and look like a timeout even though nothing had returned yet. An
+  // approval placeholder is never that send — it carries no amount and no
+  // item — so it is swept either way, otherwise a busy wallet keeps painting
+  // "Approving" beside the transaction row that already succeeded.
+  const yielding = shouldYieldChainIngestToSpend();
   const prev = readAll();
-  reportStuckOutbound(prev, now, "expiry ran");
+  reportStuckOutbound(
+    prev,
+    now,
+    yielding ? "a spend holds priority" : "expiry ran"
+  );
   let expired = 0;
   const entries = prev.flatMap((e) => {
     if (e.status !== "pending" || e.kind !== "spent") return e;
     if (e.txid) return e;
     if (now - e.at < maxAgeMs) return e;
-    expired += 1;
     if (e.sats <= 0 && !e.item) {
+      expired += 1;
       console.info(
         `[activity] removed orphan approval placeholder id=${e.id} pending=${
           e.pendingId ?? "none"
@@ -1368,6 +1400,8 @@ export function expireStaleOutboundPending(
       );
       return [];
     }
+    if (yielding) return e;
+    expired += 1;
     const name = e.item?.name?.trim();
     return [{
       ...e,
@@ -2276,7 +2310,10 @@ export function activityEntryTitle(entry: ActivityEntry): string {
 
 /** Newest-first activity feed for the history panel (excludes archived rows). */
 export function listRecentActivity(limit = 40): ActivityEntry[] {
-  const entries = [...readVisible()];
+  const now = Date.now();
+  const entries = readVisible().filter(
+    (entry) => !isStaleApprovalPlaceholder(entry, now)
+  );
   entries.sort((a, b) => b.at - a.at);
   return entries.slice(0, Math.max(1, limit));
 }

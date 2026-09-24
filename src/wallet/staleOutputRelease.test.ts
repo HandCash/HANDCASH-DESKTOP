@@ -59,6 +59,7 @@ const {
   restoreUnspentAssetOutpoint,
   chooseUtxoEvidenceAction,
   pinBroadcastLocalTx,
+  healAppHeldChange,
   __resetReclaimSealCursorsForTests,
 } = await import('./staleOutputRelease')
 const sentItemGuard = await import('./sentItemGuard')
@@ -1214,6 +1215,118 @@ describe('pinBroadcastLocalTx', () => {
     expect(updateTransaction).toHaveBeenCalledWith(11, {
       status: 'unproven',
     })
+  })
+})
+
+describe('healAppHeldChange', () => {
+  const findTransactions = vi.fn()
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const updateTransactionStatus = vi.fn()
+  const findUserByIdentityKey = vi.fn()
+
+  beforeEach(() => {
+    findTransactions.mockReset()
+    findOutputs.mockReset()
+    findOutputs.mockResolvedValue([])
+    updateOutput.mockReset()
+    updateTransactionStatus.mockReset()
+    findUserByIdentityKey.mockReset()
+    findUserByIdentityKey.mockResolvedValue({ userId: 7 })
+    overlayStore.clear()
+    __resetArcadeSubmitGuardForTests()
+    __resetUtxoLocksForTests()
+    __resetReclaimSealCursorsForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      address: '1abc',
+      wallet: {
+        identityKey: '02'.repeat(33),
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<unknown>) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              findTransactions,
+              findUserByIdentityKey,
+              updateTransactionStatus,
+              updateTransaction: vi.fn(),
+              getProvenOrRawTx: async () => undefined,
+            }),
+        },
+      },
+    })
+  })
+
+  it('frees change held behind a nosend parent the network already took', async () => {
+    // Toolbox funding only draws on completed / unproven / sending parents, so
+    // an app that signs noSend and never finalizes hides the payer's entire
+    // managed change while the balance still counts it.
+    const txid = '7a'.repeat(32)
+    rememberArcadeSubmitContact(txid)
+    findTransactions.mockImplementation(
+      async (args: { partial?: { status?: string; txid?: string } }) =>
+        args.partial?.status === 'nosend' || args.partial?.txid === txid
+          ? [{ transactionId: 12, txid, status: 'nosend' }]
+          : [],
+    )
+    findOutputs.mockImplementation(
+      async (args: { partial?: { txid?: string } }) =>
+        args.partial?.txid === txid
+          ? [
+              {
+                outputId: 31,
+                txid,
+                vout: 1,
+                change: true,
+                satoshis: 104_605,
+                lockingScript: [0x76, 0xa9],
+                spendable: false,
+              },
+            ]
+          : [],
+    )
+
+    await expect(healAppHeldChange()).resolves.toBe(1)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 12)
+    expect(updateOutput).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
+  it('asks the transactions store by its real index, never by txid alone', async () => {
+    // IndexedDB only indexes `txid_userId`. A txid-only partial degrades to a
+    // full cursor scan that can come back empty under load, which every pin
+    // gate here used to read as proof the transaction did not exist.
+    const txid = '8b'.repeat(32)
+    rememberArcadeSubmitContact(txid)
+    findTransactions.mockResolvedValue([
+      { transactionId: 13, txid, status: 'nosend' },
+    ])
+
+    await healAppHeldChange()
+
+    expect(findTransactions).toHaveBeenCalled()
+    for (const [args] of findTransactions.mock.calls) {
+      const partial = (args as { partial?: Record<string, unknown> }).partial
+      expect(partial?.userId).toBe(7)
+    }
+  })
+
+  it('leaves an app-held parent the network has not taken alone', async () => {
+    const txid = '9c'.repeat(32)
+    txExistsOnChain.mockResolvedValue(false)
+    findTransactions.mockImplementation(
+      async (args: { partial?: { status?: string } }) =>
+        args.partial?.status === 'nosend'
+          ? [{ transactionId: 14, txid, status: 'nosend' }]
+          : [],
+    )
+
+    await expect(healAppHeldChange()).resolves.toBe(0)
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
   })
 })
 

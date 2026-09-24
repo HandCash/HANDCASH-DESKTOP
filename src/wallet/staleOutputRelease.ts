@@ -785,19 +785,31 @@ export async function pinBroadcastLocalTx(
   if (!getActiveWallet()?.wallet?.storage?.runAsStorageProvider) return false;
 
   try {
-    const looked = await lookupLocalTxRow(id);
-    if (!looked) {
+    let lookup = await lookupLocalTx(id);
+    if (lookup.kind === "unreadable") {
+      // One retry after the current IndexedDB burst drains. Accepting the first
+      // silence is how an Arcade-accepted `nosend` parent kept its status, and
+      // `allocateChangeInput` only funds from completed / unproven / sending
+      // parents — so the whole managed-change balance went missing.
+      await yieldToUi();
+      lookup = await lookupLocalTx(id);
+    }
+    if (lookup.kind !== "row") {
       // No row to re-status, but Arcade owns the spend and the change is this
       // wallet's. Returning quietly here stranded it in neither balance bucket.
       const kept = await keepChangeOfSignedTx(id, undefined, true, signedBody);
       console.info(
-        `[stale-output] pin found no local row for ${id.slice(
-          0,
-          12
-        )} — kept ${kept} change output(s)`
+        `[stale-output] pin ${
+          lookup.kind === "missing" ? "found no local row" : "could not read"
+        } for ${id.slice(0, 12)} — kept ${kept} change output(s)`
       );
+      if (lookup.kind === "unreadable") rememberUnpinnedAppHeldTx(id);
       return kept > 0;
     }
+    const looked: LocalTxRowRef = {
+      transactionId: lookup.transactionId,
+      status: lookup.status,
+    };
     if (!isAppHeldTxStatus(looked.status)) {
       // Live or settled already — promotion is idempotent, status is not ours
       // to rewrite. An Arcade ACK outranks a stale local failed/doublespend
@@ -846,6 +858,81 @@ export async function pinBroadcastLocalTx(
   }
 }
 
+/** Txids the network accepted while their local row could not be read. */
+const unpinnedAppHeldTxids = new Set<string>();
+
+function rememberUnpinnedAppHeldTx(txid: string): void {
+  const id = normalizedTxidOrNull(txid);
+  if (!id) return;
+  // Bounded: a runaway set would turn the pre-spend heal into a scan.
+  if (unpinnedAppHeldTxids.size >= 32) return;
+  unpinnedAppHeldTxids.add(id);
+}
+
+/**
+ * Free change stranded behind a parent the app never finalized.
+ *
+ * `allocateChangeInput` only funds from outputs whose parent transaction is
+ * `completed`, `unproven` or `sending`. A BRC-100 app that signs with
+ * `noSend` and never calls `processAction` leaves that parent `nosend`, so the
+ * wallet's entire managed change is invisible to the next payment even though
+ * `balance()` still counts it — an "insufficient funds" refusal on a funded
+ * wallet, with the only fundable coin being whatever arrived afterwards.
+ *
+ * Only rows the network has already taken are coerced: an in-flight market
+ * listing or item send that has not been broadcast stays app-held, because
+ * promoting its change would let the next payment chain an unbroadcast parent.
+ */
+export async function healAppHeldChange(opts?: {
+  limit?: number;
+}): Promise<number> {
+  const storage = activeToolboxStorage();
+  if (!storage?.runAsStorageProvider) return 0;
+  const limit = Math.max(1, Math.trunc(opts?.limit ?? 25));
+
+  const candidates = new Set<string>(unpinnedAppHeldTxids);
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage;
+      if (typeof sp.findTransactions !== "function") return;
+      const userId = await activeStorageUserId(sp);
+      for (const status of APP_HELD_TX_STATUSES) {
+        // `status` / `status_userId` are real IndexedDB indexes, unlike `txid`.
+        const rows = await sp.findTransactions({
+          partial: userId == null ? { status } : { status, userId },
+          noRawTx: true,
+          paged: { limit, offset: 0 },
+        });
+        for (const row of rows ?? []) {
+          const id = normalizedTxidOrNull(String(row.txid ?? ""));
+          if (id) candidates.add(id);
+        }
+      }
+    });
+  } catch (err) {
+    console.warn("[stale-output] app-held scan skipped", err);
+  }
+  if (candidates.size === 0) return 0;
+
+  let freed = 0;
+  for (const id of candidates) {
+    const pinned = txHadArcadeSubmitContact(id)
+      ? await pinBroadcastLocalTx(id)
+      : await restoreOnChainLocalTx(id);
+    if (pinned) {
+      freed += 1;
+      unpinnedAppHeldTxids.delete(id);
+    }
+    await yieldToUi();
+  }
+  if (freed > 0) {
+    console.info(
+      `[stale-output] freed change of ${freed} app-held parent(s) the network already accepted`
+    );
+  }
+  return freed;
+}
+
 function normalizedTxidOrNull(txid: string): string | null {
   const id = txid.trim().toLowerCase();
   return /^[0-9a-f]{64}$/.test(id) ? id : null;
@@ -865,34 +952,92 @@ async function sealThenKeepSignedTx(
 
 type LocalTxRowRef = { transactionId: number; status: string };
 
-async function lookupLocalTxRow(id: string): Promise<LocalTxRowRef | null> {
-  const storage = getActiveWallet()?.wallet?.storage;
-  if (!storage?.runAsStorageProvider) return null;
-  return storage.runAsStorageProvider(async (activeSp) => {
-    const sp = activeSp as unknown as LocalStorage;
-    if (typeof sp.findTransactions !== "function") return null;
-    let rows: TxStatusRow[] | undefined;
-    try {
-      rows = await sp.findTransactions({
-        partial: { txid: id },
-        noRawTx: true,
-        paged: { limit: 1, offset: 0 },
-      });
-    } catch (err) {
-      if (!isUndefinedPartialFilterError(err)) {
-        console.warn(
-          "[stale-output] tx lookup skipped",
-          id.slice(0, 12),
-          err
-        );
-      }
-      return null;
+/**
+ * Whether the transactions store could be asked about a txid at all.
+ *
+ * IndexedDB indexes transactions by `txid_userId`, never by `txid` alone, so a
+ * `{ txid }` partial degrades to a full cursor scan over every transaction —
+ * each carrying its `rawTx` / `inputBEEF` blob. On a loaded phone that scan is
+ * both slow and unreliable: the read transaction can commit before the cursor
+ * reaches the row, and the caller gets an empty result that looks exactly like
+ * "this transaction does not exist". Every pin / promote gate here then took
+ * that silence as proof and gave up permanently, stranding the change of an
+ * Arcade-accepted `nosend` parent. `missing` is only ever reported from the
+ * indexed lookup.
+ */
+type LocalTxLookup =
+  | { kind: "row"; transactionId: number; status: string }
+  | { kind: "missing" }
+  | { kind: "unreadable" };
+
+let storageUserId: { identityKey: string; userId: number } | null = null;
+
+/** The one place this module reaches for the foreground toolbox storage. */
+function activeToolboxStorage(): ActiveWallet["wallet"]["storage"] | null {
+  return getActiveWallet()?.wallet?.storage ?? null;
+}
+
+async function activeStorageUserId(sp: LocalStorage): Promise<number | null> {
+  const identityKey = getActiveWallet()?.wallet?.identityKey?.trim();
+  if (!identityKey) return null;
+  if (storageUserId?.identityKey === identityKey) return storageUserId.userId;
+  if (typeof sp.findUserByIdentityKey !== "function") return null;
+  try {
+    const user = await sp.findUserByIdentityKey(identityKey);
+    const userId = positiveId(user?.userId);
+    if (userId == null) return null;
+    storageUserId = { identityKey, userId };
+    return userId;
+  } catch (err) {
+    console.warn("[stale-output] storage user lookup skipped", err);
+    return null;
+  }
+}
+
+async function lookupLocalTxOnProvider(
+  sp: LocalStorage,
+  id: string
+): Promise<LocalTxLookup> {
+  if (typeof sp.findTransactions !== "function") return { kind: "unreadable" };
+  const userId = await activeStorageUserId(sp);
+  let rows: TxStatusRow[] | undefined;
+  try {
+    rows = await sp.findTransactions({
+      partial: userId == null ? { txid: id } : { txid: id, userId },
+      noRawTx: true,
+      paged: { limit: 1, offset: 0 },
+    });
+  } catch (err) {
+    if (!isUndefinedPartialFilterError(err)) {
+      console.warn("[stale-output] tx lookup skipped", id.slice(0, 12), err);
     }
-    const row = rows?.[0];
-    const transactionId = positiveId(row?.transactionId);
-    if (transactionId == null) return null;
-    return { transactionId, status: String(row?.status ?? "").toLowerCase() };
-  });
+    return { kind: "unreadable" };
+  }
+  const row = rows?.[0];
+  const transactionId = positiveId(row?.transactionId);
+  if (transactionId == null) {
+    return userId == null ? { kind: "unreadable" } : { kind: "missing" };
+  }
+  return {
+    kind: "row",
+    transactionId,
+    status: String(row?.status ?? "").toLowerCase(),
+  };
+}
+
+async function lookupLocalTx(id: string): Promise<LocalTxLookup> {
+  const storage = activeToolboxStorage();
+  if (!storage?.runAsStorageProvider) return { kind: "unreadable" };
+  return storage.runAsStorageProvider(async (activeSp) =>
+    lookupLocalTxOnProvider(activeSp as unknown as LocalStorage, id)
+  ) as Promise<LocalTxLookup>;
+}
+
+async function lookupLocalTxRow(id: string): Promise<LocalTxRowRef | null> {
+  const looked = await lookupLocalTx(id);
+  return looked.kind === "row"
+    ? { transactionId: looked.transactionId, status: looked.status }
+    : null;
 }
 
 /** Move an Arcade-accepted `nosend` row to `unproven`. No-op otherwise. */
@@ -1177,12 +1322,16 @@ export function rebindStaleOutputReleaseForAccount(): void {
   blankReclaimCursor = 0;
   namedReclaimCursor = 0;
   promotedLocalChange = null;
+  storageUserId = null;
+  unpinnedAppHeldTxids.clear();
 }
 
 /** Test-only */
 export function __resetReclaimSealCursorsForTests(): void {
   blankReclaimCursor = 0;
   namedReclaimCursor = 0;
+  storageUserId = null;
+  unpinnedAppHeldTxids.clear();
 }
 
 function rankSealSatoshis(outpoint: string, satoshis: number): number {
@@ -1803,31 +1952,9 @@ async function appCreateActionChangeReadyToPromote(
 ): Promise<boolean> {
   const id = txid.trim().toLowerCase();
   if (txHadArcadeSubmitContact(id)) return true;
-  const storage = getActiveWallet()?.wallet?.storage;
-  if (!storage?.runAsStorageProvider) return false;
   try {
-    const status = await storage.runAsStorageProvider(async (activeSp) => {
-      const sp = activeSp as unknown as LocalStorage;
-      if (typeof sp.findTransactions !== "function") return null;
-      let rows: TxStatusRow[] | undefined;
-      try {
-        rows = await sp.findTransactions({
-          partial: { txid: id },
-          noRawTx: true,
-          paged: { limit: 1, offset: 0 },
-        });
-      } catch (err) {
-        if (!isUndefinedPartialFilterError(err)) {
-          console.warn(
-            "[stale-output] app-change status lookup skipped",
-            id.slice(0, 12),
-            err
-          );
-        }
-        return null;
-      }
-      return String(rows?.[0]?.status ?? "").toLowerCase() || null;
-    });
+    const looked = await lookupLocalTx(id);
+    const status = looked.kind === "row" ? looked.status || null : null;
     if (!status) return false;
     // App still owns broadcast — leave change unspendable so other apps pick
     // confirmed / unrelated UTXOs instead of chaining this parent.
@@ -2383,12 +2510,12 @@ async function findOutputsForTxid(
       rows.length === 0 &&
       typeof sp.findTransactions === "function"
     ) {
-      const txRows = await sp.findTransactions({
-        partial: { txid },
-        noRawTx: true,
-        paged: { limit: 1, offset: 0 },
-      });
-      const transactionId = positiveId(txRows?.[0]?.transactionId);
+      const looked = await lookupLocalTxOnProvider(
+        sp as unknown as LocalStorage,
+        txid
+      );
+      const transactionId =
+        looked.kind === "row" ? looked.transactionId : null;
       if (transactionId != null) {
         const linked = await sp.findOutputs({
           partial: { transactionId },
@@ -2418,6 +2545,9 @@ type LocalStorage = {
   ) => Promise<unknown>;
   findOutputs?: (args: unknown) => Promise<unknown>;
   findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>;
+  findUserByIdentityKey?: (
+    identityKey: string
+  ) => Promise<{ userId?: number } | undefined>;
   getProvenOrRawTx?: (
     txid: string
   ) => Promise<{ rawTx?: number[] } | undefined>;
