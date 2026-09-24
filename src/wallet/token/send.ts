@@ -104,7 +104,7 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
  * A mint that never got a locking script on listOutputs still has the 162
  * body in local BEEF. Spend that — do not wait for an indexer to rewrite it.
  */
-async function recoverBsv21TipsFromLocalBeef(
+export async function recoverBsv21TipsFromLocalBeef(
   wallet: ActiveWallet,
   tokenId: string,
 ): Promise<Bsv21SendTip[]> {
@@ -120,6 +120,12 @@ async function recoverBsv21TipsFromLocalBeef(
     })
     if (id === want || aliases.includes(want)) {
       if (token.outpoint) candidates.add(token.outpoint)
+      for (const outpoint of token.tipOutpoints ?? []) {
+        candidates.add(outpoint)
+      }
+      for (const tip of token.heldTips ?? []) {
+        candidates.add(tip.outpoint)
+      }
     }
   }
   const tips: Bsv21SendTip[] = []

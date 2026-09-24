@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.299] - 2026-09-23
+
+### Fixed
+
+- BSV-21 burns no longer interpret a Toolbox read timeout during Heal as a
+  zero token balance. They recover exact held tips from local Atomic BEEF and
+  fail as inventory unavailable—not “0 available”—when neither source can
+  prove a spend.
+- Local BEEF recovery now considers every held tip on an aggregated token,
+  rather than only its representative outpoint.
+
 ## [1.3.298] - 2026-09-23
 
 ### Fixed

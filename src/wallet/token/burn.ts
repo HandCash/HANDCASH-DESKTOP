@@ -12,8 +12,10 @@ import {
   buildBsv21SendRemittance,
   buildBsv21ValueLock,
   planBsv21Send,
+  type Bsv21SendTip,
 } from './sendPlan'
 import { listBsv21BinaryTips } from './listTips'
+import { recoverBsv21TipsFromLocalBeef } from './send'
 import { scheduleHistoryBackupPush } from '../deviceSync'
 import { markItemsSent } from '../sentItemGuard'
 import { stampBrc164Id } from '../itemAccess'
@@ -28,6 +30,24 @@ import {
 import { type ActiveWallet } from '../session'
 import { runExclusiveBurn } from '../spendGuard'
 import { estimateBurnEconomics, type BurnEconomics } from '../burnEconomics'
+
+export type Bsv21BurnInventory =
+  | { source: 'basket'; tips: Bsv21SendTip[] }
+  | { source: 'localBeef'; tips: Bsv21SendTip[] }
+  | { source: 'unavailable'; tips: [] }
+
+export async function resolveBsv21BurnInventory(args: {
+  listed: Bsv21SendTip[]
+  recover: () => Promise<Bsv21SendTip[]>
+}): Promise<Bsv21BurnInventory> {
+  if (args.listed.length > 0) {
+    return { source: 'basket', tips: args.listed }
+  }
+  const recovered = await args.recover()
+  return recovered.length > 0
+    ? { source: 'localBeef', tips: recovered }
+    : { source: 'unavailable', tips: [] }
+}
 
 function parseBurnUnits(amount: string): number {
   const amountRaw = amount.trim().replace(/,/g, '')
@@ -159,16 +179,31 @@ export async function burnBsv21Tokens(args: {
       await abortReservedActionBatches(active)
     }
 
-    const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === tokenId)
+    const listed = (await listBsv21BinaryTips(active)).filter(
+      (t) => t.tokenId === tokenId,
+    )
+    const listedTips: Bsv21SendTip[] = listed.map((t) => ({
+      outpoint: t.outpoint,
+      tokenId: t.tokenId,
+      amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+      lockingScript: t.lockingScript,
+    }))
+    // Heal can hold Toolbox long enough for listOutputs to time out. An empty
+    // read is not evidence that the token balance is zero: recover the exact
+    // held tips from our cached Atomic BEEF, as the token-send path does.
+    const inventory = await resolveBsv21BurnInventory({
+      listed: listedTips,
+      recover: () => recoverBsv21TipsFromLocalBeef(active, tokenId),
+    })
+    if (inventory.source === 'unavailable') {
+      throw new Error(
+        'Token inventory is temporarily unavailable while wallet repair is active',
+      )
+    }
     const plan = planBsv21Send({
       tokenId,
       amount: BigInt(amount),
-      tips: listed.map((t) => ({
-        outpoint: t.outpoint,
-        tokenId: t.tokenId,
-        amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
-        lockingScript: t.lockingScript,
-      })),
+      tips: inventory.tips,
     })
     const selected = plan.selected
     const change = Number(plan.changeAmt)
