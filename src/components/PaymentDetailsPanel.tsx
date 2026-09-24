@@ -15,6 +15,7 @@ import {
   isFailedMarketListingActivity,
   activityFailureLabel,
   isItemActivity,
+  isMintCollectableActivity,
   isMintTokenActivity,
   isPendingActivity,
   isTokenActivity,
@@ -411,7 +412,8 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
-  const minted = isMintTokenActivity(entry)
+  const minted =
+    isMintTokenActivity(entry) || isMintCollectableActivity(entry)
   const pending = isPendingActivity(entry)
   const failed = isFailedActivity(entry)
   const failureReason = failed ? activityFailureLabel(entry) : null
@@ -463,6 +465,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           ? `Sent · ${shownItem.name}`
           : 'Sent BSV-21'
         : shownItem?.app || shownItem?.name || 'BSV-21 token'
+      : minted
+      ? shownItem?.name
+        ? `Minted · ${shownItem.name}`
+        : 'Minted collectable'
       : shownItem?.app || '1Sat collectable'
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   // The feed folds a purchase or sale into one record; the detail view opens one

@@ -1956,6 +1956,15 @@ export function isMintTokenActivity(entry: ActivityEntry): boolean {
   return isTokenActivity(entry) && /\bmint\b/i.test(entry.note ?? "");
 }
 
+/** True when this row records a collectable created by the connected app. */
+export function isMintCollectableActivity(entry: ActivityEntry): boolean {
+  return (
+    entry.method === "mint-collectable" &&
+    !isTokenActivity(entry) &&
+    Boolean(entry.item)
+  );
+}
+
 /** True only for irreversible on-chain asset destruction. */
 export function isBurnActivity(entry: ActivityEntry): boolean {
   return entry.method === "burn-token" || entry.method === "burn-collectable";
@@ -2348,7 +2357,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   }
   if (entry.item?.name) {
     const name = entry.item.name;
-    if (entry.method === "mint-collectable") return `Minted ${name}`;
+    if (isMintCollectableActivity(entry)) return `Minted ${name}`;
     if (isBurnActivity(entry)) return `Burned ${name}`;
     if (entry.method === "market-sale") return `Sold ${name}`;
     if (entry.method === "market-purchase-receive") return `Bought ${name}`;

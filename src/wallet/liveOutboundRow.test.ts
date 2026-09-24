@@ -87,6 +87,18 @@ describe('mergeLiveOutbound', () => {
     ])
   })
 
+  it('recognizes the exact settled item even when its row retained an older timestamp', () => {
+    const settled = pendingRow({
+      status: undefined,
+      txid: 'c'.repeat(64),
+      at: NOW - 60_000,
+    })
+
+    expect(
+      mergeLiveOutbound([settled], sending(OUTPOINT), NOW).map((e) => e.id),
+    ).toEqual(['durable'])
+  })
+
   it('does not paint a coin-send ghost after this operation settled', () => {
     const settled = pendingRow({
       status: undefined,

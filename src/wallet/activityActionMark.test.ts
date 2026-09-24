@@ -47,6 +47,17 @@ describe('activityActionMark', () => {
     expect(activityActionMark(entry({ method: 'receive', sats: 500 }))).toBe('receive')
   })
 
+  it('marks a newly issued collectable as a mint, not a receive', () => {
+    expect(
+      activityActionMark(
+        entry({
+          method: 'mint-collectable',
+          item: { name: 'Robot', origin: 'a'.repeat(64) + '_0' },
+        }),
+      ),
+    ).toBe('mint')
+  })
+
   it('marks a failed row as failed ahead of its action', () => {
     expect(
       activityActionMark(

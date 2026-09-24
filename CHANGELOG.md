@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.326] - 2026-09-24
+
+### Fixed
+
+- A completed collectable send now retires its live `Approving` / `Signed`
+  projection by exact outpoint even when the durable Activity row retains an
+  older timestamp.
+- Freshly issued collectables use the `Mint` action and `Minted` detail copy,
+  keep each output's own name in multi-item transactions, and prefer the
+  full-resolution inscription bytes already held by the wallet over an
+  indexer thumbnail.
+
 ## [1.3.325] - 2026-09-24
 
 ### Fixed

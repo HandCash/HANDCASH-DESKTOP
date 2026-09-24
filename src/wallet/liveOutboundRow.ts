@@ -122,13 +122,17 @@ function hasSettledRowForSend(
       entry.kind !== 'spent' ||
       entry.status === 'pending' ||
       entry.status === 'failed' ||
-      !entry.txid ||
-      entry.at < progress.startedAt!
+      !entry.txid
     ) {
       return false
     }
     const outpoint = dottedOutpoint(entry.item?.outpoint)
-    return sending ? outpoint === sending : !outpoint
+    // Item identity is exact and survives activity-row merges that deliberately
+    // retain the row's original timestamp. Coin sends have no equivalent key,
+    // so keep their time boundary to avoid matching an earlier payment.
+    return sending
+      ? outpoint === sending
+      : !outpoint && entry.at >= progress.startedAt!
   })
 }
 

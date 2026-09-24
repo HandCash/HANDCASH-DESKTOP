@@ -12,6 +12,7 @@ import {
   getCachedFungibles,
 } from './token'
 import { p2pkhScriptHex } from './ordinalOwnership'
+import { clearAppActivity, listRecentActivity } from './appActivity'
 
 const TXID = 'a'.repeat(64)
 const ADDR = '1HandCashTestAddress'
@@ -125,6 +126,45 @@ describe('paintAfterCreateActionIssuance', () => {
     // A binary tip must paint as sendable BSV-21, never "Legacy — burn only".
     expect(getCachedFungibles()[0]?.binarySupply).toBe('locked')
     clearFungiblesCache()
+  })
+
+  it('keeps each issued output paired with its own collectable name', () => {
+    clearAppActivity()
+    const address = PrivateKey.fromRandom().toAddress()
+    const hex = p2pkhScriptHex(address)
+
+    expect(
+      paintAfterCreateActionIssuance(
+        { address, chain: 'main' } as never,
+        'https://mint.example',
+        {
+          labels: ['1sat', 'handcash-mint-studio', 'item'],
+          outputs: [
+            {
+              satoshis: 1,
+              basket: '1sat',
+              lockingScript: hex,
+              tags: ['name:Reference Robot'],
+            },
+            {
+              satoshis: 1,
+              basket: '1sat',
+              lockingScript: hex,
+              tags: ['name:Reference Token Icon'],
+            },
+          ],
+        },
+        { txid: TXID },
+      ),
+    ).toBe(2)
+
+    expect(
+      listRecentActivity()
+        .filter((entry) => entry.txid === TXID)
+        .map((entry) => entry.item?.name)
+        .sort(),
+    ).toEqual(['Reference Robot', 'Reference Token Icon'])
+    clearAppActivity()
   })
 })
 

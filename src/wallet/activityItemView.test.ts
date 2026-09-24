@@ -8,8 +8,12 @@ const held = vi.fn(() => [] as Array<Record<string, unknown>>)
 const heldTokens = vi.fn(() => [] as Array<Record<string, unknown>>)
 const resolved = vi.fn(() => null as Record<string, unknown> | null)
 const verdict = vi.fn(() => null as Record<string, unknown> | null)
+const localArt = vi.fn(() => undefined as string | undefined)
 
 vi.mock('./collectables', () => ({ getCachedCollectables: () => held() }))
+vi.mock('./localItemArt', () => ({
+  getItemArtDataUrl: (origin: string) => localArt(origin),
+}))
 vi.mock('./token', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./token')>()
   return {
@@ -46,6 +50,7 @@ describe('viewActivityItem', () => {
     heldTokens.mockReturnValue([])
     resolved.mockReturnValue(null)
     verdict.mockReturnValue(null)
+    localArt.mockReturnValue(undefined)
   })
 
   it('resolves token icons from the icon outpoint — not the token id', () => {
@@ -79,6 +84,22 @@ describe('viewActivityItem', () => {
       origin: TRUE_ORIGIN,
       app: 'Market',
     })
+  })
+
+  it('prefers full-resolution local mint art over the inventory HTTP image', () => {
+    localArt.mockReturnValue('data:image/png;base64,full-resolution')
+    held.mockReturnValue([
+      {
+        outpoint: OUTPOINT,
+        name: 'Pixel Foxes',
+        origin: TRUE_ORIGIN,
+        imageUrl: `https://content.test/${TRUE_ORIGIN}`,
+      },
+    ])
+
+    expect(viewActivityItem(frozen).imageUrl).toBe(
+      'data:image/png;base64,full-resolution',
+    )
   })
 
   it('repairs a sent tip from a verdict that outlived it', () => {

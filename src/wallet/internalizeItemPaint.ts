@@ -655,7 +655,7 @@ export function paintAfterCreateActionIssuance(
     itemTips.push({
       outpoint: op,
       origin,
-      name: issuanceNameFromArgs(args) || 'Collectable',
+      name: issuanceNameFromArgs(args, out.vout) || 'Collectable',
     })
   }
   if (itemTips.length === 0) return tokenPainted
@@ -713,16 +713,18 @@ export function paintAfterCreateActionIssuance(
   return painted
 }
 
-function issuanceNameFromArgs(args: unknown): string | undefined {
+function issuanceNameFromArgs(
+  args: unknown,
+  vout: number,
+): string | undefined {
   const body = asRecord(args)
   const outputs = Array.isArray(body?.outputs) ? body.outputs : []
-  for (const raw of outputs) {
-    const out = asRecord(raw)
-    if (!out || Number(out.satoshis) !== 1 || !isItemBasket(out.basket)) continue
-    const name = tagValue(out.tags, 'name:')
-    if (name) return name
-    const fromCustom = parseCustomInstructions(out.customInstructions)
-    if (fromCustom.name) return fromCustom.name
+  const out = asRecord(outputs[vout])
+  if (!out || Number(out.satoshis) !== 1 || !isItemBasket(out.basket)) {
+    return undefined
   }
-  return undefined
+  return (
+    tagValue(out.tags, 'name:') ??
+    parseCustomInstructions(out.customInstructions).name
+  )
 }

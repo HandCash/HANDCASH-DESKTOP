@@ -10,6 +10,7 @@ import {
   isBurnActivity,
   isEventActivity,
   isFailedActivity,
+  isMintCollectableActivity,
   isMintTokenActivity,
   type ActivityEntry,
 } from './appActivity'
@@ -55,6 +56,6 @@ export function activityActionMark(entry: ActivityEntry): ActivityActionMark | n
   if (isFailedActivity(entry)) return 'failed'
   if (market) return market
   if (isBurnActivity(entry)) return 'burn'
-  if (isMintTokenActivity(entry)) return 'mint'
+  if (isMintTokenActivity(entry) || isMintCollectableActivity(entry)) return 'mint'
   return entry.kind === 'spent' ? 'send' : 'receive'
 }

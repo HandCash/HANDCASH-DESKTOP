@@ -8,6 +8,7 @@ import {
   getResolvedInscriptionByOrigin,
   isThinResolution,
 } from './inscriptionCache'
+import { getItemArtDataUrl } from './localItemArt'
 import { contentUrlForOrigin } from './oneSatImport'
 import { getProvenVerdict } from './provenCache'
 
@@ -84,6 +85,7 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   )
   if (held) {
     const chain = getActiveWallet()?.chain ?? 'main'
+    const mediaOrigin = held.content ?? held.origin
     const named = resolvedInscriptionName(
       held.origin,
       held.outpoint,
@@ -95,9 +97,11 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
       name:
         isGenericCollectableName(held.name) && named ? named : held.name,
       origin: held.origin,
+      ...(held.content ? { content: held.content } : {}),
       imageUrl:
-        held.imageUrl ||
-        contentUrlForOrigin(held.origin, chain) ||
+        getItemArtDataUrl(mediaOrigin) ??
+        held.imageUrl ??
+        contentUrlForOrigin(mediaOrigin, chain) ??
         item.imageUrl,
       ...(held.app ? { app: held.app } : {}),
     }
@@ -123,10 +127,11 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   const name = usable?.name?.trim() || item.name
   // When origin was repaired, drop a URL that still pointed at the wrong tip.
   const imageUrl =
+    getItemArtDataUrl(origin) ??
     (previousOrigin && previousOrigin !== asOrigin(origin)
       ? contentUrlForOrigin(origin, chain)
-      : null) ||
-    item.imageUrl ||
+      : null) ??
+    item.imageUrl ??
     contentUrlForOrigin(origin, chain)
   const app = usable?.app?.trim() || undefined
 

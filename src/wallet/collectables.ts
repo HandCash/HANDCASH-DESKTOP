@@ -2976,7 +2976,9 @@ async function enrichCollectableFromIndexer(
       collectionId: resolved.collectionId ?? item.collectionId,
       traits: resolved.traits.length ? resolved.traits : item.traits,
       extras: resolved.extras.length ? resolved.extras : item.extras,
-      imageUrl: contentUrlForOrigin(mediaOrigin, wallet.chain),
+      imageUrl:
+        getItemArtDataUrl(mediaOrigin) ??
+        contentUrlForOrigin(mediaOrigin, wallet.chain),
     })
     setCollectablesCache(
       cachedCollectables.map((c) => (c.outpoint === target ? enriched : c)),
