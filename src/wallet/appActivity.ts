@@ -2070,11 +2070,11 @@ export function activityEntryTitle(entry: ActivityEntry): string {
         : "Cancelling…";
     }
     if (entry.item?.name) return `Sending ${entry.item.name}…`;
-    return "Sending…";
+    return entry.txid ? "Unconfirmed" : "Signed";
   }
   if (entry.status === "pending" && entry.kind === "earned") {
     if (entry.item?.name) return `Receiving ${entry.item.name}…`;
-    return "Receiving…";
+    return entry.txid ? "Unconfirmed" : "Signed";
   }
   if (entry.status === "pending" && entry.kind === "event") {
     if (entry.method === UTXO_HEAL_METHOD) return "Healing balance…";

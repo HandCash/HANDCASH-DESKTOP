@@ -56,6 +56,8 @@ import {
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from "../wallet/appActivity";
+import { inFlightSettlementLabel } from "../wallet/settlementCopy";
+import { getTxByTxid } from "../wallet/txStore";
 import {
   clearAllFailedSpends,
   countClearableFailedSpends,
@@ -591,15 +593,14 @@ function HistoryRow({
       : null;
 
   const entryKey = rowKey ?? activityEntryKey(entry);
-  const pendingLabel = burned
-    ? "Burning…"
-    : listing
-    ? "Listing…"
-    : cancelling
-    ? "Cancelling…"
-    : spent
-    ? "Sending…"
-    : "Verifying…";
+  const rec = entry.txid ? getTxByTxid(entry.txid) : null;
+  const settlementLabel = inFlightSettlementLabel({
+    status: entry.status,
+    txid: entry.txid,
+    chainProof: rec?.chainProof,
+    minedHeight: rec?.minedHeight,
+  });
+  const pendingLabel = settlementLabel ?? "Signed";
 
   return (
     <li
@@ -1205,7 +1206,7 @@ export function ActivityFeed({
           >
             {publishingPending
               ? "Publishing…"
-              : `Publish pending ${pendingPeerCount}`}
+              : `Publish signed ${pendingPeerCount}`}
           </button>
         ) : null}
         {showFilters && rebroadcastCount > 0 ? (

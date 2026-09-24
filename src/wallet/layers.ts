@@ -30,6 +30,15 @@ import { getActiveWallet } from './session'
  *   go-chaintracks, `chainTrackerFallback`) + `chainProofKind`. Mined txs
  *   verify merkle-to-header (`spvFinality`). Unconfirmed txs are a different
  *   kind: chain them only with ancestor bodies in the BEEF.
+ * - **Indexer role** → Finder, never Judge. May add a coin this device cannot
+ *   yet prove. Must not reclassify, detach, or prune a cheque the local BEEF
+ *   / headers still prove. Explorer 404 is silence, not cancel.
+ * - **Key discipline** → identity / receive may be a stable key (handle,
+ *   BRC-29). Managed change is derived per `createAction` and is not that
+ *   identity address reused as the only change key.
+ * - **Settlement kinds** → signed Atomic BEEF is already a cheque
+ *   (`unconfirmed`). `headerProven` is inclusion. Pay `pendingChange` is
+ *   unconfirmed SPV we own, not a processor queue. Arcade accept is cashing.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
  * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
@@ -211,6 +220,7 @@ export const WALLET_LAYER_MODULES = {
     "txLifecycle.ts",
     "txLifecycleMachine.ts",
     "txStore.ts",
+    "settlementCopy.ts",
     "utxoLifecycle.ts",
     "utxoLockManager.ts",
     "protocolValidate.ts",

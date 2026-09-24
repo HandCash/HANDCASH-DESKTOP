@@ -109,6 +109,29 @@ describe("sameActivityRow", () => {
 });
 
 describe("activityEntryTitle", () => {
+  it("calls a local cheque Signed and a networked body Unconfirmed", () => {
+    expect(
+      activityEntryTitle(
+        entry({ kind: "spent", method: "send", status: "pending" }),
+      ),
+    ).toBe("Signed");
+    expect(
+      activityEntryTitle(
+        entry({
+          kind: "spent",
+          method: "send",
+          status: "pending",
+          txid: "ab".repeat(32),
+        }),
+      ),
+    ).toBe("Unconfirmed");
+    expect(
+      activityEntryTitle(
+        entry({ kind: "earned", method: "receive", status: "pending" }),
+      ),
+    ).toBe("Signed");
+  });
+
   it("names a removed market item as sold instead of sent", () => {
     expect(
       activityEntryTitle(

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.297] - 2026-09-23
+
+### Changed
+
+- Activity and payment details now say **Signed** / **Unconfirmed** /
+  **Confirmed** (with block depth when we have it) instead of “pending” or
+  “Sending…”. That is the evidence on this device, not a processor queue.
+- Wallet health calls leftover change unconfirmed. “Publish signed” is the
+  outbox verb.
+
+### Added
+
+- SPV safety tests: silence is not cancel, missing parent bodies refuse a
+  spend, and an indexer cannot clobber local history.
+
 ## [1.3.296] - 2026-09-23
 
 ### Changed

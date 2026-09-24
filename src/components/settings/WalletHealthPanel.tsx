@@ -58,7 +58,7 @@ function healRowDescription(): string {
     return `Healed ${ago}${rec}`
   }
   if (cp.pendingChangeAfter > 0) {
-    return `${cp.pendingChangeAfter.toLocaleString()} sats still pending · last pass ${ago}`
+    return `${cp.pendingChangeAfter.toLocaleString()} sats still unconfirmed · last pass ${ago}`
   }
   return `Last heal ${ago}`
 }
@@ -67,7 +67,7 @@ function healRowStatus(): { label: string; tone: 'muted' | 'warn' | 'error' } {
   const cp = readHealCheckpoint()
   if (!cp) return { label: '—', tone: 'muted' }
   if (healCheckpointFresh()) return { label: 'OK', tone: 'muted' }
-  if (cp.pendingChangeAfter > 0) return { label: 'Pending', tone: 'warn' }
+  if (cp.pendingChangeAfter > 0) return { label: 'Unconfirmed', tone: 'warn' }
   return { label: 'Stale', tone: 'warn' }
 }
 

@@ -26,6 +26,8 @@ import {
   type ActivityEntry,
   type ActivityItem,
 } from '../wallet/appActivity'
+import { inFlightSettlementLabel } from '../wallet/settlementCopy'
+import { getTxByTxid } from '../wallet/txStore'
 import { viewActivityItem } from '../wallet/activityItemView'
 import { activityContactLink } from '../wallet/itemHistory'
 import {
@@ -421,7 +423,14 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     entry.item?.outpoint && isItemProven(entry.item.outpoint),
   )
   const showPending = pending && (spent || !inventoryProven)
-  const pendingLabel = spent ? 'Sending…' : 'Verifying…'
+  const rec = entry.txid ? getTxByTxid(entry.txid) : null
+  const pendingLabel =
+    inFlightSettlementLabel({
+      status: entry.status,
+      txid: entry.txid,
+      chainProof: rec?.chainProof,
+      minedHeight: rec?.minedHeight,
+    }) ?? (spent ? 'Signed' : 'Signed')
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
