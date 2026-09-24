@@ -73,6 +73,29 @@ describe('durable remittance retention', () => {
     expect(compacted.map[`${(19).toString(16).padStart(64, '0')}_0`]).toBeDefined()
     expect(compacted.map[`${(0).toString(16).padStart(64, '0')}_0`]).toBeUndefined()
   })
+
+  /**
+   * Ingest persists one remittance per tip. Every probe of the trim search
+   * re-encodes the whole cache, so running it on a cache that already fits
+   * charged each tip a `log2(n)` multiple of serializing up to 384KB.
+   */
+  it('does not run the trim search on a cache that already fits', () => {
+    const source = Object.fromEntries(
+      Array.from({ length: 50 }, (_, i) => {
+        const tip = `${i.toString(16).padStart(64, '0')}_0`
+        return [tip, { tip, origin: `${'f'.repeat(64)}_0`, path: [tip], at: i }]
+      }),
+    )
+
+    const spy = vi.spyOn(JSON, 'stringify')
+    const compacted = compactStoredRemittances(source)
+    const encodes = spy.mock.calls.length
+    spy.mockRestore()
+
+    expect(compacted.dropped).toBe(0)
+    expect(Object.keys(compacted.map)).toHaveLength(50)
+    expect(encodes).toBe(1)
+  })
 })
 
 const ORD_ENVELOPE =
@@ -515,6 +538,8 @@ describe('keeping a proven lineage for the next send', () => {
     })
     rebindOneSatProvenanceForAccount()
 
+    // The deferred write must land under the account it came from, even though
+    // the scope has already moved by the time we are told to rebind.
     expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
     expect(durableStore.has(primaryKey)).toBe(true)
     expect(

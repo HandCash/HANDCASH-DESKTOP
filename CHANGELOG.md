@@ -1,8 +1,24 @@
 # Changelog
 
+## [1.3.323] - 2026-09-24
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.322] - 2026-09-24
 
 ### Fixed
+
+- The main source of the lag and of slow app comms since 1.3.311. Ingest
+  persists one BRC-150 remittance per item tip, and each of those re-read the
+  whole durable cache, re-encoded it about ten times to decide whether it
+  needed trimming, and wrote up to 384KB back to storage — quadratic work on
+  the main thread, which is also the thread the BRC-100 bridge answers on. The
+  trim search now runs only when the cache is actually over budget, the cache
+  is held in memory instead of parsed per tip, and the write is coalesced to
+  one per burst. A deferred write is keyed to the account it was read from, so
+  an account switch cannot land one account's cache under another's key.
 
 - Protected-basket `listOutputs` no longer fails a cold read that is still
   running. The 20s cap exists so a concurrent refresh can fill the durable

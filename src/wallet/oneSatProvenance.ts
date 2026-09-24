@@ -615,6 +615,18 @@ export function compactStoredRemittances(
 
   const encode = (count: number) =>
     JSON.stringify(Object.fromEntries(newest.slice(0, count)))
+
+  // Cache that already fits is the overwhelmingly common case, and each probe
+  // of the search below re-encodes the whole cache. Prove it fits once instead.
+  const full = encode(newest.length)
+  if (full.length <= REMITTANCE_DURABLE_MAX_BYTES) {
+    return {
+      map: Object.fromEntries(newest),
+      body: full,
+      dropped: Object.keys(source).length - newest.length,
+    }
+  }
+
   let low = 0
   let high = newest.length
   let keep = 0
@@ -670,10 +682,71 @@ function loadDurableRemittances(): void {
   }
 }
 
+/**
+ * Working copy of the durable cache. Ingest persists one remittance per tip,
+ * and re-reading plus re-encoding the whole cache on each of those turned a
+ * basket walk into quadratic work against a blob allowed to reach 384KB.
+ */
+let durableRemittanceMap: Record<string, StoredRemittance> | null = null
+/**
+ * Account key the working map was read from. A deferred write must land under
+ * the account it belongs to, and callers rebind the scope *before* telling us
+ * about it, so the current key is not a safe target for a pending flush.
+ */
+let durableRemittanceKey: string | null = null
+let durableRemittanceFlush: ReturnType<typeof setTimeout> | null = null
+
+function durableRemittanceWorkingMap(): Record<string, StoredRemittance> {
+  const key = remittanceStorageKey()
+  if (durableRemittanceMap && durableRemittanceKey === key) {
+    return durableRemittanceMap
+  }
+  flushDurableRemittances()
+  try {
+    const raw = durableGetItem(key)
+    durableRemittanceMap = raw
+      ? (JSON.parse(raw) as Record<string, StoredRemittance>)
+      : {}
+  } catch {
+    durableRemittanceMap = {}
+  }
+  durableRemittanceKey = key
+  return durableRemittanceMap
+}
+
+/**
+ * Write the cache back once the current burst of tips is done. This is an
+ * optimisation cache — every reader falls back to rebuilding the proof — so
+ * trading immediate durability for one write per burst is safe.
+ */
+function scheduleDurableRemittanceFlush(): void {
+  if (durableRemittanceFlush != null) return
+  durableRemittanceFlush = setTimeout(() => {
+    durableRemittanceFlush = null
+    flushDurableRemittances()
+  }, 0)
+}
+
+function flushDurableRemittances(): void {
+  const map = durableRemittanceMap
+  const key = durableRemittanceKey
+  if (durableRemittanceFlush != null) {
+    clearTimeout(durableRemittanceFlush)
+    durableRemittanceFlush = null
+  }
+  if (!map || !key) return
+  try {
+    const compacted = compactStoredRemittances(map)
+    durableRemittanceMap = compacted.map
+    durableSetItem(key, compacted.body)
+  } catch {
+    // Optimisation only.
+  }
+}
+
 function persistDurableRemittance(p: ProvenanceV2): void {
   try {
-    const raw = durableGetItem(remittanceStorageKey())
-    const map: Record<string, StoredRemittance> = raw ? JSON.parse(raw) : {}
+    const map = durableRemittanceWorkingMap()
     const tip = toUnderscore(p.tip).toLowerCase()
     const beefB64 =
       p.beefB64 && p.beefB64.length <= REMITTANCE_DURABLE_MAX_BEEF_B64
@@ -686,8 +759,7 @@ function persistDurableRemittance(p: ProvenanceV2): void {
       ...(beefB64 ? { beefB64 } : {}),
       at: Date.now(),
     }
-    const compacted = compactStoredRemittances(map)
-    durableSetItem(remittanceStorageKey(), compacted.body)
+    scheduleDurableRemittanceFlush()
   } catch {
     // Optimisation only.
   }
@@ -730,12 +802,24 @@ export function getRememberedProvenanceRemittance(
 
 /** Drop account-owned memory before reading the newly bound account. */
 export function rebindOneSatProvenanceForAccount(): void {
+  // Writes back under the key the map came from, not the freshly bound one.
+  flushDurableRemittances()
   remittanceByTip.clear()
+  durableRemittanceMap = null
+  durableRemittanceKey = null
   durableRemittanceLoaded = false
 }
 
 /** Test / explicit wipe helper. */
 export function clearRememberedProvenanceRemittances(): void {
+  // Drop the working copy first so the rebind has nothing to flush back over
+  // the key we are about to remove.
+  if (durableRemittanceFlush != null) {
+    clearTimeout(durableRemittanceFlush)
+    durableRemittanceFlush = null
+  }
+  durableRemittanceMap = null
+  durableRemittanceKey = null
   rebindOneSatProvenanceForAccount()
   try {
     durableRemoveItem(remittanceStorageKey())
