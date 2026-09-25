@@ -51,18 +51,57 @@ function load(): Map<string, UtxoLockRecord> {
   return cache;
 }
 
+/** Key the pending write belongs to, or `null` when the overlay is clean. */
+let dirtyKey: string | null = null;
+let flushQueued = false;
+
+/**
+ * Mark the overlay changed; the durable write is coalesced to one per task.
+ *
+ * Serializing the whole overlay and paying a synchronous `localStorage.setItem`
+ * per coin is what froze the app: sealing a transaction calls this once per
+ * input, so a bulk seal during unlock recompose held the main thread for
+ * seconds at a time (lab phone hc-a580a: 4s tasks, 90% duty, for over a minute).
+ * A microtask flush runs once the current task unwinds — before any `await` in
+ * the caller resumes — so N coins cost one write and durability is unchanged.
+ */
 function persist(): void {
+  dirtyKey = storageKey();
+  if (flushQueued) return;
+  flushQueued = true;
+  queueMicrotask(flushUtxoLocks);
+}
+
+/**
+ * Write the overlay now.
+ *
+ * Runs on its own at the end of the task that mutated the overlay. Reads never
+ * wait for it — {@link load} is the live map — so callers only need this where
+ * the process may not survive that long.
+ */
+export function flushUtxoLocks(): void {
+  flushQueued = false;
+  const key = dirtyKey;
+  if (key == null) return;
+  dirtyKey = null;
+  // An account switch between mutation and flush would write these rows under
+  // the new account's key. The incoming overlay is already durable; drop ours.
+  if (key !== storageKey()) return;
+
   const map = load();
-  const rows = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
-  // Cap only by dropping oldest consumed overlay rows. Toolbox still has them;
-  // we never delete a coin, only forget the hide hint after the cap.
-  while (rows.length > MAX_ENTRIES) {
-    const drop = rows.pop();
-    if (drop && isConsumed(drop)) map.delete(drop.outpoint);
-    else if (drop) break;
+  if (map.size > MAX_ENTRIES) {
+    // Cap only by dropping oldest consumed overlay rows. Toolbox still has them;
+    // we never delete a coin, only forget the hide hint after the cap.
+    const ordered = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    while (ordered.length > MAX_ENTRIES) {
+      const drop = ordered.pop();
+      if (drop && isConsumed(drop)) map.delete(drop.outpoint);
+      else if (drop) break;
+    }
   }
-  durableSetItem(storageKey(), JSON.stringify([...map.values()]));
-  for (const listener of listeners) listener([...map.values()]);
+  const rows = [...map.values()];
+  durableSetItem(key, JSON.stringify(rows));
+  for (const listener of listeners) listener(rows);
 }
 
 function put(rec: UtxoLockRecord): UtxoLockRecord {
@@ -243,6 +282,8 @@ export function subscribeUtxoLocks(listener: Listener): () => void {
 }
 
 export function rebindUtxoLocksForAccount(): void {
+  // Land any coalesced write for the outgoing account before its map is gone.
+  flushUtxoLocks();
   cache = null;
   unsealGeneration = 0;
   const rows = listUtxoLocks();
@@ -414,6 +455,8 @@ export function optimisticSpendableSats(toolboxSpendableSats: number): number {
 
 export function __resetUtxoLocksForTests(): void {
   cache = new Map();
+  dirtyKey = null;
+  flushQueued = false;
   durableSetItem(storageKey(), "[]");
   unsealGeneration = 0;
 }

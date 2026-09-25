@@ -230,6 +230,9 @@ let stallTimer: ReturnType<typeof setInterval> | null = null
  * that are really the user's phone in their pocket, and real jank is lost in them.
  */
 let becameVisibleAt = Date.now()
+/** Rate limit for the detector's own synchronous persist during a storm. */
+const STALL_FLUSH_INTERVAL_MS = 10_000
+let lastStallFlushAt = 0
 
 function startStallWatch(): void {
   if (stallTimer) return
@@ -250,7 +253,14 @@ function startStallWatch(): void {
       'warn',
       `[stall] main thread blocked ${Math.round(drift)}ms${describeStallContext()}`,
     )
-    flushNow()
+    // A freeze can end in an ANR kill, so the evidence has to reach the store —
+    // but persisting is itself a synchronous write, and once per tick through a
+    // storm the detector was adding load to the thread it measures. The
+    // scheduled flush covers the rest of the burst.
+    if (now - lastStallFlushAt >= STALL_FLUSH_INTERVAL_MS) {
+      lastStallFlushAt = now
+      flushNow()
+    }
   }, STALL_TICK_MS)
 }
 

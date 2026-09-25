@@ -40,7 +40,7 @@ import {
   subjectRawTxFromAtomicBeef,
 } from "./txOutpoints";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
-import { yieldToUi } from "./yieldToUi";
+import { uiBudgetExpired, yieldToUi } from "./yieldToUi";
 import {
   classifyChangeScript,
   hasLockingScript,
@@ -576,7 +576,7 @@ export async function releaseSealedInputsOfUnsentTx(
 
   const unique = [...new Set(inputs.map((o) => o.trim()).filter(Boolean))];
   for (let i = 0; i < unique.length; i++) {
-    if (i > 0 && i % 8 === 0) await yieldToUi();
+    if (uiBudgetExpired()) await yieldToUi();
     releaseConsumedUtxo(unique[i]!, `unsent:${id.slice(0, 12)}`);
   }
 
@@ -586,7 +586,7 @@ export async function releaseSealedInputsOfUnsentTx(
       await storage.runAsStorageProvider(async (activeSp) => {
         const sp = activeSp as unknown as LocalStorage;
         for (let i = 0; i < unique.length; i++) {
-          if (i > 0 && i % 8 === 0) await yieldToUi();
+          if (uiBudgetExpired()) await yieldToUi();
           const op = unique[i]!;
           const parsed = parseOutpoint(op);
           if (!parsed) continue;
@@ -1193,7 +1193,7 @@ export async function hideSpentOutpoints(
   if (unique.length === 0) return 0;
   const id = spentBy!.trim().toLowerCase();
   for (let i = 0; i < unique.length; i++) {
-    if (i > 0 && i % 8 === 0) await yieldToUi();
+    if (uiBudgetExpired()) await yieldToUi();
     // The optimistic overlay is bound to the foreground account. A detached
     // send must never write its seals into the newly selected wallet; its own
     // Toolbox row is still updated below and remains authoritative.
@@ -1214,7 +1214,7 @@ export async function quarantineSpentOutpoints(
   const unique = [...new Set(outpoints.map((o) => o.trim()).filter(Boolean))];
   if (unique.length === 0) return 0;
   for (let i = 0; i < unique.length; i++) {
-    if (i > 0 && i % 8 === 0) await yieldToUi();
+    if (uiBudgetExpired()) await yieldToUi();
     hideUtxo(unique[i]!, { diagnostic: "quarantine:spent-unknown" });
   }
   return hideToolboxOutputs(unique);
@@ -1230,7 +1230,7 @@ async function hideToolboxOutputs(
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
       for (let i = 0; i < unique.length; i++) {
-        if (i > 0 && i % 8 === 0) await yieldToUi();
+        if (uiBudgetExpired()) await yieldToUi();
         const op = unique[i]!;
         const parsed = parseOutpoint(op);
         if (!parsed) continue;

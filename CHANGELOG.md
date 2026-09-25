@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.331] - 2026-09-25
+
+### Fixed
+
+- The UI no longer freezes for seconds at a time after unlock. Sealing a
+  transaction's inputs wrote the whole UTXO overlay to disk synchronously once
+  per coin, inside loops that yielded every 8 iterations — eight full writes in
+  one uninterrupted task (lab phone hc-a580a: 4s tasks at a 90% duty cycle,
+  sustained for over a minute of recompose and chain ingest). The overlay write
+  is now coalesced to one per task, and the seal loops yield on a time budget
+  instead of an iteration count.
+- The freeze detector stopped making freezes worse. It persisted the log
+  synchronously on every detection, adding a blocking write per tick to the
+  thread it was measuring.
+
 ## [1.3.330] - 2026-09-24
 
 ### Fixed
