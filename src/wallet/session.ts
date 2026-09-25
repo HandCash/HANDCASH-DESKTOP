@@ -782,7 +782,14 @@ export async function fetchBalanceSats(
   return lastKnownBalanceSats ?? 0
 }
 
-function coalescedBalanceRead(
+/**
+ * One in-flight read per wallet per mode.
+ *
+ * The send gate reads confirmed spendable up to four times while the hero
+ * poller reads the display total. Separate reads queue their own IndexedDB
+ * work and manufacture the contention they then time out on.
+ */
+export function coalescedBalanceRead(
   wallet: Wallet | WalletInterface,
   opts?: { creditUnconfirmed?: boolean },
 ): Promise<BalanceRead> {

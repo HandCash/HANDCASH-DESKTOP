@@ -4,7 +4,7 @@ vi.mock('./session', () => ({
   getActiveWallet: vi.fn(() => ({
     wallet: {},
   })),
-  fetchBalanceRead: vi.fn(async (_w: unknown, opts?: { creditUnconfirmed?: boolean }) =>
+  coalescedBalanceRead: vi.fn(async (_w: unknown, opts?: { creditUnconfirmed?: boolean }) =>
     opts?.creditUnconfirmed === false
       ? { kind: 'ok', sats: 2 }
       : { kind: 'ok', sats: 162769 },

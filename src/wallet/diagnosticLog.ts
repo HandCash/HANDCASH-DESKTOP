@@ -53,13 +53,15 @@ export function logDiag(
 }
 
 export async function snapshotWalletBalance(): Promise<WalletBalanceSnapshot> {
-  const { fetchBalanceRead, getActiveWallet } = await import('./session')
+  // Coalesced: this snapshot is taken when a spend fails, so it lands on the
+  // busiest store. Two fresh reads here would deepen the queue it is measuring.
+  const { coalescedBalanceRead, getActiveWallet } = await import('./session')
   const active = getActiveWallet()
   if (!active) {
     return { spendable: null, pendingChange: null, displayed: null, unavailable: 'locked' }
   }
 
-  const confirmed = await fetchBalanceRead(active.wallet, { creditUnconfirmed: false })
+  const confirmed = await coalescedBalanceRead(active.wallet, { creditUnconfirmed: false })
   if (confirmed.kind === 'unavailable') {
     return {
       spendable: null,
@@ -69,7 +71,7 @@ export async function snapshotWalletBalance(): Promise<WalletBalanceSnapshot> {
     }
   }
 
-  const displayed = await fetchBalanceRead(active.wallet, { creditUnconfirmed: true })
+  const displayed = await coalescedBalanceRead(active.wallet, { creditUnconfirmed: true })
   const spendable = confirmed.sats
   const displayedSats = displayed.kind === 'ok' ? displayed.sats : spendable
   return {

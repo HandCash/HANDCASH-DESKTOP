@@ -13,8 +13,9 @@ import { getActiveWallet } from './session'
 import { extractSatsFromArgs } from './appActivity'
 import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
+import type { BalanceRead } from './session'
 import {
-  fetchBalanceRead,
+  coalescedBalanceRead,
   peekProvenConfirmedSpendable,
 } from './session'
 import { acquireSpendLease } from './spendLease'
@@ -304,8 +305,33 @@ export async function runExclusiveBurn<T>(
 const BALANCE_UNREADABLE =
   'Wallet storage is busy, so your spendable balance could not be read. Nothing was sent — try again in a moment.'
 
-/** Bound live toolbox reads so app pay is not stuck behind a wedged IDB. */
+/** How long the gate waits before answering from a proven total instead. */
 const CONFIRMED_READ_BUDGET_MS = 1_500
+
+/**
+ * Hard ceiling when nothing has ever been proven, so there is no total to fall
+ * back to. The budget above exists to answer *fast*, not to refuse a funded
+ * wallet: a read that lands at 1600ms must still pass the gate.
+ */
+const CONFIRMED_READ_CEILING_MS = 8_000
+
+/** The read's own answer, or `null` when it simply has not settled yet. */
+async function settleWithin(
+  read: Promise<BalanceRead>,
+  budgetMs: number,
+): Promise<BalanceRead | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      read,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), budgetMs)
+      }),
+    ])
+  } finally {
+    if (timer != null) clearTimeout(timer)
+  }
+}
 
 /**
  * Confirmed spendable sats, or a refusal.
@@ -316,32 +342,33 @@ const CONFIRMED_READ_BUDGET_MS = 1_500
  * is allowed — sync contention must not block auth/pay when funds exist.
  */
 async function readConfirmedSpendable(active: {
-  wallet: Parameters<typeof fetchBalanceRead>[0]
+  wallet: Parameters<typeof coalescedBalanceRead>[0]
 }): Promise<number> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let read: Awaited<ReturnType<typeof fetchBalanceRead>>
-  try {
-    read = await Promise.race([
-      fetchBalanceRead(active.wallet, { creditUnconfirmed: false }),
-      new Promise<Awaited<ReturnType<typeof fetchBalanceRead>>>((resolve) => {
-        timer = setTimeout(
-          () => resolve({ kind: 'unavailable', reason: 'storageUnreadable' }),
-          CONFIRMED_READ_BUDGET_MS,
-        )
-      }),
-    ])
-  } finally {
-    if (timer != null) clearTimeout(timer)
-  }
-  if (read.kind === 'ok') return read.sats
+  const flight = coalescedBalanceRead(active.wallet, { creditUnconfirmed: false })
+
+  const budgeted = await settleWithin(flight, CONFIRMED_READ_BUDGET_MS)
+  if (budgeted?.kind === 'ok') return budgeted.sats
 
   const proven = peekProvenConfirmedSpendable(active.wallet)
   if (proven != null && proven > 0) {
     logDiag('spend-guard', 'warn', 'confirmed-from-proven-cache', {
       proven,
-      reason: read.reason,
+      reason: budgeted?.reason ?? 'readSlow',
     })
     return proven
+  }
+
+  // Slow is not failed. Abandoning a still-running read here is what refused
+  // one send and accepted the next: the abandoned read proved the total moments
+  // later, so the retry sailed through. With no proven total to stand on, wait
+  // the read out rather than blame the wallet for the store being busy.
+  if (budgeted == null) {
+    const settled = await settleWithin(flight, CONFIRMED_READ_CEILING_MS)
+    if (settled?.kind === 'ok') return settled.sats
+    logDiag('spend-guard', 'warn', 'confirmed-read-exhausted', {
+      ceilingMs: CONFIRMED_READ_CEILING_MS,
+      reason: settled?.reason ?? 'readSlow',
+    })
   }
   throw new Error(BALANCE_UNREADABLE)
 }

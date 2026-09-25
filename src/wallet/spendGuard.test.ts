@@ -4,7 +4,7 @@ type BalanceRead =
   | { kind: 'ok'; sats: number }
   | { kind: 'unavailable'; reason: 'noWallet' | 'storageUnreadable' }
 
-const fetchBalanceRead = vi.fn(
+const coalescedBalanceRead = vi.fn(
   async (_wallet?: unknown, opts?: { creditUnconfirmed?: boolean }): Promise<BalanceRead> => {
     void opts
     return { kind: 'ok', sats: 12_345 }
@@ -13,7 +13,7 @@ const fetchBalanceRead = vi.fn(
 
 /** Mirror of the old numeric mock so each case reads as a plain balance. */
 function mockConfirmed(sats: number): void {
-  fetchBalanceRead.mockResolvedValue({ kind: 'ok', sats })
+  coalescedBalanceRead.mockResolvedValue({ kind: 'ok', sats })
 }
 const assertOnlineForPayment = vi.fn(() => undefined)
 const monitorStop = vi.fn()
@@ -51,8 +51,8 @@ vi.mock('./session', () => ({
       ? { monitor: { stopTasks: monitorStop, startTasks: monitorStart } }
       : {}),
   }),
-  fetchBalanceRead: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
-    fetchBalanceRead(wallet, opts),
+  coalescedBalanceRead: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
+    coalescedBalanceRead(wallet, opts),
   peekProvenConfirmedSpendable: (wallet?: unknown) =>
     peekProvenConfirmedSpendable(wallet),
   bumpBalanceAfterHeal: vi.fn(),
@@ -119,7 +119,7 @@ describe('refreshSpendableBalance', () => {
   it('reads confirmed toolbox balance without the unconfirmed-change scan', async () => {
     const { refreshSpendableBalance } = await import('./spendGuard')
     await expect(refreshSpendableBalance()).resolves.toBe(12_345)
-    expect(fetchBalanceRead).toHaveBeenCalledWith(
+    expect(coalescedBalanceRead).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ creditUnconfirmed: false }),
     )
@@ -360,7 +360,7 @@ describe('refreshSpendableBalance', () => {
   it('never spends against an unreadable balance as if the wallet were empty', async () => {
     // Under heavy IndexedDB contention every spendable read can fail at once.
     // Treating that as 0 reported a funded wallet as broke.
-    fetchBalanceRead.mockResolvedValue({
+    coalescedBalanceRead.mockResolvedValue({
       kind: 'unavailable',
       reason: 'storageUnreadable',
     })
@@ -375,7 +375,7 @@ describe('refreshSpendableBalance', () => {
   })
 
   it('uses a proven confirmed cache when live storage is unreadable', async () => {
-    fetchBalanceRead.mockResolvedValue({
+    coalescedBalanceRead.mockResolvedValue({
       kind: 'unavailable',
       reason: 'storageUnreadable',
     })
@@ -388,8 +388,46 @@ describe('refreshSpendableBalance', () => {
     expect(unconfirmedChangeSats).not.toHaveBeenCalled()
   })
 
+  it('waits out a slow read when nothing has been proven yet', async () => {
+    // Slow is not failed. Abandoning the read at the budget refused one send
+    // and accepted the next, because the abandoned read proved the total
+    // moments later. With no proven total to stand on, the gate must wait.
+    let land!: (read: BalanceRead) => void
+    coalescedBalanceRead.mockReturnValue(
+      new Promise<BalanceRead>((resolve) => {
+        land = resolve
+      }),
+    )
+    peekProvenConfirmedSpendable.mockReturnValue(null)
+    const { assertSendableBalance } = await import('./spendGuard')
+
+    vi.useFakeTimers()
+    try {
+      const gate = assertSendableBalance(500)
+      await vi.advanceTimersByTimeAsync(1_600)
+      land({ kind: 'ok', sats: 12_000 })
+      await expect(gate).resolves.toBe(12_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads confirmed balance once per gate even when it asks repeatedly', async () => {
+    // Four separate reads queue their own IndexedDB work and manufacture the
+    // contention they then time out on.
+    mockConfirmed(100)
+    unconfirmedChangeSats.mockResolvedValue(0)
+    const { assertSendableBalance } = await import('./spendGuard')
+
+    await expect(assertSendableBalance(500)).rejects.toThrow(/Insufficient balance/)
+    expect(coalescedBalanceRead).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ creditUnconfirmed: false }),
+    )
+  })
+
   it('still refuses when the proven cache is short of the amount', async () => {
-    fetchBalanceRead.mockResolvedValue({
+    coalescedBalanceRead.mockResolvedValue({
       kind: 'unavailable',
       reason: 'storageUnreadable',
     })

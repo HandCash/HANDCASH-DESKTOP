@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.334] - 2026-09-25
+
+### Fixed
+
+- Payments no longer fail at random when storage is busy. The send gate gave the
+  confirmed-balance read 1500ms and, with no previously proven total to stand
+  on, refused the payment — while the abandoned read finished moments later and
+  populated the cache, so the retry sailed through. Slow is now distinguished
+  from failed: a read still in flight is waited out to a hard 8s ceiling, and
+  only a genuine read failure refuses the send.
+- The send gate no longer manufactures the storage contention it times out on.
+  `assertSendableBalance` read confirmed spendable up to four times per payment,
+  each an uncoalesced toolbox read queued onto the same IndexedDB alongside the
+  display poller. All confirmed reads now join one in-flight read per wallet.
+- The spend-failure diagnostic snapshot is coalesced too. It is taken exactly
+  when a payment fails, so its two fresh reads were deepening the queue they
+  were measuring.
+
 ## [1.3.333] - 2026-09-25
 
 ### Fixed
