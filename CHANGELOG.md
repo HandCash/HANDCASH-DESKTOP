@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.333] - 2026-09-25
+
+### Fixed
+
+- Mobile origin storage no longer lets reconstructable item art and token icon
+  caches crowd out custody-critical UTXO locks, derived-change remittance, BEEF,
+  queues, or user history. Storage records are authoritative by default; only
+  registry entries explicitly marked `rebuildable` may be reclaimed after a
+  quota refusal, then the exact wallet write is retried once.
+- Item art and token icon caches now have total byte budgets, not only entry
+  counts. A few large bitmaps can no longer consume Android's shared ~5MB
+  origin quota.
+- Settings → Logs batches live updates and renders only the latest 300 lines.
+  Copy and Upload still include the full session; diagnostics no longer create
+  their own idle long task while support collects a busy log.
+
 ## [1.3.332] - 2026-09-25
 
 ### Fixed

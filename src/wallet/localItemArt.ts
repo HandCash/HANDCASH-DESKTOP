@@ -31,6 +31,8 @@ const STORAGE_KEY = 'handcash.itemArt.v1'
  */
 const MAX_BYTES = 256 * 1024
 const MAX_ENTRIES = 120
+/** Shared origin storage is ~5MB on Android; art is a rebuildable cache. */
+const MAX_STORE_CHARS = 512 * 1024
 
 type ItemArtRecord = {
   mime: string
@@ -88,13 +90,22 @@ function readStore(): Store {
 }
 
 function writeStore(store: Store): void {
-  const entries = Object.entries(store)
+  const entries = Object.entries(store).sort(
+    (a, b) => (a[1]?.at ?? 0) - (b[1]?.at ?? 0),
+  )
   if (entries.length > MAX_ENTRIES) {
-    entries.sort((a, b) => (a[1]?.at ?? 0) - (b[1]?.at ?? 0))
     for (const [key] of entries.slice(0, entries.length - MAX_ENTRIES)) delete store[key!]
   }
+  let body = JSON.stringify(store)
+  // Count is not a byte budget: two large inscriptions can outweigh 120 tiny
+  // ones. Drop oldest art until this cache leaves room for wallet state.
+  for (const [key] of entries) {
+    if (body.length <= MAX_STORE_CHARS || Object.keys(store).length <= 1) break
+    delete store[key]
+    body = JSON.stringify(store)
+  }
   try {
-    durableSetItem(STORAGE_KEY, JSON.stringify(store))
+    durableSetItem(STORAGE_KEY, body)
   } catch {
     // Art is a cache of bytes we can rebuild from the transaction; losing it
     // costs a repaint, not the item.

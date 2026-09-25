@@ -135,4 +135,30 @@ describe('durable store ownership', () => {
     expect(local.get('handcash.appearance')).toBe('dark')
     expect(durableGetItem('handcash.brc100.appActivity')).toBe(BIG)
   })
+
+  it('reclaims rebuildable image caches before refusing wallet state', async () => {
+    const local = installLocalStorage()
+    vi.stubGlobal('window', { handcash: undefined })
+    local.set('handcash.itemArt.v1', 'a'.repeat(500 * 1024))
+    local.set('handcash.bsv21.tokenIcons', 'b'.repeat(300 * 1024))
+    const originalSet = localStorage.setItem
+    let first = true
+    localStorage.setItem = (key: string, value: string) => {
+      if (first) {
+        first = false
+        throw new DOMException('full', 'QuotaExceededError')
+      }
+      originalSet(key, value)
+    }
+    const { durableSetItem } = await loadDurable()
+
+    expect(
+      durableSetItem('handcash.wallet.utxoLocks.v1:wallet:main:0:root', 'critical'),
+    ).toBe(true)
+    expect(local.has('handcash.itemArt.v1')).toBe(false)
+    expect(local.has('handcash.bsv21.tokenIcons')).toBe(false)
+    expect(
+      local.get('handcash.wallet.utxoLocks.v1:wallet:main:0:root'),
+    ).toBe('critical')
+  })
 })

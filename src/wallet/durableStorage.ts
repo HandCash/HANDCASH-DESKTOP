@@ -38,6 +38,19 @@ const cleanedLegacyScopes = new Set<string>()
 const LOCAL_MIRROR_MAX_BYTES = 64 * 1024
 const WALLET_KEY_RE = /^(.*):wallet:(main|test):(\d+):([^:]+)$/
 const PROBE_KEY = storageRegistry.durableStoreProbe.key
+/**
+ * Reconstructable bitmap caches that must yield to wallet state under origin
+ * quota pressure. Item/token identity lives in transactions and remittance;
+ * these values only avoid decoding those bytes again.
+ */
+const REBUILDABLE_CACHE_KEYS = Object.values(storageRegistry)
+  .filter(
+    (
+      descriptor,
+    ): descriptor is typeof descriptor & { retention: 'rebuildable' } =>
+      'retention' in descriptor && descriptor.retention === 'rebuildable',
+  )
+  .map((descriptor) => descriptor.key)
 
 /**
  * Which process holds the durable copy.
@@ -315,7 +328,29 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
     noteStoreCost('write', key, writeStartedAt, value.length)
     cache.set(key, value)
     return true
-  } catch {
+  } catch (err) {
+    // Mobile's origin store has a shared ~5MB quota. Custody overlays, queues,
+    // remittance and user history must not lose a write because decoded bitmap
+    // caches consumed it. Reclaim only explicitly rebuildable caches, then
+    // retry the exact write once.
+    if (isQuotaExceeded(err)) {
+      const reclaimed = reclaimRebuildableCaches()
+      if (reclaimed > 0) {
+        try {
+          localStorage.setItem(key, value)
+          noteStoreCost('write-after-cache-reclaim', key, writeStartedAt, value.length)
+          cache.set(key, value)
+          console.warn(
+            `[storage] reclaimed ${Math.round(
+              reclaimed / 1024,
+            )}KB of rebuildable image caches for ${key}`,
+          )
+          return true
+        } catch {
+          // Still full: report the authoritative state that remains below.
+        }
+      }
+    }
     // A quota/private-mode failure is a failed durable write. Do not cache the
     // value and report success: custody queues use this result to distinguish a
     // retryable signed cheque from one that would disappear on process exit.
@@ -323,6 +358,32 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
     reportStoragePressure(key, value.length)
     return false
   }
+}
+
+function isQuotaExceeded(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'QuotaExceededError') return true
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    'name' in err &&
+    (err as { name?: unknown }).name === 'QuotaExceededError'
+  )
+}
+
+function reclaimRebuildableCaches(): number {
+  let reclaimed = 0
+  for (const cacheKey of REBUILDABLE_CACHE_KEYS) {
+    try {
+      const previous = localStorage.getItem(cacheKey)
+      if (previous == null) continue
+      reclaimed += previous.length + cacheKey.length
+      localStorage.removeItem(cacheKey)
+      cache.set(cacheKey, null)
+    } catch {
+      // Continue with the other cache; the original write still fails closed.
+    }
+  }
+  return reclaimed
 }
 
 /** Last time the store was reported full, so a burst of refusals says it once. */

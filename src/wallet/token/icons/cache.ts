@@ -8,6 +8,10 @@ import { normalizeTokenId } from '../types'
 import { base64ToBytes, bytesToBase64 } from '../../base64Binary'
 
 const STORAGE_KEY = storageRegistry.tokenIcons.key
+const MAX_ICON_BYTES = 96 * 1024
+/** Icons are reconstructable; keep their share of Android's ~5MB store small. */
+const MAX_STORE_CHARS = 256 * 1024
+const MAX_ENTRIES = 200
 
 export type TokenIconRecord = {
   mime: string
@@ -53,12 +57,19 @@ function readStore(): Store {
 }
 
 function writeStore(store: Store): void {
-  const entries = Object.entries(store)
-  if (entries.length > 200) {
-    entries.sort((a, b) => (a[1]?.at ?? 0) - (b[1]?.at ?? 0))
-    for (const [k] of entries.slice(0, entries.length - 200)) delete store[k!]
+  const entries = Object.entries(store).sort(
+    (a, b) => (a[1]?.at ?? 0) - (b[1]?.at ?? 0),
+  )
+  if (entries.length > MAX_ENTRIES) {
+    for (const [k] of entries.slice(0, entries.length - MAX_ENTRIES)) delete store[k!]
   }
-  durableSetItem(STORAGE_KEY, JSON.stringify(store))
+  let body = JSON.stringify(store)
+  for (const [key] of entries) {
+    if (body.length <= MAX_STORE_CHARS || Object.keys(store).length <= 1) break
+    delete store[key]
+    body = JSON.stringify(store)
+  }
+  durableSetItem(STORAGE_KEY, body)
 }
 
 export function rememberTokenIcon(
@@ -69,8 +80,8 @@ export function rememberTokenIcon(
   const key = keyOf(outpoint)
   if (!key || body.length === 0) return
   const mimeSafe = (mime || 'application/octet-stream').split(';')[0]!.trim() || 'application/octet-stream'
-  // Cap ~96 KiB — ticker icons should stay small; refuse huge blobs.
-  if (body.length > 512 * 1024) return
+  // Ticker icons should stay small; one icon must never own the cache budget.
+  if (body.length > MAX_ICON_BYTES) return
   const store = { ...readStore() }
   store[key] = { mime: mimeSafe, b64: bytesToBase64(body), at: Date.now() }
   writeStore(store)

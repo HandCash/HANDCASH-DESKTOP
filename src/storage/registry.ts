@@ -6,12 +6,19 @@
  * must never be rewritten.
  */
 export type StorageScope = 'device' | 'chain' | 'wallet'
+export type StorageRetention = 'authoritative' | 'rebuildable'
 
 export type StorageDescriptor = Readonly<{
   key: string
   owner: string
   scope: StorageScope
   version: number
+  /**
+   * Omitted means authoritative: never evict merely to make another write fit.
+   * `rebuildable` is reserved for caches whose source bytes remain in wallet
+   * transactions/remittance or can be fetched again.
+   */
+  retention?: StorageRetention
 }>
 
 function defineStorage<const T extends StorageDescriptor>(descriptor: T): T {
@@ -324,6 +331,7 @@ export const storageRegistry = Object.freeze({
     owner: 'tokens',
     scope: 'chain',
     version: 1,
+    retention: 'rebuildable',
   }),
   tokenDeployCaps: defineStorage({
     key: 'handcash.bsv21.deploy-cap.v1',
@@ -336,6 +344,7 @@ export const storageRegistry = Object.freeze({
     owner: 'collectables',
     scope: 'chain',
     version: 1,
+    retention: 'rebuildable',
   }),
   inscriptionResolution: defineStorage({
     key: 'handcash.inscriptionResolution.v1',

@@ -13,6 +13,8 @@ import { shipAppLogs } from '../wallet/logShip'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 
+const DISPLAY_LINES = 300
+
 async function loadElectronTail(): Promise<string | null> {
   try {
     const result = await window.handcash?.readLogs?.({ maxBytes: 256_000 })
@@ -33,7 +35,25 @@ export function LogViewerPanel() {
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState('')
 
-  useEffect(() => subscribeAppLogs(setEntries), [])
+  useEffect(() => {
+    let latest = getAppLogs()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const unsubscribe = subscribeAppLogs((next) => {
+      latest = next
+      if (timer) return
+      // Diagnostics must not become workload: a sync storm can append dozens
+      // of lines per second, and formatting/repainting the full ring per line
+      // produced an idle long task while support was collecting logs.
+      timer = setTimeout(() => {
+        timer = null
+        setEntries(latest)
+      }, 500)
+    })
+    return () => {
+      unsubscribe()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
 
   useEffect(() => {
     void loadElectronTail().then(setFileTail)
@@ -65,6 +85,14 @@ export function LogViewerPanel() {
         .join('\n') || 'No matching lines.'
     )
   }, [entries, fileTail, filter, previous])
+
+  const displayedText = useMemo(() => {
+    const lines = text.split('\n')
+    if (lines.length <= DISPLAY_LINES) return text
+    return `… ${lines.length - DISPLAY_LINES} earlier line(s) hidden; Copy and Upload still include all …\n${lines
+      .slice(-DISPLAY_LINES)
+      .join('\n')}`
+  }, [text])
 
   const refresh = async () => {
     setBusy(true)
@@ -206,7 +234,7 @@ export function LogViewerPanel() {
       ) : null}
 
       <pre className="log-viewer-pre" tabIndex={0} aria-label="Log output">
-        {text}
+        {displayedText}
       </pre>
     </div>
   )
