@@ -47,6 +47,7 @@ import { type MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isUndefinedPartialFilterError } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
+import { inUiPhase } from './uiPhase'
 import type { Chain } from './vault'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
@@ -351,7 +352,7 @@ export async function refreshFromChainExclusive(
       // payment. Aborting it instead would try to restore inputs the chain has
       // already consumed.
       const { healAppHeldChange } = await import('./staleOutputRelease')
-      await healAppHeldChange()
+      await inUiPhase('heal-app-held', healAppHeldChange)
     } catch (err) {
       console.warn('[chain-ingest] app-held change heal skipped', err)
     }
@@ -443,11 +444,13 @@ export async function refreshFromChainExclusive(
       const { setCollectableVerifyWalkDeferred } = await import('./collectables')
       setCollectableVerifyWalkDeferred(true)
     }
-    const ingestPromise = ingestLegacyAddressUtxos({
-      active,
-      knownItems: opts?.knownItems,
-      fundingOnly,
-    })
+    const ingestPromise = inUiPhase('legacy-ingest', () =>
+      ingestLegacyAddressUtxos({
+        active,
+        knownItems: opts?.knownItems,
+        fundingOnly,
+      }),
+    )
     const softTimer = setTimeout(() => {
       softDeadlineHit = true
       console.warn(
@@ -635,7 +638,9 @@ export async function refreshFromChainExclusive(
     shouldYieldChainIngestToSpend() ||
     (softDeadlineHit && !forceReview)
       ? { suspect: 0, skipped: true }
-      : await auditSpendableOutputs(forceReview && importedFunding === 0)
+      : await inUiPhase('spendable-audit', () =>
+          auditSpendableOutputs(forceReview && importedFunding === 0),
+        )
   if (review.error && forceReview) {
     stampSync({
       phase: 'error',
@@ -832,13 +837,15 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
     results = await Promise.race([
       Promise.allSettled([
         (async () => {
-          const dual = await reconcileDualLayerState()
+          const dual = await inUiPhase('dual-reconcile', reconcileDualLayerState)
           if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
             console.info('[chain-ingest] dual-layer reconcile', dual)
           }
         })(),
         (async () => {
-          const healed = await healGhostSentItems(chain, txExistsOnChain)
+          const healed = await inUiPhase('heal-ghost-sent', () =>
+            healGhostSentItems(chain, txExistsOnChain),
+          )
           if (healed.length > 0) {
             forgetOneSatImported(healed)
             console.info(
@@ -848,9 +855,8 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
           }
         })(),
         (async () => {
-          const healed = await healScanHiddenSentItems(
-            chain,
-            spentStatusOfOutpoint,
+          const healed = await inUiPhase('heal-scan-hidden', () =>
+            healScanHiddenSentItems(chain, spentStatusOfOutpoint),
           )
           if (healed.length > 0) {
             forgetOneSatImported(healed)
@@ -865,7 +871,9 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
           if (expired > 0) {
             console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)
           }
-          const pruned = await pruneMissingOnChainActivity(chain, txExistsOnChain)
+          const pruned = await inUiPhase('prune-activity', () =>
+            pruneMissingOnChainActivity(chain, txExistsOnChain),
+          )
           if (pruned > 0) {
             console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)
           }
@@ -892,7 +900,9 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
             let scriptsHealed = 0
             for (let pass = 0; pass < 4; pass += 1) {
               throwIfYieldToSpend()
-              const sweep = await sweepChangeScripts({ fromChain: true })
+              const sweep = await inUiPhase('change-script-sweep', () =>
+                sweepChangeScripts({ fromChain: true }),
+              )
               scriptsHealed += sweep.healed
               if (sweep.deferred) break
               if (sweep.healed === 0 && sweep.remaining === 0) break
@@ -907,16 +917,18 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
             console.warn('[chain-ingest] change script sweep skipped', err)
           }
           throwIfYieldToSpend()
-          await rehideInputsOfLiveLocalTxs()
+          await inUiPhase('rehide-live-inputs', rehideInputsOfLiveLocalTxs)
           throwIfYieldToSpend()
-          await promotePendingLocalChangeOutputs()
+          await inUiPhase('promote-change', promotePendingLocalChangeOutputs)
           let restored = 0
           for (let pass = 0; pass < 5; pass += 1) {
             throwIfYieldToSpend()
             // Refresh is the one path allowed to buy a missing raw tx, so
             // change the device never kept a body for can be scripted and
             // counted again instead of staying quarantined forever.
-            const batch = await restoreLiveSpendableOutputs({ fromChain: true })
+            const batch = await inUiPhase('restore-spendable', () =>
+              restoreLiveSpendableOutputs({ fromChain: true }),
+            )
             if (batch.restored === 0) break
             restored += batch.restored
           }
@@ -927,7 +939,10 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
           }
           for (let pass = 0; pass < 3; pass += 1) {
             throwIfYieldToSpend()
-            const reclaimed = await reclaimSealedInputsNeverSpent()
+            const reclaimed = await inUiPhase(
+              'reclaim-sealed',
+              reclaimSealedInputsNeverSpent,
+            )
             if (reclaimed === 0) break
           }
         })(),

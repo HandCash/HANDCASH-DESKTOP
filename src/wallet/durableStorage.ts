@@ -83,6 +83,35 @@ export function __resetDurableStoreOwnerForTests(): void {
   storeOwner = null
 }
 
+/**
+ * Longest a single store operation may take before the log names it.
+ *
+ * Both sides of this module are synchronous on the renderer — `sendSync` IPC on
+ * Desktop, `localStorage` on Mobile — so one slow key is indistinguishable from
+ * "the app froze" in a stall report. Naming the key and its size turns the next
+ * uploaded log into the answer instead of a search.
+ */
+const SLOW_STORE_MS = 50
+let reportingSlowStore = false
+
+const storeNow = (): number =>
+  typeof performance?.now === 'function' ? performance.now() : Date.now()
+
+function noteStoreCost(op: string, key: string, startedAt: number, bytes: number): void {
+  const ms = storeNow() - startedAt
+  // The report itself appends a log line, which schedules a write. Never let
+  // that recurse back through here.
+  if (ms < SLOW_STORE_MS || reportingSlowStore) return
+  reportingSlowStore = true
+  try {
+    console.warn(
+      `[storage] slow ${op} ${Math.round(ms)}ms · ${key} (${Math.round(bytes / 1024)}KB)`,
+    )
+  } finally {
+    reportingSlowStore = false
+  }
+}
+
 function mirrorLocally(key: string, value: string): void {
   if (value.length > LOCAL_MIRROR_MAX_BYTES) return
   try {
@@ -135,7 +164,9 @@ export function durableGetItem(key: string): string | null {
     // confuse a wiped key with a stored empty payload.
     return cached === '' ? null : cached
   }
+  const readStartedAt = storeNow()
   let value = readThrough(key)
+  noteStoreCost('read', key, readStartedAt, value?.length ?? 0)
   if (value === '') value = null
   // Account-local storage used two historical shapes: an unscoped primary
   // key and `base:identityKey` for children. A runtime always reads its fully
@@ -254,9 +285,11 @@ function removeMigratedLegacyKey(key: string, bytes: number): void {
 }
 
 export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
+  const writeStartedAt = storeNow()
   if (durableStoreOwner() === 'shell') {
     try {
       const ok = window.handcash?.storageSetSync?.(key, value, opts)
+      noteStoreCost('write', key, writeStartedAt, value.length)
       if (typeof ok === 'boolean') {
         // The shell owns the durable copy — localStorage is only a small-key mirror.
         mirrorLocally(key, value)
@@ -279,6 +312,7 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
   }
   try {
     localStorage.setItem(key, value)
+    noteStoreCost('write', key, writeStartedAt, value.length)
     cache.set(key, value)
     return true
   } catch {

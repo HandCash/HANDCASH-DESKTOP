@@ -20,6 +20,7 @@ import { accountLocalKey } from './accountLocalKeys'
 import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
 import { yieldToUi } from './yieldToUi'
+import { beginUiPhase } from './uiPhase'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -1085,6 +1086,22 @@ export function verifyProvenanceV2(
  * one shared origin fetch — not an O(hops) rediscovery walk.
  */
 export async function verifyProvenanceV2Async(
+  provenance: unknown,
+  heldOutpoint: string,
+  opts?: {
+    enforceBudget?: boolean
+    getBeef?: (txid: string) => Promise<Beef>
+  },
+): Promise<ProvenanceVerifyResult> {
+  const leavePhase = beginUiPhase('brc150-verify')
+  try {
+    return await verifyProvenanceV2Inner(provenance, heldOutpoint, opts)
+  } finally {
+    leavePhase()
+  }
+}
+
+async function verifyProvenanceV2Inner(
   provenance: unknown,
   heldOutpoint: string,
   opts?: {

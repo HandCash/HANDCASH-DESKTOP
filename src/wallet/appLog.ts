@@ -237,10 +237,21 @@ let lastStallFlushAt = 0
 function startStallWatch(): void {
   if (stallTimer) return
   let last = Date.now()
+  /**
+   * Context sampled by the tick *before* the block.
+   *
+   * Reporting what is running at detection time names whatever the wallet moved
+   * on to once the thread came back — by then the phase that blocked has often
+   * already returned. Ticks cannot run during a block, so the previous sample is
+   * the last thing observed before it started.
+   */
+  let contextBeforeBlock = ''
   stallTimer = setInterval(() => {
     const now = Date.now()
     const drift = now - last - STALL_TICK_MS
     const previousTick = last
+    const blockedDuring = contextBeforeBlock
+    contextBeforeBlock = describeStallContext()
     last = now
     // Background tabs have their timers throttled on purpose; that is not a stall.
     if (document.visibilityState === 'hidden') return
@@ -251,7 +262,9 @@ function startStallWatch(): void {
     if (drift < STALL_WARN_MS) return
     appendAppLog(
       'warn',
-      `[stall] main thread blocked ${Math.round(drift)}ms${describeStallContext()}`,
+      `[stall] main thread blocked ${Math.round(drift)}ms${
+        blockedDuring || contextBeforeBlock
+      }`,
     )
     // A freeze can end in an ANR kill, so the evidence has to reach the store —
     // but persisting is itself a synchronous write, and once per tick through a

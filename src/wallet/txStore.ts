@@ -105,14 +105,42 @@ export function isLocalUnconfirmedTxid(txid: string): boolean {
   )
 }
 
+/** Key the pending write belongs to, or `null` when the store is clean. */
+let dirtyKey: string | null = null
+let flushQueued = false
+
+/**
+ * Mark the store changed; the durable write is coalesced to one per task.
+ *
+ * Rewriting every row through a synchronous `localStorage.setItem` on each
+ * status change put seconds of blocked main thread into a burst of sends —
+ * the same shape that froze the UTXO overlay. A microtask flush lands the
+ * bytes before any `await` in the caller resumes, so durability is unchanged.
+ */
 function persist(): void {
+  dirtyKey = storageKey()
+  if (flushQueued) return
+  flushQueued = true
+  queueMicrotask(flushTxStore)
+}
+
+/** Write the store now. Reads never wait for it — {@link load} is the live map. */
+export function flushTxStore(): void {
+  flushQueued = false
+  const key = dirtyKey
+  if (key == null) return
+  dirtyKey = null
+  // An account switch between mutation and flush would write these rows under
+  // the new account's key. The incoming store is already durable; drop ours.
+  if (key !== storageKey()) return
+
   const map = load()
   const rows = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt)
   while (rows.length > MAX_ENTRIES) {
     const drop = rows.pop()
     if (drop) map.delete(drop.id)
   }
-  durableSetItem(storageKey(), JSON.stringify(rows))
+  durableSetItem(key, JSON.stringify(rows))
   for (const listener of listeners) listener(rows)
 }
 
@@ -146,6 +174,8 @@ export function subscribeTxStore(listener: Listener): () => void {
 }
 
 export function rebindTxStoreForAccount(): void {
+  // Land any coalesced write for the outgoing account before its map is gone.
+  flushTxStore()
   cache = null
   const rows = listTxRecords()
   for (const listener of listeners) listener(rows)
@@ -297,5 +327,7 @@ export function listPendingConfirmation(): TxRecord[] {
 /** Test helper — wipe in-memory + durable store. */
 export function __resetTxStoreForTests(): void {
   cache = new Map()
+  dirtyKey = null
+  flushQueued = false
   durableSetItem(storageKey(), '[]')
 }

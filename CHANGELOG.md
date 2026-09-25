@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.332] - 2026-09-25
+
+### Fixed
+
+- Transaction history no longer rewrites every row through a synchronous write
+  on each status change — the same whole-blob-per-mutation shape that froze the
+  UTXO overlay, now coalesced to one write per task.
+
+### Changed
+
+- Freeze reports name the step, not just the layer: `active: chainIngest · in:
+  restore-spendable`. Chain maintenance runs several steps at once, so the
+  report lists every one in flight.
+- Freeze reports attribute the block to what was running when it *started*.
+  Sampling at detection time named whatever the wallet moved on to once the
+  thread came back, which is usually not the step that blocked.
+- A synchronous durable read or write over 50ms now names its key and size, so
+  one slow store stops looking like "the app froze".
+
 ## [1.3.331] - 2026-09-25
 
 ### Fixed

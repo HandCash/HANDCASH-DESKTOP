@@ -5,6 +5,7 @@
  */
 import { createActor, type Actor } from 'xstate'
 import { setStallContextProvider } from './appLog'
+import { describeUiPhase } from './uiPhase'
 import { createSerialQueue } from './serialQueue'
 import {
   canBeginChainIngest,
@@ -236,6 +237,9 @@ export function describeWalletCoordinator(): WalletCoordinatorLiveStatus {
   if (active.length === 0) parts.push('layers idle')
   else parts.push(`active: ${active.join(', ')}`)
   if (spendWaiting > 0) parts.push(`spend waiting: ${holders.join(', ')}`)
+  // A layer runs for minutes; the freeze is one step inside it. Name the step.
+  const phase = describeUiPhase()
+  if (phase) parts.push(`in: ${phase}`)
   return {
     ...snap,
     spendWaiting,
