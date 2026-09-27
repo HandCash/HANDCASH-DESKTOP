@@ -600,6 +600,137 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   text-transform: uppercase;
 }
 
+/* History recovery — chart-driven restore progress (historyRecoveryMachine) */
+[data-aeon-scope='history-recovery'] [data-aeon-part='restore-progress'] {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--hc-border, #444) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--hc-accent) 5%, transparent);
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='restore-progress'] .history-progress-track {
+  height: 8px;
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='restore-progress'] .history-progress-range {
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-aeon-scope='history-recovery']
+  [data-aeon-part='restore-progress'][data-aeon-state^='restoring']
+  .history-progress-range {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--hc-accent) 85%, white),
+    var(--hc-accent),
+    color-mix(in srgb, var(--hc-accent) 65%, white),
+    var(--hc-accent)
+  );
+  background-size: 200% 100%;
+  animation: history-recovery-flow 1.6s linear infinite;
+}
+
+[data-aeon-scope='history-recovery']
+  [data-aeon-part='restore-progress'][data-aeon-state='done']
+  .history-progress-range {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--hc-success) 75%, var(--hc-accent)),
+    var(--hc-success)
+  );
+}
+
+@keyframes history-recovery-flow {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='restore-stages'] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='stage'] {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.86rem;
+  color: var(--hc-muted);
+  transition:
+    color 0.25s ease,
+    opacity 0.25s ease;
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='stage'] .history-recovery-stage-mark {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--hc-muted) 60%, transparent);
+  box-sizing: border-box;
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='stage'][data-aeon-state='pending'] {
+  opacity: 0.6;
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='stage'][data-aeon-state='active'] {
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='history-recovery']
+  [data-aeon-part='stage'][data-aeon-state='active']
+  .history-recovery-stage-mark {
+  border-color: var(--hc-accent);
+  background: var(--hc-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  animation: history-recovery-pulse 1.2s ease-out infinite;
+}
+
+[data-aeon-scope='history-recovery'] [data-aeon-part='stage'][data-aeon-state='done'] {
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='history-recovery']
+  [data-aeon-part='stage'][data-aeon-state='done']
+  .history-recovery-stage-mark {
+  border-color: var(--hc-success);
+  background: var(--hc-success);
+}
+
+@keyframes history-recovery-pulse {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-aeon-scope='history-recovery']
+    [data-aeon-part='restore-progress'][data-aeon-state^='restoring']
+    .history-progress-range,
+  [data-aeon-scope='history-recovery']
+    [data-aeon-part='stage'][data-aeon-state='active']
+    .history-recovery-stage-mark {
+    animation: none;
+  }
+}
+
 .wallet-setup-options {
   display: grid;
   gap: 0.65rem;

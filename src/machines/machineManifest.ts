@@ -9,6 +9,7 @@ import { appBrowserMachine } from './appBrowserMachine'
 import { assetBurnUiMachine } from './assetBurnUiMachine'
 import { deviceBackupMachine } from './deviceBackupMachine'
 import { fungibleDetailsMachine } from './fungibleDetailsMachine'
+import { historyRecoveryMachine } from './historyRecoveryMachine'
 import { modelViewerMachine } from './modelViewerMachine'
 import { permissionDecisionMachine } from './permissionDecisionMachine'
 import { qrRevealMachine } from './qrRevealMachine'
@@ -44,6 +45,7 @@ export const machineManifest = Object.freeze({
   assetBurnUi: assetBurnUiMachine,
   deviceBackup: deviceBackupMachine,
   fungibleDetails: fungibleDetailsMachine,
+  historyRecovery: historyRecoveryMachine,
   modelViewer: modelViewerMachine,
   permissionDecision: permissionDecisionMachine,
   qrReveal: qrRevealMachine,

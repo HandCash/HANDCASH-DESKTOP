@@ -405,14 +405,29 @@ export async function fetchRemoteBrc39Meta(): Promise<{
   }
 }
 
+/**
+ * Stages of a cloud restore, in the order they run. Reported through
+ * `HistoryRestoreProgress.onStage` so a panel's progress is a projection of
+ * work done. Domain code only; no UI imports.
+ */
+export type HistoryRestoreDomainStage = 'wipe' | 'reboot' | 'download' | 'merge'
+
+export type HistoryRestoreProgress = {
+  onStage?: (stage: HistoryRestoreDomainStage) => void
+}
+
 export async function downloadAndRestoreBrc39Backup(
   password?: string | null,
+  progress?: HistoryRestoreProgress,
 ): Promise<HistoryImportResult> {
-  return runHistoryReplica(() => downloadAndRestoreBrc39BackupExclusive(password))
+  return runHistoryReplica(() =>
+    downloadAndRestoreBrc39BackupExclusive(password, progress),
+  )
 }
 
 async function downloadAndRestoreBrc39BackupExclusive(
   password?: string | null,
+  progress?: HistoryRestoreProgress,
 ): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
@@ -420,6 +435,7 @@ async function downloadAndRestoreBrc39BackupExclusive(
   const prefs = getHistoryBackupPrefs()
   const url = historyBackupObjectUrl(active.identityKey, prefs)
 
+  progress?.onStage?.('download')
   const res = await fetch(url, {
     method: 'GET',
     headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
@@ -432,6 +448,7 @@ async function downloadAndRestoreBrc39BackupExclusive(
 
   const remoteExportedAt = Number(res.headers.get('X-HandCash-Exported-At') || '')
   const buf = new Uint8Array(await res.arrayBuffer())
+  progress?.onStage?.('merge')
   const result = await withActiveStorageProvider((storage) =>
     importBrc39Bytes(storage, buf, active.rootKeyHex, password, 'merge'),
   )
@@ -484,6 +501,7 @@ function deleteIdbDatabase(name: string): Promise<void> {
  */
 export async function replaceLocalHistoryFromCloud(
   password?: string | null,
+  progress?: HistoryRestoreProgress,
 ): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
@@ -500,16 +518,18 @@ export async function replaceLocalHistoryFromCloud(
   } catch {
     /* optional */
   }
+  progress?.onStage?.('wipe')
   clearActiveWallet()
   await deleteIdbDatabase(dbName)
 
+  progress?.onStage?.('reboot')
   await bootWallet({ rootKeyHex, handle, chain })
   const next = getActiveWallet()
   if (!next || next.identityKey !== identityKey) {
     throw new Error('Wallet reboot after history wipe failed')
   }
 
-  const result = await downloadAndRestoreBrc39Backup(password)
+  const result = await downloadAndRestoreBrc39Backup(password, progress)
   try {
     const { inspectLocalToolboxState } = await import('./layers')
     const { fetchBalanceSats } = await import('./session')
