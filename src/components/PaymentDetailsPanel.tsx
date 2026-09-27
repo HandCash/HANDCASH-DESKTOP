@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useActivityAction } from '../hooks/useActivityAction'
+import { ActivityActionPrompt } from './ActivityActionPrompt'
 import { AppAvatar } from './AppAvatar'
 import { ReceiveIcon } from './icons'
 import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
@@ -303,11 +305,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [attemptFate, setAttemptFate] = useState<SpendAttemptFate>({
     kind: 'notAttempt',
   })
-  const [retrying, setRetrying] = useState(false)
-  const [clearing, setClearing] = useState(false)
-  const [releasing, setReleasing] = useState(false)
-  const [reclaiming, setReclaiming] = useState(false)
-  const [attemptError, setAttemptError] = useState<string | null>(null)
+  // One exclusive mutation at a time — retry / clear / release / reclaim — with
+  // its failure reason; the chart replaces four booleans OR-ed into `disabled`.
+  const action = useActivityAction()
+  const { reset: resetAction } = action
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -325,7 +326,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   }, [entryId])
   useEffect(() => {
     let cancelled = false
-    setAttemptError(null)
+    // A stale failure belongs to the previous row; the chart ignores this while
+    // a mutation is still running.
+    resetAction()
     if (!isSpendAttempt(entry)) {
       setAttemptFate({ kind: 'notAttempt' })
       return () => {
@@ -339,7 +342,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     return () => {
       cancelled = true
     }
-  }, [entry, chain])
+  }, [entry, chain, resetAction])
 
   if (!entry) {
     return <p className="connected-empty-line">Transaction not found</p>
@@ -490,94 +493,91 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     : null
 
   const retryAttempt = async () => {
-    if (!entry || attemptFate.kind !== 'retry' || retrying) return
-    setRetrying(true)
-    setAttemptError(null)
-    try {
+    if (!entry || attemptFate.kind !== 'retry') return
+    const outcome = await action.run('retry', async () => {
       const result = await retrySpendAttempt(entry, chain)
       // A pre-tx failure creates a fresh row; a signed attempt keeps this row
       // and rebroadcasts its original BEEF. Activity reflects either outcome.
       clearNavChild()
       if (result.kind === 'reopenPayment') openSendFlow(result.toAddress)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setAttemptError(message)
-      toastError('Retry failed', message)
-      playWalletSound('error')
-      // The failed retry may have changed spendability; classify again.
-      setAttemptFate({ kind: 'checking' })
-      const next = await resolveSpendAttemptFate(entry, chain)
-      setAttemptFate(next)
-    } finally {
-      setRetrying(false)
-    }
+    })
+    if (outcome.ok || outcome.error === null) return
+    toastError('Retry failed', outcome.error)
+    playWalletSound('error')
+    // The failed retry may have changed spendability; classify again.
+    setAttemptFate({ kind: 'checking' })
+    setAttemptFate(await resolveSpendAttemptFate(entry, chain))
   }
 
   const releaseFunds = async () => {
-    if (releasing) return
-    setReleasing(true)
-    setAttemptError(null)
-    try {
+    const outcome = await action.run('release', async () => {
       await releaseSpendAttemptFunds()
       toastSuccess(
         'Coins unlocked',
         'Coins held by sends that were never signed are spendable again.',
       )
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setAttemptError(message)
-      toastError('Could not free funds', message)
-    } finally {
-      setReleasing(false)
+    })
+    if (!outcome.ok && outcome.error !== null) {
+      toastError('Could not free funds', outcome.error)
     }
   }
 
   const reclaimAttempt = async () => {
-    if (!entry || reclaiming) return
-    const confirmed = window.confirm(
-      'Take these coins back?\n\nNothing was published, so the coins are yours to spend again. If the recipient publishes their copy later it will be rejected as a double spend — the transfer is cancelled by doing this.',
+    if (!entry) return
+    const outcome = await action.run(
+      'reclaim',
+      async () => {
+        const { inputs } = await reclaimSpendAttempt(entry, chain)
+        toastSuccess(
+          'Coins taken back',
+          inputs > 0
+            ? `${inputs} input${inputs === 1 ? '' : 's'} are spendable again. The transfer is cancelled.`
+            : 'The transfer is cancelled and its coins are spendable again.',
+        )
+        setAttemptFate({ kind: 'checking' })
+        setAttemptFate(await resolveSpendAttemptFate(entry, chain))
+      },
+      {
+        confirm: {
+          title: 'Take these coins back?',
+          body:
+            'Nothing was published, so the coins are yours to spend again. If the recipient publishes their copy later it will be rejected as a double spend — the transfer is cancelled by doing this.',
+          confirmLabel: 'Take the coins back',
+          danger: true,
+        },
+      },
     )
-    if (!confirmed) return
-    setReclaiming(true)
-    setAttemptError(null)
-    try {
-      const { inputs } = await reclaimSpendAttempt(entry, chain)
-      toastSuccess(
-        'Coins taken back',
-        inputs > 0
-          ? `${inputs} input${inputs === 1 ? '' : 's'} are spendable again. The transfer is cancelled.`
-          : 'The transfer is cancelled and its coins are spendable again.',
-      )
-      setAttemptFate({ kind: 'checking' })
-      setAttemptFate(await resolveSpendAttemptFate(entry, chain))
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setAttemptError(message)
-      toastError('Could not take the coins back', message)
-    } finally {
-      setReclaiming(false)
+    if (!outcome.ok && outcome.error !== null) {
+      toastError('Could not take the coins back', outcome.error)
     }
   }
 
   const clearAttempt = async () => {
-    if (!entry || clearing) return
-    const confirmed = window.confirm(
-      entry.txid
-        ? 'Remove this send from Activity? Its coins are already spent on chain, so this only deletes the history row — it does not undo the payment.'
-        : 'Clear this failed send from Activity? It never produced a signed transaction, so this only drops the row and releases local reservations.',
+    if (!entry) return
+    const outcome = await action.run(
+      'clear',
+      async () => {
+        const { removed } = await clearSpendAttempt(entry)
+        if (removed) clearNavChild()
+      },
+      {
+        confirm: entry.txid
+          ? {
+              title: 'Remove this send from Activity?',
+              body: 'Its coins are already spent on chain, so this only deletes the history row — it does not undo the payment.',
+              confirmLabel: 'Remove from Activity',
+              danger: true,
+            }
+          : {
+              title: 'Clear this failed send from Activity?',
+              body: 'It never produced a signed transaction, so this only drops the row and releases local reservations.',
+              confirmLabel: 'Clear from Activity',
+              danger: true,
+            },
+      },
     )
-    if (!confirmed) return
-    setClearing(true)
-    setAttemptError(null)
-    try {
-      const { removed } = await clearSpendAttempt(entry)
-      if (removed) clearNavChild()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setAttemptError(message)
-      toastError('Clear failed', message)
-    } finally {
-      setClearing(false)
+    if (!outcome.ok && outcome.error !== null) {
+      toastError('Clear failed', outcome.error)
     }
   }
 
@@ -811,18 +811,22 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               ? 'Checking confirmation and whether the funds are still spendable…'
               : attemptFate.message}
           </p>
-          {attemptError ? (
-            <p className="form-error">{attemptError}</p>
+          {action.error ? (
+            <p className="form-error">{action.error}</p>
           ) : null}
-          <div className="payment-attempt-buttons">
+          <div
+            className="payment-attempt-buttons"
+            data-aeon-part="spend-attempt-actions"
+            data-aeon-state={action.stateAttr}
+          >
             {attemptFate.kind === 'retry' ? (
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={retrying || clearing}
+                disabled={action.busy}
                 onClick={() => void retryAttempt()}
               >
-                {retrying
+                {action.running('retry')
                   ? attemptFate.action === 'rebroadcast'
                     ? 'Resubmitting…'
                     : 'Retrying…'
@@ -838,10 +842,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               <button
                 type="button"
                 className="btn btn-danger"
-                disabled={retrying || clearing || releasing}
+                disabled={action.busy}
                 onClick={() => void clearAttempt()}
               >
-                {clearing ? 'Clearing…' : 'Clear from Activity'}
+                {action.running('clear') ? 'Clearing…' : 'Clear from Activity'}
               </button>
             )}
             {(attemptFate.kind === 'refuse' ||
@@ -850,11 +854,11 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={retrying || clearing || releasing || reclaiming}
+                disabled={action.busy}
                 onClick={() => void reclaimAttempt()}
                 title="Spend these coins again. Only possible while the transaction is absent from the chain, and it cancels the transfer."
               >
-                {reclaiming ? 'Taking back…' : 'Take the coins back'}
+                {action.running('reclaim') ? 'Taking back…' : 'Take the coins back'}
               </button>
             ) : null}
             {attemptFate.kind === 'refuse' &&
@@ -863,16 +867,19 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               <button
                 type="button"
                 className="btn btn-secondary"
-                disabled={retrying || clearing || releasing || reclaiming}
+                disabled={action.busy}
                 onClick={() => void releaseFunds()}
                 title="Frees coins held by sends that were never signed. This transfer is not affected."
               >
-                {releasing ? 'Unlocking…' : 'Unlock coins from unfinished sends'}
+                {action.running('release')
+                  ? 'Unlocking…'
+                  : 'Unlock coins from unfinished sends'}
               </button>
             ) : null}
           </div>
         </section>
       ) : null}
+      <ActivityActionPrompt action={action} />
     </div>
   )
 }
@@ -900,9 +907,7 @@ function ListingActivityDetails({
   entry: ActivityEntry
   chain: Chain
 }) {
-  const [cancelling, setCancelling] = useState(false)
-  const [cancelError, setCancelError] = useState<string | null>(null)
-  const [clearing, setClearing] = useState(false)
+  const action = useActivityAction()
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const outpoint = listingOutpointFor(entry)
   const auth = outpoint ? getMarketListingAuthorization({ outpoint }) : null
@@ -928,40 +933,36 @@ function ListingActivityDetails({
   const title = activityEntryTitle(viewed)
 
   const cancelListing = async () => {
-    if (!outpoint || cancelling) return
-    setCancelling(true)
-    setCancelError(null)
-    try {
+    if (!outpoint) return
+    const outcome = await action.run('cancelListing', async () => {
       await createCancelMarketListingAdvert({ outpoint })
       toastSuccess('Listing cancelled', name)
       playWalletSound('success')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setCancelError(message)
-      toastError('Could not cancel listing', message)
+    })
+    if (!outcome.ok && outcome.error !== null) {
+      toastError('Could not cancel listing', outcome.error)
       playWalletSound('error')
-    } finally {
-      setCancelling(false)
     }
   }
 
   const clearFailedListing = async () => {
-    if (clearing) return
-    const ok = window.confirm(
-      `Remove this failed listing from Activity? ${name} is still in the wallet; only the broken listing record is dropped.`,
+    const outcome = await action.run(
+      'clear',
+      async () => {
+        const { removed } = await clearSpendAttempt(entry)
+        if (removed) clearNavChild()
+      },
+      {
+        confirm: {
+          title: 'Remove this failed listing from Activity?',
+          body: `${name} is still in the wallet; only the broken listing record is dropped.`,
+          confirmLabel: 'Clear from Activity',
+          danger: true,
+        },
+      },
     )
-    if (!ok) return
-    setClearing(true)
-    try {
-      const { removed } = await clearSpendAttempt(entry)
-      if (removed) clearNavChild()
-    } catch (err) {
-      toastError(
-        'Clear failed',
-        err instanceof Error ? err.message : String(err),
-      )
-    } finally {
-      setClearing(false)
+    if (!outcome.ok && outcome.error !== null) {
+      toastError('Clear failed', outcome.error)
     }
   }
 
@@ -1086,15 +1087,19 @@ function ListingActivityDetails({
 
       {listed && outpoint && entry.status !== 'failed' ? (
         <section className="payment-attempt-actions">
-          {cancelError ? <p className="form-error">{cancelError}</p> : null}
-          <div className="payment-attempt-buttons">
+          {action.error ? <p className="form-error">{action.error}</p> : null}
+          <div
+            className="payment-attempt-buttons"
+            data-aeon-part="spend-attempt-actions"
+            data-aeon-state={action.stateAttr}
+          >
             <button
               type="button"
               className="btn btn-danger"
-              disabled={cancelling}
+              disabled={action.busy}
               onClick={() => void cancelListing()}
             >
-              {cancelling ? 'Cancelling…' : 'Cancel listing'}
+              {action.running('cancelListing') ? 'Cancelling…' : 'Cancel listing'}
             </button>
           </div>
         </section>
@@ -1106,18 +1111,24 @@ function ListingActivityDetails({
             The market could not verify this listing (amount or origin mismatch).
             Your token is still in the wallet; dismiss this row to try listing again.
           </p>
-          <div className="payment-attempt-buttons">
+          {action.error ? <p className="form-error">{action.error}</p> : null}
+          <div
+            className="payment-attempt-buttons"
+            data-aeon-part="spend-attempt-actions"
+            data-aeon-state={action.stateAttr}
+          >
             <button
               type="button"
               className="btn btn-danger"
-              disabled={clearing}
+              disabled={action.busy}
               onClick={() => void clearFailedListing()}
             >
-              {clearing ? 'Clearing…' : 'Clear from Activity'}
+              {action.running('clear') ? 'Clearing…' : 'Clear from Activity'}
             </button>
           </div>
         </section>
       ) : null}
+      <ActivityActionPrompt action={action} />
     </div>
   )
 }

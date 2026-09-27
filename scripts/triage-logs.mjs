@@ -29,15 +29,17 @@ const KNOWN_BUCKETS = {
 const TYPESAFE_URL = 'https://api.typesafe.ai/v1/systemone'
 
 function jevApiKey() {
-  if (process.env.JEV_API_KEY?.trim()) return process.env.JEV_API_KEY.trim()
-  try {
-    const env = fs.readFileSync(path.join(root, '.env'), 'utf8')
-    const hit = env.match(/^\s*JEV_API_KEY\s*=\s*(.+)$/m)
-    if (hit) return hit[1].trim().replace(/^["']|["']$/g, '')
-  } catch {
-    /* no .env */
+  for (const name of ['JEV_API_KEY', 'JEV_KEY', 'TYPESAFE_API_KEY']) {
+    if (process.env[name]?.trim()) return process.env[name].trim()
   }
-  throw new Error('JEV_API_KEY is not set (env or HANDCASH-DESKTOP/.env)')
+  // This repo's .env, then the HandCash workspace .env one level up.
+  for (const envFile of [path.join(root, '.env'), path.join(root, '..', '.env')]) {
+    if (!fs.existsSync(envFile)) continue
+    const env = fs.readFileSync(envFile, 'utf8')
+    const hit = env.match(/^\s*(?:JEV_API_KEY|JEV_KEY|TYPESAFE_API_KEY)\s*=\s*(.+)$/m)
+    if (hit) return hit[1].trim().replace(/^["']|["']$/g, '')
+  }
+  throw new Error('JEV_API_KEY / JEV_KEY is not set (env, HandCash/.env or HANDCASH-DESKTOP/.env)')
 }
 
 async function fetchLogs(bucket, all) {

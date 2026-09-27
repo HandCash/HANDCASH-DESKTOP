@@ -1,5 +1,6 @@
 import { useMemo, type FormEvent } from 'react'
 import { useMachine } from '@xstate/react'
+import { stateToAttr } from '@aeon-ui/core'
 import { appBrowserMachine, type AppBrowserOpener } from '../machines/appBrowserMachine'
 import { playWalletSound } from '../wallet/soundService'
 
@@ -39,7 +40,7 @@ function Launcher({ open }: { open: AppBrowserOpener }) {
     <form
       className="app-browser-launcher"
       data-aeon-scope="app-browser"
-      data-aeon-state={String(state.value)}
+      data-aeon-state={stateToAttr(state.value)}
       onSubmit={onSubmit}
     >
       <div className="field">

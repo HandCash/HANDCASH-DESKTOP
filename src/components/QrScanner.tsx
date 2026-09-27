@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
+import { stateToAttr } from '@aeon-ui/core'
 import { qrScannerMachine } from '../machines/qrScannerMachine'
 import { releaseWarmedQrCamera, takeQrCameraStream } from '../wallet/qrCameraWarm'
 import { Skeleton } from './Skeleton'
@@ -244,7 +245,7 @@ export function QrScanner({
     <div
       className={`qr-scanner${layout === 'fill' ? ' qr-scanner--fill' : ''}`}
       data-aeon-scope="qr-scanner"
-      data-aeon-state={snapshot.value}
+      data-aeon-state={stateToAttr(snapshot.value)}
     >
       <div className="qr-scanner-frame">
         <video

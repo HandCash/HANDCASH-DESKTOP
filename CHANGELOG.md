@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.3.340] - 2026-09-27
+
+### Fixed
+
+- Payment details: retry, clear, take-back and unlock could overlap — the
+  retry button only checked two of the four in-flight flags. One
+  `activityAction` chart holds the single running action, so every sibling
+  button disables for the same reason and the failure reason lives in the
+  chart, not a parallel `useState`.
+- Activity header: rebroadcast-all, clear-all and publish-pending each only
+  disabled themselves and could run against the same failed-spend set at
+  once; the same chart keeps them exclusive. A rejected publish now surfaces
+  a toast instead of resetting silently.
+- QR scanner and app-browser launcher projected a raw machine `.value` onto
+  `data-aeon-state`; both go through `stateToAttr`.
+
+### Changed
+
+- Every `window.confirm` in Activity is an Aeon `Prompt` opened by the chart's
+  `confirming` state (`ActivityActionPrompt`).
+- `npm run ui:review`: Jev (TypeSafe System One) reviews changed components
+  against the Aeon trajectory. Code extracts every fact
+  (`scripts/ui-facts.mjs`); Jev answers narrow typed questions; code composes
+  a 0–4 debt score and a ladder-ordered fix. Baseline over 102 components:
+  two needed attention, both fixed here.
+- Aeon ratchet gains two allowlists that only shrink — exclusive busy
+  booleans and raw `.value` projections — sharing the fact extractor with the
+  review. Skill: `.cursor/skills/jev-ui-review`.
+- Triage and review scripts accept `JEV_KEY` as well as `JEV_API_KEY`.
+
 ## [1.3.339] - 2026-09-27
 
 ### Fixed

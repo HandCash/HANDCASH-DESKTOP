@@ -1,4 +1,6 @@
 import { getActiveWallet } from '../wallet/session'
+import { useActivityAction } from '../hooks/useActivityAction'
+import { ActivityActionPrompt } from './ActivityActionPrompt'
 
 import {
   useEffect,
@@ -965,11 +967,12 @@ export function ActivityFeed({
         : 0,
     [entries, showFilters]
   );
-  const [clearingFailed, setClearingFailed] = useState(false);
-  const [rebroadcastingFailed, setRebroadcastingFailed] = useState(false);
+  // Rebroadcast-all, clear-all and publish-pending all mutate the same failed /
+  // pending spend set; one chart keeps them exclusive instead of three flags
+  // that each only disabled their own button.
+  const bulk = useActivityAction();
   const [rebroadcastCount, setRebroadcastCount] = useState(0);
   const [clearableCount, setClearableCount] = useState(0);
-  const [publishingPending, setPublishingPending] = useState(false);
   const pendingPeerCount = useMemo(
     () => (showFilters ? countUnresolvedPeerTransfers() : 0),
     [entries, showFilters]
@@ -1003,15 +1006,8 @@ export function ActivityFeed({
   }, [entries, showFilters, failedCount]);
 
   const rebroadcastFailed = async () => {
-    if (rebroadcastingFailed || rebroadcastCount === 0) return;
-    const confirmed = window.confirm(
-      `Rebroadcast ${rebroadcastCount} signed failed send${
-        rebroadcastCount === 1 ? "" : "s"
-      }? This re-submits the original transactions — it does not create new spends.`
-    );
-    if (!confirmed) return;
-    setRebroadcastingFailed(true);
-    try {
+    if (rebroadcastCount === 0) return;
+    const outcome = await bulk.run("rebroadcastAll", async () => {
       const { rebroadcasted, skipped, failed, errors } =
         await rebroadcastAllFailedSpends();
       if (rebroadcasted > 0) {
@@ -1036,26 +1032,23 @@ export function ActivityFeed({
           "No failed sends have a signed transfer ready to resubmit."
         );
       }
-    } catch (err) {
-      toastError(
-        "Rebroadcast failed",
-        err instanceof Error ? err.message : String(err)
-      );
-    } finally {
-      setRebroadcastingFailed(false);
+    }, {
+      confirm: {
+        title: `Rebroadcast ${rebroadcastCount} signed failed send${
+          rebroadcastCount === 1 ? "" : "s"
+        }?`,
+        body: "This re-submits the original transactions — it does not create new spends.",
+        confirmLabel: "Rebroadcast",
+      },
+    });
+    if (!outcome.ok && outcome.error !== null) {
+      toastError("Rebroadcast failed", outcome.error);
     }
   };
 
   const clearFailed = async () => {
-    if (clearingFailed || clearableCount === 0) return;
-    const confirmed = window.confirm(
-      `Clear ${clearableCount} failed send${
-        clearableCount === 1 ? "" : "s"
-      } from Activity? Unsigned failed sends are removed. Signed sends that never reached the chain can be cleared too. A signed send whose inputs already spent on chain is dropped from history only — it does not undo the spend.`
-    );
-    if (!confirmed) return;
-    setClearingFailed(true);
-    try {
+    if (clearableCount === 0) return;
+    const outcome = await bulk.run("clearAll", async () => {
       const { removed, kept } = await clearAllFailedSpends();
       if (removed === 0 && kept > 0) {
         toastError(
@@ -1074,20 +1067,24 @@ export function ActivityFeed({
           }`
         );
       }
-    } catch (err) {
-      toastError(
-        "Clear failed",
-        err instanceof Error ? err.message : String(err)
-      );
-    } finally {
-      setClearingFailed(false);
+    }, {
+      confirm: {
+        title: `Clear ${clearableCount} failed send${
+          clearableCount === 1 ? "" : "s"
+        } from Activity?`,
+        body: "Unsigned failed sends are removed. Signed sends that never reached the chain can be cleared too. A signed send whose inputs already spent on chain is dropped from history only — it does not undo the spend.",
+        confirmLabel: "Clear failed sends",
+        danger: true,
+      },
+    });
+    if (!outcome.ok && outcome.error !== null) {
+      toastError("Clear failed", outcome.error);
     }
   };
 
   const publishPending = async () => {
-    if (publishingPending || pendingPeerCount === 0) return;
-    setPublishingPending(true);
-    try {
+    if (pendingPeerCount === 0) return;
+    const outcome = await bulk.run("publishPending", async () => {
       const result = await publishUnresolvedPeerTransfers();
       if (result.published > 0 || result.confirmed > 0) {
         toastSuccess(
@@ -1102,8 +1099,10 @@ export function ActivityFeed({
           result.errors[0] ?? "The signed transaction bodies are not available yet."
         );
       }
-    } finally {
-      setPublishingPending(false);
+    });
+    // Previously an unhandled rejection reset the flag and surfaced nothing.
+    if (!outcome.ok && outcome.error !== null) {
+      toastError("Publish failed", outcome.error);
     }
   };
 
@@ -1201,14 +1200,16 @@ export function ActivityFeed({
           <button
             type="button"
             className="activity-rebroadcast-failed"
-            disabled={publishingPending}
+            data-aeon-part="bulk-action"
+            data-aeon-state={bulk.stateAttr}
+            disabled={bulk.busy}
             title="Publish original signed peer transfers still waiting on recipients"
             onClick={() => {
               playWalletSound("soft");
               void publishPending();
             }}
           >
-            {publishingPending
+            {bulk.running("publishPending")
               ? "Publishing…"
               : `Publish signed ${pendingPeerCount}`}
           </button>
@@ -1217,14 +1218,16 @@ export function ActivityFeed({
           <button
             type="button"
             className="activity-rebroadcast-failed"
-            disabled={rebroadcastingFailed}
+            data-aeon-part="bulk-action"
+            data-aeon-state={bulk.stateAttr}
+            disabled={bulk.busy}
             title="Rebroadcast signed failed sends"
             onClick={() => {
               playWalletSound("soft");
               void rebroadcastFailed();
             }}
           >
-            {rebroadcastingFailed
+            {bulk.running("rebroadcastAll")
               ? "Rebroadcasting…"
               : `Rebroadcast ${rebroadcastCount}`}
           </button>
@@ -1233,14 +1236,18 @@ export function ActivityFeed({
           <button
             type="button"
             className="activity-clear-failed"
-            disabled={clearingFailed}
+            data-aeon-part="bulk-action"
+            data-aeon-state={bulk.stateAttr}
+            disabled={bulk.busy}
             title="Remove failed sends that are safe to drop from Activity"
             onClick={() => {
               playWalletSound("soft");
               void clearFailed();
             }}
           >
-            {clearingFailed ? "Clearing…" : `Clear ${clearableCount} failed`}
+            {bulk.running("clearAll")
+              ? "Clearing…"
+              : `Clear ${clearableCount} failed`}
           </button>
         ) : null}
         {showFilters ? (
@@ -1276,6 +1283,10 @@ export function ActivityFeed({
     </div>
   );
 
+  // Bulk confirms are a chart state, so the Prompt only exists where the
+  // bulk buttons do.
+  const confirmPrompt = showFilters ? <ActivityActionPrompt action={bulk} /> : null;
+
   if (embedded) {
     return (
       <div
@@ -1284,6 +1295,7 @@ export function ActivityFeed({
       >
         {head}
         {body}
+        {confirmPrompt}
       </div>
     );
   }
@@ -1292,6 +1304,7 @@ export function ActivityFeed({
     <section className="history-panel panel" data-aeon-scope="recent-activity">
       {head}
       {body}
+      {confirmPrompt}
     </section>
   );
 }
