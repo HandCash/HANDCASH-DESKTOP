@@ -198,6 +198,13 @@ const DURATION_RE =
 
 const overlapMs = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0))
 const stallStart = (s) => s.at - s.ms
+/**
+ * A span longer than this was waiting, not working: the WebView was hidden
+ * (timers do not fire in the background) or the call sat behind a storage
+ * lock. Counting every freeze that happened meanwhile against it would name
+ * the wrong owner — a 439s `local-lookup` once absorbed 22 unrelated freezes.
+ */
+const WAIT_SPAN_MS = 60_000
 
 /**
  * Turn every "took N ms" line into a span and measure how much blocked time
@@ -206,6 +213,7 @@ const stallStart = (s) => s.at - s.ms
  */
 function workloadOverlap(events, stalls, blockedMsTotal) {
   const spans = []
+  const waits = []
   for (const e of events) {
     const tag = TAG_RE.exec(e.text)
     if (!tag) continue
@@ -214,18 +222,38 @@ function workloadOverlap(events, stalls, blockedMsTotal) {
     const ms = Number(d[2] ?? d[3])
     if (!Number.isFinite(ms) || ms <= 0) continue
     const verb = d[2] != null && d[1] && !/^\W/.test(d[1]) ? ` ${d[1]}` : ''
-    spans.push({ label: `${tag[1]}${verb}`, start: e.at - ms, end: e.at, ms })
+    const span = { label: `${tag[1]}${verb}`, start: e.at - ms, end: e.at, ms }
+    if (ms > WAIT_SPAN_MS) waits.push(span)
+    else spans.push(span)
   }
 
   const byLabel = new Map()
-  for (const sp of spans) {
+  const rowFor = (label) => {
     const row =
-      byLabel.get(sp.label) ??
-      { label: sp.label, spans: 0, longestMs: 0, blockedMsInside: 0, freezes: new Set(), all: [] }
+      byLabel.get(label) ??
+      {
+        label,
+        spans: 0,
+        waits: 0,
+        longestMs: 0,
+        longestWaitMs: 0,
+        blockedMsInside: 0,
+        freezes: new Set(),
+        all: [],
+      }
+    byLabel.set(label, row)
+    return row
+  }
+  for (const sp of spans) {
+    const row = rowFor(sp.label)
     row.spans += 1
     row.longestMs = Math.max(row.longestMs, sp.ms)
     row.all.push(sp)
-    byLabel.set(sp.label, row)
+  }
+  for (const sp of waits) {
+    const row = rowFor(sp.label)
+    row.waits += 1
+    row.longestWaitMs = Math.max(row.longestWaitMs, sp.ms)
   }
   // Concurrent runs of the same workload (a deferred read finishing beside a
   // live one) would count the same blocked millisecond twice; union them so a
@@ -256,6 +284,9 @@ function workloadOverlap(events, stalls, blockedMsTotal) {
       workload: r.label,
       runs: r.spans,
       longestRunMs: r.longestMs,
+      ...(r.waits
+        ? { waitsExcluded: r.waits, longestWaitMs: r.longestWaitMs }
+        : {}),
       freezesInside: r.freezes.size,
       blockedMsInside: Math.round(r.blockedMsInside),
       shareOfBlockedTime: blockedMsTotal

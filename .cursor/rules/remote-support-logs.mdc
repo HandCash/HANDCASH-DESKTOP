@@ -19,7 +19,8 @@ missing fact) rather than opening the log.
 
 Code-derived facts: freezes by active wallet layer, blocked ms, **workloads**
 (every `<phase> done <N>ms` / `+<N>ms` line becomes a span; share of blocked
-time inside it), **precedingLines** (last line before each freeze began — lines
+time inside it; spans over 60s are waits — hidden WebView, storage lock — and
+are reported as `waitsExcluded`, never as owners), **precedingLines** (last line before each freeze began — lines
 after a freeze are just queued callbacks), **bursts**, **storage** (origin
 quota refusals, largest keys, slow ops), grouped error families.
 

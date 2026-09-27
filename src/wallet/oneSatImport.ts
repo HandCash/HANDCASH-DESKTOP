@@ -547,17 +547,18 @@ export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string 
   try {
     const wallet = getActiveWallet()
     if (wallet) {
-      const { getLocalBeefForTxid } = await import('./beefCache')
-      const beef = await getLocalBeefForTxid(wallet, key)
-      const held = beef?.findTxid(key)?.tx
-      if (held) {
-        const hex = held.toHex()
+      // Raw body only. Assembling a toolbox BEEF here (ancestors + BUMPs,
+      // synchronous IndexedDB) once per scanned UTXO was the legacy-ingest
+      // freeze; a script probe never needs the proof.
+      const { getLocalRawTxHex } = await import('./beefCache')
+      const hex = await getLocalRawTxHex(wallet, key)
+      if (hex) {
         writeRawTxCache(txid, hex)
         return hex
       }
     }
   } catch {
-    /* local BEEF probe failed — fall through */
+    /* local rawtx probe failed — fall through */
   }
   const inflight = rawTxInflight.get(key)
   if (inflight) return inflight

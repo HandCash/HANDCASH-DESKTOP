@@ -268,8 +268,10 @@ async function readRawTxInSession(
 
   if (!rawTx) {
     try {
+      // `getProvenOrRawTx` above already missed the toolbox; only the
+      // session / archive / durable trees are left to check.
       const { getLocalBeefForTxid } = await import('./beefCache')
-      const beef = await getLocalBeefForTxid(active, key)
+      const beef = await getLocalBeefForTxid(active, key, { toolbox: false })
       const tx = beef?.findTxid(key)?.tx
       if (tx) rawTx = tx.toBinary()
     } catch {

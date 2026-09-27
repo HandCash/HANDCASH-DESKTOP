@@ -58,6 +58,7 @@ vi.mock('../legacyScan', () => ({
 
 vi.mock('../beefCache', () => ({
   getLocalBeefForTxid: async () => null,
+  getLocalTxForTxid: async () => null,
   rememberBeef: () => {},
   rememberBeefBinary: () => {},
 }))

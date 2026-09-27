@@ -188,16 +188,12 @@ describe('cached fungible field migration', () => {
       amount: 1_111_111_111n,
       rest: `76a914${'11'.repeat(20)}88ac`,
     }).toHex()
+    const tx = {
+      outputs: [{ satoshis: 1, lockingScript: { toHex: () => lockingScript } }],
+    }
     vi.doMock('./beefCache', () => ({
-      getLocalBeefForTxid: async () => ({
-        findTxid: () => ({
-          tx: {
-            outputs: [
-              { satoshis: 1, lockingScript: { toHex: () => lockingScript } },
-            ],
-          },
-        }),
-      }),
+      getLocalBeefForTxid: async () => ({ findTxid: () => ({ tx }) }),
+      getLocalTxForTxid: async () => tx,
     }))
     const { getCachedFungibles, proveCachedFungibleEncodings } = await import(
       './token/list'

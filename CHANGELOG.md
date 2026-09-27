@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.3.337] - 2026-09-27
+
+### Fixed
+
+- Script probes no longer assemble a toolbox BEEF. Legacy scan, BSV-21
+  deploy caps, encoding proofs, legacy-tip recovery, icon hydrate and the
+  change-script sweep only need one output script, but each asked toolbox
+  storage to build the full ancestry with merkle paths — synchronous
+  IndexedDB on the renderer thread, once per scanned UTXO. Jev on 0.1.510
+  still put 89% of blocked time inside `beef local-lookup`, with the same
+  txids answered from `toolbox-storage` burst after burst. Those callers now
+  read the raw body (two indexed rows), memoised for the session.
+- The session BEEF cache holds trees, not txids. A forty-hop lineage took
+  forty of two hundred slots, so a launch that walked a few lineages evicted
+  what it had just loaded and went back to the toolbox. Each tree is stored
+  once as compact bytes, indexed by every transaction it contains, and a
+  confirmed local absence is remembered for five minutes instead of one.
+
+### Changed
+
+- Log triage: a timed span longer than sixty seconds is a wait (hidden
+  WebView, storage lock), not work. It is reported as `waitsExcluded` and no
+  longer absorbs every freeze that happened meanwhile — one 439s lookup had
+  been credited with 22 unrelated freezes.
+
 ## [1.3.336] - 2026-09-27
 
 ### Fixed

@@ -79,9 +79,9 @@ async function capFromLocalDeploy(
   if (!m) return undefined
   const txid = m[1]!.toLowerCase()
   const vout = Number(m[2])
-  const { getLocalBeefForTxid } = await import('../beefCache')
-  const beef = await getLocalBeefForTxid(wallet, txid)
-  const tx = beef?.findTxid(txid)?.tx
+  // Script only — a raw body read, not a toolbox BEEF assembly per token.
+  const { getLocalTxForTxid } = await import('../beefCache')
+  const tx = await getLocalTxForTxid(wallet, txid)
   const script = tx?.outputs?.[vout]?.lockingScript
   if (!script) return undefined
   const hex = typeof script.toHex === 'function' ? script.toHex() : String(script)

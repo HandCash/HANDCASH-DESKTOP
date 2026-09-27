@@ -379,6 +379,76 @@ describe('beefCache', () => {
     ).rejects.toThrow(/parent transaction bodies are missing/)
   })
 
+  it('keeps a lineage tree in one slot and answers for every tx it contains', async () => {
+    const { rememberBeefTree, peekSessionBeef, getLocalBeefForTxid } = await import(
+      './beefCache'
+    )
+    // A 40-hop lineage. Under the per-txid cache it took 40 of 200 slots and
+    // six of these evicted the first — the repeat toolbox hits triage named.
+    const buildTree = (hops: number) => {
+      const beef = new Beef()
+      const ids: string[] = []
+      let prev: Transaction | null = null
+      for (let i = 0; i < hops; i++) {
+        const tx = new Transaction()
+        if (prev) {
+          tx.addInput({
+            sourceTXID: prev.id('hex'),
+            sourceOutputIndex: 0,
+            unlockingScript: LockingScript.fromHex('51'),
+          })
+        }
+        tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(`51${i.toString(16).padStart(2, '0')}`) })
+        beef.mergeRawTx(tx.toBinary())
+        ids.push(tx.id('hex'))
+        prev = tx
+      }
+      return { beef, ids }
+    }
+    const trees = Array.from({ length: 12 }, () => buildTree(40))
+    for (const t of trees) rememberBeefTree(t.beef.toBinary())
+
+    // 480 txids across 12 trees — every one still answers from the session.
+    for (const t of trees) {
+      for (const id of t.ids) expect(peekSessionBeef(id)?.findTxid(id)?.tx).toBeTruthy()
+    }
+    // No toolbox, no network: the session tree is the answer.
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+    } as unknown as ActiveWallet
+    const first = trees[0]!.ids[0]!
+    expect((await getLocalBeefForTxid(wallet, first))?.findTxid(first)?.tx).toBeTruthy()
+  })
+
+  it('reads a raw body from toolbox storage without assembling a BEEF', async () => {
+    const { getLocalTxForTxid } = await import('./beefCache')
+    const tx = new Transaction()
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const txid = tx.id('hex')
+    const getBeefForTransaction = vi.fn(async () => {
+      throw new Error('BEEF assembly must not run for a script probe')
+    })
+    const getProvenOrRawTx = vi.fn(async (id: string) =>
+      id === txid ? { rawTx: tx.toBinary() } : {},
+    )
+    const wallet = {
+      wallet: {
+        storage: {
+          isActiveStorageProvider: () => true,
+          runAsStorageProvider: async (fn: (s: unknown) => Promise<unknown>) =>
+            fn({ getBeefForTransaction, getProvenOrRawTx }),
+        },
+      },
+    } as unknown as ActiveWallet
+    const got = await getLocalTxForTxid(wallet, txid)
+    expect(got?.id('hex')).toBe(txid)
+    expect(getProvenOrRawTx).toHaveBeenCalledTimes(1)
+    expect(getBeefForTransaction).not.toHaveBeenCalled()
+    // Second read is the session memo — storage is not asked again.
+    await getLocalTxForTxid(wallet, txid)
+    expect(getProvenOrRawTx).toHaveBeenCalledTimes(1)
+  })
+
   it('merges a locally held unconfirmed parent body into the child BEEF', async () => {
     const {
       classifyBeefAncestryGap,

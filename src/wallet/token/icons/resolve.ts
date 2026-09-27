@@ -4,7 +4,6 @@
 import type { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from '../../session'
 import { normalizeTokenId } from '../types'
-import { rememberBeef } from '../../beefCache'
 import { parseOrdEnvelope } from '../../ordinalOwnership'
 import { decodeBProtocol } from '../../bProtocol'
 import { imageMimeFor } from '../../inscriptionImage'
@@ -90,11 +89,11 @@ export async function resolveTokenIconDataUrl(
   if (!wallet) return undefined
   const parts = splitOutpoint(iconOutpoint)
   if (!parts) return undefined
-  const { getLocalBeefForTxid } = await import('../../beefCache')
-  const beef = await getLocalBeefForTxid(wallet, parts.txid)
-  if (!beef) return undefined
-  rememberBeef(parts.txid, beef)
-  return cacheTokenIconFromBeef(iconOutpoint, beef)
+  // The icon is one output script; the raw body answers without a BEEF walk.
+  const { getLocalTxForTxid } = await import('../../beefCache')
+  const tx = await getLocalTxForTxid(wallet, parts.txid)
+  if (!tx) return undefined
+  return rememberImage(iconOutpoint, scriptHexOf(tx.outputs?.[parts.vout]))
 }
 
 /**
@@ -116,15 +115,17 @@ export async function resolveBsv21IconDataUrl(args: {
   if (!args.origin || !args.wallet) return undefined
   const originParts = splitOutpoint(args.origin)
   if (!originParts) return undefined
-  const { getLocalBeefForTxid, rememberBeef } = await import('../../beefCache')
-  const beef = await getLocalBeefForTxid(args.wallet, originParts.txid)
-  if (!beef) return undefined
-  rememberBeef(originParts.txid, beef)
+  const { getLocalTxForTxid } = await import('../../beefCache')
+  const originTx = await getLocalTxForTxid(args.wallet, originParts.txid)
+  if (!originTx) return undefined
   if (args.icon) {
-    const named = cacheTokenIconFromBeef(args.icon, beef)
-    if (named) return named
+    const iconParts = splitOutpoint(args.icon)
+    if (iconParts?.txid === originParts.txid) {
+      const named = rememberImage(args.icon, scriptHexOf(originTx.outputs?.[iconParts.vout]))
+      if (named) return named
+    }
   }
-  const rows = txFromBeef(beef, originParts.txid)?.outputs ?? []
+  const rows = originTx.outputs ?? []
   for (let i = 0; i < rows.length; i++) {
     if (i === originParts.vout) continue
     const url = rememberImage(`${originParts.txid}_${i}`, scriptHexOf(rows[i]))

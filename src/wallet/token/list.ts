@@ -660,11 +660,13 @@ async function recoverBsv21DeployMetadata(
   const [txid, rawVout] = normalized.split('_')
   const vout = Number(rawVout)
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
-  const { getLocalBeefForTxid, rememberBeefTree } = await import('../beefCache')
-  const beef = await getLocalBeefForTxid(wallet, txid)
-  if (!beef) return null
-  rememberBeefTree(beef.toBinary(), txid)
-  const scriptHex = beef.findTxid(txid)?.tx?.outputs[vout]?.lockingScript?.toHex()
+  // Deploy metadata is a script decode; the raw body is enough and the
+  // toolbox answers it with two indexed reads instead of a BEEF assembly.
+  const { getLocalTxForTxid } = await import('../beefCache')
+  const tx = await getLocalTxForTxid(wallet, txid)
+  if (!tx) return null
+  const beef = { findTxid: (id: string) => (id.toLowerCase() === txid ? { tx } : undefined) }
+  const scriptHex = tx.outputs[vout]?.lockingScript?.toHex()
   const envelope = parseOrdEnvelope(scriptHex)
   if (!envelope?.body?.length) return null
   try {
@@ -855,9 +857,9 @@ export function proveCachedFungibleEncoding(
     await yieldToUi()
     const [txid, rawVout] = point.split('.')
     const vout = Number(rawVout)
-    const { getLocalBeefForTxid } = await import('../beefCache')
-    const beef = await getLocalBeefForTxid(wallet, txid!)
-    const output = beef?.findTxid(txid!)?.tx?.outputs[vout]
+    const { getLocalTxForTxid } = await import('../beefCache')
+    const tx = await getLocalTxForTxid(wallet, txid!)
+    const output = tx?.outputs[vout]
     const lockingScript = output?.lockingScript?.toHex()
     if (!lockingScript || output?.satoshis !== 1) {
       scheduleEncodingProofRetry(point, wallet, epoch)
@@ -1345,7 +1347,7 @@ async function recoverCachedLegacyTips(
   wanted: Set<string>,
 ): Promise<Bsv21Utxo[]> {
   const recovered: Bsv21Utxo[] = []
-  const { getLocalBeefForTxid } = await import('../beefCache')
+  const { getLocalTxForTxid } = await import('../beefCache')
   for (const token of cached) {
     const tokenId = normalizeTokenId(token.tokenId)
     if (!tokenId || !wanted.has(tokenId) || isItemSent(token.outpoint)) continue
@@ -1366,8 +1368,8 @@ async function recoverCachedLegacyTips(
       ) {
         continue
       }
-      const beef = await getLocalBeefForTxid(active, txid)
-      const output = beef?.findTxid(txid)?.tx?.outputs[vout]
+      const tx = await getLocalTxForTxid(active, txid)
+      const output = tx?.outputs[vout]
       const lockingScript = output?.lockingScript?.toHex()
       if (!lockingScript || (output?.satoshis ?? 1) !== 1) continue
       const binary = decodeBsv21Binary(lockingScript)

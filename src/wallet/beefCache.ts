@@ -55,16 +55,27 @@ async function rememberRawTxMiss(txid: string): Promise<void> {
 export type AtomicBeefPurpose = 'default' | 'inboundItemHint'
 
 const TTL_MS = 10 * 60_000
-const MAX = 200
+/**
+ * Cached trees, not txids. A tree with forty ancestors used to take forty of
+ * the 200 slots, so a launch that walked a few lineages evicted the trees it
+ * had just loaded and asked toolbox storage for the same txids again — the
+ * repeat `toolbox-storage` hits the Android triage kept naming.
+ */
+const MAX = 300
 /** Per-txid fetch — indexer / WoC must not wedge mint or send forever. */
 const BEEF_FETCH_TIMEOUT_MS = 8_000
 /** Whole hydrate pass across missing parents. */
 const HYDRATE_DEADLINE_MS = 12_000
 
-const cache = new Map<string, { at: number; binary: number[] }>()
 /**
- * txid → cache key whose BEEF contains it. A miss used to `fromBinary` every
- * cached tree; this answers in one read. Invalidated with the cache entry.
+ * One entry per stored tree, keyed by its subject txid. Bytes are kept as a
+ * `Uint8Array`: a `number[]` costs eight bytes per byte in V8, so the old
+ * cache held 200 trees at roughly eight times their wire size.
+ */
+const cache = new Map<string, { at: number; binary: Uint8Array }>()
+/**
+ * txid → key of the cached tree that contains it. A miss used to `fromBinary`
+ * every cached tree; this answers in one read. Dropped with the tree.
  */
 const sessionHolder = new Map<string, string>()
 const inflight = new Map<string, Promise<Beef>>()
@@ -76,7 +87,12 @@ const localInflight = new Map<string, Promise<Beef | null>>()
  * IndexedDB, so the repeat was the freeze. Cleared when a BEEF is stored.
  */
 const localMissUntil = new Map<string, number>()
-const LOCAL_MISS_MS = 60_000
+/**
+ * Five minutes. A one-minute memory expired between the launch bursts, so the
+ * same absent parents were asked of toolbox storage again on every screen
+ * visit. Anything stored or ingested in the meantime clears the miss.
+ */
+const LOCAL_MISS_MS = 5 * 60_000
 /** One AtomicBEEF build per txid — hydrate must not fan out across tip polls. */
 const atomicInflight = new Map<string, Promise<number[]>>()
 /** Failed AtomicBEEF builds: do not re-hammer indexer until this epoch. */
@@ -131,7 +147,7 @@ function readDurableBeef(txid: string): Beef | null {
     if (!b64) return null
     const beef = Beef.fromBinary(Utils.toArray(b64, 'base64'))
     if (!beef.findTxid(keyOf(txid))?.tx) return null
-    storeBeefTree(beef)
+    storeBeefTree(beef, keyOf(txid))
     return beef
   } catch {
     return null
@@ -174,66 +190,77 @@ async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Prom
 function dropSessionKey(key: string): void {
   cache.delete(key)
   for (const [txid, holder] of sessionHolder) {
-    if (holder === key || txid === key) sessionHolder.delete(txid)
+    if (holder === key) sessionHolder.delete(txid)
   }
 }
 
-/** A stored BEEF answers for every tx it contains, and is no longer a miss. */
-function noteContained(holder: string, beef: Beef): void {
-  sessionHolder.set(holder, holder)
-  localMissUntil.delete(holder)
-  try {
-    for (const btx of beef.txs) {
-      const id = String(btx.txid ?? '').toLowerCase()
-      if (!/^[0-9a-f]{64}$/.test(id) || !btx.tx) continue
-      localMissUntil.delete(id)
-      if (id !== holder && !cache.has(id)) sessionHolder.set(id, holder)
-    }
-  } catch {
-    /* the holder key is indexed */
+/** Every full transaction in a tree, lower-case, in BEEF order. */
+function fullTxids(beef: Beef): string[] {
+  const out: string[] = []
+  for (const btx of beef.txs) {
+    const id = String(btx.txid ?? '').toLowerCase()
+    if (/^[0-9a-f]{64}$/.test(id) && btx.tx) out.push(id)
+  }
+  return out
+}
+
+/**
+ * Store one tree once and index every transaction it contains.
+ *
+ * `holder` names the entry; callers that asked for a specific txid pass it so
+ * a later `read` of that txid is a direct hit. Otherwise the subject — the
+ * atomic txid, or the last full tx in BEEF order — names it.
+ */
+function storeBeefTree(beef: Beef, holder?: string): void {
+  const txids = fullTxids(beef)
+  if (txids.length === 0) return
+  const key =
+    (holder && txids.includes(holder) ? holder : undefined) ??
+    (beef.atomicTxid && txids.includes(keyOf(beef.atomicTxid))
+      ? keyOf(beef.atomicTxid)
+      : undefined) ??
+    txids.at(-1)!
+  if (cache.size >= MAX && !cache.has(key)) {
+    const oldest = cache.keys().next().value
+    if (oldest != null) dropSessionKey(oldest)
+  }
+  cache.set(key, { at: Date.now(), binary: Uint8Array.from(beef.toBinary()) })
+  for (const id of txids) {
+    // A tree that carries the tx supersedes an index into a tree that may
+    // have carried it only by reference.
+    sessionHolder.set(id, key)
+    localMissUntil.delete(id)
   }
 }
 
 function read(txid: string): Beef | null {
   const key = keyOf(txid)
-  const hit = cache.get(key)
-  if (!hit) return null
-  if (Date.now() - hit.at >= TTL_MS) {
-    dropSessionKey(key)
+  const holder = sessionHolder.get(key) ?? key
+  const hit = cache.get(holder)
+  if (!hit) {
+    sessionHolder.delete(key)
     return null
   }
-  return Beef.fromBinary(hit.binary)
+  if (Date.now() - hit.at >= TTL_MS) {
+    dropSessionKey(holder)
+    return null
+  }
+  const beef = Beef.fromBinary(Array.from(hit.binary))
+  if (beef.findTxid(key)?.tx) return beef
+  sessionHolder.delete(key)
+  return null
 }
 
 function write(txid: string, beef: Beef): void {
-  const key = keyOf(txid)
-  if (cache.size >= MAX && !cache.has(key)) {
-    const oldest = cache.keys().next().value
-    if (oldest != null) dropSessionKey(oldest)
-  }
-  cache.set(key, { at: Date.now(), binary: beef.toBinary() })
-  noteContained(key, beef)
+  storeBeefTree(beef, keyOf(txid))
 }
 
-/** One serialization for every tx in the tree, instead of one per txid. */
-function storeBeefTree(beef: Beef): void {
-  const txids: string[] = []
-  for (const btx of beef.txs) {
-    const id = String(btx.txid ?? '').toLowerCase()
-    if (/^[0-9a-f]{64}$/.test(id) && btx.tx) txids.push(id)
-  }
-  if (txids.length === 0) return
-  const binary = beef.toBinary()
-  const at = Date.now()
-  for (const id of txids) {
-    if (cache.size >= MAX && !cache.has(id)) {
-      const oldest = cache.keys().next().value
-      if (oldest != null) dropSessionKey(oldest)
-    }
-    cache.set(id, { at, binary })
-    sessionHolder.set(id, id)
-    localMissUntil.delete(id)
-  }
+/** Stop answering `txid` from the session cache; a direct entry is dropped. */
+function forgetSessionTxid(txid: string): void {
+  const key = keyOf(txid)
+  const holder = sessionHolder.get(key)
+  if (holder == null || holder === key) dropSessionKey(key)
+  else sessionHolder.delete(key)
 }
 
 export function peekSessionBeef(txid: string): Beef | null {
@@ -268,9 +295,9 @@ export function rememberBeefBinary(txid: string, binary: number[]): void {
   rememberBeefTree(binary, txid)
 }
 
-function indexBeefTree(beef: Beef): void {
+function indexBeefTree(beef: Beef, holder?: string): void {
   try {
-    storeBeefTree(beef)
+    storeBeefTree(beef, holder)
   } catch {
     /* session index is best-effort */
   }
@@ -284,18 +311,7 @@ function indexBeefTree(beef: Beef): void {
  * collectables screen a multi-second main-thread stall.
  */
 function findSessionBeef(txid: string): Beef | null {
-  const key = keyOf(txid)
-  const direct = read(key)
-  if (direct?.findTxid(key)?.tx) return direct
-  const holder = sessionHolder.get(key)
-  if (!holder || holder === key) return null
-  const beef = read(holder)
-  if (beef?.findTxid(key)?.tx) {
-    write(key, beef)
-    return beef
-  }
-  sessionHolder.delete(key)
-  return null
+  return read(txid)
 }
 
 /**
@@ -403,7 +419,7 @@ async function resolveLocalBeef(
   const startedAt = Date.now()
   const finish = (beef: Beef | null, source: string): Beef | null => {
     if (beef) {
-      indexBeefTree(beef)
+      indexBeefTree(beef, key)
       localMissUntil.delete(key)
     } else if (opts?.toolbox !== false && !findSessionBeef(key)) {
       localMissUntil.set(key, Date.now() + LOCAL_MISS_MS)
@@ -434,6 +450,89 @@ async function resolveLocalBeef(
     return null
   }
   return finish(null, 'miss')
+}
+
+/**
+ * Local raw transaction, no proof, no network.
+ *
+ * Callers that only decode a script — inscription sniffing, BSV-21 transfer
+ * probes, ticker-icon checks — used to ask {@link getLocalBeefForTxid}, which
+ * asks toolbox storage to *assemble a BEEF*: every ancestor plus its BUMP,
+ * loaded synchronously on the renderer thread. Once per legacy-scan UTXO that
+ * was the `toolbox-storage` freeze under `chainIngest·legacy-ingest`. A single
+ * transaction is two indexed row reads (`getProvenOrRawTx`).
+ */
+export async function getLocalTxForTxid(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<Transaction | null> {
+  const key = keyOf(txid)
+  const startedAt = Date.now()
+  const local = await getLocalBeefForTxid(wallet, key, { toolbox: false })
+  const held = local?.findTxid(key)?.tx
+  if (held) return held
+  const memo = rawTxMemo.get(key)
+  if (memo) return Transaction.fromBinary(Array.from(memo))
+  const until = localMissUntil.get(key)
+  if (until != null && Date.now() < until) return null
+  const pending = rawTxInflight.get(key)
+  if (pending) return pending
+  const run = readToolboxRawTx(wallet, key, startedAt).finally(() => {
+    if (rawTxInflight.get(key) === run) rawTxInflight.delete(key)
+  })
+  rawTxInflight.set(key, run)
+  return run
+}
+
+/** {@link getLocalTxForTxid} as hex, for callers that parse it themselves. */
+export async function getLocalRawTxHex(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<string | null> {
+  const tx = await getLocalTxForTxid(wallet, txid)
+  return tx ? tx.toHex() : null
+}
+
+/**
+ * Raw bodies read from toolbox storage this session. They stay out of the
+ * BEEF cache on purpose: an unproven body there would answer a signing-path
+ * lookup that the toolbox could have answered with the proven copy.
+ */
+const rawTxMemo = new Map<string, Uint8Array>()
+const rawTxInflight = new Map<string, Promise<Transaction | null>>()
+const RAW_TX_MEMO_MAX = 600
+
+async function readToolboxRawTx(
+  wallet: ActiveWallet,
+  key: string,
+  startedAt: number,
+): Promise<Transaction | null> {
+  try {
+    const storageApi = wallet.wallet.storage
+    if (!storageApi?.isActiveStorageProvider?.()) return null
+    if (typeof storageApi.runAsStorageProvider !== 'function') return null
+    const rawTx = await withTimeout(
+      storageApi.runAsStorageProvider(async (storage) => {
+        const row = await storage.getProvenOrRawTx(key)
+        const bytes = row?.proven?.rawTx ?? row?.rawTx
+        return Array.isArray(bytes) && bytes.length > 0 ? bytes : null
+      }),
+      BEEF_FETCH_TIMEOUT_MS,
+      `storage rawTx ${key.slice(0, 8)}`,
+    )
+    if (!rawTx) return null
+    const tx = Transaction.fromBinary(rawTx)
+    if (tx.id('hex') !== key) return null
+    if (rawTxMemo.size >= RAW_TX_MEMO_MAX) {
+      const oldest = rawTxMemo.keys().next().value
+      if (oldest != null) rawTxMemo.delete(oldest)
+    }
+    rawTxMemo.set(key, Uint8Array.from(rawTx))
+    reportLocalLookup(key, startedAt, 'toolbox-rawtx')
+    return tx
+  } catch {
+    return null
+  }
 }
 
 async function getBeefFromLocalStorage(
@@ -663,7 +762,7 @@ export async function getBeefForTxidCached(
     const incomplete = incompleteProofTxids(localHeld).length > 0
     // Paint / heal / icons accept a body. Signing upgrades an incomplete proof.
     if (!incomplete || !opts?.needProof) return localHeld
-    cache.delete(key)
+    forgetSessionTxid(key)
   }
 
   if (!callerWantsNetwork(opts)) {
@@ -1342,6 +1441,11 @@ export async function buildMergedInputBeef(
 
 export function resetBeefCacheForTests(): void {
   cache.clear()
+  sessionHolder.clear()
+  localMissUntil.clear()
+  localInflight.clear()
+  rawTxMemo.clear()
+  rawTxInflight.clear()
   inflight.clear()
   atomicInflight.clear()
   atomicFailUntil.clear()
