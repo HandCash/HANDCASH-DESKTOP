@@ -140,8 +140,26 @@ import {
   scheduleHealCheckpointIfDue,
 } from './utxoHealFromHistory'
 import { __resetHealCheckpointForTests, writeHealCheckpoint } from './utxoHealCheckpoint'
+import {
+  installWalletRuntime,
+  resetWalletRuntimeForTests,
+} from './walletRuntime'
+import type { ActiveWallet } from './session'
 
 const TX = '9ca339904b54368bf32503f0903a1f42e06009bebb19ce97b6fd6e1ce06c6cd1'
+
+/** Existing assertions read the raw durable key; the setup identity keeps it hermetic. */
+const ACCOUNT_A = {
+  chain: 'main',
+  identityKey: 'vitest-primary-identity',
+  accountIndex: 0,
+} as unknown as ActiveWallet
+
+const ACCOUNT_B = {
+  chain: 'main',
+  identityKey: '03' + 'b'.repeat(64),
+  accountIndex: 1,
+} as unknown as ActiveWallet
 
 function mockHealSuccess() {
   mocks.collectActivityTxids.mockReturnValue({
@@ -178,8 +196,62 @@ describe('healUtxoFromActivityHistory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.clearDurableStore()
+    resetWalletRuntimeForTests()
+    installWalletRuntime(ACCOUNT_A)
     __resetHealCheckpointForTests()
     mockHealSuccess()
+  })
+
+  /**
+   * hc-a580a, 2026-09-27: a manual heal started on one vault account, the user
+   * switched, and the tail of the pass rehid / reclaimed the next account's
+   * coins and wrote its checkpoint there. A pass is pinned to the runtime it
+   * started on and aborts the moment that runtime is no longer current.
+   */
+  it('aborts when the account switches mid-pass and writes nothing to the next account', async () => {
+    const writesBeforeSwitch = () => mocks.durableSetItem.mock.calls.length
+    let writesAtSwitch = -1
+    mocks.sealSpentInputsOfSignedTx.mockImplementationOnce(async () => {
+      writesAtSwitch = writesBeforeSwitch()
+      installWalletRuntime(ACCOUNT_B)
+      return 0
+    })
+
+    await expect(
+      runUtxoHealPass({ source: 'manual', force: true }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    // Nothing after the switch reached storage — no batch, no final checkpoint.
+    expect(mocks.durableSetItem.mock.calls.length).toBe(writesAtSwitch)
+    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled()
+    expect(mocks.reconcileKnownUtxosByEvidence).not.toHaveBeenCalled()
+    expect(mocks.reclaimOutputsSealedByDeadTxs).not.toHaveBeenCalled()
+    expect(mocks.restoreFailedLocalTxsKnownOnChain).not.toHaveBeenCalled()
+    // B did not ask for a repair; it gets no "failed" Activity row.
+    expect(mocks.recordWalletEvent).not.toHaveBeenCalled()
+  })
+
+  it('keeps the checkpoint under the account that ran the pass', async () => {
+    await runUtxoHealPass({ source: 'manual', force: true })
+    const keys = mocks.durableSetItem.mock.calls.map(([key]) => key as string)
+    expect(keys.length).toBeGreaterThan(0)
+    // Every write is A's key; none carries B's identity.
+    expect(keys.every((k) => !k.includes(ACCOUNT_B.identityKey))).toBe(true)
+  })
+
+  it('reports heal running only for the account that owns the pass', async () => {
+    const { isUtxoHealRunning } = await import('./utxoHealFromHistory')
+    let seenWhileRunning: boolean | null = null
+    let seenFromB: boolean | null = null
+    mocks.sealSpentInputsOfSignedTx.mockImplementationOnce(async () => {
+      seenWhileRunning = isUtxoHealRunning()
+      installWalletRuntime(ACCOUNT_B)
+      seenFromB = isUtxoHealRunning()
+      return 0
+    })
+    await runUtxoHealPass({ source: 'manual', force: true }).catch(() => undefined)
+    expect(seenWhileRunning).toBe(true)
+    expect(seenFromB).toBe(false)
   })
 
   it('writes Activity on manual heal and reports recovered sats', async () => {

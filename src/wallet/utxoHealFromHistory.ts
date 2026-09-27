@@ -1,11 +1,16 @@
-import { getActiveWallet } from './session'
-
 /**
  * Reconcile local toolbox UTXOs from Activity + live/failed toolbox rows.
  * Do not scrape the app-log ring — that is 800+ lines of support noise, not a
  * UTXO index. Checkpoint remembers already-healed txids so we do not re-probe
  * them. Auto/checkpoint passes are silent; manual writes Activity only when
  * sats move or the pass fails.
+ *
+ * A pass is pinned to the `WalletRuntime` it started on. Every step after an
+ * await re-asserts that runtime is still current and aborts otherwise, and
+ * the checkpoint is keyed by the pinned account — never the ambient one. This
+ * is the fundamental multi-wallet rule: work that spans awaits may only touch
+ * the account it captured (hc-a580a, 2026-09-27: a manual heal begun on one
+ * vault account finished on the next and rehid/reclaimed its coins).
  */
 import {
   collectActivityTxids,
@@ -49,8 +54,44 @@ import {
   writeHealCheckpoint,
   type UtxoHealCheckpointSource,
 } from "./utxoHealCheckpoint";
+import {
+  accountKeyScopeFor,
+  type BoundAccountKeyScope,
+} from "./accountLocalKeys";
+import {
+  assertRuntimeCurrent,
+  getWalletRuntime,
+  requireWalletRuntime,
+  runtimeIsCurrent,
+  type WalletRuntime,
+  type WalletRuntimeId,
+} from "./walletRuntime";
 
-let utxoHealDepth = 0;
+/**
+ * The account a heal pass is pinned to. `guard()` throws `AbortError` once the
+ * runtime is no longer current; call it after every await so no step can act
+ * on a wallet the pass did not start on.
+ */
+type HealOwner = {
+  runtime: WalletRuntime;
+  scope: BoundAccountKeyScope;
+  guard: () => void;
+};
+
+function pinHealOwner(runtime: WalletRuntime): HealOwner {
+  return {
+    runtime,
+    scope: accountKeyScopeFor(runtime.instance),
+    guard: () => assertRuntimeCurrent(runtime),
+  };
+}
+
+export function isHealAbort(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+/** Heal depth per runtime — another account's pass is not this account's. */
+const healDepthByRuntime = new Map<WalletRuntimeId, number>();
 
 const emptyEvidence = (): UtxoEvidenceHealResult => ({
   checked: 0,
@@ -63,9 +104,11 @@ const emptyEvidence = (): UtxoEvidenceHealResult => ({
   quarantinedOutpoints: [],
 });
 
-/** True while any UTXO heal pass holds the chain-ingest region. */
+/** True while a UTXO heal pass for the *current* account holds chain ingest. */
 export function isUtxoHealRunning(): boolean {
-  return utxoHealDepth > 0;
+  const runtime = getWalletRuntime();
+  if (!runtime) return false;
+  return (healDepthByRuntime.get(runtime.runtimeId) ?? 0) > 0;
 }
 
 export type UtxoHealBalanceSnapshot = {
@@ -177,8 +220,11 @@ function orderTxidsForHeal(args: {
 }
 
 async function healShouldYieldToSpend(
-  _opts: UtxoHealPassOpts
+  _opts: UtxoHealPassOpts,
+  owner: HealOwner
 ): Promise<boolean> {
+  // Account changed: nothing here may run on the next wallet.
+  owner.guard();
   // A user-requested repair must not report "done" after checking zero rows.
   // It already owns the chain-ingest region; new spends queue behind this pass.
   if (_opts.source === "manual") return false;
@@ -193,7 +239,8 @@ async function healShouldYieldToSpend(
 
 async function runPendingChangeHeal(
   balanceBefore: UtxoHealBalanceSnapshot | null,
-  opts: UtxoHealPassOpts
+  opts: UtxoHealPassOpts,
+  owner: HealOwner
 ): Promise<ChangeHealStats> {
   const empty: ChangeHealStats = {
     restored: 0,
@@ -203,18 +250,20 @@ async function runPendingChangeHeal(
     reclaimed: 0,
     unscripted: 0,
   };
-  if (await healShouldYieldToSpend(opts)) return empty;
+  if (await healShouldYieldToSpend(opts, owner)) return empty;
 
   // Rehide before spendGate reclaim — abort-reserved sibling sends left inputs
   // spendable; reclaim without rehide re-inflates Pay.
   try {
     await rehideInputsOfLiveLocalTxs();
   } catch (err) {
+    if (isHealAbort(err)) throw err;
     console.warn("[utxo-heal] rehide before spendGate skipped", err);
   }
+  owner.guard();
 
   let heal = await runChangeHeal({ path: "spendGate" });
-  if (await healShouldYieldToSpend(opts)) return heal;
+  if (await healShouldYieldToSpend(opts, owner)) return heal;
 
   const pending = balanceBefore?.pendingChange ?? 0;
   // A change row with no locking script is counted in neither balance bucket,
@@ -232,24 +281,28 @@ async function runPendingChangeHeal(
       heal,
       await runChangeHeal({ path: "spendGatePartialRetry" })
     );
-    if (await healShouldYieldToSpend(opts)) return heal;
+    if (await healShouldYieldToSpend(opts, owner)) return heal;
   }
   heal = mergeHealStats(
     heal,
     await runChangeHeal({ path: "chainingScriptHeal" })
   );
+  owner.guard();
   return heal;
 }
 
 async function processTxidBatch(
   batch: string[],
   chain: Chain | undefined,
-  failed: Set<string>
+  failed: Set<string>,
+  owner: HealOwner
 ): Promise<{ changeKept: number; txidsOnChain: number; processed: string[] }> {
   let changeKept = 0;
   let txidsOnChain = 0;
   const processed: string[] = [];
   for (const txid of batch) {
+    // One txid = several storage writes. Re-check the account before each.
+    owner.guard();
     processed.push(txid);
     const atomic = signedChequeAtomic(txid);
     if (!atomic?.length) {
@@ -264,6 +317,7 @@ async function processTxidBatch(
     }
     if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null);
+      owner.guard();
       if (onChain === false) {
         // Absence is not cancellation. The signed template stays sealed and
         // retains its change. Re-queue miner propagation from the archive.
@@ -283,6 +337,7 @@ async function processTxidBatch(
       }
     }
     await sealSpentInputsOfSignedTx(txid, atomic);
+    owner.guard();
     // The archived template is the body that created this change — heal can
     // rebuild a script-less row from it instead of refusing the coin.
     changeKept += await keepChangeOfSignedTx(txid, undefined, true, atomic);
@@ -294,7 +349,8 @@ async function runHealCore(
   orderedTxids: string[],
   balanceBefore: UtxoHealBalanceSnapshot | null,
   failed: Set<string>,
-  opts: UtxoHealPassOpts
+  opts: UtxoHealPassOpts,
+  owner: HealOwner
 ): Promise<{
   changeKept: number;
   txidsOnChain: number;
@@ -304,7 +360,7 @@ async function runHealCore(
   recoveredSats: number;
   txidsChecked: number;
 }> {
-  if (await healShouldYieldToSpend(opts)) {
+  if (await healShouldYieldToSpend(opts, owner)) {
     logDiag("utxo-heal", "info", "yield-to-spend", { phase: "before-release" });
     bumpBalanceAfterHeal();
     const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance());
@@ -334,7 +390,7 @@ async function runHealCore(
   // repair only reconciles durable wallet state.
   if (opts.source !== "manual") await releaseSpendAttemptFunds();
 
-  if (await healShouldYieldToSpend(opts)) {
+  if (await healShouldYieldToSpend(opts, owner)) {
     logDiag("utxo-heal", "info", "yield-to-spend", { phase: "after-release" });
     bumpBalanceAfterHeal();
     const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance());
@@ -356,7 +412,7 @@ async function runHealCore(
     };
   }
 
-  const chain = getActiveWallet()?.chain;
+  const chain = owner.runtime.instance.chain;
   let changeKept = 0;
   let txidsOnChain = 0;
   let txidsChecked = 0;
@@ -376,7 +432,7 @@ async function runHealCore(
   // before auditing years of output history. On hc-a580a the old order spent
   // 195 seconds probing 873 rows before it reached the missing change.
   for (let offset = 0; offset < orderedTxids.length; ) {
-    if (await healShouldYieldToSpend(opts)) {
+    if (await healShouldYieldToSpend(opts, owner)) {
       logDiag("utxo-heal", "info", "yield-to-spend", {
         checked: txidsChecked,
         remaining: orderedTxids.length - offset,
@@ -387,27 +443,34 @@ async function runHealCore(
     if (batch.length === 0) break;
     offset += batch.length;
 
-    const batchResult = await processTxidBatch(batch, chain, failed);
+    const batchResult = await processTxidBatch(batch, chain, failed, owner);
     changeKept += batchResult.changeKept;
     txidsOnChain += batchResult.txidsOnChain;
     txidsChecked += batchResult.processed.length;
     allProcessed.push(...batchResult.processed);
 
+    owner.guard();
     bumpBalanceAfterHeal();
     const mid = toBalanceSnapshot(await snapshotWalletBalance());
-    appendHealCheckpointBatch(batchResult.processed, {
-      pendingChangeAfter: mid?.pendingChange ?? 0,
-      recoveredSats:
-        balanceBefore && mid
-          ? Math.max(0, mid.spendable - balanceBefore.spendable)
-          : 0,
-      source: opts.source,
-    });
+    owner.guard();
+    appendHealCheckpointBatch(
+      batchResult.processed,
+      {
+        pendingChangeAfter: mid?.pendingChange ?? 0,
+        recoveredSats:
+          balanceBefore && mid
+            ? Math.max(0, mid.spendable - balanceBefore.spendable)
+            : 0,
+        source: opts.source,
+      },
+      owner.scope
+    );
 
     if (!runAllBatches) break;
   }
 
   const fastBalance = toBalanceSnapshot(await snapshotWalletBalance());
+  owner.guard();
   const recoveredCurrentBalance =
     (balanceBefore?.spendable ?? 0) === 0 &&
     (fastBalance?.spendable ?? 0) > 0;
@@ -419,8 +482,9 @@ async function runHealCore(
       changeKept,
     });
   } else {
-    heal = await runPendingChangeHeal(balanceBefore, opts);
+    heal = await runPendingChangeHeal(balanceBefore, opts, owner);
     await restoreFailedLocalTxsKnownOnChain();
+    owner.guard();
 
     // Deliberately outside runPendingChangeHeal: that pass returns early when
     // pendingChange is 0, and a coin sealed by a written-off tx is stranded
@@ -439,8 +503,10 @@ async function runHealCore(
         }),
       });
     } catch (err) {
+      if (isHealAbort(err)) throw err;
       console.warn("[utxo-heal] dead-sealer reclaim skipped", err);
     }
+    owner.guard();
 
     evidence = await reconcileKnownUtxosByEvidence({
       forManualHeal: opts.source === "manual",
@@ -449,11 +515,12 @@ async function runHealCore(
       // output set without turning Settings into a multi-minute lock.
       ...(opts.source === "manual" ? { maxOutputs: 48 } : {}),
     });
+    owner.guard();
   }
 
   if (
     (balanceBefore?.pendingChange ?? 0) > 0 &&
-    !(await healShouldYieldToSpend(opts))
+    !(await healShouldYieldToSpend(opts, owner))
   ) {
     heal = mergeHealStats(
       heal,
@@ -479,6 +546,7 @@ async function runHealCore(
       );
       await relistCollectablesAfterLocalStateReplace();
     } catch (err) {
+      if (isHealAbort(err)) throw err;
       console.warn(
         "[utxo-heal] collectable/activity projection refresh skipped",
         err
@@ -486,22 +554,30 @@ async function runHealCore(
     }
   }
 
+  owner.guard();
   bumpBalanceAfterHeal();
   const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance());
+  owner.guard();
   const recoveredSats =
     balanceBefore && balanceAfter
       ? Math.max(0, balanceAfter.spendable - balanceBefore.spendable)
       : 0;
 
-  writeHealCheckpoint({
-    at: Date.now(),
-    txids: [
-      ...new Set([...(readHealCheckpoint()?.txids ?? []), ...allProcessed]),
-    ],
-    recoveredSats,
-    pendingChangeAfter: balanceAfter?.pendingChange ?? 0,
-    source: opts.source,
-  });
+  writeHealCheckpoint(
+    {
+      at: Date.now(),
+      txids: [
+        ...new Set([
+          ...(readHealCheckpoint(owner.scope)?.txids ?? []),
+          ...allProcessed,
+        ]),
+      ],
+      recoveredSats,
+      pendingChangeAfter: balanceAfter?.pendingChange ?? 0,
+      source: opts.source,
+    },
+    owner.scope
+  );
 
   return {
     changeKept,
@@ -521,14 +597,18 @@ async function runHealCore(
 export async function runUtxoHealPass(
   opts: UtxoHealPassOpts
 ): Promise<UtxoHealFromHistoryResult> {
+  // Pin the account first. Everything below is this runtime's, or aborts.
+  const owner = pinHealOwner(requireWalletRuntime());
   const { txids, activity } = collectCandidateTxids();
   const balanceBefore = toBalanceSnapshot(await snapshotWalletBalance());
-  const missing = txidsMissingFromCheckpoint(txids);
+  owner.guard();
+  const missing = txidsMissingFromCheckpoint(txids, owner.scope);
   const pendingChange = balanceBefore?.pendingChange ?? 0;
   const checkpointed = new Set(
-    (readHealCheckpoint()?.txids ?? []).map((t) => t.toLowerCase())
+    (readHealCheckpoint(owner.scope)?.txids ?? []).map((t) => t.toLowerCase())
   );
   const allFailed = (await listFailedLocalTxids()).filter((id) => txids.has(id));
+  owner.guard();
   const includeActivity = opts.force === true || opts.source === "manual";
   const failedTxids = includeActivity
     ? allFailed
@@ -539,13 +619,13 @@ export async function runUtxoHealPass(
 
   const shouldSkip =
     !includeActivity &&
-    healCheckpointFresh() &&
+    healCheckpointFresh(undefined, undefined, owner.scope) &&
     missing.length === 0 &&
     !maybePendingChange &&
     failedTxids.length === 0;
 
   if (shouldSkip) {
-    const cp = readHealCheckpoint();
+    const cp = readHealCheckpoint(owner.scope);
     return {
       skipped: true,
       activityRows: activity.total,
@@ -577,6 +657,7 @@ export async function runUtxoHealPass(
     activity: txids,
     includeActivity,
   });
+  owner.guard();
 
   logDiag("utxo-heal", "info", "start", {
     source: opts.source,
@@ -589,15 +670,20 @@ export async function runUtxoHealPass(
   });
 
   const { runChainIngest } = await import("./walletCoordinator");
+  owner.guard();
+  const depthKey = owner.runtime.runtimeId;
   return runChainIngest(async () => {
-    utxoHealDepth += 1;
+    owner.guard();
+    healDepthByRuntime.set(depthKey, (healDepthByRuntime.get(depthKey) ?? 0) + 1);
     try {
       const core = await runHealCore(
         txidList,
         balanceBefore,
         new Set(failedTxids),
-        opts
+        opts,
+        owner
       );
+      owner.guard();
       const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0;
 
       const result: UtxoHealFromHistoryResult = {
@@ -645,6 +731,16 @@ export async function runUtxoHealPass(
 
       return result;
     } catch (err) {
+      if (isHealAbort(err) || !runtimeIsCurrent(owner.runtime)) {
+        // The account changed under this pass. Nothing was written past the
+        // last guard, and Activity belongs to the wallet that is now current
+        // — not to a repair it never asked for.
+        logDiag("utxo-heal", "info", "aborted", {
+          source: opts.source,
+          reason: "account-changed",
+        });
+        throw err;
+      }
       const reason = err instanceof Error ? err.message : String(err);
       if (opts.source === "manual") {
         recordWalletEvent({
@@ -658,22 +754,30 @@ export async function runUtxoHealPass(
       logDiag("utxo-heal", "warn", "failed", { source: opts.source, reason });
       throw err;
     } finally {
-      utxoHealDepth = Math.max(0, utxoHealDepth - 1);
+      const depth = (healDepthByRuntime.get(depthKey) ?? 1) - 1;
+      if (depth <= 0) healDepthByRuntime.delete(depthKey);
+      else healDepthByRuntime.set(depthKey, depth);
     }
   });
 }
 
-/** Settings → Wallet health manual heal. */
-let manualHealFlight: Promise<UtxoHealFromHistoryResult> | null = null;
+/** Settings → Wallet health manual heal, deduped per runtime. */
+const manualHealFlightByRuntime = new Map<
+  WalletRuntimeId,
+  Promise<UtxoHealFromHistoryResult>
+>();
 
 export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistoryResult> {
-  if (manualHealFlight) return manualHealFlight;
-  manualHealFlight = runUtxoHealPass({ source: "manual", force: true }).finally(
+  const runtimeId = requireWalletRuntime().runtimeId;
+  const inFlight = manualHealFlightByRuntime.get(runtimeId);
+  if (inFlight) return inFlight;
+  const flight = runUtxoHealPass({ source: "manual", force: true }).finally(
     () => {
-      manualHealFlight = null;
+      manualHealFlightByRuntime.delete(runtimeId);
     }
   );
-  return manualHealFlight;
+  manualHealFlightByRuntime.set(runtimeId, flight);
+  return flight;
 }
 
 /**

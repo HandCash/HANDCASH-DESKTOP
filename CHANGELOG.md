@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.343] - 2026-09-27
+
+### Fixed
+
+- Multi-wallet: a heal pass is pinned to the vault account it started on.
+  `runUtxoHealPass` captures the `WalletRuntime`, re-asserts it after every
+  await (`AbortError` on change) and keys its checkpoint by that account —
+  never the ambient one. Field case hc-a580a (2026-09-27): a manual heal begun
+  on one account finished on the next, rehid 78 inputs, reclaimed ~25 of the
+  first account's txids against the second account's toolbox and wrote the
+  skip list there; the second account then read 0 sats and timed out on
+  `listOutputs`.
+- Account switch owns the ordering: dispose the runtime (aborts every pinned
+  occupant), await chain ingest idle (bounded, 8 s, logged on timeout), then
+  boot. The switch is logged (`[vault-account] switch from → to`).
+- Heal singletons are per runtime: `isUtxoHealRunning` answers for the current
+  account only, the manual-heal dedupe promise and the chained change-heal
+  state (stuck sats, cooldown, in-flight) no longer leak across accounts.
+- Sync-health binding moved into the wallet runtime lifecycle so it rebinds in
+  the same tick as every other account store.
+- Judged with Jev on extracted facts: contamination 0.67 → 0.37; root-cause
+  confidence 0.59 → below review threshold.
+
 ## [1.3.342] - 2026-09-27
 
 ### Changed

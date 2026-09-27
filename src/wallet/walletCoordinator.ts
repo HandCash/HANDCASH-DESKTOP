@@ -270,6 +270,20 @@ export function waitForForegroundSpendIdle(): Promise<void> {
   return waitFor(actor, () => context().spendDepth === 0)
 }
 
+/**
+ * Second half of the account-switching fence.
+ *
+ * Chain-ingest occupants (heal, address scan) are pinned to their runtime and
+ * abort on their next guard once it is disposed; this waits for that release
+ * so the next account never boots under another account's storage work.
+ * Bounded: an occupant that ignores its signal must not hold the switch
+ * hostage. Resolves `true` when the region went idle, `false` on timeout.
+ */
+export function waitForChainIngestIdle(maxWaitMs: number): Promise<boolean> {
+  const idle = () => context().chainIngestDepth === 0
+  return waitFor(actor, idle, maxWaitMs).then(idle)
+}
+
 /** Notify when region depths change — status pill must not claim Synced on a stale snapshot. */
 export function subscribeWalletCoordinator(
   listener: (snap: WalletCoordinatorLiveStatus) => void,

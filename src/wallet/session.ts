@@ -23,8 +23,11 @@ import {
   disposeWalletRuntime,
   getWalletRuntime,
   installWalletRuntime,
+  runtimeIsCurrent,
   type WalletRuntime,
+  type WalletRuntimeId,
 } from './walletRuntime'
+import { logDiag } from './diagnosticLog'
 
 const { specOpWalletBalance } = sdk
 
@@ -288,12 +291,10 @@ export function setActiveWallet(next: ActiveWallet | null): void {
 }
 
 export function clearActiveWallet(): void {
+  // Sync health unbinds in the runtime lifecycle (`accountLocalStores`).
   disposeWalletRuntime('locked')
   active = null
   clearSessionBackupPassword()
-  void import('./walletHealth').then(({ bindSyncHealthAccount }) => {
-    bindSyncHealthAccount(null)
-  })
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
     bindWalletProgressAccount(null)
   })
@@ -454,13 +455,8 @@ export async function bootWallet(args: {
   lastKnownBalanceSats = readTrustedBalance(active.identityKey, active.chain)
   lastBalanceBreakdown = ''
   startDurablePropagationRecovery(runtime)
-  // Sync pill + chain-ingest status are per vault account — never leave root's
-  // Synced painted on a cold child toolbox.
-  const { bindSyncHealthAccount } = await import('./walletHealth')
-  bindSyncHealthAccount({
-    identityKey: wallet.identityKey,
-    accountIndex: wallet.accountIndex,
-  })
+  // Sync pill + chain-ingest status rebind inside the runtime lifecycle
+  // (`accountLocalStores`), in the same tick as every other account store.
   return wallet
 }
 
@@ -520,51 +516,67 @@ export function bumpBalanceAfterHeal(): void {
   })()
 }
 
-/** Promote pending local change so the next spend can use it. Does not run UTXO heal. */
-let chainedBalanceHealFlight: Promise<void> | null = null
-const chainedBalanceHealState: ChainedChangeHealState = {
-  stuckSats: -1,
-  stuckAt: 0,
-  lastAttemptAt: 0,
-  inFlight: false,
+/**
+ * Promote pending local change so the next spend can use it. Does not run UTXO
+ * heal. State is per runtime: one account's stuck amount, cooldown and
+ * in-flight promise are not another account's.
+ */
+type ChainedBalanceHeal = ChainedChangeHealState & { flight: Promise<void> | null }
+const chainedBalanceHealByRuntime = new Map<WalletRuntimeId, ChainedBalanceHeal>()
+
+function chainedBalanceHealFor(runtimeId: WalletRuntimeId): ChainedBalanceHeal {
+  let state = chainedBalanceHealByRuntime.get(runtimeId)
+  if (!state) {
+    state = { stuckSats: -1, stuckAt: 0, lastAttemptAt: 0, inFlight: false, flight: null }
+    chainedBalanceHealByRuntime.set(runtimeId, state)
+  }
+  return state
 }
 
 function scheduleChainedBalanceHeal(pendingChange: number): void {
+  const runtime = getWalletRuntime()
+  if (!runtime) return
+  const state = chainedBalanceHealFor(runtime.runtimeId)
   const decision = decideChainedChangeHeal({
     pendingChange,
     now: Date.now(),
-    state: { ...chainedBalanceHealState, inFlight: !!chainedBalanceHealFlight },
+    state: { ...state, inFlight: !!state.flight },
   })
   if (!decision.run) return
-  chainedBalanceHealFlight = (async () => {
-    chainedBalanceHealState.lastAttemptAt = Date.now()
+  state.flight = (async () => {
+    state.lastAttemptAt = Date.now()
     try {
       const { promotePendingLocalChangeOutputs } = await import(
         './staleOutputRelease'
       )
+      if (!runtimeIsCurrent(runtime)) return
       // Promote pending change into spendable UTXOs only. Reclaim here used to
       // revive sealed spends (hero 47→23→70 with nothing new in Activity).
       const promoted = await promotePendingLocalChangeOutputs({
         forSpendChain: true,
       })
+      // The account changed while promoting: the display belongs to the new
+      // account now; do not publish this one's figure onto it.
+      if (!runtimeIsCurrent(runtime)) return
       if (promoted > 0) {
-        chainedBalanceHealState.stuckSats = -1
-        chainedBalanceHealState.stuckAt = 0
+        state.stuckSats = -1
+        state.stuckAt = 0
         lastBalanceBreakdown = ''
         bumpBalanceAfterHeal()
         return
       }
       // Nothing moved, so the breakdown we just logged is still accurate.
       // Invalidating it here is what re-armed this pass every cooldown.
-      chainedBalanceHealState.stuckSats = pendingChange
-      chainedBalanceHealState.stuckAt = Date.now()
+      state.stuckSats = pendingChange
+      state.stuckAt = Date.now()
     } catch (err) {
       console.warn('[balance] chained change heal skipped', err)
     } finally {
-      chainedBalanceHealFlight = null
+      state.flight = null
+      if (!runtimeIsCurrent(runtime)) chainedBalanceHealByRuntime.delete(runtime.runtimeId)
     }
   })()
-  void chainedBalanceHealFlight
+  void state.flight
 }
 
 const spendableBalanceCache = new WeakMap<object, number>()
@@ -907,6 +919,13 @@ export function formatSats(sats: number): string {
  * bootWallet rebinds account-local stores and sync health so Activity /
  * Inventory / Apps / Friends / Sync status do not spill across subwallets.
  */
+/**
+ * How long a switch waits for a disposed account's chain-ingest occupant to
+ * release. Pinned occupants abort within one await; this only bounds a
+ * misbehaving one so the switch cannot hang.
+ */
+export const ACCOUNT_SWITCH_INGEST_DRAIN_MS = 8_000
+
 export async function switchVaultAccount(args: {
   masterRootKeyHex: string
   masterIdentityKey: string
@@ -918,7 +937,9 @@ export async function switchVaultAccount(args: {
   // Do not rebind account-local Activity/inventory while a send continuation
   // still owns those foreground projections. Its signed miner submission is
   // retained separately and continues in the background after this fence.
-  const { waitForForegroundSpendIdle } = await import('./walletCoordinator')
+  const { waitForForegroundSpendIdle, waitForChainIngestIdle } = await import(
+    './walletCoordinator'
+  )
   await waitForForegroundSpendIdle()
   const {
     rootKeyHexForAccount,
@@ -926,13 +947,26 @@ export async function switchVaultAccount(args: {
   } = await import('./vaultAccounts')
   setActiveVaultAccountIndex(args.masterIdentityKey, args.accountIndex)
   const prev = active
+  logDiag('vault-account', 'info', 'switch', {
+    from: prev?.accountIndex ?? null,
+    to: args.accountIndex,
+  })
   try {
     prev?.monitor?.stopTasks?.()
   } catch {
     // optional
   }
+  // Dispose first: every runtime-pinned occupant (heal, scans) aborts on its
+  // next guard. Then wait for chain ingest to actually let go, so the next
+  // account never boots under the previous account's storage work.
   disposeWalletRuntime('account-changed')
   active = null
+  const ingestIdle = await waitForChainIngestIdle(ACCOUNT_SWITCH_INGEST_DRAIN_MS)
+  if (!ingestIdle) {
+    logDiag('vault-account', 'warn', 'ingest-drain-timeout', {
+      waitedMs: ACCOUNT_SWITCH_INGEST_DRAIN_MS,
+    })
+  }
   const rootKeyHex = rootKeyHexForAccount(args.masterRootKeyHex, args.accountIndex)
   return bootWallet({
     rootKeyHex,

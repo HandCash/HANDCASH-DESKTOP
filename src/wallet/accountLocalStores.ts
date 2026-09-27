@@ -3,6 +3,7 @@
  * Toolbox IDB is already per-account; these localStorage surfaces were not.
  */
 import { bindAccountLocalKeyScope } from './accountLocalKeys'
+import { bindSyncHealthAccount } from './walletHealth'
 import { bindWalletProgressAccount } from './walletProgress'
 import { applyWalletOutcome } from './walletEffects'
 import type { WalletRuntime } from './walletRuntime'
@@ -34,12 +35,20 @@ function ensureLifecycleRegistered(): void {
         accountIndex: wallet.accountIndex,
         identityKey: wallet.identityKey,
       })
+      // Sync pill + chain-ingest status are per vault account — never leave
+      // root's Synced painted on a cold child toolbox. Bound here, in the same
+      // tick as every other account store, not after the runtime is published.
+      bindSyncHealthAccount({
+        identityKey: wallet.identityKey,
+        accountIndex: wallet.accountIndex,
+      })
       setDirectSessionIdentity({
         rootKeyHex: wallet.rootKeyHex,
         identityKey: wallet.identityKey,
       })
     },
     dispose: () => {
+      bindSyncHealthAccount(null)
       cancelPendingPermissions('wallet-runtime-disposed')
       clearPaymentProgress()
       clearVerificationProgress()

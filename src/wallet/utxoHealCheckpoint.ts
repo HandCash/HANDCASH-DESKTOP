@@ -2,9 +2,19 @@ import { storageRegistry } from '../storage/registry'
 /**
  * Durable heal checkpoint — overlap window so we never drop a txid mid-flight.
  * Mirrors consolidateChange cooldown pattern: silent auto passes, manual can force.
+ *
+ * Every accessor takes the owning account. A heal pass spans dozens of awaits;
+ * resolving the key from the ambient scope on each one is how a pass that
+ * started on one vault account wrote its skip list into the next (hc-a580a,
+ * 2026-09-27). Callers that hold a runtime pass `accountKeyScopeFor(instance)`;
+ * the ambient default exists for synchronous UI reads only.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import {
+  accountLocalKey,
+  accountLocalKeyFor,
+  type BoundAccountKeyScope,
+} from './accountLocalKeys'
 
 const CHECKPOINT_KEY = storageRegistry.utxoHealCheckpoint.key
 const MAX_STORED_TXIDS = 256
@@ -28,6 +38,15 @@ export type UtxoHealCheckpoint = {
   source: UtxoHealCheckpointSource
 }
 
+/** Account the checkpoint belongs to; `undefined` = the ambient bound scope. */
+export type HealCheckpointOwner = BoundAccountKeyScope | undefined
+
+function checkpointKey(owner: HealCheckpointOwner): string {
+  return owner
+    ? accountLocalKeyFor(CHECKPOINT_KEY, owner)
+    : accountLocalKey(CHECKPOINT_KEY)
+}
+
 let lastAutoAttemptAt = 0
 
 export function __resetHealCheckpointForTests(): void {
@@ -40,9 +59,11 @@ export function rebindUtxoHealCheckpointForAccount(): void {
   lastAutoAttemptAt = 0
 }
 
-export function readHealCheckpoint(): UtxoHealCheckpoint | null {
+export function readHealCheckpoint(
+  owner?: HealCheckpointOwner,
+): UtxoHealCheckpoint | null {
   try {
-    const raw = durableGetItem(accountLocalKey(CHECKPOINT_KEY))
+    const raw = durableGetItem(checkpointKey(owner))
     if (!raw) return null
     const parsed = JSON.parse(raw) as UtxoHealCheckpoint
     if (!parsed || typeof parsed.at !== 'number' || !Array.isArray(parsed.txids)) {
@@ -62,12 +83,15 @@ export function readHealCheckpoint(): UtxoHealCheckpoint | null {
   }
 }
 
-export function writeHealCheckpoint(next: UtxoHealCheckpoint): void {
+export function writeHealCheckpoint(
+  next: UtxoHealCheckpoint,
+  owner?: HealCheckpointOwner,
+): void {
   const txids = [...new Set(next.txids.map((t) => t.toLowerCase()))].slice(
     -MAX_STORED_TXIDS,
   )
   durableSetItem(
-    accountLocalKey(CHECKPOINT_KEY),
+    checkpointKey(owner),
     JSON.stringify({
       ...next,
       txids,
@@ -75,8 +99,11 @@ export function writeHealCheckpoint(next: UtxoHealCheckpoint): void {
   )
 }
 
-export function healCheckpointAgeMs(now = Date.now()): number | null {
-  const cp = readHealCheckpoint()
+export function healCheckpointAgeMs(
+  now = Date.now(),
+  owner?: HealCheckpointOwner,
+): number | null {
+  const cp = readHealCheckpoint(owner)
   if (!cp) return null
   return Math.max(0, now - cp.at)
 }
@@ -85,24 +112,31 @@ export function healCheckpointAgeMs(now = Date.now()): number | null {
 export function healCheckpointFresh(
   now = Date.now(),
   overlapMs = HEAL_CHECKPOINT_OVERLAP_MS,
+  owner?: HealCheckpointOwner,
 ): boolean {
-  const cp = readHealCheckpoint()
+  const cp = readHealCheckpoint(owner)
   if (!cp) return false
   if (now - cp.at > overlapMs) return false
   return cp.pendingChangeAfter <= 0
 }
 
-export function mergeTxidsWithCheckpoint(current: Set<string>): Set<string> {
+export function mergeTxidsWithCheckpoint(
+  current: Set<string>,
+  owner?: HealCheckpointOwner,
+): Set<string> {
   const merged = new Set(current)
-  for (const txid of readHealCheckpoint()?.txids ?? []) {
+  for (const txid of readHealCheckpoint(owner)?.txids ?? []) {
     merged.add(txid.toLowerCase())
   }
   return merged
 }
 
-export function txidsMissingFromCheckpoint(current: Set<string>): string[] {
+export function txidsMissingFromCheckpoint(
+  current: Set<string>,
+  owner?: HealCheckpointOwner,
+): string[] {
   const prev = new Set(
-    (readHealCheckpoint()?.txids ?? []).map((t) => t.toLowerCase()),
+    (readHealCheckpoint(owner)?.txids ?? []).map((t) => t.toLowerCase()),
   )
   return [...current].filter((t) => !prev.has(t.toLowerCase()))
 }
@@ -123,18 +157,22 @@ export function appendHealCheckpointBatch(
     recoveredSats: number
     source: UtxoHealCheckpointSource
   },
+  owner?: HealCheckpointOwner,
 ): void {
   if (processedTxids.length === 0) return
-  const prev = readHealCheckpoint()
+  const prev = readHealCheckpoint(owner)
   const merged = new Set([
     ...(prev?.txids ?? []),
     ...processedTxids.map((t) => t.toLowerCase()),
   ])
-  writeHealCheckpoint({
-    at: Date.now(),
-    txids: [...merged],
-    recoveredSats: Math.max(partial.recoveredSats, prev?.recoveredSats ?? 0),
-    pendingChangeAfter: partial.pendingChangeAfter,
-    source: partial.source,
-  })
+  writeHealCheckpoint(
+    {
+      at: Date.now(),
+      txids: [...merged],
+      recoveredSats: Math.max(partial.recoveredSats, prev?.recoveredSats ?? 0),
+      pendingChangeAfter: partial.pendingChangeAfter,
+      source: partial.source,
+    },
+    owner,
+  )
 }

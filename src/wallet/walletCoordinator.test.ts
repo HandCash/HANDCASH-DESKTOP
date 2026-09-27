@@ -20,6 +20,7 @@ import {
   SpendRegionAbandonedError,
   SPEND_REGION_ABANDONED,
   rebindWalletCoordinatorForRuntime,
+  waitForChainIngestIdle,
   waitForForegroundSpendIdle,
 } from './walletCoordinator'
 
@@ -102,6 +103,60 @@ describe('walletCoordinator runtime', () => {
     await spend
     await fence
     expect(switched).toBe(true)
+  })
+
+  it('drains a chain-ingest occupant before an account switch completes', async () => {
+    let releaseHeal!: () => void
+    let started!: () => void
+    const hold = new Promise<void>((resolve) => {
+      releaseHeal = resolve
+    })
+    const active = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const heal = runChainIngest(async () => {
+      started()
+      await hold
+    })
+    await active
+
+    let drained: boolean | null = null
+    const fence = waitForChainIngestIdle(5_000).then((idle) => {
+      drained = idle
+    })
+    await Promise.resolve()
+    expect(drained).toBeNull()
+
+    releaseHeal()
+    await heal
+    await fence
+    expect(drained).toBe(true)
+  })
+
+  it('gives up on a chain-ingest occupant that never releases, and says so', async () => {
+    vi.useFakeTimers()
+    let releaseStuck!: () => void
+    const stuck = new Promise<void>((resolve) => {
+      releaseStuck = resolve
+    })
+    let started!: () => void
+    const active = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const occupant = runChainIngest(async () => {
+      started()
+      await stuck
+    })
+    try {
+      await active
+      const fence = waitForChainIngestIdle(50)
+      await vi.advanceTimersByTimeAsync(60)
+      expect(await fence).toBe(false)
+    } finally {
+      releaseStuck()
+      await occupant
+      vi.useRealTimers()
+    }
   })
 
   it('fences queued work when the wallet runtime changes', async () => {
