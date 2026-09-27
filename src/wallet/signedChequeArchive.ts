@@ -137,23 +137,39 @@ function migrateLegacyBodies(owner?: BoundAccountKeyScope): StoredCheque[] {
   return extra
 }
 
+/**
+ * Last parse, keyed by the exact stored string.
+ *
+ * The archive is the largest key on a phone (888KB on the lab device) and
+ * `signedChequeAtomic` is consulted on every local BEEF lookup — encoding
+ * proofs, deploy caps, stale-output restores, outbox checks. Parsing that
+ * string per call was a synchronous main-thread cost multiplied by every tip.
+ * `durableGetItem` returns the identical string until something writes, so
+ * identity is a correct cache key. Callers copy before mutating.
+ */
+let parsedRaw: string | null = null
+let parsedRows: StoredCheque[] = []
+
 function loadStored(owner?: BoundAccountKeyScope): StoredCheque[] {
   try {
-    const parsed = JSON.parse(
-      durableGetItem(scopedKey(KEY_BASE, owner)) || '[]',
-    ) as unknown
+    const raw = durableGetItem(scopedKey(KEY_BASE, owner)) || '[]'
+    if (raw === parsedRaw) return parsedRows
+    const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed) || parsed.length === 0) {
       const migrated = migrateLegacyBodies(owner)
       if (migrated.length > 0) saveStored(migrated, owner)
       return migrated
     }
-    return parsed.filter(
+    const rows = parsed.filter(
       (row): row is StoredCheque =>
         !!row &&
         typeof row === 'object' &&
         typeof (row as StoredCheque).txid === 'string' &&
         typeof (row as StoredCheque).atomicB64 === 'string',
     )
+    parsedRaw = raw
+    parsedRows = rows
+    return rows
   } catch {
     return []
   }
@@ -224,7 +240,9 @@ export function archiveSignedCheque(
 ): boolean {
   if (!bodyIsSignedCheque(txid, atomic)) return false
   const id = txid.trim().toLowerCase()
-  const rows = loadStored(opts?.owner)
+  // `loadStored` shares its parse; a refused save must not leave the shared
+  // rows carrying a cheque the store never accepted.
+  const rows = loadStored(opts?.owner).map((row) => ({ ...row }))
   const next: StoredCheque = {
     txid: id,
     atomicB64: Utils.toBase64(atomic),

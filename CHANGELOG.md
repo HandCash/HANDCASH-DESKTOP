@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.335] - 2026-09-27
+
+### Fixed
+
+- The signed-cheque archive — the largest key on a phone (888KB on the lab
+  device) — is parsed once per stored value instead of on every local BEEF
+  lookup. Encoding proofs, deploy-cap lookups, stale-output restores and outbox
+  checks each re-parsed it synchronously, multiplying main-thread time by every
+  held tip. Same identity-keyed memo the Activity store already uses; the one
+  writer copies before mutating so a refused save cannot poison the shared rows.
+- Token list work yields to the UI between tips: per-row decode (Sigma
+  signature checks), per-token deploy-cap BEEF walks and per-card chain-fate
+  probes now hand the thread back whenever the 24ms hold budget is spent.
+
+### Changed
+
+- Token list phases are timed in the log — `activity-recovery`, `basket-read`,
+  `tip-decode`, `deploy-caps`, `live-tokens`, `legacy-tip-recovery`,
+  `chain-fate`, `encoding-proofs`, `icon-hydrate` — alongside `[beef]
+  local-lookup` (naming which store answered) and `[stale-output] restore`
+  (proof vs storage split). Only phases over 250ms log, so the next upload
+  attributes freezes to a phase without anyone reading the file.
+- `npm run triage` now extracts workloads (blocked time inside every timed
+  span), the last line before each freeze began, freeze bursts and origin
+  storage pressure, and asks Jev for the freeze owner among the workloads code
+  actually found, whether storage contributes, and which fix to make first.
+  Concurrent runs of one workload are unioned so a share never exceeds 100%.
+
 ## [1.3.334] - 2026-09-25
 
 ### Fixed

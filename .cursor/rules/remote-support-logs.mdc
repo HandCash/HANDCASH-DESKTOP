@@ -8,14 +8,24 @@ alwaysApply: true
 Devices POST session logs to BRC-CLOUD. **Do not ask the user to paste logs** when
 the upload URL / bucket is known — fetch `/latest` (and the bucket index) first.
 
-## Triage with Jev first, not by hand
+## Triage with Jev, never by hand
 
-`npm run triage [phone|android|desktop|<bucket>]` pulls the bucket, derives the
-facts in code (freeze counts by active wallet layer, blocked milliseconds,
-grouped error families, how often each family coincides with an *unexplained*
-freeze), then asks Jev — TypeSafe System One — for the judgments: user-visible
-freeze, primary driver, custody at risk, regression against the previous
-session, severity.
+**Do not read uploaded logs line by line.** `npm run triage
+[phone|android|desktop|<bucket>]` pulls the bucket, derives every fact in code,
+then asks Jev — TypeSafe System One — for the judgments. If the verdict does not
+name a fix, extend the extractor in `scripts/triage-logs.mjs` (or add a
+`<phase> done <N>ms` log line in the wallet so the next upload carries the
+missing fact) rather than opening the log.
+
+Code-derived facts: freezes by active wallet layer, blocked ms, **workloads**
+(every `<phase> done <N>ms` / `+<N>ms` line becomes a span; share of blocked
+time inside it), **precedingLines** (last line before each freeze began — lines
+after a freeze are just queued callbacks), **bursts**, **storage** (origin
+quota refusals, largest keys, slow ops), grouped error families.
+
+Jev's judgments: user-visible freeze, primary driver, **freeze owner** (chosen
+among the workloads code actually found), storage contribution, **fix first**,
+custody at risk, regression vs previous session, severity.
 
 ```bash
 npm run triage android          # verdict
@@ -23,9 +33,11 @@ npm run triage android -- --state   # just the extracted facts, no model call
 npm run triage android -- --json    # facts + raw answers
 ```
 
-Read a log by hand only to confirm something the triage flags. Never ask the
-model to count — counting, grouping and correlation stay in
+Never ask the model to count — counting, grouping and correlation stay in
 `scripts/triage-logs.mjs`. Needs `JEV_API_KEY` in `HANDCASH-DESKTOP/.env`.
+
+When you add long-running wallet work, log `[<tag>] <phase> done <N>ms` when it
+exceeds ~250ms so triage can attribute freezes to it without anyone reading.
 
 ## Endpoints
 
@@ -36,11 +48,16 @@ model to count — counting, grouping and correlation stay in
 | Latest upload | `GET /v1/logs/<bucket>/latest` |
 | Last few | `GET /v1/logs/<bucket>/all` |
 
-Current lab phone bucket (Android): `hc-2c00efc3249a742845a7`
+Buckets (aliases in `scripts/triage-logs.mjs`):
+
+| Alias | Bucket | Device |
+|---|---|---|
+| `android` | `hc-a580a83ef98f5463f546` | Brandon's Android (current) |
+| `phone` | `hc-2c00efc3249a742845a7` | older lab phone (uploads stopped Sep 6) |
+| `desktop` | `hc-ad7afbfaae0d01fffcb3` | Brandon Desktop (darwin) |
 
 ```bash
-curl -sS -A "Mozilla/5.0" \
-  "https://brc-cloud.bcryderman.workers.dev/v1/logs/hc-2c00efc3249a742845a7/latest"
+npm run triage android   # preferred — do not curl the log to read it
 ```
 
 In-app: Settings → Upload URL (`handcash.logs.uploadUrl`). New installs

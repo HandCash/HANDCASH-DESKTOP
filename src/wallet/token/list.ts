@@ -46,7 +46,7 @@ import {
   resolveBsv21IconDataUrl,
   resolveTokenIconDataUrl,
 } from './icons/resolve'
-import { yieldToUi } from '../yieldToUi'
+import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 import { stampBrc164Id } from '../itemAccess'
 import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
@@ -82,6 +82,22 @@ let listRunSeq = 0
 const LIST_CALL_TIMEOUT_MS = 13_000
 /** A basket read that takes longer than this is treated as unavailable. */
 const LIVE_READ_TIMEOUT_MS = 12_000
+/**
+ * Shortest phase worth a log line.
+ *
+ * The uploaded log is triaged by code that turns every `<phase> done <N>ms`
+ * line into a span and measures how much main-thread blocked time fell inside
+ * it. A whole list read on the lab phone spanned 11–20s of freezes; naming
+ * each phase lets that triage say *which* part owned them instead of "bsv21".
+ * Below this length a phase cannot contain a reportable freeze, so stay quiet.
+ */
+const PHASE_REPORT_MS = 250
+
+function reportPhase(phase: string, startedAt: number, detail?: string): void {
+  const ms = Date.now() - startedAt
+  if (ms < PHASE_REPORT_MS) return
+  console.info(`[bsv21] ${phase} done ${ms}ms${detail ? ` — ${detail}` : ''}`)
+}
 /** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
 let fungiblesAccountEpoch = 0
 const listeners = new Set<Listener>()
@@ -729,7 +745,9 @@ async function hydrateMissingTokenIcons(
   wallet: ActiveWallet,
   tokens: FungibleToken[],
 ): Promise<void> {
+  const startedAt = Date.now()
   await hydrateCachedTokenIcons(wallet, tokens)
+  reportPhase('icon-hydrate', startedAt, `${tokens.length} token(s)`)
 }
 
 /** Drop in-memory + durable token list so a wiped wallet cannot paint ghosts. */
@@ -911,10 +929,13 @@ export async function proveCachedFungibleEncodings(
   const wallet = active ?? getActiveWallet()
   if (!wallet) return
   const unknown = cached.filter(encodingVerdictIsFalsifiable)
+  if (unknown.length === 0) return
+  const startedAt = Date.now()
   for (const row of unknown) {
     await proveCachedFungibleEncoding(row.outpoint, wallet)
     await yieldToUi()
   }
+  reportPhase('encoding-proofs', startedAt, `${unknown.length} tip(s)`)
 }
 
 export function areFungiblesHydrated(): boolean {
@@ -1090,6 +1111,7 @@ async function dropUnconfirmedFungibles(
   const kept: FungibleToken[] = []
   const now = Date.now()
   for (const row of prior) {
+    if (uiBudgetExpired()) await yieldToUi()
     const point = normalizedDottedOutpoint(row.outpoint)
     const inLiveBasket = point == null || liveOutpoints.has(point)
     // Only pay for a lookup when absence would otherwise retire the card —
@@ -1186,7 +1208,9 @@ async function listFungiblesNow(
   // local transaction bytes in the background, and let the live list reconcile.
   void proveCachedFungibleEncodings(wallet)
   const beforeRepair = getCachedFungibles()
+  const repairStartedAt = Date.now()
   const repaired = await recoverReceivedTokensFromActivity(beforeRepair)
+  reportPhase('activity-recovery', repairStartedAt)
   if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
   if (fungibleProjectionChanged(repaired, beforeRepair)) {
     setFungiblesCache(repaired, { forEpoch: epoch, forRun: run })
@@ -1222,12 +1246,14 @@ async function listFungiblesNow(
     const startedAt = Date.now()
     let liveRows: FungibleToken[] = []
     let liveReadUsable = true
+    const basketStartedAt = Date.now()
     try {
       const { listBsv21BinaryTokens } = await import('./listTips')
       // The basket read is the one call that can park behind a spend or an
       // account rebind. Absence it never answered is not absence: time out
       // into `live-read-unavailable`, which keeps every cached card.
       liveRows = await withLiveReadTimeout(listBsv21BinaryTokens(wallet))
+      reportPhase('live-tokens', basketStartedAt, `${liveRows.length} token(s)`)
     } catch (err) {
       liveReadUsable = false
       if (err instanceof LiveReadTimeout) {
@@ -1258,19 +1284,27 @@ async function listFungiblesNow(
             )
         : [],
     )
+    const recoveryStartedAt = Date.now()
     const recoveredHeld =
       missingTokenIds.size > 0
         ? await recoverCachedLegacyTips(wallet, missingTokenIds)
         : []
+    reportPhase(
+      'legacy-tip-recovery',
+      recoveryStartedAt,
+      `${missingTokenIds.size} missing token id(s)`,
+    )
     if (recoveredHeld.length > 0) {
       liveRows = mergeLiveFungibles(aggregateFungibles(recoveredHeld), liveRows)
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
     // Live BRC-162 rows win over stale JSON BSV-21 rows.
+    const fateStartedAt = Date.now()
     const prior = await dropUnconfirmedFungibles(cached, wallet, {
       liveRows,
       liveReadUsable,
     })
+    reportPhase('chain-fate', fateStartedAt)
     const merged = withCardsPaintedDuringRead(
       mergeLiveFungibles(liveRows, prior),
       runStartedAt,

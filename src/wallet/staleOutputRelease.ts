@@ -1306,10 +1306,12 @@ export async function restoreUnspentAssetOutpoint(
   const parsed = parseOutpoint(outpoint);
   if (!parsed) return false;
 
+  const startedAt = Date.now();
   if (!(await outpointProvenUnspent(active, outpoint))) return false;
   // A spend may have completed while the provider check was in flight. Local
   // confirmed-consumption state always outranks a lagging "unspent" response.
   if (isItemSent(outpoint)) return false;
+  const provenAt = Date.now();
 
   const storage = active.wallet.storage;
   if (!storage?.runAsStorageProvider) return false;
@@ -1336,7 +1338,15 @@ export async function restoreUnspentAssetOutpoint(
     "restore:asset-proven-unspent"
   );
   if (!released) creditUtxo(outpoint, { satoshis: 1 });
-  console.info(`[stale-output] restored proven-unspent asset ${outpoint}`);
+  // `restore done <N>ms` is a span for log triage: the provider proof is
+  // network, the storage write is local; the split says which one held the
+  // thread when a freeze lands inside it.
+  const now = Date.now();
+  console.info(
+    `[stale-output] restore done ${now - startedAt}ms — proof ${
+      provenAt - startedAt
+    }ms, storage ${now - provenAt}ms · restored proven-unspent asset ${outpoint}`
+  );
   return true;
 }
 

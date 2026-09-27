@@ -62,7 +62,10 @@ vi.mock('../beefCache', () => ({
   rememberBeefBinary: () => {},
 }))
 
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => {} }))
+vi.mock('../yieldToUi', () => ({
+  yieldToUi: async () => {},
+  uiBudgetExpired: () => false,
+}))
 
 const TOKEN = `${'ab'.repeat(32)}_0`
 const OTHER = `${'dd'.repeat(32)}_0`

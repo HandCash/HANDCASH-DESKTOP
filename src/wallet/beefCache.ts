@@ -263,6 +263,19 @@ function findDurableBeef(txid: string): Beef | null {
   return null
 }
 
+/**
+ * Shortest local lookup worth a log line. Log triage turns
+ * `local-lookup done <N>ms` into a span and measures freeze time inside it;
+ * the source that answered says which store was slow.
+ */
+const LOCAL_LOOKUP_REPORT_MS = 250
+
+function reportLocalLookup(txid: string, startedAt: number, source: string): void {
+  const ms = Date.now() - startedAt
+  if (ms < LOCAL_LOOKUP_REPORT_MS) return
+  console.info(`[beef] local-lookup done ${ms}ms — ${source} ${txid.slice(0, 8)}`)
+}
+
 /** Session cache + durable created BEEF + toolbox storage. No network. */
 export async function getLocalBeefForTxid(
   wallet: ActiveWallet,
@@ -271,6 +284,7 @@ export async function getLocalBeefForTxid(
   const key = keyOf(txid)
   const cached = findSessionBeef(key)
   if (cached) return cached
+  const startedAt = Date.now()
   try {
     const { signedChequeAtomic } = await import('./signedChequeArchive')
     const archived = signedChequeAtomic(key)
@@ -278,6 +292,7 @@ export async function getLocalBeefForTxid(
       const beef = Beef.fromBinary(archived)
       if (beef.findTxid(key)?.tx) {
         indexBeefTree(beef)
+        reportLocalLookup(key, startedAt, 'cheque-archive')
         return beef
       }
     }
@@ -287,13 +302,16 @@ export async function getLocalBeefForTxid(
   const durable = findDurableBeef(key)
   if (durable) {
     indexBeefTree(durable)
+    reportLocalLookup(key, startedAt, 'durable-created')
     return durable
   }
   const local = await getBeefFromLocalStorage(wallet, key)
   if (local) {
     indexBeefTree(local)
+    reportLocalLookup(key, startedAt, 'toolbox-storage')
     return local
   }
+  reportLocalLookup(key, startedAt, 'miss')
   return null
 }
 

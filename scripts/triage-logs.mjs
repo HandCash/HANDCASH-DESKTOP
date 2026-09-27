@@ -135,6 +135,12 @@ function parseSession(text) {
     c.worstMs = Math.max(c.worstMs, s.ms)
   }
 
+  const blockedMsTotal = stalls.reduce((a, s) => a + s.ms, 0)
+  const workloads = workloadOverlap(events, stalls, blockedMsTotal)
+  const precedingLines = stallTriggers(events, stalls, blockedMsTotal)
+  const storage = storagePressure(events)
+  const bursts = stallBursts(events, stalls, workloads.spans)
+
   const span =
     events.length > 0
       ? Math.round((events.at(-1).at - events[0].at) / 1000)
@@ -149,12 +155,22 @@ function parseSession(text) {
     freezes: {
       total: stalls.length,
       worstMs: stalls.reduce((a, s) => Math.max(a, s.ms), 0),
-      blockedMsTotal: stalls.reduce((a, s) => a + s.ms, 0),
+      blockedMsTotal,
       byActiveLayer: stallClasses,
       longtaskCount: longtasks.length,
     },
     // "layers idle" means nothing the wallet coordinator names was running.
     idleFreezes: stalls.filter((s) => /idle/i.test(s.during)).length,
+    // Timed work whose span overlapped blocked time. Spans from different
+    // workloads can overlap each other, so shares may sum above 1.
+    workloads: workloads.rows,
+    // The last line logged before each freeze began. Lines *after* a freeze
+    // are callbacks that were queued behind it, so only the preceding line
+    // can name what was running when the thread stopped.
+    precedingLines,
+    // Freezes within 3s of each other, with everything that overlapped them.
+    bursts,
+    storage,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -167,6 +183,211 @@ function parseSession(text) {
         message: f.family,
       })),
   }
+}
+
+/* ------------------------------------------------------- freeze forensics */
+
+const FREEZE_LINE_RE = /^\[(stall|longtask)\]/
+const TAG_RE = /^\[([\w-]+)[^\]]*\]\s*(.*)$/
+/**
+ * `listOutputs done 19570ms`, `listOutputs done (ownership) 31ms`, or
+ * `[brc29-ingest …] +1781ms beef`.
+ */
+const DURATION_RE =
+  /(?:(\S+)\s+)?(?:done|finished|completed?)(?:\s+\([^)]*\))?\s+(\d+)ms|\+(\d+)ms/i
+
+const overlapMs = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0))
+const stallStart = (s) => s.at - s.ms
+
+/**
+ * Turn every "took N ms" line into a span and measure how much blocked time
+ * fell inside spans of each workload. A log line cannot be written while the
+ * thread is blocked, so a span that *contains* a freeze was running across it.
+ */
+function workloadOverlap(events, stalls, blockedMsTotal) {
+  const spans = []
+  for (const e of events) {
+    const tag = TAG_RE.exec(e.text)
+    if (!tag) continue
+    const d = DURATION_RE.exec(tag[2])
+    if (!d) continue
+    const ms = Number(d[2] ?? d[3])
+    if (!Number.isFinite(ms) || ms <= 0) continue
+    const verb = d[2] != null && d[1] && !/^\W/.test(d[1]) ? ` ${d[1]}` : ''
+    spans.push({ label: `${tag[1]}${verb}`, start: e.at - ms, end: e.at, ms })
+  }
+
+  const byLabel = new Map()
+  for (const sp of spans) {
+    const row =
+      byLabel.get(sp.label) ??
+      { label: sp.label, spans: 0, longestMs: 0, blockedMsInside: 0, freezes: new Set(), all: [] }
+    row.spans += 1
+    row.longestMs = Math.max(row.longestMs, sp.ms)
+    row.all.push(sp)
+    byLabel.set(sp.label, row)
+  }
+  // Concurrent runs of the same workload (a deferred read finishing beside a
+  // live one) would count the same blocked millisecond twice; union them so a
+  // label's share is at most 1.
+  for (const row of byLabel.values()) {
+    const merged = []
+    for (const sp of row.all.sort((a, b) => a.start - b.start)) {
+      const last = merged.at(-1)
+      if (last && sp.start <= last.end) last.end = Math.max(last.end, sp.end)
+      else merged.push({ start: sp.start, end: sp.end })
+    }
+    for (const iv of merged) {
+      for (const s of stalls) {
+        const o = overlapMs(iv.start, iv.end, stallStart(s), s.at)
+        if (o > 0) {
+          row.blockedMsInside += o
+          row.freezes.add(s.at)
+        }
+      }
+    }
+  }
+
+  const rows = [...byLabel.values()]
+    .filter((r) => r.blockedMsInside > 0)
+    .sort((a, b) => b.blockedMsInside - a.blockedMsInside)
+    .slice(0, 8)
+    .map((r) => ({
+      workload: r.label,
+      runs: r.spans,
+      longestRunMs: r.longestMs,
+      freezesInside: r.freezes.size,
+      blockedMsInside: Math.round(r.blockedMsInside),
+      shareOfBlockedTime: blockedMsTotal
+        ? Number((r.blockedMsInside / blockedMsTotal).toFixed(2))
+        : 0,
+    }))
+  return { rows, spans }
+}
+
+/** Family of the last line before each freeze started, grouped. */
+function stallTriggers(events, stalls, blockedMsTotal) {
+  const LOOKBACK_MS = 5_000
+  const candidates = events.filter((e) => !FREEZE_LINE_RE.test(e.text))
+  const byFamily = new Map()
+  for (const s of stalls) {
+    const start = stallStart(s)
+    let last = null
+    for (const e of candidates) {
+      if (e.at >= start) break
+      if (e.at >= start - LOOKBACK_MS) last = e
+    }
+    if (!last) continue
+    const key = family(last.text)
+    const row = byFamily.get(key) ?? { message: key, freezes: 0, blockedMs: 0 }
+    row.freezes += 1
+    row.blockedMs += s.ms
+    byFamily.set(key, row)
+  }
+  return [...byFamily.values()]
+    .sort((a, b) => b.blockedMs - a.blockedMs)
+    .slice(0, 8)
+    .map((r) => ({
+      ...r,
+      shareOfBlockedTime: blockedMsTotal ? Number((r.blockedMs / blockedMsTotal).toFixed(2)) : 0,
+    }))
+}
+
+/**
+ * Origin-storage quota facts. A refused write means the WebView's ~5MB store
+ * is full; the report line names what is holding it. Slow-store lines are the
+ * per-operation cost the storage layer measured itself.
+ */
+function storagePressure(events) {
+  const REFUSED_RE =
+    /^\[storage\] durable write refused for (\S+)(?: \((\d+)KB\) — (\d+)KB held across (\d+) keys · largest: (.*))?$/
+  const SLOW_RE = /^\[storage\] slow (\S+) (\d+)ms · (\S+) \((\d+)KB\)/
+  const RECLAIM_RE = /^\[storage\] reclaimed (\d+)KB/
+  const shortKey = (k) => k.split(':wallet:')[0]
+
+  const out = {
+    refusedWrites: 0,
+    refusedKeys: [],
+    heldKB: null,
+    keyCount: null,
+    largestKeys: [],
+    slowOps: 0,
+    worstSlowOp: null,
+    reclaimedKB: 0,
+  }
+  const refusedKeys = new Set()
+  for (const e of events) {
+    let m = REFUSED_RE.exec(e.text)
+    if (m) {
+      out.refusedWrites += 1
+      refusedKeys.add(shortKey(m[1]))
+      if (m[3]) {
+        out.heldKB = Number(m[3])
+        out.keyCount = Number(m[4])
+        out.largestKeys = (m[5] ?? '')
+          .split(/\s+/)
+          .map((tok) => /^(.+)=(\d+)KB$/.exec(tok))
+          .filter(Boolean)
+          .map((t) => ({ key: shortKey(t[1]), kb: Number(t[2]) }))
+      }
+      continue
+    }
+    m = SLOW_RE.exec(e.text)
+    if (m) {
+      out.slowOps += 1
+      const ms = Number(m[2])
+      if (!out.worstSlowOp || ms > out.worstSlowOp.ms) {
+        out.worstSlowOp = { op: m[1], ms, key: shortKey(m[3]), kb: Number(m[4]) }
+      }
+      continue
+    }
+    m = RECLAIM_RE.exec(e.text)
+    if (m) out.reclaimedKB += Number(m[1])
+  }
+  out.refusedKeys = [...refusedKeys].slice(0, 6)
+  return out
+}
+
+/** Cluster freezes closer than 3s and describe each cluster's surroundings. */
+function stallBursts(events, stalls, spans) {
+  const GAP_MS = 3_000
+  const launches = events.filter((e) => /^App log capture started/.test(e.text)).map((e) => e.at)
+  const sorted = [...stalls].sort((a, b) => stallStart(a) - stallStart(b))
+  const clusters = []
+  for (const s of sorted) {
+    const cur = clusters.at(-1)
+    if (cur && stallStart(s) - cur.end <= GAP_MS) {
+      cur.end = Math.max(cur.end, s.at)
+      cur.stalls.push(s)
+    } else {
+      clusters.push({ start: stallStart(s), end: s.at, stalls: [s] })
+    }
+  }
+  const nonFreeze = events.filter((e) => !FREEZE_LINE_RE.test(e.text))
+  return clusters
+    .map((c) => {
+      const launch = launches.filter((t) => t <= c.start).at(-1)
+      const before = nonFreeze.filter((e) => e.at < c.start).at(-1)
+      const overlapping = new Map()
+      for (const sp of spans) {
+        const o = overlapMs(sp.start, sp.end, c.start, c.end)
+        if (o > 0) overlapping.set(sp.label, (overlapping.get(sp.label) ?? 0) + o)
+      }
+      return {
+        secondsAfterLaunch: launch != null ? Math.round((c.start - launch) / 1000) : null,
+        durationSeconds: Math.round((c.end - c.start) / 1000),
+        freezes: c.stalls.length,
+        blockedMs: c.stalls.reduce((a, s) => a + s.ms, 0),
+        activeLayers: [...new Set(c.stalls.map((s) => s.during))],
+        overlappingWorkloads: [...overlapping.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([label, ms]) => `${label} (${Math.round(ms)}ms overlap)`),
+        lineBefore: before ? family(before.text) : null,
+      }
+    })
+    .sort((a, b) => b.blockedMs - a.blockedMs)
+    .slice(0, 6)
 }
 
 /**
@@ -189,6 +410,62 @@ function splitUploads(text) {
 }
 
 /* ------------------------------------------------------------------- jev */
+
+/** Choice ids must be identifiers; workload labels carry spaces and dashes. */
+const choiceId = (label) => label.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase()
+
+/**
+ * Questions that depend on what code found: the freeze-owner candidates are
+ * the workloads whose spans actually overlapped blocked time, so the model
+ * chooses among real suspects instead of a fixed taxonomy.
+ */
+function forensicQuestions(latest) {
+  const owners = {}
+  for (const w of latest.workloads) {
+    owners[choiceId(w.workload)] =
+      `The \`${w.workload}\` work — see the \`latest.workloads\` row with workload "${w.workload}" for how much blocked time fell inside its runs.`
+  }
+  owners.storage_quota =
+    'The origin store itself: `latest.storage` shows writes refused at quota, and every refusal or large-blob write is synchronous work on the same thread.'
+  owners.startup_recompose =
+    'Unlock-time recompose / legacy ingest running as a whole, rather than any single timed workload.'
+  owners.unclear = 'Nothing in `latest.workloads`, `latest.precedingLines` or `latest.bursts` singles one out.'
+
+  return {
+    freeze_owner: {
+      type: 'choice',
+      instructions:
+        'Which single piece of work most plausibly owns the blocked time in `latest`? Weigh `latest.workloads[].shareOfBlockedTime` (blocked time that fell inside that workload’s runs), `latest.precedingLines` (the last line logged before each freeze began — later lines were only queued behind it), and `latest.bursts[].overlappingWorkloads`. Overlapping shares can each be large; prefer the one that recurs across bursts.',
+      criteria: owners,
+    },
+    storage_pressure_contributes: {
+      type: 'noul',
+      instructions:
+        'Given `latest.storage` — origin storage near its quota, writes refused, the sizes of the largest keys — is the storage layer plausibly adding to the freezes, either through refused-write handling or by serialising those large values synchronously?',
+      criteria: {
+        true: 'The store is full or nearly full with multi-hundred-KB values, and freezes coincide with storage activity.',
+        false: 'Storage has headroom or its activity does not line up with the freezes.',
+      },
+    },
+    fix_first: {
+      type: 'choice',
+      instructions:
+        'What single change should be made first to remove the freezes described by `latest`, given `freeze_owner` candidates, `latest.storage`, and the repeating problems?',
+      criteria: {
+        yield_or_offload_owner:
+          'Slice the owning workload so it yields to the event loop between items, or move its decoding/verification into a worker. Stored data is unchanged.',
+        shrink_stored_state:
+          'Cap or relocate the largest stored keys so the origin store has headroom and large JSON values stop being serialised on the main thread.',
+        dedupe_refreshes:
+          'Stop starting the same read while one is already running — lines like "refresh still running" or "deferring listOutputs" show the work is repeated, not slow.',
+        throttle_polling:
+          'Run background checks (dependency health, header polls, backup probes) less often while the app is in the foreground.',
+        need_more_evidence:
+          'The facts do not single out a change; instrument the function inside the freeze first.',
+      },
+    },
+  }
+}
 
 const QUESTIONS = {
   user_visible_freeze: {
@@ -250,6 +527,7 @@ const QUESTIONS = {
 }
 
 async function askJev(state, apiKey) {
+  const questions = { ...QUESTIONS, ...forensicQuestions(state.latest) }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const res = await fetch(TYPESAFE_URL, {
       method: 'POST',
@@ -257,7 +535,7 @@ async function askJev(state, apiKey) {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ state, model: 'jev-latest', questions: QUESTIONS }),
+      body: JSON.stringify({ state, model: 'jev-latest', questions }),
     })
     if (res.ok) return res.json()
     if (res.status !== 429 && res.status !== 529) {
@@ -299,10 +577,65 @@ function report(state, answers) {
     }`,
   )
 
-  const driver = answers.primary_driver
-  console.log(`\nPrimary driver: ${driver.choice} (confidence ${driver.confidence.toFixed(2)})`)
-  for (const [k, v] of Object.entries(driver.probabilities).sort((a, b) => b[1] - a[1])) {
-    if (v >= 0.03) console.log(`  ${k.padEnd(20)} ${BAR(v)} ${(v * 100).toFixed(0)}%`)
+  const choiceBlock = (title, c) => {
+    console.log(`\n${title}: ${c.choice} (confidence ${c.confidence.toFixed(2)})`)
+    for (const [k, v] of Object.entries(c.probabilities).sort((a, b) => b[1] - a[1])) {
+      if (v >= 0.03) console.log(`  ${k.padEnd(28)} ${BAR(v)} ${(v * 100).toFixed(0)}%`)
+    }
+  }
+  choiceBlock('Primary driver', answers.primary_driver)
+  choiceBlock('Freeze owner', answers.freeze_owner)
+  console.log(
+    `\n${'Storage adds to freezes'.padEnd(24)} ${BAR(answers.storage_pressure_contributes.noul)} ${(
+      answers.storage_pressure_contributes.noul * 100
+    ).toFixed(0)}%`,
+  )
+  choiceBlock('Fix first', answers.fix_first)
+
+  if (latest.workloads.length) {
+    console.log('\nWorkloads overlapping blocked time (code-measured):')
+    for (const w of latest.workloads) {
+      console.log(
+        `  ${w.workload.padEnd(28)} ${BAR(w.shareOfBlockedTime)} ${(w.shareOfBlockedTime * 100).toFixed(0)}% · ` +
+          `${w.runs} run(s), longest ${w.longestRunMs}ms, inside ${w.freezesInside} freeze(s)`,
+      )
+    }
+  }
+  if (latest.precedingLines.length) {
+    console.log('\nLast line before a freeze began (code-measured):')
+    for (const p of latest.precedingLines.slice(0, 6)) {
+      console.log(
+        `  ${String(p.freezes).padStart(3)}× · ${(p.shareOfBlockedTime * 100).toFixed(0)}% of blocked time · ${p.message}`,
+      )
+    }
+  }
+  if (latest.bursts.length) {
+    console.log('\nFreeze bursts:')
+    for (const b of latest.bursts.slice(0, 4)) {
+      const when = b.secondsAfterLaunch != null ? `+${b.secondsAfterLaunch}s after launch` : 'launch unknown'
+      console.log(
+        `  ${when}: ${b.freezes} freeze(s), ${(b.blockedMs / 1000).toFixed(1)}s blocked over ${b.durationSeconds}s · ${b.activeLayers.join(' | ')}`,
+      )
+      if (b.overlappingWorkloads.length) console.log(`      during: ${b.overlappingWorkloads.join(', ')}`)
+      if (b.lineBefore) console.log(`      preceded by: ${b.lineBefore}`)
+    }
+  }
+  const st = latest.storage
+  if (st.refusedWrites || st.slowOps) {
+    console.log('\nOrigin storage:')
+    if (st.heldKB != null) {
+      console.log(
+        `  ${st.heldKB}KB held across ${st.keyCount} keys · ${st.refusedWrites} refused write(s) for ${st.refusedKeys.join(', ')}`,
+      )
+      console.log(`  largest: ${st.largestKeys.map((k) => `${k.key}=${k.kb}KB`).join('  ')}`)
+    } else if (st.refusedWrites) {
+      console.log(`  ${st.refusedWrites} refused write(s) for ${st.refusedKeys.join(', ')}`)
+    }
+    if (st.worstSlowOp) {
+      console.log(
+        `  ${st.slowOps} slow op(s), worst ${st.worstSlowOp.op} ${st.worstSlowOp.ms}ms on ${st.worstSlowOp.key} (${st.worstSlowOp.kb}KB)`,
+      )
+    }
   }
 
   if (latest.repeatingProblems.length) {

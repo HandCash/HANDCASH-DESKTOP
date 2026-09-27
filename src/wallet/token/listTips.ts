@@ -22,6 +22,7 @@ import {
 } from '../sentItemGuard'
 import { scriptPaysAddress } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
+import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
 
@@ -230,16 +231,36 @@ function healStaleReceivedHide(tip: Bsv21Utxo, wallet: ActiveWallet): boolean {
   return true
 }
 
+/**
+ * Shortest phase worth a log line. The uploaded log is triaged by code that
+ * turns `<phase> done <N>ms` into a span and measures the freeze time inside
+ * it; naming the basket read, the per-tip decode and the deploy-cap lookups
+ * separately is what lets it say which one owns a stall.
+ */
+const PHASE_REPORT_MS = 250
+
+function reportPhase(phase: string, startedAt: number, detail?: string): void {
+  const ms = Date.now() - startedAt
+  if (ms < PHASE_REPORT_MS) return
+  console.info(`[bsv21] ${phase} done ${ms}ms${detail ? ` — ${detail}` : ''}`)
+}
+
 export async function listBsv21BinaryTips(
   wallet: ActiveWallet,
   opts: { includeCustomInstructions?: boolean } = {},
 ): Promise<Bsv21Utxo[]> {
+  const readStartedAt = Date.now()
   const rows = await listBasketTips(wallet, BSV21_BASKET, {
     includeCustomInstructions: opts.includeCustomInstructions,
   })
+  reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
+  const decodeStartedAt = Date.now()
   const tips: Bsv21Utxo[] = []
   const seen = new Set<string>()
   for (const row of rows) {
+    // Each decode may verify a Sigma signature; keep the thread answerable
+    // between rows rather than for the whole basket.
+    if (uiBudgetExpired()) await yieldToUi()
     const tip = decodeListedBsv21Tip(row, wallet.identityKey)
     if (!tip) continue
     if (isItemSent(tip.outpoint) && !healStaleReceivedHide(tip, wallet)) {
@@ -249,6 +270,7 @@ export async function listBsv21BinaryTips(
     seen.add(tip.outpoint)
     tips.push(tip)
   }
+  reportPhase('tip-decode', decodeStartedAt, `${tips.length} tip(s)`)
   return tips
 }
 
@@ -258,11 +280,18 @@ export async function listBsv21BinaryTokens(
   const active = wallet ?? getActiveWallet()
   if (!active) return []
   const tokens = aggregateFungibles(await listBsv21BinaryTips(active))
+  const capsStartedAt = Date.now()
+  let lookups = 0
   for (const token of tokens) {
     if (token.binarySupply !== 'locked' || token.maxSupply != null) continue
+    // Each miss walks local BEEF sources synchronously; give the UI a turn
+    // between tokens.
+    if (uiBudgetExpired()) await yieldToUi()
+    lookups += 1
     const cap = await capFromLocalDeploy(active, token.tokenId)
     if (cap != null) token.maxSupply = cap
   }
+  reportPhase('deploy-caps', capsStartedAt, `${lookups} lookup(s)`)
   return tokens
 }
 
