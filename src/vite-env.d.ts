@@ -99,6 +99,12 @@ interface HandCashBridge {
   respondHttp: (response: HttpResponseEvent) => void
   respondDevicePeerHttp?: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
+  /**
+   * The prompt that pulled the wallet forward is answered and no other is
+   * waiting — return the desktop to the app that asked. No-op on shells that
+   * cannot restore activation order.
+   */
+  releasePromptFocus?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
   /** Open a BRC-100 web app in a wallet-controlled browser surface. */
   openAppBrowser?: (

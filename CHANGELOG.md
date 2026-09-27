@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.338] - 2026-09-27
+
+### Changed
+
+- A BRC-100 prompt that pulled the wallet in front of the browser hands the
+  desktop back once it is answered and nothing else is waiting. The request
+  keeps processing while the wallet is hidden (background throttling is
+  already off), so the app the user was in — the wallet reference demo, a
+  game, a market — continues in view instead of behind the wallet. A prompt
+  approved from inside the wallet never hides it. macOS hides the app;
+  other platforms give up focus.
+- Bridge `createAction` / `signAction` / `internalizeAction` log their phases
+  when wallet work passes 250ms: `[brc100] createAction done <N>ms —
+  preflight · spend · package · cheque · seal`, with the user's approval time
+  beside the span, not inside it. Triage can now name which part of the tx
+  step an app waited on.
+
 ## [1.3.337] - 2026-09-27
 
 ### Fixed

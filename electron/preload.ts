@@ -90,6 +90,8 @@ const handcash = {
     ipcRenderer.send('device-peer-http-response', response)
   },
   focusWindow: () => ipcRenderer.invoke('app:focus-window') as Promise<void>,
+  releasePromptFocus: () =>
+    ipcRenderer.invoke('app:release-prompt-focus') as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,
   openAppBrowser: (url: string) =>
     ipcRenderer.invoke('app:open-in-app-browser', url) as Promise<

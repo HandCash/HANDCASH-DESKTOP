@@ -595,11 +595,13 @@ export async function handleBrc100Request(
       }
     }
     const ok = result.status >= 200 && result.status < 300
+    reportActionPhases(event.request_id, method, ok)
     if (method && !(quiet && ok)) {
       safeLogBrc100(method, originator, result, Date.now() - t0, args)
     }
     return result
   } catch (err) {
+    reportActionPhases(event.request_id, method, false)
     // The caller turns a throw into a 500 and never sees this frame, so a
     // failure logged only on the return path leaves no trace at all.
     if (method) {
@@ -621,6 +623,52 @@ export async function handleBrc100Request(
   } finally {
     releaseInbound()
   }
+}
+
+/**
+ * Phase clock for mutating bridge calls, keyed by request id.
+ *
+ * The app sees one number — how long `createAction` took — and cannot tell
+ * the user's approval from the wallet's signing, packaging and sealing.
+ * Triage cannot either unless the wallet says so. The `done` line covers
+ * only wallet work (approval is reported beside it, not inside the span) so
+ * a slow approval never "owns" freezes it did not cause.
+ */
+const actionPhaseClocks = new Map<number, { at: number; laps: Array<[string, number]> }>()
+const ACTION_PHASE_REPORT_MS = 250
+
+function startActionPhases(requestId: number): void {
+  actionPhaseClocks.set(requestId, { at: Date.now(), laps: [] })
+}
+
+function lapActionPhase(requestId: number, name: string): void {
+  const clock = actionPhaseClocks.get(requestId)
+  if (!clock) return
+  const now = Date.now()
+  clock.laps.push([name, now - clock.at])
+  clock.at = now
+}
+
+function reportActionPhases(requestId: number, method: string, ok: boolean): void {
+  const clock = actionPhaseClocks.get(requestId)
+  actionPhaseClocks.delete(requestId)
+  if (!clock || clock.laps.length === 0) return
+  let approvalMs = 0
+  let workMs = 0
+  const parts: string[] = []
+  for (const [name, ms] of clock.laps) {
+    if (name === 'approval') {
+      approvalMs += ms
+      continue
+    }
+    workMs += ms
+    parts.push(`${name} ${ms}ms`)
+  }
+  if (workMs < ACTION_PHASE_REPORT_MS && approvalMs < ACTION_PHASE_REPORT_MS) return
+  const approval = approvalMs > 0 ? ` · approval ${approvalMs}ms (user)` : ''
+  console.info(
+    `[brc100] ${method} ${ok ? 'done' : 'failed after'} ${workMs}ms — ${parts.join(' · ')}${approval}`,
+  )
 }
 
 function safeLogBrc100(
@@ -827,6 +875,7 @@ async function handleBrc100RequestInner(
   }
 
   if (isActionMethod(method)) {
+    startActionPhases(event.request_id)
     if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
       try {
         await verifyP1SatSpendLabels(active.wallet, args)
@@ -870,7 +919,9 @@ async function handleBrc100RequestInner(
         }
       }
     }
+    lapActionPhase(event.request_id, 'preflight')
     const actionDecision = await requestActionApproval(originator, method, args)
+    lapActionPhase(event.request_id, 'approval')
     if (actionDecision !== 'allow') {
       return {
         status: 403,
@@ -988,6 +1039,7 @@ async function handleBrc100RequestInner(
           // state decides now; reconciliation and healing remain asynchronous.
           { promote: false },
         )
+        lapActionPhase(event.request_id, 'spend')
         setPaymentProgress('finishing', 'Updating your balance', null, 'Working…')
       } catch (err) {
         clearPaymentProgress()
@@ -1049,6 +1101,7 @@ async function handleBrc100RequestInner(
         undefined,
         { promote: false },
       )
+      lapActionPhase(event.request_id, 'ingest')
     } else {
       // Reads share the wallet with background ingest but must not raise spend
       // priority. Mint Studio / explorers poll `listOutputs` while a ticker is
@@ -1110,6 +1163,7 @@ async function handleBrc100RequestInner(
       const txid = extractTxid(result)
       if (txid) {
         const completed = await cacheCreateActionBeef(active, txid, result)
+        lapActionPhase(event.request_id, 'package')
         if (completed && result && typeof result === 'object') {
           // The app receives the same SPV-complete package this wallet can
           // spend/post, including every locally-known unconfirmed parent body.
@@ -1121,10 +1175,12 @@ async function handleBrc100RequestInner(
             atomicBeef: completed,
             satoshis: extractSatsFromArgs(method, args),
           })
+          lapActionPhase(event.request_id, 'cheque')
           if (!funneled) await sealAfterAppCreateAction(txid, result)
         } else {
           await sealAfterAppCreateAction(txid, result)
         }
+        lapActionPhase(event.request_id, 'seal')
         if (method === 'createAction') {
           cacheImageIconsFromCreateAction(txid, args, result)
           void import('./token/list').then(({ proveCachedFungibleEncodings }) =>
@@ -1182,6 +1238,7 @@ async function handleBrc100RequestInner(
       // BSV the app just credited must be selectable for the next createAction.
       const receivedTxid = extractTxid(result) ?? extractTxid(args)
       if (receivedTxid) await keepChangeOfSignedTx(receivedTxid)
+      lapActionPhase(event.request_id, 'seal')
       if (isBsv21ReceiveArgs(method, args)) {
         paintAfterInternalizeBsv21(active, args, result)
         playWalletSound('receive')

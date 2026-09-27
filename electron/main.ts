@@ -366,10 +366,58 @@ function showMainWindow(): void {
     return
   }
   if (mainWindow.isMinimized()) mainWindow.restore()
+  // `releasePromptFocus` may have hidden the whole app; un-hide before raising.
+  if (process.platform === 'darwin') app.show()
   mainWindow.show()
   mainWindow.focus()
   if (process.platform === 'darwin') app.dock?.show()
   app.focus({ steal: true })
+}
+
+/**
+ * When a BRC-100 prompt pulled the wallet in front of the app the user was
+ * in. Set only when the wallet was not already focused, so approving from
+ * inside the wallet never hides it.
+ */
+let promptStoleFocusAt = 0
+const PROMPT_FOCUS_RETURN_WINDOW_MS = 10 * 60_000
+
+function focusWindowForPrompt(): void {
+  const wasInFront =
+    !!mainWindow &&
+    !mainWindow.isDestroyed() &&
+    mainWindow.isVisible() &&
+    !mainWindow.isMinimized() &&
+    mainWindow.isFocused()
+  if (!wasInFront) {
+    if (promptStoleFocusAt === 0) promptStoleFocusAt = Date.now()
+  } else if (Date.now() - promptStoleFocusAt > 2_000) {
+    // The user is already in the wallet (not the retry the renderer fires
+    // right after the first raise) — an earlier steal is moot.
+    promptStoleFocusAt = 0
+  }
+  showMainWindow()
+}
+
+/**
+ * The prompt that stole focus has been answered and nothing else is waiting:
+ * hand the desktop back to the app that asked. The renderer keeps working —
+ * `backgroundThrottling` is off — so the app's request completes while the
+ * user is already looking at its page again.
+ */
+function releasePromptFocus(): void {
+  const stoleAt = promptStoleFocusAt
+  promptStoleFocusAt = 0
+  if (stoleAt === 0 || Date.now() - stoleAt > PROMPT_FOCUS_RETURN_WINDOW_MS) return
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (process.platform === 'darwin') {
+    // Hiding the app returns activation to the previous frontmost app.
+    app.hide()
+    return
+  }
+  // No cross-app activation order elsewhere; giving up focus is the most a
+  // window can do without minimizing itself.
+  mainWindow.blur()
 }
 
 function createWindow(): void {
@@ -785,7 +833,11 @@ ipcMain.handle('bridge:restart', async () => {
 })
 
 ipcMain.handle('app:focus-window', () => {
-  showMainWindow()
+  focusWindowForPrompt()
+})
+
+ipcMain.handle('app:release-prompt-focus', () => {
+  releasePromptFocus()
 })
 
 ipcMain.handle('app:open-external', async (_event, url: unknown) => {

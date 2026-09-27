@@ -642,7 +642,25 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
   }
   resolve(decision)
   pumpQueue()
+  releasePromptFocusIfIdle()
   return true
+}
+
+/**
+ * Nothing left to approve — give the desktop back to the app that asked.
+ *
+ * The prompt pulled the wallet in front of the browser; once it is answered
+ * the user wants to watch the app continue, not find the wallet on top and
+ * switch back by hand. The shell only acts when the prompt actually stole
+ * focus, and the request keeps processing while the wallet is hidden.
+ */
+function releasePromptFocusIfIdle(): void {
+  if (current || queue.length > 0) return
+  try {
+    void window.handcash?.releasePromptFocus?.()
+  } catch {
+    // Non-DOM environments (tests) — ignore.
+  }
 }
 
 /** Drop every waiting connect/action prompt (HTTP timeout / client gone). */
