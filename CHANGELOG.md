@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.344] - 2026-09-27
+
+### Fixed
+
+- Multi-wallet, second lock: `staleOutputRelease` resolves every wallet
+  through `pinnedActiveWallet()`. The pinned wallet's `storage` — and the
+  provider handed out inside `runAsStorageProvider` — throws `AbortError` the
+  moment its runtime is disposed, so 3k lines of repair code cannot write into
+  the next account without a guard past every await.
+- `refreshFromChainExclusive` captures its runtime and guards each mutation
+  phase (nosend release, action-batch abort, maintenance, legacy ingest,
+  spendable audit); an aborted pass returns quietly instead of stamping an
+  error onto the account that did not start it.
+
 ## [1.3.343] - 2026-09-27
 
 ### Fixed

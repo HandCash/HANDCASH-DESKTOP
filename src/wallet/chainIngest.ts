@@ -1,5 +1,5 @@
 import { getActiveWallet } from './session'
-import { getWalletRuntime } from './walletRuntime'
+import { getWalletRuntime, runtimeIsCurrent } from './walletRuntime'
 /**
  * Chain ingest — finder of coins that are not yet in localState.
  *
@@ -270,13 +270,23 @@ export async function refreshFromChainExclusive(
   const forceReview = opts?.forceReview === true
   const active = getActiveWallet()
   if (!active) return emptyRun()
+  // Pin the pass to the runtime it started on. Every mutation phase below
+  // re-checks it; an account switch aborts the pass instead of letting its
+  // tail import into the next account (hc-a580a, 2026-09-27).
+  const runtime = getWalletRuntime()
   // Stamp every sync/balance UI update with this identity so an abandoned pass
   // after vault-account switch cannot paint root state onto a child (or vice versa).
   const startedIdentityKey = active.identityKey
   const startedAccountIndex = active.accountIndex
   const stillActiveAccount = (): boolean => {
+    if (runtime) return runtimeIsCurrent(runtime)
     const cur = getActiveWallet()
     return Boolean(cur && cur.identityKey === startedIdentityKey)
+  }
+  const guard = (): void => {
+    if (!stillActiveAccount()) {
+      throw new DOMException('Wallet runtime disposed', 'AbortError')
+    }
   }
   const stampSync = (patch: Parameters<typeof setSyncHealth>[0]) => {
     setSyncHealth({
@@ -343,6 +353,7 @@ export async function refreshFromChainExclusive(
   }
 
   // Failed item creates leave tips spent inside noSend. Free them before ingest.
+  guard()
   if (forceReview) {
     try {
       // Promote before aborting. An app-held parent the network already took is
@@ -359,7 +370,9 @@ export async function refreshFromChainExclusive(
     try {
       const { releaseStuckNosends, abortReservedActionBatches } =
         await import('./actionReview')
+      guard()
       await releaseStuckNosends(active)
+      guard()
       await abortReservedActionBatches(active)
       console.info('[chain-ingest] released stuck noSend / action batches before ingest')
     } catch (err) {
@@ -385,14 +398,17 @@ export async function refreshFromChainExclusive(
     try {
       // Free abandoned noSend batches as part of repair, not every receipt poll.
       const { abortReservedActionBatches } = await import('./actionReview')
+      guard()
       await abortReservedActionBatches(active)
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err
       console.warn('[chain-ingest] action-batch abort skipped', err)
     }
 
     // Independent maintenance — run together so wall-clock ≈ slowest step, not sum.
     // Explicit Refresh always runs it; background receipt polling is throttled.
     try {
+      guard()
       await runChainMaintenance(active.chain)
     } catch (err) {
       if (err instanceof ChainIngestYieldToSpendError) {
@@ -444,6 +460,7 @@ export async function refreshFromChainExclusive(
       const { setCollectableVerifyWalkDeferred } = await import('./collectables')
       setCollectableVerifyWalkDeferred(true)
     }
+    guard()
     const ingestPromise = inUiPhase('legacy-ingest', () =>
       ingestLegacyAddressUtxos({
         active,
@@ -484,6 +501,7 @@ export async function refreshFromChainExclusive(
     let ingest: Awaited<ReturnType<typeof ingestLegacyAddressUtxos>>
     try {
       ingest = await ingestPromise
+      guard()
     } catch (err) {
       if (err instanceof ChainIngestYieldToSpendError) {
         console.info('[chain-ingest] legacy ingest aborted — send waiting')
@@ -638,9 +656,10 @@ export async function refreshFromChainExclusive(
     shouldYieldChainIngestToSpend() ||
     (softDeadlineHit && !forceReview)
       ? { suspect: 0, skipped: true }
-      : await inUiPhase('spendable-audit', () =>
+      : (guard(),
+        await inUiPhase('spendable-audit', () =>
           auditSpendableOutputs(forceReview && importedFunding === 0),
-        )
+        ))
   if (review.error && forceReview) {
     stampSync({
       phase: 'error',
@@ -716,6 +735,18 @@ export async function refreshFromChainExclusive(
       scannedTxids,
     }
   } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      // The account changed under this pass. Its sync state belongs to the
+      // account it started on and is not an error there — the next account
+      // starts its own pass.
+      console.info('[chain-ingest] pass aborted — account changed')
+      return {
+        balanceSats: null,
+        importedFunding,
+        importedItems,
+        scannedTxids,
+      }
+    }
     console.warn('[chain-ingest] balance refresh failed', err)
     progressTerminal = 'failed'
     stampSync({

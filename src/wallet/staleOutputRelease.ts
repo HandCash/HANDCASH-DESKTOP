@@ -1,4 +1,7 @@
-import { getActiveWallet } from './session'
+// Every wallet resolved here is pinned to the current runtime: its storage
+// throws AbortError once that runtime is disposed, so no repair that spans an
+// account switch can write into the next account's toolbox (see pinnedWallet).
+import { pinnedActiveWallet as getActiveWallet } from './pinnedWallet'
 
 /**
  * Writing off spendable outputs — the only path allowed to do it.
