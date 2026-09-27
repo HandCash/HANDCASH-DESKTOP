@@ -7,6 +7,8 @@ type Props = {
   iconUrl?: string
   size: number
   className?: string
+  /** `circle` for the token strip; default keeps the square face. */
+  shape?: 'square' | 'circle'
 }
 
 function TokenPlaceholder({ size }: { size: number }) {
@@ -24,8 +26,16 @@ function TokenPlaceholder({ size }: { size: number }) {
  * Avatar.Root swallows non-Avatar.Image children — use a plain span so
  * local data: URLs from BEEF actually paint.
  */
-export function FungibleTokenFace({ tokenId: _tokenId, sym, iconUrl, size, className }: Props) {
-  const radius = size >= 120 ? 12 : size <= 56 ? 6 : 10
+export function FungibleTokenFace({
+  tokenId: _tokenId,
+  sym,
+  iconUrl,
+  size,
+  className,
+  shape = 'square',
+}: Props) {
+  const circle = shape === 'circle'
+  const radius = circle ? size / 2 : size >= 120 ? 12 : size <= 56 ? 6 : 10
   const cls = ['fungible-avatar', className].filter(Boolean).join(' ')
   const local = Boolean(iconUrl && (iconUrl.startsWith('data:') || iconUrl.startsWith('blob:')))
   const faceStyle = {
@@ -37,6 +47,7 @@ export function FungibleTokenFace({ tokenId: _tokenId, sym, iconUrl, size, class
     <span
       className={cls}
       data-aeon-state={iconUrl ? 'icon' : 'placeholder'}
+      data-shape={shape}
       style={faceStyle}
     >
       {iconUrl && local ? (
@@ -56,7 +67,7 @@ export function FungibleTokenFace({ tokenId: _tokenId, sym, iconUrl, size, class
           height={size}
           skeletonWidth={size}
           skeletonHeight={size}
-          skeletonRadius={size >= 120 ? 12 : 6}
+          skeletonRadius={radius}
           retainDecoded
           fallback={<TokenPlaceholder size={size} />}
         />

@@ -9974,11 +9974,6 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   border-radius: calc(var(--hc-radius) + 2px);
 }
 
-.fungible-row .collectable-media-token {
-  width: 48px;
-  height: 48px;
-}
-
 .collectable-media-token .fungible-avatar {
   width: 100% !important;
   height: 100% !important;
@@ -10140,14 +10135,6 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   gap: 0.35rem;
 }
 
-.fungible-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.fungible-row .connected-app-main {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
 .fungible-card-amount {
   min-width: 0;
   max-width: 100%;
@@ -10160,9 +10147,154 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   font-variant-numeric: tabular-nums;
 }
 
-.fungible-row .fungible-card-amount {
-  margin-left: auto;
-  padding-left: 8px;
+/* Token shelf — a row carousel of circle faces with the balance underneath.
+   The same shelf sits loose (no issuer) and inside an issuer folder; the
+   collection view only changes the face size. */
+[data-aeon-scope='collectables'] [data-aeon-part='token-strip'] {
+  --token-face: 56px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 2px 6px;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+[data-aeon-scope='collectables'] [data-aeon-part='token-strip']:hover,
+[data-aeon-scope='collectables'] [data-aeon-part='token-strip']:focus-within {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+}
+
+[data-aeon-scope='collectables'] [data-aeon-part='token-strip'][data-aeon-state='grid'] {
+  --token-face: 72px;
+  gap: 12px;
+}
+
+[data-aeon-scope='collectables'] [data-aeon-part='token'] {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  width: calc(var(--token-face) + 16px);
+}
+
+[data-aeon-scope='collectables'] .token-chip-main {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+  padding: 4px 0;
+  border: 0;
+  border-radius: calc(var(--hc-radius) + 2px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+[data-aeon-scope='collectables'] .token-chip-main:hover .token-chip-face,
+[data-aeon-scope='collectables'] .token-chip-main:focus-visible .token-chip-face {
+  border-color: color-mix(in srgb, var(--hc-accent) 55%, hsl(var(--border)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hc-accent) 18%, transparent);
+}
+
+[data-aeon-scope='collectables'] .token-chip-main:focus-visible {
+  outline: none;
+}
+
+[data-aeon-scope='collectables'] .token-chip-face {
+  position: relative;
+  width: var(--token-face);
+  height: var(--token-face);
+  border-radius: 50%;
+  background: var(--hc-sunken);
+  border: 1px solid hsl(var(--border));
+  overflow: hidden;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+[data-aeon-scope='collectables'] .token-chip-face .fungible-avatar {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 50% !important;
+}
+
+[data-aeon-scope='collectables'] .token-chip-face .fungible-avatar-image,
+[data-aeon-scope='collectables'] .token-chip-face .deferred-image img {
+  object-fit: cover;
+}
+
+[data-aeon-scope='collectables'] .token-chip-face .collectable-sending-mark {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+[data-aeon-scope='collectables'] .token-chip-face .collectable-listed-mark {
+  right: 50%;
+  bottom: 2px;
+  transform: translateX(50%);
+  max-width: calc(100% - 8px);
+}
+
+[data-aeon-scope='collectables'] .token-chip-sym {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='collectables'] .token-chip-amount {
+  font-size: 0.7rem;
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='sending'] {
+  opacity: 0.85;
+}
+
+[data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='listed'] .token-chip-face {
+  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
+}
+
+/* Inside an issuer folder the item grid is always two-up: the folder's own
+   padding and border leave less than three fixed 148px columns, so the auto-fill
+   grid collapsed to one. Media goes fluid so two cards fit any panel width. */
+[data-aeon-scope='collectables'] .collect-collection-body-content .collection-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+[data-aeon-scope='collectables'] .collect-collection-body-content .collectable-card {
+  min-width: 0;
+}
+
+[data-aeon-scope='collectables'] .collect-collection-body-content .collectable-card .collectable-media {
+  width: 100%;
+  max-width: 140px;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+[data-aeon-scope='collectables'] .collect-collection-body-content .collectable-card .collectable-media img,
+[data-aeon-scope='collectables'] .collect-collection-body-content .collectable-card .collectable-media .deferred-image {
+  width: 100%;
+  height: 100%;
+}
+
+[data-aeon-scope='collectables'] .collect-collection-body-content .collect-nested-collection {
+  min-width: 0;
 }
 
 .collect-section-title {

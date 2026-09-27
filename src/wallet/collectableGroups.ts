@@ -1,11 +1,17 @@
 import type { Collectable } from './collectables'
+import { shortIssuerLabel } from './token/issuer'
+import type { FungibleToken } from './token/types'
 
 /**
- * Collect hierarchy is issuer → collection → items.
+ * Collect hierarchy is issuer identity → tokens → collection → items.
  *
- * `app` is the issuer axis. `collectionId` (BRC-99 `collection:<id>`) is the
- * set. Items without an issuer still nest under a collection shelf when they
- * have an id; only tips with neither sit in `ungrouped`.
+ * `app` is the issuer axis for one-sat items; a fungible's `issuerHandle`
+ * (or, failing that, its issuer pubkey) is the same axis, so a `$handle`
+ * that minted both a token and a set shows once, with its fungibles on one
+ * shelf and its items under it. `collectionId` (BRC-99 `collection:<id>`) is
+ * the set. Items without an issuer still nest under a collection shelf when
+ * they have an id; only tips with neither sit in `ungrouped`, and tokens
+ * with no issuer at all sit in `ungroupedTokens`.
  */
 
 export const FACE_LIMIT = 4
@@ -32,8 +38,11 @@ export type CollectableIssuer = {
   key: string
   label: string
   app?: string
+  /** Fungibles this identity issued — one horizontal shelf. */
+  tokens: FungibleToken[]
   collections: CollectableGroup[]
   loose: Collectable[]
+  /** One-sat items only; `tokens` are not repeated here. */
   items: Collectable[]
   faces: CollectableFace[]
   overflow: number
@@ -44,6 +53,8 @@ export type CollectableIssuer = {
 export type GroupedCollectables = {
   issuers: CollectableIssuer[]
   ungrouped: Collectable[]
+  /** Fungibles whose issuer is unknown — shown on a top shelf. */
+  ungroupedTokens: FungibleToken[]
   /** Flattened collections (every size, including one). */
   groups: CollectableGroup[]
   /** Always empty — one-item collections stay under their issuer. */
@@ -101,7 +112,9 @@ function makeGroup(args: {
   }
 }
 
-function issuerKeyFor(item: Collectable): { key: string; label: string; app?: string } | null {
+type IssuerMeta = { key: string; label: string; app?: string }
+
+function issuerKeyFor(item: Collectable): IssuerMeta | null {
   const app = item.app?.trim()
   if (app) return { key: `issuer:${app.toLowerCase()}`, label: app, app }
   if (item.collectionId?.trim()) {
@@ -113,12 +126,41 @@ function issuerKeyFor(item: Collectable): { key: string; label: string; app?: st
   return null
 }
 
-export function groupCollectables(items: Collectable[]): GroupedCollectables {
+/**
+ * A fungible joins the issuer that shares its handle (the same `$handle` a
+ * one-sat mint carries as `app`). With only a pubkey it still gets a shelf of
+ * its own, keyed by that pubkey.
+ */
+function tokenIssuerKeyFor(token: FungibleToken): IssuerMeta | null {
+  const handle = token.issuerHandle?.trim()
+  if (handle) return { key: `issuer:${handle.toLowerCase()}`, label: handle, app: handle }
+  const issuer = token.issuer?.trim()
+  if (issuer) {
+    return { key: `issuer:pubkey:${issuer.toLowerCase()}`, label: shortIssuerLabel(issuer) }
+  }
+  return null
+}
+
+function tokenFaces(tokens: readonly FungibleToken[], seen: Set<string>): CollectableFace[] {
+  const faces: CollectableFace[] = []
+  for (const token of tokens) {
+    if (!token.iconUrl || seen.has(token.iconUrl)) continue
+    seen.add(token.iconUrl)
+    faces.push({ outpoint: token.outpoint, imageUrl: token.iconUrl, name: token.sym })
+  }
+  return faces
+}
+
+export function groupCollectables(
+  items: Collectable[],
+  tokens: readonly FungibleToken[] = [],
+): GroupedCollectables {
   const issuerBuckets = new Map<
     string,
-    { meta: { key: string; label: string; app?: string }; items: Collectable[] }
+    { meta: IssuerMeta; items: Collectable[]; tokens: FungibleToken[] }
   >()
   const ungrouped: Collectable[] = []
+  const ungroupedTokens: FungibleToken[] = []
 
   for (const item of items) {
     const meta = issuerKeyFor(item)
@@ -128,7 +170,21 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
     }
     const bucket = issuerBuckets.get(meta.key)
     if (bucket) bucket.items.push(item)
-    else issuerBuckets.set(meta.key, { meta, items: [item] })
+    else issuerBuckets.set(meta.key, { meta, items: [item], tokens: [] })
+  }
+
+  for (const token of tokens) {
+    const meta = tokenIssuerKeyFor(token)
+    if (!meta) {
+      ungroupedTokens.push(token)
+      continue
+    }
+    const bucket = issuerBuckets.get(meta.key)
+    if (bucket) {
+      bucket.tokens.push(token)
+      // A handle-bearing token names the issuer when items only had a label.
+      if (!bucket.meta.app && meta.app) bucket.meta = { ...bucket.meta, app: meta.app }
+    } else issuerBuckets.set(meta.key, { meta, items: [], tokens: [token] })
   }
 
   const issuers: CollectableIssuer[] = []
@@ -164,11 +220,18 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
     )
 
-    const { faces, overflow } = facesFor(bucket.items)
+    // Items lead the facepile; token icons fill the remaining slots so a
+    // tokens-only issuer still has a face.
+    const seenFaces = new Set(bucket.items.map((item) => item.imageUrl).filter(Boolean))
+    const { faces: itemFaces } = facesFor(bucket.items)
+    const faces = [...itemFaces, ...tokenFaces(bucket.tokens, seenFaces)].slice(0, FACE_LIMIT)
+    const overflow = Math.max(0, bucket.items.length + bucket.tokens.length - faces.length)
+    bucket.tokens.sort((a, b) => a.sym.localeCompare(b.sym, undefined, { sensitivity: 'base' }))
     issuers.push({
       key: bucket.meta.key,
       label: bucket.meta.label,
       ...(bucket.meta.app ? { app: bucket.meta.app } : {}),
+      tokens: bucket.tokens,
       collections,
       loose,
       items: bucket.items,
@@ -180,14 +243,22 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
   }
 
   issuers.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
-  return { issuers, ungrouped, groups, singles: [] }
+  return { issuers, ungrouped, ungroupedTokens, groups, singles: [] }
 }
 
 export function groupQuantityLabel(group: {
   quantity: number
   provenCount: number
+  tokens?: readonly unknown[]
 }): string {
-  const quantity = `${group.quantity.toLocaleString()} ${group.quantity === 1 ? 'item' : 'items'}`
-  if (group.provenCount === 0) return quantity
-  return `${quantity} · ${group.provenCount.toLocaleString()} verified`
+  const parts: string[] = []
+  const tokenCount = group.tokens?.length ?? 0
+  if (tokenCount > 0) {
+    parts.push(`${tokenCount.toLocaleString()} ${tokenCount === 1 ? 'token' : 'tokens'}`)
+  }
+  if (group.quantity > 0 || tokenCount === 0) {
+    parts.push(`${group.quantity.toLocaleString()} ${group.quantity === 1 ? 'item' : 'items'}`)
+  }
+  if (group.provenCount > 0) parts.push(`${group.provenCount.toLocaleString()} verified`)
+  return parts.join(' · ')
 }

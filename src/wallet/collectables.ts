@@ -44,6 +44,7 @@ import {
 } from './oneSatImport'
 import {
   getCachedFungibles,
+  type FungibleToken,
   isBsv21BinaryScript,
   isBsv21Mime,
 } from './token'
@@ -762,6 +763,38 @@ export function shortOrigin(origin: string): string {
 }
 
 
+function underscoredKey(raw: string | undefined | null): string {
+  return (raw ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+}
+
+/**
+ * Every outpoint / deploy id the Tokens shelf already accounts for. A fungible
+ * card aggregates many one-sat tips; only indexing the representative tip
+ * left the other tips painting as NFTs. Rebuilt when the fungibles cache
+ * array is replaced (it is replaced, never mutated, on update).
+ */
+let fungibleTipIndex: { source: readonly FungibleToken[]; keys: ReadonlySet<string> } | null =
+  null
+
+function fungibleTipKeys(): ReadonlySet<string> {
+  const source = getCachedFungibles()
+  if (fungibleTipIndex?.source === source) return fungibleTipIndex.keys
+  const keys = new Set<string>()
+  const add = (raw: string | undefined | null) => {
+    const key = underscoredKey(raw)
+    if (key) keys.add(key)
+  }
+  for (const tok of source) {
+    add(tok.tokenId)
+    for (const id of tok.tokenIds ?? []) add(id)
+    add(tok.outpoint)
+    for (const tip of tok.tipOutpoints ?? []) add(tip)
+    for (const tip of tok.heldTips ?? []) add(tip.outpoint)
+  }
+  fungibleTipIndex = { source, keys }
+  return keys
+}
+
 export function collectableIsFungible(item: {
   outpoint: string
   origin?: string
@@ -770,22 +803,20 @@ export function collectableIsFungible(item: {
   collectionId?: string
   app?: string
 }): boolean {
-  // Protocol / mime / a matching Tokens origin — not "no name yet".
+  // Protocol / mime / a matching Tokens tip or origin — not "no name yet".
   // Transfer tips paint tip-as-origin until BRC-150 / indexer fills traits.
-  if (isRetiredFungibleMime(item.mimeType)) return true
-  const op = (item.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-  const origin = item.origin ? item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') : ''
+  if (isRetiredFungibleMime(item.mimeType) || isBsv21Mime(item.mimeType)) return true
   try {
-    for (const tok of getCachedFungibles()) {
-      const id = tok.tokenId.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-      const tip = tok.outpoint.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-      if (id && (id === op || (origin && id === origin))) return true
-      if (tip && tip === op) return true
-    }
+    const keys = fungibleTipKeys()
+    if (keys.size === 0) return false
+    const op = underscoredKey(item.outpoint)
+    if (op && keys.has(op)) return true
+    const origin = underscoredKey(item.origin)
+    return Boolean(origin && keys.has(origin))
   } catch {
     // Tokens cache not ready
+    return false
   }
-  return false
 }
 
 /** Hashed origin card with no collection/name — likely an NFT misfile. */

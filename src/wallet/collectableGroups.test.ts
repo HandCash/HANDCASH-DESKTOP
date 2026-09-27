@@ -5,6 +5,7 @@ import {
   groupQuantityLabel,
 } from './collectableGroups'
 import type { Collectable } from './collectables'
+import type { FungibleToken } from './token/types'
 
 function item(partial: Partial<Collectable> & Pick<Collectable, 'outpoint'>): Collectable {
   return {
@@ -16,6 +17,17 @@ function item(partial: Partial<Collectable> & Pick<Collectable, 'outpoint'>): Co
     extras: [],
     proven: false,
     authenticity: 'unproven',
+    ...partial,
+  }
+}
+
+function token(partial: Partial<FungibleToken> & Pick<FungibleToken, 'tokenId' | 'sym'>): FungibleToken {
+  return {
+    amt: '100',
+    dec: 0,
+    utxoCount: 1,
+    outpoint: `${partial.tokenId}.0`,
+    spendKind: 'plain',
     ...partial,
   }
 }
@@ -103,6 +115,67 @@ describe('groupCollectables', () => {
       item({ outpoint: 'dd.0', app: 'Antler' }),
     ])
     expect(issuers.map((g) => g.label)).toEqual(['Antler', 'Zebra'])
+  })
+})
+
+describe('groupCollectables with fungibles', () => {
+  it('shelves a token under the issuer whose handle minted the items', () => {
+    const { issuers, ungroupedTokens } = groupCollectables(
+      [
+        item({ outpoint: 'aa.0', collectionId: 'foxes', app: '$mint', name: 'Fox #1' }),
+        item({ outpoint: 'bb.0', app: '$mint', name: 'Loose' }),
+      ],
+      [token({ tokenId: 't1', sym: 'FOX', issuerHandle: '$Mint', issuer: '02ab' })],
+    )
+    expect(issuers).toHaveLength(1)
+    expect(issuers[0]?.key).toBe('issuer:$mint')
+    expect(issuers[0]?.tokens.map((t) => t.sym)).toEqual(['FOX'])
+    expect(issuers[0]?.items).toHaveLength(2)
+    expect(issuers[0]?.quantity).toBe(2)
+    expect(ungroupedTokens).toHaveLength(0)
+  })
+
+  it('gives a tokens-only issuer its own folder, keyed by handle or pubkey', () => {
+    const pubkey = '02' + 'ab'.repeat(32)
+    const { issuers } = groupCollectables(
+      [],
+      [
+        token({ tokenId: 't1', sym: 'ZED', issuerHandle: '$zed' }),
+        token({ tokenId: 't2', sym: 'ANON', issuer: pubkey }),
+        token({ tokenId: 't3', sym: 'ANON2', issuer: pubkey.toUpperCase() }),
+      ],
+    )
+    // Sorted by label: '$zed' sorts before the shortened pubkey.
+    expect(issuers.map((i) => i.key)).toEqual(['issuer:$zed', `issuer:pubkey:${pubkey}`])
+    const anon = issuers[1]!
+    expect(anon.tokens.map((t) => t.sym)).toEqual(['ANON', 'ANON2'])
+    expect(anon.items).toHaveLength(0)
+    expect(anon.quantity).toBe(0)
+    expect(groupQuantityLabel(anon)).toBe('2 tokens')
+    expect(groupQuantityLabel(issuers[0]!)).toBe('1 token')
+  })
+
+  it('keeps tokens with no issuer on the top shelf', () => {
+    const { issuers, ungroupedTokens } = groupCollectables(
+      [item({ outpoint: 'aa.0', app: 'Zoo' })],
+      [token({ tokenId: 't1', sym: 'FREE' })],
+    )
+    expect(issuers).toHaveLength(1)
+    expect(issuers[0]?.tokens).toHaveLength(0)
+    expect(ungroupedTokens.map((t) => t.sym)).toEqual(['FREE'])
+  })
+
+  it('fills the facepile with token icons after item art, and counts both in the meta', () => {
+    const { issuers } = groupCollectables(
+      [item({ outpoint: 'aa.0', app: 'Zoo', proven: true, authenticity: 'brc150' })],
+      [
+        token({ tokenId: 't1', sym: 'A', issuerHandle: 'Zoo', iconUrl: 'data:image/png;base64,a' }),
+        token({ tokenId: 't2', sym: 'B', issuerHandle: 'Zoo' }),
+      ],
+    )
+    expect(issuers[0]?.faces.map((f) => f.name)).toEqual(['aa.0', 'A'])
+    expect(issuers[0]?.overflow).toBe(1)
+    expect(groupQuantityLabel(issuers[0]!)).toBe('2 tokens · 1 item · 1 verified')
   })
 })
 

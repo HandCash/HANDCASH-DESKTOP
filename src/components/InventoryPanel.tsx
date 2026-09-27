@@ -50,12 +50,10 @@ import {
 } from '../wallet/paymentProgress'
 import {
   openBurnCollectables,
-  openBurnFungible,
   openCollectableDetails,
   openFungibleDetails,
   openSendCollectable,
   openSendCollectables,
-  openSendFungible,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
@@ -363,12 +361,15 @@ function CollectableItems({
   verification,
   selected,
   onSelectionChange,
+  columns = 3,
 }: {
   items: Collectable[]
   view: CollectionView
   verification: VerificationProgress
   selected: ReadonlySet<string>
   onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
+  /** Grid columns the CSS lays out at this nesting — folders are fixed at two. */
+  columns?: number
 }) {
   const listRef = useRef<HTMLUListElement>(null)
   const scrolling = useScrollIdle(listRef)
@@ -376,7 +377,7 @@ function CollectableItems({
   const windowed = useWindowedRange({
     total: shownCount,
     itemExtent: view === 'grid' ? 176 : 56,
-    columns: view === 'grid' ? 3 : 1,
+    columns: view === 'grid' ? columns : 1,
     overscan: 6,
     scrollRef: listRef,
   })
@@ -499,6 +500,14 @@ function IssuerGroupItem({
         />
       </div>
       <Accordion.ItemContent value={issuer.key} className="collect-collection-body-content">
+        {issuer.tokens.length > 0 ? (
+          <section className="collect-nested-collection" data-aeon-part="issuer-tokens">
+            {issuer.items.length > 0 ? (
+              <h4 className="collect-section-title collect-nested-title">Tokens</h4>
+            ) : null}
+            <TokenShelf tokens={issuer.tokens} view={view} label={`${issuer.label} tokens`} />
+          </section>
+        ) : null}
         {issuer.collections.map((collection) => (
           <section key={collection.key} className="collect-nested-collection">
             <h4 className="collect-section-title collect-nested-title">{collection.label}</h4>
@@ -508,13 +517,16 @@ function IssuerGroupItem({
               verification={verification}
               selected={selected}
               onSelectionChange={onSelectionChange}
+              columns={2}
             />
           </section>
         ))}
         {issuer.loose.length > 0 ? (
           <section className="collect-nested-collection">
-            {issuer.collections.length > 0 ? (
-              <h4 className="collect-section-title collect-nested-title">Uncollected</h4>
+            {issuer.collections.length > 0 || issuer.tokens.length > 0 ? (
+              <h4 className="collect-section-title collect-nested-title">
+                {issuer.collections.length > 0 ? 'Uncollected' : 'Items'}
+              </h4>
             ) : null}
             <CollectableItems
               items={issuer.loose}
@@ -522,6 +534,7 @@ function IssuerGroupItem({
               verification={verification}
               selected={selected}
               onSelectionChange={onSelectionChange}
+              columns={2}
             />
           </section>
         ) : null}
@@ -530,75 +543,11 @@ function IssuerGroupItem({
   )
 }
 
-function FungibleAction({
-  token,
-  sending,
-  row = false,
-}: {
-  token: FungibleToken
-  sending: boolean
-  row?: boolean
-}) {
-  const encoding = classifyFungibleEncoding(token)
-  const isLegacy = encoding.kind === 'legacy-json'
-  const isUnknown = encoding.kind === 'unknown'
-  const sendBlocked =
-    encoding.kind !== 'brc162' ||
-    token.spendKind === 'cosigned' ||
-    token.spendKind === 'mixed'
-  const verb = inFlightVerb(token.outpoint) ?? 'Sending'
-  const burning = sending && /^burn/i.test(verb)
-  const className = `collectable-send-btn${row ? ' collectable-send-btn--row' : ''}${
-    isLegacy ? ' collectable-burn-btn' : ''
-  }${burning ? ' is-burning' : ''}`
-  const blockedTitle =
-    isUnknown
-      ? 'BSV-21 encoding is not yet verified'
-      : token.spendKind === 'cosigned'
-      ? 'Cosigner required to send'
-      : 'Mixed plain / cosigned tips'
-
-  return (
-    <button
-      type="button"
-      className={className}
-      title={
-        isLegacy
-          ? burning
-            ? `${verb} ${token.sym}`
-            : `Burn legacy BSV-21 ${token.sym}`
-          : sendBlocked
-            ? blockedTitle
-            : sending
-              ? `${verb} ${token.sym}`
-              : `Send ${token.sym}`
-      }
-      aria-label={
-        isLegacy
-          ? burning
-            ? `${verb} ${token.sym}`
-            : `Burn ${token.sym}`
-          : sending
-            ? `${verb} ${token.sym}`
-            : `Send ${token.sym}`
-      }
-      disabled={sending || (!isLegacy && sendBlocked)}
-      aria-busy={burning || undefined}
-      onClick={(event) => {
-        event.stopPropagation()
-        if (sending || (!isLegacy && sendBlocked)) return
-        playWalletSound('soft')
-        if (isLegacy) openBurnFungible(token.tokenId)
-        else openSendFungible(token.tokenId)
-      }}
-    >
-      {isLegacy ? <FireIcon size={14} /> : <SendIcon size={14} />}
-      {/* List rows are icon-only so names don't collide with the action. */}
-      {row ? null : burning ? 'Burning…' : sending ? verb : isLegacy ? 'Burn' : 'Send'}
-    </button>
-  )
-}
-
+/**
+ * One token in the strip: a circle face with the symbol and balance under it.
+ * Same chip in both collection views — the strip is a row carousel; grid view
+ * only grows the face. Send / Burn live in the details face the chip opens.
+ */
 function FungibleItem({
   token,
   sending,
@@ -619,77 +568,73 @@ function FungibleItem({
     token.marketListing?.priceSats ??
     liveMarketListingPrice(token.outpoint)
   const verb = inFlightVerb(token.outpoint) ?? 'Sending'
+  const face = view === 'grid' ? 72 : 56
+  const state = sending ? 'sending' : listPrice != null ? 'listed' : 'idle'
   const openDetails = () => {
     playWalletSound('soft')
     openFungibleDetails(token.tokenId)
   }
 
-  if (view === 'list') {
-    return (
-      <li
-        className="connected-app-row collectable-row fungible-row"
-        data-sending={sending ? 'true' : undefined}
-      >
-        <button
-          type="button"
-          className="connected-app-main collectable-row-main"
-          onClick={openDetails}
-        >
-          <div className="collectable-media collectable-media-sm collectable-media-token">
-            <FungibleTokenFace
-              tokenId={token.tokenId}
-              sym={token.sym}
-              iconUrl={token.iconUrl}
-              size={48}
-            />
-            <CollectableSendingMark sending={sending} verb={verb} />
-            {listPrice != null ? (
-              <CollectableListedMark label={listedMarkLabel(listPrice)} />
-            ) : null}
-          </div>
-          <div className="connected-app-body">
-            <strong className="connected-app-name">{token.sym}</strong>
-            <span className="connected-app-host">{issuer}</span>
-          </div>
-          <strong className="fungible-card-amount">{amount}</strong>
-        </button>
-        <FungibleAction token={token} sending={sending} row />
-      </li>
-    )
-  }
-
   return (
-    <li
-      className="collection-grid-card collectable-card fungible-card"
-      data-sending={sending ? 'true' : undefined}
-    >
+    <li className="token-chip" data-aeon-part="token" data-aeon-state={state}>
       <button
         type="button"
-        className="collection-grid-main collectable-main"
+        className="token-chip-main"
         onClick={openDetails}
+        title={`${token.sym} · ${issuer}`}
+        aria-label={`${token.sym}, ${amount}, ${issuer}`}
       >
-        <div className="collectable-media collectable-media-token">
+        <span className="collectable-media collectable-media-sm collectable-media-token token-chip-face">
           <FungibleTokenFace
             tokenId={token.tokenId}
             sym={token.sym}
             iconUrl={token.iconUrl}
-            size={120}
+            size={face}
+            shape="circle"
           />
           <CollectableSendingMark sending={sending} verb={verb} />
           {listPrice != null ? (
             <CollectableListedMark label={listedMarkLabel(listPrice)} />
           ) : null}
-        </div>
-        <strong className="collection-grid-name" title={token.sym}>
+        </span>
+        <strong className="token-chip-sym" title={token.sym}>
           {token.sym}
         </strong>
-        <span className="collection-grid-host" title={issuer}>
-          {issuer}
+        <span className="fungible-card-amount token-chip-amount" title={amount}>
+          {amount}
         </span>
-        <strong className="fungible-card-amount">{amount}</strong>
       </button>
-      <FungibleAction token={token} sending={sending} />
     </li>
+  )
+}
+
+/** Horizontal row carousel of token circles — the same shelf loose and inside an issuer. */
+function TokenShelf({
+  tokens,
+  view,
+  label,
+}: {
+  tokens: readonly FungibleToken[]
+  view: CollectionView
+  label: string
+}) {
+  return (
+    <ul
+      className="token-strip"
+      role="list"
+      aria-label={label}
+      data-aeon-part="token-strip"
+      data-aeon-state={view}
+    >
+      {tokens.map((token) => (
+        <FungibleItem
+          key={token.tokenId}
+          token={token}
+          sending={isOutpointSending(token.outpoint)}
+          view={view}
+        />
+      ))}
+    </ul>
   )
 }
 
@@ -837,10 +782,13 @@ export function InventoryPanel() {
 
   const deferredItems = useDeferredValue(items)
   const deferredQuery = useDeferredValue(query)
+  // `tokens` is a dependency on purpose: a one-sat tip is an NFT until the
+  // fungibles cache hydrates and claims it, so the split must re-run then.
   const visibleItems = useMemo(() => {
     const nfts = deferredItems.filter((item) => !collectableIsFungible(item))
     return searchCollectables(deferredQuery, nfts)
-  }, [deferredItems, deferredQuery])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tokens drive collectableIsFungible via its cache
+  }, [deferredItems, deferredQuery, tokens])
   const busyOutpoints = useMemo(
     () =>
       new Set(
@@ -925,13 +873,17 @@ export function InventoryPanel() {
       : null,
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
-  const { issuers, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
-  const empty = items.filter((item) => !collectableIsFungible(item)).length === 0 && tokens.length === 0 && ready && tokensReady
-  const searchEmpty =
-    !empty &&
-    !showLoading &&
-    visibleItems.length === 0 &&
-    deferredQuery.trim().length > 0
+  const searching = deferredQuery.trim().length > 0
+  const { issuers, ungrouped, ungroupedTokens } = useMemo(
+    () => groupCollectables(visibleItems, searching ? [] : tokens),
+    [visibleItems, tokens, searching],
+  )
+  const empty =
+    items.filter((item) => !collectableIsFungible(item)).length === 0 &&
+    tokens.length === 0 &&
+    ready &&
+    tokensReady
+  const searchEmpty = !empty && !showLoading && visibleItems.length === 0 && searching
 
   return (
     <div
@@ -970,29 +922,18 @@ export function InventoryPanel() {
               <span>Try another name, trait, origin, or id.</span>
             </div>
           ) : null}
-      {tokens.length > 0 && !deferredQuery.trim() ? (
+      {ungroupedTokens.length > 0 ? (
         <section className="collect-tokens-section" aria-label="Tokens">
           <h3 className="collect-section-title">Tokens</h3>
-          <ul
-            className={view === 'grid' ? 'collection-grid' : 'connected-app-list'}
-            role="list"
-            aria-label="Tokens"
-          >
-            {tokens.map((token) => (
-              <FungibleItem
-                key={token.tokenId}
-                token={token}
-                sending={isOutpointSending(token.outpoint)}
-                view={view}
-              />
-            ))}
-          </ul>
+          <TokenShelf tokens={ungroupedTokens} view={view} label="Tokens without an issuer" />
         </section>
       ) : null}
 
-      {visibleItems.length > 0 ? (
-        <section className="collect-items-section" aria-label="Items">
-          {tokens.length > 0 ? <h3 className="collect-section-title">Items</h3> : null}
+      {visibleItems.length > 0 || issuers.length > 0 ? (
+        <section className="collect-items-section" aria-label="Issuers and items">
+          {ungroupedTokens.length > 0 ? (
+            <h3 className="collect-section-title">Issuers</h3>
+          ) : null}
 
           {issuers.length > 0 ? (
             <Accordion.Root

@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.3.345] - 2026-09-27
+
+### Changed
+
+- Restore: the history recovery page is a live progress view driven by
+  `historyRecoveryMachine` — probe, then wipe → reboot → download → merge →
+  recompose → balance, each stage reported by the domain path as it runs, with
+  the legacy-password ask and retry as chart states instead of a static page.
+- Collect hierarchy is now issuer identity → tokens → items. A `$handle` that
+  minted both a fungible and a set shows once: its tokens sit on a horizontal
+  row carousel of circle faces (symbol and balance underneath, same shelf in
+  grid and list view), its collections and loose items stack under them.
+  Tokens-only issuers get a folder of their own; tokens with no issuer keep a
+  top shelf. Folder meta reads "2 tokens · 12 items · 3 verified".
+- Fungible cards are circles in both views; Send / Burn live in the token's
+  details face.
+
+### Fixed
+
+- Inside an issuer folder the item grid is pinned to two columns with fluid
+  media, so two cards fit any panel width; the auto-fill grid used to collapse
+  to one column behind the folder's padding.
+- One-sat tips of a fungible no longer paint as NFTs: the Tokens shelf now
+  claims every held tip (`tipOutpoints`, `heldTips`, every member deploy id)
+  and any `application/bsv-20` tip, not just the representative outpoint —
+  and the split re-runs when the fungibles cache hydrates.
+
 ## [1.3.344] - 2026-09-27
 
 ### Fixed
