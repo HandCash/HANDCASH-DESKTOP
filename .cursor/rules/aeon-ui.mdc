@@ -52,7 +52,8 @@ Prefer Aeon: `Button`, `Field`, `Dialog`/`Prompt`, `StatusBanner`, `Accordion`, 
 ## Do not
 
 - Tailwind, shadcn, Chakra, MUI, Bootstrap, or a second design-token sheet.
-- `useState('edit' | 'confirm' | 'loading')` beside a machine. The ratchet `src/machines/aeonAdherence.test.ts` allowlists **only shrink**: compose stages, two-plus `useState(false)` busy flags that gate buttons and reset in `finally` (use `useActivityAction` / a chart), and `data-aeon-state` fed a raw machine `.value`.
+- `useState('edit' | 'confirm' | 'loading')` beside a machine. The ratchet `src/machines/aeonAdherence.test.ts` allowlists **only shrink**: compose stages, two-plus `useState(false)` busy flags that gate buttons and reset in `finally` (use `useAsyncAction<Kind>()` / a chart), and `data-aeon-state` fed a raw machine `.value`.
+- A single `busy` / `submitting` boolean around an `await` + `try/finally`. That is `asyncActionMachine`: `useAsyncAction<'save'>()`, `run('save', task, { confirm })`, `<AsyncActionPrompt />`. `window.confirm` is never the confirm step.
 - Ship a component without `npm run ui:review` on the diff (Jev, skill `jev-ui-review`). Composite debt < 1 and `fix first: nothing` per touched file.
 - Grow `RAW_IMAGE_RENDERERS`. Domain `src/wallet/**` must not import `src/components/`.
 - Copy `items-market` Tailwind/shadcn patterns here. Live market UI is Aeon in `handcash-market/` (`HandCash/BRC-MARKET`).

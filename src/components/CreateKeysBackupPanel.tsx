@@ -45,7 +45,6 @@ function downloadShare(filename: string, contents: string) {
 export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
   const [kind, setKind] = useState<Kind>('phrase')
   const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
-  const [busy, setBusy] = useState(false)
   const [, setTick] = useState(0)
 
   const canConfirm = canConfirmKeysBackup(kind === 'phrase' ? 'phrase' : 'split')
@@ -133,7 +132,6 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         <button
           type="button"
           className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}
-          disabled={busy}
           onClick={showSlices}
         >
           Key slices
@@ -184,15 +182,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
               playWalletSound('soft')
               toastSuccess(`Slice ${index + 1} confirmed`)
             }}
-            onRotateShares={() => {
-              setBusy(true)
-              try {
-                showSlices()
-              } finally {
-                setBusy(false)
-              }
-            }}
-            rotateBusy={busy}
+            onRotateShares={showSlices}
           />
         </div>
       ) : null}

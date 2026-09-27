@@ -1,10 +1,10 @@
 import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
-import { activityActionMachine } from './activityActionMachine'
+import { asyncActionMachine } from './asyncActionMachine'
 
-describe('activityActionMachine', () => {
+describe('asyncActionMachine', () => {
   it('runs one named action and returns to idle on success', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'START', action: 'retry' })
     expect(actor.getSnapshot().matches('busy')).toBe(true)
     expect(actor.getSnapshot().context.action).toBe('retry')
@@ -14,7 +14,7 @@ describe('activityActionMachine', () => {
   })
 
   it('refuses a competing action while one is in flight', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'START', action: 'rebroadcastAll' })
     actor.send({ type: 'START', action: 'clearAll' })
     expect(actor.getSnapshot().matches('busy')).toBe(true)
@@ -22,7 +22,7 @@ describe('activityActionMachine', () => {
   })
 
   it('keeps the failed action and reason until reset or retried', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'START', action: 'reclaim' })
     actor.send({ type: 'FAIL', error: 'inputs already spent' })
     expect(actor.getSnapshot().matches('failure')).toBe(true)
@@ -40,7 +40,7 @@ describe('activityActionMachine', () => {
   })
 
   it('ignores a stale RESET while a mutation is running', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'START', action: 'clear' })
     actor.send({ type: 'RESET' })
     expect(actor.getSnapshot().matches('busy')).toBe(true)
@@ -54,7 +54,7 @@ describe('activityActionMachine', () => {
   }
 
   it('holds the confirm copy as a state until the user decides', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'REQUEST', action: 'reclaim', confirm })
     expect(actor.getSnapshot().matches('confirming')).toBe(true)
     expect(actor.getSnapshot().context).toEqual({ action: 'reclaim', confirm, error: null })
@@ -65,7 +65,7 @@ describe('activityActionMachine', () => {
   })
 
   it('cancelling a confirm returns to idle with nothing run', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'REQUEST', action: 'clearAll', confirm })
     actor.send({ type: 'CANCEL' })
     expect(actor.getSnapshot().matches('idle')).toBe(true)
@@ -73,7 +73,7 @@ describe('activityActionMachine', () => {
   })
 
   it('refuses a new request while confirming or busy', () => {
-    const actor = createActor(activityActionMachine).start()
+    const actor = createActor(asyncActionMachine).start()
     actor.send({ type: 'REQUEST', action: 'clearAll', confirm })
     actor.send({ type: 'REQUEST', action: 'rebroadcastAll', confirm })
     actor.send({ type: 'START', action: 'publishPending' })

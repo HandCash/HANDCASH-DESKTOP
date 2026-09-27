@@ -3,6 +3,7 @@ import { changeVaultPassword } from '../wallet/vault'
 import { validatePassword } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { PasswordField } from './PasswordField'
 
@@ -10,41 +11,41 @@ export function ChangePasswordPanel() {
   const [currentPassword, setCurrentPassword] = useState<string | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  /** Synchronous policy failures; the async failure lives in the chart. */
+  const [formError, setFormError] = useState<string | null>(null)
+  const change = useAsyncAction<'change'>()
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!currentPassword) return
-    setError(null)
+    setFormError(null)
 
     if (newPassword !== confirmPassword) {
-      setError('Passwords do not match')
+      setFormError('Passwords do not match')
       return
     }
     const pwError = validatePassword(newPassword)
     if (pwError) {
-      setError(pwError)
+      setFormError(pwError)
       return
     }
 
-    setSubmitting(true)
-    try {
+    const outcome = await change.run('change', async () => {
       await changeVaultPassword(currentPassword, newPassword)
+    })
+    if (outcome.ok) {
       setCurrentPassword(null)
       setNewPassword('')
       setConfirmPassword('')
       playWalletSound('success')
       toastSuccess('Password updated')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setError(message)
+    } else if (outcome.error) {
       playWalletSound('error')
-      toastError('Couldn’t change password', message)
-    } finally {
-      setSubmitting(false)
+      toastError('Couldn’t change password', outcome.error)
     }
   }
+
+  const error = formError ?? change.error
 
   if (!currentPassword) {
     return (
@@ -75,7 +76,12 @@ export function ChangePasswordPanel() {
           This password is used to access your wallet. Don’t forget it.
         </p>
       </div>
-      <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
+      <form
+        className="settings-form settings-form-compact"
+        data-aeon-part="change-password-form"
+        data-aeon-state={change.stateAttr}
+        onSubmit={(e) => void submit(e)}
+      >
         <PasswordField
           id="settings-new-password"
           label="New password"
@@ -84,7 +90,7 @@ export function ChangePasswordPanel() {
           onChange={(e) => setNewPassword(e.target.value)}
           autoComplete="new-password"
           autoFocus
-          disabled={submitting}
+          disabled={change.busy}
         />
         <PasswordField
           id="settings-confirm-password"
@@ -93,7 +99,7 @@ export function ChangePasswordPanel() {
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           autoComplete="new-password"
-          disabled={submitting}
+          disabled={change.busy}
         />
 
         {error ? (
@@ -106,19 +112,20 @@ export function ChangePasswordPanel() {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={submitting || !newPassword || !confirmPassword}
+            disabled={change.busy || !newPassword || !confirmPassword}
           >
-            {submitting ? 'Updating…' : 'Update password'}
+            {change.busy ? 'Updating…' : 'Update password'}
           </button>
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={submitting}
+            disabled={change.busy}
             onClick={() => {
               setCurrentPassword(null)
               setNewPassword('')
               setConfirmPassword('')
-              setError(null)
+              setFormError(null)
+              change.reset()
               playWalletSound('soft')
             }}
           >

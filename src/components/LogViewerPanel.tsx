@@ -12,6 +12,7 @@ import { getLogUploadUrl, setLogUploadUrl } from '../wallet/logUploadPrefs'
 import { shipAppLogs } from '../wallet/logShip'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 
 const DISPLAY_LINES = 300
 
@@ -31,8 +32,8 @@ export function LogViewerPanel() {
   const [fileTail, setFileTail] = useState<string | null>(null)
   const [logPath, setLogPath] = useState<string | null>(null)
   const [logUploadUrl, setLogUploadUrlState] = useState(() => getLogUploadUrl())
-  const [uploadingLogs, setUploadingLogs] = useState(false)
-  const [busy, setBusy] = useState(false)
+  /** One exclusive log operation: refresh the tail or ship the session. */
+  const logs = useAsyncAction<'refresh' | 'upload'>()
   const [filter, setFilter] = useState('')
 
   useEffect(() => {
@@ -95,13 +96,29 @@ export function LogViewerPanel() {
   }, [text])
 
   const refresh = async () => {
-    setBusy(true)
     playWalletSound('soft')
-    try {
+    await logs.run('refresh', async () => {
       setFileTail(await loadElectronTail())
       setEntries(getAppLogs())
-    } finally {
-      setBusy(false)
+    })
+  }
+
+  const upload = async () => {
+    playWalletSound('soft')
+    const url = setLogUploadUrl(logUploadUrl)
+    setLogUploadUrlState(url)
+    if (!url) {
+      toastError('Set a log upload URL first')
+      return
+    }
+    const outcome = await logs.run('upload', async () => {
+      const result = await shipAppLogs(url)
+      if (!result.ok) throw new Error(result.error)
+      toastSuccess('Logs uploaded', 'bytes' in result ? `${result.bytes} bytes` : '')
+    })
+    if (!outcome.ok && outcome.error !== null) {
+      playWalletSound('error')
+      toastError('Upload failed', outcome.error)
     }
   }
 
@@ -152,15 +169,19 @@ export function LogViewerPanel() {
             spellCheck={false}
           />
         </div>
-        <div className="actions log-viewer-actions">
+        <div
+          className="actions log-viewer-actions"
+          data-aeon-part="log-actions"
+          data-aeon-state={logs.stateAttr}
+        >
           <button
             type="button"
             className="btn btn-primary"
-            disabled={busy}
+            disabled={logs.busy}
             data-aeon-part="refresh-logs"
             onClick={() => void refresh()}
           >
-            {busy ? 'Refreshing…' : 'Refresh'}
+            {logs.running('refresh') ? 'Refreshing…' : 'Refresh'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => void copyAll()}>
             Copy
@@ -169,32 +190,10 @@ export function LogViewerPanel() {
             type="button"
             className="btn btn-ghost"
             data-aeon-part="upload-logs"
-            disabled={uploadingLogs}
-            onClick={() => {
-              playWalletSound('soft')
-              const url = setLogUploadUrl(logUploadUrl)
-              setLogUploadUrlState(url)
-              if (!url) {
-                toastError('Set a log upload URL first')
-                return
-              }
-              setUploadingLogs(true)
-              void shipAppLogs(url)
-                .then((result) => {
-                  if (!result.ok) {
-                    playWalletSound('error')
-                    toastError('Upload failed', result.error)
-                    return
-                  }
-                  toastSuccess(
-                    'Logs uploaded',
-                    'bytes' in result ? `${result.bytes} bytes` : '',
-                  )
-                })
-                .finally(() => setUploadingLogs(false))
-            }}
+            disabled={logs.busy}
+            onClick={() => void upload()}
           >
-            {uploadingLogs ? 'Uploading…' : 'Upload'}
+            {logs.running('upload') ? 'Uploading…' : 'Upload'}
           </button>
           {window.handcash?.openLogs ? (
             <button

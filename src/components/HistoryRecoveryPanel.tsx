@@ -11,6 +11,7 @@ import { recomposeWallet } from '../wallet/recompose'
 import { fetchBalanceSats} from '../wallet/session'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { playWalletSound } from '../wallet/soundService'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { PasswordField } from './PasswordField'
 
 type Props = {
@@ -34,8 +35,7 @@ type RemoteProbe =
  * root-key history (then re-uploaded as root-key).
  */
 export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const recovery = useAsyncAction<'restore'>()
   const [probe, setProbe] = useState<RemoteProbe>({ status: 'checking' })
   const [showLegacy, setShowLegacy] = useState(false)
   const [legacyPassword, setLegacyPassword] = useState('')
@@ -67,41 +67,42 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
   }, [])
 
   const restore = async () => {
-    setError(null)
-    setBusy(true)
-    try {
-      ensureSuggestedHistoryBackupUrl()
-      clearBackupBackoff()
-      const legacy =
-        legacyPassword.trim() || getSessionBackupPassword() || null
-      // Wipe empty local toolbox, then pull remote — pull-only; guarded push
-      // is deferred until after the wallet UI is free (historyEmptyGuard).
-      await replaceLocalHistoryFromCloud(legacy)
-      const recomposed = await recomposeWallet({
-        password: getSessionBackupPassword(),
-        history: 'skip',
-        reason: 'restore-url',
-      })
-      let balanceSats = recomposed.spendableSats
-      if (balanceSats == null) {
-        const active = getActiveWallet()
-        balanceSats = active ? await fetchBalanceSats(active.wallet) : 0
+    let balanceSats = 0
+    const outcome = await recovery.run('restore', async () => {
+      try {
+        ensureSuggestedHistoryBackupUrl()
+        clearBackupBackoff()
+        const legacy =
+          legacyPassword.trim() || getSessionBackupPassword() || null
+        // Wipe empty local toolbox, then pull remote — pull-only; guarded push
+        // is deferred until after the wallet UI is free (historyEmptyGuard).
+        await replaceLocalHistoryFromCloud(legacy)
+        const recomposed = await recomposeWallet({
+          password: getSessionBackupPassword(),
+          history: 'skip',
+          reason: 'restore-url',
+        })
+        balanceSats = recomposed.spendableSats ?? -1
+        if (balanceSats < 0) {
+          const active = getActiveWallet()
+          balanceSats = active ? await fetchBalanceSats(active.wallet) : 0
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (/decrypt|password|passphrase|auth|mac|argon|gcm|cipher|invalid/i.test(msg)) {
+          setShowLegacy(true)
+          throw new Error(
+            'This cloud backup was made with an older unlock password. Enter that password once below — we’ll re-seal history to your wallet key.',
+          )
+        }
+        throw err
       }
+    })
+    if (outcome.ok) {
       playWalletSound('success')
       onDone(balanceSats)
-    } catch (err) {
+    } else if (outcome.error) {
       playWalletSound('error')
-      const msg = err instanceof Error ? err.message : String(err)
-      if (/decrypt|password|passphrase|auth|mac|argon|gcm|cipher|invalid/i.test(msg)) {
-        setShowLegacy(true)
-        setError(
-          'This cloud backup was made with an older unlock password. Enter that password once below — we’ll re-seal history to your wallet key.',
-        )
-      } else {
-        setError(msg)
-      }
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -115,7 +116,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
     probe.status === 'checking'
       ? 'Looking for your history backup…'
       : probe.status === 'found'
-        ? busy
+        ? recovery.busy
           ? 'History backup found — restoring balance, activity, friends, and apps…'
           : 'History backup found — restoring automatically.'
         : probe.status === 'missing'
@@ -124,7 +125,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
 
   const canSkip = probe.status === 'missing' || probe.status === 'error'
   const showRestoreButton =
-    showLegacy || probe.status === 'error' || (probe.status === 'found' && Boolean(error))
+    showLegacy || probe.status === 'error' || (probe.status === 'found' && Boolean(recovery.error))
 
   return (
     <div className="wallet-setup-config" data-aeon-scope="history-recovery">
@@ -138,9 +139,9 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
         {remoteNote}
       </p>
 
-      {error ? (
+      {recovery.error ? (
         <p className="wallet-sync-note is-error" role="alert">
-          {error}
+          {recovery.error}
         </p>
       ) : null}
 
@@ -153,7 +154,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
             value={legacyPassword}
             onChange={(e) => setLegacyPassword(e.target.value)}
             autoComplete="current-password"
-            disabled={busy}
+            disabled={recovery.busy}
           />
           <p className="password-hint">
             Only needed for backups made before root-key history. After this restore we
@@ -162,22 +163,27 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
         </>
       ) : null}
 
-      <div className="auth-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div
+        className="auth-actions"
+        style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
+        data-aeon-part="history-recovery-actions"
+        data-aeon-state={recovery.stateAttr}
+      >
         {showRestoreButton ? (
           <button
             type="button"
             className="btn btn-primary primary"
-            disabled={busy || probe.status === 'checking'}
+            disabled={recovery.busy || probe.status === 'checking'}
             onClick={() => void restore()}
           >
-            {busy ? 'Restoring…' : 'Restore history'}
+            {recovery.busy ? 'Restoring…' : 'Restore history'}
           </button>
         ) : null}
         {canSkip ? (
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={busy}
+            disabled={recovery.busy}
             onClick={onSkip}
           >
             {probe.status === 'missing' ? 'Continue without history' : 'Skip for now'}

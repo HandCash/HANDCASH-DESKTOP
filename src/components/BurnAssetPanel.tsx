@@ -73,10 +73,11 @@ export function BurnAssetPanel({ target }: Props) {
   return <BurnCollectablePanel outpoint={target.outpoint} />
 }
 
-type Stage = 'editing' | 'confirming' | 'burning' | 'failure'
+type Stage = 'editing' | 'confirming' | 'burning' | 'forgetting' | 'failure'
 
 function stageOf(snapshot: AssetBurnUiSnapshot): Stage {
   if (snapshot.matches('confirming')) return 'confirming'
+  if (snapshot.matches('forgetting')) return 'forgetting'
   if (snapshot.matches('burning') || snapshot.matches('done')) return 'burning'
   if (snapshot.matches('failure')) return 'failure'
   // `closed` only paints for the frame before the mount effect opens the chart.
@@ -102,7 +103,6 @@ function BurnShell({
   onBack,
   onCancel,
   alternativeActionLabel,
-  alternativeActionBusy = false,
   alternativeNote,
   onAlternativeAction,
 }: {
@@ -126,7 +126,6 @@ function BurnShell({
   onBack: () => void
   onCancel: () => void
   alternativeActionLabel?: string
-  alternativeActionBusy?: boolean
   alternativeNote?: string
   onAlternativeAction?: () => void
 }) {
@@ -149,7 +148,9 @@ function BurnShell({
     net !== 0
       ? formatSecondaryFromSats(Math.abs(net), currency, usdPerBsv)
       : null
-  const busy = stage === 'burning'
+  /** A burn or a local forget is in flight; every confirm-stage control locks. */
+  const busy = stage === 'burning' || stage === 'forgetting'
+  const forgetting = stage === 'forgetting'
   const showConfirm = stage === 'confirming' || busy
 
   const hero = (
@@ -234,7 +235,7 @@ function BurnShell({
               tone: 'danger' as const,
             },
             primary: {
-              label: busy ? 'Burning…' : 'Confirm burn',
+              label: stage === 'burning' ? 'Burning…' : 'Confirm burn',
               onClick: onConfirm,
               disabled: busy,
               icon: <FireIcon size={18} />,
@@ -300,13 +301,11 @@ function BurnShell({
                 <button
                   type="button"
                   className="btn btn-ghost burn-forget"
-                  disabled={busy || alternativeActionBusy}
-                  aria-busy={alternativeActionBusy || undefined}
+                  disabled={busy}
+                  aria-busy={forgetting || undefined}
                   onClick={onAlternativeAction}
                 >
-                  {alternativeActionBusy
-                    ? 'Forgetting…'
-                    : alternativeActionLabel}
+                  {forgetting ? 'Forgetting…' : alternativeActionLabel}
                 </button>
               ) : null}
             </div>
@@ -725,7 +724,6 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   )
   const [loading, setLoading] = useState(() => item == null)
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
-  const [forgetting, setForgetting] = useState(false)
   const [snapshot, event] = useMachine(assetBurnUiMachine)
 
   useEffect(() => {
@@ -819,11 +817,13 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   }
 
   const forget = () => {
-    if (forgetting || sending) return
+    // The chart only accepts FORGET from `confirming`; a burn or forget already
+    // in flight ignores it, so the exclusivity lives in the chart, not a flag.
+    if (sending || !snapshot.matches('confirming')) return
     event({ type: 'FORGET' })
-    setForgetting(true)
     void abandonCollectable(item.outpoint)
       .then(() => {
+        event({ type: 'FORGOTTEN' })
         playWalletSound('success')
         toastSuccess(
           'Collectable forgotten',
@@ -832,13 +832,11 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
         clearNavChild()
       })
       .catch((err) => {
-        playWalletSound('error')
-        toastError(
-          'Forget failed',
-          err instanceof Error ? err.message : String(err)
-        )
+        event({
+          type: 'FAIL',
+          error: err instanceof Error ? err.message : String(err),
+        })
       })
-      .finally(() => setForgetting(false))
   }
 
   return (
@@ -879,7 +877,6 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
       onBack={() => event({ type: 'BACK' })}
       onCancel={() => openCollectableDetails(item.outpoint)}
       alternativeActionLabel="Forget from wallet"
-      alternativeActionBusy={forgetting}
       alternativeNote="Or remove it from this wallet without spending it. Nothing is broadcast, and the on-chain UTXO remains where it is."
       onAlternativeAction={forget}
     />

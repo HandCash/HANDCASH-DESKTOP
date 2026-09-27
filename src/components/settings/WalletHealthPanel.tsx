@@ -7,6 +7,7 @@ import {
   type DependencyProbeStatus,
 } from '../../wallet/dependencyHealth'
 import { playWalletSound } from '../../wallet/soundService'
+import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { toastError, toastSuccess } from '../../wallet/toast'
 import {
   healCheckpointAgeMs,
@@ -76,42 +77,34 @@ export function WalletHealthPanel() {
   const [snap, setSnap] = useState<DependencyHealthSnapshot>(() =>
     getDependencyHealthSnapshot(),
   )
-  const [checking, setChecking] = useState(false)
-  const [healing, setHealing] = useState(() => isUtxoHealRunning())
+  /** One exclusive mutation: probe refresh or UTXO heal. */
+  const health = useAsyncAction<'refresh' | 'heal'>()
+  const { run } = health
   const [healHint, setHealHint] = useState(healRowDescription)
   const healStatus = healRowStatus()
+  const checking = health.running('refresh')
+  const healing = health.running('heal')
 
   useEffect(() => subscribeDependencyHealth(setSnap), [])
 
   useEffect(() => {
-    let cancelled = false
-    setChecking(true)
-    void refreshDependencyHealth()
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setChecking(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    // Probe failures are already projected per row; the chart only tracks the lifecycle.
+    void run('refresh', async () => {
+      await refreshDependencyHealth().catch(() => {})
+    })
+  }, [run])
 
   const refresh = async () => {
-    if (checking) return
     playWalletSound('soft')
-    setChecking(true)
-    try {
+    await run('refresh', async () => {
       await refreshDependencyHealth()
-    } finally {
-      setChecking(false)
-    }
+    })
   }
 
   const healFromHistory = async () => {
-    if (healing || isUtxoHealRunning()) return
+    if (isUtxoHealRunning()) return
     playWalletSound('soft')
-    setHealing(true)
-    try {
+    const outcome = await run('heal', async () => {
       const result = await healUtxoFromActivityHistory()
       setHealHint(healRowDescription())
       const summary = formatUtxoHealResult(result)
@@ -121,12 +114,10 @@ export function WalletHealthPanel() {
       } else {
         toastSuccess('Heal complete', summary)
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      toastError('Heal failed', message)
+    })
+    if (!outcome.ok && outcome.error) {
+      toastError('Heal failed', outcome.error)
       playWalletSound('error')
-    } finally {
-      setHealing(false)
     }
   }
 
@@ -134,11 +125,15 @@ export function WalletHealthPanel() {
     <div className="nav-section-body settings-nav" data-aeon-scope="wallet-health">
       <div className="connected-panel-head settings-panel-head">
         <h2>Wallet health</h2>
-        <div className="connected-panel-head-actions">
+        <div
+          className="connected-panel-head-actions"
+          data-aeon-part="health-actions"
+          data-aeon-state={health.stateAttr}
+        >
           <button
             type="button"
             className="btn btn-primary settings-action-btn"
-            disabled={checking}
+            disabled={health.busy}
             onClick={() => {
               void refresh()
             }}
@@ -183,7 +178,8 @@ export function WalletHealthPanel() {
             <button
               type="button"
               className="btn btn-primary settings-action-btn"
-              disabled={healing}
+              disabled={health.busy}
+              data-aeon-part="heal-action"
               data-aeon-state={healing ? 'running' : 'idle'}
               onClick={() => {
                 void healFromHistory()

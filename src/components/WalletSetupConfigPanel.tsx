@@ -23,12 +23,11 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
   const [selected, setSelected] = useState<WalletConfigMode>('history')
   const [customHost, setCustomHost] = useState(false)
   const [historyUrl, setHistoryUrl] = useState(handCashHistoryUrl())
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const apply = async () => {
+  /** Synchronous: writes prefs and hands off. No lifecycle to chart. */
+  const apply = () => {
     setError(null)
-    setBusy(true)
     try {
       const url =
         selected === 'none'
@@ -40,8 +39,6 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -135,8 +132,8 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
       ) : null}
 
       <div className="auth-actions">
-        <button type="button" className="primary" disabled={busy} onClick={() => void apply()}>
-          {busy ? 'Saving…' : 'Continue'}
+        <button type="button" className="primary" onClick={apply}>
+          Continue
         </button>
       </div>
     </div>

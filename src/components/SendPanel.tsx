@@ -144,7 +144,8 @@ export function SendPanel({
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
-  const [reviewBusy, setReviewBusy] = useState(false)
+  /** Local balance read before Review — a phase of `editing`, owned by the chart. */
+  const reviewBusy = sendSnap.matches({ editing: 'checking' })
   const [scanningTo, setScanningTo] = useState(false)
   const [destAssetId, setDestAssetId] = useState('bsv')
   const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
@@ -220,9 +221,9 @@ export function SendPanel({
 
   const goReview = async () => {
     if (reviewBusy || offlineBlock || !destReady) return
-    setReviewBusy(true)
     playWalletSound('soft')
     syncAmountToMachine(amountDraft)
+    send({ type: 'CHECK' })
     try {
       const satoshis = amountToSats(amountDraft, currency, usdPerBsv)
       if (!Number.isFinite(satoshis) || satoshis <= 0) {
@@ -241,6 +242,7 @@ export function SendPanel({
       onSent(available)
       send({ type: 'REVIEW' })
     } catch (err) {
+      send({ type: 'REFUSE' })
       playWalletSound('error')
       onFail(err instanceof Error ? err.message : String(err))
       try {
@@ -249,8 +251,6 @@ export function SendPanel({
       } catch {
         // ignore secondary refresh failure
       }
-    } finally {
-      setReviewBusy(false)
     }
   }
 

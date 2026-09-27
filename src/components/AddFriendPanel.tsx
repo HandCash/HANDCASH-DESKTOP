@@ -10,6 +10,7 @@ import {
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { CheckCircleIcon, PersonAddIcon } from './icons'
 
 function initialFromNav(): { label: string; recipient: string } {
@@ -25,8 +26,7 @@ export function AddFriendPanel() {
   const seeded = initialFromNav()
   const [label, setLabel] = useState(seeded.label)
   const [recipient, setRecipient] = useState(seeded.recipient)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const add = useAsyncAction<'add'>()
   const [resolvedHandle, setResolvedHandle] = useState<ResolvedHandle | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
   const handleResolveRef = useRef(createHandleResolveDebouncer())
@@ -42,11 +42,11 @@ export function AddFriendPanel() {
     resolvedHandle && isVerifiedHandleCertificate(resolvedHandle.certificate)
 
   const canSubmit = useMemo(() => {
-    if (!trimmedRecipient || busy) return false
+    if (!trimmedRecipient || add.busy) return false
     if (needsLabel && !label.trim()) return false
     if (isHandleInput && resolveError) return false
     return true
-  }, [trimmedRecipient, busy, needsLabel, label, isHandleInput, resolveError])
+  }, [trimmedRecipient, add.busy, needsLabel, label, isHandleInput, resolveError])
 
   useEffect(() => () => handleResolveRef.current.cancel(), [])
 
@@ -69,29 +69,30 @@ export function AddFriendPanel() {
   const onAdd = async (e: FormEvent) => {
     e.preventDefault()
     if (!canSubmit) return
-    setError(null)
-    setBusy(true)
-    try {
+    const outcome = await add.run('add', async () => {
       await addFriendFromRecipient({
         label: canSetCustomLabel ? label.trim() || undefined : undefined,
         recipient: trimmedRecipient,
       })
+    })
+    if (outcome.ok) {
       playWalletSound('soft')
       toastSuccess('Friend added')
       clearNavChild()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setError(message)
+    } else if (outcome.error) {
       playWalletSound('error')
-      toastError('Couldn’t add friend', message)
-    } finally {
-      setBusy(false)
+      toastError('Couldn’t add friend', outcome.error)
     }
   }
 
   return (
     <div className="nav-child-panel add-friend-panel" data-aeon-scope="add-friend">
-      <form className="friends-add-form" onSubmit={(e) => void onAdd(e)}>
+      <form
+        className="friends-add-form"
+        data-aeon-part="add-friend-form"
+        data-aeon-state={add.stateAttr}
+        onSubmit={(e) => void onAdd(e)}
+      >
         <div className="add-friend-content">
           <header className="add-friend-intro">
             <span className="add-friend-intro-icon" aria-hidden>
@@ -114,7 +115,7 @@ export function AddFriendPanel() {
               autoComplete="off"
               autoFocus
               spellCheck={false}
-              disabled={busy}
+              disabled={add.busy}
             />
             {isHandleInput && !resolvedHandle && !resolveError ? (
               <p className="add-friend-resolving" aria-live="polite">
@@ -149,25 +150,25 @@ export function AddFriendPanel() {
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="How you’ll recognize this peer"
                 autoComplete="off"
-                disabled={busy}
+                disabled={add.busy}
               />
             </div>
           ) : null}
-          {error && (
+          {add.error ? (
             <p className="error" role="status">
-              {error}
+              {add.error}
             </p>
-          )}
+          ) : null}
         </div>
         <div className="actions add-friend-actions">
           <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
-            {busy ? 'Adding…' : 'Add friend'}
+            {add.busy ? 'Adding…' : 'Add friend'}
           </button>
           <button
             type="button"
             className="btn btn-ghost"
             onClick={() => clearNavChild()}
-            disabled={busy}
+            disabled={add.busy}
           >
             Cancel
           </button>

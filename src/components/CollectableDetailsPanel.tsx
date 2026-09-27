@@ -48,6 +48,7 @@ import { CollectableSendingMark } from './CollectableSendingMark'
 import { LoadingSpinner } from './LoadingSpinner'
 import { EmptyState } from './EmptyState'
 import { useDetailActionDock } from './WalletActionDock'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { DeferredModelViewer } from './DeferredModelViewer'
 
 type Props = {
@@ -171,8 +172,9 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const [loading, setLoading] = useState(() => !cacheHit(outpoint))
   const [verification, setVerification] = useState(() => getVerificationProgress())
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
-  const [abandoning, setAbandoning] = useState(false)
-  const [imageBusy, setImageBusy] = useState<'copy' | 'save' | null>(null)
+  /** One exclusive item mutation: local remove, or export of its media. */
+  const action = useAsyncAction<'abandon' | 'copy' | 'save'>()
+  const abandoning = action.running('abandon')
   const mediaRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => subscribeVerificationProgress(setVerification), [])
@@ -296,50 +298,54 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
 
   const paintedImg = () => mediaRef.current?.querySelector('img') ?? null
 
+  // The media helpers toast their own outcome; the chart only tracks the lifecycle.
   const copyImage = () => {
-    if (!item.imageUrl || imageBusy) return
-    setImageBusy('copy')
-    void copyCollectableImage({
-      url: item.imageUrl,
-      mimeHint: item.mimeType,
-      paintedImg: paintedImg(),
-    }).finally(() => setImageBusy(null))
+    const url = item.imageUrl
+    if (!url) return
+    void action.run('copy', async () => {
+      await copyCollectableImage({
+        url,
+        mimeHint: item.mimeType,
+        paintedImg: paintedImg(),
+      })
+    })
   }
 
   const saveImage = () => {
-    if (!item.imageUrl || imageBusy) return
-    setImageBusy('save')
-    void saveCollectableImage({
-      url: item.imageUrl,
-      name: item.name,
-      mimeHint: item.mimeType,
-      paintedImg: paintedImg(),
-    }).finally(() => setImageBusy(null))
+    const url = item.imageUrl
+    if (!url) return
+    void action.run('save', async () => {
+      await saveCollectableImage({
+        url,
+        name: item.name,
+        mimeHint: item.mimeType,
+        paintedImg: paintedImg(),
+      })
+    })
   }
 
   const saveModel = () => {
-    if (!item.imageUrl || imageBusy) return
-    setImageBusy('save')
-    void saveCollectableModel({
-      url: item.imageUrl,
-      name: item.name,
-      mimeType: item.mimeType,
-    }).finally(() => setImageBusy(null))
+    const url = item.imageUrl
+    if (!url) return
+    void action.run('save', async () => {
+      await saveCollectableModel({
+        url,
+        name: item.name,
+        mimeType: item.mimeType,
+      })
+    })
   }
 
   const startAbandon = () => {
-    if (abandoning || sending) return
-    setAbandoning(true)
+    if (sending) return
     playWalletSound('soft')
-    void abandonCollectable(item.outpoint)
-      .then(() => {
-        clearNavChild()
+    void action
+      .run('abandon', async () => {
+        await abandonCollectable(item.outpoint)
       })
-      .catch((err) => {
-        toastError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        setAbandoning(false)
+      .then((outcome) => {
+        if (outcome.ok) clearNavChild()
+        else if (outcome.error !== null) toastError(outcome.error)
       })
   }
 
@@ -351,7 +357,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             label: abandoning ? 'Removing…' : 'Remove from wallet',
             shortLabel: abandoning ? 'Removing…' : 'Remove',
             onClick: startAbandon,
-            disabled: abandoning,
+            disabled: action.busy,
             tone: 'primary',
           },
         }
@@ -371,16 +377,14 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           },
           secondary: item.imageUrl
             ? {
-                label: isModel
-                  ? imageBusy === 'save'
-                    ? 'Saving…'
-                    : 'Save model'
-                  : imageBusy === 'save'
-                    ? 'Saving…'
+                label: action.running('save')
+                  ? 'Saving…'
+                  : isModel
+                    ? 'Save model'
                     : 'Save image',
-                shortLabel: imageBusy === 'save' ? 'Saving…' : 'Save',
+                shortLabel: action.running('save') ? 'Saving…' : 'Save',
                 onClick: isModel ? saveModel : saveImage,
-                disabled: Boolean(imageBusy),
+                disabled: action.busy,
                 icon: <DownloadIcon size={18} />,
                 tone: 'secondary',
               }
@@ -470,11 +474,13 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 type="button"
                 className="btn btn-ghost btn-icon"
                 onClick={copyImage}
-                disabled={Boolean(imageBusy)}
-                aria-busy={imageBusy === 'copy' || undefined}
+                disabled={action.busy}
+                aria-busy={action.running('copy') || undefined}
+                data-aeon-part="copy-image"
+                data-aeon-state={action.stateAttr}
               >
                 <CopyIcon size={14} />
-                {imageBusy === 'copy' ? 'Copying…' : 'Copy image'}
+                {action.running('copy') ? 'Copying…' : 'Copy image'}
               </button>
             </div>
           ) : null}

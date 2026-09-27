@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
-import { Prompt, StatusBanner } from '@aeon-ui/react'
+import { StatusBanner } from '@aeon-ui/react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
@@ -51,6 +51,8 @@ import {
 } from '../wallet/paymentProgress'
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { useDetailActionDock } from './WalletActionDock'
+import { useAsyncAction } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
 
 type Props = {
   tokenId: string
@@ -101,8 +103,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       activity: activityForFungible(initialToken, listRecentActivity(500)),
     },
   })
-  const [combineOpen, setCombineOpen] = useState(false)
-  const [combining, setCombining] = useState(false)
+  /** Combine tips: confirm, then one exclusive mutation. */
+  const combine = useAsyncAction<'combine'>()
+  const combining = combine.busy
   const [sending, setSending] = useState(() => {
     const op = initialToken?.outpoint
     return op ? isOutpointSending(op) : false
@@ -233,7 +236,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             shortLabel: 'Combine',
             onClick: () => {
               playWalletSound('soft')
-              setCombineOpen(true)
+              void runCombine()
             },
             disabled: combining,
             icon: <RefreshIcon size={18} />,
@@ -280,27 +283,30 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
 
   const live = token
   async function runCombine() {
-    if (!canCombine || combining) return
-    setCombining(true)
-    playWalletSound('soft')
-    try {
-      const result = await combineToken({
-        tokenId: live.tokenId,
-        sym: live.sym,
-      })
-      setCombineOpen(false)
-      toastSuccess(
-        'Tips combined',
-        `${result.tipsSpent} tips → 1 · balance unchanged`,
-      )
-      void listFungibles().catch(() => {})
-    } catch (err) {
-      toastError(
-        'Combine failed',
-        err instanceof Error ? err.message : String(err),
-      )
-    } finally {
-      setCombining(false)
+    if (!canCombine) return
+    const outcome = await combine.run(
+      'combine',
+      async () => {
+        const result = await combineToken({
+          tokenId: live.tokenId,
+          sym: live.sym,
+        })
+        toastSuccess(
+          'Tips combined',
+          `${result.tipsSpent} tips → 1 · balance unchanged`,
+        )
+        void listFungibles().catch(() => {})
+      },
+      {
+        confirm: {
+          title: 'Combine tips?',
+          body: `${live.utxoCount} tips → 1 tip. Balance stays ${amount} ${live.sym}. Uses a small network fee for dust and the transaction.`,
+          confirmLabel: 'Combine',
+        },
+      },
+    )
+    if (!outcome.ok && outcome.error !== null) {
+      toastError('Combine failed', outcome.error)
     }
   }
 
@@ -358,47 +364,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </div>
       </header>
 
-      <Prompt.Root
-        open={combineOpen}
-        status={combining ? 'pending' : combineOpen ? 'pending' : 'dismissed'}
-        onOpenChange={(open) => {
-          if (!open && !combining) setCombineOpen(false)
-        }}
-      >
-        <Prompt.Portal>
-          <Prompt.Backdrop className="permission-backdrop" />
-          <Prompt.Positioner className="permission-positioner">
-            <Prompt.Content className="panel modal permission-modal">
-              <Prompt.Title>Combine tips?</Prompt.Title>
-              <Prompt.Description>
-                {token.utxoCount} tips → 1 tip. Balance stays {amount} {token.sym}.
-                Uses a small network fee for dust and the transaction.
-              </Prompt.Description>
-              <Prompt.Actions className="actions">
-                <Prompt.Secondary
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={combining}
-                  onClick={() => {
-                    setCombineOpen(false)
-                    playWalletSound('soft')
-                  }}
-                >
-                  Cancel
-                </Prompt.Secondary>
-                <Prompt.Primary
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={combining}
-                  onClick={() => void runCombine()}
-                >
-                  {combining ? 'Combining…' : 'Combine'}
-                </Prompt.Primary>
-              </Prompt.Actions>
-            </Prompt.Content>
-          </Prompt.Positioner>
-        </Prompt.Portal>
-      </Prompt.Root>
+      <AsyncActionPrompt action={combine} />
 
       {sendBlocked ? (
         <StatusBanner.Root tone="warning" status="send-refused" className="fungible-send-notice">

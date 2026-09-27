@@ -39,7 +39,7 @@ const AD_HOC_FLOW_STATE = new Set<string>([])
 /**
  * Components still holding two or more `useState(false)` flags that gate a
  * button and reset in `finally` — one async phase per boolean instead of one
- * chart. `activityActionMachine` is the reference replacement. Only shrinks.
+ * chart. `asyncActionMachine` is the reference replacement. Only shrinks.
  */
 const EXCLUSIVE_BUSY_BOOLEANS = new Set<string>([])
 

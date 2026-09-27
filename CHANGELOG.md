@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.3.341] - 2026-09-27
+
+### Changed
+
+- One chart for every panel mutation. `activityActionMachine` is now the generic
+  `asyncActionMachine` (`useAsyncAction<Kind>()`, `AsyncActionPrompt`): idle →
+  confirming → busy → idle | failure, with the confirm copy held in chart context.
+  Sixteen panels dropped their `busy` / `submitting` / `checking` / `combining` /
+  `forgetting` / `uploading` booleans and `try/finally` plumbing for it: Add friend,
+  Change password, Confirm password gate, Onboard protect, History recovery,
+  Import phrase, Log viewer, Unlock settings, Wallet backup, Wallet health,
+  Collectable details, Fungible details, Messages, Create-keys backup, Wallet setup.
+  Buttons project `data-aeon-state` from the chart; sibling buttons disable together.
+- `sendMachine` owns the pre-review balance check as `editing.checking`
+  (`CHECK` / `REFUSE`); the form stays mounted, Review locks, a refusal returns to
+  `editing.idle` with the draft intact.
+- `assetBurnUiMachine` gained `forgetting` (`FORGET` → `FORGOTTEN` | `FAIL`).
+  Burn and local forget are now exclusive in the chart and the "Forgetting…"
+  label is actually reachable — before, `FORGET` closed the chart and hid the button.
+- Import phrase "Forget pending import" and Wallet backup "Rotate slices" and
+  Fungible "Combine tips" confirm through the Aeon `Prompt` compound driven by the
+  chart's `confirming` state; the last `window.confirm` in the renderer is gone.
+
+### Fixed
+
+- Device-unlock dismissal in the confirm-password gate no longer passes through a
+  failure state; it simply falls back to the password factor.
+- Wallet setup "Continue" and Create-keys "Replace slice set" no longer carry a
+  busy flag that was set and cleared in the same tick.
+- `scripts/ui-facts.mjs` recognises `useAsyncAction<'kind'>()` as a chart binding.
+
 ## [1.3.340] - 2026-09-27
 
 ### Fixed

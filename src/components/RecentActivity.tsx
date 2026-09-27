@@ -1,6 +1,6 @@
 import { getActiveWallet } from '../wallet/session'
-import { useActivityAction } from '../hooks/useActivityAction'
-import { ActivityActionPrompt } from './ActivityActionPrompt'
+import { useActivityAction } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
 
 import {
   useEffect,
@@ -1285,7 +1285,7 @@ export function ActivityFeed({
 
   // Bulk confirms are a chart state, so the Prompt only exists where the
   // bulk buttons do.
-  const confirmPrompt = showFilters ? <ActivityActionPrompt action={bulk} /> : null;
+  const confirmPrompt = showFilters ? <AsyncActionPrompt action={bulk} /> : null;
 
   if (embedded) {
     return (

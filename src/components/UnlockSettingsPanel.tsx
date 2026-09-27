@@ -21,6 +21,7 @@ import {
 } from '../wallet/deviceLockPrefs'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { PasswordField } from './PasswordField'
 
@@ -32,6 +33,13 @@ type Mode =
   | 'disable-password'
   | 'disable-device'
 
+type FactorMutation =
+  | 'changePassword'
+  | 'setPassword'
+  | 'enableDevice'
+  | 'disablePassword'
+  | 'disableDevice'
+
 /**
  * Settings → Unlock: manage HandCash password vs device lock independently.
  */
@@ -39,8 +47,12 @@ export function UnlockSettingsPanel() {
   const [factors, setFactors] = useState<VaultUnlockFactors>(() => readVaultUnlockFactors())
   const [device, setDevice] = useState<DeviceAuthStatus | null>(null)
   const [mode, setMode] = useState<Mode>('overview')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  /** Synchronous policy failures; the async failure lives in the chart. */
+  const [formError, setFormError] = useState<string | null>(null)
+  /** One exclusive factor mutation at a time. */
+  const mutation = useAsyncAction<FactorMutation>()
+  const busy = mutation.busy
+  const error = formError ?? mutation.error
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [gatePassword, setGatePassword] = useState<string | null>(null)
@@ -58,77 +70,87 @@ export function UnlockSettingsPanel() {
     setNewPassword('')
     setConfirmPassword('')
     setGatePassword(null)
-    setError(null)
+    setFormError(null)
+    mutation.reset()
     setMode('overview')
+  }
+
+  /**
+   * Run one factor mutation through the chart. A dismissed device prompt
+   * (thrown 'cancelled') is not a failure and never enters `failure`.
+   */
+  const runFactor = async (
+    kind: FactorMutation,
+    copy: { success: string; failure: string },
+    task: () => Promise<void>,
+  ) => {
+    setFormError(null)
+    let dismissed = false
+    const outcome = await mutation.run(kind, async () => {
+      try {
+        await task()
+      } catch (err) {
+        if (err instanceof Error && err.message === 'cancelled') {
+          dismissed = true
+          return
+        }
+        throw err
+      }
+    })
+    if (dismissed) return
+    if (outcome.ok) {
+      playWalletSound('success')
+      toastSuccess(copy.success)
+      resetForm()
+      await refresh()
+    } else if (outcome.error !== null) {
+      playWalletSound('error')
+      toastError(copy.failure, outcome.error)
+    }
+  }
+
+  const validateNewPassword = (): boolean => {
+    setFormError(null)
+    if (newPassword !== confirmPassword) {
+      setFormError('Passwords do not match')
+      return false
+    }
+    const pwError = validatePassword(newPassword)
+    if (pwError) {
+      setFormError(pwError)
+      return false
+    }
+    return true
   }
 
   const runChangePassword = async (e: FormEvent) => {
     e.preventDefault()
-    if (!gatePassword) return
-    setError(null)
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match')
-      return
-    }
-    const pwError = validatePassword(newPassword)
-    if (pwError) {
-      setError(pwError)
-      return
-    }
-    setBusy(true)
-    try {
-      await changeVaultPassword(gatePassword, newPassword)
-      playWalletSound('success')
-      toastSuccess('Password updated')
-      resetForm()
-      await refresh()
-    } catch (err) {
-      playWalletSound('error')
-      const message = err instanceof Error ? err.message : String(err)
-      setError(message)
-      toastError('Couldn’t change password', message)
-    } finally {
-      setBusy(false)
-    }
+    if (!gatePassword || !validateNewPassword()) return
+    await runFactor(
+      'changePassword',
+      { success: 'Password updated', failure: 'Couldn’t change password' },
+      () => changeVaultPassword(gatePassword, newPassword),
+    )
   }
 
   const runSetPassword = async (e: FormEvent) => {
     e.preventDefault()
-    setError(null)
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match')
-      return
-    }
-    const pwError = validatePassword(newPassword)
-    if (pwError) {
-      setError(pwError)
-      return
-    }
-    setBusy(true)
-    try {
-      const openSecret = getOpenUnlockSecret()
-      if (openSecret) {
-        await changeVaultPassword(openSecret, newPassword)
-        clearOpenUnlockSecret()
-        setDeviceLockMode('password')
-      } else {
-        await setVaultPasswordFromDevice(newPassword)
-        setDeviceLockMode(readVaultUnlockFactors().device ? 'both' : 'password')
-      }
-      playWalletSound('success')
-      toastSuccess('HandCash password added')
-      resetForm()
-      await refresh()
-    } catch (err) {
-      playWalletSound('error')
-      const message = err instanceof Error ? err.message : String(err)
-      if (message !== 'cancelled') {
-        setError(message)
-        toastError('Couldn’t set password', message)
-      }
-    } finally {
-      setBusy(false)
-    }
+    if (!validateNewPassword()) return
+    await runFactor(
+      'setPassword',
+      { success: 'HandCash password added', failure: 'Couldn’t set password' },
+      async () => {
+        const openSecret = getOpenUnlockSecret()
+        if (openSecret) {
+          await changeVaultPassword(openSecret, newPassword)
+          clearOpenUnlockSecret()
+          setDeviceLockMode('password')
+        } else {
+          await setVaultPasswordFromDevice(newPassword)
+          setDeviceLockMode(readVaultUnlockFactors().device ? 'both' : 'password')
+        }
+      },
+    )
   }
 
   if (mode === 'change-password' && !gatePassword) {
@@ -159,7 +181,12 @@ export function UnlockSettingsPanel() {
             This HandCash password is separate from your phone or computer unlock.
           </p>
         </div>
-        <form className="settings-form settings-form-compact" onSubmit={(e) => void runChangePassword(e)}>
+        <form
+          className="settings-form settings-form-compact"
+          data-aeon-part="factor-form"
+          data-aeon-state={mutation.stateAttr}
+          onSubmit={(e) => void runChangePassword(e)}
+        >
           <PasswordField
             id="settings-new-password"
             label="New password"
@@ -210,7 +237,12 @@ export function UnlockSettingsPanel() {
             Optional backup unlock when biometrics aren’t available. Confirm with this device first.
           </p>
         </div>
-        <form className="settings-form settings-form-compact" onSubmit={(e) => void runSetPassword(e)}>
+        <form
+          className="settings-form settings-form-compact"
+          data-aeon-part="factor-form"
+          data-aeon-state={mutation.stateAttr}
+          onSubmit={(e) => void runSetPassword(e)}
+        >
           <PasswordField
             id="settings-set-password"
             label="HandCash password"
@@ -262,7 +294,7 @@ export function UnlockSettingsPanel() {
             {error}
           </p>
         ) : null}
-        <div className="actions">
+        <div className="actions" data-aeon-part="factor-form" data-aeon-state={mutation.stateAttr}>
           <button
             type="button"
             className="btn btn-primary"
@@ -270,27 +302,15 @@ export function UnlockSettingsPanel() {
             onClick={() => {
               const openSecret = getOpenUnlockSecret()
               if (!openSecret) return
-              void (async () => {
-                setBusy(true)
-                try {
+              void runFactor(
+                'enableDevice',
+                { success: 'Device unlock on', failure: 'Couldn’t enable device unlock' },
+                async () => {
                   await enableDeviceUnlock(openSecret)
                   clearOpenUnlockSecret()
                   setDeviceLockMode('device')
-                  playWalletSound('success')
-                  toastSuccess('Device unlock on')
-                  resetForm()
-                  await refresh()
-                } catch (err) {
-                  playWalletSound('error')
-                  const message = err instanceof Error ? err.message : String(err)
-                  if (message !== 'cancelled') {
-                    setError(message)
-                    toastError('Couldn’t enable device unlock', message)
-                  }
-                } finally {
-                  setBusy(false)
-                }
-              })()
+                },
+              )
             }}
           >
             {busy ? 'Saving…' : 'Enable'}
@@ -316,27 +336,19 @@ export function UnlockSettingsPanel() {
             const openSecret = getOpenUnlockSecret()
             const used = password || openSecret
             if (!used) return
-            setBusy(true)
-            try {
-              await enableDeviceUnlock(used)
-              if (openSecret && used === openSecret) {
-                clearOpenUnlockSecret()
-                setDeviceLockMode('device')
-              } else {
-                setDeviceLockMode('both')
-              }
-              playWalletSound('success')
-              toastSuccess('Device unlock on')
-              resetForm()
-              await refresh()
-            } catch (err) {
-              playWalletSound('error')
-              const message = err instanceof Error ? err.message : String(err)
-              toastError('Couldn’t enable device unlock', message)
-              setError(message)
-            } finally {
-              setBusy(false)
-            }
+            await runFactor(
+              'enableDevice',
+              { success: 'Device unlock on', failure: 'Couldn’t enable device unlock' },
+              async () => {
+                await enableDeviceUnlock(used)
+                if (openSecret && used === openSecret) {
+                  clearOpenUnlockSecret()
+                  setDeviceLockMode('device')
+                } else {
+                  setDeviceLockMode('both')
+                }
+              },
+            )
           }}
           onCancel={resetForm}
         />
@@ -360,17 +372,11 @@ export function UnlockSettingsPanel() {
           actionLabel="Remove password"
           onVerified={async (password) => {
             if (!password) return
-            try {
-              await disableVaultPassword(password)
-              playWalletSound('success')
-              toastSuccess('HandCash password removed')
-              resetForm()
-              await refresh()
-            } catch (err) {
-              playWalletSound('error')
-              const message = err instanceof Error ? err.message : String(err)
-              toastError('Couldn’t remove password', message)
-            }
+            await runFactor(
+              'disablePassword',
+              { success: 'HandCash password removed', failure: 'Couldn’t remove password' },
+              () => disableVaultPassword(password),
+            )
           }}
           onCancel={resetForm}
         />
@@ -389,17 +395,11 @@ export function UnlockSettingsPanel() {
           actionLabel="Turn off"
           onVerified={async (password) => {
             if (!password) return
-            try {
-              await disableDeviceUnlock(password)
-              playWalletSound('success')
-              toastSuccess('Device unlock off')
-              resetForm()
-              await refresh()
-            } catch (err) {
-              playWalletSound('error')
-              const message = err instanceof Error ? err.message : String(err)
-              toastError('Couldn’t turn off device unlock', message)
-            }
+            await runFactor(
+              'disableDevice',
+              { success: 'Device unlock off', failure: 'Couldn’t turn off device unlock' },
+              () => disableDeviceUnlock(password),
+            )
           }}
           onCancel={resetForm}
         />

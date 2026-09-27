@@ -1,17 +1,20 @@
 import { Prompt } from '@aeon-ui/react'
-import type { ActivityActionHandle } from '../hooks/useActivityAction'
+import type { AsyncActionHandle } from '../hooks/useAsyncAction'
 
 type Props = {
-  action: ActivityActionHandle
+  action: Pick<
+    AsyncActionHandle<string>,
+    'confirm' | 'stateAttr' | 'confirmPending' | 'cancelPending'
+  >
 }
 
 /**
- * Confirm step for an Activity mutation, projected from `activityActionMachine`
+ * Confirm step for a panel mutation, projected from `asyncActionMachine`
  * (`confirming` → open). Replaces `window.confirm`: the copy lives in the chart
  * context and the decision is an event, so the buttons behind it stay disabled
  * for the same reason the Prompt is open.
  */
-export function ActivityActionPrompt({ action }: Props) {
+export function AsyncActionPrompt({ action }: Props) {
   const { confirm } = action
   const open = confirm !== null
   return (
@@ -27,7 +30,7 @@ export function ActivityActionPrompt({ action }: Props) {
         <Prompt.Positioner className="permission-positioner">
           <Prompt.Content
             className="panel modal permission-modal"
-            data-aeon-part="activity-action-confirm"
+            data-aeon-part="async-action-confirm"
             data-aeon-state={action.stateAttr}
           >
             <Prompt.Title>{confirm?.title}</Prompt.Title>
@@ -38,7 +41,7 @@ export function ActivityActionPrompt({ action }: Props) {
                 className="btn btn-ghost"
                 onClick={action.cancelPending}
               >
-                Cancel
+                {confirm?.cancelLabel ?? 'Cancel'}
               </Prompt.Secondary>
               <Prompt.Primary
                 type="button"

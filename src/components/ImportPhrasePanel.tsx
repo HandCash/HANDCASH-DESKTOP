@@ -27,6 +27,8 @@ import {
   walletProgressDetail,
   walletProgressPercent,
 } from '../wallet/walletProgress'
+import { useAsyncAction } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 type Phase = 'enter' | 'preview' | 'working' | 'done'
@@ -59,7 +61,8 @@ export function ImportPhrasePanel() {
   const [phrase, setPhrase] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
+  /** One exclusive import job at a time; `forget` confirms first. */
+  const job = useAsyncAction<'preview' | 'sweep' | 'forget'>()
   const [preview, setPreview] = useState<PhraseSweepPreview | null>(null)
   const [status, setStatus] = useState('')
   const [fundingResult, setFundingResult] = useState<string | null>(null)
@@ -92,15 +95,26 @@ export function ImportPhrasePanel() {
     pendingImport != null &&
     pendingImport.destIdentityKey.trim().toLowerCase() === activeIdentityKey
 
-  const forgetPendingImport = () => {
+  const forgetPendingImport = async () => {
     if (!pendingImport) return
-    const confirmed = window.confirm(
-      'Forget this pending import? Items already imported stay in this wallet. Only the saved resume position is removed.',
+    const outcome = await job.run(
+      'forget',
+      async () => {
+        clearPhraseItemMigrateCursor()
+        setItemProgress(null)
+      },
+      {
+        confirm: {
+          title: 'Forget this pending import?',
+          body: 'Items already imported stay in this wallet. Only the saved resume position is removed.',
+          confirmLabel: 'Forget import',
+          danger: true,
+        },
+      },
     )
-    if (!confirmed) return
-    clearPhraseItemMigrateCursor()
-    setItemProgress(null)
-    toastSuccess('Pending import removed', 'Already imported collectables were not changed.')
+    if (outcome.ok) {
+      toastSuccess('Pending import removed', 'Already imported collectables were not changed.')
+    }
   }
 
   const runPreview = async () => {
@@ -113,10 +127,9 @@ export function ImportPhrasePanel() {
       toastError('Password', 'Confirm your unlock password first.')
       return
     }
-    setBusy(true)
     setStatus('Checking phrase…')
     playWalletSound('soft')
-    try {
+    const outcome = await job.run('preview', async () => {
       await unlockVault(password)
       const next = await previewPhraseSweep(phrase, passphrase)
       if (
@@ -144,12 +157,13 @@ export function ImportPhrasePanel() {
       )
       setPhase('preview')
       setStatus('')
+    })
+    if (outcome.ok) {
       playWalletSound('success')
-    } catch (err) {
+    } else if (outcome.error !== null) {
+      setStatus('')
       playWalletSound('error')
-      toastError('Preview failed', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
+      toastError('Preview failed', outcome.error)
     }
   }
 
@@ -165,10 +179,9 @@ export function ImportPhrasePanel() {
       return
     }
     abortRef.current = false
-    setBusy(true)
     setPhase('working')
     playWalletSound('soft')
-    try {
+    const outcome = await job.run('sweep', async () => {
       await unlockVault(password)
       if (pendingImport) {
         // This is an explicit continuation action, not a second general phrase
@@ -297,14 +310,14 @@ export function ImportPhrasePanel() {
 
       setPhase('done')
       setStatus('')
+    })
+    if (outcome.ok) {
       playWalletSound('success')
       toastSuccess('Sweep finished', 'Refresh Collect if items are still catching up.')
-    } catch (err) {
+    } else if (outcome.error !== null) {
       playWalletSound('error')
-      toastError('Sweep failed', err instanceof Error ? err.message : String(err))
+      toastError('Sweep failed', outcome.error)
       setPhase('preview')
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -369,8 +382,18 @@ export function ImportPhrasePanel() {
               ? 'To continue, enter the same source phrase and your unlock password below. Preview verifies the source before any transaction is made.'
               : 'Switch back to the destination wallet to continue. This wallet may only forget the saved resume position.'}
           </p>
-          <div className="actions" data-aeon-part="actions" style={{ marginTop: 10 }}>
-            <button type="button" className="btn btn-ghost" onClick={forgetPendingImport}>
+          <div
+            className="actions"
+            data-aeon-part="actions"
+            data-aeon-state={job.stateAttr}
+            style={{ marginTop: 10 }}
+          >
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={job.busy}
+              onClick={() => void forgetPendingImport()}
+            >
               Forget pending import
             </button>
           </div>
@@ -389,7 +412,7 @@ export function ImportPhrasePanel() {
               placeholder="twelve words separated by spaces"
               autoComplete="off"
               spellCheck={false}
-              disabled={busy || phase === 'preview'}
+              disabled={job.busy || phase === 'preview'}
             />
           </div>
           <div className="field" data-aeon-part="field">
@@ -400,7 +423,7 @@ export function ImportPhrasePanel() {
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
               autoComplete="off"
-              disabled={busy || phase === 'preview'}
+              disabled={job.busy || phase === 'preview'}
             />
           </div>
           <div className="field" data-aeon-part="field">
@@ -411,25 +434,30 @@ export function ImportPhrasePanel() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              disabled={busy}
+              disabled={job.busy}
             />
           </div>
         </>
       ) : null}
 
       {phase === 'enter' ? (
-        <div className="actions" style={{ marginTop: 12 }}>
+        <div
+          className="actions"
+          data-aeon-part="preview-actions"
+          data-aeon-state={job.stateAttr}
+          style={{ marginTop: 12 }}
+        >
           <button
             type="button"
             className="btn btn-primary"
             disabled={
-              busy ||
+              job.busy ||
               !phrase.trim() ||
               (pendingImport != null && !pendingBelongsToActiveWallet)
             }
             onClick={() => void runPreview()}
           >
-            {busy ? 'Scanning…' : pendingImport ? 'Preview and resume' : 'Preview'}
+            {job.running('preview') ? 'Scanning…' : pendingImport ? 'Preview and resume' : 'Preview'}
           </button>
         </div>
       ) : null}
@@ -539,7 +567,7 @@ export function ImportPhrasePanel() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={busy}
+                  disabled={job.busy}
                   onClick={() => void runSweep()}
                 >
                   {pendingImport ? 'Resume collectable import' : 'Sweep into this wallet'}
@@ -547,7 +575,7 @@ export function ImportPhrasePanel() {
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  disabled={busy}
+                  disabled={job.busy}
                   onClick={() => {
                     setPreview(null)
                     setPhase('enter')
@@ -637,6 +665,8 @@ export function ImportPhrasePanel() {
           {status}
         </p>
       ) : null}
+
+      <AsyncActionPrompt action={job} />
 
       <SettingsFeatureAbout tags={['BRC-75', 'BIP39', 'BIP44']}>
         Scans BRC-75, HD master, Yours / RelayX / Twetch, and the first 20 Centi receive

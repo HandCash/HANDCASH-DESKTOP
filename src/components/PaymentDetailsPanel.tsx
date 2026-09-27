@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useActivityAction } from '../hooks/useActivityAction'
-import { ActivityActionPrompt } from './ActivityActionPrompt'
+import { useActivityAction } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { AppAvatar } from './AppAvatar'
 import { ReceiveIcon } from './icons'
 import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
@@ -879,7 +879,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           </div>
         </section>
       ) : null}
-      <ActivityActionPrompt action={action} />
+      <AsyncActionPrompt action={action} />
     </div>
   )
 }
@@ -1128,7 +1128,7 @@ function ListingActivityDetails({
           </div>
         </section>
       ) : null}
-      <ActivityActionPrompt action={action} />
+      <AsyncActionPrompt action={action} />
     </div>
   )
 }

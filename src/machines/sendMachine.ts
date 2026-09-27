@@ -11,13 +11,17 @@ export type SendContext = {
 
 /**
  * Chart: sendPayment
- * States: editing → confirming → handoff | failure
+ * States: editing.idle → editing.checking → confirming → handoff | failure
  *
  * The panel owns composing and confirming a payment — not watching it land.
  * `CONFIRM` hands the payment to the wallet and closes the panel, so progress
  * and the final result are read from the global payment progress store and
  * Activity instead of being mirrored here. `failure` is reached only by a
  * pre-flight refusal, which the user can still edit their way out of.
+ *
+ * `editing.checking` is the local balance read before Review: the form stays
+ * mounted (`matches('editing')`), the Review button locks, and a refusal
+ * (`REFUSE`) drops back to `editing.idle` — the panel reports why.
  */
 export const sendMachine = setup({
   types: {
@@ -30,11 +34,17 @@ export const sendMachine = setup({
           friendLabel?: string | null
           payeeIdentityKey?: string | null
         }
+      | { type: 'CHECK' }
       | { type: 'REVIEW' }
+      | { type: 'REFUSE' }
       | { type: 'BACK' }
       | { type: 'CONFIRM' }
       | { type: 'FAIL'; error: string }
       | { type: 'RESET' },
+  },
+  guards: {
+    reviewable: ({ context }) =>
+      context.to.trim().length > 0 && Number(context.amount) > 0,
   },
 }).createMachine({
   id: 'sendPayment',
@@ -48,6 +58,7 @@ export const sendMachine = setup({
   },
   states: {
     editing: {
+      initial: 'idle',
       on: {
         EDIT: {
           actions: assign({
@@ -62,10 +73,26 @@ export const sendMachine = setup({
             error: null,
           }),
         },
-        REVIEW: {
-          guard: ({ context }) =>
-            context.to.trim().length > 0 && Number(context.amount) > 0,
-          target: 'confirming',
+      },
+      states: {
+        idle: {
+          on: {
+            CHECK: {
+              guard: 'reviewable',
+              target: 'checking',
+            },
+            REVIEW: {
+              guard: 'reviewable',
+              target: '#sendPayment.confirming',
+            },
+          },
+        },
+        /** Local balance read before Review; a second CHECK is ignored. */
+        checking: {
+          on: {
+            REVIEW: '#sendPayment.confirming',
+            REFUSE: 'idle',
+          },
         },
       },
     },

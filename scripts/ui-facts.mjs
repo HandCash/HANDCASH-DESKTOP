@@ -15,7 +15,8 @@ export const STYLE_SHEETS = ['src/styles/handcash.css', 'src/styles/layout-compa
 const AEON_COMPOUNDS =
   'Button|Field|Dialog|Prompt|StatusBanner|Accordion|Menu|Tabs|Identity|ListRow|MetricStrip|Panel|Thread|Toast|AppNav|AppShell'
 
-const MACHINE_BINDERS = /\b(useMachine|useAeonMachine|useActorRef|useActivityAction)\(\s*([A-Za-z0-9_]*)/g
+// `useAsyncAction<'save' | 'rotate'>()` — the generic names the action kinds, not a machine.
+const MACHINE_BINDERS = /\b(useMachine|useAeonMachine|useActorRef|useActivityAction|useAsyncAction)(?:<[^()]*?>)?\(\s*([A-Za-z0-9_]*)/g
 
 export function isComponentPath(p) {
   return (

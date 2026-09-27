@@ -71,6 +71,7 @@ import {
 import { Composer, Thread } from '@aeon-ui/react'
 import type { ComposerState } from '@aeon-ui/react'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { EmptyState } from './EmptyState'
 import {
   AttachFileIcon,
@@ -491,7 +492,9 @@ export function MessagesPanel({
   const [showCommands, setShowCommands] = useState(false)
   const [threadSection, setThreadSection] = useState<ChatThreadSection>('messages')
   const [activityTick, setActivityTick] = useState(0)
-  const [fileBusy, setFileBusy] = useState(false)
+  /** One exclusive thread mutation: a file upload or a confirmed pay command. */
+  const mutation = useAsyncAction<'file' | 'pay'>()
+  const fileBusy = mutation.running('file')
   const [boundMessageId, setBoundMessageId] = useState<string | null>(null)
   const [confirmCmd, setConfirmCmd] = useState<{
     id: string
@@ -499,7 +502,7 @@ export function MessagesPanel({
     amountLabel: string
     satsLabel: string | null
   } | null>(null)
-  const [confirming, setConfirming] = useState(false)
+  const confirming = mutation.running('pay')
   const threadEndRef = useRef<HTMLDivElement>(null)
   const threadListRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
@@ -936,16 +939,15 @@ export function MessagesPanel({
   const sendFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
-    if (!file || !activeFriend || !identityKey || fileBusy) return
+    if (!file || !activeFriend || !identityKey) return
     if (file.size > MAX_CHAT_FILE_BYTES) {
       setHint('Files are limited to 8 MB.')
       playWalletSound('error')
       return
     }
 
-    setFileBusy(true)
     setHint(`Uploading ${file.name}…`)
-    try {
+    const outcome = await mutation.run('file', async () => {
       const rootKeyHex = getActiveWallet()?.rootKeyHex
       if (!rootKeyHex) throw new Error('Wallet locked')
       const attachment = await uploadChatFile({
@@ -975,11 +977,14 @@ export function MessagesPanel({
       setHint(null)
       setThreadSection('messages')
       playWalletSound('soft')
-    } catch (err) {
-      setHint(err instanceof Error ? err.message : String(err))
-      playWalletSound('error')
-    } finally {
-      setFileBusy(false)
+    })
+    if (!outcome.ok) {
+      if (outcome.error !== null) {
+        setHint(outcome.error)
+        playWalletSound('error')
+      } else {
+        setHint(null)
+      }
     }
   }
 
@@ -1559,16 +1564,16 @@ export function MessagesPanel({
               effect={`Send ${confirmCmd?.amountLabel ?? 'this amount'} to ${activeFriend.label}. This moves value and cannot be undone.`}
               confirming={confirming}
               onCancel={() => {
+                if (confirming) return
                 setConfirmCmd(null)
-                setConfirming(false)
               }}
               onConfirm={() => {
                 if (!confirmCmd) return
-                setConfirming(true)
-                void confirmPay(confirmCmd.id).finally(() => {
-                  setConfirming(false)
-                  setConfirmCmd(null)
-                })
+                void mutation
+                  .run('pay', () => confirmPay(confirmCmd.id))
+                  .then((outcome) => {
+                    if (!('refused' in outcome)) setConfirmCmd(null)
+                  })
               }}
             />
           </>

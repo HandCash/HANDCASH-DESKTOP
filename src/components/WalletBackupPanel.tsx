@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Prompt } from '@aeon-ui/react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import {
   canConfirmKeysBackup,
@@ -21,6 +20,8 @@ import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { openSetting } from '../wallet/navStore'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { useAsyncAction } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
@@ -64,12 +65,11 @@ export function WalletBackupPanel() {
   const meta = readVaultMeta()
   const hasPhrase = Boolean(meta?.hasMnemonic)
   const [kind, setKind] = useState<BackupKind>('split')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  /** One exclusive key-material operation; `rotate` confirms first. */
+  const backup = useAsyncAction<'reveal' | 'rotate'>()
   const [mnemonic, setMnemonic] = useState<string | null>(null)
   const [rootKey, setRootKey] = useState<string | null>(null)
   const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
-  const [rotatePromptOpen, setRotatePromptOpen] = useState(false)
   const [, setStatusTick] = useState(0)
 
   useEffect(() => subscribeBackupConfirmed(() => setStatusTick((n) => n + 1)), [])
@@ -82,7 +82,7 @@ export function WalletBackupPanel() {
     setMnemonic(null)
     setRootKey(null)
     setShareSet(null)
-    setError(null)
+    backup.reset()
   }
 
   const selectKind = (next: BackupKind) => {
@@ -92,12 +92,10 @@ export function WalletBackupPanel() {
 
   /** Recovery material from the unlocked session — never asks for HandCash password. */
   const revealRecovery = async () => {
-    setError(null)
-    setBusy(true)
     setMnemonic(null)
     setRootKey(null)
     setShareSet(null)
-    try {
+    const outcome = await backup.run('reveal', async () => {
       if (kind === 'phrase') {
         if (!hasPhrase) throw new Error('This wallet has no recovery phrase.')
         setMnemonic(await revealMnemonic())
@@ -110,36 +108,40 @@ export function WalletBackupPanel() {
           createBrc140Shares(rootKeyHex, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL),
         )
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      playWalletSound('error')
-    } finally {
-      setBusy(false)
-    }
+    })
+    if (!outcome.ok && outcome.error !== null) playWalletSound('error')
   }
 
   const rotateShares = async () => {
-    setBusy(true)
-    setRotatePromptOpen(false)
-    try {
-      clearKeysHandoffEvidence()
-      const rootKeyHex = await revealRootKeyHex()
-      const next = createBrc140Shares(
-        rootKeyHex,
-        BRC140_DEFAULT_THRESHOLD,
-        BRC140_DEFAULT_TOTAL,
-      )
-      setShareSet(next)
-      playWalletSound('soft')
-      toastSuccess(
-        'New slice set',
-        `Integrity ${next.integrity} — old slices from the previous set will not combine with these.`,
-      )
-    } catch (err) {
+    const outcome = await backup.run(
+      'rotate',
+      async () => {
+        clearKeysHandoffEvidence()
+        const rootKeyHex = await revealRootKeyHex()
+        const next = createBrc140Shares(
+          rootKeyHex,
+          BRC140_DEFAULT_THRESHOLD,
+          BRC140_DEFAULT_TOTAL,
+        )
+        setShareSet(next)
+        playWalletSound('soft')
+        toastSuccess(
+          'New slice set',
+          `Integrity ${next.integrity} — old slices from the previous set will not combine with these.`,
+        )
+      },
+      {
+        confirm: {
+          title: 'Rotate all slices?',
+          body: `This creates a brand-new ${BRC140_DEFAULT_THRESHOLD}-of-${BRC140_DEFAULT_TOTAL} set with a new integrity tag. Slices from the previous set will not combine with these — deposit or save the new ones before discarding the old.`,
+          confirmLabel: 'Rotate',
+          cancelLabel: 'Keep current',
+        },
+      },
+    )
+    if (!outcome.ok && outcome.error !== null) {
       playWalletSound('error')
-      toastError('Rotate failed', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
+      toastError('Rotate failed', outcome.error)
     }
   }
 
@@ -273,14 +275,14 @@ export function WalletBackupPanel() {
               Your wallet is unlocked — phrase and slices are not locked behind a HandCash password.
             </p>
           </div>
-          <div className="actions">
+          <div className="actions" data-aeon-part="reveal-actions" data-aeon-state={backup.stateAttr}>
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy}
+              disabled={backup.busy}
               onClick={() => void revealRecovery()}
             >
-              {busy
+              {backup.running('reveal')
                 ? 'Opening…'
                 : kind === 'split'
                   ? 'Show slices'
@@ -292,9 +294,9 @@ export function WalletBackupPanel() {
         </div>
       ) : null}
 
-      {error && !revealed ? (
+      {backup.error && !revealed ? (
         <p className="error" role="alert">
-          {error}
+          {backup.error}
         </p>
       ) : null}
 
@@ -383,8 +385,8 @@ export function WalletBackupPanel() {
             savedIndices={splitProgress.savedIndices}
             onHandoff={handoff}
             onConfirmSaved={confirmSliceSaved}
-            onRotateShares={() => setRotatePromptOpen(true)}
-            rotateBusy={busy}
+            onRotateShares={() => void rotateShares()}
+            rotateBusy={backup.busy}
           />
           <div className="actions">
             <button
@@ -414,47 +416,7 @@ export function WalletBackupPanel() {
         </div>
       ) : null}
 
-      <Prompt.Root
-        open={rotatePromptOpen}
-        status={rotatePromptOpen ? 'pending' : 'dismissed'}
-        onOpenChange={(open) => {
-          if (!open) setRotatePromptOpen(false)
-        }}
-      >
-        <Prompt.Portal>
-          <Prompt.Backdrop className="permission-backdrop" />
-          <Prompt.Positioner className="permission-positioner">
-            <Prompt.Content className="panel modal permission-modal">
-              <Prompt.Title>Rotate all slices?</Prompt.Title>
-              <Prompt.Description>
-                This creates a brand-new {BRC140_DEFAULT_THRESHOLD}-of-{BRC140_DEFAULT_TOTAL} set
-                with a new integrity tag. Slices from the previous set will not combine with these —
-                deposit or save the new ones before discarding the old.
-              </Prompt.Description>
-              <Prompt.Actions className="actions">
-                <Prompt.Secondary
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    setRotatePromptOpen(false)
-                    playWalletSound('soft')
-                  }}
-                >
-                  Keep current
-                </Prompt.Secondary>
-                <Prompt.Primary
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busy}
-                  onClick={() => void rotateShares()}
-                >
-                  Rotate
-                </Prompt.Primary>
-              </Prompt.Actions>
-            </Prompt.Content>
-          </Prompt.Positioner>
-        </Prompt.Portal>
-      </Prompt.Root>
+      <AsyncActionPrompt action={backup} />
 
       <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
         Any two slices restore the wallet. Use Share to put them in separate accounts or apps; no

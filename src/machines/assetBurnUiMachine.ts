@@ -2,7 +2,8 @@ import { assign, setup, type SnapshotFrom } from 'xstate'
 
 /**
  * Chart: assetBurn
- * States: closed → editing → confirming → handoff | failure
+ * States: closed → editing → confirming → burning → done | failure
+ *                              ↘ forgetting → closed | failure
  *
  * Same shape as `sendMachine`, because a burn is a spend the user composes and
  * confirms: it owns a side panel (`BurnAssetPanel`), the amount is chosen in
@@ -30,6 +31,7 @@ export type AssetBurnUiEvent =
   | { type: 'CANCEL' }
   | { type: 'CONFIRM' }
   | { type: 'FORGET' }
+  | { type: 'FORGOTTEN' }
   | { type: 'SUCCESS'; txid: string; recoveredSatoshis: number }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
@@ -116,9 +118,19 @@ export const assetBurnUiMachine = setup({
       on: {
         BACK: { target: 'editing' },
         CANCEL: { target: 'closed' },
-        FORGET: { target: 'closed' },
+        FORGET: { target: 'forgetting' },
         PREVIEW: { actions: 'setPreview' },
         CONFIRM: { target: 'burning' },
+        FAIL: { target: 'failure', actions: 'fail' },
+      },
+    },
+    /**
+     * Local forget in flight: nothing is broadcast, the wallet just drops the
+     * item. Exclusive with `burning` — Back, Confirm and Forget all lock.
+     */
+    forgetting: {
+      on: {
+        FORGOTTEN: { target: 'closed' },
         FAIL: { target: 'failure', actions: 'fail' },
       },
     },

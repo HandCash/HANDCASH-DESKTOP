@@ -38,7 +38,24 @@ describe('assetBurnUiMachine', () => {
     actor.send({ type: 'REVIEW' })
     actor.send({ type: 'FORGET' })
 
+    expect(actor.getSnapshot().matches('forgetting')).toBe(true)
+    // Exclusive with burning: a confirm while forgetting is ignored.
+    actor.send({ type: 'CONFIRM' })
+    expect(actor.getSnapshot().matches('forgetting')).toBe(true)
+
+    actor.send({ type: 'FORGOTTEN' })
     expect(actor.getSnapshot().matches('closed')).toBe(true)
+  })
+
+  it('surfaces a failed forget as a failure the user can edit out of', () => {
+    const actor = createActor(assetBurnUiMachine).start()
+    actor.send({ type: 'OPEN' })
+    actor.send({ type: 'REVIEW' })
+    actor.send({ type: 'FORGET' })
+    actor.send({ type: 'FAIL', error: 'still referenced' })
+
+    expect(actor.getSnapshot().matches('failure')).toBe(true)
+    expect(actor.getSnapshot().context.error).toBe('still referenced')
   })
 
   it('sends a failure back to editing with the amount intact', () => {

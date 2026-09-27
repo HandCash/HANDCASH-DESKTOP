@@ -3,6 +3,7 @@ import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import { applyOnboardLock } from '../wallet/applyOnboardLock'
 import { type DeviceLockMode } from '../wallet/deviceLockPrefs'
 import { playWalletSound } from '../wallet/soundService'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { PasswordField } from './PasswordField'
 
 type Props = {
@@ -47,8 +48,9 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
   const [mode, setMode] = useState<DeviceLockMode>('none')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  /** Synchronous choice/policy failures; the async failure lives in the chart. */
+  const [formError, setFormError] = useState<string | null>(null)
+  const save = useAsyncAction<'save'>()
 
   useEffect(() => {
     let cancelled = false
@@ -67,32 +69,33 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
   const needsPassword = mode === 'password' || mode === 'both'
 
   const apply = async () => {
-    if (busy) return
-    setError(null)
+    setFormError(null)
     if ((mode === 'device' || mode === 'both') && !deviceAvailable) {
-      setError(`${deviceLabel} is not available on this device`)
+      setFormError(`${deviceLabel} is not available on this device`)
       return
     }
     if (needsPassword && password !== confirm) {
-      setError('Passwords do not match')
+      setFormError('Passwords do not match')
       return
     }
-    setBusy(true)
-    try {
+    let sessionPassword: string | null = null
+    const outcome = await save.run('save', async () => {
       const result = await applyOnboardLock({
         wrapPassword,
         mode,
         userPassword: needsPassword ? password : undefined,
       })
+      sessionPassword = result.sessionPassword
+    })
+    if (outcome.ok) {
       playWalletSound('success')
-      onDone(result.sessionPassword)
-    } catch (err) {
+      onDone(sessionPassword)
+    } else if (outcome.error) {
       playWalletSound('error')
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
     }
   }
+
+  const error = formError ?? save.error
 
   return (
     <div className="wallet-setup-config" data-aeon-scope="onboard-protect">
@@ -171,14 +174,19 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
         </p>
       ) : null}
 
-      <div className="auth-actions" style={{ marginTop: 16 }}>
+      <div
+        className="auth-actions"
+        style={{ marginTop: 16 }}
+        data-aeon-part="onboard-protect-actions"
+        data-aeon-state={save.stateAttr}
+      >
         <button
           type="button"
           className="btn btn-primary auth-submit"
-          disabled={busy}
+          disabled={save.busy}
           onClick={() => void apply()}
         >
-          {busy ? 'Saving…' : 'Continue'}
+          {save.busy ? 'Saving…' : 'Continue'}
         </button>
       </div>
     </div>

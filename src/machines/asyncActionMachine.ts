@@ -1,61 +1,54 @@
 import { assign, setup } from 'xstate'
 
 /**
- * Named user actions on an Activity row or the Activity list. Each is an
- * exclusive mutation of the failed / pending spend set, so at most one may be
- * in flight at a time.
+ * Copy for a confirm step; projected by the Aeon `Prompt` compound
+ * (`AsyncActionPrompt`). Replaces `window.confirm`.
  */
-export type ActivityActionKind =
-  | 'retry'
-  | 'clear'
-  | 'release'
-  | 'reclaim'
-  | 'cancelListing'
-  | 'rebroadcastAll'
-  | 'clearAll'
-  | 'publishPending'
-
-/** Copy for the confirm step; projected by the Aeon `Prompt` compound. */
-export type ActivityActionConfirm = {
+export type AsyncActionConfirm = {
   title: string
   body: string
   confirmLabel: string
+  /** Secondary label; defaults to "Cancel". */
+  cancelLabel?: string
   /** Destructive actions render the primary as `btn-danger`. */
   danger?: boolean
 }
 
-export type ActivityActionContext = {
-  /** Action awaiting confirmation, running, or the one that last failed. */
-  action: ActivityActionKind | null
-  confirm: ActivityActionConfirm | null
+export type AsyncActionContext = {
+  /**
+   * Named action awaiting confirmation, running, or the one that last failed.
+   * Callers narrow this to their own union via `useAsyncAction<Kind>()`.
+   */
+  action: string | null
+  confirm: AsyncActionConfirm | null
   error: string | null
 }
 
-export type ActivityActionEvent =
-  | { type: 'REQUEST'; action: ActivityActionKind; confirm: ActivityActionConfirm }
+export type AsyncActionEvent =
+  | { type: 'REQUEST'; action: string; confirm: AsyncActionConfirm }
   | { type: 'CONFIRM' }
   | { type: 'CANCEL' }
-  | { type: 'START'; action: ActivityActionKind }
+  | { type: 'START'; action: string }
   | { type: 'SUCCEED' }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
 
 /**
- * Chart: activityAction
+ * Chart: asyncAction
  * States: idle → confirming → busy → idle | failure
  *                 ↘ idle (cancel)      idle → busy (no confirm step)
  *
- * Replaces the `retrying | clearing | releasing | …` boolean sets that
- * Activity panels used to hold side by side, and the `window.confirm` calls
- * that guarded them. `confirming` is a state the Prompt compound projects;
- * `busy` ignores START / REQUEST, so a second click or a sibling button cannot
- * start a competing mutation while one runs — the buttons read
- * `data-aeon-state` instead of OR-ing every flag together.
+ * One exclusive user-initiated mutation for a panel: submit, save, retry,
+ * clear, combine, upload. Replaces the `busy` / `submitting` / `retrying |
+ * clearing | …` booleans that panels set before an `await` and cleared in
+ * `finally`, and the `window.confirm` calls that guarded them. `busy` ignores
+ * START / REQUEST, so a second click or a sibling button cannot start a
+ * competing mutation — buttons read `data-aeon-state` instead of OR-ing flags.
  */
-export const activityActionMachine = setup({
+export const asyncActionMachine = setup({
   types: {
-    context: {} as ActivityActionContext,
-    events: {} as ActivityActionEvent,
+    context: {} as AsyncActionContext,
+    events: {} as AsyncActionEvent,
   },
   actions: {
     request: assign({
@@ -76,7 +69,7 @@ export const activityActionMachine = setup({
     }),
   },
 }).createMachine({
-  id: 'activityAction',
+  id: 'asyncAction',
   initial: 'idle',
   context: { action: null, confirm: null, error: null },
   states: {
