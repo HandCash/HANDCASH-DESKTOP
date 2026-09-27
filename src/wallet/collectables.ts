@@ -1616,6 +1616,19 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
 }
 
 /**
+ * Local BEEF for paint and lineage while the collectables screen is opening.
+ *
+ * Chain ingest and this lookup share the renderer's synchronous IndexedDB.
+ * While ingest is active, skip the toolbox scan — the caller already falls
+ * through to a network fetch, and the scan is what froze the screen. Session,
+ * cheque archive and durable copies are still checked.
+ */
+function localBeefForDisplay(wallet: ActiveWallet, txid: string) {
+  const ingesting = getWalletCoordinatorSnapshot().chainIngest === 'active'
+  return getLocalBeefForTxid(wallet, txid, { toolbox: !ingesting })
+}
+
+/**
  * Fill item art from bytes already on the device — remittance first, then the
  * origin transaction in managed storage.
  *
@@ -1642,7 +1655,7 @@ async function hydrateLocalItemArt(
     }
     const parts = /^([0-9a-f]{64})[_.](\d+)$/i.exec(origin.trim())
     if (!parts) continue
-    const beef = await getLocalBeefForTxid(wallet, parts[1]!.toLowerCase()).catch(
+    const beef = await localBeefForDisplay(wallet, parts[1]!.toLowerCase()).catch(
       () => null,
     )
     if (beef && rememberItemArtFromBeef(origin, beef)) found += 1
@@ -1904,7 +1917,7 @@ async function proveHeldGenesis(
           // UI shares this thread.
           getBeef: async (txid) => {
             await yieldToUi()
-            const local = await getLocalBeefForTxid(wallet, txid)
+            const local = await localBeefForDisplay(wallet, txid)
             if (local) return local
             // Parents of imported / history-less tips are not in local storage.
             // needProof lets WhatsOnChain / indexer fill the hop; siblings then
@@ -2408,7 +2421,7 @@ export async function verifyItemAuthenticity(
         provenance,
         heldOutpoint: target,
         getBeef: async (txid) => {
-          const local = await getLocalBeefForTxid(wallet, txid)
+          const local = await localBeefForDisplay(wallet, txid)
           if (local) return local
           return getBeefForTxidCached(wallet, txid, { needProof: true })
         },
@@ -2437,7 +2450,7 @@ export async function verifyItemAuthenticity(
       const proof = await proveGenesisLineage({
         tipOutpoint: target,
         getBeef: async (txid) => {
-          const local = await getLocalBeefForTxid(wallet, txid)
+          const local = await localBeefForDisplay(wallet, txid)
           if (local) return local
           return getBeefForTxidCached(wallet, txid, { needProof: true })
         },

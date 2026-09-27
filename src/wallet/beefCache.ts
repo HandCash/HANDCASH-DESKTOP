@@ -62,7 +62,21 @@ const BEEF_FETCH_TIMEOUT_MS = 8_000
 const HYDRATE_DEADLINE_MS = 12_000
 
 const cache = new Map<string, { at: number; binary: number[] }>()
+/**
+ * txid → cache key whose BEEF contains it. A miss used to `fromBinary` every
+ * cached tree; this answers in one read. Invalidated with the cache entry.
+ */
+const sessionHolder = new Map<string, string>()
 const inflight = new Map<string, Promise<Beef>>()
+/** One local resolution per txid — screen open and a lineage walk share it. */
+const localInflight = new Map<string, Promise<Beef | null>>()
+/**
+ * Full local misses (session, archive, durable, toolbox). A collectables open
+ * re-asked the same absent txid once per hop; the toolbox scan is synchronous
+ * IndexedDB, so the repeat was the freeze. Cleared when a BEEF is stored.
+ */
+const localMissUntil = new Map<string, number>()
+const LOCAL_MISS_MS = 60_000
 /** One AtomicBEEF build per txid — hydrate must not fan out across tip polls. */
 const atomicInflight = new Map<string, Promise<number[]>>()
 /** Failed AtomicBEEF builds: do not re-hammer indexer until this epoch. */
@@ -80,6 +94,9 @@ const INBOUND_ITEM_HINT_BACKOFF_MS = 10_000
 const DURABLE_PREFIX = 'handcash.createdBeef.'
 const DURABLE_INDEX_KEY = 'handcash.createdBeef.index'
 const DURABLE_MAX = 16
+/** Txids inside the durable index, rebuilt only when that index string changes. */
+let durableIndexRaw: string | null = null
+let durableContained: Set<string> | null = null
 
 const keyOf = (txid: string): string => txid.trim().toLowerCase()
 
@@ -98,6 +115,8 @@ function persistDurableBeef(txid: string, binary: number[]): void {
     if (!Array.isArray(index)) index = []
     const next = [key, ...index.filter((id) => id !== key)].slice(0, DURABLE_MAX)
     durableSetItem(DURABLE_INDEX_KEY, JSON.stringify(next))
+    // The contained-txid set was built from the previous index.
+    durableContained = null
     for (const old of index) {
       if (!next.includes(old)) durableRemoveItem(DURABLE_PREFIX + old)
     }
@@ -112,10 +131,7 @@ function readDurableBeef(txid: string): Beef | null {
     if (!b64) return null
     const beef = Beef.fromBinary(Utils.toArray(b64, 'base64'))
     if (!beef.findTxid(keyOf(txid))?.tx) return null
-    for (const btx of beef.txs) {
-      const id = String(btx.txid ?? '').toLowerCase()
-      if (/^[0-9a-f]{64}$/.test(id) && btx.tx) write(id, beef)
-    }
+    storeBeefTree(beef)
     return beef
   } catch {
     return null
@@ -155,22 +171,69 @@ async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Prom
   }
 }
 
+function dropSessionKey(key: string): void {
+  cache.delete(key)
+  for (const [txid, holder] of sessionHolder) {
+    if (holder === key || txid === key) sessionHolder.delete(txid)
+  }
+}
+
+/** A stored BEEF answers for every tx it contains, and is no longer a miss. */
+function noteContained(holder: string, beef: Beef): void {
+  sessionHolder.set(holder, holder)
+  localMissUntil.delete(holder)
+  try {
+    for (const btx of beef.txs) {
+      const id = String(btx.txid ?? '').toLowerCase()
+      if (!/^[0-9a-f]{64}$/.test(id) || !btx.tx) continue
+      localMissUntil.delete(id)
+      if (id !== holder && !cache.has(id)) sessionHolder.set(id, holder)
+    }
+  } catch {
+    /* the holder key is indexed */
+  }
+}
+
 function read(txid: string): Beef | null {
-  const hit = cache.get(keyOf(txid))
+  const key = keyOf(txid)
+  const hit = cache.get(key)
   if (!hit) return null
   if (Date.now() - hit.at >= TTL_MS) {
-    cache.delete(keyOf(txid))
+    dropSessionKey(key)
     return null
   }
   return Beef.fromBinary(hit.binary)
 }
 
 function write(txid: string, beef: Beef): void {
-  if (cache.size >= MAX) {
+  const key = keyOf(txid)
+  if (cache.size >= MAX && !cache.has(key)) {
     const oldest = cache.keys().next().value
-    if (oldest != null) cache.delete(oldest)
+    if (oldest != null) dropSessionKey(oldest)
   }
-  cache.set(keyOf(txid), { at: Date.now(), binary: beef.toBinary() })
+  cache.set(key, { at: Date.now(), binary: beef.toBinary() })
+  noteContained(key, beef)
+}
+
+/** One serialization for every tx in the tree, instead of one per txid. */
+function storeBeefTree(beef: Beef): void {
+  const txids: string[] = []
+  for (const btx of beef.txs) {
+    const id = String(btx.txid ?? '').toLowerCase()
+    if (/^[0-9a-f]{64}$/.test(id) && btx.tx) txids.push(id)
+  }
+  if (txids.length === 0) return
+  const binary = beef.toBinary()
+  const at = Date.now()
+  for (const id of txids) {
+    if (cache.size >= MAX && !cache.has(id)) {
+      const oldest = cache.keys().next().value
+      if (oldest != null) dropSessionKey(oldest)
+    }
+    cache.set(id, { at, binary })
+    sessionHolder.set(id, id)
+    localMissUntil.delete(id)
+  }
 }
 
 export function peekSessionBeef(txid: string): Beef | null {
@@ -191,10 +254,7 @@ export function rememberBeefTree(binary: number[] | undefined | null, persistTxi
   if (!binary?.length) return
   try {
     const beef = Beef.fromBinary(binary)
-    for (const btx of beef.txs) {
-      const id = String(btx.txid ?? '').toLowerCase()
-      if (/^[0-9a-f]{64}$/.test(id) && btx.tx) write(id, beef)
-    }
+    storeBeefTree(beef)
     const persist = persistTxid?.trim().toLowerCase()
     if (persist && /^[0-9a-f]{64}$/.test(persist) && beef.findTxid(persist)?.tx) {
       persistDurableBeef(persist, binary)
@@ -210,34 +270,71 @@ export function rememberBeefBinary(txid: string, binary: number[]): void {
 
 function indexBeefTree(beef: Beef): void {
   try {
-    rememberBeefTree(beef.toBinary())
+    storeBeefTree(beef)
   } catch {
     /* session index is best-effort */
   }
 }
 
-/** Any cached BEEF whose tree already contains this tx — no network. */
+/**
+ * Any cached BEEF whose tree already contains this tx — no network.
+ *
+ * Trees are indexed by every txid they contain when stored, so a miss is one
+ * map lookup. Parsing every cached BEEF here made each absent hop on the
+ * collectables screen a multi-second main-thread stall.
+ */
 function findSessionBeef(txid: string): Beef | null {
   const key = keyOf(txid)
   const direct = read(key)
   if (direct?.findTxid(key)?.tx) return direct
-  for (const [cachedKey, hit] of cache) {
-    if (cachedKey === key) continue
-    if (Date.now() - hit.at >= TTL_MS) {
-      cache.delete(cachedKey)
-      continue
-    }
+  const holder = sessionHolder.get(key)
+  if (!holder || holder === key) return null
+  const beef = read(holder)
+  if (beef?.findTxid(key)?.tx) {
+    write(key, beef)
+    return beef
+  }
+  sessionHolder.delete(key)
+  return null
+}
+
+/**
+ * Whether `txid` sits inside any durable created BEEF.
+ *
+ * The index holds at most 16 bodies. Parsing all of them on every lookup —
+ * once per lineage hop — was most of `beef local-lookup`. The contained set
+ * is rebuilt only when the index string changes.
+ */
+function durableContains(txid: string): boolean {
+  let raw = ''
+  try {
+    raw = durableGetItem(DURABLE_INDEX_KEY) ?? ''
+  } catch {
+    raw = ''
+  }
+  if (durableContained == null || raw !== durableIndexRaw) {
+    durableIndexRaw = raw
+    const contained = new Set<string>()
+    let index: string[] = []
     try {
-      const beef = Beef.fromBinary(hit.binary)
-      if (beef.findTxid(key)?.tx) {
-        write(key, beef)
-        return beef
+      const parsed: unknown = raw ? JSON.parse(raw) : []
+      if (Array.isArray(parsed)) {
+        index = parsed.filter((id): id is string => typeof id === 'string')
       }
     } catch {
-      /* skip a corrupt cache row */
+      index = []
     }
+    for (const id of index) {
+      const beef = readDurableBeef(id)
+      if (!beef) continue
+      for (const btx of beef.txs) {
+        const tid = String(btx.txid ?? '').toLowerCase()
+        if (/^[0-9a-f]{64}$/.test(tid) && btx.tx) contained.add(tid)
+      }
+    }
+    durableContained = contained
   }
-  return null
+  return durableContained.has(txid)
 }
 
 /** Durable created BEEF keyed by tip — scan the tree for genesis / parents. */
@@ -245,22 +342,8 @@ function findDurableBeef(txid: string): Beef | null {
   const key = keyOf(txid)
   const direct = readDurableBeef(key)
   if (direct?.findTxid(key)?.tx) return direct
-  try {
-    const raw = durableGetItem(DURABLE_INDEX_KEY)
-    const index = raw ? (JSON.parse(raw) as string[]) : []
-    if (!Array.isArray(index)) return null
-    for (const id of index) {
-      if (id === key) continue
-      const beef = readDurableBeef(id)
-      if (beef?.findTxid(key)?.tx) {
-        indexBeefTree(beef)
-        return beef
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return null
+  if (!durableContains(key)) return null
+  return findSessionBeef(key)
 }
 
 /**
@@ -276,43 +359,81 @@ function reportLocalLookup(txid: string, startedAt: number, source: string): voi
   console.info(`[beef] local-lookup done ${ms}ms — ${source} ${txid.slice(0, 8)}`)
 }
 
+export type LocalBeefOptions = {
+  /**
+   * Consult toolbox storage after the in-memory and durable copies.
+   *
+   * That scan is synchronous IndexedDB on the renderer thread. Lineage walks
+   * and item-art paint pass `false` while chain ingest is active so opening
+   * Collectables does not queue one scan per hop on top of ingest; they fall
+   * through to the network fetch they were going to make anyway. A skipped
+   * scan is not a miss — the tx may still be in the toolbox.
+   */
+  toolbox?: boolean
+}
+
 /** Session cache + durable created BEEF + toolbox storage. No network. */
 export async function getLocalBeefForTxid(
   wallet: ActiveWallet,
   txid: string,
+  opts?: LocalBeefOptions,
 ): Promise<Beef | null> {
   const key = keyOf(txid)
   const cached = findSessionBeef(key)
   if (cached) return cached
+  // A display lookup that did not consult the toolbox must not join, or be
+  // answered by, a full lookup's miss.
+  if (opts?.toolbox === false) return resolveLocalBeef(wallet, key, opts)
+  const until = localMissUntil.get(key)
+  if (until != null && Date.now() < until) return null
+  const pending = localInflight.get(key)
+  if (pending) return pending
+  const run = resolveLocalBeef(wallet, key, opts).finally(() => {
+    if (localInflight.get(key) === run) localInflight.delete(key)
+  })
+  localInflight.set(key, run)
+  return run
+}
+
+async function resolveLocalBeef(
+  wallet: ActiveWallet,
+  key: string,
+  opts?: LocalBeefOptions,
+): Promise<Beef | null> {
   const startedAt = Date.now()
+  const finish = (beef: Beef | null, source: string): Beef | null => {
+    if (beef) {
+      indexBeefTree(beef)
+      localMissUntil.delete(key)
+    } else if (opts?.toolbox !== false && !findSessionBeef(key)) {
+      localMissUntil.set(key, Date.now() + LOCAL_MISS_MS)
+    }
+    reportLocalLookup(key, startedAt, beef ? source : 'miss')
+    return beef
+  }
   try {
     const { signedChequeAtomic } = await import('./signedChequeArchive')
     const archived = signedChequeAtomic(key)
     if (archived?.length) {
       const beef = Beef.fromBinary(archived)
-      if (beef.findTxid(key)?.tx) {
-        indexBeefTree(beef)
-        reportLocalLookup(key, startedAt, 'cheque-archive')
-        return beef
-      }
+      if (beef.findTxid(key)?.tx) return finish(beef, 'cheque-archive')
     }
   } catch {
     /* archive is optional for inbound lookups */
   }
   const durable = findDurableBeef(key)
-  if (durable) {
-    indexBeefTree(durable)
-    reportLocalLookup(key, startedAt, 'durable-created')
-    return durable
-  }
+  if (durable) return finish(durable, 'durable-created')
+  if (opts?.toolbox === false) return finish(null, 'miss')
+  const storageStarted = Date.now()
   const local = await getBeefFromLocalStorage(wallet, key)
-  if (local) {
-    indexBeefTree(local)
-    reportLocalLookup(key, startedAt, 'toolbox-storage')
-    return local
+  if (local) return finish(local, 'toolbox-storage')
+  // A timeout is not absence. The read was still running because the thread
+  // was busy; caching it as a miss would hide a local unconfirmed tx.
+  if (Date.now() - storageStarted >= BEEF_FETCH_TIMEOUT_MS - 250) {
+    reportLocalLookup(key, startedAt, 'toolbox-timeout')
+    return null
   }
-  reportLocalLookup(key, startedAt, 'miss')
-  return null
+  return finish(null, 'miss')
 }
 
 async function getBeefFromLocalStorage(

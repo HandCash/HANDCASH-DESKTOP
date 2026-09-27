@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.336] - 2026-09-27
+
+### Fixed
+
+- Opening Collectables no longer re-walks local BEEF storage for every hop.
+  Jev on 0.1.509 put 97% of blocked time inside `beef local-lookup`: each miss
+  parsed every cached tree and all 16 durable bodies, then ran a synchronous
+  toolbox scan, and the same txid was asked again by the next hop. A miss is
+  now one map lookup, the durable index is parsed once per change, identical
+  lookups join one in-flight read, and a confirmed absence is remembered for
+  a minute. While chain ingest is active the collectables screen skips the
+  toolbox scan entirely and uses the network fetch it was already going to
+  make.
+
 ## [1.3.335] - 2026-09-27
 
 ### Fixed
