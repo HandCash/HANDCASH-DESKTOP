@@ -5,6 +5,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { ExclusiveActionRegion } from './ExclusiveActionRegion'
 import { PasswordField } from './PasswordField'
 
 export function ChangePasswordPanel() {
@@ -76,11 +77,27 @@ export function ChangePasswordPanel() {
           This password is used to access your wallet. Don’t forget it.
         </p>
       </div>
-      <form
+      <ExclusiveActionRegion
+        action={change}
+        scope="settings-change-password"
+        part="change-password-form"
         className="settings-form settings-form-compact"
-        data-aeon-part="change-password-form"
-        data-aeon-state={change.stateAttr}
+        error={error}
+        idleLabel="Update password"
+        pendingLabel="Updating…"
+        primaryDisabled={!newPassword || !confirmPassword}
         onSubmit={(e) => void submit(e)}
+        secondary={{
+          label: 'Back',
+          onClick: () => {
+            setCurrentPassword(null)
+            setNewPassword('')
+            setConfirmPassword('')
+            setFormError(null)
+            change.reset()
+            playWalletSound('soft')
+          },
+        }}
       >
         <PasswordField
           id="settings-new-password"
@@ -101,38 +118,7 @@ export function ChangePasswordPanel() {
           autoComplete="new-password"
           disabled={change.busy}
         />
-
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        <div className="actions">
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={change.busy || !newPassword || !confirmPassword}
-          >
-            {change.busy ? 'Updating…' : 'Update password'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={change.busy}
-            onClick={() => {
-              setCurrentPassword(null)
-              setNewPassword('')
-              setConfirmPassword('')
-              setFormError(null)
-              change.reset()
-              playWalletSound('soft')
-            }}
-          >
-            Back
-          </button>
-        </div>
-      </form>
+      </ExclusiveActionRegion>
     </div>
   )
 }

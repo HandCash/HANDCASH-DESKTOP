@@ -20,6 +20,10 @@ export default defineConfig({
   resolve: {
     alias: [
       ...aeonUiViteAliases(),
+      {
+        find: '@aeon-ui/tree',
+        replacement: path.resolve(__dirname, 'vendor/aeon-ui-engine/packages/tree/src/index.ts'),
+      },
       { find: '@', replacement: path.resolve(__dirname, 'src') },
       {
         find: /^events$/,

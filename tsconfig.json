@@ -21,6 +21,7 @@
       "@aeon-ui/react": ["./node_modules/aeon-ui-engine/packages/react/src/index.ts"],
       "@aeon-ui/ui": ["./node_modules/aeon-ui-engine/packages/ui/src/index.ts"],
       "@aeon-ui/surface": ["./node_modules/aeon-ui-engine/packages/surface/src/index.ts"],
+      "@aeon-ui/tree": ["./node_modules/aeon-ui-engine/packages/tree/src/index.ts"],
       "@aeon-ui/panda/styled-system/css": [
         "./node_modules/aeon-ui-engine/packages/panda/styled-system/css/index.d.ts"
       ],

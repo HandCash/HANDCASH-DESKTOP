@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.342] - 2026-09-27
+
+### Changed
+
+- Vendored `@aeon-ui/tree` (aeon-ui-engine 1.8.0) into `vendor/aeon-ui-engine`.
+- `ExclusiveActionRegion` renders the `asyncAction` mutation face once through
+  `exclusiveActionWidget`: form root with chart state, error line, primary with
+  pending label, secondary, and the `AsyncActionPrompt` slot. Change password
+  and Add friend use it instead of restating that chrome.
+- `exclusiveActionRegion.test.ts` asserts every `asyncAction` state has a face.
+
 ## [1.3.341] - 2026-09-27
 
 ### Changed

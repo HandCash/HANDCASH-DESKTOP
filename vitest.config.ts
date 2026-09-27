@@ -15,6 +15,12 @@ const siblingMarketTests = [
 ]
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@aeon-ui/tree': path.resolve(root, 'vendor/aeon-ui-engine/packages/tree/src/index.ts'),
+      '@aeon-ui/core': path.resolve(root, 'vendor/aeon-ui-engine/packages/core/src/index.ts'),
+    },
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'electron/**/*.test.ts'],

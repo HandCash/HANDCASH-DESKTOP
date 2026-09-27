@@ -1,0 +1,42 @@
+{
+  "name": "@aeon-ui/tree",
+  "version": "0.1.0",
+  "description": "Widget trees: UI as data projected from a statechart snapshot. Flutter's Widget layer, Aeon's anatomy, no local state.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/tree"
+  },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "README.md"],
+  "keywords": ["aeon-ui", "statechart", "widget", "xstate"],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external react",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aeon-ui/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "react": "^19.1.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.8"
+  }
+}

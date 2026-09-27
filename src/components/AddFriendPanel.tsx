@@ -11,6 +11,7 @@ import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { ExclusiveActionRegion } from './ExclusiveActionRegion'
 import { CheckCircleIcon, PersonAddIcon } from './icons'
 
 function initialFromNav(): { label: string; recipient: string } {
@@ -87,11 +88,18 @@ export function AddFriendPanel() {
 
   return (
     <div className="nav-child-panel add-friend-panel" data-aeon-scope="add-friend">
-      <form
+      <ExclusiveActionRegion
+        action={add}
+        scope="add-friend"
+        part="add-friend-form"
         className="friends-add-form"
-        data-aeon-part="add-friend-form"
-        data-aeon-state={add.stateAttr}
+        actionsClassName="actions add-friend-actions"
+        error={add.error}
+        idleLabel="Add friend"
+        pendingLabel="Adding…"
+        primaryDisabled={!canSubmit}
         onSubmit={(e) => void onAdd(e)}
+        secondary={{ label: 'Cancel', onClick: () => clearNavChild() }}
       >
         <div className="add-friend-content">
           <header className="add-friend-intro">
@@ -154,26 +162,8 @@ export function AddFriendPanel() {
               />
             </div>
           ) : null}
-          {add.error ? (
-            <p className="error" role="status">
-              {add.error}
-            </p>
-          ) : null}
         </div>
-        <div className="actions add-friend-actions">
-          <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
-            {add.busy ? 'Adding…' : 'Add friend'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => clearNavChild()}
-            disabled={add.busy}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
+      </ExclusiveActionRegion>
     </div>
   )
 }
