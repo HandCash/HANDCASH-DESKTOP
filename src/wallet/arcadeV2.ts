@@ -138,11 +138,14 @@ async function fetchArcadeTxFateRecursive(
       depth + 1,
     )
     if (ancestor.kind === 'rejected') {
-      return {
-        kind: 'rejected',
-        status: fate.status,
-        reason: `ancestor ${fate.ancestorTxid} rejected: ${ancestor.reason}`.slice(0, 240),
-      }
+      // Name the root, not the chain. Nesting "ancestor X rejected: ancestor Y
+      // rejected: …" ran past the 240-char cap by the second generation and
+      // cut off the miner's own reason — the one fact that says why the
+      // chain died. A reason that already names a root passes through.
+      const reason = /^ancestor [0-9a-f]{64} rejected: /i.test(ancestor.reason)
+        ? ancestor.reason
+        : `ancestor ${fate.ancestorTxid} rejected: ${ancestor.reason}`.slice(0, 240)
+      return { kind: 'rejected', status: fate.status, reason }
     }
     return fate
   } catch {

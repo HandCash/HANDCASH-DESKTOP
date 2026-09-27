@@ -408,8 +408,17 @@ export async function reconcileKnownUtxosByEvidence(opts?: {
 
   empty.checked = verdicts.size;
   empty.unknown = [...verdicts.values()].filter((v) => v === "unknown").length;
+  // Name the quarantined coins: triage joins them to miner-refused chains
+  // without anyone opening the log.
+  const named =
+    empty.quarantinedOutpoints.length > 0
+      ? ` quarantinedOutpoints=${empty.quarantinedOutpoints
+          .slice(0, 12)
+          .map((op) => op.replace(/^([0-9a-f]{12})[0-9a-f]{52}/, "$1…"))
+          .join(",")}`
+      : "";
   console.info(
-    `[stale-output] evidence heal checked=${empty.checked} spent=${empty.hiddenSpent} restored=${empty.restoredUnspent} quarantined=${empty.quarantined} unknown=${empty.unknown}`
+    `[stale-output] evidence heal checked=${empty.checked} spent=${empty.hiddenSpent} restored=${empty.restoredUnspent} quarantined=${empty.quarantined} unknown=${empty.unknown}${named}`
   );
   return empty;
 }

@@ -140,6 +140,7 @@ function parseSession(text) {
   const precedingLines = stallTriggers(events, stalls, blockedMsTotal)
   const storage = storagePressure(events)
   const bursts = stallBursts(events, stalls, workloads.spans)
+  const custody = custodyFacts(events)
 
   const span =
     events.length > 0
@@ -171,6 +172,10 @@ function parseSession(text) {
     // Freezes within 3s of each other, with everything that overlapped them.
     bursts,
     storage,
+    // Signed transactions the miner refused, what they were chained on, and
+    // what the UTXO heal did about coins the chain says are spent by a tx
+    // this wallet does not hold.
+    custody,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -425,6 +430,115 @@ function stallBursts(events, stalls, spans) {
  * `/all` concatenates uploads oldest-first; return them newest-first so
  * `latest` really is the newest session and `previous` is the baseline.
  */
+/* ------------------------------------------------------- custody facts */
+
+const ARCADE_REJECT_RE = /^\[arcade\] ([0-9a-f]{12}) rejected — (.*)$/
+const ANCESTOR_RE = /ancestor ([0-9a-f]{64}) rejected:?/g
+const HEAL_SUMMARY_RE =
+  /^\[stale-output\] evidence heal checked=(\d+) spent=(\d+) restored=(\d+) quarantined=(\d+) unknown=(\d+)/
+/** `reason` is cut at this length by the wallet; a chain this long loses its root. */
+const ARCADE_REASON_CAP = 240
+
+/**
+ * Arcade rejections form chains: a child is refused because its parent was.
+ * Group them by the root ancestor so the model sees one cause with N
+ * dependants instead of N warnings, and surface the root's own reason —
+ * the only text that says *why* the chain died.
+ */
+function custodyFacts(events) {
+  const rejected = new Map()
+  const roots = new Map()
+  const rootReasons = new Map()
+  let rejectLines = 0
+  let truncatedReasons = 0
+  for (const e of events) {
+    const m = ARCADE_REJECT_RE.exec(e.text)
+    if (!m) continue
+    rejectLines += 1
+    const reason = m[2].trim()
+    const chain = [...reason.matchAll(ANCESTOR_RE)].map((c) => c[1])
+    const root = chain.at(-1) ?? null
+    const tail = reason.split(/rejected:\s*/).at(-1).trim()
+    const truncated = reason.length >= ARCADE_REASON_CAP - 1 && !/[.)]$/.test(tail)
+    if (truncated) truncatedReasons += 1
+    const rootReason = chain.length === 0 ? reason : truncated ? '<truncated>' : tail
+    const row = rejected.get(m[1]) ?? { txid: m[1], lines: 0, ancestorDepth: 0, root, rootReason }
+    row.lines += 1
+    row.ancestorDepth = Math.max(row.ancestorDepth, chain.length)
+    rejected.set(m[1], row)
+    if (root) {
+      const r = roots.get(root) ?? { rootTxid: root, dependants: new Set(), warnings: 0 }
+      r.dependants.add(m[1])
+      r.warnings += 1
+      roots.set(root, r)
+    }
+    const key = family(rootReason)
+    rootReasons.set(key, (rootReasons.get(key) ?? 0) + 1)
+  }
+
+  const heals = []
+  const quarantinedOutpoints = new Set()
+  for (const e of events) {
+    const m = HEAL_SUMMARY_RE.exec(e.text)
+    if (!m) continue
+    const named = /quarantinedOutpoints=(\S+)/.exec(e.text)?.[1]?.split(',') ?? []
+    for (const op of named) quarantinedOutpoints.add(op)
+    heals.push({
+      at: e.at,
+      checked: Number(m[1]),
+      spent: Number(m[2]),
+      restored: Number(m[3]),
+      quarantined: Number(m[4]),
+      unknown: Number(m[5]),
+    })
+  }
+  // A quarantined coin whose funding tx the miner refused is not "spent by a
+  // stranger": it is an output of a dead chain.
+  const refusedPrefixes = new Set([
+    ...rejected.keys(),
+    ...[...roots.keys()].map((id) => id.slice(0, 12)),
+  ])
+  const quarantinedFromRefusedTx = [...quarantinedOutpoints].filter((op) =>
+    refusedPrefixes.has(op.slice(0, 12)),
+  ).length
+  const quarantineLines = events.filter((e) => /quarantin/i.test(e.text)).length
+  const launches = events.filter((e) => /^App log capture started/.test(e.text)).length
+
+  return {
+    launchesInWindow: launches,
+    arcadeRejections: {
+      warnings: rejectLines,
+      distinctTxids: rejected.size,
+      // Same txid warned again means the terminal verdict was not remembered.
+      // With one launch in the window that is the durable rejection set not
+      // being written; across launches it is expected once per launch.
+      repeatedTxids: [...rejected.values()].filter((r) => r.lines > 1).length,
+      maxAncestorDepth: Math.max(0, ...[...rejected.values()].map((r) => r.ancestorDepth)),
+      truncatedReasons,
+      roots: [...roots.values()]
+        .sort((a, b) => b.dependants.size - a.dependants.size)
+        .slice(0, 6)
+        .map((r) => ({ rootTxid: r.rootTxid, dependants: r.dependants.size, warnings: r.warnings })),
+      rootReasons: [...rootReasons.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([reason, count]) => ({ reason, count })),
+    },
+    utxoHeal: {
+      runs: heals.length,
+      last: heals.at(-1) ?? null,
+      // "quarantined" = the chain says spent, no local spender: coins that
+      // left through a transaction this wallet never saw or signed.
+      quarantinedTotal: heals.reduce((a, h) => a + h.quarantined, 0),
+      restoredTotal: heals.reduce((a, h) => a + h.restored, 0),
+      hiddenSpentTotal: heals.reduce((a, h) => a + h.spent, 0),
+      quarantinedOutpoints: [...quarantinedOutpoints].slice(0, 12),
+      quarantinedFromRefusedTx,
+    },
+    quarantineLines,
+  }
+}
+
 function splitUploads(text) {
   const parts = text
     .split(/^# \d{15}-[0-9a-f]+\.log$/m)
@@ -462,7 +576,47 @@ function forensicQuestions(latest) {
     'Unlock-time recompose / legacy ingest running as a whole, rather than any single timed workload.'
   owners.unclear = 'Nothing in `latest.workloads`, `latest.precedingLines` or `latest.bursts` singles one out.'
 
+  const custody = latest.custody
+  const custodyQuestions =
+    custody.arcadeRejections.warnings > 0 || custody.utxoHeal.quarantinedTotal > 0
+      ? {
+          rejected_chain_cause: {
+            type: 'choice',
+            instructions:
+              'Why did the miner refuse the transactions in `latest.custody.arcadeRejections`? `roots` groups refusals by the ancestor at the bottom of each chain; `rootReasons` is the text the miner gave for that root; `maxAncestorDepth` is how many generations were chained on it. Read `latest.custody.utxoHeal` alongside: coins quarantined as "spent, spender unknown" are inputs that left through a transaction this wallet does not hold.',
+            criteria: {
+              dead_chain_outputs:
+                '`utxoHeal.quarantinedFromRefusedTx` covers the quarantined coins: they are outputs of transactions the miner refused, so the chain reads them as gone because their funding tx never existed on chain.',
+              competing_spend:
+                'The root reason names a double spend, missing or already-spent inputs, or the heal quarantined coins that are not outputs of a refused tx — the same coins were spent from elsewhere and everything chained on them is dead.',
+              root_never_propagated:
+                'The root itself is not on chain and its inputs are still unspent: it was signed but never accepted, and children were chained before that showed.',
+              policy_or_script:
+                'The root reason names fees, script validation, size or a policy rule rather than its inputs.',
+              cause_truncated:
+                '`truncatedReasons` is most of the warnings and `rootReasons` is `<truncated>`: the wallet cut the chain text before the miner’s reason.',
+            },
+          },
+          quarantine_next_step: {
+            type: 'choice',
+            instructions:
+              'Given `latest.custody`, what should the wallet do about the quarantined coins and the rejected chain?',
+            criteria: {
+              write_off_rejected_chain:
+                'The refusals are terminal and the quarantined inputs are spent elsewhere: mark every transaction in the chain failed, drop their outputs from the spendable set, and stop re-asking the miner.',
+              release_and_rebroadcast_root:
+                'The root is merely unpropagated: post its BEEF again and keep the chain sealed until the miner answers.',
+              wait_for_chain_evidence:
+                'Verdicts are still unknown or too fresh to act on; leave the quarantine in place and re-check later.',
+              need_more_evidence:
+                'The facts do not say — the root reason is missing or the heal and the refusals disagree.',
+            },
+          },
+        }
+      : {}
+
   return {
+    ...custodyQuestions,
     freeze_owner: {
       type: 'choice',
       instructions:
@@ -667,6 +821,30 @@ function report(state, answers) {
         `  ${st.slowOps} slow op(s), worst ${st.worstSlowOp.op} ${st.worstSlowOp.ms}ms on ${st.worstSlowOp.key} (${st.worstSlowOp.kb}KB)`,
       )
     }
+  }
+
+  const cu = latest.custody
+  if (cu.arcadeRejections.warnings > 0 || cu.utxoHeal.runs > 0) {
+    console.log('\nCustody (code-counted):')
+    const ar = cu.arcadeRejections
+    if (ar.warnings > 0) {
+      console.log(
+        `  miner refused ${ar.distinctTxids} tx(s) in ${ar.warnings} warning(s) · chains up to ${ar.maxAncestorDepth} deep · ` +
+          `${ar.repeatedTxids} re-asked · ${ar.truncatedReasons} reason(s) truncated`,
+      )
+      for (const r of ar.roots) {
+        console.log(`  root ${r.rootTxid.slice(0, 16)}… — ${r.dependants} dependant tx(s)`)
+      }
+      for (const r of ar.rootReasons) console.log(`  root reason ×${r.count}: ${r.reason}`)
+    }
+    if (cu.utxoHeal.last) {
+      const h = cu.utxoHeal.last
+      console.log(
+        `  heal ran ${cu.utxoHeal.runs}× · last: checked ${h.checked}, hid spent ${h.spent}, restored ${h.restored}, quarantined ${h.quarantined}, unknown ${h.unknown}`,
+      )
+    }
+    if (answers.rejected_chain_cause) choiceBlock('Why the chain was refused', answers.rejected_chain_cause)
+    if (answers.quarantine_next_step) choiceBlock('Quarantine next step', answers.quarantine_next_step)
   }
 
   if (latest.repeatingProblems.length) {

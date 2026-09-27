@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.339] - 2026-09-27
+
+### Fixed
+
+- An Arcade rejection inherited through a chain of parents now names the
+  root ancestor and the miner's own reason. Nesting "ancestor X rejected:
+  ancestor Y rejected: …" ran past the 240-character cap by the second
+  generation and cut off the reason — Jev on 0.1.511 saw 30 refused
+  transactions under six roots with every root reason truncated, so nothing
+  could say why four coins were quarantined.
+- The UTXO evidence heal names the outpoints it quarantines, so triage can
+  join them to refused chains in code.
+
+### Changed
+
+- Log triage derives custody facts: miner refusals grouped by root ancestor
+  with the root's reason, re-asked verdicts, heal runs and quarantined
+  coins, and whether quarantined coins are outputs of a refused transaction.
+  Jev answers why the chain was refused and what to do about the quarantine.
+
 ## [1.3.338] - 2026-09-27
 
 ### Changed
