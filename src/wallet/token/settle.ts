@@ -78,6 +78,71 @@ function deployMetadataFromBeef(beef: Beef, tokenId: string) {
   }
 }
 
+type PayingTip = { vout: number; encoding: 'binary' | 'json' }
+
+/**
+ * Outputs of `tokenId` worth `amount` that pay `address`. A self-send has two
+ * (the payment and the change) when both amounts match; both are custody.
+ */
+export function collectFungibleTipsPayingUs(args: {
+  outputs: ReadonlyArray<{
+    satoshis?: number | null
+    lockingScript?: { toHex(): string } | null
+  } | null>
+  address: string
+  tokenId: string
+  amount: string
+}): { tips: PayingTip[]; sym?: string; icon?: string; issuer?: string } {
+  const tips: PayingTip[] = []
+  let sym: string | undefined
+  let icon: string | undefined
+  let issuer: string | undefined
+  for (let i = 0; i < args.outputs.length; i++) {
+    const output = args.outputs[i]
+    const scriptHex = output?.lockingScript?.toHex()
+    if (
+      output?.satoshis !== 1 ||
+      !scriptHex ||
+      !scriptPaysAddress(scriptHex, args.address)
+    ) {
+      continue
+    }
+    const binary = decodeBsv21Binary(scriptHex)
+    if (binary && binary.amount > 0n) {
+      const binId = normalizeTokenId(binary.tokenId ?? '') ?? binary.tokenId
+      if (binId === args.tokenId && binary.amount.toString() === args.amount) {
+        tips.push({ vout: i, encoding: 'binary' })
+        continue
+      }
+    }
+    const envelope = parseOrdEnvelope(scriptHex)
+    if (!envelope) continue
+    let payload: ReturnType<typeof parseBsv21Json> = null
+    try {
+      payload = parseBsv21Json(JSON.parse(new TextDecoder().decode(envelope.body)))
+      sym = sym || payload?.sym
+      icon = icon || payload?.icon
+      issuer = issuer || payload?.issuer
+    } catch {
+      // Not a BSV-21 inscription.
+    }
+    if (
+      payload?.op === 'transfer' &&
+      payload.id === args.tokenId &&
+      payload.amt === args.amount &&
+      !tips.some((tip) => tip.vout === i)
+    ) {
+      tips.push({ vout: i, encoding: 'json' })
+    }
+  }
+  return {
+    tips,
+    ...(sym ? { sym } : {}),
+    ...(icon ? { icon } : {}),
+    ...(issuer ? { issuer } : {}),
+  }
+}
+
 export async function internalizePeerFungibleSettle(opts: {
   txid: string
   tx?: number[]
@@ -142,9 +207,13 @@ export async function internalizePeerFungibleSettle(opts: {
     return { accepted: false, outpoints: [], reason: 'missing-beef' }
   }
 
-  let tipVout = -1
-  /** How the accepted tip proved itself — BRC-162 lock or legacy JSON. */
-  let tipEncoding: 'binary' | 'json' | null = null
+  /**
+   * Every output of this token that pays us the remitted amount. A self-send
+   * puts the payment and the change on the same address for the same amount
+   * (500 out, 500 back); refusing the second as ambiguous left the row on
+   * Receiving forever (hc-a580a, 438497125f03, 2026-09-27).
+   */
+  const tips: { vout: number; encoding: 'binary' | 'json' }[] = []
   let parsedBeef: Beef | null = null
   let resolvedSym = opts.token.sym
   let resolvedIcon = opts.token.icon
@@ -161,63 +230,16 @@ export async function internalizePeerFungibleSettle(opts: {
       clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'beef-missing-tx' }
     }
-    for (let i = 0; i < tx.outputs.length; i++) {
-      const output = tx.outputs[i]
-      const scriptHex = output?.lockingScript?.toHex()
-      if (
-        output?.satoshis !== 1 ||
-        !scriptHex ||
-        !scriptPaysAddress(scriptHex, active.address)
-      ) {
-        continue
-      }
-      const binary = decodeBsv21Binary(scriptHex)
-      if (binary && binary.amount > 0n) {
-        const binId = normalizeTokenId(binary.tokenId ?? '') ?? binary.tokenId
-        if (binId === tokenId && binary.amount.toString() === amount) {
-          if (tipVout >= 0) {
-            clearInboundReceivePending(id)
-            return {
-              accepted: false,
-              outpoints: [],
-              reason: 'ambiguous-token-output',
-            }
-          }
-          tipVout = i
-          tipEncoding = 'binary'
-          continue
-        }
-      }
-      const envelope = parseOrdEnvelope(scriptHex)
-      if (!envelope) continue
-      let payload: ReturnType<typeof parseBsv21Json> = null
-      try {
-        payload = parseBsv21Json(
-          JSON.parse(new TextDecoder().decode(envelope.body)),
-        )
-        resolvedSym = resolvedSym || payload?.sym || 'Token'
-        resolvedIcon = resolvedIcon || payload?.icon
-        resolvedIssuer = resolvedIssuer || payload?.issuer
-      } catch {
-        // Not a BSV-21 inscription.
-      }
-      if (
-        payload?.op === 'transfer' &&
-        payload.id === tokenId &&
-        payload.amt === amount
-      ) {
-        if (tipVout >= 0) {
-          clearInboundReceivePending(id)
-          return {
-            accepted: false,
-            outpoints: [],
-            reason: 'ambiguous-token-output',
-          }
-        }
-        tipVout = i
-        tipEncoding = 'json'
-      }
-    }
+    const matched = collectFungibleTipsPayingUs({
+      outputs: tx.outputs,
+      address: active.address,
+      tokenId,
+      amount,
+    })
+    tips.push(...matched.tips)
+    resolvedSym = resolvedSym || matched.sym || 'Token'
+    resolvedIcon = resolvedIcon || matched.icon
+    resolvedIssuer = resolvedIssuer || matched.issuer
   } catch (err) {
     clearInboundReceivePending(id)
     return {
@@ -226,44 +248,52 @@ export async function internalizePeerFungibleSettle(opts: {
       reason: err instanceof Error ? err.message : String(err),
     }
   }
-  if (tipVout < 0) {
+  if (tips.length === 0) {
     clearInboundReceivePending(id)
     return { accepted: false, outpoints: [], reason: 'no-token-tip-paying-us' }
   }
 
+  const tipVout = tips[0]!.vout
   const tipOp = `${id}.${tipVout}`
+  const outpoints = tips.map((tip) => `${id}.${tip.vout}`)
   const paintReceivedToken = (): void => {
     if (resolvedIcon && parsedBeef) {
       cacheTokenIconFromBeef(resolvedIcon, parsedBeef)
     }
-    const painted = fungibleFromImport({
-      outpoint: tipOp,
-      txid: id,
-      vout: tipVout,
-      tokenId,
-      amt: amount,
-      op: 'transfer',
-      sym: resolvedSym,
-      icon: resolvedIcon,
-      dec: opts.token.dec,
-      issuer: resolvedIssuer,
-      ...(tipEncoding === 'binary' ? { binarySupply: 'locked' as const } : {}),
-      // Both branches decoded this tip's locking script, so the wire format is
-      // proven either way.
-      encoding: tipEncoding === 'binary' ? 'brc162' : 'legacy-json',
-    })
-    rememberFungibleToken(painted)
-    void hydrateCachedTokenIcons(active, [painted]).catch(() => {})
+    let painted: ReturnType<typeof fungibleFromImport> | null = null
+    for (const tip of tips) {
+      painted = fungibleFromImport({
+        outpoint: `${id}.${tip.vout}`,
+        txid: id,
+        vout: tip.vout,
+        tokenId,
+        amt: amount,
+        op: 'transfer',
+        sym: resolvedSym,
+        icon: resolvedIcon,
+        dec: opts.token.dec,
+        issuer: resolvedIssuer,
+        ...(tip.encoding === 'binary' ? { binarySupply: 'locked' as const } : {}),
+        encoding: tip.encoding === 'binary' ? 'brc162' : 'legacy-json',
+      })
+      rememberFungibleToken(painted)
+    }
+    void hydrateCachedTokenIcons(active, painted ? [painted] : []).catch(() => {})
   }
   // A tip we are internalizing now is a tip this account holds, so any hide
   // mark or import claim standing against it is stale. Builds before the
   // guards were scoped per account wrote both device-wide, which is how a
   // same-device transfer arrived hidden from the very wallet that accepted it.
-  forgetItemsSent([tipOp])
-  let claimed = beginOneSatImport([tipOp])
-  if (claimed.length === 0 && !(await basketHoldsTip(active, tipOp))) {
-    forgetOneSatImported([tipOp])
-    claimed = beginOneSatImport([tipOp])
+  forgetItemsSent(outpoints)
+  let claimed = beginOneSatImport(outpoints)
+  if (claimed.length === 0) {
+    const held = await Promise.all(
+      outpoints.map((op) => basketHoldsTip(active, op)),
+    )
+    if (held.some((yes) => !yes)) {
+      forgetOneSatImported(outpoints)
+      claimed = beginOneSatImport(outpoints)
+    }
   }
   if (claimed.length === 0) {
     paintReceivedToken()
@@ -279,7 +309,7 @@ export async function internalizePeerFungibleSettle(opts: {
         ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
       },
     }, owner)
-    return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }
+    return { accepted: true, outpoints, reason: 'already-imported' }
   }
 
   try {
@@ -289,38 +319,36 @@ export async function internalizePeerFungibleSettle(opts: {
         tx: atomic,
         description: `Receive ${resolvedSym}`.slice(0, 50),
         labels: [BSV21_BASKET, 'handcash-token-p2p'],
-        outputs: [
-          {
-            outputIndex: tipVout,
-            protocol: 'basket insertion',
-            insertionRemittance: {
-              basket: BSV21_BASKET,
-              tags: stampBrc164Id(
-                bsv21Tags({
-                  tokenId,
-                  amt: amount,
-                  sym: resolvedSym,
-                  icon: resolvedIcon,
-                  issuer: resolvedIssuer,
-                  op: 'transfer',
-                }),
-              ),
-              customInstructions: buildBsv21CustomInstructions({
+        outputs: tips.map((tip) => ({
+          outputIndex: tip.vout,
+          protocol: 'basket insertion' as const,
+          insertionRemittance: {
+            basket: BSV21_BASKET,
+            tags: stampBrc164Id(
+              bsv21Tags({
                 tokenId,
                 amt: amount,
-                op: 'transfer',
                 sym: resolvedSym,
                 icon: resolvedIcon,
-                dec: opts.token.dec,
                 issuer: resolvedIssuer,
+                op: 'transfer',
               }),
-            },
+            ),
+            customInstructions: buildBsv21CustomInstructions({
+              tokenId,
+              amt: amount,
+              op: 'transfer',
+              sym: resolvedSym,
+              icon: resolvedIcon,
+              dec: opts.token.dec,
+              issuer: resolvedIssuer,
+            }),
           },
-        ],
+        })),
         seekPermission: false,
       }),
     )
-    markOneSatImported([tipOp])
+    markOneSatImported(outpoints)
     rememberBeefTree(atomic, id)
     paintReceivedToken()
     noteInboundReceiveComplete({
@@ -345,10 +373,10 @@ export async function internalizePeerFungibleSettle(opts: {
         err,
       )
     })
-    return { accepted: true, outpoints: [tipOp] }
+    return { accepted: true, outpoints }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
-      markOneSatImported([tipOp])
+      markOneSatImported(outpoints)
       paintReceivedToken()
       noteInboundReceiveComplete({
         txid: id,
@@ -364,9 +392,9 @@ export async function internalizePeerFungibleSettle(opts: {
       }, owner)
       void listFungibles(active).catch(() => {})
       void broadcastAtomicBeef(id, atomic).catch(() => {})
-      return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }
+      return { accepted: true, outpoints, reason: 'already-imported' }
     }
-    markOneSatImportFailed([tipOp])
+    markOneSatImportFailed(outpoints)
     clearInboundReceivePending(id)
     return {
       accepted: false,

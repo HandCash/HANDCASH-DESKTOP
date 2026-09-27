@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.346] - 2026-09-27
+
+### Fixed
+
+- A self-send of a BSV-21 no longer stays on Receiving. The payment and the
+  change are both outputs paying the same address; when they carry the same
+  token amount, settle treated the second as ambiguous and refused the whole
+  transaction (hc-a580a, 438497125f03, 500 out and 500 back). Every output that
+  pays us that amount is internalized.
+
 ## [1.3.345] - 2026-09-27
 
 ### Changed

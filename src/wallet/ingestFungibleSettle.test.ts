@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { internalizePeerFungibleSettle } from './token/settle'
+import { encodeBsv21Binary } from './token/decode162'
+import { p2pkhScriptHex } from './ordinalOwnership'
+import {
+  collectFungibleTipsPayingUs,
+  internalizePeerFungibleSettle,
+} from './token/settle'
 
 const atomicBeefForSubject = vi.fn()
 
@@ -85,5 +90,47 @@ describe('internalizePeerFungibleSettle', () => {
     })
 
     expect(atomicBeefForSubject).toHaveBeenCalledWith(plainBeef, txid)
+  })
+})
+
+const SELF = '19aXSPsoR45Uuxk4LUonJ672zGFf57wfrD'
+const OTHER = '1BitcoinEaterAddressDontSendf59kuE'
+const SELF_TOKEN = `${'cd'.repeat(32)}_0`
+
+function tokenOutput(amount: bigint, address: string) {
+  return {
+    satoshis: 1 as const,
+    lockingScript: encodeBsv21Binary({
+      tokenId: SELF_TOKEN,
+      amount,
+      rest: p2pkhScriptHex(address),
+    }),
+  }
+}
+
+describe('collectFungibleTipsPayingUs', () => {
+  it('accepts both outputs of a self-send when the payment and the change are the same amount', () => {
+    const { tips } = collectFungibleTipsPayingUs({
+      outputs: [
+        tokenOutput(500n, SELF),
+        { satoshis: 12_000, lockingScript: encodeBsv21Binary({ amount: 1n, rest: p2pkhScriptHex(SELF) }) },
+        tokenOutput(500n, SELF),
+      ],
+      address: SELF,
+      tokenId: SELF_TOKEN,
+      amount: '500',
+    })
+    expect(tips.map((tip) => tip.vout)).toEqual([0, 2])
+    expect(tips.every((tip) => tip.encoding === 'binary')).toBe(true)
+  })
+
+  it('leaves a different-amount change for the sender and keeps only the payment', () => {
+    const { tips } = collectFungibleTipsPayingUs({
+      outputs: [tokenOutput(300n, OTHER), tokenOutput(700n, SELF)],
+      address: OTHER,
+      tokenId: SELF_TOKEN,
+      amount: '300',
+    })
+    expect(tips.map((tip) => tip.vout)).toEqual([0])
   })
 })
