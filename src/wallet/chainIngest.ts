@@ -898,6 +898,17 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
           }
         })(),
         (async () => {
+          try {
+            const { reconcileStuckSelfSendReceives } = await import('./selfSendReceive')
+            const selfSends = await reconcileStuckSelfSendReceives()
+            if (selfSends > 0) {
+              console.info(
+                `[chain-ingest] self-send receive reconciled ${selfSends}`,
+              )
+            }
+          } catch (err) {
+            console.warn('[chain-ingest] self-send receive reconcile skipped', err)
+          }
           const expired = expireStaleInboundPending()
           if (expired > 0) {
             console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)

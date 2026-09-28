@@ -1419,6 +1419,32 @@ export async function ingestPaymentsFromTipHints(
         console.warn(
           `[tip-ingest] item settle refused ${hint.txid.slice(0, 12)}… — ${lastReason}`,
         )
+        // A refused settle of our own cheque is a self-send echo: broadcast it
+        // again or hide it. Peer sends return 'wait' here and fall through.
+        try {
+          const { reconcileSelfSendReceive } = await import('./selfSendReceive')
+          const asset = hint.asset?.kind === 'fungible' ? hint.asset : undefined
+          await reconcileSelfSendReceive({
+            txid: hint.txid,
+            firstSeenAt: hint.firstSeenAt,
+            ...(asset
+              ? {
+                  item: {
+                    name: asset.sym,
+                    origin: asset.tokenId,
+                    tokenId: asset.tokenId,
+                    amt: asset.amount,
+                    dec: asset.dec,
+                    ...(asset.icon ? { icon: asset.icon } : {}),
+                  },
+                }
+              : hint.itemName
+                ? { item: { name: hint.itemName, origin: hint.itemOrigin ?? hint.txid } }
+                : {}),
+          })
+        } catch (err) {
+          console.warn('[tip-ingest] self-send reconcile skipped', hint.txid.slice(0, 12), err)
+        }
         await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt, false)
         if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }

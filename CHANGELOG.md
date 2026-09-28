@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.347] - 2026-09-28
+
+### Fixed
+
+- A token or item self-send that echoed back through the inbox could sit on
+  "Receiving" forever with no Sent row beside it. `selfSendReceive` now settles
+  the echo once the original send has had a minute: a cheque whose inputs can
+  still land is broadcast again and its missing Sent row (to myself) restored;
+  a spend that is already dead — proven competing input spend or Arcade
+  hard-reject — hides the receive and suppresses the txid so the next poll
+  cannot pin it again. Explorer absence alone never hides it. Runs on every
+  refused self-send settle and on each chain-ingest pass.
+
 ## [1.3.346] - 2026-09-27
 
 ### Fixed

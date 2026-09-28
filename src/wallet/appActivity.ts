@@ -1325,6 +1325,17 @@ function normalizeActivityOutpoint(outpoint: string): string {
     .replace(/_(\d+)$/, ".$1");
 }
 
+/** Pending receives still waiting on ingest. Includes rows the feed has not painted. */
+export function listPendingInboundReceives(): ActivityEntry[] {
+  return readAll().filter(
+    (entry) =>
+      entry.status === "pending" &&
+      entry.kind === "earned" &&
+      typeof entry.txid === "string" &&
+      /^[0-9a-f]{64}$/i.test(entry.txid)
+  );
+}
+
 /** Drop a Verifying… receive when ingest fails before the tip is held. */
 export function clearInboundReceivePending(txid: string): void {
   const id = txid.trim().toLowerCase();
