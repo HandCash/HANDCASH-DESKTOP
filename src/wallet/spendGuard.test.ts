@@ -173,11 +173,15 @@ describe('refreshSpendableBalance', () => {
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
   })
 
-  it('starts burns without blocking on recovery or status checks', async () => {
+  it('starts burns with light fee-coin promote only (no explorer reclaim)', async () => {
     const { runExclusiveBurn } = await import('./spendGuard')
     await expect(runExclusiveBurn('burn-token', async () => 'built')).resolves.toBe('built')
+    // Fee / recovery coins need local promote; explorer reclaim must stay off.
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({
+      forSpendChain: true,
+      localOnly: true,
+    })
     expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
-    expect(promotePendingLocalChangeOutputs).not.toHaveBeenCalled()
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
     expect(sweepChangeScripts).not.toHaveBeenCalled()
   })

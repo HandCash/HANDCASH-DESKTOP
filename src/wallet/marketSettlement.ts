@@ -1024,13 +1024,24 @@ export async function executeMarketPurchase(
           )
         }
       } else {
-        // BSV-21: the buyer tip is already on the createAction remittance
-        // (basket bsv21). Force a fresh inventory read so the demo / Tokens
-        // panel see txid.0 before we answer COMMITTED.
+        // BSV-21: paint the bought tip before listFungibles reconciles. Without
+        // this the Tokens card kept the sold listing outpoint and burn/send
+        // tried to spend a tip that was already gone.
         try {
-          const { listFungibles } = await import('./token')
+          const { paintFungibleAfterSpend, listFungibles } = await import('./token')
+          const listingIcon = (listing as MarketListingAdvert & { icon?: string | null }).icon
+          const icon = typeof listingIcon === 'string' ? listingIcon.trim() : ''
+          paintFungibleAfterSpend({
+            tokenId: listing.origin,
+            remainingAmt: listing.amt ?? 0,
+            outpoint: `${txid}_0`,
+            sym: itemDisplayName,
+            ...(icon ? { icon } : {}),
+            binarySupply: 'open',
+            utxoCount: 1,
+          })
           await listFungibles(active)
-          mark('buyer token inventory refreshed')
+          mark('buyer token painted + inventory refreshed')
         } catch (err) {
           console.warn(
             '[market-buy] buyer token inventory refresh deferred',

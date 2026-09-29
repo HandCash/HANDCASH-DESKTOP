@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.369] - 2026-09-29
+
+### Fixed
+
+- BSV-21 burn failed with rotating excuses (`Token inventory… while wallet repair is active`, then `action batch outputs are no longer spendable`). Burns now light-promote fee coins, recover tips from session/network BEEF (not only local), fall through to the same live-tip list send uses, retry once after healing sealed parents, and market buys paint the new tip so the Tokens card is not stuck on the sold outpoint.
+
 ## [1.3.368] - 2026-09-29
 
 ### Fixed

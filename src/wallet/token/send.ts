@@ -108,8 +108,14 @@ export async function recoverBsv21TipsFromLocalBeef(
   wallet: ActiveWallet,
   tokenId: string,
 ): Promise<Bsv21SendTip[]> {
-  const { getLocalBeefForTxid } = await import('../beefCache')
+  const {
+    getLocalBeefForTxid,
+    peekSessionBeef,
+    getBeefForTxidCached,
+  } = await import('../beefCache')
   const { getCachedFungibles } = await import('./list')
+  const { restoreUnspentAssetOutpoint } = await import('../staleOutputRelease')
+  const { isItemSent } = await import('../sentItemGuard')
   const want = requireTokenId(tokenId)
   const candidates = new Set<string>()
   for (const token of getCachedFungibles()) {
@@ -131,16 +137,38 @@ export async function recoverBsv21TipsFromLocalBeef(
   const tips: Bsv21SendTip[] = []
   for (const op of candidates) {
     const wire = wireOutpoint(op)
+    if (isItemSent(wire)) continue
     const [txid, voutRaw] = wire.split('.')
     if (!txid) continue
-    const beef = await getLocalBeefForTxid(wallet, txid)
-    const hex = beef
-      ?.findTxid(txid.toLowerCase())
-      ?.tx?.outputs?.[Number(voutRaw)]
-      ?.lockingScript?.toHex()
+    // Prefer live toolbox / local bodies. A display-cache tip that is already
+    // spent (e.g. the tip we just sold on the market) must not become a burn
+    // input — that surfaced as "action batch outputs are no longer spendable".
+    if (!(await restoreUnspentAssetOutpoint(wallet, wire))) continue
+    let hex =
+      (await getLocalBeefForTxid(wallet, txid))
+        ?.findTxid(txid.toLowerCase())
+        ?.tx?.outputs?.[Number(voutRaw)]
+        ?.lockingScript?.toHex() ??
+      peekSessionBeef(txid)
+        ?.findTxid(txid.toLowerCase())
+        ?.tx?.outputs?.[Number(voutRaw)]
+        ?.lockingScript?.toHex()
+    if (!hex) {
+      try {
+        const beef = await getBeefForTxidCached(wallet, txid, {
+          allowUnprovenRawTx: true,
+        })
+        hex = beef
+          .findTxid(txid.toLowerCase())
+          ?.tx?.outputs?.[Number(voutRaw)]
+          ?.lockingScript?.toHex()
+      } catch {
+        continue
+      }
+    }
     if (!hex) continue
     const decoded = tipFromBsv21Script({
-      outpoint: op,
+      outpoint: wire,
       lockingScript: hex,
       satoshis: 1,
     })
@@ -155,7 +183,7 @@ export async function recoverBsv21TipsFromLocalBeef(
   }
   if (tips.length > 0) {
     console.info(
-      `[bsv21] recovered ${tips.length} tip(s) from local BEEF (listOutputs had no 162 lock)`,
+      `[bsv21] recovered ${tips.length} tip(s) from cached BEEF (listOutputs had no 162 lock)`,
     )
   }
   return tips

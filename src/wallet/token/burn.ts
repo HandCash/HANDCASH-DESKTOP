@@ -34,19 +34,29 @@ import { estimateBurnEconomics, type BurnEconomics } from '../burnEconomics'
 export type Bsv21BurnInventory =
   | { source: 'basket'; tips: Bsv21SendTip[] }
   | { source: 'localBeef'; tips: Bsv21SendTip[] }
+  | { source: 'fungibleTips'; tips: Bsv21SendTip[] }
   | { source: 'unavailable'; tips: [] }
 
 export async function resolveBsv21BurnInventory(args: {
   listed: Bsv21SendTip[]
   recover: () => Promise<Bsv21SendTip[]>
+  /** Same live-tip path the Tokens panel / send uses when basket decode is empty. */
+  listFungibleTips?: () => Promise<Bsv21SendTip[]>
 }): Promise<Bsv21BurnInventory> {
   if (args.listed.length > 0) {
     return { source: 'basket', tips: args.listed }
   }
   const recovered = await args.recover()
-  return recovered.length > 0
-    ? { source: 'localBeef', tips: recovered }
-    : { source: 'unavailable', tips: [] }
+  if (recovered.length > 0) {
+    return { source: 'localBeef', tips: recovered }
+  }
+  if (args.listFungibleTips) {
+    const fromList = await args.listFungibleTips()
+    if (fromList.length > 0) {
+      return { source: 'fungibleTips', tips: fromList }
+    }
+  }
+  return { source: 'unavailable', tips: [] }
 }
 
 function parseBurnUnits(amount: string): number {
@@ -172,34 +182,50 @@ export async function burnBsv21Tokens(args: {
     assertOnlineForPayment()
     const active = getActiveWallet()
     if (!active) throw new Error('Wallet locked')
-    {
-      const { abortReservedActionBatches, releaseStuckNosends } =
-        await import('../actionReview')
-      await releaseStuckNosends(active)
-      await abortReservedActionBatches(active)
-    }
+    const { abortReservedActionBatches, releaseStuckNosends } =
+      await import('../actionReview')
+    await releaseStuckNosends(active)
+    await abortReservedActionBatches(active)
 
     const listed = (await listBsv21BinaryTips(active)).filter(
       (t) => t.tokenId === tokenId,
     )
-    const listedTips: Bsv21SendTip[] = listed.map((t) => ({
-      outpoint: t.outpoint,
-      tokenId: t.tokenId,
-      amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
-      lockingScript: t.lockingScript,
-    }))
-    // Heal can hold Toolbox long enough for listOutputs to time out. An empty
-    // read is not evidence that the token balance is zero: recover the exact
-    // held tips from our cached Atomic BEEF, as the token-send path does.
+    const listedTips: Bsv21SendTip[] = listed
+      .filter((t) => !!t.lockingScript)
+      .map((t) => ({
+        outpoint: t.outpoint,
+        tokenId: t.tokenId,
+        amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+        lockingScript: t.lockingScript,
+      }))
+    // Heal / a just-bought tip can make listOutputs look empty. Recover from
+    // cached BEEF and the same live-tip path send uses — never invent a
+    // "repair is active" refusal when the tips are simply not on the basket
+    // read yet.
     const inventory = await resolveBsv21BurnInventory({
       listed: listedTips,
       recover: () => recoverBsv21TipsFromLocalBeef(active, tokenId),
+      listFungibleTips: async () => {
+        const { listFungibleTips } = await import('./list')
+        const rows = await listFungibleTips(active, { tokenIds: [tokenId] })
+        return rows
+          .filter((t) => !!t.lockingScript)
+          .map((t) => ({
+            outpoint: t.outpoint,
+            tokenId: t.tokenId,
+            amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+            lockingScript: t.lockingScript!,
+          }))
+      },
     })
     if (inventory.source === 'unavailable') {
       throw new Error(
-        'Token inventory is temporarily unavailable while wallet repair is active',
+        'No spendable tips found for this token. Open Tokens, pull to refresh, then burn again.',
       )
     }
+    console.info(
+      `[bsv21-burn] inventory source=${inventory.source} tips=${inventory.tips.length}`,
+    )
     const plan = planBsv21Send({
       tokenId,
       amount: BigInt(amount),
@@ -274,27 +300,44 @@ export async function burnBsv21Tokens(args: {
     console.info(
       `[bsv21-burn] createAction start tips=${selected.length} amount=${amount} change=${change}`,
     )
-    const created = await withFungibleCreateActionTimeout(
-      active.wallet.createAction({
-        description: `Burn ${sym}`.slice(0, 50),
-        labels: ['handcash-burn', BSV21_BASKET],
-        inputBEEF,
-        inputs: selected.map((tip) => ({
-          outpoint: wireOutpoint(tip.outpoint),
-          inputDescription: 'BSV-21 value burn',
-          unlockingScriptLength: 108,
-        })),
-        outputs,
-        options: {
-          trustSelf: 'known',
-          ...(knownTxids.length > 0 ? { knownTxids } : {}),
-          noSend: true,
-          randomizeOutputs: false,
-          signAndProcess: true,
-        },
-      }),
-      FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
-    )
+    const createBurnAction = () =>
+      withFungibleCreateActionTimeout(
+        active.wallet.createAction({
+          description: `Burn ${sym}`.slice(0, 50),
+          labels: ['handcash-burn', BSV21_BASKET],
+          inputBEEF,
+          inputs: selected.map((tip) => ({
+            outpoint: wireOutpoint(tip.outpoint),
+            inputDescription: 'BSV-21 value burn',
+            unlockingScriptLength: 108,
+          })),
+          outputs,
+          options: {
+            trustSelf: 'known',
+            ...(knownTxids.length > 0 ? { knownTxids } : {}),
+            noSend: true,
+            randomizeOutputs: false,
+            signAndProcess: true,
+          },
+        }),
+        FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
+      )
+    let created: Awaited<ReturnType<typeof createBurnAction>>
+    try {
+      created = await createBurnAction()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!/no longer spendable|insufficient/i.test(msg)) throw err
+      // Fee coin sealed behind an app-held parent — free it and retry once.
+      const { healAppHeldChange } = await import('../staleOutputRelease')
+      const freed = await healAppHeldChange()
+      console.warn(
+        `[bsv21-burn] createAction refused (${msg.slice(0, 80)}); healed ${freed} parent(s), retrying`,
+      )
+      await releaseStuckNosends(active)
+      await abortReservedActionBatches(active)
+      created = await createBurnAction()
+    }
 
     let txid =
       typeof created.txid === 'string' && /^[0-9a-f]{64}$/i.test(created.txid)

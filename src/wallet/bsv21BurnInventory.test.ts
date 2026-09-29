@@ -28,11 +28,22 @@ describe('resolveBsv21BurnInventory', () => {
     ).resolves.toEqual({ source: 'localBeef', tips: [tip] })
   })
 
+  it('falls through to the live fungible-tip list before unavailable', async () => {
+    await expect(
+      resolveBsv21BurnInventory({
+        listed: [],
+        recover: async () => [],
+        listFungibleTips: async () => [tip],
+      }),
+    ).resolves.toEqual({ source: 'fungibleTips', tips: [tip] })
+  })
+
   it('reports unavailable instead of claiming the token balance is zero', async () => {
     await expect(
       resolveBsv21BurnInventory({
         listed: [],
         recover: async () => [],
+        listFungibleTips: async () => [],
       }),
     ).resolves.toEqual({ source: 'unavailable', tips: [] })
   })
