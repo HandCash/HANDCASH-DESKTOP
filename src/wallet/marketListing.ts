@@ -2997,10 +2997,13 @@ export function markMarketListingPublishFailed(args: {
   txid?: string
   reason?: string
 }): void {
-  failMarketListingActivity({
-    txid: args.txid,
-    reason: args.reason || 'Could not publish listing',
-  })
+  const reason = args.reason?.trim() || 'Could not publish listing'
+  // The overlay's refusal code only reaches this device through the app's
+  // report. Log it so triage can name the fix without anyone reading a log.
+  console.warn(
+    `[market-list] publish failed txid=${args.txid?.trim().toLowerCase() ?? '?'} reason=${reason.slice(0, 160)}`,
+  )
+  failMarketListingActivity({ txid: args.txid, reason })
 }
 
 function listingOutpointFromActivity(entry: {

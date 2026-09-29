@@ -1150,9 +1150,11 @@ async function handleBrc100RequestInner(
           { promote: false },
         )
         lapActionPhase(event.request_id, 'spend')
+        // The deposit is already signed and with miners. Nothing past this
+        // line may turn that into an app-visible error.
         if (
           method === 'createAction' &&
-          bounceDepositFromCreateAction(actionArgs) &&
+          bounceDepositFromCreateAction(args) &&
           bounceRefundUrl(originator)
         ) {
           // Chrome freezes a background tab, so a bounce page cannot start its
@@ -1161,7 +1163,7 @@ async function handleBrc100RequestInner(
           setPaymentProgress('broadcasting', 'Returning the bounce deposit', null, 'Working…')
           await continueTxBounceRefund({
             originator,
-            request: actionArgs,
+            request: args,
             result,
             identityKey: active.identityKey,
             internalize: (body) => active.wallet.internalizeAction(body as never),

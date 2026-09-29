@@ -10,6 +10,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     refs/heads/master|refs/heads/main)
       node "$ROOT/scripts/require-version-bump.mjs"
       node "$ROOT/scripts/require-toolbox-patch.mjs"
+      # The APK bundles without a typecheck; CI's release-* jobs run tsc and
+      # fail after the phone already has the build. Catch it before either.
+      (cd "$ROOT" && npx tsc -p tsconfig.json --noEmit)
       ;;
     # A tag push is what actually builds installers, and a stale toolbox patch
     # breaks `npm ci` in every release workflow.

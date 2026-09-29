@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.364] - 2026-09-29
+
+### Fixed
+
+- 1.3.363 answered every bounce-deposit `createAction` with `INSUFFICIENT_OR_STALE_FUNDS · actionArgs is not defined` after the deposit had already been signed and handed to miners: the bounce continuation read a variable scoped inside the spend. It now reads the request itself, and nothing after the signed spend can turn it into an app-visible error.
+- A refused market listing showed a fixed "amount or origin mismatch" sentence whatever the overlay actually said. The row now shows the overlay's own reason.
+
+### Changed
+
+- The wallet logs the overlay's refusal (`[market-list] publish failed txid=… reason=…`) when an app reports it back, and every refused bridge reply is a triage fact: `appFlow.refusals` (method, code, wallet detail, repeat count, or the overlay's code), with Jev asked which refusal to fix first and on which side.
+- `git push` to master now typechecks the UI core, and `scripts/build-apk.sh` refuses to bundle a core Desktop's release CI would reject.
+
 ## [1.3.363] - 2026-09-29
 
 ### Changed

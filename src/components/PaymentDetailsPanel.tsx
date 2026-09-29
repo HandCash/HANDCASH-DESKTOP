@@ -1108,8 +1108,10 @@ function ListingActivityDetails({
         <section className="payment-attempt-actions">
           <strong>Listing failed</strong>
           <p>
-            The market could not verify this listing (amount or origin mismatch).
-            Your token is still in the wallet; dismiss this row to try listing again.
+            {entry.failureReason
+              ? `The market refused this listing: ${entry.failureReason}.`
+              : 'The market could not verify this listing.'}{' '}
+            Your asset is still in the wallet; dismiss this row to try listing again.
           </p>
           {action.error ? <p className="form-error">{action.error}</p> : null}
           <div

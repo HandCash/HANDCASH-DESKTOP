@@ -1086,9 +1086,55 @@ const PAGE_GAP_STALL_MS = 20_000
  * background tab, the user reading) — kept apart from `approvalMs` and
  * `workMs` so a stalled page is never read as a slow approval.
  */
+const BRIDGE_FAILED_RE = /^\[brc100\] failed (.*)$/
+/** The market overlay's refusal, as the app reported it back through the bridge. */
+const OVERLAY_REFUSED_RE = /^\[market-list\] publish failed (.*)$/
+/** `key=value key=value…` where a value runs until the next ` key=` token (values are not quoted). */
+const FIELD_RE = /(\w+)=(.*?)(?=\s+\w+=|$)/g
+
+function logFields(text) {
+  const out = {}
+  for (const m of text.matchAll(FIELD_RE)) out[m[1]] = m[2]
+  return out
+}
+
 function appFlowFacts(events) {
   const steps = []
+  // Replies the wallet refused, as the app saw them: method, code, and the
+  // description the wallet attached. Grouped so the same refusal repeated by
+  // a retrying page counts once with a tally.
+  const refusals = new Map()
+  const refuse = (at, row) => {
+    const key = `${row.method}|${row.code ?? row.status}|${row.detail ?? ''}`
+    const seen = refusals.get(key) ?? refusals.set(key, { ...row, count: 0, lastAt: 0 }).get(key)
+    seen.count += 1
+    seen.lastAt = at
+  }
   for (const e of events) {
+    const failed = BRIDGE_FAILED_RE.exec(e.text)
+    if (failed) {
+      const f = logFields(failed[1])
+      refuse(e.at, {
+        method: f.method ?? '?',
+        origin: f.origin ?? '?',
+        status: Number(f.status ?? 0),
+        code: f.code ?? null,
+        detail: f.detail ?? null,
+      })
+      continue
+    }
+    const overlay = OVERLAY_REFUSED_RE.exec(e.text)
+    if (overlay) {
+      const f = logFields(overlay[1])
+      refuse(e.at, {
+        method: 'market overlay /submit',
+        origin: 'overlay',
+        status: 400,
+        code: f.reason ?? null,
+        detail: f.txid ? `listing ${f.txid.slice(0, 12)}` : null,
+      })
+      continue
+    }
     const m = ACTION_DONE_RE.exec(e.text)
     if (!m) continue
     const tail = m[4]
@@ -1123,6 +1169,10 @@ function appFlowFacts(events) {
     longestWorkMs: steps.reduce((a, s) => Math.max(a, s.workMs), 0),
     byOrigin: [...byOrigin.values()].sort((a, b) => b.longestPageGapMs - a.longestPageGapMs),
     stalled: stalled.slice(0, 8).map(({ at, ...s }) => s),
+    refusals: [...refusals.values()]
+      .sort((a, b) => b.lastAt - a.lastAt)
+      .slice(0, 12)
+      .map(({ lastAt, ...r }) => r),
   }
 }
 
@@ -1395,6 +1445,26 @@ function forensicQuestions(latest) {
               unclear: 'The steps do not show where the time went.',
             },
           },
+          ...(flow.refusals.length > 0
+            ? {
+                app_flow_refusal: {
+                  type: 'choice',
+                  instructions:
+                    'The same flow saw refusals: `latest.appFlow.refusals` lists each distinct one with the bridge `method` (or `market overlay /submit` when the app reported the overlay\'s refusal back), the `code`, the wallet\'s `detail`, and how many times it repeated. Which refusal is the one to fix first, and where does it live?',
+                  criteria: {
+                    wallet_bug:
+                      'A `detail` reads like a program fault (`is not defined`, `undefined`, `Cannot read`, a stack) rather than a wallet rule: the wallet threw, and the code it was mapped to is misleading. Fix the wallet.',
+                    wallet_rule_refused:
+                      'The `code` names a wallet rule (`MARKET_LISTING_REFUSED`, `USE_P1SAT_SCOPE`, `INSUFFICIENT_OR_STALE_FUNDS` with a funds `detail`) and the detail explains which: the app asked for something the wallet does not allow — fix the app, or the rule if it is wrong.',
+                    overlay_refused:
+                      'A `market overlay /submit` row carries the overlay\'s reason code: the listing was signed and the index refused it — fix on the overlay or in what the wallet packaged, named by that code.',
+                    cleanup_only:
+                      'The only refusals are follow-ups to an earlier failure (`MARKET_CANCEL_REFUSED offer-not-held` after a refused publish, permission denials): nothing to fix on their own.',
+                    unclear: 'The refusals do not say which side is wrong.',
+                  },
+                },
+              }
+            : {}),
         }
       : {}
 
@@ -1765,7 +1835,13 @@ function report(state, answers) {
         `  ${s.method} · page gap ${s.pageGapMs}ms before it arrived (${s.origin}) · approval ${s.approvalMs}ms · work ${s.workMs}ms`,
       )
     }
+    for (const r of flow.refusals) {
+      console.log(
+        `  refused ${r.method} ×${r.count} · ${r.code ?? r.status} · ${r.detail ?? '(no description)'} · ${r.origin}`,
+      )
+    }
     if (answers.app_flow_stall) choiceBlock('Who held the flow up', answers.app_flow_stall)
+    if (answers.app_flow_refusal) choiceBlock('Refusal to fix first', answers.app_flow_refusal)
   }
 
   const nft = latest.nftImport
