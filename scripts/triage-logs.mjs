@@ -248,6 +248,7 @@ function sessionFacts(header, events) {
   const ui = uiFacts(events)
   const nftImport = nftImportFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
+  const appFlow = appFlowFacts(events)
 
   const span =
     events.length > 0
@@ -286,6 +287,11 @@ function sessionFacts(header, events) {
     // Activity rows: what was written, which pending rows outlived their
     // send, and whether the expiry sweep saw them and left them anyway.
     activity,
+    // Connected-app action steps as the renderer answered them: wallet work,
+    // user approval, and how long the page took to come back with its next
+    // step. A page that only returns when the user re-opens the browser
+    // shows up here as a page gap, never as wallet time.
+    appFlow,
     // React list-key collisions: which key, which component's list.
     ui,
     // 1sat / collectable import: how many tips, what failed, which timed spans
@@ -1064,6 +1070,62 @@ function nftImportFacts(events) {
   }
 }
 
+/* ------------------------------------------------------- app flow facts */
+
+const ACTION_DONE_RE =
+  /^\[brc100\] (\w+) (done|failed after) (\d+)ms — (.*)$/
+const APPROVAL_RE = /approval (\d+)ms \(user\)/
+const PAGE_GAP_RE = /page-gap (\d+)ms \(([^)]+)\)/
+/** Longer than a page needs to hear our answer and ask its next step. */
+const PAGE_GAP_STALL_MS = 20_000
+
+/**
+ * Connected-app steps from the renderer's `[brc100] <method> done` lines.
+ * `pageGapMs` is the time between the wallet's previous answer to that origin
+ * and this request arriving — the page's own time (its server, a frozen
+ * background tab, the user reading) — kept apart from `approvalMs` and
+ * `workMs` so a stalled page is never read as a slow approval.
+ */
+function appFlowFacts(events) {
+  const steps = []
+  for (const e of events) {
+    const m = ACTION_DONE_RE.exec(e.text)
+    if (!m) continue
+    const tail = m[4]
+    const approval = APPROVAL_RE.exec(tail)
+    const gap = PAGE_GAP_RE.exec(tail)
+    steps.push({
+      at: e.at,
+      method: m[1],
+      ok: m[2] === 'done',
+      workMs: Number(m[3]),
+      approvalMs: approval ? Number(approval[1]) : 0,
+      pageGapMs: gap ? Number(gap[1]) : null,
+      origin: gap ? gap[2] : null,
+    })
+  }
+  const gaps = steps.filter((s) => s.pageGapMs != null)
+  const stalled = gaps.filter((s) => s.pageGapMs >= PAGE_GAP_STALL_MS)
+  const byOrigin = new Map()
+  for (const s of gaps) {
+    const row =
+      byOrigin.get(s.origin) ??
+      byOrigin.set(s.origin, { origin: s.origin, steps: 0, stalledSteps: 0, longestPageGapMs: 0 }).get(s.origin)
+    row.steps += 1
+    if (s.pageGapMs >= PAGE_GAP_STALL_MS) row.stalledSteps += 1
+    row.longestPageGapMs = Math.max(row.longestPageGapMs, s.pageGapMs)
+  }
+  return {
+    steps: steps.length,
+    stalledSteps: stalled.length,
+    longestPageGapMs: gaps.reduce((a, s) => Math.max(a, s.pageGapMs), 0),
+    longestApprovalMs: steps.reduce((a, s) => Math.max(a, s.approvalMs), 0),
+    longestWorkMs: steps.reduce((a, s) => Math.max(a, s.workMs), 0),
+    byOrigin: [...byOrigin.values()].sort((a, b) => b.longestPageGapMs - a.longestPageGapMs),
+    stalled: stalled.slice(0, 8).map(({ at, ...s }) => s),
+  }
+}
+
 /* -------------------------------------------------------- bridge facts */
 
 const HTTP_IN_RE = /^\[HTTP\] (GET|POST) (\/\S*)$/
@@ -1313,6 +1375,29 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const flow = latest.appFlow
+  const appFlowQuestions =
+    flow && flow.steps > 0
+      ? {
+          app_flow_stall: {
+            type: 'choice',
+            instructions:
+              'A connected app ran a multi-step flow (createAction / internalizeAction) through the bridge. `latest.appFlow` lists each step as the wallet answered it: `workMs` is wallet work, `approvalMs` is the user approving, `pageGapMs` is the time between the wallet answering the previous step and the page sending this one — the page\'s own time. `stalled` are steps whose page gap exceeded 20s, with the origin. Who held the flow up?',
+            criteria: {
+              page_stalled:
+                '`stalledSteps` > 0 and those steps carry small `approvalMs` and `workMs`: the wallet answered promptly and the page did not come back for a long time — the browser was frozen or waiting on its own server, not the wallet.',
+              user_approval:
+                'The longest waits are `approvalMs`, not `pageGapMs`: the user was reading the prompt.',
+              wallet_work:
+                '`longestWorkMs` dominates: the wallet itself was slow to sign, package or seal.',
+              flow_ran_smoothly:
+                'No step has a page gap over 20s, approvals are short, and work is under a few seconds.',
+              unclear: 'The steps do not show where the time went.',
+            },
+          },
+        }
+      : {}
+
   const nft = latest.nftImport
   const nftQuestions = nft
     ? {
@@ -1364,6 +1449,7 @@ function forensicQuestions(latest) {
     ...activityQuestions,
     ...ledgerQuestions,
     ...depositQuestions,
+    ...appFlowQuestions,
     ...nftQuestions,
     ...bridgeQuestions,
     freeze_owner: {
@@ -1666,6 +1752,20 @@ function report(state, answers) {
       console.log(`  ${d.txid} · ${why}${ancestry}`)
     }
     if (answers.stuck_token_deposit) choiceBlock('Stuck token deposit', answers.stuck_token_deposit)
+  }
+
+  const flow = latest.appFlow
+  if (flow && flow.steps > 0) {
+    console.log('\nConnected-app flow (code-counted):')
+    console.log(
+      `  ${flow.steps} action step(s) · ${flow.stalledSteps} page stall(s) ≥20s · longest page gap ${flow.longestPageGapMs}ms · longest approval ${flow.longestApprovalMs}ms · longest wallet work ${flow.longestWorkMs}ms`,
+    )
+    for (const s of flow.stalled) {
+      console.log(
+        `  ${s.method} · page gap ${s.pageGapMs}ms before it arrived (${s.origin}) · approval ${s.approvalMs}ms · work ${s.workMs}ms`,
+      )
+    }
+    if (answers.app_flow_stall) choiceBlock('Who held the flow up', answers.app_flow_stall)
   }
 
   const nft = latest.nftImport

@@ -646,8 +646,19 @@ export async function handleBrc100Request(
  * only wallet work (approval is reported beside it, not inside the span) so
  * a slow approval never "owns" freezes it did not cause.
  */
-const actionPhaseClocks = new Map<number, { at: number; laps: Array<[string, number]> }>()
+const actionPhaseClocks = new Map<
+  number,
+  { at: number; laps: Array<[string, number]>; origin: string; pageGapMs: number | null }
+>()
 const ACTION_PHASE_REPORT_MS = 250
+/**
+ * When the wallet last answered an action for each origin. A page runs its
+ * flow in steps; the gap between our answer and its next action is time the
+ * page spent — frozen in the background, waiting on its own server, or
+ * waiting on the user. It is not wallet work, and triage must not read it as
+ * approval time.
+ */
+const lastActionAnsweredAt = new Map<string, number>()
 
 function startActionPhases(
   requestId: number,
@@ -655,7 +666,14 @@ function startActionPhases(
   method: string,
   args: unknown,
 ): void {
-  actionPhaseClocks.set(requestId, { at: Date.now(), laps: [] })
+  const origin = originator ?? WALLET_ACTIVITY_ORIGIN
+  const answered = lastActionAnsweredAt.get(origin)
+  actionPhaseClocks.set(requestId, {
+    at: Date.now(),
+    laps: [],
+    origin,
+    pageGapMs: answered == null ? null : Date.now() - answered,
+  })
   const description =
     args && typeof args === 'object' && !Array.isArray(args)
       ? (args as { description?: unknown }).description
@@ -709,7 +727,9 @@ function reportActionPhases(
       else live.fail(reason ?? 'Request failed')
     }
   }
-  if (!clock || clock.laps.length === 0) return
+  if (!clock) return
+  lastActionAnsweredAt.set(clock.origin, Date.now())
+  if (clock.laps.length === 0) return
   let approvalMs = 0
   let workMs = 0
   const parts: string[] = []
@@ -721,10 +741,20 @@ function reportActionPhases(
     workMs += ms
     parts.push(`${name} ${ms}ms`)
   }
-  if (workMs < ACTION_PHASE_REPORT_MS && approvalMs < ACTION_PHASE_REPORT_MS) return
+  const pageGap =
+    clock.pageGapMs != null && clock.pageGapMs >= ACTION_PHASE_REPORT_MS
+      ? ` · page-gap ${clock.pageGapMs}ms (${clock.origin})`
+      : ''
+  if (
+    workMs < ACTION_PHASE_REPORT_MS &&
+    approvalMs < ACTION_PHASE_REPORT_MS &&
+    !pageGap
+  ) {
+    return
+  }
   const approval = approvalMs > 0 ? ` · approval ${approvalMs}ms (user)` : ''
   console.info(
-    `[brc100] ${method} ${ok ? 'done' : 'failed after'} ${workMs}ms — ${parts.join(' · ')}${approval}`,
+    `[brc100] ${method} ${ok ? 'done' : 'failed after'} ${workMs}ms — ${parts.join(' · ')}${approval}${pageGap}`,
   )
 }
 

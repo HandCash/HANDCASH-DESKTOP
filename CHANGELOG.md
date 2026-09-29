@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.362] - 2026-09-29
+
+### Changed
+
+- Bridge action lines now carry `page-gap <ms> (<origin>)` — the time between the wallet answering an app's previous action and the app sending its next one — so a connected-app flow that only moves when the user re-opens the browser is attributed to the page, never to approval or wallet work. Triage reads it as `appFlow` (steps, page stalls ≥20s, longest gap by origin) and asks Jev who held the flow up.
+
 ## [1.3.361] - 2026-09-29
 
 ### Fixed
