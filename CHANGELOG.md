@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.353] - 2026-09-29
+
+### Fixed
+
+- A token or item deposit whose sender shipped a lean package no longer sits on
+  Receiving forever. The toolbox refuses any Atomic BEEF whose unproven parents
+  are absent ("a complete, exactly framed Atomic BEEF transaction"); settle
+  now folds those parents in first — our own signed bodies, then a proven copy
+  — and internalizes the completed package. A parent nobody can supply yet is
+  a named `ancestry-incomplete:<txid>` refusal that retries, not a permanent
+  one (hc-a580a, `438497125f03`, pending 46 h).
+- Triage: token-deposit facts count parents folded in and name parents still
+  unavailable; Jev can now say `parent_unavailable` instead of `settle_refused`.
+
 ## [1.3.352] - 2026-09-29
 
 ### Changed

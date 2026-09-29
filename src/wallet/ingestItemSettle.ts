@@ -16,7 +16,11 @@ import { getActiveWallet } from './session'
 import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
 
-import { atomicBeefForSubject, rememberBeefTree } from './beefCache'
+import {
+  atomicBeefForSubject,
+  completeAtomicBeefForSubject,
+  rememberBeefTree,
+} from './beefCache'
 import { decodeBProtocol } from './bProtocol'
 import { decodeBsv21Binary } from './token'
 import { scriptPaysAddress } from './ordinalOwnership'
@@ -195,6 +199,29 @@ export async function internalizePeerItemSettle(opts: {
   if (!atomic?.length) {
     clearInboundReceivePending(id)
     return { accepted: false, outpoints: [], reason: 'missing-beef' }
+  }
+
+  // Same closure rule as the fungible settle: the toolbox refuses a package
+  // whose unproven ancestors are absent. Complete it here instead of letting
+  // that refusal retire a hop the sender already signed.
+  const startedCompletion = Date.now()
+  const completion = await completeAtomicBeefForSubject(active, atomic, id)
+  if (completion.atomic?.length) atomic = completion.atomic
+  if (completion.completed.length > 0) {
+    console.info(
+      `[item-settle] ${id.slice(0, 12)} ancestry completed +${completion.completed.length} parent(s) done ${Date.now() - startedCompletion}ms`,
+    )
+  }
+  if (completion.missing.length > 0) {
+    console.warn(
+      `[item-settle] ${id.slice(0, 12)} ancestry incomplete — missing ${completion.missing.map((p) => p.slice(0, 12)).join(', ')}`,
+    )
+    clearInboundReceivePending(id)
+    return {
+      accepted: false,
+      outpoints: [],
+      reason: `ancestry-incomplete:${completion.missing.map((p) => p.slice(0, 12)).join(',')}`,
+    }
   }
 
   const tipVouts: number[] = []

@@ -247,6 +247,7 @@ function sessionFacts(header, events) {
   const activity = activityFacts(events)
   const ui = uiFacts(events)
   const nftImport = nftImportFacts(events)
+  const tokenDeposits = tokenDepositFacts(events)
 
   const span =
     events.length > 0
@@ -290,6 +291,8 @@ function sessionFacts(header, events) {
     // 1sat / collectable import: how many tips, what failed, which timed spans
     // sat next to it. Empty means this window did not import.
     nftImport,
+    // Token deposits that ingest kept pending, refused, or failed to internalize.
+    tokenDeposits,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -870,6 +873,112 @@ function uiFacts(events) {
   }
 }
 
+/* -------------------------------------------------- token deposit facts */
+
+const TIP_PENDING_AGE_RE = /^\[tip-ingest\] tip ([0-9a-f]{12})… still pending — lookup=(\S+) age=(\d+)s/
+const TIP_PENDING_FATE_RE = /^\[tip-ingest\] tip ([0-9a-f]{12})… still pending — fate=(\S+) lookup=(\S+)/
+const TIP_RETIRED_RE = /^\[tip-ingest\] tip ([0-9a-f]{12})… retired — (.*)$/
+const TIP_REFUSED_RE = /^\[tip-ingest\] item settle refused ([0-9a-f]{12})… — (.*)$/
+const TOKEN_INTERNALIZE_RE = /^\[bsv21\] internalize failed (\S+)/
+const FUNGIBLE_BEEF_RE = /^\[fungible-settle\] AtomicBEEF fetch failed ([0-9a-f]{12})/
+const FUNGIBLE_BROADCAST_RE = /^\[fungible-settle\] post-internalize broadcast failed ([0-9a-f]{12})/
+const ANCESTRY_COMPLETED_RE = /^\[(?:fungible|item)-settle\] ([0-9a-f]{12}) ancestry completed \+(\d+) parent\(s\) done (\d+)ms/
+const ANCESTRY_INCOMPLETE_RE = /^\[(?:fungible|item)-settle\] ([0-9a-f]{12}) ancestry incomplete — missing (.*)$/
+
+/**
+ * A token deposit the wallet has not finished. Pending lines repeat as the tip
+ * ages; refused / retired / internalize-failed lines say why it stopped.
+ * Grouped by txid prefix so one stuck deposit is one row, not one row per poll.
+ */
+function tokenDepositFacts(events) {
+  const rows = new Map()
+  const rowFor = (id) => {
+    const row = rows.get(id) ?? {
+      txid: id,
+      pendingLines: 0,
+      maxAgeSeconds: 0,
+      lastLookup: null,
+      lastFate: null,
+      retired: null,
+      refused: null,
+      internalizeFailed: 0,
+      beefFetchFailed: 0,
+      broadcastFailed: 0,
+      ancestryCompleted: 0,
+      ancestryCompletionMs: 0,
+      ancestryMissing: null,
+    }
+    rows.set(id, row)
+    return row
+  }
+  for (const e of events) {
+    let m = TIP_PENDING_AGE_RE.exec(e.text)
+    if (m) {
+      const row = rowFor(m[1])
+      row.pendingLines += 1
+      row.maxAgeSeconds = Math.max(row.maxAgeSeconds, Number(m[3]))
+      row.lastLookup = m[2]
+      continue
+    }
+    m = TIP_PENDING_FATE_RE.exec(e.text)
+    if (m) {
+      const row = rowFor(m[1])
+      row.pendingLines += 1
+      row.lastFate = m[2]
+      row.lastLookup = m[3]
+      continue
+    }
+    m = TIP_RETIRED_RE.exec(e.text)
+    if (m) {
+      rowFor(m[1]).retired = m[2].slice(0, 160)
+      continue
+    }
+    m = TIP_REFUSED_RE.exec(e.text)
+    if (m) {
+      rowFor(m[1]).refused = m[2].slice(0, 160)
+      continue
+    }
+    m = TOKEN_INTERNALIZE_RE.exec(e.text)
+    if (m) {
+      rowFor(m[1].slice(0, 12)).internalizeFailed += 1
+      continue
+    }
+    m = FUNGIBLE_BEEF_RE.exec(e.text)
+    if (m) {
+      rowFor(m[1]).beefFetchFailed += 1
+      continue
+    }
+    m = FUNGIBLE_BROADCAST_RE.exec(e.text)
+    if (m) {
+      rowFor(m[1]).broadcastFailed += 1
+      continue
+    }
+    m = ANCESTRY_COMPLETED_RE.exec(e.text)
+    if (m) {
+      const row = rowFor(m[1])
+      row.ancestryCompleted += Number(m[2])
+      row.ancestryCompletionMs = Math.max(row.ancestryCompletionMs, Number(m[3]))
+      continue
+    }
+    m = ANCESTRY_INCOMPLETE_RE.exec(e.text)
+    if (m) {
+      rowFor(m[1]).ancestryMissing = m[2].slice(0, 160)
+      continue
+    }
+  }
+  const deposits = [...rows.values()].sort((a, b) => b.maxAgeSeconds - a.maxAgeSeconds || b.pendingLines - a.pendingLines)
+  return {
+    deposits: deposits.slice(0, 8),
+    stillPending: deposits.filter((d) => d.pendingLines > 0 && !d.retired).length,
+    refused: deposits.filter((d) => d.refused).length,
+    retired: deposits.filter((d) => d.retired).length,
+    internalizeFailed: deposits.reduce((a, d) => a + d.internalizeFailed, 0),
+    ancestryCompleted: deposits.filter((d) => d.ancestryCompleted > 0).length,
+    ancestryMissing: deposits.filter((d) => d.ancestryMissing).length,
+    oldestPendingSeconds: deposits.find((d) => d.pendingLines > 0)?.maxAgeSeconds ?? 0,
+  }
+}
+
 /* ----------------------------------------------------- nft import facts */
 
 const IMPORT_TAG = /^(chain-ingest|1sat|items|collectables|phrase-sweep|bsv21|tip-ingest|ordinal)/
@@ -1177,6 +1286,33 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const deposits = latest.tokenDeposits
+  const depositQuestions =
+    deposits && deposits.deposits.length > 0
+      ? {
+          stuck_token_deposit: {
+            type: 'choice',
+            instructions:
+              'The user has a token deposit that has been stuck. `latest.tokenDeposits.deposits` groups ingest lines by txid prefix: `pendingLines` and `maxAgeSeconds` are how often and how old a tip stayed pending, `lastLookup` / `lastFate` are the last ingest verdict, `refused` is why settle refused it, `retired` is why ingest gave up, `internalizeFailed` / `beefFetchFailed` / `broadcastFailed` count those failures, `ancestryCompleted` is how many missing parents the wallet folded into the package before internalize, `ancestryMissing` names parents it could not find anywhere. A deposit is stuck when it stays pending or is refused/retired instead of landing in the token basket.',
+            criteria: {
+              waiting_on_body:
+                'The oldest pending deposit has a lookup that is not a local body and has not been refused: ingest is waiting on the transaction body.',
+              parent_unavailable:
+                'A deposit has `ancestryMissing` set, or `refused` starts with `ancestry-incomplete`: the hop arrived but a parent transaction is neither local nor provable yet, so the wallet is retrying by name rather than refusing forever.',
+              settle_refused:
+                'A deposit has `refused` (not ancestry-incomplete) or `internalizeFailed`: the body arrived and internalize rejected it, so it will not land until that refusal is handled.',
+              retired_as_invalid:
+                'A deposit is `retired` and the reason says the spend is invalid, rejected, or missing: it should be hidden, not left as a deposit.',
+              broadcast_only:
+                '`broadcastFailed` is set and the deposit was otherwise accepted: the token is in the basket and only the public broadcast failed.',
+              no_stuck_deposit:
+                'Nothing is pending, refused, or retired. This window does not contain a stuck token deposit.',
+              unclear: 'The deposit lines do not say whether it is waiting, refused, or already settled.',
+            },
+          },
+        }
+      : {}
+
   const nft = latest.nftImport
   const nftQuestions = nft
     ? {
@@ -1227,6 +1363,7 @@ function forensicQuestions(latest) {
     ...custodyQuestions,
     ...activityQuestions,
     ...ledgerQuestions,
+    ...depositQuestions,
     ...nftQuestions,
     ...bridgeQuestions,
     freeze_owner: {
@@ -1507,6 +1644,28 @@ function report(state, answers) {
       console.log(`  receive ${r.sats} sats ${r.status} ${r.txid ?? 'no-txid'} · ${r.ageMinutes}min ago`)
     }
     if (answers.balance_gap_cause) choiceBlock('Balance did not rise', answers.balance_gap_cause)
+  }
+
+  const dep = latest.tokenDeposits
+  if (dep && dep.deposits.length > 0) {
+    console.log('\nToken deposits (code-counted):')
+    console.log(
+      `  ${dep.stillPending} still pending (oldest ${dep.oldestPendingSeconds}s) · ${dep.refused} refused · ${dep.retired} retired · ${dep.internalizeFailed} internalize failure(s) · ${dep.ancestryCompleted} ancestry completed · ${dep.ancestryMissing} parent(s) unavailable`,
+    )
+    for (const d of dep.deposits.slice(0, 6)) {
+      const why = d.refused
+        ? `refused: ${d.refused}`
+        : d.retired
+          ? `retired: ${d.retired}`
+          : `pending ${d.pendingLines}× age ${d.maxAgeSeconds}s lookup=${d.lastLookup ?? '?'} fate=${d.lastFate ?? '?'}`
+      const ancestry = d.ancestryCompleted
+        ? ` · +${d.ancestryCompleted} parent(s) folded in ${d.ancestryCompletionMs}ms`
+        : d.ancestryMissing
+          ? ` · missing ${d.ancestryMissing}`
+          : ''
+      console.log(`  ${d.txid} · ${why}${ancestry}`)
+    }
+    if (answers.stuck_token_deposit) choiceBlock('Stuck token deposit', answers.stuck_token_deposit)
   }
 
   const nft = latest.nftImport

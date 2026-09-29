@@ -7,16 +7,20 @@ import {
 } from './token/settle'
 
 const atomicBeefForSubject = vi.fn()
+const completeAtomicBeefForSubject = vi.fn()
+const internalizeAction = vi.fn()
 
 vi.mock('./beefCache', () => ({
   atomicBeefForSubject: (...args: unknown[]) => atomicBeefForSubject(...args),
+  completeAtomicBeefForSubject: (...args: unknown[]) =>
+    completeAtomicBeefForSubject(...args),
   rememberBeefTree: vi.fn(),
 }))
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     address: '1receiver',
-    wallet: { internalizeAction: vi.fn() },
+    wallet: { internalizeAction },
   }),
 }))
 
@@ -24,6 +28,8 @@ const TOKEN_ID = `${'ab'.repeat(32)}_0`
 
 beforeEach(() => {
   atomicBeefForSubject.mockReset()
+  completeAtomicBeefForSubject.mockReset()
+  internalizeAction.mockReset()
 })
 
 describe('internalizePeerFungibleSettle', () => {
@@ -90,6 +96,48 @@ describe('internalizePeerFungibleSettle', () => {
     })
 
     expect(atomicBeefForSubject).toHaveBeenCalledWith(plainBeef, txid)
+  })
+
+  it('names the missing parents instead of handing the toolbox a package it will refuse', async () => {
+    // hc-a580a, 438497125f03: the sender's lean package lacked an unproven
+    // parent, so internalizeAction threw "a complete, exactly framed Atomic
+    // BEEF transaction" three times a poll for two days. Completion runs first
+    // and a still-missing parent is a named, retryable refusal.
+    const txid = 'cd'.repeat(32)
+    const parent = 'ef'.repeat(32)
+    const framed = [9, 9, 9]
+    atomicBeefForSubject.mockReturnValue(framed)
+    completeAtomicBeefForSubject.mockResolvedValue({
+      atomic: framed,
+      missing: [parent],
+      completed: [],
+    })
+
+    await expect(
+      internalizePeerFungibleSettle({
+        txid,
+        tx: framed,
+        beefPurpose: 'inboundItemHint',
+        token: {
+          kind: 'fungible',
+          tokenId: TOKEN_ID,
+          amount: '10',
+          sym: 'TST',
+          dec: 0,
+        },
+      }),
+    ).resolves.toEqual({
+      accepted: false,
+      outpoints: [],
+      reason: `ancestry-incomplete:${parent.slice(0, 12)}`,
+    })
+
+    expect(completeAtomicBeefForSubject).toHaveBeenCalledWith(
+      expect.objectContaining({ address: '1receiver' }),
+      framed,
+      txid,
+    )
+    expect(internalizeAction).not.toHaveBeenCalled()
   })
 })
 

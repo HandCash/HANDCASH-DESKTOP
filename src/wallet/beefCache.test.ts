@@ -728,6 +728,129 @@ describe('beefCache', () => {
     expect(Beef.fromBinary(packed!).findTxid(tipId)?.tx).toBeTruthy()
   })
 
+  it('completes a lean peer package with the parent the toolbox validator demands', async () => {
+    const { atomicBeefMissingParents, completeAtomicBeefForSubject, rememberBeefBinary } =
+      await import('./beefCache')
+    const { Validation } = await import('@bsv/sdk')
+
+    // grandparent (mined, proven) → parent (unmined, ours) → tip (the hop)
+    const grandparent = new Transaction()
+    grandparent.addOutput({
+      satoshis: 20_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const grandparentId = grandparent.id('hex')
+    const grandparentProof = new MerklePath(800_003, [
+      [{ offset: 0, hash: grandparentId, txid: true }, { offset: 1, duplicate: true }],
+    ])
+
+    const parent = new Transaction()
+    parent.addInput({
+      sourceTXID: grandparentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    parent.addOutput({
+      satoshis: 15_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tipId = tip.id('hex')
+
+    // What the sender shipped: the hop alone, framed for itself.
+    const lean = new Beef()
+    lean.mergeTransaction(tip)
+    const leanAtomic = lean.toBinaryAtomic(tipId)
+
+    const internalizeArgs = (atomic: number[]) => ({
+      tx: atomic,
+      description: 'Receive token',
+      labels: ['bsv21'],
+      outputs: [
+        {
+          outputIndex: 0,
+          protocol: 'basket insertion' as const,
+          insertionRemittance: { basket: 'bsv21' },
+        },
+      ],
+    })
+
+    // The SDK refuses exactly this — the message the Android bucket carried.
+    expect(() => Validation.validateInternalizeActionArgs(internalizeArgs(leanAtomic))).toThrow(
+      /complete, exactly framed Atomic BEEF/,
+    )
+    expect(atomicBeefMissingParents(leanAtomic, tipId)).toEqual([parentId])
+
+    // Our own signed parent is local; the mined grandparent has a proof.
+    const parentBeef = new Beef()
+    parentBeef.mergeRawTx(grandparent.toBinary())
+    parentBeef.mergeBump(grandparentProof)
+    parentBeef.mergeTransaction(parent)
+    rememberBeefBinary(parentId, parentBeef.toBinary())
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not be called for a locally held parent')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const done = await completeAtomicBeefForSubject(wallet, leanAtomic, tipId)
+    expect(done.missing).toEqual([])
+    expect(done.completed).toEqual([parentId])
+    expect(getBeefForTxid).not.toHaveBeenCalled()
+    expect(() =>
+      Validation.validateInternalizeActionArgs(internalizeArgs(done.atomic!)),
+    ).not.toThrow()
+    expect(Beef.fromBinary(done.atomic!).atomicTxid).toBe(tipId)
+  })
+
+  it('reports the parent it could not find so the settle refuses by name', async () => {
+    const { completeAtomicBeefForSubject } = await import('./beefCache')
+
+    const parentId = 'ef'.repeat(32)
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tipId = tip.id('hex')
+    const lean = new Beef()
+    lean.mergeTransaction(tip)
+
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: {
+        getBeefForTxid: vi.fn(async () => {
+          throw new Error('not found')
+        }),
+        getRawTx: vi.fn(async () => ({ rawTx: undefined })),
+      },
+    } as unknown as ActiveWallet
+
+    const done = await completeAtomicBeefForSubject(wallet, lean.toBinaryAtomic(tipId), tipId)
+    expect(done.missing).toEqual([parentId])
+    expect(done.completed).toEqual([])
+    expect(done.atomic?.length).toBeGreaterThan(0)
+  })
+
   it('tells an AtomicBEEF reply apart from a plain BEEF carrying the same txs', async () => {
     const { isAtomicBeefFor } = await import('./beefCache')
 

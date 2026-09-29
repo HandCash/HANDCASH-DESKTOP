@@ -19,7 +19,11 @@ import {
   normalizeTokenId,
   parseBsv21Json,
 } from './types'
-import { atomicBeefForSubject, rememberBeefTree } from '../beefCache'
+import {
+  atomicBeefForSubject,
+  completeAtomicBeefForSubject,
+  rememberBeefTree,
+} from '../beefCache'
 import { scheduleHistoryBackupPush } from '../deviceSync'
 import {
   fungibleFromImport,
@@ -205,6 +209,30 @@ export async function internalizePeerFungibleSettle(opts: {
   if (!atomic?.length) {
     clearInboundReceivePending(id)
     return { accepted: false, outpoints: [], reason: 'missing-beef' }
+  }
+
+  // The toolbox refuses any package whose unproven ancestors are not all
+  // present ("a complete, exactly framed Atomic BEEF transaction"). A lean
+  // peer package is a framing problem, not a custody one: fold the parents in
+  // from our own signed bodies or a proven copy before asking it to ingest.
+  const startedCompletion = Date.now()
+  const completion = await completeAtomicBeefForSubject(active, atomic, id)
+  if (completion.atomic?.length) atomic = completion.atomic
+  if (completion.completed.length > 0) {
+    console.info(
+      `[fungible-settle] ${id.slice(0, 12)} ancestry completed +${completion.completed.length} parent(s) done ${Date.now() - startedCompletion}ms`,
+    )
+  }
+  if (completion.missing.length > 0) {
+    console.warn(
+      `[fungible-settle] ${id.slice(0, 12)} ancestry incomplete — missing ${completion.missing.map((p) => p.slice(0, 12)).join(', ')}`,
+    )
+    clearInboundReceivePending(id)
+    return {
+      accepted: false,
+      outpoints: [],
+      reason: `ancestry-incomplete:${completion.missing.map((p) => p.slice(0, 12)).join(',')}`,
+    }
   }
 
   /**
