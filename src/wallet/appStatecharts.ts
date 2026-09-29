@@ -1338,7 +1338,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'brc100Bridge',
     label: 'Bridge',
-    caption: 'BRC-100 local bridge — online, handle, prompt',
+    caption:
+      'BRC-100 local bridge — online, handle, prompt; app createAction loading ends at preparing (Arcade/cheque background)',
     source: BRIDGE,
   },
 ]

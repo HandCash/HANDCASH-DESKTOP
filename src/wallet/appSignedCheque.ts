@@ -3,6 +3,9 @@
  *
  * `createAction` / `signAction` / `processAction` already produce a signed
  * body. That body is the template heal needs — not a second 16-slot cache.
+ *
+ * Arcade / miner cashing is started here but never awaited by the BRC-100
+ * reply path — the bridge returns once the Atomic BEEF is packaged.
  */
 import {
   assertRuntimeCurrent,
@@ -18,7 +21,9 @@ export async function funnelAppSignedCheque(args: {
   if (!/^[0-9a-f]{64}$/.test(txid) || args.atomicBeef.length === 0) return false
   const runtime = requireWalletRuntime()
   try {
-    const { registerSignedSend } = await import('./signedSendLifecycle')
+    const { registerSignedSend, startSignedSendPropagation } = await import(
+      './signedSendLifecycle'
+    )
     assertRuntimeCurrent(runtime)
     const handle = await registerSignedSend({
       txid,
@@ -26,9 +31,9 @@ export async function funnelAppSignedCheque(args: {
       flow: 'brc100_action',
       satoshis: Math.max(0, Math.trunc(args.satoshis ?? 0)),
     })
-    // The app owns propagation after processAction. Registration only needs
-    // the retention through its durable archive/outbox boundary.
-    handle.releaseRuntime?.()
+    // Cash in the background. HTTP 200 already means signed + packaged;
+    // Arcade silence must not hold the demo / app loading state.
+    startSignedSendPropagation(handle)
     return true
   } catch (err) {
     console.warn(

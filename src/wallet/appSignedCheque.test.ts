@@ -6,6 +6,7 @@ const registerSignedSend = vi.fn(async () => ({
   atomicBeef: [1, 2, 3],
   flow: 'brc100_action',
 }))
+const startSignedSendPropagation = vi.fn()
 const assertRuntimeCurrent = vi.fn()
 const runtime = {
   instance: {
@@ -17,6 +18,8 @@ const runtime = {
 
 vi.mock('./signedSendLifecycle', () => ({
   registerSignedSend: (...args: unknown[]) => registerSignedSend(...args),
+  startSignedSendPropagation: (...args: unknown[]) =>
+    startSignedSendPropagation(...args),
 }))
 
 vi.mock('./walletRuntime', () => ({
@@ -48,6 +51,7 @@ describe('funnelAppSignedCheque', () => {
       flow: 'brc100_action',
       satoshis: 20_000,
     })
+    expect(startSignedSendPropagation).toHaveBeenCalledOnce()
   })
 
   it('leaves the app-owned signed transaction intact when registration throws', async () => {
@@ -57,5 +61,6 @@ describe('funnelAppSignedCheque', () => {
       funnelAppSignedCheque({ txid: TXID, atomicBeef: ATOMIC }),
     ).resolves.toBe(false)
     expect(registerSignedSend).toHaveBeenCalled()
+    expect(startSignedSendPropagation).not.toHaveBeenCalled()
   })
 })

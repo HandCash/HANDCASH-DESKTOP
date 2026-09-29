@@ -376,7 +376,7 @@ async function dispatchAppActionFundedFromHeldChange(
     console.info(
       `[brc100] retrying ${method} after freeing ${freed} app-held parent(s)`,
     )
-    setPaymentProgress('broadcasting', 'Signing and sending to the network')
+    setPaymentProgress('preparing', 'Signing…', null, 'Working…')
     return dispatchWalletMethod(wallet, method, args, originator)
   }
 }
@@ -1118,12 +1118,9 @@ async function handleBrc100RequestInner(
               // seen-on-chain callback (Plinko on lilb.it sat 2–3 min per bet).
               actionArgs = withImmediateAppBroadcast(actionArgs)
             }
-            setPaymentProgress(
-              'broadcasting',
-              'Signing and sending to the network',
-              null,
-              'Working…',
-            )
+            // Stay on preparing through sign. Arcade cashing is background —
+            // never paint a "broadcasting" phase that holds the demo loader.
+            setPaymentProgress('preparing', 'Signing…', null, 'Working…')
             const created = await dispatchAppActionFundedFromHeldChange(
               active.wallet,
               method,
@@ -1154,8 +1151,8 @@ async function handleBrc100RequestInner(
           { promote: false },
         )
         lapActionPhase(event.request_id, 'spend')
-        // The deposit is already signed and with miners. Nothing past this
-        // line may turn that into an app-visible error.
+        // Signed. Loading ends with preparing — cheque archive + Arcade are
+        // background and must not keep the app / demo spinner alive.
         if (
           method === 'createAction' &&
           bounceDepositFromCreateAction(args) &&
@@ -1164,8 +1161,7 @@ async function handleBrc100RequestInner(
           // Chrome freezes a background tab, so a bounce page cannot start its
           // refund until the user tabs back. Finish it here, while this app
           // is in front, but do not hold the deposit's reply on the refund
-          // round trip — the deposit is already signed and with miners.
-          setPaymentProgress('broadcasting', 'Returning the bounce deposit', null, 'Working…')
+          // round trip — the deposit is already signed.
           void continueTxBounceRefund({
             originator,
             request: args,
@@ -1176,7 +1172,6 @@ async function handleBrc100RequestInner(
         }
         const signedTxid = extractTxid(result)
         if (signedTxid) liveAction(bridgeActionId(event.request_id))?.txid(signedTxid)
-        setPaymentProgress('finishing', 'Updating your balance', null, 'Working…')
       } catch (err) {
         clearPaymentProgress()
         const blocked = spendBlockedMessage(err)
@@ -1277,24 +1272,20 @@ async function handleBrc100RequestInner(
       if (txid) {
         const completed = await cacheCreateActionBeef(active, txid, result)
         if (completed) {
-          const funneled = await funnelAppSignedCheque({
+          void funnelAppSignedCheque({
             txid,
             atomicBeef: completed,
             satoshis: extractSatsFromArgs(method, args),
-          })
-          if (!funneled) {
-            try {
-              await keepChangeOfSignedTx(txid)
-            } catch (err) {
+          }).then((funneled) => {
+            if (funneled) return
+            return keepChangeOfSignedTx(txid).catch((err) => {
               console.warn('[brc100] keep change after processAction skipped', err)
-            }
-          }
+            })
+          })
         } else {
-          try {
-            await keepChangeOfSignedTx(txid)
-          } catch (err) {
+          void keepChangeOfSignedTx(txid).catch((err) => {
             console.warn('[brc100] keep change after processAction skipped', err)
-          }
+          })
         }
       }
     } else if (method === 'createAction' || method === 'signAction') {
@@ -1307,18 +1298,32 @@ async function handleBrc100RequestInner(
           // spend/post, including every locally-known unconfirmed parent body.
           result = { ...(result as Record<string, unknown>), tx: completed }
         }
-        if (completed) {
-          const funneled = await funnelAppSignedCheque({
-            txid,
-            atomicBeef: completed,
-            satoshis: extractSatsFromArgs(method, args),
-          })
-          lapActionPhase(event.request_id, 'cheque')
-          if (!funneled) await sealAfterAppCreateAction(txid, result)
-        } else {
-          await sealAfterAppCreateAction(txid, result)
-        }
-        lapActionPhase(event.request_id, 'seal')
+        // Seal / archive / Arcade cash after the HTTP reply. The toolbox already
+        // owns the signed action; durable cheque work must not block the app.
+        const packaged = result
+        const sats = extractSatsFromArgs(method, args)
+        void (async () => {
+          try {
+            if (completed) {
+              const funneled = await funnelAppSignedCheque({
+                txid,
+                atomicBeef: completed,
+                satoshis: sats,
+              })
+              lapActionPhase(event.request_id, 'cheque')
+              if (!funneled) await sealAfterAppCreateAction(txid, packaged)
+            } else {
+              await sealAfterAppCreateAction(txid, packaged)
+            }
+            lapActionPhase(event.request_id, 'seal')
+          } catch (err) {
+            console.warn(
+              '[brc100] post-sign cheque/seal deferred',
+              txid.slice(0, 12),
+              err,
+            )
+          }
+        })()
         if (method === 'createAction') {
           cacheImageIconsFromCreateAction(txid, args, result)
           void import('./token/list').then(({ proveCachedFungibleEncodings }) =>

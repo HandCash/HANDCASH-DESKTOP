@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.370] - 2026-09-29
+
+### Fixed
+
+- Demo / BRC-100 app loading no longer hangs on a “broadcasting” phase waiting for Arcade. `createAction` / `signAction` stay on preparing through sign, clear when preparing ends, and return once the Atomic BEEF is packaged; cheque archive + miner cashing run after the HTTP reply (`funnelAppSignedCheque` starts background propagation).
+
 ## [1.3.369] - 2026-09-29
 
 ### Fixed

@@ -1,8 +1,8 @@
 /**
- * Third-party createAction should return once the tx is signed and handed to
- * miners — not after a seen-on-chain / merkle callback. Arcade (or any miner)
- * accepting the BEEF is enough for the app to treat the spend as complete and
- * for us to deduct change.
+ * Third-party createAction should return once the tx is signed and packaged —
+ * not after Arcade / merkle / seen-on-chain. Miner cashing runs on the shared
+ * signed-send outbox after the BRC-100 reply; Arcade silence must never hold
+ * the app (or demo) loading state past preparing/signing.
  *
  * `trustSelf: 'known'` keeps that return off the ancestry proof walk. With it
  * unset the toolbox fetches a merkle proof for every parent before it answers;
