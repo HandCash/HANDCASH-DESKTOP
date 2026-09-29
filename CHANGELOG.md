@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.375] - 2026-09-29
+
+The 0.1.537 upload: preflight is down to ~150ms, but the slowest payments (22–24s) re-signed over the same dead coins, and the cross-device lease cost ~1.7s per acquire from a backgrounded phone.
+
+### Fixed
+
+- **Re-sign no longer reselects the dead coins.** `retireCreateActionSpentElsewhere` hid the confirmed-spent inputs and *then* failed the signed tx — and failing a tx restores its inputs to spendable, so the hide was undone and the next sign picked the same coins (11 re-signs, 8× `count=4` in one upload). It now fails first, then hides.
+
+### Changed
+
+- **Receive skips the cross-device lease.** `internalizeAction` selects no inputs, so another install cannot pick the same coins; it keeps the local exclusive region but no longer pays three backup-host round trips. `runExclusiveSpend(..., { crossDevice: false })`.
+- Spend lease linger 3s → 10s, so a bet → payout → bet cycle reuses the held lease now that receive no longer refreshes it.
+
+### Added
+
+- Mobile bridge logs `[spend] bridge_deliver done <N>ms` (native :3321 accept → WebView listener), folded into triage `spend.*` rows.
+
 ## [1.3.374] - 2026-09-29
 
 Faster app payments. The 0.1.535 upload showed the whole Toolbox `createAction` (coin selection, signing, script checks, commit) at 0.8–1.6s median; the rest of the ~6.5s spend phase was wallet round trips around it.

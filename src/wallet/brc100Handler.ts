@@ -1234,11 +1234,12 @@ async function handleBrc100RequestInner(
     } else if (method === 'internalizeAction') {
       // Serialize with spends — ingest validates locally, then submits the exact
       // Atomic BEEF to Arcade without waiting for explorer visibility. Receiving
-      // does not select inputs, so never run spend-change recovery here.
+      // does not select inputs, so never run spend-change recovery here, and
+      // no other install can pick the same coins: skip the cross-device lease.
       result = await runExclusiveSpend(
         () => internalizeActionWithBroadcast(active.wallet, args, originator),
         undefined,
-        { promote: false },
+        { promote: false, crossDevice: false },
       )
       lapActionPhase(event.request_id, 'ingest')
       liveAction(bridgeActionId(event.request_id))?.stage('settling')

@@ -24,7 +24,7 @@ const LEASE_RELEASE_MS = 2_000
  */
 const LEASE_REUSE_MIN_REMAINING_MS = 15_000
 /** How long a finished spend keeps the lease for the next one before dropping it. */
-const LEASE_LINGER_MS = 3_000
+const LEASE_LINGER_MS = 10_000
 const SLOW_ACQUIRE_MS = 250
 
 type HeldLease = { url: string; deviceId: string }

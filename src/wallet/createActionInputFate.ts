@@ -132,10 +132,12 @@ export async function retireCreateActionSpentElsewhere(
   const { hideSpentOutpoints, failUnsentLocalTx } = await import(
     './staleOutputRelease'
   )
+  // Failing a tx restores its inputs to spendable, so fail first: hiding
+  // first had the fail hand the dead coins straight back to the next sign.
+  await failUnsentLocalTx(txid, { force: true })
   for (const [spender, outpoints] of bySpender) {
     await hideSpentOutpoints(outpoints, spender)
   }
-  await failUnsentLocalTx(txid, { force: true })
   console.warn(
     `[brc100] createAction inputs spent elsewhere count=${spends.length} txid=${txid.slice(0, 12)}`,
   )

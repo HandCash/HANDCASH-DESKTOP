@@ -217,7 +217,15 @@ async function reviewAfterAbandonedSpend(): Promise<void> {
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { promote?: SpendPreparation },
+  opts?: {
+    promote?: SpendPreparation
+    /**
+     * `false` skips the cross-device lease. Only for work that selects no
+     * inputs (receive): the lease exists so two installs never pick the same
+     * coins, and each acquire is three backup-host round trips.
+     */
+    crossDevice?: boolean
+  },
 ): Promise<T> {
   const runtime = getWalletRuntime()
   if (!runtime && import.meta.env?.MODE !== 'test') {
@@ -263,7 +271,9 @@ export function runExclusiveSpend<T>(
         resumeMonitor()
       }
     },
-    () => acquireSpendLease(abort.signal),
+    opts?.crossDevice === false
+      ? async () => async () => undefined
+      : () => acquireSpendLease(abort.signal),
     onSpendRegion,
     // The watchdog's abort is what frees the region: without it a toolbox call
     // that never settles keeps every later payment queued behind this one.

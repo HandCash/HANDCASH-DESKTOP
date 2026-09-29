@@ -1,9 +1,23 @@
 import { Beef, MerklePath, PrivateKey, P2PKH, Script, Transaction } from '@bsv/sdk'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   inputsWithPossiblyMinedParent,
   parseConfirmedForeignSpender,
+  retireCreateActionSpentElsewhere,
 } from './createActionInputFate'
+
+const retireCalls: string[] = []
+
+vi.mock('./staleOutputRelease', () => ({
+  failUnsentLocalTx: async (txid: string) => {
+    retireCalls.push(`fail ${txid}`)
+    return true
+  },
+  hideSpentOutpoints: async (outpoints: string[], spender: string) => {
+    retireCalls.push(`hide ${outpoints.join(',')} by ${spender}`)
+    return outpoints.length
+  },
+}))
 
 const SELF = 'aa'.repeat(32)
 const OTHER = 'bb'.repeat(32)
@@ -64,6 +78,44 @@ describe('inputsWithPossiblyMinedParent', () => {
       `${mined.id('hex')}.0`,
       `${txidOnly}.0`,
       `${absent}.0`,
+    ])
+  })
+})
+
+describe('retireCreateActionSpentElsewhere', () => {
+  afterEach(() => {
+    retireCalls.length = 0
+    vi.unstubAllGlobals()
+  })
+
+  it('fails the signed tx before hiding its dead inputs, so the fail cannot restore them', async () => {
+    const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    const parent = new Transaction()
+    parent.addInput({ sourceTXID: '55'.repeat(32), sourceOutputIndex: 0, unlockingScript: new Script() })
+    parent.addOutput({ lockingScript: lock, satoshis: 1_000 })
+    parent.merklePath = MerklePath.fromCoinbaseTxidAndHeight(parent.id('hex'), 900_000)
+    const signed = new Transaction()
+    signed.addInput({ sourceTXID: parent.id('hex'), sourceOutputIndex: 0, unlockingScript: new Script() })
+    signed.addOutput({ lockingScript: lock, satoshis: 900 })
+    const beef = new Beef()
+    beef.mergeTransaction(parent)
+    beef.mergeRawTx(signed.toBinary())
+    const txid = signed.id('hex')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ txid: OTHER, status: 'confirmed' }) })),
+    )
+
+    await expect(
+      retireCreateActionSpentElsewhere(
+        { txid, tx: Array.from(beef.toBinaryAtomic(txid)) },
+        'main',
+      ),
+    ).resolves.toBe(true)
+    expect(retireCalls).toEqual([
+      `fail ${txid}`,
+      `hide ${parent.id('hex')}.0 by ${OTHER}`,
     ])
   })
 })

@@ -123,7 +123,7 @@ describe('spendLease', () => {
       expect(fetchMock).toHaveBeenCalledTimes(3)
       expect(state.lease?.deviceId).toBe('local-device')
 
-      await vi.advanceTimersByTimeAsync(3_100)
+      await vi.advanceTimersByTimeAsync(10_100)
       expect(fetchMock).toHaveBeenCalledTimes(5)
       expect(state.lease?.deviceId).toBe('')
     } finally {
