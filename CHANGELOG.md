@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.352] - 2026-09-29
+
+### Changed
+
+- The feature map now documents the 1Sat stack an integrator builds on:
+  BRC-147 storage profile, BRC-150 provenance, BRC-164 held-row key, BRC-165
+  view and spend grammar, the fail-closed view rules, and the `oneSat`
+  capability block `GET /health` and `GET /manifest.json` advertise. Views are
+  described as they behave: tags plus `originVerified`, never provenance BEEF.
+  Each task page now links its published `.md`. Mirrors docs.handcash.io.
+
 ## [1.3.351] - 2026-09-29
 
 ### Changed

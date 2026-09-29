@@ -3,7 +3,24 @@ title: "Feature map: Connect to BRC wallet"
 description: "The BRC wallet path to integrate today — auth, payments, items, and plain BSV-21 — and the Connect feature each call replaces"
 ---
 
-Beta — BRC wallet only. Integrate the four sections under **Ship this**. The tables below them are the full Connect map, including calls this release forwards but has not proven. Request and response shapes follow [BRC-100](https://brc.dev/100).
+**Beta — BRC wallet only.** Integrate the four rows under **Ship this**. The tables below them are the full Connect map, including calls this release forwards but has not proven. Request and response shapes follow [BRC-100](https://brc.dev/100).
+
+## Read these as markdown
+
+Each task page is published as markdown. Hand an agent the `.md` URL, or open it yourself.
+
+| Task | Markdown |
+| --- | --- |
+| This map | [feature-map.md](https://docs.handcash.io/brc-wallet/feature-map.md) |
+| Getting started | [getting-started.md](https://docs.handcash.io/brc-wallet/getting-started.md) |
+| Permissions and errors | [permissions.md](https://docs.handcash.io/brc-wallet/permissions.md) |
+| Payments | [payments.md](https://docs.handcash.io/brc-wallet/payments.md) |
+| Collectables | [items.md](https://docs.handcash.io/brc-wallet/items.md) |
+| Tokens | [tokens.md](https://docs.handcash.io/brc-wallet/tokens.md) |
+| Signing | [signing.md](https://docs.handcash.io/brc-wallet/signing.md) |
+| Local bridge | [local-bridge.md](https://docs.handcash.io/brc-wallet/local-bridge.md) |
+| Every method | [interactions.md](https://docs.handcash.io/brc-wallet/interactions.md) |
+| Examples | [examples.md](https://docs.handcash.io/brc-wallet/examples.md) |
 
 ## How to read this page
 
@@ -31,7 +48,7 @@ Hand these four to a developer integrating today. Each one has HandCash behavior
 | --- | --- | --- |
 | Auth | `isAuthenticated`, then `waitForAuthentication` | The origin is the session. There is no `authToken` and no app secret. |
 | Payments | `createAction`, `signAction`, `abortAction`, `internalizeAction`, `listActions`, `listOutputs` on basket `default` | Amounts are satoshis. Auto-pay and the BRC-73 cap cover plain payments only. Retry `CHANGE_CHAINING_REQUIRED`. |
-| Items | `listOutputs` on `p 1sat …`, `createAction` into basket `1sat`, `internalizeAction` with `basket insertion` | Always prompts. The app builds the ordinal script. Reads return only what the user granted. |
+| Items | `listOutputs` on `p 1sat …`, `createAction` into basket `1sat`, `internalizeAction` with `basket insertion` | Always prompts. The app builds the ordinal script. Reads return only what the user granted. The contract is BRC-147, 150, 164, and 165; see [The 1Sat stack](#the-1sat-stack). |
 | Plain BSV-21 | `listOutputs` on `p bsv21 …`, `createAction` into basket `bsv21`, `internalizeAction` into `bsv21` | The app builds the BRC-162 script. Change back into `bsv21` is mandatory. Cosigned tips are not this path: the wallet will not cosign, and a plain unlock is refused. |
 
 Ordinary signing rides along with auth when a back end needs proof the wallet holds the key: `getPublicKey`, `createSignature`, `verifySignature`, `encrypt`, `decrypt`, `createHmac`, `verifyHmac`. A `createSignature` whose `protocolID` is `[2, 'wallet identity proof']` is checked against the calling origin. Any other protocol is signed as a normal BRC-42 signature.
@@ -50,7 +67,7 @@ Leave the rest of this page for later. Certificates, identity discovery, and key
 | `Connect.getPermissions()` | Nothing to poll | Grants are per origin and per method group. A call the user has not approved prompts; a refused call returns `403 ACTION_DENIED` or `PERMISSION_DENIED`. |
 | App secret on your server | Nothing | There is no server secret. Your app never holds anything the user did not sign. |
 
-Task page: [Permissions and scopes](https://docs.handcash.io/brc-wallet/permissions).
+Task page: [Permissions and scopes](/brc-wallet/permissions) · [permissions.md](https://docs.handcash.io/brc-wallet/permissions.md)
 
 ## Payments
 
@@ -68,13 +85,13 @@ Task page: [Permissions and scopes](https://docs.handcash.io/brc-wallet/permissi
 | Silent payments after one permission grant | Auto-pay, plus a `spendingAuthorization` cap in your web `manifest.json` (BRC-73) | User-controlled and per origin. Expect `CHANGE_CHAINING_REQUIRED` on rapid successive payments and retry with a short backoff. |
 | Staging a transaction your app finishes | `createAction` with `unlockingScriptLength` and `options.signAndProcess: false`, then `signAction({ reference, spends })` or `abortAction` | No Connect equivalent. This is how an app spends its own contract outputs. |
 
-Task page: [Payments and actions](https://docs.handcash.io/brc-wallet/payments).
+Task page: [Payments and actions](/brc-wallet/payments) · [payments.md](https://docs.handcash.io/brc-wallet/payments.md)
 
 ## Items (collectables)
 
 | Connect Items | BRC wallet | Notes |
 | --- | --- | --- |
-| `Connect.getItemsInventory({ body })` | `wallet.listOutputs({ basket: 'p 1sat all', includeCustomInstructions: true })` | Reads go through a scoped view grant. `totalOutputs` is what the user let your app see, not the whole wallet. |
+| `Connect.getItemsInventory({ body })` | `wallet.listOutputs({ basket: 'p 1sat all', includeTags: true })` | Reads go through a scoped view grant. `totalOutputs` is what the user let your app see, not the whole wallet. A view returns tags and `originVerified`; the wallet forces `includeCustomInstructions` off so provenance BEEF never rides an inventory. |
 | `collectionId` filter | `basket: 'p 1sat collection', tags: ['collection:<id>'], tagQueryMode: 'all'` | Same idea for `p 1sat app`, `p 1sat creator`. |
 | Item `id` / `origin` | `origin:` tag and `customInstructions.origin`; the held row is the `id:` tag | Origin is the genesis outpoint, stable across owners. The tip is the current outpoint a transfer spends. |
 | `rarity`, `color`, `attributes`, `imageUrl` | `customInstructions` JSON your app writes at mint | The wallet reads `name`, `app`, `collectionId`, `content`, `creator`, `provenance`. Anything else is yours to define and render. |
@@ -86,7 +103,58 @@ Task page: [Payments and actions](https://docs.handcash.io/brc-wallet/payments).
 | Lock / unlock item | Not available | There is no custodian to hold a lock. A locked state is app-side or a covenant script you design. |
 | Item verified badge | BRC-150 v2 `provenance` in `customInstructions` | Wallet-verified. Missing or oversized proofs show as unproven, never truncated. |
 
-Task page: [Collectables](https://docs.handcash.io/brc-wallet/items).
+### The 1Sat stack
+
+"Items" on the BRC wallet is four BRCs riding on `listOutputs`, `createAction`, and `internalizeAction`. The bridge advertises which ones it implements in `oneSat.brcs`, so an app can check before it builds an inscription.
+
+| BRC | What it fixes | Where it shows up on the wire |
+| --- | --- | --- |
+| [BRC-147](https://github.com/HandCash/HANDCASH-DESKTOP/blob/master/docs/bsva/brcs/tokens/0147.md) | The storage basket `1sat`, the tag vocabulary, and the `customInstructions` schema (`origin`, `content`, `name`, `app`, `provenance`) | Every output you mint or receive into `1sat` |
+| [BRC-150](https://github.com/HandCash/HANDCASH-DESKTOP/blob/master/docs/bsva/brcs/tokens/0150.md) | Offline tip → origin proof, version 2 | `customInstructions.provenance`; the wallet writes it on send and verifies it on receive |
+| BRC-164 | A stable held-row key, `id:<key>`, that names one row without exposing inventory | Stamped on the tags when a tip enters custody; used by `p 1sat id` reads and spend labels |
+| [BRC-165](https://github.com/bsv-blockchain/BRCs/pull/229) | The permission grammar: `p 1sat <scope>` for reads, `p 1sat input id <key>` for spends | `basket` on `listOutputs`; `labels` on `createAction` |
+
+Storage and permission are separate. Held collectables live in `1sat`; your app never names that basket on a read. `listOutputs({ basket: '1sat' })` returns `400 USE_P1SAT_SCOPE`.
+
+**View rules.** The scope is one of `all`, `collection`, `app`, `creator`, `id`. The value is always a tag, never part of the basket name. A non-`all` scope with no matching tag, a bare `p 1sat`, an unknown scope, or a value embedded in the basket name fails closed. Extra tags narrow a request but cannot widen it: the wallet post-filters to the granted axis even when you send `tagQueryMode: 'any'`. `app:` and `creator:` are different axes. `p 1sat id` with one `id:` tag resolves without a prompt, which makes it the right call for a detail screen.
+
+A view returns tags plus the wallet's `originVerified` verdict. Provenance BEEF is not a view payload; the wallet never hands a 700-row inventory its proofs. Fetch one row with `include: 'entire transactions'` when you need the transaction itself.
+
+**Spend rules.** Every label `p 1sat input id <key>` must resolve to exactly one held row, and that row's outpoint must appear in `inputs`, or the call fails with `400 INVALID_P1SAT_SPEND` before any prompt. Each item spend is approved per action. Pay and auto-pay grants never cover item view or item spend.
+
+**What the bridge advertises.** `GET /health` and `GET /manifest.json` both carry this block. Branch on it, not on the wallet's name.
+
+```json
+{
+  "oneSat": {
+    "brcs": ["147", "150", "164", "165"],
+    "baskets": ["1sat"],
+    "permissions": {
+      "protocol": "p 1sat",
+      "viewScopes": ["all", "collection", "app", "creator", "id"],
+      "spendLabel": "p 1sat input id <key>"
+    },
+    "provenanceVerify": ["v2"],
+    "walletIdentityProof": {
+      "version": 1,
+      "methods": ["waitForAuthentication", "getPublicKey", "createSignature"],
+      "protocolID": [2, "wallet identity proof"],
+      "keyID": "identity-proof:<normalized-origin>",
+      "counterparty": "anyone",
+      "challenge": {
+        "domain": "handcash-wallet-identity-proof",
+        "encoding": "canonical-json-utf8",
+        "maxTtlMs": 300000,
+        "minNonceBits": 128
+      }
+    }
+  }
+}
+```
+
+`provenanceVerify: ['v2']` means the wallet shows an item as verified only on a complete BRC-150 v2 proof. BRC-156 soft-latch was withdrawn and is not advertised.
+
+Task page: [Collectables](/brc-wallet/items) · [items.md](https://docs.handcash.io/brc-wallet/items.md)
 
 ## Tokens (BSV-21)
 
@@ -98,7 +166,7 @@ Task page: [Collectables](https://docs.handcash.io/brc-wallet/items).
 | — | Cosigned tips | Not the integrator path. The wallet's own send refuses them with `cosigner_required`, and the bridge will not produce the cosigner signature. An app spends one only by supplying that unlock itself. |
 | — | Provenance | BRC-176 walk from tip to a fixed-supply deploy; `issuerAttested` is a Sigma signature check, not a supply audit. |
 
-Task page: [Tokens](https://docs.handcash.io/brc-wallet/tokens).
+Task page: [Tokens](/brc-wallet/tokens) · [tokens.md](https://docs.handcash.io/brc-wallet/tokens.md)
 
 ## Signing and encryption
 
@@ -110,7 +178,7 @@ Task page: [Tokens](https://docs.handcash.io/brc-wallet/tokens).
 | — | `acquireCertificate`, `listCertificates`, `proveCertificate`, `relinquishCertificate` | On the wire, not proven. Forwarded to the wallet. Do not ship a certificate flow on this release. |
 | — | `discoverByIdentityKey`, `discoverByAttributes`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage` | On the wire, not proven. No HandCash test shows a third-party discover or linkage call succeeding. |
 
-Task page: [Signing and encryption](https://docs.handcash.io/brc-wallet/signing).
+Task page: [Signing and encryption](/brc-wallet/signing) · [signing.md](https://docs.handcash.io/brc-wallet/signing.md)
 
 ## Social, business, and embedded wallets
 
@@ -134,7 +202,7 @@ Task page: [Signing and encryption](https://docs.handcash.io/brc-wallet/signing)
 | — | `WALLET_LOCKED`, `OFFLINE_PAYMENTS_DISABLED`, `DOUBLE_SPENT` | Device state. A timeout is not a failure — check `listActions` by label before retrying a payment. |
 | — | `400 USE_P1SAT_SCOPE`, `400 INVALID_P1SAT_SPEND`, `403 MARKET_ORIGIN_DENIED` | Item scope grammar and HandCash-host-only methods. |
 
-Full list with HTTP statuses: [Permissions and scopes](https://docs.handcash.io/brc-wallet/permissions).
+Full list with HTTP statuses: [Permissions and scopes](/brc-wallet/permissions) · [permissions.md](https://docs.handcash.io/brc-wallet/permissions.md).
 
 ## How BRC-100 grows
 
@@ -171,7 +239,7 @@ This is where features live. A payment, a collectable, and a fungible token are 
 | Derived keys, per-app | BRC-42 / BRC-43 | `protocolID`, `keyID`, `counterparty` on every key method |
 | Transaction proofs | BRC-62 Atomic BEEF | `inputBEEF` on `createAction`, `tx` on `internalizeAction` |
 | Silent spending cap | BRC-73 | `spendingAuthorization` in your web `manifest.json` |
-| Collectables | 1Sat ordinals, BRC-147 / 164 / 165, BRC-150 provenance | Basket `1sat`, tags `ordinal`, `origin:`, `name:`, `app:`, `collection:`; label `p 1sat input id <key>` |
+| Collectables | 1Sat ordinals: BRC-147 basket profile, BRC-150 provenance, BRC-164 held-row key, BRC-165 permission grammar | Basket `1sat`, tags `ordinal`, `origin:`, `name:`, `app:`, `collection:`, `creator:`, `id:`; read scope `p 1sat <scope>`; spend label `p 1sat input id <key>`. See [The 1Sat stack](#the-1sat-stack). |
 | Fungible tokens | BSV-21 with BRC-162 value locks, BRC-176 provenance | Basket `bsv21`, tags `bsv21:`, `amt:`, `op:`, `sym:`, `dec:` |
 | Certificates | BRC-52 | Forwarded, not proven. Leave off the integrator path until a third-party call is shown succeeding. |
 | Catalog and overlay packs | BRC-230 | Not in this release. Shipping on `feature/brc-230-index-expansion`; the methods return `404 INDEX_EXPANSION_UNAVAILABLE` today |
@@ -200,8 +268,9 @@ Do this at connect time, once, and branch on the result rather than on the walle
 | --- | --- |
 | `GET http://127.0.0.1:3321/health` | The bridge is up. Returns `{ ok, service: 'handcash-brc100', oneSat }` |
 | `GET http://127.0.0.1:3321/manifest.json` | `babbage.trust` (wallet name and identity public key) and `babbage.oneSat` |
-| `oneSat.brcs` | Protocols the item path implements: `['147', '150', '164', '165']` |
+| `oneSat.brcs` | Protocols the item path implements: `['147', '150', '164', '165']`. Full block under [The 1Sat stack](#the-1sat-stack). |
 | `oneSat.permissions` | View-scope grammar (`p 1sat` with `all`, `collection`, `app`, `creator`, `id`) and the spend-label template |
+| `oneSat.provenanceVerify` | Proof versions the wallet will mark verified: `['v2']` |
 | `oneSat.walletIdentityProof` | Version, methods, `protocolID`, `keyID` template, challenge rules for identity proofs |
 | `POST /getVersion` | The BRC-100 interface version |
 | `POST /<unknownMethod>` | `404 Unsupported BRC-100 method: <name>` — the signal to fall back |
@@ -248,4 +317,4 @@ Ship auth, payments, items, and plain BSV-21, plus ordinary signing when a back 
 | Who runs it | Your server | The user's browser or native app |
 | Mobile | Same cloud API | Same wallet core; a public deep-link transport is not yet a contract |
 
-Task page: [Local bridge](https://docs.handcash.io/brc-wallet/local-bridge). Live examples: [Transaction Bounce](https://brc-cloud.bcryderman.workers.dev/tx-bounce) and the [wallet demo](https://brc-cloud.bcryderman.workers.dev/wallet-demo).
+Task page: [Local bridge](/brc-wallet/local-bridge) · [local-bridge.md](https://docs.handcash.io/brc-wallet/local-bridge.md). Live examples: [Transaction Bounce](https://brc-cloud.bcryderman.workers.dev/tx-bounce) and the [wallet demo](https://brc-cloud.bcryderman.workers.dev/wallet-demo).
