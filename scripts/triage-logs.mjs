@@ -3,8 +3,15 @@
  * Triage a device's uploaded session logs with Jev (TypeSafe System One).
  *
  *   node scripts/triage-logs.mjs [bucket] [--all] [--json] [--state]
+ *   node scripts/triage-logs.mjs desktop-local        # this machine, no upload
+ *   node scripts/triage-logs.mjs --file <session.log> # any saved upload / ring
  *
  * Buckets default to the ones in `.cursor/rules/remote-support-logs.mdc`.
+ * `desktop-local` reads the renderer ring the Desktop app mirrors into its
+ * Electron `durable-prefs.json` (`handcash.applog.current.v1` = latest run,
+ * `handcash.applog.previous.v1` = the run before) plus the electron-log
+ * `main.log` for BRC-100 bridge facts — the same lines an upload would carry,
+ * without waiting for one.
  *
  * Division of labour, per the TypeSafe building guide: **code** does the
  * parsing, counting, grouping and correlation — every exact fact. **Jev** only
@@ -15,6 +22,7 @@
  * Needs JEV_API_KEY (read from .env or the environment).
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -49,6 +57,79 @@ async function fetchLogs(bucket, all) {
   return res.text()
 }
 
+/* ---------------------------------------------------------- local sources */
+
+const ELECTRON_APP_ID = 'handcash-brc100'
+const RING_CURRENT_KEY = 'handcash.applog.current.v1'
+const RING_PREVIOUS_KEY = 'handcash.applog.previous.v1'
+
+/** Electron `userData` and `logs` folders for the installed Desktop app. */
+function desktopLocalPaths() {
+  const home = os.homedir()
+  if (process.platform === 'darwin') {
+    return {
+      prefs: path.join(home, 'Library/Application Support', ELECTRON_APP_ID, 'durable-prefs.json'),
+      mainLog: path.join(home, 'Library/Logs', ELECTRON_APP_ID, 'main.log'),
+      mainOldLog: path.join(home, 'Library/Logs', ELECTRON_APP_ID, 'main.old.log'),
+    }
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA ?? path.join(home, 'AppData/Roaming')
+    const base = path.join(appData, ELECTRON_APP_ID)
+    return {
+      prefs: path.join(base, 'durable-prefs.json'),
+      mainLog: path.join(base, 'logs/main.log'),
+      mainOldLog: path.join(base, 'logs/main.old.log'),
+    }
+  }
+  const base = path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), ELECTRON_APP_ID)
+  return {
+    prefs: path.join(base, 'durable-prefs.json'),
+    mainLog: path.join(base, 'logs/main.log'),
+    mainOldLog: path.join(base, 'logs/main.old.log'),
+  }
+}
+
+/**
+ * The renderer ring as the Desktop app persists it: `{ at, level, message }`
+ * rows, newest last. Same lines an upload carries, read straight from disk.
+ */
+function readDurableRing(prefsPath, key) {
+  if (!fs.existsSync(prefsPath)) return []
+  const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'))
+  const raw = prefs?.[key]
+  if (typeof raw !== 'string' || !raw) return []
+  try {
+    const rows = JSON.parse(raw)
+    return Array.isArray(rows)
+      ? rows.filter((r) => r && typeof r.at === 'number' && typeof r.message === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+/** A ring row becomes one upload-format event; multi-line messages stay one event. */
+function ringEvents(rows) {
+  return rows.map((r) => ({
+    at: r.at,
+    level: String(r.level ?? 'info'),
+    text: r.message.replace(/\s*\n\s*/g, ' ⏎ ').trim(),
+  }))
+}
+
+/** electron-log main process lines: `[2026-08-29 10:55:55.497] [info]  message`. */
+const ELECTRON_LINE = /^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\] \[(\w+)\]\s+(.*)$/
+
+function parseElectronLog(text) {
+  const events = []
+  for (const raw of text.split('\n')) {
+    const m = ELECTRON_LINE.exec(raw.trim())
+    if (m) events.push({ at: Date.parse(m[1]), level: m[2], text: m[3] })
+  }
+  return events
+}
+
 /* ---------------------------------------------------------------- parsing */
 
 const LINE = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\[(\w+)\]\s+(.*)$/
@@ -71,13 +152,33 @@ function parseSession(text) {
     header[m[1]] ??= m[2].trim()
   }
   const versionLine = text.match(/^# version (\S+) · platform (\S+)/m)
+  if (versionLine) {
+    header.version = versionLine[1]
+    header.platform = versionLine[2]
+  }
 
   const events = []
   for (const raw of text.split('\n')) {
     const m = LINE.exec(raw.trim())
     if (m) events.push({ at: Date.parse(m[1]), level: m[2], text: m[3] })
   }
+  return sessionFacts(header, events)
+}
 
+/** A session read from the on-disk ring instead of an upload body. */
+function ringSession(rows, reason) {
+  const events = ringEvents(rows)
+  const version = events
+    .map((e) => /^App log capture started — v(\d+\.\d+\.\d+)/.exec(e.text)?.[1])
+    .filter(Boolean)
+    .at(-1)
+  return sessionFacts(
+    { version: version ?? 'local-ring', platform: process.platform, reason },
+    events,
+  )
+}
+
+function sessionFacts(header, events) {
   const stalls = []
   const longtasks = []
   const navs = []
@@ -143,6 +244,8 @@ function parseSession(text) {
   const storage = storagePressure(events)
   const bursts = stallBursts(events, stalls, workloads.spans)
   const custody = custodyFacts(events)
+  const activity = activityFacts(events)
+  const ui = uiFacts(events)
 
   const span =
     events.length > 0
@@ -150,8 +253,8 @@ function parseSession(text) {
       : 0
 
   return {
-    version: versionLine?.[1] ?? header.version ?? 'unknown',
-    platform: versionLine?.[2] ?? 'unknown',
+    version: header.version ?? 'unknown',
+    platform: header.platform ?? 'unknown',
     uploadReason: (header.reason ?? 'unknown').split('·')[0].trim(),
     windowSeconds: span,
     lineCount: events.length,
@@ -178,6 +281,11 @@ function parseSession(text) {
     // what the UTXO heal did about coins the chain says are spent by a tx
     // this wallet does not hold.
     custody,
+    // Activity rows: what was written, which pending rows outlived their
+    // send, and whether the expiry sweep saw them and left them anyway.
+    activity,
+    // React list-key collisions: which key, which component's list.
+    ui,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -541,6 +649,261 @@ function custodyFacts(events) {
   }
 }
 
+/* ------------------------------------------------------ activity facts */
+
+const ACTIVITY_WRITE_RE =
+  /^\[activity\] (new|merged|skipped) (spent|earned)\/([\w-]+) (-?\d+) sat (no-txid|[0-9a-f]{12}…) — (.*)$/
+const STUCK_CENSUS_RE = /^\[activity\] (\d+) outbound row\(s\) stuck past 90s — (.+?): (.*)$/
+const STUCK_ROW_RE =
+  /([\w-]+)\/(-?\d+)sat age=(\d+)s id=(\S+) pending=(\S+)(?: item=(\S+))?/g
+const ORPHAN_REMOVED_RE = /^\[activity\] removed orphan approval placeholder id=(\S+) pending=(\S+)/
+const WRITE_REFUSED_RE = /^\[activity\] durable write refused/
+
+/**
+ * Pending Activity rows that outlive their send. The wallet prints a census of
+ * every txid-less pending spend older than 90s (at most once a minute) and a
+ * line for each approval placeholder it sweeps. Reading both across time says
+ * whether a row is being rewritten fresh, whether the sweep saw it and left
+ * it, and whether the store refused the write that would have removed it.
+ */
+function activityFacts(events) {
+  const writes = { new: 0, merged: 0, skipped: 0 }
+  const placeholderWrites = new Map()
+  let orphanRemovals = 0
+  let refusedWrites = 0
+  const censuses = []
+  const rows = new Map()
+
+  for (const e of events) {
+    let m = ACTIVITY_WRITE_RE.exec(e.text)
+    if (m) {
+      writes[m[1]] += 1
+      // A zero-sat, txid-less spend is the "Approving" placeholder.
+      if (m[2] === 'spent' && Number(m[4]) <= 0 && m[5] === 'no-txid') {
+        const key = `${m[3]} · ${family(m[6])}`
+        placeholderWrites.set(key, (placeholderWrites.get(key) ?? 0) + 1)
+      }
+      continue
+    }
+    if (ORPHAN_REMOVED_RE.test(e.text)) {
+      orphanRemovals += 1
+      continue
+    }
+    if (WRITE_REFUSED_RE.test(e.text)) {
+      refusedWrites += 1
+      continue
+    }
+    m = STUCK_CENSUS_RE.exec(e.text)
+    if (!m) continue
+    const sweepRan = !/holds priority/i.test(m[2])
+    const census = { at: e.at, stuck: Number(m[1]), sweepRan, rows: [] }
+    for (const r of m[3].matchAll(STUCK_ROW_RE)) {
+      const id = r[4]
+      const ageS = Number(r[3])
+      const row = rows.get(id) ?? {
+        id,
+        method: r[1],
+        sats: Number(r[2]),
+        pendingId: r[5],
+        item: r[6] ?? 'unknown',
+        seen: 0,
+        firstAgeS: ageS,
+        lastAgeS: ageS,
+        maxAgeS: ageS,
+        ageShrank: false,
+        seenAfterSweepRan: 0,
+        sweepsSurvived: 0,
+      }
+      row.seen += 1
+      if (ageS < row.lastAgeS) row.ageShrank = true
+      row.lastAgeS = ageS
+      row.maxAgeS = Math.max(row.maxAgeS, ageS)
+      rows.set(id, row)
+      census.rows.push(id)
+    }
+    censuses.push(census)
+  }
+
+  // A row listed in a census *after* one where the sweep ran was seen by the
+  // sweep and left in place.
+  let lastSweepAt = null
+  for (const c of censuses) {
+    for (const id of c.rows) {
+      const row = rows.get(id)
+      if (lastSweepAt != null && c.at > lastSweepAt) row.seenAfterSweepRan += 1
+    }
+    if (c.sweepRan) {
+      lastSweepAt = c.at
+      for (const id of c.rows) rows.get(id).sweepsSurvived += 1
+    }
+  }
+
+  const stuckRows = [...rows.values()].sort((a, b) => b.maxAgeS - a.maxAgeS)
+  const isPlaceholder = (r) => r.sats <= 0 && (r.item === 'none' || r.item === 'unknown')
+  return {
+    writes,
+    placeholderWrites: [...placeholderWrites.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([write, count]) => ({ write, count })),
+    orphanRemovals,
+    refusedWrites,
+    stuckCensuses: censuses.length,
+    censusesWhereSweepRan: censuses.filter((c) => c.sweepRan).length,
+    censusesWhereSweepYielded: censuses.filter((c) => !c.sweepRan).length,
+    stuckRows: stuckRows.slice(0, 12),
+    // Zero-sat, item-less rows are UI placeholders; the sweep removes them
+    // even while a spend holds priority. One that survives a sweep it should
+    // have removed is the fact the feed cannot explain on its own.
+    placeholderRows: stuckRows.filter(isPlaceholder).length,
+    placeholderRowsSurvivingSweep: stuckRows.filter((r) => isPlaceholder(r) && r.sweepsSurvived > 0 && r.seenAfterSweepRan > 0).length,
+    pricedRowsHeldWhileYielding: stuckRows.filter((r) => r.sats > 0 && r.seen > 1).length,
+    rowsRewrittenFresh: stuckRows.filter((r) => r.ageShrank).length,
+    // Ages that keep growing across the window mean the same durable row is
+    // still there, not a new one each time.
+    longestStuckSeconds: stuckRows[0]?.maxAgeS ?? 0,
+  }
+}
+
+/* ------------------------------------------------------------ ui facts */
+
+const DUPLICATE_KEY_RE = /^Encountered two children with the same key, `%s`\./
+/** `%s` is left literal by console capture; the substituted args follow the text. */
+const DUPLICATE_KEY_TAIL_RE = /identity across updates\. Non-unique keys may cause children to be duplicated and\/or omitted — the behavior is unsupported and could change in a future version\.\s*(\S+)(?:\s+(.*))?$/s
+
+/**
+ * React list-key collisions. A feed that renders two rows under one key can
+ * paint duplicated or stale rows, which reads exactly like a phantom Activity
+ * entry, so the offending key and the component that owns the list are facts
+ * worth having in the state.
+ */
+function uiFacts(events) {
+  const keys = new Map()
+  const owners = new Map()
+  let duplicateKeyErrors = 0
+  for (const e of events) {
+    if (e.level !== 'error' || !DUPLICATE_KEY_RE.test(e.text)) continue
+    duplicateKeyErrors += 1
+    const tail = DUPLICATE_KEY_TAIL_RE.exec(e.text)
+    const key = tail?.[1] ?? '<unknown>'
+    keys.set(key, (keys.get(key) ?? 0) + 1)
+    const stack = tail?.[2] ?? ''
+    const owner = /\bat\s+([A-Z]\w+)/.exec(stack)?.[1] ?? '<unknown>'
+    owners.set(owner, (owners.get(owner) ?? 0) + 1)
+  }
+  return {
+    duplicateKeyErrors,
+    duplicateKeys: [...keys.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([key, count]) => ({ key: key.slice(0, 120), count })),
+    duplicateKeyOwners: [...owners.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([component, count]) => ({ component, count })),
+  }
+}
+
+/* -------------------------------------------------------- bridge facts */
+
+const HTTP_IN_RE = /^\[HTTP\] (GET|POST) (\/\S*)$/
+const HTTP_TO_RENDERER_RE = /^\[HTTP\] → renderer request_id=(\d+) (?:GET|POST) (\/\S*)/
+const HTTP_FROM_RENDERER_RE = /^\[HTTP\] ← renderer request_id=(\d+) status=(\d+)/
+const HTTP_ERROR_RE = /^\[HTTP\] ← renderer request_id=(\d+) (?:GET|POST) (\/\S*) error: ([A-Z][A-Z0-9_]{2,}|\w+)/
+const HTTP_NO_REPLY_RE = /no renderer reply|renderer-not-ready/i
+
+const percentile = (sorted, p) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : 0)
+
+/**
+ * BRC-100 bridge facts from the Electron main log: what apps asked, how long
+ * the renderer took to answer each request, and which errors came back. The
+ * renderer ring never sees this side, so it is the only record of an app
+ * waiting on the wallet.
+ */
+function bridgeFacts(events) {
+  const byMethod = new Map()
+  const methodFor = (m) => byMethod.get(m) ?? byMethod.set(m, { method: m, requests: 0, answered: 0, errors: 0, latencies: [] }).get(m)
+  const open = new Map()
+  const errorCodes = new Map()
+  const slowest = []
+  let noReply = 0
+  let requests = 0
+  const otherProblems = new Map()
+
+  for (const e of events) {
+    let m = HTTP_IN_RE.exec(e.text)
+    if (m) {
+      requests += 1
+      methodFor(m[2]).requests += 1
+      continue
+    }
+    m = HTTP_TO_RENDERER_RE.exec(e.text)
+    if (m) {
+      open.set(m[1], { method: m[2], at: e.at })
+      continue
+    }
+    m = HTTP_ERROR_RE.exec(e.text)
+    if (m) {
+      methodFor(m[2]).errors += 1
+      errorCodes.set(m[3], (errorCodes.get(m[3]) ?? 0) + 1)
+      if (HTTP_NO_REPLY_RE.test(e.text)) noReply += 1
+      continue
+    }
+    m = HTTP_FROM_RENDERER_RE.exec(e.text)
+    if (m) {
+      const started = open.get(m[1])
+      if (!started) continue
+      open.delete(m[1])
+      const ms = e.at - started.at
+      const row = methodFor(started.method)
+      row.answered += 1
+      row.latencies.push(ms)
+      slowest.push({ method: started.method, ms, status: Number(m[2]) })
+      continue
+    }
+    if (HTTP_NO_REPLY_RE.test(e.text)) noReply += 1
+    if ((e.level === 'warn' || e.level === 'error') && !/^\[HTTP\]/.test(e.text)) {
+      const key = family(e.text)
+      const cur = otherProblems.get(key) ?? { level: e.level, message: key, occurrences: 0 }
+      cur.occurrences += 1
+      otherProblems.set(key, cur)
+    }
+  }
+
+  const methods = [...byMethod.values()]
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 14)
+    .map((r) => {
+      const sorted = [...r.latencies].sort((a, b) => a - b)
+      return {
+        method: r.method,
+        requests: r.requests,
+        answered: r.answered,
+        errors: r.errors,
+        p50ms: percentile(sorted, 0.5),
+        p95ms: percentile(sorted, 0.95),
+        maxMs: sorted.at(-1) ?? 0,
+      }
+    })
+
+  return {
+    lineCount: events.length,
+    windowSeconds: events.length ? Math.round((events.at(-1).at - events[0].at) / 1000) : 0,
+    requests,
+    unanswered: open.size,
+    rendererNotReady: noReply,
+    methods,
+    errorCodes: [...errorCodes.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([code, count]) => ({ code, count })),
+    slowest: slowest
+      .sort((a, b) => b.ms - a.ms)
+      .slice(0, 6),
+    otherProblems: [...otherProblems.values()].sort((a, b) => b.occurrences - a.occurrences).slice(0, 8),
+  }
+}
+
 function splitUploads(text) {
   const parts = text
     .split(/^# \d{15}-[0-9a-f]+\.log$/m)
@@ -617,8 +980,54 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const activity = latest.activity
+  const activityQuestions =
+    activity.stuckCensuses > 0 || activity.placeholderWrites.length > 0 || latest.ui.duplicateKeyErrors > 0
+      ? {
+          phantom_row_cause: {
+            type: 'choice',
+            instructions:
+              'Why are pending "Signed / Approving" rows still on screen? `latest.activity.stuckRows` lists every txid-less pending spend older than 90s each time the wallet took its census, with its sats, whether it names an item, how many censuses it appeared in, whether its age ever shrank, and how many sweeps it survived. `censusesWhereSweepRan` vs `censusesWhereSweepYielded` says whether the expiry pass got to act. `placeholderWrites` are zero-sat txid-less spend rows being written. `latest.ui.duplicateKeys` are React list keys that collided, with the component owning the list — a list rendered under colliding keys can paint duplicated or stale rows that no store row explains.',
+            criteria: {
+              list_key_collision:
+                '`latest.ui.duplicateKeyErrors` > 0 and no stuck store row explains the rows: the feed rendered two records under one key, so React duplicated or kept stale rows on screen. The store is clean; the projection is wrong.',
+              placeholder_survives_sweep:
+                '`placeholderRowsSurvivingSweep` > 0: a zero-sat, item-less row was listed again after a census where the sweep ran, so the sweep saw it and did not remove it — its shape escapes the placeholder test or the store refused the write (`refusedWrites`).',
+              row_rewritten_fresh:
+                '`rowsRewrittenFresh` > 0 or `placeholderWrites` keep recurring: something re-upserts the placeholder so its age resets and the read-time filter never sees it as stale.',
+              priced_row_held_while_yielding:
+                'The stuck rows carry sats > 0: they are real attempted sends the sweep keeps while a spend holds priority (`censusesWhereSweepYielded` dominates), not approval placeholders.',
+              sweep_never_reached:
+                'Stuck rows exist but there is no census at all in the window, so neither the feed refresh loop nor chain-ingest maintenance ran the expiry pass.',
+              unclear: 'The activity facts do not favour one cause.',
+            },
+          },
+        }
+      : {}
+
+  const bridge = latest.bridge
+  const bridgeQuestions =
+    bridge && bridge.requests > 0
+      ? {
+          bridge_health: {
+            type: 'choice',
+            instructions:
+              'From `latest.bridge` (BRC-100 local HTTP bridge, Electron main side): `methods[]` gives per-method request counts and renderer answer latency percentiles, `errorCodes` the error codes returned to apps, `rendererNotReady` how often the wallet window could not answer, `unanswered` requests with no reply at all. What best describes the bridge in this window?',
+            criteria: {
+              healthy: 'Requests are answered quickly and errors are the expected WALLET_LOCKED / permission denials.',
+              renderer_unavailable: '`rendererNotReady` or `unanswered` is a meaningful share: apps were talking to a wallet window that could not answer.',
+              slow_spends: 'createAction / signAction / internalizeAction p95 latency is many seconds while other methods are fast.',
+              app_errors_dominate: 'Error codes other than WALLET_LOCKED and permission denials make up most replies.',
+              unclear: 'Too few requests, or the facts do not favour one description.',
+            },
+          },
+        }
+      : {}
+
   return {
     ...custodyQuestions,
+    ...activityQuestions,
+    ...bridgeQuestions,
     freeze_owner: {
       type: 'choice',
       instructions:
@@ -849,6 +1258,62 @@ function report(state, answers) {
     if (answers.quarantine_next_step) choiceBlock('Quarantine next step', answers.quarantine_next_step)
   }
 
+  const ac = latest.activity
+  const ui = latest.ui
+  if (ui.duplicateKeyErrors > 0) {
+    console.log('\nReact list keys (code-counted):')
+    console.log(
+      `  ${ui.duplicateKeyErrors} duplicate-key error(s) · owners: ${ui.duplicateKeyOwners.map((o) => `${o.component}×${o.count}`).join('  ') || 'unknown'}`,
+    )
+    for (const k of ui.duplicateKeys) console.log(`  ${String(k.count).padStart(4)}× key ${k.key}`)
+  }
+  if (ac.stuckCensuses > 0 || ac.placeholderWrites.length > 0 || ac.orphanRemovals > 0 || ui.duplicateKeyErrors > 0) {
+    console.log('\nActivity rows (code-counted):')
+    console.log(
+      `  writes new ${ac.writes.new} · merged ${ac.writes.merged} · skipped ${ac.writes.skipped} · ` +
+        `placeholders swept ${ac.orphanRemovals} · refused writes ${ac.refusedWrites}`,
+    )
+    if (ac.stuckCensuses > 0) {
+      console.log(
+        `  ${ac.stuckCensuses} stuck-row census(es): sweep ran in ${ac.censusesWhereSweepRan}, yielded in ${ac.censusesWhereSweepYielded} · ` +
+          `${ac.stuckRows.length} distinct row(s), longest stuck ${ac.longestStuckSeconds}s`,
+      )
+      console.log(
+        `  placeholders ${ac.placeholderRows} (surviving a sweep: ${ac.placeholderRowsSurvivingSweep}) · ` +
+          `priced rows held while yielding ${ac.pricedRowsHeldWhileYielding} · rewritten fresh ${ac.rowsRewrittenFresh}`,
+      )
+      for (const r of ac.stuckRows.slice(0, 6)) {
+        console.log(
+          `  ${r.method}/${r.sats}sat item=${r.item} pending=${r.pendingId} · seen ${r.seen}× · age ${r.firstAgeS}s→${r.maxAgeS}s · survived ${r.sweepsSurvived} sweep(s)`,
+        )
+      }
+    }
+    for (const w of ac.placeholderWrites.slice(0, 5)) {
+      console.log(`  ${String(w.count).padStart(4)}× placeholder write ${w.write}`)
+    }
+    if (answers.phantom_row_cause) choiceBlock('Phantom row cause', answers.phantom_row_cause)
+  }
+
+  const br = latest.bridge
+  if (br && br.requests > 0) {
+    console.log('\nBRC-100 bridge (electron main, code-counted):')
+    console.log(
+      `  ${br.requests} request(s) over ${br.windowSeconds}s · unanswered ${br.unanswered} · renderer not ready ${br.rendererNotReady}`,
+    )
+    for (const m of br.methods.slice(0, 8)) {
+      console.log(
+        `  ${m.method.padEnd(26)} ${String(m.requests).padStart(5)} req · p50 ${m.p50ms}ms · p95 ${m.p95ms}ms · max ${m.maxMs}ms · errors ${m.errors}`,
+      )
+    }
+    if (br.errorCodes.length) {
+      console.log(`  errors: ${br.errorCodes.map((c) => `${c.code}×${c.count}`).join('  ')}`)
+    }
+    for (const p of br.otherProblems.slice(0, 4)) {
+      console.log(`  ${String(p.occurrences).padStart(4)}× [${p.level}] ${p.message}`)
+    }
+    if (answers.bridge_health) choiceBlock('Bridge health', answers.bridge_health)
+  }
+
   if (latest.repeatingProblems.length) {
     console.log('\nRepeating problems (code-counted, not model-guessed):')
     for (const p of latest.repeatingProblems.slice(0, 8)) {
@@ -865,14 +1330,37 @@ function report(state, answers) {
 
 const args = process.argv.slice(2)
 const flags = new Set(args.filter((a) => a.startsWith('--')))
-const bucketArg = args.find((a) => !a.startsWith('--')) ?? 'android'
-const bucket = KNOWN_BUCKETS[bucketArg] ?? bucketArg
+const fileIdx = args.indexOf('--file')
+const filePath = fileIdx >= 0 ? args[fileIdx + 1] : null
+const positional = args.filter((a, i) => !a.startsWith('--') && (fileIdx < 0 || i !== fileIdx + 1))
+const bucketArg = positional[0] ?? 'android'
 
-// `/all` is what makes "is this new?" answerable, so compare by default.
-const text = await fetchLogs(bucket, true)
-const uploads = splitUploads(text)
-const latest = parseSession(uploads[0])
-const previous = uploads[1] ? parseSession(uploads[1]) : null
+let latest
+let previous = null
+if (filePath) {
+  // A saved upload body (or `/all` dump) on disk.
+  const uploads = splitUploads(fs.readFileSync(filePath, 'utf8'))
+  latest = parseSession(uploads[0])
+  previous = uploads[1] ? parseSession(uploads[1]) : null
+} else if (bucketArg === 'desktop-local') {
+  const paths = desktopLocalPaths()
+  const current = readDurableRing(paths.prefs, RING_CURRENT_KEY)
+  if (current.length === 0) {
+    throw new Error(`no renderer ring at ${paths.prefs} — is HandCash Desktop installed on this machine?`)
+  }
+  latest = ringSession(current, 'local-ring')
+  const before = readDurableRing(paths.prefs, RING_PREVIOUS_KEY)
+  previous = before.length ? ringSession(before, 'local-ring-previous') : null
+  if (fs.existsSync(paths.mainLog)) {
+    latest.bridge = bridgeFacts(parseElectronLog(fs.readFileSync(paths.mainLog, 'utf8')))
+  }
+} else {
+  const bucket = KNOWN_BUCKETS[bucketArg] ?? bucketArg
+  // `/all` is what makes "is this new?" answerable, so compare by default.
+  const uploads = splitUploads(await fetchLogs(bucket, true))
+  latest = parseSession(uploads[0])
+  previous = uploads[1] ? parseSession(uploads[1]) : null
+}
 const state = previous ? { latest, previous } : { latest }
 
 if (flags.has('--state')) {

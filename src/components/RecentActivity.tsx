@@ -877,6 +877,9 @@ function useContinuousRecordKeys(records: readonly ActivityRecord[]): string[] {
     );
     let stable = found?.stable ?? record.key;
     if (taken.has(stable)) stable = record.key;
+    // A continued key may already be held by an earlier row this pass. Two
+    // rows under one React key paint duplicated or stale rows — never emit it.
+    if (taken.has(stable)) stable = `${record.key}~${record.subject.id}`;
     taken.add(stable);
     keys.push(stable);
     next.push({ stable, entry: record.subject });

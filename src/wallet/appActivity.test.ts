@@ -976,6 +976,34 @@ describe("inbound receive activity", () => {
     expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(0);
   });
 
+  it("settles onto the transaction's existing row when its pending row is gone", () => {
+    // The app bridge already recorded this transaction under the app origin;
+    // the wallet's own pending row was swept before the send completed.
+    upsertAppActivity({
+      origin: "wallet-reference-demo",
+      kind: "spent",
+      sats: 700,
+      method: "createAction",
+      note: "Paid wallet-reference-demo",
+      txid: TX,
+    });
+    noteOutboundSendComplete({
+      pendingId: "swept-away",
+      txid: TX,
+      sats: 700,
+      to: "1abc",
+    });
+    const rows = listRecentActivity(10).filter((row) => row.txid === TX);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.pendingId).toBe("swept-away");
+  });
+
+  it("still opens a fresh Sending… row when there is no txid to match", () => {
+    noteOutboundSendPending({ pendingId: "first", sats: 100, to: "1abc" });
+    noteOutboundSendPending({ pendingId: "second", sats: 100, to: "1abc" });
+    expect(listRecentActivity(10)).toHaveLength(2);
+  });
+
   it("revives a failed signed send once the cheque is known live", () => {
     noteOutboundSendPending({ pendingId: "late", sats: 500, to: "1abc" });
     failOutboundSendPending({ pendingId: "late", reason: "timeout" });

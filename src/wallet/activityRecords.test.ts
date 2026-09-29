@@ -42,6 +42,19 @@ function collectable(
 }
 
 describe('composeActivityRecords', () => {
+  it('never hands a feed two records under one key', () => {
+    // Same spent txid written by an app origin and by the wallet: two records
+    // by origin, one subject key. React must still see distinct keys.
+    const records = composeActivityRecords([
+      entry({ method: 'createAction', kind: 'spent', sats: 700, txid: TXID, origin: 'demo.app', id: 'app-row' }),
+      entry({ method: 'send', kind: 'spent', sats: 700, txid: TXID, id: 'wallet-row' }),
+    ])
+    expect(records).toHaveLength(2)
+    expect(new Set(records.map((record) => record.key)).size).toBe(2)
+    expect(records[0]?.key).toBe(`tx:${TXID}:spent`)
+    expect(records[1]?.key).toBe(`tx:${TXID}:spent~wallet-row`)
+  })
+
   it('folds a listing and the held item it created into one record', () => {
     const records = composeActivityRecords([
       entry({

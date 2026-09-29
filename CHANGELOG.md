@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.348] - 2026-09-29
+
+### Fixed
+
+- Activity no longer paints phantom "Signed / Approving" rows above transactions
+  that already settled. Two records for one spent txid (an app-origin "Paid" row
+  beside the wallet's own row) shared a single feed key, and React kept stale
+  rows on screen under the colliding key (`Encountered two children with the same
+  key` was the last line before an 8.7s freeze in local triage). Record keys are
+  now unique per feed, and a send that completes after its pending row was swept
+  settles onto the transaction's existing row instead of writing a second one.
+
+### Changed
+
+- `npm run triage desktop-local` triages this machine without an upload: the
+  renderer ring mirrored in `durable-prefs.json` plus the electron `main.log`.
+  Triage now extracts activity facts (stuck-row census with `item=`, placeholder
+  writes, sweeps survived), React duplicate-key facts, and BRC-100 bridge facts
+  (per-method latency, error codes, renderer-not-ready); `--file` triages a saved
+  upload body.
+
 ## [1.3.347] - 2026-09-28
 
 ### Fixed

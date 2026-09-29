@@ -644,7 +644,15 @@ function findActivityMatchIndex(
       });
       if (byPendingOp >= 0) return byPendingOp;
     }
-    return -1;
+    // The pending row is gone (swept as a placeholder, or the send began on
+    // another device) but the transaction may already have its settled row —
+    // an app "Paid" row or a replica merge. Returning -1 here wrote a second
+    // spent row for the same txid; two records then shared one feed key and
+    // React kept stale rows on screen. A txid names the transaction exactly,
+    // so fall through to the txid match. Without a txid there is nothing to
+    // match on and a fresh Sending… row is right.
+    if (!args.txid?.trim()) return -1;
+    return findActivityTxMatchIndex(entries, args);
   }
   const outpoint = args.item?.outpoint?.trim().toLowerCase().replace("_", ".");
   if (outpoint) {
@@ -669,8 +677,17 @@ function findActivityMatchIndex(
     );
     if (byPack >= 0) return byPack;
   }
+  return findActivityTxMatchIndex(entries, args);
+}
+
+/** The row for this transaction and direction — item rows by their own tip. */
+function findActivityTxMatchIndex(
+  entries: ActivityEntry[],
+  args: { kind: ActivityKind; txid?: string; item?: ActivityItem; method: string }
+): number {
   const txid = args.txid?.trim().toLowerCase();
   if (!txid) return -1;
+  const outpoint = args.item?.outpoint?.trim().toLowerCase().replace("_", ".");
   const wantItem = activityRowIsItem(args);
   return entries.findIndex((e) => {
     if (e.kind !== args.kind) return false;
@@ -1432,7 +1449,9 @@ function reportStuckOutbound(
       (e) =>
         `${e.method}/${e.sats}sat age=${Math.round(
           (now - e.at) / 1000
-        )}s id=${e.id} pending=${e.pendingId ?? "none"}`
+        )}s id=${e.id} pending=${e.pendingId ?? "none"} item=${
+          e.item ? (e.item.name?.trim() || "unnamed").replace(/\s+/g, "_") : "none"
+        }`
     )
     .join(" · ");
   console.warn(

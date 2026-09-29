@@ -349,9 +349,18 @@ export function composeActivityRecords(
       order.push(key)
     }
   }
+  // Two records may still name the same subject key: the same spent txid
+  // written once by an app origin and once by the wallet folds by origin, so it
+  // becomes two records. React renders a list by key, and two children under
+  // one key leave duplicated or stale rows on screen — a phantom "Signed" line
+  // above the transaction that already settled. Keys must be unique per feed.
+  const taken = new Set<string>()
   return order.map((key) => {
     const bucket = buckets.get(key)!
     const subject = [...bucket].sort((a, b) => subjectRank(a) - subjectRank(b))[0]!
+    let recordKey = activityEntryKey(subject)
+    if (taken.has(recordKey)) recordKey = `${recordKey}~${subject.id}`
+    taken.add(recordKey)
     const rest = bucket.filter((entry) => entry !== subject)
     const money = pickMoneyLeg(rest)
     const seen = new Set(assetKeys(subject))
@@ -367,7 +376,7 @@ export function composeActivityRecords(
       assets.push(entry)
     }
     return {
-      key: activityEntryKey(subject),
+      key: recordKey,
       subject,
       money,
       assets,

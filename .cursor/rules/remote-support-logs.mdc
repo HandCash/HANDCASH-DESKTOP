@@ -32,7 +32,15 @@ custody at risk, regression vs previous session, severity.
 npm run triage android          # verdict
 npm run triage android -- --state   # just the extracted facts, no model call
 npm run triage android -- --json    # facts + raw answers
+npm run triage desktop-local        # this Mac: renderer ring in durable-prefs.json + electron main.log, no upload needed
+npm run triage -- --file saved.log  # any saved upload body
 ```
+
+`desktop-local` also carries **activity** facts (stuck-row census with `item=`,
+placeholder writes, sweeps survived), **ui** facts (React duplicate list keys and
+the owning component) and **bridge** facts from `main.log` (per-method BRC-100
+latency, error codes, renderer-not-ready). "Local desktop logs" means this
+command — never open `main.log` or the ring by hand.
 
 Never ask the model to count — counting, grouping and correlation stay in
 `scripts/triage-logs.mjs`. Needs `JEV_API_KEY` in `HANDCASH-DESKTOP/.env`.
