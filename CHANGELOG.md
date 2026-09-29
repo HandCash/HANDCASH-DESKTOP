@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.367] - 2026-09-29
+
+### Fixed
+
+- Miners no longer sit on any reply. The toolbox awaited an Arcade `postBeef` inside every `internalizeAction` for a new txid and refused the payment on a miss — 4.7s per bounce refund, and an Arcade outage turned an SPV-valid payment into a refusal. The wallet now credits from the BEEF and posts to miners after the reply (`internalizeMinerDeferral.ts`); its own miner rounds still go to the configured service.
+- A market listing waited on `propagateSignedSend` (5.4s "miner accepted") before returning the advert, and a purchase waited up to 5s for an acknowledgement. Both now register the signed cheque, send `BROADCASTED`, and propagate in the background like cancel and every other signed send; a late hard-reject rewrites the row through the existing lifecycle.
+- `broadcastAtomicBeef` joins an in-flight round for the same txid instead of paying a second multi-provider RTT.
+
 ## [1.3.366] - 2026-09-29
 
 ### Fixed

@@ -122,8 +122,6 @@ export function rebindMarketSettlementForAccount(): void {}
  */
 const SETTLEMENT_TIMEOUT_MS = 30_000
 const LISTING_DETAIL_MS = 4_000
-/** Normal Arcade accepts land in under 4s; slower propagation belongs in outbox. */
-const MARKET_BROADCAST_WAIT_MS = 5_000
 
 /**
  * What happened to the seller's copy of a committed settlement.
@@ -160,15 +158,17 @@ async function sellerHandoffOutcome(
 }
 
 /**
- * Hand the signed settlement to miner propagation without making the purchase
- * UI wait indefinitely for provider acknowledgement. Market asset data uses
- * the same signed-cheque lifecycle as every other Bitcoin transaction.
+ * Hand the signed settlement to the signed-cheque lifecycle. Registration
+ * seals the inputs and stores the durable retry body; miners are contacted in
+ * the background, as for every other signed send. A late Arcade hard-reject
+ * rewrites the row through reportLateMinerSubmitFailure — it never holds the
+ * buyer's reply, and it never decides the purchase after the fact here.
  */
 async function submitMarketSettlement(
   txid: string,
   atomic: number[],
 ): Promise<boolean> {
-  const { registerSignedSend, propagateSignedSend } = await import(
+  const { registerSignedSend, startSignedSendPropagation } = await import(
     './signedSendLifecycle'
   )
   const signedSettlement = await registerSignedSend({
@@ -176,38 +176,8 @@ async function submitMarketSettlement(
     atomicBeef: atomic,
     flow: 'market_purchase',
   })
-  const pending = propagateSignedSend(signedSettlement)
-    .then(() => true)
-    .catch((err) => {
-      console.warn(
-        '[market-buy] signed settlement rejected',
-        txid,
-        err instanceof Error ? err.message : String(err),
-      )
-      return false
-    })
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const outcome = await Promise.race([
-    pending.then((accepted) => ({ kind: 'answered' as const, accepted })),
-    new Promise<{ kind: 'queued'; accepted: true }>((resolve) => {
-      timer = setTimeout(
-        () => resolve({ kind: 'queued', accepted: true }),
-        MARKET_BROADCAST_WAIT_MS,
-      )
-    }),
-  ])
-  if (timer) clearTimeout(timer)
-  if (outcome.kind === 'queued') {
-    console.info(
-      `[market-buy] miner acknowledgement still pending after ${MARKET_BROADCAST_WAIT_MS}ms — propagation queued`,
-    )
-    void pending.then((accepted) => {
-      if (!accepted) {
-        console.warn('[market-buy] queued settlement was later rejected', txid)
-      }
-    })
-  }
-  return outcome.accepted
+  startSignedSendPropagation(signedSettlement)
+  return true
 }
 
 /**
@@ -984,7 +954,7 @@ export async function executeMarketPurchase(
       atomic = await mergeLocalUnconfirmedAncestry(active, atomic)
       rememberBeefTree(atomic, txid)
       remember({ phase: 'signedUnknown', txid, atomicBeef: atomic })
-      mark(`signed ${txid.slice(0, 12)} — Arcade postBeef once`)
+      mark(`signed ${txid.slice(0, 12)} — cheque registered, miners in background`)
       const broadcasted = await submitMarketSettlement(txid, atomic)
       if (!broadcasted) throw new Error('Market transaction broadcast failed')
       chart.send({ type: 'BROADCASTED' })

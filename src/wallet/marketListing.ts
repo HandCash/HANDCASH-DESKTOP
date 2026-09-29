@@ -2066,9 +2066,12 @@ async function createMarketListingAdvertExclusive(
       )
     }
     mark(`signed ${signedTxid.slice(0, 12)}`)
-    // Accept on Arcade contact / non-immediate-fail — do not require SPV
-    // "valid on chain main" before the listing is considered broadcast.
-    const { registerSignedSend, propagateSignedSend } = await import(
+    // The signed cheque is the promise. Registration seals inputs and stores
+    // the durable retry body; miners are contacted in the background, the same
+    // as cancel and every other signed send. Waiting for Arcade here held the
+    // advert 5s per listing, and a late hard-reject already rewrites the row
+    // through reportLateMinerSubmitFailure.
+    const { registerSignedSend, startSignedSendPropagation } = await import(
       './signedSendLifecycle'
     )
     const signedListing = await registerSignedSend({
@@ -2076,23 +2079,9 @@ async function createMarketListingAdvertExclusive(
       atomicBeef: atomic,
       flow: 'market_listing',
     })
-    const mined = await propagateSignedSend(signedListing)
-    mark(`miner ${mined.kind}`)
-    if (mined.kind === 'unproven-conflict') {
-      const reason =
-        'Not broadcast — miners could not see every parent input yet. Try listing again.'
-      await abortUnsentMarketAction({
-        active,
-        reference,
-        chart,
-        tipOutpoint: listingOutpoint,
-        reason,
-        signedTxid,
-        atomic: signedAtomic,
-      })
-      throw new MarketListingError('MARKET_LISTING_NOT_BROADCAST', reason)
-    }
+    mark('cheque registered')
     chart.send({ type: 'BROADCASTED', txid })
+    startSignedSendPropagation(signedListing)
     const listedOutpoint = `${txid}_0`
     const offerOutpoint = `${txid}_1`
     const advert: MarketListingAdvert = {

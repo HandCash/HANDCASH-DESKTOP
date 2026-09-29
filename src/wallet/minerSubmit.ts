@@ -507,9 +507,13 @@ export async function submitAtomicBeefToMiners(
   let summary: PostBeefSummary;
   let rawResults: PostBeefServiceResult[] | undefined;
   try {
-    const results = await active.services.postBeef(Beef.fromBinary(beefBytes), [
-      id,
-    ]);
+    // The configured service, not the internalize interceptor: this is the
+    // wallet's own miner round and must never be answered from the BEEF.
+    const { directPostBeef } = await import("./internalizeMinerDeferral");
+    const results = await directPostBeef(active.services)(
+      Beef.fromBinary(beefBytes),
+      [id],
+    );
     rawResults = results as PostBeefServiceResult[];
     summary = summarizePostBeef(rawResults);
   } catch (err) {

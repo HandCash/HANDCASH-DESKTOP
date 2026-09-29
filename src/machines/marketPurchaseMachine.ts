@@ -104,7 +104,8 @@ export const marketPurchaseMachine = setup({
     signedUnknown: {
       on: {
         BROADCASTED: 'broadcast',
-        // Arcade hard-reject: abort the noSend so buyer funding is not reserved forever.
+        // Registration failed before the cheque was durable: abort the noSend
+        // so buyer funding is not reserved forever. Miners never send this.
         ABORTED: 'failed',
         RECOVER: 'recovery',
         FAIL: { target: 'recovery', actions: 'setError' },

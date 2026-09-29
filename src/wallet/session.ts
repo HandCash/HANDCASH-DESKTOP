@@ -4,6 +4,7 @@ import { createFallbackChainTracker } from './chainTrackerFallback'
 import { wrapFindChainTipHeader } from './tipHeaderFailover'
 import { installRawTxFallback } from './rawTxFallback'
 import { installArcadeV2Services } from './arcadeV2'
+import { installInternalizeMinerDeferral } from './internalizeMinerDeferral'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -389,6 +390,9 @@ export async function bootWallet(args: {
   installMerklePreferBitails(setup.services as Services)
   installPostBeefPreferFast(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
+  // Credit from the BEEF; miners run after the reply. The toolbox otherwise
+  // awaits postBeef inside every internalizeAction and refuses on a miss.
+  installInternalizeMinerDeferral(setup.wallet, setup.services as Services)
   syncMonitorChaintracks(setup.monitor, (setup.services as Services).options.chaintracks)
 
   try {

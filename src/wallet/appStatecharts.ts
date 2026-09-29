@@ -505,7 +505,9 @@ const MARKET_LISTING = `stateDiagram-v2
   preSignAbortable --> failed : ABORTED
   note right of signedUnknown
     noSend listing/cancel.
-    Abort + restore tip while Arcade has not accepted.
+    Abort + restore tip until the cheque is registered.
+    BROADCASTED = registered + sealed; miners run
+    in the background (durable retry, late reject).
     Never abort after BROADCASTED.
   end note
   note right of committed
@@ -525,26 +527,27 @@ const MARKET_PURCHASE = `stateDiagram-v2
   reserving --> preSignAbortable : RESERVED / item0 + offer1
   preSignAbortable --> sellerSigned : seller signs both inputs
   sellerSigned --> signedUnknown : SIGNING / wallet processing begins
-  signedUnknown --> broadcast : BROADCASTED
-  signedUnknown --> failed : ABORTED on Arcade hard-reject
+  signedUnknown --> broadcast : BROADCASTED cheque registered
+  signedUnknown --> failed : ABORTED before registration
   signedUnknown --> recovery : unknown result
   broadcast --> committed : COMMITTED
   recovery --> broadcast : recovered txid
-  recovery --> failed : ABORTED when Arcade ghosted the tx
+  recovery --> failed : ABORTED when never registered
   preSignAbortable --> aborting : TIMEOUT / DUPLICATE / COMPETING_BUYER / FAIL
   sellerSigned --> aborting : pre-sign FAIL
   aborting --> failed : ABORTED
   note right of signedUnknown
     Buyer-local reference never crosses wallets.
     Inputs: item0, offer1, then buyer funding.
-    Abort after sign only when Arcade hard-rejects
-    (ghost / ARCADE_HARD_REJECT) — frees funding.
+    Abort after sign only while the cheque is unregistered.
+    Miners run in the background; a late reject
+    rewrites the row (reportLateMinerSubmitFailure).
   end note
   note right of broadcast
     MarketSoldAnnouncePath (catalog hygiene, never custody):
     overlaySubmit → BRC-22 settlement + buyerIdentityKey + payment address
     skip → no-host | no-settlement-beef | buyer-identity-unknown
-    miner ACK wait is bounded; pending outbox owns slow propagation
+    no miner ACK wait; pending outbox owns propagation
     buyer txid.0 extends the admitted BRC-150 proof and paints proven
     oversized seller receipt stays inline; seller fetches BEEF by txid
     local seller reconcile runs after spend lease + retries durably
@@ -1236,7 +1239,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'marketListing',
     label: 'Market list',
     caption:
-      'marketListingMachine — noSend list/cancel; abort+restore tip until Arcade accepts',
+      'marketListingMachine — noSend list/cancel; abort+restore tip until the cheque is registered; Arcade never blocks',
     source: MARKET_LISTING,
   },
   {

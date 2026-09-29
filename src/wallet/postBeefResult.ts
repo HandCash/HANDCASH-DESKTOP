@@ -265,11 +265,13 @@ export async function deliverSignedTxBestEffort(args: {
     return { outcome: 'conflict_real', detail: 'invalid txid' }
   }
 
-  const postBeef = getActiveWallet()?.services?.postBeef
-  if (!postBeef) {
+  const services = getActiveWallet()?.services
+  if (!services?.postBeef) {
     console.info(`${prefix} no postBeef — signed tx valid locally; monitor may broadcast`)
     return { outcome: 'deferred', detail: 'no_service' }
   }
+  const { directPostBeef } = await import('./internalizeMinerDeferral')
+  const postBeef = directPostBeef(services)
 
   const { Beef } = await import('@bsv/sdk')
   let summary: PostBeefSummary

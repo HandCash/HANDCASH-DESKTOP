@@ -124,12 +124,34 @@ export type SendBrc29Result = {
  * body. `false` is only a hard reject — reflect that immediately; do not wait
  * on explorer silence and do not treat it as "try a second payment".
  */
-export async function broadcastAtomicBeef(
+/**
+ * One miner round per subject at a time. Every internalize now propagates in
+ * the background from the wallet boundary, and several ingest paths also post
+ * on their own; the second caller joins the first round instead of paying a
+ * second multi-provider RTT.
+ */
+const broadcastInFlight = new Map<string, Promise<boolean>>()
+
+export function broadcastAtomicBeef(
   txid: string,
   atomic: number[],
   opts?: { skipIfOnChain?: boolean },
 ): Promise<boolean> {
   const id = txid.trim().toLowerCase()
+  const joined = broadcastInFlight.get(id)
+  if (joined) return joined
+  const round = broadcastAtomicBeefOnce(id, atomic, opts).finally(() => {
+    if (broadcastInFlight.get(id) === round) broadcastInFlight.delete(id)
+  })
+  if (/^[0-9a-f]{64}$/.test(id)) broadcastInFlight.set(id, round)
+  return round
+}
+
+async function broadcastAtomicBeefOnce(
+  id: string,
+  atomic: number[],
+  opts?: { skipIfOnChain?: boolean },
+): Promise<boolean> {
   const active = getActiveWallet()
   if (!active || !/^[0-9a-f]{64}$/.test(id) || !atomic.length) return false
   const t0 = Date.now()

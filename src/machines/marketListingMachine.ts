@@ -86,7 +86,8 @@ export const marketListingMachine = setup({
     signedUnknown: {
       on: {
         BROADCASTED: { target: 'broadcast', actions: 'txid' },
-        // Arcade never accepted — abort the noSend and free the tip.
+        // The cheque never became durable — abort the noSend and free the tip.
+        // Miners run after BROADCASTED and never send this.
         ABORTED: { target: 'failed', actions: 'error' },
         RECOVER: 'recovery',
         FAIL: { target: 'recovery', actions: 'error' },
