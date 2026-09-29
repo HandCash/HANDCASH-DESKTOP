@@ -49,6 +49,7 @@ import {
   planChangeConsolidation,
   type ChangeConsolidationStats,
 } from './changeConsolidationPath'
+import { LIVE_LOCAL_TX_STATUSES, failOrphanedLocalTxs } from './localTxClosure'
 
 /**
  * Mirror of wallet-toolbox `generateChange.maxPossibleSatoshis`. One output of
@@ -82,10 +83,18 @@ export type ConsolidationOutcome =
         | 'noStorage'
         | 'tooFewFragments'
         | 'belowFeeFloor'
+        | 'unsettledChange'
         | 'error'
     }
 
-type OutputRow = { satoshis?: number; change?: boolean; basket?: string }
+type OutputRow = {
+  satoshis?: number
+  change?: boolean
+  basket?: string
+  transactionId?: number
+}
+
+type TxRow = { transactionId?: number }
 
 /**
  * Count spendable managed-change outputs in a single storage session.
@@ -93,6 +102,9 @@ type OutputRow = { satoshis?: number; change?: boolean; basket?: string }
  * Assets are excluded twice over: the loop skips the `1sat` / `bsv21` baskets,
  * and only outputs flagged `change: true` (managed change) are counted. A
  * received 1-sat tip is neither.
+ *
+ * Fragments whose transaction the chain has not solidified are counted apart:
+ * the plan refuses to build a self-payment on them.
  */
 async function countConsolidatableChange(
   active: ActiveWallet,
@@ -103,11 +115,32 @@ async function countConsolidatableChange(
     return await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as {
         findOutputs?: (args: unknown) => Promise<OutputRow[] | undefined>
+        findTransactions?: (args: unknown) => Promise<TxRow[] | undefined>
       }
       if (typeof sp.findOutputs !== 'function') return null
 
+      // Local transactions the chain has not decided. Without this answer the
+      // pool cannot be called settled, so the pass stands down (fail closed).
+      if (typeof sp.findTransactions !== 'function') return null
+      const unsettledTxIds = new Set<number>()
+      for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
+        const batch =
+          (await sp.findTransactions({
+            partial: {},
+            status: [...LIVE_LOCAL_TX_STATUSES],
+            noRawTx: true,
+            paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+          })) ?? []
+        for (const row of batch) {
+          const id = Number(row.transactionId)
+          if (Number.isFinite(id) && id > 0) unsettledTxIds.add(id)
+        }
+        if (batch.length < ENUM_PAGE) break
+      }
+
       let fragments = 0
       let totalSats = 0
+      let unsettledFragments = 0
       for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
         let batch: OutputRow[] = []
         try {
@@ -133,10 +166,12 @@ async function countConsolidatableChange(
           if (sats <= 1) continue
           fragments += 1
           totalSats += sats
+          const txId = Number(row.transactionId)
+          if (Number.isFinite(txId) && unsettledTxIds.has(txId)) unsettledFragments += 1
         }
         if (batch.length < ENUM_PAGE) break
       }
-      return { fragments, totalSats }
+      return { fragments, totalSats, unsettledFragments }
     })
   } catch (err) {
     console.warn('[consolidate] enumerate change failed', err)
@@ -363,11 +398,22 @@ export async function maybeConsolidateChange(): Promise<ConsolidationOutcome> {
     return { ran: false, reason: 'offline' }
   }
 
+  // The pool must be a valid state before it is measured: a child of a failed
+  // tx still counting its change is exactly what a sweep must not collect.
+  await failOrphanedLocalTxs(active)
+
   const stats = await countConsolidatableChange(active)
   if (!stats) return { ran: false, reason: 'noStorage' }
 
   const plan = planChangeConsolidation(stats)
-  if (plan.action === 'skip') return { ran: false, reason: plan.reason }
+  if (plan.action === 'skip') {
+    if (plan.reason === 'unsettledChange') {
+      console.info(
+        `[consolidate] ${stats.unsettledFragments} of ${plan.fragments} change output(s) still unsettled — waiting for the chain`,
+      )
+    }
+    return { ran: false, reason: plan.reason }
+  }
 
   // Cool down on the attempt itself so a repeatedly failing consolidation does
   // not retry on every poll.

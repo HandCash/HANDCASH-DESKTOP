@@ -335,6 +335,18 @@ export async function refreshFromChainExclusive(
   let progressTerminal: 'done' | 'failed' = 'done'
 
   try {
+  // Invariant before any balance is read: no live local tx spends a failed one.
+  // The toolbox fails transactions singly (monitor, Arcade SSE); a child left
+  // alive doubles the balance and poisons the next coin selection.
+  try {
+    const { failOrphanedLocalTxs } = await import('./localTxClosure')
+    guard()
+    await inUiPhase('tx-closure', () => failOrphanedLocalTxs(active))
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    console.warn('[chain-ingest] tx closure pass skipped', err)
+  }
+
   let balanceBefore = 0
   let balanceBeforeOk = false
   if (opts?.announceReceive !== false) {

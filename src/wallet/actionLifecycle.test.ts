@@ -134,6 +134,21 @@ describe('paymentProgress walks the shared lifecycle', () => {
       pendingId: 'send-live-1',
       txid: 'ee'.repeat(32),
     })
+    // The row learning its txid is the action learning it.
+    expect(liveAction('send-live-1')?.view().txid).toBe('ee'.repeat(32))
     clearPaymentProgress()
+  })
+})
+
+describe('a signed action is a fact', () => {
+  it('settles, never fails, when the wallet is slow after the txid exists', () => {
+    vi.useFakeTimers()
+    const signed = beginAction({ id: 'action:9', origin: 'a.app', method: 'createAction' })
+    signed.stage('broadcasting')
+    signed.txid('ab'.repeat(32))
+    vi.advanceTimersByTime(91_000)
+    expect(liveAction('action:9')?.view().face).toBe('settled')
+    vi.advanceTimersByTime(1_600)
+    expect(liveAction('action:9')).toBeNull()
   })
 })

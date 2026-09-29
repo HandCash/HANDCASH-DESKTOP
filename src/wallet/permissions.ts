@@ -1342,20 +1342,49 @@ function summarizeItemView(request: ItemViewRequest): {
   }
 }
 
+/**
+ * A prompt must never wait on the toolbox. This read only names what the
+ * prompt offers; when storage is slow or held (hc-a580a 2026-09-29: a
+ * third-party `listOutputs` sat here for minutes with no prompt, no log and
+ * no reply), the basket the wallet last painted names it instead.
+ */
+const HELD_OUTPUTS_BUDGET_MS = 6_000
+
 async function listHeldOutputs(basket: string): Promise<unknown[]> {
   const active = getActiveWallet()
   if (!active) return []
-  try {
-    const listed = await active.wallet.listOutputs({
+  const live = active.wallet
+    .listOutputs({
       basket,
       limit: 1000,
       includeTags: true,
       includeCustomInstructions: true,
       seekPermission: false,
     })
-    return listed.outputs ?? []
-  } catch {
-    return []
+    .then((listed) => listed.outputs ?? [])
+  live.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      live,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('held outputs read timed out')),
+          HELD_OUTPUTS_BUDGET_MS,
+        )
+      }),
+    ])
+  } catch (err) {
+    const { cachedMarketListOutputs } = await import('./marketInventory')
+    const cached = cachedMarketListOutputs(basket)
+    console.info(
+      `[permission] ${basket} basket read ${
+        err instanceof Error ? err.message : 'failed'
+      } — naming the prompt from ${cached ? `${cached.outputs.length} cached row(s)` : 'nothing'}`,
+    )
+    return cached?.outputs ?? []
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
   }
 }
 
@@ -1451,11 +1480,8 @@ export async function requestItemViewApproval(
   const original = preparedRequest ?? parseItemViewRequest(args)
   const thirdParty = isThirdPartyOriginator(origin)
   const catalog = isHandCashCatalogOrigin(origin)
-  let promptNames: string[] | undefined
-  if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
-    const converted = await thirdPartyItemViewRequest(original)
-    promptNames = converted.names
-  }
+  // Grant first: an origin already allowed answers from memory, never from a
+  // basket read. The read below only names what a *new* prompt offers.
   const access = getItemAccess(origin)
   if (itemViewGranted(access, original)) return 'allow'
   // BRC-165 `id` is a narrow row lookup, not inventory access. Record only
@@ -1465,6 +1491,11 @@ export async function requestItemViewApproval(
       mergeItemViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
     )
     return 'allow'
+  }
+  let promptNames: string[] | undefined
+  if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
+    const converted = await thirdPartyItemViewRequest(original)
+    promptNames = converted.names
   }
 
   const { title, summary, details } = promptNames
@@ -1521,13 +1552,15 @@ export async function requestTokenViewApproval(
   const original = preparedRequest ?? parseTokenViewRequest(args)
   const thirdParty = isThirdPartyOriginator(origin)
   const catalog = isHandCashCatalogOrigin(origin)
+  // Grant first: an origin already allowed answers from memory, never from a
+  // basket read. The read below only names what a *new* prompt offers.
+  const access = getTokenAccess(origin)
+  if (tokenViewGranted(access, original)) return 'allow'
   let tickers: string[] = original.ids
   if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
     const converted = await thirdPartyTokenViewRequest(original)
     tickers = converted.tickers
   }
-  const access = getTokenAccess(origin)
-  if (tokenViewGranted(access, original)) return 'allow'
 
   const { title, summary, details } = summarizeTokenView(tickers, original.wantsAll)
 

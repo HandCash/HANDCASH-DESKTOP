@@ -5464,8 +5464,18 @@ html[data-aeon-mode='light'] .history-batch-count {
 [data-aeon-scope='activity-row'][data-aeon-state='broadcasting'] [data-aeon-part='row-state'],
 [data-aeon-scope='activity-row'][data-aeon-state='settling'] [data-aeon-part='row-state'] {
   color: var(--hc-accent);
-  animation: status-pulse 1.4s ease-in-out infinite;
-  transform-origin: right center;
+  animation: row-state-breathe 1.4s ease-in-out infinite;
+}
+
+/* Text never scales — a live phase only breathes in opacity. */
+@keyframes row-state-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 [data-aeon-scope='activity-row'][data-aeon-state='approving'] .history-amount {

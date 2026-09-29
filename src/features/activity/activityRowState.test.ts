@@ -43,6 +43,37 @@ describe('activityRowState', () => {
     expect(activityRowStateLabel('settling')).toBe('Verifying')
   })
 
+  it('reads the transaction, not the wallet, once the action has a txid', () => {
+    const txid = 'cd'.repeat(32)
+    // Sent and recorded: the row is done, whatever the wallet still files.
+    expect(
+      activityRowState({
+        entry: entry({ status: 'complete', txid, pendingId: 'send-1' }),
+        live: live({ face: 'broadcasting', txid }),
+      })
+    ).toBe('settled')
+    expect(
+      activityRowState({
+        entry: entry({ status: 'complete', txid, pendingId: 'send-1' }),
+        live: live({ face: 'settling', txid }),
+      })
+    ).toBe('settled')
+    // Signed but the row still pending: the transaction's standing, not a phase.
+    expect(
+      activityRowState({
+        entry: entry({ status: 'pending', txid, pendingId: 'send-1' }),
+        live: live({ face: 'broadcasting', txid }),
+      })
+    ).toBe('unconfirmed')
+    // Arcade rejected it afterwards: the record's verdict paints the row.
+    expect(
+      activityRowState({
+        entry: entry({ status: 'failed', txid, pendingId: 'send-1' }),
+        live: live({ face: 'settling', txid }),
+      })
+    ).toBe('failed')
+  })
+
   it('is the settlement phrase once nothing is running', () => {
     expect(activityRowState({ entry: entry({ status: 'pending' }), live: null })).toBe('signed')
     expect(

@@ -71,8 +71,16 @@ async function withSendCleanupBudget<T>(
 export async function releaseStuckNosends(
   active?: ActiveWallet | null
 ): Promise<void> {
-  const wallet = (active ?? getActiveWallet())?.wallet;
+  const resolved = active ?? getActiveWallet();
+  const wallet = resolved?.wallet;
   if (!wallet) return;
+  // Coin selection is about to read spendable rows. A child of a failed tx
+  // must not be among them — its change is phantom and its parent cannot be
+  // sourced for the BEEF (hc-a580a 2026-09-29: send died on 828a0685…).
+  await withSendCleanupBudget("fail orphaned local txs", async () => {
+    const { failOrphanedLocalTxs } = await import("./localTxClosure");
+    return failOrphanedLocalTxs(resolved);
+  });
   const listed = await withSendCleanupBudget("list no-send actions", () =>
     wallet.listNoSendActions({ labels: [], limit: 100 }, false)
   );

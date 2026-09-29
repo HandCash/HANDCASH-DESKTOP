@@ -22,9 +22,12 @@ const createHmac = vi.fn(async () => ({
   hmac: Array.from({ length: 32 }, (_, i) => i),
 }))
 const findOutputs = vi.fn(async (_args: unknown) => [] as unknown[])
+// Live (chain-undecided) local transactions; none by default.
+const findTransactions = vi.fn(async (_args: unknown) => [] as unknown[])
 const runAsStorageProvider = vi.fn(async (fn: (sp: unknown) => Promise<unknown>) =>
-  fn({ findOutputs }),
+  fn({ findOutputs, findTransactions }),
 )
+const failOrphanedLocalTxs = vi.fn(async () => ({ failed: [], keptOnChain: [] }))
 
 const shouldYield = vi.fn(() => false)
 const recomposeActive = vi.fn(() => false)
@@ -101,6 +104,11 @@ vi.mock('./minerSubmit', () => ({
     result.kind === 'accepted' && result.ancestryComplete === true,
 }))
 
+vi.mock('./localTxClosure', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./localTxClosure')>()),
+  failOrphanedLocalTxs: (...a: unknown[]) => failOrphanedLocalTxs(...(a as [])),
+}))
+
 vi.mock('./actionReview', () => ({
   releaseStuckNosends: async () => undefined,
   sendWithHasFailure: () => false,
@@ -128,7 +136,9 @@ describe('maybeConsolidateChange', () => {
     shouldYield.mockReturnValue(false)
     recomposeActive.mockReturnValue(false)
     findOutputs.mockResolvedValue([])
-    runAsStorageProvider.mockImplementation(async (fn) => fn({ findOutputs }))
+    findTransactions.mockResolvedValue([])
+    failOrphanedLocalTxs.mockResolvedValue({ failed: [], keptOnChain: [] })
+    runAsStorageProvider.mockImplementation(async (fn) => fn({ findOutputs, findTransactions }))
     submitAtomicBeefToMiners.mockResolvedValue({
       kind: 'accepted' as const,
       ancestryComplete: true,
@@ -195,6 +205,48 @@ describe('maybeConsolidateChange', () => {
     const { maybeConsolidateChange } = await import('./consolidateChange')
     const outcome = await maybeConsolidateChange()
     expect(outcome).toEqual({ ran: false, reason: 'tooFewFragments' })
+    expect(createAction).not.toHaveBeenCalled()
+  })
+
+  it('takes the failed-tx closure before it measures the pool', async () => {
+    findOutputs.mockImplementation(async (args: unknown) =>
+      offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
+    )
+    const { maybeConsolidateChange } = await import('./consolidateChange')
+    await maybeConsolidateChange()
+    expect(failOrphanedLocalTxs).toHaveBeenCalledTimes(1)
+    const closureOrder = failOrphanedLocalTxs.mock.invocationCallOrder[0] ?? Infinity
+    const countOrder = findOutputs.mock.invocationCallOrder[0] ?? 0
+    expect(closureOrder).toBeLessThan(countOrder)
+  })
+
+  it('stands down while any change fragment belongs to a chain-undecided tx', async () => {
+    findOutputs.mockImplementation(async (args: unknown) => {
+      if (offsetOf(args) !== 0) return []
+      const rows = changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000).map((row, i) => ({
+        ...row,
+        transactionId: 100 + i,
+      }))
+      return rows
+    })
+    // One fragment's transaction is still `unproven`.
+    findTransactions.mockImplementation(async (args: unknown) =>
+      offsetOf(args) === 0 ? [{ transactionId: 103, status: 'unproven' }] : [],
+    )
+    const { maybeConsolidateChange } = await import('./consolidateChange')
+    const outcome = await maybeConsolidateChange()
+    expect(outcome).toEqual({ ran: false, reason: 'unsettledChange' })
+    expect(createAction).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when storage cannot say which local txs are unsettled', async () => {
+    findOutputs.mockImplementation(async (args: unknown) =>
+      offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
+    )
+    runAsStorageProvider.mockImplementation(async (fn) => fn({ findOutputs }))
+    const { maybeConsolidateChange } = await import('./consolidateChange')
+    const outcome = await maybeConsolidateChange()
+    expect(outcome).toEqual({ ran: false, reason: 'noStorage' })
     expect(createAction).not.toHaveBeenCalled()
   })
 

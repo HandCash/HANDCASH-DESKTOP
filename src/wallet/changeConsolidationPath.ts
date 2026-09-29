@@ -48,13 +48,23 @@ export function estimateConsolidationFeeSats(fragments: number): number {
   return Math.ceil((bytes * CONSOLIDATE_FEE_SATS_PER_KB) / 1000)
 }
 
-export type ConsolidationSkipReason = 'tooFewFragments' | 'belowFeeFloor'
+export type ConsolidationSkipReason =
+  | 'tooFewFragments'
+  | 'belowFeeFloor'
+  | 'unsettledChange'
 
 export type ChangeConsolidationStats = {
   /** Spendable managed-change outputs (never `1sat` / `bsv21`). */
   fragments: number
   /** Sum of their satoshis. */
   totalSats: number
+  /**
+   * Fragments whose own transaction the chain has not solidified yet
+   * (`unproven` / `sending` / `nosend` …). A consolidation is an optimisation
+   * of settled state; chaining it on a parent still in flight only deepens what
+   * one failed parent can take down.
+   */
+  unsettledFragments?: number
 }
 
 /**
@@ -84,6 +94,10 @@ export function planChangeConsolidation(
 
   if (fragments < MIN_FRAGMENTS_TO_CONSOLIDATE) {
     return { action: 'skip', reason: 'tooFewFragments', fragments, totalSats }
+  }
+  const unsettled = Math.max(0, Math.floor(Number(stats.unsettledFragments) || 0))
+  if (unsettled > 0) {
+    return { action: 'skip', reason: 'unsettledChange', fragments, totalSats }
   }
   const estFeeSats = estimateConsolidationFeeSats(fragments)
   if (totalSats <= estFeeSats + MIN_NET_AFTER_FEE_SATS) {

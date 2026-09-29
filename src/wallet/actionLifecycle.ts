@@ -117,8 +117,18 @@ function armWatchdog(id: string): void {
     const live = entries.get(id)
     if (!live) return
     live.watchdog = null
-    const stuck = actionLifecycleFace(live.actor.getSnapshot())
+    const snapshot = live.actor.getSnapshot()
+    const stuck = actionLifecycleFace(snapshot)
     if (stuck === 'settled' || stuck === 'failed') return
+    if (snapshot.context.txid) {
+      // Signed is a fact. Whatever the wallet is still doing afterwards is not
+      // this action's verdict; the record (and Arcade, if it rejects) speaks.
+      console.warn('[action-lifecycle] slow after signing — settling', id, stuck)
+      live.actor.send({ type: 'SETTLE' })
+      scheduleRetire(id, SETTLED_RETIRE_MS)
+      publish()
+      return
+    }
     console.warn('[action-lifecycle] stuck — failing', id, stuck)
     live.actor.send({ type: 'FAIL', reason: `Timed out while ${stuck}` })
     scheduleRetire(id, FAILED_RETIRE_MS)

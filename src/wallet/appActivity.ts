@@ -13,7 +13,7 @@ import { isGhostTxSuppressed } from "./ghostTxSuppress";
 import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 import { announceSpendCompleted } from "./spendAnnounce";
-import { adoptWalletActionId, walletAction } from "./actionLifecycle";
+import { adoptWalletActionId, liveAction, walletAction } from "./actionLifecycle";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
@@ -770,6 +770,11 @@ export function upsertAppActivity(args: {
   if (pending && pendingId && !owner) {
     const live = walletAction();
     if (live && live.id.startsWith("wallet:")) adoptWalletActionId(pendingId);
+  }
+  // The row learning its txid is the action learning it: from here the row
+  // projects the transaction, not the phases the wallet still walks after it.
+  if (txid && pendingId && !owner && /^[0-9a-f]{64}$/i.test(txid)) {
+    liveAction(pendingId)?.txid(txid);
   }
   const entries = [...readAll(owner)];
   const idx = findActivityMatchIndex(entries, {

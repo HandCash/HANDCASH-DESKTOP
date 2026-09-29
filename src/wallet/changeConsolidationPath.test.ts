@@ -31,6 +31,18 @@ describe('planChangeConsolidation', () => {
     if (plan.action === 'skip') expect(plan.reason).toBe('belowFeeFloor')
   })
 
+  it('skips while any fragment belongs to a transaction the chain has not decided', () => {
+    const fragments = MIN_FRAGMENTS_TO_CONSOLIDATE
+    const estFee = estimateConsolidationFeeSats(fragments)
+    const plan = planChangeConsolidation({
+      fragments,
+      totalSats: estFee + MIN_NET_AFTER_FEE_SATS + 1_000_000,
+      unsettledFragments: 1,
+    })
+    expect(plan.action).toBe('skip')
+    if (plan.action === 'skip') expect(plan.reason).toBe('unsettledChange')
+  })
+
   it('consolidates once the pool is fragmented and comfortably above the fee', () => {
     const fragments = MIN_FRAGMENTS_TO_CONSOLIDATE
     const estFee = estimateConsolidationFeeSats(fragments)

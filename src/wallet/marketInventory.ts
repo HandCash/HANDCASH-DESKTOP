@@ -67,7 +67,8 @@ function cachedTokenBasketOutputs(): { outputs: unknown[]; totalOutputs: number 
   return { outputs, totalOutputs: outputs.length }
 }
 
-function cachedMarketListOutputs(basket: unknown): { outputs: unknown[]; totalOutputs: number } | null {
+/** The basket as the wallet last painted it — what a stalled toolbox read falls back to. */
+export function cachedMarketListOutputs(basket: unknown): { outputs: unknown[]; totalOutputs: number } | null {
   if (typeof basket !== 'string') return null
   const t = basket.trim()
   if (t === '1sat' || t === 'p 1sat all') return cachedItemBasketOutputs()

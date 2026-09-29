@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.3.356] - 2026-09-29
+
+### Fixed
+
+- Failing a local transaction is now a closure, not a row. The toolbox fails a
+  transaction alone — it restores that transaction's inputs and retires its
+  outputs, but a live child that already spent one of those outputs keeps its
+  status and its change stays spendable. Both were counted at once: the
+  balance doubled (hc-a580a: 4,323,084 → 8,652,598 sats), a consolidation
+  swept the phantom change into one output, and the next send died because a
+  failed parent cannot be sourced for the BEEF. Every live local descendant of
+  a failed transaction now fails with it — leaves first, then every output of
+  a dead transaction an orphan spent from is retired again, so the toolbox
+  releasing a child's inputs cannot resurrect a dead parent's outputs. A
+  descendant the chain already has is left alone and named: it proves the
+  parent verdict wrong. The pass runs at the head of chain ingest, before
+  every send's coin selection, before consolidation measures the pool, and
+  inside the wallet's own fail path.
+- Change consolidation only collapses settled change. A fragment whose own
+  transaction the chain has not decided (`unproven`, `sending`, `nosend`, …)
+  stands the pass down (`unsettledChange`) — a self-payment built on a parent
+  still in flight only deepens what one failed parent can take down. If
+  storage cannot say which local transactions are unsettled, the pass does not
+  run.
+- A third-party app's `listOutputs` on a token or item basket no longer stalls
+  silently when the toolbox is slow. The view gate ran an unbounded 1000-row
+  basket read *before* checking whether the origin was already granted — with
+  storage held, the wallet demo's "read token and item inventory" sat for
+  minutes with no prompt, no log line and no reply. Granted origins now answer
+  from memory; a new prompt names its tokens or collections from a read
+  bounded to six seconds, falling back to the basket the wallet last painted.
+  A gate still open after eight seconds names itself in the log.
+- Activity rows no longer read "Broadcasting" or "Verifying" with a spinner
+  after a payment is signed. Signed is a fact: once the action has a txid, the
+  row projects the transaction's standing (sent · unconfirmed · confirmed ·
+  failed) and whatever the wallet still files afterwards — hand-off, sealing,
+  notifying the payee — is not the row's story. The stuck watchdog settles a
+  signed action instead of painting "Timed out while broadcasting" over a
+  payment that went through; a later Arcade rejection repaints the row through
+  its record.
+
+### Changed
+
+- Live-phase text in Activity no longer grows and shrinks. The row-state slot
+  breathes in opacity only; nothing scales.
+
 ## [1.3.355] - 2026-09-29
 
 ### Fixed

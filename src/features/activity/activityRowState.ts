@@ -65,7 +65,12 @@ export function activityRowState(args: {
   chainProof?: 'unconfirmed' | 'headerProven' | null
 }): ActivityRowState {
   const { entry, live, chainProof } = args
-  if (live && isStage(live.face)) return live.face
+  // A live phase describes the wallet's work before a transaction exists. Once
+  // signed, the transaction is the fact: the row reads its standing from the
+  // record (sent · unconfirmed · confirmed · failed), and whatever the wallet
+  // still does afterwards — hand-off, sealing, notifying — is not the row's
+  // story. Arcade rejecting it later repaints the row through the record.
+  if (live && isStage(live.face) && !live.txid) return live.face
   if (entry.status === 'failed') return 'failed'
   if (live?.face === 'failed' && entry.status !== 'complete') return 'failed'
   if (chainProof === 'headerProven') return 'confirmed'

@@ -1007,8 +1007,20 @@ async function handleBrc100RequestInner(
     if (isRetiredIndexBasket(basket)) {
       return indexExpansionUnavailable()
     }
+    // A view gate that sits here is invisible to the app (no reply) and to the
+    // log (no verdict line). Name it once it is slow.
+    const gateStarted = Date.now()
+    const slowGate = setTimeout(() => {
+      console.warn(
+        `[brc100] listOutputs ${String(basket ?? 'basket')} view gate slow — ${Math.round(
+          (Date.now() - gateStarted) / 1000,
+        )}s origin=${normalizeOrigin(originator) || 'unknown'}`,
+      )
+    }, 8_000)
     if (isTokenViewBasket(basket)) {
-      const viewDecision = await requestTokenViewApproval(originator, args, tokenViewRequest)
+      const viewDecision = await requestTokenViewApproval(originator, args, tokenViewRequest).finally(
+        () => clearTimeout(slowGate),
+      )
       if (viewDecision !== 'allow') {
         return {
           status: 403,
@@ -1020,7 +1032,9 @@ async function handleBrc100RequestInner(
         }
       }
     } else if (isItemBasket(basket)) {
-      const viewDecision = await requestItemViewApproval(originator, args, itemViewRequest)
+      const viewDecision = await requestItemViewApproval(originator, args, itemViewRequest).finally(
+        () => clearTimeout(slowGate),
+      )
       if (viewDecision !== 'allow') {
         return {
           status: 403,
@@ -1031,6 +1045,8 @@ async function handleBrc100RequestInner(
           }),
         }
       }
+    } else {
+      clearTimeout(slowGate)
     }
   }
 
