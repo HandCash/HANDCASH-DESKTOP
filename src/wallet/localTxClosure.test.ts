@@ -4,6 +4,7 @@ import {
   failLocalTxClosure,
   inputTxidsOfRawTx,
   orphanedDescendants,
+  planFailureClosure,
   type ClosureStorage,
 } from './localTxClosure'
 
@@ -43,6 +44,40 @@ describe('orphanedDescendants', () => {
     expect(
       orphanedDescendants(new Set([A.toUpperCase()]), [{ txid: B, inputTxids: [A] }]),
     ).toEqual([B])
+  })
+})
+
+describe('planFailureClosure', () => {
+  it('names every decision: what fails, what is kept and why, what to retire again', () => {
+    // A failed. B → C both live off A; C is on chain. D also spends A and dies.
+    const plan = planFailureClosure({
+      failed: new Set([A]),
+      live: [
+        { txid: B, inputTxids: [A] },
+        { txid: C, inputTxids: [B] },
+        { txid: D, inputTxids: [A] },
+      ],
+      chain: new Map([[C, 'present']]),
+    })
+    expect(plan.fail).toEqual([D])
+    expect(plan.keep).toEqual(
+      expect.arrayContaining([
+        { txid: C, reason: 'onChain' },
+        { txid: B, reason: 'ancestorOfOnChain' },
+      ]),
+    )
+    expect(plan.keep).toHaveLength(2)
+    expect(plan.retireOutputsOf).toEqual([A])
+  })
+
+  it('treats an unknown chain answer as absence — wallet state decides', () => {
+    const plan = planFailureClosure({
+      failed: new Set([A]),
+      live: [{ txid: B, inputTxids: [A] }],
+      chain: new Map([[B, 'unknown']]),
+    })
+    expect(plan.fail).toEqual([B])
+    expect(plan.keep).toEqual([])
   })
 })
 
@@ -197,6 +232,53 @@ describe('failLocalTxClosure', () => {
     expect(rows[2]?.status).toBe('failed')
     expect(warn.mock.calls.some(([m]) => String(m).includes('parent verdict is wrong'))).toBe(true)
     warn.mockRestore()
+  })
+
+  it('does not fail a live spend of a confirmed descendant', async () => {
+    // A failed locally, B is already on chain, C spends only B. Marking B dead
+    // and then failing C restores B's outputs — the doubled balance, one hop
+    // further down. D spends A directly and still fails.
+    const { sp, rows, outputs } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([A]) },
+        { transactionId: 3, txid: C, status: 'sending', rawTx: rawTxSpending([B]) },
+        { transactionId: 4, txid: D, status: 'unproven', rawTx: rawTxSpending([A]) },
+      ],
+      [{ outputId: 20, txid: B, spendable: false, spentBy: 3 }],
+    )
+    const outcome = await failLocalTxClosure(sp, {
+      txExistsOnChain: async (txid) => txid === B,
+    })
+    expect(outcome.failed).toEqual([D])
+    expect(outcome.keptOnChain).toEqual([B])
+    expect(rows.find((r) => r.txid === C)?.status).toBe('sending')
+    expect(rows.find((r) => r.txid === B)?.status).toBe('unproven')
+    expect(outputs.find((o) => o.outputId === 20)).toMatchObject({
+      spendable: false,
+      spentBy: 3,
+    })
+  })
+
+  it('leaves the live parent of a confirmed descendant alone', async () => {
+    // C is on chain and spends E, so failing E would restore inputs the chain
+    // has consumed. B spends the failed A and leads nowhere confirmed, so it fails.
+    const { sp, rows } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([A]) },
+        { transactionId: 5, txid: E, status: 'unproven', rawTx: rawTxSpending([A]) },
+        { transactionId: 3, txid: C, status: 'sending', rawTx: rawTxSpending([E]) },
+      ],
+      [],
+    )
+    const outcome = await failLocalTxClosure(sp, {
+      txExistsOnChain: async (txid) => txid === C,
+    })
+    expect(outcome.failed).toEqual([B])
+    expect(outcome.keptOnChain).toEqual([C])
+    expect(rows.find((r) => r.txid === E)?.status).toBe('unproven')
+    expect(rows.find((r) => r.txid === C)?.status).toBe('sending')
   })
 
   it('treats an unknown chain answer as not-on-chain (wallet state decides)', async () => {

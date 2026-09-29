@@ -64,6 +64,8 @@ export type IngestItemSettleResult = {
   accepted: boolean
   outpoints: string[]
   reason?: string
+  /** Parents no source could supply; see `IngestFungibleSettleResult`. */
+  missingParents?: string[]
 }
 
 export function itemSettleIsSelfSend(txid: string): boolean {
@@ -221,6 +223,7 @@ export async function internalizePeerItemSettle(opts: {
       accepted: false,
       outpoints: [],
       reason: `ancestry-incomplete:${completion.missing.map((p) => p.slice(0, 12)).join(',')}`,
+      missingParents: completion.missing,
     }
   }
 

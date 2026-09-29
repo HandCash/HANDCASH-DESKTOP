@@ -30,7 +30,10 @@ import {
   isGhostTxSuppressed,
   rememberGhostTx,
 } from './ghostTxSuppress'
-import { isTerminalInboundHintStatus } from './kernel/inboundHintFate'
+import {
+  isTerminalInboundHintStatus,
+  type MissingAncestorFacts,
+} from './kernel/inboundHintFate'
 import {
   clearInboundHintIngestFail,
   inboundHintLastFailAt,
@@ -1228,6 +1231,7 @@ export async function ingestPaymentsFromTipHints(
     hadLocalBeef: boolean,
     firstSeenAt: number | undefined,
     rawBodyCanRecover: boolean,
+    missingParents: readonly string[] = [],
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
     // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
@@ -1241,30 +1245,43 @@ export async function ingestPaymentsFromTipHints(
     const {
       decideInboundHintFate,
       mayBeUnresolvable,
+      DEAD_ANCESTOR_HINT_STATUS,
       UNDELIVERABLE_HINT_STATUS,
       UNRESOLVABLE_GRACE_MS,
       UNRESOLVABLE_HINT_STATUS,
     } = await import('./kernel/inboundHintFate')
     const { fetchRawTxHex, peekRawTxLookup } = await import('./oneSatImport')
+    const active = getActiveWallet()
     const now = Date.now()
     let bodyLookup = peekRawTxLookup(txid)
     const first = stampInboundHintFirstSeen(txid, firstSeenAt)
+    const pastGrace = first > 0 && now - first >= UNRESOLVABLE_GRACE_MS
+    // Settle named a parent it could not complete. The hint's own body is in
+    // hand, so the durable lookups run against that parent instead: it is the
+    // transaction whose existence decides whether this package can ever land.
+    const deadParentCandidate = missingParents[0]?.trim().toLowerCase()
+    let missingAncestor: MissingAncestorFacts | null = deadParentCandidate
+      ? { txid: deadParentCandidate, bodyLookup: peekRawTxLookup(deadParentCandidate), onChain: null }
+      : null
+    if (missingAncestor && missingAncestor.bodyLookup === 'unknown' && pastGrace && active) {
+      try {
+        const raw = await fetchRawTxHex(missingAncestor.txid, active.chain)
+        missingAncestor = {
+          ...missingAncestor,
+          bodyLookup: raw ? 'hit' : peekRawTxLookup(missingAncestor.txid),
+        }
+      } catch {
+        /* unknown keeps the hint pending */
+      }
+    }
     // Fungible inbox settle intentionally refuses an indexer custody fallback,
     // so it may never have asked for a raw body. Once the grace window expires,
     // perform one durable multi-provider existence probe solely to decide
     // whether the body-less envelope can be retired.
-    if (
-      !hadLocalBeef &&
-      bodyLookup === 'unknown' &&
-      first > 0 &&
-      now - first >= UNRESOLVABLE_GRACE_MS
-    ) {
+    if (!hadLocalBeef && bodyLookup === 'unknown' && pastGrace && active) {
       try {
-        const active = getActiveWallet()
-        if (active) {
-          const raw = await fetchRawTxHex(txid, active.chain)
-          bodyLookup = raw ? 'hit' : peekRawTxLookup(txid)
-        }
+        const raw = await fetchRawTxHex(txid, active.chain)
+        bodyLookup = raw ? 'hit' : peekRawTxLookup(txid)
       } catch {
         /* unknown keeps the hint pending */
       }
@@ -1274,12 +1291,15 @@ export async function ingestPaymentsFromTipHints(
       hasDeliverableBeef: hadLocalBeef,
       bodyLookup,
       rawBodyCanRecover,
+      missingAncestor,
       firstSeenAt: first,
       now,
     }
     if (!mayBeUnresolvable(base)) {
       console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — lookup=${bodyLookup} age=${Math.round((now - first) / 1000)}s`,
+        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — lookup=${bodyLookup} age=${Math.round((now - first) / 1000)}s${
+          missingAncestor ? ` parent=${missingAncestor.txid.slice(0, 12)} parentLookup=${missingAncestor.bodyLookup}` : ''
+        }`,
       )
       return
     }
@@ -1289,22 +1309,24 @@ export async function ingestPaymentsFromTipHints(
     let onChain: boolean | null = null
     // A raw-only item envelope is already classified: chain presence cannot
     // manufacture the missing AtomicBEEF, so no existence probe is useful.
-    if (!(bodyLookup === 'hit' && !rawBodyCanRecover)) {
+    // With a missing parent, the probe belongs to the parent.
+    const probeTxid = missingAncestor?.txid ?? txid
+    if (active && (missingAncestor || !(bodyLookup === 'hit' && !rawBodyCanRecover))) {
       try {
-        const active = getActiveWallet()
-        if (active) {
-          const { txExistsOnChain } = await import('./legacyScan')
-          onChain = await txExistsOnChain(txid, active.chain)
-        }
+        const { txExistsOnChain } = await import('./legacyScan')
+        onChain = await txExistsOnChain(probeTxid, active.chain)
       } catch {
         /* unknown keeps the hint pending */
       }
     }
+    if (missingAncestor) missingAncestor = { ...missingAncestor, onChain }
 
-    const fate = decideInboundHintFate({ ...base, onChain })
+    const fate = decideInboundHintFate({ ...base, missingAncestor, onChain })
     if (fate.kind !== 'unresolvable') {
       console.info(
-        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — fate=${fate.kind} lookup=${bodyLookup}`,
+        `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — fate=${fate.kind} lookup=${bodyLookup}${
+          missingAncestor ? ` parent=${missingAncestor.txid.slice(0, 12)} parentLookup=${missingAncestor.bodyLookup} parentOnChain=${String(missingAncestor.onChain)}` : ''
+        }`,
       )
       return
     }
@@ -1312,9 +1334,11 @@ export async function ingestPaymentsFromTipHints(
     console.warn(`[tip-ingest] tip ${txid.slice(0, 12)}… retired — ${fate.reason}`)
     markInboundPaymentStatus(
       txid,
-      bodyLookup === 'hit' && !rawBodyCanRecover
-        ? UNDELIVERABLE_HINT_STATUS
-        : UNRESOLVABLE_HINT_STATUS,
+      missingAncestor
+        ? DEAD_ANCESTOR_HINT_STATUS
+        : bodyLookup === 'hit' && !rawBodyCanRecover
+          ? UNDELIVERABLE_HINT_STATUS
+          : UNRESOLVABLE_HINT_STATUS,
     )
     retireUnresolvable(txid)
   }
@@ -1376,6 +1400,7 @@ export async function ingestPaymentsFromTipHints(
       const hadLocalBeef = !!(atomic && atomic.length > 0)
       let accepted = false
       let lastReason = 'settle-refused'
+      let missingParents: string[] = []
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         const asset = hint.asset
         const result =
@@ -1411,6 +1436,7 @@ export async function ingestPaymentsFromTipHints(
           break
         }
         lastReason = result.reason ?? lastReason
+        missingParents = result.missingParents ?? missingParents
         if (attempt < ingestAttempts - 1) {
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
@@ -1445,7 +1471,13 @@ export async function ingestPaymentsFromTipHints(
         } catch (err) {
           console.warn('[tip-ingest] self-send reconcile skipped', hint.txid.slice(0, 12), err)
         }
-        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt, false)
+        await markGhostIfMissing(
+          hint.txid,
+          hadLocalBeef,
+          hint.firstSeenAt,
+          false,
+          missingParents,
+        )
         if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
       return { importedTxid, balanceSats }

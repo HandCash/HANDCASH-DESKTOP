@@ -62,6 +62,12 @@ export type IngestFungibleSettleResult = {
   accepted: boolean
   outpoints: string[]
   reason?: string
+  /**
+   * Parents the package needs that no source could supply. Named so the hint
+   * fate can probe *them* — a body we hold is not deliverable when the
+   * transaction it spends never existed.
+   */
+  missingParents?: string[]
 }
 
 function deployMetadataFromBeef(beef: Beef, tokenId: string) {
@@ -232,6 +238,7 @@ export async function internalizePeerFungibleSettle(opts: {
       accepted: false,
       outpoints: [],
       reason: `ancestry-incomplete:${completion.missing.map((p) => p.slice(0, 12)).join(',')}`,
+      missingParents: completion.missing,
     }
   }
 

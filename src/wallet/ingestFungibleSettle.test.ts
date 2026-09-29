@@ -130,6 +130,7 @@ describe('internalizePeerFungibleSettle', () => {
       accepted: false,
       outpoints: [],
       reason: `ancestry-incomplete:${parent.slice(0, 12)}`,
+      missingParents: [parent],
     })
 
     expect(completeAtomicBeefForSubject).toHaveBeenCalledWith(

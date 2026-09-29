@@ -34,9 +34,23 @@ export type InboundHintFacts = {
   rawBodyCanRecover: boolean
   /** Explorer existence. `null` when no explorer could answer. */
   onChain: boolean | null
+  /**
+   * A parent the delivered package spends that no source could supply, with
+   * the same durable lookups run against *it*. A body we hold is not
+   * deliverable while the transaction it spends does not exist: the toolbox
+   * refuses the package and Arcade would refuse the broadcast
+   * (hc-a580a, 438497125f03 → 6aa054b3, 2026-09-29).
+   */
+  missingAncestor?: MissingAncestorFacts | null
   /** When the hint first arrived. */
   firstSeenAt: number
   now: number
+}
+
+export type MissingAncestorFacts = {
+  txid: string
+  bodyLookup: 'hit' | 'miss' | 'unknown'
+  onChain: boolean | null
 }
 
 /**
@@ -68,6 +82,9 @@ function ageMs(facts: Pick<InboundHintFacts, 'firstSeenAt' | 'now'>): number {
  */
 export function mayBeUnresolvable(facts: Omit<InboundHintFacts, 'onChain'>): boolean {
   if (facts.isArcadeGhost) return false
+  // A package missing a parent is worth probing once it is old enough, even
+  // though we hold its body — the body alone cannot be internalized.
+  if (facts.missingAncestor) return ageMs(facts) >= UNRESOLVABLE_GRACE_MS
   if (facts.hasDeliverableBeef) return false
   if (facts.bodyLookup === 'unknown') return false
   if (facts.bodyLookup === 'hit' && facts.rawBodyCanRecover) return false
@@ -77,10 +94,25 @@ export function mayBeUnresolvable(facts: Omit<InboundHintFacts, 'onChain'>): boo
 export function decideInboundHintFate(facts: InboundHintFacts): InboundHintFate {
   if (facts.isArcadeGhost) return { kind: 'arcadeGhost' }
 
+  if (ageMs(facts) < UNRESOLVABLE_GRACE_MS) return { kind: 'retry' }
+
+  // The package spends a transaction nobody has. Absence is established the
+  // same way as for the hint itself: a durable multi-provider body miss and a
+  // positive on-chain "no". Silence keeps retrying — the parent may still
+  // propagate, and a later envelope carrying it revives this hint.
+  if (facts.missingAncestor) {
+    const parent = facts.missingAncestor
+    if (parent.bodyLookup === 'miss' && parent.onChain === false) {
+      return {
+        kind: 'unresolvable',
+        reason: `spends ${parent.txid.slice(0, 12)}… which no provider has and the chain never saw`,
+      }
+    }
+    return { kind: 'retry' }
+  }
+
   // We could still rescue this by broadcasting it ourselves.
   if (facts.hasDeliverableBeef) return { kind: 'retry' }
-
-  if (ageMs(facts) < UNRESOLVABLE_GRACE_MS) return { kind: 'retry' }
 
   // A raw transaction is not an AtomicBEEF. Item/token receive cannot prove
   // ancestry or internalize custody from this envelope after the package is
@@ -108,6 +140,8 @@ export function decideInboundHintFate(facts: InboundHintFacts): InboundHintFate 
 export const UNRESOLVABLE_HINT_STATUS = 'Unavailable — sender never broadcast'
 export const UNDELIVERABLE_HINT_STATUS =
   'Unavailable — sender did not deliver spend proof'
+export const DEAD_ANCESTOR_HINT_STATUS =
+  'Unavailable — spends a transaction the network never saw'
 
 /**
  * Skip another heavy ingest while the hint is still inside the retirement

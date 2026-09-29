@@ -73,6 +73,89 @@ export function orphanedDescendants(
   }
 }
 
+/**
+ * What the chain said about a live descendant. Only `present` is evidence;
+ * `unknown` covers 404, silence and errors. The closure fails on `unknown` —
+ * wallet state decides, and a mined descendant every explorer misses is the
+ * rarer wrong than a phantom that was never broadcast being kept alive.
+ */
+export type ChainAnswer = 'present' | 'unknown'
+
+export type ClosureKeepReason =
+  /** The chain has it, so the failed parent verdict is wrong. */
+  | 'onChain'
+  /** A confirmed transaction spent it; failing it would restore consumed inputs. */
+  | 'ancestorOfOnChain'
+
+export type FailureClosurePlan = {
+  /** Fail in this order — leaves first, so each restore lands on a live parent. */
+  fail: string[]
+  /** Left alone, each with the one reason that excuses it. */
+  keep: { txid: string; reason: ClosureKeepReason }[]
+  /** Dead transactions whose outputs a failed child spent — retire them again after. */
+  retireOutputsOf: string[]
+}
+
+/**
+ * The whole closure decision, pure.
+ *
+ * 1. `orphanedDescendants` names every live transaction reachable from a
+ *    failed one.
+ * 2. A confirmed transaction in that set is a cut: it is kept, and so is every
+ *    live ancestor it spent inside the set — the chain consumed those inputs.
+ * 3. The reachability is taken again without the kept transactions. What is
+ *    left fails, leaves first. A sibling that spends the failed parent
+ *    directly and leads nowhere confirmed still fails.
+ * 4. Failing a child restores its inputs; those that belong to a dead
+ *    transaction are retired again so the pass ends in the invariant.
+ */
+export function planFailureClosure(args: {
+  failed: ReadonlySet<string>
+  live: readonly LocalTxLink[]
+  chain: ReadonlyMap<string, ChainAnswer>
+}): FailureClosurePlan {
+  const failed = new Set(Array.from(args.failed, normalize))
+  const live = args.live.map((link) => ({
+    txid: normalize(link.txid),
+    inputTxids: link.inputTxids.map(normalize),
+  }))
+  const linkByTxid = new Map(live.map((link) => [link.txid, link]))
+  const reachable = new Set(orphanedDescendants(failed, live))
+  if (reachable.size === 0) return { fail: [], keep: [], retireOutputsOf: [] }
+
+  const onChain = new Set(
+    [...reachable].filter((txid) => args.chain.get(txid) === 'present'),
+  )
+  const keep = new Map<string, ClosureKeepReason>()
+  const stack = [...onChain]
+  while (stack.length > 0) {
+    const txid = stack.pop()!
+    if (keep.has(txid)) continue
+    keep.set(txid, onChain.has(txid) ? 'onChain' : 'ancestorOfOnChain')
+    for (const parent of linkByTxid.get(txid)?.inputTxids ?? []) {
+      if (reachable.has(parent) && !keep.has(parent)) stack.push(parent)
+    }
+  }
+
+  const fail = orphanedDescendants(
+    failed,
+    live.filter((link) => !keep.has(link.txid)),
+  ).reverse()
+
+  const dead = new Set([...failed, ...fail])
+  const retire = new Set<string>()
+  for (const txid of fail) {
+    for (const parent of linkByTxid.get(txid)?.inputTxids ?? []) {
+      if (dead.has(parent)) retire.add(parent)
+    }
+  }
+  return {
+    fail,
+    keep: [...keep].map(([txid, reason]) => ({ txid, reason })),
+    retireOutputsOf: [...retire],
+  }
+}
+
 /** Txids a raw transaction spends from; empty when the bytes cannot be read. */
 export function inputTxidsOfRawTx(rawTx: ArrayLike<number> | undefined | null): string[] {
   if (!rawTx || rawTx.length === 0) return []
@@ -207,63 +290,60 @@ export async function failLocalTxClosure(
 
   const liveRows = await pageTransactions(sp, LIVE_LOCAL_TX_STATUSES, false)
   const byTxid = new Map<string, StorageTxRow>()
-  const linkByTxid = new Map<string, LocalTxLink>()
   const links: LocalTxLink[] = []
   for (const row of liveRows) {
     const id = normalize(String(row.txid ?? ''))
     if (!/^[0-9a-f]{64}$/.test(id)) continue
-    const link = { txid: id, inputTxids: inputTxidsOfRawTx(row.rawTx) }
     byTxid.set(id, row)
-    linkByTxid.set(id, link)
-    links.push(link)
+    links.push({ txid: id, inputTxids: inputTxidsOfRawTx(row.rawTx) })
   }
 
   const outcome: ClosureOutcome = { failed: [], keptOnChain: [] }
   if (typeof sp.updateTransactionStatus !== 'function') return outcome
-  const orphans = orphanedDescendants(failed, links)
-  if (orphans.length === 0) return outcome
+  const reachable = orphanedDescendants(failed, links)
+  if (reachable.length === 0) return outcome
 
-  // Leaves first: a leaf's inputs belong to a still-live parent, so the
-  // toolbox restoring them is consistent until that parent fails in turn.
-  const dead = new Set(failed)
-  for (const txid of [...orphans].reverse()) {
-    const row = byTxid.get(txid)
-    const transactionId = Number(row?.transactionId)
-    if (!Number.isFinite(transactionId) || transactionId <= 0) continue
-    if (opts.txExistsOnChain) {
-      let onChain: boolean | null = null
+  // Ask the chain about every reachable descendant once; the plan reads the
+  // answers, it never asks.
+  const chain = new Map<string, ChainAnswer>()
+  if (opts.txExistsOnChain) {
+    for (const txid of reachable) {
+      let answer: boolean | null = null
       try {
-        onChain = await opts.txExistsOnChain(txid)
+        answer = await opts.txExistsOnChain(txid)
       } catch {
-        onChain = null
+        answer = null
       }
-      if (onChain === true) {
-        console.warn(
-          `[tx-closure] ${txid.slice(0, 12)} is on chain but descends from a failed local tx — parent verdict is wrong; left alone`,
-        )
-        outcome.keptOnChain.push(txid)
-        continue
-      }
+      chain.set(txid, answer === true ? 'present' : 'unknown')
     }
+  }
+
+  const plan = planFailureClosure({ failed, live: links, chain })
+  for (const kept of plan.keep) {
+    if (kept.reason === 'onChain') {
+      outcome.keptOnChain.push(kept.txid)
+      console.warn(
+        `[tx-closure] ${kept.txid.slice(0, 12)} is on chain but descends from a failed local tx — parent verdict is wrong; left alone`,
+      )
+    } else {
+      console.warn(
+        `[tx-closure] ${kept.txid.slice(0, 12)} left alone — a descendant is already on chain`,
+      )
+    }
+  }
+  if (plan.fail.length === 0) return outcome
+
+  for (const txid of plan.fail) {
+    const transactionId = Number(byTxid.get(txid)?.transactionId)
+    if (!Number.isFinite(transactionId) || transactionId <= 0) continue
     try {
       await sp.updateTransactionStatus('failed', transactionId)
       outcome.failed.push(txid)
-      dead.add(txid)
     } catch (err) {
       console.warn('[tx-closure] fail descendant skipped', txid.slice(0, 12), err)
     }
   }
-
-  // Failing a child restored its inputs — some of which are outputs of a tx
-  // that is itself dead. Retire every output of every dead tx an orphan spent
-  // from, so the pass ends in the invariant rather than one step short of it.
-  const deadParents = new Set<string>()
-  for (const txid of outcome.failed) {
-    for (const parent of linkByTxid.get(txid)?.inputTxids ?? []) {
-      if (dead.has(parent)) deadParents.add(parent)
-    }
-  }
-  for (const parent of deadParents) await retireOutputsOf(sp, parent)
+  for (const parent of plan.retireOutputsOf) await retireOutputsOf(sp, parent)
 
   if (outcome.failed.length > 0) {
     console.warn(

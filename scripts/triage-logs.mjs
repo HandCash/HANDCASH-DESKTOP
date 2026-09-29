@@ -1302,7 +1302,7 @@ function forensicQuestions(latest) {
               settle_refused:
                 'A deposit has `refused` (not ancestry-incomplete) or `internalizeFailed`: the body arrived and internalize rejected it, so it will not land until that refusal is handled.',
               retired_as_invalid:
-                'A deposit is `retired` and the reason says the spend is invalid, rejected, or missing: it should be hidden, not left as a deposit.',
+                'A deposit is `retired` and the reason says the spend is invalid, rejected, missing, or spends a transaction no provider has and the chain never saw: it has been hidden as it should be.',
               broadcast_only:
                 '`broadcastFailed` is set and the deposit was otherwise accepted: the token is in the basket and only the public broadcast failed.',
               no_stuck_deposit:

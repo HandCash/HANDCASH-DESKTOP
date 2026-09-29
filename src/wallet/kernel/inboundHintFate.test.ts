@@ -119,6 +119,58 @@ describe('inbound hint fate', () => {
   })
 })
 
+describe('a package that spends a transaction nobody has', () => {
+  const PARENT = '6a'.repeat(32)
+  /** We hold the body — before this fact existed that alone meant "retry forever". */
+  function deadParent(over: Partial<InboundHintFacts> = {}): InboundHintFacts {
+    return unbroadcast({
+      hasDeliverableBeef: true,
+      bodyLookup: 'unknown',
+      onChain: null,
+      missingAncestor: { txid: PARENT, bodyLookup: 'miss', onChain: false },
+      ...over,
+    })
+  }
+
+  it('retires the hint once the parent is absent at every provider and on chain', () => {
+    const fate = decideInboundHintFate(deadParent())
+    expect(fate.kind).toBe('unresolvable')
+    expect(fate.kind === 'unresolvable' && fate.reason).toContain(PARENT.slice(0, 12))
+  })
+
+  it('is worth the probe even though we hold the body', () => {
+    const { onChain: _drop, ...facts } = deadParent()
+    expect(mayBeUnresolvable(facts)).toBe(true)
+  })
+
+  it('keeps retrying while the parent has only been silent', () => {
+    expect(
+      decideInboundHintFate(
+        deadParent({ missingAncestor: { txid: PARENT, bodyLookup: 'unknown', onChain: null } }),
+      ).kind,
+    ).toBe('retry')
+    expect(
+      decideInboundHintFate(
+        deadParent({ missingAncestor: { txid: PARENT, bodyLookup: 'miss', onChain: null } }),
+      ).kind,
+    ).toBe('retry')
+  })
+
+  it('keeps retrying when the parent turns out to exist — the package may complete next pass', () => {
+    expect(
+      decideInboundHintFate(
+        deadParent({ missingAncestor: { txid: PARENT, bodyLookup: 'hit', onChain: true } }),
+      ).kind,
+    ).toBe('retry')
+  })
+
+  it('holds a young hint through the grace window', () => {
+    expect(
+      decideInboundHintFate(deadParent({ firstSeenAt: NOW - UNRESOLVABLE_GRACE_MS + 1 })).kind,
+    ).toBe('retry')
+  })
+})
+
 describe('terminal hint status', () => {
   it('takes received and retired cards out of the sweep', () => {
     expect(isTerminalInboundHintStatus('Received')).toBe(true)

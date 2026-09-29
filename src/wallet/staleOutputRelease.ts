@@ -653,7 +653,9 @@ export async function failUnsentLocalTx(
 ): Promise<boolean> {
   const id = txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(id)) return false;
-  const storage = getActiveWallet()?.wallet?.storage;
+  const active = getActiveWallet();
+  const storage = active?.wallet?.storage;
+  const chain = active?.chain;
   if (!storage?.runAsStorageProvider) return false;
 
   try {
@@ -719,7 +721,6 @@ export async function failUnsentLocalTx(
       // outputs is dead with it. Take them in the same session, parents
       // first, so no balance read can see the parent's inputs restored
       // beside a child's change (hc-a580a 2026-09-29, 2× balance).
-      const chain = getActiveWallet()?.chain;
       await failLocalTxClosure(sp as unknown as ClosureStorage, {
         seedTxids: [id],
         ...(chain

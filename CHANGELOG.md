@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.3.358] - 2026-09-29
+
+### Fixed
+
+- The failure closure (1.3.356) stopped one hop short when a descendant was
+  already on chain: it kept that transaction but still failed the live
+  transactions that spent it, and the live parent it was built on — restoring
+  outputs the chain has consumed, which is the doubled balance one hop further
+  down. A confirmed descendant is now a cut: it stays, its spends stay, the
+  live ancestor it spent stays; a sibling that spends the failed transaction
+  directly still fails.
+- A token or item deposit whose package spends a transaction nobody has no
+  longer retries forever. The wallet holds the body, so the hint counted as
+  deliverable; but a parent absent at every provider and positively absent on
+  chain means the package can never be internalized or broadcast. After the
+  two-hour grace the row retires as "Unavailable — spends a transaction the
+  network never saw". Silence about the parent keeps retrying, and a later
+  envelope carrying it revives the hint (hc-a580a, `438497125f03` →
+  `6aa054b3`, pending 47 h).
+
+### Changed
+
+- The failure closure is a pure plan the storage layer executes:
+  `planFailureClosure` names what fails (leaves first), what is kept and the
+  one reason for each (`onChain` / `ancestorOfOnChain`), and which dead
+  transactions' outputs to retire again. Chain answers are a tagged
+  `present | unknown`; only `present` is evidence.
+- Settle results carry `missingParents` structurally; the inbound hint fate
+  kernel takes a `missingAncestor` fact with the parent's own durable lookups.
+- One fewer runtime compatibility accessor call (ratchet 195 → 194).
+
 ## [1.3.357] - 2026-09-29
 
 ### Fixed

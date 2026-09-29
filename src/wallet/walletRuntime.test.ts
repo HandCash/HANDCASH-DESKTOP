@@ -120,6 +120,6 @@ describe('wallet runtime architecture ratchet', () => {
     // Existing adapters resolve through WalletRuntime in session.ts. New and
     // migrated feature APIs receive WalletRuntime explicitly; this ratchet only
     // shrinks as compatibility adapters are converted.
-    expect(calls).toBeLessThanOrEqual(195)
+    expect(calls).toBeLessThanOrEqual(194)
   })
 })
