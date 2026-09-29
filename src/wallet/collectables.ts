@@ -1518,7 +1518,13 @@ export function noteIngestedItem(args: {
   if (!firstSeenAt.has(key)) firstSeenAt.set(key, Date.now())
   seededItems.set(key, output)
   if (identityKey) persistSeededItems(identityKey)
-  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return
+  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
+  // do not wait for the user to open the item. Also re-prefer when the tip was
+  // already on the list so an Activity row for a known item still leads.
+  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) {
+    requestCollectableVerification(target)
+    return
+  }
   // A send to our own handle leaves the outgoing tip on the list until the next
   // ownership pass; without this the same collectable shows twice until then.
   const seeded = mergeCollectablePaint(
@@ -1547,6 +1553,9 @@ export function noteIngestedItem(args: {
       cachedLiveOneSats?.keys ?? null,
     )
   )
+  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
+  // do not wait for the user to open the item.
+  requestCollectableVerification(target)
 }
 
 function lockingScriptIsFungible(hex?: string): boolean {

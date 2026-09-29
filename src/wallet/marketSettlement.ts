@@ -974,7 +974,10 @@ export async function executeMarketPurchase(
       if (!isBsv21) {
         try {
           const purchasedOutpoint = `${txid}.0`
-          const proven = provenance
+          // Prove tip→origin from the listing remittance before we finalize the
+          // buy. Waiting until the user opens the item left Activity rows
+          // Unverified through the whole purchase receipt.
+          let proven = provenance
             ? await provePurchasedMarketTip({
                 active,
                 provenance,
@@ -985,6 +988,7 @@ export async function executeMarketPurchase(
           const {
             noteIngestedItem,
             retireCollectableAfterSpend,
+            verifyItemAuthenticity,
           } = await import('./collectables')
           // On a self-purchase, origin deduplication would otherwise retain the
           // sold tip and hide txid.0. Retire the exact spent tip before painting
@@ -1002,12 +1006,34 @@ export async function executeMarketPurchase(
             content: listingMeta.content,
             identityKey: active.identityKey,
           })
+          if (!proven && listing.origin) {
+            const result = await verifyItemAuthenticity(
+              purchasedOutpoint,
+              listing.origin,
+              active,
+            )
+            proven = result.proven
+          }
           mark(`buyer collectable painted proven=${String(proven)}`)
         } catch (err) {
           // Local cache projection is recoverable from listOutputs; custody and
           // the durable Activity row must not be rolled back for a paint error.
           console.warn(
             '[market-buy] buyer collectable paint deferred',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      } else {
+        // BSV-21: the buyer tip is already on the createAction remittance
+        // (basket bsv21). Force a fresh inventory read so the demo / Tokens
+        // panel see txid.0 before we answer COMMITTED.
+        try {
+          const { listFungibles } = await import('./token')
+          await listFungibles(active)
+          mark('buyer token inventory refreshed')
+        } catch (err) {
+          console.warn(
+            '[market-buy] buyer token inventory refresh deferred',
             err instanceof Error ? err.message : String(err),
           )
         }

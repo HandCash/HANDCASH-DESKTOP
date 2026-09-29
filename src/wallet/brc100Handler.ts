@@ -200,12 +200,16 @@ function brcSpendErrorCode(err: unknown): {
   description: string
 } {
   const description = err instanceof Error ? err.message : String(err)
-  if (
-    err &&
-    typeof err === 'object' &&
-    (err as { code?: unknown }).code === 'WALLET_BALANCE_TIMEOUT'
-  ) {
+  const code =
+    err && typeof err === 'object' ? (err as { code?: unknown }).code : undefined
+  if (code === 'WALLET_BALANCE_TIMEOUT') {
     return { status: 503, code: 'WALLET_BALANCE_TIMEOUT', description }
+  }
+  if (code === 'SPEND_REGION_ABANDONED') {
+    // Region freed while the toolbox call was still outstanding — not a balance
+    // problem. Mapping this to INSUFFICIENT_OR_STALE_FUNDS made demo buys look
+    // like the wallet was empty.
+    return { status: 503, code: 'SPEND_REGION_ABANDONED', description }
   }
   if (/offline/i.test(description)) {
     return { status: 503, code: 'OFFLINE_PAYMENTS_DISABLED', description }

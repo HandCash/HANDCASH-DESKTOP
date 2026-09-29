@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.368] - 2026-09-29
+
+### Fixed
+
+- Market sold-announce was refused `seller-payment-mismatch`: the overlay expected a separate 1-sat deposit refund at output 3, while the wallet (and list-time SINGLE unlocks) fold that sat into seller proceeds at output 1. Overlay now matches the wallet shape.
+- BRC-100 mapped a freed spend region (`The send stopped responding`) to `INSUFFICIENT_OR_STALE_FUNDS`, so a BSV-21 demo buy looked like an empty wallet. It now returns `SPEND_REGION_ABANDONED`.
+
+### Changed
+
+- Newly painted collectables (Activity, inbox, market buy) jump the BRC-150 verify queue immediately — no wait for opening the item. Item market purchases await tip→origin prove before `COMMITTED`; BSV-21 buys refresh token inventory before answering.
+
 ## [1.3.367] - 2026-09-29
 
 ### Fixed
