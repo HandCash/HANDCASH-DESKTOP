@@ -11,10 +11,6 @@
   spend; a signed one settles. Approving a bridge action no longer starts a
   second wallet action alongside the request's own.
 
-### Changed
-
-- Patch release (every push must ship a new version).
-
 ## [1.3.356] - 2026-09-29
 
 ### Fixed
