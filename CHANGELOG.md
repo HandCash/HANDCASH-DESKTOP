@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.357] - 2026-09-29
+
+### Fixed
+
+- The status pill no longer keeps its own phase clock beside the action
+  lifecycle. It paints that action, and it goes idle the moment the action
+  has a txid — sealing and notifying the payee do not bring "Broadcasting"
+  back. There is one 90-second watchdog: an unsigned stall still aborts the
+  spend; a signed one settles. Approving a bridge action no longer starts a
+  second wallet action alongside the request's own.
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.356] - 2026-09-29
 
 ### Fixed

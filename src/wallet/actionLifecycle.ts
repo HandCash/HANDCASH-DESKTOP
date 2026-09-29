@@ -62,6 +62,17 @@ const entries = new Map<string, Entry>()
 const listeners = new Set<() => void>()
 let views: readonly LiveAction[] = []
 
+/**
+ * One place a stuck action is noticed. `paymentProgress` hangs the spend-abort
+ * here so a second 90s timer cannot disagree with this one.
+ */
+type StuckHandler = (view: LiveAction) => void
+let stuckHandler: StuckHandler | null = null
+
+export function onActionStuck(handler: StuckHandler): void {
+  stuckHandler = handler
+}
+
 function project(actor: Actor<typeof actionLifecycleMachine>): LiveAction {
   const snapshot = actor.getSnapshot()
   const c = snapshot.context
@@ -120,6 +131,7 @@ function armWatchdog(id: string): void {
     const snapshot = live.actor.getSnapshot()
     const stuck = actionLifecycleFace(snapshot)
     if (stuck === 'settled' || stuck === 'failed') return
+    stuckHandler?.(project(live.actor))
     if (snapshot.context.txid) {
       // Signed is a fact. Whatever the wallet is still doing afterwards is not
       // this action's verdict; the record (and Arcade, if it rejects) speaks.

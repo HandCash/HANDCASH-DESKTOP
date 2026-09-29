@@ -7,6 +7,7 @@ import {
   marketBusyCopy,
   setPaymentProgress,
 } from './paymentProgress'
+import { walletAction } from './actionLifecycle'
 import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 
 describe('paymentProgress', () => {
@@ -41,6 +42,16 @@ describe('paymentProgress', () => {
 
     clearPaymentProgress()
     expect(isOutpointSending('txid_0')).toBe(false)
+  })
+
+  it('goes idle the moment the spend is signed and stays idle through later phases', () => {
+    setPaymentProgress('broadcasting', 'Signing and sending to the network')
+    expect(getPaymentProgress().phase).toBe('broadcasting')
+    walletAction()?.txid('ab'.repeat(32))
+    expect(getPaymentProgress().phase).toBe('idle')
+    setPaymentProgress('finishing', 'Updating your balance')
+    expect(getPaymentProgress().phase).toBe('idle')
+    clearPaymentProgress()
   })
 
   it('keeps a listing label across phase updates', () => {

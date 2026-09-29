@@ -11,6 +11,8 @@ import {
   beginWalletAction,
   endWalletAction,
   liveAction,
+  onActionStuck,
+  subscribeLiveActions,
   walletAction,
 } from './actionLifecycle'
 import type { ActionStage } from '../machines/actionLifecycleMachine'
@@ -165,42 +167,53 @@ function emit(): void {
   for (const listener of listeners) listener(progress)
 }
 
-let stuckWatchdog: ReturnType<typeof setTimeout> | null = null
-const STUCK_PAYMENT_MS = 90_000
-
-function clearStuckWatchdog(): void {
-  if (stuckWatchdog) {
-    clearTimeout(stuckWatchdog)
-    stuckWatchdog = null
+/** Hide the pill without settling the action — the send or the chart owns that. */
+function dropPill(): void {
+  if (progress.phase === 'idle') return
+  progress = {
+    phase: 'idle',
+    startedAt: null,
+    label: null,
+    detail: null,
+    outpoint: null,
   }
+  emit()
 }
 
-function armStuckWatchdog(): void {
-  clearStuckWatchdog()
+const STUCK_PAYMENT_MS = 90_000
+
+function spendView() {
+  const bound = boundActionId ? liveAction(boundActionId)?.view() : null
+  return bound ?? walletAction()?.view() ?? null
+}
+
+/**
+ * Signed is a fact. The moment the action this pill is painting has a txid,
+ * the pill goes idle — it does not keep saying Broadcasting through sealing
+ * and payee notify. A later failure repaints through the Activity record.
+ */
+subscribeLiveActions(() => {
   if (progress.phase === 'idle') return
-  stuckWatchdog = setTimeout(() => {
-    stuckWatchdog = null
-    if (progress.phase === 'idle') return
-    const stuckPhase = progress.phase
-    console.warn(
-      '[payment-progress] stuck watchdog fired — clearing',
-      progress.phase,
-      progress.detail,
-    )
-    const detail = progress.detail?.trim()
-    endWalletAction({ failed: 'Send timed out' })
-    void import('./spendGuard')
-      .then(({ abortLiveExclusiveSpend }) => {
-        const aborted = abortLiveExclusiveSpend('Send timed out')
-        if (aborted) {
-          console.warn('[payment-progress] aborted in-flight spend')
-          recordTransactionStage('retry_exhausted', {
-            flow: telemetryFlow,
-            blockerCode: `stuck_${stuckPhase}`,
-          })
-          clearPaymentProgress()
-          return
-        }
+  const view = spendView()
+  // Null during the id handoff (wallet: → the row's pendingId): the entry has
+  // moved and `walletActionId` has not caught up. The publish that follows
+  // carries it. Dropping the pill here made the next phase look like a new spend.
+  if (!view) return
+  if (view.txid || view.face === 'settled' || view.face === 'failed') dropPill()
+})
+
+onActionStuck((view) => {
+  const detail = progress.detail?.trim()
+  const stuckPhase = progress.phase
+  dropPill()
+  if (view.txid) return
+  console.warn('[payment-progress] stuck before signing — aborting', view.id, view.face)
+  void import('./spendGuard')
+    .then(({ abortLiveExclusiveSpend }) => {
+      const aborted = abortLiveExclusiveSpend('Send timed out')
+      if (aborted) {
+        console.warn('[payment-progress] aborted in-flight spend')
+      } else {
         void import('./toast')
           .then(({ toastError }) => {
             toastError(
@@ -211,7 +224,6 @@ function armStuckWatchdog(): void {
             )
           })
           .catch(() => {})
-        clearPaymentProgress()
         void import('./appActivity')
           .then(({ expireStaleOutboundPending }) => {
             const n = expireStaleOutboundPending(STUCK_PAYMENT_MS)
@@ -223,20 +235,18 @@ function armStuckWatchdog(): void {
           })
           .catch(() => {})
         void import('./chainedChangeHeal')
-          .then(({ scheduleHealAfterSendCleanup }) =>
-            scheduleHealAfterSendCleanup(),
-          )
+          .then(({ scheduleHealAfterSendCleanup }) => scheduleHealAfterSendCleanup())
           .catch(() => {})
+      }
+      if (stuckPhase !== 'idle') {
         recordTransactionStage('retry_exhausted', {
           flow: telemetryFlow,
           blockerCode: `stuck_${stuckPhase}`,
         })
-      })
-      .catch(() => {
-        clearPaymentProgress()
-      })
-  }, STUCK_PAYMENT_MS)
-}
+      }
+    })
+    .catch(() => {})
+})
 
 export function getPaymentProgress(): PaymentProgress {
   return progress
@@ -317,11 +327,13 @@ export function setPaymentProgress(
       detail: null,
       outpoint: null,
     }
-    clearStuckWatchdog()
     walkLifecycle(previousPhase)
     emit()
     return
   }
+  // The chart already has the signature. Later phases (sealing, notifying)
+  // must not bring the pill back.
+  if (spendView()?.txid) return
   const copy = COPY[phase]
   const previousPhase = progress.phase
   const nextOutpoint =
@@ -353,7 +365,6 @@ export function setPaymentProgress(
     recordPaymentProgressStage(telemetryFlow, phase)
   }
   walkLifecycle(previousPhase)
-  armStuckWatchdog()
   emit()
 }
 

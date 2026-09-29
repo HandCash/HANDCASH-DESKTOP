@@ -20,10 +20,7 @@ import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { PermissionItemPreview } from './PermissionItemPreview'
 import { LoadingSpinner } from './LoadingSpinner'
 import {
-  clearPaymentProgress,
   getPaymentProgress,
-  marketBusyCopy,
-  setPaymentProgress,
   subscribePaymentProgress,
   type PaymentProgress,
 } from '../wallet/paymentProgress'
@@ -100,19 +97,6 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
           pendingPrompt.method === 'purchaseMarketListing')
       ) {
         setLastApproved(pendingPrompt)
-        const market = marketBusyCopy(pendingPrompt.method)
-        setPaymentProgress(
-          'preparing',
-          market?.detail ?? 'Starting…',
-          pendingPrompt.itemOutpoint,
-          market?.label,
-        )
-      } else if (
-        pendingPrompt.kind === 'action' &&
-        getPaymentProgress().detail === 'Starting…'
-      ) {
-        clearPaymentProgress()
-        setLastApproved(null)
       }
       if (pendingPrompt.kind === 'connect') {
         playWalletSound('connect')
