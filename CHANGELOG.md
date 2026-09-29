@@ -1,10 +1,32 @@
 # Changelog
 
-## [1.3.359] - 2026-09-29
+## [1.3.360] - 2026-09-29
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Changelog only: the 1.3.359 build shipped with the bump placeholder in
+  place of its note. No wallet code changed since 1.3.359.
+
+## [1.3.359] - 2026-09-29
+
+### Fixed
+
+- Received tokens now show their icon in Collectables. Icons resolved only
+  from transaction bodies this wallet holds, and a token someone else issued
+  names an icon on the issuer's inscription transaction — never local — so
+  every received token painted blank. When the body is not held, the wallet
+  fetches the raw transaction by txid from its own providers and checks it
+  hashes to that txid before decoding the image. Still no indexer `/content/`
+  and no identicon; a transaction nobody has is remembered as a miss, not
+  re-asked on every paint. Deploy metadata recovery (symbol, decimals, issuer)
+  uses the same lookup.
+- Activity no longer lists an app request before the user approves it. The
+  permission prompt is the request's whole presence until then; denying it
+  leaves no row.
+- Activity no longer flashes "Unconfirmed" as a request finishes. The
+  synthesized live row read its own placeholder as a chain record once the
+  transaction had a txid; it now keeps the action's phase (Broadcasting,
+  Verifying) until the durable row lands.
 
 ## [1.3.358] - 2026-09-29
 
