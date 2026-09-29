@@ -205,9 +205,6 @@ describe('runExclusiveBurn', () => {
         unscripted: 0,
       })),
     }))
-    vi.doMock('./spendLease', () => ({
-      acquireSpendLease: async () => async () => undefined,
-    }))
 
     const { runExclusiveBurn } = await import('./spendGuard')
     await expect(runExclusiveBurn('burn-collectable', async () => 'ok')).resolves.toBe('ok')

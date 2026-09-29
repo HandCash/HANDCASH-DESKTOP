@@ -76,27 +76,11 @@ vi.mock('./staleOutputRelease', () => ({
 }))
 
 vi.mock('./walletCoordinator', () => ({
-  runExclusiveSpend: async <T>(
-    fn: () => Promise<T>,
-    acquireLease: () => Promise<() => Promise<void>>,
-  ) => {
-    const release = await acquireLease()
-    try {
-      return await fn()
-    } finally {
-      await release()
-    }
-  },
+  runExclusiveSpend: async <T>(fn: () => Promise<T>) => fn(),
   leaseSpendPriority: () => ({
     touch: vi.fn(),
     release: vi.fn(),
   }),
-}))
-
-const acquireSpendLease = vi.fn(async () => async () => undefined)
-
-vi.mock('./spendLease', () => ({
-  acquireSpendLease: () => acquireSpendLease(),
 }))
 
 describe('refreshSpendableBalance', () => {
@@ -281,19 +265,6 @@ describe('refreshSpendableBalance', () => {
     unconfirmedChangeSats.mockResolvedValue(50)
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).rejects.toThrow(/Insufficient balance/)
-  })
-
-  it('takes the cross-device lease for spends and skips it for receive-only work', async () => {
-    const { runExclusiveSpend } = await import('./spendGuard')
-
-    await runExclusiveSpend(async () => 'spent', undefined, { promote: false })
-    expect(acquireSpendLease).toHaveBeenCalledTimes(1)
-
-    await runExclusiveSpend(async () => 'received', undefined, {
-      promote: false,
-      crossDevice: false,
-    })
-    expect(acquireSpendLease).toHaveBeenCalledTimes(1)
   })
 
   it('runExclusiveSpend does no maintenance before ready local UTXOs', async () => {

@@ -1,9 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
-vi.mock('./deviceSync', () => ({
-  hasDeviceLinkBackupUrl: vi.fn(() => false),
-}))
-
 describe('paymentPolicy offline gate', () => {
   const onlineDesc = Object.getOwnPropertyDescriptor(navigator, 'onLine')
 

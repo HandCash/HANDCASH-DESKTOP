@@ -577,7 +577,6 @@ function runSpendBody<T>(
 /** Send / BRC spend paths — exclusive with chain ingest and history replica. */
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
-  acquireLease: () => Promise<() => Promise<void>>,
   onSpendRegion?: () => void,
   opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
 ): Promise<T> {
@@ -596,14 +595,12 @@ export function runExclusiveSpend<T>(
     try {
       assertCoordinatorEpoch(epoch)
       const releaseSpend = await acquireSpend()
-      // Region acquired — drop "Waiting to send…" before the cross-device lease RTT.
+      // Region acquired — drop "Waiting to send…".
       onSpendRegion?.()
-      const releaseLease = await acquireLease()
       try {
         assertCoordinatorEpoch(epoch)
         return await runSpendBody(fn, opts)
       } finally {
-        await releaseLease()
         releaseSpend()
       }
     } finally {

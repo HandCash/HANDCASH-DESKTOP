@@ -550,7 +550,7 @@ const MARKET_PURCHASE = `stateDiagram-v2
     no miner ACK wait; pending outbox owns propagation
     buyer txid.0 extends the admitted BRC-150 proof and paints proven
     oversized seller receipt stays inline; seller fetches BEEF by txid
-    local seller reconcile runs after spend lease + retries durably
+    local seller reconcile runs after the spend region + retries durably
   end note
 `
 
@@ -874,7 +874,6 @@ const WALLET_IO = `flowchart TB
     HANDLES["$handle resolve / claim"]
     MSG["messagebox"]
     LOGS["support logs"]
-    LEASE["spend-lease"]
   end
 
   subgraph Apps["Local apps / peers"]
@@ -902,7 +901,6 @@ const WALLET_IO = `flowchart TB
   HANDLER --> HANDLES
   HANDLER --> MSG
   KEYS --> LOGS
-  SPEND --> LEASE
   DAPP --> BRIDGE_N
   PHONE --> DPEER
   PHONE --> H39
@@ -937,7 +935,7 @@ const SPEND_SIGN = `stateDiagram-v2
   direction LR
   [*] --> prepare
 
-  prepare --> createAction : local balance / lease ok
+  prepare --> createAction : local balance ok
   prepare --> refuse : TipKind refuse / thin funds
 
   createAction --> signedNoSend : noSend + signAndProcess

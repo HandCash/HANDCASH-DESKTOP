@@ -35,12 +35,8 @@ import { showToast, toastError, toastSuccess } from './wallet/toast'
 import { appDisplayName } from './wallet/appIdentity'
 import { refreshFromChain } from './wallet/chainIngest'
 import { isUtxoHealRunning } from './wallet/utxoHealFromHistory'
-import { softPullHistoryIfRemoteNewer } from './wallet/deviceSync'
-import { isDeviceParityEnabled } from './wallet/paymentPolicy'
-import { getSessionBackupPassword } from './wallet/sessionBackupAuth'
 import { refreshCloudBackupHealth } from './wallet/cloudBackupHealth'
 import { isVaultStoredUnsealed } from './wallet/vaultSealStatus'
-import { setSyncHealth } from './wallet/walletHealth'
 import { isRecomposeInFlight } from './wallet/recompose'
 import {
   shouldKeepTrustedBalance,
@@ -351,19 +347,6 @@ export function App() {
     }
     playWalletSound('soft')
     try {
-      if (isDeviceParityEnabled() && getSessionBackupPassword()) {
-        setSyncHealth({
-          phase: 'syncing',
-          message: 'Checking for a newer history backup',
-        })
-        try {
-          await softPullHistoryIfRemoteNewer()
-        } finally {
-          // History pull can outlive the syncing watchdog; never leave its
-          // message (or a cleared-but-stuck Syncing phase) for chain ingest.
-          setSyncHealth({ phase: 'idle', message: null })
-        }
-      }
       const sats = await refreshFromChain({ forceReview: true, announceReceive: true })
       if (sats != null) handleBalanceRefresh(sats)
       void refreshCloudBackupHealth()

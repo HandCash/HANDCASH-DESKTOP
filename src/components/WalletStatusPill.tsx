@@ -173,7 +173,7 @@ function resolveStatus(
     }
   }
 
-  // Chain ingest wins. History replica (BRC-39) is optional parity — never alarm as
+  // Chain ingest wins. History replica (BRC-39) is optional backup — never alarm as
   // "Out of sync" when funds/items are healthy on this device. See wallet/layers.ts.
   if (health.phase === 'ok') {
     const timedOut =

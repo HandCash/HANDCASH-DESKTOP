@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.376] - 2026-09-29
+
+Same-key device parity is gone (one install per identity), so its guardrails go too.
+
+### Removed
+
+- **Cross-device spend lease.** Every payment took a lock on the backup host — three sequential round trips before signing (~1.7s from a backgrounded phone in the 0.1.537 upload) plus a release. `spendLease.ts` is deleted and the coordinator's `runExclusiveSpend` no longer takes a lease; the local exclusive spend region is unchanged.
+- **Soft history pull.** `softPullHistoryIfRemoteNewer` ran on the Dashboard poll (every 5 min) and on manual Refresh whenever a History backup URL was set. With one install the remote is never newer than this device, and pulling a stale install's blob would overwrite live state. Refresh is chain ingest only.
+- `isDeviceParityEnabled` and the "sync History if you share a backup URL" offline-payment copy; the unused parity chain-poll interval.
+
+### Unchanged
+
+- History backup push after spends and empty-local recovery at unlock / restore — backup, not parity.
+
 ## [1.3.375] - 2026-09-29
 
 The 0.1.537 upload: preflight is down to ~150ms, but the slowest payments (22–24s) re-signed over the same dead coins, and the cross-device lease cost ~1.7s per acquire from a backgrounded phone.

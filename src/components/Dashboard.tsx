@@ -50,10 +50,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { WalletNav } from './WalletNav'
 import { DashboardSideColumn } from './DashboardSideColumn'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
-import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
-import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
-import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 
 import { getWalletRuntime } from '../wallet/walletRuntime'
 import { identityQrDataUrl } from '../wallet/identityQr'
@@ -71,8 +68,6 @@ const TIP_HINT_POLL_IDLE_MS = 20_000
 const TIP_HINT_POLL_HIDDEN_MS = 30_000
 /** Consecutive empty visible polls before stretching to IDLE_MS. */
 const TIP_HINT_IDLE_AFTER_EMPTY = 2
-/** Cloud history is a full encrypted replica merge, not a presence heartbeat. */
-const HISTORY_PULL_INTERVAL_MS = 5 * 60_000
 /**
  * Address scans return the complete P2PKH UTXO set. Large ordinal wallets can
  * produce hundreds of thousands of rows, so hidden windows must not continuously
@@ -87,8 +82,6 @@ const CHAIN_POLL_HIDDEN_MS = 15 * 60_000
  */
 const CHAIN_POLL_PHONE_MS = 2 * 60_000
 const CHAIN_POLL_DESKTOP_MS = 2 * 60_000
-/** Device parity has its own history cadence; it does not need faster chain scans. */
-const CHAIN_POLL_PARITY_MS = 2 * 60_000
 /**
  * Stale inbox / chat tip cards must not re-run funding-only Refresh every 5s.
  * pollInboundTipHints also dispatches `handcash:payment-hint`, so the same
@@ -125,7 +118,6 @@ function nextChainPollMs(): number {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     return CHAIN_POLL_HIDDEN_MS
   }
-  if (isDeviceParityEnabled()) return CHAIN_POLL_PARITY_MS
   return isPhoneShell() ? CHAIN_POLL_PHONE_MS : CHAIN_POLL_DESKTOP_MS
 }
 
@@ -280,7 +272,6 @@ export function Dashboard({
 
   useEffect(() => {
     let cancelled = false
-    let lastHistoryPull = 0
     let tickInFlight = false
     let pollTimer: number | null = null
     let tipHintTimer: number | null = null
@@ -514,7 +505,7 @@ export function Dashboard({
     }
 
     const sync = async (opts?: { forceReview?: boolean }) => {
-      // Skip overlapping poll ticks — prior soft-pull + chain sync must finish.
+      // Skip overlapping poll ticks — the prior chain sync must finish.
       if (tickInFlight) return
       // Don't fight the permission UI / createAction bridge reply.
       if (hasPendingPermissionPrompt()) return
@@ -526,21 +517,6 @@ export function Dashboard({
       }
       tickInFlight = true
       try {
-        // Parity devices merge strictly-newer cloud history before reading the chain,
-        // so the balance stays current without an explicit Refresh.
-        if (
-          isDeviceParityEnabled() &&
-          getSessionBackupPassword() &&
-          Date.now() - lastHistoryPull >= HISTORY_PULL_INTERVAL_MS
-        ) {
-          lastHistoryPull = Date.now()
-          await softPullHistoryIfRemoteNewer()
-          if (cancelled) return
-          if (shouldYieldChainIngestToSpend()) {
-            scheduleNext(750)
-            return
-          }
-        }
         // Background polls never audit: reviewSpendableOutputs is report-only and
         // was colliding with nav taps right after unlock. Manual Refresh / online
         // recovery still force the audit.

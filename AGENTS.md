@@ -26,7 +26,7 @@
 - **Refresh** = chainIngest only. It will not restore P2P/managed-change history.
 - **History backup** = historyReplica. That is how remittance / managed change leaves the device.
 - **Recompose** = `recomposeWallet` (history then chain). Unlock / History restore / Pair Sync only — never Dashboard Refresh.
-- Explicit **Refresh** may soft-pull newer BRC-39 when parity is configured (`softPullHistoryIfRemoteNewer`).
+- No same-key device parity: one install per identity. There is no cross-device spend lease and Refresh never pulls BRC-39; the History backup URL is backup + empty-local recovery only.
 - Empty-local × remote overwrite is isolated in `historyEmptyGuard.ts` (auto paths refuse; manual Upload may force).
 - Prefer `refreshFromChain` from `chainIngest.ts` — single entry for network → localState.
 - Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.

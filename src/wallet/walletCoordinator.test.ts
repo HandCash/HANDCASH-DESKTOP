@@ -89,7 +89,6 @@ describe('walletCoordinator runtime', () => {
         started()
         await hold
       },
-      async () => async () => undefined,
     )
     await active
     let switched = false
@@ -196,7 +195,7 @@ describe('walletCoordinator runtime', () => {
       await spendHold
       order.push('spend-end')
       return 'tx'
-    }, async () => async () => undefined)
+    })
 
     await Promise.resolve()
     const refresh = runChainIngest(async () => {
@@ -248,7 +247,7 @@ describe('walletCoordinator runtime', () => {
         order.push('heal')
       })
       order.push('done')
-    }, async () => async () => undefined)
+    })
 
     expect(order).toEqual(['spend', 'heal', 'done'])
     expect(getWalletCoordinatorSnapshot()).toEqual({
@@ -275,7 +274,7 @@ describe('walletCoordinator runtime', () => {
     const spend = runExclusiveSpend(async () => {
       expect(shouldYieldChainIngestToSpend()).toBe(true)
       await hold
-    }, async () => async () => undefined)
+    })
 
     await Promise.resolve()
     expect(shouldYieldChainIngestToSpend()).toBe(true)
@@ -284,49 +283,41 @@ describe('walletCoordinator runtime', () => {
     expect(shouldYieldChainIngestToSpend()).toBe(false)
   })
 
-  it('notifies onSpendRegion after FIFO acquire and before the lease', async () => {
+  it('notifies onSpendRegion after FIFO acquire and before the spend body', async () => {
     const order: string[] = []
     await runExclusiveSpend(
       async () => {
         order.push('fn')
       },
-      async () => {
-        order.push('lease')
-        return async () => {
-          order.push('release-lease')
-        }
-      },
       () => {
         order.push('acquired')
       },
     )
-    expect(order).toEqual(['acquired', 'lease', 'fn', 'release-lease'])
+    expect(order).toEqual(['acquired', 'fn'])
   })
 
   it('frees the region when a hung spend is aborted, so the next payment runs', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const lease = async () => async () => undefined
     const abort = new AbortController()
 
     // A toolbox call that never settles — the shape of a lost IDB transaction.
-    const hung = runExclusiveSpend(() => new Promise<string>(() => {}), lease, undefined, {
+    const hung = runExclusiveSpend(() => new Promise<string>(() => {}), undefined, {
       abandonSignal: abort.signal,
     })
     await Promise.resolve()
     abort.abort('Send timed out')
 
     await expect(hung).rejects.toBeInstanceOf(SpendRegionAbandonedError)
-    await expect(runExclusiveSpend(async () => 'next-tx', lease)).resolves.toBe('next-tx')
+    await expect(runExclusiveSpend(async () => 'next-tx')).resolves.toBe('next-tx')
     expect(getWalletCoordinatorSnapshot().spend).toBe('idle')
     expect(getSpendPriorityDepth()).toBe(0)
   })
 
   it('gives up on a spend that never reports back at all', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const lease = async () => async () => undefined
 
     await expect(
-      runExclusiveSpend(() => new Promise<string>(() => {}), lease, undefined, {
+      runExclusiveSpend(() => new Promise<string>(() => {}), undefined, {
         ceilingMs: 1_000,
       }),
     ).rejects.toMatchObject({
@@ -343,7 +334,6 @@ describe('walletCoordinator runtime', () => {
     await expect(
       runExclusiveSpend(
         () => new Promise<string>(() => {}),
-        async () => async () => undefined,
         undefined,
         { abandonSignal: abort.signal },
       ),
@@ -363,7 +353,6 @@ describe('walletCoordinator runtime', () => {
         new Promise<string>((_, reject) => {
           failLate = reject
         }),
-      async () => async () => undefined,
       undefined,
       { abandonSignal: abort.signal },
     )
@@ -518,7 +507,7 @@ describe('walletCoordinator runtime', () => {
     const spend = runExclusiveSpend(async () => {
       order.push('spend')
       return 'tx'
-    }, async () => async () => undefined)
+    })
 
     releaseChain()
     await Promise.all([chain, spend, history])
@@ -546,7 +535,7 @@ describe('walletCoordinator runtime', () => {
     const spend = runExclusiveSpend(async () => {
       order.push('spend')
       return 'tx'
-    }, async () => async () => undefined)
+    })
 
     await expect(spend).resolves.toBe('tx')
     expect(order).toEqual(['chain-start', 'spend'])

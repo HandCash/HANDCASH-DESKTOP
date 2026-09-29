@@ -285,7 +285,6 @@ export const WALLET_LAYER_MODULES = {
     "walletCoordinatorMachine.ts",
     "walletCoordinator.ts",
     "spendGuard.ts",
-    "spendLease.ts",
   ],
 } as const satisfies Record<WalletLayer | "coordinator", readonly string[]>;
 

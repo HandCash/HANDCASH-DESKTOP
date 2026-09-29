@@ -55,7 +55,7 @@ Canonical SSoT: `src/wallet/layers.ts`.
 - After `createAction` / send, schedule historyReplica push — P2P state is not recoverable via Refresh.
 - Empty-local history recovery uses `localToolboxStateLooksEmpty()` (outs **and** actions), not balance alone.
 - Device recovery: `recomposeWallet` (historyReplica then chainIngest) — unlock, History restore, Pair Sync.
-- Explicit Refresh may soft-pull newer BRC-39 when parity URL + session password are set (`softPullHistoryIfRemoteNewer`).
+- No same-key device parity: no cross-device spend lease, and Refresh never pulls BRC-39. The History backup URL is backup + empty-local recovery only.
 - Recursive NFT *content* stays basket `1sat`; remittance + BRC-39 are the same path as other 1sat tips.
 - BRC-150 provenance: `oneSatProvenance.ts` — omit when over budget; never truncate.
 - Soft-latch (BRC-156) is withdrawn — no `oneSatLatch*`. Authenticity = BRC-150 v2 only.

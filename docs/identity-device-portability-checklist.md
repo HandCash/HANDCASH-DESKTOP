@@ -6,7 +6,7 @@
 |------|------------|
 | **Backup device** | A known device id + public key, used only to address a sealed recovery copy. No identity, balance, history, or spend link. |
 | **Sealed recovery copy** | Cold EncryptedMessage of one wallet’s custody secret (BRC-78), held by one device. One direction only; never in the spend path. |
-| **History backup URL** | Optional BRC-39 replica of **this** identity’s localState. Only same-key installs use it for Sync / spend-lease. |
+| **History backup URL** | Optional BRC-39 replica of **this** identity’s localState — backup and empty-local recovery. Never a live sync between installs. |
 
 ## Two devices, two wallets
 
@@ -30,9 +30,8 @@ never links identities.
 ## Same phrase on two installs
 
 1. Phrase/shares → same identity → **one BSV pot** on both.
-2. Set the **same** History backup URL if you want Sync + spend-lease.
+2. Not supported as a live setup: there is no same-key parity (no spend lease, no history pull). Two installs spending one pot can pick the same coins; use one install per identity and restore on the other only to move.
 3. The row reads `Same wallet · no copy needed`; sealed recovery is skipped.
-4. UTXO truth is still the chain; Refresh after the other device spends.
 
 ## Boundaries
 

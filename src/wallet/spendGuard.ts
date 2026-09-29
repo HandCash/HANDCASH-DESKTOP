@@ -18,7 +18,6 @@ import {
   coalescedBalanceRead,
   peekProvenConfirmedSpendable,
 } from './session'
-import { acquireSpendLease } from './spendLease'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 import {
@@ -213,19 +212,11 @@ async function reviewAfterAbandonedSpend(): Promise<void> {
   }
 }
 
-/** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
+/** Run spend-related work one-at-a-time (selection + broadcast). */
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: {
-    promote?: SpendPreparation
-    /**
-     * `false` skips the cross-device lease. Only for work that selects no
-     * inputs (receive): the lease exists so two installs never pick the same
-     * coins, and each acquire is three backup-host round trips.
-     */
-    crossDevice?: boolean
-  },
+  opts?: { promote?: SpendPreparation },
 ): Promise<T> {
   const runtime = getWalletRuntime()
   if (!runtime && import.meta.env?.MODE !== 'test') {
@@ -271,9 +262,6 @@ export function runExclusiveSpend<T>(
         resumeMonitor()
       }
     },
-    opts?.crossDevice === false
-      ? async () => async () => undefined
-      : () => acquireSpendLease(abort.signal),
     onSpendRegion,
     // The watchdog's abort is what frees the region: without it a toolbox call
     // that never settles keeps every later payment queued behind this one.
