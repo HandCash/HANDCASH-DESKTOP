@@ -68,24 +68,16 @@ export function activityRowState(args: {
   chainProof?: 'unconfirmed' | 'headerProven' | null
 }): ActivityRowState {
   const { entry, live, chainProof } = args
-  // A live phase describes the wallet's work before a transaction exists. Once
-  // signed, the transaction is the fact: the row reads its standing from the
-  // record (sent · unconfirmed · confirmed · failed), and whatever the wallet
-  // still does afterwards — hand-off, sealing, notifying — is not the row's
-  // story. Arcade rejecting it later repaints the row through the record.
-  //
-  // A live row has no record to read. Its synthesized entry is not a chain
-  // fact, so it keeps the action's phase from signing through settling; the
-  // moment the durable row lands it takes over. Reading the synthesized entry
-  // as a record flashed "Unconfirmed" between the txid and the write.
-  const liveRow = entry.id.startsWith(LIVE_ROW_PREFIX)
-  if (live && isStage(live.face) && (!live.txid || liveRow)) return live.face
+  // A live phase is only the work before a signature. A txid means the send is
+  // assumed: Broadcasting is not a pending state, and miner acceptance does not
+  // hold the row. Chain proof is what moves Signed to Unconfirmed or Confirmed.
+  // Arcade rejecting it later repaints through the record.
+  if (live && isStage(live.face) && !live.txid) return live.face
   if (entry.status === 'failed') return 'failed'
   if (live?.face === 'failed' && entry.status !== 'complete') return 'failed'
   if (chainProof === 'headerProven') return 'confirmed'
-  if (entry.status === 'pending') {
-    return normalizeTxid(entry.txid) || chainProof === 'unconfirmed' ? 'unconfirmed' : 'signed'
-  }
+  if (chainProof === 'unconfirmed') return 'unconfirmed'
+  if (entry.status === 'pending') return 'signed'
   return 'settled'
 }
 

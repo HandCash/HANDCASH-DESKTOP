@@ -102,6 +102,7 @@ export type PendingAction = {
   /** Market listing display when the buyer does not yet hold the item. */
   itemName?: string
   itemImageUrl?: string
+  itemIcon?: string
   previewKind?: 'token' | 'collectable'
   createdAt: number
 }
@@ -810,6 +811,7 @@ export function summarizeAction(method: string, args: unknown): {
   tokenId?: string
   itemName?: string
   itemImageUrl?: string
+  itemIcon?: string
   previewKind?: 'token' | 'collectable'
 } {
   const body = asRecord(args)
@@ -1125,10 +1127,13 @@ export function summarizeAction(method: string, args: unknown): {
         ) || 0,
       ),
     )
+    const bought = preview?.units
+      ? `${preview.units} ${preview.itemName ?? 'Token'}`
+      : preview?.itemName
     return {
-      title: 'Buy market item',
-      summary: preview?.itemName
-        ? `Buy ${preview.itemName}`
+      title: bought ? `Buy ${bought}` : 'Buy market item',
+      summary: bought
+        ? `Buy ${bought}`
         : 'Authorize one atomic item purchase',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
@@ -1136,6 +1141,7 @@ export function summarizeAction(method: string, args: unknown): {
       tokenId: preview?.tokenId,
       itemName: preview?.itemName,
       itemImageUrl: preview?.itemImageUrl,
+      itemIcon: preview?.itemIcon,
       previewKind: preview?.previewKind,
       details: [
         'Total includes the 5% market fee',
@@ -1160,6 +1166,7 @@ export function summarizeAction(method: string, args: unknown): {
       tokenId: preview?.tokenId,
       itemName: preview?.itemName,
       itemImageUrl: preview?.itemImageUrl,
+      itemIcon: preview?.itemIcon,
       previewKind: preview?.previewKind,
       details: ['The signed intent binds the listing, price, fee, and BRC-150 proof.'],
     }
@@ -1208,7 +1215,7 @@ export function requestActionApproval(
   args: unknown,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
-  const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, previewKind } =
+  const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
     summarizeAction(method, args)
   const itemSpend =
     isItemSpendArgs(method, args) ||
@@ -1305,6 +1312,7 @@ export function requestActionApproval(
     tokenId,
     itemName,
     itemImageUrl,
+    itemIcon,
     previewKind,
     createdAt: Date.now(),
   }).then((decision) => {

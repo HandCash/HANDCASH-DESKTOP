@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.371] - 2026-09-29
+
+### Fixed
+
+- App `createAction` could sign against coins an explorer had already confirmed spent elsewhere; the reply carried a txid, the miner reject retired the output, and the next call (list the mint) found nothing. The wallet now probes inputs after signing (`createActionInputFate.ts`), hides confirmed-foreign-spent coins, fails the dead local tx, and signs once more with live coins. A hard miner reject no longer releases those coins back to spendable.
+- Background BEEF assembly for a miner chase held the toolbox storage-provider lock in front of the next `createAction` signature (a timeout did not release it). Hydration now skips the local walk while a send needs storage (`spendNeedsStorage`), and one miner round per txid is shared by every joiner.
+- Self-buy (buyer and seller on this device) folded both sides of the settlement into one Activity record and hid the sale. Purchase and sale now stay separate rows; the sale + proceeds are recorded at buy time instead of only on the deferred seller sweep.
+
+### Changed
+
+- Activity rows: a txid means the send is assumed. "Signed" until a chain proof moves it to Unconfirmed/Confirmed — miner acceptance no longer paints a pending state.
+- BSV-21 market copy: permission prompt and Activity show `Buy 1,000 SYM` / `Bought` / `Sold` / `Listed` with the token icon (listing `icon` or BRC-150 provenance fallback) instead of generic "market collectable".
+
 ## [1.3.370] - 2026-09-29
 
 ### Fixed

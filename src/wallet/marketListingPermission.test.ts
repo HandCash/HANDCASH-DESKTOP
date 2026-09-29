@@ -55,6 +55,28 @@ describe('market listing permission summary', () => {
     expect(summary.summary).toContain('Rare Fox')
   })
 
+  it('shows the token and its icon on a BSV-21 buy', () => {
+    const origin = `${'d'.repeat(64)}_0`
+    const icon = `${'e'.repeat(64)}_1`
+    const summary = summarizeAction('purchaseMarketListing', {
+      listing: {
+        outpoint: `${'f'.repeat(64)}_0`,
+        assetType: 'bsv21',
+        origin,
+        sym: 'KING',
+        amt: 1000,
+        icon,
+        priceSats: 2500,
+      },
+      provenance: { sym: 'KING', icon },
+    })
+    expect(summary.title).toBe('Buy 1,000 KING')
+    expect(summary.itemName).toBe('KING')
+    expect(summary.itemIcon).toBe(icon)
+    expect(summary.tokenId).toBe(origin)
+    expect(summary.previewKind).toBe('token')
+  })
+
   it('shows token sym on BSV-21 purchase intent', () => {
     const origin = `${'d'.repeat(64)}_0`
     const summary = summarizeAction('createMarketPurchaseIntent', {

@@ -66,6 +66,13 @@ describe('settlementCopy', () => {
         status: 'pending',
         txid: 'ab'.repeat(32),
       }),
+    ).toBe('Signed')
+    expect(
+      inFlightSettlementLabel({
+        status: 'pending',
+        txid: 'ab'.repeat(32),
+        chainProof: 'unconfirmed',
+      }),
     ).toBe('Unconfirmed')
     expect(inFlightSettlementLabel({ status: 'failed', txid: 'ab'.repeat(32) })).toBe(
       null,

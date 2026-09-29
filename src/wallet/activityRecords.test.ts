@@ -114,6 +114,46 @@ describe('composeActivityRecords', () => {
     expect(records[0]!.money?.sats).toBe(9_000)
   })
 
+  it('keeps a self-buy as listed, bought, and sold', () => {
+    const token = {
+      name: 'KING',
+      origin: `${OTHER_TXID}_0`,
+      tokenId: `${OTHER_TXID}_0`,
+      outpoint: `${OTHER_TXID}.0`,
+      icon: `${OTHER_TXID}_1`,
+    }
+    const records = composeActivityRecords([
+      entry({
+        method: 'market-list',
+        kind: 'event',
+        txid: OTHER_TXID,
+        item: token,
+      }),
+      entry({ method: 'market-purchase', kind: 'spent', sats: 9_000, txid: TXID }),
+      entry({
+        method: 'market-purchase-receive',
+        txid: TXID,
+        item: { ...token, outpoint: `${TXID}.0` },
+      }),
+      entry({
+        method: 'market-sale',
+        kind: 'spent',
+        sats: 1,
+        txid: TXID,
+        item: token,
+      }),
+      entry({ method: 'market-sale-proceeds', sats: 8_550, txid: TXID }),
+    ])
+    expect(records.map((row) => row.subject.method)).toEqual([
+      'market-list',
+      'market-purchase-receive',
+      'market-sale',
+    ])
+    expect(records[1]!.money?.method).toBe('market-purchase')
+    expect(records[2]!.money?.method).toBe('market-sale-proceeds')
+    expect(records[1]!.subject.item?.icon).toBe(`${OTHER_TXID}_1`)
+  })
+
   it('folds sale proceeds under the sold item', () => {
     const records = composeActivityRecords([
       entry({

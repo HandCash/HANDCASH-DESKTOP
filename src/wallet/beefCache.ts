@@ -549,8 +549,15 @@ async function getBeefFromLocalStorage(
     const storageApi = wallet.wallet.storage
     if (!storageApi?.isActiveStorageProvider?.()) return null
     if (typeof storageApi.runAsStorageProvider !== 'function') return null
+    // Assembling a BEEF holds the storage-provider lock until the walk
+    // finishes. A timeout does not release that lock, so a background miner
+    // chase queued behind it keeps the next createAction from signing.
+    // Skip the walk while a send needs the lock; the chase still posts.
+    const { spendNeedsStorage } = await import('./walletCoordinator')
+    if (spendNeedsStorage()) return null
     return await withTimeout(
       storageApi.runAsStorageProvider(async (storage) => {
+        if (spendNeedsStorage()) return null
         const beef = await storage.getBeefForTransaction(txid, {
           ignoreServices: true,
         })

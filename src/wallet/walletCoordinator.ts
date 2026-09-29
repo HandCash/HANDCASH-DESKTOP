@@ -258,6 +258,18 @@ export function getWalletCoordinatorSnapshot(): WalletCoordinatorSnapshot {
 }
 
 /**
+ * A send is in the spend region or already queued for it.
+ *
+ * Background miner hydration must not take the toolbox storage-provider lock
+ * while this is true. That lock is the same one `createAction` needs to sign,
+ * and a timed-out BEEF assembly does not release it. The broadcast still posts;
+ * it just does not wait on a full ancestry walk in front of the signature.
+ */
+export function spendNeedsStorage(): boolean {
+  return context().spendDepth > 0 || spendPriorityHolds.length > 0
+}
+
+/**
  * Account switching fence.
  *
  * A send owns mutable inventory/Activity projections until its signed cheque

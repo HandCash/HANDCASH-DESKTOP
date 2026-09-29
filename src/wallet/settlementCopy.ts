@@ -5,8 +5,9 @@
  * module is the only place those become words on screen. "Pending" as
  * "a service is processing this" is forbidden.
  *
- *   Signed       — local cheque (Atomic BEEF), not header-final
- *   Unconfirmed  — network has / can have the body; reorg still possible
+ *   Signed       — local cheque (Atomic BEEF). Assumed the moment it is signed.
+ *                  Miner acceptance is a background chase, not this phrase.
+ *   Unconfirmed  — a chain proof says the body is out and not yet header-final
  *   Confirmed    — BUMP vs this device's headers; optional block depth
  */
 export type SettlementPhrase = 'signed' | 'unconfirmed' | 'confirmed'
@@ -41,8 +42,7 @@ export function classifyActivitySettlement(args: {
 }): SettlementPhrase {
   if (args.chainProof === 'headerProven') return 'confirmed'
   if (args.chainProof === 'unconfirmed') return 'unconfirmed'
-  if (args.hasTxid) return 'unconfirmed'
-  if (args.status === 'pending') return 'signed'
+  // A txid is the assumption. It does not mean a miner has accepted it.
   return 'signed'
 }
 

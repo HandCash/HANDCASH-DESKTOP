@@ -107,6 +107,32 @@ function directionOf(entry: ActivityEntry): 'in' | 'out' | 'event' {
   return 'event'
 }
 
+/**
+ * A self-buy is both sides of one settlement. Folding them into one record
+ * hid the sale behind the purchase. Listed stays on its own transaction.
+ */
+function selfDealKeys(entries: readonly ActivityEntry[]): Set<string> {
+  const purchase = new Set<string>()
+  const sale = new Set<string>()
+  for (const entry of entries) {
+    if (isFailedActivity(entry)) continue
+    const txid = txidOf(entry)
+    if (!txid) continue
+    const key = `${entry.origin}|${txid}`
+    if (entry.method.startsWith('market-purchase')) purchase.add(key)
+    if (entry.method.startsWith('market-sale')) sale.add(key)
+  }
+  const both = new Set<string>()
+  for (const key of purchase) if (sale.has(key)) both.add(key)
+  return both
+}
+
+function dealSide(method: string): 'purchase' | 'sale' | null {
+  if (method.startsWith('market-purchase')) return 'purchase'
+  if (method.startsWith('market-sale')) return 'sale'
+  return null
+}
+
 /** Transactions that carry a market leg, and so fold across directions. */
 function marketTransactions(entries: readonly ActivityEntry[]): Set<string> {
   const keys = new Set<string>()
@@ -121,6 +147,7 @@ function marketTransactions(entries: readonly ActivityEntry[]): Set<string> {
 export function chooseActivityFold(
   entry: ActivityEntry,
   marketKeys: ReadonlySet<string>,
+  selfDeals: ReadonlySet<string> = new Set(),
 ): ActivityFold {
   // Failed send legs are cleared and retried independently. A grouped burn is
   // one atomic transaction attempt with no per-NFT retry, so its members must
@@ -140,7 +167,10 @@ export function chooseActivityFold(
       : { kind: 'solo' }
   }
   const key = `${entry.origin}|${txid}`
-  if (marketKeys.has(key)) return { kind: 'transaction', key }
+  if (marketKeys.has(key)) {
+    const side = selfDeals.has(key) ? dealSide(entry.method) : null
+    return { kind: 'transaction', key: side ? `${key}|${side}` : key }
+  }
   return { kind: 'direction', key: `${key}|${directionOf(entry)}` }
 }
 
@@ -288,12 +318,13 @@ function siblingsOf(
   entries: readonly ActivityEntry[],
 ): ActivityEntry[] {
   const marketKeys = marketTransactions(entries)
-  const key = foldKeyOf(chooseActivityFold(entry, marketKeys))
+  const selfDeals = selfDealKeys(entries)
+  const key = foldKeyOf(chooseActivityFold(entry, marketKeys, selfDeals))
   if (!key) return []
   return entries.filter(
     (candidate) =>
       candidate.id !== entry.id &&
-      foldKeyOf(chooseActivityFold(candidate, marketKeys)) === key,
+      foldKeyOf(chooseActivityFold(candidate, marketKeys, selfDeals)) === key,
   )
 }
 
@@ -338,9 +369,10 @@ export function composeActivityRecords(
   const order: string[] = []
   const buckets = new Map<string, ActivityEntry[]>()
   const marketKeys = marketTransactions(entries)
+  const selfDeals = selfDealKeys(entries)
   for (const entry of entries) {
     const key =
-      foldKeyOf(chooseActivityFold(entry, marketKeys)) ??
+      foldKeyOf(chooseActivityFold(entry, marketKeys, selfDeals)) ??
       `solo|${activityEntryKey(entry)}`
     const bucket = buckets.get(key)
     if (bucket) bucket.push(entry)

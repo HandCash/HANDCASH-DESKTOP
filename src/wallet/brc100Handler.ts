@@ -98,6 +98,7 @@ import {
 import { spendBlockedMessage } from './walletCoordinator'
 import { canAutoProcessPayment } from './autoPay'
 import { withImmediateAppBroadcast } from './appCreateAction'
+import { retireCreateActionSpentElsewhere } from './createActionInputFate'
 import { funnelAppSignedCheque } from './appSignedCheque'
 import {
   isAlreadySpentInputError,
@@ -376,7 +377,7 @@ async function dispatchAppActionFundedFromHeldChange(
     console.info(
       `[brc100] retrying ${method} after freeing ${freed} app-held parent(s)`,
     )
-    setPaymentProgress('preparing', 'Signing…', null, 'Working…')
+    setPaymentProgress('signing', 'Signing…', null, 'Working…')
     return dispatchWalletMethod(wallet, method, args, originator)
   }
 }
@@ -1118,18 +1119,19 @@ async function handleBrc100RequestInner(
               // seen-on-chain callback (Plinko on lilb.it sat 2–3 min per bet).
               actionArgs = withImmediateAppBroadcast(actionArgs)
             }
-            // Stay on preparing through sign. Arcade cashing is background —
-            // never paint a "broadcasting" phase that holds the demo loader.
-            setPaymentProgress('preparing', 'Signing…', null, 'Working…')
-            const created = await dispatchAppActionFundedFromHeldChange(
-              active.wallet,
-              method,
-              actionArgs,
-              originator,
-            )
-            // Auth / Sigma fund tips use unlockingScriptLength → signable only.
-            // Complete with root P2PKH so the app gets a txid (collectables pattern).
-            if (method === 'createAction') {
+            // Signing is the reply. Miner acceptance is not a gate — the chase
+            // starts after this returns and must not hold the app on Broadcasting.
+            setPaymentProgress('signing', 'Signing…', null, 'Working…')
+            const signOnce = async () => {
+              const created = await dispatchAppActionFundedFromHeldChange(
+                active.wallet,
+                method,
+                actionArgs,
+                originator,
+              )
+              // Auth / Sigma fund tips use unlockingScriptLength → signable only.
+              // Complete with root P2PKH so the app gets a txid (collectables pattern).
+              if (method !== 'createAction') return created
               try {
                 return await finishBsv21IdentityMintCreateAction(
                   active,
@@ -1141,7 +1143,20 @@ async function handleBrc100RequestInner(
                 throw err
               }
             }
-            return created
+            const signed = await signOnce()
+            // Coins the toolbox still calls spendable can already be confirmed
+            // spent. Returning that txid lets the next call (list the mint)
+            // miss the output after the reject retires it. Retire and sign once
+            // more so the app receives an output this wallet still holds.
+            if (
+              method === 'createAction' &&
+              (await retireCreateActionSpentElsewhere(signed, active.chain))
+            ) {
+              console.warn('[brc100] createAction signing again with live coins')
+              setPaymentProgress('signing', 'Signing…', null, 'Working…')
+              return signOnce()
+            }
+            return signed
           },
           () => {
             setPaymentProgress('preparing', 'Preparing payment', null, 'Working…')

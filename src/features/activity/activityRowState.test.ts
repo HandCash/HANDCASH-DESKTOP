@@ -59,19 +59,18 @@ describe('activityRowState', () => {
         live: live({ face: 'settling', txid }),
       })
     ).toBe('settled')
-    // Signed but the row still pending: the transaction's standing, not a phase.
+    // Signed but the row still pending: assumed. Broadcasting is not the standing.
     expect(
       activityRowState({
         entry: entry({ status: 'pending', txid, pendingId: 'send-1' }),
         live: live({ face: 'broadcasting', txid }),
       })
-    ).toBe('unconfirmed')
-    // No durable row yet: the synthesized live row is not a record. It keeps
-    // the phase until the record lands instead of flashing "Unconfirmed".
+    ).toBe('signed')
+    // No durable row yet: a txid is Signed, not Broadcasting and not Unconfirmed.
     const action = live({ face: 'broadcasting', txid })
-    expect(activityRowState({ entry: liveActionEntry(action), live: action })).toBe('broadcasting')
+    expect(activityRowState({ entry: liveActionEntry(action), live: action })).toBe('signed')
     const settling = live({ face: 'settling', txid })
-    expect(activityRowState({ entry: liveActionEntry(settling), live: settling })).toBe('settling')
+    expect(activityRowState({ entry: liveActionEntry(settling), live: settling })).toBe('signed')
     // Arcade rejected it afterwards: the record's verdict paints the row.
     expect(
       activityRowState({
@@ -85,6 +84,13 @@ describe('activityRowState', () => {
     expect(activityRowState({ entry: entry({ status: 'pending' }), live: null })).toBe('signed')
     expect(
       activityRowState({ entry: entry({ status: 'pending', txid: 'ab'.repeat(32) }), live: null })
+    ).toBe('signed')
+    expect(
+      activityRowState({
+        entry: entry({ status: 'pending', txid: 'ab'.repeat(32) }),
+        live: null,
+        chainProof: 'unconfirmed',
+      })
     ).toBe('unconfirmed')
     expect(
       activityRowState({

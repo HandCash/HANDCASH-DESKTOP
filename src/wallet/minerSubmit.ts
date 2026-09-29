@@ -377,6 +377,15 @@ async function resolveMinerConflict(args: {
     await onAlreadySpentSend({ txid: id, atomic });
     throw new Error(formatPostBeefFailure(summary));
   }
+  // Confirmed foreign spenders must stay hidden. Releasing them back to
+  // spendable is how the next createAction signs the same dead coins and the
+  // minted output disappears before it can be listed.
+  const { retireCreateActionSpentElsewhere } = await import(
+    "./createActionInputFate"
+  );
+  if (await retireCreateActionSpentElsewhere({ txid: id, tx: atomic }, active.chain)) {
+    throw new Error(formatPostBeefFailure(summary));
+  }
   console.warn(
     "[minerSubmit] hard reject — releasing seal (tx not on chain)",
     id.slice(0, 12),
@@ -387,10 +396,45 @@ async function resolveMinerConflict(args: {
 }
 
 /**
+ * One miner round per subject. Several ingest and outbox paths post the same
+ * cheque at once; each one used to assemble ancestry on the storage lock, and
+ * the next signature waited behind all of them. Joiners share the round.
+ * The post still happens — it is just not repeated.
+ */
+const minerSubmitInFlight = new Map<string, Promise<MinerSubmitResult>>()
+
+/**
  * Hand signed BEEF to miners. Returns optimistic `submitted` on transport silence.
  * Throws only on invalid BEEF body or provable missing-inputs / double-spend.
+ *
+ * Acceptance is not the send. The cheque is already assumed; this is the
+ * proactive chase and must not be how the caller learns the payment exists.
  */
-export async function submitAtomicBeefToMiners(
+export function submitAtomicBeefToMiners(
+  txid: string,
+  atomic: number[],
+  opts?: {
+    fromOutbox?: boolean
+    traceId?: string
+    requestId?: string
+    flow?: TransactionFlow
+    retryCount?: number
+    runtime?: WalletRuntime
+    owner?: BoundAccountKeyScope
+  },
+): Promise<MinerSubmitResult> {
+  const id = normalizeTxid(txid)
+  if (!id || !atomic.length) return submitAtomicBeefToMinersOnce(txid, atomic, opts)
+  const joined = minerSubmitInFlight.get(id)
+  if (joined) return joined
+  const round = submitAtomicBeefToMinersOnce(txid, atomic, opts).finally(() => {
+    if (minerSubmitInFlight.get(id) === round) minerSubmitInFlight.delete(id)
+  })
+  minerSubmitInFlight.set(id, round)
+  return round
+}
+
+async function submitAtomicBeefToMinersOnce(
   txid: string,
   atomic: number[],
   opts?: {

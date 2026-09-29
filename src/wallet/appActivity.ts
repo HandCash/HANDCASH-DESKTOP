@@ -2396,6 +2396,9 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     const withQty = qty ? `${qty} ${name}` : name;
     if (isMintTokenActivity(entry)) return `Minted ${withQty}`;
     if (isBurnActivity(entry)) return `Burned ${withQty}`;
+    if (entry.method === "market-purchase-receive") return `Bought ${withQty}`;
+    if (entry.method === "market-sale") return `Sold ${withQty}`;
+    if (entry.method === "market-list") return `Listed ${withQty}`;
     if (entry.kind === "spent" || entry.method === "send-token") {
       return `Sent ${withQty}`;
     }

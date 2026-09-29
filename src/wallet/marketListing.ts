@@ -691,6 +691,10 @@ export type MarketListingPreview = {
   tokenId?: string
   itemName?: string
   itemImageUrl?: string
+  /** BSV-21 icon inscription outpoint, when the listing has no inline image. */
+  itemIcon?: string
+  /** Token units being bought, already a display string. */
+  units?: string
   previewKind?: 'token' | 'collectable'
 }
 
@@ -707,19 +711,31 @@ export function marketListingPreviewFromArgs(args: unknown): MarketListingPrevie
     typeof listing.outpoint === 'string' ? listing.outpoint.trim().toLowerCase() : ''
   if (!outpoint) return null
   const isToken = listing.assetType === 'bsv21'
-  const origin =
-    typeof listing.origin === 'string' ? listing.origin.trim().toLowerCase() : ''
-  const sym = typeof listing.sym === 'string' ? listing.sym.trim() : ''
-  const name = typeof listing.name === 'string' ? listing.name.trim() : ''
-  const contentUrl =
-    typeof listing.contentUrl === 'string' && listing.contentUrl.trim()
-      ? listing.contentUrl.trim()
-      : undefined
+  const provenance =
+    body.provenance && typeof body.provenance === 'object' && !Array.isArray(body.provenance)
+      ? (body.provenance as Record<string, unknown>)
+      : null
+  const text = (...values: unknown[]): string => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+    return ''
+  }
+  const origin = text(listing.origin, provenance?.tokenId).toLowerCase()
+  const sym = text(listing.sym, provenance?.sym)
+  const name = text(listing.name, provenance?.name)
+  const contentUrl = text(listing.contentUrl, provenance?.contentUrl)
+  const icon = text(listing.icon, provenance?.icon)
+  const amt = Number(listing.amt ?? listing.listAmt)
+  const units =
+    isToken && Number.isSafeInteger(amt) && amt > 0 ? amt.toLocaleString() : ''
   return {
     itemOutpoint: outpoint.replace(/_(\d+)$/, '.$1'),
     ...(isToken && origin ? { tokenId: origin } : {}),
     itemName: sym || name || (isToken ? 'Token' : 'Collectable'),
     ...(contentUrl ? { itemImageUrl: contentUrl } : {}),
+    ...(icon ? { itemIcon: icon } : {}),
+    ...(units ? { units } : {}),
     previewKind: isToken ? 'token' : 'collectable',
   }
 }

@@ -1127,6 +1127,7 @@ function listingPhaseFacts(events) {
     runs.push({
       totalMs: marks.at(-1).ms,
       slowest: [...phases].sort((a, b) => b.ms - a.ms)[0],
+      phases,
     })
     marks = []
   }

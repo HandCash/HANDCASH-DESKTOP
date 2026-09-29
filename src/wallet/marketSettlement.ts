@@ -91,7 +91,11 @@ import {
 } from './marketSettlementPath'
 import { clearSoldListingFromMarket } from './marketSoldAnnounce'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import {
+  recordAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
+  type ActivityItem,
+} from './appActivity'
 import { addressFromIdentityKey } from './friends'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 import { getResolvedInscription } from './inscriptionCache'
@@ -245,6 +249,28 @@ function marketCloudOrigin(): string {
     /\/+$/,
     '',
   )
+}
+
+function marketDealItem(
+  listing: MarketListingAdvert,
+  name: string,
+  outpoint: string,
+): ActivityItem {
+  const extra = listing as MarketListingAdvert & { icon?: string | null }
+  const icon = typeof extra.icon === 'string' ? extra.icon.trim() : ''
+  const token = listing.assetType === 'bsv21'
+  return {
+    name,
+    origin: listing.origin,
+    outpoint: outpoint.replace('_', '.'),
+    ...(token
+      ? {
+          tokenId: listing.origin,
+          ...(listing.amt != null && listing.amt > 0 ? { amt: String(listing.amt) } : {}),
+          ...(icon ? { icon } : {}),
+        }
+      : {}),
+  }
 }
 
 function listingItemTxid(listing: MarketListingAdvert): string {
@@ -752,7 +778,9 @@ export async function executeMarketPurchase(
     let created: Awaited<ReturnType<typeof active.wallet.createAction>>
     try {
       created = await active.wallet.createAction({
-      description: 'Buy market collectable',
+      description: isBsv21
+        ? `Buy ${listing.amt?.toLocaleString() ?? ''} ${itemDisplayName}`.replace('  ', ' ')
+        : `Buy ${itemDisplayName}`,
       labels: [
         'market-v3',
         'brc48',
@@ -1095,12 +1123,13 @@ export async function executeMarketPurchase(
           })
         }, 0)
       }
+      const bought = marketDealItem(listing, itemDisplayName, `${txid}.0`)
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
         sats: listing.priceSats,
         method: 'market-purchase',
-        note: 'Bought market collectable',
+        note: `Bought ${itemDisplayName}`,
         txid,
       })
       recordAppActivity({
@@ -1108,15 +1137,33 @@ export async function executeMarketPurchase(
         kind: 'earned',
         sats: 1,
         method: 'market-purchase-receive',
-        note: 'Received market collectable',
+        note: `Bought ${itemDisplayName}`,
         txid,
-        item: {
-          name: itemDisplayName,
-          origin: listing.origin,
-          outpoint: `${txid}.0`,
-        },
+        item: bought,
         status: 'complete',
       })
+      // A self-buy is also a sale. Record it now — the seller sweep is deferred
+      // and must not be the only place this wallet learns it sold.
+      if (receiptPath.path === 'localSellerReconcile') {
+        recordAppActivity({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          kind: 'spent',
+          sats: 1,
+          method: 'market-sale',
+          note: `Sold ${itemDisplayName}`,
+          txid,
+          item: marketDealItem(listing, itemDisplayName, listing.outpoint),
+          status: 'complete',
+        })
+        recordAppActivity({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          kind: 'earned',
+          sats: amounts.sellerSats,
+          method: 'market-sale-proceeds',
+          note: 'Market sale proceeds',
+          txid,
+        })
+      }
       scheduleHistoryBackupPush('market-purchase')
       mark('done status=broadcast')
       return {
@@ -1757,17 +1804,19 @@ export async function handleInboundMarketSettlementWire(args: {
     if (listing) {
       const proceeds = calculateMarketSettlement(listing.priceSats).sellerSats
       const soldItem = getResolvedInscription(listing.outpoint)
+      const soldName =
+        (listing as MarketListingAdvert & { sym?: string | null }).sym?.trim() ||
+        soldItem?.name?.trim() ||
+        'Market item'
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
         sats: 1,
         method: 'market-sale',
-        note: 'Sold market collectable',
+        note: `Sold ${soldName}`,
         txid: args.wire.txid,
         item: {
-          name: soldItem?.name?.trim() || 'Market collectable',
-          origin: listing.origin,
-          outpoint: listing.outpoint,
+          ...marketDealItem(listing, soldName, listing.outpoint),
           ...(soldItem?.app ? { app: soldItem.app } : {}),
         },
         status: 'complete',

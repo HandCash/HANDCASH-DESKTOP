@@ -21,6 +21,7 @@ function resolvePreview(
   hints?: {
     itemName?: string
     itemImageUrl?: string
+    itemIcon?: string
     previewKind?: 'token' | 'collectable'
   },
 ): Preview | null {
@@ -48,15 +49,20 @@ function resolvePreview(
   if (token) {
     return {
       name: token.sym || 'Token',
-      imageUrl: token.iconUrl || getTokenIconDataUrl(token.icon),
+      imageUrl:
+        token.iconUrl ||
+        getTokenIconDataUrl(token.icon) ||
+        hints?.itemImageUrl ||
+        (hints?.itemIcon ? getTokenIconDataUrl(hints.itemIcon) : undefined),
       kind: 'token',
       subtitle: 'Token',
     }
   }
   if (hints?.itemName) {
+    const iconUrl = hints.itemIcon ? getTokenIconDataUrl(hints.itemIcon) : undefined
     return {
       name: hints.itemName,
-      imageUrl: hints.itemImageUrl,
+      imageUrl: hints.itemImageUrl || iconUrl,
       kind: hints.previewKind ?? (id ? 'token' : 'collectable'),
       subtitle: hints.previewKind === 'token' ? 'Token' : 'Collectable',
     }
@@ -69,12 +75,14 @@ export function PermissionItemPreview({
   tokenId,
   itemName,
   itemImageUrl,
+  itemIcon,
   previewKind,
 }: {
   outpoint?: string
   tokenId?: string
   itemName?: string
   itemImageUrl?: string
+  itemIcon?: string
   previewKind?: 'token' | 'collectable'
 }) {
   const [item, setItem] = useState<Preview | null>(null)
@@ -84,10 +92,11 @@ export function PermissionItemPreview({
       resolvePreview(outpoint, tokenId, {
         itemName,
         itemImageUrl,
+        itemIcon,
         previewKind,
       }),
     )
-  }, [outpoint, tokenId, itemName, itemImageUrl, previewKind])
+  }, [outpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind])
 
   if (!item) return null
   const Fallback = item.kind === 'token' ? InventoryIcon : CollectablesIcon

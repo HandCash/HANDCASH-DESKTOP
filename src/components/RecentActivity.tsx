@@ -17,6 +17,7 @@ import {
   AppsIcon,
   CancelListingIcon,
   CollectablesIcon,
+  InventoryIcon,
   FilterIcon,
   FriendsIcon,
   ListingIcon,
@@ -434,13 +435,21 @@ export function HistoryIconCluster({
             decoding="async"
             fallback={
               <span className="history-item-thumb-icon">
-                <CollectablesIcon size={18} />
+                {isTokenActivity(entry) ? (
+                  <InventoryIcon size={18} />
+                ) : (
+                  <CollectablesIcon size={18} />
+                )}
               </span>
             }
           />
         ) : item || listing || cancelling ? (
           <span className="history-item-thumb-icon">
-            <CollectablesIcon size={18} />
+            {isTokenActivity(entry) ? (
+              <InventoryIcon size={18} />
+            ) : (
+              <CollectablesIcon size={18} />
+            )}
           </span>
         ) : (
           <img
