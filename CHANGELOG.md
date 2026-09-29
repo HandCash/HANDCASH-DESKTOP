@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.355] - 2026-09-29
+
+### Fixed
+
+- Collect no longer keeps a card the basket has stopped listing forever. The
+  short-page guard (there so a half-restored database cannot wipe the grid)
+  treated the cache as the truth whenever the basket returned fewer rows than
+  cached, so one stale card made every later read "short" and the card never
+  left — the log showed `kept 21 cached item(s) while basket listed 20` on
+  every pass. A card omitted from three consecutive complete basket reads
+  spanning five minutes, and absent from the address scan, is now retired.
+  Empty pages, truncated pages, seeded tips and protected tips are never
+  judged.
+- A basket read deferred because chain ingest held the wallet now runs once
+  the wallet goes idle instead of quietly serving the cache. Ingest asked for
+  the list while it still held the region, so its own request always deferred
+  and the grid only reconciled on the next visit or five-minute poll.
+- Returning to Collect within 30 seconds of a real basket answer reuses it
+  instead of reading `1sat` and `bsv21` again.
+
 ## [1.3.354] - 2026-09-29
 
 ### Changed

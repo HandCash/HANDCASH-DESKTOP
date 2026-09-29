@@ -261,6 +261,74 @@ describe('collectables across a cold open', () => {
     expect(ops).toHaveLength(3)
   })
 
+  it('retires a card the basket keeps omitting, but only after the trend is clear', async () => {
+    vi.useFakeTimers()
+    try {
+      const ghost = `${'ef'.repeat(32)}.0`
+      seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(ghost, 'Ghost Card')])
+      recomposeActive = false
+      // The basket answers the same, complete, page every time: one card.
+      active.wallet.listOutputs.mockResolvedValue({
+        outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
+        totalOutputs: 1,
+      })
+      const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+      // Two reads a minute apart: the guard keeps the omitted card.
+      await listCollectables(active as never)
+      expect(getCachedCollectables().map((c) => c.outpoint)).toEqual(
+        expect.arrayContaining([TIP, ghost]),
+      )
+      await vi.advanceTimersByTimeAsync(60_000)
+      await listCollectables(active as never)
+      expect(getCachedCollectables()).toHaveLength(2)
+
+      // A third read, once five minutes have passed, retires it.
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      await listCollectables(active as never)
+      expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
+      expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never retires a card from an empty page, however often it repeats', async () => {
+    vi.useFakeTimers()
+    try {
+      seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(`${'ef'.repeat(32)}.0`, 'Kept')])
+      recomposeActive = false
+      active.wallet.listOutputs.mockResolvedValue({ outputs: [], totalOutputs: 0 })
+      const { listCollectables, getCachedCollectables } = await import('./collectables')
+      for (let i = 0; i < 4; i++) {
+        await listCollectables(active as never)
+        await vi.advanceTimersByTimeAsync(3 * 60_000)
+      }
+      expect(getCachedCollectables()).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runs a read deferred by chain ingest once the wallet goes idle', async () => {
+    seedDurableList(IDENTITY)
+    recomposeActive = false
+    const { runChainIngest } = await import('./walletCoordinator')
+    const { listCollectables } = await import('./collectables')
+    active.wallet.listOutputs.mockClear()
+
+    await runChainIngest(async () => {
+      // Ingest asks for the list while it still holds the region.
+      await listCollectables(active as never)
+      expect(active.wallet.listOutputs).not.toHaveBeenCalled()
+    })
+
+    // Region released → the one coalesced follow-up reads the basket.
+    await vi.waitFor(() => expect(active.wallet.listOutputs).toHaveBeenCalled(), {
+      timeout: 5_000,
+    })
+  }, 15_000)
+
   it('keeps a named card when the sync page omits remittance names', async () => {
     seedDurableList(IDENTITY)
     recomposeActive = false

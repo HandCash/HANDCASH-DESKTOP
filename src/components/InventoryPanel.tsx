@@ -23,6 +23,7 @@ import {
   areCollectablesHydrated,
   getCollectablePageStatus,
   getCachedCollectables,
+  getCollectablesLastListedAt,
   listCollectables,
   loadMoreCollectables,
   subscribeCollectables,
@@ -95,6 +96,8 @@ import { useWalletActionDock } from './WalletActionDock'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
+/** A basket answer this recent is reused on a tab visit instead of re-read. */
+const INVENTORY_VISIT_FRESH_MS = 30_000
 
 function SelectionCheckbox({
   checked,
@@ -713,6 +716,18 @@ export function InventoryPanel() {
         await import('../wallet/walletCoordinator')
       if (shouldYieldChainIngestToSpend() || getSpendPriorityDepth() > 0) {
         console.info(`[collectables] deferring refresh (${reason}) — send waiting`)
+        return
+      }
+      // Flipping back to this tab seconds after the basket answered is not new
+      // information; ingest, sends and receives already relist on their own.
+      const sinceListed = Date.now() - getCollectablesLastListedAt()
+      if (reason === 'ownership' && sinceListed < INVENTORY_VISIT_FRESH_MS) {
+        console.info(
+          `[collectables] basket read ${Math.round(sinceListed / 1000)}s ago — not re-reading on visit`,
+        )
+        setReady(areCollectablesHydrated())
+        setTokensReady(areFungiblesHydrated())
+        setAwaitingFirst(false)
         return
       }
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0

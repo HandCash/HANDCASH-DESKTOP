@@ -176,7 +176,15 @@ import {
   getSpendPriorityDepth,
   getWalletCoordinatorSnapshot,
   shouldYieldChainIngestToSpend,
+  waitForChainIngestIdle,
+  waitForForegroundSpendIdle,
 } from './walletCoordinator'
+import {
+  BASKET_ABSENCE_MIN_READS,
+  isCompleteBasketPage,
+  judgeBasketAbsence,
+  type BasketAbsence,
+} from './collectableBasketAbsence'
 import {
   getResolvedInscription,
   getResolvedInscriptionByOrigin,
@@ -2606,6 +2614,52 @@ export function resumeCollectableVerifyWalk(): void {
   void proveHeldGenesis(wallet, listInFlight)
 }
 
+/** When the basket last actually answered a first-page read (deferred reads do not count). */
+let lastListedAt = 0
+
+export function getCollectablesLastListedAt(): number {
+  return lastListedAt
+}
+
+/** Longest the wallet may stay busy before a deferred read gives up waiting. */
+const RELIST_IDLE_WAIT_MS = 60_000
+let relistWhenIdle: Promise<void> | null = null
+
+/**
+ * A read deferred because the wallet was busy still owes the panel an answer.
+ * Chain ingest asks for the list while it holds the ingest region, so its own
+ * request always deferred and the basket was only re-read on the next visit or
+ * poll. Wait for the regions to release once, then read — coalesced, so every
+ * deferred caller in the window shares the one follow-up.
+ */
+function relistWhenWalletIdle(): void {
+  if (relistWhenIdle) return
+  const epoch = collectablesAccountEpoch
+  relistWhenIdle = (async () => {
+    try {
+      const deadline = Date.now() + RELIST_IDLE_WAIT_MS
+      await waitForChainIngestIdle(RELIST_IDLE_WAIT_MS)
+      await Promise.race([
+        waitForForegroundSpendIdle(),
+        new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now()))),
+      ])
+      while (
+        (shouldYieldChainIngestToSpend() || getSpendPriorityDepth() > 0) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      if (epoch !== collectablesAccountEpoch) return
+      console.info('[collectables] wallet idle — running the deferred listOutputs')
+      await listCollectables()
+    } catch (err) {
+      console.warn('[collectables] deferred relist skipped', err)
+    } finally {
+      relistWhenIdle = null
+    }
+  })()
+}
+
 /**
  * Every visit to the Collect panel lists the basket, so flipping through the nav
  * bar would otherwise stack identical `listOutputs` queries. Callers all share the
@@ -2648,8 +2702,56 @@ export function loadMoreCollectables(
 }
 
 
+/**
+ * Cards the basket keeps omitting, by outpoint key. Judged with
+ * `judgeBasketAbsence` on every complete short page; cleared whenever a read
+ * lists at least as many rows as the cache holds.
+ */
+const basketAbsence = new Map<string, BasketAbsence>()
+
+/**
+ * Cached cards a complete basket page omitted often enough, and long enough,
+ * to retire. Seeded, protected, sent and address-live cards are never judged.
+ */
+function retireAbsentFromBasket(
+  page: ItemOutput[],
+  seeded: ItemOutput[],
+  live: { at: number; keys: Set<string> } | null,
+  complete: boolean,
+  now: number,
+): Set<string> {
+  const listed = new Set([...page, ...seeded].map((o) => outpointKey(o.outpoint)))
+  const retire = new Set<string>()
+  const stillCached = new Set<string>()
+  for (const held of cachedCollectables) {
+    const key = outpointKey(held.outpoint)
+    stillCached.add(key)
+    if (listed.has(key) || isItemSent(held.outpoint)) {
+      basketAbsence.delete(key)
+      continue
+    }
+    if (!complete) continue
+    if (isProtectedFromGhostDrop(held.outpoint) || live?.keys.has(key)) {
+      basketAbsence.delete(key)
+      continue
+    }
+    const judged = judgeBasketAbsence(basketAbsence.get(key) ?? null, now)
+    basketAbsence.set(key, judged.next)
+    if (judged.retire) retire.add(key)
+  }
+  for (const key of Array.from(basketAbsence.keys())) {
+    if (!stillCached.has(key)) basketAbsence.delete(key)
+  }
+  for (const key of retire) basketAbsence.delete(key)
+  return retire
+}
+
 /** Short/empty basket page: keep painted cards, append newly listed outpoints. */
-function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
+function mergeShortBasketPage(
+  page: ItemOutput[],
+  chain: Chain,
+  retired: ReadonlySet<string> = new Set(),
+): Collectable[] {
   const incoming: Collectable[] = []
   for (const o of page) {
     if (!isListableItem(o)) continue
@@ -2664,6 +2766,7 @@ function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
   const byOp = new Map<string, Collectable>()
   for (const held of cachedCollectables) {
     if (isItemSent(held.outpoint)) continue
+    if (retired.has(outpointKey(held.outpoint))) continue
     byOp.set(normalizeOutpoint(held.outpoint), held)
   }
   for (const item of incoming) {
@@ -2716,6 +2819,7 @@ async function listCollectablesNow(
     console.info(
       `[collectables] deferring listOutputs — wallet busy, using ${cachedCollectables.length} cached item(s)`,
     )
+    relistWhenWalletIdle()
     return getCachedCollectables()
   }
 
@@ -2747,6 +2851,7 @@ async function listCollectablesNow(
     if (epoch !== collectablesAccountEpoch) {
       return getCachedCollectables()
     }
+    if (!append) lastListedAt = Date.now()
     // Recompose / BRC-39 / mobile sync can return 0 or a short page from a
     // temporary or partially restored database. That is not proof of an empty
     // inventory. On a real cold launch this painted 777 durable cards, replaced
@@ -2769,11 +2874,32 @@ async function listCollectablesNow(
       !authoritativeAfterReplace &&
       page.length < cachedCollectables.length
     ) {
-      const seeded = pendingSeededItems(page, Date.now(), wallet.identityKey)
-      const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain)
-      console.info(
-        `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
+      const now = Date.now()
+      const seeded = pendingSeededItems(page, now, wallet.identityKey)
+      // A complete page that is merely smaller than the cache is the basket
+      // telling the truth about one card, read after read. Let that converge.
+      const retired = retireAbsentFromBasket(
+        page,
+        seeded,
+        listedOutputTotal > 10_000 ? cachedLiveOneSats : resolveLiveOneSatKeys(wallet),
+        isCompleteBasketPage({
+          offset: pageOffset,
+          pageLength: page.length,
+          pageLimit: LIST_PAGE_SIZE,
+        }),
+        now,
       )
+      const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain, retired)
+      if (retired.size > 0) {
+        console.info(
+          `[collectables] retired ${retired.size} card(s) absent from ${BASKET_ABSENCE_MIN_READS}+ complete basket reads`,
+          Array.from(retired),
+        )
+      } else {
+        console.info(
+          `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
+        )
+      }
       if (page.length > 0) {
         const byOp = new Map(
           lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
@@ -2787,6 +2913,8 @@ async function listCollectablesNow(
       setCollectablesCache(merged, { announceArrivals, forEpoch: epoch })
       return getCachedCollectables()
     }
+    // The basket answered for every cached card; absence streaks start over.
+    if (!append) basketAbsence.clear()
     listedOutputTotal = inferCollectableOutputTotal({
       offset: pageOffset,
       pageLength: result.outputs?.length ?? 0,
