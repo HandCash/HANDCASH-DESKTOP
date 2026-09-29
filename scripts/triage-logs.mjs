@@ -249,6 +249,7 @@ function sessionFacts(header, events) {
   const nftImport = nftImportFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
   const appFlow = appFlowFacts(events)
+  const toolboxSteps = toolboxStepFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const bounceRefunds = events.flatMap((e) => {
     const m = BOUNCE_REFUND_RE.exec(e.text)
@@ -297,6 +298,9 @@ function sessionFacts(header, events) {
     // step. A page that only returns when the user re-opens the browser
     // shows up here as a page gap, never as wallet time.
     appFlow,
+    // Wallet Toolbox steps inside createAction / signAction that ran past
+    // 250ms (`[toolbox] <step> done <N>ms`), per step and page visibility.
+    toolboxSteps,
     listingPhases,
     bounceRefundMs: bounceRefunds,
     // React list-key collisions: which key, which component's list.
@@ -1142,7 +1146,109 @@ function listingPhaseFacts(events) {
   return runs
 }
 
+const LIFECYCLE_RE = /^\[lifecycle\] (hidden|visible)$/
+const PHASE_MS_RE = /(\w+) (\d+)ms/g
+
+/**
+ * Page visibility over `[from, to]`: `visible` / `hidden` when it held the
+ * whole window, `mixed` when it flipped inside it. Android runs a hidden
+ * WebView on a background-priority CPU budget, so the same work is slower —
+ * comparing the buckets says how much of a slow step is the platform.
+ */
+function visibilityTimeline(events) {
+  const flips = []
+  const seen = new Set()
+  for (const e of events) {
+    const m = LIFECYCLE_RE.exec(e.text)
+    if (!m || seen.has(`${e.at}|${m[1]}`)) continue
+    seen.add(`${e.at}|${m[1]}`)
+    flips.push({ at: e.at, hidden: m[1] === 'hidden' })
+  }
+  flips.sort((a, b) => a.at - b.at)
+  const hiddenAt = (at) => {
+    let hidden = false
+    for (const f of flips) {
+      if (f.at > at) break
+      hidden = f.hidden
+    }
+    return hidden
+  }
+  return (from, to) => {
+    const start = hiddenAt(from)
+    const flipped = flips.some((f) => f.at > from && f.at <= to && f.hidden !== start)
+    if (flipped) return 'mixed'
+    return start ? 'hidden' : 'visible'
+  }
+}
+
+function medianOf(values) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]
+}
+
+/** Work and phase medians per `<method> <visibility>` for the answered actions. */
+function workByVisibility(steps) {
+  const buckets = {}
+  for (const s of steps) {
+    if (!s.ok || s.workMs < 50) continue
+    const b = (buckets[`${s.method} ${s.visibility}`] ??= { steps: 0, work: [], phases: {} })
+    b.steps += 1
+    b.work.push(s.workMs)
+    for (const m of (s.phases ?? '').matchAll(PHASE_MS_RE)) {
+      ;(b.phases[m[1]] ??= []).push(Number(m[2]))
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(buckets).map(([key, b]) => [
+      key,
+      {
+        steps: b.steps,
+        medianWorkMs: medianOf(b.work),
+        worstWorkMs: Math.max(...b.work),
+        medianPhaseMs: Object.fromEntries(
+          Object.entries(b.phases).map(([phase, ms]) => [phase, medianOf(ms)]),
+        ),
+      },
+    ]),
+  )
+}
+
+const TOOLBOX_STEP_RE = /^\[toolbox\] (\S+) done (\d+)ms(?: (\w+))?$/
+
+function toolboxStepFacts(events) {
+  const visibilityOver = visibilityTimeline(events)
+  const seen = new Set()
+  const steps = new Map()
+  for (const e of events) {
+    const m = TOOLBOX_STEP_RE.exec(e.text)
+    if (!m || seen.has(`${e.at}|${e.text}`)) continue
+    seen.add(`${e.at}|${e.text}`)
+    const ms = Number(m[2])
+    const visibility = visibilityOver(e.at - ms, e.at)
+    const row = steps.get(m[1]) ?? steps.set(m[1], { step: m[1], failed: 0, runs: {} }).get(m[1])
+    if (m[3]) row.failed += 1
+    ;(row.runs[visibility] ??= []).push(ms)
+  }
+  return [...steps.values()]
+    .map(({ step, failed, runs }) => {
+      const all = Object.values(runs).flat()
+      return {
+        step,
+        runs: all.length,
+        failed,
+        totalMs: all.reduce((a, ms) => a + ms, 0),
+        worstMs: Math.max(...all),
+        medianMsByVisibility: Object.fromEntries(
+          Object.entries(runs).map(([visibility, ms]) => [visibility, medianOf(ms)]),
+        ),
+      }
+    })
+    .sort((a, b) => b.totalMs - a.totalMs)
+}
+
 function appFlowFacts(events) {
+  const visibilityOver = visibilityTimeline(events)
   const steps = []
   // Replies the wallet refused, as the app saw them: method, code, and the
   // description the wallet attached. Grouped so the same refusal repeated by
@@ -1194,8 +1300,12 @@ function appFlowFacts(events) {
       pageGapMs: gap ? Number(gap[1]) : null,
       origin: gap ? gap[2] : null,
       phases: phaseTail || null,
+      visibility: visibilityOver(e.at - Number(m[3]), e.at),
     })
   }
+  const unique = steps.filter(
+    (s, i, all) => all.findIndex((o) => o.at === s.at && o.method === s.method) === i,
+  )
   const gaps = steps.filter((s) => s.pageGapMs != null)
   const stalled = gaps.filter((s) => s.pageGapMs >= PAGE_GAP_STALL_MS)
   const byOrigin = new Map()
@@ -1219,9 +1329,14 @@ function appFlowFacts(events) {
       .sort((a, b) => b.workMs - a.workMs)
       .slice(0, 5)
       .map(({ at, ...s }) => s),
-    actions: steps
-      .filter((s, i, all) => all.findIndex((o) => o.at === s.at && o.method === s.method) === i)
-      .map(({ method, ok, workMs, phases }) => ({ method, ok, workMs, phases })),
+    actions: unique.map(({ method, ok, workMs, phases, visibility }) => ({
+      method,
+      ok,
+      workMs,
+      phases,
+      visibility,
+    })),
+    workByVisibility: workByVisibility(unique),
     refusals: [...refusals.values()]
       .sort((a, b) => b.lastAt - a.lastAt)
       .slice(0, 12)
@@ -1496,6 +1611,26 @@ function forensicQuestions(latest) {
               flow_ran_smoothly:
                 'No step has a page gap over 20s, approvals are short, and work is under a few seconds.',
               unclear: 'The steps do not show where the time went.',
+            },
+          },
+          slow_signing_owner: {
+            type: 'choice',
+            instructions:
+              'Where does signing time go? `latest.appFlow.workByVisibility` is keyed `<method> <visibility>`, where visibility is the page state over the step (`visible`, `hidden` — the phone backgrounded the WebView the whole time — or `mixed`); each row gives the median wallet work and median of each phase: `preflight` is the pre-consent balance read, `spend` is funding + Toolbox createAction + signing, `ingest` / `seal` are internalize storage. `latest.toolboxSteps` splits Toolbox work into its own steps (`create_action.storage_plan` coin selection in IndexedDB, `create_action.complete_signing` ECDSA, `create_action.verify_unlock_scripts` script checks, `create_action.process` storage commit, `create_action.merge_result_beef` / `verify_result_beef` the session BEEF) with medians per visibility; it is empty on builds that predate that log line. Which owns the time?',
+            criteria: {
+              balance_read:
+                '`preflight` is a large share of work (around 1.5s or more): the balance read ran into its budget.',
+              toolbox_storage:
+                'The heaviest `toolboxSteps` rows are `storage_plan` or `process`: IndexedDB work inside the Toolbox, not cryptography.',
+              session_beef:
+                'The heaviest `toolboxSteps` rows are `merge_result_beef` or `verify_result_beef`: the in-memory session BEEF has grown large.',
+              cryptography:
+                'The heaviest `toolboxSteps` rows are `complete_signing` or `verify_unlock_scripts`: signature math dominates.',
+              background_penalty:
+                'The same phases are much slower in `hidden` than in `visible`: Android deprioritised the backgrounded WebView, and the fix is less work per step rather than a different step.',
+              need_toolbox_steps:
+                '`spend` dominates but `toolboxSteps` is empty: the build does not log Toolbox steps yet, so the owner inside createAction is unknown.',
+              unclear: 'The phases do not show where signing time went.',
             },
           },
           ...(flow.refusals.length > 0
@@ -1899,7 +2034,24 @@ function report(state, answers) {
         `  slow ${s.method} · wallet work ${s.workMs}ms · approval ${s.approvalMs}ms · ${s.phases ?? s.origin ?? '?'}`,
       )
     }
+    for (const [key, b] of Object.entries(flow.workByVisibility ?? {})) {
+      const phases = Object.entries(b.medianPhaseMs)
+        .map(([phase, ms]) => `${phase} ${ms}ms`)
+        .join(' · ')
+      console.log(
+        `  ${key.padEnd(25)} ${b.steps} step(s) · median work ${b.medianWorkMs}ms · worst ${b.worstWorkMs}ms · ${phases}`,
+      )
+    }
+    for (const t of latest.toolboxSteps ?? []) {
+      const medians = Object.entries(t.medianMsByVisibility)
+        .map(([visibility, ms]) => `${visibility} ${ms}ms`)
+        .join(' · ')
+      console.log(
+        `  toolbox ${t.step.padEnd(40)} ${t.runs} run(s) · total ${t.totalMs}ms · worst ${t.worstMs}ms · median ${medians}${t.failed ? ` · ${t.failed} failed` : ''}`,
+      )
+    }
     if (answers.app_flow_stall) choiceBlock('Who held the flow up', answers.app_flow_stall)
+    if (answers.slow_signing_owner) choiceBlock('Signing time owner', answers.slow_signing_owner)
     if (answers.app_flow_refusal) choiceBlock('Refusal to fix first', answers.app_flow_refusal)
   }
 

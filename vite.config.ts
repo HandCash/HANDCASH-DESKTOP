@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Rollup } from 'vite'
 import react from '@vitejs/plugin-react'
 import { aeonUiOptimizeDeps, aeonUiViteAliases } from 'aeon-ui-engine/vite'
 import fs from 'node:fs'
@@ -8,10 +8,20 @@ const pkg = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
 ) as { version: string }
 
+/**
+ * `@bsv/verifast` glue (page and worker) loads `bdk-core.wasm` from its own
+ * chunk directory by that exact name, so that one asset keeps it unhashed.
+ */
+const assetFileNames = (asset: Rollup.PreRenderedAsset): string =>
+  asset.names.includes('bdk-core.wasm')
+    ? 'assets/[name][extname]'
+    : 'assets/[name]-[hash][extname]'
+
 export default defineConfig({
   plugins: [react()],
   worker: {
     format: 'es',
+    rollupOptions: { output: { assetFileNames } },
   },
   base: './',
   define: {
@@ -42,11 +52,13 @@ export default defineConfig({
       'buffer',
       'events',
     ],
+    exclude: [...(aeonUiOptimizeDeps().exclude ?? []), '@bsv/verifast'],
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
     target: 'es2022',
+    rollupOptions: { output: { assetFileNames } },
   },
   server: {
     port: 5173,

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.372] - 2026-09-29
+
+### Changed
+
+- Signing and script checks run on `@bsv/verifast` (libsecp256k1 + the BSV BDK script engine in WebAssembly) once it has loaded: about 8× faster to sign and 12× faster to verify than the pure-JS SDK in Chromium. `cryptoBackend.ts` registers it as the SDK's backend (P2PKH signing, BRC-42 derivation) and hands it to the Toolbox as `scriptVerifier`. Until the module is warm the JS path runs; once selected, its verdict is final. CSP allows `'wasm-unsafe-eval'` (WebAssembly compilation only).
+- App `createAction` / `signAction` read the balance once before consent. Auto-approved payments used to read it a second time back to back, and each read may wait out its 1.5s budget — about 1.8s median preflight while the phone had HandCash in the background.
+
+### Added
+
+- Slow Wallet Toolbox steps log as `[toolbox] <step> done <N>ms` (`toolboxTelemetry.ts`). Triage splits app actions by method and page visibility (`workByVisibility`), summarises Toolbox steps, and asks Jev which step owns signing time.
+
 ## [1.3.371] - 2026-09-29
 
 ### Fixed

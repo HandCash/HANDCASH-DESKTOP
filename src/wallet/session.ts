@@ -5,6 +5,8 @@ import { wrapFindChainTipHeader } from './tipHeaderFailover'
 import { installRawTxFallback } from './rawTxFallback'
 import { installArcadeV2Services } from './arcadeV2'
 import { installInternalizeMinerDeferral } from './internalizeMinerDeferral'
+import { walletCryptoBackend } from './cryptoBackend'
+import { traceSlowToolboxSteps } from './toolboxTelemetry'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -379,7 +381,9 @@ export async function bootWallet(args: {
       handle: args.handle,
       accountIndex,
     }),
+    scriptVerifier: walletCryptoBackend(args.chain),
   })
+  traceSlowToolboxSteps(setup.wallet)
 
   installFallbackChainTracker(setup.services as Services, args.chain)
   // Arcade V2: POST /tx success completes the send. No SSE / callback webhook.

@@ -25,7 +25,6 @@ import {
   isBsv21ReceiveArgs,
   isItemBasket,
   isItemReceiveArgs,
-  isItemSpendArgs,
   isTokenViewBasket,
   p1SatSpendIds,
   prepareItemBasketArgs,
@@ -96,7 +95,6 @@ import {
   runExclusiveSpend,
 } from './spendGuard'
 import { spendBlockedMessage } from './walletCoordinator'
-import { canAutoProcessPayment } from './autoPay'
 import { withImmediateAppBroadcast } from './appCreateAction'
 import { retireCreateActionSpentElsewhere } from './createActionInputFate'
 import { funnelAppSignedCheque } from './appSignedCheque'
@@ -990,20 +988,14 @@ async function handleBrc100RequestInner(
     if (method === 'createAction' || method === 'signAction') {
       try {
         assertOnlineForPayment()
-        // Local toolbox / history backup is authoritative — no chain heal before
-        // pay. Still refuse auto-pay when local balance cannot cover the ask.
+        // Local toolbox / history backup is authoritative — no chain heal before pay.
         const amountSats = extractSatsFromArgs(method, args)
         // Refuse impossible spends before consent so the app receives a
         // structured response instead of waiting through an approval flow for
-        // a transaction the wallet cannot fund.
+        // a transaction the wallet cannot fund. This is the only pre-consent
+        // read: the spend region re-reads (and promotes change) under the lock,
+        // and each read may wait out the full balance-read budget.
         await assertBrcActionFundsAvailable(amountSats)
-        const silentAutoPay =
-          !isItemSpendArgs(method, args) &&
-          !isBsv21IdentityMintArgs(method, args) &&
-          canAutoProcessPayment(normalizeOrigin(originator), method, amountSats)
-        if (silentAutoPay) {
-          await prepareBrcActionSpend(method, args)
-        }
       } catch (err) {
         const mapped = brcSpendErrorCode(err)
         return {
