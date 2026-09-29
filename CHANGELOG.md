@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.351] - 2026-09-29
+
+### Changed
+
+- The BRC wallet feature map now leads with the path to hand an integrator:
+  auth, payments, items, and plain BSV-21, plus ordinary signing. Certificates,
+  identity discovery, and key-linkage reveals stay on the map as forwarded and
+  unproven, and cosigned token tips are called out as not that path.
+
 ## [1.3.350] - 2026-09-29
 
 ### Added

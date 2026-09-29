@@ -1,9 +1,9 @@
 ---
 title: "Feature map: Connect to BRC wallet"
-description: "Every Connect and Items feature, the BRC-100 call that does the same job against the HandCash BRC wallet, and where the two differ"
+description: "The BRC wallet path to integrate today — auth, payments, items, and plain BSV-21 — and the Connect feature each call replaces"
 ---
 
-Beta — BRC wallet only. This page maps features, not payloads. Request and response shapes follow [BRC-100](https://brc.dev/100); the HandCash-specific guidance for each row is on the linked task page.
+Beta — BRC wallet only. Integrate the four sections under **Ship this**. The tables below them are the full Connect map, including calls this release forwards but has not proven. Request and response shapes follow [BRC-100](https://brc.dev/100).
 
 ## How to read this page
 
@@ -22,6 +22,23 @@ const wallet = new WalletClient('auto') // finds HandCash Desktop on loopback
 ```
 
 `WalletClient` already implements the BRC-100 method names below. There is no HandCash SDK for the BRC wallet, and the same code runs against any conforming wallet.
+
+## Ship this
+
+Hand these four to a developer integrating today. Each one has HandCash behavior in front of the wallet call: an origin gate, a prompt, a scope check, or a funds preflight. Desktop answers on `http://127.0.0.1:3321`.
+
+| | Call | Stop here |
+| --- | --- | --- |
+| Auth | `isAuthenticated`, then `waitForAuthentication` | The origin is the session. There is no `authToken` and no app secret. |
+| Payments | `createAction`, `signAction`, `abortAction`, `internalizeAction`, `listActions`, `listOutputs` on basket `default` | Amounts are satoshis. Auto-pay and the BRC-73 cap cover plain payments only. Retry `CHANGE_CHAINING_REQUIRED`. |
+| Items | `listOutputs` on `p 1sat …`, `createAction` into basket `1sat`, `internalizeAction` with `basket insertion` | Always prompts. The app builds the ordinal script. Reads return only what the user granted. |
+| Plain BSV-21 | `listOutputs` on `p bsv21 …`, `createAction` into basket `bsv21`, `internalizeAction` into `bsv21` | The app builds the BRC-162 script. Change back into `bsv21` is mandatory. Cosigned tips are not this path: the wallet will not cosign, and a plain unlock is refused. |
+
+Ordinary signing rides along with auth when a back end needs proof the wallet holds the key: `getPublicKey`, `createSignature`, `verifySignature`, `encrypt`, `decrypt`, `createHmac`, `verifyHmac`. A `createSignature` whose `protocolID` is `[2, 'wallet identity proof']` is checked against the calling origin. Any other protocol is signed as a normal BRC-42 signature.
+
+Two HandCash conveniences are safe behind a `404` check: `getBalance` (otherwise sum basket `default`) and `getClaimedCloudHandle` (otherwise the identity key).
+
+Leave the rest of this page for later. Certificates, identity discovery, and key-linkage reveals are forwarded to the wallet and have no HandCash proof that a third-party call succeeds. BRC-230 returns `404`. Market, migration, and handle writes return `403` to every other origin.
 
 ## Authentication and identity
 
@@ -78,6 +95,7 @@ Task page: [Collectables](https://docs.handcash.io/brc-wallet/items).
 | No fungible token API in Connect | `wallet.listOutputs({ basket: 'p bsv21 all' })` or `basket: 'p bsv21 id', tags: ['bsv21:<tokenId>']` | Balances are the sum of `amt:` across held tips per token id. There is no per-token balance method; `basket: 'bsv21'` directly returns `400 USE_PBSV21_SCOPE`. |
 | — | `createAction` with a BRC-162 / BSV-21 output, basket `bsv21`, tags `bsv21`, `op:`, `sym:`, `amt:`, `dec:` | Mint and transfer are the same call with different scripts. Amount lives in the lock, the output is 1 satoshi, change back to `bsv21` is mandatory. |
 | — | `internalizeAction` with `basket insertion` into `bsv21` | The named output must be 1 sat, pay the wallet, and decode to the same token id and amount. Every output paying you in a self-send is custody. |
+| — | Cosigned tips | Not the integrator path. The wallet's own send refuses them with `cosigner_required`, and the bridge will not produce the cosigner signature. An app spends one only by supplying that unlock itself. |
 | — | Provenance | BRC-176 walk from tip to a fixed-supply deploy; `issuerAttested` is a Sigma signature check, not a supply audit. |
 
 Task page: [Tokens](https://docs.handcash.io/brc-wallet/tokens).
@@ -89,8 +107,8 @@ Task page: [Tokens](https://docs.handcash.io/brc-wallet/tokens).
 | Not offered by Connect | `wallet.getPublicKey({ protocolID, keyID, counterparty })` | App-scoped derived keys, BRC-42 / BRC-43. |
 | — | `wallet.createSignature`, `wallet.verifySignature` | Prompts once per origin for the protocol. |
 | — | `wallet.encrypt`, `wallet.decrypt`, `wallet.createHmac`, `wallet.verifyHmac` | Data the user can read on any BRC-100 wallet holding the same keys. |
-| — | `acquireCertificate`, `listCertificates`, `proveCertificate`, `relinquishCertificate` | BRC-52 certificates. |
-| — | `discoverByIdentityKey`, `discoverByAttributes`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage` | Identity discovery and selective disclosure. |
+| — | `acquireCertificate`, `listCertificates`, `proveCertificate`, `relinquishCertificate` | On the wire, not proven. Forwarded to the wallet. Do not ship a certificate flow on this release. |
+| — | `discoverByIdentityKey`, `discoverByAttributes`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage` | On the wire, not proven. No HandCash test shows a third-party discover or linkage call succeeding. |
 
 Task page: [Signing and encryption](https://docs.handcash.io/brc-wallet/signing).
 
@@ -130,18 +148,18 @@ Layer 1  BRC-100 core                  28 methods, getVersion reports the interf
 
 ### Layer 1: the core interface
 
-The wallet implements the BRC-100 method set as published, and `getVersion` names the interface it speaks. Nothing HandCash-specific is needed to authenticate, pay, receive, list, sign, encrypt, or hold certificates. `@bsv/sdk` `WalletClient` covers exactly this layer.
+The wallet dispatches the BRC-100 method set as published, and `getVersion` names the interface it speaks. `@bsv/sdk` `WalletClient` covers this layer. Ship the groups marked ready. The others are forwarded and unproven in this release.
 
-| Group | Methods |
-| --- | --- |
-| Discovery | `getVersion`, `getNetwork`, `getHeight`, `getHeaderForHeight` |
-| Session | `isAuthenticated`, `waitForAuthentication` |
-| Transactions | `createAction`, `signAction`, `abortAction`, `listActions`, `internalizeAction` |
-| Outputs | `listOutputs`, `relinquishOutput` |
-| Keys | `getPublicKey`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage` |
-| Crypto | `encrypt`, `decrypt`, `createHmac`, `verifyHmac`, `createSignature`, `verifySignature` |
-| Certificates | `acquireCertificate`, `listCertificates`, `proveCertificate`, `relinquishCertificate` |
-| Identity | `discoverByIdentityKey`, `discoverByAttributes` |
+| Group | Methods | For integrators |
+| --- | --- | --- |
+| Session | `isAuthenticated`, `waitForAuthentication` | Ready |
+| Transactions | `createAction`, `signAction`, `abortAction`, `listActions`, `internalizeAction` | Ready |
+| Outputs | `listOutputs`, `relinquishOutput` | Ready. Reads of items and tokens use the `p` baskets, not the storage basket. |
+| Keys | `getPublicKey` | Ready. `revealCounterpartyKeyLinkage` and `revealSpecificKeyLinkage` are forwarded and unproven. |
+| Crypto | `encrypt`, `decrypt`, `createHmac`, `verifyHmac`, `createSignature`, `verifySignature` | Ready |
+| Chain | `getVersion`, `getNetwork`, `getHeight`, `getHeaderForHeight` | `getVersion` at connect time. The other three are forwarded. |
+| Certificates | `acquireCertificate`, `listCertificates`, `proveCertificate`, `relinquishCertificate` | Not this release |
+| Identity discovery | `discoverByIdentityKey`, `discoverByAttributes` | Not this release |
 
 ### Layer 2: protocols that ride on the core
 
@@ -155,7 +173,7 @@ This is where features live. A payment, a collectable, and a fungible token are 
 | Silent spending cap | BRC-73 | `spendingAuthorization` in your web `manifest.json` |
 | Collectables | 1Sat ordinals, BRC-147 / 164 / 165, BRC-150 provenance | Basket `1sat`, tags `ordinal`, `origin:`, `name:`, `app:`, `collection:`; label `p 1sat input id <key>` |
 | Fungible tokens | BSV-21 with BRC-162 value locks, BRC-176 provenance | Basket `bsv21`, tags `bsv21:`, `amt:`, `op:`, `sym:`, `dec:` |
-| Certificates | BRC-52 | `acquireCertificate` and friends, unchanged |
+| Certificates | BRC-52 | Forwarded, not proven. Leave off the integrator path until a third-party call is shown succeeding. |
 | Catalog and overlay packs | BRC-230 | Not in this release. Shipping on `feature/brc-230-index-expansion`; the methods return `404 INDEX_EXPANSION_UNAVAILABLE` today |
 
 The permission grammar is part of this layer too. `p 1sat collection` and `p bsv21 id` are baskets in the BRC-100 sense — the wallet interprets them as scoped views. Another wallet may use a different grammar, so treat the scope string as a HandCash convention and the underlying `listOutputs` call as portable.
@@ -220,7 +238,7 @@ async function spendableSats(wallet: WalletClient, hasGetBalance: boolean) {
 
 ### The rule for app authors
 
-Write against Layer 1. Choose protocols from Layer 2 by what your product needs, knowing each one is a published BRC any wallet can adopt. Use Layer 3 only when it saves the user a prompt or a round trip, and only behind a check. An app built this way runs on HandCash today and on the next conforming wallet without a rewrite — which is the point of not shipping a HandCash SDK for the BRC wallet.
+Ship auth, payments, items, and plain BSV-21, plus ordinary signing when a back end must check the key. Pick those protocols from Layer 2. Use `getBalance` and `getClaimedCloudHandle` only behind a `404` check. Leave certificates, identity discovery, key-linkage reveals, and BRC-230 off the integration until this repo shows a third-party call succeeding. That is the point of not shipping a HandCash SDK for the BRC wallet: the calls above are BRC-100, and the rest is not ready to wrap.
 
 ## Transport
 
