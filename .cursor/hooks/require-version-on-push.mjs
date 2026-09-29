@@ -33,6 +33,19 @@ function deny() {
   process.exit(0)
 }
 
+function denyTypecheck(output) {
+  const firstError = output.split('\n').find((line) => /error TS\d+/.test(line)) ?? ''
+  process.stdout.write(
+    JSON.stringify({
+      permission: 'deny',
+      user_message: `Push blocked: the UI core does not typecheck. ${firstError}`.trim(),
+      agent_message:
+        `tsc -p tsconfig.json --noEmit failed. The APK bundles without a typecheck and Desktop's release CI fails on exactly this, so 1.3.363 shipped a ReferenceError to the phone. Fix the error, then push. ${firstError}`.trim(),
+    }),
+  )
+  process.exit(0)
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let raw = ''
@@ -105,6 +118,19 @@ try {
   )
 } catch {
   deny()
+}
+
+// Same check Desktop's release CI runs (`build:renderer`). Vite bundles code
+// that does not typecheck, so without this the phone gets a build every
+// installer job refuses.
+try {
+  execFileSync(
+    process.execPath,
+    [path.join(ROOT, 'node_modules/typescript/bin/tsc'), '-p', 'tsconfig.json', '--noEmit'],
+    { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+} catch (err) {
+  denyTypecheck(`${err?.stdout ?? ''}\n${err?.stderr ?? ''}`)
 }
 
 allow()

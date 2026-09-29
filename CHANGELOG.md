@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.365] - 2026-09-29
+
+### Changed
+
+- The push gate (`.cursor/hooks/require-version-on-push.mjs`, `.githooks/pre-push`) runs `tsc -p tsconfig.json --noEmit` after the version check and denies the push with the first error. This is the same check every release job runs; it now happens before the phone gets the build.
+
 ## [1.3.364] - 2026-09-29
 
 ### Fixed
