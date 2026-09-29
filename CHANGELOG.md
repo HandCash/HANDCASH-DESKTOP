@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.349] - 2026-09-29
+
+### Fixed
+
+- Legacy address ingest no longer freezes the window right after the scan line.
+  Classifying the scanned outputs walked every unrecognized one-sat and, once its
+  backoff had expired, rewrote the whole miss map through synchronous storage
+  once per tip. Expired misses are now dropped in memory and written once, and
+  the walk yields back to the UI on the same budget as the rest of ingest.
+  `[chain-ingest] classify done Nms` is logged when that walk exceeds 250ms.
+
 ## [1.3.348] - 2026-09-29
 
 ### Fixed

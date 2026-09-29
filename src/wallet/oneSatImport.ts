@@ -31,13 +31,14 @@ import {
   markOneSatImportFailed,
   releaseOneSatImport,
 } from './oneSatImportGuard'
-import { yieldToUi } from './yieldToUi'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 import { mapPool } from './asyncPool'
 import { stampBrc164Id } from './itemAccess'
 import {
   getResolvedInscription,
   rememberResolvedInscription,
   rememberUnresolved,
+  flushInscriptionMisses,
   shouldResolveInscription,
   RESOLVE_RETRY_MS,
 } from './inscriptionCache'
@@ -1243,6 +1244,10 @@ export async function classifyLegacyUtxos(
   let probeBudget = MAX_TRANSFER_PROBES_PER_PASS
 
   for (const u of candidates) {
+    // The scan result is already logged. This walk is the next thing on the
+    // thread, and it used to run to the end — every one-sat, no await — which
+    // is the freeze that starts the moment the scan line is printed.
+    if (uiBudgetExpired()) await yieldToUi()
     if (claimed.has(outpointKey(u.outpoint))) continue
 
     // HARD RULE: never fund-sweep 1-sat outs.
@@ -1444,6 +1449,10 @@ export async function classifyLegacyUtxos(
     }
     // nonPositive / weird values: ignore (do not sweep)
   }
+
+  // Expired backoffs were dropped in memory during the walk. One write, not
+  // one per tip, and before the caller starts importing.
+  flushInscriptionMisses()
 
   return { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips }
 }

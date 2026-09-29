@@ -246,6 +246,7 @@ function sessionFacts(header, events) {
   const custody = custodyFacts(events)
   const activity = activityFacts(events)
   const ui = uiFacts(events)
+  const nftImport = nftImportFacts(events)
 
   const span =
     events.length > 0
@@ -286,6 +287,9 @@ function sessionFacts(header, events) {
     activity,
     // React list-key collisions: which key, which component's list.
     ui,
+    // 1sat / collectable import: how many tips, what failed, which timed spans
+    // sat next to it. Empty means this window did not import.
+    nftImport,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -765,6 +769,68 @@ function activityFacts(events) {
   }
 }
 
+/**
+ * Spendable balance the wallet last trusted, against coin receives in Activity.
+ * A receive row can land while the output never becomes spendable, so the
+ * history says "Received" and the balance does not move. Read from the same
+ * durable prefs the app writes — not from log lines.
+ */
+function ledgerFacts(prefsPath, now = Date.now()) {
+  const empty = { trustedSats: null, trustedAgeSeconds: null, recentCoinReceives: [] }
+  if (!fs.existsSync(prefsPath)) return empty
+  let prefs
+  try {
+    prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'))
+  } catch {
+    return empty
+  }
+  let trusted = null
+  for (const [key, raw] of Object.entries(prefs)) {
+    if (!key.startsWith('handcash.balance.lastTrusted')) continue
+    try {
+      const row = JSON.parse(raw)
+      if (row && typeof row.sats === 'number' && (trusted == null || row.readAt > trusted.readAt)) {
+        trusted = row
+      }
+    } catch {
+      /* not a snapshot */
+    }
+  }
+  const receives = []
+  for (const [key, raw] of Object.entries(prefs)) {
+    if (!key.includes('appActivity')) continue
+    let decoded
+    try {
+      decoded = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const rows = Array.isArray(decoded) ? decoded : Array.isArray(decoded?.data) ? decoded.data : []
+    for (const row of rows) {
+      if (row?.kind !== 'earned' || row?.method !== 'receive' || !(row.sats > 1)) continue
+      receives.push({
+        sats: row.sats,
+        txid: typeof row.txid === 'string' ? row.txid.slice(0, 12) : null,
+        status: row.status ?? 'settled',
+        ageMinutes: Number.isFinite(row.at) ? Math.round((now - row.at) / 60_000) : null,
+      })
+    }
+  }
+  receives.sort((a, b) => (a.ageMinutes ?? 1e9) - (b.ageMinutes ?? 1e9))
+  const newest = receives[0] ?? null
+  const trustedSats = trusted?.sats ?? null
+  return {
+    trustedSats,
+    trustedAgeSeconds: trusted?.readAt ? Math.round((now - trusted.readAt) / 1000) : null,
+    recentCoinReceives: receives.slice(0, 6),
+    // The newest coin receive is larger than everything the wallet will spend.
+    receivedAboveTrusted:
+      newest && trustedSats != null && newest.ageMinutes != null && newest.ageMinutes <= 180
+        ? Math.max(0, newest.sats - trustedSats)
+        : 0,
+  }
+}
+
 /* ------------------------------------------------------------ ui facts */
 
 const DUPLICATE_KEY_RE = /^Encountered two children with the same key, `%s`\./
@@ -801,6 +867,91 @@ function uiFacts(events) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)
       .map(([component, count]) => ({ component, count })),
+  }
+}
+
+/* ----------------------------------------------------- nft import facts */
+
+const IMPORT_TAG = /^(chain-ingest|1sat|items|collectables|phrase-sweep|bsv21|tip-ingest|ordinal)/
+const IMPORTING_RE = /^\[chain-ingest\] importing (\d+) 1sat tip\(s\) in chunks of (\d+)/
+const IMPORTED_ITEMS_RE = /^\[chain-ingest\] imported (\d+) collectable tip\(s\)/
+const IMPORTED_TOKENS_RE = /^\[chain-ingest\] imported (\d+) BSV-21 tip\(s\)/
+const IMPORT_PARTIAL_RE = /^\[chain-ingest\] 1sat import partial/
+const HELD_ONESAT_RE = /^\[chain-ingest\] holding (\d+) unrecognized one-sat/
+const PHRASE_FAIL_RE = /^\[phrase-sweep\] (tip unreadable|item migrate failed)/
+
+/**
+ * Whether this window imported collectables, and which timed work sat inside
+ * that import. The importer logs counts, not a duration, so a speed verdict
+ * can only come from the `done Nms` spans whose tag is the import itself or
+ * the lookups it performs.
+ */
+function nftImportFacts(events) {
+  let importRuns = 0
+  let tipsQueued = 0
+  let chunkSize = null
+  let collectablesImported = 0
+  let tokensImported = 0
+  let partialChunks = 0
+  let heldUnrecognized = 0
+  let heldUnrecognizedLines = 0
+  let phraseSweepFailures = 0
+  const byLabel = new Map()
+  for (const e of events) {
+    let m = IMPORTING_RE.exec(e.text)
+    if (m) {
+      importRuns += 1
+      tipsQueued += Number(m[1])
+      chunkSize = Number(m[2])
+      continue
+    }
+    m = IMPORTED_ITEMS_RE.exec(e.text)
+    if (m) {
+      collectablesImported += Number(m[1])
+      continue
+    }
+    m = IMPORTED_TOKENS_RE.exec(e.text)
+    if (m) {
+      tokensImported += Number(m[1])
+      continue
+    }
+    if (IMPORT_PARTIAL_RE.test(e.text)) {
+      partialChunks += 1
+      continue
+    }
+    m = HELD_ONESAT_RE.exec(e.text)
+    if (m) {
+      // The same address reports this count on every pass. Keep the peak, not the sum.
+      heldUnrecognized = Math.max(heldUnrecognized, Number(m[1]))
+      heldUnrecognizedLines += 1
+      continue
+    }
+    if (PHRASE_FAIL_RE.test(e.text)) phraseSweepFailures += 1
+    const tag = TAG_RE.exec(e.text)
+    if (!tag || !IMPORT_TAG.test(tag[1])) continue
+    const d = DURATION_RE.exec(tag[2])
+    if (!d) continue
+    const ms = Number(d[2] ?? d[3])
+    if (!Number.isFinite(ms) || ms <= 0) continue
+    const row = byLabel.get(tag[1]) ?? { label: tag[1], runs: 0, totalMs: 0, longestMs: 0 }
+    row.runs += 1
+    row.totalMs += ms
+    row.longestMs = Math.max(row.longestMs, ms)
+    byLabel.set(tag[1], row)
+  }
+  const spans = [...byLabel.values()].sort((a, b) => b.totalMs - a.totalMs).slice(0, 8)
+  return {
+    importRuns,
+    tipsQueued,
+    chunkSize,
+    collectablesImported,
+    tokensImported,
+    partialChunks,
+    heldUnrecognized,
+    heldUnrecognizedLines,
+    phraseSweepFailures,
+    timedSpans: spans,
+    longestSpanMs: spans.reduce((a, s) => Math.max(a, s.longestMs), 0),
   }
 }
 
@@ -1005,6 +1156,54 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const ledger = latest.ledger
+  const ledgerQuestions =
+    ledger && ledger.receivedAboveTrusted > 0
+      ? {
+          balance_gap_cause: {
+            type: 'choice',
+            instructions:
+              'The user received coins and the spendable balance did not rise. `latest.ledger.trustedSats` is the last spendable balance the wallet trusted, `trustedAgeSeconds` how long ago that read was, and `recentCoinReceives` are Activity rows for plain coin receives (sats, txid prefix, age). `receivedAboveTrusted` is how many sats the newest recent receive exceeds the trusted balance by. Activity recording a receive does not credit spendable balance — only an output in local state does.',
+            criteria: {
+              received_not_spendable:
+                '`receivedAboveTrusted` is most of the receive and the trusted read is recent: history shows the coins arrived, spendable local state does not hold them.',
+              trusted_already_includes:
+                '`trustedSats` is at least the newest receive, so the balance did rise and a stale display is the remaining question.',
+              receive_still_pending:
+                'The newest receive row is still `pending`: ingest has not finished, so the balance is waiting on it.',
+              unclear: 'The ledger facts do not say whether the output is missing or the display is stale.',
+            },
+          },
+        }
+      : {}
+
+  const nft = latest.nftImport
+  const nftQuestions = nft
+    ? {
+        nft_import_speedup: {
+          type: 'choice',
+          instructions:
+            'Can the NFT (1sat collectable) import in `latest.nftImport` be sped up, and where? `tipsQueued` / `chunkSize` is how many tips were taken serially in chunks. `collectablesImported` is how many landed. `partialChunks` and `phraseSweepFailures` are retries and unreadable tips. `heldUnrecognized` is the peak count of one-sat outputs the scan decided not to import, and `heldUnrecognizedLines` is how many passes reported that. `timedSpans` are the `done Nms` lines whose tag is the import or a lookup it performs (chain-ingest, 1sat, items, collectables, phrase-sweep, bsv21, tip-ingest); the importer itself does not log a duration, so an import with counts but empty `timedSpans` has no timing evidence. `longestSpanMs` is the slowest of those.',
+          criteria: {
+            no_import_in_window:
+              '`tipsQueued`, `collectablesImported` and `timedSpans` are all empty: this window did not import NFTs, so it cannot say whether import is slow.',
+            need_chunk_timing:
+              'Tips were queued or imported, but `timedSpans` is empty: the log never says how long a chunk took, so changing the importer would be a guess. Time each chunk first.',
+            serial_chunks:
+              '`tipsQueued` is large relative to `chunkSize` and a timed span covers the chunk loop: fewer sequential round trips per chunk would shorten it.',
+            per_tip_lookup:
+              'The long spans are lookups (beef, listOutputs, provenance, content, tip-ingest) rather than the chunk loop: the speedup is fewer lookups per tip, not a bigger chunk.',
+            retrying_failures:
+              '`partialChunks` or `phraseSweepFailures` repeat: time is going into tips that fail and get tried again.',
+            already_fine:
+              'The import is a handful of tips, or the longest related span is under about a second.',
+            skip_the_unrecognized:
+              '`heldUnrecognized` is thousands and `heldUnrecognizedLines` shows that count reported again on later passes: the scan keeps walking one-sat outputs it has already decided not to import. Remembering that decision would shorten the next pass; the tips that did import are not the slow part.',
+          },
+        },
+      }
+    : {}
+
   const bridge = latest.bridge
   const bridgeQuestions =
     bridge && bridge.requests > 0
@@ -1027,6 +1226,8 @@ function forensicQuestions(latest) {
   return {
     ...custodyQuestions,
     ...activityQuestions,
+    ...ledgerQuestions,
+    ...nftQuestions,
     ...bridgeQuestions,
     freeze_owner: {
       type: 'choice',
@@ -1294,6 +1495,40 @@ function report(state, answers) {
     if (answers.phantom_row_cause) choiceBlock('Phantom row cause', answers.phantom_row_cause)
   }
 
+  const led = latest.ledger
+  if (led && (led.recentCoinReceives.length > 0 || led.trustedSats != null)) {
+    console.log('\nLedger (durable prefs, code-counted):')
+    console.log(
+      `  trusted spendable ${led.trustedSats ?? 'unknown'} sats` +
+        (led.trustedAgeSeconds != null ? `, read ${led.trustedAgeSeconds}s ago` : '') +
+        ` · newest receive exceeds it by ${led.receivedAboveTrusted} sats`,
+    )
+    for (const r of led.recentCoinReceives.slice(0, 4)) {
+      console.log(`  receive ${r.sats} sats ${r.status} ${r.txid ?? 'no-txid'} · ${r.ageMinutes}min ago`)
+    }
+    if (answers.balance_gap_cause) choiceBlock('Balance did not rise', answers.balance_gap_cause)
+  }
+
+  const nft = latest.nftImport
+  if (
+    nft &&
+    (nft.tipsQueued || nft.collectablesImported || nft.tokensImported || nft.timedSpans.length || nft.partialChunks || nft.phraseSweepFailures)
+  ) {
+    console.log('\nNFT import (code-counted):')
+    console.log(
+      `  ${nft.importRuns} chunked run(s), ${nft.tipsQueued} tip(s) queued` +
+        (nft.chunkSize ? ` in chunks of ${nft.chunkSize}` : '') +
+        ` · imported ${nft.collectablesImported} collectable(s), ${nft.tokensImported} token(s)`,
+    )
+    console.log(
+      `  partial chunks ${nft.partialChunks} · phrase-sweep failures ${nft.phraseSweepFailures} · unrecognized one-sats held ${nft.heldUnrecognized} (reported ${nft.heldUnrecognizedLines}×)`,
+    )
+    for (const s of nft.timedSpans) {
+      console.log(`  ${s.label.padEnd(22)} ${s.runs} run(s), total ${s.totalMs}ms, longest ${s.longestMs}ms`)
+    }
+    if (answers.nft_import_speedup) choiceBlock('NFT import speed', answers.nft_import_speedup)
+  }
+
   const br = latest.bridge
   if (br && br.requests > 0) {
     console.log('\nBRC-100 bridge (electron main, code-counted):')
@@ -1354,6 +1589,7 @@ if (filePath) {
   if (fs.existsSync(paths.mainLog)) {
     latest.bridge = bridgeFacts(parseElectronLog(fs.readFileSync(paths.mainLog, 'utf8')))
   }
+  latest.ledger = ledgerFacts(paths.prefs)
 } else {
   const bucket = KNOWN_BUCKETS[bucketArg] ?? bucketArg
   // `/all` is what makes "is this new?" answerable, so compare by default.

@@ -395,12 +395,19 @@ export async function ingestLegacyAddressUtxos(
       .map((u) => u.outpoint),
   ])
 
+  const classifyStarted = Date.now()
   let { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips } =
     await classifyLegacyUtxos(scan.utxos, active.chain, opts.knownItems ?? [], {
       fundingOnly,
       knownCollectableOutpoints,
       collectableRemittance: remittanceByOutpoint,
     })
+  const classifyMs = Date.now() - classifyStarted
+  if (classifyMs >= 250) {
+    console.info(
+      `[chain-ingest] classify done ${classifyMs}ms — ${scan.utxos.length} utxos`,
+    )
+  }
 
   const latched = keepCollectablesOutOfTokenRoute(
     oneSats,

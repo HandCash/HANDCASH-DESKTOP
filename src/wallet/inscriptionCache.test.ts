@@ -53,6 +53,27 @@ describe('inscriptionCache', () => {
     expect(reloaded.shouldResolveInscription('aa.0')).toBe(false)
   })
 
+  it('drops a burst of expired misses in one write, not one per tip', async () => {
+    const cache = await import('./inscriptionCache')
+    const at = Date.now()
+    for (let i = 0; i < 400; i += 1) cache.rememberUnresolved(`aa.${i}`, at)
+    const before = store.get('handcash.inscriptionMiss.v1')
+    let writes = 0
+    const original = store.set.bind(store)
+    store.set = (key, value) => {
+      if (key === 'handcash.inscriptionMiss.v1') writes += 1
+      return original(key, value)
+    }
+    for (let i = 0; i < 400; i += 1) {
+      expect(cache.shouldResolveInscription(`aa.${i}`, at + cache.RESOLVE_RETRY_MS)).toBe(true)
+    }
+    expect(writes).toBe(0)
+    cache.flushInscriptionMisses()
+    expect(writes).toBe(1)
+    expect(store.get('handcash.inscriptionMiss.v1')).not.toBe(before)
+    store.set = original
+  })
+
   it('backs off after a miss, then retries once the window passes', async () => {
     const cache = await import('./inscriptionCache')
     const at = Date.now()

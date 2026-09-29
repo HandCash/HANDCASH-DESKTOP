@@ -69,6 +69,35 @@ function persistMisses(map: Map<string, number>): void {
   }
 }
 
+/**
+ * Expired misses are dropped in memory and written once.
+ *
+ * Classifying an address calls {@link shouldResolveInscription} once per
+ * one-sat output. Persisting on each expired miss rewrote the whole backoff
+ * map through synchronous storage — hundreds of times, on the main thread,
+ * immediately after the scan line. One flush after the burst is the same
+ * durable result.
+ */
+let missesDirty = false
+let missFlushScheduled = false
+
+function scheduleMissFlush(): void {
+  missesDirty = true
+  if (missFlushScheduled) return
+  missFlushScheduled = true
+  queueMicrotask(() => {
+    missFlushScheduled = false
+    flushInscriptionMisses()
+  })
+}
+
+/** Write dropped misses now. A no-op when nothing has expired since the last flush. */
+export function flushInscriptionMisses(): void {
+  if (!missesDirty || !misses) return
+  missesDirty = false
+  persistMisses(misses)
+}
+
 function load(): Map<string, ResolvedInscription> {
   if (hits) return hits
   hits = new Map()
@@ -238,7 +267,7 @@ export function shouldResolveInscription(
   if (missed != null && now - missed < retryMs) return false
   if (missed != null) {
     map.delete(outpoint)
-    persistMisses(map)
+    scheduleMissFlush()
   }
   return true
 }
@@ -246,4 +275,5 @@ export function shouldResolveInscription(
 export function resetInscriptionCacheForTests(): void {
   hits = null
   misses = null
+  missesDirty = false
 }
