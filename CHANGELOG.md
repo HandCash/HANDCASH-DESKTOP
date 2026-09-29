@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.361] - 2026-09-29
+
+### Fixed
+
+- A newly minted token keeps its icon. Issuance paints the token from the
+  BRC-162 lock, and that paint was dropping the icon the payload names, so
+  Collectables showed the placeholder. The icon outpoint now rides on the
+  painted token. Bytes already kept as the inscription's item art are used
+  as the token face. A lookup that missed before the transaction was stored
+  no longer hides the body, and a provider 404 on a mint the indexer has not
+  seen yet is not pinned as "this transaction never existed".
+- The in-app browser keeps running while the wallet covers it. Approving a
+  request and staying on the wallet was freezing the page, so the reference
+  app's next transaction (the token mint bound to the icon) did not start
+  until the browser was brought back.
+- The app mark on the left of an Activity row no longer redraws. The badge is
+  16px and was rejecting every favicon that small, then retrying and blanking
+  the mark on a timer.
+
 ## [1.3.360] - 2026-09-29
 
 ### Changed

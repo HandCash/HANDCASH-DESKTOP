@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encodeBsv21Binary } from './token'
+import { encodeBsv21Binary, tokenIdToWire } from './token'
 import {
   classifyOneSatAsBsv21,
   isBsv21OneSatLock,
@@ -90,6 +90,21 @@ describe('classifyOneSatAsBsv21', () => {
       }).toHex(),
     })
     expect(binary.kind === 'bsv21' && binary.encoding).toBe('binary')
+  })
+
+  it('keeps a BRC-162 payload icon on the painted token', () => {
+    const iconTx = 'b30338c15080cc0775c64af3572e156f8ba96037550d0f3466bb9320fe6697e2'
+    const got = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${'aa'.repeat(32)}.0`,
+      lockingScriptHex: encodeBsv21Binary({
+        amount: 1000n,
+        payload: { sym: 'REF', icon: tokenIdToWire(`${iconTx}_1`) },
+        rest: P2PKH,
+      }).toHex(),
+    })
+    expect(got.kind).toBe('bsv21')
+    if (got.kind === 'bsv21') expect(got.payload.icon).toBe(`${iconTx}_1`)
   })
 
   it('does not move an image collectable even with token remittance', () => {

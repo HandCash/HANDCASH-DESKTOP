@@ -465,6 +465,7 @@ async function resolveLocalBeef(
 export async function getLocalTxForTxid(
   wallet: ActiveWallet,
   txid: string,
+  opts?: { ignoreMiss?: boolean },
 ): Promise<Transaction | null> {
   const key = keyOf(txid)
   const startedAt = Date.now()
@@ -473,8 +474,13 @@ export async function getLocalTxForTxid(
   if (held) return held
   const memo = rawTxMemo.get(key)
   if (memo) return Transaction.fromBinary(Array.from(memo))
-  const until = localMissUntil.get(key)
-  if (until != null && Date.now() < until) return null
+  // A display lookup that missed before the transaction was stored must not
+  // hide the body for five minutes. Icon art is one of those lookups: the
+  // inscription exists in toolbox the moment we sign it.
+  if (!opts?.ignoreMiss) {
+    const until = localMissUntil.get(key)
+    if (until != null && Date.now() < until) return null
+  }
   const pending = rawTxInflight.get(key)
   if (pending) return pending
   const run = readToolboxRawTx(wallet, key, startedAt).finally(() => {

@@ -491,6 +491,17 @@ function persistDurableRawTxMiss(txid: string): void {
   }
 }
 
+/** A body we hold, or a miss from the last few seconds. Durable pins are not answers. */
+const UNPINNED_MISS_MS = 15_000
+
+function readUnpinnedRawTx(txid: string): { hex: string | null } | null {
+  const hit = rawTxCache.get(rawTxKey(txid))
+  if (!hit) return null
+  const ttl = hit.hex ? RAW_TX_CACHE_TTL_MS : UNPINNED_MISS_MS
+  if (Date.now() - hit.at >= ttl) return null
+  return { hex: hit.hex }
+}
+
 function readRawTxCache(txid: string): { hex: string | null } | null {
   const key = rawTxKey(txid)
   if (durableRawTxMisses.has(key)) return { hex: null }
@@ -504,13 +515,37 @@ function readRawTxCache(txid: string): { hex: string | null } | null {
   return { hex: hit.hex }
 }
 
-function writeRawTxCache(txid: string, hex: string | null): void {
+function forgetDurableRawTxMiss(txid: string): void {
+  const key = rawTxKey(txid)
+  if (!durableRawTxMisses.delete(key)) return
+  try {
+    durableSetItem(
+      RAW_TX_MISS_KEY,
+      JSON.stringify({ at: Date.now(), txids: [...durableRawTxMisses] }),
+    )
+  } catch {
+    /* the in-memory set already forgot it */
+  }
+}
+
+function writeRawTxCache(
+  txid: string,
+  hex: string | null,
+  pinMiss = true,
+): void {
   if (rawTxCache.size >= RAW_TX_CACHE_MAX) {
     const oldest = rawTxCache.keys().next().value
     if (oldest != null) rawTxCache.delete(oldest)
   }
   rawTxCache.set(rawTxKey(txid), { at: Date.now(), hex })
-  if (hex == null) persistDurableRawTxMiss(txid)
+  if (hex == null) {
+    // A 404 on a transaction this wallet just signed is not "the network
+    // never saw it". Callers that pass pinMiss: false keep the short memory
+    // miss and leave the durable pin alone.
+    if (pinMiss) persistDurableRawTxMiss(txid)
+    return
+  }
+  forgetDurableRawTxMiss(txid)
 }
 
 /**
@@ -541,8 +576,13 @@ export function rememberRawTxMiss(txid: string): void {
   writeRawTxCache(txid, null)
 }
 
-export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null> {
-  const cached = readRawTxCache(txid)
+export async function fetchRawTxHex(
+  txid: string,
+  chain: Chain,
+  opts?: { pinMiss?: boolean },
+): Promise<string | null> {
+  const pinMiss = opts?.pinMiss !== false
+  const cached = pinMiss ? readRawTxCache(txid) : readUnpinnedRawTx(txid)
   if (cached) return cached.hex
   const key = rawTxKey(txid)
   try {
@@ -565,7 +605,7 @@ export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string 
   if (inflight) return inflight
   const request = fetchRawTxHexUncached(txid, chain)
     .then((hex) => {
-      writeRawTxCache(txid, hex)
+      writeRawTxCache(txid, hex, pinMiss)
       return hex
     })
     .finally(() => {

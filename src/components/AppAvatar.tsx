@@ -39,6 +39,10 @@ export function AppAvatar({
 
   const src = !failed && candidates[index] ? candidates[index] : null
   const ready = failed || loaded
+  // The activity subscript is 16px. Favicons of that size are the picture,
+  // not a failure — rejecting them made the badge cycle candidates and
+  // redraw every few seconds.
+  const minEdge = embedded ? 1 : MIN_ICON_EDGE_PX
 
   const advanceOrFail = useCallback(() => {
     setLoaded(false)
@@ -80,10 +84,7 @@ export function AppAvatar({
     const img = imgRef.current
     if (!img || !src || failed) return
     if (img.complete && img.naturalWidth > 0) {
-      if (
-        img.naturalWidth < MIN_ICON_EDGE_PX ||
-        img.naturalHeight < MIN_ICON_EDGE_PX
-      ) {
+      if (img.naturalWidth < minEdge || img.naturalHeight < minEdge) {
         advanceOrFail()
         return
       }
@@ -93,25 +94,27 @@ export function AppAvatar({
     if (img.complete && img.naturalWidth === 0) {
       advanceOrFail()
     }
-  }, [src, index, attempt, failed, advanceOrFail])
+  }, [src, index, attempt, failed, advanceOrFail, minEdge])
 
   // Retry after total failure — favicons often miss on first cold network.
+  // Not on an embedded subscript: restarting blanks a painted mark and the
+  // activity row flickers for as long as the origin has no large favicon.
   useEffect(() => {
-    if (!failed || candidates.length === 0) return
+    if (embedded || !failed || candidates.length === 0) return
     const id = window.setTimeout(restart, RETRY_AFTER_MS)
     return () => window.clearTimeout(id)
-  }, [failed, candidates.length, attempt, restart])
+  }, [embedded, failed, candidates.length, attempt, restart])
 
   // Retry when the app comes back online or the window is focused.
   useEffect(() => {
-    if (!failed || candidates.length === 0) return
+    if (embedded || !failed || candidates.length === 0) return
     window.addEventListener('online', restart)
     window.addEventListener('focus', restart)
     return () => {
       window.removeEventListener('online', restart)
       window.removeEventListener('focus', restart)
     }
-  }, [failed, candidates.length, restart])
+  }, [embedded, failed, candidates.length, restart])
 
   useEffect(() => {
     if (!ready || readySent.current) return
@@ -142,10 +145,7 @@ export function AppAvatar({
           referrerPolicy="no-referrer"
           onLoad={(event) => {
             const image = event.currentTarget
-            if (
-              image.naturalWidth < MIN_ICON_EDGE_PX ||
-              image.naturalHeight < MIN_ICON_EDGE_PX
-            ) {
+            if (image.naturalWidth < minEdge || image.naturalHeight < minEdge) {
               advanceOrFail()
               return
             }

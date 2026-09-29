@@ -11,6 +11,7 @@ import {
   buildBsv21CustomInstructions,
   bsv21Tags,
   decodeBsv21Binary,
+  iconOutpointFromPayload,
   isBsv21Mime,
   parseBsv21Json,
   tokenIdForPayload,
@@ -121,6 +122,7 @@ export function classifyOneSatAsBsv21(
     const op = (args.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
     const tokenId = binary.tokenId ?? (binary.role === 'deploy' ? op : '')
     if (tokenId) {
+      const icon = iconOutpointFromPayload(binary.payload?.icon, tokenId)
       const payload = parseBsv21Json({
         p: 'bsv-20',
         op: binary.role === 'deploy' ? 'deploy+mint' : 'transfer',
@@ -128,6 +130,7 @@ export function classifyOneSatAsBsv21(
         amt: binary.amount.toString(),
         ...(binary.payload?.sym ? { sym: binary.payload.sym } : {}),
         ...(binary.payload?.dec != null ? { dec: String(binary.payload.dec) } : {}),
+        ...(icon ? { icon } : {}),
       })
       if (payload) return { kind: 'bsv21', encoding: 'binary', payload, tokenId }
     }

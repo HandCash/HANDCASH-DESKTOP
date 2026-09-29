@@ -14,6 +14,8 @@ import { normalizeTokenId } from '../types'
 import { parseOrdEnvelope } from '../../ordinalOwnership'
 import { decodeBProtocol } from '../../bProtocol'
 import { imageMimeFor } from '../../inscriptionImage'
+import { base64ToBytes } from '../../base64Binary'
+import { getItemArtDataUrl, getItemArtRecord } from '../../localItemArt'
 import { getTokenIconDataUrl, rememberTokenIcon } from '../icons/cache'
 
 function splitOutpoint(outpoint: string): { txid: string; vout: number } | null {
@@ -87,18 +89,37 @@ function txFromBeef(
 }
 
 /**
- * The transaction a token's icon or deploy metadata lives on: held locally,
- * or fetched by txid and verified to hash to that txid. A provider miss is
- * remembered by `fetchRawTxHex`, so a token whose transaction nobody has does
- * not re-ask on every paint.
+ * Picture already kept when this wallet minted or received the inscription.
+ * Token icons and item art are the same bytes in two caches; a fresh mint
+ * stores the JPEG as item art and the token only names that outpoint.
+ */
+function iconFromItemArt(outpoint: string): string | undefined {
+  const rec = getItemArtRecord(outpoint)
+  if (!rec) return getItemArtDataUrl(outpoint)
+  try {
+    rememberTokenIcon(outpoint, base64ToBytes(rec.b64), rec.mime)
+  } catch {
+    return getItemArtDataUrl(outpoint)
+  }
+  return getTokenIconDataUrl(outpoint) ?? getItemArtDataUrl(outpoint)
+}
+
+/**
+ * The transaction a token's icon or deploy metadata lives on.
+ *
+ * Held locally first, including past a display-lookup miss: the inscription
+ * is in toolbox the moment we sign it, and that miss used to hide it for five
+ * minutes. Then the raw transaction by txid. A provider 404 is not pinned —
+ * a mint the indexer has not seen yet must stay retryable, and a pin from an
+ * earlier attempt must not keep answering "never existed".
  */
 export async function tokenTxBody(wallet: ActiveWallet, txid: string): Promise<Transaction | null> {
   const { getLocalTxForTxid } = await import('../../beefCache')
-  const held = await getLocalTxForTxid(wallet, txid)
+  const held = await getLocalTxForTxid(wallet, txid, { ignoreMiss: true })
   if (held) return held
   try {
     const { fetchRawTxHex } = await import('../../oneSatImport')
-    const hex = await fetchRawTxHex(txid, wallet.chain)
+    const hex = await fetchRawTxHex(txid, wallet.chain, { pinMiss: false })
     if (!hex) return null
     const tx = Transaction.fromHex(hex)
     if (tx.id('hex') !== txid.toLowerCase()) {
@@ -116,7 +137,7 @@ export async function resolveTokenIconDataUrl(
   wallet?: ActiveWallet | null,
 ): Promise<string | undefined> {
   if (!iconOutpoint?.trim()) return undefined
-  const cached = getTokenIconDataUrl(iconOutpoint)
+  const cached = getTokenIconDataUrl(iconOutpoint) ?? iconFromItemArt(iconOutpoint)
   if (cached) return cached
   if (!wallet) return undefined
   const parts = splitOutpoint(iconOutpoint)
