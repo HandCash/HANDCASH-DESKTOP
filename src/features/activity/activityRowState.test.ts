@@ -6,6 +6,7 @@ import {
   activityRowStateLabel,
   liveActionEntry,
   liveActionForEntry,
+  liveActionIsFeedRow,
   liveActionTitle,
   mergeLiveActions,
 } from './activityRowState'
@@ -65,6 +66,12 @@ describe('activityRowState', () => {
         live: live({ face: 'broadcasting', txid }),
       })
     ).toBe('unconfirmed')
+    // No durable row yet: the synthesized live row is not a record. It keeps
+    // the phase until the record lands instead of flashing "Unconfirmed".
+    const action = live({ face: 'broadcasting', txid })
+    expect(activityRowState({ entry: liveActionEntry(action), live: action })).toBe('broadcasting')
+    const settling = live({ face: 'settling', txid })
+    expect(activityRowState({ entry: liveActionEntry(settling), live: settling })).toBe('settling')
     // Arcade rejected it afterwards: the record's verdict paints the row.
     expect(
       activityRowState({
@@ -118,23 +125,37 @@ describe('activityRowState', () => {
     expect(liveActionForEntry(entry({ at: 5, sats: 0 }), actions)).toBeNull()
   })
 
-  it('shows an unrecorded live action as its own row, and drops it once a row claims it', () => {
-    const approving = live({ id: 'action:1', description: 'Mint Fox #1' })
+  it('shows an approved, unrecorded live action as its own row, and drops it once a row claims it', () => {
+    const preparing = live({ id: 'action:1', face: 'preparing', description: 'Mint Fox #1' })
     const rows = [entry({ id: 'row-a', status: 'complete', txid: 'ab'.repeat(32) })]
-    const merged = mergeLiveActions(rows, [approving])
+    const merged = mergeLiveActions(rows, [preparing])
     expect(merged.map((row) => row.id)).toEqual(['live:action:1', 'row-a'])
     expect(merged[0]?.note).toBe('Mint Fox #1')
     expect(merged[0]?.pendingId).toBe('action:1')
 
     const claimed = mergeLiveActions(
       [entry({ id: 'row-b', status: 'pending', pendingId: 'action:1' }), ...rows],
-      [approving]
+      [preparing]
     )
     expect(claimed.map((row) => row.id)).toEqual(['row-b', 'row-a'])
 
     expect(mergeLiveActions(rows, [live({ face: 'settled' })]).map((row) => row.id)).toEqual([
       'row-a',
     ])
+  })
+
+  it('does not list a request the user has not approved yet', () => {
+    // The prompt is the request's whole presence; denying it leaves no row.
+    const rows = [entry({ id: 'row-a', status: 'complete', txid: 'ab'.repeat(32) })]
+    const approving = live({ id: 'action:1', face: 'approving', description: 'Mint Fox #1' })
+    expect(mergeLiveActions(rows, [approving]).map((row) => row.id)).toEqual(['row-a'])
+    expect(liveActionIsFeedRow(approving)).toBe(false)
+    expect(liveActionIsFeedRow(live({ face: 'preparing' }))).toBe(true)
+    expect(liveActionIsFeedRow(live({ face: 'failed' }))).toBe(true)
+    // Approved: the row appears and stays through the phases.
+    expect(
+      mergeLiveActions(rows, [live({ id: 'action:1', face: 'signing' })]).map((row) => row.id)
+    ).toEqual(['live:action:1', 'row-a'])
   })
 
   it('names an undescribed action by who asked and what for', () => {

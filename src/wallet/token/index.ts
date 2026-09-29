@@ -149,6 +149,7 @@ export {
   mergeIconTxIntoBeef,
   resolveBsv21IconDataUrl,
   resolveTokenIconDataUrl,
+  tokenTxBody,
 } from './icons/resolve'
 
 // Market view overlay

@@ -1,7 +1,14 @@
 /**
- * Token icons from local BEEFs only — no content indexers, no identicon.
+ * Token icons from transaction bodies — no content indexers, no identicon.
+ *
+ * Local bodies first. A token received from another wallet names an icon
+ * outpoint on a transaction this wallet never signed or ingested — the
+ * issuer's image inscription — so a local-only lookup drew every received
+ * token blank. The fallback is the raw transaction by txid from the wallet's
+ * own providers, hash-checked here before any byte is trusted: chain data by
+ * id, never an indexer's rendered `/content/`.
  */
-import type { Beef } from '@bsv/sdk'
+import { Transaction, type Beef } from '@bsv/sdk'
 import type { ActiveWallet } from '../../session'
 import { normalizeTokenId } from '../types'
 import { parseOrdEnvelope } from '../../ordinalOwnership'
@@ -79,6 +86,31 @@ function txFromBeef(
   return undefined
 }
 
+/**
+ * The transaction a token's icon or deploy metadata lives on: held locally,
+ * or fetched by txid and verified to hash to that txid. A provider miss is
+ * remembered by `fetchRawTxHex`, so a token whose transaction nobody has does
+ * not re-ask on every paint.
+ */
+export async function tokenTxBody(wallet: ActiveWallet, txid: string): Promise<Transaction | null> {
+  const { getLocalTxForTxid } = await import('../../beefCache')
+  const held = await getLocalTxForTxid(wallet, txid)
+  if (held) return held
+  try {
+    const { fetchRawTxHex } = await import('../../oneSatImport')
+    const hex = await fetchRawTxHex(txid, wallet.chain)
+    if (!hex) return null
+    const tx = Transaction.fromHex(hex)
+    if (tx.id('hex') !== txid.toLowerCase()) {
+      console.warn('[token-icon] provider body does not hash to its txid', txid.slice(0, 12))
+      return null
+    }
+    return tx
+  } catch {
+    return null
+  }
+}
+
 export async function resolveTokenIconDataUrl(
   iconOutpoint: string | undefined,
   wallet?: ActiveWallet | null,
@@ -90,16 +122,15 @@ export async function resolveTokenIconDataUrl(
   const parts = splitOutpoint(iconOutpoint)
   if (!parts) return undefined
   // The icon is one output script; the raw body answers without a BEEF walk.
-  const { getLocalTxForTxid } = await import('../../beefCache')
-  const tx = await getLocalTxForTxid(wallet, parts.txid)
+  const tx = await tokenTxBody(wallet, parts.txid)
   if (!tx) return undefined
   return rememberImage(iconOutpoint, scriptHexOf(tx.outputs?.[parts.vout]))
 }
 
 /**
- * BSV-21 face from local BEEFs. Prefer the named icon outpoint (4-byte same-tx
- * or 36-byte pointer). Fall back to a B-protocol sibling on the deploy tx.
- * Never Gorilla /content/.
+ * BSV-21 face. Prefer the named icon outpoint (4-byte same-tx or 36-byte
+ * pointer). Fall back to a B-protocol sibling on the deploy tx. Bodies come
+ * from {@link tokenTxBody}; never Gorilla /content/.
  */
 export async function resolveBsv21IconDataUrl(args: {
   icon?: string
@@ -115,8 +146,7 @@ export async function resolveBsv21IconDataUrl(args: {
   if (!args.origin || !args.wallet) return undefined
   const originParts = splitOutpoint(args.origin)
   if (!originParts) return undefined
-  const { getLocalTxForTxid } = await import('../../beefCache')
-  const originTx = await getLocalTxForTxid(args.wallet, originParts.txid)
+  const originTx = await tokenTxBody(args.wallet, originParts.txid)
   if (!originTx) return undefined
   if (args.icon) {
     const iconParts = splitOutpoint(args.icon)

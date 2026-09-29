@@ -45,6 +45,7 @@ import {
   cacheTokenIconFromBeef,
   resolveBsv21IconDataUrl,
   resolveTokenIconDataUrl,
+  tokenTxBody,
 } from './icons/resolve'
 import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 import { stampBrc164Id } from '../itemAccess'
@@ -660,10 +661,9 @@ async function recoverBsv21DeployMetadata(
   const [txid, rawVout] = normalized.split('_')
   const vout = Number(rawVout)
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
-  // Deploy metadata is a script decode; the raw body is enough and the
-  // toolbox answers it with two indexed reads instead of a BEEF assembly.
-  const { getLocalTxForTxid } = await import('../beefCache')
-  const tx = await getLocalTxForTxid(wallet, txid)
+  // Deploy metadata is a script decode; the raw body is enough. A received
+  // token's deploy is rarely local — the body comes by txid, hash-checked.
+  const tx = await tokenTxBody(wallet, txid)
   if (!tx) return null
   const beef = { findTxid: (id: string) => (id.toLowerCase() === txid ? { tx } : undefined) }
   const scriptHex = tx.outputs[vout]?.lockingScript?.toHex()
@@ -1320,7 +1320,8 @@ async function listFungiblesNow(
       `[bsv21] listOutputs done ${Date.now() - startedAt}ms — ` +
         `live ${liveRows.length} token(s) / ${liveTipCount} tip(s), showing ${merged.length}`,
     )
-    // Fill missing icons from local/session BEEF (no HTTP content indexer).
+    // Fill missing icons from held bodies, else the raw tx by txid (no HTTP
+    // content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
     return merged
   } catch (err) {

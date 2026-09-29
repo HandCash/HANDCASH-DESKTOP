@@ -8,7 +8,10 @@
  * The join between a live action and its durable row is exact — the row's
  * `pendingId` is the action's id, or they share a txid. No matching by time,
  * amount, or method. A live action with no row yet is shown as a row of its
- * own; a row with no live action reads its settlement from the chain record.
+ * own once the user has approved it — a request still waiting on the prompt
+ * is not activity — and that row keeps the action's phase until the durable
+ * row claims it; a row with no live action reads its settlement from the
+ * chain record.
  */
 import {
   ACTION_STAGE_LABELS,
@@ -70,7 +73,13 @@ export function activityRowState(args: {
   // record (sent · unconfirmed · confirmed · failed), and whatever the wallet
   // still does afterwards — hand-off, sealing, notifying — is not the row's
   // story. Arcade rejecting it later repaints the row through the record.
-  if (live && isStage(live.face) && !live.txid) return live.face
+  //
+  // A live row has no record to read. Its synthesized entry is not a chain
+  // fact, so it keeps the action's phase from signing through settling; the
+  // moment the durable row lands it takes over. Reading the synthesized entry
+  // as a record flashed "Unconfirmed" between the txid and the write.
+  const liveRow = entry.id.startsWith(LIVE_ROW_PREFIX)
+  if (live && isStage(live.face) && (!live.txid || liveRow)) return live.face
   if (entry.status === 'failed') return 'failed'
   if (live?.face === 'failed' && entry.status !== 'complete') return 'failed'
   if (chainProof === 'headerProven') return 'confirmed'
@@ -130,10 +139,16 @@ export function liveActionEntry(action: LiveAction): ActivityEntry {
 }
 
 /**
- * Feed = durable rows + one row per live action nobody has recorded yet.
- * Settled actions never add a row: their durable row is the record, and if
- * none was written there was nothing to show.
+ * A live action the feed shows as its own row while nothing durable claims it.
+ * Not while approving: a request the user has not accepted is a prompt, not
+ * activity — denying it must leave no trace. Not once settled: the durable row
+ * is the record, and if none was written there was nothing to show.
  */
+export function liveActionIsFeedRow(action: LiveAction): boolean {
+  return action.face !== 'approving' && action.face !== 'settled'
+}
+
+/** Feed = durable rows + one row per approved live action nobody has recorded yet. */
 export function mergeLiveActions(
   entries: readonly ActivityEntry[],
   live: readonly LiveAction[]
@@ -145,9 +160,7 @@ export function mergeLiveActions(
     const action = liveActionForEntry(entry, live)
     if (action) claimed.add(action.id)
   }
-  const orphans = live.filter(
-    (action) => !claimed.has(action.id) && action.face !== 'settled'
-  )
+  const orphans = live.filter((action) => !claimed.has(action.id) && liveActionIsFeedRow(action))
   if (orphans.length === 0) return durable
   return [...orphans.map(liveActionEntry), ...durable]
 }
