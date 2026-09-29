@@ -249,6 +249,11 @@ function sessionFacts(header, events) {
   const nftImport = nftImportFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
   const appFlow = appFlowFacts(events)
+  const listingPhases = listingPhaseFacts(events)
+  const bounceRefunds = events.flatMap((e) => {
+    const m = BOUNCE_REFUND_RE.exec(e.text)
+    return m ? [Number(m[1])] : []
+  })
 
   const span =
     events.length > 0
@@ -292,6 +297,8 @@ function sessionFacts(header, events) {
     // step. A page that only returns when the user re-opens the browser
     // shows up here as a page gap, never as wallet time.
     appFlow,
+    listingPhases,
+    bounceRefundMs: bounceRefunds,
     // React list-key collisions: which key, which component's list.
     ui,
     // 1sat / collectable import: how many tips, what failed, which timed spans
@@ -1098,6 +1105,42 @@ function logFields(text) {
   return out
 }
 
+const MARKET_LIST_MARK_RE = /^\[market-list\] \+(\d+)ms (.*)$/
+const BOUNCE_REFUND_RE = /^\[brc100\] bounce-refund done (\d+)ms/
+
+/** Cumulative `[market-list] +Nms phase` marks → the time each phase actually took. */
+function listingPhaseFacts(events) {
+  const runs = []
+  let marks = []
+  const flush = () => {
+    if (marks.length < 2) {
+      marks = []
+      return
+    }
+    const phases = []
+    for (let i = 1; i < marks.length; i += 1) {
+      phases.push({
+        phase: marks[i].phase,
+        ms: marks[i].ms - marks[i - 1].ms,
+      })
+    }
+    runs.push({
+      totalMs: marks.at(-1).ms,
+      slowest: [...phases].sort((a, b) => b.ms - a.ms)[0],
+    })
+    marks = []
+  }
+  for (const e of events) {
+    const m = MARKET_LIST_MARK_RE.exec(e.text)
+    if (!m) continue
+    const ms = Number(m[1])
+    if (marks.length && ms < marks.at(-1).ms) flush()
+    marks.push({ ms, phase: m[2] })
+  }
+  flush()
+  return runs
+}
+
 function appFlowFacts(events) {
   const steps = []
   // Replies the wallet refused, as the app saw them: method, code, and the
@@ -1140,6 +1183,7 @@ function appFlowFacts(events) {
     const tail = m[4]
     const approval = APPROVAL_RE.exec(tail)
     const gap = PAGE_GAP_RE.exec(tail)
+    const phaseTail = tail.split(' · approval')[0].split(' · page-gap')[0].trim()
     steps.push({
       at: e.at,
       method: m[1],
@@ -1148,6 +1192,7 @@ function appFlowFacts(events) {
       approvalMs: approval ? Number(approval[1]) : 0,
       pageGapMs: gap ? Number(gap[1]) : null,
       origin: gap ? gap[2] : null,
+      phases: phaseTail || null,
     })
   }
   const gaps = steps.filter((s) => s.pageGapMs != null)
@@ -1169,6 +1214,13 @@ function appFlowFacts(events) {
     longestWorkMs: steps.reduce((a, s) => Math.max(a, s.workMs), 0),
     byOrigin: [...byOrigin.values()].sort((a, b) => b.longestPageGapMs - a.longestPageGapMs),
     stalled: stalled.slice(0, 8).map(({ at, ...s }) => s),
+    slowest: [...steps]
+      .sort((a, b) => b.workMs - a.workMs)
+      .slice(0, 5)
+      .map(({ at, ...s }) => s),
+    actions: steps
+      .filter((s, i, all) => all.findIndex((o) => o.at === s.at && o.method === s.method) === i)
+      .map(({ method, ok, workMs, phases }) => ({ method, ok, workMs, phases })),
     refusals: [...refusals.values()]
       .sort((a, b) => b.lastAt - a.lastAt)
       .slice(0, 12)
@@ -1838,6 +1890,12 @@ function report(state, answers) {
     for (const r of flow.refusals) {
       console.log(
         `  refused ${r.method} ×${r.count} · ${r.code ?? r.status} · ${r.detail ?? '(no description)'} · ${r.origin}`,
+      )
+    }
+    for (const s of flow.slowest ?? []) {
+      if (s.workMs < 3000) continue
+      console.log(
+        `  slow ${s.method} · wallet work ${s.workMs}ms · approval ${s.approvalMs}ms · ${s.phases ?? s.origin ?? '?'}`,
       )
     }
     if (answers.app_flow_stall) choiceBlock('Who held the flow up', answers.app_flow_stall)

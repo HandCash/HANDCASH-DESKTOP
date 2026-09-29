@@ -1525,6 +1525,30 @@ async function retireSpentListingTip(
   await dropSpentListingTip(active, tipOutpoint)
 }
 
+/**
+ * Beef the app submits to the overlay. signAction's atomic package often
+ * leaves an unconfirmed mint as a txid stub, and the overlay then cannot see
+ * the spent output (`invalid-previous-item-tip`). The item BEEF already holds
+ * that output; fold it in and keep the listing tx as the atomic subject.
+ */
+function listingAdvertBeef(
+  atomic: number[],
+  parents: { toBinary: () => number[] | Uint8Array } | undefined,
+  txid: string,
+): number[] {
+  if (!parents) return atomic
+  try {
+    const merged = Beef.fromBinary(Uint8Array.from(atomic))
+    const raw = parents.toBinary()
+    merged.mergeBeef(raw instanceof Uint8Array ? Array.from(raw) : raw)
+    merged.atomicTxid = undefined
+    const framed = Array.from(merged.toBinaryAtomic(txid))
+    return framed.length > 0 ? framed : atomic
+  } catch {
+    return atomic
+  }
+}
+
 export async function createMarketListingAdvert(
   args: CreateMarketListingArgs
 ): Promise<MarketListingPostPayload> {
@@ -2208,7 +2232,7 @@ async function createMarketListingAdvertExclusive(
       listing: advert,
       provenance,
       txid,
-      beef: atomic,
+      beef: listingAdvertBeef(atomic, listingBeef, txid),
       token: {
         outpoint: offerOutpoint,
         outputIndex: MARKET_OFFER_VOUT,

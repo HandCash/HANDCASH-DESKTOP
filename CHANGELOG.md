@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.366] - 2026-09-29
+
+### Fixed
+
+- The first app `createAction` of a session spent ~19s proving every parent before it answered. The wallet now tells the toolbox `trustSelf: 'known'` and attaches local parent bodies itself, and a bounce refund no longer holds the deposit's reply.
+- A listing of a freshly inscribed item was refused `invalid-previous-item-tip`. The advert BEEF now includes the spent output, and the overlay accepts an ord envelope whose spendable branch is P2PKH.
+
 ## [1.3.365] - 2026-09-29
 
 ### Changed

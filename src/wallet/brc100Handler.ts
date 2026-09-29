@@ -1159,9 +1159,10 @@ async function handleBrc100RequestInner(
         ) {
           // Chrome freezes a background tab, so a bounce page cannot start its
           // refund until the user tabs back. Finish it here, while this app
-          // is in front. The page's own call then reads the cached refund.
+          // is in front, but do not hold the deposit's reply on the refund
+          // round trip — the deposit is already signed and with miners.
           setPaymentProgress('broadcasting', 'Returning the bounce deposit', null, 'Working…')
-          await continueTxBounceRefund({
+          void continueTxBounceRefund({
             originator,
             request: args,
             result,

@@ -3,6 +3,12 @@
  * miners — not after a seen-on-chain / merkle callback. Arcade (or any miner)
  * accepting the BEEF is enough for the app to treat the spend as complete and
  * for us to deduct change.
+ *
+ * `trustSelf: 'known'` keeps that return off the ancestry proof walk. With it
+ * unset the toolbox fetches a merkle proof for every parent before it answers;
+ * the first spend of a session measured 19s inside that walk. Local parent
+ * bodies are merged onto the reply afterwards, which is what a chained refund
+ * actually needs.
  */
 export function withImmediateAppBroadcast(args: unknown): unknown {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return args
@@ -16,6 +22,7 @@ export function withImmediateAppBroadcast(args: unknown): unknown {
     options: {
       ...options,
       acceptDelayedBroadcast: true,
+      ...(options.trustSelf == null ? { trustSelf: 'known' as const } : {}),
     },
   }
 }

@@ -8,16 +8,26 @@ describe('withImmediateAppBroadcast', () => {
       description: 'Plinko bet',
       outputs: [{ satoshis: 1299000 }],
       options: { acceptDelayedBroadcast: false, signAndProcess: true },
-    }) as { options: { acceptDelayedBroadcast: boolean; signAndProcess: boolean } }
+    }) as { options: { acceptDelayedBroadcast: boolean; signAndProcess: boolean; trustSelf: string } }
     expect(next.options.acceptDelayedBroadcast).toBe(true)
+    expect(next.options.trustSelf).toBe('known')
     expect(next.options.signAndProcess).toBe(true)
   })
 
   it('adds options when the app omitted them', () => {
     const next = withImmediateAppBroadcast({ description: 'bet' }) as {
-      options: { acceptDelayedBroadcast: boolean }
+      options: { acceptDelayedBroadcast: boolean; trustSelf: string }
     }
     expect(next.options.acceptDelayedBroadcast).toBe(true)
+    expect(next.options.trustSelf).toBe('known')
+  })
+
+  it('keeps an explicit trustSelf', () => {
+    const next = withImmediateAppBroadcast({
+      description: 'bet',
+      options: { trustSelf: 'known' },
+    }) as { options: { trustSelf: string } }
+    expect(next.options.trustSelf).toBe('known')
   })
 
   it('leaves non-objects alone', () => {

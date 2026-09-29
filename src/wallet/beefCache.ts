@@ -1344,21 +1344,11 @@ export async function cacheCreateActionBeef(
       return null
     }
   }
+  // Local bodies only. A network proof walk here is the same ancestry fetch
+  // `trustSelf: 'known'` just kept out of createAction, and it held the app's
+  // reply for the whole indexer round trip. Confirmed parents are already
+  // with miners; unconfirmed ones this wallet signed are in local storage.
   packed = await mergeLocalUnconfirmedAncestry(wallet, packed)
-  try {
-    // `hydrateInputBeef` shapes an `inputBEEF`: it clears `atomicTxid` and
-    // returns plain BEEF. Taking those bytes as-is stripped the BRC-95 prefix
-    // off the reply, and hydration succeeds on its first pass whenever the
-    // package is already broadcast-safe — so the common path handed apps a
-    // bare BEEF that every subject-txid verifier rejects. Re-frame before
-    // accepting; keep the merged atomic package when the subject will not
-    // re-frame, since a hydrated body is worth less than a parseable one.
-    const shaped = await hydrateInputBeef(wallet, Beef.fromBinary(packed))
-    const reframed = shaped ? atomicBeefForSubject(shaped, id) : undefined
-    if (reframed) packed = reframed
-  } catch {
-    // Complete unconfirmed bodies are enough; merkle hydration may be pending.
-  }
   // Check our own work. A structurally wrong reply still answers 200, so it is
   // invisible here and shows up only in the app's verifier — which is how a
   // dropped BRC-95 prefix shipped unnoticed. Repair it if the subject is still
