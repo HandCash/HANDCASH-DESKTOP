@@ -1165,6 +1165,114 @@ export function atomicBeefForSubject(
 }
 
 /**
+ * Parents `internalizeAction` will demand that this AtomicBEEF does not carry.
+ *
+ * Mirrors the SDK's BRC-95 closure rule (`parseWalletResultAtomicBEEF`): walk
+ * from the subject; a transaction with a matching merkle bump, or a txid-only
+ * stub, ends the walk; every other input's transaction must be in the package.
+ * `Beef.isAtomic` skips absent inputs, so a package can pass our own framing
+ * check and still be refused as "not a complete, exactly framed Atomic BEEF" —
+ * which is how a self-sent token sat on Receiving for two days (hc-a580a,
+ * 438497125f03, 2026-09-29).
+ */
+export function atomicBeefMissingParents(
+  binary: number[] | undefined,
+  txid: string,
+): string[] {
+  if (!binary?.length) return []
+  const id = keyOf(txid)
+  try {
+    const beef = Beef.fromBinary(binary)
+    const subject = beef.findTxid(id)
+    if (!subject) return []
+    const hasMatchingBump = (btx: (typeof beef.txs)[number]): boolean => {
+      const idx = btx.bumpIndex
+      if (idx == null || idx < 0 || idx >= beef.bumps.length) return false
+      const leaves = beef.bumps[idx]?.path[0] ?? []
+      return leaves.some((leaf) => leaf.hash === btx.txid)
+    }
+    const missing = new Set<string>()
+    const seen = new Set<string>()
+    const stack = [subject]
+    while (stack.length > 0) {
+      const btx = stack.pop()!
+      if (seen.has(btx.txid)) continue
+      seen.add(btx.txid)
+      if (btx.isTxidOnly || !btx.tx || hasMatchingBump(btx)) continue
+      for (const parent of btx.inputTxids ?? []) {
+        const pid = keyOf(parent)
+        const found = beef.findTxid(pid)
+        if (found) stack.push(found)
+        else missing.add(pid)
+      }
+    }
+    return [...missing]
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Frame `binary` as AtomicBEEF for `txid` and fold in the parents the SDK's
+ * internalize validator demands — locally signed bodies first, then a proven
+ * copy from the network. A settle must never end on framing (rule 7): when the
+ * sender shipped a lean package, the parents are either our own unmined change
+ * (self-send) or mined transactions any SPV source can prove.
+ *
+ * Returns the best package it could build and whatever is still missing;
+ * callers treat a non-empty `missing` as a named, retryable refusal rather
+ * than handing the toolbox a package it will reject.
+ */
+export async function completeAtomicBeefForSubject(
+  wallet: ActiveWallet,
+  binary: number[] | undefined,
+  txid: string,
+): Promise<{ atomic: number[] | undefined; missing: string[]; completed: string[] }> {
+  const id = keyOf(txid)
+  let atomic = atomicBeefForSubject(binary, id)
+  if (!atomic?.length) return { atomic: undefined, missing: [], completed: [] }
+  let missing = atomicBeefMissingParents(atomic, id)
+  if (missing.length === 0) return { atomic, missing, completed: [] }
+
+  const deadline = Date.now() + HYDRATE_DEADLINE_MS
+  const completed: string[] = []
+  try {
+    const work = Beef.fromBinary(atomic)
+    work.atomicTxid = undefined
+    for (let pass = 0; pass < 8 && missing.length > 0; pass += 1) {
+      let added = false
+      for (const parent of missing) {
+        if (Date.now() >= deadline) break
+        let source: Beef | null = null
+        try {
+          source = await getLocalBeefForTxid(wallet, parent)
+          const node = source?.findTxid(parent)
+          if (!node?.tx || node.isTxidOnly) {
+            source = await getBeefForTxidCached(wallet, parent, { needProof: true })
+          }
+        } catch (err) {
+          console.warn('[beef] parent fetch failed', parent.slice(0, 12), err)
+          source = null
+        }
+        const node = source?.findTxid(parent)
+        if (!source || !node?.tx || node.isTxidOnly) continue
+        work.mergeBeef(source.toBinary())
+        work.atomicTxid = undefined
+        completed.push(parent)
+        added = true
+      }
+      const framed = work.toBinaryAtomic(id)
+      if (framed.length > 0) atomic = framed
+      missing = atomicBeefMissingParents(atomic, id)
+      if (!added || Date.now() >= deadline) break
+    }
+  } catch (err) {
+    console.warn('[beef] ancestry completion failed', id.slice(0, 12), err)
+  }
+  return { atomic, missing, completed }
+}
+
+/**
  * True when these bytes really are AtomicBEEF for `txid`.
  *
  * Checks the serialized form, not what a `Beef` could produce: the prefix must
