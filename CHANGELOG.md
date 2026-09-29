@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.350] - 2026-09-29
+
+### Added
+
+- `docs/brc-wallet-feature-map.md`: a docs-site page mapping every Connect,
+  Items, and Wallet API feature to the BRC-100 call that does the same job on
+  the BRC wallet, with the "no equivalent" rows stated plainly. It also
+  documents how BRC-100 grows in three layers (core methods, protocols carried
+  by those methods, HandCash-only methods), what `GET /health` and
+  `GET /manifest.json` advertise, and how an app feature-detects extensions
+  without ever triggering a prompt.
+
 ## [1.3.349] - 2026-09-29
 
 ### Fixed
