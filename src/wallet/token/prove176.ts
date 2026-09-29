@@ -1,21 +1,32 @@
 /**
- * BRC-176 prove(outpoint, beef) for BRC-162 binary BSV-21.
+ * BRC-176 prove(outpoint, beef) for BSV-21.
  *
  * Walks token-parent bodies back to a fixed-supply deploy (empty id, amt > 0).
  * Conservation is per token id (I >= O). Missing token-parent bodies fail
  * closed. Funding inputs may be absent from the BEEF. Over-transfer fails.
- * Merge must include every same-id parent. Authority / mint paths are not
- * implemented — amount 0 fails closed.
+ * Merge must include every same-id parent.
+ *
+ * Both encodings are decoded (BRC-176 §validity: "decode both BRC-161 JSON and
+ * BRC-162 binary; a lineage may mix them"). BRC-162 binary wins when an
+ * output carries both. Authority / mint paths are not implemented — a
+ * `deploy+auth`, `auth`, `mint` or amount-0 output on the path fails closed.
+ * A burn output counts toward O and, as a spent input, contributes nothing.
  */
 import { Beef, type Transaction } from '@bsv/sdk'
-import {
-  decodeBsv21Binary,
-  parseDisplayOutpoint,
-  type Bsv21Binary,
-} from './decode162'
+import { decodeBsv21Binary, parseDisplayOutpoint } from './decode162'
+import { parseOrdEnvelope } from '../ordinalOwnership'
 import { toUnderscoreOutpoint } from '../outpointFormat'
+import { BSV21_PROTOCOL, normalizeTokenId } from './types'
 
-const MAX_HOPS = 64
+/**
+ * Longest token-parent chain (deploy → tip) prove will walk. Every hop needs
+ * a body, so this bounds recursion, not history: a token transferred more
+ * than this many times in a straight line reads `unproven`, never counterfeit.
+ */
+export const MAX_PROVE_DEPTH = 256
+/** Distinct transaction bodies a fill / ancestry collection will hold. */
+export const MAX_PACKET_TXS = 2048
+export const PARENT_FILL_DEADLINE_MS = 20_000
 
 export type Bsv21Proof = {
   ok: true
@@ -23,6 +34,8 @@ export type Bsv21Proof = {
   amount: bigint
   deployOutpoint: string
   role: 'deploy' | 'value'
+  /** Wire encoding of the proven tip itself. */
+  encoding: 'binary' | 'json'
 }
 
 export type Bsv21ProofFailure = {
@@ -31,6 +44,15 @@ export type Bsv21ProofFailure = {
 }
 
 export type Bsv21ProofResult = Bsv21Proof | Bsv21ProofFailure
+
+/** Encoding-neutral view of one BSV-21 output for the walk. */
+export type TokenOutput = {
+  role: 'deploy' | 'value' | 'authority' | 'burn'
+  /** Absent on deploy (the outpoint is the id). */
+  tokenId?: string
+  amount: bigint
+  encoding: 'binary' | 'json'
+}
 
 function fail(reason: string): Bsv21ProofFailure {
   return { ok: false, reason }
@@ -55,21 +77,84 @@ function txBody(beef: Beef, txid: string): Transaction | undefined {
   return beef.findTxid(txid)?.tx ?? undefined
 }
 
-function isBsv21Output(tx: Transaction, vout: number): boolean {
-  const out = tx.outputs[vout]
-  if (!out) return false
-  return decodeBsv21Binary(out.lockingScript) != null
+const UINT64_RE = /^\d{1,20}$/
+
+function decodeJsonTokenOutput(scriptHex: string): TokenOutput | null {
+  const envelope = parseOrdEnvelope(scriptHex)
+  if (!envelope?.body?.length) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(new TextDecoder().decode(envelope.body))
+  } catch {
+    return null
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (o.p !== BSV21_PROTOCOL) return null
+  const op = typeof o.op === 'string' ? o.op.trim() : ''
+  const amtRaw =
+    typeof o.amt === 'string'
+      ? o.amt.trim()
+      : typeof o.amt === 'number' && Number.isFinite(o.amt)
+        ? String(Math.trunc(o.amt))
+        : ''
+  const amount = UINT64_RE.test(amtRaw) ? BigInt(amtRaw) : null
+  const tokenId = typeof o.id === 'string' ? normalizeTokenId(o.id) ?? undefined : undefined
+  switch (op) {
+    case 'deploy+mint':
+      if (amount == null) return null
+      return { role: 'deploy', amount, encoding: 'json' }
+    case 'transfer':
+      if (amount == null || !tokenId) return null
+      return { role: 'value', tokenId, amount, encoding: 'json' }
+    case 'burn':
+      if (amount == null || !tokenId) return null
+      return { role: 'burn', tokenId, amount, encoding: 'json' }
+    case 'deploy+auth':
+    case 'auth':
+    case 'mint':
+      return { role: 'authority', ...(tokenId ? { tokenId } : {}), amount: amount ?? 0n, encoding: 'json' }
+    default:
+      return null
+  }
 }
 
-const PARENT_FILL_DEADLINE_MS = 20_000
+/**
+ * Decode a BSV-21 output in either encoding. Binary wins when both are
+ * present (BRC-162 §"binary wins").
+ */
+export function decodeTokenOutput(script: { toHex(): string } | string | undefined): TokenOutput | null {
+  if (!script) return null
+  const hex = typeof script === 'string' ? script : script.toHex()
+  const binary = decodeBsv21Binary(hex)
+  if (binary) {
+    if (binary.role === 'authority' || binary.amount === 0n) {
+      return { role: 'authority', ...(binary.tokenId ? { tokenId: binary.tokenId } : {}), amount: binary.amount, encoding: 'binary' }
+    }
+    if (binary.role === 'deploy') return { role: 'deploy', amount: binary.amount, encoding: 'binary' }
+    if (!binary.tokenId) return null
+    return { role: 'value', tokenId: binary.tokenId, amount: binary.amount, encoding: 'binary' }
+  }
+  return decodeJsonTokenOutput(hex)
+}
+
+function decodeOutput(tx: Transaction, vout: number): TokenOutput | null {
+  const out = tx.outputs[vout]
+  if (!out) return null
+  return decodeTokenOutput(out.lockingScript)
+}
+
+function isTokenOutput(tx: Transaction, vout: number): boolean {
+  return decodeOutput(tx, vout) != null
+}
 
 /**
  * Pull raw token-parent bodies into a BEEF without waiting for merkle proofs.
  *
  * A first send of an unmined 162 genesis often returns AtomicBEEF that only
  * has the new transfer (txid-only parents). Prove needs the deploy body.
- * Funding inputs are fetched once so we can tell them from 162 parents, then
- * left out of the walk.
+ * Funding inputs are fetched once so we can tell them from token parents,
+ * then left out of the walk.
  */
 export async function fillTokenParentBodies(
   beef: Beef,
@@ -103,7 +188,7 @@ export async function fillTokenParentBodies(
     return work.findTxid(txid)?.tx
   }
 
-  while (queue.length && seen.size < MAX_HOPS) {
+  while (queue.length && seen.size < MAX_PACKET_TXS) {
     const txid = queue.shift()
     if (!txid || seen.has(txid)) continue
     seen.add(txid)
@@ -116,27 +201,14 @@ export async function fillTokenParentBodies(
       if (seen.has(prev)) continue
       const parentTx = await ensureBody(prev)
       if (!parentTx) continue
-      if (isBsv21Output(parentTx, prevVout)) queue.push(prev)
+      if (isTokenOutput(parentTx, prevVout)) queue.push(prev)
     }
   }
 
   return work
 }
 
-function decodeOutput(
-  tx: Transaction,
-  vout: number,
-): Bsv21Binary | null {
-  const out = tx.outputs[vout]
-  if (!out) return null
-  return decodeBsv21Binary(out.lockingScript)
-}
-
-function tokenIdOf(
-  decoded: Bsv21Binary,
-  txid: string,
-  vout: number,
-): string | null {
+function tokenIdOf(decoded: TokenOutput, txid: string, vout: number): string | null {
   if (decoded.tokenId) return decoded.tokenId
   if (decoded.role === 'deploy') return `${txid}_${vout}`
   return null
@@ -149,7 +221,9 @@ function walk(
   seen: Set<string>,
   hops: number,
 ): Bsv21ProofResult {
-  if (hops > MAX_HOPS) return fail('token parent walk exceeded hop limit')
+  if (hops > MAX_PROVE_DEPTH) {
+    return fail(`token parent walk exceeded depth limit ${MAX_PROVE_DEPTH}`)
+  }
   const key = `${txid}_${vout}`
   if (seen.has(key)) return fail(`cycle in token parent walk at ${key}`)
   seen.add(key)
@@ -173,10 +247,11 @@ function walkBody(
   if (!tx) return fail(`missing token-parent body ${key}`)
 
   const decoded = decodeOutput(tx, vout)
-  if (!decoded) return fail(`output ${key} is not BSV-21 binary`)
-  if (decoded.amount === 0n || decoded.role === 'authority') {
+  if (!decoded) return fail(`output ${key} is not BSV-21`)
+  if (decoded.role === 'authority' || decoded.amount === 0n) {
     return fail('authority outputs are not proven in this slice')
   }
+  if (decoded.role === 'burn') return fail(`burn output ${key} holds no value`)
 
   if (decoded.role === 'deploy') {
     return {
@@ -185,6 +260,7 @@ function walkBody(
       amount: decoded.amount,
       deployOutpoint: key,
       role: 'deploy',
+      encoding: decoded.encoding,
     }
   }
 
@@ -218,6 +294,7 @@ function walkBody(
     amount: decoded.amount,
     deployOutpoint,
     role: 'value',
+    encoding: decoded.encoding,
   }
 }
 
@@ -229,18 +306,17 @@ function checkConservation(
   | { ok: true; parents: { txid: string; vout: number }[]; input: bigint; output: bigint }
   | Bsv21ProofFailure {
   let output = 0n
+  const txid = tx.id('hex')
   for (let i = 0; i < tx.outputs.length; i++) {
     const decoded = decodeOutput(tx, i)
     if (!decoded) continue
-    if (decoded.amount === 0n || decoded.role === 'authority') {
-      const id = tokenIdOf(decoded, tx.id('hex'), i)
-      if (id === tokenId) {
-        return fail('authority mint paths are not implemented')
-      }
-      continue
+    const id = tokenIdOf(decoded, txid, i)
+    if (id !== tokenId) continue
+    if (decoded.role === 'authority' || decoded.amount === 0n) {
+      return fail('authority mint paths are not implemented')
     }
-    const id = tokenIdOf(decoded, tx.id('hex'), i)
-    if (id === tokenId) output += decoded.amount
+    // Value and burn both leave the input pool (BRC-176: burn counts toward O).
+    output += decoded.amount
   }
 
   let input = 0n
@@ -264,15 +340,13 @@ function checkConservation(
     }
     const decoded = decodeOutput(parentTx, prevVout)
     if (!decoded) continue
-    if (decoded.amount === 0n || decoded.role === 'authority') {
-      const id = tokenIdOf(decoded, prev, prevVout)
-      if (id === tokenId) {
-        return fail('authority mint paths are not implemented')
-      }
-      continue
-    }
     const id = tokenIdOf(decoded, prev, prevVout)
     if (id !== tokenId) continue
+    if (decoded.role === 'authority' || decoded.amount === 0n) {
+      return fail('authority mint paths are not implemented')
+    }
+    // A spent burn contributes nothing; it is not a parent to walk either.
+    if (decoded.role === 'burn') continue
     input += decoded.amount
     parents.push({ txid: prev, vout: prevVout })
   }
@@ -292,8 +366,12 @@ function checkConservation(
 }
 
 /**
- * Prove a BRC-162 tip from its BEEF: walk token parents to the fixed-supply
+ * Prove a BSV-21 tip from its BEEF: walk token parents to the fixed-supply
  * deploy and enforce per-id conservation (I >= O).
+ *
+ * Token rules only. Bitcoin validity (merkle paths, script) is the toolbox's
+ * verify on `internalizeAction` / `processAction`; callers admit a tip when
+ * both hold.
  */
 export function prove(
   outpoint: string,
@@ -334,7 +412,7 @@ export function collectBsv21TokenAncestryTxids(args: {
   }
 
   const ancestry = new Set<string>()
-  while (queue.length > 0 && ancestry.size < MAX_HOPS) {
+  while (queue.length > 0 && ancestry.size < MAX_PACKET_TXS) {
     const txid = queue.shift()
     if (!txid || ancestry.has(txid)) continue
     ancestry.add(txid)
@@ -346,12 +424,14 @@ export function collectBsv21TokenAncestryTxids(args: {
       const parentTx = txBody(parsedBeef, parentTxid)
       if (!parentTx) continue
       const decoded = decodeOutput(parentTx, parentVout)
-      if (!decoded) continue
+      if (!decoded || decoded.role === 'burn') continue
       if (tokenIdOf(decoded, parentTxid, parentVout) === tokenId) {
         queue.push(parentTxid)
       }
     }
   }
-  if (queue.length > 0) throw new Error('token ancestry exceeded hop limit')
+  if (queue.length > 0) {
+    throw new Error(`token ancestry exceeded packet limit ${MAX_PACKET_TXS}`)
+  }
   return [...ancestry]
 }

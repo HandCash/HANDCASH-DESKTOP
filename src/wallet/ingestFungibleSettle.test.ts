@@ -1,3 +1,4 @@
+import { Beef, Transaction, UnlockingScript } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeBsv21Binary } from './token/decode162'
 import { p2pkhScriptHex } from './ordinalOwnership'
@@ -8,19 +9,25 @@ import {
 
 const atomicBeefForSubject = vi.fn()
 const completeAtomicBeefForSubject = vi.fn()
+const getBeefForTxidCached = vi.fn()
 const internalizeAction = vi.fn()
 
 vi.mock('./beefCache', () => ({
   atomicBeefForSubject: (...args: unknown[]) => atomicBeefForSubject(...args),
   completeAtomicBeefForSubject: (...args: unknown[]) =>
     completeAtomicBeefForSubject(...args),
+  getBeefForTxidCached: (...args: unknown[]) => getBeefForTxidCached(...args),
+  getLocalTxForTxid: async () => undefined,
   rememberBeefTree: vi.fn(),
 }))
 
+const RECEIVER = '19aXSPsoR45Uuxk4LUonJ672zGFf57wfrD'
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
-    address: '1receiver',
-    wallet: { internalizeAction },
+    address: RECEIVER,
+    identityKey: '02' + 'ab'.repeat(32),
+    wallet: { internalizeAction, listOutputs: async () => ({ outputs: [], totalOutputs: 0 }) },
   }),
 }))
 
@@ -29,6 +36,8 @@ const TOKEN_ID = `${'ab'.repeat(32)}_0`
 beforeEach(() => {
   atomicBeefForSubject.mockReset()
   completeAtomicBeefForSubject.mockReset()
+  getBeefForTxidCached.mockReset()
+  getBeefForTxidCached.mockRejectedValue(new Error('offline'))
   internalizeAction.mockReset()
 })
 
@@ -134,11 +143,99 @@ describe('internalizePeerFungibleSettle', () => {
     })
 
     expect(completeAtomicBeefForSubject).toHaveBeenCalledWith(
-      expect.objectContaining({ address: '1receiver' }),
+      expect.objectContaining({ address: RECEIVER }),
       framed,
       txid,
     )
     expect(internalizeAction).not.toHaveBeenCalled()
+  })
+
+  describe('BRC-176 on receive', () => {
+    const deploy = () => {
+      const tx = new Transaction()
+      tx.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({
+          amount: 1000n,
+          payload: { sym: 'GOLD', dec: 2 },
+          rest: p2pkhScriptHex(OTHER),
+        }),
+      })
+      return tx
+    }
+
+    it('refuses a forged BSV-21 output that names a real token id but has no proven lineage', async () => {
+      const genesis = deploy()
+      const tokenId = `${genesis.id('hex')}_0`
+      const forged = new Transaction()
+      forged.addInput({
+        sourceTXID: 'ee'.repeat(32),
+        sourceOutputIndex: 0,
+        unlockingScript: new UnlockingScript(),
+      })
+      forged.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
+      })
+      const beef = new Beef()
+      beef.mergeTransaction(forged)
+      const atomic = Array.from(beef.toBinaryAtomic(forged.id('hex')))
+      atomicBeefForSubject.mockReturnValue(atomic)
+      completeAtomicBeefForSubject.mockResolvedValue({ atomic, missing: [], completed: [] })
+
+      const result = await internalizePeerFungibleSettle({
+        txid: forged.id('hex'),
+        tx: atomic,
+        beefPurpose: 'inboundItemHint',
+        token: { kind: 'fungible', tokenId, amount: '1000', sym: 'GOLD', dec: 2 },
+      })
+      expect(result.accepted).toBe(false)
+      expect(result.reason).toMatch(/^lineage-unproven:/)
+      expect(internalizeAction).not.toHaveBeenCalled()
+    })
+
+    it('internalizes a proven tip and inherits sym/dec from the deploy payload', async () => {
+      const genesis = deploy()
+      const tokenId = `${genesis.id('hex')}_0`
+      const transfer = new Transaction()
+      transfer.addInput({
+        sourceTransaction: genesis,
+        sourceOutputIndex: 0,
+        unlockingScript: new UnlockingScript(),
+      })
+      transfer.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
+      })
+      const beef = new Beef()
+      beef.mergeTransaction(transfer)
+      const atomic = Array.from(beef.toBinaryAtomic(transfer.id('hex')))
+      atomicBeefForSubject.mockReturnValue(atomic)
+      completeAtomicBeefForSubject.mockResolvedValue({ atomic, missing: [], completed: [] })
+      internalizeAction.mockResolvedValue({ accepted: true })
+
+      const result = await internalizePeerFungibleSettle({
+        txid: transfer.id('hex'),
+        tx: atomic,
+        beefPurpose: 'inboundItemHint',
+        // Sender envelope claims nothing useful — the deploy is the record.
+        token: { kind: 'fungible', tokenId, amount: '1000', sym: '', dec: 0 },
+      })
+      expect(result.accepted).toBe(true)
+      expect(result.outpoints).toEqual([`${transfer.id('hex')}.0`])
+      expect(internalizeAction).toHaveBeenCalledTimes(1)
+      const call = internalizeAction.mock.calls[0]![0] as {
+        description: string
+        outputs: { insertionRemittance: { customInstructions: string } }[]
+      }
+      expect(call.description).toBe('Receive GOLD')
+      const ci = JSON.parse(call.outputs[0]!.insertionRemittance.customInstructions) as {
+        sym?: string
+        dec?: number
+      }
+      expect(ci.sym).toBe('GOLD')
+      expect(String(ci.dec)).toBe('2')
+    })
   })
 })
 

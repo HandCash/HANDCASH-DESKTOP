@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.373] - 2026-09-29
+
+BSV-21 conformance pass against BRC-162 / BRC-163 / BRC-176 (Jev audit, 22 clauses).
+
+### Fixed
+
+- **Receive verifies lineage (BRC-176).** `internalizePeerFungibleSettle` now walks every accepted tip to its deploy with per-id conservation before `internalizeAction`, filling token-parent bodies from local/network raw transactions. An unprovable tip is refused as `lineage-unproven:<reason>` instead of painting a balance from the sender's claim. `sym` / `dec` / `icon` are inherited from the proven deploy (binary CBOR or JSON body), not the envelope.
+- **Combine / self-send no longer forgets the token.** A payee that resolves to this wallet keeps its output in basket `bsv21` (`payeeIsSelf`), and the card is repainted with every held output. Previously combine sent the full amount to a basket-less output, change was 0, and `paintFungibleAfterSpend` dropped the card with no recovery path.
+- **Non-plain locks refuse before signing (BRC-163).** Every selected input's rest script is classified (`chooseBsv21BatchSendPath`) before `createAction`; cosigner, covenant and unknown locks are a named refusal. Listed tips now carry `cosign` detected from the script.
+- **Market listing proof is a record, not a claim (BRC-176).** `buildBsv21ListingProof` emits `v:176` only after `prove()` succeeds over a token-parent-complete BEEF; missing BEEF or a failed walk is `ITEM_ORIGIN_UNPROVEN` (it used to fall through to `deployOutpoint = tokenId`).
+- **Issuer attestation** requires the Sigma signer address to *be* the claimed issuer; a Sigma block by anyone else no longer marks a remittance claim attested.
+- **`dec` propagates** from the token card through send remittance, burn change, the Activity row and the peer envelope (was hard-coded `0`).
+
+### Changed
+
+- `prove176` decodes both BRC-161 JSON and BRC-162 binary (binary wins per output) so mixed lineages prove; `burn` counts toward outputs and contributes nothing as an input; authority paths still fail closed by name. Limits are split into `MAX_PROVE_DEPTH` (256) and `MAX_PACKET_TXS` (2048); tripping either reads *unproven*.
+- BRC-162 CBOR reader consumes every well-formed item (negatives, arrays, floats, tags, 8-byte lengths, indefinite lengths) and ignores unknown keys, per spec; it used to reject the whole token for any type it did not model.
+
 ## [1.3.372] - 2026-09-29
 
 ### Changed

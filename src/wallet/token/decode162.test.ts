@@ -5,6 +5,7 @@ import { hasOrdEnvelope, parseOrdEnvelope } from '../ordinalOwnership'
 import {
   BSV21_TAG_HEX,
   decodeBsv21Binary,
+  decodeDeployCbor,
   encodeBsv21Binary,
   tokenIdFromWire,
   tokenIdToWire,
@@ -142,5 +143,39 @@ describe('bsv21Binary encode/decode', () => {
       [...new TextEncoder().encode('nope')].map((b) => b.toString(16).padStart(2, '0')).join('') +
       '6d'
     expect(decodeBsv21Binary(hex)).toBeNull()
+  })
+})
+
+describe('decodeDeployCbor — BRC-162 "unknown keys are ignored"', () => {
+  const hex = (s: string) => Uint8Array.from(s.match(/../g)!.map((b) => Number.parseInt(b, 16)))
+
+  it('keeps sym/dec/icon beside unknown values of every major type', () => {
+    // {"sym":"GOLD","dec":2,"neg":-5,"arr":[1,"x",{}],"f":1.5,"t":true,"tag":1(0),"big":2^63,"icon":h'01020304'}
+    const bytes = hex(
+      'a9' +
+        '6373796d' + '64474f4c44' +
+        '63646563' + '02' +
+        '636e6567' + '24' +
+        '63617272' + '83' + '01' + '6178' + 'a0' +
+        '6166' + 'f93e00' +
+        '6174' + 'f5' +
+        '63746167' + 'c100' +
+        '63626967' + '1b8000000000000000' +
+        '6469636f6e' + '4401020304',
+    )
+    const payload = decodeDeployCbor(bytes)
+    expect(payload).toEqual({ sym: 'GOLD', dec: 2, icon: Uint8Array.from([1, 2, 3, 4]) })
+  })
+
+  it('accepts indefinite-length maps and strings', () => {
+    // {_ "sym": (_ "GO" "LD"), "x": [_ 1 2] }
+    const bytes = hex('bf' + '6373796d' + '7f' + '62474f' + '624c44' + 'ff' + '6178' + '9f0102ff' + 'ff')
+    expect(decodeDeployCbor(bytes)).toEqual({ sym: 'GOLD' })
+  })
+
+  it('still refuses truncated or non-map payloads', () => {
+    expect(decodeDeployCbor(hex('a2' + '6373796d' + '64474f'))).toBeNull()
+    expect(decodeDeployCbor(hex('83010203'))).toBeNull()
+    expect(decodeDeployCbor(hex('a16373796d64474f4c4400'))).toBeNull()
   })
 })

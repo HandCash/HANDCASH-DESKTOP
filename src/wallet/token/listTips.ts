@@ -5,6 +5,8 @@ import { type ActiveWallet } from '../session'
 import {
   aggregateFungibles,
   BSV21_BASKET,
+  cosignFromRemittance,
+  detectCosignFromLockingScript,
   issuerFromRemittance,
   issuerFromSigmaLockingScript,
   normalizeTokenId,
@@ -187,6 +189,11 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     [remittanceIssuer, identityKey].filter(Boolean) as string[],
   )
   const issuer = sigma.issuer ?? remittanceIssuer
+  // Script wins for the lock kind (BRC-163: readers prefer the script when
+  // trust matters); remittance only fills a cosign claim the rest lacks.
+  const cosign =
+    detectCosignFromLockingScript(decoded.restScriptHex) ??
+    cosignFromRemittance({ customInstructions: raw.customInstructions, tags })
   return {
     outpoint: outpointUnderscore(outpointRaw).toLowerCase(),
     tokenId,
@@ -202,6 +209,7 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     ...(scriptHex ? { lockingScript: scriptHex } : {}),
     ...(issuer ? { issuer } : {}),
     ...(sigma.issuer ? { issuerAttested: true } : {}),
+    ...(cosign ? { cosign } : {}),
   }
 }
 

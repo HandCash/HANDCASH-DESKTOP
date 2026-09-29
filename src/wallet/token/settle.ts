@@ -38,7 +38,8 @@ import {
   markOneSatImportFailed,
 } from '../oneSatImportGuard'
 import { forgetItemsSent } from '../sentItemGuard'
-import { decodeBsv21Binary } from './decode162'
+import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
+import { fillTokenParentBodies, prove } from './prove176'
 import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { broadcastAtomicBeef } from '../sendBrc29Payment'
 import { type ActiveWallet } from '../session'
@@ -70,19 +71,42 @@ export type IngestFungibleSettleResult = {
   missingParents?: string[]
 }
 
-function deployMetadataFromBeef(beef: Beef, tokenId: string) {
+type DeployDisplay = { sym?: string; icon?: string; issuer?: string; dec?: number }
+
+/**
+ * Display fields from the deploy output — the record later outputs inherit
+ * (BRC-162 §roles). BRC-162 binary CBOR payload first, BRC-161 JSON body
+ * second; a value tip's own payload is OP_0 and carries nothing.
+ */
+function deployMetadataFromBeef(beef: Beef, tokenId: string): DeployDisplay | null {
   const [txid, rawVout] = tokenId.split('_')
   const vout = Number(rawVout)
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
   const tx = beef.findTxid(txid)?.tx
   const scriptHex = tx?.outputs[vout]?.lockingScript?.toHex()
   if (!scriptHex) return null
+  const binary = decodeBsv21Binary(scriptHex)
+  if (binary?.role === 'deploy') {
+    const icon = iconOutpointFromPayload(binary.payload?.icon, tokenId)
+    return {
+      ...(binary.payload?.sym ? { sym: binary.payload.sym } : {}),
+      ...(binary.payload?.dec != null ? { dec: binary.payload.dec } : {}),
+      ...(icon ? { icon } : {}),
+    }
+  }
   const envelope = parseOrdEnvelope(scriptHex)
   if (!envelope?.body?.length) return null
   try {
-    return parseBsv21Json(
+    const json = parseBsv21Json(
       JSON.parse(new TextDecoder().decode(envelope.body)),
     )
+    if (!json) return null
+    return {
+      ...(json.sym ? { sym: json.sym } : {}),
+      ...(json.icon ? { icon: json.icon } : {}),
+      ...(json.issuer ? { issuer: json.issuer } : {}),
+      ...(json.dec != null ? { dec: json.dec } : {}),
+    }
   } catch {
     return null
   }
@@ -253,13 +277,10 @@ export async function internalizePeerFungibleSettle(opts: {
   let resolvedSym = opts.token.sym
   let resolvedIcon = opts.token.icon
   let resolvedIssuer = opts.token.issuer
+  let resolvedDec = opts.token.dec
   try {
     const beef = Beef.fromBinary(atomic)
     parsedBeef = beef
-    const deploy = deployMetadataFromBeef(beef, tokenId)
-    resolvedSym = resolvedSym || deploy?.sym || 'Token'
-    resolvedIcon = resolvedIcon || deploy?.icon
-    resolvedIssuer = resolvedIssuer || deploy?.issuer
     const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
     if (!tx) {
       clearInboundReceivePending(id)
@@ -272,9 +293,72 @@ export async function internalizePeerFungibleSettle(opts: {
       amount,
     })
     tips.push(...matched.tips)
-    resolvedSym = resolvedSym || matched.sym || 'Token'
-    resolvedIcon = resolvedIcon || matched.icon
-    resolvedIssuer = resolvedIssuer || matched.issuer
+    if (tips.length === 0) {
+      clearInboundReceivePending(id)
+      return { accepted: false, outpoints: [], reason: 'no-token-tip-paying-us' }
+    }
+
+    // BRC-176: what we record is what the packet proves, not what the
+    // remittance claims. Walk every accepted tip to its deploy with per-id
+    // conservation. The peer package is subject + direct parents only, so
+    // fold token-parent bodies in first (raw bodies; the toolbox does SPV on
+    // internalize). A tip that cannot be proven is refused with a name — the
+    // hint fate retries when the failure was a fetch, and a forged output
+    // naming a real token id never paints a balance.
+    const provingStarted = Date.now()
+    const { getBeefForTxidCached } = await import('../beefCache')
+    const proofBeef = await fillTokenParentBodies(
+      beef,
+      async (txid) => {
+        try {
+          return await getBeefForTxidCached(active, txid, {
+            needProof: false,
+            allowUnprovenRawTx: true,
+          })
+        } catch {
+          return null
+        }
+      },
+      [id],
+    )
+    let deployOutpoint: string | undefined
+    for (const tip of tips) {
+      const proof = prove(`${id}_${tip.vout}`, proofBeef)
+      if (!proof.ok) {
+        console.warn(
+          `[fungible-settle] ${id.slice(0, 12)}_${tip.vout} BRC-176 unproven — ${proof.reason} (${Date.now() - provingStarted}ms)`,
+        )
+        clearInboundReceivePending(id)
+        return {
+          accepted: false,
+          outpoints: [],
+          reason: `lineage-unproven:${proof.reason.slice(0, 120)}`,
+        }
+      }
+      if (proof.tokenId !== tokenId) {
+        clearInboundReceivePending(id)
+        return {
+          accepted: false,
+          outpoints: [],
+          reason: `token-id-mismatch:${proof.tokenId.slice(0, 16)}`,
+        }
+      }
+      deployOutpoint = proof.deployOutpoint
+    }
+    const provingMs = Date.now() - provingStarted
+    if (provingMs > 250) {
+      console.info(`[fungible-settle] ${id.slice(0, 12)} prove done ${provingMs}ms`)
+    }
+
+    // Display data is inherited from the proven deploy (BRC-162 §roles); the
+    // sender's envelope and the tip's own inscription only fill gaps.
+    const deploy = deployMetadataFromBeef(proofBeef, deployOutpoint ?? tokenId)
+    resolvedSym = deploy?.sym || resolvedSym || matched.sym || 'Token'
+    resolvedIcon = deploy?.icon || resolvedIcon || matched.icon
+    resolvedIssuer = deploy?.issuer || resolvedIssuer || matched.issuer
+    resolvedDec = deploy?.dec ?? resolvedDec
+    // Superset of the peer package; the icon tx rides here when merged.
+    parsedBeef = proofBeef
   } catch (err) {
     clearInboundReceivePending(id)
     return {
@@ -282,10 +366,6 @@ export async function internalizePeerFungibleSettle(opts: {
       outpoints: [],
       reason: err instanceof Error ? err.message : String(err),
     }
-  }
-  if (tips.length === 0) {
-    clearInboundReceivePending(id)
-    return { accepted: false, outpoints: [], reason: 'no-token-tip-paying-us' }
   }
 
   const tipVout = tips[0]!.vout
@@ -306,7 +386,7 @@ export async function internalizePeerFungibleSettle(opts: {
         op: 'transfer',
         sym: resolvedSym,
         icon: resolvedIcon,
-        dec: opts.token.dec,
+        dec: resolvedDec,
         issuer: resolvedIssuer,
         ...(tip.encoding === 'binary' ? { binarySupply: 'locked' as const } : {}),
         encoding: tip.encoding === 'binary' ? 'brc162' : 'legacy-json',
@@ -340,6 +420,7 @@ export async function internalizePeerFungibleSettle(opts: {
       token: {
         ...opts.token,
         sym: resolvedSym,
+        dec: resolvedDec,
         ...(resolvedIcon ? { icon: resolvedIcon } : {}),
         ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
       },
@@ -375,7 +456,7 @@ export async function internalizePeerFungibleSettle(opts: {
               op: 'transfer',
               sym: resolvedSym,
               icon: resolvedIcon,
-              dec: opts.token.dec,
+              dec: resolvedDec,
               issuer: resolvedIssuer,
             }),
           },
@@ -394,6 +475,7 @@ export async function internalizePeerFungibleSettle(opts: {
       token: {
         ...opts.token,
         sym: resolvedSym,
+        dec: resolvedDec,
         ...(resolvedIcon ? { icon: resolvedIcon } : {}),
         ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
       },
@@ -421,6 +503,7 @@ export async function internalizePeerFungibleSettle(opts: {
         token: {
           ...opts.token,
           sym: resolvedSym,
+          dec: resolvedDec,
           ...(resolvedIcon ? { icon: resolvedIcon } : {}),
           ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
         },

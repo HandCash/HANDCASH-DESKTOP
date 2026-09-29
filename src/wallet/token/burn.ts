@@ -262,7 +262,8 @@ export async function burnBsv21Tokens(args: {
         tokenId,
         amt: BigInt(change),
         sym,
-        dec: 0,
+        dec: Number.isInteger(args.item.dec) ? args.item.dec : 0,
+        ...(args.icon ? { icon: args.icon } : {}),
       })
       outputs.push({
         lockingScript: buildBsv21ValueLock({
@@ -464,6 +465,8 @@ export async function burnBsv21Tokens(args: {
           outpoint: keptOp,
           sym,
           icon: args.icon,
+          dec: Number.isInteger(args.item.dec) ? args.item.dec : undefined,
+          binarySupply: 'locked',
         })
       })
       .catch(() => {})

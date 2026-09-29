@@ -23,6 +23,11 @@ import {
 import { decodeBsv21Binary } from './decode162'
 import { fillTokenParentBodies } from './prove176'
 import {
+  type Bsv21TipKind,
+  chooseBsv21BatchSendPath,
+  classifyBsv21TipKind,
+} from './tipKind'
+import {
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
   buildBsv21SubjectBeef,
@@ -342,6 +347,12 @@ export async function sendBsv21Tokens(args: {
   friendLabel?: string | null
   recipientIdentityKey?: string | null
   sym?: string
+  /**
+   * Display decimals from the deploy. Carried into child remittance, the
+   * Activity row and the peer envelope (BRC-163 `dec`); when omitted the
+   * cached card supplies it.
+   */
+  dec?: number
   /** Decorative icon inscription to echo into child remittance. */
   icon?: string
   /**
@@ -400,7 +411,42 @@ export async function sendBsv21Tokens(args: {
   console.info(
     `[bsv21] send plan tips=${selected.length} amount=${amount} change=${change} token=${tokenId.slice(0, 16)}`,
   )
+  // BRC-163: a tip whose lock is not plain P2PKH MUST fail closed — before
+  // createAction reserves anything, not at unlock time. Classify the rest
+  // script of every selected input as one batch: cosigner, covenant or an
+  // unknown lock is a named refusal, never a P2PKH unlock attempt.
+  const lockPath = chooseBsv21BatchSendPath(
+    selected.map((tip): Bsv21TipKind => {
+      const rest = tip.lockingScript
+        ? decodeBsv21Binary(tip.lockingScript)?.restScriptHex
+        : undefined
+      if (!rest) return { kind: 'unknown' }
+      if (isCovenantLockedScript(rest)) return { kind: 'unknown' }
+      return classifyBsv21TipKind({ lockingScript: rest })
+    }),
+  )
+  if (lockPath.path !== 'plain') {
+    const reason = lockPath.path === 'refuse' ? lockPath.reason : 'cosigner_required'
+    console.warn(`[bsv21] send refused before sign: ${reason}`)
+    throw new Error(
+      reason === 'cosigner_required'
+        ? 'This token requires a cosigner to spend; HandCash cannot sign it alone yet.'
+        : reason === 'mixed_tips'
+          ? 'These token tips have different lock types and cannot be spent together.'
+          : 'A selected token tip uses a lock this wallet cannot spend.',
+    )
+  }
   const sym = args.sym?.trim() || 'Token'
+  const dec = await (async () => {
+    const isDec = (n: unknown): n is number =>
+      Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 18
+    if (isDec(args.dec)) return args.dec
+    const { getFungible } = await import('./list')
+    const cached = getFungible(tokenId)?.dec
+    if (isDec(cached)) return cached
+    const fromTip = listed162.find((t) => t.tokenId === tokenId && isDec(t.dec) && t.dec > 0)?.dec
+    return isDec(fromTip) ? fromTip : 0
+  })()
   const primary = selected[0]!
   const actionLabel = args.actionLabel ?? 'handcash-send-bsv21'
   const actionDescription = args.actionDescription ?? 'Send token'
@@ -426,7 +472,7 @@ export async function sendBsv21Tokens(args: {
     outpoint: primary.outpoint,
     tokenId,
     amt: String(amount),
-    dec: 0,
+    dec,
   }
   noteOutboundSendPending({
     pendingId: outboundPending.id,
@@ -454,6 +500,10 @@ export async function sendBsv21Tokens(args: {
         primary.outpoint,
       )
       const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
+      // Resolved, not typed: a handle that resolves to this wallet is a
+      // self-send too. Self outputs stay in basket `bsv21` (BRC-163).
+      const payeeIsSelf =
+        to.trim().toLowerCase() === wallet.address.trim().toLowerCase()
       const issuer = (() => {
         for (const tip of listed162) {
           if (tip.tokenId === tokenId && tip.issuer) return tip.issuer
@@ -484,9 +534,10 @@ export async function sendBsv21Tokens(args: {
           payeeAddress: to,
           changeAddress: wallet.address,
           sym,
-          dec: 0,
+          dec,
           issuer,
           icon,
+          payeeIsSelf,
         })
       } catch {
         throw new Error('Invalid recipient address or identity key')
@@ -711,6 +762,8 @@ export async function sendBsv21Tokens(args: {
       let remainingAmt = change
       let remainingOp: string | undefined
       let payeeOutpoints: string[] = []
+      /** Every output this wallet still holds after the spend (self payee + change). */
+      let heldAfter: { outpoint: string; amt: bigint }[] = []
       try {
         const signedBeef = Beef.fromBinary(atomic)
         signedBeef.atomicTxid = undefined
@@ -743,12 +796,14 @@ export async function sendBsv21Tokens(args: {
             changeAmt: plan.changeAmt,
             classified,
           })
+          heldAfter = [
+            ...(payeeIsSelf ? classified.payee : []),
+            ...classified.change,
+          ].map((out) => ({ outpoint: `${txid}_${out.vout}`, amt: out.amt }))
           remainingAmt = Number(
-            classified.change.reduce((sum, out) => sum + out.amt, 0n),
+            heldAfter.reduce((sum, out) => sum + out.amt, 0n),
           )
-          remainingOp = classified.change[0]
-            ? `${txid}_${classified.change[0].vout}`
-            : undefined
+          remainingOp = heldAfter[0]?.outpoint
           payeeOutpoints = classified.payee.map((out) => `${txid}_${out.vout}`)
           console.info(
             `[bsv21] signed outputs payee=${classified.payee.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'} change=${classified.change.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'}`,
@@ -806,8 +861,8 @@ export async function sendBsv21Tokens(args: {
           tokenId,
           amount: String(amount),
           sym,
-          dec: 0,
-          ...(args.icon ? { icon: args.icon } : {}),
+          dec,
+          ...(icon ? { icon } : {}),
         }
         void (async () => {
           const { notifyPeerItemIncoming } = await import('../messageTransport')
@@ -882,8 +937,6 @@ export async function sendBsv21Tokens(args: {
 
       setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
-      const payeeIsSelf =
-        args.toAddress.trim().toLowerCase() === wallet.address.trim().toLowerCase()
       markItemsSent([
         ...spent.map((outpoint) => ({ outpoint, txid })),
         ...(payeeIsSelf
@@ -923,14 +976,33 @@ export async function sendBsv21Tokens(args: {
       startSignedSendPropagation(signedSend, {
         pendingId: outboundPending.id,
       })
-      const { paintFungibleAfterSpend, getFungible } = await import('./list')
+      const { paintFungibleAfterSpend } = await import('./list')
       paintFungibleAfterSpend({
         tokenId,
         remainingAmt,
         outpoint: remainingOp,
         sym,
-        icon: args.icon,
-        dec: getFungible(tokenId)?.dec ?? 0,
+        icon,
+        dec,
+        binarySupply: 'locked',
+        ...(heldAfter.length > 1
+          ? {
+              utxoCount: heldAfter.length,
+              heldTips: heldAfter.map((out) => ({
+                outpoint: out.outpoint,
+                tokenId,
+                amt: out.amt.toString(),
+                op: 'transfer' as const,
+                sym,
+                dec,
+                satoshis: 1,
+                binarySupply: 'locked' as const,
+                encoding: 'brc162' as const,
+                ...(icon ? { icon } : {}),
+                seenAt: Date.now(),
+              })),
+            }
+          : {}),
       })
       return { txid, tipsSpent: selected.length, change: remainingAmt }
       } finally {
@@ -1000,12 +1072,16 @@ export async function combineBsv21Tips(args: {
     throw new Error('Already a single tip — nothing to combine')
   }
   const amount = mine.reduce((s, t) => s + Number(t.amt.replace(/\D/g, '') || '0'), 0)
+  const dec = mine.find((t) => t.dec > 0)?.dec
+  const icon = mine.find((t) => t.icon)?.icon
   const result = await sendBsv21Tokens({
     tokenId,
     amount,
     toAddress: active.address,
     skipPeerNotify: true,
-    sym: args.sym,
+    sym: args.sym ?? mine.find((t) => t.sym)?.sym,
+    ...(dec != null ? { dec } : {}),
+    ...(icon ? { icon } : {}),
     actionDescription: 'Combine token tips',
     actionLabel: 'handcash-combine-bsv21',
   })

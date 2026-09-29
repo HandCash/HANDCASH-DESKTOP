@@ -169,6 +169,7 @@ export async function sendFungible(args: {
     friendLabel: args.friendLabel,
     recipientIdentityKey: args.recipientIdentityKey,
     sym: token.sym,
+    dec: token.dec,
     ...(token.icon ? { icon: token.icon } : {}),
   })
   return { txid: result.txid }

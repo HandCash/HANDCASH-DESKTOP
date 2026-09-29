@@ -1,4 +1,5 @@
 import {
+  Beef,
   LockingScript,
   P2PKH,
   PrivateKey,
@@ -23,7 +24,7 @@ import {
   resolveOrdinalListingOrigin,
 } from './marketListing'
 import { rememberProvenVerdict } from './provenCache'
-import { decodeBsv21Binary } from './token'
+import { decodeBsv21Binary, encodeBsv21Binary } from './token'
 import { buildBsv21ValueLock } from './token'
 import {
   chooseMarketCancelPath,
@@ -42,6 +43,8 @@ const listingHarness = vi.hoisted(() => ({
     throw new Error('stop-after-createAction')
   }),
   listed: null as null | Record<string, unknown>,
+  /** Token-parent BEEF the listing proof walks; empty when a test has none. */
+  beef: null as null | import('@bsv/sdk').Beef,
   address: '',
   identityKey: '',
   listOutputsCalls: [] as Array<{ basket?: string; tags?: string[]; limit?: number }>,
@@ -76,7 +79,7 @@ vi.mock('./session', () => ({
 vi.mock('./beefCache', () => ({
   getBeefForTxidCached: async () => {
     const { Beef } = await import('@bsv/sdk')
-    return new Beef()
+    return listingHarness.beef ?? new Beef()
   },
   prepareBroadcastCheque: async (
     _wallet: unknown,
@@ -350,9 +353,52 @@ describe('market 162 listing remittance', () => {
 
 
 describe('162 market list createAction lock', () => {
-  const tokenId = `${'ab'.repeat(32)}_0`
-  const tip = `${'cd'.repeat(32)}_3`
   const seller = PrivateKey.fromHex('1'.padStart(64, '0'))
+
+  /**
+   * A real BRC-162 lineage: fixed-supply deploy → transfer paying the seller
+   * at `vout`. The listing proof walks this packet (BRC-176); a token id that
+   * names no deploy body is refused, not asserted.
+   */
+  function mintTip(amount: bigint, vout = 3) {
+    const filler = new P2PKH().lock(seller.toAddress())
+    const deploy = new Transaction()
+    deploy.addOutput({
+      satoshis: 1,
+      lockingScript: encodeBsv21Binary({
+        amount,
+        payload: { sym: 'TST' },
+        rest: filler.toHex(),
+      }),
+    })
+    const tokenId = `${deploy.id('hex')}_0`
+    const transfer = new Transaction()
+    transfer.addInput({
+      sourceTransaction: deploy,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    for (let i = 0; i < vout; i++) {
+      transfer.addOutput({ satoshis: 1, lockingScript: filler })
+    }
+    const lockingScriptHex = buildBsv21ValueLock({
+      tokenId,
+      amount,
+      address: seller.toAddress(),
+    })
+    transfer.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex(lockingScriptHex),
+    })
+    const beef = new Beef()
+    beef.mergeTransaction(transfer)
+    return {
+      tokenId,
+      tip: `${transfer.id('hex')}_${vout}`,
+      lockingScriptHex,
+      beef,
+    }
+  }
 
   beforeEach(() => {
     listingHarness.createAction.mockClear()
@@ -360,33 +406,32 @@ describe('162 market list createAction lock', () => {
       throw new Error('stop-after-createAction')
     })
     listingHarness.listed = null
+    listingHarness.beef = null
     listingHarness.listOutputsCalls.length = 0
     listingHarness.address = seller.toAddress()
     listingHarness.identityKey = seller.toPublicKey().toString()
   })
 
   it('reads the held tip by origin tag instead of scanning the whole basket', async () => {
-    const knownTip = `${'be'.repeat(32)}_1`
-    const knownOrigin = `${'bf'.repeat(32)}_0`
+    const minted = mintTip(60n, 1)
+    const knownTip = minted.tip
+    const knownOrigin = minted.tokenId
     rememberProvenVerdict(knownTip.replace('_', '.'), {
       tier: 'brc150',
       origin: knownOrigin,
       path: [knownTip, knownOrigin],
       verifiedAt: Date.now(),
     })
+    listingHarness.beef = minted.beef
     listingHarness.listed = {
       outpoint: knownTip.replace('_', '.'),
       satoshis: 1,
-      lockingScript: buildBsv21ValueLock({
-        tokenId,
-        amount: 60n,
-        address: seller.toAddress(),
-      }),
-      tags: ['bsv21', `bsv21:${tokenId}`, 'amt:60'],
+      lockingScript: minted.lockingScriptHex,
+      tags: ['bsv21', `bsv21:${minted.tokenId}`, 'amt:60'],
       customInstructions: JSON.stringify({
         p: 'bsv-20',
         op: 'transfer',
-        id: tokenId,
+        id: minted.tokenId,
         amt: '60',
       }),
     }
@@ -403,51 +448,69 @@ describe('162 market list createAction lock', () => {
     ).toBe(false)
   })
 
-  it('proves a fresh 162 tip from binary + 163 without BRC-150', () => {
-    const lockingScriptHex = buildBsv21ValueLock({
-      tokenId,
-      amount: 60n,
-      address: seller.toAddress(),
-    })
+  it('proves a fresh 162 tip from binary + 163 + its token-parent BEEF without BRC-150', () => {
+    const minted = mintTip(60n)
     const proof = buildBsv21ListingProof({
-      outpoint: tip,
-      lockingScriptHex,
+      outpoint: minted.tip,
+      lockingScriptHex: minted.lockingScriptHex,
       customInstructions: JSON.stringify({
         p: 'bsv-20',
         op: 'transfer',
-        id: tokenId,
+        id: minted.tokenId,
         amt: '60',
       }),
+      beef: minted.beef,
     })
     expect(proof).toMatchObject({
       v: 176,
-      tokenId,
+      tokenId: minted.tokenId,
       amt: '60',
       role: 'value',
-      tip,
+      tip: minted.tip,
+      deployOutpoint: minted.tokenId,
     })
   })
 
-  it('createAction held lock for a 162 list is 162, not P2PKH', async () => {
-    const lockingScriptHex = buildBsv21ValueLock({
-      tokenId,
+  it('refuses a v:176 proof when the packet cannot prove the tip (BRC-176: record, not claim)', () => {
+    const minted = mintTip(60n)
+    expect(() =>
+      buildBsv21ListingProof({
+        outpoint: minted.tip,
+        lockingScriptHex: minted.lockingScriptHex,
+      }),
+    ).toThrow(MarketListingError)
+    const forgedId = `${'ab'.repeat(32)}_0`
+    const forgedLock = buildBsv21ValueLock({
+      tokenId: forgedId,
       amount: 60n,
       address: seller.toAddress(),
     })
+    expect(() =>
+      buildBsv21ListingProof({
+        outpoint: minted.tip,
+        lockingScriptHex: forgedLock,
+        beef: minted.beef,
+      }),
+    ).toThrow(/BRC-176 proof/)
+  })
+
+  it('createAction held lock for a 162 list is 162, not P2PKH', async () => {
+    const minted = mintTip(60n)
+    listingHarness.beef = minted.beef
     listingHarness.listed = {
-      outpoint: tip.replace('_', '.'),
+      outpoint: minted.tip.replace('_', '.'),
       satoshis: 1,
-      lockingScript: lockingScriptHex,
-      tags: ['bsv21', `bsv21:${tokenId}`, 'amt:60'],
+      lockingScript: minted.lockingScriptHex,
+      tags: ['bsv21', `bsv21:${minted.tokenId}`, 'amt:60'],
       customInstructions: JSON.stringify({
         p: 'bsv-20',
         op: 'transfer',
-        id: tokenId,
+        id: minted.tokenId,
         amt: '60',
       }),
     }
     await expect(
-      createMarketListingAdvert({ outpoint: tip, priceSats: 100 }),
+      createMarketListingAdvert({ outpoint: minted.tip, priceSats: 100 }),
     ).rejects.toThrow(/stop-after-createAction/)
     expect(listingHarness.createAction).toHaveBeenCalledTimes(1)
     const args = listingHarness.createAction.mock.calls[0]![0] as {
@@ -459,7 +522,7 @@ describe('162 market list createAction lock', () => {
     }
     const held = args.outputs[0]!
     const decoded = decodeBsv21Binary(held.lockingScript)
-    expect(decoded).toMatchObject({ role: 'value', tokenId, amount: 60n })
+    expect(decoded).toMatchObject({ role: 'value', tokenId: minted.tokenId, amount: 60n })
     expect(held.lockingScript.startsWith('76a914')).toBe(false)
     expect(held.basket).toBe('bsv21')
     const ci = JSON.parse(held.customInstructions ?? '{}') as {
@@ -468,31 +531,28 @@ describe('162 market list createAction lock', () => {
       amt: string
     }
     expect(ci.p).toBe('bsv-20')
-    expect(ci.id).toBe(tokenId)
+    expect(ci.id).toBe(minted.tokenId)
     expect(ci.amt).toBe('60')
   })
 
   it('splits a larger 162 tip to listAmt before the offer so lock amt matches the advert', async () => {
-    const lockingScriptHex = buildBsv21ValueLock({
-      tokenId,
-      amount: 69000n,
-      address: seller.toAddress(),
-    })
+    const minted = mintTip(69000n)
+    listingHarness.beef = minted.beef
     listingHarness.listed = {
-      outpoint: tip.replace('_', '.'),
+      outpoint: minted.tip.replace('_', '.'),
       satoshis: 1,
-      lockingScript: lockingScriptHex,
-      tags: ['bsv21', `bsv21:${tokenId}`, 'amt:69000'],
+      lockingScript: minted.lockingScriptHex,
+      tags: ['bsv21', `bsv21:${minted.tokenId}`, 'amt:69000'],
       customInstructions: JSON.stringify({
         p: 'bsv-20',
         op: 'transfer',
-        id: tokenId,
+        id: minted.tokenId,
         amt: '69000',
       }),
     }
     await expect(
       createMarketListingAdvert({
-        outpoint: tip,
+        outpoint: minted.tip,
         assetType: 'bsv21',
         priceSats: 57600,
         listAmt: 240,
@@ -510,14 +570,15 @@ describe('162 market list createAction lock', () => {
     expect(args.description).toMatch(/split/i)
     expect(args.outputs.some((o) => o.basket === 'market-offers')).toBe(false)
     const listed = decodeBsv21Binary(args.outputs[0]!.lockingScript)
-    expect(listed).toMatchObject({ role: 'value', tokenId, amount: 240n })
+    expect(listed).toMatchObject({ role: 'value', tokenId: minted.tokenId, amount: 240n })
     const change = decodeBsv21Binary(args.outputs[1]!.lockingScript)
-    expect(change).toMatchObject({ role: 'value', tokenId, amount: 68760n })
+    expect(change).toMatchObject({ role: 'value', tokenId: minted.tokenId, amount: 68760n })
   })
 
   it('does not treat remittance-only 1-sat as a 162 listable tip', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
     const classified = classifyMarketListingAsset({
-      outpoint: tip,
+      outpoint: `${'cd'.repeat(32)}_3`,
       satoshis: 1,
       lockingScriptHex: `76a914${'11'.repeat(20)}88ac`,
       tags: ['bsv21', `bsv21:${tokenId}`, 'amt:60'],
@@ -531,7 +592,6 @@ describe('162 market list createAction lock', () => {
     expect(classified.assetType).not.toBe('bsv21')
   })
 })
-
 
 describe('ordinal listing origin', () => {
   const proven = `${'a1'.repeat(32)}_0`

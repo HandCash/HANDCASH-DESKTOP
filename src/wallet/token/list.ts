@@ -997,10 +997,11 @@ function parseListedOutput(
   let issuerAttested = false
   const candidates = [issuer, selfIdentityKey].filter(Boolean) as string[]
   const sigma = issuerFromSigmaLockingScript(raw.lockingScript, candidates)
+  // Attested means the Sigma signer address *is* the claimed issuer. A Sigma
+  // block signed by anyone else next to a remittance `issuer` claim is not an
+  // attestation of that claim (BRC-163 §issuer attestation).
   if (sigma.issuer) {
     issuer = sigma.issuer
-    issuerAttested = true
-  } else if (issuer && sigma.address) {
     issuerAttested = true
   }
   return {

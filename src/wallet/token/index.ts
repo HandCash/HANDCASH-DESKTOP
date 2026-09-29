@@ -125,9 +125,13 @@ export { burnBsv21Tokens, previewBsv21Burn } from './burn'
 // BRC-176 prove
 export {
   collectBsv21TokenAncestryTxids,
+  decodeTokenOutput,
   fillTokenParentBodies,
+  MAX_PACKET_TXS,
+  MAX_PROVE_DEPTH,
   prove,
   type Bsv21ProofResult,
+  type TokenOutput,
 } from './prove176'
 export {
   assertBsv21BroadcastValidity,

@@ -305,29 +305,74 @@ export function buildBsv21ListingProof(args: {
       'BRC-163 amt does not match the 162 lock.',
     )
   }
-  let deployOutpoint = decoded.role === 'deploy' ? tip : tokenId
-  let role: 'deploy' | 'value' = decoded.role === 'deploy' ? 'deploy' : 'value'
-  if (args.beef) {
-    const result = prove(tip, args.beef)
-    if (result.ok) {
-      if (result.tokenId !== tokenId || result.amount !== decoded.amount) {
-        throw new MarketListingError(
-          'ITEM_ORIGIN_UNPROVEN',
-          'BRC-176 proof does not match the 162 lock.',
-        )
-      }
-      deployOutpoint = result.deployOutpoint
-      role = result.role
-    }
+  // BRC-176: "what is proven is the record from the packet, not a claim".
+  // A `v:176` advert is a proof-shaped statement; it is only emitted when
+  // prove() walked this tip to its deploy. No BEEF or a failed walk is a
+  // named refusal, never a proof built from the lock's own token id.
+  if (!args.beef) {
+    throw new MarketListingError(
+      'ITEM_ORIGIN_UNPROVEN',
+      'BRC-176 proof needs the token transaction package; refresh and list again.',
+    )
+  }
+  const result = prove(tip, args.beef)
+  if (!result.ok) {
+    console.warn(`[market-list] refuse bsv21 proof — ${result.reason}`)
+    throw new MarketListingError(
+      'ITEM_ORIGIN_UNPROVEN',
+      `BRC-176 proof failed: ${result.reason}`,
+    )
+  }
+  if (result.tokenId !== tokenId || result.amount !== decoded.amount) {
+    throw new MarketListingError(
+      'ITEM_ORIGIN_UNPROVEN',
+      'BRC-176 proof does not match the 162 lock.',
+    )
   }
   return {
     v: 176,
     tokenId,
     amt: decoded.amount.toString(),
-    deployOutpoint,
-    role,
+    deployOutpoint: result.deployOutpoint,
+    role: result.role,
     tip,
   }
+}
+
+/**
+ * Token-parent complete BEEF for a listing proof: the tip's own package plus
+ * every token ancestor body back to the deploy (raw bodies are enough for
+ * prove; SPV is the toolbox's job on settle).
+ */
+async function loadBsv21ProofBeef(
+  active: ActiveWallet,
+  itemTxid: string,
+): Promise<Beef | undefined> {
+  let beef: Beef | undefined
+  try {
+    beef = await getBeefForTxidCached(active, itemTxid, {
+      needProof: true,
+      allowUnprovenRawTx: true,
+    })
+  } catch {
+    beef = undefined
+  }
+  if (!beef) return undefined
+  const { fillTokenParentBodies } = await import('./token/prove176')
+  return fillTokenParentBodies(
+    beef,
+    async (txid) => {
+      try {
+        return await getBeefForTxidCached(active, txid, {
+          needProof: false,
+          allowUnprovenRawTx: true,
+        })
+      } catch {
+        return null
+      }
+    },
+    [itemTxid],
+  )
 }
 
 
@@ -1676,12 +1721,7 @@ async function createMarketListingAdvertExclusive(
         listedLock.message,
       )
     }
-    let beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
-    try {
-      beef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
-    } catch {
-      beef = undefined
-    }
+    const beef = await loadBsv21ProofBeef(active, itemTxid)
     provenance = buildBsv21ListingProof({
       outpoint: listingOutpoint,
       lockingScriptHex: listedLock.lockingScriptHex,
@@ -1741,12 +1781,7 @@ async function createMarketListingAdvertExclusive(
         listingOutpoint = normalizeOutpoint(vin0.outpoint)
         itemTxid = listingOutpoint.slice(0, 64)
         provenAmt = Number(vin0.amt)
-        let vin0Beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
-        try {
-          vin0Beef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
-        } catch {
-          vin0Beef = undefined
-        }
+        const vin0Beef = await loadBsv21ProofBeef(active, itemTxid)
         provenance = buildBsv21ListingProof({
           outpoint: listingOutpoint,
           lockingScriptHex: vin0.lockingScript,

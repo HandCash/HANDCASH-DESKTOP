@@ -32,9 +32,24 @@ Legacy JSON BSV-21 (`application/bsv-20`) is read-only. New token transactions u
 
 ## Ingress
 
-1. **P2P settle** — `internalizePeerFungibleSettle` → basket `bsv21`.
+1. **P2P settle** — `internalizePeerFungibleSettle` → basket `bsv21`. Every accepted tip is walked to its deploy with `prove()` (token-parent bodies filled from local/network raw tx; the toolbox does SPV on `internalizeAction`). An unprovable tip is refused with `lineage-unproven:<reason>` — a forged output naming a real token id never paints a balance. Display fields (`sym`, `dec`, `icon`) are inherited from the proven deploy, not from the sender's envelope.
 2. **BRC-100** — connected apps via `createAction` / `internalizeAction`; issuer enrich in `token/issuer.ts`.
 3. **Chain refresh** — does **not** import tokens from address scan (recovery via remittance / settle only).
+
+## BRC-176 prove (`token/prove176.ts`)
+
+- Decodes **both** encodings (BRC-161 JSON and BRC-162 binary; binary wins per output) so mixed lineages prove.
+- Per-id conservation I ≥ O; `burn` counts toward O and contributes nothing as an input.
+- Authority model (`deploy+auth` / `auth` / `mint` / amount 0) fails closed with a named reason.
+- Limits: `MAX_PROVE_DEPTH` (walk depth), `MAX_PACKET_TXS` (bodies per fill / ancestry), `PARENT_FILL_DEADLINE_MS`. Tripping a limit reads *unproven*, never counterfeit.
+- Market listing (`buildBsv21ListingProof`) emits `v:176` **only** after a successful walk over a token-parent-complete BEEF; no BEEF or a failed walk is `ITEM_ORIGIN_UNPROVEN`.
+
+## Send invariants (BRC-163)
+
+- Every selected input's rest script is classified (`chooseBsv21BatchSendPath`) **before** `createAction`; cosigner / covenant / unknown locks refuse by name.
+- A payee that resolves to this wallet (combine, self-send) keeps its output in basket `bsv21`; the card is repainted with every held output.
+- `dec` travels from the card → remittance → Activity → peer envelope; it is never hard-coded.
+- `issuerAttested` means the Sigma signer **is** the claimed issuer (address match); a Sigma block by anyone else does not attest a remittance claim.
 
 ## Features (v1)
 

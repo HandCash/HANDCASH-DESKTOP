@@ -256,7 +256,19 @@ export function encodeDeployCbor(payload: Bsv21BinaryPayload): number[] {
 
 type CborRead = { value: unknown; next: number }
 
-function readCborLen(bytes: Uint8Array, at: number, addl: number): { len: number; next: number } | null {
+/** Opaque stand-in for a well-formed CBOR item this reader does not model. */
+const CBOR_IGNORED: unique symbol = Symbol('cbor-ignored')
+const CBOR_BREAK: unique symbol = Symbol('cbor-break')
+
+/**
+ * Argument of a CBOR head. `null` when the buffer ends inside it. Indefinite
+ * length (addl 31) returns `len: -1`.
+ */
+function readCborLen(
+  bytes: Uint8Array,
+  at: number,
+  addl: number,
+): { len: number; next: number } | null {
   if (addl < 24) return { len: addl, next: at }
   if (addl === 24) {
     const n = bytes[at]
@@ -276,42 +288,98 @@ function readCborLen(bytes: Uint8Array, at: number, addl: number): { len: number
     if (b0 == null || b1 == null || b2 == null || b3 == null) return null
     return { len: ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) >>> 0, next: at + 4 }
   }
+  if (addl === 27) {
+    if (at + 8 > bytes.length) return null
+    let n = 0n
+    for (let i = 0; i < 8; i++) n = (n << 8n) | BigInt(bytes[at + i]!)
+    // Lengths and small ints fit; anything larger is well-formed but ignored.
+    return { len: n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : -2, next: at + 8 }
+  }
+  if (addl === 31) return { len: -1, next: at }
   return null
 }
 
-function readCbor(bytes: Uint8Array, at: number): CborRead | null {
-  if (at >= bytes.length) return null
+/**
+ * Read one CBOR data item. Every well-formed item is consumed; only the
+ * shapes BRC-162 names (unsigned ints, byte strings, text strings, maps) are
+ * modelled, the rest read as {@link CBOR_IGNORED}. BRC-162: "unknown keys
+ * are ignored" — a reader that rejects a payload for carrying an array, a
+ * float or a tag would reject a valid token.
+ */
+function readCbor(bytes: Uint8Array, at: number, depth = 0): CborRead | null {
+  if (at >= bytes.length || depth > 32) return null
   const ib = bytes[at]!
   const major = ib >> 5
   const addl = ib & 0x1f
+  if (major === 7 && addl === 31) return { value: CBOR_BREAK, next: at + 1 }
   const len = readCborLen(bytes, at + 1, addl)
   if (!len) return null
+  const indefinite = len.len === -1
+  if (indefinite && (major === 0 || major === 1 || major === 6)) return null
+
   if (major === 0) return { value: len.len, next: len.next }
-  if (major === 2) {
-    const end = len.next + len.len
-    if (end > bytes.length) return null
-    return { value: bytes.slice(len.next, end), next: end }
+  if (major === 1) return { value: CBOR_IGNORED, next: len.next }
+  if (major === 6) return readCbor(bytes, len.next, depth + 1)
+  if (major === 7) {
+    // Simple values / floats: addl 24 carries one byte, 25/26/27 the float.
+    const width = addl < 24 ? 0 : addl === 24 ? 1 : addl === 25 ? 2 : addl === 26 ? 4 : 8
+    const next = at + 1 + width
+    return next > bytes.length ? null : { value: CBOR_IGNORED, next }
   }
-  if (major === 3) {
-    const end = len.next + len.len
-    if (end > bytes.length) return null
-    return {
-      value: new TextDecoder().decode(bytes.slice(len.next, end)),
-      next: end,
+  if (major === 2 || major === 3) {
+    if (indefinite) {
+      let pos = len.next
+      const chunks: Uint8Array[] = []
+      let text = ''
+      let clean = true
+      for (;;) {
+        const chunk = readCbor(bytes, pos, depth + 1)
+        if (!chunk) return null
+        pos = chunk.next
+        if (chunk.value === CBOR_BREAK) break
+        if (major === 2 && chunk.value instanceof Uint8Array) chunks.push(chunk.value)
+        else if (major === 3 && typeof chunk.value === 'string') text += chunk.value
+        else clean = false
+      }
+      if (!clean) return { value: CBOR_IGNORED, next: pos }
+      if (major === 3) return { value: text, next: pos }
+      const joined = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
+      let off = 0
+      for (const c of chunks) {
+        joined.set(c, off)
+        off += c.length
+      }
+      return { value: joined, next: pos }
     }
+    if (len.len < 0) return null
+    const end = len.next + len.len
+    if (end > bytes.length) return null
+    if (major === 2) return { value: bytes.slice(len.next, end), next: end }
+    return { value: new TextDecoder().decode(bytes.slice(len.next, end)), next: end }
   }
-  if (major === 5) {
-    const map = new Map<string, unknown>()
+  if (major === 4 || major === 5) {
+    if (len.len < -1) return null
+    const map = major === 5 ? new Map<string, unknown>() : null
     let pos = len.next
-    for (let i = 0; i < len.len; i++) {
-      const key = readCbor(bytes, pos)
-      if (!key || typeof key.value !== 'string') return null
-      const val = readCbor(bytes, key.next)
-      if (!val) return null
-      map.set(key.value, val.value)
+    const perEntry = major === 5 ? 2 : 1
+    for (let i = 0; indefinite || i < len.len; i++) {
+      const first = readCbor(bytes, pos, depth + 1)
+      if (!first) return null
+      if (first.value === CBOR_BREAK) {
+        if (!indefinite) return null
+        pos = first.next
+        break
+      }
+      if (perEntry === 1) {
+        pos = first.next
+        continue
+      }
+      const val = readCbor(bytes, first.next, depth + 1)
+      if (!val || val.value === CBOR_BREAK) return null
+      if (typeof first.value === 'string') map!.set(first.value, val.value)
       pos = val.next
     }
-    return { value: map, next: pos }
+    return { value: map ?? CBOR_IGNORED, next: pos }
   }
   return null
 }

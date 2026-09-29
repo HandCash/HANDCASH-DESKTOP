@@ -116,6 +116,22 @@ describe('bsv21Send conservation', () => {
     expect(decodeBsv21Binary(outputs[0]!.lockingScript)?.role).toBe('value')
   })
 
+  it('keeps a self-payee output in basket bsv21 (combine / self-send)', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const outputs = buildBsv21SendOutputs({
+      tokenId,
+      payeeAmt: 100n,
+      changeAmt: 0n,
+      payeeAddress: CHANGE,
+      changeAddress: CHANGE,
+      payeeIsSelf: true,
+    })
+    expect(outputs).toHaveLength(1)
+    expect(outputs[0]!.role).toBe('payee')
+    expect(outputs[0]!.basket).toBe('bsv21')
+    expect(outputs[0]!.tags).toContain(`bsv21:${tokenId}`)
+  })
+
   it('refuses over-send', () => {
     const tokenId = `${'ab'.repeat(32)}_0`
     expect(() =>

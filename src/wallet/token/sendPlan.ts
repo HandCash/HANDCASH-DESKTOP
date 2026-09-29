@@ -296,6 +296,12 @@ export function buildBsv21SendOutputs(args: {
   dec?: number
   issuer?: string
   icon?: string
+  /**
+   * The payee is this wallet (combine / self-send). BRC-163: an output paying
+   * ourselves is a held token and MUST land in basket `bsv21`, or the toolbox
+   * drops it and the card forgets the balance at change 0.
+   */
+  payeeIsSelf?: boolean
 }): Bsv21SendOutput[] {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -314,7 +320,7 @@ export function buildBsv21SendOutputs(args: {
     issuer: args.issuer,
     icon: args.icon,
   })
-  const { basket: _payeeBasket, ...payeeRemitFields } = payeeRemit
+  const { basket: payeeBasket, ...payeeRemitFields } = payeeRemit
   const outputs: Bsv21SendOutput[] = [
     {
       role: 'payee',
@@ -325,7 +331,8 @@ export function buildBsv21SendOutputs(args: {
       }),
       satoshis: 1,
       ...payeeRemitFields,
-      outputDescription: 'BSV-21 value',
+      ...(args.payeeIsSelf ? { basket: payeeBasket } : {}),
+      outputDescription: args.payeeIsSelf ? 'BSV-21 value (self)' : 'BSV-21 value',
       amt: args.payeeAmt.toString(),
     },
   ]
