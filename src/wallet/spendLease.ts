@@ -17,6 +17,21 @@ const LEASE_TTL_MS = 45_000
 const LEASE_FETCH_MS = 8_000
 /** Lease cleanup must never keep the local spend coordinator active. */
 const LEASE_RELEASE_MS = 2_000
+/**
+ * A lease this device still holds with this much TTL left is reused as-is.
+ * Every acquire is three sequential backup-host round trips; an app paying in
+ * a burst (one bet, one tip per click) paid them on every payment.
+ */
+const LEASE_REUSE_MIN_REMAINING_MS = 15_000
+/** How long a finished spend keeps the lease for the next one before dropping it. */
+const LEASE_LINGER_MS = 3_000
+const SLOW_ACQUIRE_MS = 250
+
+type HeldLease = { url: string; deviceId: string }
+
+let held: (HeldLease & { until: number }) | null = null
+let lingerTimer: ReturnType<typeof setTimeout> | null = null
+let dropping: Promise<void> | null = null
 
 function mergeAbortSignals(
   outer: AbortSignal | undefined,
@@ -126,11 +141,63 @@ function isActiveForeign(lease: SpendLease | null, localId: string, identityKey:
   return lease.deviceId !== localId
 }
 
+function cancelLinger(): void {
+  if (lingerTimer == null) return
+  clearTimeout(lingerTimer)
+  lingerTimer = null
+}
+
+async function clearRemoteLease(lease: HeldLease): Promise<void> {
+  const cleanup = mergeAbortSignals(undefined, LEASE_RELEASE_MS)
+  try {
+    const cur = await readLease(lease.url, cleanup.signal)
+    if (cur?.deviceId === lease.deviceId) {
+      await writeLease(lease.url, null, cleanup.signal)
+    }
+  } catch (err) {
+    console.warn('[spend-lease] release failed', err)
+  } finally {
+    cleanup.cancel()
+  }
+}
+
+/**
+ * Drop the lease this device holds now instead of after the linger.
+ * The next acquire awaits the drop, so it can never clear a fresher lease.
+ */
+export function releaseHeldSpendLease(): Promise<void> {
+  cancelLinger()
+  const lease = held
+  held = null
+  if (!lease) return dropping ?? Promise.resolve()
+  const tracked: Promise<void> = clearRemoteLease(lease).finally(() => {
+    if (dropping === tracked) dropping = null
+  })
+  dropping = tracked
+  return tracked
+}
+
+/** Release fn for one spend: it never waits on the backup host. */
+function lingeringRelease(): () => Promise<void> {
+  let released = false
+  return async () => {
+    if (released) return
+    released = true
+    cancelLinger()
+    lingerTimer = setTimeout(() => {
+      lingerTimer = null
+      void releaseHeldSpendLease()
+    }, LEASE_LINGER_MS)
+  }
+}
+
 /**
  * Acquire cross-device spend lease when parity backup URL is set.
  * No-op without a backup URL. If the host can’t store leases, degrades to
  * local-only serialization (still safer than nothing).
- * Returns a release fn (always call in finally).
+ * Returns a release fn (always call in finally). Releasing never waits on the
+ * host: the lease lingers briefly for the next spend, then drops in the
+ * background.
  */
 export async function acquireSpendLease(
   signal?: AbortSignal,
@@ -141,11 +208,29 @@ export async function acquireSpendLease(
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
+  const started = Date.now()
   try {
     if (signal?.aborted) throw new Error('Aborted')
     assertDeviceLinkBackupUrl()
     const deviceId = getOrCreateDeviceId()
     const url = spendLeaseObjectUrl(active.identityKey)
+    if (
+      held?.url === url &&
+      held.deviceId === deviceId &&
+      held.until - Date.now() > LEASE_REUSE_MIN_REMAINING_MS
+    ) {
+      cancelLinger()
+      return lingeringRelease()
+    }
+    if (held?.url === url) {
+      // Near expiry: the rewrite below replaces it — dropping it first would
+      // only add round trips.
+      cancelLinger()
+      held = null
+    } else if (held) {
+      void releaseHeldSpendLease()
+    }
+    if (dropping) await dropping
     const existing = await readLease(url, signal)
     if (isActiveForeign(existing, deviceId, active.identityKey)) {
       const secs = Math.max(1, Math.ceil((existing!.until - Date.now()) / 1000))
@@ -174,22 +259,10 @@ export async function acquireSpendLease(
       return noop
     }
 
-    let released = false
-    return async () => {
-      if (released) return
-      released = true
-      const cleanup = mergeAbortSignals(undefined, LEASE_RELEASE_MS)
-      try {
-        const cur = await readLease(url, cleanup.signal)
-        if (cur?.deviceId === deviceId) {
-          await writeLease(url, null, cleanup.signal)
-        }
-      } catch (err) {
-        console.warn('[spend-lease] release failed', err)
-      } finally {
-        cleanup.cancel()
-      }
-    }
+    held = { url, deviceId, until: lease.until }
+    const ms = Date.now() - started
+    if (ms >= SLOW_ACQUIRE_MS) console.info(`[spend] lease done ${ms}ms`)
+    return lingeringRelease()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (signal?.aborted || /abort/i.test(msg)) throw err

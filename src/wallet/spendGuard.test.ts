@@ -416,6 +416,42 @@ describe('refreshSpendableBalance', () => {
     }
   })
 
+  it('answers from a proven total that covers the amount without waiting out the budget', async () => {
+    coalescedBalanceRead.mockReturnValue(new Promise<BalanceRead>(() => {}))
+    peekProvenConfirmedSpendable.mockReturnValue(12_000)
+    const { assertSendableBalance } = await import('./spendGuard')
+
+    vi.useFakeTimers()
+    try {
+      const gate = assertSendableBalance(500)
+      await vi.advanceTimersByTimeAsync(200)
+      await expect(gate).resolves.toBe(12_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the full budget when the proven total is short of the amount', async () => {
+    let land!: (read: BalanceRead) => void
+    coalescedBalanceRead.mockReturnValue(
+      new Promise<BalanceRead>((resolve) => {
+        land = resolve
+      }),
+    )
+    peekProvenConfirmedSpendable.mockReturnValue(100)
+    const { assertSendableBalance } = await import('./spendGuard')
+
+    vi.useFakeTimers()
+    try {
+      const gate = assertSendableBalance(500)
+      await vi.advanceTimersByTimeAsync(1_000)
+      land({ kind: 'ok', sats: 12_000 })
+      await expect(gate).resolves.toBe(12_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reads confirmed balance once per gate even when it asks repeatedly', async () => {
     // Four separate reads queue their own IndexedDB work and manufacture the
     // contention they then time out on.

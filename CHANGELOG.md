@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.374] - 2026-09-29
+
+Faster app payments. The 0.1.535 upload showed the whole Toolbox `createAction` (coin selection, signing, script checks, commit) at 0.8–1.6s median; the rest of the ~6.5s spend phase was wallet round trips around it.
+
+### Changed
+
+- **Spend lease no longer holds the reply.** Releasing the cross-device lease used to be a backup-host read + write awaited before the app got its txid. Release now returns at once; the lease lingers 3s and drops in the background, and the next acquire waits for that drop so it can never clear a fresher lease.
+- **Back-to-back payments reuse the lease.** A lease this device still holds with 15s+ TTL is reused instead of three sequential round trips (read, write, read back) per payment.
+- **Balance gate answers from a covering proven total.** When the last proven confirmed total already covers the amount, the in-region gate waits 150ms for the live read instead of 1.5s. The long budget only ever ended in that same total; coin selection still refuses a real shortfall.
+- **Post-sign spender probe skips unmined parents.** A confirmed foreign spend needs a mined parent, so inputs whose parent rides the BEEF as a raw tx without a proof (this wallet's unconfirmed change) are no longer probed on WhatsOnChain. Txid-only or missing parents are still probed.
+
+### Added
+
+- `[spend] lease|balance|input_fate|internalize done <N>ms` timing lines; triage folds them into `toolboxSteps` as `spend.*` rows and Jev can name `network_waits` as the signing-time owner.
+
 ## [1.3.373] - 2026-09-29
 
 BSV-21 conformance pass against BRC-162 / BRC-163 / BRC-176 (Jev audit, 22 clauses).

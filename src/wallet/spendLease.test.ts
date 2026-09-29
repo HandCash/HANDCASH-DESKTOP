@@ -84,15 +84,51 @@ describe('spendLease', () => {
       }),
     )
 
-    const { acquireSpendLease } = await import('./spendLease')
+    const { acquireSpendLease, releaseHeldSpendLease } = await import('./spendLease')
     const release = await acquireSpendLease()
     expect(state.lease?.deviceId).toBe('local-device')
     await release()
+    await releaseHeldSpendLease()
     expect(
       state.lease?.released === true ||
         state.lease?.until === 0 ||
         state.lease?.deviceId === '',
     ).toBe(true)
+  })
+
+  it('reuses a held lease for back-to-back spends, then drops it after the linger', async () => {
+    vi.useFakeTimers()
+    try {
+      const state: { lease: { deviceId?: string; until?: number } | null } = { lease: null }
+      const fetchMock = vi.fn(async (_input: RequestInfo, init?: RequestInit) => {
+        if ((init?.method ?? 'GET') === 'PUT') {
+          state.lease = JSON.parse(String(init?.body ?? '{}')) as NonNullable<typeof state.lease>
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (!state.lease || state.lease.until === 0) {
+          return { ok: false, status: 404, json: async () => ({}) }
+        }
+        return { ok: true, status: 200, json: async () => state.lease }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const { acquireSpendLease } = await import('./spendLease')
+      const first = await acquireSpendLease()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      await first()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+
+      const second = await acquireSpendLease()
+      await second()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      expect(state.lease?.deviceId).toBe('local-device')
+
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(fetchMock).toHaveBeenCalledTimes(5)
+      expect(state.lease?.deviceId).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('bounds a stalled release so the spend coordinator can continue', async () => {
@@ -134,12 +170,13 @@ describe('spendLease', () => {
       )
       vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-      const { acquireSpendLease } = await import('./spendLease')
+      const { acquireSpendLease, releaseHeldSpendLease } = await import('./spendLease')
       const release = await acquireSpendLease()
-      const releasing = release()
+      await expect(release()).resolves.toBeUndefined()
+      const dropping = releaseHeldSpendLease()
       await vi.advanceTimersByTimeAsync(2_100)
 
-      await expect(releasing).resolves.toBeUndefined()
+      await expect(dropping).resolves.toBeUndefined()
     } finally {
       vi.useRealTimers()
     }

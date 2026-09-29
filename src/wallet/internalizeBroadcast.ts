@@ -61,9 +61,12 @@ export async function internalizeActionWithBroadcast(
 
   let result: unknown
   try {
+    const started = Date.now()
     const accepted = await withVisibleOnChainBeef(() =>
       wallet.internalizeAction(args as never, originator),
     )
+    const ms = Date.now() - started
+    if (ms >= 250) console.info(`[spend] internalize done ${ms}ms`)
     result = {
       ...(accepted && typeof accepted === 'object' && !Array.isArray(accepted)
         ? (accepted as unknown as Record<string, unknown>)

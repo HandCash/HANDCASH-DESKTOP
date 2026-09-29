@@ -310,6 +310,12 @@ const BALANCE_UNREADABLE =
 const CONFIRMED_READ_BUDGET_MS = 1_500
 
 /**
+ * Budget when the proven total already covers the amount. The long budget only
+ * ever ends in that same total; coin selection still refuses a real shortfall.
+ */
+const COVERED_READ_BUDGET_MS = 150
+
+/**
  * Hard ceiling when nothing has ever been proven, so there is no total to fall
  * back to. The budget above exists to answer *fast*, not to refuse a funded
  * wallet: a read that lands at 1600ms must still pass the gate.
@@ -342,19 +348,31 @@ async function settleWithin(
  * live read fails or exceeds the budget, a previously proven confirmed total
  * is allowed — sync contention must not block auth/pay when funds exist.
  */
-async function readConfirmedSpendable(active: {
-  wallet: Parameters<typeof coalescedBalanceRead>[0]
-}): Promise<number> {
+async function readConfirmedSpendable(
+  active: {
+    wallet: Parameters<typeof coalescedBalanceRead>[0]
+  },
+  neededSats?: number,
+): Promise<number> {
   const flight = coalescedBalanceRead(active.wallet, { creditUnconfirmed: false })
+  const provenBefore = peekProvenConfirmedSpendable(active.wallet)
+  const covered =
+    neededSats != null && neededSats > 0 && provenBefore != null && provenBefore >= neededSats
 
-  const budgeted = await settleWithin(flight, CONFIRMED_READ_BUDGET_MS)
+  const started = Date.now()
+  const budgeted = await settleWithin(
+    flight,
+    covered ? COVERED_READ_BUDGET_MS : CONFIRMED_READ_BUDGET_MS,
+  )
+  const ms = Date.now() - started
+  if (ms >= 250) console.info(`[spend] balance done ${ms}ms`)
   if (budgeted?.kind === 'ok') return budgeted.sats
 
   const proven = peekProvenConfirmedSpendable(active.wallet)
   if (proven != null && proven > 0) {
-    logDiag('spend-guard', 'warn', 'confirmed-from-proven-cache', {
+    logDiag('spend-guard', covered ? 'info' : 'warn', 'confirmed-from-proven-cache', {
       proven,
-      reason: budgeted?.reason ?? 'readSlow',
+      reason: budgeted?.reason ?? (covered ? 'provenCovers' : 'readSlow'),
     })
     return proven
   }
@@ -392,7 +410,7 @@ export async function assertSendableBalanceForReview(satoshis: number): Promise<
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const confirmed = await readConfirmedSpendable(active)
+  const confirmed = await readConfirmedSpendable(active, satoshis)
   if (satoshis <= confirmed) return confirmed
 
   let confirming = 0
@@ -438,7 +456,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  let confirmed = await readConfirmedSpendable(active)
+  let confirmed = await readConfirmedSpendable(active, satoshis)
   if (satoshis <= confirmed) return confirmed
 
   // Display balance credits pending change; createAction only selects spendable

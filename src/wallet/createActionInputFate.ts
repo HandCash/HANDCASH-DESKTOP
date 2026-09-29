@@ -5,6 +5,7 @@
  *
  * Before the app is told the mint exists, name those inputs and sign again.
  */
+import { Beef } from '@bsv/sdk'
 import type { Chain } from './vault'
 import { inputOutpointsFromAtomicBeef } from './txOutpoints'
 import { extractTxid } from './txExplorer'
@@ -67,6 +68,26 @@ function atomicFromCreateResult(result: unknown): number[] | null {
   return null
 }
 
+/**
+ * Inputs whose parent may be mined. A confirmed spender needs a confirmed
+ * parent, so an input whose parent rides this BEEF as a raw tx with no proof
+ * cannot have one — back-to-back payments spend exactly that unmined change.
+ * A parent the BEEF names by txid only, or omits, is still probed.
+ */
+export function inputsWithPossiblyMinedParent(atomic: number[], txid: string): string[] {
+  const inputs = inputOutpointsFromAtomicBeef(atomic, txid)
+  let beef: Beef
+  try {
+    beef = Beef.fromBinary(atomic)
+  } catch {
+    return inputs
+  }
+  return inputs.filter((outpoint) => {
+    const parent = beef.findTxid(outpoint.split('.')[0] ?? '')
+    return !parent || parent.isTxidOnly || parent.hasProof
+  })
+}
+
 export async function foreignConfirmedInputSpends(
   result: unknown,
   chain: Chain,
@@ -74,13 +95,17 @@ export async function foreignConfirmedInputSpends(
   const txid = extractTxid(result)?.toLowerCase()
   const atomic = atomicFromCreateResult(result)
   if (!txid || !atomic?.length) return []
-  const inputs = inputOutpointsFromAtomicBeef(atomic, txid)
+  const inputs = inputsWithPossiblyMinedParent(atomic, txid)
+  if (inputs.length === 0) return []
+  const started = Date.now()
   const rows = await Promise.all(
     inputs.map(async (outpoint) => ({
       outpoint,
       spender: await confirmedForeignSpenderTxid(outpoint, txid, chain),
     })),
   )
+  const ms = Date.now() - started
+  if (ms >= 250) console.info(`[spend] input_fate done ${ms}ms`)
   return rows.filter(
     (row): row is { outpoint: string; spender: string } => row.spender != null,
   )

@@ -1214,7 +1214,7 @@ function workByVisibility(steps) {
   )
 }
 
-const TOOLBOX_STEP_RE = /^\[toolbox\] (\S+) done (\d+)ms(?: (\w+))?$/
+const TOOLBOX_STEP_RE = /^\[(toolbox|spend)\] (\S+) done (\d+)ms(?: (\w+))?$/
 
 function toolboxStepFacts(events) {
   const visibilityOver = visibilityTimeline(events)
@@ -1224,10 +1224,11 @@ function toolboxStepFacts(events) {
     const m = TOOLBOX_STEP_RE.exec(e.text)
     if (!m || seen.has(`${e.at}|${e.text}`)) continue
     seen.add(`${e.at}|${e.text}`)
-    const ms = Number(m[2])
+    const name = m[1] === 'spend' ? `spend.${m[2]}` : m[2]
+    const ms = Number(m[3])
     const visibility = visibilityOver(e.at - ms, e.at)
-    const row = steps.get(m[1]) ?? steps.set(m[1], { step: m[1], failed: 0, runs: {} }).get(m[1])
-    if (m[3]) row.failed += 1
+    const row = steps.get(name) ?? steps.set(name, { step: name, failed: 0, runs: {} }).get(name)
+    if (m[4]) row.failed += 1
     ;(row.runs[visibility] ??= []).push(ms)
   }
   return [...steps.values()]
@@ -1616,7 +1617,7 @@ function forensicQuestions(latest) {
           slow_signing_owner: {
             type: 'choice',
             instructions:
-              'Where does signing time go? `latest.appFlow.workByVisibility` is keyed `<method> <visibility>`, where visibility is the page state over the step (`visible`, `hidden` — the phone backgrounded the WebView the whole time — or `mixed`); each row gives the median wallet work and median of each phase: `preflight` is the pre-consent balance read, `spend` is funding + Toolbox createAction + signing, `ingest` / `seal` are internalize storage. `latest.toolboxSteps` splits Toolbox work into its own steps (`create_action.storage_plan` coin selection in IndexedDB, `create_action.complete_signing` ECDSA, `create_action.verify_unlock_scripts` script checks, `create_action.process` storage commit, `create_action.merge_result_beef` / `verify_result_beef` the session BEEF) with medians per visibility; it is empty on builds that predate that log line. Which owns the time?',
+              'Where does signing time go? `latest.appFlow.workByVisibility` is keyed `<method> <visibility>`, where visibility is the page state over the step (`visible`, `hidden` — the phone backgrounded the WebView the whole time — or `mixed`); each row gives the median wallet work and median of each phase: `preflight` is the pre-consent balance read, `spend` is funding + Toolbox createAction + signing, `ingest` / `seal` are internalize storage. `latest.toolboxSteps` splits Toolbox work into its own steps (`create_action.storage_plan` coin selection in IndexedDB, `create_action.complete_signing` ECDSA, `create_action.verify_unlock_scripts` script checks, `create_action.process` storage commit, `create_action.merge_result_beef` / `verify_result_beef` the session BEEF) with medians per visibility; it is empty on builds that predate that log line. Rows prefixed `spend.` are wallet work around the Toolbox inside the same phase: `spend.lease` the cross-device spend lock on the backup host, `spend.balance` the in-region balance gate, `spend.input_fate` the post-sign explorer probe of input spenders, `spend.internalize` the Toolbox internalize call. Which owns the time?',
             criteria: {
               balance_read:
                 '`preflight` is a large share of work (around 1.5s or more): the balance read ran into its budget.',
@@ -1626,6 +1627,8 @@ function forensicQuestions(latest) {
                 'The heaviest `toolboxSteps` rows are `merge_result_beef` or `verify_result_beef`: the in-memory session BEEF has grown large.',
               cryptography:
                 'The heaviest `toolboxSteps` rows are `complete_signing` or `verify_unlock_scripts`: signature math dominates.',
+              network_waits:
+                'The heaviest `toolboxSteps` rows are `spend.lease` or `spend.input_fate`: round trips to the backup host or explorer, not the Toolbox.',
               background_penalty:
                 'The same phases are much slower in `hidden` than in `visible`: Android deprioritised the backgrounded WebView, and the fix is less work per step rather than a different step.',
               need_toolbox_steps:
