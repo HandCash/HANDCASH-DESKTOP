@@ -101,10 +101,17 @@ import {
 } from './staleOutputRelease'
 import { isInsufficientFundsError } from './insufficientFunds'
 import {
+  bindPaymentProgressToAction,
   clearPaymentProgress,
   marketBusyCopy,
   setPaymentProgress,
 } from './paymentProgress'
+import {
+  beginAction,
+  bridgeActionId,
+  dismissAction,
+  liveAction,
+} from './actionLifecycle'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
 import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
@@ -595,13 +602,18 @@ export async function handleBrc100Request(
       }
     }
     const ok = result.status >= 200 && result.status < 300
-    reportActionPhases(event.request_id, method, ok)
+    reportActionPhases(event.request_id, method, ok, ok ? null : result.body)
     if (method && !(quiet && ok)) {
       safeLogBrc100(method, originator, result, Date.now() - t0, args)
     }
     return result
   } catch (err) {
-    reportActionPhases(event.request_id, method, false)
+    reportActionPhases(
+      event.request_id,
+      method,
+      false,
+      err instanceof Error ? err.message : String(err),
+    )
     // The caller turns a throw into a 500 and never sees this frame, so a
     // failure logged only on the return path leaves no trace at all.
     if (method) {
@@ -637,8 +649,39 @@ export async function handleBrc100Request(
 const actionPhaseClocks = new Map<number, { at: number; laps: Array<[string, number]> }>()
 const ACTION_PHASE_REPORT_MS = 250
 
-function startActionPhases(requestId: number): void {
+function startActionPhases(
+  requestId: number,
+  originator: string | undefined,
+  method: string,
+  args: unknown,
+): void {
   actionPhaseClocks.set(requestId, { at: Date.now(), laps: [] })
+  const description =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? (args as { description?: unknown }).description
+      : undefined
+  beginAction({
+    id: bridgeActionId(requestId),
+    origin: originator ?? WALLET_ACTIVITY_ORIGIN,
+    method,
+    description: typeof description === 'string' ? description : null,
+  })
+}
+
+/** Why a bridge response failed, for the action's row; null for a user denial. */
+function actionFailureReason(body: string | null): string | null | undefined {
+  if (body == null) return undefined
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown; description?: unknown }
+    if (parsed.code === 'ACTION_DENIED') return null
+    if (typeof parsed.description === 'string' && parsed.description.trim()) {
+      return parsed.description.trim()
+    }
+    if (typeof parsed.code === 'string') return parsed.code
+  } catch {
+    // Plain-text failure message.
+  }
+  return body.trim() || 'Request failed'
 }
 
 function lapActionPhase(requestId: number, name: string): void {
@@ -649,9 +692,23 @@ function lapActionPhase(requestId: number, name: string): void {
   clock.at = now
 }
 
-function reportActionPhases(requestId: number, method: string, ok: boolean): void {
+function reportActionPhases(
+  requestId: number,
+  method: string,
+  ok: boolean,
+  failure: string | null,
+): void {
   const clock = actionPhaseClocks.get(requestId)
   actionPhaseClocks.delete(requestId)
+  const live = liveAction(bridgeActionId(requestId))
+  if (live) {
+    if (ok) live.settle()
+    else {
+      const reason = actionFailureReason(failure)
+      if (reason === null) dismissAction(live.id)
+      else live.fail(reason ?? 'Request failed')
+    }
+  }
   if (!clock || clock.laps.length === 0) return
   let approvalMs = 0
   let workMs = 0
@@ -875,7 +932,7 @@ async function handleBrc100RequestInner(
   }
 
   if (isActionMethod(method)) {
-    startActionPhases(event.request_id)
+    startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
       try {
         await verifyP1SatSpendLabels(active.wallet, args)
@@ -932,6 +989,7 @@ async function handleBrc100RequestInner(
         }),
       }
     }
+    liveAction(bridgeActionId(event.request_id))?.stage('preparing')
     await yieldForPermissionProjection()
   }
 
@@ -980,7 +1038,8 @@ async function handleBrc100RequestInner(
     let result: unknown
     if (method === 'createAction' || method === 'signAction') {
       try {
-        // Pill only — never paint a Signed/Approving Activity ghost for app mints.
+        // The pill borrows this request's lifecycle: its phases are the row's phases.
+        bindPaymentProgressToAction(bridgeActionId(event.request_id))
         setPaymentProgress('preparing', 'Waiting to send…', null, 'Working…')
         result = await runExclusiveSpend(
           async () => {
@@ -1040,6 +1099,8 @@ async function handleBrc100RequestInner(
           { promote: false },
         )
         lapActionPhase(event.request_id, 'spend')
+        const signedTxid = extractTxid(result)
+        if (signedTxid) liveAction(bridgeActionId(event.request_id))?.txid(signedTxid)
         setPaymentProgress('finishing', 'Updating your balance', null, 'Working…')
       } catch (err) {
         clearPaymentProgress()
@@ -1085,6 +1146,7 @@ async function handleBrc100RequestInner(
       }
       inFlightMarketActions.add(actionKey)
       try {
+        bindPaymentProgressToAction(bridgeActionId(event.request_id))
         setPaymentProgress('preparing', busy.detail, outpoint, busy.label)
         result = await dispatchWalletMethod(active.wallet, method, args, originator)
         setPaymentProgress('finishing', 'Updating market state', outpoint, busy.label)
@@ -1102,6 +1164,7 @@ async function handleBrc100RequestInner(
         { promote: false },
       )
       lapActionPhase(event.request_id, 'ingest')
+      liveAction(bridgeActionId(event.request_id))?.stage('settling')
     } else {
       // Reads share the wallet with background ingest but must not raise spend
       // priority. Mint Studio / explorers poll `listOutputs` while a ticker is

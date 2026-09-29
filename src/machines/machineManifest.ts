@@ -1,3 +1,4 @@
+import { actionLifecycleMachine } from './actionLifecycleMachine'
 import { asyncActionMachine } from './asyncActionMachine'
 import { appMachine } from './appMachine'
 import { sendMachine } from './sendMachine'
@@ -34,6 +35,7 @@ import { bsv21SendMachine } from '../wallet/token/sendMachine'
  * instead of maintaining a second list of which machines define wallet flows.
  */
 export const machineManifest = Object.freeze({
+  actionLifecycle: actionLifecycleMachine,
   asyncAction: asyncActionMachine,
   app: appMachine,
   send: sendMachine,

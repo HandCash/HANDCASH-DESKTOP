@@ -37,6 +37,8 @@ import { announceItemsReceived } from './itemArrivalToast'
 import { contentUrlForOrigin } from './oneSatImport'
 import { rememberResolvedInscription } from './inscriptionCache'
 import { rememberItemArtFromScript, getItemArtDataUrl } from './localItemArt'
+import { proveHeldOutputFromBeef } from './oneSatProvenance'
+import { clearAwaitingVerification } from './verificationProgress'
 import {
   classifyOneSatAsBsv21,
   isBsv21OneSatLock,
@@ -297,6 +299,29 @@ function paintFungibleTip(opts: {
     })
   }
   return true
+}
+
+/** The signed package a createAction returned (or was handed), as a Beef. */
+function beefFromCreateAction(result: unknown, args: unknown): Beef | null {
+  const candidates = [
+    result && typeof result === 'object' ? (result as { tx?: unknown }).tx : undefined,
+    asRecord(args)?.tx,
+  ]
+  for (const raw of candidates) {
+    let binary: number[] | null = null
+    if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
+      binary = raw as number[]
+    } else if (raw instanceof Uint8Array) {
+      binary = Array.from(raw)
+    }
+    if (!binary?.length) continue
+    try {
+      return Beef.fromBinary(binary)
+    } catch {
+      /* raw transaction bytes carry no lineage */
+    }
+  }
+  return null
 }
 
 function lockingScriptsFromCreateAction(
@@ -662,11 +687,22 @@ export function paintAfterCreateActionIssuance(
   }
   if (itemTips.length === 0) return tokenPainted
 
+  // The package we just signed is the whole lineage of a fresh mint. Prove it
+  // here, so the card is verified when it appears instead of waiting on an
+  // indexer that has not seen the transaction.
+  const signedBeef = beefFromCreateAction(result, args)
   let painted = tokenPainted
   for (const tip of itemTips) {
     const op = tip.outpoint
     const origin = tip.origin ?? op.replace(/\.(\d+)$/, '_$1')
     const name = tip.name?.trim() || 'Collectable'
+    if (signedBeef) {
+      try {
+        if (proveHeldOutputFromBeef(signedBeef, op)) clearAwaitingVerification(op)
+      } catch (err) {
+        console.warn('[brc100] local lineage proof for issued item skipped', err)
+      }
+    }
     rememberResolvedInscription(op, {
       origin,
       name,

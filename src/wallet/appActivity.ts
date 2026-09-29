@@ -13,6 +13,7 @@ import { isGhostTxSuppressed } from "./ghostTxSuppress";
 import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 import { announceSpendCompleted } from "./spendAnnounce";
+import { adoptWalletActionId, walletAction } from "./actionLifecycle";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
@@ -764,6 +765,12 @@ export function upsertAppActivity(args: {
   const txid = args.txid?.trim() || undefined;
   const pendingId = args.pendingId?.trim() || undefined;
   const sendGroupId = args.sendGroupId?.trim() || undefined;
+  // The first pending row written during the wallet's own spend is that spend's
+  // row: the live action takes the row's id so every surface joins them exactly.
+  if (pending && pendingId && !owner) {
+    const live = walletAction();
+    if (live && live.id.startsWith("wallet:")) adoptWalletActionId(pendingId);
+  }
   const entries = [...readAll(owner)];
   const idx = findActivityMatchIndex(entries, {
     kind: args.kind,
@@ -2336,6 +2343,10 @@ export function activityEntryTitle(entry: ActivityEntry): string {
         : "Cancelling…";
     }
     if (entry.item?.name) return `Sending ${entry.item.name}…`;
+    // While it runs, the row is named by what was approved; the state slot
+    // carries the phase, so the title never repeats it.
+    const approved = entry.note?.trim();
+    if (approved) return approved;
     return entry.txid ? "Unconfirmed" : "Signed";
   }
   if (entry.status === "pending" && entry.kind === "earned") {

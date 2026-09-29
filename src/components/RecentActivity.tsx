@@ -58,7 +58,6 @@ import {
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from "../wallet/appActivity";
-import { inFlightSettlementLabel } from "../wallet/settlementCopy";
 import { getTxByTxid } from "../wallet/txStore";
 import {
   clearAllFailedSpends,
@@ -118,11 +117,17 @@ import {
   type DisplayCurrency,
 } from "../wallet/displayCurrency";
 import {
-  getPaymentProgress,
-  subscribePaymentProgress,
-  type PaymentProgress,
-} from "../wallet/paymentProgress";
-import { LIVE_OUTBOUND_ID, mergeLiveOutbound } from "../wallet/liveOutboundRow";
+  listLiveActions,
+  subscribeLiveActions,
+  type LiveAction,
+} from "../wallet/actionLifecycle";
+import {
+  activityRowState,
+  activityRowStateLabel,
+  liveActionForEntry,
+  LIVE_ROW_PREFIX,
+  mergeLiveActions,
+} from "../features/activity/activityRowState";
 import {
   openPaymentDetails,
   openSetting,
@@ -483,6 +488,7 @@ function HistoryRow({
   showWhen,
   newest = false,
   verifying = false,
+  live = null,
   amountEntry = null,
   assets = [],
   batch = null,
@@ -490,6 +496,8 @@ function HistoryRow({
   entry: ActivityEntry;
   /** Feed identity that survives Sending… → Sent / Receiving… → Received. */
   rowKey?: string;
+  /** The action still running for this row, joined by pendingId or txid. */
+  live?: LiveAction | null;
   currency: DisplayCurrency;
   usdPerBsv: number | null;
   showWhen: boolean;
@@ -539,9 +547,9 @@ function HistoryRow({
         .filter((name): name is string => Boolean(name))
         .join(", ")
     : null;
-  // A pending spend the wallet cannot price yet has no transaction built —
-  // it is still clearing approval. Say so, rather than signing an empty amount
-  // or falling through to the no-rate dash, which read as a stray "—".
+  // A pending spend the wallet cannot price yet has no transaction built. The
+  // state slot says which phase it is in; the amount slot only admits it does
+  // not know yet, rather than falling through to the no-rate dash.
   const approving = spent && showPending && entry.sats <= 0;
   const amountLabel = utxoHealDone
     ? formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
@@ -552,7 +560,7 @@ function HistoryRow({
     : item
     ? batchName || shown?.name || "Collectable"
     : approving
-    ? "Approving"
+    ? "…"
     : showPending && entry.sats <= 0
     ? "…"
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv);
@@ -593,13 +601,16 @@ function HistoryRow({
 
   const entryKey = rowKey ?? activityEntryKey(entry);
   const rec = entry.txid ? getTxByTxid(entry.txid) : null;
-  const settlementLabel = inFlightSettlementLabel({
-    status: entry.status,
-    txid: entry.txid,
+  // One token: the live phase while the action runs, the settlement after.
+  const rowState = activityRowState({
+    entry,
+    live,
     chainProof: rec?.chainProof,
+  });
+  const stateLabel = activityRowStateLabel(rowState, {
     minedHeight: rec?.minedHeight,
   });
-  const pendingLabel = settlementLabel ?? "Signed";
+  const liveRow = entry.id.startsWith(LIVE_ROW_PREFIX);
 
   return (
     <li
@@ -607,12 +618,14 @@ function HistoryRow({
       data-activity-newest={newest ? "" : undefined}
       data-activity-pending={showPending ? "" : undefined}
       data-activity-failed={failed ? "" : undefined}
+      data-aeon-scope="activity-row"
+      data-aeon-state={rowState}
     >
       <button
         type="button"
         className={`history-row history-row-btn${failed ? " is-failed" : ""}`}
         onClick={() => {
-          if (entry.id === LIVE_OUTBOUND_ID) return;
+          if (liveRow) return;
           if (utxoHeal) return;
           playWalletSound("soft");
           openPaymentDetails(entry.id);
@@ -648,8 +661,8 @@ function HistoryRow({
             {failed ? "Failed" : signed}
           </span>
           {showWhen ? (
-            <span className="history-when">
-              {showPending ? pendingLabel : formatWhen(entry.at)}
+            <span className="history-when" data-aeon-part="row-state">
+              {(showPending || live) && stateLabel ? stateLabel : formatWhen(entry.at)}
             </span>
           ) : null}
         </div>
@@ -735,13 +748,16 @@ function useActivityFeed(limit: number) {
   const [origins, setOrigins] = useState<PaymentOriginOption[]>(
     () => readActivityFeed(limit).origins
   );
-  const [payment, setPayment] = useState<PaymentProgress>(() =>
-    getPaymentProgress()
+  const [live, setLive] = useState<readonly LiveAction[]>(() =>
+    listLiveActions()
   );
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), []);
   useEffect(() => subscribeDisplayCurrency(setCurrency), []);
-  useEffect(() => subscribePaymentProgress(setPayment), []);
+  useEffect(
+    () => subscribeLiveActions(() => setLive(listLiveActions())),
+    []
+  );
   useEffect(() => {
     const refresh = () => {
       archiveOversizedBulkSendDebris()
@@ -781,11 +797,11 @@ function useActivityFeed(limit: number) {
   }, [limit]);
 
   const merged = useMemo(
-    () => mergeLiveOutbound(entries, payment),
-    [entries, payment]
+    () => mergeLiveActions(entries, live),
+    [entries, live]
   );
 
-  return { entries: merged, usdPerBsv, currency, origins };
+  return { entries: merged, live, usdPerBsv, currency, origins };
 }
 
 /**
@@ -900,7 +916,7 @@ export function ActivityFeed({
   onViewAll,
 }: FeedProps) {
   const headRef = useRef<HTMLDivElement | null>(null);
-  const { entries, usdPerBsv, currency, origins } = useActivityFeed(
+  const { entries, live, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
   const [filters, setFilters] = useState<PaymentFilters>(
@@ -1147,6 +1163,7 @@ export function ActivityFeed({
             key={recordKeys[windowed.start + index] ?? record.key}
             rowKey={recordKeys[windowed.start + index] ?? record.key}
             entry={record.subject}
+            live={liveActionForEntry(record.subject, live)}
             amountEntry={record.money}
             assets={record.assets}
             batch={record.batch}

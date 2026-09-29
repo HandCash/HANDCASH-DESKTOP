@@ -8,8 +8,16 @@
  */
 
 import {
+  beginWalletAction,
+  endWalletAction,
+  liveAction,
+  walletAction,
+} from './actionLifecycle'
+import type { ActionStage } from '../machines/actionLifecycleMachine'
+import {
   findPendingOutpointFlight,
   pendingOutpointFlightVerb,
+  WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 import { toUnderscoreOutpoint } from './outpointFormat'
 import {
@@ -97,6 +105,62 @@ function normalizeOutpointKey(outpoint: string): string {
   return toUnderscoreOutpoint(outpoint)
 }
 
+/** Pill phases are the wallet's spend walking the shared action lifecycle. */
+const STAGE_FOR_PHASE: Record<Exclude<PaymentPhase, 'idle'>, ActionStage> = {
+  preparing: 'preparing',
+  building: 'preparing',
+  signing: 'signing',
+  broadcasting: 'broadcasting',
+  finishing: 'settling',
+}
+
+/**
+ * An action that already has a lifecycle (the bridge's `action:<id>`) can borrow
+ * the pill: its phases advance that action instead of starting a wallet one,
+ * and clearing the pill leaves the action to settle or fail on its own terms.
+ */
+let boundActionId: string | null = null
+
+export function bindPaymentProgressToAction(id: string | null): void {
+  boundActionId = id
+}
+
+function walkLifecycle(previousPhase: PaymentPhase): void {
+  if (boundActionId) {
+    const bound = liveAction(boundActionId)
+    if (progress.phase === 'idle') {
+      boundActionId = null
+      return
+    }
+    if (bound) {
+      bound.stage(STAGE_FOR_PHASE[progress.phase])
+      if (progress.outpoint) bound.touch([progress.outpoint])
+    }
+    return
+  }
+  if (progress.phase === 'idle') {
+    endWalletAction('settled')
+    return
+  }
+  const stage = STAGE_FOR_PHASE[progress.phase]
+  const outpoints = progress.outpoint ? [progress.outpoint] : []
+  if (previousPhase === 'idle' || !walletAction()) {
+    beginWalletAction({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      method: telemetryFlow,
+      description: progress.label?.replace(/…/g, '').trim() || null,
+      outpoints,
+      startedAt: progress.startedAt ?? undefined,
+      stage,
+    })
+    return
+  }
+  const live = walletAction()
+  if (!live) return
+  live.stage(stage)
+  if (outpoints.length) live.touch(outpoints)
+}
+
 function emit(): void {
   for (const listener of listeners) listener(progress)
 }
@@ -124,6 +188,7 @@ function armStuckWatchdog(): void {
       progress.detail,
     )
     const detail = progress.detail?.trim()
+    endWalletAction({ failed: 'Send timed out' })
     void import('./spendGuard')
       .then(({ abortLiveExclusiveSpend }) => {
         const aborted = abortLiveExclusiveSpend('Send timed out')
@@ -244,6 +309,7 @@ export function setPaymentProgress(
   flow?: TransactionFlow,
 ): void {
   if (phase === 'idle') {
+    const previousPhase = progress.phase
     progress = {
       phase: 'idle',
       startedAt: null,
@@ -252,6 +318,7 @@ export function setPaymentProgress(
       outpoint: null,
     }
     clearStuckWatchdog()
+    walkLifecycle(previousPhase)
     emit()
     return
   }
@@ -285,6 +352,7 @@ export function setPaymentProgress(
   if (phase !== previousPhase) {
     recordPaymentProgressStage(telemetryFlow, phase)
   }
+  walkLifecycle(previousPhase)
   armStuckWatchdog()
   emit()
 }

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { PrivateKey } from '@bsv/sdk'
+import {
+  Beef,
+  LockingScript,
+  MerklePath,
+  PrivateKey,
+  Transaction,
+  UnlockingScript,
+} from '@bsv/sdk'
+import { getProvenVerdict, isItemProven, resetProvenCacheForTests } from './provenCache'
 import {
   paintAfterCreateActionBsv21Mint,
   paintAfterCreateActionIssuance,
@@ -166,7 +174,66 @@ describe('paintAfterCreateActionIssuance', () => {
     ).toEqual(['Reference Robot', 'Reference Token Icon'])
     clearAppActivity()
   })
+
+  it('proves a self-mint from the package it just signed — no indexer walk', () => {
+    clearAppActivity()
+    resetProvenCacheForTests()
+    const key = PrivateKey.fromRandom()
+    const address = key.toAddress()
+    const p2pkh = p2pkhScriptHex(address)
+
+    const funding = new Transaction()
+    funding.addOutput({ satoshis: 10_000, lockingScript: LockingScript.fromHex(p2pkh) })
+    const mint = new Transaction()
+    mint.addInput({
+      sourceTransaction: funding,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    mint.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex(ORD_ENVELOPE + p2pkh),
+    })
+    mint.addOutput({ satoshis: 9_000, lockingScript: LockingScript.fromHex(p2pkh) })
+    const beef = new Beef()
+    const fundingEntry = beef.mergeRawTx(funding.toBinary())
+    fundingEntry.bumpIndex = beef.mergeBump(
+      new MerklePath(900_000, [
+        [
+          { offset: 0, hash: funding.id('hex'), txid: true },
+          { offset: 1, duplicate: true },
+        ],
+      ]),
+    )
+    beef.mergeRawTx(mint.toBinary())
+    const txid = mint.id('hex')
+
+    const painted = paintAfterCreateActionIssuance(
+      { address, chain: 'main' } as never,
+      'https://mint.example',
+      {
+        labels: ['1sat', 'handcash-mint-studio', 'item'],
+        outputs: [
+          { satoshis: 1, basket: '1sat', lockingScript: ORD_ENVELOPE + p2pkh, tags: ['name:Fox'] },
+          { satoshis: 9_000, lockingScript: p2pkh },
+        ],
+      },
+      { txid, tx: beef.toBinaryAtomic(txid) },
+    )
+
+    expect(painted).toBe(1)
+    expect(isItemProven(`${txid}.0`)).toBe(true)
+    expect(getProvenVerdict(`${txid}.0`)).toMatchObject({
+      tier: 'brc150',
+      origin: `${txid}_0`,
+      path: [`${txid}_0`],
+    })
+    clearAppActivity()
+    resetProvenCacheForTests()
+  })
 })
+
+const ORD_ENVELOPE = '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
 
 describe('paintAfterCreateActionBsv21Mint', () => {
   it('paints Mint Studio BRC-162 deploy as proven and sendable immediately', () => {

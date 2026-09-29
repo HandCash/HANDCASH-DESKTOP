@@ -202,6 +202,41 @@ export function deriveOneSatPathFromBeef(
 }
 
 /**
+ * Prove a held 1-sat output from a transaction package this wallet already has
+ * — the one it just signed, or one it just internalized — and pin the verdict.
+ *
+ * A mint proves as its own origin; a transfer proves back to the origin its
+ * package carries. Either way the wallet needs nothing from an indexer, so a
+ * self-mint reads as verified the moment it is filed, not after a network walk
+ * that cannot see the transaction yet.
+ */
+export function proveHeldOutputFromBeef(
+  beef: Beef,
+  heldOutpoint: string,
+): { origin: string; path: string[] } | null {
+  const proof = rebuildProvenanceV2FromBeef(beef, heldOutpoint)
+  if (!proof) return null
+  const held = toUnderscore(heldOutpoint).toLowerCase()
+  rememberProvenVerdict(held, {
+    tier: 'brc150',
+    origin: proof.origin,
+    path: proof.path,
+    verifiedAt: Date.now(),
+  })
+  try {
+    rememberProvenLineage({
+      tipOutpoint: held,
+      origin: proof.origin,
+      path: proof.path,
+      beef: Array.from(base64ToBytes(proof.beefB64)),
+    })
+  } catch {
+    // The verdict is pinned; reuse on the next send is an optimisation.
+  }
+  return { origin: proof.origin, path: proof.path }
+}
+
+/**
  * Rebuild a legacy BRC-150 path without trusting an indexer identity.
  *
  * The parent of each hop is the unique FIFO 1-sat input that lands on that

@@ -5448,6 +5448,45 @@ html[data-aeon-mode='light'] .history-batch-count {
   text-align: right;
 }
 
+/*
+ * Activity row = f(action lifecycle). The <li> carries one token in
+ * data-aeon-state; every phase and settlement look is keyed off it here.
+ *   approving · preparing · signing · broadcasting · settling — the action runs
+ *   signed · unconfirmed · confirmed · settled · failed        — where it stands
+ */
+[data-aeon-scope='activity-row'] [data-aeon-part='row-state'] {
+  transition: color 220ms ease;
+}
+
+[data-aeon-scope='activity-row'][data-aeon-state='approving'] [data-aeon-part='row-state'],
+[data-aeon-scope='activity-row'][data-aeon-state='preparing'] [data-aeon-part='row-state'],
+[data-aeon-scope='activity-row'][data-aeon-state='signing'] [data-aeon-part='row-state'],
+[data-aeon-scope='activity-row'][data-aeon-state='broadcasting'] [data-aeon-part='row-state'],
+[data-aeon-scope='activity-row'][data-aeon-state='settling'] [data-aeon-part='row-state'] {
+  color: var(--hc-accent);
+  animation: status-pulse 1.4s ease-in-out infinite;
+  transform-origin: right center;
+}
+
+[data-aeon-scope='activity-row'][data-aeon-state='approving'] .history-amount {
+  opacity: 0.6;
+}
+
+[data-aeon-scope='activity-row'][data-aeon-state='signed'] [data-aeon-part='row-state'],
+[data-aeon-scope='activity-row'][data-aeon-state='unconfirmed'] [data-aeon-part='row-state'] {
+  color: hsl(var(--muted-foreground));
+}
+
+[data-aeon-scope='activity-row'][data-aeon-state='confirmed'] [data-aeon-part='row-state'] {
+  color: var(--hc-success);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-aeon-scope='activity-row'] [data-aeon-part='row-state'] {
+    animation: none;
+  }
+}
+
 .connected-panel-head {
   display: flex;
   align-items: center;

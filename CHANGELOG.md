@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.353] - 2026-09-29
+
+### Changed
+
+- Activity is a projection of one action lifecycle. Every action that can end
+  in a transaction — an app's `createAction`, a wallet send, a listing, a burn,
+  a receive — walks the same chart (approving → preparing → signing →
+  broadcasting → verifying → settled | failed), and each row carries that one
+  state in `data-aeon-state`. An approved app request appears as a row the
+  moment the prompt opens and advances through signing to its settled record;
+  a wallet send's row is joined to its live phase by the id it was written
+  with, never by time, amount, or label sniffing. The heuristic "Sending…"
+  live-row merge is gone.
+- A self-mint verifies its BRC-150 lineage from the transaction the wallet
+  just signed, so the card reads as proven when it appears instead of waiting
+  on an indexer that has not seen the transaction yet.
+
 ## [1.3.352] - 2026-09-29
 
 ### Changed
