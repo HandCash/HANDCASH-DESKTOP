@@ -48,6 +48,11 @@ import {
   stampBsv21IconOnListedOutputs,
 } from './token'
 import { cacheCreateActionBeef } from './beefCache'
+import {
+  bounceDepositFromCreateAction,
+  bounceRefundUrl,
+  continueTxBounceRefund,
+} from './bounceContinuation'
 import { announceCoinsReceived } from './receiveAnnounce'
 import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
@@ -1145,6 +1150,23 @@ async function handleBrc100RequestInner(
           { promote: false },
         )
         lapActionPhase(event.request_id, 'spend')
+        if (
+          method === 'createAction' &&
+          bounceDepositFromCreateAction(actionArgs) &&
+          bounceRefundUrl(originator)
+        ) {
+          // Chrome freezes a background tab, so a bounce page cannot start its
+          // refund until the user tabs back. Finish it here, while this app
+          // is in front. The page's own call then reads the cached refund.
+          setPaymentProgress('broadcasting', 'Returning the bounce deposit', null, 'Working…')
+          await continueTxBounceRefund({
+            originator,
+            request: actionArgs,
+            result,
+            identityKey: active.identityKey,
+            internalize: (body) => active.wallet.internalizeAction(body as never),
+          })
+        }
         const signedTxid = extractTxid(result)
         if (signedTxid) liveAction(bridgeActionId(event.request_id))?.txid(signedTxid)
         setPaymentProgress('finishing', 'Updating your balance', null, 'Working…')

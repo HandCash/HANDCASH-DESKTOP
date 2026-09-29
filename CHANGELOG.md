@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.363] - 2026-09-29
+
+### Changed
+
+- A transaction-bounce deposit now finishes inside the wallet. System Chrome freezes the page the moment HandCash is in front, so the page never starts the refund until the user tabs back. After the deposit is signed, the wallet posts it to the app's `/v1/tx-bounce/refund` and credits the refund itself. The page's later call reads the cached refund and accepts an output that is already credited.
+
 ## [1.3.362] - 2026-09-29
 
 ### Changed
