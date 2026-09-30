@@ -4,7 +4,9 @@ import {
   foreignConfirmedInputSpends,
   inputsWithPossiblyMinedParent,
   outpointRecentlyCleared,
+  parseBulkSpentEntry,
   parseConfirmedForeignSpender,
+  probeOutpointSpends,
   resetClearedOutpointsForTests,
   retireCreateActionSpentElsewhere,
 } from './createActionInputFate'
@@ -32,6 +34,24 @@ vi.mock('./deadCoinSweep', () => ({
 const SELF = 'aa'.repeat(32)
 const OTHER = 'bb'.repeat(32)
 
+type Utxo = { txid: string; vout: number }
+
+/** WhatsOnChain bulk `/utxos/spent`: `answer` builds each entry past `utxo`. */
+function bulkFetch(answer: (utxo: Utxo) => Record<string, unknown>) {
+  return vi.fn(async (_url: string, init?: { body?: string }) => {
+    const { utxos } = JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => utxos.map((utxo) => ({ utxo, error: '', ...answer(utxo) })),
+    }
+  })
+}
+
+const spentBy = (txid: string, status = 'confirmed') => () => ({
+  spentIn: { txid, vin: 0, status },
+})
+
 describe('parseConfirmedForeignSpender', () => {
   it('names a confirmed spender that is not this transaction', () => {
     expect(
@@ -54,6 +74,57 @@ describe('parseConfirmedForeignSpender', () => {
     ).toBeNull()
     expect(parseConfirmedForeignSpender({ status: 'confirmed' }, SELF)).toBeNull()
     expect(parseConfirmedForeignSpender(null, SELF)).toBeNull()
+  })
+})
+
+describe('parseBulkSpentEntry', () => {
+  const utxo = { txid: '11'.repeat(32), vout: 0 }
+
+  it('clears an unspent coin and names a confirmed foreign spender', () => {
+    expect(parseBulkSpentEntry({ utxo, error: '' }, SELF)).toEqual({ kind: 'noConfirmedSpender' })
+    expect(
+      parseBulkSpentEntry({ utxo, spentIn: { txid: OTHER, status: 'confirmed' }, error: '' }, SELF),
+    ).toEqual({ kind: 'confirmedSpender', spender: OTHER })
+  })
+
+  it('keeps an unknown output, an error, or a spend by this tx unknown', () => {
+    expect(
+      parseBulkSpentEntry(
+        { utxo, spentIn: { txid: utxo.txid, status: 'Unknown UTXO' }, error: '' },
+        SELF,
+      ),
+    ).toEqual({ kind: 'unknown' })
+    expect(parseBulkSpentEntry({ utxo, error: 'bad txid' }, SELF)).toEqual({ kind: 'unknown' })
+    expect(
+      parseBulkSpentEntry({ utxo, spentIn: { txid: SELF, status: 'confirmed' }, error: '' }, SELF),
+    ).toEqual({ kind: 'unknown' })
+  })
+})
+
+describe('probeOutpointSpends', () => {
+  afterEach(() => {
+    resetClearedOutpointsForTests()
+    vi.unstubAllGlobals()
+  })
+
+  it('asks twenty coins per request', async () => {
+    const fetch = bulkFetch(() => ({}))
+    vi.stubGlobal('fetch', fetch)
+    const outpoints = Array.from({ length: 45 }, (_, i) => `${'12'.repeat(32)}.${i}`)
+    const probes = await probeOutpointSpends(outpoints, '', 'main')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect([...probes.values()].every((p) => p.kind === 'noConfirmedSpender')).toBe(true)
+  })
+
+  it('leaves a coin the reply omits unknown', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })),
+    )
+    const outpoint = `${'13'.repeat(32)}.0`
+    const probes = await probeOutpointSpends([outpoint], '', 'main')
+    expect(probes.get(outpoint)).toEqual({ kind: 'unknown' })
+    expect(outpointRecentlyCleared(outpoint)).toBe(false)
   })
 })
 
@@ -118,14 +189,7 @@ describe('retireCreateActionSpentElsewhere', () => {
 
   it('fails the signed tx before hiding its dead inputs, so the fail cannot restore them', async () => {
     const { txid, tx, input } = signedOverMinedParent()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ txid: OTHER, status: 'confirmed' }),
-      })),
-    )
+    vi.stubGlobal('fetch', bulkFetch(spentBy(OTHER)))
 
     await expect(retireCreateActionSpentElsewhere({ txid, tx }, 'main')).resolves.toBe(true)
     expect(retireCalls).toEqual([`fail ${txid}`, `hide ${input} by ${OTHER}`])
@@ -133,14 +197,7 @@ describe('retireCreateActionSpentElsewhere', () => {
 
   it('skips the descendant walk for a tx signed in this spend region and sweeps the pool', async () => {
     const { txid, tx, input } = signedOverMinedParent()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ txid: OTHER, status: 'confirmed' }),
-      })),
-    )
+    vi.stubGlobal('fetch', bulkFetch(spentBy(OTHER)))
 
     await expect(
       retireCreateActionSpentElsewhere({ txid, tx }, 'main', { freshlySigned: true }),
@@ -156,9 +213,9 @@ describe('foreignConfirmedInputSpends', () => {
     vi.unstubAllGlobals()
   })
 
-  it('clears a coin on 404 and does not ask about it again on the next sign', async () => {
+  it('clears an unspent coin and does not ask about it again on the next sign', async () => {
     const { txid, tx, input } = signedOverMinedParent()
-    const fetch = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }))
+    const fetch = bulkFetch(() => ({}))
     vi.stubGlobal('fetch', fetch)
 
     await expect(foreignConfirmedInputSpends({ txid, tx }, 'main')).resolves.toEqual([])
@@ -176,14 +233,7 @@ describe('foreignConfirmedInputSpends', () => {
     await foreignConfirmedInputSpends({ txid, tx }, 'main')
     expect(outpointRecentlyCleared(input)).toBe(false)
 
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ txid: OTHER, status: 'unconfirmed' }),
-      })),
-    )
+    vi.stubGlobal('fetch', bulkFetch(spentBy(OTHER, 'unconfirmed')))
     await foreignConfirmedInputSpends({ txid, tx }, 'main')
     expect(outpointRecentlyCleared(input)).toBe(false)
   })

@@ -17,20 +17,24 @@ const PROBE_MS = 1_500
  * device, so a coin the explorer cleared minutes ago is not re-asked per sign.
  */
 const CLEARED_TTL_MS = 10 * 60_000
+/** WhatsOnChain's bulk `/utxos/spent` answers at most this many per request. */
+export const SPENT_PROBE_BATCH = 20
 
 export type OutpointSpendProbe =
   | { kind: 'noConfirmedSpender' }
   | { kind: 'confirmedSpender'; spender: string }
   | { kind: 'unknown' }
 
+const UNKNOWN: OutpointSpendProbe = { kind: 'unknown' }
+
 const clearedAt = new Map<string, number>()
 
-function wocSpentUrl(chain: Chain, txid: string, vout: number): string {
+function wocBulkSpentUrl(chain: Chain): string {
   const host =
     chain === 'main'
       ? 'https://api.whatsonchain.com/v1/bsv/main'
       : 'https://api.whatsonchain.com/v1/bsv/test'
-  return `${host}/tx/${txid}/${vout}/spent`
+  return `${host}/utxos/spent`
 }
 
 function outpointKey(outpoint: string): string {
@@ -69,44 +73,87 @@ export function parseConfirmedForeignSpender(
 }
 
 /**
- * Ask the explorer who spent `outpoint`. A 404 is the only answer that clears
- * the coin; a timeout, rate limit or unconfirmed spender stays `unknown`.
+ * One entry of the bulk `/utxos/spent` reply. An entry with no `spentIn` and
+ * no error is the unspent answer (the per-outpoint endpoint's 404); an unknown
+ * output carries `spentIn.status: "Unknown UTXO"` and stays `unknown`.
  */
-export async function probeOutpointSpend(
-  outpoint: string,
+export function parseBulkSpentEntry(entry: unknown, selfTxid: string): OutpointSpendProbe {
+  if (!entry || typeof entry !== 'object') return UNKNOWN
+  const row = entry as { error?: unknown; spentIn?: unknown }
+  if (String(row.error ?? '').trim()) return UNKNOWN
+  if (row.spentIn == null) return { kind: 'noConfirmedSpender' }
+  const spender = parseConfirmedForeignSpender(row.spentIn, selfTxid)
+  return spender ? { kind: 'confirmedSpender', spender } : UNKNOWN
+}
+
+type ParsedOutpoint = { outpoint: string; key: string; txid: string; vout: number }
+
+async function bulkSpent(
+  chunk: ParsedOutpoint[],
   selfTxid: string,
   chain: Chain,
-): Promise<OutpointSpendProbe> {
-  const parsed = parseOutpoint(outpoint)
-  if (!parsed) return { kind: 'unknown' }
+  timeoutMs: number,
+): Promise<Map<string, OutpointSpendProbe>> {
+  const answers = new Map<string, OutpointSpendProbe>()
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), PROBE_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(wocSpentUrl(chain, parsed.txid, parsed.vout), {
+    const res = await fetch(wocBulkSpentUrl(chain), {
+      method: 'POST',
       signal: controller.signal,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ utxos: chunk.map(({ txid, vout }) => ({ txid, vout })) }),
     })
-    if (res.status === 404) {
-      markCleared(outpoint)
-      return { kind: 'noConfirmedSpender' }
+    if (!res.ok) return answers
+    const body: unknown = await res.json()
+    if (!Array.isArray(body)) return answers
+    for (const entry of body) {
+      const utxo = (entry as { utxo?: { txid?: unknown; vout?: unknown } } | null)?.utxo
+      const txid = String(utxo?.txid ?? '').trim().toLowerCase()
+      const vout = Number(utxo?.vout)
+      if (!txid || !Number.isInteger(vout)) continue
+      answers.set(`${txid}.${vout}`, parseBulkSpentEntry(entry, selfTxid))
     }
-    if (!res.ok) return { kind: 'unknown' }
-    const spender = parseConfirmedForeignSpender(await res.json(), selfTxid)
-    return spender ? { kind: 'confirmedSpender', spender } : { kind: 'unknown' }
   } catch {
-    return { kind: 'unknown' }
+    // Timeout or network: every outpoint in the chunk stays unknown.
   } finally {
     clearTimeout(timer)
   }
+  return answers
 }
 
-export async function confirmedForeignSpenderTxid(
-  outpoint: string,
+/**
+ * Ask the explorer who spent each outpoint, twenty per request. Only the
+ * unspent answer clears a coin; a timeout, rate limit, unknown output or
+ * unconfirmed spender stays `unknown`.
+ */
+export async function probeOutpointSpends(
+  outpoints: string[],
   selfTxid: string,
   chain: Chain,
-): Promise<string | null> {
-  const probe = await probeOutpointSpend(outpoint, selfTxid, chain)
-  return probe.kind === 'confirmedSpender' ? probe.spender : null
+  timeoutMs = PROBE_MS,
+): Promise<Map<string, OutpointSpendProbe>> {
+  const probes = new Map<string, OutpointSpendProbe>()
+  const parsed: ParsedOutpoint[] = []
+  for (const outpoint of outpoints) {
+    const p = parseOutpoint(outpoint)
+    if (!p) {
+      probes.set(outpoint, UNKNOWN)
+      continue
+    }
+    const txid = p.txid.toLowerCase()
+    parsed.push({ outpoint, key: `${txid}.${p.vout}`, txid, vout: p.vout })
+  }
+  for (let i = 0; i < parsed.length; i += SPENT_PROBE_BATCH) {
+    const chunk = parsed.slice(i, i + SPENT_PROBE_BATCH)
+    const answers = await bulkSpent(chunk, selfTxid, chain, timeoutMs)
+    for (const row of chunk) {
+      const probe = answers.get(row.key) ?? UNKNOWN
+      if (probe.kind === 'noConfirmedSpender') markCleared(row.outpoint)
+      probes.set(row.outpoint, probe)
+    }
+  }
+  return probes
 }
 
 function atomicFromCreateResult(result: unknown): number[] | null {
@@ -151,17 +198,13 @@ export async function foreignConfirmedInputSpends(
   )
   if (inputs.length === 0) return []
   const started = Date.now()
-  const rows = await Promise.all(
-    inputs.map(async (outpoint) => ({
-      outpoint,
-      spender: await confirmedForeignSpenderTxid(outpoint, txid, chain),
-    })),
-  )
+  const probes = await probeOutpointSpends(inputs, txid, chain)
   const ms = Date.now() - started
   if (ms >= 250) console.info(`[spend] input_fate done ${ms}ms`)
-  return rows.filter(
-    (row): row is { outpoint: string; spender: string } => row.spender != null,
-  )
+  return inputs.flatMap((outpoint) => {
+    const probe = probes.get(outpoint)
+    return probe?.kind === 'confirmedSpender' ? [{ outpoint, spender: probe.spender }] : []
+  })
 }
 
 /**
@@ -198,11 +241,16 @@ export async function retireCreateActionSpentElsewhere(
     force: true,
     noDescendants: opts?.freshlySigned === true,
   })
+  const failedAt = Date.now()
   for (const [spender, outpoints] of bySpender) {
     await hideSpentOutpoints(outpoints, spender)
   }
   const ms = Date.now() - started
-  if (ms >= 250) console.info(`[spend] retire done ${ms}ms`)
+  if (ms >= 250) {
+    console.info(
+      `[spend] retire done ${ms}ms fail=${failedAt - started}ms hide=${Date.now() - failedAt}ms`,
+    )
+  }
   console.warn(
     `[brc100] createAction inputs spent elsewhere count=${spends.length} txid=${txid.slice(0, 12)}`,
   )

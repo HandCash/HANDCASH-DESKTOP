@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.379] - 2026-09-30
+
+The 0.1.540 upload: background payments that signed once took 4.2–4.3s. The other 6 of 8 resigned over coins a confirmed foreign tx had already spent, and took 8–41s. The sweep meant to clear those coins asked WhatsOnChain one coin per request. 21 of 50 went unanswered (rate limits, and timeouts while the WebView was hidden), were never asked again, and the next payments kept picking them.
+
+### Fixed
+
+- **The dead-coin sweep runs at unlock, before the first payment.** About 8s after unlock, once any recompose has finished, the managed-change pool is swept. Previously the sweep only started after a payment had already resigned.
+- **Coins are asked about twenty at a time.** Both the per-sign input check and the sweep use WhatsOnChain's bulk `/utxos/spent`, so a 50-coin sweep is 3 requests instead of 50, and a sign with several inputs is one request. The evidence rule is unchanged: only a named, confirmed, foreign spender hides a coin, and only the unspent answer clears one.
+- **Unanswered coins are asked again.** After 5s, then after 20s. A sweep that still leaves coins unanswered may run again after 60s instead of 10 minutes.
+- **Hidden-coin spenders are not re-asked every launch.** Restored, live and missing outcomes are remembered for 30 days, and `notOnChain` for a day. Previously the unlock replay made ~120 explorer lookups on every launch, competing with the first payments.
+
+### Changed
+
+- `[spend] retire done Nms fail=Nms hide=Nms`. Triage reports `medianPartMs` for any step line that carries `part=Nms` spans.
+
 ## [1.3.378] - 2026-09-30
 
 The 0.1.539 upload: after about ten penny payments, the balance dropped about 2.5M sats more than the 700k sats actually paid to lilb.it. The extra drop came from hiding coins that WhatsOnChain showed were spent by confirmed txs: 9 hidden on resign and 3 by the sweep. If the spender was this wallet's own send, marked failed locally but actually mined, then the fail had put its inputs back as phantom coins and hidden its change. Hiding the phantoms without reviving the spender left real change stranded.

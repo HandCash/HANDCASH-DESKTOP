@@ -538,6 +538,18 @@ export const storageRegistry = Object.freeze({
     scope: 'chain',
     version: 1,
   }),
+  deadCoinSettledSpenders: defineStorage({
+    key: 'handcash.deadCoins.settledSpenders.v1',
+    owner: 'chain',
+    scope: 'chain',
+    version: 1,
+  }),
+  deadCoinNotOnChainSpenders: defineStorage({
+    key: 'handcash.deadCoins.notOnChainSpenders.v1',
+    owner: 'chain',
+    scope: 'chain',
+    version: 1,
+  }),
   balanceLastTrusted: defineStorage({
     key: 'handcash.balance.lastTrusted',
     owner: 'balance',

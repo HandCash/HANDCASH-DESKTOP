@@ -1222,7 +1222,8 @@ function workByVisibility(steps) {
   )
 }
 
-const TOOLBOX_STEP_RE = /^\[(toolbox|spend)\] (\S+) done (\d+)ms(?: (\w+))?$/
+const TOOLBOX_STEP_RE = /^\[(toolbox|spend)\] (\S+) done (\d+)ms(?: (\w+))?((?: \w+=\d+ms)*)$/
+const STEP_PART_RE = / (\w+)=(\d+)ms/g
 
 function toolboxStepFacts(events) {
   const visibilityOver = visibilityTimeline(events)
@@ -1235,12 +1236,16 @@ function toolboxStepFacts(events) {
     const name = m[1] === 'spend' ? `spend.${m[2]}` : m[2]
     const ms = Number(m[3])
     const visibility = visibilityOver(e.at - ms, e.at)
-    const row = steps.get(name) ?? steps.set(name, { step: name, failed: 0, runs: {} }).get(name)
+    const row =
+      steps.get(name) ?? steps.set(name, { step: name, failed: 0, runs: {}, parts: {} }).get(name)
     if (m[4]) row.failed += 1
+    for (const [, part, partMs] of (m[5] ?? '').matchAll(STEP_PART_RE)) {
+      ;(row.parts[part] ??= []).push(Number(partMs))
+    }
     ;(row.runs[visibility] ??= []).push(ms)
   }
   return [...steps.values()]
-    .map(({ step, failed, runs }) => {
+    .map(({ step, failed, runs, parts }) => {
       const all = Object.values(runs).flat()
       return {
         step,
@@ -1251,6 +1256,13 @@ function toolboxStepFacts(events) {
         medianMsByVisibility: Object.fromEntries(
           Object.entries(runs).map(([visibility, ms]) => [visibility, medianOf(ms)]),
         ),
+        ...(Object.keys(parts).length
+          ? {
+              medianPartMs: Object.fromEntries(
+                Object.entries(parts).map(([part, ms]) => [part, medianOf(ms)]),
+              ),
+            }
+          : {}),
       }
     })
     .sort((a, b) => b.totalMs - a.totalMs)

@@ -3,6 +3,7 @@ import { resetClearedOutpointsForTests } from './createActionInputFate'
 import {
   adoptSpendersLater,
   resetDeadCoinSweepForTests,
+  scheduleUnlockDeadCoinPass,
   sweepDeadCoins,
 } from './deadCoinSweep'
 import type { WalletRuntime } from './walletRuntime'
@@ -13,10 +14,15 @@ const FLAKY = 'f1'.repeat(32)
 const UNMINED = 'c1'.repeat(32)
 const ITEM = 'e1'.repeat(32)
 const SPENDER = 'bb'.repeat(32)
+const OLD_SPENDER = 'b2'.repeat(32)
 
 const hides: Array<{ outpoints: string[]; spender: string }> = []
 const bumpBalanceAfterHeal = vi.fn()
 let spendBusy = false
+/** Bulk requests in which FLAKY still goes unanswered. */
+let flakyMisses = Infinity
+const prefs = new Map<string, string>()
+let locks: Array<{ diagnostic?: string; spentBy?: string }> = []
 
 const outputs = [
   { txid: DEAD, vout: 0, satoshis: 500, change: true, transactionId: 1 },
@@ -57,6 +63,18 @@ vi.mock('./localTxClosure', () => ({
   LIVE_LOCAL_TX_STATUSES: ['unproven', 'sending'],
 }))
 
+vi.mock('./recompose', () => ({ isRecomposeInFlight: () => false }))
+
+vi.mock('./utxoLockManager', () => ({ listUtxoLocks: () => locks }))
+
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => prefs.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    prefs.set(key, value)
+    return true
+  },
+}))
+
 const adoptConfirmedSpender = vi.fn(async (_txid: string) => 'restored')
 
 vi.mock('./staleOutputRelease', () => ({
@@ -67,19 +85,50 @@ vi.mock('./staleOutputRelease', () => ({
   adoptConfirmedSpender: (txid: string) => adoptConfirmedSpender(txid),
 }))
 
-describe('sweepDeadCoins', () => {
-  const fetch = vi.fn(async (url: string) => {
-    if (url.includes(DEAD)) {
-      return { ok: true, status: 200, json: async () => ({ txid: SPENDER, status: 'confirmed' }) }
-    }
-    if (url.includes(FLAKY)) return { ok: false, status: 429, json: async () => ({}) }
-    return { ok: false, status: 404, json: async () => ({}) }
-  })
+type Utxo = { txid: string; vout: number }
 
+const fetch = vi.fn(async (_url: string, init?: { body?: string }) => {
+  const { utxos } = JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }
+  const flakyAsked = utxos.some((u) => u.txid === FLAKY)
+  const flakyAnswers = flakyAsked && flakyMisses <= 0
+  if (flakyAsked) flakyMisses -= 1
+  return {
+    ok: true,
+    status: 200,
+    json: async () =>
+      utxos.map((utxo) => {
+        if (utxo.txid === DEAD || (utxo.txid === FLAKY && flakyAnswers)) {
+          return { utxo, spentIn: { txid: SPENDER, vin: 0, status: 'confirmed' }, error: '' }
+        }
+        if (utxo.txid === FLAKY) {
+          return { utxo, spentIn: { txid: FLAKY, vin: 0, status: 'Unknown UTXO' }, error: '' }
+        }
+        return { utxo, error: '' }
+      }),
+  }
+})
+
+const askedTxids = () =>
+  fetch.mock.calls.flatMap(([, init]) =>
+    (JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }).utxos.map((u) => u.txid),
+  )
+
+/** Runs `task` with fake timers far enough for every sweep retry. */
+async function drained<T>(task: () => Promise<T>): Promise<T> {
+  const pending = task()
+  await vi.advanceTimersByTimeAsync(60_000)
+  return pending
+}
+
+describe('sweepDeadCoins', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
     hides.length = 0
     spendBusy = false
     current = true
+    flakyMisses = Infinity
+    prefs.clear()
+    locks = []
     bumpBalanceAfterHeal.mockReset()
     adoptConfirmedSpender.mockClear()
     resetDeadCoinSweepForTests()
@@ -90,65 +139,91 @@ describe('sweepDeadCoins', () => {
   afterEach(() => {
     resetClearedOutpointsForTests()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
-  it('hides only coins with a named confirmed spender', async () => {
-    await expect(sweepDeadCoins(runtime)).resolves.toEqual({
+  it('hides only coins with a named confirmed spender, asking in one request', async () => {
+    await expect(drained(() => sweepDeadCoins(runtime))).resolves.toEqual({
       ran: true,
       checked: 3,
       hidden: 1,
       unknown: 1,
     })
     expect(hides).toEqual([{ outpoints: [`${DEAD}.0`], spender: SPENDER }])
-    expect(bumpBalanceAfterHeal).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0]?.[0]).toMatch(/\/utxos\/spent$/)
+  })
+
+  it('asks again about coins the explorer left unanswered and hides them when named', async () => {
+    flakyMisses = 1
+    await expect(drained(() => sweepDeadCoins(runtime))).resolves.toEqual({
+      ran: true,
+      checked: 3,
+      hidden: 2,
+      unknown: 0,
+    })
+    expect(hides).toEqual([
+      { outpoints: [`${DEAD}.0`], spender: SPENDER },
+      { outpoints: [`${FLAKY}.0`], spender: SPENDER },
+    ])
+  })
+
+  it('gives up on an unanswered coin after two retries', async () => {
+    await drained(() => sweepDeadCoins(runtime))
+    expect(askedTxids().filter((t) => t === FLAKY)).toHaveLength(3)
   })
 
   it('adopts the spender of every coin it hides, so stranded change comes back', async () => {
-    vi.useFakeTimers()
-    try {
-      await sweepDeadCoins(runtime)
-      await vi.advanceTimersByTimeAsync(2_000)
-      expect(adoptConfirmedSpender).toHaveBeenCalledWith(SPENDER)
-      expect(bumpBalanceAfterHeal).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.useRealTimers()
-    }
+    flakyMisses = 0
+    await drained(() => sweepDeadCoins(runtime))
+    expect(adoptConfirmedSpender).toHaveBeenCalledWith(SPENDER)
+    expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
+    expect(bumpBalanceAfterHeal).toHaveBeenCalledTimes(2)
   })
 
   it('adopts queued spenders once each and stops when the account changes', async () => {
-    vi.useFakeTimers()
-    try {
-      adoptSpendersLater(runtime, [SPENDER, SPENDER, 'not-a-txid'])
-      await vi.advanceTimersByTimeAsync(2_000)
-      expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
+    adoptSpendersLater(runtime, [SPENDER, SPENDER, 'not-a-txid'])
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
 
-      current = false
-      adoptSpendersLater(runtime, [DEAD])
-      await vi.advanceTimersByTimeAsync(2_000)
-      expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
-    } finally {
-      vi.useRealTimers()
-    }
+    current = false
+    adoptSpendersLater(runtime, [DEAD])
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
   })
 
   it('never asks about change of an unmined local tx or an asset basket', async () => {
-    await sweepDeadCoins(runtime)
-    const asked = fetch.mock.calls.map(([url]) => String(url))
-    expect(asked.some((url) => url.includes(UNMINED))).toBe(false)
-    expect(asked.some((url) => url.includes(ITEM))).toBe(false)
+    await drained(() => sweepDeadCoins(runtime))
+    expect(askedTxids()).not.toContain(UNMINED)
+    expect(askedTxids()).not.toContain(ITEM)
   })
 
   it('does not re-ask coins cleared minutes ago', async () => {
-    await sweepDeadCoins(runtime)
+    await drained(() => sweepDeadCoins(runtime))
     fetch.mockClear()
-    await sweepDeadCoins(runtime)
-    const asked = fetch.mock.calls.map(([url]) => String(url))
-    expect(asked.some((url) => url.includes(LIVE))).toBe(false)
+    await drained(() => sweepDeadCoins(runtime))
+    expect(askedTxids()).not.toContain(LIVE)
   })
 
   it('does nothing for a runtime that was locked or switched away', async () => {
     current = false
     await expect(sweepDeadCoins(runtime)).resolves.toEqual({ ran: false, reason: 'locked' })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('sweeps at unlock, then replays old spenders once across launches', async () => {
+    flakyMisses = 0
+    locks = [{ diagnostic: `spent-by:${OLD_SPENDER.slice(0, 12)}`, spentBy: OLD_SPENDER }]
+    scheduleUnlockDeadCoinPass(runtime)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(hides.flatMap((h) => h.outpoints)).toEqual([`${DEAD}.0`, `${FLAKY}.0`])
+    expect(adoptConfirmedSpender.mock.calls.map(([id]) => id).sort()).toEqual(
+      [OLD_SPENDER, SPENDER].sort(),
+    )
+
+    adoptConfirmedSpender.mockClear()
+    resetClearedOutpointsForTests()
+    scheduleUnlockDeadCoinPass({ ...runtime, runtimeId: 'r2' } as WalletRuntime)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(adoptConfirmedSpender).not.toHaveBeenCalledWith(OLD_SPENDER)
   })
 })

@@ -46,8 +46,8 @@ function ensureLifecycleRegistered(): void {
         rootKeyHex: wallet.rootKeyHex,
         identityKey: wallet.identityKey,
       })
-      void import('./deadCoinSweep').then(({ scheduleSpenderRecovery }) =>
-        scheduleSpenderRecovery(runtime),
+      void import('./deadCoinSweep').then(({ scheduleUnlockDeadCoinPass }) =>
+        scheduleUnlockDeadCoinPass(runtime),
       )
     },
     dispose: () => {
