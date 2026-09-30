@@ -275,6 +275,14 @@ function sessionFacts(header, events) {
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const listingOutcomes = listingOutcomeFacts(events)
+  const nativeCrashes = [
+    ...new Set(
+      events.flatMap((e) => {
+        const m = NATIVE_CRASH_RE.exec(e.text)
+        return m ? [m[1].slice(0, 600)] : []
+      }),
+    ),
+  ]
   const bounceRefunds = events.flatMap((e) => {
     const m = BOUNCE_REFUND_RE.exec(e.text)
     return m ? [Number(m[1])] : []
@@ -347,6 +355,9 @@ function sessionFacts(header, events) {
     // the wallet refused by code, and Arcade pins that did or did not find the
     // local tx row — `storageUserMoved` names a store rebuilt under a new user.
     listingOutcomes,
+    // Android deaths JS never saw: uncaught Java exceptions (with stack) and
+    // lost WebView renderers, written natively and replayed on next launch.
+    nativeCrashes,
     bounceRefundMs: bounceRefunds,
     // React list-key collisions: which key, which component's list.
     ui,
@@ -1191,6 +1202,7 @@ function listingPhaseFacts(events) {
   return runs
 }
 
+const NATIVE_CRASH_RE = /^\[native-crash\] ([\s\S]+)$/
 const REPUBLISHED_RE = /^\[market-list\] republished txid=([0-9a-f]{64})/
 const CANCEL_REFUSED_RE = /MARKET_CANCEL_REFUSED(?: detail=|[\s:]+)([\w-]+)/
 const CANCEL_PROVEN_RE = /^\[market\] cancel offer \S+ missing from market-offers — proven by its signed listing/
