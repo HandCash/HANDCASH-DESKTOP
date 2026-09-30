@@ -60,11 +60,27 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Building HandCash ${VERSION} → release ${TAG}"
 
-      - name: Build macOS installers (unsigned)
+      - name: Build macOS installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:mac -- --publish never
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # package.json forces signing and notarization. Until the Developer ID
+          # secrets exist the release is built through the explicit unsigned
+          # opt-out and flagged on the run, never silently.
+          if [[ -n "$CSC_LINK" && -n "$CSC_KEY_PASSWORD" && -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+            echo "Signing with Developer ID and notarizing"
+          else
+            echo "::warning title=Unsigned macOS release::Add the CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID secrets to sign and notarize."
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            export HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npm run package:mac -- --publish never
 
       - name: Verify Mac package integrity
         run: |

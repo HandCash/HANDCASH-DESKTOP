@@ -26,8 +26,8 @@ echo "==> Building renderer + electron…"
 npm run build
 
 echo "==> Packaging Mac .app ($ARCH)…"
-# Skip code-sign discovery for local launch reliability
-CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --publish never
+# Local launch builds are unsigned on purpose; releases are signed in CI.
+HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --publish never
 
 if [[ ! -d "$APP" ]]; then
   # electron-builder layout can vary by version — search once

@@ -64,11 +64,23 @@ jobs:
       - name: Build Windows installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         # Windows runners default to PowerShell, where `rm` is Remove-Item and
         # rejects `-rf`. Every other step here is bash for the same reason.
         shell: bash
         run: |
+          set -euo pipefail
+          # package.json forces code signing. Until the certificate secrets exist
+          # the release is built through the explicit unsigned opt-out and
+          # flagged on the run, never silently.
+          if [[ -n "$WIN_CSC_LINK" && -n "$WIN_CSC_KEY_PASSWORD" ]]; then
+            echo "Signing with the Windows code-signing certificate"
+          else
+            echo "::warning title=Unsigned Windows release::Add the WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD secrets to sign the installer."
+            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+            export HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
           rm -rf release
           npm run build
           npx electron-builder --win nsis --publish never

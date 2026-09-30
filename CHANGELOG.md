@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.388] - 2026-09-30
+
+Release builds enforce code signing.
+
+### Security
+
+- **Mac and Windows packaging requires code signing** (`package.json` `forceCodeSigning`, hardened runtime, notarization; `scripts/check-release-signing.cjs`). A Mac build without Apple notarization credentials and a Developer ID identity refuses to package. Unsigned builds need the explicit `HANDCASH_ALLOW_UNSIGNED=1` opt-out, which `launch:mac` uses for local runs.
+- **Release workflows sign as soon as the secrets exist.** Mac uses `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`; Windows uses `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`. Until then each run builds through the opt-out and shows an "Unsigned release" warning.
+
 ## [1.3.387] - 2026-09-30
 
 Rest of the 2026-09-30 security review. Cloud backup and messages are signed per request.
