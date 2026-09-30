@@ -37,6 +37,7 @@ vi.mock('./paymentPolicy', () => ({
 const peekProvenConfirmedSpendable = vi.fn(
   (_wallet?: unknown): number | null => null,
 )
+const debitProvenConfirmedSpendable = vi.fn((_wallet: unknown, _sats: number) => {})
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
@@ -55,6 +56,8 @@ vi.mock('./session', () => ({
     coalescedBalanceRead(wallet, opts),
   peekProvenConfirmedSpendable: (wallet?: unknown) =>
     peekProvenConfirmedSpendable(wallet),
+  debitProvenConfirmedSpendable: (wallet: unknown, sats: number) =>
+    debitProvenConfirmedSpendable(wallet, sats),
   bumpBalanceAfterHeal: vi.fn(),
 }))
 
@@ -402,19 +405,17 @@ describe('refreshSpendableBalance', () => {
     }
   })
 
-  it('answers from a proven total that covers the amount without waiting out the budget', async () => {
-    coalescedBalanceRead.mockReturnValue(new Promise<BalanceRead>(() => {}))
+  it('answers from a proven total that covers the amount without starting a storage read', async () => {
     peekProvenConfirmedSpendable.mockReturnValue(12_000)
-    const { assertSendableBalance } = await import('./spendGuard')
+    const { assertSendableBalance, assertSendableBalanceForReview } =
+      await import('./spendGuard')
 
-    vi.useFakeTimers()
-    try {
-      const gate = assertSendableBalance(500)
-      await vi.advanceTimersByTimeAsync(200)
-      await expect(gate).resolves.toBe(12_000)
-    } finally {
-      vi.useRealTimers()
-    }
+    await expect(assertSendableBalanceForReview(500)).resolves.toBe(12_000)
+    expect(debitProvenConfirmedSpendable).not.toHaveBeenCalled()
+    await expect(assertSendableBalance(500)).resolves.toBe(12_000)
+    expect(coalescedBalanceRead).not.toHaveBeenCalled()
+    expect(debitProvenConfirmedSpendable).toHaveBeenCalledOnce()
+    expect(debitProvenConfirmedSpendable).toHaveBeenCalledWith(expect.anything(), 500)
   })
 
   it('keeps the full budget when the proven total is short of the amount', async () => {

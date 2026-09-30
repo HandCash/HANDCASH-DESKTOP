@@ -1142,7 +1142,9 @@ async function handleBrc100RequestInner(
             // more so the app receives an output this wallet still holds.
             if (
               method === 'createAction' &&
-              (await retireCreateActionSpentElsewhere(signed, active.chain))
+              (await retireCreateActionSpentElsewhere(signed, active.chain, {
+                freshlySigned: true,
+              }))
             ) {
               console.warn('[brc100] createAction signing again with live coins')
               setPaymentProgress('signing', 'Signing…', null, 'Working…')

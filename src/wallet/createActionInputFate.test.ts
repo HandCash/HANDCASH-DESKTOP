@@ -1,21 +1,31 @@
 import { Beef, MerklePath, PrivateKey, P2PKH, Script, Transaction } from '@bsv/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  foreignConfirmedInputSpends,
   inputsWithPossiblyMinedParent,
+  outpointRecentlyCleared,
   parseConfirmedForeignSpender,
+  resetClearedOutpointsForTests,
   retireCreateActionSpentElsewhere,
 } from './createActionInputFate'
 
 const retireCalls: string[] = []
+const sweeps: string[] = []
 
 vi.mock('./staleOutputRelease', () => ({
-  failUnsentLocalTx: async (txid: string) => {
-    retireCalls.push(`fail ${txid}`)
+  failUnsentLocalTx: async (txid: string, opts?: { noDescendants?: boolean }) => {
+    retireCalls.push(`fail ${txid}${opts?.noDescendants ? ' fresh' : ''}`)
     return true
   },
   hideSpentOutpoints: async (outpoints: string[], spender: string) => {
     retireCalls.push(`hide ${outpoints.join(',')} by ${spender}`)
     return outpoints.length
+  },
+}))
+
+vi.mock('./deadCoinSweep', () => ({
+  scheduleDeadCoinSweep: (chain: string) => {
+    sweeps.push(chain)
   },
 }))
 
@@ -82,40 +92,99 @@ describe('inputsWithPossiblyMinedParent', () => {
   })
 })
 
+function signedOverMinedParent(): { txid: string; tx: number[]; input: string } {
+  const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+  const parent = new Transaction()
+  parent.addInput({ sourceTXID: '55'.repeat(32), sourceOutputIndex: 0, unlockingScript: new Script() })
+  parent.addOutput({ lockingScript: lock, satoshis: 1_000 })
+  parent.merklePath = MerklePath.fromCoinbaseTxidAndHeight(parent.id('hex'), 900_000)
+  const signed = new Transaction()
+  signed.addInput({ sourceTXID: parent.id('hex'), sourceOutputIndex: 0, unlockingScript: new Script() })
+  signed.addOutput({ lockingScript: lock, satoshis: 900 })
+  const beef = new Beef()
+  beef.mergeTransaction(parent)
+  beef.mergeRawTx(signed.toBinary())
+  const txid = signed.id('hex')
+  return { txid, tx: Array.from(beef.toBinaryAtomic(txid)), input: `${parent.id('hex')}.0` }
+}
+
 describe('retireCreateActionSpentElsewhere', () => {
   afterEach(() => {
     retireCalls.length = 0
+    sweeps.length = 0
+    resetClearedOutpointsForTests()
     vi.unstubAllGlobals()
   })
 
   it('fails the signed tx before hiding its dead inputs, so the fail cannot restore them', async () => {
-    const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
-    const parent = new Transaction()
-    parent.addInput({ sourceTXID: '55'.repeat(32), sourceOutputIndex: 0, unlockingScript: new Script() })
-    parent.addOutput({ lockingScript: lock, satoshis: 1_000 })
-    parent.merklePath = MerklePath.fromCoinbaseTxidAndHeight(parent.id('hex'), 900_000)
-    const signed = new Transaction()
-    signed.addInput({ sourceTXID: parent.id('hex'), sourceOutputIndex: 0, unlockingScript: new Script() })
-    signed.addOutput({ lockingScript: lock, satoshis: 900 })
-    const beef = new Beef()
-    beef.mergeTransaction(parent)
-    beef.mergeRawTx(signed.toBinary())
-    const txid = signed.id('hex')
-
+    const { txid, tx, input } = signedOverMinedParent()
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({ ok: true, json: async () => ({ txid: OTHER, status: 'confirmed' }) })),
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ txid: OTHER, status: 'confirmed' }),
+      })),
+    )
+
+    await expect(retireCreateActionSpentElsewhere({ txid, tx }, 'main')).resolves.toBe(true)
+    expect(retireCalls).toEqual([`fail ${txid}`, `hide ${input} by ${OTHER}`])
+  })
+
+  it('skips the descendant walk for a tx signed in this spend region and sweeps the pool', async () => {
+    const { txid, tx, input } = signedOverMinedParent()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ txid: OTHER, status: 'confirmed' }),
+      })),
     )
 
     await expect(
-      retireCreateActionSpentElsewhere(
-        { txid, tx: Array.from(beef.toBinaryAtomic(txid)) },
-        'main',
-      ),
+      retireCreateActionSpentElsewhere({ txid, tx }, 'main', { freshlySigned: true }),
     ).resolves.toBe(true)
-    expect(retireCalls).toEqual([
-      `fail ${txid}`,
-      `hide ${parent.id('hex')}.0 by ${OTHER}`,
-    ])
+    expect(retireCalls).toEqual([`fail ${txid} fresh`, `hide ${input} by ${OTHER}`])
+    await vi.waitFor(() => expect(sweeps).toEqual(['main']))
+  })
+})
+
+describe('foreignConfirmedInputSpends', () => {
+  afterEach(() => {
+    resetClearedOutpointsForTests()
+    vi.unstubAllGlobals()
+  })
+
+  it('clears a coin on 404 and does not ask about it again on the next sign', async () => {
+    const { txid, tx, input } = signedOverMinedParent()
+    const fetch = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(foreignConfirmedInputSpends({ txid, tx }, 'main')).resolves.toEqual([])
+    expect(outpointRecentlyCleared(input)).toBe(true)
+    await expect(foreignConfirmedInputSpends({ txid, tx }, 'main')).resolves.toEqual([])
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('never clears a coin on a rate limit or an unconfirmed spender', async () => {
+    const { txid, tx, input } = signedOverMinedParent()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) })),
+    )
+    await foreignConfirmedInputSpends({ txid, tx }, 'main')
+    expect(outpointRecentlyCleared(input)).toBe(false)
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ txid: OTHER, status: 'unconfirmed' }),
+      })),
+    )
+    await foreignConfirmedInputSpends({ txid, tx }, 'main')
+    expect(outpointRecentlyCleared(input)).toBe(false)
   })
 })

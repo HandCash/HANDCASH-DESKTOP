@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.377] - 2026-09-30
+
+The 0.1.538 upload: a backgrounded bridge payment took ~11.6s. It broke down as a first sign whose `storage_plan` waited ~6s on IndexedDB, ~3s retiring coins a confirmed foreign tx had spent, and a second sign. Every payment resigned; the dead coins came from a stale pool (3, 3, 3, 1 per payment), not from one coin coming back.
+
+### Fixed
+
+- **The hero read no longer runs under a hidden sign.** `bumpBalanceAfterHeal` does a full display balance read after every bridge receive and send seal. While the WebView was hidden that read held IndexedDB for ~6s under the next `createAction` (first `storage_plan` 6.1s, the resign seconds later 0.45s). While hidden it now publishes once when the page is next visible (`deferWhileHidden`).
+- **A covered balance gate starts no storage read.** When the proven confirmed total already covers the amount, the gate used to start `balance()`, wait 150ms, and leave the read scanning the outputs store under the sign. That happened twice per payment. It now answers from the proven total and debits the committed amount, so the figure can only drift low; the next short gate reads storage.
+- **The dead-coin pool is swept once, not three coins per payment.** When a sign finds a coin a confirmed foreign tx spent, `deadCoinSweep` probes the rest of the spendable managed change in the background: two at a time, pausing for spends, skipping change of unmined local txs. It hides only on a named, confirmed, foreign spender. A 404, timeout, rate limit or unconfirmed spender never writes a coin off.
+- **The retire of a just-signed tx skips the global closure.** A tx signed inside the current exclusive spend region cannot have descendants, so `failUnsentLocalTx(..., { noDescendants })` no longer walks every failed tx in history (~2s of the retire). Miner-reject retires still run the closure.
+
+### Changed
+
+- The per-sign input probe skips coins the explorer cleared (404) in the last 10 minutes.
+- `[spend] retire done Nms` and `[dead-coins] sweep checked=… hidden=… unknown=… done Nms` log lines. Triage now reports `deadCoins` (resigns and sweeps) and `notifications`: posted, skipped by reason, failed, and hidden-WebView value actions that raised no notification.
+
 ## [1.3.376] - 2026-09-29
 
 Same-key device parity is gone (one install per identity), so its guardrails go too.

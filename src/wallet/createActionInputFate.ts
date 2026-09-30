@@ -12,6 +12,18 @@ import { extractTxid } from './txExplorer'
 import { parseOutpoint } from './legacyScan'
 
 const PROBE_MS = 1_500
+/**
+ * A confirmed foreign spend needs a new block and a key holder other than this
+ * device, so a coin the explorer cleared minutes ago is not re-asked per sign.
+ */
+const CLEARED_TTL_MS = 10 * 60_000
+
+export type OutpointSpendProbe =
+  | { kind: 'noConfirmedSpender' }
+  | { kind: 'confirmedSpender'; spender: string }
+  | { kind: 'unknown' }
+
+const clearedAt = new Map<string, number>()
 
 function wocSpentUrl(chain: Chain, txid: string, vout: number): string {
   const host =
@@ -19,6 +31,27 @@ function wocSpentUrl(chain: Chain, txid: string, vout: number): string {
       ? 'https://api.whatsonchain.com/v1/bsv/main'
       : 'https://api.whatsonchain.com/v1/bsv/test'
   return `${host}/tx/${txid}/${vout}/spent`
+}
+
+function outpointKey(outpoint: string): string {
+  return outpoint.trim().toLowerCase()
+}
+
+export function outpointRecentlyCleared(outpoint: string, now = Date.now()): boolean {
+  const key = outpointKey(outpoint)
+  const at = clearedAt.get(key)
+  if (at == null) return false
+  if (now - at < CLEARED_TTL_MS) return true
+  clearedAt.delete(key)
+  return false
+}
+
+function markCleared(outpoint: string): void {
+  clearedAt.set(outpointKey(outpoint), Date.now())
+}
+
+export function resetClearedOutpointsForTests(): void {
+  clearedAt.clear()
 }
 
 /** WhatsOnChain `/spent` body → a confirmed spender that is not this tx. */
@@ -35,13 +68,17 @@ export function parseConfirmedForeignSpender(
   return spender
 }
 
-export async function confirmedForeignSpenderTxid(
+/**
+ * Ask the explorer who spent `outpoint`. A 404 is the only answer that clears
+ * the coin; a timeout, rate limit or unconfirmed spender stays `unknown`.
+ */
+export async function probeOutpointSpend(
   outpoint: string,
   selfTxid: string,
   chain: Chain,
-): Promise<string | null> {
+): Promise<OutpointSpendProbe> {
   const parsed = parseOutpoint(outpoint)
-  if (!parsed) return null
+  if (!parsed) return { kind: 'unknown' }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_MS)
   try {
@@ -49,13 +86,27 @@ export async function confirmedForeignSpenderTxid(
       signal: controller.signal,
       headers: { Accept: 'application/json' },
     })
-    if (!res.ok) return null
-    return parseConfirmedForeignSpender(await res.json(), selfTxid)
+    if (res.status === 404) {
+      markCleared(outpoint)
+      return { kind: 'noConfirmedSpender' }
+    }
+    if (!res.ok) return { kind: 'unknown' }
+    const spender = parseConfirmedForeignSpender(await res.json(), selfTxid)
+    return spender ? { kind: 'confirmedSpender', spender } : { kind: 'unknown' }
   } catch {
-    return null
+    return { kind: 'unknown' }
   } finally {
     clearTimeout(timer)
   }
+}
+
+export async function confirmedForeignSpenderTxid(
+  outpoint: string,
+  selfTxid: string,
+  chain: Chain,
+): Promise<string | null> {
+  const probe = await probeOutpointSpend(outpoint, selfTxid, chain)
+  return probe.kind === 'confirmedSpender' ? probe.spender : null
 }
 
 function atomicFromCreateResult(result: unknown): number[] | null {
@@ -95,7 +146,9 @@ export async function foreignConfirmedInputSpends(
   const txid = extractTxid(result)?.toLowerCase()
   const atomic = atomicFromCreateResult(result)
   if (!txid || !atomic?.length) return []
-  const inputs = inputsWithPossiblyMinedParent(atomic, txid)
+  const inputs = inputsWithPossiblyMinedParent(atomic, txid).filter(
+    (outpoint) => !outpointRecentlyCleared(outpoint),
+  )
   if (inputs.length === 0) return []
   const started = Date.now()
   const rows = await Promise.all(
@@ -114,15 +167,20 @@ export async function foreignConfirmedInputSpends(
 /**
  * Hide coins a confirmed foreign tx already spent, and retire this signed tx
  * so its outputs are not listed as held. Returns true when a resign is required.
+ *
+ * One dead coin means the pool holds more, so the rest are swept in the
+ * background instead of one resign per payment finding them.
  */
 export async function retireCreateActionSpentElsewhere(
   result: unknown,
   chain: Chain,
+  opts?: { freshlySigned?: boolean },
 ): Promise<boolean> {
   const txid = extractTxid(result)?.toLowerCase()
   if (!txid) return false
   const spends = await foreignConfirmedInputSpends(result, chain)
   if (spends.length === 0) return false
+  const started = Date.now()
   const bySpender = new Map<string, string[]>()
   for (const row of spends) {
     const list = bySpender.get(row.spender) ?? []
@@ -134,12 +192,20 @@ export async function retireCreateActionSpentElsewhere(
   )
   // Failing a tx restores its inputs to spendable, so fail first: hiding
   // first had the fail hand the dead coins straight back to the next sign.
-  await failUnsentLocalTx(txid, { force: true })
+  await failUnsentLocalTx(txid, {
+    force: true,
+    noDescendants: opts?.freshlySigned === true,
+  })
   for (const [spender, outpoints] of bySpender) {
     await hideSpentOutpoints(outpoints, spender)
   }
+  const ms = Date.now() - started
+  if (ms >= 250) console.info(`[spend] retire done ${ms}ms`)
   console.warn(
     `[brc100] createAction inputs spent elsewhere count=${spends.length} txid=${txid.slice(0, 12)}`,
+  )
+  void import('./deadCoinSweep').then(({ scheduleDeadCoinSweep }) =>
+    scheduleDeadCoinSweep(chain),
   )
   return true
 }

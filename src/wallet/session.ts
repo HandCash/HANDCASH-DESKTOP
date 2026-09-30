@@ -14,6 +14,7 @@ import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
 import { selfFundsRewriteActive } from './selfFundsRewrite'
+import { deferWhileHidden } from './deferWhileHidden'
 import {
   configurePostBeefServices,
   preferServiceOrder,
@@ -509,6 +510,10 @@ export function bumpBalanceAfterHeal(): void {
   // Heal used to only clear caches — the hero stayed on a poisoned high figure
   // because nothing re-published. Force a full display read + UI refresh.
   if (!session?.wallet) return
+  // Nobody reads the hero of a hidden WebView, and this full display read held
+  // IndexedDB for ~6s under the next bridge sign (hc-a580a 0.1.538: first
+  // storage_plan 6.1s, the resign seconds later 0.45s). Publish once on return.
+  if (deferWhileHidden('balance-bump', bumpBalanceAfterHeal)) return
   const wallet = session.wallet
   const identityKey = session.identityKey
   const chain = session.chain
@@ -644,6 +649,25 @@ export function peekProvenConfirmedSpendable(
     if (cached != null) return cached
   }
   return lastConfirmedSpendableSats
+}
+
+/**
+ * Take a gated amount off the proven total so a gate that answered from it
+ * without a live read can only drift low; the next short gate reads storage.
+ */
+export function debitProvenConfirmedSpendable(
+  wallet: Wallet | WalletInterface | object | null | undefined,
+  sats: number,
+): void {
+  const amount = Math.max(0, Math.trunc(sats))
+  if (amount === 0) return
+  if (wallet && typeof wallet === 'object') {
+    const cached = confirmedSpendableCache.get(wallet)
+    if (cached != null) confirmedSpendableCache.set(wallet, Math.max(0, cached - amount))
+  }
+  if (lastConfirmedSpendableSats != null) {
+    lastConfirmedSpendableSats = Math.max(0, lastConfirmedSpendableSats - amount)
+  }
 }
 
 export async function fetchBalanceRead(

@@ -649,7 +649,14 @@ export async function releaseSealedInputsOfUnsentTx(
  */
 export async function failUnsentLocalTx(
   txid: string,
-  opts?: { force?: boolean }
+  opts?: {
+    force?: boolean;
+    /**
+     * Signed inside the current exclusive spend region, so nothing can have
+     * spent its outputs yet. Skips the closure walk over every failed tx.
+     */
+    noDescendants?: boolean;
+  }
 ): Promise<boolean> {
   const id = txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(id)) return false;
@@ -721,12 +728,14 @@ export async function failUnsentLocalTx(
       // outputs is dead with it. Take them in the same session, parents
       // first, so no balance read can see the parent's inputs restored
       // beside a child's change (hc-a580a 2026-09-29, 2× balance).
-      await failLocalTxClosure(sp as unknown as ClosureStorage, {
-        seedTxids: [id],
-        ...(chain
-          ? { txExistsOnChain: (child: string) => txExistsOnChain(child, chain) }
-          : {}),
-      });
+      if (!opts?.noDescendants) {
+        await failLocalTxClosure(sp as unknown as ClosureStorage, {
+          seedTxids: [id],
+          ...(chain
+            ? { txExistsOnChain: (child: string) => txExistsOnChain(child, chain) }
+            : {}),
+        });
+      }
 
       const outs = await findOutputsForTxid(sp, id);
       for (const out of outs) {

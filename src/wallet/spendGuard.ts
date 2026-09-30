@@ -3,7 +3,6 @@ import { getActiveWallet } from './session'
 /**
  * Spend guard:
  * - serialize spends on this device (wallet coordinator spend region)
- * - advisory lease on shared backup URL across devices
  * - assert against **local** spendable balance (toolbox / history backup)
  *
  * Local wallet state is the authority for what we own and what we can sign.
@@ -16,6 +15,7 @@ import { assertOnlineForPayment } from './paymentPolicy'
 import type { BalanceRead } from './session'
 import {
   coalescedBalanceRead,
+  debitProvenConfirmedSpendable,
   peekProvenConfirmedSpendable,
 } from './session'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
@@ -308,12 +308,6 @@ const BALANCE_UNREADABLE =
 const CONFIRMED_READ_BUDGET_MS = 1_500
 
 /**
- * Budget when the proven total already covers the amount. The long budget only
- * ever ends in that same total; coin selection still refuses a real shortfall.
- */
-const COVERED_READ_BUDGET_MS = 150
-
-/**
  * Hard ceiling when nothing has ever been proven, so there is no total to fall
  * back to. The budget above exists to answer *fast*, not to refuse a funded
  * wallet: a read that lands at 1600ms must still pass the gate.
@@ -351,26 +345,35 @@ async function readConfirmedSpendable(
     wallet: Parameters<typeof coalescedBalanceRead>[0]
   },
   neededSats?: number,
+  opts?: { commit?: boolean },
 ): Promise<number> {
-  const flight = coalescedBalanceRead(active.wallet, { creditUnconfirmed: false })
   const provenBefore = peekProvenConfirmedSpendable(active.wallet)
   const covered =
     neededSats != null && neededSats > 0 && provenBefore != null && provenBefore >= neededSats
+  // A covered answer never needed the read, and a read left running scans the
+  // outputs store under the createAction that follows (hc-a580a: two per
+  // payment beside a 6s storage_plan). Debit the committed amount instead.
+  if (covered) {
+    if (opts?.commit) debitProvenConfirmedSpendable(active.wallet, neededSats)
+    logDiag('spend-guard', 'info', 'confirmed-from-proven-cache', {
+      proven: provenBefore,
+      reason: 'provenCovers',
+    })
+    return provenBefore
+  }
 
+  const flight = coalescedBalanceRead(active.wallet, { creditUnconfirmed: false })
   const started = Date.now()
-  const budgeted = await settleWithin(
-    flight,
-    covered ? COVERED_READ_BUDGET_MS : CONFIRMED_READ_BUDGET_MS,
-  )
+  const budgeted = await settleWithin(flight, CONFIRMED_READ_BUDGET_MS)
   const ms = Date.now() - started
   if (ms >= 250) console.info(`[spend] balance done ${ms}ms`)
   if (budgeted?.kind === 'ok') return budgeted.sats
 
   const proven = peekProvenConfirmedSpendable(active.wallet)
   if (proven != null && proven > 0) {
-    logDiag('spend-guard', covered ? 'info' : 'warn', 'confirmed-from-proven-cache', {
+    logDiag('spend-guard', 'warn', 'confirmed-from-proven-cache', {
       proven,
-      reason: budgeted?.reason ?? (covered ? 'provenCovers' : 'readSlow'),
+      reason: budgeted?.reason ?? 'readSlow',
     })
     return proven
   }
@@ -454,7 +457,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  let confirmed = await readConfirmedSpendable(active, satoshis)
+  let confirmed = await readConfirmedSpendable(active, satoshis, { commit: true })
   if (satoshis <= confirmed) return confirmed
 
   // Display balance credits pending change; createAction only selects spendable

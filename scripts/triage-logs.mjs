@@ -250,6 +250,8 @@ function sessionFacts(header, events) {
   const tokenDeposits = tokenDepositFacts(events)
   const appFlow = appFlowFacts(events)
   const toolboxSteps = toolboxStepFacts(events)
+  const notifications = notificationFacts(events)
+  const deadCoins = deadCoinFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const bounceRefunds = events.flatMap((e) => {
     const m = BOUNCE_REFUND_RE.exec(e.text)
@@ -301,6 +303,12 @@ function sessionFacts(header, events) {
     // Wallet Toolbox steps inside createAction / signAction that ran past
     // 250ms (`[toolbox] <step> done <N>ms`), per step and page visibility.
     toolboxSteps,
+    // Mobile activity notifications: posted / skipped (with reason) / failed,
+    // and hidden-WebView bridge value actions that raised none within 5s.
+    notifications,
+    // createAction resigns over coins a confirmed foreign tx spent, and the
+    // background pool sweeps (`[dead-coins] sweep`) that clear the rest.
+    deadCoins,
     listingPhases,
     bounceRefundMs: bounceRefunds,
     // React list-key collisions: which key, which component's list.
@@ -1248,6 +1256,100 @@ function toolboxStepFacts(events) {
     .sort((a, b) => b.totalMs - a.totalMs)
 }
 
+const NOTIFY_POSTED_RE = /^\[mobile-notifications\] posted channel=(\S+)/
+const NOTIFY_SKIPPED_RE = /^\[mobile-notifications\] skipped kind=(\S+) reason=(\S+)/
+const NOTIFY_FAILED_RE = /^\[mobile-notifications\] (\S+) failed: (.*)$/
+const BRIDGE_VALUE_OK_RE = /^\[brc100\] ok method=(createAction|internalizeAction) /
+/** A bridge reply and its notification land in the same task burst. */
+const NOTIFY_WINDOW_MS = 5_000
+
+/**
+ * Mobile activity notifications against the bridge actions that should have
+ * raised one: every createAction / internalizeAction answered while the
+ * WebView was hidden.
+ */
+function notificationFacts(events) {
+  const visibilityOver = visibilityTimeline(events)
+  const seen = new Set()
+  const posted = []
+  const postedByChannel = {}
+  const skipped = {}
+  const failed = {}
+  const hiddenActions = []
+  for (const e of events) {
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const p = NOTIFY_POSTED_RE.exec(e.text)
+    if (p) {
+      posted.push(e.at)
+      postedByChannel[p[1]] = (postedByChannel[p[1]] ?? 0) + 1
+      continue
+    }
+    const s = NOTIFY_SKIPPED_RE.exec(e.text)
+    if (s) {
+      const k = `${s[1]} ${s[2]}`
+      skipped[k] = (skipped[k] ?? 0) + 1
+      continue
+    }
+    const f = NOTIFY_FAILED_RE.exec(e.text)
+    if (f) {
+      const k = `${f[1]}: ${f[2].slice(0, 80)}`
+      failed[k] = (failed[k] ?? 0) + 1
+      continue
+    }
+    const a = BRIDGE_VALUE_OK_RE.exec(e.text)
+    if (a && visibilityOver(e.at, e.at) === 'hidden') {
+      hiddenActions.push({ at: e.at, method: a[1] })
+    }
+  }
+  const silent = hiddenActions.filter(
+    (a) => !posted.some((at) => at >= a.at && at - a.at <= NOTIFY_WINDOW_MS),
+  )
+  return {
+    posted: posted.length,
+    postedByChannel,
+    skipped,
+    failed,
+    hiddenValueActions: hiddenActions.length,
+    hiddenValueActionsWithoutNotification: silent.length,
+    silentExamples: silent.slice(0, 5).map((a) => ({
+      method: a.method,
+      at: new Date(a.at).toISOString(),
+    })),
+  }
+}
+
+const RESIGN_RE = /^\[brc100\] createAction signing again with live coins$/
+const DEAD_SWEEP_RE =
+  /^\[dead-coins\] sweep checked=(\d+) hidden=(\d+) unknown=(\d+) done (\d+)ms$/
+
+/** Resigns over coins a confirmed foreign tx spent, and the pool sweeps they set off. */
+function deadCoinFacts(events) {
+  const seen = new Set()
+  let resigns = 0
+  const sweeps = []
+  for (const e of events) {
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (RESIGN_RE.test(e.text)) {
+      resigns += 1
+      continue
+    }
+    const m = DEAD_SWEEP_RE.exec(e.text)
+    if (m) {
+      sweeps.push({
+        checked: Number(m[1]),
+        hidden: Number(m[2]),
+        unknown: Number(m[3]),
+        ms: Number(m[4]),
+      })
+    }
+  }
+  return { resigns, sweeps }
+}
+
 function appFlowFacts(events) {
   const visibilityOver = visibilityTimeline(events)
   const steps = []
@@ -1617,7 +1719,7 @@ function forensicQuestions(latest) {
           slow_signing_owner: {
             type: 'choice',
             instructions:
-              'Where does signing time go? `latest.appFlow.workByVisibility` is keyed `<method> <visibility>`, where visibility is the page state over the step (`visible`, `hidden` — the phone backgrounded the WebView the whole time — or `mixed`); each row gives the median wallet work and median of each phase: `preflight` is the pre-consent balance read, `spend` is funding + Toolbox createAction + signing, `ingest` / `seal` are internalize storage. `latest.toolboxSteps` splits Toolbox work into its own steps (`create_action.storage_plan` coin selection in IndexedDB, `create_action.complete_signing` ECDSA, `create_action.verify_unlock_scripts` script checks, `create_action.process` storage commit, `create_action.merge_result_beef` / `verify_result_beef` the session BEEF) with medians per visibility; it is empty on builds that predate that log line. Rows prefixed `spend.` are wallet work around the Toolbox inside the same phase: `spend.lease` the cross-device spend lock on the backup host, `spend.balance` the in-region balance gate, `spend.input_fate` the post-sign explorer probe of input spenders, `spend.internalize` the Toolbox internalize call, `spend.bridge_deliver` the hop from the native :3321 socket into the WebView (Android, grows when the WebView is backgrounded). Which owns the time?',
+              'Where does signing time go? `latest.appFlow.workByVisibility` is keyed `<method> <visibility>`, where visibility is the page state over the step (`visible`, `hidden` — the phone backgrounded the WebView the whole time — or `mixed`); each row gives the median wallet work and median of each phase: `preflight` is the pre-consent balance read, `spend` is funding + Toolbox createAction + signing, `ingest` / `seal` are internalize storage. `latest.toolboxSteps` splits Toolbox work into its own steps (`create_action.storage_plan` coin selection in IndexedDB, `create_action.complete_signing` ECDSA, `create_action.verify_unlock_scripts` script checks, `create_action.process` storage commit, `create_action.merge_result_beef` / `verify_result_beef` the session BEEF) with medians per visibility; it is empty on builds that predate that log line. Rows prefixed `spend.` are wallet work around the Toolbox inside the same phase: `spend.lease` the cross-device spend lock (removed in 1.3.376; only older builds log it), `spend.balance` the in-region balance gate, `spend.input_fate` the post-sign explorer probe of input spenders, `spend.retire` failing a sign that picked coins a confirmed foreign tx spent before signing again (`latest.deadCoins.resigns` counts those; `latest.deadCoins.sweeps` are the background pool sweeps that should stop them recurring), `spend.internalize` the Toolbox internalize call, `spend.bridge_deliver` the hop from the native :3321 socket into the WebView (Android, grows when the WebView is backgrounded). Which owns the time?',
             criteria: {
               balance_read:
                 '`preflight` is a large share of work (around 1.5s or more): the balance read ran into its budget.',
@@ -1628,7 +1730,7 @@ function forensicQuestions(latest) {
               cryptography:
                 'The heaviest `toolboxSteps` rows are `complete_signing` or `verify_unlock_scripts`: signature math dominates.',
               network_waits:
-                'The heaviest `toolboxSteps` rows are `spend.lease` or `spend.input_fate`: round trips to the backup host or explorer, not the Toolbox.',
+                'The heaviest `toolboxSteps` rows are `spend.lease`, `spend.input_fate` or `spend.retire`: round trips to the backup host or explorer, or a resign over dead coins, not the Toolbox.',
               background_penalty:
                 'The same phases are much slower in `hidden` than in `visible`: Android deprioritised the backgrounded WebView, and the fix is less work per step rather than a different step.',
               need_toolbox_steps:
@@ -1686,6 +1788,29 @@ function forensicQuestions(latest) {
       }
     : {}
 
+  const notify = latest.notifications
+  const notifyQuestions =
+    notify && (notify.hiddenValueActions > 0 || notify.posted > 0)
+      ? {
+          missing_notifications: {
+            type: 'choice',
+            instructions:
+              'From `latest.notifications` (Android activity notifications): `hiddenValueActions` counts createAction / internalizeAction replies sent while the WebView was hidden, and `hiddenValueActionsWithoutNotification` those with no `posted` line within 5s (`silentExamples` names them). `skipped` tallies deliberate skips by `kind reason` (`onScreen` = HandCash was judged on screen, `notPermitted` = no display permission or channel setup failed). `failed` tallies plugin errors. Builds before 0.1.539 skip silently, so on those a silent action with no `skipped` line can still be an on-screen skip. Why are notifications missing, if they are?',
+            criteria: {
+              none_missing:
+                '`hiddenValueActionsWithoutNotification` is 0 and `failed` is empty: every hidden value action posted. Missing ones the user reports are the OS (bundling, cooldown, Do Not Disturb), not the wallet.',
+              judged_on_screen:
+                'Silent hidden actions line up with `skipped ... onScreen`: the on-screen check said HandCash was in front while the WebView was hidden.',
+              not_permitted:
+                '`skipped ... notPermitted` or a permission warning explains the gap.',
+              plugin_failed: '`failed` has entries: the notification plugin threw.',
+              no_event:
+                'Silent hidden actions have neither a skip nor a failure line: the wallet never raised a notification event for them.',
+            },
+          },
+        }
+      : {}
+
   const bridge = latest.bridge
   const bridgeQuestions =
     bridge && bridge.requests > 0
@@ -1712,6 +1837,7 @@ function forensicQuestions(latest) {
     ...depositQuestions,
     ...appFlowQuestions,
     ...nftQuestions,
+    ...notifyQuestions,
     ...bridgeQuestions,
     freeze_owner: {
       type: 'choice',
@@ -2056,6 +2182,31 @@ function report(state, answers) {
     if (answers.app_flow_stall) choiceBlock('Who held the flow up', answers.app_flow_stall)
     if (answers.slow_signing_owner) choiceBlock('Signing time owner', answers.slow_signing_owner)
     if (answers.app_flow_refusal) choiceBlock('Refusal to fix first', answers.app_flow_refusal)
+  }
+
+  const dead = latest.deadCoins
+  if (dead && (dead.resigns || dead.sweeps.length)) {
+    console.log('\nDead coins (code-counted):')
+    console.log(`  ${dead.resigns} resign(s) over coins a confirmed foreign tx spent`)
+    for (const s of dead.sweeps) {
+      console.log(
+        `  sweep checked ${s.checked} · hidden ${s.hidden} · unknown ${s.unknown} · ${s.ms}ms`,
+      )
+    }
+  }
+
+  const notify = latest.notifications
+  if (notify && (notify.hiddenValueActions || notify.posted)) {
+    console.log('\nNotifications (code-counted):')
+    console.log(
+      `  ${notify.posted} posted · ${notify.hiddenValueActions} hidden value action(s) · ${notify.hiddenValueActionsWithoutNotification} with no notification`,
+    )
+    for (const [k, n] of Object.entries(notify.skipped)) console.log(`  skipped ${k} ×${n}`)
+    for (const [k, n] of Object.entries(notify.failed)) console.log(`  failed ${k} ×${n}`)
+    for (const s of notify.silentExamples) console.log(`  silent ${s.method} at ${s.at}`)
+    if (answers.missing_notifications) {
+      choiceBlock('Missing notifications', answers.missing_notifications)
+    }
   }
 
   const nft = latest.nftImport
