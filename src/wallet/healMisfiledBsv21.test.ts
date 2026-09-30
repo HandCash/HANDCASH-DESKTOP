@@ -135,6 +135,18 @@ describe('classifyOneSatAsBsv21', () => {
     ).toBe('skip')
   })
 
+  it('does not move a bare P2PKH tip on token tags alone', () => {
+    expect(
+      classifyOneSatAsBsv21({
+        satoshis: 1,
+        outpoint: `${'bb'.repeat(32)}.1`,
+        lockingScriptHex: P2PKH,
+        customInstructions: JSON.stringify(transfer),
+        tags: ['bsv21', `bsv21:${tokenId}`, 'amt:1000'],
+      }).kind,
+    ).toBe('skip')
+  })
+
   it('does not move a bsv-20 mime without a holding payload', () => {
     expect(
       classifyOneSatAsBsv21({

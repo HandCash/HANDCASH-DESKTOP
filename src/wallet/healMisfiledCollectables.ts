@@ -8,6 +8,7 @@ import { getActiveWallet } from './session'
  */
 import {
   BSV21_BASKET,
+  decodeBsv21Binary,
   isBsv21Mime,
   parseBsv21Json,
 } from './token'
@@ -69,6 +70,12 @@ export function classifyTokenBasketTip(
   args: ClassifyTokenBasketTipArgs,
 ): TokenBasketTipClass {
   if (args.satoshis !== 1) return 'unknown'
+
+  // A BRC-162 prefix is the token itself. Cache rows, names and tags can be
+  // stale; letting them win filed live tokens as NFTs until the reverse heal
+  // moved them back, on every Refresh.
+  const binary = args.lockingScriptHex ? decodeBsv21Binary(args.lockingScriptHex) : null
+  if (binary && binary.amount > 0n && binary.role !== 'authority') return 'token'
 
   const env = parseOrdEnvelope(args.lockingScriptHex)
   const mime = (env?.contentType ?? '').toLowerCase().split(';')[0]!.trim()

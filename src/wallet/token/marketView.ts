@@ -17,6 +17,8 @@ export type FungibleMarketListingView = {
   listAmt?: number
   state: MarketListingState
   listedOutpoint: string
+  /** False while the offer is on chain but the listings index lacks it. */
+  published: boolean
 }
 
 export type TokenMarketPricePoint = {
@@ -38,6 +40,7 @@ function authToView(auth: MarketListingAuthorization): FungibleMarketListingView
     listAmt: auth.listing?.amt,
     state: auth.state,
     listedOutpoint: auth.outpoint,
+    published: auth.publish?.kind !== 'unpublished',
   }
 }
 
@@ -119,6 +122,7 @@ export function attachMarketListingToToken(
     listAmt: listing.listAmt,
     state: listing.state as 'active' | 'reserved',
     listedOutpoint: listing.listedOutpoint,
+    published: listing.published,
   } }
 }
 
@@ -170,7 +174,7 @@ export function listActiveBsv21MarketListings(
       sym: token.sym,
       iconUrl: token.iconUrl,
       dec: token.dec,
-      listing,
+      listing: { ...listing, published: listing.published !== false },
     })
   }
 

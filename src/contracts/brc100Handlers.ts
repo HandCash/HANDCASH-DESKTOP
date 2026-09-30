@@ -19,6 +19,7 @@ export const BRC100_HANDLER_MANIFEST = Object.freeze({
   createCancelMarketListingAdvert: 'market',
   getMarketListingStatus: 'market',
   markMarketListingPublishFailed: 'market',
+  markMarketListingPublished: 'market',
   claimCloudHandle: 'identity',
   getClaimedCloudHandle: 'identity',
   clearClaimedCloudHandle: 'identity',

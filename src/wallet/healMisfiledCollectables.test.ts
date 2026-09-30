@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { classifyTokenBasketTip } from './healMisfiledCollectables'
+import { encodeBsv21Binary } from './token'
 
 const P2PKH = '76a914' + '11'.repeat(20) + '88ac'
 /** OP_FALSE OP_IF "ord" OP_1 <image/png> OP_0 <hi> OP_ENDIF */
@@ -80,6 +81,23 @@ describe('classifyTokenBasketTip', () => {
   it('leaves 1sat-ft mime in the token path', () => {
     expect(
       classifyTokenBasketTip({ satoshis: 1, lockingScriptHex: FT_ENV + P2PKH }),
+    ).toBe('token')
+  })
+
+  it('keeps a BRC-162 lock as a token even when it carries a collectable mark', () => {
+    const lockingScriptHex = encodeBsv21Binary({
+      tokenId: `${'cc'.repeat(32)}_0`,
+      amount: 500n,
+      rest: P2PKH,
+    }).toHex()
+    expect(
+      classifyTokenBasketTip({
+        satoshis: 1,
+        lockingScriptHex,
+        tags: ['ordinal', `origin:${'cc'.repeat(32)}.0`],
+        cached: { outpoint: 'x.0', origin: `${'cc'.repeat(32)}_0`, name: 'Stale card' },
+        importedOneSat: true,
+      }),
     ).toBe('token')
   })
 })

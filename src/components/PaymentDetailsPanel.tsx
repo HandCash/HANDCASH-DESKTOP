@@ -928,6 +928,8 @@ function ListingActivityDetails({
   const app = shown?.app || held?.app
   const priceSats = auth?.priceSats ?? priceFromNote(entry.note)
   const listed = entry.method === 'market-list' && auth?.state !== 'cancelled'
+  const liveAuth = auth?.state === 'active' || auth?.state === 'reserved'
+  const unpublished = liveAuth && auth?.publish?.kind === 'unpublished' ? auth.publish : null
   const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
   const viewed = { ...entry, item: shown ? { ...shown, name } : { name, origin: origin || '', outpoint: outpoint || undefined, ...(imageUrl ? { imageUrl } : {}) } }
   const title = activityEntryTitle(viewed)
@@ -1087,6 +1089,13 @@ function ListingActivityDetails({
 
       {listed && outpoint && entry.status !== 'failed' ? (
         <section className="payment-attempt-actions">
+          {unpublished ? (
+            <p>
+              Not published: {unpublished.reason}. The listing is signed on chain but the
+              market has not indexed it. Publish it again from the market, or cancel it to
+              return the item.
+            </p>
+          ) : null}
           {action.error ? <p className="form-error">{action.error}</p> : null}
           <div
             className="payment-attempt-buttons"
@@ -1119,6 +1128,16 @@ function ListingActivityDetails({
             data-aeon-part="spend-attempt-actions"
             data-aeon-state={action.stateAttr}
           >
+            {liveAuth && outpoint ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={action.busy}
+                onClick={() => void cancelListing()}
+              >
+                {action.running('cancelListing') ? 'Cancelling…' : 'Cancel listing'}
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-danger"

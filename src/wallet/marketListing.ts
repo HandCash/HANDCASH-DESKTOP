@@ -56,10 +56,13 @@ import {
 } from './walletConfig'
 import {
   failMarketListingActivity,
+  noteMarketListingPublished,
+  noteMarketListingUnpublished,
   recordWalletEvent,
   removeActivityById,
   type ActivityEntry,
 } from './appActivity'
+import { signedChequeAtomic } from './signedChequeArchive'
 import { getCachedCollectables } from './collectables'
 import { rememberGhostTx } from './ghostTxSuppress'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -206,6 +209,21 @@ export type MarketListingState =
   | 'settled'
   | 'failed'
 
+/**
+ * Whether the listings index carries this offer. Orthogonal to `state`: an
+ * `active` offer is on chain either way, and a buyer holding the advert can
+ * still settle it with the list-time unlocks. Absent = listed before 1.3.383,
+ * treated as published.
+ */
+export type MarketPublishState =
+  | { kind: 'published'; at: number }
+  | { kind: 'unpublished'; reason: string; at: number }
+
+/** What the seller's own surfaces may say about a live listing. */
+export type MarketListingMark =
+  | { kind: 'listed'; priceSats: number }
+  | { kind: 'unpublished'; priceSats: number; reason: string }
+
 export type MarketListingAuthorization = {
   key: string
   outpoint: string
@@ -215,6 +233,7 @@ export type MarketListingAuthorization = {
   provenanceHash: string
   priceSats: number
   state: MarketListingState
+  publish?: MarketPublishState
   createdAt: number
   updatedAt: number
   reason?: string
@@ -2885,9 +2904,15 @@ async function createCancelMarketListingAdvertExclusive(args: {
     limit: 2,
     seekPermission: false,
   })
-  const offerHeld = held.outputs.some(
+  const inBasket = held.outputs.some(
     (output) => normalizeOutpoint(output.outpoint) === normalizeOutpoint(listing.offerOutpoint)
   )
+  const offerHeld = inBasket || signedListingCarriesOffer(listing)
+  if (!inBasket && offerHeld) {
+    console.info(
+      `[market] cancel offer ${listing.offerOutpoint.slice(0, 18)}… missing from market-offers — proven by its signed listing`,
+    )
+  }
   const path = chooseMarketCancelPath({
     offerOutpoint: listing.offerOutpoint,
     held: offerHeld,
@@ -3057,6 +3082,41 @@ export async function getMarketSettlementReceipt(args: {
 }
 
 
+/** Live listing mark for the seller's inventory, or null when not listed. */
+export function marketListingMark(
+  auth: MarketListingAuthorization | null | undefined,
+): MarketListingMark | null {
+  if (!auth || (auth.state !== 'active' && auth.state !== 'reserved')) return null
+  if (!(auth.priceSats > 0)) return null
+  return auth.publish?.kind === 'unpublished'
+    ? { kind: 'unpublished', priceSats: auth.priceSats, reason: auth.publish.reason }
+    : { kind: 'listed', priceSats: auth.priceSats }
+}
+
+function authorizationForListingTxid(
+  txid: string | undefined,
+): MarketListingAuthorization | null {
+  const id = txid?.trim().toLowerCase()
+  if (!id || !/^[0-9a-f]{64}$/.test(id)) return null
+  return (
+    listMarketListingAuthorizations()
+      .filter((row) => normalizeOutpoint(row.outpoint) === normalizeOutpoint(`${id}_0`))
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+  )
+}
+
+function setMarketListingPublish(
+  auth: MarketListingAuthorization,
+  publish: MarketPublishState,
+): void {
+  saveAuthorization({ ...auth, publish, updatedAt: Date.now() })
+}
+
+/**
+ * The app could not put a signed listing on the index. The offer is already
+ * on chain (the cheque registered before the advert returned), so the listing
+ * is not failed: it is unpublished, and stays cancellable or re-publishable.
+ */
 export function markMarketListingPublishFailed(args: {
   txid?: string
   reason?: string
@@ -3067,7 +3127,45 @@ export function markMarketListingPublishFailed(args: {
   console.warn(
     `[market-list] publish failed txid=${args.txid?.trim().toLowerCase() ?? '?'} reason=${reason.slice(0, 160)}`,
   )
-  failMarketListingActivity({ txid: args.txid, reason })
+  const auth = authorizationForListingTxid(args.txid)
+  if (!auth) {
+    failMarketListingActivity({ txid: args.txid, reason })
+    return
+  }
+  setMarketListingPublish(auth, { kind: 'unpublished', reason: reason.slice(0, 160), at: Date.now() })
+  noteMarketListingUnpublished({ txid: args.txid, reason })
+}
+
+/** The index accepted this listing (first publish or a re-publish). */
+export function markMarketListingPublished(args: { txid?: string }): { ok: boolean } {
+  const auth = authorizationForListingTxid(args.txid)
+  if (!auth) return { ok: false }
+  if (auth.publish?.kind === 'unpublished') {
+    console.info(`[market-list] republished txid=${args.txid?.trim().toLowerCase()}`)
+  }
+  setMarketListingPublish(auth, { kind: 'published', at: Date.now() })
+  noteMarketListingPublished({ txid: args.txid })
+  return { ok: true }
+}
+
+/**
+ * The listing's own signed cheque proves its offer output when the basket
+ * read misses it (store rebuilt under a new user row, or a read that raced
+ * the commit). Without it a just-signed listing could not be cancelled.
+ */
+function signedListingCarriesOffer(listing: MarketListingAdvert): boolean {
+  const offerTxid = listing.offerOutpoint.slice(0, 64).toLowerCase()
+  const atomic = signedChequeAtomic(offerTxid)
+  if (!atomic?.length) return false
+  try {
+    const out = Beef.fromBinary(atomic).findTxid(offerTxid)?.tx?.outputs[MARKET_OFFER_VOUT]
+    return (
+      out?.satoshis === MARKET_OFFER_DEPOSIT_SATS &&
+      out.lockingScript?.toHex() === listing.offerLockingScript
+    )
+  } catch {
+    return false
+  }
 }
 
 function listingOutpointFromActivity(entry: {

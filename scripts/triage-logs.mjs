@@ -274,6 +274,7 @@ function sessionFacts(header, events) {
   const incomingFinality = incomingFinalityFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
+  const listingOutcomes = listingOutcomeFacts(events)
   const bounceRefunds = events.flatMap((e) => {
     const m = BOUNCE_REFUND_RE.exec(e.text)
     return m ? [Number(m[1])] : []
@@ -342,6 +343,10 @@ function sessionFacts(header, events) {
     // many ever reached Arcade, and which never left the device.
     broadcast,
     listingPhases,
+    // Market listings the overlay never indexed (and which came back), cancels
+    // the wallet refused by code, and Arcade pins that did or did not find the
+    // local tx row — `storageUserMoved` names a store rebuilt under a new user.
+    listingOutcomes,
     bounceRefundMs: bounceRefunds,
     // React list-key collisions: which key, which component's list.
     ui,
@@ -1184,6 +1189,65 @@ function listingPhaseFacts(events) {
   }
   flush()
   return runs
+}
+
+const REPUBLISHED_RE = /^\[market-list\] republished txid=([0-9a-f]{64})/
+const CANCEL_REFUSED_RE = /MARKET_CANCEL_REFUSED(?: detail=|[\s:]+)([\w-]+)/
+const CANCEL_PROVEN_RE = /^\[market\] cancel offer \S+ missing from market-offers — proven by its signed listing/
+const PIN_MISS_RE = /^\[stale-output\] pin (found no local row|could not read) for ([0-9a-f]{12})/
+const PIN_HIT_RE = /^\[stale-output\] (?:pinned broadcast|restored Arcade-pinned) local tx ([0-9a-f]{12})/
+const STORE_USER_MOVED_RE = /^\[stale-output\] storage user moved (\S+) → (\S+)/
+
+/**
+ * Listings the overlay never indexed and whether each came back, cancels the
+ * wallet refused (by code), and Arcade pins that found — or missed — the local
+ * tx row. `stillUnpublished` is on chain, signed, and invisible to buyers.
+ */
+function listingOutcomeFacts(events) {
+  const failed = new Map()
+  const republished = new Set()
+  const cancelRefused = {}
+  let cancelProvenBySignedListing = 0
+  const pins = { hit: 0, noLocalRow: 0, unreadable: 0, storageUserMoved: [] }
+  for (const e of events) {
+    const t = e.text
+    let m = OVERLAY_REFUSED_RE.exec(t)
+    if (m) {
+      const f = logFields(m[1])
+      if (f.txid) failed.set(f.txid, f.reason ?? '')
+      continue
+    }
+    if ((m = REPUBLISHED_RE.exec(t))) {
+      republished.add(m[1])
+      continue
+    }
+    if ((m = CANCEL_REFUSED_RE.exec(t))) {
+      cancelRefused[m[1]] = (cancelRefused[m[1]] ?? 0) + 1
+      continue
+    }
+    if (CANCEL_PROVEN_RE.test(t)) {
+      cancelProvenBySignedListing += 1
+      continue
+    }
+    if ((m = PIN_MISS_RE.exec(t))) {
+      if (m[1] === 'found no local row') pins.noLocalRow += 1
+      else pins.unreadable += 1
+      continue
+    }
+    if (PIN_HIT_RE.test(t)) {
+      pins.hit += 1
+      continue
+    }
+    if ((m = STORE_USER_MOVED_RE.exec(t))) pins.storageUserMoved.push(`${m[1]}→${m[2]}`)
+  }
+  return {
+    publishFailed: [...failed].map(([txid, reason]) => ({ txid: txid.slice(0, 12), reason })),
+    republished: republished.size,
+    stillUnpublished: [...failed.keys()].filter((t) => !republished.has(t)).map((t) => t.slice(0, 12)),
+    cancelRefused,
+    cancelProvenBySignedListing,
+    pins: { ...pins, storageUserMoved: [...new Set(pins.storageUserMoved)] },
+  }
 }
 
 const LIFECYCLE_RE = /^\[lifecycle\] (hidden|visible)$/
@@ -2608,6 +2672,38 @@ function report(state, answers) {
     console.log('\nIncoming finality (code-counted):')
     console.log(
       `  ${fin.nonFinal} non-final package(s) refused · ${fin.finalityUnknown} with no chain height${fin.txids.length ? ` · ${fin.txids.join(', ')}` : ''}`,
+    )
+  }
+
+  const outcomes = latest.listingOutcomes
+  if (
+    outcomes &&
+    (outcomes.publishFailed.length ||
+      Object.keys(outcomes.cancelRefused).length ||
+      outcomes.pins.hit ||
+      outcomes.pins.noLocalRow ||
+      outcomes.pins.unreadable)
+  ) {
+    console.log('\nListings and pins (code-counted):')
+    for (const f of outcomes.publishFailed) {
+      console.log(`  publish failed ${f.txid} — ${f.reason}`)
+    }
+    if (outcomes.publishFailed.length) {
+      console.log(
+        `  ${outcomes.republished} republished · still unpublished: ${outcomes.stillUnpublished.join(', ') || 'none'}`,
+      )
+    }
+    for (const [code, n] of Object.entries(outcomes.cancelRefused)) {
+      console.log(`  cancel refused ${code} ×${n}`)
+    }
+    if (outcomes.cancelProvenBySignedListing) {
+      console.log(`  ${outcomes.cancelProvenBySignedListing} cancel(s) proven by the signed listing`)
+    }
+    const p = outcomes.pins
+    console.log(
+      `  Arcade pins: ${p.hit} found the local row · ${p.noLocalRow} found none · ${p.unreadable} unreadable${
+        p.storageUserMoved.length ? ` · storage user moved ${p.storageUserMoved.join(', ')}` : ''
+      }`,
     )
   }
 

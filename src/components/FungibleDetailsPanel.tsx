@@ -353,8 +353,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           ) : null}
           <strong className="fungible-details-balance">{amount}</strong>
           {marketListing ? (
-            <span className="fungible-details-list-price">
-              Listed for{' '}
+            <span
+              className="fungible-details-list-price"
+              data-aeon-state={marketListing.published === false ? 'unpublished' : 'listed'}
+            >
+              {marketListing.published === false ? 'Not published · ' : 'Listed for '}
               {formatPrimaryFromSats(marketListing.priceSats, displayCurrency, usdPerBsv)}
             </span>
           ) : null}

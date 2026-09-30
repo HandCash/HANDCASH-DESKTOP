@@ -75,7 +75,11 @@ import {
   getCachedUsdPerBsv,
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
-import { getMarketListingAuthorization } from '../features/market'
+import {
+  getMarketListingAuthorization,
+  marketListingMark,
+  type MarketListingMark,
+} from '../features/market'
 import { isItemSent } from '../wallet/sentItemGuard'
 import {
   collectableSendReadyMessage,
@@ -137,19 +141,16 @@ function SelectionCheckbox({
   )
 }
 
-function liveMarketListingPrice(outpoint: string): number | null {
+function liveMarketListing(outpoint: string): MarketListingMark | null {
   // Spent tips can still have a local listing auth until the next write;
   // never show Listed on something we already hid as sent.
   if (isItemSent(outpoint)) return null
-  const auth = getMarketListingAuthorization({ outpoint })
-  if (!auth || (auth.state !== 'active' && auth.state !== 'reserved')) return null
-  return auth.priceSats > 0 ? auth.priceSats : null
+  return marketListingMark(getMarketListingAuthorization({ outpoint }))
 }
 
-function listedMarkLabel(priceSats: number): string {
-  const displayCurrency = getDisplayCurrency()
-  const usdPerBsv = getCachedUsdPerBsv()
-  return `Listed · ${formatPrimaryFromSats(priceSats, displayCurrency, usdPerBsv)}`
+function listedMarkLabel(mark: MarketListingMark): string {
+  const price = formatPrimaryFromSats(mark.priceSats, getDisplayCurrency(), getCachedUsdPerBsv())
+  return mark.kind === 'unpublished' ? `Not published · ${price}` : `Listed · ${price}`
 }
 
 function collectableSendUi(
@@ -189,7 +190,7 @@ function CollectableGridItem({
   onSelectedChange: (checked: boolean) => void
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
-  const listPrice = liveMarketListingPrice(item.outpoint)
+  const listing = liveMarketListing(item.outpoint)
   const sendUi = collectableSendUi(item, verifying, sending)
   return (
     <li
@@ -222,8 +223,8 @@ function CollectableGridItem({
             }
           />
           <CollectableSendingMark sending={sending} verb={verb} />
-          {listPrice != null ? (
-            <CollectableListedMark label={listedMarkLabel(listPrice)} />
+          {listing ? (
+            <CollectableListedMark mark={listing.kind} label={listedMarkLabel(listing)} />
           ) : null}
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
@@ -281,7 +282,7 @@ function CollectableListItem({
   onSelectedChange: (checked: boolean) => void
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
-  const listPrice = liveMarketListingPrice(item.outpoint)
+  const listing = liveMarketListing(item.outpoint)
   const sendUi = collectableSendUi(item, verifying, sending)
   return (
     <li
@@ -314,8 +315,8 @@ function CollectableListItem({
             }
           />
           <CollectableSendingMark sending={sending} verb={verb} />
-          {listPrice != null ? (
-            <CollectableListedMark label={listedMarkLabel(listPrice)} />
+          {listing ? (
+            <CollectableListedMark mark={listing.kind} label={listedMarkLabel(listing)} />
           ) : null}
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
@@ -567,12 +568,14 @@ function FungibleItem({
     : encoding.kind === 'legacy-json'
       ? 'Legacy BSV-21'
       : 'BSV-21'
-  const listPrice =
-    token.marketListing?.priceSats ??
-    liveMarketListingPrice(token.outpoint)
+  const listing: MarketListingMark | null = token.marketListing
+    ? token.marketListing.published === false
+      ? { kind: 'unpublished', priceSats: token.marketListing.priceSats, reason: '' }
+      : { kind: 'listed', priceSats: token.marketListing.priceSats }
+    : liveMarketListing(token.outpoint)
   const verb = inFlightVerb(token.outpoint) ?? 'Sending'
   const face = view === 'grid' ? 72 : 56
-  const state = sending ? 'sending' : listPrice != null ? 'listed' : 'idle'
+  const state = sending ? 'sending' : listing ? listing.kind : 'idle'
   const openDetails = () => {
     playWalletSound('soft')
     openFungibleDetails(token.tokenId)
@@ -596,8 +599,8 @@ function FungibleItem({
             shape="circle"
           />
           <CollectableSendingMark sending={sending} verb={verb} />
-          {listPrice != null ? (
-            <CollectableListedMark label={listedMarkLabel(listPrice)} />
+          {listing ? (
+            <CollectableListedMark mark={listing.kind} label={listedMarkLabel(listing)} />
           ) : null}
         </span>
         <strong className="token-chip-sym" title={token.sym}>

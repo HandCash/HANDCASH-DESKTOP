@@ -172,6 +172,8 @@ export type FungibleToken = {
     listAmt?: number
     state: 'active' | 'reserved'
     listedOutpoint: string
+    /** False while the offer is on chain but the listings index lacks it. */
+    published?: boolean
   }
 }
 

@@ -76,6 +76,7 @@ import {
   getMarketSaleStatus,
   isMarketListingOrigin,
   markMarketListingPublishFailed,
+  markMarketListingPublished,
   MarketListingError,
   marketListingPreviewFromArgs,
   purchaseMarketListing,
@@ -505,6 +506,8 @@ async function dispatchWalletMethod(
         (args ?? {}) as { txid?: string; reason?: string },
       )
       return { ok: true }
+    case 'markMarketListingPublished':
+      return markMarketListingPublished((args ?? {}) as { txid?: string })
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -920,6 +923,7 @@ async function handleBrc100RequestInner(
       'createCancelMarketListingAdvert',
       'getMarketListingStatus',
       'markMarketListingPublishFailed',
+      'markMarketListingPublished',
       'getTokenIcon',
     ].includes(method) &&
     !isMarketListingOrigin(originator)

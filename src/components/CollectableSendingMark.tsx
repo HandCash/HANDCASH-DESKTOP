@@ -55,9 +55,20 @@ export function CollectableSendingMark({
 }
 
 /** Small corner badge when an item or token is listed on the market. */
-export function CollectableListedMark({ label }: { label: string }) {
+export function CollectableListedMark({
+  label,
+  mark = 'listed',
+}: {
+  label: string
+  mark?: 'listed' | 'unpublished'
+}) {
   return (
-    <span className="collectable-listed-mark" aria-label={label} title={label}>
+    <span
+      className="collectable-listed-mark"
+      data-aeon-state={mark}
+      aria-label={label}
+      title={label}
+    >
       {label}
     </span>
   )

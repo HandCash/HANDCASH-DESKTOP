@@ -1910,6 +1910,47 @@ export function failMarketListingActivity(args: {
   );
 }
 
+const UNPUBLISHED_NOTE_PREFIX = "Not published: ";
+
+function rewriteMarketListingNote(
+  txid: string | undefined,
+  rewrite: (note: string | undefined) => string | undefined,
+): void {
+  const id = txid?.trim().toLowerCase();
+  if (!id) return;
+  writeAll(
+    readAll().map((entry) => {
+      if (entry.method !== "market-list") return entry;
+      if ((entry.txid || "").toLowerCase() !== id) return entry;
+      return { ...entry, note: rewrite(entry.note) };
+    })
+  );
+}
+
+/**
+ * The listing is on chain but the index does not carry it. Not a failure:
+ * the row stays live so dismissing it cannot release an offer that exists.
+ */
+export function noteMarketListingUnpublished(args: {
+  txid?: string;
+  reason: string;
+}): void {
+  rewriteMarketListingNote(args.txid, (note) => {
+    const base = note?.startsWith(UNPUBLISHED_NOTE_PREFIX)
+      ? note.slice(UNPUBLISHED_NOTE_PREFIX.length)
+      : note || "Listing";
+    return `${UNPUBLISHED_NOTE_PREFIX}${base}`;
+  });
+}
+
+export function noteMarketListingPublished(args: { txid?: string }): void {
+  rewriteMarketListingNote(args.txid, (note) =>
+    note?.startsWith(UNPUBLISHED_NOTE_PREFIX)
+      ? note.slice(UNPUBLISHED_NOTE_PREFIX.length)
+      : note
+  );
+}
+
 /** True when the row is a permission / friend / other non-money action. */
 export function isEventActivity(entry: ActivityEntry): boolean {
   return entry.kind === "event";

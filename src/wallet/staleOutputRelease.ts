@@ -1048,10 +1048,15 @@ function activeToolboxStorage(): ActiveWallet["wallet"]["storage"] | null {
   return getActiveWallet()?.wallet?.storage ?? null;
 }
 
-async function activeStorageUserId(sp: LocalStorage): Promise<number | null> {
+async function activeStorageUserId(
+  sp: LocalStorage,
+  opts: { fresh?: boolean } = {}
+): Promise<number | null> {
   const identityKey = getActiveWallet()?.wallet?.identityKey?.trim();
   if (!identityKey) return null;
-  if (storageUserId?.identityKey === identityKey) return storageUserId.userId;
+  if (!opts.fresh && storageUserId?.identityKey === identityKey) {
+    return storageUserId.userId;
+  }
   if (typeof sp.findUserByIdentityKey !== "function") return null;
   try {
     const user = await sp.findUserByIdentityKey(identityKey);
@@ -1071,6 +1076,26 @@ async function lookupLocalTxOnProvider(
 ): Promise<LocalTxLookup> {
   if (typeof sp.findTransactions !== "function") return { kind: "unreadable" };
   const userId = await activeStorageUserId(sp);
+  const first = await lookupLocalTxAsUser(sp, id, userId);
+  if (first.kind !== "missing" || userId == null) return first;
+  // A wipe, reimport or History replace rebuilds the store under the same
+  // identity with a new user row. A cached id from before that makes every
+  // indexed lookup miss — every Arcade pin then strands its change and the
+  // offer of a fresh listing reads as not held.
+  const fresh = await activeStorageUserId(sp, { fresh: true });
+  if (fresh == null || fresh === userId) return first;
+  console.info(
+    `[stale-output] storage user moved ${userId} → ${fresh} — tx lookups re-keyed`
+  );
+  return lookupLocalTxAsUser(sp, id, fresh);
+}
+
+async function lookupLocalTxAsUser(
+  sp: LocalStorage,
+  id: string,
+  userId: number | null
+): Promise<LocalTxLookup> {
+  if (typeof sp.findTransactions !== "function") return { kind: "unreadable" };
   let rows: TxStatusRow[] | undefined;
   try {
     rows = await sp.findTransactions({

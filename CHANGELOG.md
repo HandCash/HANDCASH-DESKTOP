@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.383] - 2026-09-30
+
+On 0.1.543 a BSV-21 listing was accepted by Arcade, but the market app lost its connection before it could index it ("Failed to fetch"). The market then tried to cancel. The wallet refused with `offer-not-held`, and Inventory kept showing the token as "Listed". Pressing Try again in the market signed a second listing. On the same phone, every Arcade pin (30 of 30 across uploads) logged `pin found no local row`. Tokens also switched between Tokens and NFTs on each Refresh.
+
+### Fixed
+
+- **A listing the market never indexed shows as "Not published", not "Listed"** (`marketListing.MarketPublishState`, `marketListingMark`). `markMarketListingPublishFailed` now keeps the listing authorization and records it as unpublished with the reason. Inventory, the token chip and token details show a warning-colour "Not published · price". The activity row reads "Not published: reason" and still offers Cancel listing. A new market-origin method, `markMarketListingPublished`, clears the mark once the index accepts the listing.
+- **Cancelling a listing no longer depends on the offer's basket row** (`signedListingCarriesOffer`). When the market-offers row is missing, the wallet accepts the offer if its own signed listing proves it: output 1 carries the deposit and the recorded offer script.
+- **Arcade pins find their local row after a store rebuild** (`staleOutputRelease.lookupLocalTxOnProvider`). A lookup that misses re-resolves the storage user. If the user id changed, the wallet logs `[stale-output] storage user moved A → B` and retries under the new id.
+- **Tokens no longer flip between Tokens and NFTs on Refresh.** A BRC-162 lock with an amount stays a token, even if a stale collectable mark says otherwise (`healMisfiledCollectables`). A bare P2PKH tip is not moved to Tokens on token tags alone (`healMisfiledBsv21`).
+- Legacy failed-listing rows whose listing is still live now offer Cancel listing next to Clear from Activity.
+
+### Changed
+
+- **Triage reports listing outcomes and pins** (`latest.listingOutcomes`): listings whose publish failed, how many were republished, which are still unpublished, cancel refusals by code, cancels proven by the signed listing, and Arcade pin hits, misses and storage-user moves.
+
+Ships with BRC-MARKET, where a publish that cannot reach the index keeps the signed listing. Publish again re-submits the same advert, Cancel listing returns the item, and only an overlay refusal withdraws the listing automatically.
+
 ## [1.3.382] - 2026-09-30
 
 Ships with Mobile 0.1.544, which keeps the wallet answering apps while it is in the background. The Desktop app is unchanged.

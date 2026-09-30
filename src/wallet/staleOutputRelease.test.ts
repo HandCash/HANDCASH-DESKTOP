@@ -1413,6 +1413,25 @@ describe('healAppHeldChange', () => {
     }
   })
 
+  it('re-keys a tx lookup when the store was rebuilt under a new user row', async () => {
+    // A wipe / History replace recreates the store for the same identity.
+    // The cached user id from before made every Arcade pin report
+    // "found no local row" and strand its change.
+    const txid = '8c'.repeat(32)
+    rememberArcadeSubmitContact(txid)
+    findTransactions.mockImplementation(
+      async (args: { partial?: { txid?: string; userId?: number } }) =>
+        args.partial?.txid === txid && args.partial.userId === 9
+          ? [{ transactionId: 21, txid, status: 'nosend' }]
+          : [],
+    )
+    await pinBroadcastLocalTx('8d'.repeat(32))
+    findUserByIdentityKey.mockResolvedValue({ userId: 9 })
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 21)
+  })
+
   it('leaves an app-held parent the network has not taken alone', async () => {
     const txid = '9c'.repeat(32)
     txExistsOnChain.mockResolvedValue(false)

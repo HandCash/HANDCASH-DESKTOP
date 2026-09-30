@@ -156,6 +156,14 @@ export function classifyOneSatAsBsv21(
     return { kind: 'skip' }
   }
 
+  // A one-sat lock with neither a BRC-162 prefix nor an inscription cannot
+  // carry a live token. Tags or remittance alone must not move it: the
+  // collectable heal reads the same metadata the other way, and the tip
+  // flipped between Tokens and NFTs on every Refresh.
+  if (args.lockingScriptHex?.trim() && !parseOrdEnvelope(args.lockingScriptHex)) {
+    return { kind: 'skip' }
+  }
+
   const ciPayload = parseBsv21Json(ci)
   const payload = envPayload ?? ciPayload
   const op = (payload?.op ?? tagValue(args.tags, 'op:') ?? 'transfer') as Bsv21Op
