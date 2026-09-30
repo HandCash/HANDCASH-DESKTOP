@@ -887,6 +887,37 @@ describe('keepChangeOfSignedTx', () => {
     }
   })
 
+  it('leaves change another of its own sends already spent sealed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const txid = '57'.repeat(32)
+      const listing = 'e8'.repeat(32)
+      hideUtxo(`${txid}.1`, { spentBy: listing, satoshis: 5000 })
+      findOutputs.mockResolvedValue([
+        {
+          outputId: 21,
+          txid,
+          vout: 1,
+          change: true,
+          satoshis: 5000,
+          spendable: false,
+          lockingScript: [118, 169],
+        },
+      ])
+
+      await expect(keepChangeOfSignedTx(txid)).resolves.toBe(0)
+      expect(updateOutput).not.toHaveBeenCalled()
+      expect(getUtxoLock(`${txid}.1`)?.spentBy).toBe(listing)
+      expect(
+        warn.mock.calls.some((call) =>
+          String(call[0]).includes('already spent by'),
+        ),
+      ).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('promotes received (non-change) BSV outs so apps can chain them', async () => {
     const txid = 'ab'.repeat(32)
     findOutputs.mockResolvedValue([

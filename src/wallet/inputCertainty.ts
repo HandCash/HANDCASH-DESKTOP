@@ -38,6 +38,7 @@ import {
 } from './createActionInputFate'
 import { peerSpenderOf, refreshPeerDeviceSpends } from './peerDeviceSpends'
 import { canonicalOutpoint, coinCleared, noteTxCertified, txCertified } from './spendCertainty'
+import { sealedSpenderOf } from './utxoLockManager'
 import { extractTxid } from './txExplorer'
 import { normalizeTxid } from './txid'
 
@@ -184,7 +185,17 @@ export async function judgeSignedInputs(
 
   const origins = inputOrigins(atomic, inputs)
   const peerSpent = new Map<string, string>()
+  // A certified parent vouches that its change exists, not that it is still
+  // unspent. A coin this wallet sealed under another of its own transactions
+  // is spent whatever the parent's standing.
+  let sealed = 0
   for (const o of origins) {
+    const own = sealedSpenderOf(o.outpoint)
+    if (own && own !== txid) {
+      peerSpent.set(o.outpoint, own)
+      sealed += 1
+      continue
+    }
     const spender = peerSpenderOf(o.outpoint)
     if (spender) peerSpent.set(o.outpoint, spender)
   }
@@ -216,7 +227,7 @@ export async function judgeSignedInputs(
     console.info(
       `[certainty] ${txid.slice(0, 12)} ${verdict.kind}${
         verdict.kind === 'uncertain' ? ` reason=${verdict.reason}` : ''
-      } inputs=${inputs.length} asked=${asked} parents=${chainedParents.length} peer=${peerSpent.size} done ${ms}ms`,
+      } inputs=${inputs.length} asked=${asked} parents=${chainedParents.length} peer=${peerSpent.size - sealed} sealed=${sealed} done ${ms}ms`,
     )
   }
   return { txid, inputs, verdict }

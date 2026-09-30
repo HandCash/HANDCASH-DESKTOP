@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.384] - 2026-09-30
+
+On 0.1.545 a 1,000-sat payment to an app failed as a double spend. The app's refund, which depended on that payment, failed with it. Three of the payment's inputs had already been spent by the wallet's own market listing. That listing's Arcade pin never found its local row, so only the lock list recorded the spend. A later "keep change" pass on the listing's parent then marked those coins spendable again. The pre-send check trusted them because their parent was certified.
+
+### Fixed
+
+- **Change is never re-offered after another of the wallet's own sends spent it** (`staleOutputRelease.keepChangeOfSignedTx`). An output the lock list has sealed under a named spender stays sealed. The wallet logs `[stale-output] left N output(s) of X sealed — already spent by …`.
+- **The pre-send check reads the lock list** (`inputCertainty.judgeSignedInputs`, `utxoLockManager.sealedSpenderOf`). An input sealed under another transaction counts as spent, even when its parent is certified. The signature is retired and the send re-signs with live coins. The `[certainty]` line now reports `sealed=`.
+- Triage reports native Android crashes from the `[native-crash]` lines that Mobile 0.1.546 records.
+
 ## [1.3.383] - 2026-09-30
 
 On 0.1.543 a BSV-21 listing was accepted by Arcade, but the market app lost its connection before it could index it ("Failed to fetch"). The market then tried to cancel. The wallet refused with `offer-not-held`, and Inventory kept showing the token as "Listed". Pressing Try again in the market signed a second listing. On the same phone, every Arcade pin (30 of 30 across uploads) logged `pin found no local row`. Tokens also switched between Tokens and NFTs on each Refresh.

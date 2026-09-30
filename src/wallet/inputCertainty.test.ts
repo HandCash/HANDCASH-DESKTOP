@@ -19,11 +19,16 @@ const calls: string[] = []
 const arcade = new Map<string, { kind: string; status?: string; reason?: string }>()
 const rejected = new Set<string>()
 const peerSpent = new Map<string, string>()
+const sealed = new Map<string, string>()
 let peerRead: () => Promise<unknown> = async () => ({ kind: 'throttled' })
 
 vi.mock('./peerDeviceSpends', () => ({
   peerSpenderOf: (outpoint: string) => peerSpent.get(outpoint) ?? null,
   refreshPeerDeviceSpends: () => peerRead(),
+}))
+vi.mock('./utxoLockManager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./utxoLockManager')>()),
+  sealedSpenderOf: (outpoint: string) => sealed.get(outpoint) ?? null,
 }))
 
 vi.mock('./staleOutputRelease', () => ({
@@ -118,6 +123,7 @@ describe('signWithCertainInputs', () => {
     arcade.clear()
     rejected.clear()
     peerSpent.clear()
+    sealed.clear()
     peerRead = async () => ({ kind: 'throttled' })
     resetSpendCertaintyForTests()
   })
@@ -219,6 +225,28 @@ describe('signWithCertainInputs', () => {
       ),
     )
     expect(asked).not.toContain(dead.input)
+  })
+
+  it('retires change of a certified send that another of its own sends already spent', async () => {
+    const dead = signedOver({ parentMined: false })
+    const live = signedOver({ parentMined: true })
+    noteTxCertified(dead.parent, [])
+    sealed.set(dead.input, SPENDER)
+    wocAnswers(() => ({}))
+    const sign = vi
+      .fn<() => Promise<typeof dead.result>>()
+      .mockResolvedValueOnce(dead.result)
+      .mockResolvedValueOnce(live.result)
+    await expect(signWithCertainInputs(sign, 'main')).resolves.toBe(live.result)
+    expect(calls).toEqual([`fail ${dead.result.txid.slice(0, 4)} fresh`, `hide 1 by dddd`])
+  })
+
+  it('does not treat its own seal as a prior spend', async () => {
+    const { result, input, parent } = signedOver({ parentMined: false })
+    noteTxCertified(parent, [])
+    sealed.set(input, result.txid)
+    await expect(signWithCertainInputs(async () => result, 'main')).resolves.toBe(result)
+    expect(calls).toEqual([])
   })
 
   it('judges only after a snapshot read the signature raced', async () => {

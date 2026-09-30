@@ -266,6 +266,18 @@ export function getUtxoLock(outpoint: string): UtxoLockRecord | null {
   return load().get(normalizeOutpointKey(outpoint)) ?? null;
 }
 
+/**
+ * The transaction this wallet signed over `outpoint`, when the overlay sealed
+ * it under a named spender. A seal whose spender has no local tx row writes
+ * only `spendable: false` to the toolbox, so this is the one record of it.
+ */
+export function sealedSpenderOf(outpoint: string): string | null {
+  const rec = getUtxoLock(outpoint);
+  if (!rec || rec.spendable !== false) return null;
+  const by = typeof rec.spentBy === "string" ? rec.spentBy.trim().toLowerCase() : "";
+  return /^[0-9a-f]{64}$/.test(by) ? by : null;
+}
+
 /** Restore must not resurrect reserved or consumed coins. Quarantine may thaw on unspent proof. */
 export function isUtxoBlockedFromRestore(outpoint: string): boolean {
   const rec = getUtxoLock(outpoint);

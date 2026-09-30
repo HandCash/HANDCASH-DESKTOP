@@ -33,6 +33,7 @@ import {
   isUtxoBlockedFromRestore,
   listUtxoLocks,
   releaseConsumedUtxo,
+  sealedSpenderOf,
   utxoUnsealGeneration,
 } from "./utxoLockManager";
 import { isQuarantined } from "./utxoLifecycle";
@@ -2196,6 +2197,7 @@ export async function keepChangeOfSignedTx(
       let unscripted = 0;
       let revived = 0;
       let revivedSats = 0;
+      const skippedSealed: string[] = [];
       for (const row of rows) {
         const outputId = positiveId(row.outputId);
         const outpoint = outpointFromOutput(row);
@@ -2210,6 +2212,15 @@ export async function keepChangeOfSignedTx(
         // Already spendable — do not re-write / re-log every ingest tick
         // (Arcade-pinned sends with explorer 404 were promoting forever).
         if (row.spendable === true) continue;
+        // A seal writes only `spendable: false` to the row when the spender has
+        // no local tx row, so the overlay's named spender is the sole record
+        // that this change is gone. Promoting it re-offers a spent coin and the
+        // next send double-spends this wallet's own transaction.
+        const sealedBy = sealedSpenderOf(outpoint);
+        if (sealedBy) {
+          skippedSealed.push(`${outpoint}→${sealedBy.slice(0, 12)}`);
+          continue;
+        }
 
         let healed = await healLockingScript(sp, row, txCache, { active });
         if (healed == null && !hasLockingScript(row)) {
@@ -2242,6 +2253,14 @@ export async function keepChangeOfSignedTx(
             0,
             12
           )}`
+        );
+      }
+      if (skippedSealed.length > 0) {
+        console.warn(
+          `[stale-output] left ${skippedSealed.length} output(s) of ${id.slice(
+            0,
+            12
+          )} sealed — already spent by ${skippedSealed.join(", ")}`
         );
       }
       if (revived > 0) {
