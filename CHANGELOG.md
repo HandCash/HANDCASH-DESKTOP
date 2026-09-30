@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.3.381] - 2026-09-30
+
+On 0.1.542 a phone went from 1,007,412 sats to zero. Its history backup had not uploaded for a week: every push logged `skip schedule: no session password`, because the wallet had been unlocked with the device key, not a password. The wallet was then wiped and the seed reimported. The wipe deleted the toolbox store, and the reimport restored the week-old backup: 4.3M sats of coins that were long spent, which the dead-coin sweep then hid (125 coins). Change made after that backup is locked to keys derived from random BRC-29 prefixes and suffixes that lived only in the deleted store. The seed cannot regenerate them.
+
+### Fixed
+
+- **History backups upload under device unlock** (`sessionBackupAuth.sessionBackupCredential`). BRC-39 blobs are sealed to the root key; a password is only needed to read old password-sealed blobs. Push, flush, auto-sync and recompose now skip only when the wallet is locked.
+- **Change derivations survive a wipe and an older restore** (`reimportDerivedChange.ts`, `wipePolicy.ts`). Before a factory wipe or a History replace deletes the store, every output's prefix and suffix is echoed to the durable store. That key is scoped to the identity and holds no keys, so a factory wipe now keeps it (Desktop renderer, Electron store and Android bridge). After every recompose, the wallet re-imports each echoed coin the chain shows unspent but the store lacks (up to 400 per pass, largest first), forgets the spent ones, and refreshes the echo. Manual heal runs the same recovery. The echo cannot help this incident's phone: the wipe that caused it deleted the echo too.
+- **History replace on a subwallet wiped the primary wallet.** `replaceLocalHistoryFromCloud` deleted `handcash-brc100-<chain>-<handle>` whatever the account, then rebooted as account 0. It now deletes and reboots that account's own store.
+- **Change locking scripts are rebuilt from BRC-29 keys** (`changeScriptFate.derivedLockingScript`). A restored change row without a script gets it from its own derivation (own change, or a BRC-29 payment from a sender). A body whose output does not match is refused as `derivation-mismatch`. The identity-address guess no longer marks a written-off row spendable.
+- **Legacy deposits import with a proof** (`legacyBeef.ts`). A P2PKH deposit to a subwallet's address was built as a bare raw tx, and the toolbox refused it ("inputBEEF must be valid Beef when factoring trustSelf"), so the 10c never arrived. Now a mined deposit ships its own merkle path, and a mempool deposit ships its proven parents. With neither, it waits for a block.
+- **A subwallet no longer inherits the previous account's items.** A chain scan that started under account 0 imported its collectables into account 3 after the switch. Legacy ingest is pinned to its runtime and stops at the first await after a switch. `listCollectablesNow` will not list a basket whose identity is not the current account.
+
+### Changed
+
+- Log lines: `[derived-change] echoed N derivation(s) from M output row(s) done Nms`, `[derived-change] echo recovery checked= live= sats= imported= failed= spent= unknown= done Nms`, `[change-script] derived N change locking script(s) from BRC-29 keys`, `[change-revive] <txid> revived= sats=`, `[legacy-beef] <txid> via=proof|parents`.
+- Triage `derivations` counts history replaces, echoes, recoveries, live outputs with no derivation, rebuilt scripts and legacy deposit proof sources. `--trace <text>` prints every matching line of the latest two sessions, once each.
+
+This release also comes from an audit against BSVA sources: Arcade `adfa78b`, Teranode, `@bsv/sdk` 2.8.1, wallet-toolbox 2.13.2 and the BRC index. Two findings change how 1.3.380 reads the network.
+
+First, why Arcade sat on the dead-coin sends. Teranode drops a transaction once every output is spent and mined past its 288-block retention. A later spend of one of those outputs then finds no parent, and the node answers with an opaque `PROCESSING (4)`. Arcade files that as a missing parent: `PENDING_RETRY`, retried 288 times (about a day) before it writes `REJECTED` with "no network verdict". A spend of a coin whose parent is still held gets `UTXO_SPENT` back at once, as Arcade 466, with the spender named.
+
+Second, nothing in the SDK, the toolbox or the wallet checked finality, which is BRC-67 step 4.
+
+### Fixed
+
+- **Coins are checked against a Teranode node as well as WhatsOnChain** (`createActionInputFate.ts`). Each check posts to Teranode's bulk `/api/v1/utxos/json` (GorillaPool mainnet, then mainnet2) alongside WhatsOnChain's `/utxos/spent`, in parallel and on the same timeout. The node sees mempool spenders; WhatsOnChain names only confirmed ones. So a coin another unconfirmed transaction already holds is now retired and the payment signed again, where it used to refuse as "explorer silent". A spender named by either source wins. Otherwise an unspent answer from either clears the coin. A node's `NOT_FOUND` is not an answer, because a pruned parent reads the same as one the node never saw. The payment check, the landing evidence and the dead-coin sweep all use this.
+- **Arcade's give-up is not a rejection** (`arcadeV2.ts`). `REJECTED` with "no network verdict after N durable retry attempts" now reads as `stalled`. Before, it failed the transaction and released its inputs. A valid body that never reached a node would then have had its coins re-spent, while it could still land. The landing watch now asks for the coins instead.
+- **Arcade 466 names the spender.** A node's `UTXO_SPENT` / `TX_CONFLICTING` carries `<parent>:<vout> utxo already spent by tx <spender>`. The landing watch hides that coin under that spender even when no probe answered, and labels the send "a coin it spent was already spent".
+- **More Arcade statuses are read correctly.** 476 (not final yet) is retryable, not dead. `STUMP_PROCESSING` (a block holds it while its BUMP is built) is landed. `SENT_TO_NETWORK` is queued.
+- **Incoming packages must be final before they are credited** (`incomingFinality.ts`, `kernel/txFinality.ts`; BRC-67 step 4, BRC-9). `internalizeAction` credits from the BEEF before any miner sees the body, so no miner's finality gate ever ran. Every unmined transaction in the package is now judged. If an input's sequence is below `0xFFFFFFFF` and the lock time is still ahead (the next block's height, or median time past for a time lock), the sender can still replace it, and the package is refused with `non-final`. The chain height is fetched only when a lock time is live. If no height is available, the package is refused with `finality-unknown`. Ordinary payments (lock time 0 or all-final sequences) cost nothing extra.
+- **Permission prompts are never timed out** (BRC-219). The Desktop bridge gave every request 120s, or 300s for a spend, then cancelled the prompt the user was reading. The Android bridge answered 504 after 120s and left the prompt up, so an approval that came later signed a transaction whose reply had nowhere to go. Now the renderer reports when a prompt is on screen (`notePromptOpen`), and both bridges re-arm their deadline instead of firing while one is open. A client that disconnects still cancels.
+
+### Changed
+
+- The probe kinds `noConfirmedSpender` / `confirmedSpender` are now `unspent` / `spent`, since node answers include mempool spenders.
+- BSV-21 ancestry treats an Arcade give-up as `ancestor-pending`, as it treats a retryable rejection.
+- Log lines: `[internalize] <txid> refused reason=non-final lockTime= by=height|time`, `[internalize] refused reason=finality-unknown`, and `[HTTP] request_id=N <path> deadline held — a permission prompt is open`.
+- Triage `incomingFinality` counts non-final and finality-unknown refusals.
+
 ## [1.3.380] - 2026-09-30
 
 On the night of Sep 29, app payments on 0.1.533–0.1.540 all logged `Arcade accepted — tx pinned`, about 100 distinct transactions, and none reached the chain. Arcade's POST `/tx` answers 202 once it has *queued* a body. Every sampled one then read `PENDING_RETRY` on `GET /tx/{txid}` ("failed to validate transaction", 130–190 retries) and was 404 on WhatsOnChain. Each spent a coin that a transaction mined on Aug 17 or Sep 22 had already spent, or change from such a send. The wallet took the 202 as the send, so Activity said sent, the dead coins stayed sealed, and later payments chained on dead change. `classifyArcadeTxStatus` read `PENDING_RETRY` as `unknown`, and the Arcade pin holds on `unknown`, so no later pass ever released them.

@@ -127,6 +127,7 @@ describe('durable store', () => {
       JSON.stringify({
         'handcash.brc100.vault.v1': 'secret',
         'handcash.appearance': 'dark',
+        'handcash.brc100.derivedChangeEcho.v1:wallet:main:0:02ab': '{}',
       }),
       'utf8',
     )
@@ -137,5 +138,6 @@ describe('durable store', () => {
     const onDisk = JSON.parse(fs.readFileSync(storeFile(), 'utf8')) as Record<string, string>
     expect('handcash.brc100.vault.v1' in onDisk).toBe(false)
     expect(onDisk['handcash.appearance']).toBe('dark')
+    expect(onDisk['handcash.brc100.derivedChangeEcho.v1:wallet:main:0:02ab']).toBe('{}')
   })
 })

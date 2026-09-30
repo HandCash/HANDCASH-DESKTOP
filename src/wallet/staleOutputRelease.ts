@@ -46,6 +46,7 @@ import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 import { uiBudgetExpired, yieldToUi } from "./yieldToUi";
 import {
   classifyChangeScript,
+  derivedScriptFor,
   hasLockingScript,
   resolveChangeRowOutpoint,
   sweepChangeScripts,
@@ -2168,6 +2169,8 @@ export async function keepChangeOfSignedTx(
       const txCache = new Map<number, TxStatusRow | null>();
       let kept = 0;
       let unscripted = 0;
+      let revived = 0;
+      let revivedSats = 0;
       for (const row of rows) {
         const outputId = positiveId(row.outputId);
         const outpoint = outpointFromOutput(row);
@@ -2183,9 +2186,13 @@ export async function keepChangeOfSignedTx(
         // (Arcade-pinned sends with explorer 404 were promoting forever).
         if (row.spendable === true) continue;
 
-        let healed = await healLockingScript(sp, row, txCache);
+        let healed = await healLockingScript(sp, row, txCache, { active });
         if (healed == null && !hasLockingScript(row)) {
           healed = changeScriptFromSignedBody(row, id, bodyRawTx);
+        }
+        if (healed != null && !hasLockingScript(row)) {
+          revived += 1;
+          revivedSats += sats;
         }
         if (healed == null && !hasLockingScript(row)) {
           // The coin is real and this wallet owns it, but `allocateChangeInput`
@@ -2210,6 +2217,11 @@ export async function keepChangeOfSignedTx(
             0,
             12
           )}`
+        );
+      }
+      if (revived > 0) {
+        console.info(
+          `[change-revive] ${id.slice(0, 12)} revived=${revived} sats=${revivedSats}`
         );
       }
       if (unscripted > 0) {
@@ -2695,10 +2707,12 @@ async function healLockingScript(
   sp: LocalStorage,
   output: ChangeRow & { transactionId?: number; outputIndex?: number },
   txCache: Map<number, TxStatusRow | null>,
-  opts?: { fromChain?: boolean }
+  opts?: { fromChain?: boolean; active?: ActiveWallet | null }
 ): Promise<number[] | null> {
   if (hasLockingScript(output)) return null;
 
+  const active = opts?.active ?? getActiveWallet();
+  const derived = derivedScriptFor(active, output);
   let txRow: TxStatusRow | null = null;
   const transactionId = Number(output.transactionId);
   if (Number.isFinite(transactionId) && transactionId > 0) {
@@ -2706,17 +2720,19 @@ async function healLockingScript(
   }
 
   const resolved = resolveChangeRowOutpoint(output, txRow);
-  if (!resolved?.txid) return null;
+  if (!resolved?.txid) return derived;
 
   const txid = resolved.txid;
   if (typeof sp.getProvenOrRawTx === "function") {
     try {
       const local = await sp.getProvenOrRawTx(txid);
-      const fate = classifyChangeScript(
-        resolved,
-        local?.rawTx?.length ? local.rawTx : null
-      );
-      if (fate.kind === "heal") return fate.lockingScript;
+      if (local?.rawTx?.length) {
+        const fate = classifyChangeScript(resolved, local.rawTx, derived);
+        if (fate.kind === "heal") return fate.lockingScript;
+        if (fate.kind === "refuse" && fate.reason === "derivation-mismatch") {
+          return null;
+        }
+      }
     } catch (err) {
       console.warn(
         "[stale-output] change script heal skipped",
@@ -2735,8 +2751,11 @@ async function healLockingScript(
       });
       const raw = rows?.[0]?.rawTx ?? txRow?.rawTx;
       if (Array.isArray(raw) && raw.length) {
-        const fate = classifyChangeScript(resolved, raw);
+        const fate = classifyChangeScript(resolved, raw, derived);
         if (fate.kind === "heal") return fate.lockingScript;
+        if (fate.kind === "refuse" && fate.reason === "derivation-mismatch") {
+          return null;
+        }
       }
     } catch (err) {
       console.warn(
@@ -2747,10 +2766,11 @@ async function healLockingScript(
     }
   }
 
+  // No local body: the row's own derivation is the script, and costs no fetch.
+  if (derived) return derived;
   if (opts?.fromChain !== true) return null;
 
   try {
-    const active = getActiveWallet();
     if (!active) return null;
     const { fetchRawTxHex } = await import("./oneSatImport");
     const hex = await fetchRawTxHex(txid, active.chain);
@@ -2758,7 +2778,8 @@ async function healLockingScript(
     const { Transaction } = await import("@bsv/sdk");
     const fate = classifyChangeScript(
       resolved,
-      Transaction.fromHex(hex).toBinary()
+      Transaction.fromHex(hex).toBinary(),
+      derived
     );
     return fate.kind === "heal" ? fate.lockingScript : null;
   } catch (err) {

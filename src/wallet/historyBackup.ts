@@ -530,13 +530,20 @@ export async function replaceLocalHistoryFromCloud(
 ): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
-  const { rootKeyHex, handle, chain, identityKey } = active
-  const dbName = `handcash-brc100-${chain}-${handle}`
+  const { rootKeyHex, handle, chain, identityKey, accountIndex, masterRootKeyHex, mnemonic } =
+    active
+  const { toolboxDatabaseName } = await import('./vaultAccounts')
+  const dbName = toolboxDatabaseName({ chain, handle, accountIndex })
 
   appendAppLog(
     'info',
     `[cloud-backup] replace local history — wiping ${dbName} then pulling BRC-39`,
   )
+
+  // The snapshot can be older than this store; change made since is spendable
+  // only through derivations held in the rows about to be deleted.
+  const { echoAllDerivedOutputs, recoverEchoedChange } = await import('./reimportDerivedChange')
+  await echoAllDerivedOutputs(active)
 
   try {
     active.monitor?.stopTasks?.()
@@ -548,13 +555,18 @@ export async function replaceLocalHistoryFromCloud(
   await deleteIdbDatabase(dbName)
 
   progress?.onStage?.('reboot')
-  await bootWallet({ rootKeyHex, handle, chain })
+  await bootWallet({ rootKeyHex, handle, chain, accountIndex, masterRootKeyHex, mnemonic })
   const next = getActiveWallet()
   if (!next || next.identityKey !== identityKey) {
     throw new Error('Wallet reboot after history wipe failed')
   }
 
   const result = await downloadAndRestoreBrc39Backup(password, progress)
+  try {
+    await recoverEchoedChange(next)
+  } catch (err) {
+    console.warn('[derived-change] echo recovery after replace failed', err)
+  }
   try {
     const { inspectLocalToolboxState } = await import('./layers')
     const { fetchBalanceSats } = await import('./session')

@@ -121,6 +121,35 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     )
   })
 
+  it('files nothing under the next account when the switch lands mid-import', async () => {
+    let current = true
+    mockImportLegacyUtxos.mockImplementation(async () => {
+      current = false
+      return {
+        imported: 1,
+        failed: 0,
+        errors: [],
+        skippedOneSats: 0,
+        skippedKnown: 0,
+        importedOutpoints: [OUTPOINT],
+        importedReceipts: [
+          { outpoint: OUTPOINT, satoshis: 5000, receiveTxid: 'bb', sweepTxid: SWEEP_TXID },
+        ],
+      }
+    })
+    const guard = () => {
+      if (!current) throw new DOMException('Wallet runtime disposed', 'AbortError')
+    }
+
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    await expect(ingestLegacyAddressUtxos({ active, guard })).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+
+    const { listRecentActivity } = await import('./appActivity')
+    expect(listRecentActivity(10)).toEqual([])
+  })
+
   it('does not duplicate a receive already logged for that txid', async () => {
     const { recordAppActivity, WALLET_ACTIVITY_ORIGIN, listRecentActivity } =
       await import('./appActivity')

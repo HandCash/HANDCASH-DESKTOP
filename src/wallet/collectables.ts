@@ -53,6 +53,7 @@ import {
   looksLikeRetiredFungibleTip,
 } from './retiredFungible'
 import { decodeBProtocol } from './bProtocol'
+import { getWalletRuntime } from './walletRuntime'
 import {
   getItemArtDataUrl,
   getItemArtRecord,
@@ -2805,6 +2806,12 @@ async function listCollectablesNow(
   const epoch = collectablesAccountEpoch
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
+  // The cache belongs to the current account. A caller still holding a
+  // previous account's wallet would clear it and list the old basket into it.
+  const current = getWalletRuntime()?.instance
+  if (current && wallet.identityKey && current.identityKey !== wallet.identityKey) {
+    return getCachedCollectables()
+  }
 
   const cachedFor = durableListIdentity()
   if (

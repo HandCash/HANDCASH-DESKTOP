@@ -87,7 +87,10 @@ vi.mock('./staleOutputRelease', () => ({
 
 type Utxo = { txid: string; vout: number }
 
-const fetch = vi.fn(async (_url: string, init?: { body?: string }) => {
+const isExplorer = (url: unknown) => String(url).includes('api.whatsonchain.com')
+
+const fetch = vi.fn(async (url: string, init?: { body?: string }) => {
+  if (!isExplorer(url)) return { ok: false, status: 503, json: async () => ({}) }
   const { utxos } = JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }
   const flakyAsked = utxos.some((u) => u.txid === FLAKY)
   const flakyAnswers = flakyAsked && flakyMisses <= 0
@@ -108,8 +111,10 @@ const fetch = vi.fn(async (_url: string, init?: { body?: string }) => {
   }
 })
 
+const explorerCalls = () => fetch.mock.calls.filter(([url]) => isExplorer(url))
+
 const askedTxids = () =>
-  fetch.mock.calls.flatMap(([, init]) =>
+  explorerCalls().flatMap(([, init]) =>
     (JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }).utxos.map((u) => u.txid),
   )
 
@@ -150,7 +155,7 @@ describe('sweepDeadCoins', () => {
       unknown: 1,
     })
     expect(hides).toEqual([{ outpoints: [`${DEAD}.0`], spender: SPENDER }])
-    expect(fetch.mock.calls[0]?.[0]).toMatch(/\/utxos\/spent$/)
+    expect(explorerCalls()[0]?.[0]).toMatch(/\/utxos\/spent$/)
   })
 
   it('asks again about coins the explorer left unanswered and hides them when named', async () => {

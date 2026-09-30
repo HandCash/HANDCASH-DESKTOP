@@ -47,6 +47,13 @@ import { getActiveWallet } from './session'
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
+ *   Each change lock is derived from a random BRC-29 prefix/suffix that the
+ *   seed cannot regenerate. `derivedChangeEcho.ts` keeps a durable,
+ *   identity-scoped copy that survives factory wipe; `echoAllDerivedOutputs`
+ *   refreshes it before any wipe or History replace and after every recompose,
+ *   and `recoverEchoedChange` re-imports echoed coins that are unspent on chain
+ *   but missing from `localState`. Change scripts are rebuilt from those keys
+ *   (`changeScriptFate.derivedLockingScript`), never guessed from an address.
  * - **Items (1sat / recursive)** → basket `1sat` in `localState`.
  *   - **BRC-150 remittance** (`oneSatProvenance.ts`) — tip→origin proof in
  *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
@@ -92,11 +99,13 @@ import { getActiveWallet } from './session'
  *   — latency, not a cancel. Undo only on a proven competing spend. Arcade
  *   `postBeef` is a miner cashing the cheque plus a reject oracle; its 202 is
  *   a queue receipt, so `arcadeLanding.ts` follows each accepted cheque until
- *   a node holds it and fails it only on proof (Arcade reject, an input a
- *   confirmed foreign tx spent, a dead parent). Every signature — app reply,
- *   send, item, market, token, sweep, consolidation — passes
- *   `inputCertainty.ts`, installed on the toolbox instance at boot: each coin
- *   is proven unspent (an explorer cleared it, or it is change of a tx this
+ *   a node holds it and fails it only on proof (a node's reject — Arcade 466
+ *   names the spender — an input another tx spends, a dead parent). Arcade's
+ *   own give-up after its retry budget is silence, not a reject. Every
+ *   signature — app reply, send, item, market, token, sweep, consolidation —
+ *   passes `inputCertainty.ts`, installed on the toolbox instance at boot:
+ *   each coin is proven unspent (a Teranode node's `/utxos` or WhatsOnChain
+ *   cleared it — a spender either names wins — or it is change of a tx this
  *   wallet certified or a node already holds — `spendCertainty.ts`);
  *   unanswered coins refuse, and `signAction` is judged before it signs. The
  *   one spender the ledger cannot see is this key on another install:
@@ -104,7 +113,10 @@ import { getActiveWallet } from './session'
  *   (decrypt in the worker, never import — historyReplica stays separate
  *   from signing) and retires the coins it spent. Before any
  *   post, `spvPackage.ts` runs full SPV (scripts, amounts, proofs vs headers):
- *   incomplete packages wait in the outbox, invalid ones are never sent. A
+ *   incomplete packages wait in the outbox, invalid ones are never sent.
+ *   Incoming packages are credited before any miner sees them, so
+ *   `incomingFinality.ts` refuses one whose unmined txs are not final
+ *   (BRC-67 step 4 — the SDK and toolbox check neither lock time nor sequence). A
  *   signed tx that was posted or queued keeps its seal — releasing its inputs
  *   is only for a body that never left this device. Heal
  *   fetching a raw tx restores a lost locking-script projection; it does not

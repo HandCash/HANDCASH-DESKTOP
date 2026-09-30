@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { decideLanding, QUEUED_EVIDENCE_AFTER_MS, type LandingEvidence } from './landingFate'
+import {
+  decideLanding,
+  QUEUED_EVIDENCE_AFTER_MS,
+  withArcadeConflict,
+  type LandingEvidence,
+} from './landingFate'
 
 const SPENDER = '59a99dc737b29920c847f583ec1022023dad7583790dbdabe253c5c0868f85d5'
 const PARENT = '95936498eda958249c465029dc10d75f02fbfdeefb0ac48f282cfb9aba160198'
@@ -89,5 +94,28 @@ describe('decideLanding', () => {
         evidence: none,
       }),
     ).toMatchObject({ kind: 'dead', cause: 'arcade-rejected' })
+  })
+
+  it('names the spender an Arcade 466 carries even when the probes were silent', () => {
+    const conflict = { outpoint: `${PARENT}.1`, spender: SPENDER }
+    const arcade = { kind: 'rejected' as const, reason: 'UTXO_SPENT (70)', conflict }
+    expect(withArcadeConflict(none, arcade).spentElsewhere).toEqual([conflict])
+    expect(
+      withArcadeConflict({ ...none, spentElsewhere: [conflict] }, arcade).spentElsewhere,
+    ).toHaveLength(1)
+    expect(decideLanding({ arcade, elapsedMs: 30_000, evidence: none })).toMatchObject({
+      kind: 'dead',
+      cause: 'input-spent-elsewhere',
+    })
+  })
+
+  it('waits out an Arcade give-up the same as any stall', () => {
+    const gaveUp = {
+      kind: 'stalled' as const,
+      status: 'REJECTED',
+      reason: 'no network verdict after 288 durable retry attempts: giving up',
+    }
+    expect(decideLanding({ arcade: gaveUp, elapsedMs: 0 }).kind).toBe('gatherEvidence')
+    expect(decideLanding({ arcade: gaveUp, elapsedMs: 0, evidence: none }).kind).toBe('waiting')
   })
 })

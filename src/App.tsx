@@ -160,6 +160,11 @@ export function App() {
 
   useEffect(() => subscribePermissionRequests(setPendingPrompt), [])
 
+  const promptOpen = pendingPrompt !== null
+  useEffect(() => {
+    window.handcash?.notePromptOpen?.(promptOpen)
+  }, [promptOpen])
+
   useEffect(() => {
     if (!window.handcash?.onHttpRequestCancelled) return
     return window.handcash.onHttpRequestCancelled(() => {

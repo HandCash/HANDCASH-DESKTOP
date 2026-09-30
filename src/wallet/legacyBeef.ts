@@ -1,13 +1,15 @@
 /**
  * Builds the input BEEF for a legacy P2PKH sweep.
  *
- * This is cash, not an item: the address scanner already showed the UTXO
- * (mempool or mined). Fetch the deposit body and stop. Do not walk parent
- * ancestry and do not wait for a merkle path — ARC / mempool accept is enough.
+ * The toolbox calls `Beef.verify` (SPV) inside `createAction`, and that
+ * verification is authoritative: seeing a transaction body is not proof that
+ * its outputs are valid or spendable. A bare deposit body therefore fails
+ * every time ("must be valid Beef when factoring options.trustSelf").
  *
- * The toolbox still calls `Beef.verify` (SPV) inside `createAction`. That
- * verification must remain authoritative: seeing a transaction body is not
- * proof that its outputs are valid or spendable.
+ * So each deposit carries a proof: its own merkle path once mined, or — while
+ * it sits in mempool — the merkle-proven transactions it spends. One level
+ * only; a deposit whose parents are also unmined waits for the next block and
+ * stays retryable.
  */
 import { Beef, Transaction, type BEEF } from '@bsv/sdk'
 import type { Services } from '@bsv/wallet-toolbox-client'
@@ -86,6 +88,37 @@ async function loadTx(ctx: BuildContext, txid: string): Promise<Transaction> {
   return tx
 }
 
+/** Proofs are cached only once found — a mempool miss must be asked again. */
+async function attachMerklePath(ctx: BuildContext, tx: Transaction, txid: string): Promise<boolean> {
+  if (tx.merklePath) return true
+  spendFetch(ctx, txid)
+  const found = await throttled(() => ctx.services.getMerklePath(txid)).catch(() => null)
+  if (!found?.merklePath) return false
+  tx.merklePath = found.merklePath
+  return true
+}
+
+/**
+ * The deposit with an SPV-checkable proof: its own path, or every parent's.
+ * Throws a retryable reason when neither exists yet.
+ */
+async function provenDeposit(ctx: BuildContext, txid: string): Promise<Transaction> {
+  const tx = await loadTx(ctx, txid)
+  if (await attachMerklePath(ctx, tx, txid)) return tx
+  for (const input of tx.inputs) {
+    const parentTxid = String(input.sourceTXID ?? '').toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(parentTxid)) {
+      throw new Error(`deposit ${txid.slice(0, 12)} names no parent txid`)
+    }
+    const parent = await loadTx(ctx, parentTxid)
+    if (!(await attachMerklePath(ctx, parent, parentTxid))) {
+      throw new Error(`deposit ${txid.slice(0, 12)} and its parents are unmined; waiting for a block`)
+    }
+    input.sourceTransaction = parent
+  }
+  return tx
+}
+
 /**
  * Compatibility wrapper retained for existing call sites. Validation is
  * intentionally delegated to Wallet Toolbox without mutating global state or
@@ -144,12 +177,12 @@ export async function buildLegacyInputBeef(
       const [txid, group] = groups[index]!
       const t0 = Date.now()
       try {
-        const tx = await loadTx(ctx, txid)
+        const tx = await provenDeposit(ctx, txid)
         // Merge on the awaiting side only: Beef is not reentrant.
         beef.mergeTransaction(tx)
         ready.push(...group)
         console.info(
-          `[legacy-beef] ${txid.slice(0, 12)}… via=tip fetches=${ctx.fetches} ${Date.now() - t0}ms`,
+          `[legacy-beef] ${txid.slice(0, 12)}… via=${tx.merklePath ? 'proof' : 'parents'} fetches=${ctx.fetches} ${Date.now() - t0}ms`,
         )
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)

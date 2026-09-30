@@ -19,13 +19,34 @@ import {
 export const PROBE_MS = 1_500
 /** WhatsOnChain's bulk `/utxos/spent` answers at most this many per request. */
 export const SPENT_PROBE_BATCH = 20
+/** Teranode's bulk `/utxos` takes 36-byte records; keep one request small. */
+export const TERANODE_PROBE_BATCH = 100
 
+/**
+ * `spent` names the transaction a node or explorer holds as the spender;
+ * `unspent` is a positive answer that nothing does. Anything else — silence,
+ * a rate limit, an output the source does not know — is `unknown`.
+ */
 export type OutpointSpendProbe =
-  | { kind: 'noConfirmedSpender' }
-  | { kind: 'confirmedSpender'; spender: string }
+  | { kind: 'unspent' }
+  | { kind: 'spent'; spender: string }
   | { kind: 'unknown' }
 
 const UNKNOWN: OutpointSpendProbe = { kind: 'unknown' }
+
+/**
+ * Teranode asset services from Arcade's `/health` datahub list that answer
+ * the bulk spend lookup over HTTPS with CORS. A node sees mempool spenders
+ * as well as mined ones; WhatsOnChain names only confirmed spenders.
+ */
+const TERANODE_UTXO_HOSTS: Record<Chain, readonly string[]> = {
+  main: ['https://mainnet.gorillanode.io/api/v1', 'https://mainnet2.gorillanode.io/api/v1'],
+  test: [],
+}
+
+/** `utxo.Status` in Teranode's store. */
+const TERANODE_UTXO_OK = 0
+const TERANODE_UTXO_SPENT = 1
 
 function wocBulkSpentUrl(chain: Chain): string {
   const host =
@@ -67,12 +88,81 @@ export function parseBulkSpentEntry(entry: unknown, selfTxid: string): OutpointS
   if (!entry || typeof entry !== 'object') return UNKNOWN
   const row = entry as { error?: unknown; spentIn?: unknown }
   if (String(row.error ?? '').trim()) return UNKNOWN
-  if (row.spentIn == null) return { kind: 'noConfirmedSpender' }
+  if (row.spentIn == null) return { kind: 'unspent' }
   const spender = parseConfirmedForeignSpender(row.spentIn, selfTxid)
-  return spender ? { kind: 'confirmedSpender', spender } : UNKNOWN
+  return spender ? { kind: 'spent', spender } : UNKNOWN
+}
+
+/**
+ * One record of Teranode's bulk `/utxos/json` reply. `NOT_FOUND` is not an
+ * answer: the node drops a transaction once every output is spent and mined
+ * past its retention, and it reads the same for an output it never saw.
+ */
+export function parseTeranodeUtxoEntry(entry: unknown, selfTxid: string): OutpointSpendProbe {
+  if (!entry || typeof entry !== 'object') return UNKNOWN
+  const row = entry as { status?: unknown; spendingData?: { txId?: unknown } | null }
+  if (row.status === TERANODE_UTXO_OK) return { kind: 'unspent' }
+  if (row.status !== TERANODE_UTXO_SPENT) return UNKNOWN
+  const spender = String(row.spendingData?.txId ?? '').trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(spender) || spender === selfTxid.trim().toLowerCase()) return UNKNOWN
+  return { kind: 'spent', spender }
+}
+
+/** A named spender from any source outranks an unspent answer from another. */
+export function combineSpendProbes(
+  a: OutpointSpendProbe | undefined,
+  b: OutpointSpendProbe | undefined,
+): OutpointSpendProbe {
+  if (a?.kind === 'spent') return a
+  if (b?.kind === 'spent') return b
+  if (a?.kind === 'unspent' || b?.kind === 'unspent') return { kind: 'unspent' }
+  return UNKNOWN
 }
 
 type ParsedOutpoint = { outpoint: string; key: string; txid: string; vout: number }
+
+/** `[txid, internal byte order][vout, u32 LE]` per outpoint. */
+export function teranodeUtxoRequestBody(
+  outpoints: Array<{ txid: string; vout: number }>,
+): Uint8Array<ArrayBuffer> {
+  const body = new Uint8Array(outpoints.length * 36)
+  const view = new DataView(body.buffer)
+  outpoints.forEach(({ txid, vout }, i) => {
+    const at = i * 36
+    for (let b = 0; b < 32; b++) body[at + b] = parseInt(txid.slice(62 - b * 2, 64 - b * 2), 16)
+    view.setUint32(at + 32, vout, true)
+  })
+  return body
+}
+
+async function teranodeSpent(
+  chunk: ParsedOutpoint[],
+  selfTxid: string,
+  chain: Chain,
+  deadline: number,
+): Promise<Map<string, OutpointSpendProbe>> {
+  const answers = new Map<string, OutpointSpendProbe>()
+  for (const host of TERANODE_UTXO_HOSTS[chain]) {
+    const left = deadline - Date.now()
+    if (left <= 0) break
+    try {
+      const res = await fetch(`${host}/utxos/json`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(left),
+        headers: { Accept: 'application/json', 'Content-Type': 'application/octet-stream' },
+        body: teranodeUtxoRequestBody(chunk),
+      })
+      if (!res.ok) continue
+      const body: unknown = await res.json()
+      if (!Array.isArray(body) || body.length !== chunk.length) continue
+      chunk.forEach((row, i) => answers.set(row.key, parseTeranodeUtxoEntry(body[i], selfTxid)))
+      return answers
+    } catch {
+      // Timeout or network: try the next node inside the same budget.
+    }
+  }
+  return answers
+}
 
 async function bulkSpent(
   chunk: ParsedOutpoint[],
@@ -108,10 +198,43 @@ async function bulkSpent(
   return answers
 }
 
+async function explorerSpent(
+  parsed: ParsedOutpoint[],
+  selfTxid: string,
+  chain: Chain,
+  timeoutMs: number,
+): Promise<Map<string, OutpointSpendProbe>> {
+  const answers = new Map<string, OutpointSpendProbe>()
+  for (let i = 0; i < parsed.length; i += SPENT_PROBE_BATCH) {
+    const chunk = parsed.slice(i, i + SPENT_PROBE_BATCH)
+    for (const [key, probe] of await bulkSpent(chunk, selfTxid, chain, timeoutMs)) {
+      answers.set(key, probe)
+    }
+  }
+  return answers
+}
+
+async function nodeSpent(
+  parsed: ParsedOutpoint[],
+  selfTxid: string,
+  chain: Chain,
+  timeoutMs: number,
+): Promise<Map<string, OutpointSpendProbe>> {
+  const answers = new Map<string, OutpointSpendProbe>()
+  const deadline = Date.now() + timeoutMs
+  for (let i = 0; i < parsed.length; i += TERANODE_PROBE_BATCH) {
+    const chunk = parsed.slice(i, i + TERANODE_PROBE_BATCH)
+    for (const [key, probe] of await teranodeSpent(chunk, selfTxid, chain, deadline)) {
+      answers.set(key, probe)
+    }
+  }
+  return answers
+}
+
 /**
- * Ask the explorer who spent each outpoint, twenty per request. Only the
- * unspent answer clears a coin; a timeout, rate limit, unknown output or
- * unconfirmed spender stays `unknown`.
+ * Ask a Teranode node and WhatsOnChain, together, who spent each outpoint.
+ * A spender either names wins; otherwise an unspent answer from either
+ * clears the coin. Silence from both stays `unknown`.
  */
 export async function probeOutpointSpends(
   outpoints: string[],
@@ -130,15 +253,15 @@ export async function probeOutpointSpends(
     const txid = p.txid.toLowerCase()
     parsed.push({ outpoint, key: `${txid}.${p.vout}`, txid, vout: p.vout })
   }
+  const [node, explorer] = await Promise.all([
+    nodeSpent(parsed, selfTxid, chain, timeoutMs),
+    explorerSpent(parsed, selfTxid, chain, timeoutMs),
+  ])
   const cleared: string[] = []
-  for (let i = 0; i < parsed.length; i += SPENT_PROBE_BATCH) {
-    const chunk = parsed.slice(i, i + SPENT_PROBE_BATCH)
-    const answers = await bulkSpent(chunk, selfTxid, chain, timeoutMs)
-    for (const row of chunk) {
-      const probe = answers.get(row.key) ?? UNKNOWN
-      if (probe.kind === 'noConfirmedSpender') cleared.push(row.outpoint)
-      probes.set(row.outpoint, probe)
-    }
+  for (const row of parsed) {
+    const probe = combineSpendProbes(node.get(row.key), explorer.get(row.key))
+    if (probe.kind === 'unspent') cleared.push(row.outpoint)
+    probes.set(row.outpoint, probe)
   }
   if (cleared.length > 0) noteCoinsCleared(cleared)
   return probes
@@ -191,7 +314,7 @@ export async function foreignConfirmedInputSpends(
   if (ms >= 250) console.info(`[spend] input_fate done ${ms}ms`)
   return inputs.flatMap((outpoint) => {
     const probe = probes.get(outpoint)
-    return probe?.kind === 'confirmedSpender' ? [{ outpoint, spender: probe.spender }] : []
+    return probe?.kind === 'spent' ? [{ outpoint, spender: probe.spender }] : []
   })
 }
 

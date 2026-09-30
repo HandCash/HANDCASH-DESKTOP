@@ -86,6 +86,9 @@ const handcash = {
   respondHttp: (response: HttpResponseEvent) => {
     ipcRenderer.send('http-response', response)
   },
+  notePromptOpen: (open: boolean) => {
+    ipcRenderer.send('bridge:prompt-open', open)
+  },
   respondDevicePeerHttp: (response: HttpResponseEvent) => {
     ipcRenderer.send('device-peer-http-response', response)
   },

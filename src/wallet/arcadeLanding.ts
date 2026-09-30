@@ -7,9 +7,9 @@
  * asking Arcade what the network actually said, and acting on it:
  *
  * - `landed`: a node holds it, or it is on chain. Remembered, never re-asked.
- * - `dead` (see `kernel/landingFate`): Arcade rejected it, a confirmed foreign
- *   tx already spent an input, or it spends change of a cheque already proven
- *   dead. The send is failed as a closure, the dead coins are hidden under
+ * - `dead` (see `kernel/landingFate`): a node rejected it, a node or explorer
+ *   names another spender of an input, or it spends change of a cheque
+ *   already proven dead. The send is failed as a closure, the dead coins are hidden under
  *   their named spender, the pool is swept, and Activity says "not sent".
  * - `waiting`: Arcade still retrying with nothing proven. Once per watch the
  *   body is re-posted to the non-Arcade miners — Arcade's first success ends
@@ -31,6 +31,7 @@ import { createDurableTtlTxidMap } from './durableTtlTxidMap'
 import { normalizeTxid } from './txid'
 import {
   decideLanding,
+  withArcadeConflict,
   type LandingArcade,
   type LandingEvidence,
   type LandingFate,
@@ -88,7 +89,9 @@ export function toLandingArcade(fate: ArcadeTxFate, isLanded: (status: string) =
     case 'retryable':
       return { kind: 'stalled', status: fate.status, reason: fate.reason }
     case 'rejected':
-      return { kind: 'rejected', reason: fate.reason }
+      return fate.conflict
+        ? { kind: 'rejected', reason: fate.reason, conflict: fate.conflict }
+        : { kind: 'rejected', reason: fate.reason }
     default:
       return { kind: 'unknown' }
   }
@@ -119,7 +122,7 @@ async function landingEvidence(
   const probes = await probeOutpointSpends(inputs, txid, chain, EVIDENCE_PROBE_MS)
   const spentElsewhere = inputs.flatMap((outpoint) => {
     const probe = probes.get(outpoint)
-    return probe?.kind === 'confirmedSpender' ? [{ outpoint, spender: probe.spender }] : []
+    return probe?.kind === 'spent' ? [{ outpoint, spender: probe.spender }] : []
   })
   return { onChain, spentElsewhere, rejectedParents }
 }
@@ -268,7 +271,7 @@ async function checkLanding(args: {
   let fate = decideLanding({ arcade, elapsedMs })
   let evidence: LandingEvidence | undefined
   if (fate.kind === 'gatherEvidence') {
-    evidence = await landingEvidence(txid, args.atomic, chain)
+    evidence = withArcadeConflict(await landingEvidence(txid, args.atomic, chain), arcade)
     fate = decideLanding({ arcade, elapsedMs, evidence })
   }
   if (!runtimeIsCurrent(runtime)) {

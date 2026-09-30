@@ -5,9 +5,9 @@
  * can know, per input:
  *
  * - `mined` parent (proven, txid-only, or absent from the BEEF): the coin is
- *   good when an explorer says no tx spends it (`cleared`), dead when it names
- *   a confirmed spender or another install's history snapshot shows it spent,
- *   and unknown when it does not answer.
+ *   good when a Teranode node or the explorer says no tx spends it
+ *   (`cleared`), dead when either names a spender or another install's history
+ *   snapshot shows it spent, and unknown when neither answers.
  * - `chained` parent (an unmined tx riding the BEEF): the coin is good when the
  *   parent was itself signed from proven coins (`certified`) or a node accepted
  *   it (`landed`); dead when Arcade rejected the parent; unknown while it waits.

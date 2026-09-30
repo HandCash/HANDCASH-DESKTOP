@@ -90,7 +90,25 @@ describe('buildLegacyInputBeef', () => {
     expect(built.failures[0].outpoint).toBe(`${bad.id('hex')}.0`)
   })
 
-  it('does not walk parent ancestry for an unproven tip', async () => {
+  const acceptingTracker = {
+    isValidRootForHeight: async () => true,
+    currentHeight: async () => 900_000,
+  }
+
+  it('ships a mined deposit with its own merkle path so SPV passes', async () => {
+    const [tx] = buildChain(1, 979_431)
+    const { services, rawTxCalls } = makeServices([{ tx, proof: provenAt(tx, 969_032) }])
+
+    const built = await buildLegacyInputBeef(services, [`${tx.id('hex')}.0`])
+
+    expect(built.ready).toEqual([`${tx.id('hex')}.0`])
+    expect(rawTxCalls).toEqual([tx.id('hex')])
+    const beef = Beef.fromBinary(built.beef)
+    expect(beef.bumps).toHaveLength(1)
+    expect(await beef.verify(acceptingTracker, false)).toBe(true)
+  })
+
+  it('proves a mempool deposit through its merkle-proven parent', async () => {
     const [tip, parent] = buildChain(2)
     const { services, proofCalls, rawTxCalls } = makeServices([
       { tx: tip },
@@ -101,8 +119,9 @@ describe('buildLegacyInputBeef', () => {
 
     expect(built.failures).toEqual([])
     expect(built.ready).toEqual([`${tip.id('hex')}.0`])
-    expect(rawTxCalls).toEqual([tip.id('hex')])
-    expect(proofCalls).toEqual([])
+    expect(rawTxCalls).toEqual([tip.id('hex'), parent.id('hex')])
+    expect(proofCalls).toEqual([tip.id('hex'), parent.id('hex')])
+    expect(await Beef.fromBinary(built.beef).verify(acceptingTracker, false)).toBe(true)
   })
 
   it('fetches a shared transaction once', async () => {
@@ -115,16 +134,15 @@ describe('buildLegacyInputBeef', () => {
     expect(rawTxCalls).toEqual([tx.id('hex')])
   })
 
-  it('keeps a deep unproven deposit spendable with only the tip', async () => {
+  it('leaves a deposit with unmined parents retryable instead of walking deeper', async () => {
     const chain = buildChain(12)
-    const { services, proofCalls, rawTxCalls } = makeServices(chain.map((tx) => ({ tx })))
+    const { services, rawTxCalls } = makeServices(chain.map((tx) => ({ tx })))
 
     const built = await buildLegacyInputBeef(services, [`${chain[0].id('hex')}.0`])
 
-    expect(built.failures).toEqual([])
-    expect(built.ready).toEqual([`${chain[0].id('hex')}.0`])
-    expect(rawTxCalls).toEqual([chain[0].id('hex')])
-    expect(proofCalls).toEqual([])
+    expect(built.ready).toEqual([])
+    expect(built.failures[0].reason).toMatch(/waiting for a block/)
+    expect(rawTxCalls).toEqual([chain[0].id('hex'), chain[1].id('hex')])
   })
 
   it('does not bypass BEEF verification for a visible transaction body', async () => {

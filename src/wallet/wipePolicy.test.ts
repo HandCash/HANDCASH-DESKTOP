@@ -24,6 +24,13 @@ describe('wipePolicy', () => {
     expect(shouldWipeHandcashKey('unrelated')).toBe(false)
   })
 
+  it('keeps change derivations — the only way to spend change a restore lacks', () => {
+    expect(
+      shouldWipeHandcashKey('handcash.brc100.derivedChangeEcho.v1:wallet:main:0:02ab'),
+    ).toBe(false)
+    expect(shouldWipeHandcashKey('handcash.brc100.derivedChangeEcho.v1')).toBe(false)
+  })
+
   it('lists only wipeable handcash keys from a Storage-like map', () => {
     const keys = [
       'handcash.appearance',

@@ -23,8 +23,13 @@ import { getActiveWallet } from './session'
  *
  * Healing never flips `spendable`. Re-enabling a written-off output requires
  * on-chain evidence, which is `restoreLiveSpendableOutputs`' job.
+ *
+ * A row that still carries its BRC-29 derivation needs no raw tx at all: the
+ * script is a pure function of this wallet's root key and the row's own
+ * prefix/suffix, exactly as `makeChangeLock` (or the payment's sender) built it.
  */
-import { P2PKH, Transaction } from '@bsv/sdk'
+import { P2PKH, Transaction, type KeyDeriverApi } from '@bsv/sdk'
+import { brc29ProtocolID } from '@bsv/wallet-toolbox-client'
 import { type ActiveWallet } from './session'
 
 export type ChangeRow = {
@@ -37,6 +42,39 @@ export type ChangeRow = {
   change?: boolean
   spendable?: boolean
   lockingScript?: unknown
+  derivationPrefix?: string | null
+  derivationSuffix?: string | null
+  senderIdentityKey?: string | null
+}
+
+/**
+ * The P2PKH script this wallet's keys put on a BRC-29 row, or null when the row
+ * has no derivation. Own change is `lock(root, rootPub)`; a received payment is
+ * the sender's `lock(sender, us)`, which BRC-42 lets us rebuild as `forSelf`.
+ */
+export function derivedLockingScript(
+  keyDeriver: Pick<KeyDeriverApi, 'rootKey' | 'derivePublicKey'>,
+  row: ChangeRow,
+): number[] | null {
+  const prefix = row.derivationPrefix?.trim()
+  const suffix = row.derivationSuffix?.trim()
+  if (!prefix || !suffix) return null
+  try {
+    const keyID = `${prefix} ${suffix}`
+    const own = keyDeriver.rootKey.toPublicKey().toString()
+    const sender = row.senderIdentityKey?.trim().toLowerCase()
+    const pub =
+      sender && sender !== own.toLowerCase()
+        ? keyDeriver.derivePublicKey(brc29ProtocolID, keyID, sender, true)
+        : keyDeriver.derivePublicKey(brc29ProtocolID, keyID, own, false)
+    return new P2PKH().lock(pub.toHash() as number[]).toBinary()
+  } catch {
+    return null
+  }
+}
+
+function sameScript(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i])
 }
 
 export type ChangeRefuseReason =
@@ -44,6 +82,7 @@ export type ChangeRefuseReason =
   | 'no-rawtx'
   | 'vout-missing'
   | 'satoshis-mismatch'
+  | 'derivation-mismatch'
 
 export type ChangeScriptFate =
   | { kind: 'scripted' }
@@ -159,25 +198,30 @@ function isChangeRow(row: ChangeRow): boolean {
 
 /**
  * Decide what to do with one script-less change row given the raw tx that
- * created it. Pure so the fate table is testable without storage.
+ * created it and, when the row kept its BRC-29 derivation, the script this
+ * wallet's keys produce for it. Pure so the fate table is testable without
+ * storage.
  */
 export function classifyChangeScript(
   row: ChangeRow,
   rawTx: number[] | null,
+  derived: number[] | null = null,
 ): ChangeScriptFate {
   if (hasLockingScript(row)) return { kind: 'scripted' }
 
   const txid = (row.txid ?? '').trim().toLowerCase()
   const vout = Number(row.vout)
-  if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isInteger(vout) || vout < 0) {
-    return { kind: 'refuse', reason: 'no-outpoint' }
+  const hasOutpoint = /^[0-9a-f]{64}$/.test(txid) && Number.isInteger(vout) && vout >= 0
+  if (!hasOutpoint || !rawTx?.length) {
+    if (derived?.length) return { kind: 'heal', lockingScript: derived }
+    return { kind: 'refuse', reason: hasOutpoint ? 'no-rawtx' : 'no-outpoint' }
   }
-  if (!rawTx?.length) return { kind: 'refuse', reason: 'no-rawtx' }
 
   let out: { satoshis?: number; lockingScript: { toBinary: () => number[] } }
   try {
     out = Transaction.fromBinary(rawTx).outputs[vout]
   } catch {
+    if (derived?.length) return { kind: 'heal', lockingScript: derived }
     return { kind: 'refuse', reason: 'no-rawtx' }
   }
   if (!out) return { kind: 'refuse', reason: 'vout-missing' }
@@ -189,7 +233,19 @@ export function classifyChangeScript(
 
   const lockingScript = out.lockingScript.toBinary()
   if (!lockingScript.length) return { kind: 'refuse', reason: 'vout-missing' }
+  if (derived?.length && !sameScript(derived, lockingScript)) {
+    return { kind: 'refuse', reason: 'derivation-mismatch' }
+  }
   return { kind: 'heal', lockingScript }
+}
+
+/** `derivedLockingScript` for the active wallet, or null without a key deriver. */
+export function derivedScriptFor(
+  active: Pick<ActiveWallet, 'wallet'> | null | undefined,
+  row: ChangeRow,
+): number[] | null {
+  const keyDeriver = (active?.wallet as { keyDeriver?: KeyDeriverApi } | undefined)?.keyDeriver
+  return keyDeriver ? derivedLockingScript(keyDeriver, row) : null
 }
 
 /** Every change row, spendable or written off, paged to the end. */
@@ -323,6 +379,8 @@ export type ChangeScriptSweep = {
   quarantined: number
   refused: number
   addressFallback?: number
+  /** Scripts rebuilt from the row's BRC-29 derivation with no raw tx. */
+  derived?: number
   /** Script-less rows found by this scan. */
   unscripted: number
   /** Rows this call actually classified (bounded by batching and yields). */
@@ -441,13 +499,13 @@ export async function sweepChangeScripts(args?: {
     await active.wallet.storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as ChangeStorage
 
+      // A guessed script is not evidence: never on a row whose derivation says
+      // otherwise, and never a reason to revive a written-off coin.
       const tryAddressFallback = async (row: ChangeRow, outputId: number): Promise<boolean> => {
         if (!isWalletChangeRow(row) || !walletScript) return false
+        if (row.derivationPrefix?.trim() && row.derivationSuffix?.trim()) return false
         try {
-          await sp.updateOutput(outputId, {
-            lockingScript: walletScript,
-            ...(row.spendable !== true ? { spendable: true, spentBy: undefined } : {}),
-          })
+          await sp.updateOutput(outputId, { lockingScript: walletScript })
           result.healed += 1
           result.addressFallback = (result.addressFallback ?? 0) + 1
           return true
@@ -467,7 +525,19 @@ export async function sweepChangeScripts(args?: {
           Number.isFinite(transactionId) && transactionId > 0
             ? await loadTxRowByTransactionId(sp, transactionId, txByIdCache)
             : null
+        const derived = derivedScriptFor(active, row)
         const resolved = resolveChangeRowOutpoint(row, txRow)
+        if (!resolved?.txid && derived) {
+          try {
+            await sp.updateOutput(outputId, { lockingScript: derived })
+            result.healed += 1
+            result.derived = (result.derived ?? 0) + 1
+            refusedBefore.delete(outputId)
+            continue
+          } catch (err) {
+            console.warn('[change-script] derived heal skipped', outputId, err)
+          }
+        }
         if (!resolved?.txid) {
           if (await tryAddressFallback(row, outputId)) {
             refusedBefore.delete(outputId)
@@ -496,7 +566,7 @@ export async function sweepChangeScripts(args?: {
           budget,
           txRow,
         )
-        const fate = classifyChangeScript(resolved, rawTx)
+        const fate = classifyChangeScript(resolved, rawTx, derived)
 
         if (fate.kind === 'scripted') continue
 
@@ -504,6 +574,7 @@ export async function sweepChangeScripts(args?: {
           try {
             await sp.updateOutput(outputId, { lockingScript: fate.lockingScript })
             result.healed += 1
+            if (!rawTx?.length) result.derived = (result.derived ?? 0) + 1
             refusedBefore.delete(outputId)
             continue
           } catch (err) {
@@ -564,10 +635,16 @@ export async function sweepChangeScripts(args?: {
 
   if (result.healed > 0) {
     const viaFallback = result.addressFallback ?? 0
-    const viaRawTx = result.healed - viaFallback
+    const viaDerivation = result.derived ?? 0
+    const viaRawTx = result.healed - viaFallback - viaDerivation
     if (viaRawTx > 0) {
       console.info(
         `[change-script] rebuilt ${viaRawTx} change locking script(s) from raw tx`,
+      )
+    }
+    if (viaDerivation > 0) {
+      console.info(
+        `[change-script] derived ${viaDerivation} change locking script(s) from BRC-29 keys`,
       )
     }
     if (viaFallback > 0) {
@@ -597,6 +674,10 @@ export async function sweepChangeScripts(args?: {
         ...(result.deferred ? { deferred: true } : {}),
         fromChain,
         ...(result.addressFallback ? { addressFallback: result.addressFallback } : {}),
+        ...(result.derived ? { derived: result.derived } : {}),
+        ...(refuseReasons['derivation-mismatch']
+          ? { derivationMismatch: refuseReasons['derivation-mismatch'] }
+          : {}),
         ...(refuseReasons['no-outpoint']
           ? { noOutpoint: refuseReasons['no-outpoint'] }
           : {}),

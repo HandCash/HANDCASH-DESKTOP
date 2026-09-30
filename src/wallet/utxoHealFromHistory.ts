@@ -518,6 +518,19 @@ async function runHealCore(
     owner.guard();
   }
 
+  // Change whose toolbox row a restore or wipe removed has no row to reclaim;
+  // only its echoed derivation can bring it back.
+  if (opts.source === "manual") {
+    try {
+      const { recoverEchoedChange } = await import("./reimportDerivedChange");
+      await recoverEchoedChange(owner.runtime.instance);
+    } catch (err) {
+      if (isHealAbort(err)) throw err;
+      console.warn("[utxo-heal] echo recovery skipped", err);
+    }
+    owner.guard();
+  }
+
   if (
     (balanceBefore?.pendingChange ?? 0) > 0 &&
     !(await healShouldYieldToSpend(opts, owner))

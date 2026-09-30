@@ -44,9 +44,9 @@ export type DerivedChangeRow = {
   vout?: number
   outputIndex?: number
   satoshis?: number
-  derivationPrefix?: string
-  derivationSuffix?: string
-  senderIdentityKey?: string
+  derivationPrefix?: string | null
+  derivationSuffix?: string | null
+  senderIdentityKey?: string | null
   lockingScript?: unknown
   change?: boolean
   purpose?: string
@@ -165,6 +165,18 @@ export function rememberDerivedChangeFromRows(rows: DerivedChangeRow[]): number 
   return rememberDerivedChange(
     rows.map(derivedChangeEchoFromRow).filter((row): row is DerivedChangeEcho => row != null),
   )
+}
+
+/** Drop echoes the chain says are spent — the cap keeps the largest, so dead ones crowd out live change. */
+export function forgetDerivedChange(outpoints: string[]): number {
+  const known = new Map(readEcho())
+  let removed = 0
+  for (const outpoint of outpoints) {
+    const key = echoKey(outpoint)
+    if (key && known.delete(key)) removed += 1
+  }
+  if (removed > 0) writeEcho(known)
+  return removed
 }
 
 export function derivedChangeEchoFor(outpoint: string): DerivedChangeEcho | null {

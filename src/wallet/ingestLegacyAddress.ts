@@ -48,6 +48,7 @@ import {
 import { isItemAbandoned, isItemSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { assertRuntimeCurrent, getWalletRuntime } from './walletRuntime'
 
 /** In-flight legacy ingest aborts so the spend region can open. */
 export class ChainIngestYieldToSpendError extends Error {
@@ -92,6 +93,30 @@ export type LegacyAddressIngestOptions = {
    * chainIngest and is what blocked NFT send on a dead explorer tour.
    */
   fundingOnly?: boolean
+  /**
+   * Throws `AbortError` once the account this ingest scanned is no longer
+   * current. Defaults to a pin on the runtime current at the start.
+   */
+  guard?: () => void
+}
+
+/**
+ * Activity, import marks, the collectables cache and arrival toasts are
+ * account-local stores that resolve against whichever account is current when
+ * written. An ingest that outlives an account switch would file the old
+ * account's tips under the new one (hc-a580a, 2026-09-30: a new subwallet
+ * showed three verified NFTs another subwallet held), so every write after an
+ * await first proves the scanned account still is current.
+ */
+function pinIngestRuntime(active: ActiveWallet): () => void {
+  const runtime = getWalletRuntime()
+  if (!runtime) return () => {}
+  if (runtime.instance !== active) {
+    return () => {
+      throw new DOMException('Wallet runtime disposed', 'AbortError')
+    }
+  }
+  return () => assertRuntimeCurrent(runtime)
 }
 
 /** Activity rows for newly internalized collectables. */
@@ -331,6 +356,7 @@ export async function ingestLegacyAddressUtxos(
 ): Promise<LegacyAddressIngestResult> {
   const active = opts.active ?? getActiveWallet()
   if (!active) throw new Error('Wallet locked')
+  const guard = opts.guard ?? pinIngestRuntime(active)
 
   const fundingOnly = opts.fundingOnly === true
   // A send is queued — don't start a 7s address scan the spend region is
@@ -366,6 +392,7 @@ export async function ingestLegacyAddressUtxos(
           return null
         }),
   ])
+  guard()
 
   const scan = mergeTokenTxos(mergeTokenTxos(addressScan, ordinalTxos), tokenTxos)
   if (scan.utxos.length > 0) {
@@ -402,6 +429,7 @@ export async function ingestLegacyAddressUtxos(
       knownCollectableOutpoints,
       collectableRemittance: remittanceByOutpoint,
     })
+  guard()
   const classifyMs = Date.now() - classifyStarted
   if (classifyMs >= 250) {
     console.info(
@@ -437,6 +465,7 @@ export async function ingestLegacyAddressUtxos(
   // the local basket so the filter below can re-claim them on this Refresh.
   if (!fundingOnly && oneSats.length > 0) {
     await healOrphanOneSatImportMarks(active, oneSats, basketListed)
+    guard()
   }
 
   const basketHeld = basketListed?.fullyListed ? basketListed.keys : null
@@ -460,8 +489,10 @@ export async function ingestLegacyAddressUtxos(
   if (bsv21.length > 0 && !fundingOnly && !skipCollectableImport) {
     yieldToSpendIfNeeded()
     await yieldToUi()
+    guard()
     const { importBsv21Tokens } = await import('./token/list')
     const tokenResult = await importBsv21Tokens(bsv21, active)
+    guard()
     if (tokenResult.imported > 0) {
       console.info(
         `[chain-ingest] imported ${tokenResult.imported} BSV-21 tip(s) from address scan`,
@@ -528,7 +559,9 @@ export async function ingestLegacyAddressUtxos(
       yieldToSpendIfNeeded()
       const chunk = newOneSatCandidates.slice(i, i + ONE_SAT_IMPORT_CHUNK)
       await yieldToUi()
+      guard()
       const itemResult = await importOneSatOrdinals(chunk, active)
+      guard()
       importedItems += itemResult.imported
       itemsFailed += itemResult.failed
       newOneSatOutpoints.push(...(itemResult.outpoints ?? []))
@@ -543,6 +576,7 @@ export async function ingestLegacyAddressUtxos(
       if ((itemResult.outpoints ?? []).length > 0) {
         void import('./collectables')
           .then(async ({ noteIngestedItem, listCollectables, rememberLiveOneSatOutpoints }) => {
+            guard()
             rememberLiveOneSatOutpoints(scan.utxos, active.identityKey)
             for (const raw of itemResult.outpoints ?? []) {
               const op = outpointKey(raw)
@@ -556,10 +590,12 @@ export async function ingestLegacyAddressUtxos(
               })
             }
             const { announceItemsReceived } = await import('./itemArrivalToast')
+            guard()
             announceItemsReceived(itemResult.outpoints ?? [])
             return listCollectables(active)
           })
           .catch((err) => {
+            if (err instanceof DOMException && err.name === 'AbortError') return
             console.warn('[chain-ingest] early collectables paint failed', err)
           })
       }
@@ -578,7 +614,9 @@ export async function ingestLegacyAddressUtxos(
 
   if (funding.length > 0) {
     yieldToSpendIfNeeded()
+    guard()
     let result = await importLegacyUtxos(funding, active)
+    guard()
     importedFunding = result.imported
     fundingFailed = result.failed
     fundingSkippedKnown = result.skippedKnown
@@ -590,12 +628,14 @@ export async function ingestLegacyAddressUtxos(
     // the txid checks below cost nothing on a healthy wallet.
     if (result.imported === 0 && result.skippedKnown > 0 && scan.sats > 0) {
       const retryable = await retryableStuckSweeps(funding, active.chain)
+      guard()
       if (retryable.length > 0) {
         forgetLegacyImported(retryable)
         console.warn(
           `[chain-ingest] ${retryable.length} legacy out(s) marked imported but ${scan.sats} sats still on address and no sweep tx on chain — retrying sweep`,
         )
         result = await importLegacyUtxos(funding, active)
+        guard()
         importedFunding = result.imported
         fundingFailed = result.failed
         fundingSkippedKnown = result.skippedKnown

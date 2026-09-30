@@ -20,9 +20,13 @@
  * Only the toolbox's own in-line round is intercepted: wallet code that posts
  * to miners itself goes through {@link directPostBeef}, which is the service
  * as configured, never the interceptor.
+ *
+ * Crediting before any miner sees the body means no miner's finality gate
+ * runs first, so a non-final package is refused here ({@link assertIncomingFinal}).
  */
 import { Transaction } from '@bsv/sdk'
 import type { Services, Wallet } from '@bsv/wallet-toolbox-client'
+import { assertIncomingFinal } from './incomingFinality'
 
 type PostBeef = Services['postBeef']
 
@@ -120,6 +124,7 @@ export function installInternalizeMinerDeferral(
   const patched: Wallet['internalizeAction'] = async (args, originator) => {
     const subject = internalizeSubject(args)
     if (!subject) return originalInternalize(args, originator)
+    await assertIncomingFinal(subject.atomic, () => services.getHeight())
     deferred.add(subject.txid)
     let result: Awaited<ReturnType<Wallet['internalizeAction']>>
     try {

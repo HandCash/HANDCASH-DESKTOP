@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { CachedKeyDeriver, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { ScriptTemplateBRC29 } from '@bsv/wallet-toolbox-client'
 
 const mockGetActiveWallet = vi.fn()
 
@@ -19,7 +20,7 @@ vi.mock('./oneSatImport', () => ({
   peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
-const { classifyChangeScript, findMatchingVout, forgetChangeScriptRefusals, hasLockingScript, isWalletChangeRow, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow, walletChangeLockingScript } =
+const { classifyChangeScript, derivedLockingScript, findMatchingVout, forgetChangeScriptRefusals, hasLockingScript, isWalletChangeRow, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow, walletChangeLockingScript } =
   await import('./changeScriptFate')
 
 /** A one-output tx we can point a change row at. */
@@ -224,6 +225,53 @@ describe('sweepChangeScripts', () => {
     expect(updateOutput).toHaveBeenCalledExactlyOnceWith(12, {
       lockingScript: walletScript,
     })
+  })
+
+  it('derives the script of a restored change row with no outpoint instead of guessing', async () => {
+    const root = PrivateKey.fromRandom()
+    const keyDeriver = new CachedKeyDeriver(root)
+    const row = {
+      outputId: 30,
+      change: true,
+      spendable: false,
+      satoshis: 1_521_447,
+      derivationPrefix: 'cHJlZml4',
+      derivationSuffix: 'c3VmZml4',
+    }
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      address: walletAddress,
+      wallet: {
+        keyDeriver,
+        storage: {
+          runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
+            fn({ findOutputs, getProvenOrRawTx, findTransactions, updateOutput }),
+        },
+      },
+    })
+    pageOnce([], [row])
+
+    const r = await sweepChangeScripts()
+
+    const expected = new ScriptTemplateBRC29({
+      derivationPrefix: row.derivationPrefix,
+      derivationSuffix: row.derivationSuffix,
+      keyDeriver,
+    })
+      .lock(root.toString(), root.toPublicKey().toString())
+      .toBinary()
+    expect(r.derived).toBe(1)
+    expect(r.addressFallback ?? 0).toBe(0)
+    expect(updateOutput).toHaveBeenCalledExactlyOnceWith(30, { lockingScript: expected })
+  })
+
+  it('never revives a written-off row through the address guess', async () => {
+    pageOnce([], [{ outputId: 31, change: true, spendable: false, satoshis: 500 }])
+
+    const r = await sweepChangeScripts()
+
+    expect(r.addressFallback).toBe(1)
+    expect(updateOutput).toHaveBeenCalledExactlyOnceWith(31, { lockingScript: walletScript })
   })
 
   it('quarantines a change row when address fallback is unavailable', async () => {
@@ -458,5 +506,93 @@ describe('sweepChangeScripts', () => {
     expect(r.unscripted).toBe(1)
     expect(r.attempted).toBe(1)
     expect(r.remaining).toBe(0)
+  })
+})
+
+describe('derivedLockingScript', () => {
+  const root = PrivateKey.fromRandom()
+  const keyDeriver = new CachedKeyDeriver(root)
+  const derivation = { derivationPrefix: 'cHJl', derivationSuffix: 'c3Vm' }
+
+  it('is the script makeChangeLock puts on own change', () => {
+    const expected = new ScriptTemplateBRC29({ ...derivation, keyDeriver })
+      .lock(root.toString(), root.toPublicKey().toString())
+      .toBinary()
+    expect(derivedLockingScript(keyDeriver, derivation)).toEqual(expected)
+  })
+
+  it('is the script a BRC-29 sender locked to this wallet', () => {
+    const sender = PrivateKey.fromRandom()
+    const expected = new ScriptTemplateBRC29({
+      ...derivation,
+      keyDeriver: new CachedKeyDeriver(sender),
+    })
+      .lock(sender.toString(), root.toPublicKey().toString())
+      .toBinary()
+    expect(
+      derivedLockingScript(keyDeriver, {
+        ...derivation,
+        senderIdentityKey: sender.toPublicKey().toString(),
+      }),
+    ).toEqual(expected)
+  })
+
+  it('is null without a full derivation', () => {
+    expect(derivedLockingScript(keyDeriver, { derivationPrefix: 'cHJl' })).toBeNull()
+  })
+
+  it('refuses a raw tx whose output disagrees with the row derivation', () => {
+    const tx = fixtureTx(500)
+    const row = { txid: tx.id('hex'), vout: 0, satoshis: 500, ...derivation }
+    const derived = derivedLockingScript(keyDeriver, row)
+    expect(classifyChangeScript(row, tx.toBinary(), derived)).toEqual({
+      kind: 'refuse',
+      reason: 'derivation-mismatch',
+    })
+    expect(classifyChangeScript(row, null, derived)).toEqual({ kind: 'heal', lockingScript: derived })
+  })
+})
+
+describe('derivedLockingScript', () => {
+  const root = PrivateKey.fromRandom()
+  const keyDeriver = new CachedKeyDeriver(root)
+  const derivation = { derivationPrefix: 'cHJl', derivationSuffix: 'c3Vm' }
+
+  it('is the script makeChangeLock puts on own change', () => {
+    const expected = new ScriptTemplateBRC29({ ...derivation, keyDeriver })
+      .lock(root.toString(), root.toPublicKey().toString())
+      .toBinary()
+    expect(derivedLockingScript(keyDeriver, derivation)).toEqual(expected)
+  })
+
+  it('is the script a BRC-29 sender locked to this wallet', () => {
+    const sender = PrivateKey.fromRandom()
+    const expected = new ScriptTemplateBRC29({
+      ...derivation,
+      keyDeriver: new CachedKeyDeriver(sender),
+    })
+      .lock(sender.toString(), root.toPublicKey().toString())
+      .toBinary()
+    expect(
+      derivedLockingScript(keyDeriver, {
+        ...derivation,
+        senderIdentityKey: sender.toPublicKey().toString(),
+      }),
+    ).toEqual(expected)
+  })
+
+  it('is null without a full derivation', () => {
+    expect(derivedLockingScript(keyDeriver, { derivationPrefix: 'cHJl' })).toBeNull()
+  })
+
+  it('refuses a raw tx whose output disagrees with the row derivation', () => {
+    const tx = fixtureTx(500)
+    const row = { txid: tx.id('hex'), vout: 0, satoshis: 500, ...derivation }
+    const derived = derivedLockingScript(keyDeriver, row)
+    expect(classifyChangeScript(row, tx.toBinary(), derived)).toEqual({
+      kind: 'refuse',
+      reason: 'derivation-mismatch',
+    })
+    expect(classifyChangeScript(row, null, derived)).toEqual({ kind: 'heal', lockingScript: derived })
   })
 })

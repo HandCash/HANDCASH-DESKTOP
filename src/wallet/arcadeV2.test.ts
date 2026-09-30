@@ -78,6 +78,8 @@ describe('classifyArcadeTxStatus', () => {
     'ACCEPTED_BY_NETWORK',
     'SEEN_ON_NETWORK',
     'SEEN_MULTIPLE_NODES',
+    'SENT_TO_NETWORK',
+    'STUMP_PROCESSING',
     'IMMUTABLE',
     'MINED',
   ])('treats Arcade propagation status %s as accepted', (txStatus) => {
@@ -85,6 +87,42 @@ describe('classifyArcadeTxStatus', () => {
       kind: 'accepted',
       status: txStatus,
     })
+  })
+
+  it('counts a block building its BUMP as landed, a queue hop as not', () => {
+    expect(arcadeStatusLanded('STUMP_PROCESSING')).toBe(true)
+    expect(arcadeStatusLanded('SENT_TO_NETWORK')).toBe(false)
+  })
+
+  it('names the spender a node reported behind Arcade 466', () => {
+    const parent = 'ab'.repeat(32)
+    const spender = 'cd'.repeat(32)
+    const extraInfo = `UTXO_SPENT (70): UTXO_SPENT (70): ${parent}:3 utxo already spent by tx ${spender}[0]`
+    expect(classifyArcadeTxStatus({ txStatus: 'REJECTED', status: 466, extraInfo })).toEqual({
+      kind: 'rejected',
+      status: 'REJECTED',
+      reason: extraInfo,
+      conflict: { outpoint: `${parent}.3`, spender },
+    })
+  })
+
+  it('reads Arcade giving up with no network verdict as a stall, not a rejection', () => {
+    const extraInfo =
+      'no network verdict after 288 durable retry attempts: giving up — a parent this transaction spends has never reached the network; last network response: PROCESSING (4)'
+    expect(classifyArcadeTxStatus({ txStatus: 'REJECTED', extraInfo })).toMatchObject({
+      kind: 'stalled',
+      status: 'REJECTED',
+    })
+  })
+
+  it('keeps a not-yet-final rejection (476) retryable', () => {
+    expect(
+      classifyArcadeTxStatus({
+        txStatus: 'REJECTED',
+        status: 476,
+        extraInfo: 'TX_LOCK_TIME (35): … — retryable',
+      }),
+    ).toMatchObject({ kind: 'retryable' })
   })
 
   it('treats parent rejection as an authoritative SPV failure', () => {

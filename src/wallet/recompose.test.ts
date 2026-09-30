@@ -30,6 +30,7 @@ vi.mock('./deviceSync', () => ({
 
 vi.mock('./sessionBackupAuth', () => ({
   getSessionBackupPassword: () => null,
+  sessionBackupCredential: () => null,
   setSessionBackupPassword: vi.fn(),
 }))
 

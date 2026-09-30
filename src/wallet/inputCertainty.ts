@@ -154,8 +154,8 @@ async function coinAnswers(
     const silent: string[] = []
     for (const outpoint of ask) {
       const probe = probes.get(outpoint)
-      if (probe?.kind === 'noConfirmedSpender') answers.set(outpoint, { kind: 'cleared' })
-      else if (probe?.kind === 'confirmedSpender') {
+      if (probe?.kind === 'unspent') answers.set(outpoint, { kind: 'cleared' })
+      else if (probe?.kind === 'spent') {
         answers.set(outpoint, { kind: 'spent', spender: probe.spender })
       } else silent.push(outpoint)
     }

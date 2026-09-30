@@ -478,6 +478,7 @@ export async function refreshFromChainExclusive(
         active,
         knownItems: opts?.knownItems,
         fundingOnly,
+        guard,
       }),
     )
     const softTimer = setTimeout(() => {

@@ -6,6 +6,9 @@ const session = vi.hoisted(() => {
     rootKeyHex: 'aa'.repeat(32),
     handle: 'alice',
     chain: 'main' as const,
+    accountIndex: 0,
+    masterRootKeyHex: 'aa'.repeat(32),
+    mnemonic: null,
     monitor: { stopTasks: vi.fn() },
     wallet: {},
   }
@@ -16,6 +19,19 @@ const session = vi.hoisted(() => {
     bootWallet: vi.fn(async () => undefined),
   }
 })
+
+const echo = vi.hoisted(() => ({
+  order: [] as string[],
+  echoAllDerivedOutputs: vi.fn(async () => {
+    echo.order.push('echo')
+    return 0
+  }),
+  recoverEchoedChange: vi.fn(async () => ({})),
+}))
+vi.mock('./reimportDerivedChange', () => ({
+  echoAllDerivedOutputs: echo.echoAllDerivedOutputs,
+  recoverEchoedChange: echo.recoverEchoedChange,
+}))
 
 vi.mock('./session', () => ({
   getActiveWallet: session.getActiveWallet,
@@ -78,6 +94,38 @@ describe('replaceLocalHistoryFromCloud stage reporting', () => {
     expect(session.clearActiveWallet).toHaveBeenCalledTimes(1)
     expect(session.bootWallet).toHaveBeenCalledTimes(1)
     expect(stages.indexOf('wipe')).toBeLessThan(stages.indexOf('reboot'))
+  })
+
+  it('echoes derivations before the wipe and replaces only this subwallet', async () => {
+    const deleted: string[] = []
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: (name: string) => {
+        deleted.push(name)
+        echo.order.push('wipe')
+        const req: { onsuccess?: () => void } = {}
+        queueMicrotask(() => req.onsuccess?.())
+        return req
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })))
+    echo.order.length = 0
+    session.bootWallet.mockClear()
+    Object.assign(session.active, { accountIndex: 2, rootKeyHex: 'bb'.repeat(32) })
+    try {
+      await expect(replaceLocalHistoryFromCloud(null)).rejects.toThrow()
+    } finally {
+      Object.assign(session.active, { accountIndex: 0, rootKeyHex: 'aa'.repeat(32) })
+    }
+
+    expect(echo.order).toEqual(['echo', 'wipe'])
+    expect(deleted).toEqual(['handcash-brc100-main-alice-a2'])
+    expect(session.bootWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootKeyHex: 'bb'.repeat(32),
+        accountIndex: 2,
+        masterRootKeyHex: 'aa'.repeat(32),
+      }),
+    )
   })
 
   it('is silent when no progress sink is given', async () => {

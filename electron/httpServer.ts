@@ -37,10 +37,17 @@ let requestIdCounter = 1
 const pendingRequests = new Map<number, PendingRequest>()
 
 /**
+ * A permission prompt is on screen. BRC-219: a request waiting on the user is
+ * never aborted because time passed, so no deadline fires while this holds.
+ */
+let promptOpen = false
+
+/**
  * Reject in-flight bridge calls when the renderer they were sent to goes away.
  * Called per window by main.ts — the bridge itself no longer owns a window.
  */
 export function failPendingBridgeRequests(reason: string): void {
+  promptOpen = false
   failAllPendingRequests(`WALLET_BRIDGE_UNAVAILABLE: ${reason}`)
 }
 
@@ -218,6 +225,10 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
     pendingRequests.delete(response.request_id)
   }
   ipcMain.on('http-response', onHttpResponse)
+  const onPromptOpen = (_event: Electron.IpcMainEvent, open: unknown) => {
+    promptOpen = open === true
+  }
+  ipcMain.on('bridge:prompt-open', onPromptOpen)
 
   app.all('*', async (req: Request, res: Response) => {
     const request_id = requestIdCounter++
@@ -249,8 +260,18 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
       }
 
       const responsePromise = new Promise<HttpResponseEvent>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          if (!pendingRequests.has(request_id)) return
+        let heldForPrompt = false
+        const arm = (): ReturnType<typeof setTimeout> => setTimeout(() => {
+          const pending = pendingRequests.get(request_id)
+          if (!pending) return
+          if (promptOpen) {
+            if (!heldForPrompt) {
+              heldForPrompt = true
+              log.info(`[HTTP] request_id=${request_id} ${req.path} deadline held — a permission prompt is open`)
+            }
+            pending.timer = arm()
+            return
+          }
           pendingRequests.delete(request_id)
           // The renderer may be suspended in a permission promise. Once the
           // HTTP deadline has elapsed there is no caller left to receive that
@@ -267,7 +288,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
           reject(new Error(bridgeDeadlineMessage(req.method, req.path)))
         }, bridgeDeadlineMs(req.path))
 
-        pendingRequests.set(request_id, { resolve, reject, timer })
+        pendingRequests.set(request_id, { resolve, reject, timer: arm() })
 
         // Prefer 'aborted' — IncomingMessage 'close' can fire after the body is
         // fully read (before we answer), which would drop every Wallet Connect call.
@@ -385,6 +406,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
     httpUrl: 'http://127.0.0.1:3321',
     stop: async () => {
       ipcMain.removeListener('http-response', onHttpResponse)
+      ipcMain.removeListener('bridge:prompt-open', onPromptOpen)
       failAllPendingRequests('WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down')
       await Promise.all([
         new Promise<void>((resolve) => {

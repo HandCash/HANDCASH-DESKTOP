@@ -34,7 +34,7 @@ import {
   setHistoryBackupPrefs,
 } from './historyBackupPrefs'
 
-import { getSessionBackupPassword } from './sessionBackupAuth'
+import { sessionBackupCredential } from './sessionBackupAuth'
 import { localToolboxStateLooksEmpty } from './layers'
 import {
   allowEmptyLocalHistoryPull,
@@ -385,9 +385,9 @@ export function resetHistoryBackupDeferForTests(): void {
 }
 
 export function scheduleHistoryBackupPush(reason = 'dirty'): void {
-  if (!getSessionBackupPassword()) {
+  if (sessionBackupCredential() === null) {
     void import('./appLog').then(({ appendAppLog }) =>
-      appendAppLog('info', `[cloud-backup] skip schedule (${reason}): no session password`),
+      appendAppLog('info', `[cloud-backup] skip schedule (${reason}): wallet locked`),
     )
     return
   }
@@ -445,8 +445,8 @@ async function flushHistoryBackupPush(
     if (historyDirty) return flushHistoryBackupPush(reason, priority)
     return
   }
-  const password = getSessionBackupPassword()
-  if (!password || !historyDirty) return
+  const password = sessionBackupCredential()
+  if (password === null || !historyDirty) return
   historyDirty = false
   pushInFlight = (async () => {
     if (hasDeviceLinkBackupUrl()) {
@@ -541,8 +541,8 @@ export async function autoPushHistoryBackupIfConfigured(
     pullError: null,
     skipReason: null,
   }
-  if (!password) {
-    result.skipReason = 'no password'
+  if (password == null) {
+    result.skipReason = 'wallet locked'
     return result
   }
   const reason = opts.reason ?? 'unlock'

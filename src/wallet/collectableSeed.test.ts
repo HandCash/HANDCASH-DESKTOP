@@ -36,6 +36,10 @@ const active = vi.hoisted(() => ({ wallet: null as ReturnType<typeof walletListi
 vi.mock('./session', () => ({
   getActiveWallet: () => active.wallet,
 }))
+vi.mock('./walletRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./walletRuntime')>()),
+  getWalletRuntime: () => (active.wallet ? { instance: active.wallet } : null),
+}))
 
 const TXID = 'd4'.repeat(32)
 const TIP = `${TXID}.0`
@@ -178,10 +182,20 @@ describe('locally seeded collectables', () => {
     vi.resetModules()
     const restarted = await import('./collectables')
     const otherIdentity = '03'.repeat(33)
-    const after = await restarted.listCollectables(
-      walletListing([], otherIdentity) as never,
-    )
+    active.wallet = walletListing([], otherIdentity)
+    const after = await restarted.listCollectables(active.wallet as never)
     expect(after.map((c) => c.outpoint)).not.toContain(TIP)
+  })
+
+  it('refuses to list a previous account’s basket into the current cache', async () => {
+    const collectables = await import('./collectables')
+    collectables.noteIngestedItem({ outpoint: TIP, chain: 'main', name: 'Mine' })
+    const stale = walletListing([`${'e5'.repeat(32)}.0`], '03'.repeat(33))
+
+    const after = await collectables.listCollectables(stale as never)
+
+    expect(after.map((c) => c.outpoint)).toEqual([TIP])
+    expect(stale.wallet.listOutputs).not.toHaveBeenCalled()
   })
 
   it('pages older outputs without silently truncating the basket', async () => {

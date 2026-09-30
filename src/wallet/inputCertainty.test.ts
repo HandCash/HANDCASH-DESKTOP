@@ -93,8 +93,10 @@ function signedOver(opts: { parentMined: boolean }) {
 }
 
 type Utxo = { txid: string; vout: number }
+const isExplorer = (url: unknown) => String(url).includes('api.whatsonchain.com')
 function wocAnswers(answer: (utxo: Utxo) => Record<string, unknown> | 'omit') {
-  const fetch = vi.fn(async (_url: string, init?: { body?: string }) => {
+  const fetch = vi.fn(async (url: string, init?: { body?: string }) => {
+    if (!isExplorer(url)) return { ok: false, status: 503, json: async () => [] }
     const { utxos } = JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }
     return {
       ok: true,
@@ -211,7 +213,7 @@ describe('signWithCertainInputs', () => {
       .mockResolvedValueOnce(live.result)
     await expect(signWithCertainInputs(sign, 'main')).resolves.toBe(live.result)
     expect(calls).toEqual([`fail ${dead.result.txid.slice(0, 4)} fresh`, `hide 1 by dddd`])
-    const asked = fetch.mock.calls.flatMap(([, init]) =>
+    const asked = fetch.mock.calls.filter(([url]) => isExplorer(url)).flatMap(([, init]) =>
       (JSON.parse(init?.body ?? '{"utxos":[]}') as { utxos: Utxo[] }).utxos.map(
         (u) => `${u.txid}.${u.vout}`,
       ),

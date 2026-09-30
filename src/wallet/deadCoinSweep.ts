@@ -348,11 +348,11 @@ export async function sweepDeadCoins(runtime: WalletRuntime): Promise<DeadCoinSw
       const probes = await probeOutpointSpends(chunk, '', chain, SWEEP_PROBE_MS)
       for (const outpoint of chunk) {
         const probe = probes.get(outpoint)
-        if (probe?.kind === 'confirmedSpender') {
+        if (probe?.kind === 'spent') {
           const list = spentBy.get(probe.spender) ?? []
           list.push(outpoint)
           spentBy.set(probe.spender, list)
-        } else if (probe?.kind !== 'noConfirmedSpender') {
+        } else if (probe?.kind !== 'unspent') {
           unanswered.push(outpoint)
         }
       }

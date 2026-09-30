@@ -27,7 +27,7 @@ import {
   autoPushHistoryBackupIfConfigured,
   hasDeviceLinkBackupUrl,
 } from './deviceSync'
-import { getSessionBackupPassword, setSessionBackupPassword } from './sessionBackupAuth'
+import { sessionBackupCredential, setSessionBackupPassword } from './sessionBackupAuth'
 import { fetchBalanceSats} from './session'
 import {
   assertRuntimeCurrent,
@@ -112,7 +112,7 @@ async function runRecomposeBody(
   const reason = opts.reason ?? 'recompose'
   const historyMode = opts.history ?? 'auto'
   const runChain = opts.chain !== false
-  const password = opts.password ?? getSessionBackupPassword()
+  const password = opts.password ?? sessionBackupCredential()
   if (password) setSessionBackupPassword(password)
 
   let history: RecomposeResult['history'] = 'none'
@@ -125,7 +125,7 @@ async function runRecomposeBody(
   // Yield once so a queued permission prompt can render before Argon2 / IDB work.
   await yieldToUi()
 
-  if (historyMode !== 'skip' && password && hasDeviceLinkBackupUrl()) {
+  if (historyMode !== 'skip' && password != null && hasDeviceLinkBackupUrl()) {
     if (shouldYieldChainIngestToSpend()) {
       history = 'skipped'
       historyError = 'deferred-for-spend'
@@ -258,5 +258,39 @@ async function runRecomposeBody(
     }
   }
 
+  if (runtime) scheduleDerivedChangePass(runtime)
   return { history, historyError, spendableSats, chainError }
+}
+
+const DERIVED_PASS_YIELD_MS = 2_000
+
+/**
+ * After every recompose: bring back echoed change a restore left out, then
+ * echo every derivation this store holds. A wipe or an older snapshot deletes
+ * the only other copy of those random prefixes/suffixes, and change without
+ * them is unspendable forever.
+ */
+function scheduleDerivedChangePass(runtime: WalletRuntime): void {
+  setTimeout(() => {
+    void (async () => {
+      const { runtimeIsCurrent } = await import('./walletRuntime')
+      while (shouldYieldChainIngestToSpend() || isRecomposeInFlight()) {
+        if (!runtimeIsCurrent(runtime)) return
+        await new Promise((resolve) => setTimeout(resolve, DERIVED_PASS_YIELD_MS))
+      }
+      if (!runtimeIsCurrent(runtime)) return
+      const { echoAllDerivedOutputs, recoverEchoedChange } = await import(
+        './reimportDerivedChange'
+      )
+      const recovered = await recoverEchoedChange(runtime.instance)
+      if (!runtimeIsCurrent(runtime)) return
+      await echoAllDerivedOutputs(runtime.instance)
+      if (recovered.imported > 0) {
+        const { bumpBalanceAfterHeal } = await import('./session')
+        bumpBalanceAfterHeal()
+      }
+    })().catch((err) => {
+      console.warn('[derived-change] post-recompose pass failed', err)
+    })
+  }, 0)
 }

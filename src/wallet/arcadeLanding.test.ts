@@ -61,7 +61,7 @@ vi.mock('./createActionInputFate', () => ({
       outpoints.map((op) => [
         op,
         spentBy[op]
-          ? { kind: 'confirmedSpender', spender: spentBy[op] }
+          ? { kind: 'spent', spender: spentBy[op] }
           : { kind: 'unknown' },
       ]),
     ),

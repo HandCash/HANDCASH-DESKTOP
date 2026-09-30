@@ -4,6 +4,7 @@
  */
 import { unlockVault, unlockVaultWithDevice } from './vault'
 import { clearActiveWallet } from './session'
+import { getWalletRuntime } from './walletRuntime'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
 import { clearFungiblesCache } from './token'
@@ -114,6 +115,16 @@ export async function wipeAllWalletData(password: string | null): Promise<void> 
     sessionStorage.setItem(PENDING_IDB_WIPE, '1')
   } catch {
     // ignore
+  }
+
+  const active = getWalletRuntime()?.instance
+  if (active) {
+    try {
+      const { echoAllDerivedOutputs } = await import('./reimportDerivedChange')
+      await echoAllDerivedOutputs(active)
+    } catch (err) {
+      console.warn('[derived-change] pre-wipe echo failed', err)
+    }
   }
 
   cancelPendingPermissions('wipe')

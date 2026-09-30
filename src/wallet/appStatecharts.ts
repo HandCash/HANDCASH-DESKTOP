@@ -947,7 +947,7 @@ const SPEND_SIGN = `stateDiagram-v2
   signedNoSend --> externalBroadcast : pasted address
   prepare --> confirmBroadcast : retry unconfirmed signed BEEF\\nsource still unspent
   certify --> appReply : every coin cleared · or change of a\\ncertified / node-held parent
-  certify --> createAction : coin spent by confirmed tx / another install\\n/ parent rejected — retire, sign again (≤3)
+  certify --> createAction : coin spent (Teranode or explorer names it)\\n/ another install / parent rejected — retire, sign again (≤3)
   certify --> refuse : coin unanswered / parent not on a node\\n/ named or signable input dead — nothing sent
   appReply --> spv : txid to the app, then propagation
   peerDeliver --> spv : common signed-send propagation\\nnotify async
@@ -959,15 +959,17 @@ const SPEND_SIGN = `stateDiagram-v2
   spv --> failed : invalid — never posted, inputs freed
   note right of certify
     inputCertainty + kernel/inputCertainty. SPV proves a parent exists;
-    only a UTXO answer or this wallet's own certified ledger proves unspent.
+    only a UTXO answer (Teranode /utxos with mempool spenders,
+    WhatsOnChain for confirmed ones) or this wallet's own
+    certified ledger proves unspent.
     peerDeviceSpends reads another install's BRC-39 upload (never imports):
     coins it spent are dead here before any explorer sees that tx.
   end note
   postBeef --> landing : Arcade 202 (queued, not landed)
   postBeef --> done : non-Arcade accept
   landing --> done : node holds it / on chain
-  landing --> landing : Arcade queued / PENDING_RETRY\\nno input proven spent · re-post outside Arcade once
-  landing --> failed : Arcade rejected / input spent by confirmed tx\\n/ parent proven dead — fail closure, hide coins
+  landing --> landing : Arcade queued / PENDING_RETRY / gave up (no verdict)\\nno input proven spent · re-post outside Arcade once
+  landing --> failed : node rejected (466 names the spender)\\n/ input spent per Teranode or explorer\\n/ parent proven dead — fail closure, hide coins
   note right of signedNoSend
     registerSignedSend seals + queues before settle metadata.
     Asset data does not alter Bitcoin communication:

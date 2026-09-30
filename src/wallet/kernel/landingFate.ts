@@ -2,34 +2,35 @@
  * Did an Arcade-accepted cheque reach the chain?
  *
  * Arcade's 202 means Arcade queued the body, nothing more. It then hands the
- * transaction to the network and reports what the network said on
- * `GET /tx/{txid}`. A transaction whose input a confirmed tx already spent is
- * refused there as `PENDING_RETRY` ("failed to validate transaction") and
- * retried forever; reading the 202 as the send let a phone sign a night of
- * app payments on long-dead coins with every one shown as sent
+ * transaction to Teranode and reports what the network said on
+ * `GET /tx/{txid}`. Teranode drops a transaction once every output is spent
+ * and mined past its 288-block retention, then answers a spend of one of those
+ * outputs with an opaque `PROCESSING` that Arcade files as a missing parent:
+ * `PENDING_RETRY`, retried for a day. Reading the 202 as the send let a phone
+ * sign a night of app payments on long-dead coins with every one shown as sent
  * (hc-a580a 0.1.540, 09c17bab2cd7: input spent by a tx mined 2026-09-22).
  *
  * `PENDING_RETRY` alone is not proof — a child of a still-propagating parent
  * reads the same. A cheque is only declared dead on evidence nobody can
- * dispute: Arcade's own rejection, an input a confirmed foreign tx spent, or
- * a parent this wallet already proved dead. Anything on chain is landed, full
- * stop. Silence keeps waiting.
+ * dispute: a node's rejection (Arcade 466 names the spender), an input a node
+ * or explorer names another spender for, or a parent this wallet already
+ * proved dead. Anything on chain is landed, full stop. Silence keeps waiting.
  */
 
 export type LandingArcade =
   /** A node, not just Arcade's queue, holds it. */
   | { kind: 'landed'; status: string }
-  /** Arcade's 202 states: received, stored, announced. */
+  /** Arcade's 202 states: received, sent to network. */
   | { kind: 'queued'; status: string }
-  /** The network refused to validate it; Arcade keeps retrying. */
+  /** No node gave a verdict; Arcade keeps retrying or gave up. */
   | { kind: 'stalled'; status: string; reason: string }
-  | { kind: 'rejected'; reason: string }
+  | { kind: 'rejected'; reason: string; conflict?: { outpoint: string; spender: string } }
   | { kind: 'unknown' }
 
 export type LandingEvidence = {
   /** Explorer existence; `null` when no explorer answered. */
   onChain: boolean | null
-  /** Inputs a confirmed transaction other than this one already spent. */
+  /** Inputs a node or explorer says another transaction already spends. */
   spentElsewhere: Array<{ outpoint: string; spender: string }>
   /** Inputs whose funding transaction is already proven dead. */
   rejectedParents: string[]
@@ -55,18 +56,29 @@ export type LandingFate =
  */
 export const QUEUED_EVIDENCE_AFTER_MS = 15_000
 
+/** The spender Arcade's 466 named joins what the probes found. */
+export function withArcadeConflict(
+  evidence: LandingEvidence,
+  arcade: LandingArcade,
+): LandingEvidence {
+  if (arcade.kind !== 'rejected' || !arcade.conflict) return evidence
+  const { outpoint } = arcade.conflict
+  if (evidence.spentElsewhere.some((s) => s.outpoint === outpoint)) return evidence
+  return { ...evidence, spentElsewhere: [...evidence.spentElsewhere, arcade.conflict] }
+}
+
 export function decideLanding(facts: {
   arcade: LandingArcade
   elapsedMs: number
   evidence?: LandingEvidence
 }): LandingFate {
-  const { arcade, evidence } = facts
+  const { arcade } = facts
   if (arcade.kind === 'landed') {
     return { kind: 'landed', reason: `Arcade ${arcade.status}` }
   }
-  if (evidence?.onChain === true) return { kind: 'landed', reason: 'on chain' }
+  if (facts.evidence?.onChain === true) return { kind: 'landed', reason: 'on chain' }
 
-  if (!evidence) {
+  if (!facts.evidence) {
     if (arcade.kind === 'rejected') {
       return { kind: 'gatherEvidence', reason: 'Arcade rejected — name the dead inputs' }
     }
@@ -79,16 +91,17 @@ export function decideLanding(facts: {
     return { kind: 'waiting', reason: arcade.kind === 'queued' ? `Arcade ${arcade.status}` : 'Arcade silent' }
   }
 
-  if (arcade.kind === 'rejected') {
-    return { kind: 'dead', cause: 'arcade-rejected', reason: arcade.reason }
-  }
+  const evidence = withArcadeConflict(facts.evidence, arcade)
   if (evidence.spentElsewhere.length > 0) {
     const first = evidence.spentElsewhere[0]!
     return {
       kind: 'dead',
       cause: 'input-spent-elsewhere',
-      reason: `${evidence.spentElsewhere.length} input(s) already spent on chain by ${first.spender.slice(0, 12)}`,
+      reason: `${evidence.spentElsewhere.length} input(s) already spent by ${first.spender.slice(0, 12)}`,
     }
+  }
+  if (arcade.kind === 'rejected') {
+    return { kind: 'dead', cause: 'arcade-rejected', reason: arcade.reason }
   }
   if (evidence.rejectedParents.length > 0) {
     return {

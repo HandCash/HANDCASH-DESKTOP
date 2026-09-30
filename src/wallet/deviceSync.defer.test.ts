@@ -26,6 +26,7 @@ vi.mock('./historyBackup', () => ({
 
 vi.mock('./sessionBackupAuth', () => ({
   getSessionBackupPassword: () => 'session-password',
+  sessionBackupCredential: () => 'session-password',
 }))
 
 // No cloud URL — the push writes the local snapshot, which is the same

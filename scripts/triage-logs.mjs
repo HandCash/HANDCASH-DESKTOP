@@ -162,7 +162,25 @@ function parseSession(text) {
     const m = LINE.exec(raw.trim())
     if (m) events.push({ at: Date.parse(m[1]), level: m[2], text: m[3] })
   }
-  return sessionFacts(header, events)
+  const facts = sessionFacts(header, events)
+  Object.defineProperty(facts, 'events', { value: events, enumerable: false })
+  return facts
+}
+
+/** Every event naming one transaction, in order — the per-txid story without reading the log. */
+function traceTxid(session, prefix) {
+  const needle = prefix.toLowerCase()
+  const t0 = session.events?.[0]?.at ?? 0
+  const seen = new Set()
+  return (session.events ?? [])
+    .filter((e) => {
+      if (!e.text.toLowerCase().includes(needle)) return false
+      const key = `${e.at}\u0000${e.text}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((e) => ({ s: Math.round((e.at - t0) / 1000), level: e.level, text: e.text.slice(0, 400) }))
 }
 
 /** A session read from the on-disk ring instead of an upload body. */
@@ -252,6 +270,8 @@ function sessionFacts(header, events) {
   const toolboxSteps = toolboxStepFacts(events)
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
+  const derivations = derivationFacts(events)
+  const incomingFinality = incomingFinalityFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const bounceRefunds = events.flatMap((e) => {
@@ -311,6 +331,13 @@ function sessionFacts(header, events) {
     // sweeps (`[dead-coins] sweep`) that clear the rest, and `peerDevice`:
     // reads of another install's BRC-39 upload and the coins it had spent.
     deadCoins,
+    // BRC-29 change derivations: echoes written before a wipe/replace,
+    // coins re-imported from them after, locking scripts rebuilt from keys,
+    // and whether legacy deposits were proven by their own path or parents.
+    derivations,
+    // Incoming packages refused before crediting because an unmined tx in
+    // them is not final (BRC-67 step 4), or its lock time met no chain height.
+    incomingFinality,
     // Signed transactions and what miners said: per-txid outcome chain, how
     // many ever reached Arcade, and which never left the device.
     broadcast,
@@ -1396,7 +1423,113 @@ function deadCoinFacts(events) {
       })
     }
   }
-  return { resigns, sweeps, spenders, peerDevice }
+  return { resigns, sweeps, spenders, peerDevice, unscriptedChange: unscriptedChangeFacts(events) }
+}
+
+const UNSCRIPTED_CHANGE_RE =
+  /^\[stale-output\] (\d+) change output\(s\) of ([0-9a-f]{12}) have no locking script\b/
+const CHANGE_REVIVED_RE = /^\[change-revive\] ([0-9a-f]{12}) revived=(\d+) sats=(\d+)/
+
+/**
+ * Change this wallet signed but could not spend: rows with no locking script
+ * are never promoted, so every one of them is balance the user cannot see.
+ */
+function unscriptedChangeFacts(events) {
+  const byTxid = new Map()
+  const revived = new Map()
+  for (const e of events) {
+    const m = UNSCRIPTED_CHANGE_RE.exec(e.text)
+    if (m) {
+      const row = byTxid.get(m[2]) ?? { txid: m[2], outputs: 0, reports: 0 }
+      row.outputs = Math.max(row.outputs, Number(m[1]))
+      row.reports += 1
+      byTxid.set(m[2], row)
+      continue
+    }
+    const r = CHANGE_REVIVED_RE.exec(e.text)
+    if (r) revived.set(r[1], { txid: r[1], outputs: Number(r[2]), sats: Number(r[3]) })
+  }
+  return {
+    txids: [...byTxid.values()].map((row) => ({ ...row, revived: revived.has(row.txid) })),
+    revived: [...revived.values()],
+  }
+}
+
+const ECHOED_RE = /^\[derived-change\] echoed (\d+) derivation\(s\) from (\d+) output row\(s\)(?: done (\d+)ms)?/
+const ECHO_RECOVERY_RE =
+  /^\[derived-change\] echo recovery checked=(\d+) live=(\d+) sats=(\d+) imported=(\d+) failed=(\d+) spent=(\d+) unknown=(\d+) done (\d+)ms/
+const NO_ECHO_RE = /^\[derived-change\] ([0-9a-f]{12})… (\d+) output\(s\) live on chain with no toolbox row and no remittance echo/
+const DERIVED_SCRIPT_RE = /^\[change-script\] derived (\d+) change locking script/
+const LEGACY_BEEF_RE = /^\[legacy-beef\] ([0-9a-f]{12})… via=(proof|parents|tip)( FAIL)?/
+const REPLACE_RE = /^\[cloud-backup\] replace local history\b/
+
+/** Change spendable only through its random BRC-29 prefix/suffix, and whether we still had it. */
+function derivationFacts(events) {
+  const seen = new Set()
+  const facts = {
+    replaces: 0,
+    echoes: [],
+    recoveries: [],
+    noEcho: [],
+    derivedScripts: 0,
+    legacyProof: { proof: 0, parents: 0, tipFail: 0 },
+  }
+  for (const e of events) {
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (REPLACE_RE.test(e.text)) {
+      facts.replaces += 1
+      continue
+    }
+    let m = ECHOED_RE.exec(e.text)
+    if (m) {
+      facts.echoes.push({ added: Number(m[1]), rows: Number(m[2]), ms: m[3] ? Number(m[3]) : null })
+      continue
+    }
+    m = ECHO_RECOVERY_RE.exec(e.text)
+    if (m) {
+      const [checked, live, sats, imported, failed, spent, unknown, ms] = m.slice(1).map(Number)
+      facts.recoveries.push({ checked, live, sats, imported, failed, spent, unknown, ms })
+      continue
+    }
+    m = NO_ECHO_RE.exec(e.text)
+    if (m) {
+      facts.noEcho.push({ txid: m[1], outputs: Number(m[2]) })
+      continue
+    }
+    m = DERIVED_SCRIPT_RE.exec(e.text)
+    if (m) {
+      facts.derivedScripts += Number(m[1])
+      continue
+    }
+    m = LEGACY_BEEF_RE.exec(e.text)
+    if (m) {
+      if (m[3]) facts.legacyProof.tipFail += 1
+      else if (m[2] === 'proof') facts.legacyProof.proof += 1
+      else if (m[2] === 'parents') facts.legacyProof.parents += 1
+    }
+  }
+  return facts
+}
+
+const INCOMING_REFUSED_RE =
+  /^\[internalize\] (?:([0-9a-f]{12}) )?refused reason=(non-final|finality-unknown)\b/
+
+function incomingFinalityFacts(events) {
+  const seen = new Set()
+  const facts = { nonFinal: 0, finalityUnknown: 0, txids: [] }
+  for (const e of events) {
+    const m = INCOMING_REFUSED_RE.exec(e.text)
+    if (!m) continue
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (m[2] === 'non-final') facts.nonFinal += 1
+    else facts.finalityUnknown += 1
+    if (m[1] && !facts.txids.includes(m[1])) facts.txids.push(m[1])
+  }
+  return facts
 }
 
 /**
@@ -2394,6 +2527,41 @@ function report(state, answers) {
     }
   }
 
+  const der = latest.derivations
+  const lp = der?.legacyProof
+  if (
+    der &&
+    (der.replaces || der.echoes.length || der.recoveries.length || der.noEcho.length ||
+      der.derivedScripts || lp.proof || lp.parents || lp.tipFail)
+  ) {
+    console.log('\nChange derivations (code-counted):')
+    if (der.replaces) console.log(`  ${der.replaces} history replace(s) — local toolbox wiped`)
+    for (const echo of der.echoes) {
+      console.log(`  echoed ${echo.added} new of ${echo.rows} row(s)${echo.ms != null ? ` · ${echo.ms}ms` : ''}`)
+    }
+    for (const r of der.recoveries) {
+      console.log(
+        `  recovery checked ${r.checked} · live ${r.live} (${r.sats} sats) · imported ${r.imported} · failed ${r.failed} · spent ${r.spent} · unknown ${r.unknown} · ${r.ms}ms`,
+      )
+    }
+    if (der.noEcho.length) {
+      const outs = der.noEcho.reduce((a, row) => a + row.outputs, 0)
+      console.log(`  ${outs} live output(s) in ${der.noEcho.length} tx(s) with no derivation anywhere`)
+    }
+    if (der.derivedScripts) console.log(`  ${der.derivedScripts} locking script(s) rebuilt from BRC-29 keys`)
+    if (lp.proof || lp.parents || lp.tipFail) {
+      console.log(`  legacy deposits: ${lp.proof} own proof · ${lp.parents} via parents · ${lp.tipFail} unprovable`)
+    }
+  }
+
+  const fin = latest.incomingFinality
+  if (fin && (fin.nonFinal || fin.finalityUnknown)) {
+    console.log('\nIncoming finality (code-counted):')
+    console.log(
+      `  ${fin.nonFinal} non-final package(s) refused · ${fin.finalityUnknown} with no chain height${fin.txids.length ? ` · ${fin.txids.join(', ')}` : ''}`,
+    )
+  }
+
   const notify = latest.notifications
   if (notify && (notify.hiddenValueActions || notify.posted)) {
     console.log('\nNotifications (code-counted):')
@@ -2466,7 +2634,14 @@ const args = process.argv.slice(2)
 const flags = new Set(args.filter((a) => a.startsWith('--')))
 const fileIdx = args.indexOf('--file')
 const filePath = fileIdx >= 0 ? args[fileIdx + 1] : null
-const positional = args.filter((a, i) => !a.startsWith('--') && (fileIdx < 0 || i !== fileIdx + 1))
+const traceIdx = args.indexOf('--trace')
+const tracePrefix = traceIdx >= 0 ? args[traceIdx + 1] : null
+const positional = args.filter(
+  (a, i) =>
+    !a.startsWith('--') &&
+    (fileIdx < 0 || i !== fileIdx + 1) &&
+    (traceIdx < 0 || i !== traceIdx + 1),
+)
 const bucketArg = positional[0] ?? 'android'
 
 let latest
@@ -2497,6 +2672,11 @@ if (filePath) {
   previous = uploads[1] ? parseSession(uploads[1]) : null
 }
 const state = previous ? { latest, previous } : { latest }
+
+if (tracePrefix) {
+  console.log(JSON.stringify({ latest: traceTxid(latest, tracePrefix), previous: previous ? traceTxid(previous, tracePrefix) : [] }, null, 2))
+  process.exit(0)
+}
 
 if (flags.has('--state')) {
   console.log(JSON.stringify(state, null, 2))

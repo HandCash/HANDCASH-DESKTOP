@@ -51,27 +51,42 @@ export function arcadeV2BaseUrl(chain: Chain): string | null {
 }
 
 /**
- * `stalled` is Arcade's `PENDING_RETRY`: the network refused to validate the
- * body ("failed to validate transaction") and Arcade parked it for durable
- * rebroadcast. Not a verdict on its own — a child of a still-propagating
- * parent reads the same — but a transaction that sits here never lands until
- * its inputs are proven live, so the landing watch asks the chain why.
+ * `stalled` is Arcade's `PENDING_RETRY`: no node gave a verdict and Arcade
+ * parked the body for durable rebroadcast. Teranode answers a parent it does
+ * not hold with an opaque `PROCESSING` that Arcade reads as a missing parent —
+ * and it drops a transaction once every output is spent and mined past its
+ * 288-block retention, so a coin spent long ago reads exactly like a parent
+ * still propagating. Not a verdict; the landing watch asks for the coins.
+ *
+ * Arcade's own give-up after its retry budget ("no network verdict after N
+ * durable retry attempts") is written as `REJECTED` but is the same silence,
+ * so it is `stalled` too. Only a node's answer is a rejection.
+ *
+ * `conflict` is Arcade's 466: a node named the transaction that already
+ * spends one of the inputs.
  */
 export type ArcadeTxFate =
   | { kind: 'accepted'; status: string }
-  | { kind: 'rejected'; status: string; reason: string }
+  | {
+      kind: 'rejected'
+      status: string
+      reason: string
+      conflict?: { outpoint: string; spender: string }
+    }
   | { kind: 'retryable'; status: string; reason: string; ancestorTxid?: string }
   | { kind: 'stalled'; status: string; reason: string }
   | { kind: 'unknown' }
 
 /**
  * Statuses where a node, not just Arcade's queue, holds the transaction.
- * `RECEIVED` / `STORED` / `ANNOUNCED_TO_NETWORK` are Arcade's own 202 states.
+ * `RECEIVED` / `SENT_TO_NETWORK` are Arcade's own queue states;
+ * `STUMP_PROCESSING` is a block holding it while its BUMP is built.
  */
 const ARCADE_LANDED_STATUSES = new Set([
   'SEEN_ON_NETWORK',
   'SEEN_MULTIPLE_NODES',
   'ACCEPTED_BY_NETWORK',
+  'STUMP_PROCESSING',
   'MINED',
   'IMMUTABLE',
 ])
@@ -80,15 +95,23 @@ export function arcadeStatusLanded(status: string): boolean {
   return ARCADE_LANDED_STATUSES.has(status.trim().toUpperCase())
 }
 
+/** ARC status codes Arcade attaches to a node's answer. */
+const ARC_STATUS_CONFLICT = 466
+const ARC_STATUS_NOT_FINAL = 476
+
 const PARENT_REJECTED_RE =
   /parent rejected \(ancestor ([0-9a-f]{64})\): retryable/i
+const NO_VERDICT_RE = /^no network verdict after \d+/i
+const SPENT_BY_RE = /([0-9a-f]{64}):(\d+) utxo already spent by tx ([0-9a-f]{64})/i
 
 /** Interpret Arcade's authoritative transaction lifecycle response. */
 export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
   if (body == null || typeof body !== 'object') return { kind: 'unknown' }
-  const record = body as { txStatus?: unknown; extraInfo?: unknown }
+  const record = body as { txStatus?: unknown; extraInfo?: unknown; status?: unknown }
   const status = String(record.txStatus ?? '').trim().toUpperCase()
-  const reason = String(record.extraInfo ?? status).trim().slice(0, 240)
+  const extraInfo = String(record.extraInfo ?? '').trim()
+  const reason = (extraInfo || status).slice(0, 240)
+  const code = Number(record.status)
   if (!status) return { kind: 'unknown' }
   if (status === 'REJECTED' && /parent rejected/i.test(reason) && /retryable/i.test(reason)) {
     return {
@@ -98,24 +121,36 @@ export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
       ancestorTxid: PARENT_REJECTED_RE.exec(reason)?.[1]?.toLowerCase(),
     }
   }
+  if (status === 'REJECTED' && code === ARC_STATUS_NOT_FINAL) {
+    return { kind: 'retryable', status, reason }
+  }
+  if (status === 'REJECTED' && NO_VERDICT_RE.test(extraInfo)) {
+    return { kind: 'stalled', status, reason }
+  }
   if (
     status === 'REJECTED' ||
     status === 'INVALID' ||
     status === 'DOUBLE_SPEND_ATTEMPTED'
   ) {
+    const spent = code === ARC_STATUS_CONFLICT ? SPENT_BY_RE.exec(extraInfo) : null
     return {
       kind: 'rejected',
       status,
       reason,
+      ...(spent
+        ? {
+            conflict: {
+              outpoint: `${spent[1]!.toLowerCase()}.${Number(spent[2])}`,
+              spender: spent[3]!.toLowerCase(),
+            },
+          }
+        : {}),
     }
   }
   if (status === 'PENDING_RETRY') return { kind: 'stalled', status, reason }
   if (
-    status === 'MINED' ||
-    status === 'IMMUTABLE' ||
-    status === 'SEEN_ON_NETWORK' ||
-    status === 'SEEN_MULTIPLE_NODES' ||
-    status === 'ACCEPTED_BY_NETWORK' ||
+    arcadeStatusLanded(status) ||
+    status === 'SENT_TO_NETWORK' ||
     status === 'ANNOUNCED_TO_NETWORK' ||
     status === 'STORED' ||
     status === 'RECEIVED' ||

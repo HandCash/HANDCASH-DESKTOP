@@ -271,9 +271,13 @@ const WIPE_SURVIVE_KEYS = new Set([
   'handcash.update.mode',
 ])
 
+/** Identity-scoped BRC-29 change derivations; see `wipePolicy.ts`. */
+const WIPE_SURVIVE_PREFIXES = ['handcash.brc100.derivedChangeEcho.v1']
+
 function shouldWipeHandcashKey(key: string): boolean {
   if (!key.startsWith('handcash.')) return false
-  return !WIPE_SURVIVE_KEYS.has(key)
+  if (WIPE_SURVIVE_KEYS.has(key)) return false
+  return !WIPE_SURVIVE_PREFIXES.some((prefix) => key.startsWith(prefix))
 }
 
 /**

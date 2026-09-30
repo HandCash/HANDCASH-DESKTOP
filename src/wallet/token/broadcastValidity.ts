@@ -59,8 +59,11 @@ export async function checkBsv21BroadcastValidity(args: {
       txid: rejected.txid,
     }
   }
-  const pending = fates.find(({ fate }) => fate.kind === 'retryable')
-  if (pending?.fate.kind === 'retryable') {
+  const pending = fates.find(
+    ({ fate }) =>
+      fate.kind === 'retryable' || (fate.kind === 'stalled' && fate.status === 'REJECTED'),
+  )
+  if (pending?.fate.kind === 'retryable' || pending?.fate.kind === 'stalled') {
     return {
       kind: 'refuse',
       reason: 'ancestor-pending',
