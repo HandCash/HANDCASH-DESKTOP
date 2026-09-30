@@ -2,15 +2,11 @@
  * historyReplica document budget — refuse an unencryptable export instead of
  * killing the renderer with it.
  *
- * `encryptBRC39` does not stream. For a document of N bytes it holds, at once:
- * the canonical string we passed in, the structured-clone copy inside the
- * worker, `JSON.parse` of that, a second canonical string from its own
- * `canonicalize`, a `number[]` from `Utils.toArray` (~8 bytes per byte of
- * document), the `Uint8Array` plaintext, the AES-GCM result, and a final
- * `Array.from` over the whole ciphertext (another ~8x). Peak heap is roughly
- * twenty times the document, so a worker with a ~2GB ceiling cannot encrypt
- * much past 100MB, and a 254MB document dies before Argon2id even starts —
- * taking the unlocked session, and any in-flight settlement, with it.
+ * Encryption does not stream (`brc39Lean.ts`). For a document of N bytes the
+ * worker holds the JSON string, a transient validation parse, one UTF-8
+ * plaintext and the sealed output. The toolbox's own `encryptBRC39` held about
+ * twenty times N in `number[]` copies, which killed Android WebViews on
+ * documents of a few tens of MB and a 254MB document on Desktop.
  *
  * A refusal loses the same backup the crash would have lost, and keeps the
  * wallet. See `layers.ts` (historyReplica).

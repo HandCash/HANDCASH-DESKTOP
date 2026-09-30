@@ -202,33 +202,118 @@ export function publishActivityLedger(namespace: string, rows: ActivityEntry[]):
   for (const cb of listeners) cb()
 }
 
+type IdbTransaction = {
+  objectStore(name: string): {
+    index(name: string): { getAllKeys(query: unknown): Promise<unknown[]> }
+    get(key: unknown): Promise<unknown>
+  }
+  done: Promise<void>
+}
+
 type LedgerReader = {
   findUsers: (args: unknown) => Promise<unknown>
   findTransactions: (args: unknown) => Promise<unknown>
   findOutputs: (args: unknown) => Promise<unknown>
   findOutputBaskets: (args: unknown) => Promise<unknown>
+  /** Present on the IndexedDB provider (`StorageIdb`). */
+  toDbTrx?: (stores: string[], mode: 'readonly') => IdbTransaction
 }
 
 const asRows = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 
-async function readLedger(runtime: WalletRuntime): Promise<ActivityEntry[] | null> {
+const TX_CHUNK = 40
+
+type TxCache = { namespace: string; userId: number; byId: Map<number, LedgerTx> }
+let txCache: TxCache | null = null
+
+function assertCurrent(runtime: WalletRuntime): void {
+  if (!runtimeIsCurrent(runtime)) throw new DOMException('Activity account changed', 'AbortError')
+}
+
+function ledgerTxOf(value: unknown): LedgerTx | null {
+  if (!value || typeof value !== 'object') return null
+  const r = value as Record<string, unknown>
+  const transactionId = Number(r.transactionId)
+  if (!Number.isSafeInteger(transactionId) || transactionId <= 0) return null
+  return {
+    transactionId,
+    txid: typeof r.txid === 'string' ? r.txid : null,
+    satoshis: typeof r.satoshis === 'number' ? r.satoshis : undefined,
+    description: typeof r.description === 'string' ? r.description : undefined,
+    isOutgoing: r.isOutgoing === true,
+    created_at: r.created_at as LedgerTx['created_at'],
+  }
+}
+
+/**
+ * Settled transactions, reading only records this session has not seen.
+ *
+ * IndexedDB cannot project fields: every record read is cloned whole, raw
+ * transaction and input BEEF included, and on a phone that is the entire
+ * history copied on the UI thread. Ids come from the `status_userId` index
+ * without their values; only new ids are fetched, in small transactions with a
+ * frame between them. A settled record's ledger fields do not change, so ids
+ * that left the settled set are dropped and the rest are kept. `full` rereads
+ * everything, for a recompose that may have rewritten the store.
+ */
+async function settledTransactions(
+  sp: LedgerReader,
+  runtime: WalletRuntime,
+  userId: number,
+  full: boolean,
+): Promise<LedgerTx[]> {
+  const toDbTrx = sp.toDbTrx?.bind(sp)
+  if (!toDbTrx) {
+    return asRows<LedgerTx>(
+      await sp.findTransactions({ partial: { userId }, status: [...SETTLED_STATUSES], noRawTx: true }),
+    )
+  }
+  const namespace = runtime.storageNamespace
+  if (full || !txCache || txCache.namespace !== namespace || txCache.userId !== userId) {
+    txCache = { namespace, userId, byId: new Map() }
+  }
+  const cache = txCache
+  const keys = toDbTrx(['transactions'], 'readonly')
+  const index = keys.objectStore('transactions').index('status_userId')
+  const lists = await Promise.all(SETTLED_STATUSES.map((status) => index.getAllKeys([status, userId])))
+  await keys.done
+  assertCurrent(runtime)
+  const settled = new Set(lists.flat().map(Number))
+  for (const id of cache.byId.keys()) if (!settled.has(id)) cache.byId.delete(id)
+  const missing = [...settled].filter((id) => !cache.byId.has(id))
+  for (let i = 0; i < missing.length; i += TX_CHUNK) {
+    if (i > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      assertCurrent(runtime)
+    }
+    const trx = toDbTrx(['transactions'], 'readonly')
+    const store = trx.objectStore('transactions')
+    const records = await Promise.all(missing.slice(i, i + TX_CHUNK).map((id) => store.get(id)))
+    await trx.done
+    for (const record of records) {
+      const tx = ledgerTxOf(record)
+      if (tx) cache.byId.set(tx.transactionId!, tx)
+    }
+  }
+  assertCurrent(runtime)
+  return [...cache.byId.values()]
+}
+
+async function readLedger(runtime: WalletRuntime, full: boolean): Promise<ActivityEntry[] | null> {
   const active = runtime.instance
   const storage = active.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
-  const { txs, outputs, baskets } = await storage.runAsStorageProvider(async (raw) => {
+  const read = await storage.runAsStorageProvider(async (raw) => {
     const sp = raw as unknown as LedgerReader
     const users = asRows<{ userId: number }>(await sp.findUsers({ partial: { identityKey: active.identityKey } }))
     if (users.length !== 1 || !Number.isSafeInteger(users[0]?.userId) || users[0]!.userId <= 0) {
       throw new Error('Activity ledger wallet owner is unavailable')
     }
-    if (!runtimeIsCurrent(runtime)) throw new DOMException('Activity account changed', 'AbortError')
+    assertCurrent(runtime)
     const userId = users[0]!.userId
-    const [txs, baskets] = await Promise.all([
-      sp.findTransactions({ partial: { userId }, status: [...SETTLED_STATUSES], noRawTx: true }),
-      sp.findOutputBaskets({ partial: { userId } }),
-    ])
-    if (!runtimeIsCurrent(runtime)) throw new DOMException('Activity account changed', 'AbortError')
-    const itemBaskets = asRows<LedgerBasket>(baskets).filter((b) => {
+    const baskets = asRows<LedgerBasket>(await sp.findOutputBaskets({ partial: { userId } }))
+    assertCurrent(runtime)
+    const itemBaskets = baskets.filter((b) => {
       const name = String(b.name ?? '').toLowerCase()
       return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
     })
@@ -237,12 +322,14 @@ async function readLedger(runtime: WalletRuntime): Promise<ActivityEntry[] | nul
         sp.findOutputs({ partial: { userId, basketId: b.basketId }, noScript: true }),
       ),
     )
-    return {
-      txs: asRows<LedgerTx>(txs),
-      outputs: outputs.flatMap((o) => asRows<LedgerOutput>(o)),
-      baskets: asRows<LedgerBasket>(baskets),
-    }
+    const txs = sp.toDbTrx ? null : await settledTransactions(sp, runtime, userId, full)
+    return { sp, userId, txs, outputs: outputs.flatMap((o) => asRows<LedgerOutput>(o)), baskets }
   })
+  // Read-only IndexedDB transactions are consistent on their own, so the
+  // transaction records are fetched outside the storage lock: a spend waiting
+  // for the writer never queues behind the first read of a long history.
+  const txs = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
+  const { outputs, baskets } = read
   return ledgerActivityRows(txs, outputs, baskets).filter(
     (row) => !isGhostTxSuppressed(row.txid!),
   )
@@ -259,9 +346,13 @@ let lastRefreshAt = 0
 let logged = false
 let failures = 0
 
-/** Read the ledger now for this runtime. Concurrent calls share one read. */
+/**
+ * Read the ledger now for this runtime. Concurrent calls share one read.
+ * `full` rereads every transaction record, for after the store was rewritten.
+ */
 export function refreshActivityLedger(
   runtime: WalletRuntime | null = getWalletRuntime(),
+  opts: { full?: boolean } = {},
 ): Promise<void> {
   if (!runtime) return Promise.resolve()
   if (!runtimeIsCurrent(runtime)) return Promise.resolve()
@@ -271,7 +362,7 @@ export function refreshActivityLedger(
     const started = Date.now()
     lastRefreshAt = started
     try {
-      const rows = await readLedger(runtime)
+      const rows = await readLedger(runtime, opts.full === true)
       if (!rows || !runtimeIsCurrent(runtime)) return
       failures = 0
       publishActivityLedger(runtime.storageNamespace, rows)
@@ -314,6 +405,7 @@ export function resetActivityLedgerForRuntime(): void {
   if (timer) clearTimeout(timer)
   timer = null
   snapshot = null
+  txCache = null
   lastRefreshAt = 0
   logged = false
   failures = 0
@@ -325,6 +417,7 @@ export function resetActivityLedgerForTests(): void {
   timer = null
   inFlights.clear()
   snapshot = null
+  txCache = null
   lastRefreshAt = 0
   logged = false
   failures = 0

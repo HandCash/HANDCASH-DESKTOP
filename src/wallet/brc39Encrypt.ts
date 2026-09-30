@@ -120,8 +120,14 @@ export async function encryptBrc39Document(
     }
   }
 
-  const { encryptBRC39 } = await import('@bsv/wallet-toolbox-client')
-  return Uint8Array.from(await encryptBRC39(json, password))
+  const { Brc39LeanUnsupportedError, encryptBrc39Lean } = await import('./brc39Lean')
+  try {
+    return await encryptBrc39Lean(json, password)
+  } catch (err) {
+    if (!(err instanceof Brc39LeanUnsupportedError)) throw err
+    const { encryptBRC39 } = await import('@bsv/wallet-toolbox-client')
+    return Uint8Array.from(await encryptBRC39(json, password))
+  }
 }
 
 /**

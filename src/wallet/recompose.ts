@@ -291,7 +291,7 @@ function scheduleDerivedChangePass(runtime: WalletRuntime): void {
       }
       if (!runtimeIsCurrent(runtime)) return
       const { refreshActivityLedger } = await import('./activityLedger')
-      await refreshActivityLedger(runtime)
+      await refreshActivityLedger(runtime, { full: true })
     })().catch((err) => {
       console.warn('[derived-change] post-recompose pass failed', err)
     })

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.389] - 2026-09-30
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.388] - 2026-09-30
 
 Release builds enforce code signing.

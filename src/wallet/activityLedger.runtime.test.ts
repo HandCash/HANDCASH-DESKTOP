@@ -54,6 +54,42 @@ describe('Activity ledger runtime ownership', () => {
     publishActivityLedger('owner', [{ ...row, kind: 'earned', method: 'receive' }])
     expect(ledgerActivitySnapshot()[0]).toMatchObject({ kind: 'earned', method: 'receive' })
   })
+  it('on IndexedDB storage fetches only transactions this session has not read', async () => {
+    const records = new Map<number, Record<string, unknown>>([
+      [1, { transactionId: 1, txid: txid(1), satoshis: 100, created_at: 10, status: 'completed', rawTx: [1, 2, 3] }],
+      [2, { transactionId: 2, txid: txid(2), satoshis: -40, isOutgoing: true, created_at: 20, status: 'unproven' }],
+    ])
+    const gets: number[] = []
+    const owner = wallet('owner'); control.current = owner.runtime
+    const provider = owner.provider as typeof owner.provider & { toDbTrx: unknown }
+    provider.toDbTrx = () => ({
+      objectStore: () => ({
+        index: (name: string) => {
+          expect(name).toBe('status_userId')
+          return { getAllKeys: async ([status, userId]: [string, number]) => {
+            expect(userId).toBe(9)
+            return [...records.values()].filter(r => r.status === status).map(r => r.transactionId)
+          } }
+        },
+        get: async (id: number) => { gets.push(id); return records.get(id) },
+      }),
+      done: Promise.resolve(),
+    })
+    await refreshActivityLedger(owner.runtime)
+    expect(ledgerActivitySnapshot().map(row => [row.txid, row.sats, row.kind])).toEqual([[txid(1), 100, 'earned'], [txid(2), 40, 'spent']])
+    expect(owner.provider.findTransactions).not.toHaveBeenCalled()
+
+    records.set(3, { transactionId: 3, txid: txid(3), satoshis: 7, created_at: 30, status: 'completed' })
+    records.get(2)!.status = 'failed'
+    gets.length = 0
+    await refreshActivityLedger(owner.runtime)
+    expect(gets).toEqual([3])
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(1), txid(3)])
+
+    gets.length = 0
+    await refreshActivityLedger(owner.runtime, { full: true })
+    expect(gets.sort()).toEqual([1, 3])
+  })
   it('refuses an ambiguous or missing wallet owner', async () => {
     const owner = wallet('owner'); control.current = owner.runtime
     owner.provider.findUsers.mockResolvedValueOnce([])

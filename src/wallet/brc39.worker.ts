@@ -12,7 +12,8 @@
  * layouts, and the Mobile build ships an exports map that seals deep paths off.
  * The root entry is the only specifier that resolves in both.
  */
-import { decryptBRC39, encryptBRC39, type BRC38WalletData } from '@bsv/wallet-toolbox-client'
+import { encryptBRC39, type BRC38WalletData } from '@bsv/wallet-toolbox-client'
+import { Brc39LeanUnsupportedError, decryptBrc39Lean, encryptBrc39Lean } from './brc39Lean'
 import { peerSnapshotFromBrc38, type PeerSnapshot } from './peerSnapshot'
 
 export type Brc39EncryptRequest = {
@@ -51,17 +52,23 @@ ctx.onmessage = (event: MessageEvent<Brc39WorkerRequest>) => {
   void (async () => {
     try {
       if (request.kind === 'document') {
-        const document = await decryptBRC39(request.bytes, request.password)
+        const document = await decryptBrc39Lean(request.bytes, request.password)
         ctx.postMessage({ id, ok: true, document } satisfies Brc39DocumentResponse)
         return
       }
       if (request.kind === 'snapshot') {
-        const doc = await decryptBRC39(request.bytes, request.password)
+        const doc = await decryptBrc39Lean(request.bytes, request.password)
         const reply: Brc39SnapshotResponse = { id, ok: true, snapshot: peerSnapshotFromBrc38(doc) }
         ctx.postMessage(reply)
         return
       }
-      const bytes = Uint8Array.from(await encryptBRC39(request.json, request.password))
+      let bytes: Uint8Array
+      try {
+        bytes = await encryptBrc39Lean(request.json, request.password)
+      } catch (err) {
+        if (!(err instanceof Brc39LeanUnsupportedError)) throw err
+        bytes = Uint8Array.from(await encryptBRC39(request.json, request.password))
+      }
       const reply: Brc39EncryptResponse = { id, ok: true, bytes }
       ctx.postMessage(reply, [bytes.buffer])
     } catch (err) {
