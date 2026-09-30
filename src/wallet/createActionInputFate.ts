@@ -169,7 +169,9 @@ export async function foreignConfirmedInputSpends(
  * so its outputs are not listed as held. Returns true when a resign is required.
  *
  * One dead coin means the pool holds more, so the rest are swept in the
- * background instead of one resign per payment finding them.
+ * background instead of one resign per payment finding them. Each spender is
+ * adopted there too: when it is this wallet's own send failed locally, its
+ * change comes back instead of vanishing with the hidden input.
  */
 export async function retireCreateActionSpentElsewhere(
   result: unknown,
@@ -205,7 +207,7 @@ export async function retireCreateActionSpentElsewhere(
     `[brc100] createAction inputs spent elsewhere count=${spends.length} txid=${txid.slice(0, 12)}`,
   )
   void import('./deadCoinSweep').then(({ scheduleDeadCoinSweep }) =>
-    scheduleDeadCoinSweep(chain),
+    scheduleDeadCoinSweep(chain, bySpender.keys()),
   )
   return true
 }

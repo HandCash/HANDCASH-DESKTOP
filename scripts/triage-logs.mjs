@@ -1323,18 +1323,29 @@ function notificationFacts(events) {
 const RESIGN_RE = /^\[brc100\] createAction signing again with live coins$/
 const DEAD_SWEEP_RE =
   /^\[dead-coins\] sweep checked=(\d+) hidden=(\d+) unknown=(\d+) done (\d+)ms$/
+const SPENDER_TALLY_RE = /^\[dead-coins\] spenders (.*)$/
 
 /** Resigns over coins a confirmed foreign tx spent, and the pool sweeps they set off. */
 function deadCoinFacts(events) {
   const seen = new Set()
   let resigns = 0
   const sweeps = []
+  // Outcome of adopting the named spenders of hidden coins: `restored` = this
+  // wallet's own send, on chain but failed locally, whose change came back.
+  const spenders = {}
   for (const e of events) {
     const key = `${e.at}|${e.text}`
     if (seen.has(key)) continue
     seen.add(key)
     if (RESIGN_RE.test(e.text)) {
       resigns += 1
+      continue
+    }
+    const tally = SPENDER_TALLY_RE.exec(e.text)
+    if (tally) {
+      for (const [, k, n] of tally[1].matchAll(/(\w+)=(\d+)/g)) {
+        spenders[k] = (spenders[k] ?? 0) + Number(n)
+      }
       continue
     }
     const m = DEAD_SWEEP_RE.exec(e.text)
@@ -1347,7 +1358,7 @@ function deadCoinFacts(events) {
       })
     }
   }
-  return { resigns, sweeps }
+  return { resigns, sweeps, spenders }
 }
 
 function appFlowFacts(events) {
@@ -2185,13 +2196,17 @@ function report(state, answers) {
   }
 
   const dead = latest.deadCoins
-  if (dead && (dead.resigns || dead.sweeps.length)) {
+  if (dead && (dead.resigns || dead.sweeps.length || Object.keys(dead.spenders ?? {}).length)) {
     console.log('\nDead coins (code-counted):')
     console.log(`  ${dead.resigns} resign(s) over coins a confirmed foreign tx spent`)
     for (const s of dead.sweeps) {
       console.log(
         `  sweep checked ${s.checked} · hidden ${s.hidden} · unknown ${s.unknown} · ${s.ms}ms`,
       )
+    }
+    const adopted = Object.entries(dead.spenders ?? {})
+    if (adopted.length) {
+      console.log(`  spenders adopted: ${adopted.map(([k, n]) => `${k} ${n}`).join(' · ')}`)
     }
   }
 

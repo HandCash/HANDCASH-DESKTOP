@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.378] - 2026-09-30
+
+The 0.1.539 upload: after about ten penny payments, the balance dropped about 2.5M sats more than the 700k sats actually paid to lilb.it. The extra drop came from hiding coins that WhatsOnChain showed were spent by confirmed txs: 9 hidden on resign and 3 by the sweep. If the spender was this wallet's own send, marked failed locally but actually mined, then the fail had put its inputs back as phantom coins and hidden its change. Hiding the phantoms without reviving the spender left real change stranded.
+
+### Fixed
+
+- **Hiding a dead coin now also restores its spender.** For each named confirmed spender, `adoptConfirmedSpender` looks the tx up locally. If it is a failed or unsigned row that the chain has, `restoreOnChainLocalTx` seals its inputs and makes its change spendable again. Live rows, spenders with no local row, and spenders the chain does not have are left alone. Adoption runs after the retire and after each sweep, outside the spend region, with one queue per account.
+- **Coins already hidden are replayed at unlock.** 45s after an account unlocks, once any recompose has finished, the named spenders of hidden coins in the UTXO overlay (up to 200) go through the same adoption. This brings back change stranded by earlier builds.
+
+### Changed
+
+- Triage reports the spender adoption tally (`restored`, `live`, `missing`, `notOnChain`, `unreadable`).
+
 ## [1.3.377] - 2026-09-30
 
 The 0.1.538 upload: a backgrounded bridge payment took ~11.6s. It broke down as a first sign whose `storage_plan` waited ~6s on IndexedDB, ~3s retiring coins a confirmed foreign tx had spent, and a second sign. Every payment resigned; the dead coins came from a stale pool (3, 3, 3, 1 per payment), not from one coin coming back.

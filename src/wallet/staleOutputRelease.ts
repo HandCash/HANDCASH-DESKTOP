@@ -1188,6 +1188,30 @@ export async function listFailedLocalTxids(): Promise<string[]> {
   return [...txids];
 }
 
+export type ConfirmedSpenderAdoption =
+  | "restored"
+  | "live"
+  | "missing"
+  | "notOnChain"
+  | "unreadable";
+
+/**
+ * A coin still spendable here that a confirmed tx spent usually means that tx
+ * is ours and was failed locally: the fail handed its inputs back and hid its
+ * change. Hiding the coin alone then drops the balance by the change the
+ * spender carried. Restoring the spender (chain-checked) brings it back.
+ */
+export async function adoptConfirmedSpender(
+  txid: string
+): Promise<ConfirmedSpenderAdoption> {
+  const id = normalizedTxidOrNull(txid);
+  if (!id) return "missing";
+  const looked = await lookupLocalTx(id);
+  if (looked.kind !== "row") return looked.kind;
+  if (INTERNALIZE_OK_TX.has(looked.status)) return "live";
+  return (await restoreOnChainLocalTx(id)) ? "restored" : "notOnChain";
+}
+
 /**
  * Cloud false-negative pass: a local `failed` row whose tx is actually known
  * on chain is restored as that transaction, not by editing its outputs.

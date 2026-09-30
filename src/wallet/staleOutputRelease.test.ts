@@ -67,6 +67,7 @@ const {
   reclaimSealedInputsNeverSpent,
   reclaimOutputsSealedByDeadTxs,
   restoreOnChainLocalTx,
+  adoptConfirmedSpender,
   restoreUnspentAssetOutpoint,
   chooseUtxoEvidenceAction,
   pinBroadcastLocalTx,
@@ -1848,6 +1849,40 @@ describe('restoreOnChainLocalTx', () => {
     await expect(restoreOnChainLocalTx(txid)).resolves.toBe(true)
     expect(txExistsOnChain).not.toHaveBeenCalled()
     expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 4)
+  })
+
+  it('adopts a confirmed spender failed locally: restores it and keeps its change', async () => {
+    const txid = 'ae'.repeat(32)
+    txExistsOnChain.mockResolvedValue(true)
+    findTransactions.mockResolvedValue([{ transactionId: 11, txid, status: 'failed' }])
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 6,
+        txid,
+        vout: 1,
+        satoshis: 640_000,
+        spendable: false,
+        change: true,
+        lockingScript: [118, 169],
+      },
+    ])
+
+    await expect(adoptConfirmedSpender(txid)).resolves.toBe('restored')
+    expect(updateTransaction).toHaveBeenCalledWith(11, { status: 'unproven' })
+    expect(updateOutput).toHaveBeenCalledWith(6, expect.objectContaining({ spendable: true }))
+  })
+
+  it('leaves a live spender, an unknown spender and an off-chain failed row alone', async () => {
+    const txid = 'af'.repeat(32)
+    findTransactions.mockResolvedValue([{ transactionId: 12, txid, status: 'unproven' }])
+    await expect(adoptConfirmedSpender(txid)).resolves.toBe('live')
+
+    findTransactions.mockResolvedValue([{ transactionId: 12, txid, status: 'failed' }])
+    txExistsOnChain.mockResolvedValue(false)
+    await expect(adoptConfirmedSpender(txid)).resolves.toBe('notOnChain')
+
+    expect(updateTransaction).not.toHaveBeenCalled()
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 
   it('coerces noSend unsent rows to unproven after miner submit', async () => {

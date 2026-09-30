@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetClearedOutpointsForTests } from './createActionInputFate'
-import { sweepDeadCoins } from './deadCoinSweep'
+import {
+  adoptSpendersLater,
+  resetDeadCoinSweepForTests,
+  sweepDeadCoins,
+} from './deadCoinSweep'
 import type { WalletRuntime } from './walletRuntime'
 
 const DEAD = 'd1'.repeat(32)
@@ -53,11 +57,14 @@ vi.mock('./localTxClosure', () => ({
   LIVE_LOCAL_TX_STATUSES: ['unproven', 'sending'],
 }))
 
+const adoptConfirmedSpender = vi.fn(async (_txid: string) => 'restored')
+
 vi.mock('./staleOutputRelease', () => ({
   hideSpentOutpoints: async (outpoints: string[], spender: string) => {
     hides.push({ outpoints, spender })
     return outpoints.length
   },
+  adoptConfirmedSpender: (txid: string) => adoptConfirmedSpender(txid),
 }))
 
 describe('sweepDeadCoins', () => {
@@ -74,6 +81,8 @@ describe('sweepDeadCoins', () => {
     spendBusy = false
     current = true
     bumpBalanceAfterHeal.mockReset()
+    adoptConfirmedSpender.mockClear()
+    resetDeadCoinSweepForTests()
     fetch.mockClear()
     vi.stubGlobal('fetch', fetch)
   })
@@ -92,6 +101,34 @@ describe('sweepDeadCoins', () => {
     })
     expect(hides).toEqual([{ outpoints: [`${DEAD}.0`], spender: SPENDER }])
     expect(bumpBalanceAfterHeal).toHaveBeenCalledOnce()
+  })
+
+  it('adopts the spender of every coin it hides, so stranded change comes back', async () => {
+    vi.useFakeTimers()
+    try {
+      await sweepDeadCoins(runtime)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(adoptConfirmedSpender).toHaveBeenCalledWith(SPENDER)
+      expect(bumpBalanceAfterHeal).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('adopts queued spenders once each and stops when the account changes', async () => {
+    vi.useFakeTimers()
+    try {
+      adoptSpendersLater(runtime, [SPENDER, SPENDER, 'not-a-txid'])
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
+
+      current = false
+      adoptSpendersLater(runtime, [DEAD])
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('never asks about change of an unmined local tx or an asset basket', async () => {
