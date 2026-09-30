@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.387] - 2026-09-30
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.386] - 2026-09-30
 
 Activity no longer loses history.

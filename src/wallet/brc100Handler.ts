@@ -21,7 +21,7 @@ import {
   requestTokenViewApproval,
 } from './permissions'
 import { normalizeAppHost } from './appIdentity'
-import { settleAutoPayReservation, type AutoPayReservation } from './autoPay'
+import { getAutoPaySettings, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
   isBsv21ReceiveArgs,
   isItemBasket,
@@ -1018,7 +1018,7 @@ async function handleBrc100RequestInner(
     }
     lapActionPhase(event.request_id, 'preflight')
     const actionDecision = await requestActionApproval(originator, method, args,
-      reservation => { automaticReservation = reservation })
+      reservation => { automaticReservation = reservation }, event.request_id)
     lapActionPhase(event.request_id, 'approval')
     if (actionDecision !== 'allow') {
       return {
@@ -1028,6 +1028,17 @@ async function handleBrc100RequestInner(
           code: 'ACTION_DENIED',
           description: 'You denied this transaction or signing request.',
         }),
+      }
+    }
+    if (method === 'createAction' && !automaticReservation && getAutoPaySettings(originator)?.enabled) {
+      const approvedSats = extractSatsFromArgs(method, args)
+      if (approvedSats > 0) {
+        automaticReservation = reserveApprovedPayment(originator, approvedSats)
+        if (!automaticReservation) return {
+          status: 503,
+          body: JSON.stringify({ status: 'error', code: 'SPENDING_BUDGET_UNAVAILABLE',
+            description: 'The approved payment could not be recorded safely. Retry after local storage is available.' }),
+        }
       }
     }
     liveAction(bridgeActionId(event.request_id))?.stage('preparing')

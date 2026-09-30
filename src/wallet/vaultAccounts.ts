@@ -7,6 +7,8 @@
  * One mnemonic / unlock recovers every account.
  */
 import { KeyDeriver, PrivateKey } from '@bsv/sdk'
+import { storageRegistry } from '../storage/registry'
+import { durableGetItem, durableSetItem } from './durableStorage'
 
 export const VAULT_ACCOUNT_PROTOCOL: [2, 'account'] = [2, 'account']
 
@@ -53,7 +55,7 @@ export function identityKeyForAccount(masterRootKeyHex: string, index: number): 
     .toString()
 }
 
-export function toolboxDatabaseName(args: {
+export function originalToolboxDatabaseName(args: {
   chain: string
   handle: string
   accountIndex: number
@@ -63,6 +65,24 @@ export function toolboxDatabaseName(args: {
     return `handcash-brc100-${args.chain}-${args.handle}`
   }
   return `handcash-brc100-${args.chain}-${args.handle}-a${args.accountIndex}`
+}
+
+/** A validated replacement is selected with one committed pointer write.
+ * The historical database remains an independent rollback copy. */
+export function toolboxDatabaseName(args: { chain: string; handle: string; accountIndex: number }): string {
+  const base = originalToolboxDatabaseName(args)
+  const selected = durableGetItem(storageRegistry.toolboxDatabasePointer.key + base)
+  return selected?.startsWith(base + '-restore-') && /^[a-zA-Z0-9._-]+$/.test(selected) ? selected : base
+}
+
+export function selectToolboxDatabase(args: { chain: string; handle: string; accountIndex: number }, name: string): void {
+  const base = originalToolboxDatabaseName(args)
+  if (name !== base && !(name.startsWith(base + '-restore-') && /^[a-zA-Z0-9._-]+$/.test(name))) {
+    throw new Error('Invalid replacement database')
+  }
+  if (!durableSetItem(storageRegistry.toolboxDatabasePointer.key + base, name)) {
+    throw new Error('Could not commit recovery database selection; original history retained')
+  }
 }
 
 function defaultPrimary(masterIdentityKey: string): VaultAccount {

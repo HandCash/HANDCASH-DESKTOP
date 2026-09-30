@@ -27,6 +27,7 @@ import {
   noteInboundReceivePending,
   removeActivityById,
   upsertAppActivity,
+  sameActivityRow,
   type ActivityEntry,
 } from './appActivity'
 
@@ -70,7 +71,27 @@ describe('Activity over the wallet ledger', () => {
     publishActivityLedger('ns', [ledgerCoin(1)])
 
     expect(listActivityFeed(10).map((e) => e.id)).toEqual(['paid'])
-    expect(getActivityById(`ledger:${tx(1)}`)).toBeNull()
+    expect(getActivityById(`ledger:${tx(1)}`)).toMatchObject({ id: `ledger:${tx(1)}`, origin: 'shop.example', sats: 100 })
+  })
+
+  it('keeps an open ledger-only item linked to its later annotation', () => {
+    const outpoint = `${tx(1)}.0`
+    publishActivityLedger('ns', [ledgerItem(2, outpoint, 'earned')])
+    const id = `ledger:${tx(2)}:${outpoint}`
+    const before = getActivityById(id)
+    mergeActivityEntries([row({ id: 'named', txid: tx(2), kind: 'earned', method: 'receive-collectable', item: { name: 'Fox', origin: `${tx(1)}_0`, outpoint } })])
+    const after = getActivityById(id)
+    expect(after).toMatchObject({ id, item: { name: 'Fox', outpoint } })
+    expect(sameActivityRow(before, after)).toBe(false)
+  })
+
+  it('does not treat a changed name, note, origin or token amount as the same display row', () => {
+    const before = row({ id: 'row', item: { name: 'Fox', origin: 'asset', amt: '1' } })
+    for (const after of [
+      { ...before, note: 'Updated' }, { ...before, origin: 'app.example' },
+      { ...before, item: { ...before.item!, name: 'Robot' } },
+      { ...before, item: { ...before.item!, amt: '2' } },
+    ]) expect(sameActivityRow(before, after)).toBe(false)
   })
 
   it('keeps both activities of a send to yourself', () => {

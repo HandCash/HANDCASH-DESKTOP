@@ -8,6 +8,7 @@
  */
 import type {
   Brc39EncryptResponse,
+  Brc39DocumentResponse,
   Brc39SnapshotResponse,
   Brc39WorkerRequest,
 } from './brc39.worker'
@@ -35,7 +36,7 @@ function spawn(): Worker {
   })
 }
 
-type WorkerReply = Brc39EncryptResponse | Brc39SnapshotResponse
+type WorkerReply = Brc39EncryptResponse | Brc39SnapshotResponse | Brc39DocumentResponse
 type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never
 
 function requestWorker<R extends WorkerReply>(
@@ -145,4 +146,12 @@ export async function readBrc39Snapshot(
 /** Test hook. */
 export function resetBrc39WorkerForTests(): void {
   workersUsable = typeof Worker !== 'undefined'
+}
+
+/** Validate the entire authenticated document off the UI thread before recovery. */
+export async function decryptBrc39Document(bytes: Uint8Array, password: string) {
+  const reply = await requestWorker<Brc39DocumentResponse>(
+    { kind: 'document', bytes, password }, 'document validation', { abortable: false },
+  )
+  return reply.document
 }

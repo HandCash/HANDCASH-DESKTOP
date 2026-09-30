@@ -54,6 +54,21 @@ describe('autoPay', () => {
     vi.resetModules()
   })
 
+  it('keeps explicit approvals charged after display Activity is compacted', async () => {
+    const { setAutoPaySettings, reserveApprovedPayment, canAutoProcessPayment } = await import('./autoPay')
+    setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })
+    expect(reserveApprovedPayment('game.example', 19_000_000)).not.toBeNull()
+    getSpentSatsSince.mockReturnValue(0)
+    expect(canAutoProcessPayment('game.example', 'createAction', 2_000_000)).toBe(false)
+  })
+
+  it('reserves concurrent silent payments before execution', async () => {
+    const { setAutoPaySettings, reserveAutoPayPayment } = await import('./autoPay')
+    setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })
+    expect(reserveAutoPayPayment('game.example', 11_000_000)).not.toBeNull()
+    expect(reserveAutoPayPayment('game.example', 11_000_000)).toBeNull()
+  })
+
   it('caches maxSats from FX when enabling Auto-pay', async () => {
     const { setAutoPaySettings, getAutoPaySettings } = await import('./autoPay')
     setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })

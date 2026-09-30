@@ -84,6 +84,7 @@ export type PendingPermission = {
 export type PendingAction = {
   id: number
   kind: 'action'
+  bridgeRequestId?: number
   origin: string
   method: string
   title: string
@@ -1214,6 +1215,7 @@ export function requestActionApproval(
   method: string,
   args: unknown,
   onAutomaticApproval?: (reservation: AutoPayReservation) => void,
+  bridgeRequestId?: number,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
@@ -1256,7 +1258,7 @@ export function requestActionApproval(
   return enqueuePrompt({
     id: idCounter++,
     kind: 'action',
-    origin: key,
+    bridgeRequestId,    origin: key,
     method,
     title,
     summary,

@@ -1,3 +1,4 @@
+import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 
 /**
@@ -692,6 +693,12 @@ function messageboxHostAllowsAuthrite(box: string): boolean {
   }
 }
 
+function authenticatedMessageboxFetch(rootKeyHex: string, box: string, url: string, init: RequestInit): Promise<Response> {
+  return messageboxHostAllowsAuthrite(box)
+    ? signedIdentityFetch(rootKeyHex, 'messagebox', url, init)
+    : fetch(url, init)
+}
+
 /** Sign-then-attach so retries cannot reuse a stale X-BRC33-Timestamp. */
 function signedMessageboxHeaders(
   rootKeyHex: string,
@@ -737,7 +744,7 @@ export async function uploadMessageboxBytes(args: {
   const contentType = args.contentType || 'application/octet-stream'
   const payload = new Uint8Array(args.bytes.byteLength)
   payload.set(args.bytes)
-  const res = await fetch(`${box}/files`, {
+  const res = await authenticatedMessageboxFetch(args.rootKeyHex, box, `${box}/files`, {
     method: 'POST',
     headers: signedMessageboxHeaders(args.rootKeyHex, 'files', {
       'Content-Type': contentType,
@@ -895,7 +902,7 @@ export async function deliverOutbound(
   }
   const url = `${box}/sendMessage`
   const post = (body: string) =>
-    fetch(url, {
+    authenticatedMessageboxFetch(env.rootKeyHex, box, url, {
       method: 'POST',
       headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
         'Content-Type': 'application/json',
@@ -969,7 +976,7 @@ async function postSessionOffer(env: OutboundEnvelope, box: string): Promise<voi
     return
   }
   try {
-    await fetch(`${box}/sendMessage`, {
+    await authenticatedMessageboxFetch(env.rootKeyHex, box, `${box}/sendMessage`, {
       method: 'POST',
       headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
         'Content-Type': 'application/json',
@@ -1140,7 +1147,7 @@ export async function pollInboundTipHints(args: {
   const box = normalizeMessageboxBase(args.messagebox)
   const url = `${box}/listMessages`
   try {
-    const res = await fetch(url, {
+    const res = await authenticatedMessageboxFetch(args.rootKeyHex, box, url, {
       method: 'POST',
       headers: signedMessageboxHeaders(args.rootKeyHex, 'listMessages', {
         'Content-Type': 'application/json',
@@ -1534,7 +1541,7 @@ async function acknowledgeMessages(
 ): Promise<void> {
   const box = normalizeMessageboxBase(messagebox)
   try {
-    await fetch(`${box}/acknowledgeMessage`, {
+    await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/acknowledgeMessage`, {
       method: 'POST',
       headers: signedMessageboxHeaders(rootKeyHex, 'acknowledgeMessage', {
         'Content-Type': 'application/json',

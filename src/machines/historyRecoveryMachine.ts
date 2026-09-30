@@ -2,7 +2,7 @@ import { assign, setup, type SnapshotFrom } from 'xstate'
 
 /**
  * Chart: historyRecovery
- * States: probing → found → restoring.{wipe → reboot → download → merge → recompose → balance}
+ * States: probing → found → restoring.{download → validate → merge → reboot → recompose → balance}
  *                 ↘ missing            ↘ done | legacy | failure
  *                 ↘ unreachable
  *
@@ -18,10 +18,10 @@ import { assign, setup, type SnapshotFrom } from 'xstate'
  * this chart only knows about restoring.
  */
 export const HISTORY_RESTORE_STAGES = [
-  'wipe',
-  'reboot',
   'download',
+  'validate',
   'merge',
+  'reboot',
   'recompose',
   'balance',
 ] as const
@@ -29,10 +29,10 @@ export const HISTORY_RESTORE_STAGES = [
 export type HistoryRestoreStage = (typeof HISTORY_RESTORE_STAGES)[number]
 
 export const HISTORY_RESTORE_STAGE_LABELS: Readonly<Record<HistoryRestoreStage, string>> = {
-  wipe: 'Clearing the empty local ledger',
+  validate: 'Checking your backup before recovery',
   reboot: 'Reopening the wallet',
   download: 'Downloading your encrypted history',
-  merge: 'Unsealing and merging activity, UTXOs, friends and apps',
+  merge: 'Restoring history into a separate ledger',
   recompose: 'Rebuilding balances from the merged ledger',
   balance: 'Reading your balance',
 }
@@ -57,7 +57,7 @@ export type HistoryRecoveryContext = {
 /** Shared `STAGE` routing: each stage node jumps to whichever stage the domain reports. */
 const stageOn = {
   STAGE: [
-    { target: 'wipe', guard: 'isWipe' },
+    { target: 'validate', guard: 'isValidate' },
     { target: 'reboot', guard: 'isReboot' },
     { target: 'download', guard: 'isDownload' },
     { target: 'merge', guard: 'isMerge' },
@@ -80,7 +80,7 @@ export const historyRecoveryMachine = setup({
     events: {} as HistoryRecoveryEvent,
   },
   guards: {
-    isWipe: isStage('wipe'),
+    isValidate: isStage('validate'),
     isReboot: isStage('reboot'),
     isDownload: isStage('download'),
     isMerge: isStage('merge'),
@@ -127,9 +127,9 @@ export const historyRecoveryMachine = setup({
     },
     /** One face per real stage — `STAGE` moves along them in domain order. */
     restoring: {
-      initial: 'wipe',
+      initial: 'download',
       states: {
-        wipe: { on: stageOn },
+        validate: { on: stageOn },
         reboot: { on: stageOn },
         download: { on: stageOn },
         merge: { on: stageOn },

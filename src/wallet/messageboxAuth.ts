@@ -82,7 +82,7 @@ export function signMessageboxAuth(args: {
   const timestamp = args.timestamp ?? Date.now()
   const nonce =
     args.nonce?.trim() ||
-    Utils.toHex(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)))
+    Utils.toHex(Array.from(crypto.getRandomValues(new Uint8Array(16))))
   const root = PrivateKey.fromHex(args.rootKeyHex.trim())
   const identityKey = root.toPublicKey().toString().toLowerCase()
   const preimage = messageboxAuthPreimage({

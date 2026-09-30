@@ -3,6 +3,7 @@
  * Toolbox IDB is already per-account; these localStorage surfaces were not.
  */
 import { bindAccountLocalKeyScope } from './accountLocalKeys'
+import { resetActivityLedgerForRuntime, scheduleActivityLedgerRefresh } from './activityLedger'
 import { appendAppLog } from './appLog'
 import { reconcileBackupWatchdog } from './backupWatchdog'
 import { bindSyncHealthAccount } from './walletHealth'
@@ -27,6 +28,8 @@ function ensureLifecycleRegistered(): void {
     name: 'account-feature-state',
     start: (runtime) => {
       const wallet = runtime.instance
+      resetActivityLedgerForRuntime()
+      scheduleActivityLedgerRefresh()
       applyWalletOutcome({
         type: 'AccountChanged',
         accountIndex: wallet.accountIndex,
@@ -59,6 +62,7 @@ function ensureLifecycleRegistered(): void {
       )
     },
     dispose: () => {
+      resetActivityLedgerForRuntime()
       bindSyncHealthAccount(null)
       cancelPendingPermissions('wallet-runtime-disposed')
       clearPaymentProgress()

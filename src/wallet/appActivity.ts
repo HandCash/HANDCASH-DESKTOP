@@ -126,18 +126,12 @@ export type ActivityEntry = {
  * signature means nothing a screen cares about moved.
  */
 export function activityRowSignature(entry: ActivityEntry): string {
-  return [
-    entry.id,
-    entry.status ?? "",
-    entry.txid ?? "",
-    entry.at,
-    entry.sats,
-    entry.method,
-    entry.failureReason ?? "",
-    entry.archivedAt ?? "",
-    entry.item?.outpoint ?? "",
-    entry.retry?.kind ?? "",
-  ].join("|");
+  return JSON.stringify([
+    entry.id, entry.origin, entry.kind, entry.status, entry.txid, entry.at,
+    entry.sats, entry.method, entry.note, entry.failureReason, entry.archivedAt,
+    entry.pendingId, entry.sendGroupId, entry.item, entry.burn, entry.retry,
+  ]);
+
 }
 
 /** True when two reads of the same row are interchangeable for the UI. */
@@ -2757,7 +2751,17 @@ export function getActivityById(id: string): ActivityEntry | null {
   const stored = readAll().find((e) => e.id === id);
   if (stored) return stored;
   const ledger = ledgerActivityById(id);
-  return ledger && projectedActivity().includes(ledger) ? ledger : null;
+  if (!ledger) return null;
+  if (projectedActivity().includes(ledger)) return ledger;
+  // An annotation can replace a ledger-only row while its details are open.
+  // Keep that navigation ID and resolve the matching leg, never a sibling.
+  const rows = readAll().filter((row) => row.txid?.toLowerCase() === ledger.txid && row.kind === ledger.kind);
+  const outpoint = normalOutpoint(ledger.item?.outpoint);
+  const annotation = outpoint
+    ? rows.find((row) => normalOutpoint(row.item?.outpoint) === outpoint) ??
+      rows.find((row) => activityRowIsItem(row) && !ledgerIndexOf(ledgerActivitySnapshot()).items.get(ledger.txid!)?.has(normalOutpoint(row.item?.outpoint) ?? ''))
+    : rows.find((row) => !activityRowIsItem(row));
+  return annotation ? { ...annotation, id: ledger.id } : null;
 }
 
 /** Export full local activity (storage-capped) for history backup. */

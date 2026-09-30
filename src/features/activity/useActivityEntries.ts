@@ -1,4 +1,4 @@
-import { useExternalGeneration } from '../../stores/useExternalGeneration'
+import { useMemo, useSyncExternalStore } from 'react'
 import {
   getActivityWriteGeneration,
   listActivityFeed,
@@ -12,9 +12,6 @@ function subscribe(listener: () => void): () => void {
 
 /** Stable React projection of the activity read model. */
 export function useActivityEntries(limit = 500): readonly ActivityEntry[] {
-  return useExternalGeneration(
-    subscribe,
-    getActivityWriteGeneration,
-    () => listActivityFeed(limit),
-  )
+  const generation = useSyncExternalStore(subscribe, getActivityWriteGeneration, getActivityWriteGeneration)
+  return useMemo(() => listActivityFeed(limit), [generation, limit])
 }

@@ -23,6 +23,16 @@ export type Brc39ArchiveMeta = {
 
 const MAX_SNAPSHOTS_PER_IDENTITY = 40
 
+function writeCommittedSnapshot(file: string, bytes: Uint8Array): void {
+  const fd = fs.openSync(file, 'wx', 0o600)
+  try { fs.writeFileSync(fd, Buffer.from(bytes)); fs.fsyncSync(fd) }
+  finally { fs.closeSync(fd) }
+  if (process.platform !== 'win32') {
+    const directory = fs.openSync(path.dirname(file), 'r')
+    try { fs.fsyncSync(directory) } finally { fs.closeSync(directory) }
+  }
+}
+
 function archiveRoot(): string {
   return path.join(app.getPath('userData'), 'brc39-archive')
 }
@@ -123,7 +133,7 @@ export function writeBrc39ArchiveSnapshot(args: {
 
   try {
     // wx = exclusive create — fails if the path already exists (no overwrite).
-    fs.writeFileSync(filePath, Buffer.from(bytes), { flag: 'wx', mode: 0o600 })
+    writeCommittedSnapshot(filePath, bytes)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EEXIST') {
@@ -136,7 +146,7 @@ export function writeBrc39ArchiveSnapshot(args: {
       // Same timestamp collision with different content — write under a unique name.
       const alt = snapshotFilename(exportedAt + 1, digest)
       const altPath = path.join(dir, alt)
-      fs.writeFileSync(altPath, Buffer.from(bytes), { flag: 'wx', mode: 0o600 })
+      writeCommittedSnapshot(altPath, bytes)
       pruneOldest(identityKey)
       const meta = parseSnapshotName(identityKey, dir, alt)
       if (!meta) throw new Error('Failed to record UTXO archive metadata')

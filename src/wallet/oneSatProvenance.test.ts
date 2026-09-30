@@ -513,6 +513,7 @@ describe('keeping a proven lineage for the next send', () => {
       beef: bytesOf(provenance.beefB64),
     })
 
+    rebindOneSatProvenanceForAccount() // Flush the optimisation cache before simulating reload.
     vi.resetModules()
     const fresh = await import('./oneSatProvenance')
     const found = fresh.getRememberedProvenanceRemittance(provenance.tip)

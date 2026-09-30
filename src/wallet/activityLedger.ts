@@ -9,8 +9,7 @@
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
-import type { ActiveWallet } from './session'
-import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
@@ -80,7 +79,7 @@ export function ledgerActivityRows(
     if (basket !== COLLECTABLE_BASKET && basket !== TOKEN_BASKET) continue
     const creator = Number(out.transactionId)
     const txid = out.txid?.trim().toLowerCase() || txidById.get(creator)
-    const outpoint = txid && Number.isInteger(out.vout) ? `${txid}.${out.vout}` : null
+    const outpoint = txid && /^[0-9a-f]{64}$/.test(txid) && Number.isSafeInteger(out.vout) && out.vout! >= 0 ? `${txid}.${out.vout}` : null
     if (creator > 0) note(creator, basket, outpoint ? { outpoint, role: 'created' } : null)
     const spender = Number(out.spentBy)
     if (spender > 0) note(spender, basket, outpoint ? { outpoint, role: 'spent' } : null)
@@ -92,7 +91,7 @@ export function ledgerActivityRows(
     if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue
     const at = timeOf(tx.created_at)
     if (at == null) continue
-    const net = Math.trunc(Number(tx.satoshis) || 0)
+    const net = Number.isSafeInteger(tx.satoshis) ? tx.satoshis! : 0
     const outgoing = tx.isOutgoing === true || net < 0
     const description = tx.description?.trim() || ''
     const items = itemsOf.get(Number(tx.transactionId))
@@ -179,7 +178,9 @@ function sameRows(a: readonly ActivityEntry[], b: readonly ActivityEntry[]): boo
   for (let i = 0; i < a.length; i += 1) {
     const x = a[i]!
     const y = b[i]!
-    if (x.id !== y.id || x.at !== y.at || x.sats !== y.sats || x.note !== y.note) return false
+    if (x.id !== y.id || x.at !== y.at || x.sats !== y.sats || x.note !== y.note ||
+        x.kind !== y.kind || x.method !== y.method || x.item?.outpoint !== y.item?.outpoint ||
+        x.item?.origin !== y.item?.origin) return false
   }
   return true
 }
@@ -202,6 +203,7 @@ export function publishActivityLedger(namespace: string, rows: ActivityEntry[]):
 }
 
 type LedgerReader = {
+  findUsers: (args: unknown) => Promise<unknown>
   findTransactions: (args: unknown) => Promise<unknown>
   findOutputs: (args: unknown) => Promise<unknown>
   findOutputBaskets: (args: unknown) => Promise<unknown>
@@ -209,22 +211,30 @@ type LedgerReader = {
 
 const asRows = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 
-async function readLedger(active: ActiveWallet): Promise<ActivityEntry[] | null> {
+async function readLedger(runtime: WalletRuntime): Promise<ActivityEntry[] | null> {
+  const active = runtime.instance
   const storage = active.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
   const { txs, outputs, baskets } = await storage.runAsStorageProvider(async (raw) => {
     const sp = raw as unknown as LedgerReader
+    const users = asRows<{ userId: number }>(await sp.findUsers({ partial: { identityKey: active.identityKey } }))
+    if (users.length !== 1 || !Number.isSafeInteger(users[0]?.userId) || users[0]!.userId <= 0) {
+      throw new Error('Activity ledger wallet owner is unavailable')
+    }
+    if (!runtimeIsCurrent(runtime)) throw new DOMException('Activity account changed', 'AbortError')
+    const userId = users[0]!.userId
     const [txs, baskets] = await Promise.all([
-      sp.findTransactions({ partial: {}, status: [...SETTLED_STATUSES], noRawTx: true }),
-      sp.findOutputBaskets({ partial: {} }),
+      sp.findTransactions({ partial: { userId }, status: [...SETTLED_STATUSES], noRawTx: true }),
+      sp.findOutputBaskets({ partial: { userId } }),
     ])
+    if (!runtimeIsCurrent(runtime)) throw new DOMException('Activity account changed', 'AbortError')
     const itemBaskets = asRows<LedgerBasket>(baskets).filter((b) => {
       const name = String(b.name ?? '').toLowerCase()
       return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
     })
     const outputs = await Promise.all(
       itemBaskets.map((b) =>
-        sp.findOutputs({ partial: { basketId: b.basketId }, noScript: true }),
+        sp.findOutputs({ partial: { userId, basketId: b.basketId }, noScript: true }),
       ),
     )
     return {
@@ -241,24 +251,29 @@ async function readLedger(active: ActiveWallet): Promise<ActivityEntry[] | null>
 const MIN_REFRESH_GAP_MS = 10_000
 const SETTLE_MS = 2_500
 const SPEND_YIELD_MS = 2_000
+const MAX_FAILURE_GAP_MS = 5 * 60_000
 
-let inFlight: Promise<void> | null = null
+const inFlights = new Map<WalletRuntime, Promise<void>>()
 let timer: ReturnType<typeof setTimeout> | null = null
 let lastRefreshAt = 0
 let logged = false
+let failures = 0
 
 /** Read the ledger now for this runtime. Concurrent calls share one read. */
 export function refreshActivityLedger(
   runtime: WalletRuntime | null = getWalletRuntime(),
 ): Promise<void> {
   if (!runtime) return Promise.resolve()
-  if (inFlight) return inFlight
-  inFlight = (async () => {
+  if (!runtimeIsCurrent(runtime)) return Promise.resolve()
+  const current = inFlights.get(runtime)
+  if (current) return current
+  const flight = (async () => {
     const started = Date.now()
     lastRefreshAt = started
     try {
-      const rows = await readLedger(runtime.instance)
+      const rows = await readLedger(runtime)
       if (!rows || !runtimeIsCurrent(runtime)) return
+      failures = 0
       publishActivityLedger(runtime.storageNamespace, rows)
       const ms = Date.now() - started
       if (!logged || ms >= 250) {
@@ -266,20 +281,27 @@ export function refreshActivityLedger(
         console.info(`[activity-ledger] ${rows.length} row(s) from wallet history done ${ms}ms`)
       }
     } catch (err) {
+      if (!runtimeIsCurrent(runtime)) return
+      failures += 1
       console.warn('[activity-ledger] read failed', err instanceof Error ? err.message : err)
+      scheduleActivityLedgerRefresh()
     } finally {
-      inFlight = null
+      inFlights.delete(runtime)
     }
   })()
-  return inFlight
+  inFlights.set(runtime, flight)
+  return flight
 }
 
 /** Re-read after Activity changes settle; never competes with a spend. */
 export function scheduleActivityLedgerRefresh(): void {
   if (timer || !getWalletRuntime()) return
-  const wait = Math.max(SETTLE_MS, lastRefreshAt + MIN_REFRESH_GAP_MS - Date.now())
+  // A read that keeps failing (no owner row, storage closed) backs off instead
+  // of warning every ten seconds for the whole session.
+  const gap = Math.min(MAX_FAILURE_GAP_MS, MIN_REFRESH_GAP_MS * 2 ** failures)
+  const wait = Math.max(SETTLE_MS, lastRefreshAt + gap - Date.now())
   timer = setTimeout(function fire() {
-    if (shouldYieldChainIngestToSpend()) {
+    if (shouldYieldChainIngestToSpend() || spendNeedsStorage()) {
       timer = setTimeout(fire, SPEND_YIELD_MS)
       return
     }
@@ -288,11 +310,22 @@ export function scheduleActivityLedgerRefresh(): void {
   }, wait)
 }
 
-export function resetActivityLedgerForTests(): void {
+export function resetActivityLedgerForRuntime(): void {
   if (timer) clearTimeout(timer)
   timer = null
-  inFlight = null
   snapshot = null
   lastRefreshAt = 0
   logged = false
+  failures = 0
+  for (const cb of listeners) cb()
+}
+
+export function resetActivityLedgerForTests(): void {
+  if (timer) clearTimeout(timer)
+  timer = null
+  inFlights.clear()
+  snapshot = null
+  lastRefreshAt = 0
+  logged = false
+  failures = 0
 }

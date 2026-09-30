@@ -162,8 +162,8 @@ export function App() {
 
   const promptOpen = pendingPrompt !== null
   useEffect(() => {
-    window.handcash?.notePromptOpen?.(promptOpen)
-  }, [promptOpen])
+    window.handcash?.notePromptOpen?.(promptOpen, pendingPrompt?.kind === 'action' ? pendingPrompt.bridgeRequestId : undefined)
+  }, [promptOpen, pendingPrompt])
 
   useEffect(() => {
     if (!window.handcash?.onHttpRequestCancelled) return

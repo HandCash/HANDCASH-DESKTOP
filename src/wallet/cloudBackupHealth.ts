@@ -1,3 +1,4 @@
+import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 
 /**
@@ -75,12 +76,12 @@ export function ensureHistoryBackupUrlFromConfig(): string {
   return ''
 }
 
-async function probeRemoteBrc39Exists(identityKey: string): Promise<{
+async function probeRemoteBrc39Exists(identityKey: string, rootKeyHex: string): Promise<{
   exists: boolean
   exportedAt: number | null
 }> {
   const url = historyBackupObjectUrl(identityKey)
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(rootKeyHex, 'history', url, {
     method: 'HEAD',
     headers: { Accept: 'application/vnd.brc39.wallet, application/octet-stream, */*' },
   })
@@ -149,7 +150,7 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
   }
 
   try {
-    const meta = await probeRemoteBrc39Exists(active.identityKey)
+    const meta = await probeRemoteBrc39Exists(active.identityKey, active.rootKeyHex)
     if (!meta.exists) {
       // Local already pushed — treat as ok even if HEAD briefly lags.
       if (prefs.lastUploadedAt) {

@@ -72,8 +72,17 @@ export function flushDurableStore(): boolean {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     // Atomic-ish replace to reduce torn writes.
     const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(cache), 'utf8')
+    const fd = fs.openSync(tmp, 'w', 0o600)
+    try {
+      fs.writeFileSync(fd, JSON.stringify(cache), 'utf8')
+      fs.fsyncSync(fd)
+    } finally { fs.closeSync(fd) }
     fs.renameSync(tmp, file)
+    // POSIX rename durability requires the parent directory to be committed too.
+    if (process.platform !== 'win32') {
+      const dir = fs.openSync(path.dirname(file), 'r')
+      try { fs.fsyncSync(dir) } finally { fs.closeSync(dir) }
+    }
     return true
   } catch (err) {
     log.error('durable store flush failed', err)
@@ -107,7 +116,7 @@ function isVaultKey(key: string): boolean {
 function requiresCommittedWrite(key: string): boolean {
   // Recoverable signed bodies, outboxes, input ownership, and authentication
   // enrollment must reach disk before the renderer receives success.
-  return isVaultKey(key) || /^(?:handcash\.wallet\.(?:signedChequeArchive|pendingMinerOutbox|utxoLocks)|handcash\.brc29\.pendingOutbox|handcash\.item\.pendingOutbox|handcash\.brc100\.deviceDek|handcash\.createdBeef|handcash\.autoPayReservations)/.test(key)
+  return isVaultKey(key) || /^(?:handcash\.wallet\.(?:signedChequeArchive|pendingMinerOutbox|utxoLocks)|handcash\.brc29\.pendingOutbox|handcash\.item\.pendingOutbox|handcash\.brc100\.deviceDek|handcash\.createdBeef|handcash\.autoPayReservations|handcash\.toolboxDatabasePointer)/.test(key)
 }
 
 function canSeal(): boolean {

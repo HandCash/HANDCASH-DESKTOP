@@ -1,3 +1,4 @@
+import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 
 /**
@@ -158,7 +159,7 @@ export async function uploadFriendsBackup(): Promise<{ url: string; count: numbe
   assertDeviceLinkBackupUrl()
   const friends = listFriends()
   const url = friendsBackupObjectUrl(active.identityKey)
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -184,7 +185,7 @@ export async function downloadAndMergeFriendsBackup(): Promise<number> {
   if (!active) throw new Error('Unlock the wallet first')
   assertDeviceLinkBackupUrl()
   const url = friendsBackupObjectUrl(active.identityKey)
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'GET',
     headers: { Accept: 'application/json, */*' },
   })
@@ -209,7 +210,7 @@ export async function uploadActivityBackup(): Promise<{ url: string; count: numb
   const { exportAllActivity } = await import('./appActivity')
   const entries = exportAllActivity()
   const url = activityBackupObjectUrl(active.identityKey)
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -235,7 +236,7 @@ export async function downloadAndMergeActivityBackup(): Promise<number> {
   if (!active) throw new Error('Unlock the wallet first')
   assertDeviceLinkBackupUrl()
   const url = activityBackupObjectUrl(active.identityKey)
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'GET',
     headers: { Accept: 'application/json, */*' },
   })

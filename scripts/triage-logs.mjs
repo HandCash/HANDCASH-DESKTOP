@@ -1208,6 +1208,7 @@ function listingPhaseFacts(events) {
 
 const NATIVE_CRASH_RE = /^\[native-crash\] ([\s\S]+)$/
 const KEPT_CHANGE_RE = /^\[stale-output\] kept (\d+) spendable output\(s\) of ([0-9a-f]{12})/
+const BACKUP_MISS_RE = /^\[cloud-backup\] ((?:skip (?:push|upload|schedule)|auto-sync (?:skipped|failed)|refusing to encrypt|export rejected|deferral budget spent|defer(?:red)? )[\s\S]*)$/
 const HISTORY_EVENTS = [
   ['replace', /^\[cloud-backup\] replace local history — wiping (\S+)/],
   ['restore', /^\[cloud-backup\] restored (\d+) bytes via (\S+) \(inserts=(\d+) updates=(\d+)\)/],
@@ -1263,10 +1264,22 @@ function historyReplicaFacts(events) {
   })
   const writes = timeline.filter((r) => r.kind === 'replace' || r.kind === 'restore' || r.kind === 'archiveRestore')
   const firstWrite = writes[0]?.s
+  // Every push that did not end in an upload, grouped by reason: a wallet with
+  // zero uploads and no row here never attempted one.
+  const pushMisses = new Map()
+  for (const e of events) {
+    const m = BACKUP_MISS_RE.exec(e.text)
+    if (!m) continue
+    const family = m[1].replace(/\d[\d.,]*(MB|ms|s)?/g, 'N').replace(/\s+/g, ' ').slice(0, 160)
+    const row = pushMisses.get(family) ?? { reason: family, count: 0 }
+    row.count++
+    pushMisses.set(family, row)
+  }
   return {
     replaces: timeline.filter((r) => r.kind === 'replace').length,
     restores: timeline.filter((r) => r.kind === 'restore').length,
     uploads: timeline.filter((r) => r.kind === 'upload').length,
+    pushMisses: [...pushMisses.values()].sort((a, b) => b.count - a.count).slice(0, 10),
     pinMissesAfterLocalStateWrite: firstWrite == null ? 0 : pinMisses.filter((p) => p.s >= firstWrite).length,
     pinMisses: [...new Map(pinMisses.map((p) => [p.txid, p])).values()].slice(0, 12),
     keptChange: keptChange.slice(0, 12),

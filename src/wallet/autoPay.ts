@@ -40,6 +40,12 @@ function readReservations(key = accountLocalKey(RESERVATION_KEY)): ReservedPayme
  */
 export function reserveAutoPayPayment(origin: string | undefined, amountSats: number): AutoPayReservation | null {
   if (!canAutoProcessPayment(origin, 'createAction', amountSats)) return null
+  return reserveApprovedPayment(origin, amountSats)
+}
+
+/** Record explicit approvals too: Activity compaction must not reset the budget. */
+export function reserveApprovedPayment(origin: string | undefined, amountSats: number): AutoPayReservation | null {
+  if (!Number.isSafeInteger(amountSats) || amountSats <= 0) return null
   const key = accountLocalKey(RESERVATION_KEY)
   const rows = readReservations(key)
   if (!rows) return null
@@ -114,7 +120,7 @@ function readStore(): Store {
           : DEFAULT_AUTO_PAY_MAX_USD
       const windowHours =
         typeof value.windowHours === 'number' && value.windowHours > 0
-          ? value.windowHours
+          ? Math.max(1, Math.min(744, Math.trunc(value.windowHours)))
           : DEFAULT_AUTO_PAY_WINDOW_HOURS
       const maxSats =
         typeof value.maxSats === 'number' &&

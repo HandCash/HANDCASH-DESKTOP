@@ -23,6 +23,13 @@ import { appendAppLog } from './appLog'
  */
 export const HISTORY_DOCUMENT_BUDGET_BYTES = 64 * 1024 * 1024
 
+/**
+ * Largest encrypted backup the history host stores and a download accepts:
+ * BRC-CLOUD's PUT cap, under the Workers 100MB request ceiling. Downloads must
+ * keep accepting backups written before the document budget above existed.
+ */
+export const HISTORY_BACKUP_MAX_BYTES = 96 * 1024 * 1024
+
 /** Growth past this is worth a warning while backups still succeed. */
 const HISTORY_DOCUMENT_WARN_BYTES = HISTORY_DOCUMENT_BUDGET_BYTES / 2
 
@@ -51,7 +58,7 @@ export class HistoryDocumentTooLargeError extends Error {
     super(
       `BRC-38 document is ${mib(bytes)} — over the ${mib(
         HISTORY_DOCUMENT_BUDGET_BYTES,
-      )} history backup budget. Encrypting it would crash the wallet.`,
+      )} history backup budget. Reduce the history size before uploading.`,
     )
   }
 }
@@ -100,7 +107,7 @@ export function formatBrc38TableSizes(sizes: Brc38TableSize[]): string {
  * The breakdown is only computed when it matters — it costs a scan per table.
  */
 export function assertHistoryDocumentEncryptable(json: string): void {
-  const bytes = json.length
+  const bytes = new TextEncoder().encode(json).byteLength
   if (bytes < HISTORY_DOCUMENT_WARN_BYTES) return
 
   const breakdown = formatBrc38TableSizes(summarizeBrc38TableSizes(json))

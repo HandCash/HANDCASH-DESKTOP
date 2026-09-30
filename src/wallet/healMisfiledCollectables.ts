@@ -8,10 +8,10 @@ import { getActiveWallet } from './session'
  */
 import {
   BSV21_BASKET,
-  decodeBsv21Binary,
   isBsv21Mime,
   parseBsv21Json,
-} from './token'
+} from './token/types'
+import { decodeBsv21Binary } from './token/decode162'
 import {
   isRetiredFungibleMime,
   looksLikeRetiredFungibleTip,

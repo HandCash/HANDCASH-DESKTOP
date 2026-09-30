@@ -12,7 +12,7 @@
  * layouts, and the Mobile build ships an exports map that seals deep paths off.
  * The root entry is the only specifier that resolves in both.
  */
-import { decryptBRC39, encryptBRC39 } from '@bsv/wallet-toolbox-client'
+import { decryptBRC39, encryptBRC39, type BRC38WalletData } from '@bsv/wallet-toolbox-client'
 import { peerSnapshotFromBrc38, type PeerSnapshot } from './peerSnapshot'
 
 export type Brc39EncryptRequest = {
@@ -29,7 +29,11 @@ export type Brc39SnapshotRequest = {
   password: string
 }
 
-export type Brc39WorkerRequest = Brc39EncryptRequest | Brc39SnapshotRequest
+export type Brc39DocumentRequest = Omit<Brc39SnapshotRequest, 'kind'> & { kind: 'document' }
+export type Brc39DocumentResponse =
+  | { id: number; ok: true; document: BRC38WalletData }
+  | { id: number; ok: false; error: string }
+export type Brc39WorkerRequest = Brc39EncryptRequest | Brc39SnapshotRequest | Brc39DocumentRequest
 
 export type Brc39EncryptResponse =
   | { id: number; ok: true; bytes: Uint8Array }
@@ -46,6 +50,11 @@ ctx.onmessage = (event: MessageEvent<Brc39WorkerRequest>) => {
   const { id } = request
   void (async () => {
     try {
+      if (request.kind === 'document') {
+        const document = await decryptBRC39(request.bytes, request.password)
+        ctx.postMessage({ id, ok: true, document } satisfies Brc39DocumentResponse)
+        return
+      }
       if (request.kind === 'snapshot') {
         const doc = await decryptBRC39(request.bytes, request.password)
         const reply: Brc39SnapshotResponse = { id, ok: true, snapshot: peerSnapshotFromBrc38(doc) }

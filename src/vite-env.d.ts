@@ -98,7 +98,7 @@ interface HandCashBridge {
   ) => () => void
   respondHttp: (response: HttpResponseEvent) => void
   /** A permission prompt opened or closed; the bridge holds deadlines while one is open. */
-  notePromptOpen?: (open: boolean) => void
+  notePromptOpen?: (open: boolean, requestId?: number) => void
   respondDevicePeerHttp?: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
   /**

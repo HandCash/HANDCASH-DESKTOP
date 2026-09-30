@@ -1,3 +1,4 @@
+import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 
 /**
@@ -11,12 +12,14 @@ import { getActiveWallet } from './session'
  */
 import {
   exportBRC38Json,
+  importBRC38,
+  SetupClient,
   importBRC39,
   type BRC38ImportResult,
   type StorageProvider,
 } from '@bsv/wallet-toolbox-client'
 import { appendAppLog } from './appLog'
-import { encryptBrc39Document } from './brc39Encrypt'
+import { encryptBrc39Document, decryptBrc39Document } from './brc39Encrypt'
 import { historyCryptoSecret } from './historyCryptoSecret'
 import {
   getHistoryBackupPrefs,
@@ -25,7 +28,7 @@ import {
   setHistoryBackupPrefs,
   setSpendableHighWaterFromPush,
 } from './historyBackupPrefs'
-import { clearActiveWallet, bootWallet } from './session'
+import { bootWallet } from './session'
 import { revealRootKeyHex } from './vault'
 import { refreshCloudBackupHealth } from './cloudBackupHealth'
 import {
@@ -40,7 +43,7 @@ import {
   type ProvenTxReqHistoryStore,
 } from './brc38HistoryRepair'
 import { decideHistoryPush } from './historyEmptyGuard'
-import { assertHistoryDocumentEncryptable } from './historyDocumentBudget'
+import { assertHistoryDocumentEncryptable, HISTORY_BACKUP_MAX_BYTES } from './historyDocumentBudget'
 import { inspectLocalToolboxState } from './layers'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
@@ -326,9 +329,10 @@ export async function uploadBrc39Backup(
     `[cloud-backup] uploading ${bytes.byteLength} bytes → ${url} (spendable=${local.spendableSats} actions=${local.actionCount})`,
   )
 
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'PUT',
     headers: {
+      ...(remote?.etag ? { 'If-Match': remote.etag } : {}),
       'Content-Type': BRC39_MEDIA,
       Accept: 'application/json, application/octet-stream, */*',
       'X-HandCash-Exported-At': String(exportedAt),
@@ -365,6 +369,7 @@ export async function fetchRemoteBrc39Meta(): Promise<{
   bytes: number | null
   spendableSats: number | null
   actionCount: number | null
+  etag?: string | null
 } | null> {
   const active = getActiveWallet()
   if (!active) return null
@@ -376,7 +381,7 @@ export async function fetchRemoteBrc39Meta(): Promise<{
     return null
   }
   try {
-    const res = await fetch(url, {
+    const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
       method: 'HEAD',
       headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
     })
@@ -395,6 +400,7 @@ export async function fetchRemoteBrc39Meta(): Promise<{
     const len = res.headers.get('Content-Length')
     return {
       exists: true,
+      etag: res.headers.get('ETag'),
       exportedAt: Number.isFinite(exportedAt) && exportedAt! > 0 ? exportedAt : null,
       bytes: len ? Number(len) : null,
       spendableSats: parseOptionalIntHeader(res, 'X-HandCash-Spendable-Sats'),
@@ -418,14 +424,14 @@ export async function fetchRemoteBrc39Bytes(): Promise<{
   } catch {
     return null
   }
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'GET',
     headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
   })
   if (!res.ok) return null
   const exportedAt = Number(res.headers.get('X-HandCash-Exported-At') || '')
   return {
-    bytes: new Uint8Array(await res.arrayBuffer()),
+    bytes: await readBoundedBackup(res),
     exportedAt: Number.isFinite(exportedAt) && exportedAt > 0 ? exportedAt : null,
   }
 }
@@ -435,7 +441,7 @@ export async function fetchRemoteBrc39Bytes(): Promise<{
  * `HistoryRestoreProgress.onStage` so a panel's progress is a projection of
  * work done. Domain code only; no UI imports.
  */
-export type HistoryRestoreDomainStage = 'wipe' | 'reboot' | 'download' | 'merge'
+export type HistoryRestoreDomainStage = 'download' | 'validate' | 'merge' | 'reboot'
 
 export type HistoryRestoreProgress = {
   onStage?: (stage: HistoryRestoreDomainStage) => void
@@ -461,7 +467,7 @@ async function downloadAndRestoreBrc39BackupExclusive(
   const url = historyBackupObjectUrl(active.identityKey, prefs)
 
   progress?.onStage?.('download')
-  const res = await fetch(url, {
+  const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'GET',
     headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
   })
@@ -472,7 +478,7 @@ async function downloadAndRestoreBrc39BackupExclusive(
   }
 
   const remoteExportedAt = Number(res.headers.get('X-HandCash-Exported-At') || '')
-  const buf = new Uint8Array(await res.arrayBuffer())
+  const buf = await readBoundedBackup(res)
   progress?.onStage?.('merge')
   const result = await withActiveStorageProvider((storage) =>
     importBrc39Bytes(storage, buf, active.rootKeyHex, password, 'merge'),
@@ -503,83 +509,93 @@ async function downloadAndRestoreBrc39BackupExclusive(
   return result
 }
 
-function deleteIdbDatabase(name: string): Promise<void> {
-  return new Promise((resolve) => {
-    try {
-      const req = indexedDB.deleteDatabase(name)
-      req.onsuccess = () => resolve()
-      req.onerror = () => resolve()
-      req.onblocked = () => resolve()
-    } catch {
-      resolve()
-    }
-  })
-}
-
-/**
- * Recovery / replace: wipe this wallet's toolbox IndexedDB, reboot, then merge
- * remote BRC-39 into a clean localState. Avoids LWW merge against soft-latch
- * dust that raced a prior pull (under-restored spendable balance).
- *
- * Keeps the sealed vault (keys). History decrypt uses the root key (optional
- * unlock password only for legacy blobs).
- */
+/** Recover into a separate database. The current ledger is never deleted.
+ * Validate and import fully before selecting the replacement; on boot failure
+ * select and reopen the original database. A process death at the selection
+ * boundary leaves either the original or a complete replacement selected. */
 export async function replaceLocalHistoryFromCloud(
   password?: string | null,
   progress?: HistoryRestoreProgress,
 ): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
-  const { rootKeyHex, handle, chain, identityKey, accountIndex, masterRootKeyHex, mnemonic } =
-    active
-  const { toolboxDatabaseName } = await import('./vaultAccounts')
-  const dbName = toolboxDatabaseName({ chain, handle, accountIndex })
-
-  appendAppLog(
-    'info',
-    `[cloud-backup] replace local history — wiping ${dbName} then pulling BRC-39`,
-  )
-
-  // The snapshot can be older than this store; change made since is spendable
-  // only through derivations held in the rows about to be deleted.
-  const { echoAllDerivedOutputs, recoverEchoedChange } = await import('./reimportDerivedChange')
-  await echoAllDerivedOutputs(active)
-
+  const { rootKeyHex, handle, chain, identityKey, accountIndex, masterRootKeyHex, mnemonic } = active
+  progress?.onStage?.('download')
+  const url = historyBackupObjectUrl(identityKey, getHistoryBackupPrefs())
+  const response = await signedIdentityFetch(rootKeyHex, 'history', url)
+  if (!response.ok) throw new Error(`Download failed (${response.status})`)
+  const bytes = await readBoundedBackup(response)
+  progress?.onStage?.('validate')
+  let crypto: HistoryCryptoPath = 'root-key'
+  let document
+  try { document = await decryptBrc39Document(bytes, historyCryptoSecret(rootKeyHex)) }
+  catch (error) {
+    if (!password?.trim()) throw error
+    document = await decryptBrc39Document(bytes, password.trim())
+    crypto = 'legacy-password'
+  }
+  if (document.user.identityKey !== identityKey || document.sourceStorage.chain !== chain) {
+    throw new Error('Backup identity or chain does not match this wallet')
+  }
+  const { toolboxDatabaseName, originalToolboxDatabaseName, selectToolboxDatabase } = await import('./vaultAccounts')
+  const account = { chain, handle, accountIndex }
+  const original = toolboxDatabaseName(account)
+  const replacement = originalToolboxDatabaseName(account) + '-restore-' + globalThis.crypto.randomUUID()
+  const stage = await SetupClient.createStorageIdb({ chain, rootKeyHex, databaseName: replacement })
+  let result: BRC38ImportResult
   try {
+    progress?.onStage?.('merge')
+    result = await importBRC38(stage, document, { mode: 'merge' })
+  } finally { await stage.destroy() }
+  // No network/crypto remains inside the wallet's exclusive mutation region.
+  await runHistoryReplica(async () => {
+    if (getActiveWallet() !== active || toolboxDatabaseName(account) !== original) {
+      throw new Error('Wallet changed during recovery; original history retained')
+    }
+    const { echoAllDerivedOutputs, recoverEchoedChange } = await import('./reimportDerivedChange')
+    await echoAllDerivedOutputs(active)
+    selectToolboxDatabase(account, replacement)
     active.monitor?.stopTasks?.()
-  } catch {
-    /* optional */
-  }
-  progress?.onStage?.('wipe')
-  clearActiveWallet()
-  await deleteIdbDatabase(dbName)
+    progress?.onStage?.('reboot')
+    try {
+      const next = await bootWallet({ rootKeyHex, handle, chain, accountIndex, masterRootKeyHex, mnemonic })
+      if (next.identityKey !== identityKey) throw new Error('Replacement wallet identity mismatch')
+      await recoverEchoedChange(next)
+    } catch (error) {
+      selectToolboxDatabase(account, original)
+      await bootWallet({ rootKeyHex, handle, chain, accountIndex, masterRootKeyHex, mnemonic })
+      throw error
+    }
+  })
+  if (crypto === 'legacy-password') scheduleRootKeyMigratePush()
+  setHistoryBackupPrefs({ lastError: null })
+  appendAppLog('info', `[cloud-backup] recovered into ${replacement}; original retained at ${original}`)
+  void refreshCloudBackupHealth()
+  return { ...result, crypto }
+}
 
-  progress?.onStage?.('reboot')
-  await bootWallet({ rootKeyHex, handle, chain, accountIndex, masterRootKeyHex, mnemonic })
-  const next = getActiveWallet()
-  if (!next || next.identityKey !== identityKey) {
-    throw new Error('Wallet reboot after history wipe failed')
-  }
-
-  const result = await downloadAndRestoreBrc39Backup(password, progress)
+export async function readBoundedBackup(response: Response): Promise<Uint8Array<ArrayBuffer>> {
+  const max = HISTORY_BACKUP_MAX_BYTES
+  const tooLarge = `Backup exceeds ${max / (1024 * 1024)} MB`
+  if (Number(response.headers.get('Content-Length')) > max) throw new Error(tooLarge)
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('Empty backup')
+  const chunks: Uint8Array[] = []
+  let size = 0
   try {
-    await recoverEchoedChange(next)
-  } catch (err) {
-    console.warn('[derived-change] echo recovery after replace failed', err)
-  }
-  try {
-    const { inspectLocalToolboxState } = await import('./layers')
-    const { fetchBalanceSats } = await import('./session')
-    const state = await inspectLocalToolboxState()
-    const managed = await fetchBalanceSats(next.wallet)
-    appendAppLog(
-      'info',
-      `[cloud-backup] after replace: managed=${managed} defaultOuts=${state.defaultOutputCount} actions=${state.actionCount} oneSat=${state.oneSatOutputCount} crypto=${result.crypto}`,
-    )
-  } catch {
-    /* diagnostic only */
-  }
-  return result
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > max) { await reader.cancel(); throw new Error(tooLarge) }
+      chunks.push(value)
+    }
+  } finally { reader.releaseLock() }
+  const out = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength }
+  if (size < 64) throw new Error('Backup is too small')
+  return out
 }
 
 /** Merge a write-once on-device UTXO snapshot back into localState. */

@@ -29,7 +29,7 @@ const LEGACY_PASSWORD_HINT = /decrypt|password|passphrase|auth|mac|argon|gcm|cip
 /**
  * Post-restore gate: keys are sealed; replace local toolbox state from BRC-39
  * using the root key. When a remote backup exists we pull automatically —
- * local IndexedDB is wiped first, then merged from cloud (never an empty PUT
+ * cloud history is validated in a separate database before switching (never an empty PUT
  * over remote; push stays deferred on the restore path).
  *
  * Every face here is `historyRecoveryMachine`: the probe outcome, the six

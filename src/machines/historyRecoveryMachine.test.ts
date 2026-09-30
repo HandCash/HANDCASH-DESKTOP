@@ -21,7 +21,7 @@ describe('historyRecoveryMachine', () => {
     const actor = createActor(historyRecoveryMachine).start()
     expect(actor.getSnapshot().matches('probing')).toBe(true)
     expect(historyRestoreProgress(actor.getSnapshot())).toBeNull()
-    expect(historyRestoreStageFace(actor.getSnapshot(), 'wipe')).toBe('pending')
+    expect(historyRestoreStageFace(actor.getSnapshot(), 'download')).toBe('pending')
   })
 
   it('classifies the probe: found keeps the size, missing is terminal, unreachable keeps the reason', () => {
@@ -43,7 +43,7 @@ describe('historyRecoveryMachine', () => {
   it('walks the stages in domain order and projects a bar that moves from the first stage', () => {
     const actor = foundActor()
     actor.send({ type: 'RESTORE' })
-    expect(actor.getSnapshot().matches({ restoring: 'wipe' })).toBe(true)
+    expect(actor.getSnapshot().matches({ restoring: 'download' })).toBe(true)
     expect(historyRestoreProgress(actor.getSnapshot())).toEqual({
       value: 0.5,
       max: HISTORY_RESTORE_STAGES.length,
@@ -94,7 +94,7 @@ describe('historyRecoveryMachine', () => {
     expect(historyRestoreProgress(actor.getSnapshot())).toBeNull()
 
     actor.send({ type: 'RESTORE' })
-    expect(actor.getSnapshot().matches({ restoring: 'wipe' })).toBe(true)
+    expect(actor.getSnapshot().matches({ restoring: 'download' })).toBe(true)
     expect(actor.getSnapshot().context.error).toBeNull()
   })
 
