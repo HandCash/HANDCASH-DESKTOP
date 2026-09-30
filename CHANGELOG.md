@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.386] - 2026-09-30
+
+Activity no longer loses history.
+
+### Fixed
+
+- **Activity is a view of the wallet's own ledger** (`activityLedger`, `appActivity.listActivityFeed`). Its base is the Toolbox transaction table, read live, which the BRC-39 backup already carries. Stored rows only add what that table cannot say: which app, which item, pending and failed sends, and events. Rows that storage dropped reappear at their real time. Nothing comes from an indexer and nothing is persisted twice. Wallet logic (rebroadcast, peer re-delivery, item verification) still reads stored rows only.
+- **One transaction can be several activities.** A send to yourself or a purchase from yourself keeps both legs. Each item's direction comes from the output it moved, so a mint reads as received rather than sent.
+- **Full storage sheds what the ledger still shows** (`appActivity.writeAll`). It sheds plain settled rows first, then annotated ones. The oldest rows are dropped only after that, and the log says which of the two happened. Inlined `data:` item art is no longer stored. 19 pictures had filled the whole 512 KB budget and pushed every older row out.
+- **Verification never moves a row in time.** A late annotation, such as an item finishing verification, keeps the transaction's own time instead of jumping to the top.
+- **Cloud backup backoff clears after an upgrade** (`accountLocalStores`). The watchdog is reconciled once the account's keys exist; before unlock it silently did nothing, leaving backups paused for up to 12 hours.
+
 ## [1.3.385] - 2026-09-30
 
 First fixes from the 2026-09-30 security review.
