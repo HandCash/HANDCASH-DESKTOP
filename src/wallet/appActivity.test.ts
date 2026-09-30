@@ -503,6 +503,31 @@ describe("inbound receive activity", () => {
     expect(ids).not.toContain("rich-0");
   });
 
+  it("never lets inlined item art push history out of storage", () => {
+    const art = `data:image/png;base64,${"A".repeat(26_000)}`;
+    const rows = Array.from({ length: 90 }, (_, i) =>
+      entry({
+        id: `row-${i}`,
+        at: i,
+        txid: i.toString(16).padStart(64, "0"),
+        ...(i % 4 === 0
+          ? { item: { name: `Fox ${i}`, origin: `${TX}_${i}`, outpoint: `${TX}.${i}`, imageUrl: art } }
+          : {}),
+      })
+    );
+
+    mergeActivityEntries(rows);
+
+    const kept = exportAllActivity();
+    expect(kept).toHaveLength(90);
+    expect(kept.find((row) => row.id === "row-0")?.item).toEqual({
+      name: "Fox 0",
+      origin: `${TX}_0`,
+      outpoint: `${TX}.0`,
+    });
+    expect(store.get("handcash.brc100.appActivity")!).not.toContain("data:image");
+  });
+
   it("shows a verifying payment in Activity before internalize finishes", () => {
     noteInboundReceivePending({ txid: TX, sats: 12_345 });
     const rows = listRecentActivity(10);

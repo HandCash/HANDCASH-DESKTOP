@@ -23,7 +23,7 @@ import {
   type VerificationProgress,
 } from '../wallet/verificationProgress'
 import { getGenesisFailure, getProvenVerdict } from '../wallet/provenCache'
-import { listRecentActivity, subscribeAppActivity } from '../wallet/appActivity'
+import { listActivityFeed, subscribeAppActivity } from '../wallet/appActivity'
 import { itemHistory } from '../wallet/itemHistory'
 import { AssetHistoryList } from './AssetHistoryList'
 import {
@@ -405,7 +405,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   )
 
   const authenticity = authenticityView(item, verification)
-  const history = itemHistory(item, listRecentActivity(200))
+  const history = itemHistory(item, listActivityFeed(200))
 
   return (
     <div

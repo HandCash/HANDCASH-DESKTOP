@@ -14,6 +14,8 @@ import { getActiveWallet } from './session'
  * balanceView    what UI shows: owned cash = spendable managed change
  *                + unconfirmed change of live local sends (never payment outs,
  *                never 1sat / bsv21). See `balanceView.ts`.
+ *                Activity is the same kind of view: stored annotations over
+ *                the localState transaction table (`activityLedger.ts`).
  * health         chain ingest health ⊕ history replica health ⊕ bridge
  * coordinator    walletCoordinatorMachine — legal overlaps between layers (UTXO safety)
  * runtime        one account instance + namespace + generation + abort signal;
@@ -40,6 +42,13 @@ import { getActiveWallet } from './session'
  *   (`unconfirmed`). `headerProven` is inclusion. Pay `pendingChange` is
  *   unconfirmed SPV we own, not a processor queue. Arcade accept is cashing
  *   started, not landed — the landing watch closes it.
+ * - **Activity** → a view, not a record. Its base is the Toolbox transaction
+ *   table read live (`activityLedger.ts`), which the BRC-39 replica already
+ *   carries; stored rows (`appActivity.ts`) add only what the table cannot
+ *   say — app, item identity, pending/failed sends, events. One transaction
+ *   may be several activities (a send to yourself, a batch). Storage pressure
+ *   sheds rows the table still shows first; wallet logic reads stored rows
+ *   only (`listRecentActivity`), display reads the view (`listActivityFeed`).
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
  * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
@@ -302,6 +311,7 @@ export const WALLET_LAYER_MODULES = {
     "balanceView.ts",
     "session.ts#fetchBalanceSats",
     "layers.ts#inspectLocalToolboxState",
+    "activityLedger.ts",
   ],
   health: [
     "walletHealth.ts",

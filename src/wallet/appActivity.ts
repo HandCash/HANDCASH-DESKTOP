@@ -14,6 +14,13 @@ import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 import { announceSpendCompleted } from "./spendAnnounce";
 import { adoptWalletActionId, liveAction, walletAction } from "./actionLifecycle";
+import {
+  ledgerActivityById,
+  ledgerActivitySnapshot,
+  ledgerTimeOfTxid,
+  scheduleActivityLedgerRefresh,
+  subscribeActivityLedger,
+} from "./activityLedger";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
@@ -319,6 +326,11 @@ function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
 /** Bumps on every write — activity feed caches must not serve a pre-write snapshot. */
 let writeGeneration = 0;
 
+subscribeActivityLedger(() => {
+  writeGeneration += 1;
+  for (const cb of listeners) cb();
+});
+
 /** Monotonic generation for feed cache invalidation (remount-safe). */
 
 /** Drop parse cache and notify so Activity reloads the active account store. */
@@ -393,16 +405,202 @@ function announceSettledSpend(
 export const ACTIVITY_DURABLE_MAX_BYTES = 512 * 1024;
 const ACTIVITY_DURABLE_MAX_ROWS = 1000;
 
-function activityBodyWithinBudget(entries: ActivityEntry[]): {
+const encodeActivity = (rows: ActivityEntry[]) =>
+  JSON.stringify({ v: storageRegistry.activity.version, data: rows });
+
+const activityFits = (rows: ActivityEntry[], body: string) =>
+  rows.length <= ACTIVITY_DURABLE_MAX_ROWS &&
+  body.length <= ACTIVITY_DURABLE_MAX_BYTES;
+
+const normalOutpoint = (value: string | undefined): string | null =>
+  value?.trim().toLowerCase().replace("_", ".") || null;
+
+type LedgerIndex = {
+  /** A coin-only transaction's single net-effect row. */
+  money: ReadonlyMap<string, ActivityEntry>;
+  /** Item legs by transaction, keyed by the outpoint each one moved. */
+  items: ReadonlyMap<string, ReadonlyMap<string, ActivityEntry>>;
+};
+
+let ledgerIndexCache: {
+  ledger: readonly ActivityEntry[];
+  index: LedgerIndex;
+} | null = null;
+
+function ledgerIndexOf(ledger: readonly ActivityEntry[]): LedgerIndex {
+  if (ledgerIndexCache?.ledger === ledger) return ledgerIndexCache.index;
+  const money = new Map<string, ActivityEntry>();
+  const items = new Map<string, Map<string, ActivityEntry>>();
+  for (const row of ledger) {
+    const outpoint = normalOutpoint(row.item?.outpoint);
+    if (!outpoint) {
+      money.set(row.txid!, row);
+      continue;
+    }
+    const legs = items.get(row.txid!) ?? new Map<string, ActivityEntry>();
+    legs.set(outpoint, row);
+    items.set(row.txid!, legs);
+  }
+  const index = { money, items };
+  ledgerIndexCache = { ledger, index };
+  return index;
+}
+
+/**
+ * Which ledger rows the stored rows already tell.
+ *
+ * One transaction can be several activities — a send to yourself, a purchase
+ * from yourself, a batch — so coverage is per activity, not per txid. An item
+ * leg is covered by the stored row for that outpoint; a stored item row whose
+ * outpoint the ledger does not know covers that direction's legs rather than
+ * doubling them. A coin-only transaction's net row is covered by any stored
+ * row: the stored rows carry what the net hides.
+ */
+function storedLedgerCoverage(
+  stored: readonly ActivityEntry[],
+  index: LedgerIndex
+): {
+  covers: (row: ActivityEntry) => boolean;
+  rowsByTxid: ReadonlyMap<string, number>;
+  unmatchedItemKinds: ReadonlySet<string>;
+} {
+  const txids = new Map<string, number>();
+  const outpoints = new Set<string>();
+  const unmatchedItemKinds = new Set<string>();
+  for (const entry of stored) {
+    const txid = entry.txid?.toLowerCase();
+    if (!txid) continue;
+    txids.set(txid, (txids.get(txid) ?? 0) + 1);
+    if (!activityRowIsItem(entry)) continue;
+    const outpoint = normalOutpoint(entry.item?.outpoint);
+    if (outpoint && index.items.get(txid)?.has(outpoint)) {
+      outpoints.add(`${txid}:${outpoint}`);
+    } else {
+      unmatchedItemKinds.add(`${txid}:${entry.kind}`);
+    }
+  }
+  return {
+    covers: (row) => {
+      const outpoint = normalOutpoint(row.item?.outpoint);
+      if (!outpoint) return txids.has(row.txid!);
+      return (
+        outpoints.has(`${row.txid}:${outpoint}`) ||
+        unmatchedItemKinds.has(`${row.txid}:${row.kind}`)
+      );
+    },
+    rowsByTxid: txids,
+    unmatchedItemKinds,
+  };
+}
+
+/**
+ * Settled rows the ledger shows by itself once they leave the store, cheapest
+ * to lose first: plain wallet rows before ones carrying an app or item
+ * annotation, oldest first. The ledger must tell that exact activity — a send
+ * to yourself nets to the fee, so neither leg qualifies. An archived row is a
+ * tombstone hiding its ledger row, so it never qualifies either.
+ */
+function ledgerReproducibleOrder(
+  entries: ActivityEntry[],
+  ledgerIsOwners: boolean
+): ActivityEntry[] {
+  if (!ledgerIsOwners) return [];
+  const ledger = ledgerActivitySnapshot();
+  if (ledger.length === 0) return [];
+  const index = ledgerIndexOf(ledger);
+  const { rowsByTxid, unmatchedItemKinds } = storedLedgerCoverage(
+    entries,
+    index
+  );
+  const reproduces = (entry: ActivityEntry, txid: string): boolean => {
+    if (activityRowIsItem(entry)) {
+      const outpoint = normalOutpoint(entry.item?.outpoint);
+      const leg = outpoint ? index.items.get(txid)?.get(outpoint) : undefined;
+      return (
+        leg?.kind === entry.kind &&
+        !unmatchedItemKinds.has(`${txid}:${entry.kind}`)
+      );
+    }
+    const net = index.money.get(txid);
+    return (
+      rowsByTxid.get(txid) === 1 &&
+      net?.kind === entry.kind &&
+      net.sats === entry.sats
+    );
+  };
+  const plain: ActivityEntry[] = [];
+  const annotated: ActivityEntry[] = [];
+  for (const entry of entries) {
+    const txid = entry.txid?.toLowerCase();
+    if (
+      !txid ||
+      entry.status ||
+      isArchivedActivity(entry) ||
+      entry.retry ||
+      !reproduces(entry, txid)
+    ) {
+      continue;
+    }
+    const bare =
+      entry.origin === WALLET_ACTIVITY_ORIGIN && !entry.item && !entry.burn;
+    (bare ? plain : annotated).push(entry);
+  }
+  const byAge = (a: ActivityEntry, b: ActivityEntry) => a.at - b.at;
+  return [...plain.sort(byAge), ...annotated.sort(byAge)];
+}
+
+function activityBodyWithinBudget(
+  entries: ActivityEntry[],
+  ledgerIsOwners: boolean
+): {
   body: string;
   kept: ActivityEntry[];
+  shed: number;
 } {
-  const candidates = entries.slice(-ACTIVITY_DURABLE_MAX_ROWS);
-  const encode = (rows: ActivityEntry[]) =>
-    JSON.stringify({ v: storageRegistry.activity.version, data: rows });
-  let body = encode(candidates);
+  let body = encodeActivity(entries);
+  if (activityFits(entries, body)) return { body, kept: entries, shed: 0 };
+
+  // Rows the ledger reproduces leave the store without leaving the feed. Find
+  // the fewest of them to shed.
+  const order = ledgerReproducibleOrder(entries, ledgerIsOwners);
+  const without = (count: number) => {
+    const gone = new Set(order.slice(0, count));
+    return entries.filter((entry) => !gone.has(entry));
+  };
+  let candidates = entries;
+  let shed = 0;
+  if (order.length > 0) {
+    const all = without(order.length);
+    const allBody = encodeActivity(all);
+    if (activityFits(all, allBody)) {
+      let low = 1;
+      let high = order.length;
+      let best = all;
+      let bestBody = allBody;
+      let bestCount = order.length;
+      while (low <= high) {
+        const count = Math.floor((low + high) / 2);
+        const rows = without(count);
+        const encoded = encodeActivity(rows);
+        if (activityFits(rows, encoded)) {
+          best = rows;
+          bestBody = encoded;
+          bestCount = count;
+          high = count - 1;
+        } else {
+          low = count + 1;
+        }
+      }
+      return { body: bestBody, kept: best, shed: bestCount };
+    }
+    candidates = all;
+    shed = order.length;
+  }
+
+  candidates = candidates.slice(-ACTIVITY_DURABLE_MAX_ROWS);
+  body = encodeActivity(candidates);
   if (body.length <= ACTIVITY_DURABLE_MAX_BYTES) {
-    return { body, kept: candidates };
+    return { body, kept: candidates, shed };
   }
 
   // Find the largest newest suffix that fits. Repeatedly halving after a quota
@@ -411,11 +609,11 @@ function activityBodyWithinBudget(entries: ActivityEntry[]): {
   let low = 1;
   let high = candidates.length;
   let best = candidates.slice(-1);
-  let bestBody = encode(best);
+  let bestBody = encodeActivity(best);
   while (low <= high) {
     const count = Math.floor((low + high) / 2);
     const rows = candidates.slice(-count);
-    const encoded = encode(rows);
+    const encoded = encodeActivity(rows);
     if (encoded.length <= ACTIVITY_DURABLE_MAX_BYTES) {
       best = rows;
       bestBody = encoded;
@@ -424,29 +622,47 @@ function activityBodyWithinBudget(entries: ActivityEntry[]): {
       high = count - 1;
     }
   }
-  return { body: bestBody, kept: best };
+  return { body: bestBody, kept: best, shed };
+}
+
+/**
+ * Item art is resolved at render from the art store, the held item, or its
+ * content URL. An inlined `data:` picture is a second copy of bytes that
+ * already live elsewhere, and 19 of them filled the whole budget and shed
+ * every older row; a `blob:` URL is dead after reload.
+ */
+function storableActivityRow(entry: ActivityEntry): ActivityEntry {
+  const url = entry.item?.imageUrl;
+  if (!url || !/^(data|blob):/i.test(url)) return entry;
+  const { imageUrl: _inlined, ...item } = entry.item!;
+  return { ...entry, item };
 }
 
 function writeAll(
   entries: ActivityEntry[],
   owner?: BoundAccountKeyScope,
 ): void {
-  const trimmed = entries.slice(-ACTIVITY_DURABLE_MAX_ROWS);
-  if (ownerIsCurrent(owner)) writeGeneration += 1;
+  const current = ownerIsCurrent(owner);
+  const trimmed = entries.map(storableActivityRow);
+  if (current) writeGeneration += 1;
   const key = activityStorageKey(owner);
   // A refused write was silent, and the refusal drops the cached value — so on
   // a full device the row was simply gone at the next read. A payment that had
   // really happened left no trace, and a Sending… row marked failed reverted to
-  // pending forever. Shed the oldest history instead: it is also in the BRC-39
-  // replica, and losing the newest row is what makes the feed look broken.
-  let { body, kept } = activityBodyWithinBudget(trimmed);
+  // pending forever. Shed what the ledger still shows first, then the oldest:
+  // losing the newest row is what makes the feed look broken.
+  let { body, kept, shed } = activityBodyWithinBudget(trimmed, current);
   for (;;) {
     if (durableSetItem(key, body)) {
-      if (kept.length < trimmed.length) {
+      if (shed > 0) {
+        console.info(
+          `[activity] shed ${shed} settled row(s) to fit durable storage — wallet history still shows them`
+        );
+      }
+      const lost = trimmed.length - kept.length - shed;
+      if (lost > 0) {
         console.warn(
-          `[activity] dropped ${
-            trimmed.length - kept.length
-          } oldest row(s) to fit durable storage`
+          `[activity] dropped ${lost} oldest row(s) to fit durable storage`
         );
       }
       break;
@@ -458,13 +674,11 @@ function writeAll(
       break;
     }
     kept = kept.slice(-Math.max(1, Math.floor(kept.length / 2)));
-    body = JSON.stringify({
-      v: storageRegistry.activity.version,
-      data: kept,
-    });
+    body = encodeActivity(kept);
   }
-  if (ownerIsCurrent(owner)) {
+  if (current) {
     for (const cb of listeners) cb();
+    scheduleActivityLedgerRefresh();
   }
 }
 
@@ -867,7 +1081,9 @@ export function upsertAppActivity(args: {
     origin,
     kind: args.kind,
     sats: isEvent ? 0 : sats,
-    at: Date.now(),
+    // A late annotation on a transaction the feed already shows from the
+    // ledger stays where it was rather than jumping to the top.
+    at: (ownerIsCurrent(owner) ? ledgerTimeOfTxid(txid) : null) ?? Date.now(),
     method: args.method,
     note: args.note,
     txid,
@@ -1609,7 +1825,15 @@ export function archiveActivityById(id: string): boolean {
     changed = true;
     return { ...entry, archivedAt: at };
   });
-  if (!changed) return false;
+  if (!changed) {
+    // A ledger row is hidden by storing it archived: the stored row then owns
+    // its txid, so the projection stops showing it.
+    const ledger = prev.some((entry) => entry.id === key)
+      ? null
+      : ledgerActivityById(key);
+    if (!ledger) return false;
+    next.push({ ...ledger, archivedAt: at });
+  }
   writeAll(next);
   return true;
 }
@@ -2478,18 +2702,62 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   return entry.note?.trim() || `From ${name}`;
 }
 
-/** Newest-first activity feed for the history panel (excludes archived rows). */
-export function listRecentActivity(limit = 40): ActivityEntry[] {
+function newestVisible(rows: ActivityEntry[], limit: number): ActivityEntry[] {
   const now = Date.now();
-  const entries = readVisible().filter(
-    (entry) => !isStaleApprovalPlaceholder(entry, now)
+  const entries = rows.filter(
+    (entry) =>
+      !isArchivedActivity(entry) && !isStaleApprovalPlaceholder(entry, now)
   );
   entries.sort((a, b) => b.at - a.at);
   return entries.slice(0, Math.max(1, limit));
 }
 
+/**
+ * Newest-first stored rows (excludes archived rows).
+ *
+ * Wallet logic reads this: rebroadcast, peer re-delivery and item verification
+ * act on rows this wallet wrote, never on ones projected from the ledger.
+ */
+export function listRecentActivity(limit = 40): ActivityEntry[] {
+  return newestVisible(readAll(), limit);
+}
+
+let projection: {
+  stored: ActivityEntry[];
+  ledger: readonly ActivityEntry[];
+  rows: ActivityEntry[];
+} | null = null;
+
+/**
+ * Stored rows plus every settled ledger row no stored row covers. Archived
+ * rows cover too — that is how a ledger row is hidden.
+ */
+function projectedActivity(): ActivityEntry[] {
+  const stored = readAll();
+  const ledger = ledgerActivitySnapshot();
+  if (ledger.length === 0) return stored;
+  if (projection?.stored === stored && projection.ledger === ledger) {
+    return projection.rows;
+  }
+  const coverage = storedLedgerCoverage(stored, ledgerIndexOf(ledger));
+  const shown = ledger.filter(
+    (row) => !coverage.covers(row) && !isGhostTxSuppressed(row.txid!)
+  );
+  const rows = shown.length > 0 ? [...stored, ...shown] : stored;
+  projection = { stored, ledger, rows };
+  return rows;
+}
+
+/** Newest-first history for display: stored rows over the wallet's ledger. */
+export function listActivityFeed(limit = 40): ActivityEntry[] {
+  return newestVisible(projectedActivity(), limit);
+}
+
 export function getActivityById(id: string): ActivityEntry | null {
-  return readAll().find((e) => e.id === id) ?? null;
+  const stored = readAll().find((e) => e.id === id);
+  if (stored) return stored;
+  const ledger = ledgerActivityById(id);
+  return ledger && projectedActivity().includes(ledger) ? ledger : null;
 }
 
 /** Export full local activity (storage-capped) for history backup. */

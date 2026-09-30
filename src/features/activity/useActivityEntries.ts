@@ -1,7 +1,7 @@
 import { useExternalGeneration } from '../../stores/useExternalGeneration'
 import {
   getActivityWriteGeneration,
-  listRecentActivity,
+  listActivityFeed,
   subscribeAppActivity,
   type ActivityEntry,
 } from '../../wallet/appActivity'
@@ -15,6 +15,6 @@ export function useActivityEntries(limit = 500): readonly ActivityEntry[] {
   return useExternalGeneration(
     subscribe,
     getActivityWriteGeneration,
-    () => listRecentActivity(limit),
+    () => listActivityFeed(limit),
   )
 }

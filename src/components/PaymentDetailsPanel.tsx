@@ -21,7 +21,7 @@ import {
   isMintTokenActivity,
   isPendingActivity,
   isTokenActivity,
-  listRecentActivity,
+  listActivityFeed,
   sameActivityRow,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -476,7 +476,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   // The feed folds a purchase or sale into one record; the detail view opens one
   // of its entries, so it reads the money leg back from the same transaction.
-  const recent = listRecentActivity(200)
+  const recent = listActivityFeed(200)
   const record = activityRecordForEntry(entry, recent)
   const subject = record?.subject ?? entry
   const assets = record?.assets ?? []

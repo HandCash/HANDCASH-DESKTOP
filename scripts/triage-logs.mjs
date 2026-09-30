@@ -2881,6 +2881,17 @@ const positional = args.filter(
 )
 const bucketArg = positional[0] ?? 'android'
 
+if (tracePrefix && flags.has('--all') && !filePath && bucketArg !== 'desktop-local') {
+  const uploads = splitUploads(await fetchLogs(KNOWN_BUCKETS[bucketArg] ?? bucketArg, true))
+  const sessions = uploads.map((u) => {
+    const s = parseSession(u)
+    const from = s.events[0] ? new Date(s.events[0].at).toISOString() : null
+    return { version: s.version, from, events: traceTxid(s, tracePrefix) }
+  })
+  console.log(JSON.stringify(sessions, null, 2))
+  process.exit(0)
+}
+
 if (flags.has('--history') && !filePath && bucketArg !== 'desktop-local') {
   // A snapshot can predate sends by hours, so one window rarely holds both
   // the replace and the pin that later missed; read every upload kept.

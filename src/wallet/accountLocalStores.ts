@@ -3,6 +3,8 @@
  * Toolbox IDB is already per-account; these localStorage surfaces were not.
  */
 import { bindAccountLocalKeyScope } from './accountLocalKeys'
+import { appendAppLog } from './appLog'
+import { reconcileBackupWatchdog } from './backupWatchdog'
 import { bindSyncHealthAccount } from './walletHealth'
 import { bindWalletProgressAccount } from './walletProgress'
 import { applyWalletOutcome } from './walletEffects'
@@ -66,6 +68,8 @@ function ensureLifecycleRegistered(): void {
   })
 }
 
+const watchdogReconciled = new Set<string>()
+
 export function prepareAccountLocalStores(
   wallet: WalletRuntime['instance'],
 ): void {
@@ -75,4 +79,13 @@ export function prepareAccountLocalStores(
     identityKey: wallet.identityKey,
     chain: wallet.chain,
   })
+  // The watchdog lives under this account's keys, which do not exist before
+  // unlock. Once per launch: a second unlock would read a live attempt as a
+  // crash.
+  const account = `${wallet.chain}:${wallet.accountIndex}:${wallet.identityKey}`
+  if (!watchdogReconciled.has(account)) {
+    watchdogReconciled.add(account)
+    const note = reconcileBackupWatchdog()
+    if (note) appendAppLog('warn', `[cloud-backup] ${note}`)
+  }
 }

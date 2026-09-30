@@ -1,0 +1,100 @@
+import { describe, expect, it } from 'vitest'
+import { ledgerActivityRows } from './activityLedger'
+
+const tx = (n: number) => n.toString(16).padStart(64, '0')
+const baskets = [
+  { basketId: 1, name: 'default' },
+  { basketId: 2, name: '1sat' },
+  { basketId: 3, name: 'bsv21' },
+]
+
+describe('ledgerActivityRows', () => {
+  it('shows a payment with the time and description it was created with', () => {
+    const at = new Date('2026-09-20T10:00:00Z')
+    const rows = ledgerActivityRows(
+      [
+        { transactionId: 1, txid: tx(1), satoshis: -1_500, isOutgoing: true, description: 'Pay coffee', created_at: at },
+        { transactionId: 2, txid: tx(2), satoshis: 55_000, isOutgoing: false, description: 'Deposit', created_at: at.getTime() + 1 },
+      ],
+      [],
+      baskets,
+    )
+    expect(rows).toEqual([
+      expect.objectContaining({ id: `ledger:${tx(1)}`, kind: 'spent', sats: 1_500, method: 'send', note: 'Pay coffee', at: at.getTime(), txid: tx(1) }),
+      expect.objectContaining({ id: `ledger:${tx(2)}`, kind: 'earned', sats: 55_000, method: 'receive', note: 'Deposit' }),
+    ])
+  })
+
+  it('never invents a time or an amount', () => {
+    const rows = ledgerActivityRows(
+      [
+        { transactionId: 1, txid: tx(1), satoshis: -10 },
+        { transactionId: 2, txid: tx(2), satoshis: 0, created_at: 5 },
+      ],
+      [],
+      baskets,
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('shows one row per collectable a transaction moved, in and out', () => {
+    const rows = ledgerActivityRows(
+      [
+        { transactionId: 1, txid: tx(1), satoshis: 2, created_at: 5, description: 'Gift' },
+        { transactionId: 2, txid: tx(2), satoshis: -40, isOutgoing: true, created_at: 6 },
+      ],
+      [
+        { transactionId: 1, basketId: 2, vout: 0, spentBy: 2 },
+        { transactionId: 1, basketId: 2, vout: 1 },
+      ],
+      baskets,
+    )
+    expect(rows.map((r) => [r.kind, r.method, r.item?.outpoint, r.note])).toEqual([
+      ['earned', 'receive-collectable', `${tx(1)}.0`, 'Gift'],
+      ['earned', 'receive-collectable', `${tx(1)}.1`, 'Gift'],
+      ['spent', 'send-collectable', `${tx(1)}.0`, 'Sent collectable'],
+    ])
+    expect(rows[0]!.item).toEqual({ name: 'Collectable', origin: `${tx(1)}_0`, outpoint: `${tx(1)}.0` })
+  })
+
+  it('shows a send to yourself as both of its activities', () => {
+    const rows = ledgerActivityRows(
+      [
+        { transactionId: 1, txid: tx(1), satoshis: 1, created_at: 5 },
+        { transactionId: 2, txid: tx(2), satoshis: -30, isOutgoing: true, created_at: 6, description: 'Send Fox to me' },
+      ],
+      [
+        { transactionId: 1, basketId: 2, vout: 0, spentBy: 2 },
+        { transactionId: 2, basketId: 2, vout: 0 },
+      ],
+      baskets,
+    )
+    expect(rows.filter((r) => r.txid === tx(2)).map((r) => [r.kind, r.method, r.item?.outpoint, r.note])).toEqual([
+      ['spent', 'send-collectable', `${tx(1)}.0`, 'Sent collectable'],
+      ['earned', 'receive-collectable', `${tx(2)}.0`, 'Received collectable'],
+    ])
+  })
+
+  it('shows a mint as a receive although it only cost the fee', () => {
+    const rows = ledgerActivityRows(
+      [{ transactionId: 1, txid: tx(1), satoshis: -25, isOutgoing: true, created_at: 5, description: 'Mint Fox' }],
+      [{ transactionId: 1, basketId: 2, vout: 0 }],
+      baskets,
+    )
+    expect(rows).toEqual([
+      expect.objectContaining({ kind: 'earned', method: 'receive-collectable', note: 'Mint Fox', item: expect.objectContaining({ outpoint: `${tx(1)}.0` }) }),
+    ])
+  })
+
+  it('names a token move without dressing it up as a collectable', () => {
+    const rows = ledgerActivityRows(
+      [{ transactionId: 1, txid: tx(1), satoshis: -30, isOutgoing: true, created_at: 5 }],
+      [{ transactionId: 9, txid: tx(9), basketId: 3, vout: 0, spentBy: 1 }],
+      baskets,
+    )
+    expect(rows).toEqual([
+      expect.objectContaining({ method: 'send', sats: 30, note: 'Token transfer' }),
+    ])
+    expect(rows[0]!.item).toBeUndefined()
+  })
+})

@@ -54,7 +54,7 @@ import {
   activityFailureLabel,
   countFailedActivity,
   isUtxoHealActivity,
-  listRecentActivity,
+  listActivityFeed,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
@@ -230,7 +230,7 @@ function readActivityFeed(limit: number): ActivityFeedSnapshot {
   if (hit && hit.generation === generation) return hit;
   const snapshot = {
     generation,
-    entries: listRecentActivity(limit),
+    entries: listActivityFeed(limit),
     origins: listPaymentOriginOptions(limit),
   };
   feedCache.set(limit, snapshot);
