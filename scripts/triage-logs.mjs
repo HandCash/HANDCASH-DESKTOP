@@ -275,6 +275,7 @@ function sessionFacts(header, events) {
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const listingOutcomes = listingOutcomeFacts(events)
+  const historyReplica = historyReplicaFacts(events)
   const nativeCrashes = [
     ...new Set(
       events.flatMap((e) => {
@@ -355,6 +356,9 @@ function sessionFacts(header, events) {
     // the wallet refused by code, and Arcade pins that did or did not find the
     // local tx row — `storageUserMoved` names a store rebuilt under a new user.
     listingOutcomes,
+    // BRC-39 replace / merge restores, uploads and recomposes, in order, and
+    // the Arcade pins that missed their local row after a localState write.
+    historyReplica,
     // Android deaths JS never saw: uncaught Java exceptions (with stack) and
     // lost WebView renderers, written natively and replayed on next launch.
     nativeCrashes,
@@ -1203,6 +1207,72 @@ function listingPhaseFacts(events) {
 }
 
 const NATIVE_CRASH_RE = /^\[native-crash\] ([\s\S]+)$/
+const KEPT_CHANGE_RE = /^\[stale-output\] kept (\d+) spendable output\(s\) of ([0-9a-f]{12})/
+const HISTORY_EVENTS = [
+  ['replace', /^\[cloud-backup\] replace local history — wiping (\S+)/],
+  ['restore', /^\[cloud-backup\] restored (\d+) bytes via (\S+) \(inserts=(\d+) updates=(\d+)\)/],
+  ['afterReplace', /^\[cloud-backup\] after replace: managed=(\S+) defaultOuts=(\S+) actions=(\S+)/],
+  ['emptyLocalPull', /^\[cloud-backup\] empty localState \+ remote BRC-39 — pulling/],
+  ['upload', /^\[cloud-backup\] uploading (\d+) bytes → \S+ \(spendable=(\S+) actions=(\S+)\)/],
+  ['archiveRestore', /^\[utxo-archive\] restored local snapshot (\S+)/],
+  ['recompose', /^\[recompose\] ([\w-]+): history=(\S+) sats=(\S+)/],
+]
+
+/**
+ * History-replica writes into localState, in order, beside every Arcade pin
+ * that then found no local row. A replace wipes the toolbox store and merges
+ * a snapshot that can predate recent sends; the lock overlay survives it, so a
+ * pin miss after one names a send the snapshot never held.
+ */
+function historyReplicaFacts(events) {
+  const t0 = events[0]?.at ?? 0
+  const timeline = []
+  const pinMisses = []
+  for (const e of events) {
+    const s = Math.round((e.at - t0) / 1000)
+    const pin = PIN_MISS_RE.exec(e.text)
+    if (pin && pin[1] === 'found no local row') {
+      pinMisses.push({ s, txid: pin[2] })
+      continue
+    }
+    for (const [kind, re] of HISTORY_EVENTS) {
+      const m = re.exec(e.text)
+      if (!m) continue
+      const row = { s, at: new Date(e.at).toISOString(), kind }
+      if (kind === 'replace') row.store = m[1]
+      if (kind === 'restore') Object.assign(row, { bytes: Number(m[1]), crypto: m[2], inserts: Number(m[3]), updates: Number(m[4]) })
+      if (kind === 'afterReplace') Object.assign(row, { managed: m[1], defaultOuts: m[2], actions: m[3] })
+      if (kind === 'upload') Object.assign(row, { bytes: Number(m[1]), spendable: m[2], actions: m[3] })
+      if (kind === 'archiveRestore') row.snapshot = m[1]
+      if (kind === 'recompose') Object.assign(row, { reason: m[1], history: m[2], sats: m[3] })
+      timeline.push(row)
+      break
+    }
+  }
+  // Promoting outputs spendable is only safe when nothing spent them; name the
+  // caller (last lines before it) so a promotion over spent coins is traceable.
+  const keptChange = []
+  events.forEach((e, i) => {
+    const m = KEPT_CHANGE_RE.exec(e.text)
+    if (!m || keptChange.some((k) => k.txid === m[2])) return
+    const before = events
+      .slice(Math.max(0, i - 6), i)
+      .filter((p) => !/^\[(images|stall|longtask|storage)\]/.test(p.text))
+      .map((p) => p.text.slice(0, 200))
+    keptChange.push({ s: Math.round((e.at - t0) / 1000), txid: m[2], outputs: Number(m[1]), before })
+  })
+  const writes = timeline.filter((r) => r.kind === 'replace' || r.kind === 'restore' || r.kind === 'archiveRestore')
+  const firstWrite = writes[0]?.s
+  return {
+    replaces: timeline.filter((r) => r.kind === 'replace').length,
+    restores: timeline.filter((r) => r.kind === 'restore').length,
+    uploads: timeline.filter((r) => r.kind === 'upload').length,
+    pinMissesAfterLocalStateWrite: firstWrite == null ? 0 : pinMisses.filter((p) => p.s >= firstWrite).length,
+    pinMisses: [...new Map(pinMisses.map((p) => [p.txid, p])).values()].slice(0, 12),
+    keptChange: keptChange.slice(0, 12),
+    timeline: [...new Map(timeline.map((r) => [`${r.at}|${r.kind}`, r])).values()].slice(0, 40),
+  }
+}
 const REPUBLISHED_RE = /^\[market-list\] republished txid=([0-9a-f]{64})/
 const CANCEL_REFUSED_RE = /MARKET_CANCEL_REFUSED(?: detail=|[\s:]+)([\w-]+)/
 const CANCEL_PROVEN_RE = /^\[market\] cancel offer \S+ missing from market-offers — proven by its signed listing/
@@ -2810,6 +2880,23 @@ const positional = args.filter(
     (traceIdx < 0 || i !== traceIdx + 1),
 )
 const bucketArg = positional[0] ?? 'android'
+
+if (flags.has('--history') && !filePath && bucketArg !== 'desktop-local') {
+  // A snapshot can predate sends by hours, so one window rarely holds both
+  // the replace and the pin that later missed; read every upload kept.
+  const uploads = splitUploads(await fetchLogs(KNOWN_BUCKETS[bucketArg] ?? bucketArg, true))
+  const sessions = uploads.map((u) => {
+    const s = parseSession(u)
+    return {
+      version: s.version,
+      from: s.events[0] ? new Date(s.events[0].at).toISOString() : null,
+      to: s.events.at(-1) ? new Date(s.events.at(-1).at).toISOString() : null,
+      historyReplica: s.historyReplica,
+    }
+  })
+  console.log(JSON.stringify(sessions, null, 2))
+  process.exit(0)
+}
 
 let latest
 let previous = null
