@@ -938,20 +938,44 @@ const SPEND_SIGN = `stateDiagram-v2
   prepare --> createAction : local balance ok
   prepare --> refuse : TipKind refuse / thin funds
 
-  createAction --> signedNoSend : noSend + signAndProcess
+  createAction --> certify : every signed createAction\\n(toolbox instance gated at boot)
+  createAction --> signable : signAndProcess false
+  signable --> certify : signAction — judged before signing
+  certify --> signedNoSend : noSend + signAndProcess
   signedNoSend --> peerDeliver : ItemSettlePath peerDeliver
   signedNoSend --> selfReceive : selfReceive
   signedNoSend --> externalBroadcast : pasted address
   prepare --> confirmBroadcast : retry unconfirmed signed BEEF\\nsource still unspent
-  peerDeliver --> postBeef : common signed-send propagation\\nnotify async
-  confirmBroadcast --> postBeef : silent sender postBeef
-  selfReceive --> postBeef
-  externalBroadcast --> postBeef
-  postBeef --> done : accepted
+  certify --> appReply : every coin cleared · or change of a\\ncertified / node-held parent
+  certify --> createAction : coin spent by confirmed tx / another install\\n/ parent rejected — retire, sign again (≤3)
+  certify --> refuse : coin unanswered / parent not on a node\\n/ named or signable input dead — nothing sent
+  appReply --> spv : txid to the app, then propagation
+  peerDeliver --> spv : common signed-send propagation\\nnotify async
+  confirmBroadcast --> spv : silent sender postBeef
+  selfReceive --> spv
+  externalBroadcast --> spv
+  spv --> postBeef : package SPV-verified\\nscripts · amounts · proofs vs headers
+  spv --> spv : incomplete — held in outbox, retried
+  spv --> failed : invalid — never posted, inputs freed
+  note right of certify
+    inputCertainty + kernel/inputCertainty. SPV proves a parent exists;
+    only a UTXO answer or this wallet's own certified ledger proves unspent.
+    peerDeviceSpends reads another install's BRC-39 upload (never imports):
+    coins it spent are dead here before any explorer sees that tx.
+  end note
+  postBeef --> landing : Arcade 202 (queued, not landed)
+  postBeef --> done : non-Arcade accept
+  landing --> done : node holds it / on chain
+  landing --> landing : Arcade queued / PENDING_RETRY\\nno input proven spent · re-post outside Arcade once
+  landing --> failed : Arcade rejected / input spent by confirmed tx\\n/ parent proven dead — fail closure, hide coins
   note right of signedNoSend
     registerSignedSend seals + queues before settle metadata.
     Asset data does not alter Bitcoin communication:
-    same Arcade reject, retry, and BUMP finality as BSV.
+    same Arcade reject, retry, landing watch, and BUMP finality as BSV.
+  end note
+  note right of landing
+    arcadeLanding + kernel/landingFate, never on the reply path.
+    Unlock replays every pinned cheque that never landed.
   end note
   signedNoSend --> sendWithOk : BSV BRC-29 same pattern
   sendWithOk --> done : no failure

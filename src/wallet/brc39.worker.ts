@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 /**
- * BRC-39 encryption off the UI thread.
+ * BRC-39 encryption and snapshot reads off the UI thread.
  *
  * The canonical KDF is Argon2id with 7 passes over 128 MiB, which is several
  * seconds of solid CPU and a 128 MiB WASM heap. On an Android WebView that is
@@ -12,34 +12,55 @@
  * layouts, and the Mobile build ships an exports map that seals deep paths off.
  * The root entry is the only specifier that resolves in both.
  */
-import { encryptBRC39 } from '@bsv/wallet-toolbox-client'
+import { decryptBRC39, encryptBRC39 } from '@bsv/wallet-toolbox-client'
+import { peerSnapshotFromBrc38, type PeerSnapshot } from './peerSnapshot'
 
 export type Brc39EncryptRequest = {
   id: number
+  kind?: 'encrypt'
   json: string
   password: string
 }
+
+export type Brc39SnapshotRequest = {
+  id: number
+  kind: 'snapshot'
+  bytes: Uint8Array
+  password: string
+}
+
+export type Brc39WorkerRequest = Brc39EncryptRequest | Brc39SnapshotRequest
 
 export type Brc39EncryptResponse =
   | { id: number; ok: true; bytes: Uint8Array }
   | { id: number; ok: false; error: string }
 
+export type Brc39SnapshotResponse =
+  | { id: number; ok: true; snapshot: PeerSnapshot }
+  | { id: number; ok: false; error: string }
+
 const ctx = self as unknown as DedicatedWorkerGlobalScope
 
-ctx.onmessage = (event: MessageEvent<Brc39EncryptRequest>) => {
-  const { id, json, password } = event.data
+ctx.onmessage = (event: MessageEvent<Brc39WorkerRequest>) => {
+  const request = event.data
+  const { id } = request
   void (async () => {
     try {
-      const bytes = Uint8Array.from(await encryptBRC39(json, password))
+      if (request.kind === 'snapshot') {
+        const doc = await decryptBRC39(request.bytes, request.password)
+        const reply: Brc39SnapshotResponse = { id, ok: true, snapshot: peerSnapshotFromBrc38(doc) }
+        ctx.postMessage(reply)
+        return
+      }
+      const bytes = Uint8Array.from(await encryptBRC39(request.json, request.password))
       const reply: Brc39EncryptResponse = { id, ok: true, bytes }
       ctx.postMessage(reply, [bytes.buffer])
     } catch (err) {
-      const reply: Brc39EncryptResponse = {
+      ctx.postMessage({
         id,
         ok: false,
         error: err instanceof Error ? err.message : String(err),
-      }
-      ctx.postMessage(reply)
+      })
     }
   })()
 }

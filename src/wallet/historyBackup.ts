@@ -405,6 +405,31 @@ export async function fetchRemoteBrc39Meta(): Promise<{
   }
 }
 
+/** The remote blob as bytes, for reading without importing. Null when absent or unreachable. */
+export async function fetchRemoteBrc39Bytes(): Promise<{
+  bytes: Uint8Array
+  exportedAt: number | null
+} | null> {
+  const active = getActiveWallet()
+  if (!active) return null
+  let url: string
+  try {
+    url = historyBackupObjectUrl(active.identityKey, getHistoryBackupPrefs())
+  } catch {
+    return null
+  }
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
+  })
+  if (!res.ok) return null
+  const exportedAt = Number(res.headers.get('X-HandCash-Exported-At') || '')
+  return {
+    bytes: new Uint8Array(await res.arrayBuffer()),
+    exportedAt: Number.isFinite(exportedAt) && exportedAt > 0 ? exportedAt : null,
+  }
+}
+
 /**
  * Stages of a cloud restore, in the order they run. Reported through
  * `HistoryRestoreProgress.onStage` so a panel's progress is a projection of

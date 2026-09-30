@@ -43,6 +43,11 @@ const RECEIVING_ACCOUNT = {
   accountIndex: 3,
 }
 
+vi.mock('./spvPackage', () => ({
+  verifySignedPackage: async () => ({ kind: 'verified' }),
+  spvVerifiedHere: () => true,
+}))
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: RECEIVING_ACCOUNT.chain,

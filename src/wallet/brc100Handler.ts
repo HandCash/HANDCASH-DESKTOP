@@ -96,7 +96,6 @@ import {
 } from './spendGuard'
 import { spendBlockedMessage } from './walletCoordinator'
 import { withImmediateAppBroadcast } from './appCreateAction'
-import { retireCreateActionSpentElsewhere } from './createActionInputFate'
 import { funnelAppSignedCheque } from './appSignedCheque'
 import {
   isAlreadySpentInputError,
@@ -203,6 +202,9 @@ function brcSpendErrorCode(err: unknown): {
     err && typeof err === 'object' ? (err as { code?: unknown }).code : undefined
   if (code === 'WALLET_BALANCE_TIMEOUT') {
     return { status: 503, code: 'WALLET_BALANCE_TIMEOUT', description }
+  }
+  if (code === 'INPUTS_UNVERIFIED') {
+    return { status: 503, code: 'INPUTS_UNVERIFIED', description }
   }
   if (code === 'SPEND_REGION_ABANDONED') {
     // Region freed while the toolbox call was still outstanding — not a balance
@@ -1114,43 +1116,25 @@ async function handleBrc100RequestInner(
             // Signing is the reply. Miner acceptance is not a gate — the chase
             // starts after this returns and must not hold the app on Broadcasting.
             setPaymentProgress('signing', 'Signing…', null, 'Working…')
-            const signOnce = async () => {
-              const created = await dispatchAppActionFundedFromHeldChange(
-                active.wallet,
-                method,
+            const created = await dispatchAppActionFundedFromHeldChange(
+              active.wallet,
+              method,
+              actionArgs,
+              originator,
+            )
+            // Auth / Sigma fund tips use unlockingScriptLength → signable only.
+            // Complete with root P2PKH so the app gets a txid (collectables pattern).
+            if (method !== 'createAction') return created
+            try {
+              return await finishBsv21IdentityMintCreateAction(
+                active,
                 actionArgs,
-                originator,
+                created,
               )
-              // Auth / Sigma fund tips use unlockingScriptLength → signable only.
-              // Complete with root P2PKH so the app gets a txid (collectables pattern).
-              if (method !== 'createAction') return created
-              try {
-                return await finishBsv21IdentityMintCreateAction(
-                  active,
-                  actionArgs,
-                  created,
-                )
-              } catch (err) {
-                console.warn('[bsv21-issuer] finish signable mint failed', err)
-                throw err
-              }
+            } catch (err) {
+              console.warn('[bsv21-issuer] finish signable mint failed', err)
+              throw err
             }
-            const signed = await signOnce()
-            // Coins the toolbox still calls spendable can already be confirmed
-            // spent. Returning that txid lets the next call (list the mint)
-            // miss the output after the reject retires it. Retire and sign once
-            // more so the app receives an output this wallet still holds.
-            if (
-              method === 'createAction' &&
-              (await retireCreateActionSpentElsewhere(signed, active.chain, {
-                freshlySigned: true,
-              }))
-            ) {
-              console.warn('[brc100] createAction signing again with live coins')
-              setPaymentProgress('signing', 'Signing…', null, 'Working…')
-              return signOnce()
-            }
-            return signed
           },
           () => {
             setPaymentProgress('preparing', 'Preparing payment', null, 'Working…')

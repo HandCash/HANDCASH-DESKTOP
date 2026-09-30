@@ -77,7 +77,8 @@ export type MinerSubmitResult =
     }
   | {
       kind: "queued";
-      reason: "offline" | "transport" | "service-error" | "no-ack";
+      /** `unverified`: local SPV could not finish, so nothing was posted. */
+      reason: "offline" | "transport" | "service-error" | "no-ack" | "unverified";
       summary?: PostBeefSummary;
     }
   | {
@@ -96,6 +97,7 @@ export type MinerSubmitResult =
         | "transport"
         | "service-error"
         | "no-ack"
+        | "unverified"
         | "accepted-needs-proofs"
         | "unproven-conflict";
       summary?: PostBeefSummary;
@@ -548,6 +550,47 @@ async function submitAtomicBeefToMinersOnce(
     );
   }
 
+  // Nothing reaches a miner that this device has not SPV-verified: scripts
+  // and amounts of every unmined tx, proofs of every mined one.
+  const { verifySignedPackage } = await import("./spvPackage");
+  const tracker = await Promise.resolve(active.services.getChainTracker?.()).catch(
+    () => null
+  );
+  const spv = await verifySignedPackage(beefBytes, id, tracker);
+  if (spv.kind === "incomplete") {
+    console.info(
+      `[spv] ${id.slice(0, 12)} held — ${spv.reason}; the outbox retries`
+    );
+    recordStage("propagation_queued", {
+      ...telemetry,
+      blockerCode: "spv_incomplete",
+    });
+    return outboxDurable
+      ? { kind: "queued", reason: "unverified" }
+      : untrackedMinerResult("unverified", telemetry);
+  }
+  if (spv.kind === "invalid") {
+    console.warn(`[spv] ${id.slice(0, 12)} invalid — ${spv.reason}; not sent`);
+    if (detached) {
+      return outboxDurable
+        ? { kind: "queued", reason: "unverified" }
+        : untrackedMinerResult("unverified", telemetry);
+    }
+    removePendingMinerSubmit(id, owner);
+    recordTransactionStage("hard_rejected", {
+      ...telemetry,
+      blockerCode: "spv_invalid",
+    });
+    // An invalid tx can never land, so its inputs are free. One an earlier
+    // round already posted keeps its seal: a node that took it outranks this.
+    if (!txHadArcadeSubmitContact(id)) {
+      await releaseSealedInputsOfUnsentTx(id, atomic);
+    }
+    throw new Error(
+      "Payment was signed but does not verify — nothing was sent. Try Send again."
+    );
+  }
+
   let summary: PostBeefSummary;
   let rawResults: PostBeefServiceResult[] | undefined;
   try {
@@ -608,6 +651,16 @@ async function submitAtomicBeefToMinersOnce(
       owner,
       detached,
     );
+    // Arcade's 202 queues the cheque; it does not land it. Follow it to a
+    // node (or to proof it is dead) without holding this round.
+    if (!detached && postBeefResultsArcadeAccepted(rawResults)) {
+      const body = beefBytes;
+      void import("./arcadeLanding")
+        .then(({ watchArcadeLanding }) =>
+          watchArcadeLanding(id, { atomic: body, owner })
+        )
+        .catch(() => undefined);
+    }
   }
 
   if (summary.accepted) {
@@ -700,6 +753,8 @@ export async function reportLateMinerSubmitFailure(args: {
   pendingId?: string;
   txid?: string;
   reason: unknown;
+  /** A batch caller raises one summary toast instead of one per send. */
+  toast?: boolean;
 }): Promise<void> {
   const txid = normalizeTxid(args.txid);
   if (txid && txHadArcadeSubmitContact(txid)) {
@@ -730,6 +785,7 @@ export async function reportLateMinerSubmitFailure(args: {
     }
   }
   if (!noteOutboundSendBroadcastFailed(args)) return;
+  if (args.toast === false) return;
   const label = compactFailureLabel(args.reason);
   toastError("Send issue", label);
 }

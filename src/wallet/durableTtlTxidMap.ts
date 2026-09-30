@@ -1,5 +1,5 @@
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { normalizeTxid, TXID_HEX_RE } from './txid'
+import { normalizeTxid } from './txid'
 
 type Entry = { at: number }
 
@@ -9,10 +9,15 @@ export type DurableTtlTxidMap = {
   rememberedAt(txid: string): number | null
   /** Live (un-expired) entry count. */
   size(): number
+  /** Live entries, oldest first. */
+  entries(): Array<{ txid: string; at: number }>
   remember(txid: string): void
+  /** One write for many keys. */
+  rememberMany(txids: Iterable<string>): void
   /** Stamp `at` only when missing or older — never moves a first-seen forward. */
   rememberOldest(txid: string, at: number): number | null
   forget(txid: string): void
+  forgetMany(txids: Iterable<string>): void
   reset(): void
 }
 
@@ -24,7 +29,10 @@ export function createDurableTtlTxidMap(opts: {
   key: string
   max: number
   ttlMs: number
+  /** Canonical key, or null to refuse it. Defaults to a lowercase txid. */
+  normalize?: (raw: string) => string | null
 }): DurableTtlTxidMap {
+  const normalizeKey = opts.normalize ?? normalizeTxid
   let cache: Map<string, Entry> | null = null
 
   function load(): Map<string, Entry> {
@@ -35,8 +43,9 @@ export function createDurableTtlTxidMap(opts: {
       if (!raw) return cache
       const parsed = JSON.parse(raw) as Record<string, unknown>
       const now = Date.now()
-      for (const [txid, value] of Object.entries(parsed)) {
-        if (!TXID_HEX_RE.test(txid)) continue
+      for (const [raw, value] of Object.entries(parsed)) {
+        const txid = normalizeKey(raw)
+        if (!txid) continue
         const at =
           value && typeof value === 'object' && typeof (value as Entry).at === 'number'
             ? (value as Entry).at
@@ -44,7 +53,7 @@ export function createDurableTtlTxidMap(opts: {
               ? value
               : 0
         if (now - at > opts.ttlMs) continue
-        cache.set(txid.toLowerCase(), { at })
+        cache.set(txid, { at })
       }
     } catch {
       /* corrupt blob → empty */
@@ -70,7 +79,7 @@ export function createDurableTtlTxidMap(opts: {
 
   return {
     has(txid: string): boolean {
-      const id = normalizeTxid(txid)
+      const id = normalizeKey(txid)
       if (!id) return false
       const e = load().get(id)
       if (!e) return false
@@ -82,7 +91,7 @@ export function createDurableTtlTxidMap(opts: {
       return true
     },
     rememberedAt(txid: string): number | null {
-      const id = normalizeTxid(txid)
+      const id = normalizeKey(txid)
       if (!id) return null
       const e = load().get(id)
       if (!e) return null
@@ -94,14 +103,33 @@ export function createDurableTtlTxidMap(opts: {
       for (const e of load().values()) if (now - e.at <= opts.ttlMs) live += 1
       return live
     },
+    entries(): Array<{ txid: string; at: number }> {
+      const now = Date.now()
+      return [...load().entries()]
+        .filter(([, e]) => now - e.at <= opts.ttlMs)
+        .map(([txid, e]) => ({ txid, at: e.at }))
+        .sort((a, b) => a.at - b.at)
+    },
     remember(txid: string): void {
-      const id = normalizeTxid(txid)
+      const id = normalizeKey(txid)
       if (!id) return
       load().set(id, { at: Date.now() })
       persist()
     },
+    rememberMany(txids: Iterable<string>): void {
+      const map = load()
+      const at = Date.now()
+      let changed = false
+      for (const raw of txids) {
+        const id = normalizeKey(raw)
+        if (!id) continue
+        map.set(id, { at })
+        changed = true
+      }
+      if (changed) persist()
+    },
     rememberOldest(txid: string, at: number): number | null {
-      const id = normalizeTxid(txid)
+      const id = normalizeKey(txid)
       if (!id || !Number.isFinite(at) || at <= 0) return this.rememberedAt(txid)
       const map = load()
       const existing = map.get(id)?.at
@@ -112,9 +140,18 @@ export function createDurableTtlTxidMap(opts: {
       return next
     },
     forget(txid: string): void {
-      const id = normalizeTxid(txid)
+      const id = normalizeKey(txid)
       if (!id || !load().delete(id)) return
       persist()
+    },
+    forgetMany(txids: Iterable<string>): void {
+      const map = load()
+      let changed = false
+      for (const raw of txids) {
+        const id = normalizeKey(raw)
+        if (id && map.delete(id)) changed = true
+      }
+      if (changed) persist()
     },
     reset(): void {
       cache = new Map()

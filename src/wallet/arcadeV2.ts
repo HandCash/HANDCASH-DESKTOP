@@ -50,11 +50,35 @@ export function arcadeV2BaseUrl(chain: Chain): string | null {
   }
 }
 
+/**
+ * `stalled` is Arcade's `PENDING_RETRY`: the network refused to validate the
+ * body ("failed to validate transaction") and Arcade parked it for durable
+ * rebroadcast. Not a verdict on its own — a child of a still-propagating
+ * parent reads the same — but a transaction that sits here never lands until
+ * its inputs are proven live, so the landing watch asks the chain why.
+ */
 export type ArcadeTxFate =
   | { kind: 'accepted'; status: string }
   | { kind: 'rejected'; status: string; reason: string }
   | { kind: 'retryable'; status: string; reason: string; ancestorTxid?: string }
+  | { kind: 'stalled'; status: string; reason: string }
   | { kind: 'unknown' }
+
+/**
+ * Statuses where a node, not just Arcade's queue, holds the transaction.
+ * `RECEIVED` / `STORED` / `ANNOUNCED_TO_NETWORK` are Arcade's own 202 states.
+ */
+const ARCADE_LANDED_STATUSES = new Set([
+  'SEEN_ON_NETWORK',
+  'SEEN_MULTIPLE_NODES',
+  'ACCEPTED_BY_NETWORK',
+  'MINED',
+  'IMMUTABLE',
+])
+
+export function arcadeStatusLanded(status: string): boolean {
+  return ARCADE_LANDED_STATUSES.has(status.trim().toUpperCase())
+}
 
 const PARENT_REJECTED_RE =
   /parent rejected \(ancestor ([0-9a-f]{64})\): retryable/i
@@ -85,6 +109,7 @@ export function classifyArcadeTxStatus(body: unknown): ArcadeTxFate {
       reason,
     }
   }
+  if (status === 'PENDING_RETRY') return { kind: 'stalled', status, reason }
   if (
     status === 'MINED' ||
     status === 'IMMUTABLE' ||

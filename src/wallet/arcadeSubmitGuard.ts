@@ -88,7 +88,7 @@ export async function arcadeVerdictFor(
       ? 'rejected'
       : fate.kind === 'accepted'
         ? 'accepted'
-        : fate.kind === 'retryable'
+        : fate.kind === 'retryable' || fate.kind === 'stalled'
           ? 'pending'
           : 'unknown'
   if (verdict === 'rejected') {
@@ -126,6 +126,11 @@ export async function arcadePinStillBinds(
  *  `nosend` change is stranded outside both spendable and pendingChange. */
 export function hasArcadeSubmitContacts(): boolean {
   return pins.size() > 0
+}
+
+/** Every pinned send, oldest first — parents before the change they funded. */
+export function listArcadeSubmitContacts(): Array<{ txid: string; at: number }> {
+  return pins.entries()
 }
 
 export function forgetArcadeSubmitContact(txid: string): void {

@@ -314,28 +314,28 @@ async function internalizeConsolidated(args: {
   // Retire the coins this transaction consumed before anything else can pick
   // them — same protection the send paths use after createAction.
   await sealSpentInputsOfSignedTx(txid, atomicBeef)
-  try {
-    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    if (!atomicBeef?.length) {
-      throw new Error('Consolidate signed but no transaction body was returned')
-    }
-    const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
-    const { minerSubmitAncestryComplete } = await import('./minerSubmit')
-    // Arcade 202 is not SPV. Internalize only when the BEEF itself verifies
-    // (unconfirmed parent bodies count). Service-only / incomplete ancestry
-    // must not mint phantom change.
-    if (!minerSubmitAncestryComplete(miner)) {
-      throw new Error(
-        miner.summary?.detail
-          ? `Consolidate broadcast failed (${miner.summary.detail})`
-          : 'Consolidate broadcast failed',
-      )
-    }
-  } catch (broadcastErr) {
-    // Hard reject / ghost conflict must not leave consolidate inputs retired.
-    const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')
+  const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')
+  if (!atomicBeef?.length) {
     await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
-    throw broadcastErr
+    throw new Error('Consolidate signed but no transaction body was returned')
+  }
+  // A throw here has already settled the seal on its own evidence (hard
+  // reject, invalid body). Everything else was posted or durably queued to be,
+  // and a queued consolidation still lands — releasing its inputs would hand
+  // mined-spent coins back as spendable.
+  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+  const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
+  const { spvVerifiedHere } = await import('./spvPackage')
+  if (!spvVerifiedHere(txid)) {
+    if (miner.kind === 'queued' && miner.reason === 'unverified') {
+      // Held by local SPV before any miner saw it: it never left this device.
+      await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
+      throw new Error('Consolidate did not verify — nothing was sent')
+    }
+    console.warn(
+      `[consolidate] ${txid.slice(0, 12)} ${miner.kind} before SPV — inputs stay sealed until it lands or is proven dead`,
+    )
+    throw new Error('Consolidate queued before it could be verified — inputs stay sealed')
   }
 
   // Internalize the single output back into managed change, silently. Direct

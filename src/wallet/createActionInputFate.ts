@@ -10,13 +10,13 @@ import type { Chain } from './vault'
 import { inputOutpointsFromAtomicBeef } from './txOutpoints'
 import { extractTxid } from './txExplorer'
 import { parseOutpoint } from './legacyScan'
+import {
+  coinCleared,
+  noteCoinsCleared,
+  resetClearedCoinsForTests,
+} from './spendCertainty'
 
-const PROBE_MS = 1_500
-/**
- * A confirmed foreign spend needs a new block and a key holder other than this
- * device, so a coin the explorer cleared minutes ago is not re-asked per sign.
- */
-const CLEARED_TTL_MS = 10 * 60_000
+export const PROBE_MS = 1_500
 /** WhatsOnChain's bulk `/utxos/spent` answers at most this many per request. */
 export const SPENT_PROBE_BATCH = 20
 
@@ -27,8 +27,6 @@ export type OutpointSpendProbe =
 
 const UNKNOWN: OutpointSpendProbe = { kind: 'unknown' }
 
-const clearedAt = new Map<string, number>()
-
 function wocBulkSpentUrl(chain: Chain): string {
   const host =
     chain === 'main'
@@ -37,25 +35,13 @@ function wocBulkSpentUrl(chain: Chain): string {
   return `${host}/utxos/spent`
 }
 
-function outpointKey(outpoint: string): string {
-  return outpoint.trim().toLowerCase()
-}
-
-export function outpointRecentlyCleared(outpoint: string, now = Date.now()): boolean {
-  const key = outpointKey(outpoint)
-  const at = clearedAt.get(key)
-  if (at == null) return false
-  if (now - at < CLEARED_TTL_MS) return true
-  clearedAt.delete(key)
-  return false
-}
-
-function markCleared(outpoint: string): void {
-  clearedAt.set(outpointKey(outpoint), Date.now())
+/** An explorer cleared it and this wallet has not signed over it since. */
+export function outpointRecentlyCleared(outpoint: string): boolean {
+  return coinCleared(outpoint)
 }
 
 export function resetClearedOutpointsForTests(): void {
-  clearedAt.clear()
+  resetClearedCoinsForTests()
 }
 
 /** WhatsOnChain `/spent` body → a confirmed spender that is not this tx. */
@@ -144,19 +130,21 @@ export async function probeOutpointSpends(
     const txid = p.txid.toLowerCase()
     parsed.push({ outpoint, key: `${txid}.${p.vout}`, txid, vout: p.vout })
   }
+  const cleared: string[] = []
   for (let i = 0; i < parsed.length; i += SPENT_PROBE_BATCH) {
     const chunk = parsed.slice(i, i + SPENT_PROBE_BATCH)
     const answers = await bulkSpent(chunk, selfTxid, chain, timeoutMs)
     for (const row of chunk) {
       const probe = answers.get(row.key) ?? UNKNOWN
-      if (probe.kind === 'noConfirmedSpender') markCleared(row.outpoint)
+      if (probe.kind === 'noConfirmedSpender') cleared.push(row.outpoint)
       probes.set(row.outpoint, probe)
     }
   }
+  if (cleared.length > 0) noteCoinsCleared(cleared)
   return probes
 }
 
-function atomicFromCreateResult(result: unknown): number[] | null {
+export function atomicFromCreateResult(result: unknown): number[] | null {
   if (!result || typeof result !== 'object') return null
   const raw = (result as { tx?: unknown }).tx
   if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
@@ -225,6 +213,20 @@ export async function retireCreateActionSpentElsewhere(
   if (!txid) return false
   const spends = await foreignConfirmedInputSpends(result, chain)
   if (spends.length === 0) return false
+  await retireSpentInputs(txid, spends, chain, opts)
+  return true
+}
+
+/**
+ * Retire a signed tx over coins a named confirmed tx already spent: fail it,
+ * then hide each dead coin under its spender and sweep the rest of the pool.
+ */
+export async function retireSpentInputs(
+  txid: string,
+  spends: Array<{ outpoint: string; spender: string }>,
+  chain: Chain,
+  opts?: { freshlySigned?: boolean },
+): Promise<void> {
   const started = Date.now()
   const bySpender = new Map<string, string[]>()
   for (const row of spends) {
@@ -252,10 +254,9 @@ export async function retireCreateActionSpentElsewhere(
     )
   }
   console.warn(
-    `[brc100] createAction inputs spent elsewhere count=${spends.length} txid=${txid.slice(0, 12)}`,
+    `[spend] ${txid.slice(0, 12)} inputs spent elsewhere count=${spends.length}`,
   )
   void import('./deadCoinSweep').then(({ scheduleDeadCoinSweep }) =>
     scheduleDeadCoinSweep(chain, bySpender.keys()),
   )
-  return true
 }

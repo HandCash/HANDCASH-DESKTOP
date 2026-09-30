@@ -19,6 +19,7 @@ vi.mock('./staleOutputRelease', () => ({
   releaseSealedInputsOfUnsentTx: (...a: unknown[]) => releaseSealedInputsOfUnsentTx(...a),
   onAlreadySpentSend: (...a: unknown[]) => onAlreadySpentSend(...a),
   restoreOnChainLocalTx: (...a: unknown[]) => restoreOnChainLocalTx(...a),
+  pinBroadcastLocalTx: vi.fn(async () => true),
 }))
 
 vi.mock('./pendingMinerOutbox', () => ({
@@ -58,6 +59,18 @@ vi.mock('./signedTxInputs', () => ({
   inputOutpointsForSignedTx: vi.fn(async () => [`${'b'.repeat(64)}.0`]),
 }))
 
+const watchArcadeLanding = vi.fn()
+vi.mock('./arcadeLanding', () => ({
+  watchArcadeLanding: (...a: unknown[]) => watchArcadeLanding(...a),
+}))
+
+let spvVerdict: { kind: 'verified' } | { kind: 'invalid' | 'incomplete'; reason: string } = {
+  kind: 'verified',
+}
+vi.mock('./spvPackage', () => ({
+  verifySignedPackage: vi.fn(async () => spvVerdict),
+}))
+
 const TXID = 'a'.repeat(64)
 const ATOMIC = [1, 2, 3]
 
@@ -66,12 +79,14 @@ describe('submitAtomicBeefToMiners', () => {
     outboxWritesSucceed = true
     beefComplete = true
     beefGap = 'missing-bodies'
+    spvVerdict = { kind: 'verified' }
     vi.mocked((await import('./beefCache')).hydrateInputBeef).mockClear()
     postBeef.mockReset()
     releaseSealedInputsOfUnsentTx.mockClear()
     onAlreadySpentSend.mockClear()
     restoreOnChainLocalTx.mockClear()
     toastError.mockClear()
+    watchArcadeLanding.mockClear()
     const { __resetArcadeSubmitGuardForTests } = await import('./arcadeSubmitGuard')
     __resetArcadeSubmitGuardForTests()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
@@ -93,6 +108,48 @@ describe('submitAtomicBeefToMiners', () => {
       ancestryComplete: true,
     })
     expect(restoreOnChainLocalTx).toHaveBeenCalledWith(TXID)
+    expect(watchArcadeLanding).not.toHaveBeenCalled()
+  })
+
+  it('follows an Arcade 202 to a node instead of calling it landed', async () => {
+    postBeef.mockResolvedValueOnce([
+      { name: 'ArcadeBeef', status: 'success', txidResults: [{ txid: TXID, status: 'success' }] },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.kind).toBe('accepted')
+    await vi.waitFor(() =>
+      expect(watchArcadeLanding).toHaveBeenCalledWith(
+        TXID,
+        expect.objectContaining({ atomic: ATOMIC }),
+      ),
+    )
+  })
+
+  it('holds a package it cannot SPV-verify yet, posting nothing and keeping the seal', async () => {
+    spvVerdict = { kind: 'incomplete', reason: 'missing an associated source transaction' }
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result).toEqual({ kind: 'queued', reason: 'unverified' })
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('never posts an invalid package and frees the inputs it never sent', async () => {
+    spvVerdict = { kind: 'invalid', reason: 'Script evaluation error' }
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow(/does not verify/)
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TXID, ATOMIC)
+  })
+
+  it('keeps the seal of an invalid package an earlier round already posted', async () => {
+    spvVerdict = { kind: 'invalid', reason: 'Script evaluation error' }
+    const { rememberArcadeSubmitContact } = await import('./arcadeSubmitGuard')
+    rememberArcadeSubmitContact(TXID)
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow(/does not verify/)
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
   it('queues a signed cheque on transport failure without releasing the seal', async () => {

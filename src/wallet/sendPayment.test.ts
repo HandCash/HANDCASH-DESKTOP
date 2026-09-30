@@ -21,6 +21,11 @@ const runtimeWallet = {
   services: { postBeef },
   wallet: { createAction: (args: CreateActionArgs) => createAction(args) },
 }
+vi.mock('./spvPackage', () => ({
+  verifySignedPackage: async () => ({ kind: 'verified' }),
+  spvVerifiedHere: () => true,
+}))
+
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => durable.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {

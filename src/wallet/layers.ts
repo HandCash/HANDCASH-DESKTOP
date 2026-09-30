@@ -38,7 +38,8 @@ import { getActiveWallet } from './session'
  *   identity address reused as the only change key.
  * - **Settlement kinds** → signed Atomic BEEF is already a cheque
  *   (`unconfirmed`). `headerProven` is inclusion. Pay `pendingChange` is
- *   unconfirmed SPV we own, not a processor queue. Arcade accept is cashing.
+ *   unconfirmed SPV we own, not a processor queue. Arcade accept is cashing
+ *   started, not landed — the landing watch closes it.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
  * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
@@ -89,7 +90,23 @@ import { getActiveWallet } from './session'
  *   `headerProven` after BUMP vs local headers). Account the cheque at sign.
  *   Explorer / Arcade `/txs` / Bitails `/spent` / indexer `isUtxo` are rumours
  *   — latency, not a cancel. Undo only on a proven competing spend. Arcade
- *   `postBeef` is a miner cashing the cheque plus a reject oracle. Heal
+ *   `postBeef` is a miner cashing the cheque plus a reject oracle; its 202 is
+ *   a queue receipt, so `arcadeLanding.ts` follows each accepted cheque until
+ *   a node holds it and fails it only on proof (Arcade reject, an input a
+ *   confirmed foreign tx spent, a dead parent). Every signature — app reply,
+ *   send, item, market, token, sweep, consolidation — passes
+ *   `inputCertainty.ts`, installed on the toolbox instance at boot: each coin
+ *   is proven unspent (an explorer cleared it, or it is change of a tx this
+ *   wallet certified or a node already holds — `spendCertainty.ts`);
+ *   unanswered coins refuse, and `signAction` is judged before it signs. The
+ *   one spender the ledger cannot see is this key on another install:
+ *   `peerDeviceSpends.ts` reads that install's BRC-39 upload as evidence
+ *   (decrypt in the worker, never import — historyReplica stays separate
+ *   from signing) and retires the coins it spent. Before any
+ *   post, `spvPackage.ts` runs full SPV (scripts, amounts, proofs vs headers):
+ *   incomplete packages wait in the outbox, invalid ones are never sent. A
+ *   signed tx that was posted or queued keeps its seal — releasing its inputs
+ *   is only for a body that never left this device. Heal
  *   fetching a raw tx restores a lost locking-script projection; it does not
  *   ask the network whether the cheque happened. Dependent economic activity
  *   chains unconfirmed UTXOs (parent bodies in the BEEF) so the next hop

@@ -514,6 +514,30 @@ export const storageRegistry = Object.freeze({
     scope: 'chain',
     version: 1,
   }),
+  arcadeLanded: defineStorage({
+    key: 'handcash.wallet.arcadeLanded.v1',
+    owner: 'chain',
+    scope: 'chain',
+    version: 1,
+  }),
+  clearedCoins: defineStorage({
+    key: 'handcash.wallet.clearedCoins.v1',
+    owner: 'chain',
+    scope: 'chain',
+    version: 1,
+  }),
+  certifiedTx: defineStorage({
+    key: 'handcash.wallet.certifiedTx.v1',
+    owner: 'chain',
+    scope: 'chain',
+    version: 1,
+  }),
+  peerDeviceSpends: defineStorage({
+    key: 'handcash.wallet.peerDeviceSpends.v1',
+    owner: 'history-replica',
+    scope: 'wallet',
+    version: 1,
+  }),
   ghostTx: defineStorage({
     key: 'handcash.wallet.ghostTx.v1',
     owner: 'chain',

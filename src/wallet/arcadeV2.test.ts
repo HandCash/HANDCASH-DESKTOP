@@ -3,6 +3,7 @@ import {
   ARCADE_V2_DEV_PROXY_MAIN,
   ARCADE_V2_DEV_PROXY_TEST,
   arcadeBoundFetch,
+  arcadeStatusLanded,
   arcadeV2BaseUrl,
   classifyArcadeTxStatus,
   fetchArcadeTxFate,
@@ -146,6 +147,25 @@ describe('classifyArcadeTxStatus', () => {
       expect(fate.kind === 'rejected' && fate.reason).toContain(root)
     } finally {
       fetchSpy.mockRestore()
+    }
+  })
+
+  it('reads PENDING_RETRY as stalled, not accepted and not rejected', () => {
+    const extraInfo =
+      'no network verdict after 5 propagation attempts: retryable — parked for durable rebroadcast; last network response: PROCESSING (4): failed to validate transaction'
+    expect(classifyArcadeTxStatus({ txStatus: 'PENDING_RETRY', extraInfo })).toEqual({
+      kind: 'stalled',
+      status: 'PENDING_RETRY',
+      reason: extraInfo.slice(0, 240),
+    })
+  })
+
+  it('counts only node-held statuses as landed', () => {
+    for (const s of ['SEEN_ON_NETWORK', 'SEEN_MULTIPLE_NODES', 'ACCEPTED_BY_NETWORK', 'MINED', 'IMMUTABLE']) {
+      expect(arcadeStatusLanded(s)).toBe(true)
+    }
+    for (const s of ['RECEIVED', 'STORED', 'ANNOUNCED_TO_NETWORK', 'ACCEPTED', 'PENDING_RETRY']) {
+      expect(arcadeStatusLanded(s)).toBe(false)
     }
   })
 

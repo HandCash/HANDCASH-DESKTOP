@@ -252,6 +252,7 @@ function sessionFacts(header, events) {
   const toolboxSteps = toolboxStepFacts(events)
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
+  const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const bounceRefunds = events.flatMap((e) => {
     const m = BOUNCE_REFUND_RE.exec(e.text)
@@ -306,9 +307,13 @@ function sessionFacts(header, events) {
     // Mobile activity notifications: posted / skipped (with reason) / failed,
     // and hidden-WebView bridge value actions that raised none within 5s.
     notifications,
-    // createAction resigns over coins a confirmed foreign tx spent, and the
-    // background pool sweeps (`[dead-coins] sweep`) that clear the rest.
+    // Resigns over coins a confirmed foreign tx spent, the background pool
+    // sweeps (`[dead-coins] sweep`) that clear the rest, and `peerDevice`:
+    // reads of another install's BRC-39 upload and the coins it had spent.
     deadCoins,
+    // Signed transactions and what miners said: per-txid outcome chain, how
+    // many ever reached Arcade, and which never left the device.
+    broadcast,
     listingPhases,
     bounceRefundMs: bounceRefunds,
     // React list-key collisions: which key, which component's list.
@@ -1332,12 +1337,19 @@ function notificationFacts(events) {
   }
 }
 
-const RESIGN_RE = /^\[brc100\] createAction signing again with live coins$/
+const RESIGN_RE =
+  /^\[(?:brc100\] createAction|certainty\] [0-9a-f]{12}) signing again with live coins$/
 const DEAD_SWEEP_RE =
   /^\[dead-coins\] sweep checked=(\d+) hidden=(\d+) unknown=(\d+) done (\d+)ms$/
 const SPENDER_TALLY_RE = /^\[dead-coins\] spenders (.*)$/
+const PEER_READ_RE =
+  /^\[peer-device\] snapshot \d+ (\w+)(?: spent=(\d+) withdrawn=(\d+))? txs=\d+ done (\d+)ms$/
+const PEER_UNREAD_RE = /^\[peer-device\] snapshot \d+ unread\b/
 
-/** Resigns over coins a confirmed foreign tx spent, and the pool sweeps they set off. */
+/**
+ * Resigns over coins a confirmed foreign tx spent, the pool sweeps they set
+ * off, and coins another install of this key spent (read from its BRC-39 upload).
+ */
 function deadCoinFacts(events) {
   const seen = new Set()
   let resigns = 0
@@ -1345,12 +1357,26 @@ function deadCoinFacts(events) {
   // Outcome of adopting the named spenders of hidden coins: `restored` = this
   // wallet's own send, on chain but failed locally, whose change came back.
   const spenders = {}
+  const peerDevice = { reads: 0, own: 0, spent: 0, withdrawn: 0, unread: 0, slowestMs: 0 }
   for (const e of events) {
     const key = `${e.at}|${e.text}`
     if (seen.has(key)) continue
     seen.add(key)
     if (RESIGN_RE.test(e.text)) {
       resigns += 1
+      continue
+    }
+    const peer = PEER_READ_RE.exec(e.text)
+    if (peer) {
+      if (peer[1] === 'own') peerDevice.own += 1
+      else peerDevice.reads += 1
+      peerDevice.spent += Number(peer[2] ?? 0)
+      peerDevice.withdrawn += Number(peer[3] ?? 0)
+      peerDevice.slowestMs = Math.max(peerDevice.slowestMs, Number(peer[4]))
+      continue
+    }
+    if (PEER_UNREAD_RE.test(e.text)) {
+      peerDevice.unread += 1
       continue
     }
     const tally = SPENDER_TALLY_RE.exec(e.text)
@@ -1370,7 +1396,143 @@ function deadCoinFacts(events) {
       })
     }
   }
-  return { resigns, sweeps, spenders }
+  return { resigns, sweeps, spenders, peerDevice }
+}
+
+/**
+ * `[minerSubmit] <what happened> <txid12> [detail]` → the outcome name. Order
+ * matters only where two phrasings share a prefix.
+ */
+const MINER_OUTCOMES = [
+  ['accepted', /^\[minerSubmit\] Arcade accepted — tx pinned\s+([0-9a-f]{12})/],
+  ['contacted', /^\[minerSubmit\] Arcade contacted \(no accept\/reject yet\)\s+([0-9a-f]{12})/],
+  ['chainedAncestry', /^\[minerSubmit\] posting chained unconfirmed ancestry\s+([0-9a-f]{12})/],
+  ['incompleteAncestry', /^\[minerSubmit\] posting with incomplete ancestry[^0-9a-f]*([0-9a-f]{12})/],
+  ['missingInputsIncomplete', /^\[minerSubmit\] MissingInputs on incomplete BEEF[^0-9a-f]*([0-9a-f]{12})/],
+  ['hardReject', /^\[minerSubmit\] Arcade hard-reject — dropping local spend\s+([0-9a-f]{12})/],
+  ['transportFailed', /^\[minerSubmit\] postBeef transport failed[^0-9a-f]*([0-9a-f]{12})/],
+  ['noAck', /^\[minerSubmit\] no miner ack[^0-9a-f]*([0-9a-f]{12})/],
+  ['unprovenConflict', /^\[minerSubmit\] unproven (?:missing-inputs|doubleSpend)[^0-9a-f]*([0-9a-f]{12})/],
+  ['rejectOnChain', /^\[minerSubmit\] hard reject — tx on chain[^0-9a-f]*([0-9a-f]{12})/],
+  ['rejectReleased', /^\[minerSubmit\] hard reject — releasing seal[^0-9a-f]*([0-9a-f]{12})/],
+  ['offline', /^\[minerSubmit\] offline — signed cheque queued\s+([0-9a-f]{12})/],
+  ['pinDidNotFree', /^\[minerSubmit\] post-Arcade pin did not free change\s+([0-9a-f]{12})/],
+  ['registered', /^\[signed-send\] registered\s+([0-9a-f]{12})/],
+  ['funnelDeferred', /^\[brc100\] signed cheque funnel deferred\s+([0-9a-f]{12})/],
+  ['postSignDeferred', /^\[brc100\] post-sign cheque\/seal deferred\s+([0-9a-f]{12})/],
+  ['beefPrepDeferred', /^\[signed-send\] BEEF preparation deferred[^0-9a-f]*([0-9a-f]{12})/],
+  ['outboxRefused', /^\[minerOutbox\] (?:refusing durable body|durable write refused)\s+([0-9a-f]{12})/],
+  ['landed', /^\[landing\] ([0-9a-f]{12}) landed\b/],
+  ['dead', /^\[landing\] ([0-9a-f]{12}) dead\b/],
+  ['repostedOutsideArcade', /^\[landing\] ([0-9a-f]{12}) re-posted outside Arcade\b/],
+  ['stillUnlanded', /^\[landing\] ([0-9a-f]{12}) still unlanded\b/],
+  ['certaintyRetire', /^\[certainty\] ([0-9a-f]{12}) retire\b/],
+  ['certaintyRefused', /^\[certainty\] ([0-9a-f]{12}) refused\b/],
+  ['spvHeld', /^\[spv\] ([0-9a-f]{12}) held\b/],
+  ['spvInvalid', /^\[spv\] ([0-9a-f]{12}) invalid\b/],
+]
+/** Stopped on this device by a pre-send gate (1.3.380+): unproven coins or a package that fails SPV. */
+const MINER_GATED = new Set(['certaintyRefused', 'spvInvalid'])
+/**
+ * Outcomes after which a node holds the cheque. Arcade's 202 (`accepted`) is
+ * only its queue: a night of dead-coin sends all logged `accepted` and none
+ * reached the chain (hc-a580a 0.1.540, PENDING_RETRY "failed to validate").
+ */
+const MINER_LANDED = new Set(['landed', 'rejectOnChain'])
+/** Outcomes that are a post attempt (the body left, or tried to leave, the device). */
+const MINER_ATTEMPTED = new Set([
+  'accepted', 'contacted', 'missingInputsIncomplete', 'hardReject', 'transportFailed',
+  'noAck', 'unprovenConflict', 'rejectOnChain', 'rejectReleased',
+])
+const APP_SIGN_OK_RE = /^\[brc100\] ok\b.*\bmethod=(createAction|signAction|processAction)\b/
+
+/**
+ * Did signed transactions reach a miner? Per txid (12-hex prefix as logged):
+ * every miner outcome in order, the last one, and whether any post attempt
+ * or accept was seen. Also counts app sign replies, so "signed but never
+ * posted" is a number and not a guess.
+ */
+function broadcastFacts(events) {
+  const byTxid = new Map()
+  const details = new Map()
+  let appSigned = 0
+  for (const e of events) {
+    if (APP_SIGN_OK_RE.test(e.text)) {
+      appSigned += 1
+      continue
+    }
+    for (const [outcome, re] of MINER_OUTCOMES) {
+      const m = re.exec(e.text)
+      if (!m) continue
+      const id = m[1]
+      const row = byTxid.get(id) ?? { txid: id, firstAt: e.at, outcomes: [] }
+      row.outcomes.push(outcome)
+      row.lastAt = e.at
+      byTxid.set(id, row)
+      const rest = e.text.slice(m.index + m[0].length).trim()
+      if (rest && outcome !== 'registered') {
+        const key = `${outcome}: ${family(rest)}`
+        details.set(key, (details.get(key) ?? 0) + 1)
+      }
+      break
+    }
+  }
+  const rows = [...byTxid.values()]
+  const lastOutcome = {}
+  const everSeen = {}
+  let landed = 0
+  let dead = 0
+  let arcadeQueuedOnly = 0
+  let attemptedNeverLanded = 0
+  let neverAttempted = 0
+  let gated = 0
+  for (const row of rows) {
+    const last = row.outcomes.at(-1)
+    lastOutcome[last] = (lastOutcome[last] ?? 0) + 1
+    for (const o of new Set(row.outcomes)) everSeen[o] = (everSeen[o] ?? 0) + 1
+    if (row.outcomes.some((o) => MINER_LANDED.has(o))) landed += 1
+    else if (row.outcomes.includes('dead')) dead += 1
+    else if (row.outcomes.includes('accepted')) arcadeQueuedOnly += 1
+    else if (row.outcomes.some((o) => MINER_ATTEMPTED.has(o))) attemptedNeverLanded += 1
+    else if (row.outcomes.some((o) => MINER_GATED.has(o))) gated += 1
+    else neverAttempted += 1
+  }
+  const unlanded = rows
+    .filter(
+      (row) =>
+        !row.outcomes.some((o) => MINER_LANDED.has(o) || MINER_GATED.has(o) || o === 'dead'),
+    )
+    .sort((a, b) => b.outcomes.length - a.outcomes.length)
+    .slice(0, 12)
+    .map((row) => ({
+      txid: row.txid,
+      attempts: row.outcomes.filter((o) => MINER_ATTEMPTED.has(o)).length,
+      outcomes: [...new Set(row.outcomes)].join(' → '),
+      spanSeconds: Math.round((row.lastAt - row.firstAt) / 1000),
+    }))
+  return {
+    appSignReplies: appSigned,
+    txidsSeen: rows.length,
+    // A node holds it (`[landing] … landed`, 1.3.380+) or it is on chain.
+    landed,
+    // The landing watch proved it can never land and failed it.
+    dead,
+    // Arcade 202 with no landing verdict in the window. On builds before the
+    // landing watch this is every send — a 202 is a queue receipt, not the chain.
+    arcadeQueuedOnly,
+    attemptedNeverLanded,
+    neverAttempted,
+    // Refused before any miner saw it: a coin nobody could prove unspent, or
+    // a package that fails local SPV. Nothing left the device.
+    gated,
+    lastOutcome,
+    everSeen,
+    unlanded,
+    details: [...details.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([detail, count]) => ({ detail, count })),
+  }
 }
 
 function appFlowFacts(events) {
@@ -1928,7 +2090,7 @@ const QUESTIONS = {
   custody_at_risk: {
     type: 'noul',
     instructions:
-      'Does `latest` contain evidence that money or a token could be lost, stuck, or unreceivable — a payment the counterparty cannot complete, a transaction that cannot propagate, a balance that cannot be spent? Slowness alone is not custody risk.',
+      'Does `latest` contain evidence that money or a token could be lost, stuck, or unreceivable — a payment the counterparty cannot complete, a transaction that cannot propagate, a balance that cannot be spent? `latest.broadcast` counts signed transactions by what miners said: `landed` reached a node, `dead` was proven unlandable and failed, `arcadeQueuedOnly` got only Arcade\'s 202 queue receipt with no landing verdict. Slowness alone is not custody risk.',
     criteria: {
       true: 'A value transfer cannot complete, or funds are unspendable or unaccounted for.',
       false: 'Performance or cosmetic problems only; transfers still complete.',
@@ -2208,9 +2370,19 @@ function report(state, answers) {
   }
 
   const dead = latest.deadCoins
-  if (dead && (dead.resigns || dead.sweeps.length || Object.keys(dead.spenders ?? {}).length)) {
+  const peer = dead?.peerDevice
+  const peerActive = peer && (peer.reads || peer.unread || peer.spent)
+  if (
+    dead &&
+    (dead.resigns || dead.sweeps.length || Object.keys(dead.spenders ?? {}).length || peerActive)
+  ) {
     console.log('\nDead coins (code-counted):')
-    console.log(`  ${dead.resigns} resign(s) over coins a confirmed foreign tx spent`)
+    console.log(`  ${dead.resigns} resign(s) over coins a dead or foreign spend held`)
+    if (peerActive) {
+      console.log(
+        `  another install: ${peer.reads} snapshot read(s) · ${peer.spent} coin(s) it spent · ${peer.withdrawn} withdrawn · ${peer.unread} unread · slowest ${peer.slowestMs}ms`,
+      )
+    }
     for (const s of dead.sweeps) {
       console.log(
         `  sweep checked ${s.checked} · hidden ${s.hidden} · unknown ${s.unknown} · ${s.ms}ms`,

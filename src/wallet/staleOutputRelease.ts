@@ -77,6 +77,8 @@ import {
 } from "./derivedChangeEcho";
 import { pickReclaimSeals } from "./reclaimSealBatch";
 import { failLocalTxClosure, type ClosureStorage } from "./localTxClosure";
+import { forgetTxCertified } from "./spendCertainty";
+import { removePendingMinerSubmit } from "./pendingMinerOutbox";
 import { Transaction } from "@bsv/sdk";
 
 export { isAlreadySpentInputError } from "./spendVerdict";
@@ -587,6 +589,10 @@ export async function releaseSealedInputsOfUnsentTx(
   }
   if (inputs.length === 0) return 0;
 
+  // Released means never sent. A queued retry would post it over coins the
+  // next payment is about to spend.
+  removePendingMinerSubmit(id);
+
   const unique = [...new Set(inputs.map((o) => o.trim()).filter(Boolean))];
   for (let i = 0; i < unique.length; i++) {
     if (uiBudgetExpired()) await yieldToUi();
@@ -757,6 +763,7 @@ export async function failUnsentLocalTx(
       return true;
     });
     if (failed) {
+      forgetTxCertified(id);
       console.info(
         `[stale-output] failed ghost local tx ${id.slice(
           0,

@@ -48,6 +48,12 @@ const submitAtomicBeefToMiners = vi.fn(async (..._a: unknown[]) => ({
   keepPropagating: false,
 }))
 
+let spvVerified = true
+vi.mock('./spvPackage', () => ({
+  verifySignedPackage: async () => ({ kind: 'verified' }),
+  spvVerifiedHere: () => spvVerified,
+}))
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     identityKey: '02'.padEnd(66, 'a'),
@@ -133,6 +139,7 @@ function changeRows(count: number, sats: number) {
 describe('maybeConsolidateChange', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
+    spvVerified = true
     shouldYield.mockReturnValue(false)
     recomposeActive.mockReturnValue(false)
     findOutputs.mockResolvedValue([])
@@ -180,7 +187,7 @@ describe('maybeConsolidateChange', () => {
     expect(bumpBalanceAfterHeal).toHaveBeenCalled()
   })
 
-  it('closes the funds-rewrite window when the broadcast is rejected', async () => {
+  it('keeps a verified consolidation sealed when miners only queue it — it still lands', async () => {
     findOutputs.mockImplementation(async (args: unknown) =>
       offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
     )
@@ -191,11 +198,43 @@ describe('maybeConsolidateChange', () => {
     const { maybeConsolidateChange } = await import('./consolidateChange')
 
     const outcome = await maybeConsolidateChange()
+    expect(outcome).toMatchObject({ ran: true })
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+    expect(selfFundsRewriteActive()).toBe(false)
+  })
+
+  it('releases only a consolidation local SPV held before any miner saw it', async () => {
+    spvVerified = false
+    findOutputs.mockImplementation(async (args: unknown) =>
+      offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
+    )
+    submitAtomicBeefToMiners.mockResolvedValue({
+      kind: 'queued' as const,
+      reason: 'unverified' as const,
+    })
+    const { maybeConsolidateChange } = await import('./consolidateChange')
+
+    const outcome = await maybeConsolidateChange()
     expect(outcome).toEqual({ ran: false, reason: 'error' })
-    // Inputs came back and the balance is readable again — not stuck hidden.
     expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledTimes(1)
     expect(selfFundsRewriteActive()).toBe(false)
     expect(bumpBalanceAfterHeal).toHaveBeenCalled()
+  })
+
+  it('keeps a consolidation queued before SPV sealed', async () => {
+    spvVerified = false
+    findOutputs.mockImplementation(async (args: unknown) =>
+      offsetOf(args) === 0 ? changeRows(MIN_FRAGMENTS_TO_CONSOLIDATE + 5, 5_000) : [],
+    )
+    submitAtomicBeefToMiners.mockResolvedValue({
+      kind: 'queued' as const,
+      reason: 'offline' as const,
+    })
+    const { maybeConsolidateChange } = await import('./consolidateChange')
+
+    const outcome = await maybeConsolidateChange()
+    expect(outcome).toEqual({ ran: false, reason: 'error' })
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
   it('skips a pool that is not fragmented enough — no transaction', async () => {

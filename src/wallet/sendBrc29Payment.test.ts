@@ -43,6 +43,11 @@ const notifyPeerBrc29Payment = vi.fn(
 const txExistsOnChain = vi.fn(async () => false)
 const spentStatusOfOutpoint = vi.fn(async () => 'unspent' as const)
 
+vi.mock('./spvPackage', () => ({
+  verifySignedPackage: async () => ({ kind: 'verified' }),
+  spvVerifiedHere: () => true,
+}))
+
 vi.mock('./legacyScan', () => ({
   txExistsOnChain: (...args: unknown[]) => txExistsOnChain(...args),
   spentStatusOfOutpoint: (...args: unknown[]) => spentStatusOfOutpoint(...args),

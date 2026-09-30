@@ -398,6 +398,9 @@ export async function bootWallet(args: {
   // Credit from the BEEF; miners run after the reply. The toolbox otherwise
   // awaits postBeef inside every internalizeAction and refuses on a miss.
   installInternalizeMinerDeferral(setup.wallet, setup.services as Services)
+  // No signature leaves the toolbox until every coin it spends is proven good.
+  const { installSpendCertainty } = await import('./inputCertainty')
+  installSpendCertainty(setup.wallet, args.chain)
   syncMonitorChaintracks(setup.monitor, (setup.services as Services).options.chaintracks)
 
   try {

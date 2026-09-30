@@ -1,0 +1,420 @@
+/**
+ * Follow every Arcade-accepted cheque until a node holds it.
+ *
+ * Arcade's 202 is a queue receipt. The send stays fast because nothing here
+ * sits on the reply path: signing answers the app, `minerSubmit` posts, and
+ * this watch runs afterwards. What it adds is the part the 202 skipped —
+ * asking Arcade what the network actually said, and acting on it:
+ *
+ * - `landed`: a node holds it, or it is on chain. Remembered, never re-asked.
+ * - `dead` (see `kernel/landingFate`): Arcade rejected it, a confirmed foreign
+ *   tx already spent an input, or it spends change of a cheque already proven
+ *   dead. The send is failed as a closure, the dead coins are hidden under
+ *   their named spender, the pool is swept, and Activity says "not sent".
+ * - `waiting`: Arcade still retrying with nothing proven. Once per watch the
+ *   body is re-posted to the non-Arcade miners — Arcade's first success ends
+ *   the toolbox round, so a stall inside Arcade otherwise reaches nobody else.
+ *
+ * Unlock replays every pinned cheque that never landed, oldest first, so a
+ * night of sends Arcade could not land is repaired on the next launch.
+ */
+import type { Services } from '@bsv/wallet-toolbox-client'
+import type { Chain } from './vault'
+import type { BoundAccountKeyScope } from './accountLocalKeys'
+import { accountKeyScopeFor } from './accountLocalKeys'
+import {
+  getWalletRuntime,
+  runtimeIsCurrent,
+  type WalletRuntime,
+} from './walletRuntime'
+import { createDurableTtlTxidMap } from './durableTtlTxidMap'
+import { normalizeTxid } from './txid'
+import {
+  decideLanding,
+  type LandingArcade,
+  type LandingEvidence,
+  type LandingFate,
+} from './kernel/landingFate'
+import type { ArcadeTxFate } from './arcadeV2'
+
+/** Pauses between Arcade reads for one cheque (≈31 min in all). */
+const WATCH_DELAYS_MS = [
+  5_000, 15_000, 30_000, 60_000, 120_000, 240_000, 480_000, 900_000,
+] as const
+const WATCH_SPAN_MS = WATCH_DELAYS_MS.reduce((a, b) => a + b, 0)
+const EVIDENCE_PROBE_MS = 4_000
+/** Unlock settles (history restore, first ingest) before the replay. */
+const UNLOCK_DELAY_MS = 8_000
+/** A pin younger than this is still inside its own live watch. */
+const UNLOCK_MIN_AGE_MS = 60_000
+const UNLOCK_MAX_PINS = 200
+/** WhatsOnChain keyless budget; the replay shares it with live signs. */
+const UNLOCK_GAP_MS = 400
+const SPEND_POLL_MS = 500
+const SPEND_WAIT_MAX_MS = 60_000
+
+const landed = createDurableTtlTxidMap({
+  key: 'handcash.wallet.arcadeLanded.v1',
+  max: 1_000,
+  ttlMs: 14 * 24 * 60 * 60_000,
+})
+
+const watching = new Set<string>()
+const unlockedRuntimes = new Set<string>()
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+export function txLanded(txid: string): boolean {
+  return landed.has(txid)
+}
+
+export function noteTxLanded(txid: string): void {
+  landed.remember(txid)
+}
+
+export function resetArcadeLandingForTests(): void {
+  landed.reset()
+  watching.clear()
+  unlockedRuntimes.clear()
+}
+
+export function toLandingArcade(fate: ArcadeTxFate, isLanded: (status: string) => boolean): LandingArcade {
+  switch (fate.kind) {
+    case 'accepted':
+      return isLanded(fate.status)
+        ? { kind: 'landed', status: fate.status }
+        : { kind: 'queued', status: fate.status }
+    case 'stalled':
+    case 'retryable':
+      return { kind: 'stalled', status: fate.status, reason: fate.reason }
+    case 'rejected':
+      return { kind: 'rejected', reason: fate.reason }
+    default:
+      return { kind: 'unknown' }
+  }
+}
+
+async function landingEvidence(
+  txid: string,
+  atomic: number[] | undefined,
+  chain: Chain,
+): Promise<LandingEvidence> {
+  const { txExistsOnChain } = await import('./legacyScan')
+  const onChain = await txExistsOnChain(txid, chain).catch(() => null)
+  if (onChain === true) return { onChain, spentElsewhere: [], rejectedParents: [] }
+
+  const { inputOutpointsForSignedTx } = await import('./signedTxInputs')
+  const inputs = await inputOutpointsForSignedTx(txid, atomic)
+  if (inputs.length === 0) return { onChain, spentElsewhere: [], rejectedParents: [] }
+
+  const { txIsArcadeRejected } = await import('./arcadeSubmitGuard')
+  const rejectedParents = [
+    ...new Set(
+      inputs
+        .map((op) => normalizeTxid(op.split(/[._:]/)[0] ?? ''))
+        .filter((parent): parent is string => !!parent && txIsArcadeRejected(parent)),
+    ),
+  ]
+  const { probeOutpointSpends } = await import('./createActionInputFate')
+  const probes = await probeOutpointSpends(inputs, txid, chain, EVIDENCE_PROBE_MS)
+  const spentElsewhere = inputs.flatMap((outpoint) => {
+    const probe = probes.get(outpoint)
+    return probe?.kind === 'confirmedSpender' ? [{ outpoint, spender: probe.spender }] : []
+  })
+  return { onChain, spentElsewhere, rejectedParents }
+}
+
+async function waitForSpendRegion(): Promise<boolean> {
+  const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+  const deadline = Date.now() + SPEND_WAIT_MAX_MS
+  while (shouldYieldChainIngestToSpend()) {
+    if (Date.now() > deadline) return false
+    await delay(SPEND_POLL_MS)
+  }
+  return true
+}
+
+function deadLabel(fate: Extract<LandingFate, { kind: 'dead' }>): string {
+  switch (fate.cause) {
+    case 'input-spent-elsewhere':
+      return 'Not on chain — a coin it spent was already spent'
+    case 'parent-rejected':
+      return 'Not on chain — it spent change from a payment that failed'
+    default:
+      return `Not on chain — ${fate.reason}`.slice(0, 120)
+  }
+}
+
+/**
+ * Fail a cheque the chain will never take. Order matters: failing restores
+ * the inputs, so the dead ones are hidden after, under their named spender.
+ */
+async function retireDeadCheque(args: {
+  txid: string
+  fate: Extract<LandingFate, { kind: 'dead' }>
+  evidence: LandingEvidence
+  runtime: WalletRuntime
+  owner?: BoundAccountKeyScope
+  toast: boolean
+}): Promise<boolean> {
+  const { txid, fate, evidence, runtime } = args
+  if (!(await waitForSpendRegion())) return false
+  if (!runtimeIsCurrent(runtime)) return false
+  const started = Date.now()
+
+  const { noteArcadeRejectedTx } = await import('./arcadeSubmitGuard')
+  noteArcadeRejectedTx(txid)
+  const { removePendingMinerSubmit } = await import('./pendingMinerOutbox')
+  removePendingMinerSubmit(txid, args.owner)
+  try {
+    const { rememberGhostTx } = await import('./ghostTxSuppress')
+    rememberGhostTx(txid)
+  } catch {
+    /* optional */
+  }
+
+  const { failUnsentLocalTx, hideSpentOutpoints } = await import('./staleOutputRelease')
+  await failUnsentLocalTx(txid, { force: true })
+  const bySpender = new Map<string, string[]>()
+  for (const row of evidence.spentElsewhere) {
+    const list = bySpender.get(row.spender) ?? []
+    list.push(row.outpoint)
+    bySpender.set(row.spender, list)
+  }
+  let hidden = 0
+  for (const [spender, outpoints] of bySpender) {
+    hidden += await hideSpentOutpoints(outpoints, spender, runtime.instance)
+  }
+  if (bySpender.size > 0) {
+    const { scheduleDeadCoinSweep } = await import('./deadCoinSweep')
+    scheduleDeadCoinSweep(runtime.instance.chain, bySpender.keys())
+  }
+  const { bumpBalanceAfterHeal } = await import('./session')
+  bumpBalanceAfterHeal()
+
+  const { reportLateMinerSubmitFailure } = await import('./minerSubmit')
+  await reportLateMinerSubmitFailure({
+    txid,
+    reason: new Error(deadLabel(fate)),
+    toast: args.toast,
+  })
+  console.warn(
+    `[landing] ${txid.slice(0, 12)} dead cause=${fate.cause} hidden=${hidden} — ${fate.reason} done ${
+      Date.now() - started
+    }ms`,
+  )
+  return true
+}
+
+/**
+ * Hand the body to every non-Arcade miner until one accepts it. Best effort:
+ * a dead body is refused there too, and a live one lands without Arcade.
+ */
+async function repostOutsideArcade(
+  services: Services,
+  txid: string,
+  atomic: number[],
+): Promise<void> {
+  const list = (
+    services as unknown as {
+      postBeefServices?: {
+        services?: Array<{
+          name: string
+          service: (beef: unknown, txids: string[]) => Promise<unknown>
+        }>
+      }
+    }
+  ).postBeefServices?.services
+  if (!Array.isArray(list)) return
+  const { Beef } = await import('@bsv/sdk')
+  const { isArcadeNamedService, summarizePostBeef } = await import('./postBeefResult')
+  for (const entry of list) {
+    if (isArcadeNamedService(entry.name) || typeof entry.service !== 'function') continue
+    try {
+      const result = await entry.service(Beef.fromBinary(atomic), [txid])
+      const summary = summarizePostBeef([{ name: entry.name, ...(result as object) }])
+      console.info(
+        `[landing] ${txid.slice(0, 12)} re-posted outside Arcade via ${entry.name}: ${summary.detail}`,
+      )
+      if (summary.accepted) return
+    } catch (err) {
+      console.info(
+        `[landing] ${txid.slice(0, 12)} re-post via ${entry.name} failed`,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+}
+
+type LandingRound = {
+  fate: LandingFate
+  arcade: LandingArcade
+  evidence?: LandingEvidence
+}
+
+async function checkLanding(args: {
+  txid: string
+  runtime: WalletRuntime
+  owner?: BoundAccountKeyScope
+  atomic?: number[]
+  since: number
+  toast: boolean
+}): Promise<LandingRound> {
+  const { txid, runtime } = args
+  const chain = runtime.instance.chain
+  const { fetchArcadeTxFate, arcadeStatusLanded } = await import('./arcadeV2')
+  const arcade = toLandingArcade(await fetchArcadeTxFate(chain, txid), arcadeStatusLanded)
+  const elapsedMs = Date.now() - args.since
+  let fate = decideLanding({ arcade, elapsedMs })
+  let evidence: LandingEvidence | undefined
+  if (fate.kind === 'gatherEvidence') {
+    evidence = await landingEvidence(txid, args.atomic, chain)
+    fate = decideLanding({ arcade, elapsedMs, evidence })
+  }
+  if (!runtimeIsCurrent(runtime)) {
+    return { fate: { kind: 'waiting', reason: 'account changed' }, arcade, evidence }
+  }
+  if (fate.kind === 'landed') {
+    landed.remember(txid)
+    console.info(`[landing] ${txid.slice(0, 12)} landed ${fate.reason} done ${elapsedMs}ms`)
+  } else if (fate.kind === 'dead' && evidence) {
+    const retired = await retireDeadCheque({
+      txid,
+      fate,
+      evidence,
+      runtime,
+      owner: args.owner,
+      toast: args.toast,
+    })
+    if (!retired) return { fate: { kind: 'waiting', reason: 'spend busy' }, arcade, evidence }
+  }
+  return { fate, arcade, evidence }
+}
+
+/**
+ * Start following one Arcade-accepted cheque. Never awaited by a send; one
+ * watch per txid, and none for a cheque already landed or proven dead.
+ */
+export function watchArcadeLanding(
+  txid: string,
+  opts?: { atomic?: number[]; owner?: BoundAccountKeyScope; since?: number },
+): void {
+  const id = normalizeTxid(txid)
+  if (!id || watching.has(id) || landed.has(id)) return
+  const runtime = getWalletRuntime()
+  if (!runtime) return
+  watching.add(id)
+  const since = opts?.since ?? Date.now()
+  const owner = opts?.owner ?? accountKeyScopeFor(runtime.instance)
+  void (async () => {
+    const { txIsArcadeRejected } = await import('./arcadeSubmitGuard')
+    let reposted = false
+    for (const wait of WATCH_DELAYS_MS) {
+      await delay(wait)
+      if (!runtimeIsCurrent(runtime) || txIsArcadeRejected(id)) return
+      const round = await checkLanding({
+        txid: id,
+        runtime,
+        owner,
+        atomic: opts?.atomic,
+        since,
+        toast: true,
+      })
+      if (round.fate.kind === 'landed' || round.fate.kind === 'dead') return
+      if (!reposted && round.arcade.kind === 'stalled' && round.evidence) {
+        reposted = true
+        const body = opts?.atomic ?? (await chequeBody(id, owner))
+        if (body?.length) await repostOutsideArcade(runtime.instance.services, id, body)
+      }
+    }
+    console.info(
+      `[landing] ${id.slice(0, 12)} still unlanded after ${Date.now() - since}ms — Arcade keeps retrying; checked again at unlock`,
+    )
+  })()
+    .catch((err) => {
+      console.warn(`[landing] ${id.slice(0, 12)} watch failed`, err)
+    })
+    .finally(() => {
+      watching.delete(id)
+    })
+}
+
+async function chequeBody(
+  txid: string,
+  owner?: BoundAccountKeyScope,
+): Promise<number[] | null> {
+  try {
+    const { signedChequeAtomic } = await import('./signedChequeArchive')
+    return signedChequeAtomic(txid, owner)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Once per unlocked account: ask about every pinned cheque that never
+ * landed, parents first, and fail the ones the chain proves dead. One
+ * summary toast, not one per send.
+ */
+export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
+  if (unlockedRuntimes.has(runtime.runtimeId)) return
+  unlockedRuntimes.add(runtime.runtimeId)
+  void (async () => {
+    await delay(UNLOCK_DELAY_MS)
+    const { isRecomposeInFlight } = await import('./recompose')
+    while (isRecomposeInFlight()) {
+      if (!runtimeIsCurrent(runtime)) return
+      await delay(SPEND_POLL_MS * 4)
+    }
+    if (!runtimeIsCurrent(runtime)) return
+    const started = Date.now()
+    const { listArcadeSubmitContacts, txIsArcadeRejected } = await import('./arcadeSubmitGuard')
+    const now = Date.now()
+    const pins = listArcadeSubmitContacts()
+      .filter(
+        (pin) =>
+          now - pin.at >= UNLOCK_MIN_AGE_MS &&
+          !landed.has(pin.txid) &&
+          !txIsArcadeRejected(pin.txid) &&
+          !watching.has(pin.txid),
+      )
+      .slice(0, UNLOCK_MAX_PINS)
+    if (pins.length === 0) return
+    const owner = accountKeyScopeFor(runtime.instance)
+    const tally = { landed: 0, dead: 0, waiting: 0 }
+    for (const [i, pin] of pins.entries()) {
+      if (i > 0) await delay(UNLOCK_GAP_MS)
+      if (!runtimeIsCurrent(runtime)) return
+      const round = await checkLanding({
+        txid: pin.txid,
+        runtime,
+        owner,
+        atomic: (await chequeBody(pin.txid, owner)) ?? undefined,
+        since: pin.at,
+        toast: false,
+      })
+      if (round.fate.kind === 'landed') tally.landed += 1
+      else if (round.fate.kind === 'dead') tally.dead += 1
+      else {
+        tally.waiting += 1
+        if (now - pin.at < WATCH_SPAN_MS) {
+          watchArcadeLanding(pin.txid, { owner, since: pin.at })
+        }
+      }
+    }
+    console.info(
+      `[landing] unlock pass checked=${pins.length} landed=${tally.landed} dead=${tally.dead} waiting=${tally.waiting} done ${
+        Date.now() - started
+      }ms`,
+    )
+    if (tally.dead > 0 && runtimeIsCurrent(runtime)) {
+      const { toastError } = await import('./toast')
+      toastError(
+        tally.dead === 1 ? 'A payment did not reach the chain' : `${tally.dead} payments did not reach the chain`,
+        'They spent coins that were already spent. Marked not sent; balance corrected.',
+      )
+    }
+  })().catch((err) => {
+    console.warn('[landing] unlock pass failed', err)
+  })
+}

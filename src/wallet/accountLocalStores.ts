@@ -49,6 +49,12 @@ function ensureLifecycleRegistered(): void {
       void import('./deadCoinSweep').then(({ scheduleUnlockDeadCoinPass }) =>
         scheduleUnlockDeadCoinPass(runtime),
       )
+      void import('./arcadeLanding').then(({ scheduleUnlockLandingPass }) =>
+        scheduleUnlockLandingPass(runtime),
+      )
+      void import('./peerDeviceSpends').then(({ schedulePeerDeviceWatch }) =>
+        schedulePeerDeviceWatch(runtime),
+      )
     },
     dispose: () => {
       bindSyncHealthAccount(null)
