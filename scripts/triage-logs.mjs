@@ -1303,9 +1303,17 @@ function toolboxStepFacts(events) {
 const NOTIFY_POSTED_RE = /^\[mobile-notifications\] posted channel=(\S+)/
 const NOTIFY_SKIPPED_RE = /^\[mobile-notifications\] skipped kind=(\S+) reason=(\S+)/
 const NOTIFY_FAILED_RE = /^\[mobile-notifications\] (\S+) failed: (.*)$/
+const NOTIFY_GRACE_RE = /^\[mobile-notifications\] kind=(\S+) wallet left screen within grace$/
 const BRIDGE_VALUE_OK_RE = /^\[brc100\] ok method=(createAction|internalizeAction) /
+const BRIDGE_DELIVER_RE = /^\[spend\] bridge_deliver done (\d+)ms$/
 /** A bridge reply and its notification land in the same task burst. */
 const NOTIFY_WINDOW_MS = 5_000
+/** An on-screen skip this close to a hide was never seen by the user. */
+const SKIP_THEN_HIDDEN_MS = 3_000
+/** A socket-to-WebView hop this slow was parked, not working. */
+const PARKED_DELIVER_MS = 5_000
+/** Log lines of one resume land within this of the `visible` flip. */
+const RESUME_WINDOW_MS = 1_500
 
 /**
  * Mobile activity notifications against the bridge actions that should have
@@ -1320,10 +1328,29 @@ function notificationFacts(events) {
   const skipped = {}
   const failed = {}
   const hiddenActions = []
+  const onScreenSkips = []
+  const skipAts = []
+  const flips = []
+  const delivers = []
+  let postedWithinGrace = 0
   for (const e of events) {
     const key = `${e.at}|${e.text}`
     if (seen.has(key)) continue
     seen.add(key)
+    const l = LIFECYCLE_RE.exec(e.text)
+    if (l) {
+      flips.push({ at: e.at, hidden: l[1] === 'hidden' })
+      continue
+    }
+    const d = BRIDGE_DELIVER_RE.exec(e.text)
+    if (d) {
+      delivers.push({ at: e.at, ms: Number(d[1]) })
+      continue
+    }
+    if (NOTIFY_GRACE_RE.test(e.text)) {
+      postedWithinGrace += 1
+      continue
+    }
     const p = NOTIFY_POSTED_RE.exec(e.text)
     if (p) {
       posted.push(e.at)
@@ -1334,6 +1361,8 @@ function notificationFacts(events) {
     if (s) {
       const k = `${s[1]} ${s[2]}`
       skipped[k] = (skipped[k] ?? 0) + 1
+      if (s[2] === 'onScreen') onScreenSkips.push({ at: e.at, kind: s[1] })
+      skipAts.push(e.at)
       continue
     }
     const f = NOTIFY_FAILED_RE.exec(e.text)
@@ -1347,8 +1376,19 @@ function notificationFacts(events) {
       hiddenActions.push({ at: e.at, method: a[1] })
     }
   }
+  // The log ring can drop a `[lifecycle] visible` line; the wallet's own skip
+  // decision (logged in the same burst) outranks the reconstructed timeline.
+  const answeredWithin = (ats, a) =>
+    ats.some((at) => Math.abs(at - a.at) <= NOTIFY_WINDOW_MS)
   const silent = hiddenActions.filter(
-    (a) => !posted.some((at) => at >= a.at && at - a.at <= NOTIFY_WINDOW_MS),
+    (a) => !posted.some((at) => at >= a.at && at - a.at <= NOTIFY_WINDOW_MS) && !answeredWithin(skipAts, a),
+  )
+  const skippedThenHidden = onScreenSkips.filter((s) =>
+    flips.some((f) => f.hidden && f.at >= s.at && f.at - s.at <= SKIP_THEN_HIDDEN_MS),
+  )
+  const parked = delivers.filter((d) => d.ms >= PARKED_DELIVER_MS)
+  const parkedUntilResume = parked.filter((d) =>
+    flips.some((f) => !f.hidden && Math.abs(d.at - f.at) <= RESUME_WINDOW_MS),
   )
   return {
     posted: posted.length,
@@ -1361,6 +1401,11 @@ function notificationFacts(events) {
       method: a.method,
       at: new Date(a.at).toISOString(),
     })),
+    onScreenSkipsThenHidden: skippedThenHidden.length,
+    postedWithinGrace,
+    bridgeDeliversParked: parked.length,
+    bridgeDeliversParkedUntilResume: parkedUntilResume.length,
+    parkedWorstMs: parked.length ? Math.max(...parked.map((d) => d.ms)) : null,
   }
 }
 
@@ -2113,7 +2158,7 @@ function forensicQuestions(latest) {
           missing_notifications: {
             type: 'choice',
             instructions:
-              'From `latest.notifications` (Android activity notifications): `hiddenValueActions` counts createAction / internalizeAction replies sent while the WebView was hidden, and `hiddenValueActionsWithoutNotification` those with no `posted` line within 5s (`silentExamples` names them). `skipped` tallies deliberate skips by `kind reason` (`onScreen` = HandCash was judged on screen, `notPermitted` = no display permission or channel setup failed). `failed` tallies plugin errors. Builds before 0.1.539 skip silently, so on those a silent action with no `skipped` line can still be an on-screen skip. Why are notifications missing, if they are?',
+              'From `latest.notifications` (Android activity notifications): `hiddenValueActions` counts createAction / internalizeAction replies sent while the WebView was hidden, and `hiddenValueActionsWithoutNotification` those with no `posted` line within 5s (`silentExamples` names them). `skipped` tallies deliberate skips by `kind reason` (`onScreen` = HandCash was judged on screen, `notPermitted` = no display permission or channel setup failed). `failed` tallies plugin errors. Builds before 0.1.539 skip silently, so on those a silent action with no `skipped` line can still be an on-screen skip. `onScreenSkipsThenHidden` counts on-screen skips followed by the WebView hiding within 3s (the user left before seeing the result; 0.1.544+ posts those after a 2.5s leave grace, counted in `postedWithinGrace`). `bridgeDeliversParked` counts BRC-100 requests that took ≥5s to get from the native socket into the WebView, and `bridgeDeliversParkedUntilResume` those released in the same second as a `visible` flip, meaning the hidden renderer was frozen (0.1.544+ keeps it at the app’s own priority). Why are notifications missing, if they are?',
             criteria: {
               none_missing:
                 '`hiddenValueActionsWithoutNotification` is 0 and `failed` is empty: every hidden value action posted. Missing ones the user reports are the OS (bundling, cooldown, Do Not Disturb), not the wallet.',
@@ -2122,6 +2167,10 @@ function forensicQuestions(latest) {
               not_permitted:
                 '`skipped ... notPermitted` or a permission warning explains the gap.',
               plugin_failed: '`failed` has entries: the notification plugin threw.',
+              left_during_skip:
+                '`onScreenSkipsThenHidden` is above 0 with no matching `postedWithinGrace`: the result landed while the user was leaving HandCash, so it was skipped as on screen and never seen.',
+              renderer_frozen:
+                '`bridgeDeliversParkedUntilResume` is above 0: the hidden WebView was frozen, so wallet work — and the notification it would raise — waited for the user to reopen HandCash.',
               no_event:
                 'Silent hidden actions have neither a skip nor a failure line: the wallet never raised a notification event for them.',
             },
@@ -2563,11 +2612,21 @@ function report(state, answers) {
   }
 
   const notify = latest.notifications
-  if (notify && (notify.hiddenValueActions || notify.posted)) {
+  if (notify && (notify.hiddenValueActions || notify.posted || notify.bridgeDeliversParked)) {
     console.log('\nNotifications (code-counted):')
     console.log(
       `  ${notify.posted} posted · ${notify.hiddenValueActions} hidden value action(s) · ${notify.hiddenValueActionsWithoutNotification} with no notification`,
     )
+    if (notify.onScreenSkipsThenHidden || notify.postedWithinGrace) {
+      console.log(
+        `  ${notify.onScreenSkipsThenHidden} on-screen skip(s) followed by a hide within 3s · ${notify.postedWithinGrace} posted inside the leave grace`,
+      )
+    }
+    if (notify.bridgeDeliversParked) {
+      console.log(
+        `  ${notify.bridgeDeliversParked} bridge request(s) parked ≥5s before reaching the WebView (${notify.bridgeDeliversParkedUntilResume} released only on resume · worst ${notify.parkedWorstMs}ms)`,
+      )
+    }
     for (const [k, n] of Object.entries(notify.skipped)) console.log(`  skipped ${k} ×${n}`)
     for (const [k, n] of Object.entries(notify.failed)) console.log(`  failed ${k} ×${n}`)
     for (const s of notify.silentExamples) console.log(`  silent ${s.method} at ${s.at}`)

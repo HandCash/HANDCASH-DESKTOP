@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.382] - 2026-09-30
+
+Ships with Mobile 0.1.544, which keeps the wallet answering apps while it is in the background. The Desktop app is unchanged.
+
+### Changed
+
+- **Triage counts background delivery failures** (`scripts/triage-logs.mjs`, `latest.notifications`):
+  - `bridgeDeliversParked` / `bridgeDeliversParkedUntilResume`: BRC-100 requests that took 5s or more to get from the native socket into the WebView, and how many were released only when HandCash came back on screen. On 0.1.543, all four such requests (worst 75s) waited for the user to reopen the app.
+  - `onScreenSkipsThenHidden` / `postedWithinGrace`: activity skipped as "on screen" when the user left within 3s.
+- An action is no longer reported as silent when the wallet logged its own skip for it. The log ring can drop a `[lifecycle] visible` line.
+
 ## [1.3.381] - 2026-09-30
 
 On 0.1.542 a phone went from 1,007,412 sats to zero. Its history backup had not uploaded for a week: every push logged `skip schedule: no session password`, because the wallet had been unlocked with the device key, not a password. The wallet was then wiped and the seed reimported. The wipe deleted the toolbox store, and the reimport restored the week-old backup: 4.3M sats of coins that were long spent, which the dead-coin sweep then hid (125 coins). Change made after that backup is locked to keys derived from random BRC-29 prefixes and suffixes that lived only in the deleted store. The seed cannot regenerate them.
