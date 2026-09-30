@@ -13,7 +13,10 @@ const SEALED_PREFIX = 'sealed:v1:'
 
 function canSeal(): boolean {
   try {
-    return safeStorage.isEncryptionAvailable()
+    // Keychain/DPAPI sealing alone is not user authentication. Only expose
+    // this independent unlock factor when secret release can require presence.
+    return process.platform === 'darwin' &&
+      systemPreferences.canPromptTouchID() && safeStorage.isEncryptionAvailable()
   } catch {
     return false
   }
@@ -26,16 +29,14 @@ function platformLabel(): string {
     } catch {
       // ignore
     }
-    return 'Mac password'
+    return 'Device unlock unavailable'
   }
-  if (process.platform === 'win32') return 'Windows Hello'
-  return 'Device unlock'
+  return 'Device unlock unavailable'
 }
 
 async function promptPresence(reason: string): Promise<void> {
-  if (process.platform !== 'darwin') return
+  if (!canSeal()) throw new Error('Device authentication is unavailable; use your wallet password or recovery phrase')
   try {
-    if (!systemPreferences.canPromptTouchID()) return
     await systemPreferences.promptTouchID(reason)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

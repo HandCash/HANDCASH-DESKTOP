@@ -104,9 +104,16 @@ function isVaultKey(key: string): boolean {
   return key.startsWith('handcash.brc100.vault')
 }
 
+function requiresCommittedWrite(key: string): boolean {
+  // Recoverable signed bodies, outboxes, input ownership, and authentication
+  // enrollment must reach disk before the renderer receives success.
+  return isVaultKey(key) || /^(?:handcash\.wallet\.(?:signedChequeArchive|pendingMinerOutbox|utxoLocks)|handcash\.brc29\.pendingOutbox|handcash\.item\.pendingOutbox|handcash\.brc100\.deviceDek|handcash\.createdBeef|handcash\.autoPayReservations)/.test(key)
+}
+
 function canSeal(): boolean {
   try {
-    return safeStorage.isEncryptionAvailable()
+    return safeStorage.isEncryptionAvailable() &&
+      (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text')
   } catch {
     return false
   }
@@ -232,7 +239,7 @@ export function durableSet(
     }
 
     store[key] = sealIfNeeded(key, value)
-    return writeStore(store, { sync: isVaultKey(key) })
+    return writeStore(store, { sync: requiresCommittedWrite(key) })
   } catch (err) {
     log.error('durableSet failed', err)
     return false
@@ -249,7 +256,7 @@ export function durableRemove(key: string): boolean {
       log.warn('durableRemove vault.v1 — preserved backup + history')
     }
     delete store[key]
-    return writeStore(store, { sync: isVaultKey(key) })
+    return writeStore(store, { sync: requiresCommittedWrite(key) })
   } catch (err) {
     log.error('durableRemove failed', err)
     return false

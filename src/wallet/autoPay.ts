@@ -14,10 +14,60 @@ import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { accountLocalKey } from './accountLocalKeys'
 import {
   getSpendingAuthorizationGrant,
-  spendingAuthorizationAllowsPayment,
+  startOfUtcMonth,
 } from './spendingAuthorization'
 
 const STORAGE_KEY = storageRegistry.autoPay.key
+const RESERVATION_KEY = storageRegistry.autoPayReservations.key
+type ReservedPayment = { id: string; origin: string; sats: number; at: number; txid?: string }
+export type AutoPayReservation = { key: string; id: string }
+
+function readReservations(key = accountLocalKey(RESERVATION_KEY)): ReservedPayment[] | null {
+  try {
+    const raw = durableGetItem(key)
+    if (!raw) return []
+    const rows: unknown = JSON.parse(raw)
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row.id !== 'string' ||
+      typeof row.origin !== 'string' || !Number.isSafeInteger(row.sats) || row.sats <= 0 ||
+      !Number.isFinite(row.at))) return null
+    return rows
+  } catch { return null }
+}
+
+/** Reserve before consent is returned. Failed/uncertain calls remain charged
+ * until the spending window expires; an explicit approval can still proceed.
+ * Reservations survive process death and are never timed out while signing.
+ */
+export function reserveAutoPayPayment(origin: string | undefined, amountSats: number): AutoPayReservation | null {
+  if (!canAutoProcessPayment(origin, 'createAction', amountSats)) return null
+  const key = accountLocalKey(RESERVATION_KEY)
+  const rows = readReservations(key)
+  if (!rows) return null
+  const kept = rows.filter(row => row.at >= Date.now() - 90 * 24 * 60 * 60_000)
+  if (kept.length >= 4096) return null
+  const id = crypto.randomUUID()
+  kept.push({ id, origin: normalizeAppHost(origin), sats: Math.trunc(amountSats), at: Date.now() })
+  if (!durableSetItem(key, JSON.stringify(kept))) return null
+  return { key, id }
+}
+
+export function settleAutoPayReservation(reservation: AutoPayReservation, txid: string | null | undefined): void {
+  if (!txid || !/^[0-9a-f]{64}$/i.test(txid)) return
+  const rows = readReservations(reservation.key)
+  const row = rows?.find(entry => entry.id === reservation.id)
+  if (!rows || !row) return
+  row.txid = txid
+  // A failed write conservatively leaves the original reservation in force.
+  durableSetItem(reservation.key, JSON.stringify(rows))
+}
+
+function chargedSats(origin: string | undefined, since: number): number | null {
+  const rows = readReservations()
+  if (!rows) return null
+  const own = rows.filter(row => row.origin === normalizeAppHost(origin) && row.at >= since)
+  const recorded = new Set(own.flatMap(row => row.txid ? [row.txid] : []))
+  return own.reduce((total, row) => total + row.sats, 0) + getSpentSatsSince(origin, since, recorded)
+}
 
 export const DEFAULT_AUTO_PAY_MAX_USD = 10
 export const DEFAULT_AUTO_PAY_WINDOW_HOURS = 24
@@ -133,7 +183,7 @@ export function setAutoPaySettings(
     typeof settings.windowHours === 'number' &&
     Number.isFinite(settings.windowHours) &&
     settings.windowHours > 0
-      ? Math.round(settings.windowHours)
+      ? Math.min(744, Math.max(1, Math.round(settings.windowHours)))
       : DEFAULT_AUTO_PAY_WINDOW_HOURS
   const rate = getCachedUsdPerBsv()
   const prior = store[key]
@@ -172,20 +222,23 @@ export function canAutoProcessPayment(
   const settings = getAutoPaySettings(origin)
   if (!settings?.enabled) return false
 
-  // Signing completes a prior payment flow — allow when auto-pay is on.
-  if (method === 'signAction') return true
+  // A signAction must authorize its exact prepared action. Merely enabling
+  // Auto-pay is not authority to sign an arbitrary reference/spend payload.
   if (method !== 'createAction') return false
 
   const sats = typeof amountSats === 'number' ? Math.max(0, amountSats) : 0
   if (sats <= 0) return false
 
   // BRC spendingAuthorization grant (monthly sats) takes precedence when present.
-  if (getSpendingAuthorizationGrant(origin)) {
-    return spendingAuthorizationAllowsPayment(origin, sats)
+  const grant = getSpendingAuthorizationGrant(origin)
+  if (grant) {
+    const charged = chargedSats(origin, startOfUtcMonth())
+    return charged != null && charged + sats <= grant.amountSats
   }
 
   const windowMs = settings.windowHours * 60 * 60_000
-  const spentSats = getSpentSatsSince(origin, Date.now() - windowMs)
+  const spentSats = chargedSats(origin, Date.now() - windowMs)
+  if (spentSats == null) return false
   const rate = getCachedUsdPerBsv()
 
   if (rate && rate > 0) {

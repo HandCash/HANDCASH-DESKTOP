@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTION_BRC100_METHODS,
   MIGRATION_BRC100_METHODS,
-  NO_COALESCE_BRC100_ACTIONS,
   brc100Contract,
 } from './brc100'
+import {
+  cancelPendingPermissions,
+  requestActionApproval,
+  resolvePermission,
+  subscribePermissionRequests,
+  type PendingPrompt,
+} from '../wallet/permissions'
 
 describe('frozen BRC-100 contract', () => {
   it('classifies every declared action and migration method', () => {
@@ -16,11 +22,31 @@ describe('frozen BRC-100 contract', () => {
     }
   })
 
-  it('keeps signature and market mutations distinct', () => {
-    for (const method of NO_COALESCE_BRC100_ACTIONS) {
-      expect(brc100Contract.actionMayCoalesce(method)).toBe(false)
+  it('never lets one approval stand for another payment, even an identical one', async () => {
+    cancelPendingPermissions()
+    let current: PendingPrompt | null = null
+    const unsubscribe = subscribePermissionRequests((next) => {
+      current = next
+    })
+    try {
+      const args = { description: 'pay', outputs: [{ satoshis: 1000, lockingScript: '51' }] }
+      const first = requestActionApproval('synthetic-app.invalid', 'createAction', args)
+      const second = requestActionApproval('synthetic-app.invalid', 'createAction', args)
+
+      const firstPrompt = current as PendingPrompt | null
+      if (!firstPrompt || firstPrompt.kind !== 'action') throw new Error('missing first prompt')
+      expect(resolvePermission(firstPrompt.id, 'allow')).toBe(true)
+      await expect(first).resolves.toBe('allow')
+
+      const secondPrompt = current as PendingPrompt | null
+      if (!secondPrompt || secondPrompt.kind !== 'action') throw new Error('missing second prompt')
+      expect(secondPrompt.id).not.toBe(firstPrompt.id)
+      expect(resolvePermission(secondPrompt.id, 'deny')).toBe(true)
+      await expect(second).resolves.toBe('deny')
+    } finally {
+      unsubscribe()
+      cancelPendingPermissions()
     }
-    expect(brc100Contract.actionMayCoalesce('encrypt')).toBe(true)
   })
 
   it('does not make unknown methods public by default', () => {

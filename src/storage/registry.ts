@@ -230,6 +230,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  autoPayReservations: defineStorage({
+    key: 'handcash.autoPayReservations.v1',
+    owner: 'permissions',
+    scope: 'wallet',
+    version: 1,
+  }),
   spendingAuthorization: defineStorage({
     key: 'handcash.brc100.spendingAuthorization',
     owner: 'permissions',

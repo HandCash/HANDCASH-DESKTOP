@@ -6,7 +6,7 @@ import {
 } from './appIdentity'
 import { brc100Contract } from '../contracts/brc100'
 import { storageRegistry } from '../storage/registry'
-import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
+import { canAutoProcessPayment, clearAutoPaySettings, reserveAutoPayPayment, type AutoPayReservation } from './autoPay'
 import {
   grantableCollectionIdsFromOutputs,
   grantableCollectionsFromOutputs,
@@ -1213,6 +1213,7 @@ export function requestActionApproval(
   origin: string | undefined,
   method: string,
   args: unknown,
+  onAutomaticApproval?: (reservation: AutoPayReservation) => void,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
@@ -1233,8 +1234,12 @@ export function requestActionApproval(
     if (access.canReceive) return Promise.resolve('allow')
   } else if (incomingFunds && acceptsIncomingFunds(key)) {
     return Promise.resolve('allow')
-  } else if (canAutoProcessPayment(key, method, amountSats)) {
-    return Promise.resolve('allow')
+  } else if (onAutomaticApproval && canAutoProcessPayment(key, method, amountSats)) {
+    const reservation = reserveAutoPayPayment(key, amountSats ?? 0)
+    if (reservation) {
+      onAutomaticApproval(reservation)
+      return Promise.resolve('allow')
+    }
   }
 
   // After Connect authorize, skip a second popup for identity proofs in the same flow.
@@ -1246,56 +1251,6 @@ export function requestActionApproval(
   // Same session: user already approved this proof once for this app.
   if (isIdentityProofMethod(method) && sessionApprovedProofs.has(proofGrantKey(key, method))) {
     return Promise.resolve('allow')
-  }
-
-  // Coalesce only methods where one displayed decision can safely stand for
-  // another method-identical request. Signatures and market mutations bind
-  // request-specific payloads and always receive their own prompt.
-  if (
-    brc100Contract.actionMayCoalesce(method) &&
-    current?.request.kind === 'action' &&
-    current.request.origin === key &&
-    current.request.method === method
-  ) {
-    return new Promise((resolve) => {
-      const prev = current!
-      current = {
-        request: prev.request,
-        resolve: (decision) => {
-          if (decision === 'allow' && isIdentityProofMethod(method)) {
-            sessionApprovedProofs.add(proofGrantKey(key, method))
-          }
-          if (decision === 'allow' && (itemSpend || itemReceive)) {
-            rememberItemActionGrant(key, method, args)
-          }
-          prev.resolve(decision)
-          resolve(decision)
-        },
-      }
-    })
-  }
-
-  const queued = queue.find(
-    (item) =>
-      brc100Contract.actionMayCoalesce(method) &&
-      item.request.kind === 'action' &&
-      item.request.origin === key &&
-      item.request.method === method,
-  )
-  if (queued) {
-    return new Promise((resolve) => {
-      const prevResolve = queued.resolve
-      queued.resolve = (decision) => {
-        if (decision === 'allow' && isIdentityProofMethod(method)) {
-          sessionApprovedProofs.add(proofGrantKey(key, method))
-        }
-        if (decision === 'allow' && (itemSpend || itemReceive)) {
-          rememberItemActionGrant(key, method, args)
-        }
-        prevResolve(decision)
-        resolve(decision)
-      }
-    })
   }
 
   return enqueuePrompt({

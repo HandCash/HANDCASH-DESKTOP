@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.385] - 2026-09-30
+
+First fixes from the 2026-09-30 security review.
+
+### Security
+
+- **One approval never authorizes another action** (`brc100Contract`, `permissions.requestActionApproval`). Every action gets its own prompt, including byte-identical payments. Previously a second payment from the same app could ride the first payment's approval, with a different amount or destination. The coalescing path is removed.
+- **Auto-pay reserves its spend before approving** (`autoPay.reserveAutoPayPayment`). The reservation is written to disk (`handcash.autoPayReservations.v1`) before consent is returned, so concurrent or crashed payments cannot exceed the window or the monthly BRC spending grant. A failed or uncertain payment stays charged until its window ends. Settling records the txid so the same spend is not counted twice.
+- **Auto-pay no longer signs `signAction` on its own.** Turning auto-pay on is not authority to sign an arbitrary prepared action. The window is clamped to 1–744 hours.
+- **"Windows Hello" / "Mac password" unlock is withdrawn where it did no authentication** (`electron/deviceAuth`). Device unlock is offered only on macOS with Touch ID. Elsewhere it reads "Device unlock unavailable"; use your wallet password or recovery phrase.
+- **Signed bodies, outboxes, the lock list and device keys are written to disk before success is returned** (`electron/durableStore.requiresCommittedWrite`). On Linux, secrets are not sealed with the plaintext `basic_text` keyring backend.
+
+### Changed
+
+- Triage prints a history timeline (replaces, restores, uploads, recomposes) beside pins that missed their local row, plus what triggered each keep-change pass. `--history` reads every retained upload.
+
 ## [1.3.384] - 2026-09-30
 
 On 0.1.545 a 1,000-sat payment to an app failed as a double spend. The app's refund, which depended on that payment, failed with it. Three of the payment's inputs had already been spent by the wallet's own market listing. That listing's Arcade pin never found its local row, so only the lock list recorded the spend. A later "keep change" pass on the listing's parent then marked those coins spendable again. The pre-send check trusted them because their parent was certified.

@@ -36,15 +36,6 @@ export const ACTION_BRC100_METHODS = [
   'acquireCertificate',
 ] as const
 
-export const NO_COALESCE_BRC100_ACTIONS = [
-  'createSignature',
-  'createAdminIdentityProof',
-  'createMarketListingAdvert',
-  'createMarketPurchaseIntent',
-  'purchaseMarketListing',
-  'createCancelMarketListingAdvert',
-] as const
-
 export const MIGRATION_BRC100_METHODS = [
   'getLegacyAddress',
   'refreshLegacyAddress',
@@ -59,14 +50,14 @@ const publicMethods: ReadonlySet<string> = new Set(PUBLIC_BRC100_METHODS)
 const silentAuthMethods: ReadonlySet<string> = new Set(SILENT_AUTH_BRC100_METHODS)
 const connectMethods: ReadonlySet<string> = new Set(CONNECT_BRC100_METHODS)
 const actionMethods: ReadonlySet<string> = new Set(ACTION_BRC100_METHODS)
-const noCoalesceActions: ReadonlySet<string> = new Set(NO_COALESCE_BRC100_ACTIONS)
 const migrationMethods: ReadonlySet<string> = new Set(MIGRATION_BRC100_METHODS)
 
 export const brc100Contract = Object.freeze({
   isPublicMethod: (method: string): boolean => publicMethods.has(method),
   isSilentAuthMethod: (method: string): boolean => silentAuthMethods.has(method),
   isConnectMethod: (method: string): boolean => connectMethods.has(method),
+  // No action shares consent with another: each authorizes one payload and
+  // one execution, so even byte-identical payments get their own prompt.
   isActionMethod: (method: string): boolean => actionMethods.has(method),
-  actionMayCoalesce: (method: string): boolean => !noCoalesceActions.has(method),
   isMigrationMethod: (method: string): boolean => migrationMethods.has(method),
 })

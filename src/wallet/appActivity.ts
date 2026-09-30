@@ -2214,12 +2214,14 @@ export function getAppActivityVolume(origin: string): number {
 /** Spent satoshis for an origin since `sinceMs` (inclusive). */
 export function getSpentSatsSince(
   origin: string | undefined,
-  sinceMs: number
+  sinceMs: number,
+  excludedTxids: ReadonlySet<string> = new Set()
 ): number {
   const key = normalizeAppHost(origin);
   let total = 0;
   for (const e of readAll()) {
     if (e.origin !== key || e.kind !== "spent") continue;
+    if (e.txid && excludedTxids.has(e.txid)) continue;
     if (isItemActivity(e)) continue;
     if (e.at >= sinceMs) total += e.sats;
   }

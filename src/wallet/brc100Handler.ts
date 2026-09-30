@@ -21,6 +21,7 @@ import {
   requestTokenViewApproval,
 } from './permissions'
 import { normalizeAppHost } from './appIdentity'
+import { settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
   isBsv21ReceiveArgs,
   isItemBasket,
@@ -792,6 +793,7 @@ async function handleBrc100RequestInner(
   event: HttpRequestEvent,
   runtime: WalletRuntime | null,
 ): Promise<{ status: number; body: string }> {
+  let automaticReservation: AutoPayReservation | null = null
   if (event.method === 'OPTIONS') {
     return { status: 200, body: '' }
   }
@@ -1015,7 +1017,8 @@ async function handleBrc100RequestInner(
       }
     }
     lapActionPhase(event.request_id, 'preflight')
-    const actionDecision = await requestActionApproval(originator, method, args)
+    const actionDecision = await requestActionApproval(originator, method, args,
+      reservation => { automaticReservation = reservation })
     lapActionPhase(event.request_id, 'approval')
     if (actionDecision !== 'allow') {
       return {
@@ -1427,6 +1430,7 @@ async function handleBrc100RequestInner(
       playWalletSound('soft')
     }
 
+    if (automaticReservation) settleAutoPayReservation(automaticReservation, extractTxid(result))
     return { status: 200, body: JSON.stringify(result ?? {}) }
   } catch (error) {
     if (isActionMethod(method)) playWalletSound('error')
