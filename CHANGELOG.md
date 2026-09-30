@@ -2,9 +2,24 @@
 
 ## [1.3.387] - 2026-09-30
 
+Rest of the 2026-09-30 security review. Cloud backup and messages are signed per request.
+
+### Security
+
+- **Cloud history and messagebox requests prove the whole request** (`identityRequestAuth.signedIdentityFetch`). The signature covers the method, path, exact body bytes, relevant headers, a timestamp and a random nonce. BRC-CLOUD consumes each nonce once and rate limits per identity. Earlier proofs covered only the method, box and time, so they could be replayed with a different body.
+- **Uploading a backup can no longer overwrite a newer one** (`historyBackup`). Uploads send `If-Match` with the ETag of the backup this device last saw. The server keeps every upload as a version that only its owner can list or read.
+- **History restore goes into a new database** (`replaceLocalHistoryFromCloud`, `vaultAccounts.selectToolboxDatabase`). A restore downloads, decrypts and validates the backup, merges it into a fresh local database, then switches to it through a pointer that is written to disk. If the new database fails to boot, the switch is rolled back. The original database is kept. Recovery shows each stage (download, validate, merge, reboot, recompose, balance).
+- **Critical records and archive snapshots reach disk before success** (`electron/durableStore`, `electron/brc39Archive`). The file and its directory are both synced.
+
+### Fixed
+
+- **Existing large backups stay restorable.** Downloads accept backups up to 96 MB, the server's cap, and the backup document budget stays at 64 MB.
+- **Activity ledger reads back off when they keep failing** (`activityLedger`). A read that keeps failing now waits up to five minutes between tries instead of warning every ten seconds.
+
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Triage reports every backup push that did not upload, grouped by reason (`historyReplica.pushMisses`). A wallet showing zero uploads now says why.
+- Electron 43.7.7, Vitest 4.
 
 ## [1.3.386] - 2026-09-30
 
