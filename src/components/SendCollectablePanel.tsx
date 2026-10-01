@@ -46,6 +46,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { fetchBalanceSats} from '../wallet/session'
 import type { Chain } from '../wallet/vault'
+import { AssetIssuers } from './AssetIssuers'
 import { DeferredImage } from './DeferredImage'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import {
@@ -509,6 +510,7 @@ export function SendCollectablePanel({
                   <strong className="collectable-details-name">
                     {batch ? `${items.length} selected` : item.name}
                   </strong>
+                  <AssetIssuers assets={items} />
                   {!batch && item.app ? (
                     <p className="collectable-details-app">{item.app}</p>
                   ) : null}
@@ -639,6 +641,7 @@ export function SendCollectablePanel({
                   <strong className="collectable-details-name">
                     {batch ? `${items.length} collectables` : item.name}
                   </strong>
+                  <AssetIssuers assets={items} />
                 </div>
               </div>
             </div>

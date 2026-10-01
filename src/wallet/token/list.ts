@@ -1,6 +1,6 @@
 import { issuerMetadataFromScript } from '../issuerMetadata'
 import { retainedIssuerMetadata } from '../issuerAttribution'
-import { proveHeldTokenTipLocally, tokenIssuerAttested } from './lineage'
+import { proveHeldTokenTip, tokenAttestationGap, tokenIssuerAttested } from './lineage'
 import { getActiveWallet } from '../session'
 import { storageRegistry } from '../../storage/registry'
 
@@ -950,41 +950,129 @@ export async function proveCachedFungibleEncodings(
   reportPhase('encoding-proofs', startedAt, `${unknown.length} tip(s)`)
 }
 
-/** Local lineage walks per list pass; the rest wait for the next refresh. */
+/** Lineage heals per list pass; the rest wait for the next refresh. */
 const LINEAGE_PROOFS_PER_PASS = 4
 
+/**
+ * The retained deploy names the issuer and the BAP ID; a remittance or cached
+ * claim only stands in until it is held. An attested card that was filed
+ * before its deploy was retained still lacks the BAP ID that shelves it.
+ */
 function reattested(row: FungibleToken): FungibleToken {
-  if (row.issuerAttested || !row.issuer) return row
-  const attested = heldTipsOf(row).some((tip) =>
-    tokenIssuerAttested({ outpoint: tip.outpoint, tokenId: tip.tokenId, issuer: row.issuer }),
-  )
-  if (!attested) return row
-  const bapId = row.bapId ?? retainedIssuerMetadata(row.tokenId)?.bapId
-  return { ...row, issuerAttested: true, ...(bapId ? { bapId } : {}) }
+  const deploy = retainedIssuerMetadata(row.tokenId)
+  const issuer = deploy?.issuer ?? row.issuer
+  if (!issuer) return row
+  const bapId = deploy?.issuer ? deploy.bapId : row.bapId
+  const attested =
+    (row.issuerAttested && issuer === row.issuer) ||
+    heldTipsOf(row).some((tip) =>
+      tokenIssuerAttested({ outpoint: tip.outpoint, tokenId: tip.tokenId, issuer }),
+    )
+  if (issuer === row.issuer && bapId === row.bapId && attested === Boolean(row.issuerAttested)) {
+    return row
+  }
+  const { bapId: _bapId, issuerAttested: _attested, ...rest } = row
+  return {
+    ...rest,
+    issuer,
+    ...(bapId ? { bapId } : {}),
+    ...(attested ? { issuerAttested: true } : {}),
+  }
+}
+
+let lastAttestationCensus = ''
+
+/**
+ * One line per change in how held tokens attest, so an uploaded log says
+ * which step keeps a token off its issuer's shelf without anyone reading it.
+ */
+async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken[]): Promise<void> {
+  const { issuerAttribution } = await import('../issuerIdentities')
+  const counts: Record<string, number> = {
+    bap: 0,
+    'bap-unconfirmed': 0,
+    key: 0,
+    'no-genesis': 0,
+    unbound: 0,
+    unsigned: 0,
+    'unsigned-mint': 0,
+  }
+  for (const row of rows) {
+    if (row.issuerAttested && row.issuer) {
+      const shelf = row.bapId
+        ? issuerAttribution(wallet.chain, { bapId: row.bapId, signer: row.issuer })?.kind === 'verified'
+          ? 'bap'
+          : 'bap-unconfirmed'
+        : 'key'
+      counts[shelf]! += 1
+      continue
+    }
+    const gap = tokenAttestationGap({
+      tokenId: row.tokenId,
+      issuer: row.issuer,
+      tipOutpoints: heldTipsOf(row).map((tip) => tip.outpoint),
+    })
+    counts[gap === 'attested' ? 'key' : gap]! += 1
+  }
+  const census =
+    `${rows.length} token(s) — ` +
+    Object.entries(counts)
+      .map(([kind, n]) => `${kind} ${n}`)
+      .join(', ')
+  if (census === lastAttestationCensus) return
+  lastAttestationCensus = census
+  console.info(`[bsv21] attestation census ${census}`)
 }
 
 /**
- * Tips filed before lineage was recorded carry an issuer claim the card cannot
- * attest. Prove them from this wallet's own transaction bytes, then re-attest.
+ * Cards whose issuer is not attested yet — including received tokens whose
+ * issuer is unknown until the deploy is held. Bind a tip and keep the deploy,
+ * then re-attest every card from what is now retained.
  */
-async function attestHeldTokenLineages(
+let attestationInFlight: Promise<void> | null = null
+
+function attestHeldTokenLineages(
   wallet: ActiveWallet,
   rows: FungibleToken[],
+  opts: { heal: boolean } = { heal: true },
+): Promise<void> {
+  if (attestationInFlight) return attestationInFlight
+  const run = attestHeldTokenLineagesNow(wallet, rows, opts.heal)
+    .catch((err) => console.warn('[bsv21] attestation pass failed', err))
+    .finally(() => {
+      if (attestationInFlight === run) attestationInFlight = null
+    })
+  attestationInFlight = run
+  return run
+}
+
+async function attestHeldTokenLineagesNow(
+  wallet: ActiveWallet,
+  rows: FungibleToken[],
+  heal: boolean,
 ): Promise<void> {
   const epoch = fungiblesAccountEpoch
   const startedAt = Date.now()
   let tried = 0
-  for (const row of rows) {
-    if (row.issuerAttested || !row.issuer) continue
+  for (const row of heal ? rows : []) {
+    if (row.issuerAttested) continue
     for (const tip of heldTipsOf(row)) {
       if (tried >= LINEAGE_PROOFS_PER_PASS || epoch !== fungiblesAccountEpoch) break
-      tried += 1
-      await proveHeldTokenTipLocally(wallet, tip.outpoint, tip.tokenId).catch(() => false)
+      const proof = await proveHeldTokenTip(wallet, tip.outpoint, tip.tokenId).catch(
+        () => ({ kind: 'refused', reason: 'walk-failed' }) as const,
+      )
       await yieldToUi()
+      if (proof.kind === 'refused' && proof.reason === 'retry-later') continue
+      tried += 1
+      console.info(
+        `[bsv21] lineage heal ${tip.outpoint.slice(0, 12)} — ` +
+          (proof.kind === 'bound' ? `bound (${proof.source})` : `refused ${proof.reason}`),
+      )
+      if (proof.kind === 'bound') break
     }
   }
-  if (tried === 0 || epoch !== fungiblesAccountEpoch) return
-  reportPhase('lineage-proofs', startedAt, `${tried} tip(s)`)
+  if (epoch !== fungiblesAccountEpoch) return
+  if (tried > 0) reportPhase('lineage-proofs', startedAt, `${tried} tip(s)`)
   let changed = false
   const next = cached.map((row) => {
     const upgraded = reattested(row)
@@ -992,6 +1080,7 @@ async function attestHeldTokenLineages(
     return upgraded
   })
   if (changed) setFungiblesCache(next, { forEpoch: epoch })
+  await reportAttestationCensus(wallet, changed ? next : cached)
 }
 
 export function areFungiblesHydrated(): boolean {
@@ -1301,6 +1390,7 @@ async function listFungiblesNow(
     console.info(
       `[bsv21] deferring listOutputs — wallet busy, using ${cachedRows.length} cached token(s)`,
     )
+    void attestHeldTokenLineages(wallet, cachedRows, { heal: false })
     return cachedRows
   }
 

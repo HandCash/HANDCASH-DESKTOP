@@ -266,6 +266,7 @@ function sessionFacts(header, events) {
   const ui = uiFacts(events)
   const nftImport = nftImportFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
+  const tokenAttestation = tokenAttestationFacts(events)
   const appFlow = appFlowFacts(events)
   const toolboxSteps = toolboxStepFacts(events)
   const notifications = notificationFacts(events)
@@ -370,6 +371,9 @@ function sessionFacts(header, events) {
     nftImport,
     // Token deposits that ingest kept pending, refused, or failed to internalize.
     tokenDeposits,
+    // Held tokens per issuer shelf (bap / bap-unconfirmed / key) or the step
+    // they lack (no-genesis / unbound / unsigned / unsigned-mint), plus heals.
+    tokenAttestation,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -967,6 +971,40 @@ const ANCESTRY_INCOMPLETE_RE = /^\[(?:fungible|item)-settle\] ([0-9a-f]{12}) anc
  * ages; refused / retired / internalize-failed lines say why it stopped.
  * Grouped by txid prefix so one stuck deposit is one row, not one row per poll.
  */
+const TOKEN_CENSUS_RE = /^\[bsv21\] attestation census (\d+) token\(s\) — (.*)$/
+const TOKEN_HEAL_RE = /^\[bsv21\] lineage heal ([0-9a-f]{12}) — (?:bound \((\S+)\)|refused (\S+))/
+
+/**
+ * Why held BSV-21 tokens are or are not on their issuer's shelf: the last
+ * attestation census (counts per shelf / missing step) and every heal outcome.
+ */
+function tokenAttestationFacts(events) {
+  let census = null
+  let censusLines = 0
+  const heals = { bound: {}, refused: {} }
+  const healedTips = new Set()
+  for (const e of events) {
+    let m = TOKEN_CENSUS_RE.exec(e.text)
+    if (m) {
+      censusLines += 1
+      census = { tokens: Number(m[1]) }
+      for (const part of m[2].split(',')) {
+        const kv = /^\s*(\S+) (\d+)\s*$/.exec(part)
+        if (kv) census[kv[1]] = Number(kv[2])
+      }
+      continue
+    }
+    m = TOKEN_HEAL_RE.exec(e.text)
+    if (m) {
+      healedTips.add(m[1])
+      const bucket = m[2] ? heals.bound : heals.refused
+      const key = m[2] ?? m[3]
+      bucket[key] = (bucket[key] ?? 0) + 1
+    }
+  }
+  return { census, censusLines, heals, tipsHealed: healedTips.size }
+}
+
 function tokenDepositFacts(events) {
   const rows = new Map()
   const rowFor = (id) => {
@@ -2229,6 +2267,31 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const attest = latest.tokenAttestation
+  const attestationQuestions =
+    attest?.census && attest.census.tokens > (attest.census.bap ?? 0)
+      ? {
+          token_off_issuer_shelf: {
+            type: 'choice',
+            instructions:
+              'Some held BSV-21 tokens are not shelved under a verified BAP identity in Collect. `latest.tokenAttestation.census` is the last per-token count: `bap` are on a verified identity shelf, `bap-unconfirmed` are attested but this device holds no identity package for their BAP ID, `key` are attested with no BAP ID on the deploy, `no-genesis` lack the retained deploy transaction, `unbound` have no held tip whose BRC-176 walk reached the deploy, `unsigned` have a deploy whose Sigma does not verify for the named issuer, `unsigned-mint` have a deploy that names no issuer at all. `heals.bound` / `heals.refused` count background heal outcomes by source or reason (`no-tip-body`, `walk-failed`, `no-genesis`). Which step keeps the most tokens off a verified shelf?',
+            criteria: {
+              missing_identity_package:
+                '`bap-unconfirmed` is the largest non-`bap` count: tokens are attested, but the identity package for their BAP ID never reached this device.',
+              deploy_not_retained:
+                '`no-genesis` is the largest non-`bap` count: the deploy transaction is not held, so the issuer Sigma cannot be read.',
+              lineage_unbound:
+                '`unbound` is the largest non-`bap` count, or `heals.refused` is dominated by `walk-failed` / `no-tip-body`: no tip has been walked back to its deploy.',
+              signature_mismatch:
+                '`unsigned` is the largest non-`bap` count: the deploy Sigma does not verify for the issuer the token names.',
+              minted_unsigned:
+                '`unsigned-mint` or `key` is the largest non-`bap` count: those tokens were minted without a BAP-stamped signature and can never join an identity shelf.',
+              unclear: 'The census does not say which step is missing.',
+            },
+          },
+        }
+      : {}
+
   const flow = latest.appFlow
   const appFlowQuestions =
     flow && flow.steps > 0
@@ -2372,6 +2435,7 @@ function forensicQuestions(latest) {
     ...activityQuestions,
     ...ledgerQuestions,
     ...depositQuestions,
+    ...attestationQuestions,
     ...appFlowQuestions,
     ...nftQuestions,
     ...notifyQuestions,
@@ -2676,6 +2740,24 @@ function report(state, answers) {
       console.log(`  ${d.txid} · ${why}${ancestry}`)
     }
     if (answers.stuck_token_deposit) choiceBlock('Stuck token deposit', answers.stuck_token_deposit)
+  }
+
+  const att = latest.tokenAttestation
+  if (att?.census) {
+    const { tokens, ...shelves } = att.census
+    console.log('\nToken issuer attestation (code-counted):')
+    console.log(
+      `  ${tokens} token(s) · ` +
+        Object.entries(shelves)
+          .map(([k, n]) => `${k} ${n}`)
+          .join(' · '),
+    )
+    const fmt = (bucket) =>
+      Object.entries(bucket)
+        .map(([k, n]) => `${k} ${n}`)
+        .join(', ') || 'none'
+    console.log(`  heals: bound ${fmt(att.heals.bound)} · refused ${fmt(att.heals.refused)} · ${att.tipsHealed} tip(s)`)
+    if (answers.token_off_issuer_shelf) choiceBlock('Token off issuer shelf', answers.token_off_issuer_shelf)
   }
 
   const flow = latest.appFlow

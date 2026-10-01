@@ -120,7 +120,13 @@ An item is attested when its retained origin carries the issuer's Sigma and a BR
 - **The sender** attaches the token-parent bodies from the transfer back to the deploy as `meta.tokenLineage`, up to 96 KB. The deploy keeps its merkle path. A lineage over budget is omitted, never truncated.
 - **The receiver** proves every tip from that lineage without the network. Only an older peer, or an omitted lineage, makes it walk parents from its cache or an indexer. It then keeps the deploy (`token/genesisStore.ts`), with its merkle path only once the root matched a block header, and files the tips that reached it (`token/lineage.ts`).
 - **Listing** attests a tip only when it is the deploy itself (its script matches), or when a recorded walk bound it to the deploy. In both cases the deploy's Sigma must verify for the issuer. A tip that merely names a real token ID stays an issuer claim.
-- Tips held before this landed are proven in the background from this wallet's own transaction bytes, four per list pass.
+- Tips held before this landed are healed in the background, four per list pass (`proveHeldTokenTip`). That includes cards that name no issuer yet, because a received token's issuer is unknown until its deploy is held. The walk reads this device's bytes first. A received token's parents live on the sender's device, so missing bodies are then fetched by txid. A body is keyed by the hash of its bytes, so a provider can withhold the lineage but never forge it. Each heal logs a named outcome (`bound (verdict|local|fetched)` or `refused no-tip-body|walk-failed|no-genesis`).
+- Re-attestation takes the issuer and the BAP ID from the retained deploy, not from the remittance claim, so an attested card filed before its deploy was held gains the BAP ID that shelves it.
+- Every pass logs `[bsv21] attestation census` when the counts change: tokens on a verified BAP shelf (`bap`), attested without a stored package (`bap-unconfirmed`), attested with no BAP ID (`key`), or the step they lack (`no-genesis`, `unbound`, `unsigned`, `unsigned-mint`). `npm run triage` reads it as `tokenAttestation`.
+
+### Where the issuer shows
+
+Item details, token details, Send, Burn and every app approval that previews a held asset show its issuer with one mark (`AssetIssuers` → `IssuerIdentityMark`). That mark is the BAP identity with its image, HandCash checkmark and fingerprint when a package proves the signer. Otherwise it is the signing key, or an unsigned issuer claim. It is never a handle. A batch shows each distinct issuer, up to three.
 
 A received token therefore lands on its issuer's BAP shelf beside that issuer's items, and it can be forwarded with the same identity package.
 

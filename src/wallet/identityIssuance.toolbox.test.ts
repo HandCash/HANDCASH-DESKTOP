@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   values: new Map<string, string>(),
   retained: new Map<string, unknown>(),
   toolbox: new Map<string, unknown>(),
+  provider: new Map<string, unknown>(),
 }))
 vi.mock('./walletRuntime', () => ({
   runtimeIsCurrent: (runtime: { instance: unknown }) => runtime.instance === state.active,
@@ -39,6 +40,11 @@ vi.mock('./beefCache', () => ({
   peekSessionBeef: (txid: string) => state.retained.get(txid) ?? null,
   getLocalTxForTxid: async () => null,
   getLocalBeefForTxid: async (_wallet: unknown, txid: string) => state.toolbox.get(txid) ?? null,
+  getBeefForTxidCached: async (_wallet: unknown, txid: string) => {
+    const beef = state.provider.get(txid)
+    if (!beef) throw new Error(`no provider body for ${txid}`)
+    return beef
+  },
 }))
 
 import { withImmediateAppBroadcast } from './appCreateAction'
@@ -83,9 +89,10 @@ import { encodeBsv21Binary } from './token/decode162'
 import { resetTokenGenesisForTests, retainTokenGenesis } from './token/genesisStore'
 import { verifySigmaIssuer } from './token/issuer'
 import {
-  proveHeldTokenTipLocally,
+  proveHeldTokenTip,
   recordProvenTokenTips,
   resetTokenLineageForTests,
+  tokenAttestationGap,
   tokenIssuerAttested,
   tokenLineageFromBeef,
   withTokenLineage,
@@ -276,6 +283,7 @@ beforeEach(() => {
   state.values.clear()
   state.retained.clear()
   state.toolbox.clear()
+  state.provider.clear()
   resetIssuerAttributionForTests()
   resetIssuerIdentitiesForTests()
   resetTokenGenesisForTests()
@@ -692,10 +700,10 @@ describe('identity issuance against a real toolbox wallet', () => {
     state.retained.clear()
     resetIssuerAttributionForTests()
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(false)
-    expect(await proveHeldTokenTipLocally(h.active, tokenId, tokenId)).toBe(false)
+    expect(await proveHeldTokenTip(h.active, tokenId, tokenId)).toEqual({ kind: 'refused', reason: 'no-genesis' })
 
     state.toolbox.set(minted.done.txid, minted.beef)
-    expect(await proveHeldTokenTipLocally(h.active, tokenId, tokenId)).toBe(true)
+    expect(await proveHeldTokenTip(h.active, tokenId, tokenId)).toEqual({ kind: 'bound', source: 'verdict' })
     state.toolbox.clear()
     resetIssuerAttributionForTests()
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
@@ -709,12 +717,39 @@ describe('identity issuance against a real toolbox wallet', () => {
     await publish(h)
     const { tokenId, tip, transferTxid, senderBeef } = await mintAndTransferToken(h)
     forgetSenderDevice()
-    expect(await proveHeldTokenTipLocally(h.active, tip, tokenId)).toBe(false)
+    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'refused', reason: 'no-tip-body' })
+    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'refused', reason: 'retry-later' })
     resetTokenLineageForTests()
     state.retained.set(transferTxid, senderBeef)
-    expect(await proveHeldTokenTipLocally(h.active, tip, tokenId)).toBe(true)
+    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'bound', source: 'local' })
     state.retained.clear()
     resetIssuerAttributionForTests()
     expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(true)
+  })
+
+  it('binds a tip received before lineage existed from bodies fetched by txid, then names its issuer and BAP ID', async () => {
+    const h = await fundedWallet()
+    const identity = await publish(h)
+    const { tokenId, tip, transferTxid, senderBeef, subject } = await mintAndTransferToken(h)
+    forgetSenderDevice()
+    state.retained.set(transferTxid, subject)
+    const tips = [tip]
+    expect(tokenAttestationGap({ tokenId, tipOutpoints: tips })).toBe('no-genesis')
+
+    for (const entry of senderBeef.txs) {
+      if (!entry.tx || entry.txid === transferTxid) continue
+      const body = new Beef()
+      body.mergeRawTx(entry.tx.toBinary())
+      state.provider.set(entry.txid, body)
+    }
+    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'bound', source: 'fetched' })
+    state.retained.clear()
+    state.provider.clear()
+    resetIssuerAttributionForTests()
+
+    expect(tokenAttestationGap({ tokenId, tipOutpoints: tips })).toBe('attested')
+    expect(retainedIssuerMetadata(tokenId)).toMatchObject({ issuer: signingKey(h), bapId: identity.bapId })
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(true)
+    expect(tokenAttestationGap({ tokenId, tipOutpoints: [`${'33'.repeat(32)}_0`] })).toBe('unbound')
   })
 })

@@ -1,7 +1,7 @@
 import { Beef, type ChainTracker } from '@bsv/sdk'
 import { storageRegistry } from '../../storage/registry'
 import { durableGetItem, durableSetItem } from '../durableStorage'
-import { retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
+import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
 import type { ActiveWallet } from '../session'
 import { retainedTokenGenesis, retainTokenGenesis } from './genesisStore'
 import { TOKEN_LINEAGE_MAX_BYTES } from './inboundLineage'
@@ -203,6 +203,55 @@ export async function chainTrackerFor(wallet: ActiveWallet): Promise<ChainTracke
 }
 
 const healTriedAt = new Map<string, number>()
+const genesisFetchTriedAt = new Map<string, number>()
+
+export type HeldTipProof =
+  | { kind: 'bound'; source: 'verdict' | 'local' | 'fetched' }
+  | {
+      kind: 'refused'
+      reason: 'bad-outpoint' | 'retry-later' | 'no-tip-body' | 'walk-failed' | 'no-genesis'
+    }
+
+type BodySource = {
+  body: (txid: string) => Promise<Beef | null>
+  /** Set once any body came from a provider rather than this device. */
+  fetched: boolean
+}
+
+/**
+ * Transaction bodies for a heal: this device first (session, retained deploys,
+ * toolbox), then a provider by txid. A received token's parents live on the
+ * sender's device, so a local-only walk could never bind a tip received
+ * before lineage rode the envelope.
+ */
+async function bodySource(wallet: ActiveWallet): Promise<BodySource> {
+  const { getBeefForTxidCached, getLocalTxForTxid, peekSessionBeef } = await import('../beefCache')
+  const source: BodySource = {
+    fetched: false,
+    body: async (txid) => {
+      const session = peekSessionBeef(txid)
+      if (session?.findTxid(txid)?.tx) return session
+      const genesis = retainedTokenGenesis(txid)
+      if (genesis) return genesis
+      const tx = await getLocalTxForTxid(wallet, txid).catch(() => null)
+      if (tx) {
+        const beef = new Beef()
+        beef.mergeRawTx(tx.toBinary())
+        return beef
+      }
+      // A body is keyed by the hash of its bytes: a provider can withhold the
+      // lineage, never forge it. The walk and the deploy's Sigma still decide.
+      const remote = await getBeefForTxidCached(wallet, txid, {
+        needProof: false,
+        allowUnprovenRawTx: true,
+      }).catch(() => null)
+      if (!remote?.findTxid(txid)?.tx) return null
+      source.fetched = true
+      return remote
+    },
+  }
+  return source
+}
 
 /**
  * Keep the deploy of a token this wallet holds. A mint lives in toolbox
@@ -210,66 +259,100 @@ const healTriedAt = new Map<string, number>()
  * only recent sends — so without this a self-minted token loses its attestation
  * once its mint ages out, while items re-read their origin on every list.
  */
-async function retainHeldTokenGenesis(wallet: ActiveWallet, tokenId: string): Promise<boolean> {
+async function retainHeldTokenGenesis(
+  wallet: ActiveWallet,
+  tokenId: string,
+  source: BodySource,
+): Promise<boolean> {
   const deployTxid = tokenId.split('_')[0]!
   if (retainedTokenGenesis(deployTxid)) return true
   const { getLocalBeefForTxid, peekSessionBeef } = await import('../beefCache')
   const session = peekSessionBeef(deployTxid)
-  const source = session?.findTxid(deployTxid)?.tx
+  let held = session?.findTxid(deployTxid)?.tx
     ? session
     : await getLocalBeefForTxid(wallet, deployTxid).catch(() => null)
-  if (!source?.findTxid(deployTxid)?.tx) return false
-  return retainTokenGenesis(source, deployTxid, await chainTrackerFor(wallet))
+  if (!held?.findTxid(deployTxid)?.tx) {
+    const now = Date.now()
+    if (now - (genesisFetchTriedAt.get(deployTxid) ?? 0) < HEAL_RETRY_MS) return false
+    genesisFetchTriedAt.set(deployTxid, now)
+    held = await source.body(deployTxid)
+  }
+  if (!held?.findTxid(deployTxid)?.tx) return false
+  return retainTokenGenesis(held, deployTxid, await chainTrackerFor(wallet))
 }
 
 /**
- * Bind a held tip to its deploy and keep that deploy, from this wallet's own
- * transaction bytes — for tips filed before lineage was recorded. Local
- * storage only: no indexer decides it.
+ * Bind a held tip to its deploy and keep that deploy — for tips filed before
+ * lineage was recorded. This device's bytes first, then bodies by txid; the
+ * BRC-176 walk decides, never an indexer's ownership answer.
  */
-export async function proveHeldTokenTipLocally(
+export async function proveHeldTokenTip(
   wallet: ActiveWallet,
   outpoint: string,
   rawTokenId: string,
-): Promise<boolean> {
+): Promise<HeldTipProof> {
   const tokenId = normalizeTokenId(rawTokenId)
   const tip = underscore(outpoint)
-  if (!tokenId || !OUTPOINT_RE.test(tip)) return false
-  if (!tokenTipBound(tip, tokenId) && !(await walkHeldTipLocally(wallet, tip, tokenId))) return false
-  return retainHeldTokenGenesis(wallet, tokenId)
+  if (!tokenId || !OUTPOINT_RE.test(tip)) return { kind: 'refused', reason: 'bad-outpoint' }
+  const source = await bodySource(wallet)
+  const walked = tokenTipBound(tip, tokenId) ? 'verdict' : await walkHeldTip(wallet, tip, tokenId, source)
+  if (walked !== 'verdict' && walked !== 'walked') return { kind: 'refused', reason: walked }
+  if (!(await retainHeldTokenGenesis(wallet, tokenId, source)))
+    return { kind: 'refused', reason: 'no-genesis' }
+  return {
+    kind: 'bound',
+    source: source.fetched ? 'fetched' : walked === 'verdict' ? 'verdict' : 'local',
+  }
 }
 
-async function walkHeldTipLocally(
+async function walkHeldTip(
   wallet: ActiveWallet,
   tip: string,
   tokenId: string,
-): Promise<boolean> {
+  source: BodySource,
+): Promise<'walked' | 'retry-later' | 'no-tip-body' | 'walk-failed'> {
   const now = Date.now()
-  if (now - (healTriedAt.get(tip) ?? 0) < HEAL_RETRY_MS) return false
+  if (now - (healTriedAt.get(tip) ?? 0) < HEAL_RETRY_MS) return 'retry-later'
   healTriedAt.set(tip, now)
-  const { getLocalTxForTxid, peekSessionBeef } = await import('../beefCache')
-  const localBody = async (txid: string): Promise<Beef | null> => {
-    const session = peekSessionBeef(txid)
-    if (session?.findTxid(txid)?.tx) return session
-    const genesis = retainedTokenGenesis(txid)
-    if (genesis) return genesis
-    const tx = await getLocalTxForTxid(wallet, txid).catch(() => null)
-    if (!tx) return null
-    const beef = new Beef()
-    beef.mergeRawTx(tx.toBinary())
-    return beef
-  }
   const tipTxid = tip.split('_')[0]!
-  const start = await localBody(tipTxid)
-  if (!start) return false
-  const filled = await fillTokenParentBodies(start, localBody, [tipTxid])
+  const start = await source.body(tipTxid)
+  if (!start) return 'no-tip-body'
+  const filled = await fillTokenParentBodies(start, source.body, [tipTxid])
   const deploy = recordProvenTokenTips(filled, [tip], tokenId)
-  if (!deploy) return false
+  if (!deploy) return 'walk-failed'
   await retainTokenGenesis(filled, deploy.split('_')[0]!, await chainTrackerFor(wallet))
-  return true
+  return 'walked'
+}
+
+export type TokenAttestationGap =
+  | 'attested'
+  /** The deploy is not retained, so its Sigma cannot be read yet. */
+  | 'no-genesis'
+  /** The deploy is retained and names no issuer: an unsigned mint. */
+  | 'unsigned-mint'
+  /** No held tip has a walk that reached the deploy. */
+  | 'unbound'
+  /** The deploy's Sigma does not verify for the named issuer. */
+  | 'unsigned'
+
+/** Which attestation step a held token still lacks. */
+export function tokenAttestationGap(token: {
+  tokenId: string
+  issuer?: string | null
+  tipOutpoints: readonly string[]
+}): TokenAttestationGap {
+  const tokenId = normalizeTokenId(token.tokenId)
+  if (!tokenId) return 'no-genesis'
+  const deploy = retainedIssuerMetadata(tokenId)
+  if (!deploy) return 'no-genesis'
+  const issuer = deploy.issuer ?? token.issuer
+  if (!issuer) return 'unsigned-mint'
+  if (!token.tipOutpoints.some((tip) => tokenTipBound(tip, tokenId))) return 'unbound'
+  return retainedSignedBy(tokenId, issuer) ? 'attested' : 'unsigned'
 }
 
 export function resetTokenLineageForTests(): void {
   verdicts = null
   healTriedAt.clear()
+  genesisFetchTriedAt.clear()
 }

@@ -453,7 +453,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         </div>
         <div className="collectable-details-copy">
           <h3 className="collectable-details-name">{item.name}</h3>
-          {issuerView?.bap ? (
+          {issuerView ? (
             <IssuerIdentityMark view={issuerView} className="detail-issuer-mark" />
           ) : null}
           {item.app ? <p className="collectable-details-app">{item.app}</p> : null}

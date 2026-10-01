@@ -9,7 +9,6 @@ import {
   formatFungibleAmount,
   getFungible,
   listFungibles,
-  shortIssuerLabel,
   subscribeFungibles,
   tokenMarketPriceHistory,
 } from '../wallet/token'
@@ -52,7 +51,7 @@ import {
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { useDetailActionDock } from './WalletActionDock'
 import { useAsyncAction } from '../hooks/useAsyncAction'
-import { useIssuerView } from '../hooks/useIssuerView'
+import { tokenIssuerAsset, useIssuerView } from '../hooks/useIssuerView'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { IssuerIdentityMark, issuerTrustNote } from './IssuerIdentityMark'
 
@@ -140,7 +139,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   }, [tokenId, send])
 
   const loaded = snapshot.context.token
-  const issuerView = useIssuerView(loaded ? { ...loaded, origin: loaded.tokenId } : null)
+  const issuerView = useIssuerView(loaded ? tokenIssuerAsset(loaded) : null)
 
   if (snapshot.matches('loading')) {
     return (
@@ -184,11 +183,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       : 'BSV-21 · no supply cap'
     : null
   const issuerBap = issuerView?.bap ? issuerView : null
-  const issuerLabel = token.issuerHandle
-    ? token.issuerHandle
-    : token.issuer
-      ? shortIssuerLabel(token.issuer)
-      : null
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   // Legacy BSV-21 tips are read-only except Burn (cleanup path).
   const burnBlocked =
@@ -350,14 +344,8 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               </span>
             ) : null}
           </div>
-          {issuerBap ? (
-            <IssuerIdentityMark view={issuerBap} className="detail-issuer-mark" />
-          ) : issuerLabel ? (
-            <div className="fungible-details-ids">
-              <span className="fungible-details-origin" title={token.issuer || undefined}>
-                {issuerLabel}
-              </span>
-            </div>
+          {issuerView ? (
+            <IssuerIdentityMark view={issuerView} className="detail-issuer-mark" />
           ) : null}
           <strong className="fungible-details-balance">{amount}</strong>
           {marketListing ? (

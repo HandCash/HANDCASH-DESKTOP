@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.401] - 2026-10-01
+
+### Fixed
+
+- **Received tokens find their issuer shelf.** On a phone, tokens received from another wallet stayed on the plain Tokens shelf. There were four causes. The background check skipped tokens whose issuer was not known yet, and a received token's issuer is not known until the wallet holds its deploy. It only read transactions stored on this device, but a received token's history lives on the sender's device. An attested token that was missing its BAP ID never got one. And the check never ran while the wallet was busy. It now checks every unattested token, and fetches missing history by transaction ID when needed. That history is hash-checked, so a provider can withhold it but never forge it. The issuer and BAP ID now come from the deploy itself.
+- **Uploaded logs say why a token is off its shelf.** Each check logs a one-line attestation census and a named result for every repair attempt, and `npm run triage` reports both.
+
+### Changed
+
+- **The issuer shows wherever you act on an asset.** Item details, token details, Send, Burn and app approvals (market list and buy included) now show who issued the asset. When an identity package proves the signer, that is its BAP identity: image, name, HandCash checkmark and fingerprint. Otherwise it is the signing key or an unsigned issuer claim, never a handle. A batch shows each distinct issuer.
+
 ## [1.3.400] - 2026-10-01
 
 Same wallet as 1.3.399, released from `master`. No changes.

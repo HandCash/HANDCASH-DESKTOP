@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { tokenIssuerAsset, type IssuerAsset } from '../hooks/useIssuerView'
 import { getCachedCollectables } from '../wallet/collectables'
 import { getCachedFungibles, getTokenIconDataUrl } from '../wallet/token'
+import { AssetIssuers } from './AssetIssuers'
 import { DeferredImage } from './DeferredImage'
 import { CollectablesIcon, InventoryIcon } from './icons'
 
@@ -9,6 +11,8 @@ type Preview = {
   imageUrl?: string
   kind: 'token' | 'collectable'
   subtitle: string
+  /** Only for an asset this wallet holds; a request's own hints never name an issuer. */
+  issuer?: IssuerAsset
 }
 
 function norm(raw: string): string {
@@ -37,6 +41,7 @@ function resolvePreview(
         imageUrl: item.imageUrl,
         kind: 'collectable',
         subtitle: item.proven ? 'Origin verified' : 'Collectable',
+        issuer: item,
       }
     }
   }
@@ -56,6 +61,7 @@ function resolvePreview(
         (hints?.itemIcon ? getTokenIconDataUrl(hints.itemIcon) : undefined),
       kind: 'token',
       subtitle: 'Token',
+      issuer: tokenIssuerAsset(token),
     }
   }
   if (hints?.itemName) {
@@ -97,6 +103,7 @@ export function PermissionItemPreview({
       }),
     )
   }, [outpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind])
+  const issuers = useMemo(() => (item?.issuer ? [item.issuer] : []), [item])
 
   if (!item) return null
   const Fallback = item.kind === 'token' ? InventoryIcon : CollectablesIcon
@@ -122,6 +129,7 @@ export function PermissionItemPreview({
       <div className="permission-item-preview-copy">
         <span>{item.subtitle}</span>
         <strong title={item.name}>{item.name}</strong>
+        <AssetIssuers assets={issuers} />
       </div>
     </div>
   )

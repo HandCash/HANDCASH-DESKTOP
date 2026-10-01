@@ -47,6 +47,8 @@ import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
 import { FungibleTokenFace } from './FungibleTokenFace'
+import { AssetIssuers } from './AssetIssuers'
+import { tokenIssuerAsset } from '../hooks/useIssuerView'
 import { shortTokenLabel } from '../wallet/token'
 import { useWalletActionDock } from './WalletActionDock'
 
@@ -128,6 +130,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     () => searchFriends(recipientQuery, friends).slice(0, 8),
     [recipientQuery, friends],
   )
+  const issuerAssets = useMemo(() => (token ? [tokenIssuerAsset(token)] : []), [token])
 
   const balanceLabel = token
     ? formatFungibleAmount(token.amt, token.dec)
@@ -384,6 +387,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                 <div>
                   <p className="send-eyebrow">Send token</p>
                   <strong className="collectable-details-name">{token.sym}</strong>
+                  <AssetIssuers assets={issuerAssets} />
                   <p className="collectable-details-app" title={`Origin ${token.tokenId}`}>
                     {shortTokenLabel(token.tokenId)}
                   </p>
@@ -535,6 +539,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                   <strong className="collectable-details-name">
                     {amount.trim()} {token.sym}
                   </strong>
+                  <AssetIssuers assets={issuerAssets} />
                 </div>
               </div>
             </div>

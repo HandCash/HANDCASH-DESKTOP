@@ -30,6 +30,21 @@ export type IssuerAsset = {
   origin?: string
 }
 
+/** A token's issuer: the deploy outpoint is the origin whose height judges the signer. */
+export function tokenIssuerAsset(token: {
+  tokenId: string
+  issuer?: string
+  issuerAttested?: boolean
+  bapId?: string
+}): IssuerAsset {
+  return {
+    issuer: token.issuer,
+    issuerAttested: token.issuerAttested,
+    bapId: token.bapId,
+    origin: token.tokenId,
+  }
+}
+
 /** Resolver bound to the current runtime, for one render pass. */
 export function currentIssuerResolver(): IssuerIdentityResolver {
   return issuerAttributionResolver(getWalletRuntime())
@@ -49,6 +64,22 @@ export function useIssuerIdentitiesGeneration(): string {
     ensureVerifiedIssuersFresh()
   }, [])
   return `${identities}:${packages}:${listed}`
+}
+
+/** Distinct issuers across the assets one action moves, in first-seen order. */
+export function useIssuerViews(assets: readonly IssuerAsset[]): IssuerView[] {
+  const generation = useIssuerIdentitiesGeneration()
+  return useMemo(() => {
+    const resolve = currentIssuerResolver()
+    const trust = currentIssuerTrust()
+    const views = new Map<string, IssuerView>()
+    for (const { issuer, issuerAttested, bapId, origin } of assets) {
+      if (!issuer) continue
+      const view = issuerViewFor({ issuer, issuerAttested, bapId, origin }, resolve, trust)
+      if (view && !views.has(view.key)) views.set(view.key, view)
+    }
+    return [...views.values()]
+  }, [assets, generation])
 }
 
 /** One asset's issuer, re-read when identities, stored packages or the verified list change. */

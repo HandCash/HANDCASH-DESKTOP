@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
@@ -49,6 +49,8 @@ import {
 import { parseFungibleSendAmount } from '../wallet/token'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { tokenIssuerAsset, type IssuerAsset } from '../hooks/useIssuerView'
+import { AssetIssuers } from './AssetIssuers'
 import { DeferredImage } from './DeferredImage'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
@@ -87,6 +89,7 @@ function stageOf(snapshot: AssetBurnUiSnapshot): Stage {
 function BurnShell({
   stage,
   media,
+  issuers,
   eyebrow,
   title,
   subtitle,
@@ -108,6 +111,8 @@ function BurnShell({
 }: {
   stage: Stage
   media: ReactNode
+  /** The assets being burned, so their issuers show on both steps. */
+  issuers: readonly IssuerAsset[]
   eyebrow: string
   title: string
   subtitle: string
@@ -167,6 +172,7 @@ function BurnShell({
           <strong className="collectable-details-name">
             {showConfirm ? amountLabel : title}
           </strong>
+          <AssetIssuers assets={issuers} />
           {showConfirm ? null : (
             <p className="collectable-details-app">{subtitle}</p>
           )}
@@ -344,6 +350,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const [token, setToken] = useState<FungibleToken | null>(() =>
     getFungible(tokenId)
   )
+  const issuerAssets = useMemo(() => (token ? [tokenIssuerAsset(token)] : []), [token])
   const [snapshot, event] = useMachine(assetBurnUiMachine)
 
   useEffect(() => {
@@ -523,6 +530,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
           size={48}
         />
       }
+      issuers={issuerAssets}
       eyebrow="Burn token"
       title={token.sym}
       subtitle={`You hold ${held} ${token.sym}`}
@@ -697,6 +705,7 @@ function BurnCollectablesPanel({ outpoints }: { outpoints: string[] }) {
           ))}
         </span>
       }
+      issuers={items}
       eyebrow="Burn collectables"
       title={`${items.length} selected items`}
       subtitle="One permanent on-chain action"
@@ -724,6 +733,7 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   )
   const [loading, setLoading] = useState(() => item == null)
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
+  const issuerAssets = useMemo(() => (item ? [item] : []), [item])
   const [snapshot, event] = useMachine(assetBurnUiMachine)
 
   useEffect(() => {
@@ -859,6 +869,7 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
           />
         )
       }
+      issuers={issuerAssets}
       eyebrow="Burn collectable"
       title={item.name}
       subtitle={item.app ? `${item.app} · one of a kind` : 'One of a kind'}

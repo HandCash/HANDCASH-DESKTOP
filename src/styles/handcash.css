@@ -4523,6 +4523,26 @@ button.identity-qr-copy:focus-visible {
   line-height: 1.25;
 }
 
+[data-aeon-part='asset-issuers'] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+  margin-top: 2px;
+  color: var(--hc-muted);
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.asset-issuer-mark {
+  min-width: 0;
+}
+
+.asset-issuers-more {
+  color: var(--hc-muted);
+}
+
 .issuer-identity-mark[data-aeon-state='verified'],
 .issuer-identity-mark[data-aeon-state='listed'] {
   color: var(--hc-text);
