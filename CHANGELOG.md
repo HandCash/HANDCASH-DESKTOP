@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.391] - 2026-10-01
+
+Identity issuance is now tested end to end against a real wallet. No change to app behaviour.
+
+### Tests
+
+- **Identity issuance runs through a real toolbox wallet** (`src/wallet/identityIssuance.toolbox.test.ts`): a funded IndexedDB wallet with only the network stubbed. Minting an item and a BSV-21 token with the wallet's issuer key gives a mint that spends the `noSend` anchor and carries it in its Atomic BEEF. Both outputs verify Sigma and the MAP `issuer` / `issuerProfile`. Nothing is broadcast until the wallet's broadcaster runs; it then posts the anchor and the mint together. An imported issuer key signs while the wallet funds. A failed mint releases the anchor, returns every satoshi and broadcasts nothing. The minted item and token land on the verified issuer shelf with the profile's name and icon, and a copied, unsigned claim to the same key gets its own shelf with no icon.
+
 ## [1.3.390] - 2026-10-01
 
 Public issuer identities: assets you issue carry a signed name and icon.
