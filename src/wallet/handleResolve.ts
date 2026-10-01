@@ -131,6 +131,14 @@ export function createHandleResolveDebouncer(
   }
 }
 
+/** The resolve host answered that no live binding exists; distinct from being unreachable. */
+export class HandleNotFoundError extends Error {
+  constructor(display: string) {
+    super(`Handle ${display} not found`)
+    this.name = 'HandleNotFoundError'
+  }
+}
+
 export async function resolveHandle(
   raw: string,
   baseUrl = DEFAULT_METANET_HANDLES_BASE_URL,
@@ -145,8 +153,8 @@ export async function resolveHandle(
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   })
-  if (res.status === 404) {
-    throw new Error(`Handle ${formatHandCashHandle(parsed.handle, parsed.domain)} not found`)
+  if (res.status === 404 || res.status === 410) {
+    throw new HandleNotFoundError(formatHandCashHandle(parsed.handle, parsed.domain))
   }
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 120)
@@ -162,6 +170,16 @@ export async function resolveHandle(
   }
   if (!data.handle || !data.identityKey || !data.domain) {
     throw new Error('Invalid resolve response')
+  }
+  // The host answers for its own namespace only: a key for another handle, or
+  // for `alice` when `alice@other.domain` was asked, would pay a stranger.
+  if (data.handle.toLowerCase() !== parsed.handle) {
+    throw new Error('Resolve answered for a different handle')
+  }
+  if (parsed.domain && data.domain.toLowerCase() !== parsed.domain) {
+    throw new Error(
+      `Handles on ${parsed.domain} are not served by this resolver (it serves ${data.domain.toLowerCase()})`,
+    )
   }
   const messagebox =
     typeof data.messagebox === 'string' && data.messagebox.trim()

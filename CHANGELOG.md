@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.395] - 2026-10-01
+
+Handles are harder to hijack. The resolver's answer is checked against what you asked for, a saved friend's key is pinned, and a flaky network no longer wipes your claimed handle.
+
+### Fixed
+
+- **Resolve answers are checked.** A resolver that answers for a different handle is refused. So is a `$name@domain` on a domain the resolver does not serve, which used to resolve silently on the default domain.
+- **Saved friends pin their key.** If a friend's handle starts resolving to another identity key, sending to it and re-adding it refuse with a named reason. Removing the friend accepts the new key.
+- **Claimed handle survives a network error.** Only a not-found answer from the resolver clears this device's claim; a timeout or `5xx` keeps it.
+- **Flaky timing test.** A provenance hydrate test no longer asserts wall-clock time; it already asserts the fetches overlap.
+
+### Server (BRC-CLOUD)
+
+- **Handle claims are atomic.** Two first claims racing for the same handle can no longer both succeed; the loser gets `409 handle-taken`.
+
 ## [1.3.394] - 2026-10-01
 
 Collect groups everything by BAP ID and shows the newest identity details the wallet holds, on shelves, token chips and item and token details. Token and item refreshes no longer pay for issuer attribution on every tip.

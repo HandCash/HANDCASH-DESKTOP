@@ -16,7 +16,7 @@ import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
 
-import { claimHandle, resolveHandle } from './handleResolve'
+import { claimHandle, HandleNotFoundError, resolveHandle } from './handleResolve'
 import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
 import { isMigrationOrigin } from './migration'
 
@@ -231,9 +231,14 @@ export async function getClaimedCloudHandleVerified(): Promise<ClaimedHandleStat
       if (certificate) void tryAcquireHandleCertificate(certificate)
     }
     return next
-  } catch {
-    clearClaimedCloudHandlePayload()
-    return null
+  } catch (error) {
+    // Only an answered "no such handle" ends the claim; an offline or failing
+    // host says nothing about the binding.
+    if (error instanceof HandleNotFoundError) {
+      clearClaimedCloudHandlePayload()
+      return null
+    }
+    return local
   }
 }
 

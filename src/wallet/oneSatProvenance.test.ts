@@ -605,14 +605,11 @@ describe('hydrating lean remittance path bodies', () => {
       return piece
     })
 
-    const started = Date.now()
     const { beef, fetched } = await hydrateMissingPathTxs(lean, path, getBeef)
-    const elapsed = Date.now() - started
 
     expect(getBeef).toHaveBeenCalledTimes(3)
     // The whole missing set is known up front, so the round trips must overlap.
     expect(peakInFlight).toBe(3)
-    expect(elapsed).toBeLessThan(90)
     expect(fetched).toEqual(bodies.map((tx) => tx.id('hex')))
     for (const tx of bodies) {
       expect(beef.findTxid(tx.id('hex'))?.isTxidOnly).toBeFalsy()

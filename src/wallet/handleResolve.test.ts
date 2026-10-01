@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  HandleNotFoundError,
   parseHandleInput,
   shouldResolveHandleInput,
   createHandleResolveDebouncer,
@@ -24,7 +25,7 @@ describe('createHandleResolveDebouncer', () => {
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          handle: 'sam',
+          handle: 'samy',
           domain: 'handcash.io',
           identityKey: '02' + 'ab'.repeat(32),
         }),
@@ -47,7 +48,7 @@ describe('createHandleResolveDebouncer', () => {
     await vi.advanceTimersByTimeAsync(200)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]?.[0]).toContain('handle=samy')
-    expect(resolved).toEqual(['sam'])
+    expect(resolved).toEqual(['samy'])
     debouncer.cancel()
     vi.useRealTimers()
   })
@@ -56,6 +57,27 @@ describe('createHandleResolveDebouncer', () => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('resolveHandle answers only for what was asked', () => {
+  const answer = (body: Record<string, unknown>, status = 200) =>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })))
+  const key = '02' + 'ab'.repeat(32)
+
+  it('refuses a key for another domain or another handle', async () => {
+    answer({ handle: 'alice', domain: 'handcash.io', identityKey: key })
+    await expect(resolveHandle('alice@lkup.net')).rejects.toThrow(/not served by this resolver/)
+    await expect(resolveHandle('$bob')).rejects.toThrow(/different handle/)
+    await expect(resolveHandle('@alice@handcash.io')).resolves.toMatchObject({ identityKey: key })
+    await expect(resolveHandle('$alice')).resolves.toMatchObject({ identityKey: key })
+  })
+
+  it('tells an answered not-found apart from an unreachable host', async () => {
+    answer({ error: 'not found' }, 404)
+    await expect(resolveHandle('$alice')).rejects.toBeInstanceOf(HandleNotFoundError)
+    answer({ error: 'boom' }, 503)
+    await expect(resolveHandle('$alice')).rejects.not.toBeInstanceOf(HandleNotFoundError)
+  })
 })
 
 describe('resolveHandle messagebox', () => {

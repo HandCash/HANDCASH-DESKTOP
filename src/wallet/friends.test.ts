@@ -20,8 +20,31 @@ import {
   addFriend,
   friendHasFixedHandle,
   labelLooksLikeFixedHandle,
+  refuseHandleKeyChange,
   updateFriend,
 } from './friends'
+
+describe('handle key pinning', () => {
+  beforeEach(() => store.clear())
+
+  it('refuses a resolve that moved a saved handle to another key', () => {
+    const saved = freshIdentityKey()
+    const moved = freshIdentityKey()
+    addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
+    const resolved = {
+      handle: 'alice',
+      domain: 'handcash.io',
+      identityKey: moved,
+      certificate: null,
+      display: '@alice@handcash.io',
+      messagebox: null,
+      protocols: [],
+    }
+    expect(() => refuseHandleKeyChange(resolved)).toThrow(/different identity key.*\$alice/)
+    expect(() => refuseHandleKeyChange({ ...resolved, identityKey: saved.toUpperCase() })).not.toThrow()
+    expect(() => refuseHandleKeyChange({ ...resolved, handle: 'bob' })).not.toThrow()
+  })
+})
 
 function freshIdentityKey(): string {
   return PrivateKey.fromRandom().toPublicKey().toString()

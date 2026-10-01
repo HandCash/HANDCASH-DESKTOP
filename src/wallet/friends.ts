@@ -4,7 +4,7 @@ import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { formatHandCashHandle } from './handleFormat'
 import { tryParsePeerPayUri } from './peerPayUri'
-import { parseHandleInput, resolveHandle } from './handleResolve'
+import { parseHandleInput, resolveHandle, type ResolvedHandle } from './handleResolve'
 import { storageRegistry } from '../storage/registry'
 
 const STORAGE_KEY_BASE = storageRegistry.friends.key
@@ -204,7 +204,26 @@ export async function resolvePaymentRecipient(
   }
 
   const resolved = await resolveHandle(value)
+  refuseHandleKeyChange(resolved)
   return addressFromIdentityKey(resolved.identityKey, chain)
+}
+
+/**
+ * A handle saved as a friend stays pinned to the key it resolved to then. A
+ * resolve that now answers another key means the host reassigned the handle
+ * (or lies), so paying or re-adding it refuses until the old friend is removed.
+ */
+export function refuseHandleKeyChange(resolved: ResolvedHandle): void {
+  const display = formatHandCashHandle(resolved.handle, resolved.domain).toLowerCase()
+  const key = normalizeIdentityKey(resolved.identityKey)
+  const pinned = readRaw().find(
+    (f) => f.handle?.trim().toLowerCase() === display && normalizeIdentityKey(f.identityKey) !== key,
+  )
+  if (pinned) {
+    throw new Error(
+      `${formatHandCashHandle(resolved.handle, resolved.domain)} now resolves to a different identity key than your saved friend "${pinned.label}". Remove that friend to accept the new key.`,
+    )
+  }
 }
 
 /**
@@ -325,6 +344,7 @@ export async function addFriendFromRecipient(args: {
     identityKey = normalizeIdentityKey(peer.identityKey)
   } else if (parseHandleInput(value)) {
     const resolved = await resolveHandle(value)
+    refuseHandleKeyChange(resolved)
     identityKey = normalizeIdentityKey(resolved.identityKey)
     fixedHandle = formatHandCashHandle(resolved.handle, resolved.domain)
     suggestedLabel = fixedHandle

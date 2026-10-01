@@ -54,6 +54,7 @@ const resolveHandle = vi.fn(async () => ({
 }))
 
 vi.mock('./handleResolve', () => ({
+  HandleNotFoundError: class HandleNotFoundError extends Error {},
   claimHandle: (...args: unknown[]) => claimHandle(...(args as [])),
   resolveHandle: (...args: unknown[]) => resolveHandle(...(args as [])),
 }))
@@ -192,6 +193,27 @@ describe('getClaimedCloudHandleVerified', () => {
 
     const { getClaimedCloudHandleVerified, readClaimedCloudHandle } =
       await import('./handleClaim')
+    expect(await getClaimedCloudHandleVerified()).toBeNull()
+    expect(readClaimedCloudHandle()).toBeNull()
+  })
+
+  it('keeps the claim while the registry is unreachable, and ends it on an answered not-found', async () => {
+    const claim = {
+      handle: 'alice',
+      display: '@alice@handcash.io',
+      identityKey: walletState.identityKey,
+      claimedAt: 1,
+    }
+    store.set(accountLocalKey('handcash.brc169.claimedHandle.v1'), JSON.stringify(claim))
+    const { HandleNotFoundError } = await import('./handleResolve')
+    const { getClaimedCloudHandleVerified, readClaimedCloudHandle } =
+      await import('./handleClaim')
+
+    resolveHandle.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect(await getClaimedCloudHandleVerified()).toMatchObject({ handle: 'alice' })
+    expect(readClaimedCloudHandle()?.handle).toBe('alice')
+
+    resolveHandle.mockRejectedValueOnce(new HandleNotFoundError('$alice'))
     expect(await getClaimedCloudHandleVerified()).toBeNull()
     expect(readClaimedCloudHandle()).toBeNull()
   })
