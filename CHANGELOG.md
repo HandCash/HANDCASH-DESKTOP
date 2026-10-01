@@ -1,10 +1,14 @@
 # Changelog
 
+## [1.3.400] - 2026-10-01
+
+Same wallet as 1.3.399, released from `master`. No changes.
+
 ## [1.3.399] - 2026-10-01
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Tokens you minted stay on your issuer shelf.** A token was attested only while its mint transaction sat in a short-lived cache. Once that aged out, the token fell back to an "Issuer claim" shelf away from your items. The wallet now keeps the deploy from its own storage and re-attests the card in the background, so the token stays under your identity.
 
 ## [1.3.398] - 2026-10-01
 
