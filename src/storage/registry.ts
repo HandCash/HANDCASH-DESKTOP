@@ -27,7 +27,10 @@ function defineStorage<const T extends StorageDescriptor>(descriptor: T): T {
 
 export const storageRegistry = Object.freeze({
   publicIdentities: defineStorage({
-    key: 'handcash.publicIdentities.v1', owner: 'identity', scope: 'wallet', version: 1,
+    key: 'handcash.publicIdentities.v1', owner: 'identity', scope: 'wallet', version: 2,
+  }),
+  issuerIdentities: defineStorage({
+    key: 'handcash.issuerIdentities.v1', owner: 'identity', scope: 'chain', version: 1,
   }),
   toolboxDatabasePointer: defineStorage({
     key: 'handcash.toolboxDatabasePointer.v1:', owner: 'history', scope: 'device', version: 1,

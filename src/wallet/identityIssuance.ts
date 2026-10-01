@@ -22,7 +22,7 @@ export function isIdentityIssuanceArgs(method: string, args: unknown): boolean {
 }
 
 /** Standard 1Sat SDK anchor pattern: noSend anchor → vin-bound Sigma → sendWith. */
-async function withSigmaAnchor(
+export async function withSigmaAnchor(
   active: ActiveWallet,
   args: Args,
 ): Promise<Args> {
@@ -93,11 +93,7 @@ export async function enrichIdentityIssuance(
   const nft =
     isItemIssuanceArgs('createAction', args) && !!args.outputs?.some(isOrdinal)
   if (!nft && !isBsv21IdentityMintArgs('createAction', args)) return args
-  const signer = issuanceSigner(runtime, expectedIssuer)
-  if (!signer.profile)
-    throw new Error(
-      'Define a display name and icon under ID → Public identities before issuing assets.',
-    )
+  const signer = signerWithIdentity(runtime, expectedIssuer)
   const targets = (args.outputs ?? []).filter(
     (out) => (nft && isOrdinal(out)) || isBsv21SigmaDeployOutput(out),
   )
@@ -120,9 +116,22 @@ export async function enrichIdentityIssuance(
   }
 }
 
+type IdentitySigner = ReturnType<typeof issuanceSigner> & {
+  identity: NonNullable<ReturnType<typeof issuanceSigner>['identity']>
+}
+
+function signerWithIdentity(runtime: WalletRuntime, expectedIssuer?: string): IdentitySigner {
+  const signer = issuanceSigner(runtime, expectedIssuer)
+  if (!signer.identity)
+    throw new Error(
+      'Publish your issuer identity under ID → Public identities before issuing assets.',
+    )
+  return signer as IdentitySigner
+}
+
 const anchors = new WeakMap<object, string>()
 
-async function abortQuietly(active: ActiveWallet, reference: string): Promise<void> {
+export async function abortQuietly(active: ActiveWallet, reference: string): Promise<void> {
   try {
     await active.wallet.abortAction({ reference })
   } catch (err) {
@@ -153,14 +162,15 @@ export async function releaseIdentityIssuance(
 async function signIssuance(
   runtime: WalletRuntime,
   args: Args,
-  signer: ReturnType<typeof issuanceSigner>,
+  signer: IdentitySigner,
   nft: boolean,
   isOrdinal: (out: NonNullable<Args['outputs']>[number]) => boolean,
 ): Promise<Args> {
   const active = runtime.instance
   // Selection/account can change while anchor creation waits. Never sign with
   // a different key from the one the user saw in the approval.
-  issuanceSigner(runtime, signer.identityKey)
+  if (signerWithIdentity(runtime, signer.selected).identityKey !== signer.identityKey)
+    throw new Error('Issuer identity changed after approval; approve again.')
   const funded = await enrichCreateActionForBsv21Issuer(active, args, signer)
   if (!nft) return funded
   const match = funded.inputs![0]!.outpoint.match(/^([0-9a-f]{64})[._](\d+)$/i)
@@ -180,6 +190,7 @@ async function signIssuance(
       const customInstructions = JSON.stringify({
         ...ci,
         issuer: signer.identityKey,
+        bapId: signer.bapId,
       })
       if (new TextEncoder().encode(customInstructions).length > 1000)
         throw new Error('Item remittance exceeds the BRC-100 size limit.')
@@ -196,7 +207,7 @@ async function signIssuance(
           lockingScriptHex: appendIssuerMetadata(
             out.lockingScript!,
             signer.identityKey,
-            signer.profile,
+            signer.bapId,
           ),
           fundTxid: match[1]!,
           fundVout: Number(match[2]),

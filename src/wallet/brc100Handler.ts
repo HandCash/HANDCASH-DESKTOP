@@ -4,7 +4,7 @@ import {
   isIdentityIssuanceArgs,
   releaseIdentityIssuance,
 } from './identityIssuance'
-import { selectedPublicIdentityKey, publicProfileForIssuer } from './publicIdentities'
+import { selectedPublicIdentityKey, publishedIdentityForIssuer } from './publicIdentities'
 import {
   getWalletRuntime,
   runtimeIsCurrent,
@@ -1004,9 +1004,14 @@ async function handleBrc100RequestInner(
         assertOnlineForPayment()
         if (isIdentityIssuanceArgs(method, args)) {
           const identityKey = selectedPublicIdentityKey(runtime)
-          const profile = publicProfileForIssuer(runtime, identityKey)
-          if (!profile) throw new Error('Define a display name and icon under ID → Public identities before issuing assets.')
-          approvedIssuer = { identityKey, displayName: profile.displayName }
+          const { syncHeldIssuerIdentities } = await import('./identityPublish')
+          await syncHeldIssuerIdentities(runtime, identityKey).catch((error) =>
+            console.warn('[identity-publish] held records not synced before issuance', error),
+          )
+          const identity = publishedIdentityForIssuer(runtime, identityKey)
+          if (!identity) throw new Error('Publish your issuer identity under ID → Public identities before issuing assets.')
+          if (identity.revoked) throw new Error('The selected issuer identity was revoked; select another before issuing assets.')
+          approvedIssuer = { identityKey, displayName: identity.name }
         }
         // Local toolbox / history backup is authoritative — no chain heal before pay.
         const amountSats = extractSatsFromArgs(method, args)

@@ -1,27 +1,44 @@
 import { assign, setup } from 'xstate'
-import type { PublicIdentityFields } from '../wallet/publicIdentityProfile'
+import type { IssuerIdentityFields, IssuerIdentityImage } from '../wallet/issuerIdentity'
 
-const blank = (): PublicIdentityFields => ({
-  displayName: '',
-  icon: '',
-  description: '',
+type Draft = {
+  identityKey: string | null
+  fields: IssuerIdentityFields
+  image: IssuerIdentityImage | null
+}
+const blank = (): Draft => ({
+  identityKey: null,
+  fields: { name: '', description: '' },
+  image: null,
 })
-/** Drafts and navigation only; asyncAction owns mutation/confirmation. No private keys in chart context. */
+/**
+ * Drafts and navigation only; asyncAction owns publishing, image encoding and
+ * confirmation. No private keys in chart context.
+ */
 export const publicIdentitiesMachine = setup({
   types: {
-    context: {} as { identityKey: string | null; fields: PublicIdentityFields },
+    context: {} as Draft,
     events: {} as
-      | { type: 'CREATE' }
+      | {
+          type: 'COMPOSE'
+          identityKey: string
+          fields?: IssuerIdentityFields
+          image?: IssuerIdentityImage
+        }
       | { type: 'IMPORT_KEY' }
-      | { type: 'EDIT'; identityKey: string; fields: PublicIdentityFields }
-      | { type: 'FIELD'; field: keyof PublicIdentityFields; value: string }
+      | { type: 'FIELD'; field: keyof IssuerIdentityFields; value: string }
+      | { type: 'IMAGE'; image: IssuerIdentityImage }
       | { type: 'CLOSE' },
   },
   actions: {
-    clear: assign(() => ({ identityKey: null, fields: blank() })),
-    edit: assign(({ event }) =>
-      event.type === 'EDIT'
-        ? { identityKey: event.identityKey, fields: { ...event.fields } }
+    clear: assign(() => blank()),
+    compose: assign(({ event }) =>
+      event.type === 'COMPOSE'
+        ? {
+            identityKey: event.identityKey,
+            fields: { ...(event.fields ?? blank().fields) },
+            image: event.image ?? null,
+          }
         : {},
     ),
     field: assign(({ context, event }) =>
@@ -29,28 +46,28 @@ export const publicIdentitiesMachine = setup({
         ? { fields: { ...context.fields, [event.field]: event.value } }
         : {},
     ),
+    image: assign(({ event }) => (event.type === 'IMAGE' ? { image: event.image } : {})),
   },
 }).createMachine({
   id: 'publicIdentities',
   initial: 'browsing',
-  context: { identityKey: null, fields: blank() },
+  context: blank(),
   states: {
     browsing: {
       on: {
-        CREATE: { target: 'editing', actions: 'clear' },
-        EDIT: { target: 'editing', actions: 'edit' },
+        COMPOSE: { target: 'composing', actions: 'compose' },
         IMPORT_KEY: { target: 'importing', actions: 'clear' },
       },
     },
-    editing: {
+    composing: {
       on: {
         FIELD: { actions: 'field' },
+        IMAGE: { actions: 'image' },
         CLOSE: { target: 'browsing', actions: 'clear' },
       },
     },
     importing: {
       on: {
-        FIELD: { actions: 'field' },
         CLOSE: { target: 'browsing', actions: 'clear' },
       },
     },

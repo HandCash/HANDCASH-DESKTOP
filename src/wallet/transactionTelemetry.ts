@@ -37,6 +37,7 @@ export type TransactionFlow =
   | 'consolidation'
   | 'inbound_internalization'
   | 'brc100_action'
+  | 'identity_publish'
   | 'payment'
 
 export type TransactionStage =

@@ -1,7 +1,6 @@
 import { issuerMetadataFromScript } from './issuerMetadata'
 import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from './issuerAttribution'
 import { issuerFromRemittance } from './token/issuer'
-import type { PublicIdentityProfile } from './publicIdentityProfile'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 
@@ -230,7 +229,8 @@ export type Collectable = {
   app?: string
   issuer?: string
   issuerAttested?: boolean
-  issuerProfile?: PublicIdentityProfile
+  /** Issuer BAP ID named by the item's signed tape; trusted only via its key chain. */
+  bapId?: string
   imageUrl: string
   satoshis: number
   /** Held tip script retained so send/burn planning does not require a network fetch. */
@@ -409,7 +409,7 @@ function durableListJson(snapshot: DurableListSnapshot): string {
       app: item.app,
       issuer: item.issuer,
       issuerAttested: item.issuerAttested,
-      issuerProfile: item.issuerProfile,
+      bapId: item.bapId,
       // Art bytes belong to the item art store — inlining the data URL here
       // would write every picture twice and blow the list cache budget.
       imageUrl: item.imageUrl.startsWith('data:')
@@ -966,7 +966,7 @@ function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
     app: next.app ?? held.app,
     issuer: next.issuer ?? held.issuer,
     issuerAttested: next.issuerAttested ?? held.issuerAttested,
-    issuerProfile: next.issuerProfile ?? held.issuerProfile,
+    bapId: next.bapId ?? held.bapId,
     ...(content ? { content } : held.content ? { content: held.content } : {}),
     name:
       next.name === shortOrigin(next.origin) &&
@@ -1092,7 +1092,7 @@ function toCollectable(
     name: name.trim() || shortOrigin(origin),
     app,
     issuer: issuerMetadata.issuer ?? issuerFromRemittance(o) ?? undefined,
-    issuerProfile: issuerMetadata.issuerProfile,
+    bapId: issuerMetadata.bapId,
     issuerAttested,
     imageUrl: getItemArtDataUrl(mediaOrigin) ?? contentUrlForOrigin(mediaOrigin, chain),
     satoshis: o.satoshis,

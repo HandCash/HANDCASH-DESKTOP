@@ -1,5 +1,4 @@
 import { appendIssuerMetadata, expandedProtocolScript } from '../issuerMetadata'
-import type { PublicIdentityProfile } from '../publicIdentityProfile'
 /**
  * BSV-21 issuer attestation (BRC-163): on-chain Sigma + CI/tag mirror.
  *
@@ -460,6 +459,14 @@ function normalizeDotOutpoint(op: string): string {
   return `${m[1]}.${m[2]}`
 }
 
+/** Key that Sigma-signs issuance, the BAP ID it speaks for, and earlier keys of that identity. */
+export type IssuanceSigningKey = {
+  identityKey: string
+  rootKeyHex: string
+  bapId?: string
+  priorKeys?: readonly string[]
+}
+
 /**
  * Enrich a BRC-100 createAction for basket `bsv21` identity issuance:
  * - CI + tag issuer mirror on deploy+mint / deploy+auth / mint
@@ -468,7 +475,7 @@ function normalizeDotOutpoint(op: string): string {
 export async function enrichCreateActionForBsv21Issuer(
   active: ActiveWallet,
   args: CreateActionArgs,
-  signer: { identityKey: string; rootKeyHex: string; profile?: PublicIdentityProfile } = active,
+  signer: IssuanceSigningKey = active,
 ): Promise<CreateActionArgs> {
   const outputs = args.outputs
   if (!outputs?.length) return args
@@ -544,7 +551,8 @@ export async function enrichCreateActionForBsv21Issuer(
   for (const i of allIssuanceIdxs) {
     const out = nextOutputs[i]!
     const claimed = issuerFromRemittance(out)
-    if (bsv21OpFromOutput(out) === 'mint' && claimed && claimed !== issuer) throw new Error('Select the original issuer identity before minting more tokens.')
+    if (bsv21OpFromOutput(out) === 'mint' && claimed && claimed !== issuer && !signer.priorKeys?.includes(claimed))
+      throw new Error('Select the original issuer identity before minting more tokens.')
     const tags = [...(out.tags ?? []).filter(tag => !tag.trim().toLowerCase().startsWith('issuer:'))]
     if (!tags.some((t) => t === 'bsv21' || t.startsWith('bsv21:'))) {
       tags.unshift('bsv21')
@@ -575,7 +583,7 @@ export async function enrichCreateActionForBsv21Issuer(
           nextOutputs[i] = {
             ...out,
             lockingScript: sigmaSignDeployLockingScript({
-              lockingScriptHex: appendIssuerMetadata(out.lockingScript, issuer, signer.profile),
+              lockingScriptHex: appendIssuerMetadata(out.lockingScript, issuer, signer.bapId),
               fundTxid: bindTxid,
               fundVout: bindVout,
               identityKeyHex: signer.rootKeyHex,

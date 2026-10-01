@@ -114,9 +114,10 @@ function isVaultKey(key: string): boolean {
 }
 
 function requiresCommittedWrite(key: string): boolean {
-  // Recoverable signed bodies, outboxes, input ownership, and authentication
-  // enrollment must reach disk before the renderer receives success.
-  return isVaultKey(key) || /^(?:handcash\.wallet\.(?:signedChequeArchive|pendingMinerOutbox|utxoLocks)|handcash\.brc29\.pendingOutbox|handcash\.item\.pendingOutbox|handcash\.brc100\.deviceDek|handcash\.createdBeef|handcash\.autoPayReservations|handcash\.toolboxDatabasePointer|handcash\.publicIdentities)/.test(key)
+  // Recoverable signed bodies, outboxes, input ownership, authentication
+  // enrollment and published identity proofs must reach disk before the
+  // renderer receives success.
+  return isVaultKey(key) || /^(?:handcash\.wallet\.(?:signedChequeArchive|pendingMinerOutbox|utxoLocks)|handcash\.brc29\.pendingOutbox|handcash\.item\.pendingOutbox|handcash\.brc100\.deviceDek|handcash\.createdBeef|handcash\.autoPayReservations|handcash\.toolboxDatabasePointer|handcash\.publicIdentities|handcash\.issuerIdentities)/.test(key)
 }
 
 function canSeal(): boolean {

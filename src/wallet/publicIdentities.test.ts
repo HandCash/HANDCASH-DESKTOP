@@ -1,5 +1,5 @@
 import type { WalletRuntime } from './walletRuntime'
-import { PrivateKey } from '@bsv/sdk'
+import { EncryptedMessage, PrivateKey, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveWallet } from './session'
 const state = vi.hoisted(() => ({
@@ -21,27 +21,33 @@ vi.mock('./durableStorage', () => ({
     state.values.set(key, value)
     return true
   },
+  durableRemoveItem: (key: string) => {
+    state.values.delete(key)
+  },
 }))
 import {
+  displayIssuerIdentity,
   exportPublicIdentityBackup,
   importIssuerPrivateKey,
-  importPublicIdentityProfile,
   issuanceSigner,
   listPublicIdentities,
+  recordPublishedIdentity,
   removePublicIdentity,
   restorePublicIdentityBackup,
-  saveWalletPublicIdentity,
   selectedPublicIdentityKey,
   selectPublicIdentity,
 } from './publicIdentities'
-import { signPublicIdentityProfile } from './publicIdentityProfile'
+import { bapIdentityFixture, beefOf, recordTx, rotationTx } from './issuerIdentity.fixture'
+import { bapIdFor, bapIdScript, bapKey, BAP_REVOKED_ADDRESS } from './bapRecords'
+import { buildIssuerIdentityPackage, issuerIdentityPackageBeef } from './issuerIdentity'
+import { resetIssuerIdentitiesForTests } from './issuerIdentities'
+import { storageRegistry } from '../storage/registry'
+import { accountLocalKeyFor } from './accountLocalKeys'
 const root = PrivateKey.fromHex('01'.padStart(64, '0'))
 const imported = PrivateKey.fromHex('02'.padStart(64, '0'))
-const fields = {
-  displayName: 'Issuer',
-  icon: 'https://example.test/icon.png',
-  description: '',
-}
+const rootId = root.toPublicKey().toString()
+const importedId = imported.toPublicKey().toString()
+const pub = (key: PrivateKey) => key.toPublicKey().toString()
 function active(key = root, chain: 'main' | 'test' = 'main'): ActiveWallet {
   return {
     identityKey: key.toPublicKey().toString(),
@@ -54,82 +60,155 @@ beforeEach(() => {
   state.values.clear()
   state.writable = true
   state.active = active()
+  resetIssuerIdentitiesForTests()
 })
 describe('issuer custody', () => {
-  it('encrypts imported keys, preserves the exact issuer, and keeps exports public', () => {
-    const id = importIssuerPrivateKey(runtime(), imported.toWif(), fields)
-    expect(id).toBe(imported.toPublicKey().toString())
+  it('always lists the wallet signer, encrypts imported keys and keeps exports free of secrets', () => {
+    expect(listPublicIdentities(runtime())).toEqual([
+      { identityKey: rootId, signer: 'wallet', bapId: bapIdFor(root), identity: null },
+    ])
+    const id = importIssuerPrivateKey(runtime(), imported.toWif())
+    expect(id).toBe(importedId)
     const file = exportPublicIdentityBackup(runtime())
     expect(file).not.toContain(imported.toHex().padStart(64, '0'))
     expect(file).not.toContain(imported.toWif())
-    expect(listPublicIdentities(runtime())[0]).not.toHaveProperty('sealedKey')
+    expect(listPublicIdentities(runtime()).find((row) => row.identityKey === id)).not.toHaveProperty('sealedKey')
     selectPublicIdentity(runtime(), id)
-    expect(issuanceSigner(runtime()).rootKeyHex).toBe(
-      imported.toHex().padStart(64, '0'),
-    )
-    expect(() =>
-      issuanceSigner(runtime(), root.toPublicKey().toString()),
-    ).toThrow(/changed after approval/)
+    expect(issuanceSigner(runtime()).rootKeyHex).toBe(imported.toHex().padStart(64, '0'))
+    expect(() => issuanceSigner(runtime(), rootId)).toThrow(/changed after approval/)
   })
   it('keeps records account/network scoped and refuses a different wallet backup', () => {
-    saveWalletPublicIdentity(runtime(), fields)
+    importIssuerPrivateKey(runtime(), imported.toWif())
     const backup = JSON.parse(exportPublicIdentityBackup(runtime()))
     state.active = active(imported)
-    expect(listPublicIdentities(runtime())).toEqual([])
+    expect(listPublicIdentities(runtime())).toHaveLength(1)
     expect(() => restorePublicIdentityBackup(runtime(), backup)).toThrow()
     state.active = active(root, 'test')
-    expect(listPublicIdentities(runtime())).toEqual([])
+    expect(listPublicIdentities(runtime())).toHaveLength(1)
     expect(() => restorePublicIdentityBackup(runtime(), backup)).toThrow()
   })
-  it('public profiles never grant signing authority; deleting a selected signer resets to wallet', () => {
-    const profile = signPublicIdentityProfile(imported.toHex(), 'main', fields)
-    importPublicIdentityProfile(runtime(), profile)
-    expect(() => selectPublicIdentity(runtime(), profile.identityKey)).toThrow(
+  it('only controlled keys can be selected; removing a selected signer resets to the wallet', () => {
+    expect(() => selectPublicIdentity(runtime(), importedId)).toThrow(/does not control/)
+    importIssuerPrivateKey(runtime(), imported.toHex().padStart(64, '0'))
+    selectPublicIdentity(runtime(), importedId)
+    removePublicIdentity(runtime(), importedId)
+    expect(selectedPublicIdentityKey(runtime())).toBe(rootId)
+    expect(() => removePublicIdentity(runtime(), rootId)).toThrow(/cannot be removed/)
+  })
+  it('rejects failed persistence and invalid scalars instead of reporting an import', () => {
+    for (const value of ['00'.repeat(32), 'ff'.repeat(32), 'API_TOKEN'])
+      expect(() => importIssuerPrivateKey(runtime(), value)).toThrow()
+    state.writable = false
+    expect(() => importIssuerPrivateKey(runtime(), imported.toWif())).toThrow(/Could not save/)
+    state.active = null
+    expect(() => listPublicIdentities(null)).toThrow(/Unlock/)
+  })
+})
+describe('published identity', () => {
+  it('issues with the current BAP signing key under the published BAP ID', () => {
+    expect(issuanceSigner(runtime())).toMatchObject({ identity: null, identityKey: rootId, priorKeys: [] })
+    const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
+    recordPublishedIdentity(runtime(), rootId, f.pkg)
+    expect(issuanceSigner(runtime())).toMatchObject({
+      selected: rootId,
+      identityKey: pub(f.signer),
+      rootKeyHex: f.signer.toHex().padStart(64, '0'),
+      bapId: f.bapId,
+      identity: { bapId: f.bapId, name: 'Wallet studio' },
+      priorKeys: [rootId],
+    })
+    expect(listPublicIdentities(runtime())[0]).toMatchObject({ published: f.bapId, bapId: f.bapId })
+    expect(displayIssuerIdentity(runtime(), { issuer: pub(f.signer), bapId: f.bapId })?.name).toBe('Wallet studio')
+    expect(displayIssuerIdentity(runtime(), { issuer: rootId })?.bapId).toBe(f.bapId)
+    expect(displayIssuerIdentity(runtime(), { issuer: importedId, bapId: f.bapId })).toBeNull()
+    expect(() => recordPublishedIdentity(runtime(), rootId, bapIdentityFixture({ master: imported }).pkg)).toThrow(
+      /another key/,
+    )
+    expect(() => recordPublishedIdentity(runtime(), importedId, bapIdentityFixture({ master: imported }).pkg)).toThrow(
       /does not control/,
     )
-    importIssuerPrivateKey(
-      runtime(),
-      imported.toHex().padStart(64, '0'),
-      fields,
-    )
-    selectPublicIdentity(runtime(), profile.identityKey)
-    removePublicIdentity(runtime(), profile.identityKey)
-    expect(selectedPublicIdentityKey(runtime())).toBe(
-      root.toPublicKey().toString(),
-    )
   })
-  it('restores signer custody without overwriting a newer public profile', () => {
-    const id = importIssuerPrivateKey(
+  it('after a rotation, signs with the next key and still accepts earlier keys for its own tokens', () => {
+    const f = bapIdentityFixture({ master: root, aliasHeight: 900_010 })
+    recordPublishedIdentity(runtime(), rootId, f.pkg)
+    const { tx, next } = rotationTx(f, 1, { minedHeight: 900_020 })
+    recordPublishedIdentity(
       runtime(),
-      imported.toHex().padStart(64, '0'),
-      fields,
+      rootId,
+      buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(tx)], { preferAlias: tx.id('hex') })!,
     )
-    const backup = JSON.parse(exportPublicIdentityBackup(runtime()))
-    removePublicIdentity(runtime(), id)
-    const newer = signPublicIdentityProfile(imported.toHex(), 'main', {
-      ...fields,
-      displayName: 'Updated issuer',
+    expect(issuanceSigner(runtime())).toMatchObject({
+      identityKey: pub(next),
+      bapId: f.bapId,
+      priorKeys: [rootId, pub(bapKey(root, 1))],
     })
-    importPublicIdentityProfile(runtime(), newer)
-    restorePublicIdentityBackup(runtime(), backup)
-    expect(listPublicIdentities(runtime())[0]?.profile.displayName).toBe(
-      'Updated issuer',
+  })
+  it('a revoked identity cannot issue', () => {
+    const f = bapIdentityFixture({ master: root })
+    const revoke = recordTx([bapIdScript({ bapId: f.bapId, address: BAP_REVOKED_ADDRESS, signer: bapKey(root, 0) })])
+    recordPublishedIdentity(
+      runtime(),
+      rootId,
+      buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(revoke)], {
+        preferAlias: f.aliasTx.id('hex'),
+      })!,
     )
-    selectPublicIdentity(runtime(), id)
-    expect(issuanceSigner(runtime()).identityKey).toBe(id)
+    expect(issuanceSigner(runtime()).identity).toBeNull()
+  })
+  it('a backup carries the identity packages, so a fresh device can issue under the same BAP ID', () => {
+    importIssuerPrivateKey(runtime(), imported.toWif())
+    const f = bapIdentityFixture({ master: imported, name: 'Imported studio' })
+    recordPublishedIdentity(runtime(), importedId, f.pkg)
+    const backup = JSON.parse(exportPublicIdentityBackup(runtime()))
+    expect(backup.packages[f.bapId]).toEqual(f.pkg)
+    state.values.clear()
+    resetIssuerIdentitiesForTests()
+    restorePublicIdentityBackup(runtime(), backup)
+    selectPublicIdentity(runtime(), importedId)
+    expect(issuanceSigner(runtime())).toMatchObject({
+      identityKey: pub(f.signer),
+      identity: { bapId: f.bapId, name: 'Imported studio' },
+    })
     const corrupted = structuredClone(backup)
     corrupted.identities[0].sealedKey = 'AAAA'
     expect(() => restorePublicIdentityBackup(runtime(), corrupted)).toThrow()
   })
-  it('rejects failed persistence and invalid scalars instead of reporting an import', () => {
-    for (const value of ['00'.repeat(32), 'ff'.repeat(32), 'API_TOKEN'])
-      expect(() => importIssuerPrivateKey(runtime(), value, fields)).toThrow()
-    state.writable = false
-    expect(() => saveWalletPublicIdentity(runtime(), fields)).toThrow(
-      /Could not save/,
+  it('migrates v1 profile records to custody only', () => {
+    const sealed = EncryptedMessage.encrypt(
+      Utils.toArray(
+        JSON.stringify({
+          kind: 'issuer-signing-key',
+          owner: rootId,
+          privateKey: imported.toHex().padStart(64, '0'),
+        }),
+        'utf8',
+      ),
+      root,
+      root.toPublicKey(),
     )
-    expect(listPublicIdentities(runtime())).toEqual([])
-    state.active = null
-    expect(() => listPublicIdentities(null)).toThrow(/Unlock/)
+    state.values.set(
+      accountLocalKeyFor(storageRegistry.publicIdentities.key, {
+        identityKey: rootId,
+        accountIndex: 0,
+        chain: 'main',
+      }),
+      JSON.stringify({
+        version: 1,
+        owner: rootId,
+        chain: 'main',
+        selected: importedId,
+        identities: [
+          { profile: { identityKey: rootId, displayName: 'Old', icon: 'https://x.test/i.png' }, signer: 'wallet' },
+          { profile: { identityKey: importedId }, signer: 'imported', sealedKey: Utils.toBase64(sealed) },
+          { profile: { identityKey: '03'.padEnd(66, '1') }, signer: 'public' },
+        ],
+      }),
+    )
+    const rows = listPublicIdentities(runtime())
+    expect(rows.map((row) => [row.identityKey, row.signer, row.identity])).toEqual([
+      [rootId, 'wallet', null],
+      [importedId, 'imported', null],
+    ])
+    expect(issuanceSigner(runtime()).rootKeyHex).toBe(imported.toHex().padStart(64, '0'))
   })
 })

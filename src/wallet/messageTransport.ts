@@ -1,5 +1,6 @@
 import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
+import { getWalletRuntime } from './walletRuntime'
 
 /**
  * Message transport — local-first with optional messagebox (BRC-33 semantics).
@@ -45,6 +46,7 @@ import type {
 } from './marketListing'
 import { bytesToBase64 } from './base64Binary'
 import { installElectronDirectSession } from './directSession/bridge'
+import type { IssuerIdentityPackage } from './issuerIdentity'
 import {
   encodeRemittanceForPeerBox,
   parseProvenanceV2,
@@ -377,6 +379,8 @@ type WireMessage = {
     beefB64?: string
     /** BRC-150 remittance for this hop — peer verifies identity from the package. */
     provenance?: ProvenanceV2
+    /** BAP identity packages for the issuers the asset's signed tape names. */
+    identities?: IssuerIdentityPackage[]
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
     chatRef?: boolean
   }
@@ -426,6 +430,48 @@ export function withOptionalProvenance(
     return { body, provenanceInBox: false }
   }
 }
+/** Attach issuer identity packages last, as many as fit: custody and item proof keep the box cap first. */
+export function withOptionalIdentities(
+  body: string,
+  identities: readonly IssuerIdentityPackage[],
+): { body: string; identitiesInBox: boolean } {
+  if (!identities.length || !body.startsWith(WIRE_PREFIX)) {
+    return { body, identitiesInBox: false }
+  }
+  try {
+    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
+    let fitted = body
+    const carried: IssuerIdentityPackage[] = []
+    for (const pkg of identities) {
+      const encoded = `${WIRE_PREFIX}${JSON.stringify({
+        ...parsed,
+        meta: { ...parsed.meta, identities: [...carried, pkg] },
+      } satisfies WireMessage)}`
+      if (encoded.length > MESSAGEBOX_INNER_MAX) continue
+      carried.push(pkg)
+      fitted = encoded
+    }
+    return { body: fitted, identitiesInBox: carried.length > 0 }
+  } catch {
+    return { body, identitiesInBox: false }
+  }
+}
+
+/** Store identity packages an inbound envelope carried, off the receive path. */
+function noteDeliveredIdentities(identities: unknown): void {
+  if (!Array.isArray(identities) || !identities.length) return
+  const active = getWalletRuntime()?.instance
+  if (!active) return
+  setTimeout(() => {
+    void import('./issuerIdentityDelivery')
+      .then(async ({ rememberDeliveredIdentities }) => {
+        const tracker = await Promise.resolve(active.services?.getChainTracker?.()).catch(() => null)
+        return rememberDeliveredIdentities(active.chain, identities, tracker)
+      })
+      .catch((error) => console.warn('[messagebox] identity package skipped', error))
+  }, 0)
+}
+
 export function withOptionalBeefB64(
   body: string,
   atomicBeef?: number[],
@@ -594,7 +640,9 @@ function validItemTransferMembers(value: unknown): ItemTransferMember[] | undefi
 export function decodeMessageBody(body: string): {
   kind: WireMessage['kind']
   text: string
-  meta?: WireMessage['meta']
+  /** Chat-safe card fields; identity packages stay out of the thread store. */
+  meta?: Omit<NonNullable<WireMessage['meta']>, 'identities'>
+  identities?: unknown[]
 } {
   if (!body.startsWith(WIRE_PREFIX)) return { kind: 'text', text: body }
   try {
@@ -669,6 +717,9 @@ export function decodeMessageBody(body: string): {
         provenance: parseProvenanceV2(parsed.meta?.provenance) ?? undefined,
         chatRef: parsed.meta?.chatRef === true ? true : undefined,
       },
+      ...(Array.isArray(parsed.meta?.identities) && parsed.meta.identities.length
+        ? { identities: parsed.meta.identities }
+        : {}),
     }
   } catch {
     return { kind: 'text', text: body }
@@ -1036,6 +1087,7 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
       itemName: decoded.meta?.memo?.trim() || undefined,
       token: decoded.meta?.asset?.kind === 'fungible' ? decoded.meta.asset : undefined,
     })
+    noteDeliveredIdentities(decoded.identities)
     if (typeof document !== 'undefined') {
       document.dispatchEvent(
         new CustomEvent('handcash:payment-hint', {
@@ -1246,6 +1298,7 @@ export async function pollInboundTipHints(args: {
           continue
         }
         tipHints += 1
+        noteDeliveredIdentities(decoded.identities)
         const item = decoded.meta?.item === true || undefined
         const itemName = decoded.meta?.memo?.trim() || undefined
         noteInboundReceivePending({
@@ -1408,6 +1461,23 @@ export async function notifyPeerItemIncoming(args: {
     console.warn(
       `[messagebox] BSV-21 AtomicBEEF omitted txid=${txid.slice(0, 12)} — payee cannot settle without an indexer`,
     )
+  }
+  try {
+    const chain = getWalletRuntime()?.instance.chain
+    if (chain) {
+      const { identityPackagesForDelivery } = await import('./issuerIdentityDelivery')
+      const identities = identityPackagesForDelivery(chain, {
+        itemOrigin,
+        tokenId: args.asset?.kind === 'fungible' ? args.asset.tokenId : undefined,
+        provenance: args.provenance,
+      })
+      const withIdentities = withOptionalIdentities(packed.body, identities)
+      if (withIdentities.identitiesInBox) packed = { ...packed, body: withIdentities.body }
+      else if (identities.length)
+        console.warn(`[messagebox] issuer identity omitted txid=${txid.slice(0, 12)} — box cap`)
+    }
+  } catch (error) {
+    console.warn('[messagebox] issuer identity attach skipped', error)
   }
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()

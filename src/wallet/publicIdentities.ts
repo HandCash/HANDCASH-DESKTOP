@@ -1,34 +1,81 @@
 import { EncryptedMessage, PrivateKey, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
+import { bapIdFor, bapKey } from './bapRecords'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { retainedMinedHeight } from './issuerAttribution'
+import {
+  currentIssuerSigningKey,
+  type IssuerIdentity,
+  type IssuerIdentityPackage,
+} from './issuerIdentity'
+import {
+  issuerIdentityFor,
+  issuerIdentityForSigner,
+  issuerIdentityPackage,
+  rememberIssuerIdentityPackage,
+} from './issuerIdentities'
+import { normalizeBapId, normalizeIssuerIdentityKey } from './issuerMetadata'
 import type { ActiveWallet } from './session'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
-import {
-  normalizePublicIdentityKey,
-  signPublicIdentityProfile,
-  verifyPublicIdentityProfile,
-  type PublicIdentityFields,
-  type PublicIdentityProfile,
-} from './publicIdentityProfile'
 
+/**
+ * Issuer identities this wallet controls. Each is a master key: the wallet's
+ * own root, or an imported key sealed to this wallet. Its BAP keys derive from
+ * that master exactly as 1Sat / Yours wallets derive them, so the same master
+ * has the same BAP ID everywhere. The identity itself (key chain, profile,
+ * image) is on chain and kept in `issuerIdentities`; this record holds custody.
+ */
 export type ManagedPublicIdentity = {
-  profile: PublicIdentityProfile
-  signer: 'wallet' | 'imported' | 'public'
+  /** Master public key. */
+  identityKey: string
+  signer: 'wallet' | 'imported'
   /** BRC-78 ciphertext sealed to this wallet account. Never public export. */
   sealedKey?: string
+  /** BAP ID, once this wallet has published the identity. */
+  published?: string
+}
+export type PublicIdentityRow = Omit<ManagedPublicIdentity, 'sealedKey'> & {
+  bapId: string
+  identity: IssuerIdentity | null
+}
+/** Signing material for new issuance under the selected identity. */
+export type IssuanceSigner = {
+  /** Master key of the selected identity, as the approval showed it. */
+  selected: string
+  /** Current BAP signing key: Sigma signer and `issuer` on the asset. */
+  identityKey: string
+  rootKeyHex: string
+  bapId: string
+  identity: IssuerIdentity | null
+  /** Earlier signing keys and the master, which may have issued this identity's tokens. */
+  priorKeys: string[]
 }
 type Store = {
-  version: 1
+  version: 2
   owner: string
   chain: 'main' | 'test'
   selected: string
   identities: ManagedPublicIdentity[]
 }
+type StoreV1 = {
+  version: 1
+  owner: string
+  chain: 'main' | 'test'
+  selected: string
+  identities: Array<{
+    profile?: { identityKey?: unknown }
+    signer?: unknown
+    sealedKey?: unknown
+  }>
+}
 const MAX_RECORDS = 32
-export const MAX_IDENTITY_FILE_BYTES = 128 * 1024
+const MAX_STORE_BYTES = 128 * 1024
+export const MAX_IDENTITY_BACKUP_BYTES = 4 * 1024 * 1024
+const BACKUP_KIND = 'handcash-public-identities-backup'
 const listeners = new Set<() => void>()
 let generation = 0
+const bapIds = new Map<string, string>()
 export function subscribePublicIdentities(listener: () => void): () => void {
   listeners.add(listener)
   return () => {
@@ -43,10 +90,8 @@ function announce() {
   for (const listener of listeners) listener()
 }
 function activeOrThrow(runtime: WalletRuntime | null): ActiveWallet {
-  if (!runtime)
-    throw new Error('Unlock the wallet to manage public identities.')
-  if (!runtimeIsCurrent(runtime))
-    throw new Error('Wallet changed; retry on the selected account.')
+  if (!runtime) throw new Error('Unlock the wallet to manage public identities.')
+  if (!runtimeIsCurrent(runtime)) throw new Error('Wallet changed; retry on the selected account.')
   return runtime.instance
 }
 function keyFor(active: ActiveWallet): string {
@@ -58,123 +103,113 @@ function keyFor(active: ActiveWallet): string {
 }
 function empty(active: ActiveWallet): Store {
   return {
-    version: 1,
+    version: 2,
     owner: active.identityKey.toLowerCase(),
     chain: active.chain,
     selected: active.identityKey.toLowerCase(),
     identities: [],
   }
 }
+/** v1 held self-signed JSON profiles with an icon URL; only custody carries over. */
+function migrateV1(store: StoreV1): Store {
+  const identities = (Array.isArray(store.identities) ? store.identities : [])
+    .filter((row) => row?.signer === 'wallet' || row?.signer === 'imported')
+    .map((row) => ({
+      identityKey: String(row.profile?.identityKey ?? ''),
+      signer: row.signer as ManagedPublicIdentity['signer'],
+      ...(typeof row.sealedKey === 'string' ? { sealedKey: row.sealedKey } : {}),
+    }))
+  return {
+    version: 2,
+    owner: store.owner,
+    chain: store.chain,
+    selected: identities.some((row) => row.identityKey === store.selected)
+      ? store.selected
+      : store.owner,
+    identities,
+  }
+}
 function validateStore(raw: unknown, active: ActiveWallet): Store {
-  const store = raw as Store
+  const input = raw as Store | StoreV1
+  const store = input?.version === 1 ? migrateV1(input) : (input as Store)
   if (
     !store ||
-    store.version !== 1 ||
+    store.version !== 2 ||
     store.owner !== active.identityKey.toLowerCase() ||
     store.chain !== active.chain ||
     !Array.isArray(store.identities) ||
     store.identities.length > MAX_RECORDS ||
-    !normalizePublicIdentityKey(store.selected)
+    !normalizeIssuerIdentityKey(store.selected)
   )
     throw new Error('Invalid public identity backup.')
   const keys = new Set<string>()
   const identities = store.identities.map((row) => {
-    const profile = verifyPublicIdentityProfile(
-      row?.profile,
-      undefined,
-      active.chain,
-    )
+    const identityKey = normalizeIssuerIdentityKey(row?.identityKey)
     if (
-      !profile ||
-      keys.has(profile.identityKey) ||
-      !['wallet', 'imported', 'public'].includes(row.signer)
+      !identityKey ||
+      identityKey !== row.identityKey ||
+      keys.has(identityKey) ||
+      !['wallet', 'imported'].includes(row.signer)
     )
       throw new Error('Invalid public identity record.')
-    keys.add(profile.identityKey)
-    if (row.signer === 'wallet' && profile.identityKey !== store.owner)
+    keys.add(identityKey)
+    if (row.signer === 'wallet' && identityKey !== store.owner)
       throw new Error('Wallet identity does not match.')
     if (row.signer === 'imported') {
       if (typeof row.sealedKey !== 'string' || row.sealedKey.length > 4096)
         throw new Error('Imported signer is missing.')
-    } else if (row.sealedKey !== undefined)
-      throw new Error('Unexpected signing material.')
+    } else if (row.sealedKey !== undefined) throw new Error('Unexpected signing material.')
+    const published = normalizeBapId(row.published)
     return {
-      profile,
+      identityKey,
       signer: row.signer,
       ...(row.sealedKey ? { sealedKey: row.sealedKey } : {}),
+      ...(published ? { published } : {}),
     }
   })
-  if (
-    store.selected !== store.owner &&
-    !identities.some(
-      (row) =>
-        row.profile.identityKey === store.selected && row.signer !== 'public',
-    )
-  )
+  if (store.selected !== store.owner && !identities.some((row) => row.identityKey === store.selected))
     throw new Error('Selected issuer is not controlled by this wallet.')
-  return {
-    version: 1,
-    owner: store.owner,
-    chain: store.chain,
-    selected: store.selected,
-    identities,
-  }
+  return { version: 2, owner: store.owner, chain: store.chain, selected: store.selected, identities }
 }
 let cached: { owner: string; raw: string; store: Store } | undefined
 function read(active: ActiveWallet): Store {
   const raw = durableGetItem(keyFor(active))
   if (!raw) return empty(active)
-  if (raw.length > MAX_IDENTITY_FILE_BYTES)
-    throw new Error('Public identity store is too large.')
-  if (cached?.owner === keyFor(active) && cached.raw === raw)
-    return structuredClone(cached.store)
+  if (raw.length > MAX_STORE_BYTES) throw new Error('Public identity store is too large.')
+  if (cached?.owner === keyFor(active) && cached.raw === raw) return structuredClone(cached.store)
   const store = validateStore(JSON.parse(raw), active)
   cached = { owner: keyFor(active), raw, store }
   return structuredClone(store)
 }
 function write(runtime: WalletRuntime, store: Store) {
   const active = activeOrThrow(runtime)
-  const validated = validateStore(store, active)
-  const value = JSON.stringify(validated)
-  if (value.length > MAX_IDENTITY_FILE_BYTES)
-    throw new Error('Public identity store is too large.')
+  const value = JSON.stringify(validateStore(store, active))
+  if (value.length > MAX_STORE_BYTES) throw new Error('Public identity store is too large.')
   if (!durableSetItem(keyFor(active), value))
-    throw new Error(
-      'Could not save public identities. No changes were committed.',
-    )
+    throw new Error('Could not save public identities. No changes were committed.')
   cached = undefined
   announce()
 }
 function decryptKey(active: ActiveWallet, row: ManagedPublicIdentity): string {
   if (!row.sealedKey) throw new Error('Imported signer is missing.')
   const plain = Utils.toUTF8(
-    EncryptedMessage.decrypt(
-      Utils.toArray(row.sealedKey, 'base64'),
-      PrivateKey.fromHex(active.rootKeyHex),
-    ),
+    EncryptedMessage.decrypt(Utils.toArray(row.sealedKey, 'base64'), PrivateKey.fromHex(active.rootKeyHex)),
   )
   const record = JSON.parse(plain)
-  if (
-    record.kind !== 'issuer-signing-key' ||
-    record.owner !== active.identityKey.toLowerCase()
-  )
+  if (record.kind !== 'issuer-signing-key' || record.owner !== active.identityKey.toLowerCase())
     throw new Error('Imported key belongs to another wallet.')
   const key = parsePrivateKey(record.privateKey)
-  if (key.toPublicKey().toString().toLowerCase() !== row.profile.identityKey)
-    throw new Error('Imported key does not match the public profile.')
+  if (key.toPublicKey().toString().toLowerCase() !== row.identityKey)
+    throw new Error('Imported key does not match the identity.')
   return key.toHex().padStart(64, '0')
 }
 function parsePrivateKey(value: unknown): PrivateKey {
-  if (typeof value !== 'string')
-    throw new Error('Add a hex or WIF private signing key.')
+  if (typeof value !== 'string') throw new Error('Add a hex or WIF private signing key.')
   const text = value.trim()
   let hex: string
   if (/^[0-9a-f]{64}$/i.test(text)) hex = text
   else {
-    const decoded = Utils.fromBase58Check(text, undefined) as {
-      prefix: number[]
-      data: number[]
-    }
+    const decoded = Utils.fromBase58Check(text, undefined) as { prefix: number[]; data: number[] }
     if (
       ![0x80, 0xef].includes(decoded.prefix[0]!) ||
       decoded.prefix.length !== 1 ||
@@ -187,69 +222,64 @@ function parsePrivateKey(value: unknown): PrivateKey {
   // Validate BEFORE SDK construction: PrivateKey's default constructor reduces
   // invalid scalars modulo n, which would silently import a different key.
   const scalar = BigInt('0x' + hex)
-  if (
-    scalar <= 0n ||
-    scalar >=
-      BigInt(
-        '0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141',
-      )
-  )
+  if (scalar <= 0n || scalar >= BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141'))
     throw new Error('Invalid private signing key.')
   const key = PrivateKey.fromHex(hex)
   key.toPublicKey()
   return key
 }
-function replace(
-  runtime: WalletRuntime,
-  store: Store,
-  row: ManagedPublicIdentity,
-) {
-  const existing = store.identities.findIndex(
-    (entry) => entry.profile.identityKey === row.profile.identityKey,
-  )
-  if (existing >= 0) store.identities[existing] = row
-  else {
-    if (store.identities.length >= MAX_RECORDS)
-      throw new Error('At most 32 public identities are supported.')
-    store.identities.push(row)
+function upsert(store: Store, row: ManagedPublicIdentity): Store {
+  const identities = store.identities.filter((entry) => entry.identityKey !== row.identityKey)
+  if (identities.length >= MAX_RECORDS) throw new Error(`At most ${MAX_RECORDS} issuer identities are supported.`)
+  return { ...store, identities: [...identities, row] }
+}
+function masterOf(active: ActiveWallet, owner: string, row: ManagedPublicIdentity): PrivateKey {
+  return PrivateKey.fromHex(row.identityKey === owner ? active.rootKeyHex : decryptKey(active, row))
+}
+function rowFor(store: Store, identityKey: string): ManagedPublicIdentity {
+  const key = normalizeIssuerIdentityKey(identityKey)
+  const row = rowsOf(store).find((entry) => entry.identityKey === key)
+  if (!row) throw new Error('This wallet does not control that issuer.')
+  return row
+}
+/** BAP ID is a pure function of the master key; derive it once per session. */
+function bapIdOf(active: ActiveWallet, owner: string, row: ManagedPublicIdentity): string {
+  let id = bapIds.get(row.identityKey)
+  if (!id) {
+    id = bapIdFor(masterOf(active, owner, row))
+    bapIds.set(row.identityKey, id)
   }
-  write(runtime, store)
+  return id
 }
-export function listPublicIdentities(
-  runtime: WalletRuntime | null,
-): Omit<ManagedPublicIdentity, 'sealedKey'>[] {
-  return read(activeOrThrow(runtime)).identities.map(({ profile, signer }) => ({
-    profile,
-    signer,
-  }))
+function rowsOf(store: Store): ManagedPublicIdentity[] {
+  return store.identities.some((row) => row.identityKey === store.owner)
+    ? store.identities
+    : [{ identityKey: store.owner, signer: 'wallet' as const }, ...store.identities]
 }
-export function selectedPublicIdentityKey(
-  runtime: WalletRuntime | null,
-): string {
+export function listPublicIdentities(runtime: WalletRuntime | null): PublicIdentityRow[] {
   const active = activeOrThrow(runtime)
-  return read(active).selected
-}
-export function saveWalletPublicIdentity(
-  runtime: WalletRuntime,
-  fields: PublicIdentityFields,
-) {
-  const active = activeOrThrow(runtime)
-  replace(runtime, read(active), {
-    profile: signPublicIdentityProfile(active.rootKeyHex, active.chain, fields),
-    signer: 'wallet',
+  const store = read(active)
+  return rowsOf(store).map((record) => {
+    const { sealedKey: _sealed, ...row } = record
+    return {
+      ...row,
+      bapId: bapIdOf(active, store.owner, record),
+      identity: row.published ? issuerIdentityFor(active.chain, row.published) : null,
+    }
   })
 }
-export function importIssuerPrivateKey(
-  runtime: WalletRuntime,
-  value: string,
-  fields: PublicIdentityFields,
-): string {
+export function selectedPublicIdentityKey(runtime: WalletRuntime | null): string {
+  return read(activeOrThrow(runtime)).selected
+}
+export function importIssuerPrivateKey(runtime: WalletRuntime, value: string): string {
   const active = activeOrThrow(runtime)
   const key = parsePrivateKey(value)
-  const profile = signPublicIdentityProfile(key.toHex(), active.chain, fields)
-  if (profile.identityKey === active.identityKey.toLowerCase()) {
-    saveWalletPublicIdentity(runtime, fields)
-    return profile.identityKey
+  const identityKey = key.toPublicKey().toString().toLowerCase()
+  const store = read(active)
+  if (identityKey === store.owner) {
+    if (!store.identities.some((row) => row.identityKey === identityKey))
+      write(runtime, upsert(store, { identityKey, signer: 'wallet' }))
+    return identityKey
   }
   const root = PrivateKey.fromHex(active.rootKeyHex)
   const sealed = EncryptedMessage.encrypt(
@@ -264,167 +294,160 @@ export function importIssuerPrivateKey(
     root,
     root.toPublicKey(),
   )
-  replace(runtime, read(active), {
-    profile,
-    signer: 'imported',
-    sealedKey: Utils.toBase64(sealed),
-  })
-  return profile.identityKey
+  const prior = store.identities.find((row) => row.identityKey === identityKey)
+  write(
+    runtime,
+    upsert(store, {
+      identityKey,
+      signer: 'imported',
+      sealedKey: Utils.toBase64(sealed),
+      ...(prior?.published ? { published: prior.published } : {}),
+    }),
+  )
+  return identityKey
 }
-export function updatePublicIdentity(
+/** Master private key of an identity this wallet controls. */
+/** The master an issuer's BAP keys derive from; `own` when it is this wallet's root. */
+export function identityMasterKey(
   runtime: WalletRuntime,
   identityKey: string,
-  fields: PublicIdentityFields,
-) {
+): { master: PrivateKey; own: boolean } {
   const active = activeOrThrow(runtime)
   const store = read(active)
-  const row = store.identities.find(
-    (entry) => entry.profile.identityKey === identityKey,
-  )
-  if (!row || row.signer === 'public')
-    throw new Error('This wallet does not control that identity.')
-  const root =
-    row.signer === 'wallet' ? active.rootKeyHex : decryptKey(active, row)
-  replace(runtime, store, {
-    ...row,
-    profile: signPublicIdentityProfile(root, active.chain, fields),
-  })
+  const row = rowFor(store, identityKey)
+  return { master: masterOf(active, store.owner, row), own: row.identityKey === store.owner }
 }
-export function selectPublicIdentity(
+/** Store a package this wallet built for `identityKey` and make it the one it issues under. */
+export function recordPublishedIdentity(
   runtime: WalletRuntime,
   identityKey: string,
-) {
+  pkg: IssuerIdentityPackage,
+): IssuerIdentity {
   const active = activeOrThrow(runtime)
   const store = read(active)
-  if (
-    identityKey !== active.identityKey.toLowerCase() &&
-    !store.identities.some(
-      (row) =>
-        row.profile.identityKey === identityKey && row.signer !== 'public',
-    )
-  )
+  const row = rowFor(store, identityKey)
+  if (pkg.bapId !== bapIdOf(active, store.owner, row)) throw new Error('The identity belongs to another key.')
+  const identity = rememberIssuerIdentityPackage(active.chain, pkg, { pin: true, replace: true })
+  if (!identity) throw new Error('The published identity did not verify or could not be saved.')
+  if (row.published !== identity.bapId) write(runtime, upsert(store, { ...row, published: identity.bapId }))
+  return identity
+}
+export function selectPublicIdentity(runtime: WalletRuntime, identityKey: string) {
+  const active = activeOrThrow(runtime)
+  const store = read(active)
+  if (identityKey !== store.owner && !store.identities.some((row) => row.identityKey === identityKey))
     throw new Error('This wallet does not control that issuer.')
   write(runtime, { ...store, selected: identityKey })
 }
-export function removePublicIdentity(
-  runtime: WalletRuntime,
-  identityKey: string,
-) {
-  const active = activeOrThrow(runtime)
-  const store = read(active)
+export function removePublicIdentity(runtime: WalletRuntime, identityKey: string) {
+  const store = read(activeOrThrow(runtime))
+  if (identityKey === store.owner) throw new Error('The wallet identity cannot be removed.')
   write(runtime, {
     ...store,
     selected: store.selected === identityKey ? store.owner : store.selected,
-    identities: store.identities.filter(
-      (row) => row.profile.identityKey !== identityKey,
-    ),
+    identities: store.identities.filter((row) => row.identityKey !== identityKey),
   })
 }
-export function importPublicIdentityProfile(
-  runtime: WalletRuntime,
-  raw: unknown,
-) {
+/** Sealed keys plus the identity packages they publish. */
+export function exportPublicIdentityBackup(runtime: WalletRuntime): string {
   const active = activeOrThrow(runtime)
   const store = read(active)
-  const profile = verifyPublicIdentityProfile(raw, undefined, active.chain)
-  if (!profile)
-    throw new Error('Profile signature, fields, or network did not verify.')
-  const existing = store.identities.find(
-    (row) => row.profile.identityKey === profile.identityKey,
-  )
-  if (existing && profile.updatedAt < existing.profile.updatedAt)
-    throw new Error('This profile is older than the saved version.')
-  replace(runtime, store, {
-    ...existing,
-    profile,
-    signer:
-      existing?.signer ??
-      (profile.identityKey === store.owner ? 'wallet' : 'public'),
-  })
+  const packages: Record<string, IssuerIdentityPackage> = {}
+  for (const row of rowsOf(store)) {
+    const pkg = row.published ? issuerIdentityPackage(active.chain, row.published) : null
+    if (pkg) packages[pkg.bapId] = pkg
+  }
+  return JSON.stringify({ kind: BACKUP_KIND, ...store, packages }, null, 2)
 }
-export function exportPublicIdentityBackup(runtime: WalletRuntime): string {
-  return JSON.stringify(
-    {
-      kind: 'handcash-public-identities-backup',
-      ...read(activeOrThrow(runtime)),
-    },
-    null,
-    2,
-  )
-}
-export function restorePublicIdentityBackup(
-  runtime: WalletRuntime,
-  raw: unknown,
-) {
+export function restorePublicIdentityBackup(runtime: WalletRuntime, raw: unknown) {
   const active = activeOrThrow(runtime)
-  if ((raw as { kind?: unknown })?.kind !== 'handcash-public-identities-backup')
-    throw new Error('Not a public identity backup.')
+  const backup = raw as { kind?: unknown; packages?: unknown }
+  if (backup?.kind !== BACKUP_KIND) throw new Error('Not a public identity backup.')
   const restored = validateStore(raw, active)
+  const packages =
+    backup.packages && typeof backup.packages === 'object' && !Array.isArray(backup.packages)
+      ? (backup.packages as Record<string, unknown>)
+      : {}
   const existing = read(active)
   // Keep identities absent from this backup; never delete a newly imported key.
-  const byKey = new Map(
-    existing.identities.map((row) => [row.profile.identityKey, row]),
-  )
+  const byKey = new Map(existing.identities.map((row) => [row.identityKey, row]))
   for (const row of restored.identities) {
-    const prior = byKey.get(row.profile.identityKey)
-    const profile =
-      prior && prior.profile.updatedAt >= row.profile.updatedAt
-        ? prior.profile
-        : row.profile
-    const custody =
-      prior?.signer === 'imported'
-        ? prior
-        : row.signer === 'imported'
-          ? row
-          : (prior ?? row)
     if (row.signer === 'imported') decryptKey(active, row)
-    byKey.set(row.profile.identityKey, { ...custody, profile })
+    const prior = byKey.get(row.identityKey)
+    const custody = prior?.signer === 'imported' ? prior : row.signer === 'imported' ? row : (prior ?? row)
+    const pkg = row.published ? packages[row.published] : undefined
+    const identity = pkg ? rememberIssuerIdentityPackage(active.chain, pkg, { pin: true }) : null
+    const published =
+      prior?.published ??
+      (identity && identity.bapId === row.published && identity.bapId === bapIdOf(active, existing.owner, custody)
+        ? identity.bapId
+        : undefined)
+    const { published: _drop, ...rest } = custody
+    byKey.set(row.identityKey, { ...rest, ...(published ? { published } : {}) })
   }
   write(runtime, { ...existing, identities: [...byKey.values()] })
 }
-export function publicProfileForIssuer(
+/** Identity the given master key publishes, when this wallet controls it. */
+export function publishedIdentityForIssuer(
   runtime: WalletRuntime | null,
   identityKey: string,
-): PublicIdentityProfile | null {
+): IssuerIdentity | null {
   if (!runtime || !runtimeIsCurrent(runtime)) return null
   const active = runtime.instance
   try {
-    return (
-      read(active).identities.find(
-        (row) =>
-          row.profile.identityKey === normalizePublicIdentityKey(identityKey),
-      )?.profile ?? null
-    )
+    const key = normalizeIssuerIdentityKey(identityKey)
+    const bapId = rowsOf(read(active)).find((row) => row.identityKey === key)?.published
+    return bapId ? issuerIdentityFor(active.chain, bapId) : null
   } catch {
     return null
   }
 }
-export function issuanceSigner(
-  runtime: WalletRuntime,
-  expectedKey?: string,
-): {
-  identityKey: string
-  rootKeyHex: string
-  profile?: PublicIdentityProfile
-} {
+/**
+ * Identity shown for an asset: the BAP identity its signed tape names, when
+ * the signer was that identity's active key at the asset's height; otherwise,
+ * for an asset signed directly by a master key this wallet holds, its identity.
+ */
+export function displayIssuerIdentity(
+  runtime: WalletRuntime | null,
+  asset: { issuer: string; bapId?: string; origin?: string },
+): IssuerIdentity | null {
+  if (!runtime || !runtimeIsCurrent(runtime)) return null
+  if (asset.bapId)
+    return issuerIdentityForSigner(runtime.instance.chain, {
+      bapId: asset.bapId,
+      signer: asset.issuer,
+      minedHeight: asset.origin ? retainedMinedHeight(asset.origin) : undefined,
+    })
+  return publishedIdentityForIssuer(runtime, asset.issuer)
+}
+export function issuanceSigner(runtime: WalletRuntime, expectedKey?: string): IssuanceSigner {
   const active = activeOrThrow(runtime)
   const store = read(active)
   if (expectedKey && expectedKey !== store.selected)
     throw new Error('Issuer identity changed after approval; approve again.')
-  const row = store.identities.find(
-    (entry) => entry.profile.identityKey === store.selected,
-  )
-  const rootKeyHex =
-    store.selected === store.owner
-      ? active.rootKeyHex
-      : row?.signer === 'imported'
-        ? decryptKey(active, row)
-        : null
-  if (!rootKeyHex)
-    throw new Error('Selected issuer signing key is unavailable.')
+  const row = rowFor(store, store.selected)
+  const master = masterOf(active, store.owner, row)
+  const bapId = bapIdOf(active, store.owner, row)
+  const identity = publishedIdentityForIssuer(runtime, store.selected)
+  if (!identity || identity.revoked)
+    return {
+      selected: store.selected,
+      identityKey: store.selected,
+      rootKeyHex: master.toHex().padStart(64, '0'),
+      bapId,
+      identity: null,
+      priorKeys: [],
+    }
+  const signing = currentIssuerSigningKey(master, identity)
   return {
-    identityKey: store.selected,
-    rootKeyHex,
-    ...(row ? { profile: row.profile } : {}),
+    selected: store.selected,
+    identityKey: signing.toPublicKey().toString(),
+    rootKeyHex: signing.toHex().padStart(64, '0'),
+    bapId,
+    identity,
+    priorKeys: [
+      store.selected,
+      ...identity.keys.slice(0, -1).map((key) => bapKey(master, key.seq).toPublicKey().toString()),
+    ],
   }
 }

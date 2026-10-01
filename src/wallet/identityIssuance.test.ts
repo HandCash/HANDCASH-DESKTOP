@@ -19,6 +19,9 @@ vi.mock('./durableStorage', () => ({
     state.values.set(key, value)
     return true
   },
+  durableRemoveItem: (key: string) => {
+    state.values.delete(key)
+  },
 }))
 vi.mock('./beefCache', () => ({
   rememberBeefBinary: vi.fn(),
@@ -34,18 +37,23 @@ import { issuerMetadataFromScript } from './issuerMetadata'
 import { sigmaSignDeployLockingScript, verifySigmaIssuer } from './token/issuer'
 import {
   importIssuerPrivateKey,
-  removePublicIdentity,
-  saveWalletPublicIdentity,
+  recordPublishedIdentity,
   selectPublicIdentity,
 } from './publicIdentities'
 import { encodeBsv21Binary } from './token/decode162'
+import { bapIdentityFixture } from './issuerIdentity.fixture'
+import { resetIssuerIdentitiesForTests } from './issuerIdentities'
 
 const root = PrivateKey.fromHex('01'.padStart(64, '0'))
 const issuer = PrivateKey.fromHex('02'.padStart(64, '0'))
-const fields = {
-  displayName: 'Studio',
-  icon: 'https://example.test/studio.png',
-  description: 'Collectibles and awards',
+const rootIdentity = bapIdentityFixture({ master: root, name: 'Studio' })
+const issuerIdentity = bapIdentityFixture({ master: issuer, name: 'Imported studio' })
+const rootSigner = rootIdentity.signer.toPublicKey().toString()
+const issuerSigner = issuerIdentity.signer.toPublicKey().toString()
+function importIssuer(): string {
+  const id = importIssuerPrivateKey(runtime(), issuer.toHex().padStart(64, '0'))
+  recordPublishedIdentity(runtime(), id, issuerIdentity.pkg)
+  return id
 }
 const lock = new P2PKH().lock(root.toAddress()).toHex()
 function sourceBeef(): { tx: number[]; txid: string } {
@@ -98,7 +106,8 @@ beforeEach(() => {
       abortAction: vi.fn(async () => ({ aborted: true })),
     },
   } as unknown as ActiveWallet
-  saveWalletPublicIdentity(runtime(), fields)
+  resetIssuerIdentitiesForTests()
+  recordPublishedIdentity(runtime(), root.toPublicKey().toString(), rootIdentity.pkg)
 })
 function boundTransaction(
   args: Awaited<ReturnType<typeof enrichIdentityIssuance>>,
@@ -118,10 +127,11 @@ function boundTransaction(
   return tx
 }
 describe('standard issuer-backed minting', () => {
-  it('requires a human profile before preparing an anchor', async () => {
-    removePublicIdentity(runtime(), root.toPublicKey().toString())
+  it('requires a published identity before preparing an anchor', async () => {
+    state.values.clear()
+    resetIssuerIdentitiesForTests()
     await expect(enrichIdentityIssuance(runtime(), nftArgs())).rejects.toThrow(
-      /display name and icon/,
+      /Publish your issuer identity/,
     )
     expect(state.active!.wallet.createAction).not.toHaveBeenCalled()
   })
@@ -152,20 +162,17 @@ describe('standard issuer-backed minting', () => {
     )
     const tx = boundTransaction(args)
     for (let i = 0; i < 2; i++) {
-      expect(verifySigmaIssuer(tx, i, id)).toBe(true)
-      expect(
-        issuerMetadataFromScript(args.outputs![i]!.lockingScript).issuerProfile
-          ?.identityKey,
-      ).toBe(id)
+      expect(verifySigmaIssuer(tx, i, rootSigner)).toBe(true)
+      expect(verifySigmaIssuer(tx, i, id)).toBe(false)
+      expect(issuerMetadataFromScript(args.outputs![i]!.lockingScript)).toEqual({
+        issuer: rootSigner,
+        bapId: rootIdentity.bapId,
+      })
     }
     expect(state.active!.wallet.createAction).toHaveBeenCalledTimes(1)
   })
   it('uses the SDK anchor flow and the selected imported key for an NFT, while funding stays with the wallet', async () => {
-    const id = importIssuerPrivateKey(
-      runtime(),
-      issuer.toHex().padStart(64, '0'),
-      fields,
-    )
+    const id = importIssuer()
     selectPublicIdentity(runtime(), id)
     const args = await enrichIdentityIssuance(runtime(), nftArgs(), id)
     expect(state.active!.wallet.createAction).toHaveBeenCalledWith(
@@ -185,13 +192,15 @@ describe('standard issuer-backed minting', () => {
     ])
     const out = args.outputs![0]!
     expect(out.tags?.filter((tag) => tag.startsWith('issuer:'))).toEqual([
-      `issuer:${id}`,
+      `issuer:${issuerSigner}`,
     ])
-    expect(JSON.parse(out.customInstructions!).issuer).toBe(id)
+    expect(JSON.parse(out.customInstructions!)).toMatchObject({
+      issuer: issuerSigner,
+      bapId: issuerIdentity.bapId,
+    })
     const metadata = issuerMetadataFromScript(out.lockingScript)
-    expect(metadata.issuer).toBe(id)
-    expect(metadata.issuerProfile?.displayName).toBe('Studio')
-    expect(verifySigmaIssuer(boundTransaction(args), 0, id)).toBe(true)
+    expect(metadata).toEqual({ issuer: issuerSigner, bapId: issuerIdentity.bapId })
+    expect(verifySigmaIssuer(boundTransaction(args), 0, issuerSigner)).toBe(true)
     expect(
       verifySigmaIssuer(
         boundTransaction(args),
@@ -200,8 +209,7 @@ describe('standard issuer-backed minting', () => {
       ),
     ).toBe(false)
   })
-  it('signs a BRC-162 fungible genesis with the same profile and Sigma wire', async () => {
-    saveWalletPublicIdentity(runtime(), fields)
+  it('signs a BRC-162 fungible genesis with the same BAP ID and Sigma wire', async () => {
     const id = root.toPublicKey().toString()
     const args = await enrichIdentityIssuance(
       runtime(),
@@ -226,18 +234,13 @@ describe('standard issuer-backed minting', () => {
       },
       id,
     )
-    expect(
-      issuerMetadataFromScript(args.outputs![0]!.lockingScript).issuerProfile
-        ?.identityKey,
-    ).toBe(id)
-    expect(verifySigmaIssuer(boundTransaction(args), 0, id)).toBe(true)
+    expect(issuerMetadataFromScript(args.outputs![0]!.lockingScript).bapId).toBe(
+      rootIdentity.bapId,
+    )
+    expect(verifySigmaIssuer(boundTransaction(args), 0, rootSigner)).toBe(true)
   })
   it('rejects changed selection after consent or during anchor creation, and never returns an unsigned mint', async () => {
-    const id = importIssuerPrivateKey(
-      runtime(),
-      issuer.toHex().padStart(64, '0'),
-      fields,
-    )
+    const id = importIssuer()
     await expect(
       enrichIdentityIssuance(runtime(), nftArgs(), id),
     ).rejects.toThrow(/changed after approval/)

@@ -16,10 +16,32 @@ import {
   publicMessageboxBase,
   uploadMessageboxBytes,
   withOptionalBeefB64,
+  withOptionalIdentities,
   withOptionalProvenance,
 } from './messageTransport'
+import { bapIdentityFixture } from './issuerIdentity.fixture'
 
 describe('message transport envelopes', () => {
+  it('carries issuer identity packages beside an item, never into chat metadata', () => {
+    const { pkg } = bapIdentityFixture({})
+    const other = bapIdentityFixture({}).pkg
+    const base = encodeMessageBody({
+      kind: 'tip',
+      text: 'Sent you Award',
+      meta: { txid: 'ab'.repeat(32), item: true, sats: 1 },
+    })
+    const packed = withOptionalIdentities(base, [pkg])
+    expect(packed.identitiesInBox).toBe(true)
+    const decoded = decodeMessageBody(packed.body)
+    expect(decoded.identities).toEqual([pkg])
+    expect(decoded.meta).not.toHaveProperty('identities')
+    expect(decoded.meta?.txid).toBe('ab'.repeat(32))
+    const huge = { ...pkg, beefB64: 'A'.repeat(MESSAGEBOX_INNER_MAX) }
+    expect(withOptionalIdentities(base, [huge])).toEqual({ body: base, identitiesInBox: false })
+    const fitted = withOptionalIdentities(base, [huge, other, pkg])
+    expect(decodeMessageBody(fitted.body).identities).toEqual([other, pkg])
+    expect(withOptionalIdentities('plain text', [pkg]).identitiesInBox).toBe(false)
+  })
   it('round-trips bounded market settlement responses', () => {
     const body = encodeMarketSettlementWire({
       type: 'sign-response',

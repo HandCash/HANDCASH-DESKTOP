@@ -74,6 +74,16 @@ import { getActiveWallet } from './session'
  *     storage. GorillaPool `/content/` is the last resort for an origin whose
  *     bytes never reached us (a legacy-address sweep), never how a fresh mint
  *     first paints — a just-signed transaction is in no indexer yet.
+ *   - **Issuer identity** (`issuerIdentity.ts`, draft BRC-248 beside BRC-247) —
+ *     a BAP identity: 0-sat AIP-signed ID records form a rotating key chain, the
+ *     ALIAS is the profile, the image is a B:// file. Nothing is an ordinal.
+ *     The wallet's own tree sits in basket `bap` as 1Sat wallets keep it;
+ *     imported masters in `bap issuer`. Assets name the BAP ID inside their
+ *     Sigma-signed tape, signed by the then-active key. The package (a minimal
+ *     BEEF of the chain, ALIAS and image) is stored once per BAP ID
+ *     (`issuerIdentities.ts`) and rides an item delivery as `meta.identities`
+ *     only when it fits after the custody BEEF and item provenance. It never
+ *     gates ingest or ACK.
  *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
  *     spend does not wait on an indexer.
  *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).

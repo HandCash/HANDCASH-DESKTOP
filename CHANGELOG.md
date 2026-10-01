@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.3.393] - 2026-10-01
+
+Issuer identities are now BAP identities with an uploaded image and key rotation. Assets name the BAP ID in their signed script, and the identity's proof is stored once and travels beside items.
+
+### Changed
+
+- **Your issuer identity is a BAP identity.** Under ID → Public identities, choose an image, a name and an optional bio, then publish.
+  - The records are standard BAP: a root-signed `ID` declaring the first signing key, an `ALIAS` schema.org profile, and the image as a B:// file. Each record is a 0-sat AIP-signed data output, so nothing can be moved or sold.
+  - The image is uploaded, not linked: it is cropped square, re-encoded to WebP under 64 KB, and stripped of EXIF and location metadata.
+  - Publishing asks you to confirm that it is public and permanent, and goes through the signed-send lifecycle (flow `identity_publish`).
+  - **Publish update** re-signs only the profile and reuses an unchanged image.
+  - The same master key gives the same BAP ID as 1Sat wallets.
+  - The ID panel's separate BAP compose is gone; its records are adopted.
+- **Key rotation.** **Rotate signing key** declares the next BAP key, signed by the current one, and re-signs the profile. New assets are signed by the new key. Assets the old key signed keep their attribution when they were mined before the rotation was. A root-signed BAP revocation written elsewhere is honoured, and a revoked identity can no longer issue.
+- **Works with 1Sat apps on this wallet.** The wallet's own identity sits in basket `bap` with the 1Sat SDK's tags and key derivation. An imported issuer's records sit in `bap issuer`, so 1Sat apps never mistake them for the wallet's key. Before each BRC-100 issuance, the wallet follows a rotation that such an app wrote, so it never signs with a retired key.
+- **Assets name the identity inside their signed script.**
+  - New items and BSV-21 deploys carry `MAP SET issuer <signing key> bapId <BAP ID>` before their Sigma signature, so any later holder recovers it from the item's BRC-150 package.
+  - Issuing requires a published identity.
+  - Mints no longer carry the self-signed `issuerProfile` JSON or an icon URL. Older assets that carry one are read with it ignored: they still group under their verified key, without a name or image.
+- **One copy per identity, attached only when needed.**
+  - An identity's proof is a minimal BEEF of its key chain, profile and image, with merkle proofs once mined. It is stored once per BAP ID, and assets hold only the BAP ID.
+  - Your own identities are pinned, upgraded to mined proofs, and included in the identity backup.
+  - A peer's package is kept only after its proofs match block headers. It merges with what is stored, keeping the first rotation on chain. Peers' packages are capped at 8.
+- **Identity travels beside items.** An item or token delivery attaches the package for the BAP ID it names as `meta.identities`. It goes in last, so the custody BEEF and the item's provenance keep the box cap first. The receiver verifies and stores it off the receive path; it never gates ingest or ACK and never enters the chat transcript.
+- **Collect shows the verified identity.** An issuer shelf, keyed by BAP ID, shows the identity's image and name only when the asset's Sigma signer is its `issuer` and was an active key of that identity when the asset was mined. Assets from before and after a rotation share one shelf, and a copied claim stays on its own.
+- **Drafts.** The asset stamp is BRC-247; the package, verdict and delivery rules are drafted as BRC-248 (`BRCs/peer-to-peer/0248.md`). Wallet details: `docs/public-identities.md`.
+
+### Tests
+
+- The real-toolbox issuance suite covers the full lifecycle against a real wallet:
+  - publishing 0-sat records in `bap`, with 1Sat key parity over BRC-100 and the 1Sat ID custom instructions;
+  - an update that reuses the image;
+  - refusal before publishing;
+  - mints signed by the current BAP key;
+  - an imported master's records kept in `bap issuer`;
+  - release on failure;
+  - one shelf across a rotation;
+  - adopting the earlier compose's records;
+  - following a rotation another app wrote into `bap`;
+  - delivery to a receiver with empty storage.
+- New unit suites cover:
+  - BAP record parsing, AIP recovery and byte equality with the earlier compose;
+  - key chains, retired keys, unmined and rival rotations, forks, and revocation, mined and unmined;
+  - image reuse and profile ordering;
+  - URL and oversized image refusal;
+  - store-once, merge and eviction;
+  - backup round-trips and the envelope field.
+
 ## [1.3.392] - 2026-10-01
 
 Same app as 1.3.391. Its tag was published before the commit reached master, so this version carries that commit onto master.

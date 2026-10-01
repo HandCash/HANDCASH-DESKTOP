@@ -658,15 +658,15 @@ const IDENTITY = `stateDiagram-v2
 const PUBLIC_IDENTITIES = `stateDiagram-v2
   direction LR
   [*] --> browsing
-  browsing --> editing : CREATE / EDIT
+  browsing --> composing : COMPOSE
   browsing --> importing : IMPORT_KEY
-  editing --> editing : FIELD
-  importing --> importing : FIELD
-  editing --> browsing : CLOSE
+  composing --> composing : FIELD / IMAGE
+  composing --> browsing : CLOSE
   importing --> browsing : CLOSE
-  note right of importing
-    Drafts contain public fields only.
-    asyncAction owns save/import/delete confirmation.
+  note right of composing
+    Draft holds the public image, name and bio only.
+    asyncAction owns image encode, publish confirm,
+    key rotation, key import and removal.
   end note
 `
 
@@ -1329,7 +1329,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'publicIdentities',
     label: 'Public identities',
-    caption: 'Issuer profiles, imported signing keys and encrypted backup',
+    caption: 'BAP issuer identities (image, name, bio), key rotation, signers and encrypted backup',
     source: PUBLIC_IDENTITIES,
   },
   {

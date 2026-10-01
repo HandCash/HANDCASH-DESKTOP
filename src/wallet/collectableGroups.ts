@@ -1,14 +1,16 @@
 import {
-  verifyPublicIdentityProfile,
-  type PublicIdentityProfile,
-} from './publicIdentityProfile'
+  issuerIdentityImageDataUrl,
+  type IssuerIdentity,
+} from './issuerIdentity'
 import type { Collectable } from './collectables'
 import { normalizeIssuerPubKey, shortIssuerLabel } from './token/issuer'
 import type { FungibleToken } from './token/types'
 
 /**
- * Collect hierarchy is issuer → collections → assets. Identity-backed tokens
- * are keyed by their normalized issuer public key; handles are display only.
+ * Collect hierarchy is issuer → collections → assets. An asset whose signer
+ * speaks for a BAP identity shelves under that BAP ID, so a key rotation keeps
+ * one shelf; other identity-backed assets are keyed by their normalized issuer
+ * public key. Handles are display only.
  * Label-only item shelves stay separate and cannot impersonate a keyed issuer.
  * Grouping is presentation, not signature verification or transfer policy.
  * This remains applicable to transferable assets, identity records and awards.
@@ -39,9 +41,10 @@ export type CollectableIssuer = {
   key: string
   /** Attribution key from the asset record; presence does not certify its signature. */
   identityKey?: string
+  /** Image of the BAP identity the shelf's signers speak for. */
   icon?: string
+  bapId?: string
   issuerAttested?: boolean
-  profileChain?: 'main' | 'test'
   label: string
   app?: string
   /** Fungibles this identity issued — one horizontal shelf. */
@@ -134,10 +137,44 @@ type IssuerMeta = {
   app?: string
   identityKey?: string
   issuerAttested?: boolean
+  identity?: IssuerIdentity
 }
 
-function issuerKeyFor(item: Collectable): IssuerMeta | null {
+export type IssuerIdentityResolver = (asset: {
+  issuer: string
+  bapId?: string
+  origin?: string
+}) => IssuerIdentity | null
+
+function identityMeta(
+  identityFor: IssuerIdentityResolver,
+  asset: { issuer: string; bapId?: string; origin?: string },
+): IssuerMeta | null {
+  const identity = identityFor(asset)
+  if (!identity || (asset.bapId && identity.bapId !== asset.bapId)) return null
+  return {
+    key: `issuer:bap:${identity.bapId}`,
+    identityKey: asset.issuer,
+    issuerAttested: true,
+    label: identity.name,
+    identity,
+  }
+}
+
+function issuerKeyFor(
+  item: Collectable,
+  identityFor: IssuerIdentityResolver,
+): IssuerMeta | null {
   const issuer = normalizeIssuerPubKey(item.issuer)
+  const backed =
+    issuer && item.issuerAttested
+      ? identityMeta(identityFor, {
+          issuer,
+          bapId: item.bapId,
+          origin: item.origin,
+        })
+      : null
+  if (backed) return backed
   if (issuer)
     return {
       key: `issuer:${item.issuerAttested ? 'pubkey' : 'claim'}:${issuer}`,
@@ -161,9 +198,20 @@ function issuerKeyFor(item: Collectable): IssuerMeta | null {
 }
 
 /** Human labels may change; the issuer key determines the shelf. */
-function tokenIssuerKeyFor(token: FungibleToken): IssuerMeta | null {
+function tokenIssuerKeyFor(
+  token: FungibleToken,
+  identityFor: IssuerIdentityResolver,
+): IssuerMeta | null {
   const issuer = normalizeIssuerPubKey(token.issuer)
   if (!issuer) return null
+  const backed = token.issuerAttested
+    ? identityMeta(identityFor, {
+        issuer,
+        bapId: token.bapId,
+        origin: token.tokenId,
+      })
+    : null
+  if (backed) return backed
   return {
     key: `issuer:${token.issuerAttested ? 'pubkey' : 'claim'}:${issuer}`,
     identityKey: issuer,
@@ -196,7 +244,7 @@ function tokenFaces(
 export function groupCollectables(
   items: Collectable[],
   tokens: readonly FungibleToken[] = [],
-  profiles: readonly PublicIdentityProfile[] = [],
+  identityFor: IssuerIdentityResolver = () => null,
 ): GroupedCollectables {
   const issuerBuckets = new Map<
     string,
@@ -206,7 +254,7 @@ export function groupCollectables(
   const ungroupedTokens: FungibleToken[] = []
 
   for (const item of items) {
-    const meta = issuerKeyFor(item)
+    const meta = issuerKeyFor(item, identityFor)
     if (!meta) {
       ungrouped.push(item)
       continue
@@ -217,7 +265,7 @@ export function groupCollectables(
   }
 
   for (const token of tokens) {
-    const meta = tokenIssuerKeyFor(token)
+    const meta = tokenIssuerKeyFor(token, identityFor)
     if (!meta) {
       ungroupedTokens.push(token)
       continue
@@ -281,25 +329,14 @@ export function groupCollectables(
     bucket.tokens.sort((a, b) =>
       a.sym.localeCompare(b.sym, undefined, { sensitivity: 'base' }),
     )
-    const publicProfile =
-      bucket.meta.identityKey && bucket.meta.issuerAttested
-        ? [
-            ...profiles,
-            ...bucket.items.map((item) => item.issuerProfile),
-            ...bucket.tokens.map((token) => token.issuerProfile),
-          ]
-            .map((profile) =>
-              verifyPublicIdentityProfile(profile, bucket.meta.identityKey),
-            )
-            .filter((profile): profile is PublicIdentityProfile => !!profile)
-            .sort((a, b) => b.updatedAt - a.updatedAt)[0]
-        : undefined
+    const identity = bucket.meta.identity
     issuers.push({
       key: bucket.meta.key,
-      label: publicProfile?.displayName ?? bucket.meta.label,
-      ...(publicProfile
-        ? { icon: publicProfile.icon, profileChain: publicProfile.chain }
+      label: bucket.meta.label,
+      ...(identity?.image
+        ? { icon: issuerIdentityImageDataUrl(identity.image) }
         : {}),
+      ...(identity ? { bapId: identity.bapId } : {}),
       ...(bucket.meta.identityKey
         ? {
             identityKey: bucket.meta.identityKey,

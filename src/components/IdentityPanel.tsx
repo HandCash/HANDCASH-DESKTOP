@@ -1,6 +1,5 @@
 import { PublicIdentitiesPanel } from './PublicIdentitiesPanel'
-import { useAsyncAction } from '../hooks/useAsyncAction'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
 import {
@@ -10,14 +9,14 @@ import {
 } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
 import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
-import { playWalletSound } from '../wallet/soundService'
-import { toastError, toastSuccess } from '../wallet/toast'
+import { toastError } from '../wallet/toast'
+import { issuerIdentitiesGeneration, subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import {
-  composeBapIdentity,
-  getBapProfile,
-  previewBapId,
-  type BapProfile,
-} from '../wallet/bapIdentity'
+  listPublicIdentities,
+  publicIdentitiesGeneration,
+  subscribePublicIdentities,
+} from '../wallet/publicIdentities'
+import { getWalletRuntime } from '../wallet/walletRuntime'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
 import { CopyIcon } from './icons'
@@ -39,14 +38,15 @@ export function IdentityPanel({ profile }: Props) {
   const [claimed, setClaimed] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
-  const [bapId, setBapId] = useState<string | null>(null)
-  const [published, setPublished] = useState(false)
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [image, setImage] = useState('')
-  const action = useAsyncAction<'publish'>()
-  const busy = action.busy
-  const [status, setStatus] = useState<string | null>(null)
+  const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
+  const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
+  const bap = useMemo(() => {
+    try {
+      return listPublicIdentities(getWalletRuntime()).find((row) => row.signer === 'wallet') ?? null
+    } catch {
+      return null
+    }
+  }, [identities, packages, profile.identityKey])
 
   useEffect(() => {
     let cancelled = false
@@ -84,40 +84,6 @@ export function IdentityPanel({ profile }: Props) {
     }
   }, [profile.identityKey])
 
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const state = await getBapProfile()
-        if (cancelled) return
-        setPublished(state.published)
-        setBapId(state.bapId)
-        const p = state.profile
-        if (p) {
-          setName(typeof p.name === 'string' ? p.name : '')
-          setDescription(typeof p.description === 'string' ? p.description : '')
-          setImage(typeof p.image === 'string' ? p.image : '')
-        } else {
-          const preview = await previewBapId()
-          if (!cancelled) setBapId(preview)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          try {
-            const preview = await previewBapId()
-            setBapId(preview)
-          } catch {
-            /* locked */
-          }
-          setStatus(err instanceof Error ? err.message : String(err))
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [profile.identityKey])
-
   const handleLabel = claimed
     ? formatHandCashHandle(claimed.handle, null)
     : null
@@ -133,43 +99,6 @@ export function IdentityPanel({ profile }: Props) {
 
   const openClaim = () => {
     void window.handcash?.openExternal?.(CLAIM_HANDLE_URL)
-  }
-
-  const onCompose = async () => {
-    const trimmed = name.trim()
-    if (!trimmed) {
-      toastError('Identity', 'Add a display name first.')
-      return
-    }
-    await action.run('publish', async () => {
-      setStatus(null)
-      playWalletSound('soft')
-      const profilePayload: BapProfile = {
-        '@type': 'Person',
-        name: trimmed,
-      }
-      if (description.trim()) profilePayload.description = description.trim()
-      if (image.trim()) profilePayload.image = image.trim()
-
-      const result = await composeBapIdentity(profilePayload)
-
-      if (!result.ok) {
-        toastError('Compose identity', result.error)
-        setStatus(result.error)
-        return
-      }
-      setPublished(true)
-      setBapId(result.bapId)
-      setStatus(
-        result.createdIdentity
-          ? `Published BAP + profile · ${result.txid.slice(0, 10)}…`
-          : `Updated profile · ${result.txid.slice(0, 10)}…`,
-      )
-      toastSuccess(
-        result.createdIdentity ? 'Identity published' : 'Profile updated',
-        result.bapId,
-      )
-    })
   }
 
   return (
@@ -267,9 +196,9 @@ ${profile.identityKey}`}
               </li>
               <li className="identity-field">
                 <span className="identity-field-label">BAP ID</span>
-                <strong className="mono identity-bap-id">
-                  {bapId ? shortIdentityKey(bapId) : '—'}
-                  {published ? '' : ' (not published yet)'}
+                <strong className="mono identity-bap-id" title={bap?.bapId}>
+                  {bap ? shortIdentityKey(bap.bapId) : '—'}
+                  {bap?.identity ? '' : ' (not published yet)'}
                 </strong>
               </li>
             </ul>
@@ -279,63 +208,6 @@ ${profile.identityKey}`}
             key={`${profile.chain}:${profile.identityKey}`}
             profile={profile}
           />
-          <section
-            className="identity-card identity-compose"
-            aria-label="Compose BAP identity"
-          >
-            <h3 className="identity-compose-title">BAP on-chain identity</h3>
-            <p className="identity-compose-lede">
-              Publishes your BAP ID (first time) and ALIAS profile on-chain for
-              this wallet account. Needs a little spendable balance for fees.
-            </p>
-            <label className="identity-compose-field">
-              <span>Display name</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Name"
-                autoComplete="nickname"
-                disabled={busy}
-              />
-            </label>
-            <label className="identity-compose-field">
-              <span>About</span>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Short bio"
-                rows={3}
-                disabled={busy}
-              />
-            </label>
-            <label className="identity-compose-field">
-              <span>Image URL</span>
-              <input
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-                placeholder="https://…"
-                inputMode="url"
-                disabled={busy}
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn-primary identity-compose-submit"
-              disabled={busy}
-              onClick={() => void onCompose()}
-            >
-              {busy
-                ? 'Publishing…'
-                : published
-                  ? 'Update profile'
-                  : 'Publish identity'}
-            </button>
-            {status || action.error ? (
-              <p className="identity-compose-status" role="status">
-                {status ?? action.error}
-              </p>
-            ) : null}
-          </section>
         </div>
       </div>
     </div>

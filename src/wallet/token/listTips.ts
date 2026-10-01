@@ -218,7 +218,7 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     ...(scriptHex ? { lockingScript: scriptHex } : {}),
     ...(issuer ? { issuer } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
-    ...(metadata.issuerProfile ? { issuerProfile: metadata.issuerProfile } : {}),
+    ...(metadata.bapId ? { bapId: metadata.bapId } : {}),
     ...(cosign ? { cosign } : {}),
   }
 }

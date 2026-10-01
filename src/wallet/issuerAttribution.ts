@@ -1,12 +1,15 @@
 import { Hash, Utils } from '@bsv/sdk'
 import { peekSessionBeef } from './beefCache'
 import { issuerMetadataFromScript } from './issuerMetadata'
-import type { PublicIdentityProfile } from './publicIdentityProfile'
 import { verifySigmaIssuer } from './token/issuer'
 
-export type RetainedIssuer = { issuer?: string; issuerProfile?: PublicIdentityProfile }
+export type RetainedIssuer = { issuer?: string; bapId?: string }
 
-type Entry = RetainedIssuer & { scriptHash: string; signers: Map<string, boolean> }
+type Entry = RetainedIssuer & {
+  scriptHash: string
+  signers: Map<string, boolean>
+  minedHeight?: number
+}
 
 /**
  * Issuer metadata and Sigma verdicts for outputs of locally retained
@@ -29,9 +32,14 @@ function outpointKey(outpoint: string): { key: string; txid: string; vout: numbe
   return { key: `${txid}.${vout}`, txid, vout }
 }
 
-function retainedTx(txid: string) {
+function retainedEntry(txid: string) {
   try {
-    return peekSessionBeef(txid)?.findTxid(txid)?.tx ?? null
+    const beef = peekSessionBeef(txid)
+    const entry = beef?.findTxid(txid)
+    if (!beef || !entry?.tx) return null
+    const minedHeight =
+      entry.bumpIndex === undefined ? undefined : beef.bumps[entry.bumpIndex]?.blockHeight
+    return { tx: entry.tx, minedHeight }
   } catch {
     return null
   }
@@ -53,12 +61,14 @@ function entryFor(outpoint: string): Entry | null {
   if (!at) return null
   const hit = entries.get(at.key)
   if (hit) return remember(at.key, hit)
-  const script = retainedTx(at.txid)?.outputs[at.vout]?.lockingScript.toHex()
+  const retained = retainedEntry(at.txid)
+  const script = retained?.tx.outputs[at.vout]?.lockingScript.toHex()
   if (!script) return null
   const metadata = issuerMetadataFromScript(script)
   return remember(at.key, {
     ...(metadata.issuer ? { issuer: metadata.issuer } : {}),
-    ...(metadata.issuerProfile ? { issuerProfile: metadata.issuerProfile } : {}),
+    ...(metadata.bapId ? { bapId: metadata.bapId } : {}),
+    ...(retained?.minedHeight !== undefined ? { minedHeight: retained.minedHeight } : {}),
     scriptHash: hashScript(script),
     signers: new Map(),
   })
@@ -70,8 +80,20 @@ export function retainedIssuerMetadata(outpoint: string): RetainedIssuer | null 
   if (!entry) return null
   return {
     ...(entry.issuer ? { issuer: entry.issuer } : {}),
-    ...(entry.issuerProfile ? { issuerProfile: entry.issuerProfile } : {}),
+    ...(entry.bapId ? { bapId: entry.bapId } : {}),
   }
+}
+
+/** Block height of a retained output's transaction, once its BEEF carries the proof. */
+export function retainedMinedHeight(outpoint: string): number | undefined {
+  const entry = entryFor(outpoint)
+  const at = outpointKey(outpoint)
+  if (!entry || !at) return undefined
+  if (entry.minedHeight === undefined) {
+    const minedHeight = retainedEntry(at.txid)?.minedHeight
+    if (minedHeight !== undefined) entry.minedHeight = minedHeight
+  }
+  return entry.minedHeight
 }
 
 /** The retained output's locking script is exactly `scriptHex`. */
@@ -89,7 +111,7 @@ export function retainedSignedBy(outpoint: string, issuer: string): boolean {
   const signer = issuer.trim().toLowerCase()
   const known = entry.signers.get(signer)
   if (known !== undefined) return known
-  const tx = retainedTx(at.txid)
+  const tx = retainedEntry(at.txid)?.tx
   if (!tx) return false
   const verdict = verifySigmaIssuer(tx, at.vout, signer)
   entry.signers.set(signer, verdict)

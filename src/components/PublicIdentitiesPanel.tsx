@@ -9,21 +9,31 @@ import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
 import {
   exportPublicIdentityBackup,
   importIssuerPrivateKey,
-  importPublicIdentityProfile,
   listPublicIdentities,
-  MAX_IDENTITY_FILE_BYTES,
+  MAX_IDENTITY_BACKUP_BYTES,
   publicIdentitiesGeneration,
   removePublicIdentity,
   restorePublicIdentityBackup,
-  saveWalletPublicIdentity,
   selectedPublicIdentityKey,
   selectPublicIdentity,
   subscribePublicIdentities,
-  updatePublicIdentity,
+  type PublicIdentityRow,
 } from '../wallet/publicIdentities'
+import {
+  IDENTITY_DESCRIPTION_MAX,
+  IDENTITY_NAME_MAX,
+  issuerIdentityImageDataUrl,
+} from '../wallet/issuerIdentity'
+import { issuerIdentitiesGeneration, subscribeIssuerIdentities } from '../wallet/issuerIdentities'
+import { encodeIdentityImage } from '../wallet/identityImage'
+import {
+  publishIssuerIdentity,
+  rotateIssuerSigningKey,
+  syncHeldIssuerIdentities,
+  upgradeIssuerIdentityProofs,
+} from '../wallet/identityPublish'
 import { toastSuccess } from '../wallet/toast'
 import type { WalletProfile } from '../machines/appMachine'
-import { contentUrlForOrigin } from '../wallet/oneSatImport'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { DeferredImage } from './DeferredImage'
 
@@ -38,19 +48,26 @@ function downloadJson(value: string, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+const shortKey = (key: string) => `${key.slice(0, 12)}…${key.slice(-8)}`
+
 /** Account-keyed by the parent: switching wallets discards drafts and secret input. */
 export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   const [snapshot, send] = useMachine(publicIdentitiesMachine)
   const action = useAsyncAction<
-    'save' | 'select' | 'remove' | 'import' | 'export' | 'copy'
+    'publish' | 'rotate' | 'image' | 'select' | 'remove' | 'import' | 'restore' | 'export' | 'copy'
   >()
   const privateKey = useRef<HTMLInputElement>(null)
-  const file = useRef<HTMLInputElement>(null)
+  const backupFile = useRef<HTMLInputElement>(null)
+  const imageFile = useRef<HTMLInputElement>(null)
   const prefix = useId()
   const runtime = getWalletRuntime()
   const generation = useSyncExternalStore(
     subscribePublicIdentities,
     publicIdentitiesGeneration,
+  )
+  const packages = useSyncExternalStore(
+    subscribeIssuerIdentities,
+    issuerIdentitiesGeneration,
   )
   const view = useMemo(() => {
     try {
@@ -61,12 +78,12 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
       }
     } catch (error) {
       return {
-        rows: [],
+        rows: [] as PublicIdentityRow[],
         selected: profile.identityKey,
         error: error instanceof Error ? error.message : String(error),
       }
     }
-  }, [generation, profile.identityKey, runtime])
+  }, [generation, packages, profile.identityKey, runtime])
   const assertOwner = () => {
     if (
       !runtime ||
@@ -82,52 +99,92 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     },
     [action.reset],
   )
+  useEffect(() => {
+    if (!runtime) return
+    void syncHeldIssuerIdentities(runtime)
+      .then(() => upgradeIssuerIdentityProofs(runtime))
+      .catch((error) => console.warn('[identity-publish] maintenance skipped', error))
+  }, [runtime])
   const close = () => {
     if (privateKey.current) privateKey.current.value = ''
     send({ type: 'CLOSE' })
   }
-  const save = async () => {
-    const result = await action.run('save', async () => {
+  const compose = (row: PublicIdentityRow) =>
+    send({
+      type: 'COMPOSE',
+      identityKey: row.identityKey,
+      ...(row.identity
+        ? {
+            fields: { name: row.identity.name, description: row.identity.description },
+            ...(row.identity.image ? { image: row.identity.image } : {}),
+          }
+        : {}),
+    })
+  const importKey = () =>
+    action.run('import', async () => {
       assertOwner()
       try {
-        if (snapshot.matches('importing'))
-          importIssuerPrivateKey(
-            runtime!,
-            privateKey.current?.value ?? '',
-            snapshot.context.fields,
-          )
-        else if (snapshot.context.identityKey)
-          updatePublicIdentity(
-            runtime!,
-            snapshot.context.identityKey,
-            snapshot.context.fields,
-          )
-        else saveWalletPublicIdentity(runtime!, snapshot.context.fields)
+        importIssuerPrivateKey(runtime!, privateKey.current?.value ?? '')
         close()
-        toastSuccess('Public identity saved')
+        toastSuccess('Signing key imported')
       } finally {
         if (privateKey.current) privateKey.current.value = ''
       }
     })
-    return result
+  const pickImage = (picked: File) =>
+    action.run('image', async () => {
+      send({ type: 'IMAGE', image: await encodeIdentityImage(picked) })
+    })
+  const publish = () => {
+    const { identityKey, fields, image } = snapshot.context
+    return action.run(
+      'publish',
+      async () => {
+        assertOwner()
+        if (!identityKey || !image) throw new Error('Choose an image first.')
+        await publishIssuerIdentity(runtime!, identityKey, fields, image)
+        close()
+        toastSuccess('Issuer identity published')
+      },
+      {
+        confirm: {
+          title: 'Publish issuer identity?',
+          body: 'This image, name and bio are published on-chain as a BAP profile signed by your identity key. They are public and permanent; a later update adds a new profile but never erases this one. Publishing costs a small network fee.',
+          confirmLabel: 'Publish',
+        },
+      },
+    )
   }
-  const loadFile = async (picked: File) => {
-    await action.run('import', async () => {
+  const rotate = (row: PublicIdentityRow) =>
+    action.run(
+      'rotate',
+      async () => {
+        assertOwner()
+        await rotateIssuerSigningKey(runtime!, row.identityKey)
+        toastSuccess('Signing key rotated')
+      },
+      {
+        confirm: {
+          title: 'Rotate signing key?',
+          body: 'Your BAP ID, name and image stay the same; a new key signs everything you issue from now on. Assets the old key signed stay attributed to you when they were mined before this rotation. Rotate if you suspect the current key leaked. Costs a small network fee.',
+          confirmLabel: 'Rotate key',
+        },
+      },
+    )
+  const restore = (picked: File) =>
+    action.run('restore', async () => {
       assertOwner()
-      if (picked.size > MAX_IDENTITY_FILE_BYTES)
-        throw new Error('Identity file is too large (128 KB maximum).')
+      if (picked.size > MAX_IDENTITY_BACKUP_BYTES)
+        throw new Error('Backup file is too large (4 MB maximum).')
       const raw: unknown = JSON.parse(await picked.text())
       assertOwner()
-      if (
-        (raw as { kind?: string })?.kind === 'handcash-public-identities-backup'
-      )
-        restorePublicIdentityBackup(runtime!, raw)
-      else importPublicIdentityProfile(runtime!, raw)
-      toastSuccess('Identity imported')
+      restorePublicIdentityBackup(runtime!, raw)
+      toastSuccess('Identities restored')
     })
-  }
   const browsing = snapshot.matches('browsing')
   const importing = snapshot.matches('importing')
+  const selectedRow = view.rows.find((row) => row.identityKey === view.selected)
+  const draft = snapshot.context
   return (
     <section
       className="identity-card identity-compose"
@@ -137,45 +194,23 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     >
       <h3 className="identity-compose-title">Public identities</h3>
       <p className="identity-compose-lede">
-        Put a name and icon behind the key you use to issue items and tokens. A
-        name and icon are required before issuing. Selecting an issuer changes
-        asset signing; payments still use your wallet account.
+        Your issuer identity is a BAP identity: a stable BAP ID with an image, a
+        name and a bio, signed by a key you can rotate. Every asset you issue
+        names the BAP ID and is signed by its current key, and the identity
+        proof travels with it, so holders can show who made it without trusting
+        a server. Publish one before issuing.
       </p>
       <div data-aeon-part="actions" data-aeon-state={action.stateAttr}>
         {browsing ? (
           <>
             <p>
               Issuer:{' '}
-              <strong>
-                {view.rows.find(
-                  (row) => row.profile.identityKey === view.selected,
-                )?.profile.displayName ?? 'Wallet identity'}
-              </strong>{' '}
+              <strong>{selectedRow?.identity?.name ?? 'Not published'}</strong>{' '}
               <span className="mono" title={view.selected}>
-                {view.selected.slice(0, 10)}…{view.selected.slice(-8)}
+                {shortKey(view.selected)}
               </span>
             </p>
             <div className="actions">
-              <Button.Root
-                className="btn btn-primary"
-                disabled={action.busy || !!view.error}
-                onClick={() => {
-                  const own = view.rows.find(
-                    (row) => row.profile.identityKey === profile.identityKey,
-                  )
-                  send(
-                    own
-                      ? {
-                          type: 'EDIT',
-                          identityKey: profile.identityKey,
-                          fields: own.profile,
-                        }
-                      : { type: 'CREATE' },
-                  )
-                }}
-              >
-                Define wallet identity
-              </Button.Root>
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
@@ -188,9 +223,9 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                 variant="ghost"
                 className="btn btn-ghost"
                 disabled={action.busy}
-                onClick={() => file.current?.click()}
+                onClick={() => backupFile.current?.click()}
               >
-                Import profile / backup
+                Restore backup
               </Button.Root>
               <Button.Root
                 variant="ghost"
@@ -210,67 +245,83 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
               </Button.Root>
             </div>
             <input
-              ref={file}
+              ref={backupFile}
               type="file"
               accept=".json,application/json"
               hidden
               onChange={(event) => {
                 const picked = event.target.files?.[0]
                 event.target.value = ''
-                if (picked) void loadFile(picked)
+                if (picked) void restore(picked)
               }}
             />
-            {view.selected !== profile.identityKey ? (
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                disabled={action.busy}
-                onClick={() =>
-                  void action.run('select', async () => {
-                    assertOwner()
-                    selectPublicIdentity(runtime!, profile.identityKey)
-                  })
-                }
-              >
-                Use wallet identity as issuer
-              </Button.Root>
-            ) : null}
             <ul className="identity-list" data-aeon-part="records">
               {view.rows.map((row) => (
-                <li key={row.profile.identityKey} data-aeon-part="record">
-                  <DeferredImage
-                    src={
-                      row.profile.icon.startsWith('ord://')
-                        ? contentUrlForOrigin(
-                            row.profile.icon.slice(6),
-                            profile.chain,
-                          )
-                        : row.profile.icon
-                    }
-                    alt=""
-                    width={40}
-                    height={40}
-                    fallback={<span aria-hidden>◈</span>}
-                  />
-                  <strong>{row.profile.displayName}</strong>
-                  <p className="mono" title={row.profile.identityKey}>
-                    {row.profile.identityKey.slice(0, 12)}…
-                    {row.profile.identityKey.slice(-8)}
+                <li key={row.identityKey} data-aeon-part="record">
+                  {row.identity?.image ? (
+                    <DeferredImage
+                      src={issuerIdentityImageDataUrl(row.identity.image)}
+                      alt=""
+                      width={40}
+                      height={40}
+                      fallback={<span aria-hidden>◈</span>}
+                    />
+                  ) : (
+                    <span aria-hidden>◈</span>
+                  )}
+                  <strong>{row.identity?.name ?? 'Not published'}</strong>
+                  <p className="mono" title={row.identityKey}>
+                    {shortKey(row.identityKey)}
                   </p>
                   <p>
-                    {row.signer === 'imported'
-                      ? 'Imported signer'
-                      : row.signer === 'wallet'
-                        ? 'Wallet signer'
-                        : 'Public profile · view only'}
-                    {row.profile.identityKey === view.selected
-                      ? ' · selected issuer'
-                      : ''}
+                    {row.signer === 'imported' ? 'Imported signer' : 'Wallet signer'}
+                    {row.identityKey === view.selected ? ' · selected issuer' : ''}
                   </p>
-                  {row.profile.description ? (
-                    <p>{row.profile.description}</p>
+                  {row.identity?.description ? <p>{row.identity.description}</p> : null}
+                  <p className="mono" title={row.bapId}>
+                    BAP ID {row.bapId}
+                  </p>
+                  {row.identity ? (
+                    <p>
+                      {row.identity.revoked
+                        ? 'Revoked'
+                        : `Signing key ${row.identity.keys.length}${
+                            row.identity.keys.at(-1)!.minedHeight === undefined ? ' · confirming' : ''
+                          }`}
+                      {row.identity.image ? '' : ' · no image yet'}
+                    </p>
                   ) : null}
                   <div className="actions">
+                    <Button.Root
+                      className="btn btn-primary"
+                      disabled={action.busy || !!row.identity?.revoked}
+                      onClick={() => compose(row)}
+                    >
+                      {row.identity ? 'Publish update' : 'Publish identity'}
+                    </Button.Root>
+                    {row.identity && !row.identity.revoked ? (
+                      <Button.Root
+                        variant="ghost"
+                        className="btn btn-ghost"
+                        disabled={action.busy || !row.identity.image}
+                        onClick={() => void rotate(row)}
+                      >
+                        {action.running('rotate') ? 'Rotating…' : 'Rotate signing key'}
+                      </Button.Root>
+                    ) : null}
+                    <Button.Root
+                      variant="ghost"
+                      className="btn btn-ghost"
+                      disabled={action.busy || row.identityKey === view.selected}
+                      onClick={() =>
+                        void action.run('select', async () => {
+                          assertOwner()
+                          selectPublicIdentity(runtime!, row.identityKey)
+                        })
+                      }
+                    >
+                      Use as issuer
+                    </Button.Root>
                     <Button.Root
                       variant="ghost"
                       className="btn btn-ghost"
@@ -278,7 +329,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                       onClick={() =>
                         void action.run('copy', async () => {
                           assertOwner()
-                          await copyText(row.profile.identityKey, {
+                          await copyText(row.identityKey, {
                             label: 'issuer identity key',
                           })
                         })
@@ -286,159 +337,159 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                     >
                       Copy identity key
                     </Button.Root>
-                    {row.signer !== 'public' ? (
-                      <>
-                        <Button.Root
-                          variant="ghost"
-                          className="btn btn-ghost"
-                          disabled={
-                            action.busy ||
-                            row.profile.identityKey === view.selected
-                          }
-                          onClick={() =>
-                            void action.run('select', async () => {
+                    {row.signer === 'imported' ? (
+                      <Button.Root
+                        variant="ghost"
+                        className="btn btn-ghost"
+                        disabled={action.busy}
+                        onClick={() =>
+                          void action.run(
+                            'remove',
+                            async () => {
                               assertOwner()
-                              selectPublicIdentity(
-                                runtime!,
-                                row.profile.identityKey,
-                              )
-                            })
-                          }
-                        >
-                          Use as issuer
-                        </Button.Root>
-                        <Button.Root
-                          variant="ghost"
-                          className="btn btn-ghost"
-                          disabled={action.busy}
-                          onClick={() =>
-                            send({
-                              type: 'EDIT',
-                              identityKey: row.profile.identityKey,
-                              fields: row.profile,
-                            })
-                          }
-                        >
-                          Edit profile
-                        </Button.Root>
-                      </>
-                    ) : null}
-                    <Button.Root
-                      variant="ghost"
-                      className="btn btn-ghost"
-                      disabled={action.busy}
-                      onClick={() =>
-                        void action.run('export', async () => {
-                          assertOwner()
-                          downloadJson(
-                            JSON.stringify(row.profile, null, 2),
-                            `issuer-${row.profile.identityKey.slice(0, 12)}.json`,
-                          )
-                        })
-                      }
-                    >
-                      Export public profile
-                    </Button.Root>
-                    <Button.Root
-                      variant="ghost"
-                      className="btn btn-ghost"
-                      disabled={action.busy}
-                      onClick={() =>
-                        void action.run(
-                          'remove',
-                          async () => {
-                            assertOwner()
-                            removePublicIdentity(
-                              runtime!,
-                              row.profile.identityKey,
-                            )
-                          },
-                          {
-                            confirm: {
-                              title: 'Remove public identity?',
-                              body:
-                                row.signer === 'imported'
-                                  ? 'This removes its private signing key from this wallet. Keep an identity backup and your wallet recovery phrase, or the original key, before removing it. Existing assets are unaffected.'
-                                  : 'This removes the saved profile. Existing assets are unaffected.',
-                              confirmLabel: 'Remove identity',
-                              danger: true,
+                              removePublicIdentity(runtime!, row.identityKey)
                             },
-                          },
-                        )
-                      }
-                    >
-                      Remove
-                    </Button.Root>
+                            {
+                              confirm: {
+                                title: 'Remove imported signer?',
+                                body: 'This removes its private signing key from this wallet. Keep an identity backup and your wallet recovery phrase, or the original key, before removing it. Published identities and existing assets are unaffected.',
+                                confirmLabel: 'Remove signer',
+                                danger: true,
+                              },
+                            },
+                          )
+                        }
+                      >
+                        Remove
+                      </Button.Root>
+                    ) : null}
                   </div>
                 </li>
               ))}
             </ul>
             <p className="identity-compose-lede">
               Imported keys are encrypted to this wallet. Your recovery phrase
-              alone cannot recover them: keep an identity backup too. Public
-              profile exports contain no private keys.
+              alone cannot recover them: keep an identity backup too.
             </p>
           </>
-        ) : (
+        ) : importing ? (
           <>
-            <h4>
-              {importing
-                ? 'Import existing issuer key'
-                : 'Define public identity'}
-            </h4>
-            {importing ? (
-              <Field.Root className="identity-compose-field">
-                <Field.Label htmlFor={`${prefix}-key`}>
-                  Private signing key (hex or WIF)
-                </Field.Label>
-                <Field.Control
-                  id={`${prefix}-key`}
-                  ref={privateKey}
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={action.busy}
-                />
-                <p>
-                  Use the actual Sigma signing key, not an API credential.
-                  Importing does not move funds.
-                </p>
-              </Field.Root>
-            ) : null}
-            {(['displayName', 'icon', 'description'] as const).map((field) => (
-              <Field.Root className="identity-compose-field" key={field}>
-                <Field.Label htmlFor={`${prefix}-${field}`}>
-                  {field === 'displayName'
-                    ? 'Display name'
-                    : field === 'icon'
-                      ? 'Icon URL (HTTPS or ord://)'
-                      : 'About (optional)'}
-                </Field.Label>
-                <Field.Control
-                  id={`${prefix}-${field}`}
-                  value={snapshot.context.fields[field]}
-                  maxLength={
-                    field === 'displayName' ? 80 : field === 'icon' ? 512 : 280
-                  }
-                  disabled={action.busy}
-                  onChange={(event) =>
-                    send({ type: 'FIELD', field, value: event.target.value })
-                  }
-                />
-              </Field.Root>
-            ))}
-            <p className="identity-compose-lede">
-              Saving signs this profile with the identity key. No publishing
-              fee. The signature proves control of the key; it does not verify a
-              real-world name or handle.
-            </p>
+            <h4>Import existing issuer key</h4>
+            <Field.Root className="identity-compose-field">
+              <Field.Label htmlFor={`${prefix}-key`}>
+                Private signing key (hex or WIF)
+              </Field.Label>
+              <Field.Control
+                id={`${prefix}-key`}
+                ref={privateKey}
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={action.busy}
+              />
+              <p>
+                Use the identity's master key, the one 1Sat or Yours derived
+                its BAP ID from, not an API credential. Importing does not move
+                funds.
+              </p>
+            </Field.Root>
             <div className="actions">
               <Button.Root
                 className="btn btn-primary"
                 disabled={action.busy}
-                onClick={() => void save()}
+                onClick={() => void importKey()}
               >
-                {action.running('save') ? 'Saving…' : 'Save signed profile'}
+                {action.running('import') ? 'Importing…' : 'Import key'}
+              </Button.Root>
+              <Button.Root
+                variant="ghost"
+                className="btn btn-ghost"
+                disabled={action.busy}
+                onClick={close}
+              >
+                Cancel
+              </Button.Root>
+            </div>
+          </>
+        ) : (
+          <>
+            <h4>Publish issuer identity</h4>
+            <p className="mono" title={draft.identityKey ?? ''}>
+              {draft.identityKey ? shortKey(draft.identityKey) : null}
+            </p>
+            <div className="identity-compose-field" data-aeon-part="image">
+              {draft.image ? (
+                <DeferredImage
+                  src={issuerIdentityImageDataUrl(draft.image)}
+                  alt="Identity image"
+                  width={96}
+                  height={96}
+                  fallback={<span aria-hidden>◈</span>}
+                />
+              ) : null}
+              <Button.Root
+                variant="ghost"
+                className="btn btn-ghost"
+                disabled={action.busy}
+                onClick={() => imageFile.current?.click()}
+              >
+                {action.running('image')
+                  ? 'Preparing image…'
+                  : draft.image
+                    ? 'Change image'
+                    : 'Choose image'}
+              </Button.Root>
+              <p>
+                Cropped square and compressed to 64 KB. Photo metadata such as
+                location is removed before anything is published.
+              </p>
+              <input
+                ref={imageFile}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(event) => {
+                  const picked = event.target.files?.[0]
+                  event.target.value = ''
+                  if (picked) void pickImage(picked)
+                }}
+              />
+            </div>
+            <Field.Root className="identity-compose-field">
+              <Field.Label htmlFor={`${prefix}-name`}>Name</Field.Label>
+              <Field.Control
+                id={`${prefix}-name`}
+                value={draft.fields.name}
+                maxLength={IDENTITY_NAME_MAX}
+                disabled={action.busy}
+                onChange={(event) =>
+                  send({ type: 'FIELD', field: 'name', value: event.target.value })
+                }
+              />
+            </Field.Root>
+            <Field.Root className="identity-compose-field">
+              <Field.Label htmlFor={`${prefix}-bio`}>Bio (optional)</Field.Label>
+              <Field.Control
+                id={`${prefix}-bio`}
+                value={draft.fields.description}
+                maxLength={IDENTITY_DESCRIPTION_MAX}
+                disabled={action.busy}
+                onChange={(event) =>
+                  send({ type: 'FIELD', field: 'description', value: event.target.value })
+                }
+              />
+            </Field.Root>
+            <p className="identity-compose-lede">
+              The signature proves control of the BAP identity; it does not
+              verify a real-world name or handle.
+            </p>
+            <div className="actions">
+              <Button.Root
+                className="btn btn-primary"
+                disabled={action.busy || !draft.image || !draft.fields.name.trim()}
+                onClick={() => void publish()}
+              >
+                {action.running('publish') ? 'Publishing…' : 'Publish'}
               </Button.Root>
               <Button.Root
                 variant="ghost"

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
-import { signPublicIdentityProfile } from './publicIdentityProfile'
+import { bapIdentityFixture } from './issuerIdentity.fixture'
+import { verifyIssuerIdentityPackage, issuerIdentityImageDataUrl } from './issuerIdentity'
 import {
   collectionSeriesLabel,
   groupCollectables,
@@ -60,63 +61,58 @@ describe('groupCollectables', () => {
     expect(claimed?.icon).toBeUndefined()
   })
 
-  it('groups new NFTs and FTs by issuer key and displays only a matching signed profile', () => {
-    const root = PrivateKey.fromHex('01')
-    const issuer = root.toPublicKey().toString()
-    const profile = signPublicIdentityProfile(root.toHex(), 'main', {
-      displayName: 'Example Studio',
-      icon: 'https://example.test/icon.png',
-      description: 'Items and awards',
-    })
+  it('shelves NFTs and FTs whose signer speaks for a BAP identity under that BAP ID', () => {
+    const f = bapIdentityFixture({ name: 'Example Studio' })
+    const identity = verifyIssuerIdentityPackage(f.pkg)!
+    const signer = f.signer.toPublicKey().toString()
+    const nextKey = PrivateKey.fromRandom().toPublicKey().toString()
     const assets = [
-      item({
-        outpoint: 'aa.0',
-        issuer,
-        issuerProfile: profile,
-        app: 'An app',
-        collectionId: 'awards',
-      }),
+      item({ outpoint: 'aa.0', issuer: signer, bapId: f.bapId, app: 'An app', collectionId: 'awards' }),
+      item({ outpoint: 'cc.0', issuer: nextKey, bapId: f.bapId }),
     ]
-    const tokens = [
-      token({
-        tokenId: 'bb',
-        sym: 'FT',
-        issuer,
-        issuerHandle: 'unverified-handle',
-      }),
-    ]
-    const result = groupCollectables(assets, tokens)
+    const tokens = [token({ tokenId: 'bb', sym: 'FT', issuer: signer, bapId: f.bapId, issuerHandle: 'unverified-handle' })]
+    const seen: unknown[] = []
+    const result = groupCollectables(assets, tokens, (asset) => {
+      seen.push(asset)
+      return asset.bapId === f.bapId ? identity : null
+    })
+    expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'aa_0' })
+    expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'bb' })
     expect(result.issuers).toHaveLength(1)
     expect(result.issuers[0]).toMatchObject({
-      key: `issuer:pubkey:${issuer}`,
-      identityKey: issuer,
-      label: profile.displayName,
-      icon: profile.icon,
+      key: `issuer:bap:${f.bapId}`,
+      label: 'Example Studio',
+      icon: issuerIdentityImageDataUrl(identity.image!),
+      bapId: f.bapId,
+      issuerAttested: true,
     })
+    expect(result.issuers[0]?.items).toHaveLength(2)
     expect(result.issuers[0]?.tokens).toHaveLength(1)
     expect(result.issuers[0]?.collections[0]?.quantity).toBe(1)
-    const tampered = groupCollectables(
-      [
-        {
-          ...assets[0]!,
-          issuerProfile: { ...profile, displayName: 'Imposter' },
-        },
-      ],
-      tokens,
+  })
+
+  it('never shows an identity for an unattested asset or one the resolver refuses', () => {
+    const f = bapIdentityFixture({ name: 'Example Studio' })
+    const identity = verifyIssuerIdentityPackage(f.pkg)!
+    const signer = f.signer.toPublicKey().toString()
+    const assets = [item({ outpoint: 'aa.0', issuer: signer, bapId: f.bapId })]
+    const refused = groupCollectables(assets, [], () => null)
+    expect(refused.issuers[0]).toMatchObject({ key: `issuer:pubkey:${signer}` })
+    expect(refused.issuers[0]?.icon).toBeUndefined()
+    const unattested = groupCollectables(
+      assets.map((asset) => ({ ...asset, issuerAttested: false })),
+      [],
+      () => identity,
     )
-    expect(tampered.issuers[0]?.icon).toBeUndefined()
-    expect(tampered.issuers[0]?.label).not.toBe('Imposter')
-    const wrongKey = signPublicIdentityProfile(
-      PrivateKey.fromHex('02').toHex(),
-      'main',
-      { displayName: 'Wrong issuer', icon: profile.icon, description: '' },
+    expect(unattested.issuers[0]?.key).toBe(`issuer:claim:${signer}`)
+    expect(unattested.issuers[0]?.label).not.toBe('Example Studio')
+    const otherId = bapIdentityFixture({}).bapId
+    const mismatched = groupCollectables(
+      [item({ outpoint: 'aa.0', issuer: signer, bapId: otherId })],
+      [],
+      () => identity,
     )
-    expect(
-      groupCollectables(
-        assets.map((asset) => ({ ...asset, issuerProfile: wrongKey })),
-        tokens,
-      ).issuers[0]?.label,
-    ).not.toBe('Wrong issuer')
+    expect(mismatched.issuers[0]?.key).toBe(`issuer:pubkey:${signer}`)
   })
   it('nests collections under the issuer, not the other way around', () => {
     const { issuers, singles, ungrouped } = groupCollectables([
