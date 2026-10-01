@@ -52,7 +52,9 @@ import {
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { useDetailActionDock } from './WalletActionDock'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { useIssuerView } from '../hooks/useIssuerView'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
+import { IssuerIdentityMark } from './IssuerIdentityMark'
 
 type Props = {
   tokenId: string
@@ -137,6 +139,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
     }
   }, [tokenId, send])
 
+  const loaded = snapshot.context.token
+  const issuerView = useIssuerView(loaded ? { ...loaded, origin: loaded.tokenId } : null)
+
   if (snapshot.matches('loading')) {
     return (
       <div
@@ -178,6 +183,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         : 'BSV-21 · supply locked'
       : 'BSV-21 · no supply cap'
     : null
+  const issuerBap = issuerView?.bap ? issuerView : null
   const issuerLabel = token.issuerHandle
     ? token.issuerHandle
     : token.issuer
@@ -344,7 +350,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               </span>
             ) : null}
           </div>
-          {issuerLabel ? (
+          {issuerBap ? (
+            <IssuerIdentityMark view={issuerBap} className="detail-issuer-mark" />
+          ) : issuerLabel ? (
             <div className="fungible-details-ids">
               <span className="fungible-details-origin" title={token.issuer || undefined}>
                 {issuerLabel}
@@ -459,8 +467,21 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           {token.issuer ? (
             <MetaRow
               label="Issuer"
-              value={token.issuerHandle ? `${token.issuerHandle} · ${token.issuer}` : token.issuer}
+              value={
+                issuerBap?.bap?.state === 'verified'
+                  ? `${issuerBap.label} · ${token.issuer}`
+                  : token.issuerHandle
+                    ? `${token.issuerHandle} · ${token.issuer}`
+                    : token.issuer
+              }
               copyLabel="issuer identity key"
+            />
+          ) : null}
+          {issuerBap?.bap ? (
+            <MetaRow
+              label={issuerBap.bap.state === 'verified' ? 'BAP ID' : 'BAP ID (unconfirmed)'}
+              value={issuerBap.bap.id}
+              copyLabel="BAP ID"
             />
           ) : null}
           {isLegacy ? (

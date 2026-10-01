@@ -8,6 +8,7 @@ import {
   issuerSignerVerdict,
   parseIssuerIdentityPackage,
   verifyIssuerIdentityPackage,
+  type IssuerAttribution,
   type IssuerIdentity,
   type IssuerIdentityPackage,
 } from './issuerIdentity'
@@ -113,15 +114,30 @@ export function issuerIdentityFor(chain: Chain, bapId: string): IssuerIdentity |
   return valid
 }
 
+/** Whether `signer` spoke for the stamped BAP ID when it signed an asset mined at `minedHeight`. */
+export function issuerAttribution(
+  chain: Chain,
+  claim: { bapId: string; signer: string; minedHeight?: number },
+): IssuerAttribution | null {
+  const bapId = normalizeBapId(claim.bapId)
+  if (!bapId) return null
+  const identity = issuerIdentityFor(chain, bapId)
+  if (!identity) return { kind: 'unconfirmed', bapId, reason: 'no-package' }
+  const verdict = issuerSignerVerdict(identity, claim.signer, claim.minedHeight)
+  if (verdict === 'active') return { kind: 'verified', identity }
+  if (verdict === 'unknown-key') return { kind: 'unconfirmed', bapId, reason: 'unknown-key' }
+  if (verdict === 'retired-key' && claim.minedHeight === undefined)
+    return { kind: 'unconfirmed', bapId, reason: 'height-unknown' }
+  return { kind: 'refused', bapId, reason: verdict }
+}
+
 /** The identity `signer` spoke for when it signed an asset mined at `minedHeight`. */
 export function issuerIdentityForSigner(
   chain: Chain,
   claim: { bapId: string; signer: string; minedHeight?: number },
 ): IssuerIdentity | null {
-  const identity = issuerIdentityFor(chain, claim.bapId)
-  return identity && issuerSignerVerdict(identity, claim.signer, claim.minedHeight) === 'active'
-    ? identity
-    : null
+  const attribution = issuerAttribution(chain, claim)
+  return attribution?.kind === 'verified' ? attribution.identity : null
 }
 
 /**

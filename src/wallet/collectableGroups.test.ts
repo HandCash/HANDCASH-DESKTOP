@@ -74,7 +74,7 @@ describe('groupCollectables', () => {
     const seen: unknown[] = []
     const result = groupCollectables(assets, tokens, (asset) => {
       seen.push(asset)
-      return asset.bapId === f.bapId ? identity : null
+      return asset.bapId === f.bapId ? { kind: 'verified', identity } : null
     })
     expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'aa_0' })
     expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'bb' })
@@ -102,7 +102,7 @@ describe('groupCollectables', () => {
     const unattested = groupCollectables(
       assets.map((asset) => ({ ...asset, issuerAttested: false })),
       [],
-      () => identity,
+      () => ({ kind: 'verified', identity }),
     )
     expect(unattested.issuers[0]?.key).toBe(`issuer:claim:${signer}`)
     expect(unattested.issuers[0]?.label).not.toBe('Example Studio')
@@ -110,9 +110,47 @@ describe('groupCollectables', () => {
     const mismatched = groupCollectables(
       [item({ outpoint: 'aa.0', issuer: signer, bapId: otherId })],
       [],
-      () => identity,
+      () => ({ kind: 'verified', identity }),
     )
     expect(mismatched.issuers[0]?.key).toBe(`issuer:pubkey:${signer}`)
+    const retired = groupCollectables(assets, [], () => ({
+      kind: 'refused',
+      bapId: f.bapId,
+      reason: 'retired-key',
+    }))
+    expect(retired.issuers[0]).toMatchObject({ key: `issuer:pubkey:${signer}` })
+    expect(retired.issuers[0]?.bapId).toBeUndefined()
+  })
+
+  it('groups unconfirmed stamps by BAP ID across signers, with no name or image', () => {
+    const f = bapIdentityFixture({ name: 'Example Studio' })
+    const identity = verifyIssuerIdentityPackage(f.pkg)!
+    const signer = f.signer.toPublicKey().toString()
+    const stranger = PrivateKey.fromRandom().toPublicKey().toString()
+    const result = groupCollectables(
+      [
+        item({ outpoint: 'aa.0', issuer: signer, bapId: f.bapId }),
+        item({ outpoint: 'bb.0', issuer: stranger, bapId: f.bapId }),
+        item({ outpoint: 'dd.0', issuer: PrivateKey.fromRandom().toPublicKey().toString(), bapId: f.bapId }),
+      ],
+      [token({ tokenId: 'cc', sym: 'FT', issuer: stranger, bapId: f.bapId, issuerHandle: '$studio' })],
+      (asset) =>
+        asset.issuer === signer
+          ? { kind: 'verified', identity }
+          : { kind: 'unconfirmed', bapId: f.bapId, reason: 'unknown-key' },
+    )
+    expect(result.issuers.map((i) => i.key).sort()).toEqual(
+      [`issuer:bap-unconfirmed:${f.bapId}`, `issuer:bap:${f.bapId}`].sort(),
+    )
+    const unconfirmed = result.issuers.find((i) => i.bapState === 'unconfirmed')!
+    expect(unconfirmed).toMatchObject({ bapId: f.bapId, issuerAttested: true })
+    expect(unconfirmed.label).toMatch(/^Unconfirmed BAP /)
+    expect(unconfirmed.label).not.toContain('Example Studio')
+    expect(unconfirmed.label).not.toContain('$studio')
+    expect(unconfirmed.icon).toBeUndefined()
+    expect(unconfirmed.items.map((i) => i.outpoint)).toEqual(['bb.0', 'dd.0'])
+    expect(unconfirmed.tokens).toHaveLength(1)
+    expect(result.issuers.find((i) => i.bapState === 'verified')?.label).toBe('Example Studio')
   })
   it('nests collections under the issuer, not the other way around', () => {
     const { issuers, singles, ungrouped } = groupCollectables([

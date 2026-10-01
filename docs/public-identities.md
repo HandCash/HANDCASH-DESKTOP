@@ -68,7 +68,15 @@ Collect shows the issuer's image and name only when all of these hold:
 - a verified package for `bapId` is in the store;
 - that signer is an **active** key of the chain at the asset's mined height. The height comes from the retained merkle path of the asset's origin; without one, it is unknown.
 
-Such assets share the shelf `issuer:bap:<bapId>` across rotations. A copied claim stays on a separate "issuer claim" shelf.
+Collect groups by BAP ID. `issuerAttribution` (`issuerIdentities.ts`) gives each signed asset one of three answers, and `issuerViewFor` (`collectableGroups.ts`) turns it into the shelf, the token chip label and the issuer rows in item and token details:
+
+| Attribution | When | Shelf | Shows |
+|---|---|---|---|
+| `verified` | the signer is an active key at the asset's height | `issuer:bap:<bapId>` | the newest profile in the stored package: image, name, BAP ID |
+| `unconfirmed` | no package yet, a signer the package does not list, or a retired key at an unknown height | `issuer:bap-unconfirmed:<bapId>` | "Unconfirmed BAP …" and the BAP ID; never a name, image or handle |
+| `refused` | the package retires the signer before the asset's height, or the identity is revoked | `issuer:pubkey:<signer>` | the signing key |
+
+Every verified asset of one BAP ID shares a shelf across rotations, labelled with the newest profile the wallet holds, and a newer package merged from any delivery relabels it. Anyone can copy a stamp, so unconfirmed assets keep their own BAP shelf until a package proves their signer. An unsigned copy stays on a separate "issuer claim" shelf.
 
 Builds before 1.3.393 wrote a self-signed `issuerProfile` JSON with an icon URL into mints. Those bytes are ignored. Those assets still group by their verified key, and the issuer's own wallet still recognises its earlier keys.
 

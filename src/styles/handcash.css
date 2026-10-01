@@ -4496,6 +4496,37 @@ button.identity-qr-copy:focus-visible {
   flex-shrink: 0;
 }
 
+.issuer-identity-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.issuer-identity-mark-icon {
+  object-fit: cover;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.issuer-identity-mark-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-issuer-mark {
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.issuer-identity-mark[data-aeon-state='verified'] {
+  color: var(--hc-text);
+}
+
 .identity-field {
   display: grid;
   gap: 6px;

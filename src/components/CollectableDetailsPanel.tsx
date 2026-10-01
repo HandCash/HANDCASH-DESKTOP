@@ -49,7 +49,9 @@ import { LoadingSpinner } from './LoadingSpinner'
 import { EmptyState } from './EmptyState'
 import { useDetailActionDock } from './WalletActionDock'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { useIssuerView } from '../hooks/useIssuerView'
 import { DeferredModelViewer } from './DeferredModelViewer'
+import { IssuerIdentityMark } from './IssuerIdentityMark'
 
 type Props = {
   outpoint: string
@@ -238,6 +240,9 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     if (item.authenticity !== 'unproven') return
     requestCollectableVerification(item.outpoint)
   }, [item?.outpoint, item?.authenticity])
+
+  const issuerView = useIssuerView(item)
+  const issuerBap = issuerView?.bap
 
   const copy = async (label: string, value: string) => {
     await copyText(value, { label })
@@ -448,6 +453,9 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         </div>
         <div className="collectable-details-copy">
           <h3 className="collectable-details-name">{item.name}</h3>
+          {issuerView?.bap ? (
+            <IssuerIdentityMark view={issuerView} className="detail-issuer-mark" />
+          ) : null}
           {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
           <p
             className={`collectable-authenticity collectable-authenticity-${authenticity.tone}`}
@@ -491,6 +499,20 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       <TraitStrip title="Details" traits={detailRows} />
 
       <dl className="collectable-details-meta">
+        {issuerView ? (
+          <MetaRow
+            label={issuerView.issuerAttested ? 'Issuer' : 'Issuer claim'}
+            value={issuerView.identityKey}
+            onCopy={() => void copy('issuer key', issuerView.identityKey)}
+          />
+        ) : null}
+        {issuerBap ? (
+          <MetaRow
+            label={issuerBap.state === 'verified' ? 'BAP ID' : 'BAP ID (unconfirmed)'}
+            value={issuerBap.id}
+            onCopy={() => void copy('BAP ID', issuerBap.id)}
+          />
+        ) : null}
         {item.collectionId ? (
           <MetaRow
             label="Collection"

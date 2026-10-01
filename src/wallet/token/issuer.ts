@@ -113,34 +113,66 @@ function sigmaInputHash(txid: string, vout: number): number[] {
   return Hash.sha256([...Utils.toArray(txid, 'hex'), vout & 255, (vout >>> 8) & 255, (vout >>> 16) & 255, (vout >>> 24) & 255])
 }
 
-export function verifySigmaIssuer(tx: Transaction, outputIndex: number, issuer: string): boolean {
+export type SigmaSigner = { address: string; /** BRC-77 only: the key the signature names. */ key?: string }
+
+/** The output's Sigma signer, verified against its funding input; null when unsigned or invalid. */
+export function verifiedSigmaSigner(tx: Transaction, outputIndex: number): SigmaSigner | null {
   try {
-    const key = normalizeIssuerPubKey(issuer)
-    if (!key || !Number.isSafeInteger(outputIndex) || !tx.outputs[outputIndex]) return false
+    if (!Number.isSafeInteger(outputIndex) || !tx.outputs[outputIndex]) return null
     const script = expandedProtocolScript(tx.outputs[outputIndex]!.lockingScript.toHex())
     const parsedTx = new Transaction()
     parsedTx.addInput({ sourceTXID: '00'.repeat(32), sourceOutputIndex: 0 })
     parsedTx.addOutput({ satoshis: 1, lockingScript: script })
     const sig = new SigmaParser(parsedTx).sig
-    if (!sig || sig.address !== PublicKey.fromString(key).toAddress()) return false
+    if (!sig?.address) return null
     const vin = sig.vin === -1 ? outputIndex : sig.vin
-    if (!Number.isSafeInteger(vin) || vin < 0 || !tx.inputs[vin]) return false
+    if (!Number.isSafeInteger(vin) || vin < 0 || !tx.inputs[vin]) return null
     const input = tx.inputs[vin]!
     const txid = input.sourceTXID ?? input.sourceTransaction?.id('hex')
-    if (!txid || !/^[0-9a-f]{64}$/i.test(txid)) return false
+    if (!txid || !/^[0-9a-f]{64}$/i.test(txid)) return null
     const bytes = Utils.toArray(sig.signature, 'base64')
+    let key: string | undefined
     if (sig.algorithm === Algorithm.BRC77) {
       // BRC-77 carries the actual signing key; its address field is not proof.
-      if (Utils.toHex(bytes.slice(4, 37)).toLowerCase() !== key) return false
-    } else if (sig.algorithm !== Algorithm.BSM) return false
+      key = Utils.toHex(bytes.slice(4, 37)).toLowerCase()
+      if (PublicKey.fromString(key).toAddress() !== sig.address) return null
+    } else if (sig.algorithm !== Algorithm.BSM) return null
     const index = script.chunks.findIndex(chunk => chunk.data && Utils.toUTF8(chunk.data) === 'SIGMA')
-    if (index < 1) return false
+    if (index < 1) return null
     const separator = script.chunks[index - 1]!
-    if (separator.op !== OP.OP_RETURN && (!separator.data || Utils.toUTF8(separator.data) !== '|')) return false
+    if (separator.op !== OP.OP_RETURN && (!separator.data || Utils.toUTF8(separator.data) !== '|')) return null
     const prefix = new Script(script.chunks.slice(0, index - 1)).toBinary()
-    return new Sigma({ algorithm: sig.algorithm, address: sig.address, signature: bytes, vin: sig.vin })
+    const valid = new Sigma({ algorithm: sig.algorithm, address: sig.address, signature: bytes, vin: sig.vin })
       .verifyWithHashes(sigmaInputHash(txid, input.sourceOutputIndex), Hash.sha256(prefix))
-  } catch { return false }
+    return valid ? { address: sig.address, ...(key ? { key } : {}) } : null
+  } catch { return null }
+}
+
+const addressByKey = new Map<string, string>()
+
+/** Listing asks per tip on every refresh; point decompression is not free on a phone. */
+function addressOfKey(key: string): string {
+  const known = addressByKey.get(key)
+  if (known) return known
+  const address = PublicKey.fromString(key).toAddress()
+  if (addressByKey.size >= 512) addressByKey.clear()
+  addressByKey.set(key, address)
+  return address
+}
+
+export function sigmaSignerIs(signer: SigmaSigner | null, issuer: string): boolean {
+  if (!signer) return false
+  const key = normalizeIssuerPubKey(issuer)
+  if (!key) return false
+  try {
+    return signer.address === addressOfKey(key) && (signer.key === undefined || signer.key === key)
+  } catch {
+    return false
+  }
+}
+
+export function verifySigmaIssuer(tx: Transaction, outputIndex: number, issuer: string): boolean {
+  return sigmaSignerIs(verifiedSigmaSigner(tx, outputIndex), issuer)
 }
 
 /**

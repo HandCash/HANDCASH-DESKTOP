@@ -17,6 +17,7 @@ vi.mock('./durableStorage', () => ({
 import { bapAliasScript, bapIdScript } from './bapRecords'
 import { bapIdentityFixture, beefOf, recordTx, rotationTx } from './issuerIdentity.fixture'
 import {
+  issuerAttribution,
   issuerIdentityFor,
   issuerIdentityForSigner,
   issuerIdentityPackage,
@@ -95,6 +96,28 @@ describe('store once', () => {
     )
     expect(issuerIdentityForSigner('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight: 900_030 })).toBeNull()
     expect(issuerIdentityForSigner('main', { bapId: f.bapId, signer: pub(next) })?.bapId).toBe(f.bapId)
+  })
+
+  it('tells an unconfirmed stamp apart from one the package refuses', () => {
+    const f = bapIdentityFixture({ aliasHeight: 900_010 })
+    const stranger = pub(PrivateKey.fromRandom())
+    expect(issuerAttribution('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight: 900_015 })).toEqual({
+      kind: 'unconfirmed',
+      bapId: f.bapId,
+      reason: 'no-package',
+    })
+    expect(issuerAttribution('main', { bapId: 'not-a-bap-id', signer: stranger })).toBeNull()
+    const { tx } = rotationTx(f, 1, { name: 'Studio II', minedHeight: 900_020 })
+    rememberIssuerIdentityPackage('main', buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(tx)])!)
+    const old = (minedHeight?: number) => issuerAttribution('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight })
+    expect(old(900_015)).toMatchObject({ kind: 'verified', identity: { name: 'Studio II' } })
+    expect(old(900_030)).toEqual({ kind: 'refused', bapId: f.bapId, reason: 'retired-key' })
+    expect(old()).toEqual({ kind: 'unconfirmed', bapId: f.bapId, reason: 'height-unknown' })
+    expect(issuerAttribution('main', { bapId: f.bapId, signer: stranger, minedHeight: 900_015 })).toEqual({
+      kind: 'unconfirmed',
+      bapId: f.bapId,
+      reason: 'unknown-key',
+    })
   })
 
   it('a leaked retired key cannot fork a chain the store already holds', () => {

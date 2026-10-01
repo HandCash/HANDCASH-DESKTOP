@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.3.394] - 2026-10-01
+
+Collect groups everything by BAP ID and shows the newest identity details the wallet holds, on shelves, token chips and item and token details. Token and item refreshes no longer pay for issuer attribution on every tip.
+
+### Fixed
+
+- **Token refresh lag since 1.3.390.** On 0.1.553, Android froze for 26.5 s across 100 minutes, against 2.6 s across 26 minutes on 0.1.550. Triage named the BSV-21 refresh as the owner. Issuer attribution was re-parsing whole retained BEEF packages, ancestry included, on the main thread:
+  - **Tips:** each token tip used to parse its BEEF and run a Sigma check, sometimes twice, every time it was listed. A retained output is now parsed once and its Sigma signer verified once. A transfer tip, which never carries the issuer's Sigma, is no longer checked; the deploy output alone attests the issuer.
+  - **Inscribed items:** an unmoved item no longer rehashes its whole inscribed script on every refresh.
+  - **Unmined origins:** an unmined origin's height is re-read at most once a minute.
+  - **Signer addresses:** issuer addresses are derived once per key.
+- **Collect regrouping** reads the public identity store once per pass, not once per asset, and judges each issuer or stamped origin once (`issuerAttributionResolver`).
+- **Legacy BSV-21 recovery** no longer re-proves the same tip with a provider round trip and a storage write on every refresh.
+  - A proven tip is remembered for 10 minutes.
+  - Any spend clears what is remembered.
+  - If the spend watch cannot start, nothing is remembered.
+
+### Changed
+
+- **One shelf per BAP ID.** Signed assets that name a BAP ID share one shelf per BAP ID, across key rotations.
+  - When a stored identity package proves the signer, the shelf shows the identity's newest image and name.
+  - Until a package proves the signer, the asset sits on an "Unconfirmed BAP …" shelf with no name or image, because anyone can copy a stamp. This covers a missing package, a signer the package does not list, or an unknown height.
+  - A key the package retires or revokes before the asset was mined keeps a shelf of its own key.
+- **Identity everywhere in Collect.**
+  - Token chips on a BAP shelf use the identity's name instead of a cached handle.
+  - Item and token details show the issuer's image and name, with Issuer and BAP ID rows that copy on click.
+  - Item details show the issuer for the first time.
+- `issuerAttribution` returns `verified`, `unconfirmed` or `refused` with a named reason, in place of identity-or-nothing.
+
+### Tests
+
+- `issuerIdentities.test.ts`:
+  - no package;
+  - verified at a height before the rotation, showing the rotated profile;
+  - retired after it;
+  - height unknown;
+  - stranger key.
+- `collectableGroups.test.ts`: unconfirmed stamps from several signers share one BAP shelf without the verified identity's name, image or a handle; a refused signer stays on its key shelf.
+- `issuerAttribution.test.ts`:
+  - fifty listing passes read a retained output's BEEF once (it used to be twice);
+  - an output with no Sigma is never re-read;
+  - an unmined height is re-read only after a minute;
+  - a matched script still refuses a different one.
+
 ## [1.3.393] - 2026-10-01
 
 Issuer identities are now BAP identities with an uploaded image and key rotation. Assets name the BAP ID in their signed script, and the identity's proof is stored once and travels beside items.

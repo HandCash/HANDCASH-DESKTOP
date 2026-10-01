@@ -1,5 +1,5 @@
 import { issuerMetadataFromScript } from '../issuerMetadata'
-import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
+import { retainedIssuerMetadata, retainedSignedBy } from '../issuerAttribution'
 import { getActiveWallet } from '../session'
 
 /** List BRC-162 value tips from basket `bsv21` (BRC-163). */
@@ -193,11 +193,9 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     [remittanceIssuer, identityKey].filter(Boolean) as string[],
   )
   const issuer = sigma.issuer ?? remittanceIssuer
-  // An address hint alone is never attested.
-  const issuerAttested =
-    !!issuer &&
-    ((retainedScriptIs(outpointRaw, scriptHex) && retainedSignedBy(outpointRaw, issuer)) ||
-      retainedSignedBy(tokenId, issuer))
+  // An address hint alone is never attested. Only the deploy output carries
+  // the issuer's Sigma; a transfer tip has none to check.
+  const issuerAttested = !!issuer && retainedSignedBy(tokenId, issuer)
   // Script wins for the lock kind (BRC-163: readers prefer the script when
   // trust matters); remittance only fills a cosign claim the rest lacks.
   const cosign =

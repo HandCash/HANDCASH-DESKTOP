@@ -1,14 +1,18 @@
 import { Hash, Utils } from '@bsv/sdk'
 import { peekSessionBeef } from './beefCache'
 import { issuerMetadataFromScript } from './issuerMetadata'
-import { verifySigmaIssuer } from './token/issuer'
+import { sigmaSignerIs, verifiedSigmaSigner, type SigmaSigner } from './token/issuer'
 
 export type RetainedIssuer = { issuer?: string; bapId?: string }
 
 type Entry = RetainedIssuer & {
   scriptHash: string
-  signers: Map<string, boolean>
+  scriptLength: number
+  /** Last listed script that matched; a refresh compares it instead of rehashing an inscription. */
+  matched?: string
+  signer: SigmaSigner | null
   minedHeight?: number
+  heightCheckedAt?: number
 }
 
 /**
@@ -17,10 +21,13 @@ type Entry = RetainedIssuer & {
  *
  * A session BEEF read parses the whole package, ancestry included, and an
  * origin script can be the full inscribed image. Listing runs per tip on every
- * refresh, so each outpoint is parsed and verified once: a txid's outputs never
- * change. Nothing is remembered until the transaction is actually held.
+ * refresh, so each outpoint is parsed and its Sigma verified once: a txid's
+ * outputs never change. Nothing is remembered until the transaction is held.
  */
 const MAX_ENTRIES = 2048
+/** An unmined origin rereads its BEEF for a proof at most this often. */
+const HEIGHT_RECHECK_MS = 60_000
+const SIGMA_MARKER = '5349474d41'
 const entries = new Map<string, Entry>()
 
 function outpointKey(outpoint: string): { key: string; txid: string; vout: number } | null {
@@ -63,14 +70,17 @@ function entryFor(outpoint: string): Entry | null {
   if (hit) return remember(at.key, hit)
   const retained = retainedEntry(at.txid)
   const script = retained?.tx.outputs[at.vout]?.lockingScript.toHex()
-  if (!script) return null
+  if (!retained || !script) return null
   const metadata = issuerMetadataFromScript(script)
   return remember(at.key, {
     ...(metadata.issuer ? { issuer: metadata.issuer } : {}),
     ...(metadata.bapId ? { bapId: metadata.bapId } : {}),
-    ...(retained?.minedHeight !== undefined ? { minedHeight: retained.minedHeight } : {}),
+    ...(retained.minedHeight !== undefined
+      ? { minedHeight: retained.minedHeight }
+      : { heightCheckedAt: Date.now() }),
     scriptHash: hashScript(script),
-    signers: new Map(),
+    scriptLength: script.length,
+    signer: script.toLowerCase().includes(SIGMA_MARKER) ? verifiedSigmaSigner(retained.tx, at.vout) : null,
   })
 }
 
@@ -89,7 +99,9 @@ export function retainedMinedHeight(outpoint: string): number | undefined {
   const entry = entryFor(outpoint)
   const at = outpointKey(outpoint)
   if (!entry || !at) return undefined
-  if (entry.minedHeight === undefined) {
+  const now = Date.now()
+  if (entry.minedHeight === undefined && now - (entry.heightCheckedAt ?? 0) >= HEIGHT_RECHECK_MS) {
+    entry.heightCheckedAt = now
     const minedHeight = retainedEntry(at.txid)?.minedHeight
     if (minedHeight !== undefined) entry.minedHeight = minedHeight
   }
@@ -100,22 +112,17 @@ export function retainedMinedHeight(outpoint: string): number | undefined {
 export function retainedScriptIs(outpoint: string, scriptHex: string | undefined): boolean {
   if (!scriptHex) return false
   const entry = entryFor(outpoint)
-  return !!entry && entry.scriptHash === hashScript(scriptHex)
+  if (!entry) return false
+  if (entry.matched === scriptHex) return true
+  if (scriptHex.length !== entry.scriptLength || entry.scriptHash !== hashScript(scriptHex)) return false
+  entry.matched = scriptHex
+  return true
 }
 
 /** Sigma on the retained output verifies for `issuer`, bound to its funding input. */
 export function retainedSignedBy(outpoint: string, issuer: string): boolean {
   const entry = entryFor(outpoint)
-  const at = outpointKey(outpoint)
-  if (!entry || !at) return false
-  const signer = issuer.trim().toLowerCase()
-  const known = entry.signers.get(signer)
-  if (known !== undefined) return known
-  const tx = retainedEntry(at.txid)?.tx
-  if (!tx) return false
-  const verdict = verifySigmaIssuer(tx, at.vout, signer)
-  entry.signers.set(signer, verdict)
-  return verdict
+  return !!entry && sigmaSignerIs(entry.signer, issuer)
 }
 
 export function resetIssuerAttributionForTests(): void {

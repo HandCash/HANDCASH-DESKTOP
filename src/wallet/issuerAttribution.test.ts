@@ -12,6 +12,7 @@ vi.mock('./beefCache', () => ({
 import {
   resetIssuerAttributionForTests,
   retainedIssuerMetadata,
+  retainedMinedHeight,
   retainedScriptIs,
   retainedSignedBy,
 } from './issuerAttribution'
@@ -54,7 +55,30 @@ describe('retained issuer attribution', () => {
       expect(retainedScriptIs(`${txid}.0`, script)).toBe(true)
       expect(retainedSignedBy(`${txid}.0`, issuerKey)).toBe(true)
     }
-    expect(held.reads).toBe(2)
+    expect(held.reads).toBe(1)
+  })
+
+  it('never rereads an output with no Sigma, and rereads an unmined height at most once a minute', () => {
+    vi.useFakeTimers()
+    try {
+      const tx = new Transaction()
+      tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 1, unlockingScript: Script.fromHex('') })
+      tx.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(issuer.toPublicKey().toAddress()) })
+      const beef = new Beef()
+      beef.mergeTransaction(tx)
+      const txid = tx.id('hex')
+      held.beefs.set(txid, beef)
+      for (let i = 0; i < 20; i++) {
+        expect(retainedSignedBy(`${txid}.0`, issuerKey)).toBe(false)
+        expect(retainedMinedHeight(`${txid}.0`)).toBeUndefined()
+      }
+      expect(held.reads).toBe(1)
+      vi.advanceTimersByTime(60_000)
+      expect(retainedMinedHeight(`${txid}.0`)).toBeUndefined()
+      expect(held.reads).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('remembers nothing until the transaction is held', () => {
@@ -67,6 +91,9 @@ describe('retained issuer attribution', () => {
   it('refuses a different script, a different signer and a malformed outpoint', () => {
     const { txid, script } = signedDeploy()
     expect(retainedScriptIs(`${txid}.0`, script.slice(0, -2) + '00')).toBe(false)
+    expect(retainedScriptIs(`${txid}.0`, script)).toBe(true)
+    expect(retainedScriptIs(`${txid}.0`, script.slice(0, -2) + '00')).toBe(false)
+    expect(retainedScriptIs(`${txid}.0`, script + '00')).toBe(false)
     expect(retainedScriptIs(`${txid}.0`, undefined)).toBe(false)
     expect(retainedSignedBy(`${txid}.0`, PrivateKey.fromHex('04'.padStart(64, '0')).toPublicKey().toString())).toBe(false)
     expect(retainedSignedBy(`${txid}.1`, issuerKey)).toBe(false)

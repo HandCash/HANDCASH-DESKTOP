@@ -57,7 +57,13 @@ import { groupCollectables } from './collectableGroups'
 import type { Collectable } from './collectables'
 import { resetIssuerAttributionForTests, retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from './issuerAttribution'
 import { appendIssuerMetadata, issuerMetadataFromScript } from './issuerMetadata'
-import { displayIssuerIdentity, importIssuerPrivateKey, issuanceSigner, selectPublicIdentity } from './publicIdentities'
+import {
+  displayIssuerAttribution,
+  displayIssuerIdentity,
+  importIssuerPrivateKey,
+  issuanceSigner,
+  selectPublicIdentity,
+} from './publicIdentities'
 import { publishIssuerIdentity, rotateIssuerSigningKey, syncHeldIssuerIdentities } from './identityPublish'
 import { issuerIdentityImageDataUrl, type IssuerIdentity } from './issuerIdentity'
 import { issuerIdentityFor, resetIssuerIdentitiesForTests } from './issuerIdentities'
@@ -392,7 +398,7 @@ describe('identity issuance against a real toolbox wallet', () => {
         shelfItem(`${copy.id('hex')}.0`, claimScript),
       ],
       [shelfToken(`${before.done.txid}.1`, tokenScript)],
-      (asset) => displayIssuerIdentity(h.runtime, asset),
+      (asset) => displayIssuerAttribution(h.runtime, asset),
     ).issuers
     const verified = shelves.find((s) => s.key === `issuer:bap:${identity.bapId}`)
     const claim = shelves.find((s) => s.key === `issuer:claim:${signingKey(h, 2)}`)

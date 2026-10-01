@@ -1,13 +1,3 @@
-import { getWalletRuntime } from '../wallet/walletRuntime'
-import {
-  displayIssuerIdentity,
-  publicIdentitiesGeneration,
-  subscribePublicIdentities,
-} from '../wallet/publicIdentities'
-import {
-  issuerIdentitiesGeneration,
-  subscribeIssuerIdentities,
-} from '../wallet/issuerIdentities'
 import {
   startTransition,
   useDeferredValue,
@@ -15,8 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from 'react'
+import { currentIssuerResolver, useIssuerIdentitiesGeneration } from '../hooks/useIssuerView'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
@@ -507,7 +497,9 @@ function IssuerGroupItem({
             <strong
               className="collect-collection-name"
               title={
-                issuer.bapId
+                issuer.bapState === 'unconfirmed'
+                  ? `BAP ID ${issuer.bapId} · no identity package on this device confirms these signers`
+                  : issuer.bapId
                   ? `${issuer.label} · BAP ID ${issuer.bapId}`
                   : issuer.identityKey
                     ? `${issuer.label} · issuer attribution: ${issuer.identityKey}`
@@ -540,7 +532,12 @@ function IssuerGroupItem({
             {issuer.items.length > 0 ? (
               <h4 className="collect-section-title collect-nested-title">Tokens</h4>
             ) : null}
-            <TokenShelf tokens={issuer.tokens} view={view} label={`${issuer.label} tokens`} />
+            <TokenShelf
+              tokens={issuer.tokens}
+              view={view}
+              label={`${issuer.label} tokens`}
+              issuerLabel={issuer.bapId ? issuer.label : undefined}
+            />
           </section>
         ) : null}
         {issuer.collections.map((collection) => (
@@ -587,14 +584,19 @@ function FungibleItem({
   token,
   sending,
   view,
+  issuerLabel,
 }: {
   token: FungibleToken
   sending: boolean
   view: CollectionView
+  /** The BAP shelf's label; a cached handle never overrides it. */
+  issuerLabel?: string
 }) {
   const amount = formatFungibleAmount(token.amt, token.dec)
   const encoding = classifyFungibleEncoding(token)
-  const issuer = token.issuer
+  const issuer = issuerLabel
+    ? issuerLabel
+    : token.issuer
     ? token.issuerHandle || shortIssuerLabel(token.issuer)
     : encoding.kind === 'legacy-json'
       ? 'Legacy BSV-21'
@@ -650,10 +652,12 @@ function TokenShelf({
   tokens,
   view,
   label,
+  issuerLabel,
 }: {
   tokens: readonly FungibleToken[]
   view: CollectionView
   label: string
+  issuerLabel?: string
 }) {
   return (
     <ul
@@ -669,6 +673,7 @@ function TokenShelf({
           token={token}
           sending={isOutpointSending(token.outpoint)}
           view={view}
+          issuerLabel={issuerLabel}
         />
       ))}
     </ul>
@@ -676,8 +681,7 @@ function TokenShelf({
 }
 
 export function InventoryPanel() {
-  const identityGeneration = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
-  const publishedGeneration = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
+  const identityGeneration = useIssuerIdentitiesGeneration()
   const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -926,18 +930,8 @@ export function InventoryPanel() {
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const searching = deferredQuery.trim().length > 0
   const { issuers, ungrouped, ungroupedTokens } = useMemo(
-    () => {
-      const runtime = getWalletRuntime()
-      return groupCollectables(visibleItems, searching ? [] : tokens, (asset) => {
-        try {
-          return displayIssuerIdentity(runtime, asset)
-        } catch {
-          // Unreadable identity store: shelves keep key labels.
-          return null
-        }
-      })
-    },
-    [visibleItems, tokens, searching, identityGeneration, publishedGeneration],
+    () => groupCollectables(visibleItems, searching ? [] : tokens, currentIssuerResolver()),
+    [visibleItems, tokens, searching, identityGeneration],
   )
   const empty =
     items.filter((item) => !collectableIsFungible(item)).length === 0 &&

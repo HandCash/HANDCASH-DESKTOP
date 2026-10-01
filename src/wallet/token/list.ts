@@ -779,6 +779,7 @@ export function rebindFungiblesForAccount(): void {
   listWorkInFlight = null
   encodingProofInFlight.clear()
   encodingProofRetries.clear()
+  legacyTipProvenAt.clear()
   const durable = loadDurableList()
   if (durable.length > 0) {
     cached = durable
@@ -1355,12 +1356,40 @@ export function getFungible(tokenId: string): FungibleToken | null {
  * basket row yet. The cached card identifies the exact held outpoint; the
  * locally retained BEEF supplies the authoritative script and JSON amount.
  */
+/**
+ * Legacy JSON tips never appear in the BRC-162 live read, so recovery sees them
+ * missing on every refresh. A provider proof restores the row; repeating it
+ * each refresh is a network round trip and a storage write per tip. A send in
+ * between still drops the tip through `isItemSent`.
+ */
+const LEGACY_TIP_PROOF_MS = 10 * 60_000
+const legacyTipProvenAt = new Map<string, number>()
+let legacyProofSpendWatch: (() => void) | null = null
+
+/**
+ * Any spend may retire a restored row again, so it voids every remembered
+ * proof. Without the watch, nothing is remembered.
+ */
+async function watchSpendsForLegacyProofs(): Promise<boolean> {
+  if (legacyProofSpendWatch) return true
+  try {
+    const coordinator = await import('../walletCoordinator')
+    legacyProofSpendWatch ??= coordinator.subscribeWalletCoordinator(() => {
+      if (coordinator.getWalletCoordinatorSnapshot().spend === 'active') legacyTipProvenAt.clear()
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function recoverCachedLegacyTips(
   active: ActiveWallet,
   wanted: Set<string>,
 ): Promise<Bsv21Utxo[]> {
   const recovered: Bsv21Utxo[] = []
   const { getLocalTxForTxid } = await import('../beefCache')
+  const remember = await watchSpendsForLegacyProofs()
   for (const token of cached) {
     const tokenId = normalizeTokenId(token.tokenId)
     if (!tokenId || !wanted.has(tokenId) || isItemSent(token.outpoint)) continue
@@ -1375,11 +1404,14 @@ async function recoverCachedLegacyTips(
       // source proves it still exists and the toolbox row is restored first.
       // Local unconfirmed change (just signed) is held in txStore, not yet in
       // the basket — treating that as gone is what emptied inventory after send.
-      if (
-        !isLocalUnconfirmedTxid(txid) &&
-        !(await restoreUnspentAssetOutpoint(active, point))
-      ) {
-        continue
+      const recentlyProven =
+        remember && Date.now() - (legacyTipProvenAt.get(point) ?? 0) < LEGACY_TIP_PROOF_MS
+      if (!isLocalUnconfirmedTxid(txid) && !recentlyProven) {
+        if (!(await restoreUnspentAssetOutpoint(active, point))) {
+          legacyTipProvenAt.delete(point)
+          continue
+        }
+        if (remember) legacyTipProvenAt.set(point, Date.now())
       }
       const tx = await getLocalTxForTxid(active, txid)
       const output = tx?.outputs[vout]

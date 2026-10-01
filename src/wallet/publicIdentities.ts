@@ -6,12 +6,13 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { retainedMinedHeight } from './issuerAttribution'
 import {
   currentIssuerSigningKey,
+  type IssuerAttribution,
   type IssuerIdentity,
   type IssuerIdentityPackage,
 } from './issuerIdentity'
 import {
+  issuerAttribution,
   issuerIdentityFor,
-  issuerIdentityForSigner,
   issuerIdentityPackage,
   rememberIssuerIdentityPackage,
 } from './issuerIdentities'
@@ -403,22 +404,64 @@ export function publishedIdentityForIssuer(
   }
 }
 /**
- * Identity shown for an asset: the BAP identity its signed tape names, when
- * the signer was that identity's active key at the asset's height; otherwise,
- * for an asset signed directly by a master key this wallet holds, its identity.
+ * Attribution shown for an asset: the BAP ID its signed tape names, judged
+ * against the stored package at the asset's height; otherwise, for an asset
+ * signed directly by a master key this wallet holds, that key's identity.
+ * Null when the asset names no identity or the store is unreadable.
  */
+export function displayIssuerAttribution(
+  runtime: WalletRuntime | null,
+  asset: { issuer: string; bapId?: string; origin?: string },
+): IssuerAttribution | null {
+  return issuerAttributionResolver(runtime)(asset)
+}
+
+/**
+ * `displayIssuerAttribution` for one pass over many assets: the identity store
+ * is read once and each issuer, or each stamped origin, is judged once.
+ */
+export function issuerAttributionResolver(
+  runtime: WalletRuntime | null,
+): (asset: { issuer: string; bapId?: string; origin?: string }) => IssuerAttribution | null {
+  if (!runtime || !runtimeIsCurrent(runtime)) return () => null
+  const active = runtime.instance
+  let published: Map<string, string> | undefined
+  const memo = new Map<string, IssuerAttribution | null>()
+  const judge = (asset: { issuer: string; bapId?: string; origin?: string }): IssuerAttribution | null => {
+    if (asset.bapId)
+      return issuerAttribution(active.chain, {
+        bapId: asset.bapId,
+        signer: asset.issuer,
+        minedHeight: asset.origin ? retainedMinedHeight(asset.origin) : undefined,
+      })
+    published ??= new Map(
+      rowsOf(read(active)).flatMap((row) => (row.published ? [[row.identityKey, row.published] as const] : [])),
+    )
+    const issuer = normalizeIssuerIdentityKey(asset.issuer)
+    const bapId = issuer ? published.get(issuer) : undefined
+    const identity = bapId ? issuerIdentityFor(active.chain, bapId) : null
+    return identity ? { kind: 'verified', identity } : null
+  }
+  return (asset) => {
+    const key = asset.bapId ? `${asset.issuer}|${asset.bapId}|${asset.origin ?? ''}` : asset.issuer
+    if (memo.has(key)) return memo.get(key)!
+    let attribution: IssuerAttribution | null
+    try {
+      attribution = runtimeIsCurrent(runtime) ? judge(asset) : null
+    } catch {
+      attribution = null
+    }
+    memo.set(key, attribution)
+    return attribution
+  }
+}
+
 export function displayIssuerIdentity(
   runtime: WalletRuntime | null,
   asset: { issuer: string; bapId?: string; origin?: string },
 ): IssuerIdentity | null {
-  if (!runtime || !runtimeIsCurrent(runtime)) return null
-  if (asset.bapId)
-    return issuerIdentityForSigner(runtime.instance.chain, {
-      bapId: asset.bapId,
-      signer: asset.issuer,
-      minedHeight: asset.origin ? retainedMinedHeight(asset.origin) : undefined,
-    })
-  return publishedIdentityForIssuer(runtime, asset.issuer)
+  const attribution = displayIssuerAttribution(runtime, asset)
+  return attribution?.kind === 'verified' ? attribution.identity : null
 }
 export function issuanceSigner(runtime: WalletRuntime, expectedKey?: string): IssuanceSigner {
   const active = activeOrThrow(runtime)

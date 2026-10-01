@@ -49,6 +49,16 @@ export type IssuerIdentityPackage = { v: 1; bapId: string; beefB64: string }
 /** Why a signer does or does not speak for an identity at a given height. */
 export type SignerVerdict = 'active' | 'unknown-key' | 'retired-key' | 'revoked'
 
+/**
+ * What an asset's issuer stamp proves against the packages this wallet holds.
+ * Only `verified` may show the identity's name or image; an `unconfirmed`
+ * stamp can still be copied onto anyone's asset.
+ */
+export type IssuerAttribution =
+  | { kind: 'verified'; identity: IssuerIdentity }
+  | { kind: 'unconfirmed'; bapId: string; reason: 'no-package' | 'unknown-key' | 'height-unknown' }
+  | { kind: 'refused'; bapId: string; reason: 'retired-key' | 'revoked' }
+
 const CONTROL = /[\u0000-\u001f\u007f]/
 
 export function issuerIdentityFields(fields: IssuerIdentityFields): IssuerIdentityFields {

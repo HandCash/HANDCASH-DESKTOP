@@ -1,5 +1,6 @@
 import {
   issuerIdentityImageDataUrl,
+  type IssuerAttribution,
   type IssuerIdentity,
 } from './issuerIdentity'
 import type { Collectable } from './collectables'
@@ -7,10 +8,10 @@ import { normalizeIssuerPubKey, shortIssuerLabel } from './token/issuer'
 import type { FungibleToken } from './token/types'
 
 /**
- * Collect hierarchy is issuer → collections → assets. An asset whose signer
- * speaks for a BAP identity shelves under that BAP ID, so a key rotation keeps
- * one shelf; other identity-backed assets are keyed by their normalized issuer
- * public key. Handles are display only.
+ * Collect hierarchy is issuer → collections → assets. A signed asset that
+ * names a BAP ID shelves under that BAP ID, so a key rotation keeps one shelf
+ * labelled with the newest profile held; other signed assets are keyed by
+ * their normalized issuer public key. Handles are display only.
  * Label-only item shelves stay separate and cannot impersonate a keyed issuer.
  * Grouping is presentation, not signature verification or transfer policy.
  * This remains applicable to transferable assets, identity records and awards.
@@ -44,6 +45,7 @@ export type CollectableIssuer = {
   /** Image of the BAP identity the shelf's signers speak for. */
   icon?: string
   bapId?: string
+  bapState?: IssuerBap['state']
   issuerAttested?: boolean
   label: string
   app?: string
@@ -131,59 +133,83 @@ function makeGroup(args: {
   }
 }
 
+export type IssuerIdentityResolver = (asset: {
+  issuer: string
+  bapId?: string
+  origin?: string
+}) => IssuerAttribution | null
+
+export type IssuerBap = {
+  id: string
+  state: 'verified' | 'unconfirmed'
+  /** Newest profile the stored package proves; only on `verified`. */
+  identity?: IssuerIdentity
+}
+
+/** How a signed asset's issuer reads everywhere in Collect: shelf, chip and details. */
+export type IssuerView = {
+  key: string
+  label: string
+  identityKey: string
+  issuerAttested: boolean
+  bap?: IssuerBap
+}
+
+/**
+ * Every asset stamped with a BAP ID shares one shelf per BAP ID, across key
+ * rotations. Verified signers show the identity; unconfirmed stamps get their
+ * own BAP shelf with no name or image, because anyone can copy a stamp. A
+ * signer the package retires or revokes keeps a shelf of its own key.
+ */
+export function issuerViewFor(
+  asset: { issuer?: string; issuerAttested?: boolean; bapId?: string; origin?: string },
+  identityFor: IssuerIdentityResolver,
+): IssuerView | null {
+  const issuer = normalizeIssuerPubKey(asset.issuer)
+  if (!issuer) return null
+  if (!asset.issuerAttested)
+    return {
+      key: `issuer:claim:${issuer}`,
+      identityKey: issuer,
+      issuerAttested: false,
+      label: `Issuer claim ${shortIssuerLabel(issuer)}`,
+    }
+  const signed = { identityKey: issuer, issuerAttested: true }
+  const attribution = identityFor({ issuer, bapId: asset.bapId, origin: asset.origin })
+  if (attribution?.kind === 'verified' && (!asset.bapId || attribution.identity.bapId === asset.bapId)) {
+    const { identity } = attribution
+    return {
+      ...signed,
+      key: `issuer:bap:${identity.bapId}`,
+      label: identity.name,
+      bap: { id: identity.bapId, state: 'verified', identity },
+    }
+  }
+  if (attribution?.kind === 'unconfirmed' && attribution.bapId === asset.bapId)
+    return {
+      ...signed,
+      key: `issuer:bap-unconfirmed:${attribution.bapId}`,
+      label: `Unconfirmed BAP ${shortId(attribution.bapId)}`,
+      bap: { id: attribution.bapId, state: 'unconfirmed' },
+    }
+  return { ...signed, key: `issuer:pubkey:${issuer}`, label: shortIssuerLabel(issuer) }
+}
+
 type IssuerMeta = {
   key: string
   label: string
   app?: string
   identityKey?: string
   issuerAttested?: boolean
-  identity?: IssuerIdentity
-}
-
-export type IssuerIdentityResolver = (asset: {
-  issuer: string
-  bapId?: string
-  origin?: string
-}) => IssuerIdentity | null
-
-function identityMeta(
-  identityFor: IssuerIdentityResolver,
-  asset: { issuer: string; bapId?: string; origin?: string },
-): IssuerMeta | null {
-  const identity = identityFor(asset)
-  if (!identity || (asset.bapId && identity.bapId !== asset.bapId)) return null
-  return {
-    key: `issuer:bap:${identity.bapId}`,
-    identityKey: asset.issuer,
-    issuerAttested: true,
-    label: identity.name,
-    identity,
-  }
+  bap?: IssuerBap
 }
 
 function issuerKeyFor(
   item: Collectable,
   identityFor: IssuerIdentityResolver,
 ): IssuerMeta | null {
-  const issuer = normalizeIssuerPubKey(item.issuer)
-  const backed =
-    issuer && item.issuerAttested
-      ? identityMeta(identityFor, {
-          issuer,
-          bapId: item.bapId,
-          origin: item.origin,
-        })
-      : null
-  if (backed) return backed
-  if (issuer)
-    return {
-      key: `issuer:${item.issuerAttested ? 'pubkey' : 'claim'}:${issuer}`,
-      identityKey: issuer,
-      issuerAttested: !!item.issuerAttested,
-      label: item.issuerAttested
-        ? shortIssuerLabel(issuer)
-        : `Issuer claim ${shortIssuerLabel(issuer)}`,
-    }
+  const keyed = issuerViewFor(item, identityFor)
+  if (keyed) return keyed
   const app = item.app?.trim()
   if (app) return { key: `issuer:app:${app.toLowerCase()}`, label: app, app }
   if (item.collectionId?.trim()) {
@@ -197,31 +223,15 @@ function issuerKeyFor(
   return null
 }
 
-/** Human labels may change; the issuer key determines the shelf. */
-function tokenIssuerKeyFor(
+/**
+ * A cached handle is not certified by the token, so it never labels a shelf;
+ * the deploy outpoint is the origin whose height judges the signer.
+ */
+export function tokenIssuerViewFor(
   token: FungibleToken,
   identityFor: IssuerIdentityResolver,
-): IssuerMeta | null {
-  const issuer = normalizeIssuerPubKey(token.issuer)
-  if (!issuer) return null
-  const backed = token.issuerAttested
-    ? identityMeta(identityFor, {
-        issuer,
-        bapId: token.bapId,
-        origin: token.tokenId,
-      })
-    : null
-  if (backed) return backed
-  return {
-    key: `issuer:${token.issuerAttested ? 'pubkey' : 'claim'}:${issuer}`,
-    identityKey: issuer,
-    issuerAttested: !!token.issuerAttested,
-    // Handle certificate verification belongs to profile resolution. Until
-    // then, a cached handle must not label an identity-backed issuer shelf.
-    label: token.issuerAttested
-      ? shortIssuerLabel(issuer)
-      : `Issuer claim ${shortIssuerLabel(issuer)}`,
-  }
+): IssuerView | null {
+  return issuerViewFor({ ...token, origin: token.tokenId }, identityFor)
 }
 
 function tokenFaces(
@@ -265,7 +275,7 @@ export function groupCollectables(
   }
 
   for (const token of tokens) {
-    const meta = tokenIssuerKeyFor(token, identityFor)
+    const meta = tokenIssuerViewFor(token, identityFor)
     if (!meta) {
       ungroupedTokens.push(token)
       continue
@@ -329,14 +339,14 @@ export function groupCollectables(
     bucket.tokens.sort((a, b) =>
       a.sym.localeCompare(b.sym, undefined, { sensitivity: 'base' }),
     )
-    const identity = bucket.meta.identity
+    const { bap } = bucket.meta
     issuers.push({
       key: bucket.meta.key,
       label: bucket.meta.label,
-      ...(identity?.image
-        ? { icon: issuerIdentityImageDataUrl(identity.image) }
+      ...(bap?.identity?.image
+        ? { icon: issuerIdentityImageDataUrl(bap.identity.image) }
         : {}),
-      ...(identity ? { bapId: identity.bapId } : {}),
+      ...(bap ? { bapId: bap.id, bapState: bap.state } : {}),
       ...(bucket.meta.identityKey
         ? {
             identityKey: bucket.meta.identityKey,
