@@ -113,7 +113,18 @@ The store (`issuerIdentities.ts`) keeps one durable key per BAP ID plus a small 
 - A peer's package merges into the stored one, and the merge keeps the first rotation on chain. A leaked retired key therefore cannot fork the chain by sending a package of its own.
 - Peers' packages are capped at 8, and the oldest are evicted first. On Electron, writes commit to disk before success is reported.
 
-When an item or token is delivered over the messagebox, `notifyPeerItemIncoming` looks up the BAP ID that the asset's origin names. If that package is in the store, it attaches it as `meta.identities`, at most 2 per envelope. It goes in **last**: the Atomic BEEF and the item's BRC-150 provenance keep the box cap first, and a package that does not fit is omitted. The receiver header-checks, verifies and stores packages off the receive path. Packages never gate ingest or ACK, and they are kept out of the chat transcript.
+### Tokens are attested like items
+
+An item is attested when its retained origin carries the issuer's Sigma and a BRC-150 proof binds the tip to that origin. A BSV-21 token follows the same rule. The deploy is the origin, and a BRC-176 walk is the binding.
+
+- **The sender** attaches the token-parent bodies from the transfer back to the deploy as `meta.tokenLineage`, up to 96 KB. The deploy keeps its merkle path. A lineage over budget is omitted, never truncated.
+- **The receiver** proves every tip from that lineage without the network. Only an older peer, or an omitted lineage, makes it walk parents from its cache or an indexer. It then keeps the deploy (`token/genesisStore.ts`), with its merkle path only once the root matched a block header, and files the tips that reached it (`token/lineage.ts`).
+- **Listing** attests a tip only when it is the deploy itself (its script matches), or when a recorded walk bound it to the deploy. In both cases the deploy's Sigma must verify for the issuer. A tip that merely names a real token ID stays an issuer claim.
+- Tips held before this landed are proven in the background from this wallet's own transaction bytes, four per list pass.
+
+A received token therefore lands on its issuer's BAP shelf beside that issuer's items, and it can be forwarded with the same identity package.
+
+When an item or token is delivered over the messagebox, `notifyPeerItemIncoming` looks up the BAP ID that the asset's origin names. If that package is in the store, it attaches it as `meta.identities`, at most 2 per envelope. It goes in **last**: the Atomic BEEF, the item's BRC-150 provenance and the token's lineage keep the box cap first, and a package that does not fit is omitted. The receiver header-checks, verifies and stores packages off the receive path. Packages never gate ingest or ACK, and they are kept out of the chat transcript.
 
 ## Custody and recovery
 

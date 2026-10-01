@@ -191,6 +191,12 @@ import { getActiveWallet } from './session'
  * - **Tokens (fungible)** → BRC-162 binary in basket `bsv21` (BRC-163 remittance).
  *   Balance = Σ `amt` per tip. Transfers spend 162 inputs and create payee (+ change)
  *   162 outputs with conserved amount; subject BEEF via BRC-176. See `token/`.
+ *   The envelope carries the token-parent bodies back to the deploy as
+ *   `meta.tokenLineage` (the BSV-21 twin of BRC-150 remittance), so the payee
+ *   proves offline. It keeps the deploy (`token/genesisStore.ts`), which holds
+ *   the issuer's Sigma, and files which tips reached it (`token/lineage.ts`).
+ *   A tip is issuer-attested only when it is the deploy or a recorded walk
+ *   bound it there; naming a token id is not enough.
  *   Legacy JSON BSV-21 rows may remain visible read-only; native JSON send is retired.
  * - **Asset burn** → `burnPlan` + `burnMachine` + `burn`.
  *   This is an explicit, irreversible spend — never local abandon and never a

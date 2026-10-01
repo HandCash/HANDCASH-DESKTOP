@@ -1,6 +1,7 @@
 import { Hash, Utils } from '@bsv/sdk'
 import { peekSessionBeef } from './beefCache'
 import { issuerMetadataFromScript } from './issuerMetadata'
+import { retainedTokenGenesis } from './token/genesisStore'
 import { sigmaSignerIs, verifiedSigmaSigner, type SigmaSigner } from './token/issuer'
 
 export type RetainedIssuer = { issuer?: string; bapId?: string }
@@ -41,7 +42,8 @@ function outpointKey(outpoint: string): { key: string; txid: string; vout: numbe
 
 function retainedEntry(txid: string) {
   try {
-    const beef = peekSessionBeef(txid)
+    const session = peekSessionBeef(txid)
+    const beef = session?.findTxid(txid)?.tx ? session : retainedTokenGenesis(txid)
     const entry = beef?.findTxid(txid)
     if (!beef || !entry?.tx) return null
     const minedHeight =

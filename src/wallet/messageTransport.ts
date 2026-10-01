@@ -38,6 +38,7 @@ import {
   type MessageKind,
 } from './messageStore'
 import { rememberBeefBinary } from './beefCache'
+import { noteInboundTokenLineage } from './token/inboundLineage'
 import { noteInboundReceivePending } from './appActivity'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import type {
@@ -382,6 +383,8 @@ type WireMessage = {
     provenance?: ProvenanceV2
     /** BAP identity packages for the issuers the asset's signed tape names. */
     identities?: IssuerIdentityPackage[]
+    /** BRC-176 token-parent bodies back to the deploy — BSV-21 payee proves offline. */
+    tokenLineage?: string
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
     chatRef?: boolean
   }
@@ -455,6 +458,27 @@ export function withOptionalIdentities(
     return { body: fitted, identitiesInBox: carried.length > 0 }
   } catch {
     return { body, identitiesInBox: false }
+  }
+}
+
+/** Attach BSV-21 lineage after custody and item proof, when it fits. */
+export function withOptionalTokenLineage(
+  body: string,
+  lineage: number[] | null | undefined,
+): { body: string; lineageInBox: boolean } {
+  if (!lineage?.length || !body.startsWith(WIRE_PREFIX)) {
+    return { body, lineageInBox: false }
+  }
+  try {
+    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
+    const encoded = `${WIRE_PREFIX}${JSON.stringify({
+      ...parsed,
+      meta: { ...parsed.meta, tokenLineage: bytesToBase64(Uint8Array.from(lineage)) },
+    } satisfies WireMessage)}`
+    if (encoded.length > MESSAGEBOX_INNER_MAX) return { body, lineageInBox: false }
+    return { body: encoded, lineageInBox: true }
+  } catch {
+    return { body, lineageInBox: false }
   }
 }
 
@@ -641,9 +665,10 @@ function validItemTransferMembers(value: unknown): ItemTransferMember[] | undefi
 export function decodeMessageBody(body: string): {
   kind: WireMessage['kind']
   text: string
-  /** Chat-safe card fields; identity packages stay out of the thread store. */
-  meta?: Omit<NonNullable<WireMessage['meta']>, 'identities'>
+  /** Chat-safe card fields; identity packages and token lineage stay out of the thread store. */
+  meta?: Omit<NonNullable<WireMessage['meta']>, 'identities' | 'tokenLineage'>
   identities?: unknown[]
+  tokenLineage?: string
 } {
   if (!body.startsWith(WIRE_PREFIX)) return { kind: 'text', text: body }
   try {
@@ -720,6 +745,9 @@ export function decodeMessageBody(body: string): {
       },
       ...(Array.isArray(parsed.meta?.identities) && parsed.meta.identities.length
         ? { identities: parsed.meta.identities }
+        : {}),
+      ...(typeof parsed.meta?.tokenLineage === 'string' && parsed.meta.tokenLineage.trim()
+        ? { tokenLineage: parsed.meta.tokenLineage.trim() }
         : {}),
     }
   } catch {
@@ -1086,6 +1114,9 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
   if (inlineBeef && typeof decoded.meta?.txid === 'string') {
     rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
   }
+  if (typeof decoded.meta?.txid === 'string') {
+    noteInboundTokenLineage(decoded.meta.txid, decoded.tokenLineage)
+  }
   if (peerId) {
     appendMessage(peerId, {
       direction: 'in',
@@ -1300,6 +1331,9 @@ export async function pollInboundTipHints(args: {
       if (inlineBeef && typeof decoded.meta?.txid === 'string') {
         rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
       }
+      if (typeof decoded.meta?.txid === 'string') {
+        noteInboundTokenLineage(decoded.meta.txid, decoded.tokenLineage)
+      }
       if (peerId) {
         const { beefB64: _omitBeef, ...chatMeta } = decoded.meta ?? {}
         appendMessage(peerId, {
@@ -1403,6 +1437,8 @@ export async function notifyPeerItemIncoming(args: {
   asset?: ItemTransferAsset
   atomicBeef?: number[]
   provenance?: unknown
+  /** BRC-176 lineage for a fungible; derived from `atomicBeef` when absent. */
+  tokenLineage?: number[]
 }): Promise<PeerBeefNotifyResult> {
   const none: PeerBeefNotifyResult = {
     delivered: 'local',
@@ -1492,6 +1528,21 @@ export async function notifyPeerItemIncoming(args: {
     console.warn(
       `[messagebox] BSV-21 AtomicBEEF omitted txid=${txid.slice(0, 12)} — payee cannot settle without an indexer`,
     )
+  }
+  if (args.asset?.kind === 'fungible') {
+    try {
+      let lineage = args.tokenLineage ?? null
+      if (!lineage && atomicBeef?.length) {
+        const { tokenLineageFromBeef } = await import('./token/lineage')
+        lineage = tokenLineageFromBeef(atomicBeef, txid, args.asset.tokenId)
+      }
+      const withLineage = withOptionalTokenLineage(packed.body, lineage)
+      if (withLineage.lineageInBox) packed = { ...packed, body: withLineage.body }
+      else if (lineage)
+        console.warn(`[messagebox] BSV-21 lineage omitted txid=${txid.slice(0, 12)} — box cap; payee walks token parents`)
+    } catch (error) {
+      console.warn('[messagebox] BSV-21 lineage attach skipped', error)
+    }
   }
   try {
     const chain = getWalletRuntime()?.instance.chain

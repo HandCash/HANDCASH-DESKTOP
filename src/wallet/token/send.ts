@@ -22,6 +22,8 @@ import {
 } from './types'
 import { decodeBsv21Binary } from './decode162'
 import { fillTokenParentBodies } from './prove176'
+import { retainTokenGenesis } from './genesisStore'
+import { chainTrackerFor, recordProvenTokenTips, tokenLineageFromBeef } from './lineage'
 import {
   type Bsv21TipKind,
   chooseBsv21BatchSendPath,
@@ -764,6 +766,7 @@ export async function sendBsv21Tokens(args: {
       let payeeOutpoints: string[] = []
       /** Every output this wallet still holds after the spend (self payee + change). */
       let heldAfter: { outpoint: string; amt: bigint }[] = []
+      let tokenLineage: number[] | null = null
       try {
         const signedBeef = Beef.fromBinary(atomic)
         signedBeef.atomicTxid = undefined
@@ -812,6 +815,19 @@ export async function sendBsv21Tokens(args: {
             parentBeef: withParents,
             subjectTx: signedTx,
           })
+          tokenLineage = tokenLineageFromBeef(withParents, txid, tokenId)
+          const deployOutpoint = recordProvenTokenTips(
+            withParents,
+            heldAfter.map((out) => out.outpoint),
+            tokenId,
+          )
+          if (deployOutpoint) {
+            void chainTrackerFor(wallet)
+              .then((tracker) =>
+                retainTokenGenesis(withParents, deployOutpoint.split('_')[0]!, tracker),
+              )
+              .catch(() => false)
+          }
           try {
             atomic = Array.from(proved.toBinaryAtomic(txid))
           } catch {
@@ -880,6 +896,7 @@ export async function sendBsv21Tokens(args: {
               itemName: sym,
               asset,
               atomicBeef: peerAtomic,
+              ...(tokenLineage ? { tokenLineage } : {}),
             })
             console.info(
               `[bsv21] peer notify box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,

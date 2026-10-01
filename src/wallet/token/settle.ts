@@ -40,6 +40,9 @@ import {
 import { forgetItemsSent } from '../sentItemGuard'
 import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { fillTokenParentBodies, prove } from './prove176'
+import { retainTokenGenesis } from './genesisStore'
+import { inboundTokenLineage } from './inboundLineage'
+import { chainTrackerFor, rememberProvenTokenTips, withTokenLineage } from './lineage'
 import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { broadcastAtomicBeef } from '../sendBrc29Payment'
 import { type ActiveWallet } from '../session'
@@ -300,27 +303,32 @@ export async function internalizePeerFungibleSettle(opts: {
 
     // BRC-176: what we record is what the packet proves, not what the
     // remittance claims. Walk every accepted tip to its deploy with per-id
-    // conservation. The peer package is subject + direct parents only, so
-    // fold token-parent bodies in first (raw bodies; the toolbox does SPV on
+    // conservation. The sender's lineage carries the token-parent bodies, so
+    // the walk is offline; without it (older peers, over budget) fold them in
+    // from our cache or the network (raw bodies; the toolbox does SPV on
     // internalize). A tip that cannot be proven is refused with a name — the
     // hint fate retries when the failure was a fetch, and a forged output
     // naming a real token id never paints a balance.
     const provingStarted = Date.now()
-    const { getBeefForTxidCached } = await import('../beefCache')
-    const proofBeef = await fillTokenParentBodies(
-      beef,
-      async (txid) => {
-        try {
-          return await getBeefForTxidCached(active, txid, {
-            needProof: false,
-            allowUnprovenRawTx: true,
-          })
-        } catch {
-          return null
-        }
-      },
-      [id],
-    )
+    let proofBeef = withTokenLineage(beef, inboundTokenLineage(id))
+    const offline = tips.every((tip) => prove(`${id}_${tip.vout}`, proofBeef).ok)
+    if (!offline) {
+      const { getBeefForTxidCached } = await import('../beefCache')
+      proofBeef = await fillTokenParentBodies(
+        proofBeef,
+        async (txid) => {
+          try {
+            return await getBeefForTxidCached(active, txid, {
+              needProof: false,
+              allowUnprovenRawTx: true,
+            })
+          } catch {
+            return null
+          }
+        },
+        [id],
+      )
+    }
     let deployOutpoint: string | undefined
     for (const tip of tips) {
       const proof = prove(`${id}_${tip.vout}`, proofBeef)
@@ -347,7 +355,22 @@ export async function internalizePeerFungibleSettle(opts: {
     }
     const provingMs = Date.now() - provingStarted
     if (provingMs > 250) {
-      console.info(`[fungible-settle] ${id.slice(0, 12)} prove done ${provingMs}ms`)
+      console.info(
+        `[fungible-settle] ${id.slice(0, 12)} prove done ${provingMs}ms (${offline ? 'lineage' : 'parent walk'})`,
+      )
+    }
+    // The deploy carries the issuer's Sigma; keeping it and the walk that
+    // reached it is what lets this token be attested after the tip moves.
+    if (deployOutpoint) {
+      rememberProvenTokenTips(
+        tips.map((tip) => `${id}_${tip.vout}`),
+        deployOutpoint,
+      )
+      const genesisSource = proofBeef
+      const deployTxid = deployOutpoint.split('_')[0]!
+      void chainTrackerFor(active)
+        .then((tracker) => retainTokenGenesis(genesisSource, deployTxid, tracker))
+        .catch(() => false)
     }
 
     // Display data is inherited from the proven deploy (BRC-162 §roles); the

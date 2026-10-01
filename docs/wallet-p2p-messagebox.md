@@ -46,6 +46,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | BSV / item-tip custody | Grade A P2PKH | Keep |
 | Item identity / authenticity | BRC-150 v2 offline tip→origin proof | Keep; fail closed when proof cannot be verified |
 | BRC-150 remittance to peer | Inbox envelope `meta.provenance` + Atomic BEEF of this hop | Keep; receive verifies from the package. Indexer hydrate is C fallback for a slimmed origin body. Never gate chain custody on delivery |
+| BSV-21 lineage to peer | Inbox envelope `meta.tokenLineage`: token-parent bodies back to the deploy, beside the Atomic BEEF | Keep; payee runs BRC-176 offline, keeps the deploy for issuer attestation. Parent walk from cache/indexer is C fallback for older peers or an omitted (over-budget) lineage |
 | Chat delivery | Resolved peer **messagebox URL**; BRC-CLOUD fallback; live draft-BRC-246 IPv6 session when both wallets are reachable | Keep box as rendezvous + offline inbox; socket is the hot path |
 | Chat encryption | BRC-169 §7 envelope + BRC-78 content (legacy plaintext inbound still accepted) | Tolls / reachability policy; full Authrite Peer sessions |
 | Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |

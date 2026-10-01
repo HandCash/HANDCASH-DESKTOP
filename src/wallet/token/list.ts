@@ -1,5 +1,6 @@
 import { issuerMetadataFromScript } from '../issuerMetadata'
-import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
+import { retainedIssuerMetadata } from '../issuerAttribution'
+import { proveHeldTokenTipLocally, tokenIssuerAttested } from './lineage'
 import { getActiveWallet } from '../session'
 import { storageRegistry } from '../../storage/registry'
 
@@ -949,6 +950,50 @@ export async function proveCachedFungibleEncodings(
   reportPhase('encoding-proofs', startedAt, `${unknown.length} tip(s)`)
 }
 
+/** Local lineage walks per list pass; the rest wait for the next refresh. */
+const LINEAGE_PROOFS_PER_PASS = 4
+
+function reattested(row: FungibleToken): FungibleToken {
+  if (row.issuerAttested || !row.issuer) return row
+  const attested = heldTipsOf(row).some((tip) =>
+    tokenIssuerAttested({ outpoint: tip.outpoint, tokenId: tip.tokenId, issuer: row.issuer }),
+  )
+  if (!attested) return row
+  const bapId = row.bapId ?? retainedIssuerMetadata(row.tokenId)?.bapId
+  return { ...row, issuerAttested: true, ...(bapId ? { bapId } : {}) }
+}
+
+/**
+ * Tips filed before lineage was recorded carry an issuer claim the card cannot
+ * attest. Prove them from this wallet's own transaction bytes, then re-attest.
+ */
+async function attestHeldTokenLineages(
+  wallet: ActiveWallet,
+  rows: FungibleToken[],
+): Promise<void> {
+  const epoch = fungiblesAccountEpoch
+  const startedAt = Date.now()
+  let tried = 0
+  for (const row of rows) {
+    if (row.issuerAttested || !row.issuer) continue
+    for (const tip of heldTipsOf(row)) {
+      if (tried >= LINEAGE_PROOFS_PER_PASS || epoch !== fungiblesAccountEpoch) break
+      tried += 1
+      await proveHeldTokenTipLocally(wallet, tip.outpoint, tip.tokenId).catch(() => false)
+      await yieldToUi()
+    }
+  }
+  if (tried === 0 || epoch !== fungiblesAccountEpoch) return
+  reportPhase('lineage-proofs', startedAt, `${tried} tip(s)`)
+  let changed = false
+  const next = cached.map((row) => {
+    const upgraded = reattested(row)
+    if (upgraded !== row) changed = true
+    return upgraded
+  })
+  if (changed) setFungiblesCache(next, { forEpoch: epoch })
+}
+
 export function areFungiblesHydrated(): boolean {
   return hydrated
 }
@@ -1005,16 +1050,19 @@ function parseListedOutput(
     customInstructions: raw.customInstructions,
     tags: raw.tags,
   })
-  let issuerAttested = false
   const candidates = [issuer, selfIdentityKey].filter(Boolean) as string[]
   const sigma = issuerFromSigmaLockingScript(raw.lockingScript, candidates)
-  // Attested means the Sigma signer address *is* the claimed issuer. A Sigma
-  // block signed by anyone else next to a remittance `issuer` claim is not an
-  // attestation of that claim (BRC-163 §issuer attestation).
-  if (sigma.issuer) {
-    issuer = sigma.issuer
-    issuerAttested = retainedScriptIs(outpoint, raw.lockingScript) && retainedSignedBy(outpoint, issuer)
-  }
+  if (sigma.issuer) issuer = sigma.issuer
+  // Attested means the deploy's Sigma signer *is* the claimed issuer and this
+  // tip is bound to that deploy. A Sigma block signed by anyone else next to a
+  // remittance `issuer` claim is not an attestation of that claim (BRC-163
+  // §issuer attestation).
+  const issuerAttested = tokenIssuerAttested({
+    outpoint,
+    tokenId,
+    issuer,
+    lockingScript: raw.lockingScript,
+  })
   return {
     outpoint,
     tokenId,
@@ -1336,6 +1384,7 @@ async function listFungiblesNow(
     // Fill missing icons from held bodies, else the raw tx by txid (no HTTP
     // content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
+    void attestHeldTokenLineages(wallet, merged)
     return merged
   } catch (err) {
     console.warn('[bsv21] list failed', err)

@@ -25,6 +25,7 @@ import {
   withOptionalBeefB64,
   withOptionalIdentities,
   withOptionalProvenance,
+  withOptionalTokenLineage,
 } from './messageTransport'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
 import { IDENTITY_CARD_REQUEST } from './identityCard'
@@ -49,6 +50,23 @@ describe('message transport envelopes', () => {
     const fitted = withOptionalIdentities(base, [huge, other, pkg])
     expect(decodeMessageBody(fitted.body).identities).toEqual([other, pkg])
     expect(withOptionalIdentities('plain text', [pkg]).identitiesInBox).toBe(false)
+  })
+  it('carries BSV-21 lineage beside a token, never into chat metadata', () => {
+    const base = encodeMessageBody({
+      kind: 'tip',
+      text: 'Sent you 5 TEST',
+      meta: { txid: 'cd'.repeat(32), item: true, sats: 1 },
+    })
+    const packed = withOptionalTokenLineage(base, [1, 2, 3, 250])
+    expect(packed.lineageInBox).toBe(true)
+    const decoded = decodeMessageBody(packed.body)
+    expect(decoded.tokenLineage).toBe(btoa(String.fromCharCode(1, 2, 3, 250)))
+    expect(decoded.meta).not.toHaveProperty('tokenLineage')
+    expect(withOptionalTokenLineage(base, new Array(MESSAGEBOX_INNER_MAX).fill(7))).toEqual({
+      body: base,
+      lineageInBox: false,
+    })
+    expect(withOptionalTokenLineage(base, null).lineageInBox).toBe(false)
   })
   it('round-trips bounded market settlement responses', () => {
     const body = encodeMarketSettlementWire({

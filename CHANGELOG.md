@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.398] - 2026-10-01
+
+Tokens carry their issuer's signature from wallet to wallet, the way items already did.
+
+### Fixed
+
+- **Received tokens are attested like items.** A BSV-21 token you receive now shows Attested and sits on its issuer's shelf, beside that issuer's items. Before, only the wallet that minted a token could attest it. A token transfer now carries its lineage back to the deploy, and the payee proves it offline (BRC-176). The payee then keeps the deploy, which holds the issuer's signature. A tip is attested only when that walk bound it to a deploy the issuer signed; a tip that only names a real token ID stays an issuer claim. Tokens held before this update are proven in the background from this wallet's own transactions.
+
 ## [1.3.397] - 2026-10-01
 
 Your issuer identity travels peer to peer: contacts get it straight from your wallet as a signed card, with no HandCash server in between. Publishing or rotating an identity now goes through a real transaction approval.

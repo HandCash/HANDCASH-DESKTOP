@@ -36,6 +36,7 @@ vi.mock('./beefCache', () => ({
   hydrateInputBeef: async (_active: unknown, beef: Beef) => beef.toBinary(),
   buildMergedInputBeef: vi.fn(),
   peekSessionBeef: (txid: string) => state.retained.get(txid) ?? null,
+  getLocalTxForTxid: async () => null,
 }))
 
 import { withImmediateAppBroadcast } from './appCreateAction'
@@ -77,7 +78,17 @@ import { identityPackagesForDelivery, rememberDeliveredIdentities } from './issu
 import { PNG_1PX } from './issuerIdentity.fixture'
 import { registerSignedSend } from './signedSendLifecycle'
 import { encodeBsv21Binary } from './token/decode162'
+import { resetTokenGenesisForTests, retainTokenGenesis } from './token/genesisStore'
 import { verifySigmaIssuer } from './token/issuer'
+import {
+  proveHeldTokenTipLocally,
+  recordProvenTokenTips,
+  resetTokenLineageForTests,
+  tokenIssuerAttested,
+  tokenLineageFromBeef,
+  withTokenLineage,
+} from './token/lineage'
+import { decodeTokenOutput } from './token/prove176'
 import type { FungibleToken } from './token/types'
 
 const FUNDING = 100_000
@@ -264,8 +275,41 @@ beforeEach(() => {
   state.retained.clear()
   resetIssuerAttributionForTests()
   resetIssuerIdentitiesForTests()
+  resetTokenGenesisForTests()
+  resetTokenLineageForTests()
   vi.mocked(registerSignedSend).mockClear()
 })
+
+/** Payee's device: none of the sender's bytes, packages or verdicts. */
+function forgetSenderDevice() {
+  state.values.clear()
+  state.retained.clear()
+  resetIssuerAttributionForTests()
+  resetIssuerIdentitiesForTests()
+  resetTokenGenesisForTests()
+  resetTokenLineageForTests()
+}
+
+async function mintAndTransferToken(h: Harness) {
+  const minted = await mint(h, [tokenOutput(walletLock(h))])
+  const vout = minted.tx.outputs.findIndex((o) => decodeTokenOutput(o.lockingScript)?.role === 'deploy')
+  const tokenId = `${minted.done.txid}_${vout}`
+  const transfer = new Transaction()
+  transfer.addInput({ sourceTransaction: minted.tx, sourceOutputIndex: vout, unlockingScript: Script.fromHex('') })
+  transfer.addOutput({
+    satoshis: 1,
+    lockingScript: encodeBsv21Binary({
+      amount: 1000n,
+      tokenId,
+      rest: new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex(),
+    }),
+  })
+  const senderBeef = minted.beef.clone()
+  senderBeef.mergeTransaction(transfer)
+  const subject = new Beef()
+  subject.mergeRawTx(transfer.toBinary())
+  return { tokenId, tip: `${transfer.id('hex')}_0`, transferTxid: transfer.id('hex'), senderBeef, subject }
+}
 
 describe('identity issuance against a real toolbox wallet', () => {
   it('publishes a BAP identity as 0-sat records: a B:// image, then the root-declared key and its profile', async () => {
@@ -590,5 +634,60 @@ describe('identity issuance against a real toolbox wallet', () => {
       bapId: identity.bapId,
       name: 'Studio',
     })
+  })
+
+  it('attests a received token from the lineage it arrived with and shelves it under the BAP ID', async () => {
+    const h = await fundedWallet()
+    const identity = await publish(h)
+    const { tokenId, tip, transferTxid, senderBeef, subject } = await mintAndTransferToken(h)
+    const lineage = tokenLineageFromBeef(senderBeef, transferTxid, tokenId)
+    expect(lineage).not.toBeNull()
+    expect(Beef.fromBinary(lineage!).findTxid(transferTxid)).toBeUndefined()
+    const packages = identityPackagesForDelivery('main', { tokenId })
+    expect(packages.map((pkg) => pkg.bapId)).toEqual([identity.bapId])
+
+    forgetSenderDevice()
+    const issuer = signingKey(h)
+    expect(recordProvenTokenTips(subject, [tip], tokenId)).toBeNull()
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer })).toBe(false)
+
+    const proof = withTokenLineage(subject, lineage)
+    expect(recordProvenTokenTips(proof, [tip], tokenId)).toBe(tokenId)
+    expect(await retainTokenGenesis(proof, tokenId.split('_')[0]!, null)).toBe(true)
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer })).toBe(true)
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: h.active.identityKey })).toBe(false)
+    expect(tokenIssuerAttested({ outpoint: `${'33'.repeat(32)}_0`, tokenId, issuer })).toBe(false)
+
+    expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
+    const token: FungibleToken = {
+      tokenId,
+      sym: 'TEST',
+      amt: '1000',
+      dec: 0,
+      utxoCount: 1,
+      outpoint: tip,
+      spendKind: 'plain',
+      issuer,
+      bapId: retainedIssuerMetadata(tokenId)?.bapId,
+      issuerAttested: tokenIssuerAttested({ outpoint: tip, tokenId, issuer }),
+    }
+    const shelves = groupCollectables([], [token], (asset) => displayIssuerAttribution(h.runtime, asset)).issuers
+    expect(shelves).toHaveLength(1)
+    expect(shelves[0]).toMatchObject({ key: `issuer:bap:${identity.bapId}`, label: 'Studio', issuerAttested: true })
+    expect(shelves[0]!.tokens.map((t) => t.outpoint)).toEqual([tip])
+  })
+
+  it('binds a tip filed before lineage was recorded from local bytes alone', async () => {
+    const h = await fundedWallet()
+    await publish(h)
+    const { tokenId, tip, transferTxid, senderBeef } = await mintAndTransferToken(h)
+    forgetSenderDevice()
+    expect(await proveHeldTokenTipLocally(h.active, tip, tokenId)).toBe(false)
+    resetTokenLineageForTests()
+    state.retained.set(transferTxid, senderBeef)
+    expect(await proveHeldTokenTipLocally(h.active, tip, tokenId)).toBe(true)
+    state.retained.clear()
+    resetIssuerAttributionForTests()
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(true)
   })
 })

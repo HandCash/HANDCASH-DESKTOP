@@ -365,6 +365,20 @@ export const storageRegistry = Object.freeze({
     scope: 'chain',
     version: 1,
   }),
+  tokenGenesis: defineStorage({
+    key: 'handcash.tokenGenesis.v1',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  tokenLineage: defineStorage({
+    key: 'handcash.tokenLineage.v1',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   itemArt: defineStorage({
     key: 'handcash.itemArt.v1',
     owner: 'collectables',
