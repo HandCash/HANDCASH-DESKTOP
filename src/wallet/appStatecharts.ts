@@ -663,10 +663,29 @@ const PUBLIC_IDENTITIES = `stateDiagram-v2
   composing --> composing : FIELD / IMAGE
   composing --> browsing : CLOSE
   importing --> browsing : CLOSE
+  composing --> quoting : REVIEW [draft ready]
+  browsing --> quoting : ROTATE
+  quoting --> reviewing : plan quoted
+  quoting --> refused : quote refused
+  reviewing --> publishing : APPROVE
+  publishing --> browsing : records signed
+  publishing --> refused : plan-changed / fee-over-plan / staged-mismatch
+  quoting --> composing : CANCEL [profile]
+  reviewing --> composing : CANCEL [profile]
+  refused --> composing : DISMISS [profile]
+  quoting --> browsing : CANCEL [rotate]
+  reviewing --> browsing : CANCEL [rotate]
+  refused --> browsing : DISMISS [rotate]
+  note right of reviewing
+    Plan: every record tx, output bytes, fee estimate
+    and ceiling, signing key, digest over the scripts.
+    publishing rebuilds it under the spend lock, stages
+    each tx unsigned, refuses a moved digest or a fee
+    over its ceiling, then signs. Draft is frozen.
+  end note
   note right of composing
     Draft holds the public image, name and bio only.
-    asyncAction owns image encode, publish confirm,
-    key rotation, key import and removal.
+    asyncAction owns image encode, key import, removal.
   end note
 `
 
@@ -1329,7 +1348,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'publicIdentities',
     label: 'Public identities',
-    caption: 'BAP issuer identities (image, name, bio), key rotation, signers and encrypted backup',
+    caption: 'BAP issuer identities: quoted, approved publish and key rotation; signers and encrypted backup',
     source: PUBLIC_IDENTITIES,
   },
   {

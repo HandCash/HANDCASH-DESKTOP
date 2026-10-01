@@ -651,7 +651,7 @@ export const WalletNav = memo(function WalletNav({
                   onSent={onSent}
                 />
               )}
-              {stageChild.type === 'add-friend' && <AddFriendPanel />}
+              {stageChild.type === 'add-friend' && <AddFriendPanel chain={profile.chain} />}
               {stageChild.type === 'collectable' && (
                 <CollectableDetailsPanel outpoint={stageChild.outpoint} />
               )}

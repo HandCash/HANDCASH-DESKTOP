@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
   addressFromIdentityKey,
@@ -13,7 +13,14 @@ import { clearNavChild, openMessagesWithFriend } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { identityCardRefusalMessage } from '../wallet/identityCard'
+import { importIdentityCard, requestIdentityCard } from '../wallet/identityCardShare'
+import { useAsyncAction } from '../hooks/useAsyncAction'
+import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { CopyIcon, MessagesIcon } from './icons'
+import { PeerAvatar, PeerIdentityLine } from './PeerIdentity'
+
+const MAX_CARD_FILE_BYTES = 400 * 1024
 
 type Props = {
   friendId: string
@@ -25,6 +32,9 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const [label, setLabel] = useState(friend?.label ?? '')
   const [error, setError] = useState<string | null>(null)
   const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const card = useAsyncAction<'ask' | 'import'>()
+  const cardFile = useRef<HTMLInputElement>(null)
+  const peer = usePeerIdentity(chain, friend?.identityKey, friend)
 
   useEffect(() => {
     return subscribeFriends(() => {
@@ -40,7 +50,8 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     setLabel(next?.label ?? '')
     setError(null)
     setConfirmingRemove(false)
-  }, [friendId])
+    card.reset()
+  }, [friendId, card.reset])
 
   if (!friend) {
     return <p className="connected-empty-line">Friend not found</p>
@@ -81,6 +92,28 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     await copyText(address, { label: 'address' })
   }
 
+  const askForCard = () =>
+    card.run('ask', async () => {
+      if (!(await requestIdentityCard(friend, { manual: true })))
+        throw new Error('Could not reach this contact. Try again later.')
+      toastSuccess('Asked for their identity card')
+    })
+
+  const importCard = (picked: File) =>
+    card.run('import', async () => {
+      if (picked.size > MAX_CARD_FILE_BYTES) throw new Error('This file is too large to be an identity card.')
+      let raw: unknown
+      try {
+        raw = JSON.parse(await picked.text())
+      } catch {
+        throw new Error(identityCardRefusalMessage('malformed'))
+      }
+      const outcome = await importIdentityCard(raw, friend.identityKey)
+      if (outcome.kind === 'refused') throw new Error(identityCardRefusalMessage(outcome.reason))
+      playWalletSound('soft')
+      toastSuccess(outcome.kind === 'presented' ? 'Identity card verified' : 'This contact stopped sharing an identity')
+    })
+
   const onRemove = () => {
     playWalletSound('deny')
     removeFriend(friend.id)
@@ -91,12 +124,10 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     <div className="nav-child-panel friend-details" data-aeon-scope="friend-details">
       <form className="friends-add-form" onSubmit={onSave}>
         <section className="friend-details-overview" aria-labelledby="friend-overview-name">
-          <span className="friend-avatar friend-avatar-lg" aria-hidden>
-            {displayHandle.slice(0, 1).toUpperCase()}
-          </span>
+          <PeerAvatar label={displayHandle} peer={peer} className="friend-avatar friend-avatar-lg" />
           <div>
             <h3 id="friend-overview-name">{displayHandle}</h3>
-            {handleFixed ? <p>Handle contact</p> : null}
+            {peer ? <PeerIdentityLine peer={peer} /> : handleFixed ? <p>Handle contact</p> : null}
           </div>
         </section>
 
@@ -115,6 +146,65 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
             />
           </div>
         )}
+
+        <section
+          className="friend-copy-row friend-identity-card"
+          data-aeon-part="peer-identity-card"
+          data-aeon-state={card.stateAttr}
+          aria-label="Shared identity"
+        >
+          <div>
+            <span className="field-static-label">Shared identity</span>
+            {peer?.kind === 'presented' ? (
+              <>
+                <PeerIdentityLine peer={peer} />
+                {peer.identity.description ? (
+                  <p className="friend-identity-bio">{peer.identity.description}</p>
+                ) : null}
+              </>
+            ) : peer ? (
+              <p className="friend-identity-bio">Their identity package is no longer on this device. Ask again to see it.</p>
+            ) : (
+              <p className="friend-identity-bio">
+                Not shared with you. A contact can send a signed BAP identity card from their wallet.
+              </p>
+            )}
+            {card.error ? (
+              <p className="error" role="status">
+                {card.error}
+              </p>
+            ) : null}
+          </div>
+          <div className="friend-identity-actions">
+            <button
+              type="button"
+              className="friend-copy-action"
+              disabled={card.busy}
+              onClick={() => void askForCard()}
+            >
+              {card.running('ask') ? 'Asking…' : 'Ask'}
+            </button>
+            <button
+              type="button"
+              className="friend-copy-action"
+              disabled={card.busy}
+              onClick={() => cardFile.current?.click()}
+            >
+              {card.running('import') ? 'Checking…' : 'Import card'}
+            </button>
+          </div>
+          <input
+            ref={cardFile}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(event) => {
+              const picked = event.target.files?.[0]
+              event.target.value = ''
+              if (picked) void importCard(picked)
+            }}
+          />
+        </section>
 
         <div className="friend-copy-row">
           <div>

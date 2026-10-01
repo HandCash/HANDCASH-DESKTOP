@@ -9,9 +9,13 @@ import {
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { exchangeIdentityCards } from '../wallet/identityCardShare'
+import type { Chain } from '../wallet/vault'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { ExclusiveActionRegion } from './ExclusiveActionRegion'
 import { CheckCircleIcon, PersonAddIcon } from './icons'
+import { PeerIdentityLine } from './PeerIdentity'
 
 function initialFromNav(): { label: string; recipient: string } {
   const child = getNavState().child
@@ -22,7 +26,7 @@ function initialFromNav(): { label: string; recipient: string } {
   }
 }
 
-export function AddFriendPanel() {
+export function AddFriendPanel({ chain }: { chain: Chain }) {
   const seeded = initialFromNav()
   const [label, setLabel] = useState(seeded.label)
   const [recipient, setRecipient] = useState(seeded.recipient)
@@ -30,6 +34,7 @@ export function AddFriendPanel() {
   const [resolvedHandle, setResolvedHandle] = useState<ResolvedHandle | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
   const handleResolveRef = useRef(createHandleResolveDebouncer())
+  const peer = usePeerIdentity(chain, resolvedHandle?.identityKey)
 
   const trimmedRecipient = recipient.trim()
   const isHandleInput = Boolean(parseHandleInput(trimmedRecipient))
@@ -67,10 +72,11 @@ export function AddFriendPanel() {
     e.preventDefault()
     if (!canSubmit) return
     const outcome = await add.run('add', async () => {
-      await addFriendFromRecipient({
+      const friend = await addFriendFromRecipient({
         label: canSetCustomLabel ? label.trim() || undefined : undefined,
         recipient: trimmedRecipient,
       })
+      void exchangeIdentityCards(friend)
     })
     if (outcome.ok) {
       playWalletSound('soft')
@@ -136,6 +142,7 @@ export function AddFriendPanel() {
                     Verified handle
                   </span>
                   <strong>{resolvedHandle.display}</strong>
+                  <PeerIdentityLine peer={peer} />
                 </div>
               </div>
             ) : null}

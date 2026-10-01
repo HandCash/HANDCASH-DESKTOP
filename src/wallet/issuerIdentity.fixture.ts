@@ -7,7 +7,7 @@ import {
   type IssuerIdentityPackage,
 } from './issuerIdentity'
 
-/** Test-only: BAP identity transactions as `publishIssuerIdentity` writes them. */
+/** Test-only: BAP identity transactions as `publishIdentityPlan` writes them. */
 export const PNG_1PX: IssuerIdentityImage = {
   contentType: 'image/png',
   bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]),

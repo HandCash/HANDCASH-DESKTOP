@@ -47,6 +47,7 @@ import type {
 import { bytesToBase64 } from './base64Binary'
 import { installElectronDirectSession } from './directSession/bridge'
 import type { IssuerIdentityPackage } from './issuerIdentity'
+import { isIdentityCardControl } from './identityCard'
 import {
   encodeRemittanceForPeerBox,
   parseProvenanceV2,
@@ -949,7 +950,10 @@ export async function deliverOutbound(
       recipientIdentityKey: env.recipientIdentityKey,
       body: wireBody,
     })
-    if (direct === 'direct') return { delivered: 'direct', messagebox: box }
+    if (direct === 'direct') {
+      shareIdentityCard(env)
+      return { delivered: 'direct', messagebox: box }
+    }
   }
   const url = `${box}/sendMessage`
   const post = (body: string) =>
@@ -993,6 +997,7 @@ export async function deliverOutbound(
     }
     if (res.ok) {
       void postSessionOffer(env, box)
+      shareIdentityCard(env)
       return { delivered: 'cloud', messagebox: box, beefStripped }
     }
     const detail = await res.text().catch(() => '')
@@ -1010,6 +1015,23 @@ export async function deliverOutbound(
     )
   }
   return { delivered: 'local', messagebox: box }
+}
+
+function shareIdentityCard(env: OutboundEnvelope): void {
+  if (!env.body || isIdentityCardControl(env.body)) return
+  void import('./identityCardShare')
+    .then(({ shareIdentityCardAfterDelivery }) => shareIdentityCardAfterDelivery(env))
+    .catch(() => {
+      /* the card rides the next delivery */
+    })
+}
+
+function ingestIdentityCard(senderKey: string, inner: string): Promise<void> {
+  return import('./identityCardShare')
+    .then(({ ingestIdentityCardBody }) => ingestIdentityCardBody(senderKey, inner))
+    .catch((err) => {
+      console.warn('[identity-card] ingest failed', err instanceof Error ? err.message : String(err))
+    })
 }
 
 async function postSessionOffer(env: OutboundEnvelope, box: string): Promise<void> {
@@ -1051,6 +1073,10 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
   if (inner == null) return
   if (ingestSessionOfferBody(inner)) {
     warmDirectSession(sender)
+    return
+  }
+  if (isIdentityCardControl(inner)) {
+    void ingestIdentityCard(sender, inner)
     return
   }
   const decoded = decodeMessageBody(inner)
@@ -1235,6 +1261,11 @@ export async function pollInboundTipHints(args: {
       if (inner == null) continue
       if (ingestSessionOfferBody(inner)) {
         warmDirectSession(senderKey)
+        if (m.messageId) ackIds.push(String(m.messageId))
+        continue
+      }
+      if (isIdentityCardControl(inner)) {
+        await ingestIdentityCard(senderKey, inner)
         if (m.messageId) ackIds.push(String(m.messageId))
         continue
       }

@@ -4592,6 +4592,76 @@ button.identity-qr-copy:focus-visible {
   vertical-align: middle;
 }
 
+[data-aeon-part='peer-avatar'] {
+  overflow: hidden;
+}
+
+[data-aeon-part='peer-avatar'] .deferred-image,
+[data-aeon-part='peer-avatar'] .peer-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+[data-aeon-part='peer-avatar'] .peer-avatar-image {
+  object-fit: cover;
+}
+
+[data-aeon-part='peer-identity'] {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+
+.peer-identity-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hc-text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-aeon-part='peer-identity'][data-aeon-state='imitation'] .peer-identity-name {
+  text-decoration: underline wavy var(--hc-warn);
+  text-underline-offset: 3px;
+}
+
+[data-aeon-part='peer-identity'] .bap-fingerprint {
+  flex-shrink: 0;
+}
+
+.friend-grid-card [data-aeon-part='peer-identity'] {
+  justify-content: center;
+  width: 100%;
+}
+
+.friend-identity-card {
+  align-items: start;
+}
+
+.friend-identity-card [data-aeon-part='peer-identity'] {
+  margin-top: 2px;
+}
+
+.friend-identity-bio {
+  margin: 4px 0 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.friend-identity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .public-identity-bap,
 .identity-bap-id {
   display: inline-flex;

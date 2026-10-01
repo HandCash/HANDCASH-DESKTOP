@@ -11,6 +11,8 @@ import {
   importIssuerPrivateKey,
   listPublicIdentities,
   MAX_IDENTITY_BACKUP_BYTES,
+  presentedPublicIdentityKey,
+  presentPublicIdentity,
   publicIdentitiesGeneration,
   removePublicIdentity,
   restorePublicIdentityBackup,
@@ -27,16 +29,26 @@ import {
 import { issuerIdentitiesGeneration, subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { encodeIdentityImage } from '../wallet/identityImage'
 import {
-  publishIssuerIdentity,
-  rotateIssuerSigningKey,
+  planIdentityPublish,
+  publishIdentityPlan,
   syncHeldIssuerIdentities,
   upgradeIssuerIdentityProofs,
 } from '../wallet/identityPublish'
+import { exportIdentityCard } from '../wallet/identityCardShare'
 import { toastSuccess } from '../wallet/toast'
 import type { WalletProfile } from '../machines/appMachine'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { DeferredImage } from './DeferredImage'
 import { BapIdenticon } from './BapIdenticon'
+import { IdentityPublishReview, type IdentityReviewStage } from './IdentityPublishReview'
+
+const REVIEW_STAGES: readonly IdentityReviewStage[] = ['quoting', 'reviewing', 'publishing', 'refused']
+
+const PUBLISHED_TOAST = {
+  publish: 'Issuer identity published',
+  update: 'Issuer identity updated',
+  rotate: 'Signing key rotated',
+} as const
 
 function downloadJson(value: string, filename: string) {
   const url = URL.createObjectURL(
@@ -51,11 +63,41 @@ function downloadJson(value: string, filename: string) {
 
 const shortKey = (key: string) => `${key.slice(0, 12)}…${key.slice(-8)}`
 
+function ownerRuntime(profile: WalletProfile) {
+  const runtime = getWalletRuntime()
+  if (
+    !runtime ||
+    !runtimeIsCurrent(runtime) ||
+    runtime.instance.identityKey !== profile.identityKey ||
+    runtime.instance.chain !== profile.chain
+  )
+    throw new Error('Wallet changed; reopen Identity and retry.')
+  return runtime
+}
+
 /** Account-keyed by the parent: switching wallets discards drafts and secret input. */
 export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
-  const [snapshot, send] = useMachine(publicIdentitiesMachine)
+  const [snapshot, send] = useMachine(publicIdentitiesMachine, {
+    input: {
+      ports: {
+        quote: async (request) => planIdentityPublish(ownerRuntime(profile), request),
+        publish: async (request, plan) => {
+          await publishIdentityPlan(ownerRuntime(profile), request, plan)
+          toastSuccess(PUBLISHED_TOAST[plan.kind])
+        },
+      },
+    },
+  })
   const action = useAsyncAction<
-    'publish' | 'rotate' | 'image' | 'select' | 'remove' | 'import' | 'restore' | 'export' | 'copy'
+    | 'image'
+    | 'select'
+    | 'remove'
+    | 'import'
+    | 'restore'
+    | 'export'
+    | 'copy'
+    | 'present'
+    | 'share'
   >()
   const privateKey = useRef<HTMLInputElement>(null)
   const backupFile = useRef<HTMLInputElement>(null)
@@ -75,24 +117,20 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
       return {
         rows: listPublicIdentities(runtime),
         selected: selectedPublicIdentityKey(runtime),
+        presented: presentedPublicIdentityKey(runtime),
         error: null,
       }
     } catch (error) {
       return {
         rows: [] as PublicIdentityRow[],
         selected: profile.identityKey,
+        presented: null,
         error: error instanceof Error ? error.message : String(error),
       }
     }
   }, [generation, packages, profile.identityKey, runtime])
   const assertOwner = () => {
-    if (
-      !runtime ||
-      !runtimeIsCurrent(runtime) ||
-      runtime.instance.identityKey !== profile.identityKey ||
-      runtime.instance.chain !== profile.chain
-    )
-      throw new Error('Wallet changed; reopen Identity and retry.')
+    if (ownerRuntime(profile) !== runtime) throw new Error('Wallet changed; reopen Identity and retry.')
   }
   useEffect(
     () => () => {
@@ -136,42 +174,29 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     action.run('image', async () => {
       send({ type: 'IMAGE', image: await encodeIdentityImage(picked) })
     })
-  const publish = () => {
-    const { identityKey, fields, image } = snapshot.context
-    return action.run(
-      'publish',
-      async () => {
-        assertOwner()
-        if (!identityKey || !image) throw new Error('Choose an image first.')
-        await publishIssuerIdentity(runtime!, identityKey, fields, image)
-        close()
-        toastSuccess('Issuer identity published')
-      },
-      {
-        confirm: {
-          title: 'Publish issuer identity?',
-          body: 'This image, name and bio are published on-chain as a BAP profile signed by your identity key. They are public and permanent; a later update adds a new profile but never erases this one. Publishing costs a small network fee.',
-          confirmLabel: 'Publish',
-        },
-      },
-    )
-  }
-  const rotate = (row: PublicIdentityRow) =>
+  const present = (row: PublicIdentityRow | null) =>
     action.run(
-      'rotate',
+      'present',
       async () => {
         assertOwner()
-        await rotateIssuerSigningKey(runtime!, row.identityKey)
-        toastSuccess('Signing key rotated')
+        presentPublicIdentity(runtime!, row?.identityKey ?? null)
+        toastSuccess(row ? 'Identity shown to contacts' : 'Identity no longer shown')
       },
-      {
-        confirm: {
-          title: 'Rotate signing key?',
-          body: 'Your BAP ID, name and image stay the same; a new key signs everything you issue from now on. Assets the old key signed stay attributed to you when they were mined before this rotation. Rotate if you suspect the current key leaked. Costs a small network fee.',
-          confirmLabel: 'Rotate key',
-        },
-      },
+      row
+        ? {
+            confirm: {
+              title: `Show ${row.identity?.name ?? 'this identity'} to contacts?`,
+              body: 'Contacts you message or pay get a card with this identity\'s name, image and BAP ID, signed by your wallet key and the identity\'s key, straight from your wallet. They can show it to anyone, so it links this identity to your handle. Stopping later tells contacts who saw it, but cannot unshare a copy they kept.',
+              confirmLabel: 'Show to contacts',
+            },
+          }
+        : undefined,
     )
+  const shareCard = () =>
+    action.run('share', async () => {
+      assertOwner()
+      downloadJson(await exportIdentityCard(runtime!), 'handcash-identity-card.json')
+    })
   const restore = (picked: File) =>
     action.run('restore', async () => {
       assertOwner()
@@ -182,9 +207,14 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
       restorePublicIdentityBackup(runtime!, raw)
       toastSuccess('Identities restored')
     })
-  const browsing = snapshot.matches('browsing')
+  const review = REVIEW_STAGES.find((stage) => snapshot.matches(stage)) ?? null
+  const { request } = snapshot.context
+  const rotating = !!review && request?.kind === 'rotate'
+  const busy = action.busy || snapshot.hasTag('review')
+  const browsing = snapshot.matches('browsing') || rotating
   const importing = snapshot.matches('importing')
   const selectedRow = view.rows.find((row) => row.identityKey === view.selected)
+  const presentedRow = view.rows.find((row) => row.identityKey === view.presented)
   const draft = snapshot.context
   return (
     <section
@@ -211,11 +241,15 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                 {shortKey(view.selected)}
               </span>
             </p>
+            <p data-aeon-part="presented" data-aeon-state={presentedRow ? 'shown' : 'hidden'}>
+              Shown to contacts:{' '}
+              <strong>{presentedRow?.identity?.name ?? 'Nothing'}</strong>
+            </p>
             <div className="actions">
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
-                disabled={action.busy || !!view.error}
+                disabled={busy || !!view.error}
                 onClick={() => send({ type: 'IMPORT_KEY' })}
               >
                 Import signing key
@@ -223,7 +257,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
-                disabled={action.busy}
+                disabled={busy}
                 onClick={() => backupFile.current?.click()}
               >
                 Restore backup
@@ -231,7 +265,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
-                disabled={action.busy || !!view.error}
+                disabled={busy || !!view.error}
                 onClick={() =>
                   void action.run('export', async () => {
                     assertOwner()
@@ -277,6 +311,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                   <p>
                     {row.signer === 'imported' ? 'Imported signer' : 'Wallet signer'}
                     {row.identityKey === view.selected ? ' · selected issuer' : ''}
+                    {row.identityKey === view.presented ? ' · shown to contacts' : ''}
                   </p>
                   {row.identity?.description ? <p>{row.identity.description}</p> : null}
                   <p className="public-identity-bap" title={row.bapId}>
@@ -296,7 +331,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                   <div className="actions">
                     <Button.Root
                       className="btn btn-primary"
-                      disabled={action.busy || !!row.identity?.revoked}
+                      disabled={busy || !!row.identity?.revoked}
                       onClick={() => compose(row)}
                     >
                       {row.identity ? 'Publish update' : 'Publish identity'}
@@ -305,16 +340,49 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                       <Button.Root
                         variant="ghost"
                         className="btn btn-ghost"
-                        disabled={action.busy || !row.identity.image}
-                        onClick={() => void rotate(row)}
+                        disabled={busy || !row.identity.image}
+                        onClick={() => send({ type: 'ROTATE', identityKey: row.identityKey })}
                       >
-                        {action.running('rotate') ? 'Rotating…' : 'Rotate signing key'}
+                        {rotating && request?.identityKey === row.identityKey
+                          ? 'Rotating…'
+                          : 'Rotate signing key'}
                       </Button.Root>
+                    ) : null}
+                    {row.identity && !row.identity.revoked ? (
+                      row.identityKey === view.presented ? (
+                        <>
+                          <Button.Root
+                            variant="ghost"
+                            className="btn btn-ghost"
+                            disabled={busy}
+                            onClick={() => void shareCard()}
+                          >
+                            Share identity card
+                          </Button.Root>
+                          <Button.Root
+                            variant="ghost"
+                            className="btn btn-ghost"
+                            disabled={busy}
+                            onClick={() => void present(null)}
+                          >
+                            {action.running('present') ? 'Stopping…' : 'Stop showing'}
+                          </Button.Root>
+                        </>
+                      ) : (
+                        <Button.Root
+                          variant="ghost"
+                          className="btn btn-ghost"
+                          disabled={busy}
+                          onClick={() => void present(row)}
+                        >
+                          Show to contacts
+                        </Button.Root>
+                      )
                     ) : null}
                     <Button.Root
                       variant="ghost"
                       className="btn btn-ghost"
-                      disabled={action.busy || row.identityKey === view.selected}
+                      disabled={busy || row.identityKey === view.selected}
                       onClick={() =>
                         void action.run('select', async () => {
                           assertOwner()
@@ -327,7 +395,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                     <Button.Root
                       variant="ghost"
                       className="btn btn-ghost"
-                      disabled={action.busy}
+                      disabled={busy}
                       onClick={() =>
                         void action.run('copy', async () => {
                           assertOwner()
@@ -343,7 +411,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                       <Button.Root
                         variant="ghost"
                         className="btn btn-ghost"
-                        disabled={action.busy}
+                        disabled={busy}
                         onClick={() =>
                           void action.run(
                             'remove',
@@ -387,7 +455,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
-                disabled={action.busy}
+                disabled={busy}
               />
               <p>
                 Use the identity's master key, the one 1Sat or Yours derived
@@ -398,7 +466,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
             <div className="actions">
               <Button.Root
                 className="btn btn-primary"
-                disabled={action.busy}
+                disabled={busy}
                 onClick={() => void importKey()}
               >
                 {action.running('import') ? 'Importing…' : 'Import key'}
@@ -406,7 +474,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
-                disabled={action.busy}
+                disabled={busy}
                 onClick={close}
               >
                 Cancel
@@ -432,7 +500,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
-                disabled={action.busy}
+                disabled={busy}
                 onClick={() => imageFile.current?.click()}
               >
                 {action.running('image')
@@ -463,7 +531,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                 id={`${prefix}-name`}
                 value={draft.fields.name}
                 maxLength={IDENTITY_NAME_MAX}
-                disabled={action.busy}
+                disabled={busy}
                 onChange={(event) =>
                   send({ type: 'FIELD', field: 'name', value: event.target.value })
                 }
@@ -475,7 +543,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                 id={`${prefix}-bio`}
                 value={draft.fields.description}
                 maxLength={IDENTITY_DESCRIPTION_MAX}
-                disabled={action.busy}
+                disabled={busy}
                 onChange={(event) =>
                   send({ type: 'FIELD', field: 'description', value: event.target.value })
                 }
@@ -488,15 +556,15 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
             <div className="actions">
               <Button.Root
                 className="btn btn-primary"
-                disabled={action.busy || !draft.image || !draft.fields.name.trim()}
-                onClick={() => void publish()}
+                disabled={busy || !draft.image || !draft.fields.name.trim()}
+                onClick={() => send({ type: 'REVIEW' })}
               >
-                {action.running('publish') ? 'Publishing…' : 'Publish'}
+                {review ? 'Publishing…' : 'Review and publish'}
               </Button.Root>
               <Button.Root
                 variant="ghost"
                 className="btn btn-ghost"
-                disabled={action.busy}
+                disabled={busy}
                 onClick={close}
               >
                 Cancel
@@ -511,6 +579,15 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         ) : null}
       </div>
       <AsyncActionPrompt action={action} />
+      <IdentityPublishReview
+        stage={review}
+        rotation={request?.kind === 'rotate'}
+        plan={snapshot.context.plan}
+        error={snapshot.context.error}
+        onApprove={() => send({ type: 'APPROVE' })}
+        onCancel={() => send({ type: 'CANCEL' })}
+        onDismiss={() => send({ type: 'DISMISS' })}
+      />
     </section>
   )
 }

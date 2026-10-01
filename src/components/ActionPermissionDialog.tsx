@@ -184,6 +184,23 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     <dt>What for</dt>
                     <dd>{pending.summary}</dd>
                   </div>
+                  {pending.issuance ? (
+                    <div data-aeon-part="issuance-signer">
+                      <dt>Signs as</dt>
+                      <dd>
+                        {pending.issuance.displayName ?? 'Wallet identity'} ·{' '}
+                        <span className="mono" title={pending.issuance.identityKey}>
+                          {pending.issuance.identityKey.slice(0, 10)}…{pending.issuance.identityKey.slice(-6)}
+                        </span>
+                      </dd>
+                    </div>
+                  ) : null}
+                  {pending.issuance?.anchor ? (
+                    <div data-aeon-part="issuance-anchor">
+                      <dt>Extra transaction</dt>
+                      <dd>A 2-sat Sigma signing anchor, sent with the mint, and its network fee</dd>
+                    </div>
+                  ) : null}
                   {pending.details.slice(0, pending.title === 'Mint token' ? 4 : 2).map((line) => (
                     <div key={line}>
                       <dt>Detail</dt>

@@ -64,7 +64,13 @@ import {
   issuanceSigner,
   selectPublicIdentity,
 } from './publicIdentities'
-import { publishIssuerIdentity, rotateIssuerSigningKey, syncHeldIssuerIdentities } from './identityPublish'
+import {
+  IdentityPublishRefused,
+  planIdentityPublish,
+  publishIdentityPlan,
+  syncHeldIssuerIdentities,
+  type IdentityPublishRequest,
+} from './identityPublish'
 import { issuerIdentityImageDataUrl, type IssuerIdentity } from './issuerIdentity'
 import { issuerIdentityFor, resetIssuerIdentitiesForTests } from './issuerIdentities'
 import { identityPackagesForDelivery, rememberDeliveredIdentities } from './issuerIdentityDelivery'
@@ -217,8 +223,21 @@ async function spendable(h: Harness): Promise<number> {
   return outputs.filter((o) => o.spendable).reduce((sum, o) => sum + o.satoshis, 0)
 }
 
+async function approveAndPublish(h: Harness, request: IdentityPublishRequest): Promise<IssuerIdentity> {
+  return publishIdentityPlan(h.runtime, request, await planIdentityPublish(h.runtime, request))
+}
+
+const profileRequest = (
+  identityKey: string,
+  fields = { name: 'Studio', description: 'Awards' },
+): IdentityPublishRequest => ({ kind: 'profile', identityKey, fields, image: PNG_1PX })
+
 function publish(h: Harness, identityKey = h.active.identityKey): Promise<IssuerIdentity> {
-  return publishIssuerIdentity(h.runtime, identityKey, { name: 'Studio', description: 'Awards' }, PNG_1PX)
+  return approveAndPublish(h, profileRequest(identityKey))
+}
+
+function rotate(h: Harness, identityKey = h.active.identityKey): Promise<IssuerIdentity> {
+  return approveAndPublish(h, { kind: 'rotate', identityKey })
 }
 
 const master = (h: Harness) => PrivateKey.fromHex(h.active.rootKeyHex)
@@ -290,10 +309,76 @@ describe('identity issuance against a real toolbox wallet', () => {
     const h = await fundedWallet()
     const first = await publish(h)
     vi.mocked(registerSignedSend).mockClear()
-    const updated = await publishIssuerIdentity(h.runtime, h.active.identityKey, { name: 'Studio II', description: '' }, PNG_1PX)
+    const updated = await approveAndPublish(h, profileRequest(h.active.identityKey, { name: 'Studio II', description: '' }))
     expect(vi.mocked(registerSignedSend).mock.calls.map(([args]) => args.txid)).toEqual([updated.alias.txid])
     expect(updated).toMatchObject({ bapId: first.bapId, name: 'Studio II', imageTxid: first.imageTxid })
     expect(updated.keys).toEqual(first.keys)
+  })
+
+  it('quotes every record and its fee ceiling, signs nothing until approved, then pays within it', async () => {
+    const h = await fundedWallet()
+    const plan = await planIdentityPublish(h.runtime, profileRequest(h.active.identityKey))
+    expect(plan).toMatchObject({
+      kind: 'publish',
+      bapId: bapIdFor(master(h)),
+      signer: 'wallet',
+      name: 'Studio',
+      image: { status: 'new', bytes: PNG_1PX.bytes.length, contentType: PNG_1PX.contentType },
+      signingKey: { seq: 1, publicKey: signingKey(h) },
+      retiredKey: null,
+    })
+    expect(plan.transactions.map((tx) => [tx.purpose, tx.outputs.map((o) => o.description)])).toEqual([
+      ['image', ['Identity image']],
+      ['publish', ['BAP ID', 'BAP ALIAS']],
+    ])
+    expect(plan.feeSats).toBeGreaterThan(0)
+    expect(plan.maxFeeSats).toBeGreaterThan(plan.feeSats)
+    expect(registerSignedSend).not.toHaveBeenCalled()
+    expect((await h.active.wallet.listOutputs({ basket: BAP_BASKET })).outputs).toEqual([])
+    expect(await spendable(h)).toBe(FUNDING)
+
+    await publishIdentityPlan(h.runtime, profileRequest(h.active.identityKey), plan)
+    const paid = FUNDING - (await spendable(h))
+    expect(paid).toBeGreaterThan(0)
+    expect(paid).toBeLessThanOrEqual(plan.feeSats)
+  })
+
+  it('refuses a plan that moved since review before staging anything', async () => {
+    const h = await fundedWallet()
+    const request = profileRequest(h.active.identityKey)
+    const plan = await planIdentityPublish(h.runtime, request)
+    const renamed = profileRequest(h.active.identityKey, { name: 'Studio X', description: 'Awards' })
+    await expect(publishIdentityPlan(h.runtime, renamed, plan)).rejects.toMatchObject({ reason: 'plan-changed' })
+    expect(registerSignedSend).not.toHaveBeenCalled()
+    expect(await spendable(h)).toBe(FUNDING)
+
+    await publish(h)
+    const update = profileRequest(h.active.identityKey, { name: 'Studio II', description: '' })
+    const stale = await planIdentityPublish(h.runtime, update)
+    expect(stale).toMatchObject({ kind: 'update', image: { status: 'reused' } })
+    await rotate(h)
+    vi.mocked(registerSignedSend).mockClear()
+    const refused = publishIdentityPlan(h.runtime, update, stale)
+    await expect(refused).rejects.toBeInstanceOf(IdentityPublishRefused)
+    await expect(refused).rejects.toMatchObject({ reason: 'plan-changed' })
+    expect(registerSignedSend).not.toHaveBeenCalled()
+  })
+
+  it('aborts a staged record over its approved fee ceiling unsigned, and frees the change', async () => {
+    const h = await fundedWallet()
+    const request = profileRequest(h.active.identityKey)
+    const plan = await planIdentityPublish(h.runtime, request)
+    const createAction = h.active.wallet.createAction.bind(h.active.wallet)
+    const padding = new Script().writeOpCode(0x00).writeOpCode(0x6a).writeBin(new Array(40_000).fill(1)).toHex()
+    vi.spyOn(h.active.wallet, 'createAction').mockImplementation((args) =>
+      createAction({
+        ...args,
+        outputs: [...(args.outputs ?? []), { lockingScript: padding, satoshis: 0, outputDescription: 'padding' }],
+      }),
+    )
+    await expect(publishIdentityPlan(h.runtime, request, plan)).rejects.toMatchObject({ reason: 'fee-over-plan' })
+    expect(registerSignedSend).not.toHaveBeenCalled()
+    expect(await spendable(h)).toBe(FUNDING)
   })
 
   it('refuses to issue before an identity is published', async () => {
@@ -373,7 +458,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     const h = await fundedWallet()
     const identity = await publish(h)
     const before = await mint(h, [itemOutput(walletLock(h)), tokenOutput(walletLock(h))])
-    const rotated = await rotateIssuerSigningKey(h.runtime, h.active.identityKey)
+    const rotated = await rotate(h)
     expect(rotated.keys.map((k) => k.seq)).toEqual([1, 2])
     expect(rotated).toMatchObject({ bapId: identity.bapId, name: 'Studio', imageTxid: identity.imageTxid })
     expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 2))
@@ -484,7 +569,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(synced).toMatchObject({ name: 'Studio', imageTxid: identity.imageTxid })
     expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 2))
 
-    const rotated = await rotateIssuerSigningKey(h.runtime, h.active.identityKey)
+    const rotated = await rotate(h)
     expect(rotated.keys.map((k) => k.seq)).toEqual([1, 2, 3])
     expect(rotated.keys[1]!.txid).toBe(foreign.txid)
     expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 3))

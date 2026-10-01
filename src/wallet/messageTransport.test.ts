@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const cardShare = vi.hoisted(() => ({
+  ingestIdentityCardBody: vi.fn(async () => {}),
+  shareIdentityCardAfterDelivery: vi.fn(async () => {}),
+}))
+vi.mock('./identityCardShare', () => cardShare)
+
 import {
   decodeMessageBody,
   decodeMarketSettlementWire,
@@ -13,6 +19,7 @@ import {
   normalizeMessageboxBase,
   notifyPeerBrc29Payment,
   notifyPeerItemIncoming,
+  pollInboundTipHints,
   publicMessageboxBase,
   uploadMessageboxBytes,
   withOptionalBeefB64,
@@ -20,6 +27,7 @@ import {
   withOptionalProvenance,
 } from './messageTransport'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
+import { IDENTITY_CARD_REQUEST } from './identityCard'
 
 describe('message transport envelopes', () => {
   it('carries issuer identity packages beside an item, never into chat metadata', () => {
@@ -367,6 +375,46 @@ describe('messagebox base URL', () => {
       openPeerMessage({ body: message.body, rootKeyHex: recipient.toHex() }),
     ).toEqual({ plaintext: 'hello federation', sealed: true })
     expect(message.sender).toBeUndefined()
+  })
+
+  it('hands identity cards to the card store, ACKs them and keeps them out of chat', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const { sealPeerMessage } = await import('./messageEnvelope')
+    const me = PrivateKey.fromRandom()
+    const peer = PrivateKey.fromRandom()
+    const peerKey = peer.toPublicKey().toString().toLowerCase()
+    const body = sealPeerMessage({
+      plaintext: IDENTITY_CARD_REQUEST,
+      rootKeyHex: peer.toHex(),
+      recipientIdentityKey: me.toPublicKey().toString(),
+    })
+    const posts: { url: string; body: string }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        posts.push({ url, body: String(init?.body ?? '') })
+        if (url.endsWith('/listMessages'))
+          return new Response(
+            JSON.stringify({
+              status: 'success',
+              messages: [{ messageId: 'card-1', body, sender: peerKey, createdAt: 1 }],
+            }),
+            { status: 200 },
+          )
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+    const result = await pollInboundTipHints({
+      rootKeyHex: me.toHex(),
+      messagebox: 'https://mb.peer.example/v1/messagebox',
+      peerIdForSender: () => 'peer-1',
+    })
+    expect(result).toMatchObject({ messages: 0, tipHints: 0 })
+    expect(cardShare.ingestIdentityCardBody).toHaveBeenCalledWith(peerKey, IDENTITY_CARD_REQUEST)
+    await vi.waitFor(() =>
+      expect(posts.some((post) => post.url.endsWith('/acknowledgeMessage') && post.body.includes('card-1'))).toBe(true),
+    )
   })
 
   it('sends sealed chat on a live IPv6 session and skips the box', async () => {

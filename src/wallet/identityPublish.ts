@@ -1,4 +1,4 @@
-import type { PrivateKey } from '@bsv/sdk'
+import { Hash, Transaction, Utils, type PrivateKey } from '@bsv/sdk'
 import {
   BAP_BASKET,
   BAP_KEY_ID,
@@ -57,8 +57,92 @@ type Signer = { master: PrivateKey; own: boolean; basket: string }
 
 const PROOF_FETCH_MS = 8_000
 
+/** Toolbox `defaultOptions().feeModel`; record transactions are funded at this rate. */
+const FEE_SAT_PER_KB = 100
+const TX_OVERHEAD_BYTES = 10
+const FUNDING_INPUT_BYTES = 148
+const CHANGE_OUTPUT_BYTES = 34
+/** Managed change: `managedChangePolicy.maxOutputsPerAction`. */
+const MAX_CHANGE_OUTPUTS = 8
+/** Fee ceiling headroom for a fragmented wallet. */
+const MAX_FUNDING_INPUTS = 16
+/** Sizes an ALIAS whose new image has no txid until its own transaction is signed. */
+const UNSIGNED_IMAGE_TXID = '00'.repeat(32)
+
+export type IdentityPublishRequest =
+  | {
+      kind: 'profile'
+      identityKey: string
+      fields: IssuerIdentityFields
+      image: IssuerIdentityImage | null
+    }
+  | { kind: 'rotate'; identityKey: string }
+
+export type IdentityRecordPurpose = 'image' | 'publish' | 'update' | 'rotate'
+
+export type IdentityRecordTx = {
+  purpose: IdentityRecordPurpose
+  description: string
+  outputs: { description: string; bytes: number }[]
+  /** One funding input; managed change splits into its full output count while under target. */
+  feeSats: number
+  /** The staged transaction is aborted unsigned when it would pay more. */
+  maxFeeSats: number
+}
+
+export type IdentityPlanKey = { seq: number; publicKey: string }
+
+/** Everything the user approves before an identity record is signed. Public data only. */
+export type IdentityPublishPlan = {
+  kind: 'publish' | 'update' | 'rotate'
+  identityKey: string
+  bapId: string
+  signer: 'wallet' | 'imported'
+  name: string
+  description: string
+  image:
+    | { status: 'new'; bytes: number; contentType: string }
+    | { status: 'reused'; txid: string }
+  /** Signs every asset issued after this publish. */
+  signingKey: IdentityPlanKey
+  /** Rotation only: the key these records retire. */
+  retiredKey: IdentityPlanKey | null
+  transactions: IdentityRecordTx[]
+  feeSats: number
+  maxFeeSats: number
+  /** Commits to every record script; a publish refuses a plan whose digest moved. */
+  digest: string
+}
+
+export type IdentityPublishRefusal =
+  | 'invalid-key'
+  | 'wallet-changed'
+  | 'revoked'
+  | 'no-image'
+  | 'not-published'
+  | 'missing-package'
+  | 'plan-changed'
+  | 'staged-mismatch'
+  | 'fee-over-plan'
+  | 'not-signed'
+
+export class IdentityPublishRefused extends Error {
+  constructor(
+    readonly reason: IdentityPublishRefusal,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'IdentityPublishRefused'
+  }
+}
+
+function refuse(reason: IdentityPublishRefusal, message: string): never {
+  console.warn(`[identity-publish] refused ${reason}`)
+  throw new IdentityPublishRefused(reason, message)
+}
+
 function assertCurrent(runtime: WalletRuntime): ActiveWallet {
-  if (!runtimeIsCurrent(runtime)) throw new Error('Wallet changed; publish again.')
+  if (!runtimeIsCurrent(runtime)) refuse('wallet-changed', 'Wallet changed; review the publish again.')
   return runtime.instance
 }
 
@@ -72,20 +156,83 @@ function logSlow(phase: string, started: number) {
   if (ms > 250) console.info(`[identity-publish] ${phase} done ${ms}ms`)
 }
 
+const varIntBytes = (n: number) => (n < 0xfd ? 1 : n <= 0xffff ? 3 : n <= 0xffffffff ? 5 : 9)
+
+function outputBytes(lockingScript: string): number {
+  const length = lockingScript.length / 2
+  return 8 + varIntBytes(length) + length
+}
+
+const feeFor = (bytes: number) => Math.ceil((bytes * FEE_SAT_PER_KB) / 1000)
+
+function recordTx(purpose: IdentityRecordPurpose, description: string, outputs: DataOutput[]): IdentityRecordTx {
+  const sized = outputs.map((o) => ({ description: o.outputDescription, bytes: outputBytes(o.lockingScript) }))
+  const body = TX_OVERHEAD_BYTES + sized.reduce((sum, o) => sum + o.bytes, 0)
+  return {
+    purpose,
+    description,
+    outputs: sized,
+    feeSats: feeFor(body + FUNDING_INPUT_BYTES + MAX_CHANGE_OUTPUTS * CHANGE_OUTPUT_BYTES),
+    maxFeeSats: feeFor(body + MAX_FUNDING_INPUTS * FUNDING_INPUT_BYTES + MAX_CHANGE_OUTPUTS * CHANGE_OUTPUT_BYTES),
+  }
+}
+
+/** Fee of a staged transaction, after checking it carries exactly our records first, in order. */
+function stagedFee(signable: number[], outputs: DataOutput[]): number {
+  const tx = Transaction.fromAtomicBEEF(signable)
+  outputs.forEach((planned, vout) => {
+    const staged = tx.outputs[vout]
+    if (staged?.satoshis !== 0 || staged.lockingScript.toHex() !== planned.lockingScript.toLowerCase())
+      refuse('staged-mismatch', 'The wallet staged different records than you approved. Nothing was signed.')
+  })
+  let paid = 0
+  for (const input of tx.inputs) {
+    const satoshis = input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
+    if (typeof satoshis !== 'number')
+      refuse('staged-mismatch', 'The staged transaction is missing an input value. Nothing was signed.')
+    paid += satoshis
+  }
+  return paid - tx.outputs.reduce((sum, o) => sum + (o.satoshis ?? 0), 0)
+}
+
+/**
+ * Stage unsigned, hold the fee to what was approved, then sign. Refusing
+ * before `signAction` releases the reserved change; nothing reached a miner.
+ */
 async function sendIdentityRecords(
   active: ActiveWallet,
-  description: string,
+  step: IdentityRecordTx,
   outputs: DataOutput[],
 ): Promise<{ txid: string; tx: number[] }> {
   const created = await active.wallet.createAction({
-    description,
+    description: step.description,
     labels: ['bap-identity'],
     outputs,
-    options: { randomizeOutputs: false, acceptDelayedBroadcast: true },
+    options: { randomizeOutputs: false, acceptDelayedBroadcast: true, signAndProcess: false },
   })
-  const txid = typeof created.txid === 'string' ? created.txid.toLowerCase() : ''
-  const tx = created.tx ? Array.from(created.tx) : []
-  if (!/^[0-9a-f]{64}$/.test(txid) || !tx.length) throw new Error(`${description} was not signed.`)
+  const signable = created.signableTransaction
+  if (!signable?.reference || !signable.tx?.length)
+    refuse('not-signed', `${step.description} could not be staged. Nothing was signed.`)
+  const { reference } = signable
+  let fee: number
+  try {
+    fee = stagedFee(Array.from(signable.tx), outputs)
+    if (fee > step.maxFeeSats)
+      refuse(
+        'fee-over-plan',
+        `${step.description} needs a ${fee}-sat network fee, above the ${step.maxFeeSats} sats you approved. Nothing was signed.`,
+      )
+  } catch (error) {
+    await active.wallet
+      .abortAction({ reference })
+      .catch((err) => console.warn(`[identity-publish] could not release ${reference.slice(0, 12)}`, err))
+    throw error
+  }
+  const signed = await active.wallet.signAction({ reference, spends: {}, options: { acceptDelayedBroadcast: true } })
+  const txid = typeof signed.txid === 'string' ? signed.txid.toLowerCase() : ''
+  const tx = signed.tx ? Array.from(signed.tx) : []
+  if (!/^[0-9a-f]{64}$/.test(txid) || !tx.length) refuse('not-signed', `${step.description} was not signed.`)
+  console.info(`[identity-publish] ${step.purpose} ${txid.slice(0, 12)} fee ${fee} sats (approved ≤ ${step.maxFeeSats})`)
   const { registerSignedSend, startSignedSendPropagation } = await import('./signedSendLifecycle')
   const handle = await registerSignedSend({ txid, atomicBeef: tx, flow: 'identity_publish', satoshis: 0 })
   startSignedSendPropagation(handle)
@@ -156,97 +303,176 @@ function packaged(
   return recordPublishedIdentity(runtime, identityKey, pkg)
 }
 
+type Step = { tx: IdentityRecordTx; outputs: (imageTxid: string) => DataOutput[] }
+
+type Prepared = {
+  key: string
+  plan: IdentityPublishPlan
+  steps: Step[]
+  beefs: number[][]
+  /** Set when the ALIAS references an image already on chain. */
+  imageTxid?: string
+}
+
+type PlanBase = Omit<IdentityPublishPlan, 'transactions' | 'feeSats' | 'maxFeeSats' | 'digest'>
+
+const planKey = (seq: number, key: PrivateKey): IdentityPlanKey => ({
+  seq,
+  publicKey: key.toPublicKey().toString(),
+})
+
+const imageOutput = (signer: Signer, bapId: string, image: IssuerIdentityImage): DataOutput => ({
+  lockingScript: bFileScript(image),
+  satoshis: 0,
+  outputDescription: 'Identity image',
+  basket: signer.basket,
+  tags: ['type:image', `bapId:${bapId}`],
+})
+
 /**
- * Publish or update an identity's profile. Without a key chain, the root
- * declares `identity-1` beside the ALIAS; with one (stored, or held from an
- * earlier publish or another app), only a new ALIAS signed by the current key
- * is written. A new image is its own B:// file transaction; an unchanged image
- * is referenced again, never re-uploaded.
+ * The records a publish or rotation writes, from what this wallet knows now.
+ * Quote and publish both build through here, so an approved digest pins the
+ * exact scripts that get signed.
+ *
+ * Profile: without a key chain the root declares `identity-1` beside the
+ * ALIAS; with one, only a new ALIAS signed by the current key. A new image is
+ * its own B:// transaction; an unchanged one is referenced, never re-uploaded.
+ *
+ * Rotation: the outgoing key declares `identity-N+1`, which re-signs the same
+ * profile in the same transaction. Assets the old key signed stay attributed
+ * when mined before the rotation is.
  */
-export async function publishIssuerIdentity(
-  runtime: WalletRuntime,
-  identityKey: string,
-  fields: IssuerIdentityFields,
-  image: IssuerIdentityImage | null,
-): Promise<IssuerIdentity> {
-  const key = normalizeIssuerIdentityKey(identityKey)
-  if (!key) throw new Error('Invalid issuer identity key.')
-  const clean = issuerIdentityFields(fields)
-  const bitmap = image ? issuerIdentityImage(image) : null
-  const started = Date.now()
-  return runExclusiveSpend(async () => {
-    const active = assertCurrent(runtime)
-    const signer = signerFor(runtime, key)
-    const { master } = signer
-    const bapId = bapIdFor(master)
-    const prior = publishedIdentityForIssuer(runtime, key)
-    const beefs = await knownRecords(active, signer.basket, bapId)
-    assertCurrent(runtime)
-    const chain = bapKeyChain(bapId, beefs)
-    if (chain?.revoked) throw new Error('This identity was revoked and cannot be updated.')
-    const signingKey = chain ? currentIssuerSigningKey(master, chain) : bapKey(master, 1)
-    let imageTxid = prior?.imageTxid
-    if (bitmap && !(imageTxid && prior?.image && sameImage(prior.image, bitmap))) {
-      const file = await sendIdentityRecords(active, 'Issuer identity image', [
-        {
-          lockingScript: bFileScript(bitmap),
-          satoshis: 0,
-          outputDescription: 'Identity image',
-          basket: signer.basket,
-          tags: ['type:image', `bapId:${bapId}`],
-        },
-      ])
-      imageTxid = file.txid
-      beefs.push(file.tx)
-      assertCurrent(runtime)
+async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest): Promise<Prepared> {
+  const key = normalizeIssuerIdentityKey(request.identityKey)
+  if (!key) refuse('invalid-key', 'Invalid issuer identity key.')
+  const fields = request.kind === 'profile' ? issuerIdentityFields(request.fields) : null
+  const bitmap = request.kind === 'profile' && request.image ? issuerIdentityImage(request.image) : null
+  const active = assertCurrent(runtime)
+  const signer = signerFor(runtime, key)
+  const { master } = signer
+  const bapId = bapIdFor(master)
+  const prior = publishedIdentityForIssuer(runtime, key)
+  const beefs = await knownRecords(active, signer.basket, bapId)
+  assertCurrent(runtime)
+  const chain = bapKeyChain(bapId, beefs)
+  if (chain?.revoked) refuse('revoked', 'This identity was revoked and cannot be updated.')
+  const who = { identityKey: key, bapId, signer: signer.own ? ('wallet' as const) : ('imported' as const) }
+  const steps: Step[] = []
+  let base: PlanBase
+  let imageTxid: string | undefined
+  if (!fields) {
+    if (!prior) refuse('not-published', 'Publish the identity before rotating its key.')
+    if (!prior.imageTxid) refuse('no-image', 'Publish an image before rotating the key.')
+    if (!chain) refuse('missing-package', 'The identity package is missing; restore an identity backup.')
+    const seq = chain.keys.at(-1)!.seq
+    const outgoing = currentIssuerSigningKey(master, chain)
+    const next = bapKey(master, seq + 1)
+    imageTxid = prior.imageTxid
+    const profile = issuerProfile({ name: prior.name, description: prior.description }, imageTxid)
+    const outputs = [
+      idOutput(signer, bapId, seq + 1, bapIdScript({ bapId, address: next.toAddress(), signer: outgoing })),
+      aliasOutput(signer, bapId, bapAliasScript({ bapId, profile, signer: next })),
+    ]
+    steps.push({ tx: recordTx('rotate', 'Rotate issuer signing key', outputs), outputs: () => outputs })
+    base = {
+      kind: 'rotate',
+      ...who,
+      name: prior.name,
+      description: prior.description,
+      image: { status: 'reused', txid: imageTxid },
+      signingKey: planKey(seq + 1, next),
+      retiredKey: planKey(seq, outgoing),
     }
-    if (!imageTxid) throw new Error('Choose an image first.')
-    const outputs: DataOutput[] = []
-    if (!chain)
-      outputs.push(
-        idOutput(signer, bapId, 1, bapIdScript({ bapId, address: bapAddress(master, 1), signer: bapKey(master, 0) })),
-      )
-    outputs.push(
-      aliasOutput(signer, bapId, bapAliasScript({ bapId, profile: issuerProfile(clean, imageTxid), signer: signingKey })),
-    )
-    const alias = await sendIdentityRecords(active, chain ? 'Update issuer identity' : 'Publish issuer identity', outputs)
-    beefs.push(alias.tx)
-    const identity = packaged(runtime, key, bapId, beefs, alias.txid)
-    logSlow('publish', started)
-    return identity
-  })
+  } else {
+    imageTxid =
+      prior?.imageTxid && (!bitmap || (prior.image && sameImage(prior.image, bitmap))) ? prior.imageTxid : undefined
+    if (!imageTxid && !bitmap) refuse('no-image', 'Choose an image first.')
+    const seq = chain ? chain.keys.at(-1)!.seq : 1
+    const signingKey = chain ? currentIssuerSigningKey(master, chain) : bapKey(master, 1)
+    if (!imageTxid) {
+      const outputs = [imageOutput(signer, bapId, bitmap!)]
+      steps.push({ tx: recordTx('image', 'Issuer identity image', outputs), outputs: () => outputs })
+    }
+    const records = (txid: string): DataOutput[] => [
+      ...(chain
+        ? []
+        : [idOutput(signer, bapId, 1, bapIdScript({ bapId, address: bapAddress(master, 1), signer: bapKey(master, 0) }))]),
+      aliasOutput(signer, bapId, bapAliasScript({ bapId, profile: issuerProfile(fields, txid), signer: signingKey })),
+    ]
+    steps.push({
+      tx: recordTx(
+        chain ? 'update' : 'publish',
+        chain ? 'Update issuer identity' : 'Publish issuer identity',
+        records(imageTxid ?? UNSIGNED_IMAGE_TXID),
+      ),
+      outputs: records,
+    })
+    base = {
+      kind: chain ? 'update' : 'publish',
+      ...who,
+      name: fields.name,
+      description: fields.description,
+      image: imageTxid
+        ? { status: 'reused', txid: imageTxid }
+        : { status: 'new', bytes: bitmap!.bytes.length, contentType: bitmap!.contentType },
+      signingKey: planKey(seq, signingKey),
+      retiredKey: null,
+    }
+  }
+  const transactions = steps.map((step) => step.tx)
+  const body = {
+    ...base,
+    transactions,
+    feeSats: transactions.reduce((sum, tx) => sum + tx.feeSats, 0),
+    maxFeeSats: transactions.reduce((sum, tx) => sum + tx.maxFeeSats, 0),
+  }
+  const scripts = steps.map((step) =>
+    step.outputs(imageTxid ?? UNSIGNED_IMAGE_TXID).map((output) => output.lockingScript),
+  )
+  const digest = Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify({ plan: body, scripts }), 'utf8')))
+  return { key, plan: { ...body, digest }, steps, beefs, imageTxid }
+}
+
+/** What publishing `request` would sign and cost. Signs nothing. */
+export async function planIdentityPublish(
+  runtime: WalletRuntime,
+  request: IdentityPublishRequest,
+): Promise<IdentityPublishPlan> {
+  const started = Date.now()
+  const { plan } = await prepare(runtime, request)
+  logSlow('quote', started)
+  return plan
 }
 
 /**
- * Retire the current signing key: the outgoing key declares `identity-N+1`,
- * which re-signs the same profile in the same transaction. Assets the old key
- * signed stay attributed when mined before this rotation is.
+ * Sign and broadcast an approved plan. It is rebuilt under the spend lock: a
+ * rotation, a new image or a wallet switch since review refuses rather than
+ * signing records the user never saw, and each transaction's fee is held to
+ * its approved ceiling before it is signed.
  */
-export async function rotateIssuerSigningKey(runtime: WalletRuntime, identityKey: string): Promise<IssuerIdentity> {
-  const key = normalizeIssuerIdentityKey(identityKey)
-  if (!key) throw new Error('Invalid issuer identity key.')
+export async function publishIdentityPlan(
+  runtime: WalletRuntime,
+  request: IdentityPublishRequest,
+  approved: IdentityPublishPlan,
+): Promise<IssuerIdentity> {
   const started = Date.now()
   return runExclusiveSpend(async () => {
+    const prepared = await prepare(runtime, request)
+    if (prepared.plan.digest !== approved.digest)
+      refuse('plan-changed', 'This identity changed since you reviewed it. Review the publish again.')
     const active = assertCurrent(runtime)
-    const signer = signerFor(runtime, key)
-    const prior = publishedIdentityForIssuer(runtime, key)
-    if (!prior) throw new Error('Publish the identity before rotating its key.')
-    if (!prior.imageTxid) throw new Error('Publish an image before rotating the key.')
-    const beefs = await knownRecords(active, signer.basket, prior.bapId)
-    assertCurrent(runtime)
-    const chain = bapKeyChain(prior.bapId, beefs)
-    if (!chain) throw new Error('The identity package is missing; restore an identity backup.')
-    if (chain.revoked) throw new Error('This identity was revoked.')
-    const outgoing = currentIssuerSigningKey(signer.master, chain)
-    const seq = chain.keys.at(-1)!.seq + 1
-    const next = bapKey(signer.master, seq)
-    const profile = issuerProfile({ name: prior.name, description: prior.description }, prior.imageTxid)
-    const rotation = await sendIdentityRecords(active, 'Rotate issuer signing key', [
-      idOutput(signer, prior.bapId, seq, bapIdScript({ bapId: prior.bapId, address: next.toAddress(), signer: outgoing })),
-      aliasOutput(signer, prior.bapId, bapAliasScript({ bapId: prior.bapId, profile, signer: next })),
-    ])
-    const identity = packaged(runtime, key, prior.bapId, [...beefs, rotation.tx], rotation.txid)
-    logSlow('rotate', started)
+    let imageTxid = prepared.imageTxid
+    let aliasTxid = ''
+    for (const step of prepared.steps) {
+      if (step.tx.purpose !== 'image' && !imageTxid) refuse('no-image', 'Choose an image first.')
+      const sent = await sendIdentityRecords(active, step.tx, step.outputs(imageTxid ?? UNSIGNED_IMAGE_TXID))
+      prepared.beefs.push(sent.tx)
+      if (step.tx.purpose === 'image') imageTxid = sent.txid
+      else aliasTxid = sent.txid
+      assertCurrent(runtime)
+    }
+    const identity = packaged(runtime, prepared.key, approved.bapId, prepared.beefs, aliasTxid)
+    logSlow(approved.kind, started)
     return identity
   })
 }

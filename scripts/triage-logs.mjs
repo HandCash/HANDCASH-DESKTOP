@@ -1990,6 +1990,7 @@ function bridgeFacts(events) {
   const methodFor = (m) => byMethod.get(m) ?? byMethod.set(m, { method: m, requests: 0, answered: 0, errors: 0, latencies: [] }).get(m)
   const open = new Map()
   const errorCodes = new Map()
+  const errorFamilies = new Map()
   const slowest = []
   let noReply = 0
   let requests = 0
@@ -2011,6 +2012,12 @@ function bridgeFacts(events) {
     if (m) {
       methodFor(m[2]).errors += 1
       errorCodes.set(m[3], (errorCodes.get(m[3]) ?? 0) + 1)
+      const reason = family(e.text.slice(e.text.indexOf(' error: ') + 8))
+      const famKey = `${m[2]} ${reason}`
+      const fam = errorFamilies.get(famKey) ?? { method: m[2], reason, count: 0, firstAt: e.at, lastAt: e.at }
+      fam.count += 1
+      fam.lastAt = e.at
+      errorFamilies.set(famKey, fam)
       if (HTTP_NO_REPLY_RE.test(e.text)) noReply += 1
       continue
     }
@@ -2062,6 +2069,10 @@ function bridgeFacts(events) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
       .map(([code, count]) => ({ code, count })),
+    errorFamilies: [...errorFamilies.values()]
+      .sort((a, b) => b.lastAt - a.lastAt)
+      .slice(0, 14)
+      .map((f) => ({ ...f, firstAt: new Date(f.firstAt).toISOString(), lastAt: new Date(f.lastAt).toISOString() })),
     slowest: slowest
       .sort((a, b) => b.ms - a.ms)
       .slice(0, 6),

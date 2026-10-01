@@ -105,6 +105,13 @@ export type PendingAction = {
   itemImageUrl?: string
   itemIcon?: string
   previewKind?: 'token' | 'collectable'
+  /** Published identity whose BAP key signs this mint; the prompt always shows it. */
+  issuance?: {
+    identityKey: string
+    displayName?: string
+    /** The wallet funds and sends a 2-sat Sigma anchor transaction with the mint. */
+    anchor: boolean
+  }
   createdAt: number
 }
 
@@ -1221,11 +1228,10 @@ export function requestActionApproval(
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
     summarizeAction(method, args)
-  if (issuer) {
-    details.push(`Issuer: ${issuer.displayName ?? 'Wallet identity'} · ${issuer.identityKey}`)
-    const body = asRecord(args)
-    if (!Array.isArray(body.inputs) || body.inputs.length === 0) details.push('Includes a 2-sat Sigma signing anchor transaction and its network fee')
-  }
+  const inputs = asRecord(args).inputs
+  const issuance = issuer
+    ? { ...issuer, anchor: !Array.isArray(inputs) || inputs.length === 0 }
+    : undefined
   const itemSpend =
     isItemSpendArgs(method, args) ||
     isBsv21SpendArgs(method, args)
@@ -1233,9 +1239,10 @@ export function requestActionApproval(
   const incomingFunds = method === 'internalizeAction' && !itemReceive
   const identityMint = isBsv21IdentityMintArgs(method, args)
 
-  // Item send / receive and identity-backed token mints are never covered by
-  // Pay or Auto-pay. Send / mint always prompt; receive may reuse a prior grant.
-  if (itemSpend || identityMint) {
+  // Item send / receive and anything signed by an issuer identity are never
+  // covered by Pay or Auto-pay. Send / mint always prompt; receive may reuse a
+  // prior grant.
+  if (itemSpend || identityMint || issuance) {
     // fall through to prompt
   } else if (itemReceive) {
     const access = getItemAccess(key)
@@ -1277,6 +1284,7 @@ export function requestActionApproval(
     itemImageUrl,
     itemIcon,
     previewKind,
+    ...(issuance ? { issuance } : {}),
     createdAt: Date.now(),
   }).then((decision) => {
     if (decision === 'allow' && isIdentityProofMethod(method)) {

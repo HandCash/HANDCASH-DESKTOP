@@ -72,6 +72,8 @@ import { Composer, Thread } from '@aeon-ui/react'
 import type { ComposerState } from '@aeon-ui/react'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { usePeerIdentity } from '../hooks/usePeerIdentity'
+import { PeerAvatar, PeerIdentityLine } from './PeerIdentity'
 import { EmptyState } from './EmptyState'
 import {
   AttachFileIcon,
@@ -98,9 +100,26 @@ function navRoutedChat(props: { nestedInNav?: boolean; fullscreen?: boolean }): 
   return Boolean(props.nestedInNav || props.fullscreen)
 }
 
-function friendInitial(label: string): string {
-  const t = label.trim()
-  return t ? t.slice(0, 1).toUpperCase() : '?'
+function ChatPeerAvatar({ label, identityKey, chain }: { label: string; identityKey?: string; chain: Chain }) {
+  const peer = usePeerIdentity(chain, identityKey)
+  return <PeerAvatar label={label} peer={peer} />
+}
+
+function ChatThreadPeer({ friend, chain }: { friend: Friend; chain: Chain }) {
+  const peer = usePeerIdentity(chain, friend.identityKey, friend)
+  return (
+    <>
+      <PeerAvatar label={friend.label} peer={peer} className="friend-avatar chat-thread-avatar" />
+      <div className="chat-thread-titles">
+        <strong>{friend.label}</strong>
+        {peer ? (
+          <PeerIdentityLine peer={peer} />
+        ) : (
+          <span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>
+        )}
+      </div>
+    </>
+  )
 }
 
 function formatTime(ts: number): string {
@@ -1261,9 +1280,7 @@ export function MessagesPanel({
                     data-selected={selected ? '' : undefined}
                     onClick={() => selectPeer(id)}
                   >
-                    <span className="friend-avatar" aria-hidden>
-                      {friendInitial(label)}
-                    </span>
+                    <ChatPeerAvatar label={label} identityKey={friend?.identityKey} chain={chain} />
                     <span className="chat-peer-body">
                       <span className="chat-peer-top">
                         <strong className="chat-peer-name">{label}</strong>
@@ -1302,13 +1319,7 @@ export function MessagesPanel({
                   ←
                 </button>
               ) : null}
-              <span className="friend-avatar chat-thread-avatar" aria-hidden>
-                {friendInitial(activeFriend.label)}
-              </span>
-              <div className="chat-thread-titles">
-                <strong>{activeFriend.label}</strong>
-                <span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>
-              </div>
+              <ChatThreadPeer friend={activeFriend} chain={chain} />
             </header>
             ) : null}
             <nav className="chat-thread-tabs panel-label-bar" aria-label="Thread sections">

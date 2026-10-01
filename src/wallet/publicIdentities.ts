@@ -61,6 +61,10 @@ type Store = {
   chain: 'main' | 'test'
   selected: string
   identities: ManagedPublicIdentity[]
+  /** Master key whose published identity this wallet presents to peers. */
+  presented?: string
+  /** When `presented` last changed; the identity card's statement time. */
+  presentedAt?: string
 }
 type StoreV1 = {
   version: 1
@@ -173,7 +177,27 @@ function validateStore(raw: unknown, active: ActiveWallet): Store {
   })
   if (store.selected !== store.owner && !identities.some((row) => row.identityKey === store.selected))
     throw new Error('Selected issuer is not controlled by this wallet.')
-  return { version: 2, owner: store.owner, chain: store.chain, selected: store.selected, identities }
+  const presentedAt = store.presentedAt === undefined ? undefined : canonicalTime(store.presentedAt)
+  if (store.presentedAt !== undefined && !presentedAt) throw new Error('Invalid presented identity time.')
+  if (
+    store.presented !== undefined &&
+    (!presentedAt || !identities.some((row) => row.identityKey === store.presented && row.published))
+  )
+    throw new Error('Presented identity is not published by this wallet.')
+  return {
+    version: 2,
+    owner: store.owner,
+    chain: store.chain,
+    selected: store.selected,
+    identities,
+    ...(store.presented !== undefined ? { presented: store.presented } : {}),
+    ...(presentedAt ? { presentedAt } : {}),
+  }
+}
+function canonicalTime(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) && new Date(ms).toISOString() === value ? value : null
 }
 let cached: { owner: string; raw: string; store: Store } | undefined
 function read(active: ActiveWallet): Store {
@@ -346,11 +370,64 @@ export function selectPublicIdentity(runtime: WalletRuntime, identityKey: string
 export function removePublicIdentity(runtime: WalletRuntime, identityKey: string) {
   const store = read(activeOrThrow(runtime))
   if (identityKey === store.owner) throw new Error('The wallet identity cannot be removed.')
+  const { presented, presentedAt, ...rest } = store
   write(runtime, {
-    ...store,
+    ...rest,
     selected: store.selected === identityKey ? store.owner : store.selected,
     identities: store.identities.filter((row) => row.identityKey !== identityKey),
+    ...(presented === identityKey
+      ? { presentedAt: nextPresentedAt(presentedAt) }
+      : { ...(presented ? { presented } : {}), ...(presentedAt ? { presentedAt } : {}) }),
   })
+}
+/** Strictly after the previous statement, so peers never see two cards at one time. */
+function nextPresentedAt(previous: string | undefined): string {
+  const floor = previous ? Date.parse(previous) + 1 : 0
+  return new Date(Math.max(Date.now(), floor)).toISOString()
+}
+export function presentedPublicIdentityKey(runtime: WalletRuntime | null): string | null {
+  return read(activeOrThrow(runtime)).presented ?? null
+}
+/** Present a published identity to peers, or stop presenting with `null`. */
+export function presentPublicIdentity(runtime: WalletRuntime, identityKey: string | null) {
+  const store = read(activeOrThrow(runtime))
+  const key = identityKey === null ? null : normalizeIssuerIdentityKey(identityKey)
+  if (identityKey !== null && !store.identities.some((row) => row.identityKey === key && row.published))
+    throw new Error('Publish this identity before presenting it.')
+  if ((store.presented ?? null) === key) return
+  const { presented: _drop, ...rest } = store
+  write(runtime, {
+    ...rest,
+    ...(key ? { presented: key } : {}),
+    presentedAt: nextPresentedAt(store.presentedAt),
+  })
+}
+export type PresentedIdentityMaterial =
+  | {
+      kind: 'presented'
+      issuedAt: string
+      pkg: IssuerIdentityPackage
+      identity: IssuerIdentity
+      signingKey: PrivateKey
+    }
+  | { kind: 'withdrawn'; issuedAt: string }
+/** What this wallet's identity card says now; null before it ever presented one. */
+export function presentedIdentityMaterial(runtime: WalletRuntime): PresentedIdentityMaterial | null {
+  const active = activeOrThrow(runtime)
+  const store = read(active)
+  if (!store.presentedAt) return null
+  if (!store.presented) return { kind: 'withdrawn', issuedAt: store.presentedAt }
+  const row = rowFor(store, store.presented)
+  const pkg = row.published ? issuerIdentityPackage(active.chain, row.published) : null
+  const identity = row.published ? issuerIdentityFor(active.chain, row.published) : null
+  if (!pkg || !identity || identity.revoked) return null
+  return {
+    kind: 'presented',
+    issuedAt: store.presentedAt,
+    pkg,
+    identity,
+    signingKey: currentIssuerSigningKey(masterOf(active, store.owner, row), identity),
+  }
 }
 /** Sealed keys plus the identity packages they publish. */
 export function exportPublicIdentityBackup(runtime: WalletRuntime): string {

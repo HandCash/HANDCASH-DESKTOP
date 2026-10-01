@@ -33,7 +33,9 @@ An identity is a [BAP](https://github.com/BitcoinSchema/bap/blob/master/PROTOCOL
 
 **Image.** The picked file is drawn through a canvas, centre-cropped square, at most 512 px, then encoded as WebP (JPEG where the device cannot encode WebP). Quality and size step down until the result fits in 64 KB. Re-encoding removes EXIF and every other metadata block, including GPS location. There is no URL field.
 
-**Text.** Name: 1–80 characters. Bio: up to 280 characters. Publishing asks for confirmation that the image, name and bio become public and permanent.
+**Text.** Name: 1–80 characters. Bio: up to 280 characters.
+
+**Approval.** Publishing, updating and rotating go through the wallet's own transaction approval (`planIdentityPublish` → review → `publishIdentityPlan`). The review lists every record transaction (image, ID, ALIAS), each output's size, the estimated network fee and a per-transaction fee ceiling, the key that will sign assets from then on (and the key a rotation retires), and whether the image is new or already on-chain. Nothing is signed before approval. On approval the plan is rebuilt under the spend lock; a plan whose digest moved (another rotation, a different image or text, a wallet switch) is refused as `plan-changed`. Each transaction is staged unsigned, checked to carry exactly the approved records, and aborted unsigned (change released) when its fee is over the ceiling (`fee-over-plan`). Only then is it signed and sent through the signed-send lifecycle.
 
 ## Publish, update, rotate
 

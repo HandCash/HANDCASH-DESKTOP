@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.397] - 2026-10-01
+
+Your issuer identity travels peer to peer: contacts get it straight from your wallet as a signed card, with no HandCash server in between. Publishing or rotating an identity now goes through a real transaction approval.
+
+### Added
+
+- **Identity cards, peer to peer.** Choose a published identity under Settings → Public identities → Show to contacts. Saved contacts you message or pay then receive a card with its name, image and BAP ID. The card is signed by your wallet key and the identity's key and carries the identity's BEEF proof. It travels over the messagebox or a direct session; no indexer or HandCash server is involved. Cards go only to saved contacts, never to market counterparties or strangers. They are sent once per version, and Stop showing tells contacts who saw the card. Received cards are verified before they are stored: both signatures, the proof against block headers, an active signer, not revoked, and never older than one already held.
+- **Contacts show who they are.** Friends, chat threads, friend details and Add friend show a contact's presented identity, with its image, the HandCash checkmark or look-alike caution, and the BAP fingerprint. Friend details can ask a contact for their card, or import a card file. **Share identity card** downloads yours as a file.
+- **Identity mint approval.** Publish, update and key rotation open a review before anything is signed. It lists every record transaction (image, ID, ALIAS), each output's size, the estimated network fee and a per-transaction fee ceiling, the key that will sign your assets, and whether the image is new or already on-chain.
+
+### Fixed
+
+- **Identity publishing fails closed.** An approved plan is rebuilt under the spend lock and refused (`plan-changed`) if anything moved since review. Each record transaction is staged unsigned and checked to carry exactly the approved records. It is aborted with its change released when its fee exceeds the approved ceiling (`fee-over-plan`).
+- **BRC-100 issuance always shows the signer.** Any action signed by an issuer identity always prompts, never Auto-pay. The prompt always names the signing identity and the extra Sigma anchor transaction; before, these could be cut from the detail lines.
+- **Support triage groups bridge errors.** Local desktop triage now groups BRC-100 bridge errors by method and reason.
+
 ## [1.3.396] - 2026-10-01
 
 Handles carry real signed certificates, and every issuer identity shows a fingerprint that a look-alike cannot copy. Issuers that HandCash verifies get a checkmark.

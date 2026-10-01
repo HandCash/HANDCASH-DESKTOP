@@ -13,20 +13,18 @@ import {
 } from '../wallet/collectionView'
 import { openAddFriend, openFriendDetails, openMessagesInbox } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { EmptyState } from './EmptyState'
 import { MessagesIcon, PersonAddIcon } from './icons'
+import { PeerAvatar, PeerIdentityLine } from './PeerIdentity'
 
 type Props = {
   chain: Chain
 }
 
-function friendInitial(label: string): string {
-  const t = label.trim()
-  return t ? t.slice(0, 1).toUpperCase() : '?'
-}
-
-function FriendListItem({ friend }: { friend: Friend }) {
+function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
+  const peer = usePeerIdentity(chain, friend.identityKey)
   return (
     <li className="friend-row">
       <button
@@ -37,21 +35,24 @@ function FriendListItem({ friend }: { friend: Friend }) {
           openFriendDetails(friend.id)
         }}
       >
-        <span className="friend-avatar" aria-hidden>
-          {friendInitial(friend.label)}
-        </span>
+        <PeerAvatar label={friend.label} peer={peer} />
         <div className="friend-row-body">
           <strong className="friend-label">{friend.label}</strong>
-          <span className="friend-key mono" title={friend.identityKey}>
-            {friend.identityKey}
-          </span>
+          {peer ? (
+            <PeerIdentityLine peer={peer} />
+          ) : (
+            <span className="friend-key mono" title={friend.identityKey}>
+              {friend.identityKey}
+            </span>
+          )}
         </div>
       </button>
     </li>
   )
 }
 
-function FriendGridItem({ friend }: { friend: Friend }) {
+function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
+  const peer = usePeerIdentity(chain, friend.identityKey)
   return (
     <li className="collection-grid-card friend-grid-card">
       <button
@@ -62,19 +63,21 @@ function FriendGridItem({ friend }: { friend: Friend }) {
           openFriendDetails(friend.id)
         }}
       >
-        <span className="friend-avatar friend-avatar-lg" aria-hidden>
-          {friendInitial(friend.label)}
-        </span>
+        <PeerAvatar label={friend.label} peer={peer} className="friend-avatar friend-avatar-lg" />
         <strong className="collection-grid-name">{friend.label}</strong>
-        <span className="collection-grid-host friend-key mono" title={friend.identityKey}>
-          {friend.identityKey}
-        </span>
+        {peer ? (
+          <PeerIdentityLine peer={peer} />
+        ) : (
+          <span className="collection-grid-host friend-key mono" title={friend.identityKey}>
+            {friend.identityKey}
+          </span>
+        )}
       </button>
     </li>
   )
 }
 
-export function FriendsPanel({ chain: _chain }: Props) {
+export function FriendsPanel({ chain }: Props) {
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [view, setView] = useState<CollectionView>(() => getCollectionView('friends'))
   const [query, setQuery] = useState('')
@@ -168,13 +171,13 @@ export function FriendsPanel({ chain: _chain }: Props) {
           ) : view === 'grid' ? (
             <ul className="collection-grid friends-grid">
               {filtered.map((friend) => (
-                <FriendGridItem key={friend.id} friend={friend} />
+                <FriendGridItem key={friend.id} friend={friend} chain={chain} />
               ))}
             </ul>
           ) : (
             <ul className="friends-list">
               {filtered.map((friend) => (
-                <FriendListItem key={friend.id} friend={friend} />
+                <FriendListItem key={friend.id} friend={friend} chain={chain} />
               ))}
             </ul>
           )}

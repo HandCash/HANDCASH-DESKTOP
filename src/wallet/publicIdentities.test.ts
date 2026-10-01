@@ -31,6 +31,9 @@ import {
   importIssuerPrivateKey,
   issuanceSigner,
   listPublicIdentities,
+  presentedIdentityMaterial,
+  presentedPublicIdentityKey,
+  presentPublicIdentity,
   recordPublishedIdentity,
   removePublicIdentity,
   restorePublicIdentityBackup,
@@ -210,5 +213,54 @@ describe('published identity', () => {
       [importedId, 'imported', null],
     ])
     expect(issuanceSigner(runtime()).rootKeyHex).toBe(imported.toHex().padStart(64, '0'))
+  })
+})
+describe('presented identity', () => {
+  it('presents only a published identity and signs with its current BAP key', () => {
+    expect(presentedIdentityMaterial(runtime())).toBeNull()
+    expect(() => presentPublicIdentity(runtime(), rootId)).toThrow(/Publish this identity/)
+    const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
+    recordPublishedIdentity(runtime(), rootId, f.pkg)
+    presentPublicIdentity(runtime(), rootId)
+    expect(presentedPublicIdentityKey(runtime())).toBe(rootId)
+    const material = presentedIdentityMaterial(runtime())
+    expect(material).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId }, pkg: { bapId: f.bapId } })
+    expect(material?.kind === 'presented' && pub(material.signingKey)).toBe(pub(f.signer))
+  })
+
+  it('stopping, or removing the presented signer, withdraws with a strictly later statement', () => {
+    importIssuerPrivateKey(runtime(), imported.toWif())
+    const f = bapIdentityFixture({ master: imported, name: 'Imported studio' })
+    recordPublishedIdentity(runtime(), importedId, f.pkg)
+    presentPublicIdentity(runtime(), importedId)
+    const shown = presentedIdentityMaterial(runtime())!
+    removePublicIdentity(runtime(), importedId)
+    const withdrawn = presentedIdentityMaterial(runtime())!
+    expect(withdrawn.kind).toBe('withdrawn')
+    expect(Date.parse(withdrawn.issuedAt)).toBeGreaterThan(Date.parse(shown.issuedAt))
+    expect(presentedPublicIdentityKey(runtime())).toBeNull()
+    presentPublicIdentity(runtime(), null)
+    expect(presentedIdentityMaterial(runtime())?.issuedAt).toBe(withdrawn.issuedAt)
+  })
+
+  it('refuses a stored presentation that names an unpublished identity', () => {
+    const key = accountLocalKeyFor(storageRegistry.publicIdentities.key, {
+      identityKey: rootId,
+      accountIndex: 0,
+      chain: 'main',
+    })
+    state.values.set(
+      key,
+      JSON.stringify({
+        version: 2,
+        owner: rootId,
+        chain: 'main',
+        selected: rootId,
+        identities: [],
+        presented: rootId,
+        presentedAt: '2026-09-01T00:00:00.000Z',
+      }),
+    )
+    expect(() => listPublicIdentities(runtime())).toThrow(/not published/)
   })
 })
