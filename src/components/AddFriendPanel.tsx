@@ -3,7 +3,6 @@ import { addFriendFromRecipient } from '../wallet/friends'
 import { clearNavChild, getNavState } from '../wallet/navStore'
 import {
   createHandleResolveDebouncer,
-  isVerifiedHandleCertificate,
   parseHandleInput,
   type ResolvedHandle,
 } from '../wallet/handleResolve'
@@ -39,9 +38,6 @@ export function AddFriendPanel() {
   const canSetCustomLabel = Boolean(trimmedRecipient && !isHandleInput)
   /** Peerpay has no useful default display — require a label. Identity key falls back. */
   const needsLabel = Boolean(trimmedRecipient && isPeerPayInput)
-  const verifiedHandle =
-    resolvedHandle && isVerifiedHandleCertificate(resolvedHandle.certificate)
-
   const canSubmit = useMemo(() => {
     if (!trimmedRecipient || add.busy) return false
     if (needsLabel && !label.trim()) return false
@@ -137,7 +133,7 @@ export function AddFriendPanel() {
                 </span>
                 <div>
                   <span className="add-friend-preview-label">
-                    {verifiedHandle ? 'Verified handle' : 'Handle found'}
+                    Verified handle
                   </span>
                   <strong>{resolvedHandle.display}</strong>
                 </div>

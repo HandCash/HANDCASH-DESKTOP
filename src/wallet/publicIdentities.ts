@@ -15,8 +15,11 @@ import {
   issuerIdentityFor,
   issuerIdentityPackage,
   rememberIssuerIdentityPackage,
+  storedIssuerIdentities,
 } from './issuerIdentities'
 import { normalizeBapId, normalizeIssuerIdentityKey } from './issuerMetadata'
+import { issuerTrustFrom, type IssuerTrust } from './issuerTrust'
+import { listedVerifiedIssuers, verifiedIssuerFor } from './verifiedIssuers'
 import type { ActiveWallet } from './session'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
@@ -454,6 +457,22 @@ export function issuerAttributionResolver(
     memo.set(key, attribution)
     return attribution
   }
+}
+
+/** HandCash listing and look-alike names for one pass; stored identities are read once. */
+export function issuerTrustResolver(runtime: WalletRuntime | null): IssuerTrust {
+  return issuerTrustFrom({
+    listed: verifiedIssuerFor,
+    listedEntries: listedVerifiedIssuers(),
+    storedIdentities: () => {
+      if (!runtime || !runtimeIsCurrent(runtime)) return []
+      try {
+        return storedIssuerIdentities(runtime.instance.chain)
+      } catch {
+        return []
+      }
+    },
+  })
 }
 
 export function displayIssuerIdentity(

@@ -54,7 +54,7 @@ import { useDetailActionDock } from './WalletActionDock'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { useIssuerView } from '../hooks/useIssuerView'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
-import { IssuerIdentityMark } from './IssuerIdentityMark'
+import { IssuerIdentityMark, issuerTrustNote } from './IssuerIdentityMark'
 
 type Props = {
   tokenId: string
@@ -483,6 +483,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               value={issuerBap.bap.id}
               copyLabel="BAP ID"
             />
+          ) : null}
+          {issuerBap?.bap ? (
+            <MetaRow label="Verification" value={issuerTrustNote(issuerBap) ?? ''} />
           ) : null}
           {isLegacy ? (
             <MetaRow

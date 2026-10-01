@@ -4,6 +4,12 @@ import {
   type IssuerIdentity,
 } from './issuerIdentity'
 import type { Collectable } from './collectables'
+import {
+  NO_ISSUER_TRUST,
+  type IssuerNameCaution,
+  type IssuerTrust,
+  type VerifiedIssuer,
+} from './issuerTrust'
 import { normalizeIssuerPubKey, shortIssuerLabel } from './token/issuer'
 import type { FungibleToken } from './token/types'
 
@@ -46,6 +52,7 @@ export type CollectableIssuer = {
   icon?: string
   bapId?: string
   bapState?: IssuerBap['state']
+  bap?: IssuerBap
   issuerAttested?: boolean
   label: string
   app?: string
@@ -144,6 +151,10 @@ export type IssuerBap = {
   state: 'verified' | 'unconfirmed'
   /** Newest profile the stored package proves; only on `verified`. */
   identity?: IssuerIdentity
+  /** On HandCash's signed verified-issuer list; only on `verified`. */
+  listed?: VerifiedIssuer
+  /** The name reads like another identity's; only on `verified`, never with `listed`. */
+  caution?: IssuerNameCaution
 }
 
 /** How a signed asset's issuer reads everywhere in Collect: shelf, chip and details. */
@@ -164,6 +175,7 @@ export type IssuerView = {
 export function issuerViewFor(
   asset: { issuer?: string; issuerAttested?: boolean; bapId?: string; origin?: string },
   identityFor: IssuerIdentityResolver,
+  trust: IssuerTrust = NO_ISSUER_TRUST,
 ): IssuerView | null {
   const issuer = normalizeIssuerPubKey(asset.issuer)
   if (!issuer) return null
@@ -178,11 +190,19 @@ export function issuerViewFor(
   const attribution = identityFor({ issuer, bapId: asset.bapId, origin: asset.origin })
   if (attribution?.kind === 'verified' && (!asset.bapId || attribution.identity.bapId === asset.bapId)) {
     const { identity } = attribution
+    const listed = trust.listed(identity.bapId)
+    const caution = listed ? null : trust.caution(identity.bapId, identity.name)
     return {
       ...signed,
       key: `issuer:bap:${identity.bapId}`,
       label: identity.name,
-      bap: { id: identity.bapId, state: 'verified', identity },
+      bap: {
+        id: identity.bapId,
+        state: 'verified',
+        identity,
+        ...(listed ? { listed } : {}),
+        ...(caution ? { caution } : {}),
+      },
     }
   }
   if (attribution?.kind === 'unconfirmed' && attribution.bapId === asset.bapId)
@@ -207,8 +227,9 @@ type IssuerMeta = {
 function issuerKeyFor(
   item: Collectable,
   identityFor: IssuerIdentityResolver,
+  trust: IssuerTrust,
 ): IssuerMeta | null {
-  const keyed = issuerViewFor(item, identityFor)
+  const keyed = issuerViewFor(item, identityFor, trust)
   if (keyed) return keyed
   const app = item.app?.trim()
   if (app) return { key: `issuer:app:${app.toLowerCase()}`, label: app, app }
@@ -230,8 +251,9 @@ function issuerKeyFor(
 export function tokenIssuerViewFor(
   token: FungibleToken,
   identityFor: IssuerIdentityResolver,
+  trust: IssuerTrust = NO_ISSUER_TRUST,
 ): IssuerView | null {
-  return issuerViewFor({ ...token, origin: token.tokenId }, identityFor)
+  return issuerViewFor({ ...token, origin: token.tokenId }, identityFor, trust)
 }
 
 function tokenFaces(
@@ -255,6 +277,7 @@ export function groupCollectables(
   items: Collectable[],
   tokens: readonly FungibleToken[] = [],
   identityFor: IssuerIdentityResolver = () => null,
+  trust: IssuerTrust = NO_ISSUER_TRUST,
 ): GroupedCollectables {
   const issuerBuckets = new Map<
     string,
@@ -264,7 +287,7 @@ export function groupCollectables(
   const ungroupedTokens: FungibleToken[] = []
 
   for (const item of items) {
-    const meta = issuerKeyFor(item, identityFor)
+    const meta = issuerKeyFor(item, identityFor, trust)
     if (!meta) {
       ungrouped.push(item)
       continue
@@ -275,7 +298,7 @@ export function groupCollectables(
   }
 
   for (const token of tokens) {
-    const meta = tokenIssuerViewFor(token, identityFor)
+    const meta = tokenIssuerViewFor(token, identityFor, trust)
     if (!meta) {
       ungroupedTokens.push(token)
       continue
@@ -346,7 +369,7 @@ export function groupCollectables(
       ...(bap?.identity?.image
         ? { icon: issuerIdentityImageDataUrl(bap.identity.image) }
         : {}),
-      ...(bap ? { bapId: bap.id, bapState: bap.state } : {}),
+      ...(bap ? { bapId: bap.id, bapState: bap.state, bap } : {}),
       ...(bucket.meta.identityKey
         ? {
             identityKey: bucket.meta.identityKey,

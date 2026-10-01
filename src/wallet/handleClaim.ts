@@ -9,22 +9,22 @@ import { storageRegistry } from '../storage/registry'
  * any authenticated BRC-100 app — Free Radio and others hold an identity key
  * and need the bound handle without a second username field.
  *
- * On claim we keep the registry certificate locally and, when it looks like a
- * real BRC-52 direct issuance, also `acquireCertificate` so `listCertificates`
- * can answer the silent standards path.
+ * On claim we keep the verified public certificate locally and
+ * `acquireCertificate` the subject-encrypted copy (BRC-169 §4.6), so
+ * `listCertificates` / `proveCertificate` answer the standards path.
  */
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
 
 import { claimHandle, HandleNotFoundError, resolveHandle } from './handleResolve'
+import { BRC169_HANDLE_CERT_TYPE, HANDLE_CERTIFIERS } from './handleCertificate'
 import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
 import { isMigrationOrigin } from './migration'
 
 const STORAGE_KEY = storageRegistry.claimedHandle.key
+const HANDLE_DOMAIN = 'handcash.io'
 
-/** BRC-169 §4.5 handle-certificate type. */
-export const BRC169_HANDLE_CERT_TYPE =
-  'XgCFdUfxEcI+3xtDjsIuSAjMl5EwzCUjsQc45ds1lC8='
+export { BRC169_HANDLE_CERT_TYPE }
 
 export type ClaimedHandleCertificate = {
   type?: string
@@ -76,60 +76,110 @@ function asCertificate(raw: unknown): ClaimedHandleCertificate | null {
   return raw as ClaimedHandleCertificate
 }
 
-/**
- * A real BRC-52 direct acquisition needs a hex signature + serial + outpoint.
- * BRC-CLOUD still issues `_dev` placeholders in lab; those stay in durable
- * storage for getClaimedCloudHandle but are not stuffed into listCertificates.
- */
-function isAcquirableCertificate(cert: ClaimedHandleCertificate): boolean {
-  if (cert._dev === true) return false
-  const sig = typeof cert.signature === 'string' ? cert.signature.trim() : ''
-  const serial =
-    typeof cert.serialNumber === 'string' ? cert.serialNumber.trim() : ''
-  const certifier =
-    typeof cert.certifier === 'string' ? cert.certifier.trim() : ''
-  const type = typeof cert.type === 'string' ? cert.type.trim() : ''
-  const revocation =
-    typeof cert.revocationOutpoint === 'string'
-      ? cert.revocationOutpoint.trim()
-      : ''
-  return (
-    type.length > 0 &&
-    certifier.length > 0 &&
-    serial.length > 0 &&
-    revocation.length > 0 &&
-    /^[0-9a-fA-F]+$/.test(sig) &&
-    sig.length >= 64
-  )
+type WalletHandleCertificate = {
+  type: string
+  serialNumber: string
+  subject: string
+  certifier: string
+  revocationOutpoint: string
+  fields: Record<string, string>
+  signature: string
+  keyringForSubject: Record<string, string>
 }
 
-async function tryAcquireHandleCertificate(
-  cert: ClaimedHandleCertificate,
-): Promise<boolean> {
-  if (!isAcquirableCertificate(cert)) return false
-  const active = getActiveWallet()
-  if (!active?.wallet?.acquireCertificate) return false
+function stringRecord(v: unknown): Record<string, string> | null {
+  if (!v || typeof v !== 'object') return null
+  const out: Record<string, string> = {}
+  for (const [k, value] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof value !== 'string') return null
+    out[k] = value
+  }
+  return out
+}
+
+/** The subject-encrypted copy, only when it names this wallet and the pinned certifier. */
+function asWalletHandleCertificate(
+  raw: unknown,
+  identityKey: string,
+): WalletHandleCertificate | null {
+  if (!raw || typeof raw !== 'object') return null
+  const row = raw as Record<string, unknown>
+  const fields = stringRecord(row.fields)
+  const keyringForSubject = stringRecord(row.keyringForSubject)
+  const text = (k: string) => (typeof row[k] === 'string' ? (row[k] as string) : '')
+  if (
+    !fields ||
+    !keyringForSubject ||
+    text('type') !== BRC169_HANDLE_CERT_TYPE ||
+    text('certifier').toLowerCase() !== HANDLE_CERTIFIERS[HANDLE_DOMAIN] ||
+    text('subject').toLowerCase() !== identityKey.toLowerCase() ||
+    !text('serialNumber') ||
+    !text('revocationOutpoint') ||
+    !text('signature')
+  ) {
+    return null
+  }
+  return {
+    type: text('type'),
+    serialNumber: text('serialNumber'),
+    subject: text('subject').toLowerCase(),
+    certifier: text('certifier').toLowerCase(),
+    revocationOutpoint: text('revocationOutpoint'),
+    fields,
+    signature: text('signature'),
+    keyringForSubject,
+  }
+}
+
+const heldSerials = new Set<string>()
+
+/**
+ * Holds exactly the current handle certificate in wallet storage: acquires it
+ * when missing and relinquishes any other serial from the handle certifier.
+ * `null` relinquishes them all (the binding ended).
+ */
+async function syncHeldHandleCertificate(current: WalletHandleCertificate | null): Promise<void> {
+  if (current && heldSerials.has(current.serialNumber)) return
+  const wallet = getActiveWallet()?.wallet
+  if (!wallet?.listCertificates) return
+  const certifier = HANDLE_CERTIFIERS[HANDLE_DOMAIN]!
   try {
-    const fields = cert.fields ?? {}
-    await active.wallet.acquireCertificate({
-      type: String(cert.type || BRC169_HANDLE_CERT_TYPE),
-      certifier: String(cert.certifier),
-      acquisitionProtocol: 'direct',
-      fields: {
-        handle: String(fields.handle || ''),
-        domain: String(fields.domain || ''),
-      },
-      serialNumber: String(cert.serialNumber),
-      revocationOutpoint: String(cert.revocationOutpoint),
-      signature: String(cert.signature),
+    const { certificates } = await wallet.listCertificates({
+      certifiers: [certifier],
+      types: [BRC169_HANDLE_CERT_TYPE],
+      limit: 50,
     })
-    return true
+    let held = false
+    for (const cert of certificates) {
+      if (current && cert.serialNumber === current.serialNumber) {
+        held = true
+        continue
+      }
+      await wallet.relinquishCertificate({
+        type: BRC169_HANDLE_CERT_TYPE,
+        serialNumber: cert.serialNumber,
+        certifier,
+      })
+    }
+    if (current && !held) {
+      await wallet.acquireCertificate({
+        type: current.type,
+        certifier: current.certifier,
+        acquisitionProtocol: 'direct',
+        fields: current.fields,
+        serialNumber: current.serialNumber,
+        revocationOutpoint: current.revocationOutpoint,
+        signature: current.signature,
+        keyringRevealer: 'certifier',
+        keyringForSubject: current.keyringForSubject,
+      })
+    }
+    if (current) heldSerials.add(current.serialNumber)
   } catch (err) {
     console.warn(
-      '[handle-claim] acquireCertificate skipped',
+      '[handle-claim] certificate sync skipped',
       err instanceof Error ? err.message : String(err),
     )
-    return false
   }
 }
 
@@ -197,6 +247,8 @@ export function getClaimedCloudHandlePayload(): ClaimedHandleState | null {
 /** Drop local claim cache (does not revoke on BRC-CLOUD). */
 export function clearClaimedCloudHandlePayload(): { cleared: true } {
   durableRemoveItem(accountLocalKey(STORAGE_KEY))
+  heldSerials.clear()
+  void syncHeldHandleCertificate(null)
   notifyClaimListeners()
   return { cleared: true }
 }
@@ -220,16 +272,14 @@ export async function getClaimedCloudHandleVerified(): Promise<ClaimedHandleStat
       clearClaimedCloudHandlePayload()
       return null
     }
-    const certificate = asCertificate(resolved.certificate) ?? local.certificate ?? null
     const next: ClaimedHandleState = {
       ...local,
       display: resolved.display || local.display,
-      certificate,
+      certificate: resolved.certificate,
     }
-    if (JSON.stringify(next) !== JSON.stringify(local)) {
-      persistClaim(next)
-      if (certificate) void tryAcquireHandleCertificate(certificate)
-    }
+    if (JSON.stringify(next) !== JSON.stringify(local)) persistClaim(next)
+    const walletCertificate = asWalletHandleCertificate(resolved.walletCertificate, local.identityKey)
+    if (walletCertificate) void syncHeldHandleCertificate(walletCertificate)
     return next
   } catch (error) {
     // Only an answered "no such handle" ends the claim; an offline or failing
@@ -249,6 +299,7 @@ let claimBindingGeneration = 0
 export function rebindHandleClaimForAccount(): void {
   claimBindingGeneration += 1
   claimInFlight = null
+  heldSerials.clear()
   notifyClaimListeners()
 }
 
@@ -277,19 +328,19 @@ export async function claimCloudHandlePayload(args: {
       claimTicket,
     })
 
-    const certificate = asCertificate(result.certificate)
     const state: ClaimedHandleState = {
       handle,
       display: result.display,
       identityKey: active.identityKey.toLowerCase(),
       claimedAt: Date.now(),
-      certificate,
+      certificate: result.certificate,
     }
     if (bindingGeneration !== claimBindingGeneration) {
       throw new Error('Active wallet account changed during handle claim')
     }
     persistClaim(state)
-    if (certificate) await tryAcquireHandleCertificate(certificate)
+    const walletCertificate = asWalletHandleCertificate(result.walletCertificate, state.identityKey)
+    if (walletCertificate) await syncHeldHandleCertificate(walletCertificate)
     return state
   })()
   claimInFlight = pending

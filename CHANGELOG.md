@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.396] - 2026-10-01
+
+Handles carry real signed certificates, and every issuer identity shows a fingerprint that a look-alike cannot copy. Issuers that HandCash verifies get a checkmark.
+
+### Added
+
+- **BAP fingerprint.** Each issuer identity now shows a short BAP ID with an identicon drawn from its hash. This appears on Collect shelves, in item and token details, under Settings → Public identities, and on the Identity panel. Two identities with the same name and image no longer look alike.
+- **Verified by HandCash.** An issuer whose BAP ID is on HandCash's signed verified-issuer list gets a checkmark. BRC-CLOUD serves the list at `GET /v1/identities/verified`, signed by the handle certifier the wallet already pins. The wallet refuses a list that is unsigned, mis-signed or older than one it has seen. The checkmark only adds to an identity whose package already proves the signer.
+- **Look-alike caution.** An unlisted identity whose name reads like a verified issuer's name, after folding case, accents, spacing and characters such as `rn`/`m` and `0`/`o`, shows a warning instead of a checkmark. So does a name shared with another identity on the device. Item and token details explain the reason in a Verification row.
+
+### Fixed
+
+- **Handle certificates are verified.** Resolve, reverse lookup and claim now require a BRC-52 certificate (BRC-169 §4.1) signed by the certifier pinned for `handcash.io`. A placeholder, wrong certifier, wrong subject, mismatched field or bad signature is refused with a named reason. Until now the wallet checked only the certificate's shape.
+- **Your handle certificate lives in the wallet.** Claiming or confirming a handle acquires its certificate through `acquireCertificate` (BRC-169 §4.6). The wallet keeps exactly one current certificate and relinquishes stale ones when the handle changes or is cleared.
+
+### Server (BRC-CLOUD)
+
+- **Real handle certifier.** Claims are signed with a dedicated certifier key held as a worker secret. Older placeholder rows are re-signed the first time they are read. A claim fails with `503 certifier-unavailable` rather than issuing an unsigned certificate.
+- **Verified-issuer list.** `src/verifiedIssuers.json` is signed at request time and cached for 5 minutes. It starts empty.
+
 ## [1.3.395] - 2026-10-01
 
 Handles are harder to hijack. The resolver's answer is checked against what you asked for, a saved friend's key is pinned, and a flaky network no longer wipes your claimed handle.

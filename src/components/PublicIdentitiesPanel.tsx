@@ -36,6 +36,7 @@ import { toastSuccess } from '../wallet/toast'
 import type { WalletProfile } from '../machines/appMachine'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { DeferredImage } from './DeferredImage'
+import { BapIdenticon } from './BapIdenticon'
 
 function downloadJson(value: string, filename: string) {
   const url = URL.createObjectURL(
@@ -278,8 +279,9 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                     {row.identityKey === view.selected ? ' · selected issuer' : ''}
                   </p>
                   {row.identity?.description ? <p>{row.identity.description}</p> : null}
-                  <p className="mono" title={row.bapId}>
-                    BAP ID {row.bapId}
+                  <p className="public-identity-bap" title={row.bapId}>
+                    <BapIdenticon bapId={row.bapId} />
+                    <span className="mono">BAP ID {row.bapId}</span>
                   </p>
                   {row.identity ? (
                     <p>

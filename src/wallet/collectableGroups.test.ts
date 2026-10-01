@@ -8,6 +8,7 @@ import {
   groupQuantityLabel,
 } from './collectableGroups'
 import type { Collectable } from './collectables'
+import { issuerTrustFrom } from './issuerTrust'
 import type { FungibleToken } from './token/types'
 
 function item(
@@ -152,6 +153,44 @@ describe('groupCollectables', () => {
     expect(unconfirmed.tokens).toHaveLength(1)
     expect(result.issuers.find((i) => i.bapState === 'verified')?.label).toBe('Example Studio')
   })
+
+  it('marks a listed BAP identity and cautions a look-alike, never an unconfirmed stamp', () => {
+    const real = bapIdentityFixture({ name: 'Example Studio' })
+    const fake = bapIdentityFixture({ name: 'Examp1e  Studio' })
+    const realIdentity = verifyIssuerIdentityPackage(real.pkg)!
+    const fakeIdentity = verifyIssuerIdentityPackage(fake.pkg)!
+    const listed = { bapId: real.bapId, name: 'Example Studio' }
+    const trust = issuerTrustFrom({
+      listed: (bapId) => (bapId === listed.bapId ? listed : null),
+      listedEntries: [listed],
+      storedIdentities: () => [],
+    })
+    const stranger = PrivateKey.fromRandom().toPublicKey().toString()
+    const result = groupCollectables(
+      [
+        item({ outpoint: 'aa.0', issuer: real.signer.toPublicKey().toString(), bapId: real.bapId }),
+        item({ outpoint: 'bb.0', issuer: fake.signer.toPublicKey().toString(), bapId: fake.bapId }),
+        item({ outpoint: 'cc.0', issuer: stranger, bapId: real.bapId }),
+      ],
+      [],
+      (asset) => {
+        if (asset.issuer === stranger) return { kind: 'unconfirmed', bapId: real.bapId, reason: 'unknown-key' }
+        return { kind: 'verified', identity: asset.bapId === real.bapId ? realIdentity : fakeIdentity }
+      },
+      trust,
+    )
+    const byKey = new Map(result.issuers.map((i) => [i.key, i]))
+    expect(byKey.get(`issuer:bap:${real.bapId}`)?.bap).toMatchObject({ listed })
+    expect(byKey.get(`issuer:bap:${real.bapId}`)?.bap?.caution).toBeUndefined()
+    expect(byKey.get(`issuer:bap:${fake.bapId}`)?.bap).toMatchObject({
+      caution: { kind: 'imitates-listed', listed },
+    })
+    expect(byKey.get(`issuer:bap:${fake.bapId}`)?.bap?.listed).toBeUndefined()
+    const unconfirmed = byKey.get(`issuer:bap-unconfirmed:${real.bapId}`)
+    expect(unconfirmed?.bap?.listed).toBeUndefined()
+    expect(unconfirmed?.bap?.caution).toBeUndefined()
+  })
+
   it('nests collections under the issuer, not the other way around', () => {
     const { issuers, singles, ungrouped } = groupCollectables([
       item({

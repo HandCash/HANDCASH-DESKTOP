@@ -78,6 +78,26 @@ Collect groups by BAP ID. `issuerAttribution` (`issuerIdentities.ts`) gives each
 
 Every verified asset of one BAP ID shares a shelf across rotations, labelled with the newest profile the wallet holds, and a newer package merged from any delivery relabels it. Anyone can copy a stamp, so unconfirmed assets keep their own BAP shelf until a package proves their signer. An unsigned copy stays on a separate "issuer claim" shelf.
 
+### Telling identities apart
+
+A name and image are whatever the identity's owner chose, so anyone can publish "HandCash" with HandCash's logo. Every BAP identity is therefore shown with its **fingerprint**: the BAP ID shortened (first 6 and last 4 characters) beside a 5×5 identicon drawn from `sha256(bapId)` (`bapFingerprint` in `issuerTrust.ts`, `BapIdenticon.tsx`). The full BAP ID stays in the title and in item and token details.
+
+A verified identity can also carry one of these marks (`issuerTrustFrom`):
+
+| Mark | When |
+|---|---|
+| checkmark, **Verified by HandCash** | the BAP ID is on HandCash's verified-issuer list |
+| caution, **imitation** | not listed, and its name reads like a listed issuer's name (case, accents, spacing and look-alike characters such as `rn`/`m`, `0`/`o`, `1`/`l` folded away) |
+| caution, **shared name** | not listed, and another identity in the store reads the same |
+
+Unconfirmed stamps get neither mark; they never show a name to imitate.
+
+The verified-issuer list is served by BRC-CLOUD at `GET /v1/identities/verified` as `{ v, updatedAt, entries: [{ bapId, name }], certifier, signature }`. The signature is BRC-3 by the HandCash handle certifier, the key the wallet already pins for handle certificates, under protocol `[2, 'handcash verified issuers']`, key ID `1`, counterparty `anyone`, over `JSON.stringify({ v, updatedAt, entries })`. The wallet (`verifiedIssuers.ts`) refuses any list that is unsigned, signed by another key, or older than one it has already seen, so a removed entry cannot be replayed. It refreshes every 6 hours, keeps the last valid list on the device and re-verifies it on load. Without a valid list nobody gets a checkmark.
+
+To list an issuer, add `{ bapId, name }` to `BRC-CLOUD/src/verifiedIssuers.json`, move `updatedAt` forward, run its tests and deploy. The worker signs the list at request time; the certifier key never leaves the worker secret.
+
+A short fingerprint can be ground to collide; the identicon, the cautions and the list together are the defence, not the 10 characters alone.
+
 Builds before 1.3.393 wrote a self-signed `issuerProfile` JSON with an icon URL into mints. Those bytes are ignored. Those assets still group by their verified key, and the issuer's own wallet still recognises its earlier keys.
 
 ## Store once, attach when needed

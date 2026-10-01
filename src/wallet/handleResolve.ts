@@ -9,12 +9,20 @@
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 import { formatHandCashHandle } from './handleFormat'
 import { parseWalletProtocols } from './peerTokenCapability'
+import {
+  HandleCertificateError,
+  verifyHandleCertificate,
+  type HandleCertificate,
+} from './handleCertificate'
 
 export type ResolvedHandle = {
   handle: string
   domain: string
   identityKey: string
-  certificate: unknown
+  /** Verified per BRC-169 §4.1 against the pinned certifier for `domain`. */
+  certificate: HandleCertificate
+  /** Master certificate encrypted to the subject; only its own wallet can acquire it. */
+  walletCertificate: unknown
   display: string
   /** BRC-169 messagebox URL when the resolve host returns one. */
   messagebox: string | null
@@ -25,25 +33,41 @@ export type ResolvedHandle = {
   protocols: string[]
 }
 
-/** True when resolve returned a real BRC-52 handle certificate (not a lab placeholder). */
-export function isVerifiedHandleCertificate(cert: unknown): boolean {
-  if (!cert || typeof cert !== 'object') return false
-  const row = cert as Record<string, unknown>
-  if (row._dev === true) return false
-  const sig = typeof row.signature === 'string' ? row.signature.trim() : ''
-  const serial = typeof row.serialNumber === 'string' ? row.serialNumber.trim() : ''
-  const certifier = typeof row.certifier === 'string' ? row.certifier.trim() : ''
-  const type = typeof row.type === 'string' ? row.type.trim() : ''
-  const revocation =
-    typeof row.revocationOutpoint === 'string' ? row.revocationOutpoint.trim() : ''
-  return (
-    type.length > 0 &&
-    certifier.length > 0 &&
-    serial.length > 0 &&
-    revocation.length > 0 &&
-    /^[0-9a-fA-F]+$/.test(sig) &&
-    sig.length >= 64
-  )
+type ResolveRow = {
+  handle?: string
+  domain?: string
+  identityKey?: string
+  certificate?: unknown
+  walletCertificate?: unknown
+  messagebox?: string | null
+  protocols?: unknown
+}
+
+/** A resolve row whose certificate passes §4.1, or the refusal. */
+async function certifiedHandle(
+  row: ResolveRow,
+  fallbackProtocols?: unknown,
+): Promise<ResolvedHandle> {
+  const handle = row.handle!.toLowerCase()
+  const domain = row.domain!.toLowerCase()
+  const identityKey = row.identityKey!.toLowerCase()
+  const display = formatHandCashHandle(handle, domain, { fullyQualified: true })
+  const verdict = await verifyHandleCertificate(row.certificate, { handle, domain, identityKey })
+  if (verdict.kind === 'refused') throw new HandleCertificateError(display, verdict.reason)
+  const messagebox =
+    typeof row.messagebox === 'string' && row.messagebox.trim()
+      ? row.messagebox.trim().replace(/\/+$/, '')
+      : null
+  return {
+    handle,
+    domain,
+    identityKey,
+    certificate: verdict.certificate,
+    walletCertificate: row.walletCertificate ?? null,
+    display,
+    messagebox,
+    protocols: parseWalletProtocols(row.protocols ?? fallbackProtocols),
+  }
 }
 
 function normalizeBase(url: string): string {
@@ -160,14 +184,7 @@ export async function resolveHandle(
     const detail = (await res.text().catch(() => '')).slice(0, 120)
     throw new Error(`Handle resolve failed (${res.status})${detail ? `: ${detail}` : ''}`)
   }
-  const data = (await res.json()) as {
-    handle?: string
-    domain?: string
-    identityKey?: string
-    certificate?: unknown
-    messagebox?: string | null
-    protocols?: unknown
-  }
+  const data = (await res.json()) as ResolveRow
   if (!data.handle || !data.identityKey || !data.domain) {
     throw new Error('Invalid resolve response')
   }
@@ -181,19 +198,7 @@ export async function resolveHandle(
       `Handles on ${parsed.domain} are not served by this resolver (it serves ${data.domain.toLowerCase()})`,
     )
   }
-  const messagebox =
-    typeof data.messagebox === 'string' && data.messagebox.trim()
-      ? data.messagebox.trim().replace(/\/+$/, '')
-      : null
-  return {
-    handle: data.handle,
-    domain: data.domain,
-    identityKey: data.identityKey.toLowerCase(),
-    certificate: data.certificate,
-    display: formatHandCashHandle(data.handle, data.domain, { fullyQualified: true }),
-    messagebox,
-    protocols: parseWalletProtocols(data.protocols),
-  }
+  return certifiedHandle(data)
 }
 
 /**
@@ -224,22 +229,7 @@ export async function resolveHandleByIdentityKey(
     const detail = (await res.text().catch(() => '')).slice(0, 120)
     throw new Error(`Handle reverse resolve failed (${res.status})${detail ? `: ${detail}` : ''}`)
   }
-  const data = (await res.json()) as {
-    handle?: string
-    domain?: string
-    identityKey?: string
-    certificate?: unknown
-    messagebox?: string | null
-    handles?: Array<{
-      handle?: string
-      domain?: string
-      identityKey?: string
-      certificate?: unknown
-      messagebox?: string | null
-      protocols?: unknown
-    }>
-    protocols?: unknown
-  }
+  const data = (await res.json()) as ResolveRow & { handles?: ResolveRow[] }
 
   const rows = Array.isArray(data.handles)
     ? data.handles
@@ -247,25 +237,13 @@ export async function resolveHandleByIdentityKey(
       ? [data]
       : []
 
-  return rows
-    .filter((r) => r.handle && r.identityKey && r.domain)
-    .map((r) => {
-      const messagebox =
-        typeof r.messagebox === 'string' && r.messagebox.trim()
-          ? r.messagebox.trim().replace(/\/+$/, '')
-          : null
-      return {
-        handle: r.handle!,
-        domain: r.domain!,
-        identityKey: r.identityKey!.toLowerCase(),
-        certificate: r.certificate,
-        display: formatHandCashHandle(r.handle!, r.domain!, { fullyQualified: true }),
-        messagebox,
-        protocols: parseWalletProtocols(
-          (r as { protocols?: unknown }).protocols ?? data.protocols,
-        ),
-      }
-    })
+  // A handle bound to some other key, or without a valid certificate, is not this key's handle.
+  const settled = await Promise.allSettled(
+    rows
+      .filter((r) => r.handle && r.identityKey && r.domain && r.identityKey.toLowerCase() === key)
+      .map((r) => certifiedHandle(r, data.protocols)),
+  )
+  return settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
 }
 
 export async function claimHandle(args: {
@@ -274,7 +252,7 @@ export async function claimHandle(args: {
   /** Short-lived ticket from HandCash (items-market) — required in production. */
   claimTicket?: string
   baseUrl?: string
-}): Promise<{ display: string; certificate: unknown }> {
+}): Promise<{ display: string; certificate: HandleCertificate; walletCertificate: unknown }> {
   const base = normalizeBase(args.baseUrl || DEFAULT_METANET_HANDLES_BASE_URL)
   const res = await fetch(`${base}/v1/claim`, {
     method: 'POST',
@@ -310,11 +288,19 @@ export async function claimHandle(args: {
     }
     throw new Error(`Handle claim failed (${res.status})${detail ? `: ${detail}` : ''}`)
   }
-  const data = (await res.json()) as { display?: string; certificate?: unknown }
+  const data = (await res.json()) as ResolveRow & { display?: string }
+  const certified = await certifiedHandle({
+    ...data,
+    handle: data.handle ?? args.handle,
+    identityKey: data.identityKey ?? args.identityKey,
+    domain: data.domain ?? 'handcash.io',
+  })
+  if (certified.identityKey !== args.identityKey.toLowerCase()) {
+    throw new Error('Handle claim answered for a different identity key')
+  }
   return {
-    display:
-      data.display ||
-      formatHandCashHandle(args.handle, 'handcash.io', { fullyQualified: true }),
-    certificate: data.certificate,
+    display: data.display || certified.display,
+    certificate: certified.certificate,
+    walletCertificate: certified.walletCertificate,
   }
 }

@@ -4523,8 +4523,80 @@ button.identity-qr-copy:focus-visible {
   line-height: 1.25;
 }
 
-.issuer-identity-mark[data-aeon-state='verified'] {
+.issuer-identity-mark[data-aeon-state='verified'],
+.issuer-identity-mark[data-aeon-state='listed'] {
   color: var(--hc-text);
+}
+
+[data-aeon-part='bap-identicon'] {
+  flex-shrink: 0;
+  border-radius: 3px;
+  color: hsl(var(--bap-hue, 210) 62% 48%);
+}
+
+[data-aeon-part='bap-fingerprint'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--hc-muted);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.bap-fingerprint-id {
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+[data-aeon-part='issuer-trust'] {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+[data-aeon-part='issuer-trust'][data-aeon-state='listed'] {
+  color: var(--hc-accent);
+}
+
+[data-aeon-part='issuer-trust'][data-aeon-state='imitation'],
+[data-aeon-part='issuer-trust'][data-aeon-state='shared-name'] {
+  color: var(--hc-warn);
+}
+
+.detail-issuer-trust[data-aeon-state='listed'] {
+  color: var(--hc-text);
+}
+
+.collect-collection-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.collect-collection-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collect-collection-name[data-aeon-state='imitation'] .collect-collection-name-text {
+  text-decoration: underline wavy var(--hc-warn);
+  text-underline-offset: 3px;
+}
+
+.collect-issuer-fingerprint {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.public-identity-bap,
+.identity-bap-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .identity-field {

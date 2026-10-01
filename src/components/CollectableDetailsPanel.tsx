@@ -51,7 +51,7 @@ import { useDetailActionDock } from './WalletActionDock'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { useIssuerView } from '../hooks/useIssuerView'
 import { DeferredModelViewer } from './DeferredModelViewer'
-import { IssuerIdentityMark } from './IssuerIdentityMark'
+import { IssuerIdentityMark, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
 
 type Props = {
   outpoint: string
@@ -512,6 +512,14 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             value={issuerBap.id}
             onCopy={() => void copy('BAP ID', issuerBap.id)}
           />
+        ) : null}
+        {issuerView?.bap ? (
+          <>
+            <dt>Verification</dt>
+            <dd className="detail-issuer-trust" data-aeon-part="issuer-trust" data-aeon-state={issuerViewState(issuerView)}>
+              {issuerTrustNote(issuerView)}
+            </dd>
+          </>
         ) : null}
         {item.collectionId ? (
           <MetaRow

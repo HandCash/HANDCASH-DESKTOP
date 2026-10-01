@@ -114,6 +114,14 @@ export function issuerIdentityFor(chain: Chain, bapId: string): IssuerIdentity |
   return valid
 }
 
+/** Every verified identity this device holds a package for. */
+export function storedIssuerIdentities(chain: Chain): IssuerIdentity[] {
+  return readIndex(chain).entries.flatMap((entry) => {
+    const identity = issuerIdentityFor(chain, entry.bapId)
+    return identity ? [identity] : []
+  })
+}
+
 /** Whether `signer` spoke for the stamped BAP ID when it signed an asset mined at `minedHeight`. */
 export function issuerAttribution(
   chain: Chain,

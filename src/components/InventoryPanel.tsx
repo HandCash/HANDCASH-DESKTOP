@@ -6,10 +6,16 @@ import {
   useRef,
   useState,
 } from 'react'
-import { currentIssuerResolver, useIssuerIdentitiesGeneration } from '../hooks/useIssuerView'
+import {
+  currentIssuerResolver,
+  currentIssuerTrust,
+  useIssuerIdentitiesGeneration,
+} from '../hooks/useIssuerView'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
+import { BapFingerprint } from './BapIdenticon'
+import { IssuerTrustBadge, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
 import { useChunkedCount } from './useChunkedCount'
@@ -496,19 +502,26 @@ function IssuerGroupItem({
           <span className="collect-collection-body">
             <strong
               className="collect-collection-name"
+              data-aeon-state={issuer.bap ? issuerViewState(issuer) : undefined}
               title={
-                issuer.bapState === 'unconfirmed'
-                  ? `BAP ID ${issuer.bapId} · no identity package on this device confirms these signers`
-                  : issuer.bapId
-                  ? `${issuer.label} · BAP ID ${issuer.bapId}`
+                issuer.bap
+                  ? `${issuer.bap.state === 'verified' ? `${issuer.label} · ` : ''}BAP ID ${issuer.bap.id} · ${issuerTrustNote(issuer)}`
                   : issuer.identityKey
                     ? `${issuer.label} · issuer attribution: ${issuer.identityKey}`
                     : issuer.label
               }
             >
-              {issuer.label}
+              <span className="collect-collection-name-text">{issuer.label}</span>
+              {issuer.bap ? <IssuerTrustBadge view={issuer} /> : null}
             </strong>
             <span className="collect-collection-meta">
+              {issuer.bap ? (
+                <BapFingerprint
+                  bapId={issuer.bap.id}
+                  className="collect-issuer-fingerprint"
+                  showId={issuer.bap.state === 'verified'}
+                />
+              ) : null}
               {groupQuantityLabel(issuer)}
               {selectedCount > 0 ? ` · ${selectedCount} selected` : ''}
             </span>
@@ -930,7 +943,13 @@ export function InventoryPanel() {
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const searching = deferredQuery.trim().length > 0
   const { issuers, ungrouped, ungroupedTokens } = useMemo(
-    () => groupCollectables(visibleItems, searching ? [] : tokens, currentIssuerResolver()),
+    () =>
+      groupCollectables(
+        visibleItems,
+        searching ? [] : tokens,
+        currentIssuerResolver(),
+        currentIssuerTrust(),
+      ),
     [visibleItems, tokens, searching, identityGeneration],
   )
   const empty =

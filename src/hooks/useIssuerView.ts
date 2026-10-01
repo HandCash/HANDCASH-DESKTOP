@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import {
   issuerViewFor,
   type IssuerIdentityResolver,
@@ -8,11 +8,18 @@ import {
   issuerIdentitiesGeneration,
   subscribeIssuerIdentities,
 } from '../wallet/issuerIdentities'
+import type { IssuerTrust } from '../wallet/issuerTrust'
 import {
   issuerAttributionResolver,
+  issuerTrustResolver,
   publicIdentitiesGeneration,
   subscribePublicIdentities,
 } from '../wallet/publicIdentities'
+import {
+  ensureVerifiedIssuersFresh,
+  subscribeVerifiedIssuers,
+  verifiedIssuersGeneration,
+} from '../wallet/verifiedIssuers'
 import { getWalletRuntime } from '../wallet/walletRuntime'
 
 export type IssuerAsset = {
@@ -28,14 +35,23 @@ export function currentIssuerResolver(): IssuerIdentityResolver {
   return issuerAttributionResolver(getWalletRuntime())
 }
 
-/** Generation that changes whenever an identity or a stored package does. */
+/** HandCash listing and look-alike names, for one render pass. */
+export function currentIssuerTrust(): IssuerTrust {
+  return issuerTrustResolver(getWalletRuntime())
+}
+
+/** Generation that changes whenever an identity, a stored package or the verified list does. */
 export function useIssuerIdentitiesGeneration(): string {
   const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
   const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
-  return `${identities}:${packages}`
+  const listed = useSyncExternalStore(subscribeVerifiedIssuers, verifiedIssuersGeneration)
+  useEffect(() => {
+    ensureVerifiedIssuersFresh()
+  }, [])
+  return `${identities}:${packages}:${listed}`
 }
 
-/** One asset's issuer, re-read when identities or stored packages change. */
+/** One asset's issuer, re-read when identities, stored packages or the verified list change. */
 export function useIssuerView(asset: IssuerAsset | null): IssuerView | null {
   const generation = useIssuerIdentitiesGeneration()
   const issuer = asset?.issuer
@@ -45,7 +61,11 @@ export function useIssuerView(asset: IssuerAsset | null): IssuerView | null {
   return useMemo(
     () =>
       issuer
-        ? issuerViewFor({ issuer, issuerAttested, bapId, origin }, currentIssuerResolver())
+        ? issuerViewFor(
+            { issuer, issuerAttested, bapId, origin },
+            currentIssuerResolver(),
+            currentIssuerTrust(),
+          )
         : null,
     [issuer, issuerAttested, bapId, origin, generation],
   )

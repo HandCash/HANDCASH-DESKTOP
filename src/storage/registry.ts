@@ -32,6 +32,10 @@ export const storageRegistry = Object.freeze({
   issuerIdentities: defineStorage({
     key: 'handcash.issuerIdentities.v1', owner: 'identity', scope: 'chain', version: 1,
   }),
+  verifiedIssuers: defineStorage({
+    key: 'handcash.verifiedIssuers.v1', owner: 'identity', scope: 'device', version: 1,
+    retention: 'rebuildable',
+  }),
   toolboxDatabasePointer: defineStorage({
     key: 'handcash.toolboxDatabasePointer.v1:', owner: 'history', scope: 'device', version: 1,
   }),

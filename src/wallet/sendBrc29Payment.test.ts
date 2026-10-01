@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { Beef } from '@bsv/sdk'
+import { signedHandleCertificate, useTestHandleCertifier } from './handleCertificate.fixture'
 
 type CreateActionArgs = {
   options?: {
@@ -196,6 +197,8 @@ vi.mock('./toast', () => ({ toastSuccess: () => {}, toastError: () => {} }))
 const PAYEE =
   '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
 
+useTestHandleCertifier()
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -266,13 +269,14 @@ describe('sendBrc29ToIdentityKey', () => {
   })
 
   it('resolves a same-origin handle and completes its BRC-29 payment', async () => {
+    const certificate = await signedHandleCertificate('alice', PAYEE)
     const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
           handle: 'alice',
           domain: 'handcash.io',
           identityKey: PAYEE,
-          certificate: { type: 'test' },
+          certificate,
           messagebox: 'https://messagebox.example/v1/messagebox',
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },

@@ -20,6 +20,7 @@ import { getWalletRuntime } from '../wallet/walletRuntime'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
 import { CopyIcon } from './icons'
+import { BapIdenticon } from './BapIdenticon'
 
 type Props = {
   profile: WalletProfile
@@ -197,6 +198,7 @@ ${profile.identityKey}`}
               <li className="identity-field">
                 <span className="identity-field-label">BAP ID</span>
                 <strong className="mono identity-bap-id" title={bap?.bapId}>
+                  {bap ? <BapIdenticon bapId={bap.bapId} /> : null}
                   {bap ? shortIdentityKey(bap.bapId) : '—'}
                   {bap?.identity ? '' : ' (not published yet)'}
                 </strong>

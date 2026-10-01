@@ -105,15 +105,17 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 ### Phase 5 — Handle trust (BRC-169)
 
-A handle is a convenience name for an identity key (grade C). Until the resolver signs real BRC-52 certificates, the wallet trusts its answer only as far as these checks go:
+A handle is a convenience name for an identity key (grade C). The wallet trusts the resolver's answer only as far as these checks go:
 
 - [x] The resolve answer must echo the requested handle. A `$name@domain` the resolver does not serve is refused, not resolved on the default domain.
 - [x] A saved friend pins the key. If the handle later resolves to another key, payment and add-friend refuse until the user removes that friend.
 - [x] Only a `404`/`410` from the resolver clears this device's claim. A network error keeps it.
 - [x] BRC-CLOUD claims are first-writer-wins in one SQL statement (`handleClaimRow.js`). Re-claim by the same key and reclaim of a revoked handle still work.
-- [ ] Certifier-signed BRC-52 certificates, verified in the client against a pinned certifier key. Today `certificate` is a `dev-placeholder` and the wallet checks only its shape.
+- [x] Certifier-signed BRC-52 certificates (BRC-169 §4.1, Appendix A.3 field encoding), verified in the client against the certifier key pinned per domain in `handleCertificate.ts`. Resolve, reverse lookup and claim fail closed on a placeholder, wrong certifier, wrong subject, mismatched fields or bad signature. BRC-CLOUD signs with the `HANDLE_CERTIFIER_KEY` secret and re-signs older rows on first read.
+- [x] `acquireCertificate` into the wallet (BRC-169 §4.6). The claim returns a subject-encrypted copy; the wallet holds exactly one current handle certificate and relinquishes the rest.
+- [ ] On-chain revocation outpoints. Today the outpoint is null and the resolver's `404`/`410` is the revocation channel.
 - [ ] Proof of key possession at claim, and single-use claim tickets.
-- [ ] `acquireCertificate` into the wallet, handle release and forwarding, and a BAP `ALIAS` cross-link.
+- [ ] Handle release and forwarding, and a BAP `ALIAS` cross-link.
 
 ---
 
