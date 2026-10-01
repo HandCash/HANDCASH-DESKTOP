@@ -14,7 +14,7 @@ export function AssetIssuers({ assets }: { assets: readonly IssuerAsset[] }) {
   return (
     <span className="asset-issuers" data-aeon-part="asset-issuers" data-aeon-state={hidden > 0 ? 'overflow' : 'all'}>
       {views.slice(0, SHOWN).map((view) => (
-        <IssuerIdentityMark key={view.key} view={view} className="asset-issuer-mark" />
+        <IssuerIdentityMark key={view.key} view={view} />
       ))}
       {hidden > 0 ? <span className="asset-issuers-more">+{hidden} more</span> : null}
     </span>

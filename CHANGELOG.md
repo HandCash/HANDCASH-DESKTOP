@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.402] - 2026-10-01
+
+### Changed
+
+- Identities read as one compact pill everywhere they appear: issuer marks on
+  item and token details, Send, Burn and app approvals, the market listing
+  detail, inventory shelf fingerprints, and contacts in Friends, Add friend and
+  Messages. Each pill is 20px tall with the identity's image or BAP identicon,
+  its name, the HandCash checkmark and the short BAP ID. Verified identities
+  tint green, look-alike names amber with a wavy underline, and unconfirmed or
+  unsigned claims show a dashed outline.
+- The market listing detail now names the item's issuer.
+
 ## [1.3.401] - 2026-10-01
 
 ### Fixed

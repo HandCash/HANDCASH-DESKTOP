@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { bapFingerprint } from '../wallet/issuerTrust'
+import type { IssuerViewState } from './IssuerIdentityMark'
 
 /** 5×5 mirrored identicon drawn from the BAP ID's hash; vector, so nothing to defer. */
 export function BapIdenticon({ bapId, size = 16 }: { bapId: string; size?: number }) {
@@ -24,25 +25,31 @@ export function BapIdenticon({ bapId, size = 16 }: { bapId: string; size?: numbe
   )
 }
 
-/** Identicon plus the short BAP ID: the part of an identity a look-alike cannot copy. */
+/** Identicon plus the short BAP ID, as an identity pill: the part a look-alike cannot copy. */
 export function BapFingerprint({
   bapId,
   className,
   showId = true,
+  state,
 }: {
   bapId: string
   className?: string
   /** Off where the surrounding label already spells the short BAP ID. */
   showId?: boolean
+  /** The issuer trust state, so the pill tints like the identity it fingerprints. */
+  state?: IssuerViewState
 }) {
   return (
     <span
-      className={className ? `bap-fingerprint ${className}` : 'bap-fingerprint'}
+      className={className ? `identity-pill ${className}` : 'identity-pill'}
       data-aeon-part="bap-fingerprint"
+      data-aeon-state={state}
       title={`BAP ID ${bapId}`}
     >
-      <BapIdenticon bapId={bapId} />
-      {showId ? <span className="bap-fingerprint-id mono">{bapFingerprint(bapId).short}</span> : null}
+      <span className="identity-pill-lead">
+        <BapIdenticon bapId={bapId} size={10} />
+      </span>
+      {showId ? <span className="identity-pill-id mono">{bapFingerprint(bapId).short}</span> : null}
     </span>
   )
 }

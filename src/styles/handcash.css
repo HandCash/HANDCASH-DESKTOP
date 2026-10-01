@@ -4496,77 +4496,154 @@ button.identity-qr-copy:focus-visible {
   flex-shrink: 0;
 }
 
-.issuer-identity-mark {
+/* Identity pill — one compact chip wherever an identity is named: issuers on
+   details, Send, Burn and app approvals; contacts; inventory shelf heads.
+   Sized to sit inside a text line without moving the layout around it. */
+.identity-pill {
+  --identity-pill-tint: var(--hc-text);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  box-sizing: border-box;
+  width: fit-content;
   max-width: 100%;
   min-width: 0;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--identity-pill-tint) 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--identity-pill-tint) 5%, transparent);
+  color: var(--hc-muted);
+  font-family: var(--hc-font);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--hc-tracking-body);
+  text-transform: none;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
-.issuer-identity-mark-icon {
-  object-fit: cover;
-  border-radius: 5px;
+.identity-pill:has(> .identity-pill-lead:first-child) {
+  padding-left: 1px;
+}
+
+.identity-pill:has(> :only-child) {
+  padding: 0 1px;
+}
+
+.identity-pill-lead {
+  display: inline-flex;
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
 }
 
-.issuer-identity-mark-label {
+.identity-pill-lead .deferred-image {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.identity-pill-image {
+  width: 16px;
+  height: 16px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.identity-pill-lead .bap-identicon {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.identity-pill-label {
   min-width: 0;
   overflow: hidden;
+  color: var(--hc-text);
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.identity-pill-id {
+  flex-shrink: 0;
+  color: var(--hc-muted);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.identity-pill-label + .identity-pill-id,
+.identity-pill [data-aeon-part='issuer-trust'] + .identity-pill-id {
+  padding-left: 4px;
+  border-left: 1px solid color-mix(in srgb, var(--identity-pill-tint) 16%, transparent);
+}
+
+.identity-pill [data-aeon-part='issuer-trust'] svg {
+  width: 12px;
+  height: 12px;
+}
+
+.identity-pill[data-aeon-state='verified'],
+.identity-pill[data-aeon-state='listed'] {
+  --identity-pill-tint: var(--hc-accent);
+}
+
+.identity-pill[data-aeon-state='imitation'],
+.identity-pill[data-aeon-state='shared-name'] {
+  --identity-pill-tint: var(--hc-warn);
+}
+
+.identity-pill[data-aeon-state='imitation'] .identity-pill-label {
+  padding-block: 2px 3px;
+  text-decoration: underline wavy var(--hc-warn);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 1px;
+}
+
+.identity-pill[data-aeon-state='unconfirmed'],
+.identity-pill[data-aeon-state='claim'],
+.identity-pill[data-aeon-state='missing-package'] {
+  border-style: dashed;
+  background: transparent;
+}
+
+.identity-pill[data-aeon-state='unconfirmed'] .identity-pill-label,
+.identity-pill[data-aeon-state='claim'] .identity-pill-label {
+  color: var(--hc-muted);
 }
 
 .detail-issuer-mark {
-  color: var(--hc-muted);
-  font-size: 0.78rem;
-  line-height: 1.25;
+  margin-top: 2px;
 }
 
 [data-aeon-part='asset-issuers'] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
+  gap: 4px;
   min-width: 0;
-  margin-top: 2px;
-  color: var(--hc-muted);
-  font-size: 0.75rem;
-  line-height: 1.25;
-}
-
-.asset-issuer-mark {
-  min-width: 0;
+  max-width: 100%;
+  margin-top: 4px;
 }
 
 .asset-issuers-more {
   color: var(--hc-muted);
-}
-
-.issuer-identity-mark[data-aeon-state='verified'],
-.issuer-identity-mark[data-aeon-state='listed'] {
-  color: var(--hc-text);
+  font-size: 0.6875rem;
+  font-weight: 600;
 }
 
 [data-aeon-part='bap-identicon'] {
   flex-shrink: 0;
   border-radius: 3px;
   color: hsl(var(--bap-hue, 210) 62% 48%);
-}
-
-[data-aeon-part='bap-fingerprint'] {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: var(--hc-muted);
-  font-size: 0.72rem;
-  line-height: 1;
-}
-
-.bap-fingerprint-id {
-  white-space: nowrap;
-  letter-spacing: 0.01em;
 }
 
 [data-aeon-part='issuer-trust'] {
@@ -4609,7 +4686,6 @@ button.identity-qr-copy:focus-visible {
 
 .collect-issuer-fingerprint {
   margin-right: 6px;
-  vertical-align: middle;
 }
 
 [data-aeon-part='peer-avatar'] {
@@ -4627,37 +4703,8 @@ button.identity-qr-copy:focus-visible {
   object-fit: cover;
 }
 
-[data-aeon-part='peer-identity'] {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  color: var(--hc-muted);
-  font-size: 0.74rem;
-  line-height: 1.2;
-}
-
-.peer-identity-name {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--hc-text);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-[data-aeon-part='peer-identity'][data-aeon-state='imitation'] .peer-identity-name {
-  text-decoration: underline wavy var(--hc-warn);
-  text-underline-offset: 3px;
-}
-
-[data-aeon-part='peer-identity'] .bap-fingerprint {
-  flex-shrink: 0;
-}
-
 .friend-grid-card [data-aeon-part='peer-identity'] {
-  justify-content: center;
-  width: 100%;
+  margin-inline: auto;
 }
 
 .friend-identity-card {

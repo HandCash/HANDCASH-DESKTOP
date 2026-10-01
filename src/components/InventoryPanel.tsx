@@ -520,6 +520,7 @@ function IssuerGroupItem({
                   bapId={issuer.bap.id}
                   className="collect-issuer-fingerprint"
                   showId={issuer.bap.state === 'verified'}
+                  state={issuerViewState(issuer)}
                 />
               ) : null}
               {groupQuantityLabel(issuer)}

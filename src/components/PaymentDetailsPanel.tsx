@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useActivityAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { AppAvatar } from './AppAvatar'
+import { AssetIssuers } from './AssetIssuers'
 import { ReceiveIcon } from './icons'
 import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
 import { appDisplayName } from '../wallet/appIdentity'
@@ -919,6 +920,7 @@ function ListingActivityDetails({
           origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1'),
       )
     : undefined
+  const issuerAssets = useMemo(() => (held ? [held] : []), [held])
   const name =
     (shown?.name && shown.name !== 'Collectable' ? shown.name : undefined) ||
     held?.name ||
@@ -1033,6 +1035,7 @@ function ListingActivityDetails({
 
       <div className="payment-details-amount">
         <strong>{name}</strong>
+        <AssetIssuers assets={issuerAssets} />
         <span className="payment-details-secondary">
           {priceSats != null
             ? `Listed for ${priceSats.toLocaleString()} sats`

@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import type { PeerIdentityView } from '../hooks/usePeerIdentity'
 import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
-import { BapFingerprint } from './BapIdenticon'
+import { bapFingerprint } from '../wallet/issuerTrust'
+import { BapIdenticon } from './BapIdenticon'
 import { DeferredImage } from './DeferredImage'
 import { issuerTrustNote, issuerViewState, IssuerTrustBadge } from './IssuerIdentityMark'
 
@@ -48,26 +49,23 @@ function peerTitle(peer: PeerIdentityView): string {
   return `${peer.identity.name} · BAP ID ${peer.identity.bapId} · Presented and signed by this wallet key. ${note ?? ''}`.trim()
 }
 
-/** The identity a contact presented: its name, HandCash checkmark or caution, and BAP fingerprint. */
+/** The identity a contact presented, as the same pill issuers use: identicon, name, checkmark or caution, short BAP ID. */
 export function PeerIdentityLine({ peer }: { peer: PeerIdentityView | null }) {
   if (!peer) return null
   const state = peer.kind === 'presented' ? issuerViewState({ bap: peer.bap }) : 'missing-package'
+  const bapId = peer.kind === 'presented' ? peer.identity.bapId : peer.bapId
   return (
-    <span
-      className="peer-identity"
-      data-aeon-part="peer-identity"
-      data-aeon-state={state}
-      title={peerTitle(peer)}
-    >
+    <span className="identity-pill" data-aeon-part="peer-identity" data-aeon-state={state} title={peerTitle(peer)}>
+      <span className="identity-pill-lead">
+        <BapIdenticon bapId={bapId} size={10} />
+      </span>
       {peer.kind === 'presented' ? (
         <>
-          <span className="peer-identity-name">{peer.identity.name}</span>
+          <span className="identity-pill-label">{peer.identity.name}</span>
           <IssuerTrustBadge view={{ bap: peer.bap }} />
-          <BapFingerprint bapId={peer.identity.bapId} className="peer-identity-fingerprint" />
         </>
-      ) : (
-        <BapFingerprint bapId={peer.bapId} className="peer-identity-fingerprint" />
-      )}
+      ) : null}
+      <span className="identity-pill-id mono">{bapFingerprint(bapId).short}</span>
     </span>
   )
 }

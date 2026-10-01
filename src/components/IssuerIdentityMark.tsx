@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import type { IssuerBap, IssuerView } from '../wallet/collectableGroups'
 import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
-import { BapFingerprint } from './BapIdenticon'
+import { bapFingerprint } from '../wallet/issuerTrust'
+import { BapIdenticon } from './BapIdenticon'
 import { DeferredImage } from './DeferredImage'
 import { VerifiedIcon, WarningIcon } from './icons'
 
@@ -78,37 +79,44 @@ export function IssuerTrustBadge({ view }: { view: IssuerTrustSubject }) {
   return null
 }
 
-/** Issuer name beside the identity's image, its HandCash checkmark and its BAP fingerprint. */
-export function IssuerIdentityMark({ view, className }: { view: IssuerView; className: string }) {
+/**
+ * The identity pill: the identity's image (or BAP identicon), its name, the
+ * HandCash checkmark and the short BAP ID — the part a look-alike cannot copy.
+ */
+export function IssuerIdentityMark({ view, className }: { view: IssuerView; className?: string }) {
   const image = view.bap?.identity?.image
   const src = useMemo(() => (image ? issuerIdentityImageDataUrl(image) : null), [image])
+  const bapId = view.bap?.id
   return (
     <span
-      className={`issuer-identity-mark ${className}`}
+      className={className ? `identity-pill ${className}` : 'identity-pill'}
       data-aeon-part="issuer"
       data-aeon-state={issuerViewState(view)}
       title={issuerViewTitle(view)}
     >
       {src ? (
-        <DeferredImage
-          className="issuer-identity-mark-icon"
-          src={src}
-          alt=""
-          width={18}
-          height={18}
-          skeletonWidth={18}
-          skeletonHeight={18}
-          skeletonRadius={5}
-        />
+        <span className="identity-pill-lead">
+          <DeferredImage
+            className="identity-pill-image"
+            src={src}
+            alt=""
+            width={16}
+            height={16}
+            skeletonWidth={16}
+            skeletonHeight={16}
+            skeletonRadius="50%"
+            fallback={bapId ? <BapIdenticon bapId={bapId} size={10} /> : null}
+          />
+        </span>
+      ) : bapId ? (
+        <span className="identity-pill-lead">
+          <BapIdenticon bapId={bapId} size={10} />
+        </span>
       ) : null}
-      <span className="issuer-identity-mark-label">{view.label}</span>
+      <span className="identity-pill-label">{view.label}</span>
       <IssuerTrustBadge view={view} />
-      {view.bap ? (
-        <BapFingerprint
-          bapId={view.bap.id}
-          className="issuer-identity-mark-fingerprint"
-          showId={view.bap.state === 'verified'}
-        />
+      {bapId && view.bap?.state === 'verified' ? (
+        <span className="identity-pill-id mono">{bapFingerprint(bapId).short}</span>
       ) : null}
     </span>
   )
