@@ -1,3 +1,4 @@
+import type { PublicIdentityProfile } from '../publicIdentityProfile'
 /**
  * BSV-21 fungible tokens (inscription MIME `application/bsv-20`).
  *
@@ -79,7 +80,8 @@ export type Bsv21Utxo = {
   satoshis: number
   cosign?: Bsv21Cosign
   issuer?: string
-  /** True when Sigma address matched issuer (full vin verify optional). */
+  issuerProfile?: PublicIdentityProfile
+  /** True only after the actual transaction’s Sigma signature and signer verify. */
   issuerAttested?: boolean
   /** Locking script hex when listed with `include: locking scripts`. */
   lockingScript?: string
@@ -108,6 +110,7 @@ export type Bsv21ImportItem = {
   dec?: number
   cosign?: Bsv21Cosign
   issuer?: string
+  issuerProfile?: PublicIdentityProfile
   /** Set when a BRC-162 lock proved this holding — absent for legacy JSON. */
   binarySupply?: 'locked' | 'open'
   /**
@@ -142,9 +145,10 @@ export type FungibleToken = {
   cosign?: Bsv21Cosign
   /** Issuer identity pubkey when known (from remittance / Sigma). */
   issuer?: string
+  issuerProfile?: PublicIdentityProfile
   /** Display handle when resolved (e.g. this wallet's $handle). */
   issuerHandle?: string
-  /** Issuer claimed and Sigma address matched (not full vin proof). */
+  /** Issuer signature and input binding verified against a retained transaction. */
   issuerAttested?: boolean
   /**
    * When several deploy ids share the same issuer + ticker, all member token
@@ -475,6 +479,7 @@ function mergeFungibleRows(
   if (from.sym) into.sym = into.sym || from.sym
   if (into.dec === 0 && from.dec > 0) into.dec = from.dec
   if (!into.issuer && from.issuer) into.issuer = from.issuer
+  if (from.issuerProfile && (!into.issuerProfile || from.issuerProfile.updatedAt > into.issuerProfile.updatedAt)) into.issuerProfile = from.issuerProfile
   if (from.issuerAttested) into.issuerAttested = true
   if (!into.icon && from.icon) into.icon = from.icon
   if (!into.iconUrl && from.iconUrl) into.iconUrl = from.iconUrl
@@ -524,6 +529,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         spendKind: tipCosigned ? 'cosigned' : 'plain',
         ...(u.cosign ? { cosign: u.cosign } : {}),
         ...(u.issuer ? { issuer: u.issuer } : {}),
+        ...(u.issuerProfile ? { issuerProfile: u.issuerProfile } : {}),
         ...(u.issuerAttested ? { issuerAttested: true } : {}),
         ...(u.icon ? { icon: u.icon } : {}),
         ...(u.binarySupply ? { binarySupply: u.binarySupply } : {}),
@@ -546,6 +552,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (u.sym) existing.sym = existing.sym || u.sym
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
+    if (u.issuerProfile && (!existing.issuerProfile || u.issuerProfile.updatedAt > existing.issuerProfile.updatedAt)) existing.issuerProfile = u.issuerProfile
     if (u.issuerAttested) existing.issuerAttested = true
     if (!existing.icon && u.icon) existing.icon = u.icon
     if (!existing.binarySupply && u.binarySupply) existing.binarySupply = u.binarySupply

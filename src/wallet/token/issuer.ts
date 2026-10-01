@@ -1,3 +1,5 @@
+import { appendIssuerMetadata, expandedProtocolScript } from '../issuerMetadata'
+import type { PublicIdentityProfile } from '../publicIdentityProfile'
 /**
  * BSV-21 issuer attestation (BRC-163): on-chain Sigma + CI/tag mirror.
  *
@@ -5,8 +7,9 @@
  * `customInstructions.issuer` and tag `issuer:<pubkey>` are remittance mirrors only.
  */
 
-import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
-import { Algorithm, Sigma } from 'sigma-protocol'
+import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction, Utils, Hash, OP } from '@bsv/sdk'
+import { Algorithm, Sigma as SigmaParser } from 'sigma-protocol'
+import Sigma from '@1sat/templates/sigma'
 import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../beefCache'
 import { normalizeTokenId } from './types'
 import { planBsv21MintWire } from './mintWire'
@@ -77,9 +80,9 @@ export function issuerFromSigmaLockingScript(
     })
     tx.addOutput({
       satoshis: 1,
-      lockingScript: Script.fromHex(hex),
+      lockingScript: expandedProtocolScript(hex),
     })
-    const sigma = new Sigma(tx, 0, 0, 0)
+    const sigma = new SigmaParser(tx, 0, 0, 0)
     const sig = sigma.sig
     if (!sig?.address) return { issuer: null, verified: false }
 
@@ -105,6 +108,42 @@ export function issuerFromSigmaLockingScript(
   }
 }
 
+/** Actual output bytes + funding vin + signer key, not an address-only hint.
+ * This proves authorship, not chain inclusion or BRC-150 ancestry. */
+function sigmaInputHash(txid: string, vout: number): number[] {
+  return Hash.sha256([...Utils.toArray(txid, 'hex'), vout & 255, (vout >>> 8) & 255, (vout >>> 16) & 255, (vout >>> 24) & 255])
+}
+
+export function verifySigmaIssuer(tx: Transaction, outputIndex: number, issuer: string): boolean {
+  try {
+    const key = normalizeIssuerPubKey(issuer)
+    if (!key || !Number.isSafeInteger(outputIndex) || !tx.outputs[outputIndex]) return false
+    const script = expandedProtocolScript(tx.outputs[outputIndex]!.lockingScript.toHex())
+    const parsedTx = new Transaction()
+    parsedTx.addInput({ sourceTXID: '00'.repeat(32), sourceOutputIndex: 0 })
+    parsedTx.addOutput({ satoshis: 1, lockingScript: script })
+    const sig = new SigmaParser(parsedTx).sig
+    if (!sig || sig.address !== PublicKey.fromString(key).toAddress()) return false
+    const vin = sig.vin === -1 ? outputIndex : sig.vin
+    if (!Number.isSafeInteger(vin) || vin < 0 || !tx.inputs[vin]) return false
+    const input = tx.inputs[vin]!
+    const txid = input.sourceTXID ?? input.sourceTransaction?.id('hex')
+    if (!txid || !/^[0-9a-f]{64}$/i.test(txid)) return false
+    const bytes = Utils.toArray(sig.signature, 'base64')
+    if (sig.algorithm === Algorithm.BRC77) {
+      // BRC-77 carries the actual signing key; its address field is not proof.
+      if (Utils.toHex(bytes.slice(4, 37)).toLowerCase() !== key) return false
+    } else if (sig.algorithm !== Algorithm.BSM) return false
+    const index = script.chunks.findIndex(chunk => chunk.data && Utils.toUTF8(chunk.data) === 'SIGMA')
+    if (index < 1) return false
+    const separator = script.chunks[index - 1]!
+    if (separator.op !== OP.OP_RETURN && (!separator.data || Utils.toUTF8(separator.data) !== '|')) return false
+    const prefix = new Script(script.chunks.slice(0, index - 1)).toBinary()
+    return new Sigma({ algorithm: sig.algorithm, address: sig.address, signature: bytes, vin: sig.vin })
+      .verifyWithHashes(sigmaInputHash(txid, input.sourceOutputIndex), Hash.sha256(prefix))
+  } catch { return false }
+}
+
 /**
  * Append Sigma (BRC-77) to a deploy tip locking script, bound to funding vin 0.
  * Caller must ensure createAction spends `fundOutpoint` as input 0.
@@ -116,20 +155,21 @@ export function sigmaSignDeployLockingScript(args: {
   identityKeyHex: string
 }): string {
   const root = PrivateKey.fromHex(args.identityKeyHex)
-  const tx = new Transaction()
-  tx.addInput({
-    sourceTXID: args.fundTxid.toLowerCase(),
-    sourceOutputIndex: args.fundVout,
-  })
-  tx.addOutput({
-    satoshis: 1,
-    lockingScript: Script.fromHex(args.lockingScriptHex.trim().toLowerCase()),
-  })
-  const sigma = new Sigma(tx, 0, 0, 0)
-  const { signedTx } = sigma.sign(root, Algorithm.BRC77)
-  const script = signedTx.outputs[0]?.lockingScript?.toHex()
-  if (!script) throw new Error('Sigma sign produced no locking script')
-  return script.toLowerCase()
+  const base = Script.fromHex(args.lockingScriptHex.trim().toLowerCase())
+  if (!/^[0-9a-f]{64}$/i.test(args.fundTxid) || !Number.isSafeInteger(args.fundVout) || args.fundVout < 0 || args.fundVout > 0xffffffff) throw new Error('Invalid Sigma funding outpoint.')
+  const expanded = expandedProtocolScript(base.toHex())
+  if (expanded.chunks.some(chunk => chunk.data && Utils.toUTF8(chunk.data) === 'SIGMA')) throw new Error('New issuance already contains a Sigma signature.')
+  // @1sat/templates 0.0.2 exposes sign/verifyWithHashes. Use raw prefix
+  // bytes exactly as the SDK's current computeDataHash / go-sigma specifies.
+  const sigma = Sigma.sign(sigmaInputHash(args.fundTxid.toLowerCase(), args.fundVout), Hash.sha256(base.toBinary()), root, { algorithm: Algorithm.BRC77, vin: 0 })
+  const tail = new Script()
+  if (base.chunks.some(chunk => chunk.op === OP.OP_RETURN)) tail.writeBin(Utils.toArray('|'))
+  else tail.writeOpCode(OP.OP_RETURN)
+  for (const value of ['SIGMA', sigma.data.algorithm, sigma.data.address]) tail.writeBin(Utils.toArray(value, 'utf8'))
+  tail.writeBin(sigma.data.signature)
+  tail.writeBin(Utils.toArray('0'))
+  return Script.fromBinary([...base.toBinary(), ...tail.toBinary()]).toHex()
+
 }
 
 type CreateActionOutput = {
@@ -287,7 +327,9 @@ function mergeIssuerIntoCi(
   }
   body.issuer = issuer
   if (extra?.icon && !body.icon) body.icon = extra.icon
-  return JSON.stringify(body)
+  const value = JSON.stringify(body)
+  if (new TextEncoder().encode(value).length > 1000) throw new Error('Token remittance exceeds the BRC-100 size limit.')
+  return value
 }
 
 function iconFromCi(ci: string | undefined): string | null {
@@ -426,6 +468,7 @@ function normalizeDotOutpoint(op: string): string {
 export async function enrichCreateActionForBsv21Issuer(
   active: ActiveWallet,
   args: CreateActionArgs,
+  signer: { identityKey: string; rootKeyHex: string; profile?: PublicIdentityProfile } = active,
 ): Promise<CreateActionArgs> {
   const outputs = args.outputs
   if (!outputs?.length) return args
@@ -434,8 +477,8 @@ export async function enrichCreateActionForBsv21Issuer(
     .filter((i) => i >= 0)
   if (issuanceIdxs.length === 0) return args
 
-  const issuer = normalizeIssuerPubKey(active.identityKey)
-  if (!issuer) return args
+  const issuer = normalizeIssuerPubKey(signer.identityKey)
+  if (!issuer) throw new Error('Invalid issuer identity key.')
 
   const nextOutputs = outputs.map((o) => ({ ...o }))
 
@@ -500,13 +543,13 @@ export async function enrichCreateActionForBsv21Issuer(
 
   for (const i of allIssuanceIdxs) {
     const out = nextOutputs[i]!
-    const tags = [...(out.tags ?? [])]
+    const claimed = issuerFromRemittance(out)
+    if (bsv21OpFromOutput(out) === 'mint' && claimed && claimed !== issuer) throw new Error('Select the original issuer identity before minting more tokens.')
+    const tags = [...(out.tags ?? []).filter(tag => !tag.trim().toLowerCase().startsWith('issuer:'))]
     if (!tags.some((t) => t === 'bsv21' || t.startsWith('bsv21:'))) {
       tags.unshift('bsv21')
     }
-    if (!tags.some((t) => t.startsWith('issuer:'))) {
-      tags.push(`issuer:${issuer}`)
-    }
+    tags.push(`issuer:${issuer}`)
     nextOutputs[i] = {
       ...out,
       tags,
@@ -517,23 +560,14 @@ export async function enrichCreateActionForBsv21Issuer(
   const inputs = [...(args.inputs ?? [])]
   let inputBEEF = args.inputBEEF
 
-  // Sigma binds its signature to the outpoint at a fixed vin, so a genesis
-  // deploy can only be signed against an input we already know.
-  //
-  // We used to invent that input by naming the largest UTXO in basket
-  // `default`. That basket *is* the toolbox's change basket, and storage
-  // refuses an explicit input whose row is change ("inputs[0] must be an
-  // unmanaged input"), so every deploy failed before it reached the network.
-  // Only a caller-supplied unmanaged input — an auth tip, an imported
-  // ordinal — can carry the binding. Without one the deploy still goes out;
-  // issuer attribution falls back to the `issuer:` tag and customInstructions
-  // that every issuance output above already carries.
+  // Sigma binds to the explicit input prepared by identityIssuance's SDK
+  // anchor flow. Never substitute unsigned attribution if signing fails.
   const bindOutpoint = inputs[0] ? normalizeDotOutpoint(inputs[0].outpoint) : ''
   const [bindTxid = '', bindVoutS = ''] = bindOutpoint.split('.')
   const bindVout = Number(bindVoutS)
 
   if (deployIdxs.length > 0) {
-    if (/^[0-9a-f]{64}$/.test(bindTxid) && Number.isInteger(bindVout)) {
+    if (/^[0-9a-f]{64}$/.test(bindTxid) && Number.isSafeInteger(bindVout) && bindVout >= 0 && bindVout <= 0xffffffff) {
       for (const i of deployIdxs) {
         const out = nextOutputs[i]!
         if (!out.lockingScript) continue
@@ -541,20 +575,18 @@ export async function enrichCreateActionForBsv21Issuer(
           nextOutputs[i] = {
             ...out,
             lockingScript: sigmaSignDeployLockingScript({
-              lockingScriptHex: out.lockingScript,
+              lockingScriptHex: appendIssuerMetadata(out.lockingScript, issuer, signer.profile),
               fundTxid: bindTxid,
               fundVout: bindVout,
-              identityKeyHex: active.rootKeyHex,
+              identityKeyHex: signer.rootKeyHex,
             }),
           }
         } catch (err) {
-          console.warn('[bsv21-issuer] Sigma sign failed; CI issuer only', err)
+          throw new Error('Could not sign the issuer attestation.', { cause: err })
         }
       }
     } else {
-      console.info(
-        '[bsv21-issuer] genesis deploy has no unmanaged input to bind Sigma to; issuing with tag/CI issuer only',
-      )
+      throw new Error('Identity-backed mint requires a Sigma funding anchor.')
     }
   }
 
@@ -909,45 +941,6 @@ export async function completeBsv21SignableWithRootP2pkh(
   return {
     txid,
     ...(txBinary ? { tx: txBinary } : {}),
-  }
-}
-
-/**
- * If identity-mint createAction returned a signable (auth tip unlock pending),
- * finish it so the app gets a txid like a normal createAction.
- */
-export async function finishBsv21IdentityMintCreateAction(
-  active: ActiveWallet,
-  args: unknown,
-  result: unknown,
-): Promise<unknown> {
-  if (!isBsv21IdentityMintArgs('createAction', args)) return result
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return result
-  const row = result as {
-    txid?: unknown
-    signableTransaction?: Bsv21SignableTransaction
-  }
-  if (typeof row.txid === 'string' && row.txid.trim()) return result
-  const signable = row.signableTransaction
-  if (!signable?.reference || !Array.isArray(signable.tx)) return result
-
-  const inputs =
-    args && typeof args === 'object' && !Array.isArray(args)
-      ? ((args as CreateActionArgs).inputs ?? [])
-      : []
-  const outpoints = inputs.map((i) => i.outpoint).filter(Boolean)
-  if (outpoints.length === 0) return result
-
-  const completed = await completeBsv21SignableWithRootP2pkh(
-    active,
-    signable,
-    outpoints,
-  )
-  const { signableTransaction: _drop, ...rest } = row
-  return {
-    ...rest,
-    txid: completed.txid,
-    ...(completed.tx ? { tx: completed.tx } : {}),
   }
 }
 

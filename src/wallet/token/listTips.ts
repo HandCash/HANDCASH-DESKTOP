@@ -1,3 +1,5 @@
+import { issuerMetadataFromScript } from '../issuerMetadata'
+import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
 import { getActiveWallet } from '../session'
 
 /** List BRC-162 value tips from basket `bsv21` (BRC-163). */
@@ -180,7 +182,9 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
           typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined,
         ) ?? rememberedDeployCap(tokenId)
   if (maxSupply != null) rememberDeployCap(tokenId, maxSupply)
-  const remittanceIssuer = issuerFromRemittance({
+  const original = retainedIssuerMetadata(tokenId)
+  const metadata = original?.issuer ? original : issuerMetadataFromScript(scriptHex)
+  const remittanceIssuer = metadata.issuer ?? issuerFromRemittance({
     customInstructions: raw.customInstructions,
     tags,
   })
@@ -189,6 +193,11 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     [remittanceIssuer, identityKey].filter(Boolean) as string[],
   )
   const issuer = sigma.issuer ?? remittanceIssuer
+  // An address hint alone is never attested.
+  const issuerAttested =
+    !!issuer &&
+    ((retainedScriptIs(outpointRaw, scriptHex) && retainedSignedBy(outpointRaw, issuer)) ||
+      retainedSignedBy(tokenId, issuer))
   // Script wins for the lock kind (BRC-163: readers prefer the script when
   // trust matters); remittance only fills a cosign claim the rest lacks.
   const cosign =
@@ -208,7 +217,8 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     ...(maxSupply != null ? { maxSupply } : {}),
     ...(scriptHex ? { lockingScript: scriptHex } : {}),
     ...(issuer ? { issuer } : {}),
-    ...(sigma.issuer ? { issuerAttested: true } : {}),
+    ...(issuerAttested ? { issuerAttested: true } : {}),
+    ...(metadata.issuerProfile ? { issuerProfile: metadata.issuerProfile } : {}),
     ...(cosign ? { cosign } : {}),
   }
 }

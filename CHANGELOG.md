@@ -1,10 +1,30 @@
 # Changelog
 
+## [1.3.390] - 2026-10-01
+
+Public issuer identities: assets you issue carry a signed name and icon.
+
+### Added
+
+- **ID → Public identities.** Define the wallet's public name, icon and description, or import an existing issuer's hex or WIF Sigma signing key, and choose which key signs new issuance. Profiles are signed (`handcash-public-identity` v1, `docs/public-identities.md`) and are attribution only: they grant no spend authority and do not prove a real-world identity. Imported keys are sealed to the wallet account with BRC-78 and never enter chart state, metadata or app responses. The recovery phrase cannot derive them, so the identity backup is separate from BRC-39 history.
+- **Issuance signs with the selected issuer.** New items and BSV-21 deploys carry a standard Bitcom MAP `issuer` / `issuerProfile` tape and a Sigma (BRC-77) signature bound to a real funding input. A request with no input uses the 1Sat SDK anchor flow (`noSend` 2-sat anchor, then `sendWith`), and approval shows the issuer and the anchor fee. A name and icon are required before issuing. Selection is checked again after the anchor is made, and a failed signature refuses the mint instead of sending it unsigned.
+- **Collect groups by issuer key.** Shelves are keyed by the issuer's public key, with the signed profile's name and icon. An unverified `issuer:` remittance claim gets its own "Issuer claim" shelf and cannot land on an attested issuer's shelf.
+
+### Fixed
+
+- **Sigma signatures verify.** The old deploy signer appended a second `OP_RETURN` instead of the `|` separator and produced signatures no verifier accepted. Signing and verification now follow the 1Sat SDK hash rules (`@1sat/templates`), and attestation requires the actual transaction's signature, input binding and embedded signing key.
+- **Issuer attribution does not slow listing.** Each outpoint's retained transaction is parsed and its Sigma verified once per session (`src/wallet/issuerAttribution.ts`), and profile signatures are verified once per exact signed bytes. Doing it per tip on every refresh re-parsed whole BEEF packages and origin inscriptions.
+- **A failed mint releases its anchor.** When signing or the mint fails before broadcast, the signable mint and the `noSend` anchor are aborted, so the anchor's change is not left locked.
+
 ## [1.3.389] - 2026-09-30
 
-### Changed
+Fixes lag and crashes introduced by the last few releases.
 
-- Patch release (every push must ship a new version).
+### Fixed
+
+- **Phone backups no longer crash the app.** BRC-39 encryption and decryption now run on WebCrypto AES-GCM over one byte buffer (`src/wallet/brc39Lean.ts`). The old toolbox path held about twenty copies of the backup as JavaScript number arrays, so a 28 MB history ran the Android WebView out of memory mid-backup and the backup never finished. Peak memory is now three to four times the document. The file format is unchanged and interoperates both ways with the toolbox. The toolbox encryptor is kept only as a fallback when WebCrypto is missing.
+- **Large history restores fit in memory.** The same decryptor lets an ~80 MB backup restore on Desktop without exhausting the renderer.
+- **Activity no longer freezes the wallet as history grows.** Each Activity refresh read every settled transaction record, and IndexedDB clones the whole record, raw transaction and input BEEF included, on the UI thread. The ledger now lists ids from the `status_userId` index, fetches only records it has not seen this session in small batches that yield between them, and reads them outside the storage lock so a spend is never stuck behind it. A recompose still rereads everything.
 
 ## [1.3.388] - 2026-09-30
 

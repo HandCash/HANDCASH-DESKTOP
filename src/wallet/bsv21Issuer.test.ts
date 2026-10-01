@@ -1,5 +1,5 @@
-import { PrivateKey, P2PKH, Script, Spend, Transaction } from '@bsv/sdk'
-import { describe, expect, it } from 'vitest'
+import { Beef, PrivateKey, P2PKH, Script, Spend, Transaction } from '@bsv/sdk'
+import { describe, expect, it, vi } from 'vitest'
 import {
   issuerFromRemittance,
   normalizeIssuerPubKey,
@@ -9,6 +9,8 @@ import {
   isBsv21IdentityMintArgs,
   bsv21IdentityMintHints,
 } from './token'
+
+vi.mock('./beefCache', () => ({ hydrateInputBeef: async (_active: unknown, beef: Beef) => beef.toBinary(), rememberBeefBinary: () => {} }))
 
 describe('bsv21Issuer', () => {
   const root = PrivateKey.fromRandom()
@@ -190,7 +192,13 @@ describe('bsv21Issuer', () => {
       chain: 'main',
       wallet: { listOutputs: async () => ({ outputs: [] }) },
     }
+    const fund = new Transaction()
+    fund.addInput({ sourceTXID: 'ab'.repeat(32), sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
+    fund.addOutput({ satoshis: 2, lockingScript: new P2PKH().lock(root.toAddress()) })
+    const beef = new Beef(); beef.mergeTransaction(fund)
     const enriched = await enrichCreateActionForBsv21Issuer(active as never, {
+      inputs: [{ outpoint: `${fund.id('hex')}.0`, unlockingScriptLength: 108 }],
+      inputBEEF: beef.toBinary(),
       description: 'Mint COPE',
       outputs: [
         {
@@ -212,7 +220,7 @@ describe('bsv21Issuer', () => {
     const decoded = decodeBsv21Binary(issued)
     expect(decoded?.role).toBe('deploy')
     expect(decoded?.amount).toBe(4_444_444n)
-    expect(decoded?.restScriptHex).toBe(p2pkh)
+    expect(decoded?.restScriptHex).toMatch(new RegExp(`^${p2pkh}`))
     // Issuer attribution still rides the remittance mirror.
     expect(enriched.outputs?.[0]?.tags).toContain(`issuer:${issuer}`)
   })

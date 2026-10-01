@@ -1,4 +1,11 @@
 import {
+  enrichIdentityIssuance,
+  finishIdentityIssuance,
+  isIdentityIssuanceArgs,
+  releaseIdentityIssuance,
+} from './identityIssuance'
+import { selectedPublicIdentityKey, publicProfileForIssuer } from './publicIdentities'
+import {
   getWalletRuntime,
   runtimeIsCurrent,
   type WalletRuntime,
@@ -41,8 +48,6 @@ import {
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import {
-  enrichCreateActionForBsv21Issuer,
-  finishBsv21IdentityMintCreateAction,
   isBsv21IdentityMintArgs,
   resolveBsv21IconDataUrl,
   stampBsv21IconOnListedOutputs,
@@ -977,6 +982,7 @@ async function handleBrc100RequestInner(
     }
   }
 
+  let approvedIssuer: { identityKey: string; displayName?: string } | undefined
   if (isActionMethod(method)) {
     startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
@@ -996,6 +1002,12 @@ async function handleBrc100RequestInner(
     if (method === 'createAction' || method === 'signAction') {
       try {
         assertOnlineForPayment()
+        if (isIdentityIssuanceArgs(method, args)) {
+          const identityKey = selectedPublicIdentityKey(runtime)
+          const profile = publicProfileForIssuer(runtime, identityKey)
+          if (!profile) throw new Error('Define a display name and icon under ID → Public identities before issuing assets.')
+          approvedIssuer = { identityKey, displayName: profile.displayName }
+        }
         // Local toolbox / history backup is authoritative — no chain heal before pay.
         const amountSats = extractSatsFromArgs(method, args)
         // Refuse impossible spends before consent so the app receives a
@@ -1018,7 +1030,7 @@ async function handleBrc100RequestInner(
     }
     lapActionPhase(event.request_id, 'preflight')
     const actionDecision = await requestActionApproval(originator, method, args,
-      reservation => { automaticReservation = reservation }, event.request_id)
+      reservation => { automaticReservation = reservation }, event.request_id, approvedIssuer)
     lapActionPhase(event.request_id, 'approval')
     if (actionDecision !== 'allow') {
       return {
@@ -1114,18 +1126,20 @@ async function handleBrc100RequestInner(
             // Local balance check only — never block on address scan / chain ingest.
             await prepareBrcActionSpend(method, args)
             let actionArgs = args
+            let issuance: unknown
             if (method === 'createAction' && args && typeof args === 'object') {
               try {
                 setPaymentProgress('preparing', 'Preparing payment', null, 'Working…')
-                actionArgs = await enrichCreateActionForBsv21Issuer(
-                  active,
-                  args as Parameters<typeof enrichCreateActionForBsv21Issuer>[1],
+                actionArgs = issuance = await enrichIdentityIssuance(
+                  runtime!,
+                  args as Parameters<typeof enrichIdentityIssuance>[1],
+                  approvedIssuer?.identityKey,
                 )
               } catch (err) {
                 console.warn('[bsv21-issuer] enrich createAction failed', err)
                 // Identity mints with tip spends need inputBEEF — do not fall
                 // through to createAction or the toolbox error is opaque.
-                if (isBsv21IdentityMintArgs('createAction', args)) throw err
+                if (isIdentityIssuanceArgs('createAction', args)) throw err
               }
               // Return once signed + handed to miners. Do not wait for merkle /
               // seen-on-chain callback (Plinko on lilb.it sat 2–3 min per bet).
@@ -1134,23 +1148,25 @@ async function handleBrc100RequestInner(
             // Signing is the reply. Miner acceptance is not a gate — the chase
             // starts after this returns and must not hold the app on Broadcasting.
             setPaymentProgress('signing', 'Signing…', null, 'Working…')
-            const created = await dispatchAppActionFundedFromHeldChange(
-              active.wallet,
-              method,
-              actionArgs,
-              originator,
-            )
-            // Auth / Sigma fund tips use unlockingScriptLength → signable only.
-            // Complete with root P2PKH so the app gets a txid (collectables pattern).
-            if (method !== 'createAction') return created
+            let created: unknown
             try {
-              return await finishBsv21IdentityMintCreateAction(
-                active,
+              created = await dispatchAppActionFundedFromHeldChange(
+                active.wallet,
+                method,
                 actionArgs,
+                originator,
+              )
+              // Auth / Sigma fund tips use unlockingScriptLength → signable only.
+              // Complete with root P2PKH so the app gets a txid (collectables pattern).
+              if (method !== 'createAction' || !approvedIssuer) return created
+              return await finishIdentityIssuance(
+                runtime!,
+                actionArgs as Parameters<typeof finishIdentityIssuance>[1],
                 created,
               )
             } catch (err) {
-              console.warn('[bsv21-issuer] finish signable mint failed', err)
+              if (approvedIssuer) console.warn('[bsv21-issuer] signable mint failed', err)
+              if (issuance) await releaseIdentityIssuance(runtime!, issuance, created)
               throw err
             }
           },

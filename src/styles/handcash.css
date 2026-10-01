@@ -4472,6 +4472,30 @@ button.identity-qr-copy:focus-visible {
   max-width: 560px;
 }
 
+[data-aeon-scope="public-identities"] [data-aeon-part="records"] {
+  max-width: none;
+  margin-top: 16px;
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="record"] {
+  display: grid;
+  gap: 6px;
+  padding: 16px 0;
+  border-top: 1px solid var(--hc-border);
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="record"] p {
+  margin: 0;
+  color: var(--hc-muted);
+  overflow-wrap: anywhere;
+}
+
+.collect-issuer-icon {
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
 .identity-field {
   display: grid;
   gap: 6px;
@@ -15494,4 +15518,3 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   outline-offset: 0;
   border-color: color-mix(in srgb, var(--hc-accent) 60%, hsl(var(--border)));
 }
-

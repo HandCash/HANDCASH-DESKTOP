@@ -655,6 +655,21 @@ const IDENTITY = `stateDiagram-v2
   qrOpen : QR open
 `
 
+const PUBLIC_IDENTITIES = `stateDiagram-v2
+  direction LR
+  [*] --> browsing
+  browsing --> editing : CREATE / EDIT
+  browsing --> importing : IMPORT_KEY
+  editing --> editing : FIELD
+  importing --> importing : FIELD
+  editing --> browsing : CLOSE
+  importing --> browsing : CLOSE
+  note right of importing
+    Drafts contain public fields only.
+    asyncAction owns save/import/delete confirmation.
+  end note
+`
+
 const SETTINGS = `stateDiagram-v2
   direction TB
   [*] --> settingsHome
@@ -1310,6 +1325,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Identity',
     caption: 'identity — keys, copy, QR',
     source: IDENTITY,
+  },
+  {
+    id: 'publicIdentities',
+    label: 'Public identities',
+    caption: 'Issuer profiles, imported signing keys and encrypted backup',
+    source: PUBLIC_IDENTITIES,
   },
   {
     id: 'settingsFlow',

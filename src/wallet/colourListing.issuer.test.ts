@@ -33,7 +33,7 @@ describe('decodeListedBsv21Tip issuer', () => {
     expect(tip?.issuerAttested).toBeUndefined()
   })
 
-  it('copies issuer from Sigma when identityKey matches', () => {
+  it('copies an issuer hint without promoting an address-only match to an attestation', () => {
     const signed = sigmaSignDeployLockingScript({
       lockingScriptHex: lockingScript,
       fundTxid: 'ab'.repeat(32),
@@ -51,6 +51,6 @@ describe('decodeListedBsv21Tip issuer', () => {
       issuer,
     )
     expect(tip?.issuer).toBe(issuer)
-    expect(tip?.issuerAttested).toBe(true)
+    expect(tip?.issuerAttested).toBeUndefined()
   })
 })

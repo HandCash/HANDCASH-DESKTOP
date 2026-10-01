@@ -1,3 +1,5 @@
+import { PublicIdentitiesPanel } from './PublicIdentitiesPanel'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { useEffect, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
@@ -31,7 +33,9 @@ function shortIdentityKey(key: string): string {
 }
 
 export function IdentityPanel({ profile }: Props) {
-  const [dataUrl, setDataUrl] = useState(() => peekIdentityQrDataUrl(profile.identityKey))
+  const [dataUrl, setDataUrl] = useState(() =>
+    peekIdentityQrDataUrl(profile.identityKey),
+  )
   const [claimed, setClaimed] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
@@ -40,7 +44,8 @@ export function IdentityPanel({ profile }: Props) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [image, setImage] = useState('')
-  const [busy, setBusy] = useState(false)
+  const action = useAsyncAction<'publish'>()
+  const busy = action.busy
   const [status, setStatus] = useState<string | null>(null)
 
   useEffect(() => {
@@ -51,7 +56,10 @@ export function IdentityPanel({ profile }: Props) {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          toastError('QR failed', err instanceof Error ? err.message : String(err))
+          toastError(
+            'QR failed',
+            err instanceof Error ? err.message : String(err),
+          )
         }
       })
     return () => {
@@ -60,7 +68,8 @@ export function IdentityPanel({ profile }: Props) {
   }, [profile.identityKey])
 
   useEffect(() => {
-    const refresh = () => setClaimed(claimedHandleForIdentity(profile.identityKey))
+    const refresh = () =>
+      setClaimed(claimedHandleForIdentity(profile.identityKey))
     refresh()
     const unsub = subscribeClaimedCloudHandle(refresh)
     const onVis = () => {
@@ -109,7 +118,9 @@ export function IdentityPanel({ profile }: Props) {
     }
   }, [profile.identityKey])
 
-  const handleLabel = claimed ? formatHandCashHandle(claimed.handle, null) : null
+  const handleLabel = claimed
+    ? formatHandCashHandle(claimed.handle, null)
+    : null
 
   const copyIdentity = async () => {
     await copyText(profile.identityKey, { label: 'identity key' })
@@ -130,38 +141,42 @@ export function IdentityPanel({ profile }: Props) {
       toastError('Identity', 'Add a display name first.')
       return
     }
-    setBusy(true)
-    setStatus(null)
-    playWalletSound('soft')
-    const profilePayload: BapProfile = {
-      '@type': 'Person',
-      name: trimmed,
-    }
-    if (description.trim()) profilePayload.description = description.trim()
-    if (image.trim()) profilePayload.image = image.trim()
+    await action.run('publish', async () => {
+      setStatus(null)
+      playWalletSound('soft')
+      const profilePayload: BapProfile = {
+        '@type': 'Person',
+        name: trimmed,
+      }
+      if (description.trim()) profilePayload.description = description.trim()
+      if (image.trim()) profilePayload.image = image.trim()
 
-    const result = await composeBapIdentity(profilePayload)
-    setBusy(false)
-    if (!result.ok) {
-      toastError('Compose identity', result.error)
-      setStatus(result.error)
-      return
-    }
-    setPublished(true)
-    setBapId(result.bapId)
-    setStatus(
-      result.createdIdentity
-        ? `Published BAP + profile · ${result.txid.slice(0, 10)}…`
-        : `Updated profile · ${result.txid.slice(0, 10)}…`,
-    )
-    toastSuccess(
-      result.createdIdentity ? 'Identity published' : 'Profile updated',
-      result.bapId,
-    )
+      const result = await composeBapIdentity(profilePayload)
+
+      if (!result.ok) {
+        toastError('Compose identity', result.error)
+        setStatus(result.error)
+        return
+      }
+      setPublished(true)
+      setBapId(result.bapId)
+      setStatus(
+        result.createdIdentity
+          ? `Published BAP + profile · ${result.txid.slice(0, 10)}…`
+          : `Updated profile · ${result.txid.slice(0, 10)}…`,
+      )
+      toastSuccess(
+        result.createdIdentity ? 'Identity published' : 'Profile updated',
+        result.bapId,
+      )
+    })
   }
 
   return (
-    <div className="nav-section-body identity-nav nav-section-with-scroll" data-aeon-scope="identity">
+    <div
+      className="nav-section-body identity-nav nav-section-with-scroll"
+      data-aeon-scope="identity"
+    >
       <div className="connected-panel-head">
         <h2>Identity</h2>
       </div>
@@ -172,7 +187,12 @@ export function IdentityPanel({ profile }: Props) {
               <div className="identity-qr">
                 <div className="identity-qr-frame">
                   {dataUrl ? (
-                    <img src={dataUrl} alt="Identity QR" width={160} height={160} />
+                    <img
+                      src={dataUrl}
+                      alt="Identity QR"
+                      width={160}
+                      height={160}
+                    />
                   ) : (
                     <SkeletonQr />
                   )}
@@ -200,15 +220,22 @@ export function IdentityPanel({ profile }: Props) {
                     </button>
                   ) : (
                     <div className="identity-handle-empty">
-                      <p className="identity-handle-missing">No handle claimed yet</p>
-                      <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
+                      <p className="identity-handle-missing">
+                        No handle claimed yet
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-ghost identity-claim-btn"
+                        onClick={openClaim}
+                      >
                         Claim handle
                       </button>
                     </div>
                   )}
                 </div>
                 <p className="identity-qr-hint">
-                  Scan to pay or add as a friend. Identity is per active wallet account.
+                  Scan to pay or add as a friend. Identity is per active wallet
+                  account.
                 </p>
               </div>
             </div>
@@ -229,8 +256,13 @@ ${profile.identityKey}`}
               </li>
               <li className="identity-field">
                 <span className="identity-field-label">Network</span>
-                <strong className="identity-network" data-network={profile.chain}>
-                  {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
+                <strong
+                  className="identity-network"
+                  data-network={profile.chain}
+                >
+                  {profile.chain === 'main'
+                    ? 'Bitcoin SV Mainnet'
+                    : 'Bitcoin SV Testnet'}
                 </strong>
               </li>
               <li className="identity-field">
@@ -243,11 +275,18 @@ ${profile.identityKey}`}
             </ul>
           </section>
 
-          <section className="identity-card identity-compose" aria-label="Compose BAP identity">
-            <h3 className="identity-compose-title">Compose identity</h3>
+          <PublicIdentitiesPanel
+            key={`${profile.chain}:${profile.identityKey}`}
+            profile={profile}
+          />
+          <section
+            className="identity-card identity-compose"
+            aria-label="Compose BAP identity"
+          >
+            <h3 className="identity-compose-title">BAP on-chain identity</h3>
             <p className="identity-compose-lede">
-              Publishes your BAP ID (first time) and ALIAS profile on-chain for this wallet
-              account. Needs a little spendable balance for fees.
+              Publishes your BAP ID (first time) and ALIAS profile on-chain for
+              this wallet account. Needs a little spendable balance for fees.
             </p>
             <label className="identity-compose-field">
               <span>Display name</span>
@@ -285,9 +324,17 @@ ${profile.identityKey}`}
               disabled={busy}
               onClick={() => void onCompose()}
             >
-              {busy ? 'Publishing…' : published ? 'Update profile' : 'Publish identity'}
+              {busy
+                ? 'Publishing…'
+                : published
+                  ? 'Update profile'
+                  : 'Publish identity'}
             </button>
-            {status ? <p className="identity-compose-status">{status}</p> : null}
+            {status || action.error ? (
+              <p className="identity-compose-status" role="status">
+                {status ?? action.error}
+              </p>
+            ) : null}
           </section>
         </div>
       </div>

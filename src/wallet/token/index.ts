@@ -168,7 +168,6 @@ export {
 export {
   bsv21IdentityMintHints,
   enrichCreateActionForBsv21Issuer,
-  finishBsv21IdentityMintCreateAction,
   completeBsv21SignableWithRootP2pkh,
   injectIconIntoBsv21DeployScript,
   findPriorBsv21Icon,

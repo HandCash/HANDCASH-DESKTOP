@@ -1,3 +1,10 @@
+import { getWalletRuntime } from '../wallet/walletRuntime'
+import {
+  listPublicIdentities,
+  publicIdentitiesGeneration,
+  subscribePublicIdentities,
+} from '../wallet/publicIdentities'
+import { contentUrlForOrigin } from '../wallet/oneSatImport'
 import {
   startTransition,
   useDeferredValue,
@@ -5,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
@@ -480,9 +488,31 @@ function IssuerGroupItem({
     >
       <div className="collect-collection-head">
         <Accordion.ItemTrigger value={issuer.key} className="collect-collection-trigger">
-          <CollectableFacepile group={faceGroup} />
+          {issuer.icon ? (
+            <DeferredImage
+              className="collect-issuer-icon"
+              src={
+                issuer.icon.startsWith('ord://')
+                  ? contentUrlForOrigin(issuer.icon.slice(6), issuer.profileChain)
+                  : issuer.icon
+              }
+              alt=""
+              width={40}
+              height={40}
+              fallback={<CollectableFacepile group={faceGroup} />}
+            />
+          ) : (
+            <CollectableFacepile group={faceGroup} />
+          )}
           <span className="collect-collection-body">
-            <strong className="collect-collection-name" title={issuer.label}>
+            <strong
+              className="collect-collection-name"
+              title={
+                issuer.identityKey
+                  ? `${issuer.label} · issuer attribution: ${issuer.identityKey}`
+                  : issuer.label
+              }
+            >
               {issuer.label}
             </strong>
             <span className="collect-collection-meta">
@@ -645,6 +675,7 @@ function TokenShelf({
 }
 
 export function InventoryPanel() {
+  const identityGeneration = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
   const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -893,8 +924,16 @@ export function InventoryPanel() {
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const searching = deferredQuery.trim().length > 0
   const { issuers, ungrouped, ungroupedTokens } = useMemo(
-    () => groupCollectables(visibleItems, searching ? [] : tokens),
-    [visibleItems, tokens, searching],
+    () => {
+      let profiles: Parameters<typeof groupCollectables>[2] = []
+      try {
+        profiles = listPublicIdentities(getWalletRuntime()).map((row) => row.profile)
+      } catch {
+        // Locked wallet or unreadable profile store: shelves keep key labels.
+      }
+      return groupCollectables(visibleItems, searching ? [] : tokens, profiles)
+    },
+    [visibleItems, tokens, searching, identityGeneration],
   )
   const empty =
     items.filter((item) => !collectableIsFungible(item)).length === 0 &&

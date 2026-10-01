@@ -1,3 +1,7 @@
+import { issuerMetadataFromScript } from './issuerMetadata'
+import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from './issuerAttribution'
+import { issuerFromRemittance } from './token/issuer'
+import type { PublicIdentityProfile } from './publicIdentityProfile'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 
@@ -224,6 +228,9 @@ export type Collectable = {
   content?: string
   name: string
   app?: string
+  issuer?: string
+  issuerAttested?: boolean
+  issuerProfile?: PublicIdentityProfile
   imageUrl: string
   satoshis: number
   /** Held tip script retained so send/burn planning does not require a network fetch. */
@@ -400,6 +407,9 @@ function durableListJson(snapshot: DurableListSnapshot): string {
       ...(item.content ? { content: item.content } : {}),
       name: item.name,
       app: item.app,
+      issuer: item.issuer,
+      issuerAttested: item.issuerAttested,
+      issuerProfile: item.issuerProfile,
       // Art bytes belong to the item art store — inlining the data URL here
       // would write every picture twice and blow the list cache budget.
       imageUrl: item.imageUrl.startsWith('data:')
@@ -954,6 +964,9 @@ function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
     ...next,
     collectionId,
     app: next.app ?? held.app,
+    issuer: next.issuer ?? held.issuer,
+    issuerAttested: next.issuerAttested ?? held.issuerAttested,
+    issuerProfile: next.issuerProfile ?? held.issuerProfile,
     ...(content ? { content } : held.content ? { content: held.content } : {}),
     name:
       next.name === shortOrigin(next.origin) &&
@@ -1055,6 +1068,15 @@ function toCollectable(
     verdictOrigin: verdict?.origin,
     resolved,
   })
+  // Origin BEEF keeps issuer metadata portable after the ownership tip moves.
+  // This is attribution only; ancestry and issuer-signature verdicts stay separate.
+  const fromOrigin = retainedIssuerMetadata(origin)
+  const issuerMetadata = fromOrigin?.issuer ? fromOrigin : issuerMetadataFromScript(o.lockingScript)
+  const boundOrigin = normalizeOutpoint(origin) === normalizeOutpoint(o.outpoint)
+    ? !o.lockingScript || retainedScriptIs(origin, o.lockingScript)
+    : proven && !!verdict?.origin && normalizeOutpoint(verdict.origin) === normalizeOutpoint(origin)
+  const issuerAttested =
+    !!fromOrigin && !!issuerMetadata.issuer && boundOrigin && retainedSignedBy(origin, issuerMetadata.issuer)
   // An unmoved tip *is* its origin, so its locking script still carries the ord
   // envelope this wallet (or the minting app) wrote. Keep those bytes: the
   // indexer has not seen a fresh mint yet, and asking it paints the placeholder.
@@ -1069,6 +1091,9 @@ function toCollectable(
     ...(content ? { content } : {}),
     name: name.trim() || shortOrigin(origin),
     app,
+    issuer: issuerMetadata.issuer ?? issuerFromRemittance(o) ?? undefined,
+    issuerProfile: issuerMetadata.issuerProfile,
+    issuerAttested,
     imageUrl: getItemArtDataUrl(mediaOrigin) ?? contentUrlForOrigin(mediaOrigin, chain),
     satoshis: o.satoshis,
     ...(o.lockingScript ? { lockingScript: o.lockingScript } : {}),

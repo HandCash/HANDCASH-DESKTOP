@@ -824,7 +824,7 @@ export function summarizeAction(method: string, args: unknown): {
       typeof body.description === 'string' && body.description.trim()
         ? body.description.trim()
         : 'Mint a BSV-21 token'
-    details.push('Backed by your HandCash identity (Sigma issuer)')
+    details.push('Signed with your selected issuer identity (Sigma)')
     if (hints.sym) details.push(`Token: ${hints.sym}`)
     if (hints.amt) details.push(`Supply: ${hints.amt}`)
     details.push('Not covered by Pay or Auto-pay')
@@ -1216,10 +1216,16 @@ export function requestActionApproval(
   args: unknown,
   onAutomaticApproval?: (reservation: AutoPayReservation) => void,
   bridgeRequestId?: number,
+  issuer?: { identityKey: string; displayName?: string },
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
     summarizeAction(method, args)
+  if (issuer) {
+    details.push(`Issuer: ${issuer.displayName ?? 'Wallet identity'} · ${issuer.identityKey}`)
+    const body = asRecord(args)
+    if (!Array.isArray(body.inputs) || body.inputs.length === 0) details.push('Includes a 2-sat Sigma signing anchor transaction and its network fee')
+  }
   const itemSpend =
     isItemSpendArgs(method, args) ||
     isBsv21SpendArgs(method, args)

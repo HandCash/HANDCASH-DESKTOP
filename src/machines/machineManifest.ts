@@ -1,3 +1,4 @@
+import { publicIdentitiesMachine } from './publicIdentitiesMachine'
 import { actionLifecycleMachine } from './actionLifecycleMachine'
 import { asyncActionMachine } from './asyncActionMachine'
 import { appMachine } from './appMachine'
@@ -37,6 +38,7 @@ import { bsv21SendMachine } from '../wallet/token/sendMachine'
 export const machineManifest = Object.freeze({
   actionLifecycle: actionLifecycleMachine,
   asyncAction: asyncActionMachine,
+  publicIdentities: publicIdentitiesMachine,
   app: appMachine,
   send: sendMachine,
   unlock: unlockMachine,

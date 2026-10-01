@@ -1,3 +1,5 @@
+import { issuerMetadataFromScript } from '../issuerMetadata'
+import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
 import { getActiveWallet } from '../session'
 import { storageRegistry } from '../../storage/registry'
 
@@ -213,6 +215,7 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.iconUrl ? { iconUrl: t.iconUrl } : {}),
           ...(t.cosign ? { cosign: t.cosign } : {}),
           ...(t.issuer ? { issuer: t.issuer } : {}),
+          ...(t.issuerProfile ? { issuerProfile: t.issuerProfile } : {}),
           ...(t.issuerHandle ? { issuerHandle: t.issuerHandle } : {}),
           ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
           ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
@@ -358,6 +361,7 @@ function tipFromProjection(token: FungibleToken): Bsv21Utxo {
     satoshis: 1,
     ...(token.cosign ? { cosign: token.cosign } : {}),
     ...(token.issuer ? { issuer: token.issuer } : {}),
+    ...(token.issuerProfile ? { issuerProfile: token.issuerProfile } : {}),
     ...(token.issuerAttested ? { issuerAttested: true } : {}),
     ...(token.icon ? { icon: token.icon } : {}),
     ...(token.binarySupply ? { binarySupply: token.binarySupply } : {}),
@@ -398,6 +402,9 @@ function overlayFungibleMetadata(
       : {}),
     ...(!projected.issuer && (preferred.issuer || fallback?.issuer)
       ? { issuer: preferred.issuer || fallback?.issuer }
+      : {}),
+    ...(!projected.issuerProfile && (preferred.issuerProfile || fallback?.issuerProfile)
+      ? { issuerProfile: preferred.issuerProfile || fallback?.issuerProfile }
       : {}),
     ...((preferred.issuerAttested || fallback?.issuerAttested) &&
     !projected.issuerAttested
@@ -595,6 +602,7 @@ export function paintFungibleAfterSpend(args: {
     ...(args.icon || prior?.icon ? { icon: args.icon || prior?.icon } : {}),
     ...(prior?.iconUrl ? { iconUrl: prior.iconUrl } : {}),
     ...(prior?.issuer ? { issuer: prior.issuer } : {}),
+    ...(prior?.issuerProfile ? { issuerProfile: prior.issuerProfile } : {}),
     ...(prior?.issuerHandle ? { issuerHandle: prior.issuerHandle } : {}),
   })
 }
@@ -990,7 +998,9 @@ function parseListedOutput(
     customInstructions: raw.customInstructions,
     tags: raw.tags,
   })
-  let issuer = issuerFromRemittance({
+  const fromGenesis = retainedIssuerMetadata(tokenId)
+  const issuerMetadata = fromGenesis?.issuer ? fromGenesis : issuerMetadataFromScript(raw.lockingScript)
+  let issuer = issuerMetadata.issuer ?? issuerFromRemittance({
     customInstructions: raw.customInstructions,
     tags: raw.tags,
   })
@@ -1002,7 +1012,7 @@ function parseListedOutput(
   // attestation of that claim (BRC-163 §issuer attestation).
   if (sigma.issuer) {
     issuer = sigma.issuer
-    issuerAttested = true
+    issuerAttested = retainedScriptIs(outpoint, raw.lockingScript) && retainedSignedBy(outpoint, issuer)
   }
   return {
     outpoint,
@@ -1016,6 +1026,7 @@ function parseListedOutput(
     lockingScript: raw.lockingScript,
     ...(cosign ? { cosign } : {}),
     ...(issuer ? { issuer } : {}),
+    ...(issuerMetadata.issuerProfile ? { issuerProfile: issuerMetadata.issuerProfile } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
     encoding: from162 ? 'brc162' : 'legacy-json',
     ...(from162 ? { binarySupply: 'locked' as const } : {}),
@@ -1512,6 +1523,7 @@ export function fungibleFromImport(
     spendKind: item.cosign ? 'cosigned' : 'plain',
     ...(item.cosign ? { cosign: item.cosign } : {}),
     ...(item.issuer ? { issuer: item.issuer } : {}),
+    ...(item.issuerProfile ? { issuerProfile: item.issuerProfile } : {}),
     ...(item.icon ? { icon: item.icon } : {}),
     ...(iconUrl ? { iconUrl } : {}),
     // Without this a BRC-162 mint/receive paints as read-only legacy (burn
