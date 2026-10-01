@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.3.392] - 2026-10-01
+
+Same app as 1.3.391. Its tag was published before the commit reached master, so this version carries that commit onto master.
+
 ## [1.3.391] - 2026-10-01
 
 Identity issuance is now tested end to end against a real wallet. No change to app behaviour.
