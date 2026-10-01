@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   active: null as unknown,
   values: new Map<string, string>(),
   retained: new Map<string, unknown>(),
+  toolbox: new Map<string, unknown>(),
 }))
 vi.mock('./walletRuntime', () => ({
   runtimeIsCurrent: (runtime: { instance: unknown }) => runtime.instance === state.active,
@@ -37,6 +38,7 @@ vi.mock('./beefCache', () => ({
   buildMergedInputBeef: vi.fn(),
   peekSessionBeef: (txid: string) => state.retained.get(txid) ?? null,
   getLocalTxForTxid: async () => null,
+  getLocalBeefForTxid: async (_wallet: unknown, txid: string) => state.toolbox.get(txid) ?? null,
 }))
 
 import { withImmediateAppBroadcast } from './appCreateAction'
@@ -273,6 +275,7 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory()
   state.values.clear()
   state.retained.clear()
+  state.toolbox.clear()
   resetIssuerAttributionForTests()
   resetIssuerIdentitiesForTests()
   resetTokenGenesisForTests()
@@ -675,6 +678,30 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(shelves).toHaveLength(1)
     expect(shelves[0]).toMatchObject({ key: `issuer:bap:${identity.bapId}`, label: 'Studio', issuerAttested: true })
     expect(shelves[0]!.tokens.map((t) => t.outpoint)).toEqual([tip])
+  })
+
+  it('keeps a self-minted token attested after its mint ages out of the BEEF cache', async () => {
+    const h = await fundedWallet()
+    const identity = await publish(h)
+    const minted = await mint(h, [tokenOutput(walletLock(h))])
+    const vout = minted.tx.outputs.findIndex((o) => decodeTokenOutput(o.lockingScript)?.role === 'deploy')
+    const tokenId = `${minted.done.txid}_${vout}`
+    const issuer = signingKey(h)
+    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
+
+    state.retained.clear()
+    resetIssuerAttributionForTests()
+    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(false)
+    expect(await proveHeldTokenTipLocally(h.active, tokenId, tokenId)).toBe(false)
+
+    state.toolbox.set(minted.done.txid, minted.beef)
+    expect(await proveHeldTokenTipLocally(h.active, tokenId, tokenId)).toBe(true)
+    state.toolbox.clear()
+    resetIssuerAttributionForTests()
+    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
+    expect(retainedIssuerMetadata(tokenId)?.bapId).toBe(identity.bapId)
+    const otherScript = tokenOutput(walletLock(h)).lockingScript
+    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer, lockingScript: otherScript })).toBe(false)
   })
 
   it('binds a tip filed before lineage was recorded from local bytes alone', async () => {

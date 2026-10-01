@@ -185,7 +185,11 @@ export function tokenIssuerAttested(args: {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!args.issuer || !tokenId) return false
   if (underscore(args.outpoint) === tokenId) {
-    return retainedScriptIs(tokenId, args.lockingScript) && retainedSignedBy(tokenId, args.issuer)
+    // The txid fixes the retained output's script; a listed script that differs
+    // is a basket row that is not this outpoint's output.
+    const scriptMatches =
+      args.lockingScript === undefined || retainedScriptIs(tokenId, args.lockingScript)
+    return scriptMatches && retainedSignedBy(tokenId, args.issuer)
   }
   return tokenTipBound(args.outpoint, tokenId) && retainedSignedBy(tokenId, args.issuer)
 }
@@ -201,8 +205,27 @@ export async function chainTrackerFor(wallet: ActiveWallet): Promise<ChainTracke
 const healTriedAt = new Map<string, number>()
 
 /**
- * Prove a held tip from this wallet's own transaction bytes, for tips filed
- * before lineage was recorded. Local storage only: no indexer decides it.
+ * Keep the deploy of a token this wallet holds. A mint lives in toolbox
+ * storage, but the session cache forgets it and the durable BEEF cache keeps
+ * only recent sends — so without this a self-minted token loses its attestation
+ * once its mint ages out, while items re-read their origin on every list.
+ */
+async function retainHeldTokenGenesis(wallet: ActiveWallet, tokenId: string): Promise<boolean> {
+  const deployTxid = tokenId.split('_')[0]!
+  if (retainedTokenGenesis(deployTxid)) return true
+  const { getLocalBeefForTxid, peekSessionBeef } = await import('../beefCache')
+  const session = peekSessionBeef(deployTxid)
+  const source = session?.findTxid(deployTxid)?.tx
+    ? session
+    : await getLocalBeefForTxid(wallet, deployTxid).catch(() => null)
+  if (!source?.findTxid(deployTxid)?.tx) return false
+  return retainTokenGenesis(source, deployTxid, await chainTrackerFor(wallet))
+}
+
+/**
+ * Bind a held tip to its deploy and keep that deploy, from this wallet's own
+ * transaction bytes — for tips filed before lineage was recorded. Local
+ * storage only: no indexer decides it.
  */
 export async function proveHeldTokenTipLocally(
   wallet: ActiveWallet,
@@ -212,7 +235,15 @@ export async function proveHeldTokenTipLocally(
   const tokenId = normalizeTokenId(rawTokenId)
   const tip = underscore(outpoint)
   if (!tokenId || !OUTPOINT_RE.test(tip)) return false
-  if (tokenTipBound(tip, tokenId)) return true
+  if (!tokenTipBound(tip, tokenId) && !(await walkHeldTipLocally(wallet, tip, tokenId))) return false
+  return retainHeldTokenGenesis(wallet, tokenId)
+}
+
+async function walkHeldTipLocally(
+  wallet: ActiveWallet,
+  tip: string,
+  tokenId: string,
+): Promise<boolean> {
   const now = Date.now()
   if (now - (healTriedAt.get(tip) ?? 0) < HEAL_RETRY_MS) return false
   healTriedAt.set(tip, now)

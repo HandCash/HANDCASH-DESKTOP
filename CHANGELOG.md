@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.399] - 2026-10-01
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.398] - 2026-10-01
 
 Tokens carry their issuer's signature from wallet to wallet, the way items already did.
