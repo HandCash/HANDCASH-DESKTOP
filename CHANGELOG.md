@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.403] - 2026-10-02
+
+### Fixed
+
+- Restoring from key slices no longer fails with a bare "Integrity hash
+  mismatch". Every time slices were shown, the wallet made a fresh BRC-140
+  split with the same integrity tag, so slices saved on different days looked
+  alike but could not combine. The wallet now keeps the set it handed out and
+  shows that same set on every reveal; only Replace slice set makes a new one.
+- Restore takes every slice the holder has — pasted one per line, from email
+  bodies or from several slice files — and tries each pair until two from the
+  same set fit. When none do, it says the slices come from different sets of
+  one wallet, different wallets, or copies of one slice.
+- After restoring from slices, the wallet re-issues its set on the holder's
+  own split: the slices used, plus the one they kept, still combine with every
+  slice shown in Settings.
+- Shared, emailed and saved slices carry the date their set was issued, so two
+  sets of one wallet can be told apart. Replace slice set no longer claims the
+  integrity tag changes; it names the wallet, not the set.
+
 ## [1.3.402] - 2026-10-01
 
 ### Changed

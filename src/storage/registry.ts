@@ -286,6 +286,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  brc140IssuedSet: defineStorage({
+    key: 'handcash.brc140.issuedSet.v1',
+    owner: 'backup',
+    scope: 'device',
+    version: 1,
+  }),
   backupDeferred: defineStorage({
     key: 'handcash.brc100.backupDeferred',
     owner: 'backup',

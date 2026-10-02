@@ -21,7 +21,12 @@ import {
   lastKnownBalance,
 } from '../wallet/session'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
-import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
+import {
+  BRC140_MAX_RECOVERY_SHARES,
+  extractBrc140Shares,
+  recoverRootKeyFromBrc140Shares,
+} from '../wallet/brc140Backup'
+import { adoptRecoveredBrc140Set } from '../wallet/brc140IssuedSet'
 import { playWalletSound } from '../wallet/soundService'
 import { appendAppLog } from '../wallet/appLog'
 import {
@@ -116,8 +121,7 @@ export function AuthScreen({
   const [mnemonicInput, setMnemonicInput] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [showPassphrase, setShowPassphrase] = useState(false)
-  const [share1, setShare1] = useState('')
-  const [share2, setShare2] = useState('')
+  const [sharesInput, setSharesInput] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
@@ -521,12 +525,17 @@ export function AuthScreen({
       }
 
       if (formMode === 'shares') {
-        const recovered = recoverRootKeyFromBrc140Shares([share1, share2])
+        const recovered = recoverRootKeyFromBrc140Shares([sharesInput])
         const unlocked = await restoreVaultFromRootKey({
           rootKeyHex: recovered.rootKeyHex,
           chain,
           ...factorArgs,
         })
+        try {
+          await adoptRecoveredBrc140Set(recovered.rootKeyHex, recovered.sharesUsed)
+        } catch (err) {
+          console.warn('[brc140] could not keep the recovered slice set', err)
+        }
         await finishCreated(unlocked, password, 'restore')
         return
       }
@@ -566,22 +575,18 @@ export function AuthScreen({
     }
   }
 
-  const onShareFile = async (file: File | null) => {
-    if (!file) return
+  const onShareFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
     try {
-      const text = (await readTextFile(file)).trim()
-      const lines = text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith('#') && l.includes('.'))
-      if (lines.length >= 2) {
-        setShare1(lines[0]!)
-        setShare2(lines[1]!)
-      } else if (lines.length === 1) {
-        if (!share1.trim()) setShare1(lines[0]!)
-        else setShare2(lines[0]!)
-      } else {
+      const texts = await Promise.all(Array.from(files, (file) => readTextFile(file)))
+      const found = extractBrc140Shares(texts.join('\n'))
+      if (found.length === 0) {
         onFail('No BRC-140 share lines found in that file')
+      } else {
+        setSharesInput((prev) => {
+          const held = extractBrc140Shares(prev)
+          return [...held, ...found.filter((share) => !held.includes(share))].join('\n')
+        })
       }
     } catch (err) {
       onFail(err instanceof Error ? err.message : String(err))
@@ -600,7 +605,7 @@ export function AuthScreen({
     formMode === 'phrase'
       ? 'Enter your BRC-75 recovery phrase. Same phrase = same identity on Desktop or Mobile.'
       : formMode === 'shares'
-          ? 'Paste any two BRC-140 key slices. Same slices = same identity.'
+          ? 'Paste every BRC-140 key slice you have, one per line. HandCash finds two from the same set.'
           : formMode === 'key'
             ? 'Paste your emergency root key (64 hex chars).'
             : formMode === 'create'
@@ -612,6 +617,7 @@ export function AuthScreen({
                   : 'Enter your HandCash password to unlock.'
 
   const submitting = snapshot.matches('submitting')
+  const sharesFound = formMode === 'shares' ? extractBrc140Shares(sharesInput).length : 0
   const primaryLabel = isRestoreMethod(formMode)
     ? 'Restore'
     : formMode === 'create'
@@ -831,31 +837,27 @@ export function AuthScreen({
         {formMode === 'shares' ? (
           <>
             <div className="field" data-aeon-part="field">
-              <label htmlFor="share1">BRC-140 share 1</label>
+              <label htmlFor="shares">BRC-140 key slices</label>
               <textarea
-                id="share1"
-                rows={2}
-                placeholder="x.y.2.integrity…"
-                value={share1}
-                onChange={(e) => setShare1(e.target.value)}
+                id="shares"
+                rows={5}
+                placeholder={'x.y.2.integrity\nx.y.2.integrity'}
+                value={sharesInput}
+                onChange={(e) => setSharesInput(e.target.value)}
                 autoComplete="off"
                 autoCapitalize="off"
                 spellCheck={false}
                 autoFocus
               />
-            </div>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="share2">BRC-140 share 2</label>
-              <textarea
-                id="share2"
-                rows={2}
-                placeholder="x.y.2.integrity…"
-                value={share2}
-                onChange={(e) => setShare2(e.target.value)}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
+              <p className="field-hint" data-aeon-part="shares-count">
+                {sharesFound === 0
+                  ? 'Slices from different sets of one wallet will not combine — add every one you saved.'
+                  : `${sharesFound} slice${sharesFound === 1 ? '' : 's'} found${
+                      sharesFound > BRC140_MAX_RECOVERY_SHARES
+                        ? ` — use at most ${BRC140_MAX_RECOVERY_SHARES}`
+                        : ''
+                    }`}
+              </p>
             </div>
             <p className="auth-alt">
               <button
@@ -863,14 +865,15 @@ export function AuthScreen({
                 className="auth-alt-link"
                 onClick={() => shareFileRef.current?.click()}
               >
-                Import share file
+                Import slice files
               </button>
               <input
                 ref={shareFileRef}
                 type="file"
                 accept=".txt,text/plain"
+                multiple
                 hidden
-                onChange={(e) => void onShareFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => void onShareFiles(e.target.files)}
               />
             </p>
           </>

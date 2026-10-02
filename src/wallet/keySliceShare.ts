@@ -1,3 +1,5 @@
+import { sliceSetLabel } from './brc140IssuedSet'
+
 export type KeySliceShareOutcome = 'shared' | 'cancelled' | 'unavailable'
 
 export type KeySliceSharePayload = {
@@ -5,6 +7,7 @@ export type KeySliceSharePayload = {
   index: number
   total: number
   integrity: string
+  issuedAt?: number
 }
 
 /** Share one BRC-140 slice through the device's native share surface. */
@@ -15,10 +18,12 @@ export async function shareKeySlice(
   const text = [
     title,
     `Integrity: ${payload.integrity}`,
+    ...(payload.issuedAt ? [sliceSetLabel(payload.issuedAt)] : []),
     '',
     payload.share.trim(),
     '',
     `Keep this separate from your other ${payload.total - 1} slices.`,
+    'Only slices from the same set combine.',
   ].join('\n')
 
   if (typeof window !== 'undefined' && window.handcash?.shareText) {

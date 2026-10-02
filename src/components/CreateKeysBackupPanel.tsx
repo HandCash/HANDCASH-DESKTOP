@@ -7,13 +7,13 @@ import {
   markKeysBackupDeferred,
   noteKeysBackupHandoff,
 } from '../wallet/backupStatus'
+import { shareDownloadFilename } from '../wallet/brc140Backup'
 import {
-  BRC140_DEFAULT_THRESHOLD,
-  BRC140_DEFAULT_TOTAL,
-  createBrc140Shares,
-  shareDownloadFilename,
-  type Brc140ShareSet,
-} from '../wallet/brc140Backup'
+  loadOrIssueBrc140Set,
+  rotateBrc140Set,
+  sliceSetLabel,
+  type Brc140IssuedSet,
+} from '../wallet/brc140IssuedSet'
 import { shareKeySlice } from '../wallet/keySliceShare'
 import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
@@ -44,19 +44,25 @@ function downloadShare(filename: string, contents: string) {
  */
 export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
   const [kind, setKind] = useState<Kind>('phrase')
-  const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
+  const [shareSet, setShareSet] = useState<Brc140IssuedSet | null>(null)
   const [, setTick] = useState(0)
 
   const canConfirm = canConfirmKeysBackup(kind === 'phrase' ? 'phrase' : 'split')
   const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
 
-  const showSlices = () => {
-    clearKeysHandoffEvidence()
-    setShareSet(
-      createBrc140Shares(rootKeyHex, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL),
-    )
-    setKind('split')
-    setTick((n) => n + 1)
+  const showSlices = async (rotate: boolean) => {
+    try {
+      const next = rotate
+        ? await rotateBrc140Set(rootKeyHex)
+        : await loadOrIssueBrc140Set(rootKeyHex)
+      clearKeysHandoffEvidence()
+      setShareSet(next)
+      setKind('split')
+      setTick((n) => n + 1)
+    } catch (err) {
+      playWalletSound('error')
+      toastError('Couldn’t prepare slices', err instanceof Error ? err.message : undefined)
+    }
   }
 
   const handoff = async (
@@ -73,6 +79,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
           index,
           total: shareSet.totalShares,
           integrity: shareSet.integrity,
+          issuedAt: shareSet.issuedAt,
         })
         if (outcome === 'cancelled') return
       } else if (method === 'copy') {
@@ -81,7 +88,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
       } else if (method === 'download') {
         downloadShare(
           shareDownloadFilename(index, shareSet.totalShares, shareSet.integrity),
-          `# ${destination}\n# integrity ${shareSet.integrity}\n${share}\n`,
+          `# ${destination}\n# integrity ${shareSet.integrity}\n# ${sliceSetLabel(shareSet.issuedAt)}\n${share}\n`,
         )
       }
       playWalletSound('soft')
@@ -132,7 +139,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         <button
           type="button"
           className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}
-          onClick={showSlices}
+          onClick={() => void showSlices(false)}
         >
           Key slices
         </button>
@@ -174,6 +181,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
             shares={shareSet.shares}
             threshold={shareSet.threshold}
             integrity={shareSet.integrity}
+            issuedAt={shareSet.issuedAt}
             savedIndices={splitProgress.savedIndices}
             onHandoff={handoff}
             onConfirmSaved={(index) => {
@@ -182,7 +190,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
               playWalletSound('soft')
               toastSuccess(`Slice ${index + 1} confirmed`)
             }}
-            onRotateShares={showSlices}
+            onRotateShares={() => showSlices(true)}
           />
         </div>
       ) : null}

@@ -1,4 +1,5 @@
 import { Accordion, ListRow, Progress } from '@aeon-ui/react'
+import { sliceSetLabel } from '../wallet/brc140IssuedSet'
 
 export type SliceHandoffMethod = 'share' | 'email' | 'copy' | 'download'
 
@@ -6,6 +7,8 @@ export type KeySliceListProps = {
   shares: readonly string[]
   threshold: number
   integrity: string
+  /** When this set was issued — the only thing that tells two sets of one wallet apart. */
+  issuedAt?: number
   savedIndices: readonly number[]
   /** Optional short labels for the slices. */
   destinations?: readonly string[]
@@ -29,6 +32,7 @@ export function KeySliceList({
   shares,
   threshold,
   integrity,
+  issuedAt,
   savedIndices,
   destinations = [],
   onHandoff,
@@ -68,8 +72,9 @@ export function KeySliceList({
           </Progress.Track>
         </Progress.Root>
         <p className="settings-row-desc">
-          Integrity <span className="mono">{integrity}</span> · any {threshold} of {total} restore the
-          wallet
+          {issuedAt ? `${sliceSetLabel(issuedAt)} · ` : null}
+          Integrity <span className="mono">{integrity}</span> · any {threshold} of {total} from this
+          set restore the wallet
         </p>
       </div>
 
@@ -80,7 +85,7 @@ export function KeySliceList({
           const destination = assignmentFor(index)
           return (
             <Accordion.Item
-              key={`${integrity}-${index}`}
+              key={share}
               value={itemId}
               className="key-slice-item"
               data-aeon-state={saved ? 'saved' : 'pending'}
@@ -154,7 +159,7 @@ export function KeySliceList({
             type="button"
             className="btn btn-ghost"
             disabled={rotateBusy}
-            title="Replace this set. Old and new slices cannot be mixed."
+            title="Replace this set. Slices from the old set will not combine with the new ones."
             onClick={() => void onRotateShares()}
           >
             {rotateBusy ? 'Replacing…' : 'Replace slice set'}

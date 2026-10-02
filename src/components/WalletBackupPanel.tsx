@@ -8,13 +8,13 @@ import {
   noteKeysBackupHandoff,
   subscribeBackupConfirmed,
 } from '../wallet/backupStatus'
+import { BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL, shareDownloadFilename } from '../wallet/brc140Backup'
 import {
-  BRC140_DEFAULT_THRESHOLD,
-  BRC140_DEFAULT_TOTAL,
-  createBrc140Shares,
-  shareDownloadFilename,
-  type Brc140ShareSet,
-} from '../wallet/brc140Backup'
+  loadOrIssueBrc140Set,
+  rotateBrc140Set,
+  sliceSetLabel,
+  type Brc140IssuedSet,
+} from '../wallet/brc140IssuedSet'
 import { shareKeySlice } from '../wallet/keySliceShare'
 import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
@@ -40,18 +40,19 @@ function downloadShare(filename: string, contents: string) {
 async function emailShareToSelf(
   share: string,
   index: number,
-  total: number,
-  integrity: string,
+  set: Brc140IssuedSet,
   destination: string,
 ): Promise<void> {
-  const subject = `HandCash key slice ${index + 1} of ${total}`
+  const subject = `HandCash key slice ${index + 1} of ${set.totalShares}`
   const body = [
-    `HandCash key slice ${index + 1}/${total}`,
+    `HandCash key slice ${index + 1}/${set.totalShares}`,
     `Suggested place: ${destination}`,
-    `Integrity: ${integrity}`,
+    `Integrity: ${set.integrity}`,
+    sliceSetLabel(set.issuedAt),
     '',
     share,
     '',
+    'Only slices from the same set combine.',
   ].join('\n')
   const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   if (window.handcash?.openExternal) {
@@ -69,7 +70,7 @@ export function WalletBackupPanel() {
   const backup = useAsyncAction<'reveal' | 'rotate'>()
   const [mnemonic, setMnemonic] = useState<string | null>(null)
   const [rootKey, setRootKey] = useState<string | null>(null)
-  const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
+  const [shareSet, setShareSet] = useState<Brc140IssuedSet | null>(null)
   const [, setStatusTick] = useState(0)
 
   useEffect(() => subscribeBackupConfirmed(() => setStatusTick((n) => n + 1)), [])
@@ -103,10 +104,7 @@ export function WalletBackupPanel() {
         setRootKey(await revealRootKeyHex())
       } else {
         clearKeysHandoffEvidence()
-        const rootKeyHex = await revealRootKeyHex()
-        setShareSet(
-          createBrc140Shares(rootKeyHex, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL),
-        )
+        setShareSet(await loadOrIssueBrc140Set(await revealRootKeyHex()))
       }
     })
     if (!outcome.ok && outcome.error !== null) playWalletSound('error')
@@ -117,23 +115,18 @@ export function WalletBackupPanel() {
       'rotate',
       async () => {
         clearKeysHandoffEvidence()
-        const rootKeyHex = await revealRootKeyHex()
-        const next = createBrc140Shares(
-          rootKeyHex,
-          BRC140_DEFAULT_THRESHOLD,
-          BRC140_DEFAULT_TOTAL,
-        )
+        const next = await rotateBrc140Set(await revealRootKeyHex())
         setShareSet(next)
         playWalletSound('soft')
         toastSuccess(
           'New slice set',
-          `Integrity ${next.integrity} — old slices from the previous set will not combine with these.`,
+          `${sliceSetLabel(next.issuedAt)} — slices from the previous set will not combine with these.`,
         )
       },
       {
         confirm: {
           title: 'Rotate all slices?',
-          body: `This creates a brand-new ${BRC140_DEFAULT_THRESHOLD}-of-${BRC140_DEFAULT_TOTAL} set with a new integrity tag. Slices from the previous set will not combine with these — deposit or save the new ones before discarding the old.`,
+          body: `This creates a brand-new ${BRC140_DEFAULT_THRESHOLD}-of-${BRC140_DEFAULT_TOTAL} set. The integrity tag stays the same — it names the wallet, not the set — but slices from the previous set will not combine with these. Save the new ones before discarding the old.`,
           confirmLabel: 'Rotate',
           cancelLabel: 'Keep current',
         },
@@ -159,29 +152,18 @@ export function WalletBackupPanel() {
           index,
           total: shareSet.totalShares,
           integrity: shareSet.integrity,
+          issuedAt: shareSet.issuedAt,
         })
         if (outcome === 'cancelled') return
         if (outcome === 'unavailable') {
-          await emailShareToSelf(
-            share,
-            index,
-            shareSet.totalShares,
-            shareSet.integrity,
-            destination,
-          )
+          await emailShareToSelf(share, index, shareSet, destination)
           toastSuccess('Opened email', 'This device has no native share sheet.')
         } else {
           playWalletSound('soft')
           toastSuccess('Share sheet opened', 'Choose an account or app you control.')
         }
       } else if (method === 'email') {
-        await emailShareToSelf(
-          share,
-          index,
-          shareSet.totalShares,
-          shareSet.integrity,
-          destination,
-        )
+        await emailShareToSelf(share, index, shareSet, destination)
         playWalletSound('soft')
         toastSuccess('Opened email', destination)
       } else if (method === 'copy') {
@@ -191,7 +173,7 @@ export function WalletBackupPanel() {
       } else {
         downloadShare(
           shareDownloadFilename(index, shareSet.totalShares, shareSet.integrity),
-          `# ${destination}\n# integrity ${shareSet.integrity}\n${share}\n`,
+          `# ${destination}\n# integrity ${shareSet.integrity}\n# ${sliceSetLabel(shareSet.issuedAt)}\n${share}\n`,
         )
         playWalletSound('soft')
         toastSuccess('Slice saved', destination)
@@ -382,6 +364,7 @@ export function WalletBackupPanel() {
             shares={shareSet.shares}
             threshold={shareSet.threshold}
             integrity={shareSet.integrity}
+            issuedAt={shareSet.issuedAt}
             savedIndices={splitProgress.savedIndices}
             onHandoff={handoff}
             onConfirmSaved={confirmSliceSaved}
@@ -419,8 +402,9 @@ export function WalletBackupPanel() {
       <AsyncActionPrompt action={backup} />
 
       <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
-        Any two slices restore the wallet. Use Share to put them in separate accounts or apps; no
-        HandCash server is involved.
+        Any two slices from the same set restore the wallet. Showing slices again shows the same
+        set; only Replace slice set makes a new one. Use Share to put them in separate accounts or
+        apps; no HandCash server is involved.
       </SettingsFeatureAbout>
     </div>
   )
