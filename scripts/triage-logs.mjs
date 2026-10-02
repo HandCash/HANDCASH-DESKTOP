@@ -1255,6 +1255,11 @@ const HISTORY_EVENTS = [
   ['upload', /^\[cloud-backup\] uploading (\d+) bytes → \S+ \(spendable=(\S+) actions=(\S+)\)/],
   ['archiveRestore', /^\[utxo-archive\] restored local snapshot (\S+)/],
   ['recompose', /^\[recompose\] ([\w-]+): history=(\S+) sats=(\S+)/],
+  ['historyFailed', /^\[recompose\] history failed \(([\w-]+)\): ([\s\S]{0,240})/],
+  ['chainFailed', /^\[recompose\] chain failed \(([\w-]+)\): ([\s\S]{0,240})/],
+  ['undecryptable', /^\[cloud-backup\] history blob could not be decrypted/],
+  ['noRemote', /^\[cloud-backup\] no remote BRC-39 yet/],
+  ['remotePresent', /^\[cloud-backup\] remote BRC-39 present/],
 ]
 
 /**
@@ -1284,6 +1289,7 @@ function historyReplicaFacts(events) {
       if (kind === 'upload') Object.assign(row, { bytes: Number(m[1]), spendable: m[2], actions: m[3] })
       if (kind === 'archiveRestore') row.snapshot = m[1]
       if (kind === 'recompose') Object.assign(row, { reason: m[1], history: m[2], sats: m[3] })
+      if (kind === 'historyFailed' || kind === 'chainFailed') Object.assign(row, { reason: m[1], error: m[2] })
       timeline.push(row)
       break
     }

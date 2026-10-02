@@ -1,4 +1,5 @@
 import { setup, assign } from 'xstate'
+import type { WipeHistoryGate } from '../wallet/wipeHistoryGate'
 
 export type WipeContext = {
   /** HandCash password when used; empty string means device factor already verified. */
@@ -8,11 +9,13 @@ export type WipeContext = {
   confirmText: string
   acknowledged: boolean
   error: string | null
+  /** Proof the history replica holds localState; wipe refuses without it. */
+  gate: WipeHistoryGate | null
 }
 
 /**
  * Chart: wipeWallet
- * States: idle → confirming → wiping → success | failure
+ * States: idle → syncing → wiping → success | failure; syncing → blocked
  */
 export const wipeMachine = setup({
   types: {
@@ -23,6 +26,9 @@ export const wipeMachine = setup({
       | { type: 'CHANGE_CONFIRM'; confirmText: string }
       | { type: 'TOGGLE_ACK'; acknowledged: boolean }
       | { type: 'SUBMIT' }
+      | { type: 'SYNCED'; gate: WipeHistoryGate }
+      | { type: 'BLOCKED'; reason: string }
+      | { type: 'BACK' }
       | { type: 'SUCCESS' }
       | { type: 'FAIL'; error: string }
       | { type: 'RETRY' },
@@ -36,6 +42,7 @@ export const wipeMachine = setup({
     confirmText: '',
     acknowledged: false,
     error: null,
+    gate: null,
   },
   states: {
     idle: {
@@ -71,7 +78,32 @@ export const wipeMachine = setup({
             context.unlocked &&
             context.acknowledged &&
             context.confirmText.trim().toUpperCase() === 'DELETE',
+          target: 'syncing',
+          actions: assign({ gate: null, error: null }),
+        },
+      },
+    },
+    syncing: {
+      on: {
+        SYNCED: {
           target: 'wiping',
+          actions: assign({ gate: ({ event }) => event.gate }),
+        },
+        BLOCKED: {
+          target: 'blocked',
+          actions: assign({ error: ({ event }) => event.reason }),
+        },
+      },
+    },
+    blocked: {
+      on: {
+        RETRY: {
+          target: 'syncing',
+          actions: assign({ error: null }),
+        },
+        BACK: {
+          target: 'idle',
+          actions: assign({ error: null }),
         },
       },
     },

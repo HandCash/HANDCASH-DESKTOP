@@ -10,6 +10,8 @@ import { clearCollectablesCache } from './collectables'
 import { clearFungiblesCache } from './token'
 import { durableForgetCached, durableRemoveItem } from './durableStorage'
 import { listLocalHandcashKeysToWipe } from './wipePolicy'
+import { getOpenUnlockSecret, isNoDeviceLock } from './deviceLockPrefs'
+import { assertWipeGateFresh, type WipeHistoryGate } from './wipeHistoryGate'
 
 const PENDING_IDB_WIPE = 'handcash.brc100.pendingIdbWipe'
 
@@ -100,13 +102,20 @@ export async function finishPendingWalletWipe(): Promise<void> {
 /**
  * Destroy all local wallet data after unlock verification, then reload into onboarding.
  */
-export async function wipeAllWalletData(password: string | null): Promise<void> {
+export async function wipeAllWalletData(
+  password: string | null,
+  historyGate: WipeHistoryGate | null,
+): Promise<void> {
+  assertWipeGateFresh(historyGate)
   // Prove the operator controls an unlock factor before destroying keys.
+  const open = isNoDeviceLock() ? getOpenUnlockSecret() : null
   if (password) {
     if (password.length < 8) {
       throw new Error('Password must be at least 8 characters')
     }
     await unlockVault(password)
+  } else if (open) {
+    await unlockVault(open)
   } else {
     await unlockVaultWithDevice('Confirm wipe')
   }

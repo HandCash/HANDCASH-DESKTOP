@@ -818,12 +818,18 @@ const BACKUP_PHRASE = `stateDiagram-v2
 const WIPE = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> wiping : SUBMIT\\n(DELETE + ack)
+  idle --> syncing : SUBMIT\\n(DELETE + ack)
+  syncing --> wiping : SYNCED\\n(history holds localState)
+  syncing --> blocked : BLOCKED
+  blocked --> syncing : RETRY
+  blocked --> idle : BACK
   wiping --> success : SUCCESS
   wiping --> failure : FAIL
   failure --> idle : RETRY
   success --> [*]
   idle : Idle
+  syncing : Syncing history
+  blocked : Blocked — not synced
   wiping : Wiping
   success : Success
   failure : Failure

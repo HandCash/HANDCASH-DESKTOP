@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.405] - 2026-10-02
+
+### Fixed
+
+- Restore no longer comes up empty: the history pull and chain scan were aborted when the app swapped in a fresh wallet runtime after restore ("Wallet runtime disposed"). Recovery now reruns on the replacement runtime for the same identity.
+- Wipe works with no device lock (it demanded Touch ID).
+
+### Changed
+
+- Wipe is blocked while history backup is on until this device's history has uploaded and the cloud copy is confirmed. Empty wallets and devices with backup off are not gated.
+- Removed the BIP39 passphrase field from phrase restore.
+- Log triage reports why a recovery's history or chain step failed and whether a cloud backup exists.
+
 ## [1.3.404] - 2026-10-02
 
 ### Fixed

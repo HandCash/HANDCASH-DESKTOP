@@ -119,8 +119,6 @@ export function AuthScreen({
     recoveryOnly ? 'phrase' : mode === 'locked' ? 'unlock' : 'create',
   )
   const [mnemonicInput, setMnemonicInput] = useState('')
-  const [passphrase, setPassphrase] = useState('')
-  const [showPassphrase, setShowPassphrase] = useState(false)
   const [sharesInput, setSharesInput] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -517,7 +515,6 @@ export function AuthScreen({
         const unlocked = await restoreVaultFromMnemonic({
           mnemonic: mnemonicInput,
           chain,
-          ...(passphrase.trim() ? { passphrase: passphrase.trim() } : {}),
           ...factorArgs,
         })
         await finishCreated(unlocked, password, 'restore')
@@ -808,29 +805,6 @@ export function AuthScreen({
                 autoFocus
               />
             </div>
-            {showPassphrase ? (
-              <div className="field" data-aeon-part="field">
-                <label htmlFor="bip39-passphrase">BIP39 passphrase (optional)</label>
-                <input
-                  id="bip39-passphrase"
-                  type="password"
-                  placeholder="Only if you set one when creating the phrase"
-                  value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
-                  autoComplete="off"
-                />
-              </div>
-            ) : (
-              <p className="auth-alt">
-                <button
-                  type="button"
-                  className="auth-alt-link"
-                  onClick={() => setShowPassphrase(true)}
-                >
-                  Phrase has a BIP39 passphrase?
-                </button>
-              </p>
-            )}
           </>
         ) : null}
 

@@ -97,11 +97,55 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
     return inFlight.promise
   }
 
-  const promise = runRecompose(() => runRecomposeBody(opts, runtime)).finally(() => {
-    if (inFlight?.promise === promise) inFlight = null
-  })
+  const promise = runRecompose(() => runRecomposeBody(opts, runtime))
+    .then(
+      (result) =>
+        disposedMidFlight(result.historyError) || disposedMidFlight(result.chainError)
+          ? rerunOnReplacement(opts, runtime, result)
+          : result,
+      (err: unknown) =>
+        disposedMidFlight(err instanceof Error ? err.message : String(err))
+          ? rerunOnReplacement(opts, runtime, err)
+          : Promise.reject(err),
+    )
+    .finally(() => {
+      if (inFlight?.promise === promise) inFlight = null
+    })
   inFlight = { runtimeId, promise }
   return promise
+}
+
+function disposedMidFlight(message: string | null | undefined): boolean {
+  return Boolean(message?.includes('Wallet runtime disposed'))
+}
+
+/**
+ * Restore and unlock hand off to the app, which boots a fresh runtime for the
+ * same identity. A pass aborted by that handoff reruns on the replacement;
+ * reporting it as an empty wallet strands the history it never pulled.
+ */
+async function rerunOnReplacement(
+  opts: RecomposeOpts,
+  runtime: WalletRuntime | null,
+  outcome: unknown,
+): Promise<RecomposeResult> {
+  const next = getWalletRuntime()
+  const replaced =
+    runtime != null &&
+    next != null &&
+    next.runtimeId !== runtime.runtimeId &&
+    next.instance.identityKey === runtime.instance.identityKey
+  if (!replaced) {
+    if (outcome instanceof Error) throw outcome
+    return outcome as RecomposeResult
+  }
+  try {
+    const { appendAppLog } = await import('./appLog')
+    appendAppLog('info', `[recompose] runtime replaced mid-flight — rerun (${opts.reason ?? 'recompose'})`)
+  } catch {
+    /* ignore */
+  }
+  return recomposeWallet(opts)
 }
 
 async function runRecomposeBody(
