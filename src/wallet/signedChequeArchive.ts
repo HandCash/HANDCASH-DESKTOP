@@ -70,12 +70,27 @@ function decodeAtomic(b64: string): number[] | null {
   }
 }
 
-function toCheque(row: StoredCheque): SignedCheque | null {
+/**
+ * Decoded + verified body per stored row. Rows are shared from the parse cache
+ * and copied before any mutation, so a row object never changes its body;
+ * decoding base64 and parsing the whole BEEF once per row, not per lookup.
+ */
+const verifiedBodies = new WeakMap<StoredCheque, number[] | null>()
+
+function verifiedAtomic(row: StoredCheque): number[] | null {
+  if (verifiedBodies.has(row)) return verifiedBodies.get(row) ?? null
   const txid = String(row.txid ?? '').trim().toLowerCase()
   const atomic = decodeAtomic(String(row.atomicB64 ?? ''))
-  if (!atomic || !bodyIsSignedCheque(txid, atomic)) {
-    return null
-  }
+  const body = atomic && bodyIsSignedCheque(txid, atomic) ? atomic : null
+  verifiedBodies.set(row, body)
+  return body
+}
+
+function toCheque(row: StoredCheque): SignedCheque | null {
+  const txid = String(row.txid ?? '').trim().toLowerCase()
+  const verified = verifiedAtomic(row)
+  if (!verified) return null
+  const atomic = [...verified]
   return {
     txid,
     atomic,
@@ -138,22 +153,25 @@ function migrateLegacyBodies(owner?: BoundAccountKeyScope): StoredCheque[] {
 }
 
 /**
- * Last parse, keyed by the exact stored string.
+ * Last parse per account key, keyed by the exact stored string.
  *
  * The archive is the largest key on a phone (888KB on the lab device) and
  * `signedChequeAtomic` is consulted on every local BEEF lookup — encoding
  * proofs, deploy caps, stale-output restores, outbox checks. Parsing that
  * string per call was a synchronous main-thread cost multiplied by every tip.
  * `durableGetItem` returns the identical string until something writes, so
- * identity is a correct cache key. Callers copy before mutating.
+ * identity is a correct cache key. Callers copy before mutating. One slot per
+ * account: miner retries read the signing account's archive while another is
+ * active, and a single shared slot re-parsed both archives on every switch.
  */
-let parsedRaw: string | null = null
-let parsedRows: StoredCheque[] = []
+const parsedByKey = new Map<string, { raw: string; rows: StoredCheque[] }>()
 
 function loadStored(owner?: BoundAccountKeyScope): StoredCheque[] {
   try {
-    const raw = durableGetItem(scopedKey(KEY_BASE, owner)) || '[]'
-    if (raw === parsedRaw) return parsedRows
+    const key = scopedKey(KEY_BASE, owner)
+    const raw = durableGetItem(key) || '[]'
+    const cached = parsedByKey.get(key)
+    if (cached?.raw === raw) return cached.rows
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed) || parsed.length === 0) {
       const migrated = migrateLegacyBodies(owner)
@@ -167,8 +185,7 @@ function loadStored(owner?: BoundAccountKeyScope): StoredCheque[] {
         typeof (row as StoredCheque).txid === 'string' &&
         typeof (row as StoredCheque).atomicB64 === 'string',
     )
-    parsedRaw = raw
-    parsedRows = rows
+    parsedByKey.set(key, { raw, rows })
     return rows
   } catch {
     return []

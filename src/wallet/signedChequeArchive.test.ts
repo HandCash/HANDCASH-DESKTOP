@@ -126,6 +126,33 @@ describe('signedChequeArchive', () => {
     expect(listSignedChequeTxids()).toEqual([txid])
   })
 
+  it('keeps each account archive cached while lookups alternate between them', async () => {
+    const { archiveSignedCheque, signedChequeAtomic } = await import('./signedChequeArchive')
+    const a = { accountIndex: 0, identityKey: 'identity-a', chain: 'main' as const }
+    const b = { accountIndex: 1, identityKey: 'identity-b', chain: 'main' as const }
+    const txA = signedTx(11)
+    const txB = signedTx(22)
+    archiveSignedCheque(txA.id('hex'), atomicBeefFor(txA), { owner: a })
+    archiveSignedCheque(txB.id('hex'), atomicBeefFor(txB), { owner: b })
+
+    const parse = vi.spyOn(JSON, 'parse')
+    const fromBinary = vi.spyOn(Beef, 'fromBinary')
+    for (let i = 0; i < 3; i++) {
+      expect(signedChequeAtomic(txA.id('hex'), a)).toEqual(atomicBeefFor(txA))
+      expect(signedChequeAtomic(txB.id('hex'), b)).toEqual(atomicBeefFor(txB))
+      expect(signedChequeAtomic(txA.id('hex'), b)).toBeNull()
+    }
+    const archiveParses = parse.mock.calls.filter(([raw]) => String(raw).includes('atomicB64'))
+    expect(archiveParses.length).toBeLessThanOrEqual(2)
+    expect(fromBinary.mock.calls.length).toBeLessThanOrEqual(2)
+    parse.mockRestore()
+    fromBinary.mockRestore()
+
+    const lookedUp = signedChequeAtomic(txA.id('hex'), a)!
+    lookedUp[0] = 0xff
+    expect(signedChequeAtomic(txA.id('hex'), a)).toEqual(atomicBeefFor(txA))
+  })
+
   // A full archive refused every write, and because a refused archive fails
   // the send closed, the wallet stopped signing anything at all.
   it('evicts the oldest cheques rather than refuse a write to a full store', async () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.406] - 2026-10-02
+
+### Fixed
+
+- Less lag on phones with more than one account: the signed-cheque archive cached one account at a time, so background miner retries for another account re-parsed up to ~1MB of JSON on every switch, and every local BEEF lookup re-decoded and re-parsed the archived cheque. Each account's archive is now cached separately and each cheque is verified once.
+
 ## [1.3.405] - 2026-10-02
 
 ### Fixed
