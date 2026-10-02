@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.407] - 2026-10-02
+
+### Fixed
+
+- BAP identicons no longer change with the theme. They were drawn in `currentColor` over a see-through plate, so the theme background bled through; the fingerprint now uses fixed colours from the BAP ID on an opaque plate.
+
 ## [1.3.406] - 2026-10-02
 
 ### Fixed

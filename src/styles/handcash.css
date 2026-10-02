@@ -4791,7 +4791,6 @@ button.identity-qr-copy:focus-visible {
 [data-aeon-part='bap-identicon'] {
   flex-shrink: 0;
   border-radius: 3px;
-  color: hsl(var(--bap-hue, 210) 62% 48%);
 }
 
 [data-aeon-part='issuer-trust'] {

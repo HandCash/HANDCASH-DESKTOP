@@ -1,10 +1,15 @@
-import type { CSSProperties } from 'react'
 import { bapFingerprint } from '../wallet/issuerTrust'
 import type { IssuerViewState } from './IssuerIdentityMark'
 
-/** 5×5 mirrored identicon drawn from the BAP ID's hash; vector, so nothing to defer. */
+/**
+ * 5×5 mirrored identicon drawn from the BAP ID's hash; vector, so nothing to defer.
+ * Colours come from the BAP ID alone — an opaque plate, never `currentColor` or a
+ * see-through fill — so the fingerprint reads the same in every theme.
+ */
 export function BapIdenticon({ bapId, size = 16 }: { bapId: string; size?: number }) {
   const { hue, cells } = bapFingerprint(bapId)
+  const plate = `hsl(${hue} 48% 91%)`
+  const ink = `hsl(${hue} 62% 40%)`
   return (
     <svg
       className="bap-identicon"
@@ -15,11 +20,10 @@ export function BapIdenticon({ bapId, size = 16 }: { bapId: string; size?: numbe
       aria-hidden
       focusable="false"
       shapeRendering="crispEdges"
-      style={{ '--bap-hue': hue } as CSSProperties}
     >
-      <rect width="5" height="5" fill="currentColor" opacity="0.14" />
+      <rect width="5" height="5" fill={plate} />
       {cells.map((on, i) =>
-        on ? <rect key={i} x={i % 5} y={Math.floor(i / 5)} width="1" height="1" fill="currentColor" /> : null,
+        on ? <rect key={i} x={i % 5} y={Math.floor(i / 5)} width="1" height="1" fill={ink} /> : null,
       )}
     </svg>
   )
