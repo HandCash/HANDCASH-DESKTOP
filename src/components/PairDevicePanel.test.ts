@@ -39,6 +39,8 @@ function role(
       direction === 'peer-wallet-to-this-device' || direction === 'reciprocal',
     recoveryCopyIssuedToPeer:
       direction === 'this-wallet-to-peer' || direction === 'reciprocal',
+    recoveryCopyStoredByPeer:
+      direction === 'this-wallet-to-peer' || direction === 'reciprocal',
   }
 }
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.404] - 2026-10-02
+
+### Fixed
+
+- Emergency key reveal on a sub-account now exports the master key, so restoring it recovers every account (it used to export only that account's key).
+- Sealed vault values are no longer mirrored into browser storage; old plaintext-adjacent copies are purged once the shell store holds them.
+- History backup: an upload the thin-overwrite guard refuses now asks before overwriting the cloud copy (showing cloud vs device balance and actions). Replace from cloud asks first too.
+- History badge reflects the last upload: warns on errors, never-uploaded, or more than 14 days stale, instead of "cloud ready" on a URL alone.
+- Device recovery copies: sealing and opening work on sub-accounts (master key and identity), with Touch ID, and with no lock. A copy counts as a backup only after you confirm the other device stored it.
+- Key-backup confirmation and BRC-140 issued slices are scoped to the vault, not the active account.
+
+### Changed
+
+- Profiles: compact identity rows with chips and an overflow menu; explanatory text removed from the profile and publish flow.
+
 ## [1.3.403] - 2026-10-02
 
 ### Fixed

@@ -163,10 +163,6 @@ export function IdentityPanel({ profile }: Props) {
                     </div>
                   )}
                 </div>
-                <p className="identity-qr-hint">
-                  Scan to pay or add as a friend. Identity is per active wallet
-                  account.
-                </p>
               </div>
             </div>
 
@@ -200,7 +196,6 @@ ${profile.identityKey}`}
                 <strong className="mono identity-bap-id" title={bap?.bapId}>
                   {bap ? <BapIdenticon bapId={bap.bapId} /> : null}
                   {bap ? shortIdentityKey(bap.bapId) : '—'}
-                  {bap?.identity ? '' : ' (not published yet)'}
                 </strong>
               </li>
             </ul>

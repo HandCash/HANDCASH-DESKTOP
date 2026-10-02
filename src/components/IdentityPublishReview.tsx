@@ -18,21 +18,21 @@ type Props = {
 
 const COPY = {
   publish: {
-    title: 'Publish issuer identity',
+    title: 'Publish identity',
     effect:
-      'This image, name and bio go on-chain as a BAP profile signed by your identity key. They are public and permanent; a later update adds a new profile but never erases this one.',
+      'Public and permanent on-chain.',
     approve: 'Sign and publish',
   },
   update: {
-    title: 'Update issuer identity',
+    title: 'Update identity',
     effect:
-      'A new BAP profile, signed by your current signing key, replaces this one for everyone who resolves the identity. The earlier profile stays on-chain.',
+      'Replaces your profile. The earlier one stays on-chain.',
     approve: 'Sign and update',
   },
   rotate: {
     title: 'Rotate signing key',
     effect:
-      'Your BAP ID, name and image stay the same; a new key signs everything you issue from now on. Assets the old key signed stay attributed to you when they were mined before this rotation.',
+      'Same BAP ID and profile. A new key signs from now on.',
     approve: 'Sign rotation',
   },
 } as const
@@ -78,7 +78,6 @@ export function IdentityPublishReview({
             data-aeon-part="identity-publish-review"
             data-aeon-state={stage ?? 'closed'}
           >
-            <Prompt.Eyebrow className="permission-eyebrow">Sign identity records</Prompt.Eyebrow>
             <Prompt.Title>{copy.title}</Prompt.Title>
             {stage === 'refused' ? (
               <Prompt.Effect role="alert">{error}</Prompt.Effect>
@@ -130,7 +129,7 @@ export function IdentityPublishReview({
                 </Prompt.Meta>
               </>
             ) : stage === 'quoting' ? (
-              <Prompt.Description className="lede">Preparing the records to sign…</Prompt.Description>
+              <Prompt.Description className="lede">Preparing…</Prompt.Description>
             ) : null}
             <Prompt.Actions className="actions">
               {stage === 'refused' ? (

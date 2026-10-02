@@ -36,6 +36,13 @@ const cleanedLegacyScopes = new Set<string>()
  * for migrating an old localStorage wallet, both of which only need small keys.
  */
 const LOCAL_MIRROR_MAX_BYTES = 64 * 1024
+/**
+ * Values the shell seals at rest (OS keychain / DPAPI). The renderer receives
+ * them unsealed, so a localStorage mirror would park the vault — and the wrap
+ * secret that opens it — side by side in plaintext leveldb.
+ */
+const NEVER_MIRROR_RE = /^handcash\.(?:brc100\.(?:vault|deviceDek)|publicIdentities)/
+let purgedSealedMirrors = false
 const WALLET_KEY_RE = /^(.*):wallet:(main|test):(\d+):([^:]+)$/
 const PROBE_KEY = storageRegistry.durableStoreProbe.key
 /**
@@ -87,6 +94,8 @@ function durableStoreOwner(): DurableStoreOwner {
   }
   if (storeOwner === 'origin') {
     console.info('[durable] shell store does not read back — origin storage owns wallet state')
+  } else {
+    purgeSealedMirrors()
   }
   return storeOwner
 }
@@ -125,7 +134,29 @@ function noteStoreCost(op: string, key: string, startedAt: number, bytes: number
   }
 }
 
+/** Drop plaintext copies of sealed values left by earlier mirrors. */
+function purgeSealedMirrors(): void {
+  if (purgedSealedMirrors || typeof localStorage === 'undefined') return
+  purgedSealedMirrors = true
+  try {
+    const stale: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const name = localStorage.key(i)
+      if (name && NEVER_MIRROR_RE.test(name)) stale.push(name)
+    }
+    for (const name of stale) {
+      // Only once the shell holds its own copy — never drop the last one.
+      const held = window.handcash?.storageGetSync?.(name)
+      if (typeof held === 'string' && held !== '') localStorage.removeItem(name)
+    }
+    if (stale.length > 0) console.info(`[durable] removed ${stale.length} plaintext mirror(s) of sealed values`)
+  } catch {
+    // retried next launch
+  }
+}
+
 function mirrorLocally(key: string, value: string): void {
+  if (NEVER_MIRROR_RE.test(key)) return
   if (value.length > LOCAL_MIRROR_MAX_BYTES) return
   try {
     localStorage.setItem(key, value)
@@ -151,7 +182,8 @@ function readThrough(key: string): string | null {
       if (local != null) {
         // Migrate a pre-Electron browser wallet up into the shell store.
         try {
-          window.handcash?.storageSetSync?.(key, local)
+          const moved = window.handcash?.storageSetSync?.(key, local)
+          if (moved === true && NEVER_MIRROR_RE.test(key)) localStorage.removeItem(key)
         } catch {
           // ignore
         }

@@ -86,13 +86,16 @@ describe('deviceKeyBackup', () => {
       expect(pkg.forIdentityKey).toBe(bob.toPublicKey().toString())
       expect(pkg.fromIdentityKey).toBe(alice.toPublicKey().toString())
 
-      const { getDeviceBackupRoleStatus } = await import('./deviceKeyBackup')
+      const { confirmSpareStoredByPeer, getDeviceBackupRoleStatus } = await import('./deviceKeyBackup')
       expect(getDeviceBackupRoleStatus('bob-device')).toEqual({
         protectsPeer: false,
         recoveryCopyReceivedFromPeer: false,
         recoveryCopyIssuedToPeer: true,
+        recoveryCopyStoredByPeer: false,
         direction: 'this-wallet-to-peer',
       })
+      confirmSpareStoredByPeer('bob-device')
+      expect(getDeviceBackupRoleStatus('bob-device').recoveryCopyStoredByPeer).toBe(true)
 
       const text = deviceKeyBackupToQrText(pkg)
       expect(parseDeviceKeyBackupPackage(text).fromDeviceId).toBe('alice-device')
@@ -104,6 +107,7 @@ describe('deviceKeyBackup', () => {
         protectsPeer: true,
         recoveryCopyReceivedFromPeer: true,
         recoveryCopyIssuedToPeer: false,
+        recoveryCopyStoredByPeer: false,
         direction: 'peer-wallet-to-this-device',
       })
 

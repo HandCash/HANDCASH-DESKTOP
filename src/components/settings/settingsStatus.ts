@@ -40,20 +40,38 @@ export function unlockStatus(): SettingRowStatus {
   }
 }
 
-export function historyStatus(): SettingRowStatus {
+const HISTORY_STALE_MS = 14 * 24 * 60 * 60 * 1000
+
+function ago(ms: number): string {
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000))
+  if (days >= 1) return `${days}d ago`
+  const hours = Math.floor(ms / (60 * 60 * 1000))
+  return hours >= 1 ? `${hours}h ago` : 'just now'
+}
+
+/** What the last upload actually did — never "ready" on a URL alone. */
+export function historyStatus(now = Date.now()): SettingRowStatus {
   const prefs = getHistoryBackupPrefs()
   const url = resolveHistoryBackupBaseUrl(prefs)
-  if (isHistoryBackupConfirmed() && url) {
-    return { text: 'Confirmed · cloud ready', tone: 'ok' }
+  const confirmed = isHistoryBackupConfirmed()
+  if (!url) {
+    return confirmed
+      ? { text: 'File only · no cloud copy', tone: 'muted' }
+      : { text: 'Not backed up', tone: 'warn' }
   }
-  if (url) {
-    const handCash = url.replace(/\/+$/, '') === handCashHistoryUrl()
-    return {
-      text: handCash ? 'HandCash · cloud ready' : `Custom host · ${url.replace(/^https?:\/\//, '').slice(0, 22)}`,
-      tone: 'muted',
-    }
+  const host =
+    url.replace(/\/+$/, '') === handCashHistoryUrl()
+      ? 'HandCash'
+      : url.replace(/^https?:\/\//, '').slice(0, 22)
+  if (prefs.lastError) return { text: `${host} · upload failing`, tone: 'warn' }
+  if (!prefs.lastUploadedAt) {
+    return confirmed
+      ? { text: `File only · not uploaded to ${host}`, tone: 'muted' }
+      : { text: `${host} · never uploaded`, tone: 'warn' }
   }
-  return { text: 'Not backed up', tone: 'warn' }
+  const age = now - prefs.lastUploadedAt
+  if (age > HISTORY_STALE_MS) return { text: `${host} · last upload ${ago(age)}`, tone: 'warn' }
+  return { text: `${host} · uploaded ${ago(age)}`, tone: 'ok' }
 }
 
 export function deviceHandoffStatus(): SettingRowStatus {
@@ -66,7 +84,11 @@ export function deviceHandoffStatus(): SettingRowStatus {
   if (roles.some((role) => role.direction === 'reciprocal')) {
     return { text: 'Both sides hold a copy', tone: 'warn' }
   }
-  const elsewhere = roles.filter((role) => role.recoveryCopyIssuedToPeer).length
+  const unconfirmed = roles.filter(
+    (role) => role.recoveryCopyIssuedToPeer && !role.recoveryCopyStoredByPeer,
+  ).length
+  if (unconfirmed > 0) return { text: `${label} · copy not confirmed`, tone: 'warn' }
+  const elsewhere = roles.filter((role) => role.recoveryCopyStoredByPeer).length
   const here = roles.filter((role) => role.protectsPeer).length
   const configured = elsewhere + here
   if (configured === 0) return { text: `${label} · no copy yet`, tone: 'muted' }

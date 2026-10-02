@@ -22,7 +22,9 @@ import { verifyAndEnrichPair } from '../wallet/devicePeer'
 import { pollDeviceMeshOnce } from '../wallet/deviceMesh'
 import {
   clearSpareExchangeForPeer,
+  confirmSpareStoredByPeer,
   createSealedBackupForPeer,
+  deviceBackupNeedsPassword,
   deviceKeyBackupToQrText,
   getDeviceBackupRoleStatus,
   getDeviceKeyBackup,
@@ -261,12 +263,15 @@ export function PairDevicePanel() {
     if (snapshot.matches('device') && !peer) send({ type: 'BACK' })
   }, [snapshot, peer, send])
 
+  const needsPassword = deviceBackupNeedsPassword()
+  const passwordReady = !needsPassword || password.length >= UNLOCK_PASSWORD_MIN_LENGTH
+
   const sealForPeer = async () => {
     if (!peer) return
     send({ type: 'SEAL' })
     try {
       const pkg = await createSealedBackupForPeer({
-        password,
+        password: needsPassword ? password : undefined,
         peerIdentityKey: peer.identityKey,
         peerDeviceId: peer.deviceId,
         label: listDeviceWallets().find((w) => w.isLocal)?.label,
@@ -302,7 +307,10 @@ export function PairDevicePanel() {
     if (!peerDeviceId) return
     send({ type: 'UNSEAL' })
     try {
-      const result = await openStoredDeviceKeyBackup({ peerDeviceId, password })
+      const result = await openStoredDeviceKeyBackup({
+        peerDeviceId,
+        password: needsPassword ? password : undefined,
+      })
       setOpened(result)
       setPassword('')
       send({ type: 'UNSEAL_OK' })
@@ -391,21 +399,23 @@ export function PairDevicePanel() {
           </>
         ) : (
           <>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="recover-password">Your unlock password</label>
-              <input
-                id="recover-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            {needsPassword ? (
+              <div className="field" data-aeon-part="field">
+                <label htmlFor="recover-password">Your unlock password</label>
+                <input
+                  id="recover-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            ) : null}
             <div className="actions">
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
+                disabled={busy || !passwordReady}
                 onClick={() => void unseal()}
               >
                 {busy ? 'Opening…' : 'Open copy'}
@@ -506,21 +516,23 @@ export function PairDevicePanel() {
             <p className="settings-hint">
               Seals this wallet’s keys so only {peer.label} can open the copy.
             </p>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="seal-password">Your unlock password</label>
-              <input
-                id="seal-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            {needsPassword ? (
+              <div className="field" data-aeon-part="field">
+                <label htmlFor="seal-password">Your unlock password</label>
+                <input
+                  id="seal-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            ) : null}
             <div className="actions">
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
+                disabled={busy || !passwordReady}
                 onClick={() => void sealForPeer()}
               >
                 {busy ? 'Sealing…' : 'Create copy'}
@@ -545,8 +557,18 @@ export function PairDevicePanel() {
               >
                 Copy code
               </button>
-              <button type="button" className="btn btn-primary" onClick={leave}>
-                Done
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  confirmSpareStoredByPeer(peer.deviceId)
+                  leave()
+                }}
+              >
+                {peer.label} stored it
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={leave}>
+                Later
               </button>
             </div>
           </div>

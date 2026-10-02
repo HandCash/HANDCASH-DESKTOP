@@ -3,6 +3,8 @@ import { getActiveWallet } from '../wallet/session'
 import { useEffect, useRef, useState } from 'react'
 import {
   exportBrc39ToFile,
+  fetchRemoteBrc39Meta,
+  HistoryThinOverwriteError,
   importBrc39FromFile,
   listLocalBrc39Archive,
   replaceLocalHistoryFromCloud,
@@ -27,6 +29,9 @@ import {
 } from '../wallet/backupStatus'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { inspectLocalToolboxState } from '../wallet/layers'
+import { useAsyncAction, type AsyncActionOutcome } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { HistoryBackupUrlField } from './settings'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
@@ -40,14 +45,24 @@ function formatWhen(ts: number | null): string {
   }
 }
 
+type HistoryActionKind =
+  | 'file'
+  | 'upload'
+  | 'overwrite'
+  | 'restore'
+  | 'import'
+  | 'check'
+  | 'local'
+
+const sats = (n: number | null) => (n == null ? 'unknown balance' : `${n.toLocaleString()} sats`)
+
 export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
   const [password, setPassword] = useState<string | null>(null)
   const [historyUnlocked, setHistoryUnlocked] = useState(false)
-  const [busy, setBusy] = useState<
-    'file' | 'upload' | 'restore' | 'import' | 'check' | 'local' | null
-  >(null)
+  const action = useAsyncAction<HistoryActionKind>()
+  const busy = action.busy
   const [exportTick, setExportTick] = useState(0)
   const [localSnaps, setLocalSnaps] = useState<LocalBrc39ArchiveMeta[]>([])
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
@@ -67,10 +82,15 @@ export function HistoryBackupPanel() {
     void refreshLocalArchive()
   }, [historyUnlocked, exportTick])
 
+  const fail = (title: string, outcome: AsyncActionOutcome) => {
+    if (outcome.ok || outcome.error === null) return
+    playWalletSound('error')
+    toastError(title, outcome.error)
+  }
+
   const checkCloud = async () => {
     playWalletSound('soft')
-    setBusy('check')
-    try {
+    await action.run('check', async () => {
       ensureSuggestedHistoryBackupUrl()
       const health = await refreshCloudBackupHealth()
       setPrefs(getHistoryBackupPrefs())
@@ -79,9 +99,7 @@ export function HistoryBackupPanel() {
         toastSuccess(health.label, health.message ?? 'Upload will retry automatically')
       else if (health.phase === 'error') toastError(health.label, health.message ?? 'Check the URL')
       else toastSuccess(health.label, health.message ?? undefined)
-    } finally {
-      setBusy(null)
-    }
+    })
   }
 
   const confirmHistory = () => {
@@ -101,8 +119,7 @@ export function HistoryBackupPanel() {
 
   const runRestoreLocal = async (snapshotId: string) => {
     if (!historyUnlocked) return
-    setBusy('local')
-    try {
+    const outcome = await action.run('local', async () => {
       const result = await restoreLocalBrc39Archive(password, snapshotId)
       const recomposed = await recomposeWallet({
         password: password ?? undefined,
@@ -115,90 +132,117 @@ export function HistoryBackupPanel() {
         `${result.inserts + result.updates} changes · balance ${recomposed.spendableSats ?? '—'} sats`,
       )
       await refreshLocalArchive()
-    } catch (err) {
-      playWalletSound('error')
-      toastError('Local restore failed', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
-    }
+    })
+    fail('Local restore failed', outcome)
   }
 
   const runExportFile = async () => {
     if (!historyUnlocked) return
-    setBusy('file')
-    try {
+    const outcome = await action.run('file', async () => {
       await exportBrc39ToFile(password ?? '', { passwordAlreadyVerified: true })
       playWalletSound('success')
       toastSuccess('Downloaded wallet.brc39')
       markExported()
       await refreshLocalArchive()
-    } catch (err) {
-      playWalletSound('error')
-      toastError('Export failed', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
-    }
+    })
+    fail('Export failed', outcome)
   }
 
+  const uploaded = async (result: { exportedAt: number }) => {
+    setPrefs(getHistoryBackupPrefs())
+    playWalletSound('success')
+    toastSuccess('Uploaded', formatWhen(result.exportedAt))
+    markExported()
+    await refreshLocalArchive()
+  }
+
+  /**
+   * Guarded first: the same empty-local / thinner-than-remote check the
+   * automatic path runs. Only a refusal asks to overwrite, naming both sides.
+   */
   const runUpload = async () => {
     if (!historyUnlocked) return
-    setBusy('upload')
-    try {
+    const guard: { refusal: string | null } = { refusal: null }
+    const outcome = await action.run('upload', async () => {
       ensureSuggestedHistoryBackupUrl()
       // The operator asked for this one — never make them wait out a backoff.
       clearBackupBackoff()
-      const result = await uploadBrc39Backup(password ?? '', {
-        force: true,
-        passwordAlreadyVerified: true,
-      })
-      setPrefs(getHistoryBackupPrefs())
-      playWalletSound('success')
-      toastSuccess('Uploaded', formatWhen(result.exportedAt))
-      markExported()
-      await refreshLocalArchive()
-    } catch (err) {
-      playWalletSound('error')
-      toastError('Upload failed', err instanceof Error ? err.message : String(err))
-      setPrefs(getHistoryBackupPrefs())
-    } finally {
-      setBusy(null)
-    }
+      try {
+        await uploaded(await uploadBrc39Backup(password ?? '', { passwordAlreadyVerified: true }))
+      } catch (err) {
+        if (!(err instanceof HistoryThinOverwriteError)) throw err
+        guard.refusal = err.message
+      }
+    })
+    setPrefs(getHistoryBackupPrefs())
+    if (!outcome.ok) return fail('Upload failed', outcome)
+    if (guard.refusal === null) return
+    const [remote, local] = await Promise.all([
+      fetchRemoteBrc39Meta().catch(() => null),
+      inspectLocalToolboxState().catch(() => null),
+    ])
+    const forced = await action.run(
+      'overwrite',
+      async () => {
+        await uploaded(
+          await uploadBrc39Backup(password ?? '', { force: true, passwordAlreadyVerified: true }),
+        )
+      },
+      {
+        confirm: {
+          title: 'Overwrite the cloud copy?',
+          body: remote?.exists
+            ? `Cloud: ${sats(remote.spendableSats)} · ${remote.actionCount ?? '?'} actions, from ${formatWhen(remote.exportedAt)}. This device: ${sats(local?.spendableSats ?? null)} · ${local?.actionCount ?? '?'} actions. The cloud copy is replaced.`
+            : 'The cloud copy could not be checked. Uploading replaces whatever is stored there.',
+          confirmLabel: 'Overwrite',
+          danger: true,
+        },
+      },
+    )
+    setPrefs(getHistoryBackupPrefs())
+    fail('Upload failed', forced)
   }
 
   const runRestoreUrl = async () => {
     if (!historyUnlocked) return
-    setBusy('restore')
-    try {
-      ensureSuggestedHistoryBackupUrl()
-      clearBackupBackoff()
-      // Wipe toolbox IDB then pull — merge alone can under-restore after a
-      // soft-latch race left local rows that win LWW over cloud spendable outs.
-      const result = await replaceLocalHistoryFromCloud(password)
-      const recomposed = await recomposeWallet({
-        password: password ?? undefined,
-        history: 'skip',
-        reason: 'restore-url',
-      })
-      playWalletSound('success')
-      toastSuccess(
-        'Replaced from history',
-        `${result.inserts + result.updates} changes` +
-          (recomposed.spendableSats != null
-            ? ` · chain ${recomposed.spendableSats} sats`
-            : ''),
-      )
-    } catch (err) {
-      playWalletSound('error')
-      toastError('Restore failed', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
-    }
+    const remote = await fetchRemoteBrc39Meta().catch(() => null)
+    const outcome = await action.run(
+      'restore',
+      async () => {
+        ensureSuggestedHistoryBackupUrl()
+        clearBackupBackoff()
+        // Wipe toolbox IDB then pull — merge alone can under-restore after a
+        // soft-latch race left local rows that win LWW over cloud spendable outs.
+        const result = await replaceLocalHistoryFromCloud(password)
+        const recomposed = await recomposeWallet({
+          password: password ?? undefined,
+          history: 'skip',
+          reason: 'restore-url',
+        })
+        playWalletSound('success')
+        toastSuccess(
+          'Replaced from history',
+          `${result.inserts + result.updates} changes` +
+            (recomposed.spendableSats != null ? ` · chain ${recomposed.spendableSats} sats` : ''),
+        )
+      },
+      {
+        confirm: {
+          title: 'Replace history from the cloud?',
+          body: remote?.exists
+            ? `Cloud copy from ${formatWhen(remote.exportedAt)} · ${sats(remote.spendableSats)} · ${remote.actionCount ?? '?'} actions. The current database stays on this device.`
+            : 'No cloud copy could be read.',
+          confirmLabel: 'Replace',
+          danger: true,
+        },
+      },
+    )
+    fail('Restore failed', outcome)
   }
 
   const runImportFile = async (file: File | null) => {
     if (!file || !historyUnlocked) return
-    setBusy('import')
-    try {
+    const outcome = await action.run('import', async () => {
       const result = await importBrc39FromFile(file, password)
       const recomposed = await recomposeWallet({
         password: password ?? undefined,
@@ -209,17 +253,11 @@ export function HistoryBackupPanel() {
       toastSuccess(
         'Imported history',
         `${result.inserts + result.updates} changes` +
-          (recomposed.spendableSats != null
-            ? ` · chain ${recomposed.spendableSats} sats`
-            : ''),
+          (recomposed.spendableSats != null ? ` · chain ${recomposed.spendableSats} sats` : ''),
       )
-    } catch (err) {
-      playWalletSound('error')
-      toastError('Import failed', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
-      if (fileRef.current) fileRef.current.value = ''
-    }
+    })
+    if (fileRef.current) fileRef.current.value = ''
+    fail('Import failed', outcome)
   }
 
   return (
@@ -241,10 +279,10 @@ export function HistoryBackupPanel() {
         <button
           type="button"
           className="btn btn-ghost"
-          disabled={busy !== null || !effectiveUrl}
+          disabled={busy || !effectiveUrl}
           onClick={() => void checkCloud()}
         >
-          {busy === 'check' ? 'Checking…' : 'Check cloud'}
+          {action.running('check') ? 'Checking…' : 'Check cloud'}
         </button>
         {effectiveUrl ? (
           <span className="settings-row-desc">
@@ -272,37 +310,36 @@ export function HistoryBackupPanel() {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy !== null}
+              disabled={busy}
               onClick={() => void runExportFile()}
             >
-              {busy === 'file' ? 'Exporting…' : 'Download .brc39'}
+              {action.running('file') ? 'Exporting…' : 'Download .brc39'}
             </button>
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={busy !== null}
+              disabled={busy}
               onClick={() => fileRef.current?.click()}
             >
-              {busy === 'import' ? 'Importing…' : 'Import file'}
+              {action.running('import') ? 'Importing…' : 'Import file'}
             </button>
           </div>
           <div className="actions">
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={busy !== null || !effectiveUrl}
-              title="May overwrite a fuller cloud copy"
+              disabled={busy || !effectiveUrl}
               onClick={() => void runUpload()}
             >
-              {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}
+              {action.running('upload') || action.running('overwrite') ? 'Uploading…' : 'Upload to URL'}
             </button>
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={busy !== null || !effectiveUrl}
+              disabled={busy || !effectiveUrl}
               onClick={() => void runRestoreUrl()}
             >
-              {busy === 'restore' ? 'Replacing…' : 'Replace from cloud'}
+              {action.running('restore') ? 'Replacing…' : 'Replace from cloud'}
             </button>
           </div>
           <input
@@ -338,10 +375,10 @@ export function HistoryBackupPanel() {
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      disabled={busy !== null}
+                      disabled={busy}
                       onClick={() => void runRestoreLocal(snap.id)}
                     >
-                      {busy === 'local' ? 'Restoring…' : 'Restore'}
+                      {action.running('local') ? 'Restoring…' : 'Restore'}
                     </button>
                   </li>
                 ))}
@@ -359,6 +396,7 @@ export function HistoryBackupPanel() {
               className="btn btn-ghost"
               onClick={() => {
                 setPassword(null)
+                setHistoryUnlocked(false)
                 playWalletSound('soft')
               }}
             >
@@ -378,6 +416,8 @@ export function HistoryBackupPanel() {
           {canConfirm ? 'History backup saved' : 'Export first'}
         </button>
       </div>
+
+      <AsyncActionPrompt action={action} />
 
       <SettingsFeatureAbout tags={['BRC-39']}>
         An encrypted copy of this wallet’s outputs, labels and baskets — on HandCash unless you set

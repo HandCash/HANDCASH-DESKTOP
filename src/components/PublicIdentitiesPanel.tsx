@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { Button, Field } from '@aeon-ui/react'
+import { Menu } from '@aeon-ui/ui'
 import { publicIdentitiesMachine } from '../machines/publicIdentitiesMachine'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
@@ -45,8 +46,8 @@ import { IdentityPublishReview, type IdentityReviewStage } from './IdentityPubli
 const REVIEW_STAGES: readonly IdentityReviewStage[] = ['quoting', 'reviewing', 'publishing', 'refused']
 
 const PUBLISHED_TOAST = {
-  publish: 'Issuer identity published',
-  update: 'Issuer identity updated',
+  publish: 'Identity published',
+  update: 'Identity updated',
   rotate: 'Signing key rotated',
 } as const
 
@@ -186,7 +187,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         ? {
             confirm: {
               title: `Show ${row.identity?.name ?? 'this identity'} to contacts?`,
-              body: 'Contacts you message or pay get a card with this identity\'s name, image and BAP ID, signed by your wallet key and the identity\'s key, straight from your wallet. They can show it to anyone, so it links this identity to your handle. Stopping later tells contacts who saw it, but cannot unshare a copy they kept.',
+              body: 'Contacts you message or pay will see it linked to your handle. Copies they keep stay shared.',
               confirmLabel: 'Show to contacts',
             },
           }
@@ -213,9 +214,38 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   const busy = action.busy || snapshot.hasTag('review')
   const browsing = snapshot.matches('browsing') || rotating
   const importing = snapshot.matches('importing')
-  const selectedRow = view.rows.find((row) => row.identityKey === view.selected)
-  const presentedRow = view.rows.find((row) => row.identityKey === view.presented)
   const draft = snapshot.context
+  const exportBackup = () =>
+    action.run('export', async () => {
+      assertOwner()
+      downloadJson(exportPublicIdentityBackup(runtime!), 'handcash-issuer-backup.json')
+    })
+  const copyKey = (row: PublicIdentityRow) =>
+    action.run('copy', async () => {
+      assertOwner()
+      await copyText(row.identityKey, { label: 'issuer identity key' })
+    })
+  const useAsIssuer = (row: PublicIdentityRow) =>
+    action.run('select', async () => {
+      assertOwner()
+      selectPublicIdentity(runtime!, row.identityKey)
+    })
+  const removeSigner = (row: PublicIdentityRow) =>
+    action.run(
+      'remove',
+      async () => {
+        assertOwner()
+        removePublicIdentity(runtime!, row.identityKey)
+      },
+      {
+        confirm: {
+          title: 'Remove imported signer?',
+          body: 'Its signing key leaves this wallet. Back up identities first.',
+          confirmLabel: 'Remove signer',
+          danger: true,
+        },
+      },
+    )
   return (
     <section
       className="identity-card identity-compose"
@@ -223,61 +253,34 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
       data-aeon-state={stateToAttr(snapshot.value)}
       aria-label="Public identities"
     >
-      <h3 className="identity-compose-title">Public identities</h3>
-      <p className="identity-compose-lede">
-        Your issuer identity is a BAP identity: a stable BAP ID with an image, a
-        name and a bio, signed by a key you can rotate. Every asset you issue
-        names the BAP ID and is signed by its current key, and the identity
-        proof travels with it, so holders can show who made it without trusting
-        a server. Publish one before issuing.
-      </p>
       <div data-aeon-part="actions" data-aeon-state={action.stateAttr}>
         {browsing ? (
           <>
-            <p>
-              Issuer:{' '}
-              <strong>{selectedRow?.identity?.name ?? 'Not published'}</strong>{' '}
-              <span className="mono" title={view.selected}>
-                {shortKey(view.selected)}
-              </span>
-            </p>
-            <p data-aeon-part="presented" data-aeon-state={presentedRow ? 'shown' : 'hidden'}>
-              Shown to contacts:{' '}
-              <strong>{presentedRow?.identity?.name ?? 'Nothing'}</strong>
-            </p>
-            <div className="actions">
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                disabled={busy || !!view.error}
-                onClick={() => send({ type: 'IMPORT_KEY' })}
-              >
-                Import signing key
-              </Button.Root>
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                disabled={busy}
-                onClick={() => backupFile.current?.click()}
-              >
-                Restore backup
-              </Button.Root>
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                disabled={busy || !!view.error}
-                onClick={() =>
-                  void action.run('export', async () => {
-                    assertOwner()
-                    downloadJson(
-                      exportPublicIdentityBackup(runtime!),
-                      'handcash-issuer-backup.json',
-                    )
-                  })
-                }
-              >
-                Back up identities
-              </Button.Root>
+            <div className="public-identities-head" data-aeon-part="head">
+              <h3 className="identity-compose-title">Public identities</h3>
+              <Menu.Root>
+                <Menu.Trigger
+                  className="btn btn-ghost public-identity-more"
+                  disabled={busy}
+                  aria-label="Identity backup and import"
+                >
+                  More
+                </Menu.Trigger>
+                <Menu.Positioner placement="bottom-end">
+                  <Menu.Content>
+                    <Menu.Item disabled={!!view.error} onClick={() => void exportBackup()}>
+                      Back up identities
+                    </Menu.Item>
+                    <Menu.Item onClick={() => backupFile.current?.click()}>
+                      Restore backup
+                    </Menu.Item>
+                    <Menu.Separator />
+                    <Menu.Item disabled={!!view.error} onClick={() => send({ type: 'IMPORT_KEY' })}>
+                      Import signing key
+                    </Menu.Item>
+                  </Menu.Content>
+                </Menu.Positioner>
+              </Menu.Root>
             </div>
             <input
               ref={backupFile}
@@ -291,177 +294,125 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
               }}
             />
             <ul className="identity-list" data-aeon-part="records">
-              {view.rows.map((row) => (
-                <li key={row.identityKey} data-aeon-part="record">
-                  {row.identity?.image ? (
-                    <DeferredImage
-                      src={issuerIdentityImageDataUrl(row.identity.image)}
-                      alt=""
-                      width={40}
-                      height={40}
-                      fallback={<span aria-hidden>◈</span>}
-                    />
-                  ) : (
-                    <span aria-hidden>◈</span>
-                  )}
-                  <strong>{row.identity?.name ?? 'Not published'}</strong>
-                  <p className="mono" title={row.identityKey}>
-                    {shortKey(row.identityKey)}
-                  </p>
-                  <p>
-                    {row.signer === 'imported' ? 'Imported signer' : 'Wallet signer'}
-                    {row.identityKey === view.selected ? ' · selected issuer' : ''}
-                    {row.identityKey === view.presented ? ' · shown to contacts' : ''}
-                  </p>
-                  {row.identity?.description ? <p>{row.identity.description}</p> : null}
-                  <p className="public-identity-bap" title={row.bapId}>
-                    <BapIdenticon bapId={row.bapId} />
-                    <span className="mono">BAP ID {row.bapId}</span>
-                  </p>
-                  {row.identity ? (
-                    <p>
-                      {row.identity.revoked
-                        ? 'Revoked'
-                        : `Signing key ${row.identity.keys.length}${
-                            row.identity.keys.at(-1)!.minedHeight === undefined ? ' · confirming' : ''
-                          }`}
-                      {row.identity.image ? '' : ' · no image yet'}
-                    </p>
-                  ) : null}
-                  <div className="actions">
-                    <Button.Root
-                      className="btn btn-primary"
-                      disabled={busy || !!row.identity?.revoked}
-                      onClick={() => compose(row)}
-                    >
-                      {row.identity ? 'Publish update' : 'Publish identity'}
-                    </Button.Root>
-                    {row.identity && !row.identity.revoked ? (
-                      <Button.Root
-                        variant="ghost"
-                        className="btn btn-ghost"
-                        disabled={busy || !row.identity.image}
-                        onClick={() => send({ type: 'ROTATE', identityKey: row.identityKey })}
-                      >
-                        {rotating && request?.identityKey === row.identityKey
-                          ? 'Rotating…'
-                          : 'Rotate signing key'}
-                      </Button.Root>
-                    ) : null}
-                    {row.identity && !row.identity.revoked ? (
-                      row.identityKey === view.presented ? (
-                        <>
-                          <Button.Root
-                            variant="ghost"
-                            className="btn btn-ghost"
-                            disabled={busy}
-                            onClick={() => void shareCard()}
-                          >
-                            Share identity card
-                          </Button.Root>
-                          <Button.Root
-                            variant="ghost"
-                            className="btn btn-ghost"
-                            disabled={busy}
-                            onClick={() => void present(null)}
-                          >
-                            {action.running('present') ? 'Stopping…' : 'Stop showing'}
-                          </Button.Root>
-                        </>
+              {view.rows.map((row) => {
+                const live = !!row.identity && !row.identity.revoked
+                const issuer = row.identityKey === view.selected
+                const shown = row.identityKey === view.presented
+                const confirming =
+                  live && row.identity!.keys.at(-1)!.minedHeight === undefined
+                return (
+                  <li
+                    key={row.identityKey}
+                    data-aeon-part="record"
+                    data-aeon-state={
+                      row.identity?.revoked ? 'revoked' : row.identity ? 'published' : 'draft'
+                    }
+                  >
+                    <span className="public-identity-avatar" aria-hidden>
+                      {row.identity?.image ? (
+                        <DeferredImage
+                          src={issuerIdentityImageDataUrl(row.identity.image)}
+                          alt=""
+                          width={44}
+                          height={44}
+                          fallback={<BapIdenticon bapId={row.bapId} size={44} />}
+                        />
                       ) : (
-                        <Button.Root
-                          variant="ghost"
-                          className="btn btn-ghost"
-                          disabled={busy}
-                          onClick={() => void present(row)}
-                        >
-                          Show to contacts
-                        </Button.Root>
-                      )
-                    ) : null}
-                    <Button.Root
-                      variant="ghost"
-                      className="btn btn-ghost"
-                      disabled={busy || row.identityKey === view.selected}
-                      onClick={() =>
-                        void action.run('select', async () => {
-                          assertOwner()
-                          selectPublicIdentity(runtime!, row.identityKey)
-                        })
-                      }
-                    >
-                      Use as issuer
-                    </Button.Root>
-                    <Button.Root
-                      variant="ghost"
-                      className="btn btn-ghost"
-                      disabled={busy}
-                      onClick={() =>
-                        void action.run('copy', async () => {
-                          assertOwner()
-                          await copyText(row.identityKey, {
-                            label: 'issuer identity key',
-                          })
-                        })
-                      }
-                    >
-                      Copy identity key
-                    </Button.Root>
-                    {row.signer === 'imported' ? (
+                        <BapIdenticon bapId={row.bapId} size={44} />
+                      )}
+                    </span>
+                    <div className="public-identity-main">
+                      <strong className="public-identity-name">
+                        {row.identity?.name ?? 'Unpublished'}
+                      </strong>
+                      <span className="public-identity-bap mono" title={row.bapId}>
+                        {shortKey(row.bapId)}
+                      </span>
+                      {row.identity?.description ? (
+                        <p className="public-identity-bio">{row.identity.description}</p>
+                      ) : null}
+                      <span className="public-identity-chips" data-aeon-part="chips">
+                        {issuer ? <span data-aeon-part="chip" data-aeon-state="issuer">Issuer</span> : null}
+                        {shown ? <span data-aeon-part="chip" data-aeon-state="shown">Shown to contacts</span> : null}
+                        {row.identity?.revoked ? (
+                          <span data-aeon-part="chip" data-aeon-state="revoked">Revoked</span>
+                        ) : null}
+                        {confirming ? (
+                          <span data-aeon-part="chip" data-aeon-state="pending">Confirming</span>
+                        ) : null}
+                        {row.signer === 'imported' ? (
+                          <span data-aeon-part="chip" data-aeon-state="imported">Imported key</span>
+                        ) : null}
+                      </span>
+                    </div>
+                    <div className="public-identity-actions">
                       <Button.Root
-                        variant="ghost"
-                        className="btn btn-ghost"
-                        disabled={busy}
-                        onClick={() =>
-                          void action.run(
-                            'remove',
-                            async () => {
-                              assertOwner()
-                              removePublicIdentity(runtime!, row.identityKey)
-                            },
-                            {
-                              confirm: {
-                                title: 'Remove imported signer?',
-                                body: 'This removes its private signing key from this wallet. Keep an identity backup and your wallet recovery phrase, or the original key, before removing it. Published identities and existing assets are unaffected.',
-                                confirmLabel: 'Remove signer',
-                                danger: true,
-                              },
-                            },
-                          )
-                        }
+                        className={row.identity ? 'btn btn-ghost' : 'btn btn-primary'}
+                        disabled={busy || !!row.identity?.revoked}
+                        onClick={() => compose(row)}
                       >
-                        Remove
+                        {row.identity ? 'Edit' : 'Publish'}
                       </Button.Root>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
+                      <Menu.Root>
+                        <Menu.Trigger
+                          className="btn btn-ghost public-identity-more"
+                          disabled={busy}
+                          aria-label={`More for ${row.identity?.name ?? 'this identity'}`}
+                        >
+                          ⋯
+                        </Menu.Trigger>
+                        <Menu.Positioner placement="bottom-end">
+                          <Menu.Content>
+                            {!issuer ? (
+                              <Menu.Item onClick={() => void useAsIssuer(row)}>Use as issuer</Menu.Item>
+                            ) : null}
+                            {live && !shown ? (
+                              <Menu.Item onClick={() => void present(row)}>Show to contacts</Menu.Item>
+                            ) : null}
+                            {live && shown ? (
+                              <>
+                                <Menu.Item onClick={() => void shareCard()}>Share identity card</Menu.Item>
+                                <Menu.Item onClick={() => void present(null)}>Stop showing</Menu.Item>
+                              </>
+                            ) : null}
+                            {live ? (
+                              <Menu.Item
+                                disabled={!row.identity!.image}
+                                onClick={() => send({ type: 'ROTATE', identityKey: row.identityKey })}
+                              >
+                                Rotate signing key
+                              </Menu.Item>
+                            ) : null}
+                            <Menu.Item onClick={() => void copyKey(row)}>Copy identity key</Menu.Item>
+                            {row.signer === 'imported' ? (
+                              <>
+                                <Menu.Separator />
+                                <Menu.Item onClick={() => void removeSigner(row)}>Remove signer</Menu.Item>
+                              </>
+                            ) : null}
+                          </Menu.Content>
+                        </Menu.Positioner>
+                      </Menu.Root>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
-            <p className="identity-compose-lede">
-              Imported keys are encrypted to this wallet. Your recovery phrase
-              alone cannot recover them: keep an identity backup too.
-            </p>
           </>
         ) : importing ? (
           <>
-            <h4>Import existing issuer key</h4>
+            <h3 className="identity-compose-title">Import signing key</h3>
             <Field.Root className="identity-compose-field">
-              <Field.Label htmlFor={`${prefix}-key`}>
-                Private signing key (hex or WIF)
-              </Field.Label>
+              <Field.Label htmlFor={`${prefix}-key`}>Private key</Field.Label>
               <Field.Control
                 id={`${prefix}-key`}
                 ref={privateKey}
                 type="password"
+                placeholder="Hex or WIF"
                 autoComplete="off"
                 spellCheck={false}
                 disabled={busy}
               />
-              <p>
-                Use the identity's master key, the one 1Sat or Yours derived
-                its BAP ID from, not an API credential. Importing does not move
-                funds.
-              </p>
             </Field.Root>
             <div className="actions">
               <Button.Root
@@ -469,50 +420,47 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                 disabled={busy}
                 onClick={() => void importKey()}
               >
-                {action.running('import') ? 'Importing…' : 'Import key'}
+                {action.running('import') ? 'Importing…' : 'Import'}
               </Button.Root>
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                disabled={busy}
-                onClick={close}
-              >
+              <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={close}>
                 Cancel
               </Button.Root>
             </div>
           </>
         ) : (
           <>
-            <h4>Publish issuer identity</h4>
-            <p className="mono" title={draft.identityKey ?? ''}>
-              {draft.identityKey ? shortKey(draft.identityKey) : null}
-            </p>
-            <div className="identity-compose-field" data-aeon-part="image">
-              {draft.image ? (
-                <DeferredImage
-                  src={issuerIdentityImageDataUrl(draft.image)}
-                  alt="Identity image"
-                  width={96}
-                  height={96}
-                  fallback={<span aria-hidden>◈</span>}
-                />
-              ) : null}
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
+            <h3 className="identity-compose-title">
+              {view.rows.find((row) => row.identityKey === draft.identityKey)?.identity
+                ? 'Edit identity'
+                : 'Publish identity'}
+            </h3>
+            <div className="public-identity-compose" data-aeon-part="compose">
+              <button
+                type="button"
+                className="public-identity-image-pick"
+                data-aeon-part="image"
+                data-aeon-state={
+                  action.running('image') ? 'preparing' : draft.image ? 'set' : 'empty'
+                }
                 disabled={busy}
+                aria-label={draft.image ? 'Change image' : 'Choose image'}
                 onClick={() => imageFile.current?.click()}
               >
-                {action.running('image')
-                  ? 'Preparing image…'
-                  : draft.image
-                    ? 'Change image'
-                    : 'Choose image'}
-              </Button.Root>
-              <p>
-                Cropped square and compressed to 64 KB. Photo metadata such as
-                location is removed before anything is published.
-              </p>
+                {draft.image ? (
+                  <DeferredImage
+                    src={issuerIdentityImageDataUrl(draft.image)}
+                    alt=""
+                    width={88}
+                    height={88}
+                    fallback={<span aria-hidden>◈</span>}
+                  />
+                ) : (
+                  <span aria-hidden>{action.running('image') ? '…' : '+'}</span>
+                )}
+                <span className="public-identity-image-label">
+                  {action.running('image') ? 'Preparing…' : draft.image ? 'Change' : 'Image'}
+                </span>
+              </button>
               <input
                 ref={imageFile}
                 type="file"
@@ -524,49 +472,43 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                   if (picked) void pickImage(picked)
                 }}
               />
+              <div className="public-identity-compose-fields">
+                <Field.Root className="identity-compose-field">
+                  <Field.Label htmlFor={`${prefix}-name`}>Name</Field.Label>
+                  <Field.Control
+                    id={`${prefix}-name`}
+                    value={draft.fields.name}
+                    maxLength={IDENTITY_NAME_MAX}
+                    disabled={busy}
+                    onChange={(event) =>
+                      send({ type: 'FIELD', field: 'name', value: event.target.value })
+                    }
+                  />
+                </Field.Root>
+                <Field.Root className="identity-compose-field">
+                  <Field.Label htmlFor={`${prefix}-bio`}>Bio</Field.Label>
+                  <Field.Control
+                    id={`${prefix}-bio`}
+                    value={draft.fields.description}
+                    maxLength={IDENTITY_DESCRIPTION_MAX}
+                    placeholder="Optional"
+                    disabled={busy}
+                    onChange={(event) =>
+                      send({ type: 'FIELD', field: 'description', value: event.target.value })
+                    }
+                  />
+                </Field.Root>
+              </div>
             </div>
-            <Field.Root className="identity-compose-field">
-              <Field.Label htmlFor={`${prefix}-name`}>Name</Field.Label>
-              <Field.Control
-                id={`${prefix}-name`}
-                value={draft.fields.name}
-                maxLength={IDENTITY_NAME_MAX}
-                disabled={busy}
-                onChange={(event) =>
-                  send({ type: 'FIELD', field: 'name', value: event.target.value })
-                }
-              />
-            </Field.Root>
-            <Field.Root className="identity-compose-field">
-              <Field.Label htmlFor={`${prefix}-bio`}>Bio (optional)</Field.Label>
-              <Field.Control
-                id={`${prefix}-bio`}
-                value={draft.fields.description}
-                maxLength={IDENTITY_DESCRIPTION_MAX}
-                disabled={busy}
-                onChange={(event) =>
-                  send({ type: 'FIELD', field: 'description', value: event.target.value })
-                }
-              />
-            </Field.Root>
-            <p className="identity-compose-lede">
-              The signature proves control of the BAP identity; it does not
-              verify a real-world name or handle.
-            </p>
             <div className="actions">
               <Button.Root
                 className="btn btn-primary"
                 disabled={busy || !draft.image || !draft.fields.name.trim()}
                 onClick={() => send({ type: 'REVIEW' })}
               >
-                {review ? 'Publishing…' : 'Review and publish'}
+                {review ? 'Publishing…' : 'Review'}
               </Button.Root>
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                disabled={busy}
-                onClick={close}
-              >
+              <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={close}>
                 Cancel
               </Button.Root>
             </div>

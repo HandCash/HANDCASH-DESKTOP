@@ -1,6 +1,7 @@
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import { accountLocalKey, accountLocalKeyFor, peekAccountLocalKeyScope } from './accountLocalKeys'
+import { readVaultMeta } from './vault'
 
 const KEYS_KEY = storageRegistry.backupConfirmed.key
 const HISTORY_KEY = storageRegistry.historyBackupConfirmed.key
@@ -19,17 +20,31 @@ const keysHandoffSliceIndices = new Set<number>()
 let keysSingleHandoff = false
 let historyExported = false
 
+/**
+ * Key backups cover the vault master, which every sub-account derives from,
+ * so their confirmation lives on the master account — never per sub-account.
+ */
+function vaultKey(base: string): string {
+  const masterIdentityKey = readVaultMeta()?.identityKey
+  if (!masterIdentityKey) return accountLocalKey(base)
+  return accountLocalKeyFor(base, {
+    accountIndex: 0,
+    identityKey: masterIdentityKey,
+    chain: peekAccountLocalKeyScope().chain,
+  })
+}
+
 function notify() {
   for (const listener of listeners) listener()
 }
 
 export function isKeysBackupConfirmed(): boolean {
-  return durableGetItem(accountLocalKey(KEYS_KEY)) === '1'
+  return durableGetItem(vaultKey(KEYS_KEY)) === '1'
 }
 
 export function isKeysBackupDeferred(): boolean {
   return (
-    durableGetItem(accountLocalKey(BACKUP_LATER_KEY)) === '1' &&
+    durableGetItem(vaultKey(BACKUP_LATER_KEY)) === '1' &&
     !isKeysBackupConfirmed()
   )
 }
@@ -37,12 +52,12 @@ export function isKeysBackupDeferred(): boolean {
 /** Onboarding "I'll do this later" — Settings still nags until confirmed. */
 export function markKeysBackupDeferred(): void {
   if (isKeysBackupConfirmed()) return
-  durableSetItem(accountLocalKey(BACKUP_LATER_KEY), '1')
+  durableSetItem(vaultKey(BACKUP_LATER_KEY), '1')
   notify()
 }
 
 export function clearKeysBackupDeferred(): void {
-  durableRemoveItem(accountLocalKey(BACKUP_LATER_KEY))
+  durableRemoveItem(vaultKey(BACKUP_LATER_KEY))
   notify()
 }
 
@@ -114,8 +129,8 @@ export function canConfirmKeysBackup(kind: 'split' | 'phrase' | 'key'): boolean 
 
 export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boolean {
   if (!canConfirmKeysBackup(kind)) return false
-  durableSetItem(accountLocalKey(KEYS_KEY), '1')
-  durableRemoveItem(accountLocalKey(BACKUP_LATER_KEY))
+  durableSetItem(vaultKey(KEYS_KEY), '1')
+  durableRemoveItem(vaultKey(BACKUP_LATER_KEY))
   notify()
   return true
 }
@@ -137,9 +152,9 @@ export function markHistoryBackupConfirmed(): boolean {
 }
 
 export function clearBackupConfirmed(): void {
-  durableRemoveItem(accountLocalKey(KEYS_KEY))
+  durableRemoveItem(vaultKey(KEYS_KEY))
   durableRemoveItem(accountLocalKey(HISTORY_KEY))
-  durableRemoveItem(accountLocalKey(BACKUP_LATER_KEY))
+  durableRemoveItem(vaultKey(BACKUP_LATER_KEY))
   keysHandoffs = 0
   keysHandoffSliceIndices.clear()
   keysSingleHandoff = false

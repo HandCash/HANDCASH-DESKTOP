@@ -136,6 +136,35 @@ describe('durable store ownership', () => {
     expect(durableGetItem('handcash.brc100.appActivity')).toBe(BIG)
   })
 
+  it('never mirrors sealed vault values into origin storage, and purges old copies', async () => {
+    const local = installLocalStorage()
+    const shell = new Map<string, string>([
+      ['handcash.brc100.vault.v1', '{"ciphertext":"c"}'],
+    ])
+    local.set('handcash.brc100.vault.v1', '{"ciphertext":"c"}')
+    local.set('handcash.brc100.vault.openSecret.v1', 'only-copy')
+    vi.stubGlobal('window', {
+      handcash: {
+        storageGetSync: (key: string) => shell.get(key) ?? null,
+        storageSetSync: (key: string, value: string) => {
+          shell.set(key, value)
+          return true
+        },
+      },
+    })
+    const { durableSetItem, durableGetItem } = await loadDurable()
+
+    expect(durableSetItem('handcash.brc100.vault.openSecret.v2', 'wrap-secret')).toBe(true)
+    expect(shell.get('handcash.brc100.vault.openSecret.v2')).toBe('wrap-secret')
+    expect(local.has('handcash.brc100.vault.openSecret.v2')).toBe(false)
+    expect(local.has('handcash.brc100.vault.v1')).toBe(false)
+
+    // The shell had no copy of this one: it moves up, then leaves origin storage.
+    expect(durableGetItem('handcash.brc100.vault.openSecret.v1')).toBe('only-copy')
+    expect(shell.get('handcash.brc100.vault.openSecret.v1')).toBe('only-copy')
+    expect(local.has('handcash.brc100.vault.openSecret.v1')).toBe(false)
+  })
+
   it('reclaims rebuildable image caches before refusing wallet state', async () => {
     const local = installLocalStorage()
     vi.stubGlobal('window', { handcash: undefined })

@@ -287,7 +287,7 @@ export const storageRegistry = Object.freeze({
     version: 1,
   }),
   brc140IssuedSet: defineStorage({
-    key: 'handcash.brc140.issuedSet.v1',
+    key: 'handcash.brc140.issuedSet.v1:',
     owner: 'backup',
     scope: 'device',
     version: 1,

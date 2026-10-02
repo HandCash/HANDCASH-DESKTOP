@@ -931,10 +931,16 @@ export async function revealMnemonic(_password?: string | null): Promise<string>
   return unlocked.mnemonic
 }
 
-/** Reveal root key from the unlocked session — never gated on HandCash password. */
+/**
+ * Reveal the vault master root key from the unlocked session — never gated on
+ * HandCash password. Always the master: sub-accounts (BRC-146) derive from it,
+ * so a backup of an account's own key would restore that account as a new,
+ * unrelated master and strand every other account.
+ */
 export async function revealRootKeyHex(_password?: string | null): Promise<string> {
   const active = getWalletRuntime()?.instance ?? null
-  if (active?.rootKeyHex) return active.rootKeyHex
+  const master = active?.masterRootKeyHex ?? active?.rootKeyHex
+  if (master) return master
   const unlocked = await unlockVaultWithDevice('Reveal emergency key')
   return unlocked.rootKeyHex
 }

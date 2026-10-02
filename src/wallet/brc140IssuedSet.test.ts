@@ -26,17 +26,20 @@ describe('BRC-140 issued slice set', () => {
   it('stores no slice in the clear', async () => {
     const rootHex = PrivateKey.fromRandom().toHex()
     const set = await loadOrIssueBrc140Set(rootHex)
-    const raw = durableGetItem(storageRegistry.brc140IssuedSet.key)!
+    const identityKey = PrivateKey.fromHex(rootHex).toPublicKey().toString()
+    const raw = durableGetItem(`${storageRegistry.brc140IssuedSet.key}${identityKey}`)!
     for (const share of set.shares) {
       expect(raw).not.toContain(share.split('.')[0])
     }
   })
 
-  it('does not hand one wallet the set of another', async () => {
+  it('keeps each wallet’s set apart', async () => {
     const a = PrivateKey.fromRandom().toHex()
     const b = PrivateKey.fromRandom().toHex()
-    await loadOrIssueBrc140Set(a)
+    const setA = await loadOrIssueBrc140Set(a)
     expect(await readBrc140IssuedSet(b)).toBeNull()
+    await loadOrIssueBrc140Set(b)
+    expect((await readBrc140IssuedSet(a))?.shares).toEqual(setA.shares)
   })
 
   it('after a slice restore, keeps the holder’s split', async () => {

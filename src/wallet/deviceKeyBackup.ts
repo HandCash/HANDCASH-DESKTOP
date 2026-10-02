@@ -12,7 +12,13 @@ import { getActiveWallet } from './session'
  */
 import { EncryptedMessage, PrivateKey, PublicKey, Utils } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { unlockVault } from './vault'
+import { getOpenUnlockSecret, isNoDeviceLock } from './deviceLockPrefs'
+import {
+  readVaultUnlockFactors,
+  unlockVault,
+  unlockVaultWithDevice,
+  type UnlockedVault,
+} from './vault'
 
 
 const STORE_KEY = 'handcash.brc100.deviceKeyBackups.v1'
@@ -39,6 +45,11 @@ export type SpareGivenRecord = {
   peerDeviceId: string
   peerIdentityKey: string
   givenAt: number
+  /**
+   * Holder confirmed the peer stored the copy. `false` = sealed and shown only.
+   * Absent on records written before confirmation existed; those count as stored.
+   */
+  confirmed?: boolean
 }
 
 export type DeviceBackupRoleStatus = {
@@ -48,6 +59,8 @@ export type DeviceBackupRoleStatus = {
   recoveryCopyReceivedFromPeer: boolean
   /** A sealed recovery copy of this wallet was issued to the peer. */
   recoveryCopyIssuedToPeer: boolean
+  /** The holder confirmed the peer stored that copy. */
+  recoveryCopyStoredByPeer: boolean
   direction:
     | 'none'
     | 'this-wallet-to-peer'
@@ -174,7 +187,9 @@ export function hasSpareGivenToPeer(peerDeviceId: string): boolean {
 export function getDeviceBackupRoleStatus(peerDeviceId: string): DeviceBackupRoleStatus {
   const protectsPeer = hasDeviceKeyBackup(peerDeviceId)
   const recoveryCopyReceivedFromPeer = protectsPeer || Boolean(readReceived()[peerDeviceId])
-  const recoveryCopyIssuedToPeer = hasSpareGivenToPeer(peerDeviceId)
+  const given = readGiven()[peerDeviceId]
+  const recoveryCopyIssuedToPeer = Boolean(given)
+  const recoveryCopyStoredByPeer = Boolean(given) && given.confirmed !== false
   const direction =
     recoveryCopyReceivedFromPeer && recoveryCopyIssuedToPeer
       ? 'reciprocal'
@@ -187,6 +202,7 @@ export function getDeviceBackupRoleStatus(peerDeviceId: string): DeviceBackupRol
     protectsPeer,
     recoveryCopyReceivedFromPeer,
     recoveryCopyIssuedToPeer,
+    recoveryCopyStoredByPeer,
     direction,
   }
 }
@@ -197,8 +213,53 @@ export function markSpareGivenToPeer(peerDeviceId: string, peerIdentityKey: stri
   const ik = peerIdentityKey.trim()
   if (!id || !isPubkey(ik)) return
   const map = readGiven()
-  map[id] = { peerDeviceId: id, peerIdentityKey: ik, givenAt: Date.now() }
+  map[id] = { peerDeviceId: id, peerIdentityKey: ik, givenAt: Date.now(), confirmed: false }
   writeGiven(map)
+}
+
+/** The holder saw the peer store the copy (it shows "Copy stored"). */
+export function confirmSpareStoredByPeer(peerDeviceId: string): void {
+  const map = readGiven()
+  const record = map[peerDeviceId.trim()]
+  if (!record || record.confirmed !== false) return
+  map[record.peerDeviceId] = { ...record, confirmed: true }
+  writeGiven(map)
+}
+
+/**
+ * Prove the operator before sealing or opening a copy, with whatever factor
+ * this wallet actually has: typed password, device unlock, or the no-lock
+ * wrap secret. Always yields the vault master key.
+ */
+async function proveOperator(password: string | undefined, reason: string): Promise<UnlockedVault> {
+  if (password) return unlockVault(password)
+  const open = isNoDeviceLock() ? getOpenUnlockSecret() : null
+  if (open) return unlockVault(open)
+  if (readVaultUnlockFactors().device) return unlockVaultWithDevice(reason)
+  throw new Error('Enter your unlock password')
+}
+
+/** True when sealing/opening needs a typed password (no device or open factor). */
+export function deviceBackupNeedsPassword(): boolean {
+  if (isNoDeviceLock()) return false
+  return !readVaultUnlockFactors().device
+}
+
+/** The active wallet's master key and its identity — sub-accounts derive from it. */
+function masterOfActive(unlocked: UnlockedVault) {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock this wallet first')
+  const master = active.masterRootKeyHex ?? active.rootKeyHex
+  if (unlocked.rootKeyHex !== master) {
+    throw new Error('Session does not match vault — unlock again')
+  }
+  const key = PrivateKey.fromHex(master)
+  return {
+    active,
+    rootKeyHex: master,
+    identityKey: key.toPublicKey().toString(),
+    address: key.toAddress(),
+  }
 }
 
 export function removeDeviceKeyBackup(peerDeviceId: string): void {
@@ -283,7 +344,7 @@ export function deviceKeyBackupToQrText(pkg: DeviceKeyBackupPackage): string {
  * Requires unlock password (proves operator + loads root).
  */
 export async function createSealedBackupForPeer(args: {
-  password: string
+  password?: string
   peerIdentityKey: string
   peerDeviceId: string
   label?: string
@@ -293,13 +354,12 @@ export async function createSealedBackupForPeer(args: {
   if (!isPubkey(peerIk)) throw new Error('Peer identity key is invalid')
   if (!peerDeviceId) throw new Error('Peer device id is required')
 
-  const unlocked = await unlockVault(args.password)
-  const active = getActiveWallet()
-  if (!active) throw new Error('Unlock this wallet first')
-  if (unlocked.rootKeyHex !== active.rootKeyHex) {
-    throw new Error('Session does not match vault — unlock again')
-  }
-  if (peerIk.toLowerCase() === active.identityKey.toLowerCase()) {
+  const unlocked = await proveOperator(args.password, 'Seal a recovery copy')
+  const master = masterOfActive(unlocked)
+  if (
+    peerIk.toLowerCase() === master.identityKey.toLowerCase() ||
+    peerIk.toLowerCase() === master.active.identityKey.toLowerCase()
+  ) {
     throw new Error('Cannot seal a spare key to this same identity')
   }
   if (hasDeviceKeyBackup(peerDeviceId) || readReceived()[peerDeviceId]) {
@@ -310,12 +370,12 @@ export async function createSealedBackupForPeer(args: {
 
   const secret: CustodySecret = {
     v: 1,
-    rootKeyHex: unlocked.rootKeyHex,
+    rootKeyHex: master.rootKeyHex,
     mnemonic: unlocked.mnemonic,
-    identityKey: active.identityKey,
-    address: active.address,
+    identityKey: master.identityKey,
+    address: master.address,
   }
-  const sender = PrivateKey.fromHex(unlocked.rootKeyHex)
+  const sender = PrivateKey.fromHex(master.rootKeyHex)
   const recipient = PublicKey.fromString(peerIk)
   const cipher = EncryptedMessage.encrypt(
     Utils.toArray(JSON.stringify(secret), 'utf8'),
@@ -327,8 +387,8 @@ export async function createSealedBackupForPeer(args: {
     v: 1,
     kind: 'handcash-device-key-backup',
     fromDeviceId: localDeviceId(),
-    fromIdentityKey: active.identityKey,
-    fromAddress: active.address,
+    fromIdentityKey: master.identityKey,
+    fromAddress: master.address,
     fromLabel: args.label?.trim() || 'Device',
     forIdentityKey: peerIk,
     sealedAt: Date.now(),
@@ -381,22 +441,24 @@ export type OpenedDeviceKeyBackup = {
  */
 export async function openStoredDeviceKeyBackup(args: {
   peerDeviceId: string
-  password: string
+  password?: string
 }): Promise<OpenedDeviceKeyBackup> {
   const pkg = getDeviceKeyBackup(args.peerDeviceId)
   if (!pkg) throw new Error('No sealed spare for that device')
 
-  const unlocked = await unlockVault(args.password)
-  const active = getActiveWallet()
-  if (!active) throw new Error('Unlock this wallet first')
-  if (unlocked.rootKeyHex !== active.rootKeyHex) {
-    throw new Error('Session does not match vault — unlock again')
-  }
-  if (pkg.forIdentityKey.toLowerCase() !== active.identityKey.toLowerCase()) {
-    throw new Error('Stored spare is not sealed for this identity')
-  }
+  const unlocked = await proveOperator(args.password, 'Open a recovery copy')
+  const master = masterOfActive(unlocked)
+  // Copies imported on a sub-account are sealed to that account's identity.
+  const forIk = pkg.forIdentityKey.toLowerCase()
+  const recipientHex =
+    forIk === master.active.identityKey.toLowerCase()
+      ? master.active.rootKeyHex
+      : forIk === master.identityKey.toLowerCase()
+        ? master.rootKeyHex
+        : null
+  if (!recipientHex) throw new Error('Stored spare is not sealed for this identity')
 
-  const recipient = PrivateKey.fromHex(unlocked.rootKeyHex)
+  const recipient = PrivateKey.fromHex(recipientHex)
   let plain: number[]
   try {
     plain = EncryptedMessage.decrypt(Utils.toArray(pkg.ciphertextB64, 'base64'), recipient)

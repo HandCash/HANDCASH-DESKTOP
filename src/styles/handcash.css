@@ -4433,13 +4433,6 @@ button.identity-qr-copy:focus-visible {
   white-space: nowrap;
 }
 
-.identity-qr-hint {
-  margin: 0;
-  color: var(--hc-muted);
-  font-size: 0.74rem;
-  line-height: 1.35;
-}
-
 .identity-key-note {
   margin: 0;
   display: flex;
@@ -4472,22 +4465,177 @@ button.identity-qr-copy:focus-visible {
   max-width: 560px;
 }
 
+[data-aeon-scope="public-identities"] [data-aeon-part="head"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 [data-aeon-scope="public-identities"] [data-aeon-part="records"] {
   max-width: none;
-  margin-top: 16px;
+  margin-top: 8px;
+  gap: 0;
 }
 
 [data-aeon-scope="public-identities"] [data-aeon-part="record"] {
   display: grid;
-  gap: 6px;
-  padding: 16px 0;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
   border-top: 1px solid var(--hc-border);
 }
 
-[data-aeon-scope="public-identities"] [data-aeon-part="record"] p {
-  margin: 0;
+[data-aeon-scope="public-identities"] [data-aeon-part="record"][data-aeon-state="revoked"] {
+  opacity: 0.6;
+}
+
+.public-identity-avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+}
+
+.public-identity-avatar img,
+.public-identity-avatar svg {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+}
+
+.public-identity-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.public-identity-name {
+  overflow: hidden;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.public-identity-main .public-identity-bap {
   color: var(--hc-muted);
-  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+}
+
+.public-identity-bio {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--hc-muted);
+  font-size: 0.76rem;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="chips"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="chips"]:empty {
+  display: none;
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"] {
+  padding: 1px 7px;
+  border: 1px solid var(--hc-border);
+  border-radius: 999px;
+  color: var(--hc-muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="issuer"],
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="shown"] {
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="revoked"],
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="imported"] {
+  border-color: color-mix(in srgb, #f5a524 45%, transparent);
+  color: #f5a524;
+}
+
+.public-identity-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.public-identity-actions .btn,
+.public-identity-more {
+  min-height: 32px;
+  padding: 4px 10px;
+}
+
+[data-aeon-scope="public-identities"] [data-aeon-part="compose"] {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  margin: 8px 0 4px;
+}
+
+.public-identity-image-pick {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px dashed color-mix(in srgb, var(--hc-text) 24%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--hc-text) 4%, transparent);
+  color: var(--hc-muted);
+  font: inherit;
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+
+.public-identity-image-pick[data-aeon-state="set"] {
+  border-style: solid;
+}
+
+.public-identity-image-pick img {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+}
+
+.public-identity-image-label {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 3px 0;
+  background: color-mix(in srgb, #000 55%, transparent);
+  color: #fff;
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.public-identity-compose-fields {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+@media (max-width: 420px) {
+  [data-aeon-scope="public-identities"] [data-aeon-part="compose"] {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
 }
 
 .collect-issuer-icon {
@@ -15675,13 +15823,6 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   margin: 0 0 2px;
   font-size: 0.95rem;
   font-weight: 650;
-}
-
-.identity-compose-lede {
-  margin: 0 0 6px;
-  font-size: 0.78rem;
-  color: var(--hc-muted);
-  line-height: 1.35;
 }
 
 .identity-compose-field {

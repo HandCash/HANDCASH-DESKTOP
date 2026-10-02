@@ -21,7 +21,7 @@ import {
   type Brc140ShareSet,
 } from './brc140Backup'
 
-const KEY = storageRegistry.brc140IssuedSet.key
+const keyFor = (identityKey: string) => `${storageRegistry.brc140IssuedSet.key}${identityKey}`
 const HKDF_INFO = 'handcash brc140 issued set v1'
 
 export type Brc140IssuedSet = Brc140ShareSet & {
@@ -110,17 +110,17 @@ async function persist(key: PrivateKey, set: Brc140IssuedSet): Promise<void> {
     iv: bytesToBase64(iv),
     ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
   }
-  if (!durableSetItem(KEY, JSON.stringify(record))) {
+  if (!durableSetItem(keyFor(identityKey), JSON.stringify(record))) {
     throw new Error('Could not save the key slice set on this device')
   }
 }
 
 /** The stored set for this root key, or null when absent / foreign / unreadable. */
 export async function readBrc140IssuedSet(rootKeyHex: string): Promise<Brc140IssuedSet | null> {
-  const raw = durableGetItem(KEY)
-  if (!raw) return null
   const key = PrivateKey.fromHex(rootKeyHex.trim())
   const identityKey = key.toPublicKey().toString()
+  const raw = durableGetItem(keyFor(identityKey))
+  if (!raw) return null
   try {
     const record = JSON.parse(raw) as SealedRecord
     if (record.v !== 1 || record.identityKey !== identityKey) return null
