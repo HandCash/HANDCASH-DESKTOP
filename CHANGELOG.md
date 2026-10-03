@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.415] - 2026-10-03
+
+### Changed
+
+- Settings → Developer is a list of dev keys. Generate one with **Sign** (as your presented identity), **Wallet**, or both ticked. BAP allows one current signing key per identity, so one key at a time signs; rotating on Identity retires it and frees Sign for a new key. Copy gives the BSVA env (`SERVER_PRIVATE_KEY`, plus `WALLET_STORAGE_URL` and/or `BAP_ID`). A key is removable once it no longer signs and its wallet is empty. The 1.3.414 server wallet carries over as a numbered key with the same key and storage.
+- Every payment the wallet makes on its own behalf now goes through the payment approval prompt: funding a dev key's wallet, and publishing, updating or rotating an identity. Declining pays nothing.
+
+### Fixed
+
+- Funding a dev wallet on Android now lands. Its wallet is built on this session's services; the Toolbox default used an unbound `fetch` that Android WebView refused with "Illegal invocation", so Fund and refresh failed silently.
+- A received item no longer shows "Receiving…" again when the receipt is replayed (cache re-entry, inbox re-delivery, ingest retry). A settled receive stays settled; a replay can only replace a placeholder name with the real one.
+
 ## [1.3.414] - 2026-10-03
 
 ### Changed

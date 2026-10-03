@@ -477,6 +477,24 @@ export function presentedIdentityMaterial(runtime: WalletRuntime): PresentedIden
     signingKey: currentIssuerSigningKey(masterOf(active, store.owner, row), identity),
   }
 }
+/**
+ * `identity-<seq>` of the presented identity, current or retired, so a key
+ * handed to a server stays reachable after a rotation. Null when another
+ * identity is presented.
+ */
+export function presentedIdentityKeyAt(
+  runtime: WalletRuntime,
+  bapId: string,
+  seq: number,
+): PrivateKey | null {
+  autoPresent(runtime)
+  const active = activeOrThrow(runtime)
+  const store = read(active)
+  if (!store.presented) return null
+  const row = rowFor(store, store.presented)
+  if (row.published !== bapId) return null
+  return bapKey(masterOf(active, store.owner, row), seq)
+}
 /** Sealed keys plus the identity packages they publish. */
 export function exportPublicIdentityBackup(runtime: WalletRuntime): string {
   const active = activeOrThrow(runtime)

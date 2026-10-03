@@ -260,6 +260,9 @@ export function humanActionCopy(
   method: string,
   title?: string,
 ): { eyebrow: string; verb: string } {
+  if (method === 'walletPayment') {
+    return { eyebrow: 'Payment', verb: 'needs your approval to pay' }
+  }
   if (title === 'Send item' || title === 'Confirm item send' || title === 'Release item') {
     return { eyebrow: 'Item transfer', verb: 'wants to send or release a collectable' }
   }

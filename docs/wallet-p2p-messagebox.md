@@ -37,29 +37,39 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 **BRC-CLOUD `/v1/messagebox` is a HandCash convenience host**, not the definition of messaging. Custody (A) must never require it.
 
-### Server wallet (not a messagebox client)
+### Dev keys (not a messagebox client)
 
-A server wallet (Settings → Developer) is a stock BRC-100 Toolbox wallet that a
-developer's server runs. Its root key is derived from the account root
-(`[2, 'handcash server wallet']`, keyID = generation, counterparty `self`).
-"Copy key" gives the server the BSVA template env:
+Settings → Developer lists dev keys. Each is generated with the capabilities
+ticked: **Sign**, **Wallet**, or both.
+
+- **Sign**: the key is the presented identity's current BAP key
+  (`identity-<seq>` under `[1,'sigma']`). BAP has one current signing key per
+  identity, so one dev key at a time can sign; rotating on Identity retires it.
+  The root (`identity-0`) never leaves the wallet.
+- **Wallet**: a stock BRC-100 Toolbox wallet the server runs from that key. A
+  key without Sign is derived from the account root
+  (`[2, 'handcash server wallet']`, keyID = key number, counterparty `self`).
+
+"Copy" gives the server the BSVA template env:
 
 ```
 SERVER_PRIVATE_KEY=<hex>
-WALLET_STORAGE_URL=https://storage.babbage.systems
+WALLET_STORAGE_URL=https://storage.babbage.systems   # Wallet only
 BSV_NETWORK=main
+BAP_ID=<bapId>                                      # Sign only
 ```
 
-HandCash opens the same key against the same storage
-(`SetupClient.createWalletClientNoEnv`). Both see one set of outputs, so there
-is no report protocol and nothing rides the messagebox. Settings shows money
-(basket `default`), items (`1sat`) and tokens (distinct `bsv21` ids).
+HandCash opens the same key against the same storage, on this session's
+services. Both see one set of outputs, so there is no report protocol and
+nothing rides the messagebox. Settings shows money (basket `default`), items
+(`1sat`) and tokens (distinct `bsv21` ids).
 
-- **Fund**: BRC-29 payment to the server identity key, then `internalizeAction`
-  into the server's storage. Recorded first; a miss retries on the next read.
-- **Recover**: the server wallet pays this wallet by BRC-29, money only, and
-  this wallet internalizes it. Items and tokens stay with the server.
-- **Rotate**: refused while the server wallet holds anything.
+- **Fund**: the payment approval prompt, then a BRC-29 payment to the key's
+  identity and `internalizeAction` into its storage. Recorded first; a miss
+  retries on the next read.
+- **Recover**: the dev key's wallet pays this wallet by BRC-29, money only,
+  and this wallet internalizes it. Items and tokens stay with the server.
+- **Remove**: refused while the key still signs or its wallet holds anything.
 
 ---
 
@@ -161,7 +171,7 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 | Item identity / remittance | `oneSatProvenance.ts` |
 | Soft-latch | withdrawn (do not revive `oneSatLatch*`) |
 | Chat transport | `messageTransport.ts` / `messageStore.ts` |
-| Server wallet (shared Toolbox storage, server-spent) | `serverWallet.ts` / `serverWalletRecoverMachine.ts` |
+| Dev keys (sign and/or shared Toolbox storage, server-spent) | `devKeys.ts` / `serverWalletRecoverMachine.ts` |
 | Handle + box URL | `handleResolve.ts` → BRC-CLOUD resolve |
 | Box host | `BRC-CLOUD/src/worker.js` `handleMessagebox` |
 | Charts | `appStatecharts.ts` |

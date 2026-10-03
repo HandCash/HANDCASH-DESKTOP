@@ -29,7 +29,6 @@ import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import {
   DevKeyList,
-  ServerWalletList,
   SettingsNavRow,
   SettingsControlRow,
   SettingsIconToggle,
@@ -320,7 +319,6 @@ export function SettingsPanel() {
 
       <SettingsSection title="Developer" part="developer">
         <DevKeyList />
-        <ServerWalletList />
       </SettingsSection>
 
       <SettingsSection title="Support" part="support">

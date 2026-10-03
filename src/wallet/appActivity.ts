@@ -995,6 +995,23 @@ export function upsertAppActivity(args: {
   });
   if (idx >= 0) {
     const prev = entries[idx]!;
+    // A settled receive is history. Replays (cache re-entry, inbox re-delivery,
+    // ingest retries) re-announce it; none may rewrite it to "Receiving …".
+    const settledReceive =
+      args.kind === "earned" && prev.status !== "pending" && prev.status !== "failed";
+    // Only a real name may replace the placeholder a receive settled with.
+    const placeholder = (name: string | undefined) =>
+      !name?.trim() || name.trim() === "Collectable" || name.trim() === "Token";
+    const keepSettled =
+      settledReceive && !(placeholder(prev.item?.name) && !placeholder(item?.name));
+    if (settledReceive && pending) {
+      logActivityWrite(
+        "skipped",
+        { kind: args.kind, method: args.method, sats, txid },
+        "settled receive kept"
+      );
+      return;
+    }
     // Never take a settled row back to verifying.
     const nextStatus =
       prev.status !== "pending" && pending
@@ -1015,7 +1032,9 @@ export function upsertAppActivity(args: {
         ? prev.item
         : item
         ? prev.item
-          ? { ...prev.item, ...item }
+          ? keepSettled
+            ? { ...item, ...prev.item }
+            : { ...prev.item, ...item }
           : item
         : prev.item;
     const nextMethod =
@@ -1035,7 +1054,10 @@ export function upsertAppActivity(args: {
       origin: origin || prev.origin,
       sats: isEvent ? 0 : sats > 0 ? sats : prev.sats,
       method: nextMethod,
-      note: preserveCollectableMint ? prev.note : args.note ?? prev.note,
+      note:
+        preserveCollectableMint || (keepSettled && prev.note)
+          ? prev.note
+          : args.note ?? prev.note,
       txid: txid || prev.txid,
       ...(nextItem ? { item: nextItem } : {}),
       ...(nextStatus === "pending" || nextStatus === "failed"
@@ -1053,6 +1075,7 @@ export function upsertAppActivity(args: {
       ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
       ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
     };
+    if (settledReceive && sameActivityRow(prev, entries[idx]!)) return;
     // A merge keeps the matched row's `at`, so it stays where it was in the
     // feed rather than appearing as something that just happened.
     logActivityWrite(

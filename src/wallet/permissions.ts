@@ -1297,6 +1297,38 @@ export function requestActionApproval(
   })
 }
 
+export class WalletPaymentDenied extends Error {
+  constructor(title: string) {
+    super(`${title} was not approved`)
+    this.name = 'WalletPaymentDenied'
+  }
+}
+
+/**
+ * A payment the wallet makes on its own behalf (outside Send) takes the same
+ * approval prompt an app's payment does. Never covered by Pay or auto-pay.
+ */
+export async function approveWalletPayment(args: {
+  title: string
+  summary: string
+  amountSats: number
+  details?: string[]
+}): Promise<void> {
+  const decision = await enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: 'handcash.io',
+    method: 'walletPayment',
+    title: args.title,
+    summary: args.summary,
+    details: args.details ?? [],
+    amountSats: args.amountSats,
+    createdAt: Date.now(),
+  })
+  console.info(`[approval] ${args.title} ${args.amountSats} sats ${decision}`)
+  if (decision !== 'allow') throw new WalletPaymentDenied(args.title)
+}
+
 function summarizeItemView(request: ItemViewRequest): {
   title: string
   summary: string

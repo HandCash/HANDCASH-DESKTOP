@@ -272,6 +272,7 @@ function sessionFacts(header, events) {
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
   const receiptReplays = receiptReplayFacts(events)
+  const serverWallet = serverWalletFacts(events)
   const accountSwitches = accountSwitchFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
@@ -347,6 +348,9 @@ function sessionFacts(header, events) {
     // Old item receipts re-merged into Activity, and announced cards that left
     // and re-entered the inventory cache (`[collectables] re-entered`).
     receiptReplays,
+    // Dev-key server wallet: funds, storage internalizes (landed / deferred
+    // with reason), refresh and recover failures.
+    serverWallet,
     accountSwitches,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
@@ -1631,6 +1635,42 @@ const PEER_UNREAD_RE = /^\[peer-device\] snapshot \d+ unread\b/
  * Resigns over coins a confirmed foreign tx spent, the pool sweeps they set
  * off, and coins another install of this key spent (read from its BRC-39 upload).
  */
+const SERVER_WALLET_RE = /^\[(?:server-wallet|dev-key)\] (.*)$/
+
+/**
+ * Dev key wallets: funds recorded, internalizes into its storage that
+ * landed or were deferred (with the reason), refresh failures, open time.
+ */
+function serverWalletFacts(events) {
+  const facts = {
+    funded: 0,
+    internalized: 0,
+    deferred: {},
+    refreshFailed: {},
+    recovered: 0,
+    recoverFailed: {},
+    openMs: [],
+  }
+  const bump = (bucket, reason) => {
+    const key = reason.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 160)
+    bucket[key] = (bucket[key] ?? 0) + 1
+  }
+  for (const e of events) {
+    const m = SERVER_WALLET_RE.exec(e.text)
+    if (!m) continue
+    const line = m[1]
+    let r
+    if (/^funded \d+ sats/.test(line)) facts.funded += 1
+    else if (/^fund \S+ internalized/.test(line)) facts.internalized += 1
+    else if ((r = /^fund \S+ internalize deferred — (.*)$/.exec(line))) bump(facts.deferred, r[1])
+    else if ((r = /^refresh failed — (.*)$/.exec(line))) bump(facts.refreshFailed, r[1])
+    else if (/^recovered \d+ sats/.test(line)) facts.recovered += 1
+    else if ((r = /^recover failed — (.*)$/.exec(line))) bump(facts.recoverFailed, r[1])
+    else if ((r = /^open done (\d+)ms$/.exec(line))) facts.openMs.push(Number(r[1]))
+  }
+  return facts
+}
+
 const RECEIPT_MERGE_RE = /^\[activity\] merged earned\/(receive-collectable|receive-token) \d+ sat ([0-9a-f]{12})… — into row \d+ of \d+, first seen (\S+)/
 const CARD_REENTRY_RE = /^\[collectables\] re-entered (\d+) announced card\(s\)/
 
@@ -2893,6 +2933,21 @@ function report(state, answers) {
     )
     for (const r of replays.replayed.slice(0, 5)) {
       console.log(`  ${r.txid} ${r.method} ×${r.merges} (first seen ${r.firstSeen})`)
+    }
+  }
+
+  const sw = latest.serverWallet
+  if (sw && (sw.funded || sw.internalized || Object.keys(sw.refreshFailed).length || sw.openMs.length)) {
+    console.log('\nDev key wallets (code-counted):')
+    console.log(
+      `  funded ${sw.funded} · internalized ${sw.internalized} · recovered ${sw.recovered} · opens ${sw.openMs.length}${sw.openMs.length ? ` (worst ${Math.max(...sw.openMs)}ms)` : ''}`,
+    )
+    for (const [label, bucket] of [
+      ['deferred', sw.deferred],
+      ['refresh failed', sw.refreshFailed],
+      ['recover failed', sw.recoverFailed],
+    ]) {
+      for (const [reason, n] of Object.entries(bucket)) console.log(`  ${label} ×${n}: ${reason}`)
     }
   }
 

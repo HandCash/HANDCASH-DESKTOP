@@ -1,14 +1,14 @@
 import { assign, setup, type SnapshotFrom } from 'xstate'
-import type { ServerWalletRecoverPlan } from './serverWallet'
+import type { DevWalletRecoverPlan } from './devKeys'
 
 export type ServerWalletRecoverContext = {
-  plan: ServerWalletRecoverPlan | null
+  plan: DevWalletRecoverPlan | null
   txid: string | null
   error: string | null
 }
 
 export type ServerWalletRecoverEvent =
-  | { type: 'START'; plan: ServerWalletRecoverPlan }
+  | { type: 'START'; plan: DevWalletRecoverPlan }
   | { type: 'SPENT'; txid: string }
   | { type: 'INTERNALIZED' }
   | { type: 'FAIL'; error: string }

@@ -36,13 +36,15 @@ import { getActiveWallet } from './session'
  *   change between sub-accounts. State is per account, because each account
  *   has its own blob at `/v1/wallets/<identityKey>/wallet.brc39`: last upload,
  *   last error, the spend-down high-water and the crash watchdog.
- * - **Server wallet** → a stock BRC-100 Toolbox wallet a developer's server
- *   runs (`serverWallet.ts`). Its root key is a BRC-42 self child of the
- *   account root; this wallet opens the same key against the same remote
- *   storage, so both read one set of outputs. Outside localState: never in
- *   the balance, never swept by Refresh. Fund = BRC-29 internalized into its
- *   storage; Recover = it pays this wallet by BRC-29, money only
- *   (`serverWalletRecoverMachine`). Items and tokens are counted, not moved.
+ * - **Dev keys** → keys handed to a developer's server (`devKeys.ts`), each
+ *   generated with Sign, Wallet or both. Sign = the presented identity's
+ *   current BAP key (one key at a time; rotation retires it). Wallet = a stock
+ *   BRC-100 Toolbox wallet the server runs from that key; this wallet opens
+ *   the same key against the same remote storage, so both read one set of
+ *   outputs. Outside localState: never in the balance, never swept by
+ *   Refresh. Fund = approved BRC-29 internalized into its storage; Recover =
+ *   it pays this wallet by BRC-29, money only (`serverWalletRecoverMachine`).
+ *   Items and tokens are counted, not moved.
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Finder of coins
  *   not yet in localState. Does not pull BRC-39. Does not reclassify a live
  *   unconfirmed cheque as dead because an indexer has not listed it.
@@ -236,7 +238,7 @@ export type WalletLayer =
 
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
-  custody: ["vault.ts", "sessionBackupAuth.ts", "serverWallet.ts"],
+  custody: ["vault.ts", "sessionBackupAuth.ts", "devKeys.ts"],
   localState: [
     "session.ts",
     "walletPool.ts",

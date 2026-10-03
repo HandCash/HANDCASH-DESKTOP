@@ -553,6 +553,24 @@ describe("inbound receive activity", () => {
     expect(hasSettledActivityTxid(TX, "earned", { item: false })).toBe(true);
   });
 
+  it("keeps a settled item receive when the receipt is replayed", () => {
+    noteInboundReceiveComplete({ txid: TX, item: true, itemName: "Fox", outpoint: `${TX}.0` });
+    const before = store.get("handcash.brc100.appActivity");
+    noteInboundReceivePending({ txid: TX, item: true, outpoint: `${TX}.0` });
+    noteInboundReceiveComplete({ txid: TX, item: true, outpoint: `${TX}.0` });
+    expect(store.get("handcash.brc100.appActivity")).toBe(before);
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ note: "Received Fox", status: undefined });
+  });
+
+  it("lets a settled placeholder receive learn its real name", () => {
+    noteInboundReceiveComplete({ txid: TX, item: true, outpoint: `${TX}.0` });
+    noteInboundReceiveComplete({ txid: TX, item: true, itemName: "Fox", outpoint: `${TX}.0` });
+    const [row] = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(row).toMatchObject({ note: "Received Fox", item: { name: "Fox" } });
+  });
+
   it("announces a completed spend, never its pending approval", () => {
     noteOutboundSendPending({
       pendingId: "notify-spend",

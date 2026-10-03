@@ -29,6 +29,9 @@ vi.mock('./durableStorage', () => ({
 vi.mock('./spendGuard', () => ({
   runExclusiveSpend: (fn: () => Promise<unknown>) => fn(),
 }))
+vi.mock('./permissions', () => ({
+  approveWalletPayment: vi.fn(async () => {}),
+}))
 vi.mock('./signedSendLifecycle', () => ({
   registerSignedSend: vi.fn(async (args: { txid: string; flow: string }) => args),
   startSignedSendPropagation: vi.fn(),
@@ -84,6 +87,7 @@ import { issuerIdentityImageDataUrl, type IssuerIdentity } from './issuerIdentit
 import { issuerIdentityFor, resetIssuerIdentitiesForTests } from './issuerIdentities'
 import { identityPackagesForDelivery, rememberDeliveredIdentities } from './issuerIdentityDelivery'
 import { PNG_1PX } from './issuerIdentity.fixture'
+import { approveWalletPayment } from './permissions'
 import { registerSignedSend } from './signedSendLifecycle'
 import { encodeBsv21Binary } from './token/decode162'
 import { resetTokenGenesisForTests, retainTokenGenesis } from './token/genesisStore'
@@ -396,6 +400,19 @@ describe('identity issuance against a real toolbox wallet', () => {
     const paid = FUNDING - (await spendable(h))
     expect(paid).toBeGreaterThan(0)
     expect(paid).toBeLessThanOrEqual(plan.feeSats)
+  })
+
+  it('asks for payment approval and signs nothing when it is declined', async () => {
+    const h = await fundedWallet()
+    const request = profileRequest(h.active.identityKey)
+    const plan = await planIdentityPublish(h.runtime, request)
+    vi.mocked(approveWalletPayment).mockRejectedValueOnce(new Error('declined'))
+    await expect(publishIdentityPlan(h.runtime, request, plan)).rejects.toThrow('declined')
+    expect(approveWalletPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Publish identity', amountSats: plan.feeSats }),
+    )
+    expect(registerSignedSend).not.toHaveBeenCalled()
+    expect(await spendable(h)).toBe(FUNDING)
   })
 
   it('refuses a plan that moved since review before staging anything', async () => {

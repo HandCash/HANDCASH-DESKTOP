@@ -399,7 +399,7 @@ const ASSET_BURN = `stateDiagram-v2
 const SERVER_WALLET_RECOVER = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> planning : START with ServerWalletRecoverPlan
+  idle --> planning : START with DevWalletRecoverPlan
   planning --> spending : recover
   planning --> internalizing : finish (broadcast, not internalized)
   planning --> failed : nothing-to-recover | uneconomical
@@ -410,7 +410,7 @@ const SERVER_WALLET_RECOVER = `stateDiagram-v2
   done --> idle : RESET
   failed --> idle : RESET
   note right of spending
-    Server wallet (same key + storage
+    A dev key's wallet (same key + storage
     as the server) pays this wallet by
     BRC-29. Money only; items and
     tokens stay with the server.
@@ -1293,9 +1293,9 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   },
   {
     id: 'serverWalletRecover',
-    label: 'Server wallet recover',
+    label: 'Dev wallet recover',
     caption:
-      'serverWalletRecoverMachine — server wallet money → BRC-29 to this wallet → internalize | named refuse',
+      'serverWalletRecoverMachine — dev key wallet money → BRC-29 to this wallet → internalize | named refuse',
     source: SERVER_WALLET_RECOVER,
   },
   {

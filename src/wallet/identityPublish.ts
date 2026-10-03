@@ -33,6 +33,7 @@ import {
   publishedIdentityForIssuer,
   recordPublishedIdentity,
 } from './publicIdentities'
+import { approveWalletPayment } from './permissions'
 import type { ActiveWallet } from './session'
 import { runExclusiveSpend } from './spendGuard'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
@@ -452,11 +453,22 @@ export async function planIdentityPublish(
  * signing records the user never saw, and each transaction's fee is held to
  * its approved ceiling before it is signed.
  */
+const PUBLISH_TITLE: Record<IdentityPublishPlan['kind'], string> = {
+  publish: 'Publish identity',
+  update: 'Update identity',
+  rotate: 'Rotate identity key',
+}
+
 export async function publishIdentityPlan(
   runtime: WalletRuntime,
   request: IdentityPublishRequest,
   approved: IdentityPublishPlan,
 ): Promise<IssuerIdentity> {
+  await approveWalletPayment({
+    title: PUBLISH_TITLE[approved.kind],
+    summary: approved.name,
+    amountSats: approved.feeSats,
+  })
   const started = Date.now()
   return runExclusiveSpend(async () => {
     const prepared = await prepare(runtime, request)
