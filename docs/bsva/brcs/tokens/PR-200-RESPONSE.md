@@ -122,5 +122,3 @@ Set **302 / 303 / 150** to:
 2. Storage files **`1sat`**.
 3. Provenance lives in CI when available.
 4. Collections / BSV-21 / Sigma do not dictate storage spelling or required `id:` tags.
-
-Same goals (BRC-100 fit, scoped grants, clear collectables profile, documented chain theory) with a single clean storage law.

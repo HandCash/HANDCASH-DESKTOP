@@ -104,7 +104,7 @@ function signText(rootKeyHex: string, preimage: string): string {
 }
 
 function nonce(): string {
-  return Utils.toHex(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)))
+  return Utils.toHex(Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16))))
 }
 
 export function offerPreimage(offer: Omit<SessionOffer, 'signature'>): string {

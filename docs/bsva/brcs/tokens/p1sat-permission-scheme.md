@@ -19,8 +19,7 @@ Non-`all` requests require matching `collection:`, `app:`, `creator:`, or
 `id:` tags. Bare `p 1sat`, unknown scopes, extra basket tokens, and values
 embedded in basket names fail closed.
 
-`app:` and `creator:` are separate axes. A future BRC may define how `app:`
-binds to Sigma application identity.
+`app:` and `creator:` are separate axes.
 
 An `id` request is a narrow BRC-164 held-row lookup, not full-inventory access.
 Item spend approval is per action. Pay and auto-pay never grant item view or
