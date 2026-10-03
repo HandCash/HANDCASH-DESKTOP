@@ -4,7 +4,10 @@
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- The wallet switcher shows each account's published profile (avatar and name) instead of its label, including on the switcher button. Accounts without a profile keep their label.
+- The switcher's edit button opens Publish identity for that account, switching to it first when needed. Inline renaming is gone.
+- Published identities are always shared with contacts. Publishing shares automatically and there is no "Stop showing". With several published identities, "Share this one instead" picks which one; removing it falls back to the wallet's own.
+- A profile image may be an ordinal: the ALIAS may name `ord://<txid>_<vout>`, and the identity package carries the inscription transaction. WebP, PNG, JPEG or GIF, up to 64 KB. The ordinal is only the picture; whoever later holds it does not gain the identity. There is no picker yet.
 
 ## [1.3.407] - 2026-10-02
 
