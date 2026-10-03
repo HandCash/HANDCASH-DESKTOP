@@ -48,7 +48,7 @@ export function BapFingerprint({
       className={className ? `identity-pill ${className}` : 'identity-pill'}
       data-aeon-part="bap-fingerprint"
       data-aeon-state={state}
-      title={`BAP ID ${bapId}`}
+      title={`Profile ID ${bapId}`}
     >
       <span className="identity-pill-lead">
         <BapIdenticon bapId={bapId} size={10} />

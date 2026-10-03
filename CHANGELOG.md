@@ -1,10 +1,29 @@
 # Changelog
 
-## [1.3.417] - 2026-10-03
+## [1.3.418] - 2026-10-03
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **Wallet key vs profile ID.** Copy now uses two plain names: the **wallet key** is what people pay or add as a friend, and the **profile ID** is your public profile's fingerprint (formerly "identity key" and "BAP ID"). Identity explains the difference in one line, and the profile ID's identicon stays beside every issuer and profile name, because a copycat can borrow a name and picture but never that ID.
+- The wallet switcher no longer shows a "Root" tag. Long profile names truncate with an ellipsis instead of squashing, and the second line reads the handle, the wallet's name under a profile, or "No public profile" instead of a raw key.
+
+### Fixed
+
+- Incoming payments, tokens and items in Activity now show the sender's public profile picture in the badge, as your own sends already did. The picture comes from the profile card the sender presented to this device. A name that looks like a verified issuer's but isn't shows the profile ID's identicon instead of the picture.
+
+## [1.3.417] - 2026-10-03
+
+### Added
+
+- **Settings → Recover from transaction.** Paste the sender's txid and the wallet claims every unspent token or item in it that pays this wallet, proving lineage exactly as on receive. No public index finds an unspent BRC-162 token by owner, so a reinstall whose history backup never held a received token had no way back until now.
+
+### Changed
+
+- **Wipe no longer dead-ends on "History not synced".** The blocked state now says what the backup lacks (held tokens and peer-to-peer payments, which the recovery phrase alone cannot bring back) and offers **Wipe anyway** behind a confirmation that names the loss. Refusing outright only sent people to uninstall, which loses the same state with no warning. Refusal detail and overrides are logged.
+
+### Fixed
+
+- Token send failures and panel blocks (lock refusal, amount/recipient review, token not found) are now logged as `[send-token]` lines; `npm run triage` reports token sends end to end — attempts, panel blocks, refusals and each signed send's path through broadcast — plus chain-ingest and recovery outcomes.
 
 ## [1.3.416] - 2026-10-03
 

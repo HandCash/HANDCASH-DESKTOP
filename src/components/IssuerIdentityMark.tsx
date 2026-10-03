@@ -33,21 +33,21 @@ export function issuerTrustNote(view: Pick<IssuerView, 'bap' | 'label'>): string
   const bap = view.bap
   if (!bap) return null
   if (bap.state === 'unconfirmed')
-    return 'No identity package on this device proves this signer speaks for the BAP ID, so its name and image stay hidden.'
+    return 'No identity package on this device proves this signer speaks for the profile ID, so its name and image stay hidden.'
   if (bap.listed)
     return bap.listed.name === view.label
       ? 'Verified by HandCash.'
       : `Verified by HandCash as “${bap.listed.name}”.`
   if (bap.caution?.kind === 'imitates-listed')
-    return `Not verified. Its name reads like “${bap.caution.listed.name}”, which HandCash verified under a different BAP ID.`
+    return `Not verified. Its name reads like “${bap.caution.listed.name}”, which HandCash verified under a different profile ID.`
   if (bap.caution?.kind === 'shared-name')
-    return `Not verified. ${bap.caution.others === 1 ? 'Another identity' : `${bap.caution.others} other identities`} on this device use the same name; compare the BAP ID.`
-  return 'Its identity package proves the signer. Not on HandCash’s verified list; compare the BAP ID.'
+    return `Not verified. ${bap.caution.others === 1 ? 'Another identity' : `${bap.caution.others} other identities`} on this device use the same name; compare the profile ID.`
+  return 'Its identity package proves the signer. Not on HandCash’s verified list; compare the profile ID.'
 }
 
 export function issuerViewTitle(view: IssuerView): string {
   if (view.bap) {
-    const head = view.bap.state === 'verified' ? `${view.label} · BAP ID ${view.bap.id}` : `BAP ID ${view.bap.id}`
+    const head = view.bap.state === 'verified' ? `${view.label} · Profile ID ${view.bap.id}` : `Profile ID ${view.bap.id}`
     return `${head} · ${issuerTrustNote(view)}`
   }
   return view.issuerAttested

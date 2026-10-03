@@ -114,7 +114,15 @@ export type ActivityEntry = {
   burn?: ActivityBurn;
   /** Set when the row is hidden from Activity but kept for heal / backup. */
   archivedAt?: number;
+  /** Sender's wallet identity key on a peer receive; Activity shows the profile it presented. */
+  from?: string;
 };
+
+function normalizeIdentityKeyField(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const key = value.trim().toLowerCase();
+  return /^0[23][0-9a-f]{64}$/.test(key) ? key : undefined;
+}
 
 /**
  * Everything about a row that changes what the UI decides, as one string.
@@ -130,6 +138,7 @@ export function activityRowSignature(entry: ActivityEntry): string {
     entry.id, entry.origin, entry.kind, entry.status, entry.txid, entry.at,
     entry.sats, entry.method, entry.note, entry.failureReason, entry.archivedAt,
     entry.pendingId, entry.sendGroupId, entry.item, entry.burn, entry.retry,
+    entry.from,
   ]);
 
 }
@@ -242,6 +251,7 @@ function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
           row.archivedAt > 0
             ? Math.trunc(row.archivedAt)
             : undefined;
+        const from = normalizeIdentityKeyField(row.from);
         return {
           ...row,
           item: item ?? undefined,
@@ -250,6 +260,7 @@ function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
           ...(failureReason ? { failureReason } : { failureReason: undefined }),
           ...(retry ? { retry } : { retry: undefined }),
           ...(archivedAt ? { archivedAt } : { archivedAt: undefined }),
+          ...(from ? { from } : { from: undefined }),
         };
       });
     parsedRaw = raw;
@@ -950,8 +961,10 @@ export function upsertAppActivity(args: {
   failureReason?: string;
   retry?: ActivityRetry;
   burn?: ActivityBurn;
+  from?: string;
 }, owner?: BoundAccountKeyScope): void {
   const sats = Math.max(0, Math.trunc(args.sats));
+  const from = normalizeIdentityKeyField(args.from);
   const item = normalizeActivityItem(args.item);
   const isEvent = args.kind === "event";
   const pending = args.status === "pending";
@@ -1005,6 +1018,11 @@ export function upsertAppActivity(args: {
     const keepSettled =
       settledReceive && !(placeholder(prev.item?.name) && !placeholder(item?.name));
     if (settledReceive && pending) {
+      if (from && !prev.from) {
+        entries[idx] = { ...prev, from };
+        writeAll(entries, owner);
+        return;
+      }
       logActivityWrite(
         "skipped",
         { kind: args.kind, method: args.method, sats, txid },
@@ -1074,6 +1092,7 @@ export function upsertAppActivity(args: {
         : { failureReason: undefined }),
       ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
       ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
+      ...(from || prev.from ? { from: prev.from ?? from } : {}),
     };
     if (settledReceive && sameActivityRow(prev, entries[idx]!)) return;
     // A merge keeps the matched row's `at`, so it stays where it was in the
@@ -1113,6 +1132,7 @@ export function upsertAppActivity(args: {
       : {}),
     ...((pending || failed) && pendingId ? { pendingId } : {}),
     ...(sendGroupId ? { sendGroupId } : {}),
+    ...(from ? { from } : {}),
     ...(normalizeActivityRetry(args.retry)
       ? { retry: normalizeActivityRetry(args.retry) }
       : {}),
@@ -1125,6 +1145,8 @@ export function upsertAppActivity(args: {
 /** Activity row as soon as a peer tip/pay lands — before internalize finishes. */
 export function noteInboundReceivePending(args: {
   txid: string;
+  /** Sender's wallet identity key, when the receive came through its inbox. */
+  from?: string;
   sats?: number;
   item?: boolean;
   itemName?: string;
@@ -1154,6 +1176,7 @@ export function noteInboundReceivePending(args: {
       `${txid}_pending`;
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
+      from: args.from,
       kind: "earned",
       sats: 1,
       method: args.token ? "receive-token" : "receive-collectable",
@@ -1183,6 +1206,7 @@ export function noteInboundReceivePending(args: {
   }
   upsertAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
+    from: args.from,
     kind: "earned",
     sats: Math.max(0, Math.trunc(args.sats ?? 0)),
     method: "receive",
@@ -1195,6 +1219,8 @@ export function noteInboundReceivePending(args: {
 /** Mark a verifying receive as settled (or create the row if ingest skipped pending). */
 export function noteInboundReceiveComplete(args: {
   txid: string;
+  /** Sender's wallet identity key, when the receive came through its inbox. */
+  from?: string;
   sats?: number;
   item?: boolean;
   itemName?: string;
@@ -1221,6 +1247,7 @@ export function noteInboundReceiveComplete(args: {
       `${txid}_pending`;
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
+      from: args.from,
       kind: "earned",
       sats: 1,
       method: args.token ? "receive-token" : "receive-collectable",
@@ -1250,6 +1277,7 @@ export function noteInboundReceiveComplete(args: {
   }
   upsertAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
+    from: args.from,
     kind: "earned",
     sats: Math.max(0, Math.trunc(args.sats ?? 0)),
     method: "receive",

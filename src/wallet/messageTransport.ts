@@ -1139,6 +1139,7 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
   ) {
     noteInboundReceivePending({
       txid,
+      from: senderKey,
       sats: decoded.meta?.sats,
       item: decoded.meta?.item === true || undefined,
       itemName: decoded.meta?.memo?.trim() || undefined,
@@ -1368,6 +1369,7 @@ export async function pollInboundTipHints(args: {
         const itemName = decoded.meta?.memo?.trim() || undefined
         noteInboundReceivePending({
           txid,
+          from: senderKey,
           sats: decoded.meta?.sats,
           item,
           itemName,

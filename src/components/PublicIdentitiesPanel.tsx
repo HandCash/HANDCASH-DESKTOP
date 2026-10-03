@@ -211,7 +211,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   const copyKey = (row: PublicIdentityRow) =>
     action.run('copy', async () => {
       assertOwner()
-      await copyText(row.identityKey, { label: 'issuer identity key' })
+      await copyText(row.identityKey, { label: 'issuer wallet key' })
     })
   const useAsIssuer = (row: PublicIdentityRow) =>
     action.run('select', async () => {
@@ -368,7 +368,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                                 Rotate signing key
                               </Menu.Item>
                             ) : null}
-                            <Menu.Item onClick={() => void copyKey(row)}>Copy identity key</Menu.Item>
+                            <Menu.Item onClick={() => void copyKey(row)}>Copy wallet key</Menu.Item>
                             {row.signer === 'imported' ? (
                               <>
                                 <Menu.Separator />

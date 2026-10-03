@@ -209,7 +209,7 @@ export function issuerViewFor(
     return {
       ...signed,
       key: `issuer:bap-unconfirmed:${attribution.bapId}`,
-      label: `Unconfirmed BAP ${shortId(attribution.bapId)}`,
+      label: `Unconfirmed profile ${shortId(attribution.bapId)}`,
       bap: { id: attribution.bapId, state: 'unconfirmed' },
     }
   return { ...signed, key: `issuer:pubkey:${issuer}`, label: shortIssuerLabel(issuer) }

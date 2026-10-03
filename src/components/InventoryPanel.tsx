@@ -505,7 +505,7 @@ function IssuerGroupItem({
               data-aeon-state={issuer.bap ? issuerViewState(issuer) : undefined}
               title={
                 issuer.bap
-                  ? `${issuer.bap.state === 'verified' ? `${issuer.label} · ` : ''}BAP ID ${issuer.bap.id} · ${issuerTrustNote(issuer)}`
+                  ? `${issuer.bap.state === 'verified' ? `${issuer.label} · ` : ''}Profile ID ${issuer.bap.id} · ${issuerTrustNote(issuer)}`
                   : issuer.identityKey
                     ? `${issuer.label} · issuer attribution: ${issuer.identityKey}`
                     : issuer.label

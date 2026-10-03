@@ -44,9 +44,9 @@ export function PeerAvatar({
 
 function peerTitle(peer: PeerIdentityView): string {
   if (peer.kind === 'missing-package')
-    return `BAP ID ${peer.bapId} · This contact presented an identity whose package is no longer on this device.`
+    return `Profile ID ${peer.bapId} · This contact presented an identity whose package is no longer on this device.`
   const note = issuerTrustNote({ bap: peer.bap, label: peer.identity.name })
-  return `${peer.identity.name} · BAP ID ${peer.identity.bapId} · Presented and signed by this wallet key. ${note ?? ''}`.trim()
+  return `${peer.identity.name} · Profile ID ${peer.identity.bapId} · Presented and signed by this wallet key. ${note ?? ''}`.trim()
 }
 
 /** The identity a contact presented, as the same pill issuers use: identicon, name, checkmark or caution, short BAP ID. */

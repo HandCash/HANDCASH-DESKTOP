@@ -90,7 +90,7 @@ export function IdentityPanel({ profile }: Props) {
     : null
 
   const copyIdentity = async () => {
-    await copyText(profile.identityKey, { label: 'identity key' })
+    await copyText(profile.identityKey, { label: 'wallet key' })
   }
 
   const copyHandle = async () => {
@@ -133,7 +133,7 @@ export function IdentityPanel({ profile }: Props) {
                   onClick={() => void copyIdentity()}
                 >
                   <CopyIcon size={14} />
-                  Copy identity key
+                  Copy wallet key
                 </button>
               </div>
               <div className="identity-hero-meta">
@@ -168,11 +168,11 @@ export function IdentityPanel({ profile }: Props) {
 
             <ul className="identity-list">
               <li className="identity-field identity-key-row">
-                <span className="identity-field-label">Identity key</span>
+                <span className="identity-field-label">Wallet key</span>
                 <button
                   type="button"
                   className="mono identity-key"
-                  title={`Click to copy identity key
+                  title={`Click to copy wallet key
 ${profile.identityKey}`}
                   onClick={() => void copyIdentity()}
                 >
@@ -192,13 +192,17 @@ ${profile.identityKey}`}
                 </strong>
               </li>
               <li className="identity-field">
-                <span className="identity-field-label">BAP ID</span>
+                <span className="identity-field-label">Profile ID</span>
                 <strong className="mono identity-bap-id" title={bap?.bapId}>
                   {bap ? <BapIdenticon bapId={bap.bapId} /> : null}
                   {bap ? shortIdentityKey(bap.bapId) : '—'}
                 </strong>
               </li>
             </ul>
+            <p className="identity-note">
+              People pay your wallet key. Your profile ID is the public name they
+              check: a copycat can borrow your name and picture, never this ID.
+            </p>
           </section>
 
           <PublicIdentitiesPanel

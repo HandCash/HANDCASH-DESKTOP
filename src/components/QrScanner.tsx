@@ -187,7 +187,7 @@ export function QrScanner({
       if (!navigator.mediaDevices?.getUserMedia) {
         send({
           type: 'FAIL',
-          error: 'Camera is not available. Paste the pair code or identity key instead.',
+          error: 'Camera is not available. Paste the pair code or wallet key instead.',
         })
         return
       }

@@ -110,12 +110,12 @@ export function AddFriendPanel({ chain }: { chain: Chain }) {
             </span>
             <div>
               <h3>Add someone you trust</h3>
-              <p>Use their $handle, peer payment link, or public identity key.</p>
+              <p>Use their $handle, peer payment link, or wallet key.</p>
             </div>
           </header>
 
           <div className="field">
-            <label htmlFor="friend-key">Handle or identity key</label>
+            <label htmlFor="friend-key">Handle or wallet key</label>
             <input
               id="friend-key"
               className="mono"

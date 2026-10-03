@@ -590,7 +590,7 @@ export function SendPanel({
                       onBlur={() => {
                         window.setTimeout(() => setShowFriendMatches(false), 120)
                       }}
-                      placeholder="Friend, $handle, peerpay:, address, or identity key"
+                      placeholder="Friend, $handle, peerpay:, address, or wallet key"
                       autoComplete="off"
                       spellCheck={false}
                     />

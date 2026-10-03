@@ -32,7 +32,7 @@ const COPY = {
   rotate: {
     title: 'Rotate signing key',
     effect:
-      'Same BAP ID and profile. A new key signs from now on.',
+      'Same profile and profile ID. A new key signs from now on.',
     approve: 'Sign rotation',
   },
 } as const

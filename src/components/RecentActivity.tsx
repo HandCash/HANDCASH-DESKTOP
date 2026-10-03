@@ -147,6 +147,9 @@ import {
 import { EmptyState } from "./EmptyState";
 import { AppAvatar } from "./AppAvatar";
 import { ProfileAvatar, useCurrentAccountProfile } from "./ProfileAvatar";
+import { usePeerIdentity, type PeerIdentityView } from "../hooks/usePeerIdentity";
+import type { AccountProfile } from "../wallet/publicIdentities";
+import { getWalletRuntime } from "../wallet/walletRuntime";
 import { appDisplayName } from "../wallet/appIdentity";
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
@@ -685,15 +688,30 @@ function HistoryRow({
  * Related app mark, opposite the transaction action badge. The wallet's own
  * actions carry the public profile it acts as, when it has one.
  */
+function senderProfile(peer: PeerIdentityView | null): AccountProfile | null {
+  if (peer?.kind !== "presented") return null;
+  const { identity, bap } = peer;
+  return {
+    bapId: identity.bapId,
+    name: identity.name,
+    ...(identity.image && !bap.caution ? { image: identity.image } : {}),
+  };
+}
+
 export function HistoryAppBadge({ entry }: { entry: ActivityEntry }) {
-  const profile = useCurrentAccountProfile();
+  const own = useCurrentAccountProfile();
+  const chain = getWalletRuntime()?.instance?.chain ?? "main";
+  const sender = senderProfile(
+    usePeerIdentity(chain, entry.kind === "earned" ? entry.from : null)
+  );
   if (isEventActivity(entry)) return null;
   if (!entry.origin || entry.origin === WALLET_ACTIVITY_ORIGIN) {
-    if (!profile || entry.kind === "earned") return null;
+    const profile = entry.kind === "earned" ? sender : own;
+    if (!profile) return null;
     return (
       <span
         className="history-app-badge"
-        aria-label={`Profile: ${profile.name}`}
+        aria-label={`${entry.kind === "earned" ? "From" : "Profile"}: ${profile.name}`}
         title={profile.name}
       >
         <ProfileAvatar profile={profile} label={profile.name} />

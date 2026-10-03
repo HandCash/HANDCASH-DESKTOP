@@ -84,7 +84,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   }
 
   const copyKey = async () => {
-    await copyText(friend.identityKey, { label: 'identity key' })
+    await copyText(friend.identityKey, { label: 'wallet key' })
   }
 
   const copyAddress = async () => {
@@ -206,7 +206,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
 
         <div className="friend-copy-row">
           <div>
-            <span className="field-static-label">Identity key</span>
+            <span className="field-static-label">Wallet key</span>
             <span className="mono wallet-detail-value" title={friend.identityKey}>
               {friend.identityKey}
             </span>
@@ -214,7 +214,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           <button
             type="button"
             className="friend-copy-action"
-            aria-label="Copy identity key"
+            aria-label="Copy wallet key"
             onClick={() => void copyKey()}
           >
             <CopyIcon size={16} />

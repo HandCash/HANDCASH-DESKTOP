@@ -462,14 +462,14 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
                     ? `${token.issuerHandle} · ${token.issuer}`
                     : token.issuer
               }
-              copyLabel="issuer identity key"
+              copyLabel="issuer wallet key"
             />
           ) : null}
           {issuerBap?.bap ? (
             <MetaRow
-              label={issuerBap.bap.state === 'verified' ? 'BAP ID' : 'BAP ID (unconfirmed)'}
+              label={issuerBap.bap.state === 'verified' ? 'Profile ID' : 'Profile ID (unconfirmed)'}
               value={issuerBap.bap.id}
-              copyLabel="BAP ID"
+              copyLabel="profile ID"
             />
           ) : null}
           {issuerBap?.bap ? (

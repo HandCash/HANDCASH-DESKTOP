@@ -249,8 +249,8 @@ export function WalletAccountMenu({
           type="button"
           className="wallet-hero-identity-copy"
           title={`Copy ${identityCopy}`}
-          aria-label="Copy identity"
-          onClick={() => void copyText(identityCopy, { label: 'identity' })}
+          aria-label="Copy pay address"
+          onClick={() => void copyText(identityCopy, { label: 'pay address' })}
         >
           <CopyIcon size={14} />
         </button>
@@ -294,21 +294,12 @@ export function WalletAccountMenu({
                       <span className="wallet-account-option-lead">
                         <ProfileAvatar profile={account.profile} label={name} />
                         <span className="wallet-account-option-copy">
-                          <strong>
-                            {name}
-                            {account.index === 0 ? (
-                              <span className="wallet-account-option-tag">Root</span>
-                            ) : null}
-                          </strong>
-                          {switching ? (
-                            <span>Switching…</span>
-                          ) : account.handle ? (
-                            <span>{account.handle}</span>
-                          ) : (
-                            <span className="mono">
-                              {`${account.identityKey.slice(0, 8)}…${account.identityKey.slice(-6)}`}
-                            </span>
-                          )}
+                          <strong>{name}</strong>
+                          <span>
+                            {switching
+                              ? 'Switching…'
+                              : account.handle ?? (account.profile ? account.label : 'No public profile')}
+                          </span>
                         </span>
                       </span>
                       {selected ? (

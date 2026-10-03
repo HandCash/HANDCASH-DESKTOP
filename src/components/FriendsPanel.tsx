@@ -134,7 +134,7 @@ export function FriendsPanel({ chain }: Props) {
         <EmptyState
           icon={<PersonAddIcon size={28} />}
           title="No friends yet"
-          body="Add someone by $handle or identity key so you can send and recognize them quickly."
+          body="Add someone by $handle or wallet key so you can send and recognize them quickly."
           action={
             <button
               type="button"
@@ -157,7 +157,7 @@ export function FriendsPanel({ chain }: Props) {
             <input
               id="friends-search-input"
               type="search"
-              placeholder="Search by name or identity key"
+              placeholder="Search by name or wallet key"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               autoComplete="off"
@@ -166,7 +166,7 @@ export function FriendsPanel({ chain }: Props) {
           {filtered.length === 0 ? (
             <div className="friends-empty">
               <strong>No friends found</strong>
-              <span>Try another name or identity key.</span>
+              <span>Try another name or wallet key.</span>
             </div>
           ) : view === 'grid' ? (
             <ul className="collection-grid friends-grid">

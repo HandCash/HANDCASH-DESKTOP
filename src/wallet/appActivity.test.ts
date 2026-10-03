@@ -553,6 +553,23 @@ describe("inbound receive activity", () => {
     expect(hasSettledActivityTxid(TX, "earned", { item: false })).toBe(true);
   });
 
+  it("keeps the sender when the receive settles without naming it", () => {
+    const sender = `02${"ab".repeat(32)}`;
+    noteInboundReceivePending({ txid: TX, sats: 100, from: sender.toUpperCase() });
+    noteInboundReceiveComplete({ txid: TX, sats: 100 });
+    const [row] = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(row).toMatchObject({ status: undefined, from: sender });
+  });
+
+  it("lets a settled receive learn its sender from a replayed hint", () => {
+    const sender = `03${"cd".repeat(32)}`;
+    noteInboundReceiveComplete({ txid: TX, sats: 100 });
+    noteInboundReceivePending({ txid: TX, sats: 100, from: sender });
+    noteInboundReceivePending({ txid: TX, sats: 100, from: "not-a-key" });
+    const [row] = listRecentActivity(10).filter((e) => e.txid === TX);
+    expect(row).toMatchObject({ status: undefined, from: sender });
+  });
+
   it("keeps a settled item receive when the receipt is replayed", () => {
     noteInboundReceiveComplete({ txid: TX, item: true, itemName: "Fox", outpoint: `${TX}.0` });
     const before = store.get("handcash.brc100.appActivity");

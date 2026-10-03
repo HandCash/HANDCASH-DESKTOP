@@ -1217,6 +1217,7 @@ export async function ingestPaymentsFromTipHints(
   for (const hint of unique.values()) {
     noteInboundReceivePending({
       txid: hint.txid,
+      from: hint.senderIdentityKey,
       sats: hint.satoshis,
       item: hint.item,
       itemName: hint.itemName,

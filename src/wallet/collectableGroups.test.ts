@@ -145,7 +145,7 @@ describe('groupCollectables', () => {
     )
     const unconfirmed = result.issuers.find((i) => i.bapState === 'unconfirmed')!
     expect(unconfirmed).toMatchObject({ bapId: f.bapId, issuerAttested: true })
-    expect(unconfirmed.label).toMatch(/^Unconfirmed BAP /)
+    expect(unconfirmed.label).toMatch(/^Unconfirmed profile /)
     expect(unconfirmed.label).not.toContain('Example Studio')
     expect(unconfirmed.label).not.toContain('$studio')
     expect(unconfirmed.icon).toBeUndefined()

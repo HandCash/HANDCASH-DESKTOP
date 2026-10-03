@@ -67,7 +67,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
   const value = mode === 'peerpay' && peerpayUri ? peerpayUri : address
   const subtitle =
     mode === 'peerpay'
-      ? 'PeerPay (BRC-125) — identity key payment link'
+      ? 'PeerPay (BRC-125) — wallet key payment link'
       : 'Payment address — scan or copy to receive BSV'
 
   const viaIsSwap = viaId !== 'bsv'

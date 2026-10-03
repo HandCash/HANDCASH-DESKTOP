@@ -4019,11 +4019,11 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-account-option-copy strong {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  overflow: hidden;
   min-width: 0;
   font-size: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wallet-account-option-copy > span {
@@ -4045,25 +4045,6 @@ li[data-aeon-state='failed'] .history-progress-range {
   gap: 6px;
   font-size: 0.85rem;
   font-weight: 600;
-}
-
-.wallet-account-option-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--hc-text) 16%, transparent);
-  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  opacity: 0.85;
-}
-
-.wallet-account-option-key {
-  font-size: 0.7rem;
-  opacity: 0.65;
 }
 
 .wallet-account-create {
@@ -4451,6 +4432,13 @@ button.identity-qr-copy:focus-visible {
   flex: 0 0 auto;
   margin-top: 1px;
   color: var(--hc-accent);
+}
+
+.identity-note {
+  margin: 10px 0 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 
 .identity-list {

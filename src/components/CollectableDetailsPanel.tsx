@@ -508,9 +508,9 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         ) : null}
         {issuerBap ? (
           <MetaRow
-            label={issuerBap.state === 'verified' ? 'BAP ID' : 'BAP ID (unconfirmed)'}
+            label={issuerBap.state === 'verified' ? 'Profile ID' : 'Profile ID (unconfirmed)'}
             value={issuerBap.id}
-            onCopy={() => void copy('BAP ID', issuerBap.id)}
+            onCopy={() => void copy('profile ID', issuerBap.id)}
           />
         ) : null}
         {issuerView?.bap ? (

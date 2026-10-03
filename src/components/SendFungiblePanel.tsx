@@ -470,7 +470,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                       onBlur={() => {
                         window.setTimeout(() => setShowMatches(false), 120)
                       }}
-                      placeholder="Friend, $handle, address, or identity key"
+                      placeholder="Friend, $handle, address, or wallet key"
                       autoComplete="off"
                       spellCheck={false}
                     />

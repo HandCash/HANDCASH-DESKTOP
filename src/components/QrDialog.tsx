@@ -17,7 +17,7 @@ type Props = {
 
 function defaultSubtitle(label: string): string {
   const key = label.trim().toLowerCase()
-  if (key === 'identity') return 'Scan to share this identity key'
+  if (key === 'identity') return 'Scan to share this wallet key'
   if (key === 'receive') return 'Scan to send BSV to this wallet'
   return 'Scan or tap below to copy'
 }
