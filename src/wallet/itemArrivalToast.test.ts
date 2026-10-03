@@ -107,6 +107,32 @@ describe('itemArrivalToast', () => {
     expect(settled?.status).toBeUndefined()
   })
 
+  it('leaves a settled receive row alone when the tip is announced or verified again', async () => {
+    const { isItemProven } = await import('./provenCache')
+    vi.mocked(isItemProven).mockReturnValue(false)
+    const { announceItemsReceived, announceItemVerified } = await import('./itemArrivalToast')
+    const { listRecentActivity, upsertAppActivity, WALLET_ACTIVITY_ORIGIN } = await import('./appActivity')
+    const txid = 'f'.repeat(64)
+    const op = `${txid}.1`
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: 'Received Fox #12',
+      txid,
+      status: 'complete',
+      item: { name: 'Fox #12', origin: `${txid}_1`, outpoint: op },
+    })
+    const before = listRecentActivity(20).find((r) => r.txid === txid)!
+
+    for (let i = 0; i < 3; i++) announceItemsReceived([op])
+    announceItemVerified(op, 'BRC-150 lineage proven')
+
+    const after = listRecentActivity(20).find((r) => r.txid === txid)!
+    expect(after).toEqual(before)
+  })
+
   it('does not re-toast receive across sessions for the same outpoint', async () => {
     const op = `${'c'.repeat(64)}.0`
     const first = await import('./itemArrivalToast')

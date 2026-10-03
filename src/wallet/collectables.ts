@@ -83,7 +83,7 @@ import {
   takePreferredCollectableVerification,
   isOutpointVerifying,
 } from './verificationProgress'
-import { announceItemVerified, announceItemsReceived } from './itemArrivalToast'
+import { announceItemVerified, announceItemsReceived, wasItemReceivedAnnounced } from './itemArrivalToast'
 import { playWalletSound } from './soundService'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { forgetOneSatImported } from './oneSatImportGuard'
@@ -541,9 +541,6 @@ function setCollectablesCache(
   const prev = new Set(
     cachedCollectables.map((i) => normalizeOutpoint(i.outpoint))
   )
-  const arrived = items
-    .map((i) => normalizeOutpoint(i.outpoint))
-    .filter((op) => !prev.has(op) && !skipArrivalToast.has(op))
   for (const op of [...skipArrivalToast]) {
     if (items.some((i) => normalizeOutpoint(i.outpoint) === op)) {
       skipArrivalToast.delete(op)
@@ -558,6 +555,18 @@ function setCollectablesCache(
         : item,
     )
     .filter((item) => !collectableIsFungible(item))
+  // Arrivals are judged on what the cache keeps. A quarantined row never enters
+  // it, so judging the raw list re-announced it on every cache write.
+  const arrived = items
+    .map((i) => normalizeOutpoint(i.outpoint))
+    .filter((op) => !prev.has(op) && !skipArrivalToast.has(op))
+  const reentered = prev.size > 0 ? arrived.filter((op) => wasItemReceivedAnnounced(op)) : []
+  if (reentered.length > 0) {
+    console.info(
+      `[collectables] re-entered ${reentered.length} announced card(s) the previous cache write dropped`,
+      reentered.map((op) => op.slice(0, 12)),
+    )
+  }
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)

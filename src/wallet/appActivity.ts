@@ -805,11 +805,12 @@ export function hasActivityItemOutpoint(
 
 /** True when this tip outpoint already has a settled activity row. */
 export function hasSettledActivityItemOutpoint(
-  outpoint: string | undefined | null
+  outpoint: string | undefined | null,
+  owner?: BoundAccountKeyScope
 ): boolean {
   const key = outpoint?.trim().toLowerCase().replace("_", ".");
   if (!key) return false;
-  return readAll().some((e) => {
+  return readAll(owner).some((e) => {
     const op = e.item?.outpoint?.trim().toLowerCase().replace("_", ".");
     return op === key && e.status !== "pending";
   });

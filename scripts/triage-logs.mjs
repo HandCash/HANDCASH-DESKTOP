@@ -271,6 +271,7 @@ function sessionFacts(header, events) {
   const toolboxSteps = toolboxStepFacts(events)
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
+  const receiptReplays = receiptReplayFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
   const broadcast = broadcastFacts(events)
@@ -342,6 +343,9 @@ function sessionFacts(header, events) {
     // sweeps (`[dead-coins] sweep`) that clear the rest, and `peerDevice`:
     // reads of another install's BRC-39 upload and the coins it had spent.
     deadCoins,
+    // Old item receipts re-merged into Activity, and announced cards that left
+    // and re-entered the inventory cache (`[collectables] re-entered`).
+    receiptReplays,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
     // and whether legacy deposits were proven by their own path or parents.
@@ -1625,6 +1629,45 @@ const PEER_UNREAD_RE = /^\[peer-device\] snapshot \d+ unread\b/
  * Resigns over coins a confirmed foreign tx spent, the pool sweeps they set
  * off, and coins another install of this key spent (read from its BRC-39 upload).
  */
+const RECEIPT_MERGE_RE = /^\[activity\] merged earned\/(receive-collectable|receive-token) \d+ sat ([0-9a-f]{12})… — into row \d+ of \d+, first seen (\S+)/
+const CARD_REENTRY_RE = /^\[collectables\] re-entered (\d+) announced card\(s\)/
+
+/**
+ * Receives replayed long after they landed: an item receipt merged again into
+ * a row first seen before this upload began, and announced cards that dropped
+ * out of the inventory cache and came back. Either one shows up as items
+ * "arriving" that never did.
+ */
+function receiptReplayFacts(events) {
+  const t0 = events[0]?.at ?? 0
+  const byTxid = new Map()
+  let reentries = 0
+  let reenteredCards = 0
+  for (const e of events) {
+    const re = CARD_REENTRY_RE.exec(e.text)
+    if (re) {
+      reentries += 1
+      reenteredCards += Number(re[1])
+      continue
+    }
+    const m = RECEIPT_MERGE_RE.exec(e.text)
+    if (!m) continue
+    const firstSeen = Date.parse(m[3])
+    if (!Number.isFinite(firstSeen) || firstSeen >= t0) continue
+    const row = byTxid.get(m[2]) ?? { txid: m[2], method: m[1], firstSeen: m[3], merges: 0 }
+    row.merges += 1
+    byTxid.set(m[2], row)
+  }
+  const replayed = [...byTxid.values()].sort((a, b) => b.merges - a.merges)
+  return {
+    replayedReceipts: replayed.length,
+    replayMerges: replayed.reduce((n, r) => n + r.merges, 0),
+    replayed: replayed.slice(0, 10),
+    reentries,
+    reenteredCards,
+  }
+}
+
 function deadCoinFacts(events) {
   const seen = new Set()
   let resigns = 0
@@ -2807,6 +2850,17 @@ function report(state, answers) {
     if (answers.app_flow_stall) choiceBlock('Who held the flow up', answers.app_flow_stall)
     if (answers.slow_signing_owner) choiceBlock('Signing time owner', answers.slow_signing_owner)
     if (answers.app_flow_refusal) choiceBlock('Refusal to fix first', answers.app_flow_refusal)
+  }
+
+  const replays = latest.receiptReplays
+  if (replays && (replays.replayedReceipts || replays.reentries)) {
+    console.log('\nReceipt replays (code-counted):')
+    console.log(
+      `  ${replays.replayedReceipts} old receipt(s) re-merged ${replays.replayMerges}× · ${replays.reentries} cache re-entr(ies) of ${replays.reenteredCards} announced card(s)`,
+    )
+    for (const r of replays.replayed.slice(0, 5)) {
+      console.log(`  ${r.txid} ${r.method} ×${r.merges} (first seen ${r.firstSeen})`)
+    }
   }
 
   const dead = latest.deadCoins

@@ -24,6 +24,7 @@ import {
   noteAwaitingVerification,
 } from './verificationProgress'
 import {
+  hasSettledActivityItemOutpoint,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
 } from './appActivity'
@@ -149,13 +150,16 @@ export function announceItemsReceived(
     const proven = isItemProven(op) || verifiedThisSession.has(key)
 
     // Activity is the durable custody projection, not notification state.
-    // Always ensure the receive row exists, even when a prior toast consumed
-    // the durable dedupe key or this wallet's send finished in the background.
-    // The Activity upsert is idempotent and cannot demote a settled row.
-    if (proven) {
-      noteInboundReceiveComplete({ txid, item: true, outpoint: key }, owner)
-    } else {
-      noteInboundReceivePending({ txid, item: true, outpoint: key }, owner)
+    // Ensure the receive row exists, even when a prior toast consumed the
+    // durable dedupe key or this wallet's send finished in the background. A
+    // settled row is left alone: re-merging rewrote its note to "Receiving
+    // Collectable" every time a tip re-entered the inventory cache.
+    if (!hasSettledActivityItemOutpoint(key, owner)) {
+      if (proven) {
+        noteInboundReceiveComplete({ txid, item: true, outpoint: key }, owner)
+      } else {
+        noteInboundReceivePending({ txid, item: true, outpoint: key }, owner)
+      }
     }
 
     // Foreground spinner/toast state belongs only to the selected wallet.
@@ -198,9 +202,11 @@ export function announceItemVerified(
   const key = normalize(outpoint)
   if (!key) return
   // Inventory authenticity is settled — Activity must not stay on Verifying…
+  // A row already settled keeps its note and item name.
   const txid = key.split('.')[0] ?? ''
+  const settleRow = /^[0-9a-f]{64}$/i.test(txid) && !hasSettledActivityItemOutpoint(key, owner)
   if (!ownerIsCurrent(owner)) {
-    if (/^[0-9a-f]{64}$/i.test(txid)) {
+    if (settleRow) {
       noteInboundReceiveComplete(
         { txid: txid.toLowerCase(), item: true, outpoint: key },
         owner,
@@ -209,7 +215,7 @@ export function announceItemVerified(
     return
   }
   clearAwaitingVerification(key)
-  if (/^[0-9a-f]{64}$/i.test(txid)) {
+  if (settleRow) {
     noteInboundReceiveComplete(
       {
         txid: txid.toLowerCase(),

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.410] - 2026-10-03
+
+### Fixed
+
+- Items you received days ago no longer look like they are arriving again. The last few received items were re-announced on most refreshes (about 20 times each per hour on Android), rewriting their Activity row to "Receiving Collectable". Announcing or verifying a tip whose receive row is already settled now leaves that row alone.
+- Inventory no longer treats a quarantined fungible row as a new arrival every time the cache is written. Arrivals are judged on what the cache actually keeps.
+
+### Added
+
+- `[collectables] re-entered N announced card(s)` log line, and a "Receipt replays" section in `npm run triage`.
+
 ## [1.3.409] - 2026-10-03
 
 ### Changed
