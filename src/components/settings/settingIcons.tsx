@@ -7,6 +7,7 @@ import {
   DownloadIcon,
   EncryptIcon,
   FileIcon,
+  FingerprintIcon,
   InfoIcon,
   LaunchIcon,
   LockIcon,
@@ -51,6 +52,8 @@ function iconFor(id: SettingId): SettingIconSpec {
       return { icon: <FileIcon size={ICON_SIZE} /> }
     case 'wallet-health':
       return { icon: <ActivityIcon size={ICON_SIZE} /> }
+    case 'dev-keys':
+      return { icon: <FingerprintIcon size={ICON_SIZE} /> }
     default:
       return { icon: <InfoIcon size={ICON_SIZE} /> }
   }

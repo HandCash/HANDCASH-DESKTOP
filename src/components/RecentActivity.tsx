@@ -146,6 +146,7 @@ import {
 
 import { EmptyState } from "./EmptyState";
 import { AppAvatar } from "./AppAvatar";
+import { ProfileAvatar, useCurrentAccountProfile } from "./ProfileAvatar";
 import { appDisplayName } from "../wallet/appIdentity";
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
@@ -680,14 +681,24 @@ function HistoryRow({
   );
 }
 
-/** Related app mark, opposite the transaction action badge. */
+/**
+ * Related app mark, opposite the transaction action badge. The wallet's own
+ * actions carry the public profile it acts as, when it has one.
+ */
 export function HistoryAppBadge({ entry }: { entry: ActivityEntry }) {
-  if (
-    isEventActivity(entry) ||
-    !entry.origin ||
-    entry.origin === WALLET_ACTIVITY_ORIGIN
-  ) {
-    return null;
+  const profile = useCurrentAccountProfile();
+  if (isEventActivity(entry)) return null;
+  if (!entry.origin || entry.origin === WALLET_ACTIVITY_ORIGIN) {
+    if (!profile || entry.kind === "earned") return null;
+    return (
+      <span
+        className="history-app-badge"
+        aria-label={`Profile: ${profile.name}`}
+        title={profile.name}
+      >
+        <ProfileAvatar profile={profile} label={profile.name} />
+      </span>
+    );
   }
   const name = appDisplayName(entry.origin);
   return (

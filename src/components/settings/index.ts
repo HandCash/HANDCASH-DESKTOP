@@ -18,4 +18,3 @@ export {
   deviceHandoffStatus,
 } from './settingsStatus'
 export { SettingsIconToggle } from './SettingsIconToggle'
-export { DevKeyList } from './DevKeyList'

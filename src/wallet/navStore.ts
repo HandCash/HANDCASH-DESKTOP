@@ -23,6 +23,7 @@ export type SettingId =
   | 'statecharts'
   | 'logs'
   | 'wallet-health'
+  | 'dev-keys'
 
 export type NavChild =
   | { type: 'app'; origin: string }

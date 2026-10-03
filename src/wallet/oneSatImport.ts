@@ -41,6 +41,7 @@ import {
   flushInscriptionMisses,
   shouldResolveInscription,
   RESOLVE_RETRY_MS,
+  heldTipArriving,
 } from './inscriptionCache'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import {
@@ -1466,14 +1467,9 @@ export async function classifyLegacyUtxos(
         claimed.add(outpointKey(u.outpoint))
       } else {
         heldOneSats.push(u)
-        // Tips the indexer has not named yet still need faster polls — held is
-        // not the same as abandoned. A 404 backs off via inscriptionCache; a
-        // budget skip is the usual "still arriving" case.
-        const cacheKey = `${u.txid}.${u.vout}`
-        if (
-          !opts.fundingOnly &&
-          shouldResolveInscription(cacheKey, Date.now(), RESOLVE_RETRY_MS)
-        ) {
+        // Only a tip that just landed is "arriving". Dust the indexer never
+        // names stays held without lighting the pill on every backoff expiry.
+        if (!opts.fundingOnly && heldTipArriving(`${u.txid}.${u.vout}`)) {
           pendingTips.push(u)
         }
       }

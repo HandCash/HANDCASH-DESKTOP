@@ -13,7 +13,13 @@ import {
   buildRetiredFungibleOrigin,
   buildRetiredFungibleTransfer,
 } from './retiredFungible.testFixtures'
-import { shouldResolveInscription } from './inscriptionCache'
+import { durableRemoveItem } from './durableStorage'
+import {
+  ARRIVAL_WINDOW_MS,
+  RESOLVE_RETRY_MS,
+  resetInscriptionCacheForTests,
+  shouldResolveInscription,
+} from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
 
 function utxo(outpoint: string, satoshis: number): LegacyUtxo {
@@ -72,7 +78,7 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
-  it('counts held tips still awaiting indexer identity as pendingTips', async () => {
+  it('counts newly landed held tips as pendingTips until the arrival window passes', async () => {
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -81,12 +87,30 @@ describe('classifyLegacyUtxos', () => {
       (_, i) => utxo(`${String(i).padStart(64, 'a')}.0`, 1),
     )
     const result = await classifyLegacyUtxos(tips, 'main')
-
     expect(result.heldOneSats.length).toBe(tips.length)
-    expect(result.pendingTips.length).toBe(2)
-    expect(result.pendingTips.map((u) => u.outpoint)).toEqual(
-      tips.slice(MAX_UNKNOWN_RESOLVES_PER_PASS).map((u) => u.outpoint),
-    )
+    expect(result.pendingTips.map((u) => u.outpoint)).toEqual(tips.map((u) => u.outpoint))
+
+    const later = Date.now() + ARRIVAL_WINDOW_MS + RESOLVE_RETRY_MS
+    const now = vi.spyOn(Date, 'now').mockReturnValue(later)
+    const settled = await classifyLegacyUtxos(tips, 'main')
+    expect(settled.heldOneSats.length).toBe(tips.length)
+    expect(settled.pendingTips).toEqual([])
+    now.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('never reports dust already held on an install as arriving', async () => {
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    durableRemoveItem('handcash.inscriptionHeldSeen.v1')
+    resetInscriptionCacheForTests()
+
+    const held = [utxo(`${'9'.repeat(64)}.0`, 1), utxo(`${'8'.repeat(64)}.0`, 1)]
+    expect((await classifyLegacyUtxos(held, 'main')).pendingTips).toEqual([])
+
+    const landed = utxo(`${'7'.repeat(64)}.0`, 1)
+    const next = await classifyLegacyUtxos([...held, landed], 'main')
+    expect(next.pendingTips.map((u) => u.outpoint)).toEqual([landed.outpoint])
     vi.unstubAllGlobals()
   })
 
@@ -98,7 +122,8 @@ describe('classifyLegacyUtxos', () => {
     const scan = [utxo(`${TXID_D}.0`, 1)]
     const first = await classifyLegacyUtxos(scan, 'main')
 
-    expect(first.pendingTips).toEqual([])
+    // Just landed and not indexed yet: arriving, and not re-walked below.
+    expect(first.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
     expect(first.oneSats).toEqual([])
     expect(first.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
 
@@ -108,7 +133,7 @@ describe('classifyLegacyUtxos', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(second.oneSats).toEqual([])
     expect(second.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
-    expect(second.pendingTips).toEqual([])
+    expect(second.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
 
     vi.unstubAllGlobals()
   })

@@ -3,7 +3,7 @@ import { getActiveWallet } from '../wallet/session'
 import { stateToAttr } from '@aeon-ui/core'
 import { PrivateKey } from '@bsv/sdk'
 import { useMachine } from '@xstate/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
 import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
@@ -12,7 +12,6 @@ import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
 import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
-import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
 import { setNavSection } from '../wallet/navStore'
 import { accountProfile, subscribePublicIdentities, type AccountProfile } from '../wallet/publicIdentities'
 import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
@@ -25,8 +24,7 @@ import {
   readVaultAccounts,
   type VaultAccount,
 } from '../wallet/vaultAccounts'
-import { BapIdenticon } from './BapIdenticon'
-import { DeferredImage } from './DeferredImage'
+import { ProfileAvatar } from './ProfileAvatar'
 import { AddIcon, CheckIcon, CopyIcon, EditIcon, ExpandMoreIcon } from './icons'
 
 type Props = {
@@ -54,32 +52,6 @@ function messageOf(error: unknown): string {
 
 function fallbackLabel(account: VaultAccount): string {
   return account.name || (account.index === 0 ? 'Primary' : `Wallet ${account.index}`)
-}
-
-function AccountAvatar({ profile, label }: { profile: AccountProfile | null; label: string }) {
-  const image = profile?.image
-  const src = useMemo(() => (image ? issuerIdentityImageDataUrl(image) : null), [image])
-  const identicon = profile ? <BapIdenticon bapId={profile.bapId} size={32} /> : null
-  return (
-    <span
-      data-aeon-part="avatar"
-      data-aeon-state={src ? 'image' : profile ? 'identicon' : 'initial'}
-      aria-hidden
-    >
-      {src ? (
-        <DeferredImage
-          src={src}
-          alt=""
-          skeletonWidth="100%"
-          skeletonHeight="100%"
-          skeletonRadius="50%"
-          fallback={identicon}
-        />
-      ) : (
-        (identicon ?? label.trim().slice(0, 1).toUpperCase())
-      )}
-    </span>
-  )
 }
 
 export function WalletAccountMenu({
@@ -266,7 +238,7 @@ export function WalletAccountMenu({
             send({ type: 'TOGGLE' })
           }}
         >
-          {current?.profile ? <AccountAvatar profile={current.profile} label={current.profile.name} /> : null}
+          {current?.profile ? <ProfileAvatar profile={current.profile} label={current.profile.name} /> : null}
           <span>{current?.profile?.name ?? identityLabel}</span>
           <ExpandMoreIcon
             size={16}
@@ -320,7 +292,7 @@ export function WalletAccountMenu({
                       onClick={() => void runSwitch(account.index)}
                     >
                       <span className="wallet-account-option-lead">
-                        <AccountAvatar profile={account.profile} label={name} />
+                        <ProfileAvatar profile={account.profile} label={name} />
                         <span className="wallet-account-option-copy">
                           <strong>
                             {name}

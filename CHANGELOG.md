@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.416] - 2026-10-03
+
+### Changed
+
+- Developer keys have their own Settings page (Settings → Developer keys). New key opens a step where you tick what the key may do — sign as your identity, a wallet your server spends, or both — each with one line on what it means. Fund is a step on the key itself, then the payment approval prompt.
+- Activity rows for the wallet's own sends and payments show your public profile picture where an app's badge usually sits.
+
+### Fixed
+
+- "Item arriving" no longer sticks. It counted every unidentified one-sat output whose indexer retry came due, so long-held dust kept the pill lit indefinitely. A held output is now "arriving" only for 10 minutes after it first appears; dust already held before this update is never counted.
+- Recover from a dev key's wallet failed with "Insufficient funds" when the storage charged more fee than estimated. It now pays exactly what the storage's shortfall allows.
+
 ## [1.3.415] - 2026-10-03
 
 ### Changed

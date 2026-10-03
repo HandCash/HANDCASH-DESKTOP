@@ -93,9 +93,64 @@ function scheduleMissFlush(): void {
 
 /** Write dropped misses now. A no-op when nothing has expired since the last flush. */
 export function flushInscriptionMisses(): void {
+  flushHeldSeen()
   if (!missesDirty || !misses) return
   missesDirty = false
   persistMisses(misses)
+}
+
+/**
+ * When each held one-sat was first seen. A tip is "arriving" only shortly
+ * after that; dust the indexer never names is held, not arriving forever.
+ */
+const HELD_SEEN_KEY = 'handcash.inscriptionHeldSeen.v1'
+export const ARRIVAL_WINDOW_MS = 10 * 60_000
+const HELD_SEEN_MAX = 1_000
+
+let heldSeen: Map<string, number> | null = null
+/** First pass on an install without the map: everything held is already old. */
+let heldSeenBaseline = false
+let heldSeenDirty = false
+
+function loadHeldSeen(): Map<string, number> {
+  if (heldSeen) return heldSeen
+  heldSeen = new Map()
+  const raw = durableGetItem(HELD_SEEN_KEY)
+  heldSeenBaseline = raw == null
+  try {
+    for (const [outpoint, at] of Object.entries(JSON.parse(raw ?? '{}') as Record<string, number>)) {
+      if (typeof at === 'number') heldSeen.set(outpoint, at)
+    }
+  } catch {
+    heldSeenBaseline = true
+  }
+  return heldSeen
+}
+
+function flushHeldSeen(): void {
+  if (!heldSeen) return
+  if (heldSeenDirty || heldSeenBaseline) {
+    while (heldSeen.size > HELD_SEEN_MAX) heldSeen.delete(heldSeen.keys().next().value!)
+    try {
+      durableSetItem(HELD_SEEN_KEY, JSON.stringify(Object.fromEntries(heldSeen)))
+    } catch {
+      // Losing it re-baselines: held tips go quiet rather than "arriving".
+    }
+  }
+  heldSeenDirty = false
+  heldSeenBaseline = false
+}
+
+/** True while a held one-sat is newly arrived. Written by the pass's flush. */
+export function heldTipArriving(outpoint: string, now = Date.now()): boolean {
+  const map = loadHeldSeen()
+  let first = map.get(outpoint)
+  if (first == null) {
+    first = heldSeenBaseline ? 0 : now
+    map.set(outpoint, first)
+    heldSeenDirty = true
+  }
+  return now - first < ARRIVAL_WINDOW_MS
 }
 
 function load(): Map<string, ResolvedInscription> {
@@ -276,4 +331,7 @@ export function resetInscriptionCacheForTests(): void {
   hits = null
   misses = null
   missesDirty = false
+  heldSeen = null
+  heldSeenBaseline = false
+  heldSeenDirty = false
 }

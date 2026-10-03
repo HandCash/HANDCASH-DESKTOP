@@ -729,30 +729,52 @@ async function spendRecover(
     keyID: `${derivationPrefix} ${derivationSuffix}`,
     counterparty: active.identityKey,
   })
-  const result = await server.createAction({
-    description: 'Recover to HandCash',
-    outputs: [
-      {
-        lockingScript: new P2PKH().lock(PublicKey.fromString(publicKey).toHash()).toHex(),
-        satoshis,
-        outputDescription: 'Recover to HandCash',
-        customInstructions: JSON.stringify({
-          derivationPrefix,
-          derivationSuffix,
-          payee: active.identityKey,
-        }),
-      },
-    ],
-    options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
-  })
-  if (!result.txid || !result.tx) throw new Error('Server wallet did not return the signed recovery')
-  return {
-    txid: result.txid,
-    atomicBeefB64: Utils.toBase64(result.tx),
-    satoshis,
-    derivationPrefix,
-    derivationSuffix,
+  const pay = (amount: number) =>
+    server.createAction({
+      description: 'Recover to HandCash',
+      outputs: [
+        {
+          lockingScript: new P2PKH().lock(PublicKey.fromString(publicKey).toHash()).toHex(),
+          satoshis: amount,
+          outputDescription: 'Recover to HandCash',
+          customInstructions: JSON.stringify({
+            derivationPrefix,
+            derivationSuffix,
+            payee: active.identityKey,
+          }),
+        },
+      ],
+      options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
+    })
+  // The storage prices the fee, not this wallet: the estimate opens the bid
+  // and its exact shortfall settles it.
+  let amount = satoshis
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const result = await pay(amount)
+      if (!result.txid || !result.tx) throw new Error('Server wallet did not return the signed recovery')
+      return {
+        txid: result.txid,
+        atomicBeefB64: Utils.toBase64(result.tx),
+        satoshis: amount,
+        derivationPrefix,
+        derivationSuffix,
+      }
+    } catch (error) {
+      const short = feeShortfall(error)
+      if (short == null || attempt >= 3 || amount - short < 1) throw error
+      console.info(`[dev-key] recover fee short ${short} sats — paying ${amount - short}`)
+      amount -= short
+    }
   }
+}
+
+/** Sats a Toolbox `WERR_INSUFFICIENT_FUNDS` says are missing, local or over storage RPC. */
+export function feeShortfall(error: unknown): number | null {
+  const more = (error as { moreSatoshisNeeded?: unknown } | null)?.moreSatoshisNeeded
+  if (typeof more === 'number' && more > 0) return more
+  const m = /(\d+) more satoshis are needed/.exec(error instanceof Error ? error.message : String(error))
+  return m ? Number(m[1]) : null
 }
 
 /**

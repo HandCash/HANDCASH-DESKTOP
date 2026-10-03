@@ -134,6 +134,7 @@ import {
   DevKeyRefused,
   devSignEligibility,
   exportDevKeyConfig,
+  feeShortfall,
   fundDevWallet,
   generateDevKey,
   listDevKeys,
@@ -205,12 +206,20 @@ function fakeServerWallet(key: PrivateKey) {
       return { accepted: true }
     },
     async createAction(args: CreateActionArgs) {
-      created.push(args)
       const pay = args.outputs![0]!
       const money = outputs.filter((o) => o.basket === 'default')
       const total = money.reduce((s, o) => s + o.satoshis, 0)
+      const fee = 30
+      if (pay.satoshis + fee > total) {
+        throw new Error(
+          `Insufficient funds in the available inputs to cover the cost of the required outputs and the transaction fee (${
+            pay.satoshis + fee - total
+          } more satoshis are needed, for a total of ${pay.satoshis + fee})`,
+        )
+      }
+      created.push(args)
       for (const o of money) outputs.splice(outputs.indexOf(o), 1)
-      const change = total - pay.satoshis - 30
+      const change = total - pay.satoshis - fee
       if (change > 0) outputs.push({ basket: 'default', satoshis: change, tags: [] })
       const tx = new Transaction()
       tx.addOutput({ lockingScript: LockingScript.fromHex(pay.lockingScript), satoshis: pay.satoshis })
@@ -475,7 +484,9 @@ describe('recover', () => {
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     server.outputs.push({ basket: 'default', satoshis: 10_000, tags: [] }, { basket: '1sat', satoshis: 1, tags: [] })
     const result = await recoverDevWallet(n)
-    expect(result.satoshis).toBe(10_000 - 23)
+    // The estimate (23) undershoots the storage's fee (30); its shortfall settles the amount.
+    expect(result.satoshis).toBe(10_000 - 30)
+    expect(server.outputs.filter((o) => o.basket === 'default')).toEqual([])
 
     const serverPub = derivedDevKey(rootHex, n).toPublicKey().toString()
     const [args] = h.handcashInternalized as InternalizeActionArgs[]
@@ -505,6 +516,16 @@ describe('recover', () => {
     expect(server.created).toHaveLength(1)
     expect(readDevKeyLedger(active).keys[0]!.wallet!.pendingRecover).toBeNull()
     expect(h.handcashInternalized).toHaveLength(1)
+  })
+})
+
+describe('fee shortfall', () => {
+  it('reads the Toolbox insufficient-funds answer, typed or over storage RPC', () => {
+    expect(feeShortfall(Object.assign(new Error('x'), { moreSatoshisNeeded: 142 }))).toBe(142)
+    expect(
+      feeShortfall(new Error('Insufficient funds … (142 more satoshis are needed, for a total of 10142)')),
+    ).toBe(142)
+    expect(feeShortfall(new Error('storage down'))).toBeNull()
   })
 })
 

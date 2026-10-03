@@ -18,6 +18,7 @@ import { qrRevealMachine } from './qrRevealMachine'
 import { qrScannerMachine } from './qrScannerMachine'
 import { updateMachine } from './updateMachine'
 import { walletAccountMenuMachine } from './walletAccountMenuMachine'
+import { devKeysPanelMachine } from './devKeysPanelMachine'
 import { wipeMachine } from './wipeMachine'
 import { assetSendMachine } from './assetSendMachine'
 import { collectableSendMachine } from '../wallet/collectableSendMachine'
@@ -57,6 +58,7 @@ export const machineManifest = Object.freeze({
   qrScanner: qrScannerMachine,
   update: updateMachine,
   walletAccountMenu: walletAccountMenuMachine,
+  devKeysPanel: devKeysPanelMachine,
   wipe: wipeMachine,
   assetSend: assetSendMachine,
   collectableSend: collectableSendMachine,

@@ -411,6 +411,13 @@ export const storageRegistry = Object.freeze({
     scope: 'chain',
     version: 1,
   }),
+  /** First sight of each held one-sat; "arriving" only shortly after. */
+  inscriptionHeldSeen: defineStorage({
+    key: 'handcash.inscriptionHeldSeen.v1',
+    owner: 'collectables',
+    scope: 'chain',
+    version: 1,
+  }),
   rawTxMiss: defineStorage({
     key: 'handcash.rawTx.miss.v1',
     owner: 'chain',

@@ -76,6 +76,7 @@ import { ImportPhrasePanel } from './ImportPhrasePanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
 import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
+import { DevKeysPanel } from './DevKeysPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCachedCollectable, getCollectable } from '../wallet/collectables'
@@ -721,6 +722,7 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'setting' && stageChild.settingId === 'about-handcash' && (
                 <AboutHandCashPanel />
               )}
+              {stageChild.type === 'setting' && stageChild.settingId === 'dev-keys' && <DevKeysPanel />}
               {stageChild.type === 'setting' && stageChild.settingId === 'statecharts' && (
                 <StatechartsPanel />
               )}

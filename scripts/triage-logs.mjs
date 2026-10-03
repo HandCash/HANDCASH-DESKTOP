@@ -1651,11 +1651,16 @@ function serverWalletFacts(events) {
     recoverFailed: {},
     openMs: [],
   }
+  // Failures carry the build that hit them: an upload spans launches, and a
+  // fix is only proven absent in the launches running it.
+  let build = 'unknown'
   const bump = (bucket, reason) => {
-    const key = reason.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 160)
+    const key = `${reason.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 160)} [v${build}]`
     bucket[key] = (bucket[key] ?? 0) + 1
   }
   for (const e of events) {
+    const launch = /^App log capture started — v(\S+)/.exec(e.text)
+    if (launch) build = launch[1]
     const m = SERVER_WALLET_RE.exec(e.text)
     if (!m) continue
     const line = m[1]

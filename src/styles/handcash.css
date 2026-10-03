@@ -5658,6 +5658,26 @@ a.history-row-link:hover .history-tx-hint {
   object-fit: cover;
 }
 
+.history-app-badge [data-aeon-part='avatar'] {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+  color: var(--hc-muted);
+  font-size: 0.5rem;
+  font-weight: 700;
+}
+
+.history-app-badge [data-aeon-part='avatar'] img,
+.history-app-badge [data-aeon-part='avatar'] svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .history-app-badge .app-avatar-fallback svg {
   width: 8px;
   height: 8px;
