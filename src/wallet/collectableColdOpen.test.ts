@@ -33,11 +33,31 @@ const TXID = 'c1'.repeat(32)
 const TIP = `${TXID}.0`
 const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
 let recomposeActive = false
+/** A send or sync holding a coordinator region. */
+let walletBusy = false
 
-vi.mock('./walletCoordinator', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./walletCoordinator')>()),
-  isRecomposeCoordinatorActive: () => recomposeActive,
+vi.mock('./walletCoordinator', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./walletCoordinator')>()
+  return {
+    ...actual,
+    isRecomposeCoordinatorActive: () => recomposeActive,
+    walletRegionsIdle: () => !recomposeActive && !walletBusy && actual.walletRegionsIdle(),
+    walletRegionsIdleSince: (generation: number) =>
+      !recomposeActive && !walletBusy && actual.walletRegionsIdleSince(generation),
+  }
+})
+
+const reportHoldings = vi.fn()
+vi.mock('./holdingsReconcile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./holdingsReconcile')>()),
+  reportHoldings: (...args: unknown[]) => reportHoldings(...args),
 }))
+
+function filedDepartures(): string[] {
+  return reportHoldings.mock.calls.flatMap(
+    ([report]) => (report as { leftBasket?: Array<{ outpoint: string }> }).leftBasket?.map((l) => l.outpoint) ?? [],
+  )
+}
 
 const active = {
   identityKey: IDENTITY,
@@ -95,6 +115,9 @@ describe('collectables across a cold open', () => {
     vi.resetModules()
     store.clear()
     recomposeActive = false
+    walletBusy = false
+    reportHoldings.mockClear()
+    active.wallet.listOutputs.mockReset()
     active.wallet.listOutputs.mockResolvedValue({
       outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
     })
@@ -147,54 +170,41 @@ describe('collectables across a cold open', () => {
     expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
   })
 
-  it('does not collapse inventory to a transient short page during a send', async () => {
+  it('defers a read while a send holds the wallet, so a reserved input cannot shrink the list', async () => {
     const tips = Array.from({ length: 7 }, (_, index) => ({
       ...itemRow(`${(index + 1).toString(16).padStart(2, '0').repeat(32)}.0`, `Item ${index + 1}`),
     }))
     seedDurableList(IDENTITY, tips)
-    active.wallet.listOutputs.mockResolvedValueOnce({
-      outputs: tips.slice(0, 2).map((item) => ({
-        outpoint: item.outpoint,
-        satoshis: 1,
-        tags: ['ordinal', `origin:${item.origin}`, `name:${item.name}`],
-      })),
-      totalOutputs: 2,
-    })
-    const {
-      listCollectables,
-      rememberLiveOneSatOutpoints,
-      getCachedCollectables,
-    } = await import('./collectables')
-    // This exact count shortcut used to turn seven cards into two, even though
-    // omission from a scan says nothing about any specific outpoint.
-    rememberLiveOneSatOutpoints(
-      tips.slice(0, 2).map((item) => ({
-        outpoint: item.outpoint,
-        satoshis: 1,
-      })),
-      IDENTITY,
-    )
-
-    await listCollectables(active as never)
-
-    expect(getCachedCollectables()).toHaveLength(7)
-  })
-
-  it('paints new 1sat tips listed during recompose instead of hiding them', async () => {
-    seedDurableList(IDENTITY)
-    recomposeActive = true
-    const extra = `${'d2'.repeat(32)}.0`
-    active.wallet.listOutputs.mockResolvedValueOnce({
-      outputs: [
-        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] },
-        { outpoint: extra, satoshis: 1, tags: ['ordinal', 'name:Pixel'] },
-      ],
-      totalOutputs: 2,
-    })
+    walletBusy = true
+    active.wallet.listOutputs.mockClear()
     const { listCollectables, getCachedCollectables } = await import('./collectables')
 
     await listCollectables(active as never)
 
+    expect(active.wallet.listOutputs).not.toHaveBeenCalled()
+    expect(getCachedCollectables()).toHaveLength(7)
+    expect(reportHoldings).not.toHaveBeenCalled()
+  })
+
+  it('defers reads during recompose and paints new tips from the post-replace relist', async () => {
+    seedDurableList(IDENTITY)
+    recomposeActive = true
+    const extra = `${'d2'.repeat(32)}.0`
+    active.wallet.listOutputs.mockResolvedValue({
+      outputs: [
+        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] },
+        { outpoint: extra, satoshis: 1, tags: ['ordinal', `origin:${extra}`, 'name:Pixel'] },
+      ],
+      totalOutputs: 2,
+    })
+    const { listCollectables, relistCollectablesAfterLocalStateReplace, getCachedCollectables } =
+      await import('./collectables')
+
+    await listCollectables(active as never)
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
+
+    recomposeActive = false
+    await relistCollectablesAfterLocalStateReplace()
     const ops = getCachedCollectables().map((c) => c.outpoint)
     expect(ops).toEqual(expect.arrayContaining([TIP, extra]))
     expect(ops).toHaveLength(2)
@@ -225,7 +235,7 @@ describe('collectables across a cold open', () => {
       return itemRow(`${tx}.${i}`, `Card ${i + 1}`)
     })
     seedDurableList(IDENTITY, rows)
-    recomposeActive = false
+    walletBusy = true
     active.wallet.listOutputs.mockResolvedValueOnce({
       outputs: [],
       totalOutputs: 0,
@@ -234,80 +244,77 @@ describe('collectables across a cold open', () => {
 
     await listCollectables(active as never)
 
+    expect(reportHoldings).not.toHaveBeenCalled()
     expect(getCachedCollectables()).toHaveLength(n)
     expect(getCachedCollectables().map((c) => c.name)).toEqual(rows.map((r) => r.name))
     expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(n)
   })
 
-  it('merges a new outpoint from a short sync page without dropping the rest', async () => {
+  it('projects a complete idle read exactly, filing every card it no longer lists', async () => {
     const extra = `${'ab'.repeat(32)}.0`
-    seedDurableList(IDENTITY, [
-      itemRow(TIP, 'Test Item'),
-      itemRow(`${'cd'.repeat(32)}.0`, 'Kept Card'),
-    ])
-    recomposeActive = false
+    const gone = `${'cd'.repeat(32)}.0`
+    seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(gone, 'Gone Card')])
     active.wallet.listOutputs.mockResolvedValueOnce({
-      outputs: [
-        { outpoint: extra, satoshis: 1, tags: ['ordinal', 'name:New Arrival'] },
-      ],
+      outputs: [{ outpoint: extra, satoshis: 1, tags: ['ordinal', `origin:${extra}`, 'name:New Arrival'] }],
       totalOutputs: 1,
     })
     const { listCollectables, getCachedCollectables } = await import('./collectables')
 
     await listCollectables(active as never)
 
-    const ops = getCachedCollectables().map((c) => c.outpoint)
-    expect(ops).toEqual(expect.arrayContaining([TIP, `${'cd'.repeat(32)}.0`, extra]))
-    expect(ops).toHaveLength(3)
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([extra])
+    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
+    // Nothing leaves silently: the chain is asked about each one.
+    expect(filedDepartures().sort()).toEqual([TIP, gone].sort())
   })
 
-  it('retires a card the basket keeps omitting, but only after the trend is clear', async () => {
-    vi.useFakeTimers()
-    try {
-      const ghost = `${'ef'.repeat(32)}.0`
-      seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(ghost, 'Ghost Card')])
-      recomposeActive = false
-      // The basket answers the same, complete, page every time: one card.
-      active.wallet.listOutputs.mockResolvedValue({
+  it('keeps every card when a send began and ended inside the read', async () => {
+    seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(`${'ef'.repeat(32)}.0`, 'Reserved')])
+    const { leaseSpendPriority } = await import('./walletCoordinator')
+    active.wallet.listOutputs.mockImplementationOnce(async () => {
+      leaseSpendPriority('test-send').release()
+      return {
         outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
         totalOutputs: 1,
-      })
-      const { listCollectables, getCachedCollectables } = await import('./collectables')
+      }
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
 
-      // Two reads a minute apart: the guard keeps the omitted card.
-      await listCollectables(active as never)
-      expect(getCachedCollectables().map((c) => c.outpoint)).toEqual(
-        expect.arrayContaining([TIP, ghost]),
-      )
-      await vi.advanceTimersByTimeAsync(60_000)
-      await listCollectables(active as never)
-      expect(getCachedCollectables()).toHaveLength(2)
+    await listCollectables(active as never)
 
-      // A third read, once five minutes have passed, retires it.
-      await vi.advanceTimersByTimeAsync(5 * 60_000)
-      await listCollectables(active as never)
-      expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
-      expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(getCachedCollectables()).toHaveLength(2)
+    expect(reportHoldings).not.toHaveBeenCalled()
   })
 
-  it('never retires a card from an empty page, however often it repeats', async () => {
-    vi.useFakeTimers()
-    try {
-      seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(`${'ef'.repeat(32)}.0`, 'Kept')])
-      recomposeActive = false
-      active.wallet.listOutputs.mockResolvedValue({ outputs: [], totalOutputs: 0 })
-      const { listCollectables, getCachedCollectables } = await import('./collectables')
-      for (let i = 0; i < 4; i++) {
-        await listCollectables(active as never)
-        await vi.advanceTimersByTimeAsync(3 * 60_000)
-      }
-      expect(getCachedCollectables()).toHaveLength(2)
-    } finally {
-      vi.useRealTimers()
-    }
+  it('files an empty idle read too, so a wrongly emptied basket is restored from the chain', async () => {
+    seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(`${'ef'.repeat(32)}.0`, 'Kept')])
+    active.wallet.listOutputs.mockResolvedValueOnce({ outputs: [], totalOutputs: 0 })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables()).toEqual([])
+    expect(filedDepartures()).toHaveLength(2)
+  })
+
+  it('keeps a card the address scan still lists, and still files it', async () => {
+    const onAddress = `${'ef'.repeat(32)}.0`
+    seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(onAddress, 'On Address')])
+    active.wallet.listOutputs.mockResolvedValue({
+      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
+      totalOutputs: 1,
+    })
+    const { listCollectables, getCachedCollectables, rememberLiveOneSatOutpoints } = await import(
+      './collectables'
+    )
+    rememberLiveOneSatOutpoints([{ outpoint: onAddress, satoshis: 1 }], IDENTITY)
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual(
+      expect.arrayContaining([TIP, onAddress]),
+    )
+    expect(filedDepartures()).toEqual([onAddress])
   })
 
   it('runs a read deferred by chain ingest once the wallet goes idle', async () => {

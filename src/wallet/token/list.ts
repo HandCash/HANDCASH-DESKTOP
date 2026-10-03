@@ -31,12 +31,7 @@ import {
   type FungibleToken,
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
-import { chooseAbsentCardFate } from './absentCardFate'
-import type { OutpointSpendProbe } from '../createActionInputFate'
-import {
-  chooseFungibleChainFate,
-  FUNGIBLE_SETTLE_GRACE_MS,
-} from './fungibleChainFate'
+import { reportHoldings } from '../holdingsReconcile'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
 import { accountLocalKey } from '../accountLocalKeys'
 import {
@@ -52,7 +47,7 @@ import {
   resolveTokenIconDataUrl,
   tokenTxBody,
 } from './icons/resolve'
-import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
+import { yieldToUi } from '../yieldToUi'
 import { stampBrc164Id } from '../itemAccess'
 import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
@@ -433,70 +428,99 @@ function projectHeldTips(
     : preferred
 }
 
-export function mergeLiveFungibles(
-  live: FungibleToken[],
-  prior: FungibleToken[],
-  retired: ReadonlySet<string> = new Set(),
+/**
+ * A tip painted before the basket lists it (a receive, a mint, our own
+ * change) is settling, not gone, for this long after its first paint.
+ */
+export const FUNGIBLE_SETTLE_GRACE_MS = 10 * 60_000
+
+function sortFungibles(rows: FungibleToken[]): FungibleToken[] {
+  return rows.sort((a, b) => Number(b.amt) - Number(a.amt) || a.sym.localeCompare(b.sym))
+}
+
+function sameToken(row: FungibleToken, projected: FungibleToken): boolean {
+  const k = tokenKey(row)
+  return k === tokenKey(projected) || Boolean(projected.tokenIds?.includes(k))
+}
+
+/**
+ * Union: every tip of `additions` on top of `base`, nothing dropped. For tips
+ * the wallet learned outside a basket read — painted mid-read, recovered from
+ * Activity, our own unlisted change.
+ */
+export function overlayFungibles(
+  additions: FungibleToken[],
+  base: FungibleToken[],
 ): FungibleToken[] {
   const byId = new Map<string, FungibleToken>()
-  const liveIds = new Set<string>()
-  for (const t of prior) {
-    if (t.outpoint && isItemSent(t.outpoint)) continue
-    if (t.maxSupply != null && Number(t.amt) > t.maxSupply) continue
-    byId.set(tokenKey(t), t)
-  }
-  for (const t of live) {
-    if (t.outpoint && isItemSent(t.outpoint)) continue
+  for (const t of base) byId.set(tokenKey(t), t)
+  for (const t of additions) {
     const k = tokenKey(t)
-    liveIds.add(k)
-    const priorRow = byId.get(k)
-    const ledger = new Map(
-      heldTipsOf(t).map((tip) => [normalizedTokenTipOutpoint(tip.outpoint), tip]),
-    )
-    // The basket can lag an inbox/internalize paint. Carry only freshly seen
-    // absent tips; older absence is reconciled by the authoritative live set.
-    if (priorRow) {
-      const now = Date.now()
-      for (const tip of heldTipsOf(priorRow)) {
-        const point = normalizedTokenTipOutpoint(tip.outpoint)
-        if (ledger.has(point) || isItemSent(point)) continue
-        if (now - (tip.seenAt ?? priorRow.seenAt ?? 0) >= FUNGIBLE_SETTLE_GRACE_MS) {
-          continue
-        }
-        ledger.set(point, tip)
-      }
+    const prior = byId.get(k)
+    const ledger = new Map<string, Bsv21Utxo>()
+    for (const tip of prior ? heldTipsOf(prior) : []) {
+      ledger.set(normalizedTokenTipOutpoint(tip.outpoint), tip)
     }
-    byId.set(k, projectHeldTips([...ledger.values()], t, priorRow))
-  }
-  // Live listing is source of truth when it returned rows. An empty live list
-  // is usually toolbox lag right after mint (or a flake) — keep prior paint,
-  // especially genesis deploy+mint tips that would otherwise vanish until the
-  // next listOutputs. When live is non-empty, drop genesis / legacy ghosts
-  // absent from it; token tips may stay on partial flakes.
-  const now = Date.now()
-  for (const [k, t] of [...byId.entries()]) {
-    if (liveIds.has(k)) continue
-    // Every tip proven spent on chain outranks the lag allowances below.
-    if (retired.has(k)) {
+    for (const tip of heldTipsOf(t)) {
+      const point = normalizedTokenTipOutpoint(tip.outpoint)
+      ledger.set(point, { ...tip, seenAt: tip.seenAt ?? ledger.get(point)?.seenAt })
+    }
+    const held = [...ledger.values()].filter((tip) => !isItemSent(tip.outpoint))
+    if (held.length === 0) {
       byId.delete(k)
       continue
     }
-    if (live.length === 0) continue
-    // A card the basket has not projected *yet* is settling, not a ghost.
-    // Retirement belongs to `chooseFungibleChainFate`, which also weighs the
-    // chain; deleting a freshly minted genesis row here retired it seconds
-    // after paint, before any basket read could ever have included it.
-    if (now - (t.seenAt ?? 0) < FUNGIBLE_SETTLE_GRACE_MS) continue
-    if (isGenesisRow(t)) {
-      byId.delete(k)
-      continue
-    }
-    if (t.binarySupply != null && cacheExtraLooksLikeFungible(t)) continue
-    byId.delete(k)
+    byId.set(k, projectHeldTips(held, t, prior))
   }
-  const out = [...byId.values()]
-  out.sort((a, b) => Number(b.amt) - Number(a.amt) || a.sym.localeCompare(b.sym))
-  return out
+  return sortFungibles([...byId.values()])
+}
+
+/**
+ * The token list as a projection of the wallet's outputs.
+ *
+ * Rows are the tips this read listed, plus prior tips still inside their
+ * settle grace. Every other prior tip has left the wallet's outputs and is
+ * returned in `departed` for the holdings reconcile — the list never keeps a
+ * card the basket does not hold, and never drops one without filing it.
+ *
+ * `seenAt` on a tip is its first paint and is carried across reads; a row's
+ * own stamp is not, since every publish restamps it.
+ */
+export function projectHeldFungibles(
+  live: FungibleToken[],
+  prior: FungibleToken[],
+  now = Date.now(),
+): { rows: FungibleToken[]; departed: Bsv21Utxo[] } {
+  const firstSeen = new Map<string, number>()
+  const priorTips = new Map<string, Bsv21Utxo>()
+  for (const row of prior) {
+    for (const tip of heldTipsOf(row)) {
+      const point = normalizedTokenTipOutpoint(tip.outpoint)
+      priorTips.set(point, tip)
+      if (tip.seenAt != null) firstSeen.set(point, tip.seenAt)
+    }
+  }
+  const held = new Map<string, Bsv21Utxo>()
+  for (const row of live) {
+    for (const tip of heldTipsOf(row)) {
+      const point = normalizedTokenTipOutpoint(tip.outpoint)
+      if (isItemSent(point)) continue
+      held.set(point, { ...tip, seenAt: firstSeen.get(point) ?? now })
+    }
+  }
+  const departed: Bsv21Utxo[] = []
+  for (const [point, tip] of priorTips) {
+    if (held.has(point) || isItemSent(point)) continue
+    if (now - (tip.seenAt ?? 0) < FUNGIBLE_SETTLE_GRACE_MS) held.set(point, tip)
+    else departed.push(tip)
+  }
+  const rows = aggregateFungibles([...held.values()]).map((projected) => {
+    const fromLive = live.find((row) => sameToken(row, projected))
+    const fromPrior = prior.find((row) => sameToken(row, projected))
+    const preferred = fromLive ?? fromPrior
+    return preferred ? overlayFungibleMetadata(projected, preferred, fromPrior) : projected
+  })
+  return { rows: sortFungibles(rows), departed }
 }
 
 function normalizedTokenTipOutpoint(raw: string): string {
@@ -573,9 +597,10 @@ export function paintFungibleAfterSpend(args: {
   }
   const prior = cached.find((t) => tokenKey(t) === args.tokenId.trim().toLowerCase())
   const outpoint = args.outpoint || prior?.outpoint || args.tokenId
+  const paintedAt = Date.now()
   const heldTips =
     args.heldTips?.length
-      ? args.heldTips
+      ? args.heldTips.map((tip) => ({ ...tip, seenAt: tip.seenAt ?? paintedAt }))
       : [{
           outpoint,
           tokenId: args.tokenId,
@@ -654,7 +679,7 @@ export function leftoverFloorWouldClobber(
       const currentIds = new Set(cached.map(tokenKey))
       const additions = repaired.filter((token) => !currentIds.has(tokenKey(token)))
       if (additions.length > 0) {
-        setFungiblesCache(mergeLiveFungibles(additions, cached), {
+        setFungiblesCache(overlayFungibles(additions, cached), {
           forEpoch: bootEpoch,
         })
       }
@@ -1233,150 +1258,31 @@ function startFungiblesList(
   return run
 }
 
-/** Existence answers for cards the basket did not return — one probe per tx. */
-const absentProbes = new Map<string, { at: number; probe: OutpointSpendProbe }>()
-const ABSENT_PROBE_TTL_MS = 10 * 60_000
-const reclaimTried = new Set<string>()
+/** Longest a deferred read waits for the wallet before giving up. */
+const RELIST_IDLE_WAIT_MS = 60_000
+let relistWhenIdle: Promise<void> | null = null
 
 /**
- * Settle cards the basket stopped listing against the chain. Returns the
- * token keys whose every tip is proven spent; unspent tips are reclaimed in
- * the background and land through the next read.
+ * A read deferred because the wallet was busy still owes the list an answer:
+ * wait for every region to release once, then read. Coalesced, so all
+ * deferred callers in the window share the one follow-up.
  */
-async function settleAbsentCards(
-  wallet: ActiveWallet,
-  absent: FungibleToken[],
-): Promise<Set<string>> {
-  const retired = new Set<string>()
-  if (absent.length === 0) return retired
-  const cards = absent.map((card) => ({
-    card,
-    tips: heldTipsOf(card)
-      .map((tip) => normalizedDottedOutpoint(tip.outpoint))
-      .filter((point): point is string => Boolean(point)),
-  }))
-  const now = Date.now()
-  const stale = [...new Set(cards.flatMap((c) => c.tips))].filter((point) => {
-    const hit = absentProbes.get(point)
-    return !hit || (hit.probe.kind !== 'spent' && now - hit.at >= ABSENT_PROBE_TTL_MS)
-  })
-  if (stale.length > 0) {
-    const { probeOutpointSpends } = await import('../createActionInputFate')
-    const answers = await probeOutpointSpends(stale, '', wallet.chain)
-    for (const [point, probe] of answers) absentProbes.set(point, { at: now, probe })
-  }
-  const fresh = new Set(stale)
-  const probes = new Map([...absentProbes].map(([point, hit]) => [point, hit.probe]))
-  for (const { card, tips } of cards) {
-    const fate = chooseAbsentCardFate(tips, probes)
-    const label = card.tokenId.slice(0, 16)
-    if (fate.kind === 'retire') {
-      retired.add(tokenKey(card))
-      console.info(
-        `[bsv21] retiring absent card ${label} — ${tips.length} tip(s) spent, first by ${fate.spenders[0]!.slice(0, 12)}`,
-      )
-      continue
+function relistFungiblesWhenIdle(): void {
+  if (relistWhenIdle) return
+  const epoch = fungiblesAccountEpoch
+  relistWhenIdle = (async () => {
+    try {
+      const { waitForWalletRegionsIdle } = await import('../walletCoordinator')
+      if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
+      if (epoch !== fungiblesAccountEpoch) return
+      console.info('[bsv21] wallet idle — running the deferred listOutputs')
+      await listFungibles()
+    } catch (err) {
+      console.warn('[bsv21] deferred relist skipped', err)
+    } finally {
+      relistWhenIdle = null
     }
-    if (!tips.some((point) => fresh.has(point))) continue
-    if (fate.kind === 'keep') {
-      console.info(`[bsv21] keeping absent card ${label} — ${fate.reason}`)
-      continue
-    }
-    for (const txid of fate.txids) {
-      if (reclaimTried.has(txid)) continue
-      reclaimTried.add(txid)
-      console.info(`[bsv21] absent card ${label} unspent on chain — reclaiming ${txid.slice(0, 12)}`)
-      void import('../recoverFromTx')
-        .then(({ recoverFromTx }) => recoverFromTx(txid))
-        .then((outcome) => {
-          if (outcome.tokens === 0) {
-            console.info(
-              `[bsv21] reclaim ${txid.slice(0, 12)} claimed nothing — ours=${outcome.ours} spent=${outcome.spent}`,
-            )
-          }
-        })
-        .catch((err) =>
-          console.warn(
-            `[bsv21] reclaim ${txid.slice(0, 12)} failed — ${err instanceof Error ? err.message : String(err)}`,
-          ),
-        )
-    }
-  }
-  return retired
-}
-
-const chainPresenceCache = new Map<string, { at: number; onChain: boolean | null }>()
-const CHAIN_PRESENCE_TTL_MS = 5 * 60_000
-
-async function tipIsOnChain(
-  txid: string,
-  chain: Chain,
-): Promise<boolean | null> {
-  const hit = chainPresenceCache.get(txid)
-  if (hit && Date.now() - hit.at < CHAIN_PRESENCE_TTL_MS) return hit.onChain
-  try {
-    const { txExistsOnChain } = await import('../legacyScan')
-    const onChain = await txExistsOnChain(txid, chain)
-    chainPresenceCache.set(txid, { at: Date.now(), onChain })
-    return onChain
-  } catch {
-    return null
-  }
-}
-
-/**
- * Stop painting a mint that never reached the chain.
- *
- * A `deploy+mint` whose transaction no provider has ever seen, and which the
- * basket does not hold, is not an asset — offering it Send or Burn is a promise
- * the wallet cannot keep. Every other absence keeps its card.
- */
-async function dropUnconfirmedFungibles(
-  rows: FungibleToken[],
-  wallet: ActiveWallet,
-  args: { liveRows: FungibleToken[]; liveReadUsable: boolean },
-): Promise<FungibleToken[]> {
-  const prior = rows.filter((t) => !leftoverCollectableSym(t.sym))
-  const liveOutpoints = new Set(
-    args.liveRows
-      .map((row) => normalizedDottedOutpoint(row.outpoint))
-      .filter((point): point is string => Boolean(point)),
-  )
-  const kept: FungibleToken[] = []
-  const now = Date.now()
-  for (const row of prior) {
-    if (uiBudgetExpired()) await yieldToUi()
-    const point = normalizedDottedOutpoint(row.outpoint)
-    const inLiveBasket = point == null || liveOutpoints.has(point)
-    // Only pay for a lookup when absence would otherwise retire the card —
-    // so ask with the answer that retires it. Asking with `null` could only
-    // ever return `chain-unknown`, which kept every card and made the probe
-    // below, and the retirement it guards, unreachable.
-    const preliminary = chooseFungibleChainFate({
-      inLiveBasket,
-      liveReadUsable: args.liveReadUsable,
-      onChain: false,
-      ageMs: now - (row.seenAt ?? 0),
-    })
-    if (preliminary.kind !== 'unconfirmed') {
-      kept.push(row)
-      continue
-    }
-    const fate = chooseFungibleChainFate({
-      inLiveBasket,
-      liveReadUsable: args.liveReadUsable,
-      onChain: await tipIsOnChain(point!.split('.')[0]!, wallet.chain),
-      ageMs: now - (row.seenAt ?? 0),
-    })
-    if (fate.kind !== 'unconfirmed') {
-      kept.push(row)
-      continue
-    }
-    console.info(
-      `[bsv21] retiring unconfirmed card ${point} — ${fate.reason}`,
-    )
-  }
-  return kept
+  })()
 }
 
 /**
@@ -1401,7 +1307,7 @@ function withCardsPaintedDuringRead(
   console.info(
     `[bsv21] reconciling ${tips} tip(s) painted during the read`,
   )
-  return mergeLiveFungibles(merged, late)
+  return overlayFungibles(late, merged)
 }
 
 class LiveReadTimeout extends Error {
@@ -1455,23 +1361,16 @@ async function listFungiblesNow(
     }
   }
 
-  const {
-    getSpendPriorityDepth,
-    getWalletCoordinatorSnapshot,
-    shouldYieldChainIngestToSpend,
-  } = await import('../walletCoordinator')
-  const coord = getWalletCoordinatorSnapshot()
+  const { walletRegionsGeneration, walletRegionsIdle, walletRegionsIdleSince } = await import(
+    '../walletCoordinator'
+  )
   const cachedRows = getCachedFungibles()
-  if (
-    cachedRows.length > 0 &&
-    (coord.chainIngest === 'active' ||
-      coord.spend === 'active' ||
-      shouldYieldChainIngestToSpend() ||
-      getSpendPriorityDepth() > 0)
-  ) {
+  // A read is a projection only while nothing rewrites or reserves outputs.
+  if (cachedRows.length > 0 && !walletRegionsIdle()) {
     console.info(
       `[bsv21] deferring listOutputs — wallet busy, using ${cachedRows.length} cached token(s)`,
     )
+    relistFungiblesWhenIdle()
     void attestHeldTokenLineages(wallet, cachedRows, { heal: false })
     return cachedRows
   }
@@ -1479,93 +1378,83 @@ async function listFungiblesNow(
   try {
     await yieldToUi()
     const startedAt = Date.now()
-    let liveRows: FungibleToken[] = []
-    let liveReadUsable = true
+    const readGeneration = walletRegionsGeneration()
+    let liveRows: FungibleToken[]
     const basketStartedAt = Date.now()
     try {
-      const { listBsv21BinaryTokens } = await import('./listTips')
-      // The basket read is the one call that can park behind a spend or an
-      // account rebind. Absence it never answered is not absence: time out
-      // into `live-read-unavailable`, which keeps every cached card.
-      liveRows = await withLiveReadTimeout(listBsv21BinaryTokens(wallet))
+      const { listHeldFungibleTokens } = await import('./listTips')
+      const continuing = new Set(
+        cachedRows.flatMap((row) =>
+          heldTipsOf(row).map((tip) => normalizedTokenTipOutpoint(tip.outpoint)),
+        ),
+      )
+      // Absence a read never answered is not absence: a timeout, an error or a
+      // truncated basket publishes nothing and files nothing.
+      liveRows = await withLiveReadTimeout(listHeldFungibleTokens(wallet, { continuing }))
       reportPhase('live-tokens', basketStartedAt, `${liveRows.length} token(s)`)
     } catch (err) {
-      liveReadUsable = false
       if (err instanceof LiveReadTimeout) {
         console.warn(
           `[bsv21] listOutputs timed out after ${LIVE_READ_TIMEOUT_MS}ms — keeping ${cached.length} cached token(s)`,
         )
       } else {
-        console.warn('[bsv21] list failed', err)
+        console.warn('[bsv21] list failed — keeping cached tokens', err)
       }
+      return getCachedFungibles()
     }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
-    // Recovery is a spendability repair, not a timeout fallback. On Android
-    // each restore can synchronously decrypt/index the wallet for seconds. A
-    // live read that never answered supplied no evidence that any cached tip is
-    // missing, so walking every cached token here only amplifies the outage.
-    const liveTokenIds = new Set(
-      liveRows
-        .map((token) => normalizeTokenId(token.tokenId))
-        .filter((id): id is string => Boolean(id)),
+    const listed = new Set(
+      liveRows.flatMap((row) =>
+        heldTipsOf(row).map((tip) => normalizedTokenTipOutpoint(tip.outpoint)),
+      ),
     )
-    const missingTokenIds = new Set(
-      liveReadUsable
-        ? cached
-            .map((token) => normalizeTokenId(token.tokenId))
-            .filter(
-              (id): id is string =>
-                typeof id === 'string' && !liveTokenIds.has(id),
-            )
-        : [],
-    )
-    const recoveryStartedAt = Date.now()
-    const recoveredHeld =
-      missingTokenIds.size > 0
-        ? await recoverCachedLegacyTips(wallet, missingTokenIds)
-        : []
-    reportPhase(
-      'legacy-tip-recovery',
-      recoveryStartedAt,
-      `${missingTokenIds.size} missing token id(s)`,
-    )
-    if (recoveredHeld.length > 0) {
-      liveRows = mergeLiveFungibles(aggregateFungibles(recoveredHeld), liveRows)
-    }
-    if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
-    // Live BRC-162 rows win over stale JSON BSV-21 rows.
-    const fateStartedAt = Date.now()
-    const prior = await dropUnconfirmedFungibles(cached, wallet, {
-      liveRows,
-      liveReadUsable,
+    // Our own signed transactions are outputs too, before the basket lists them.
+    const unlisted = await recoverCachedLegacyTips(wallet, {
+      restore: false,
+      skip: listed,
     })
-    const heldIds = new Set(liveRows.map(tokenKey))
-    const settledBefore = Date.now() - FUNGIBLE_SETTLE_GRACE_MS
-    const retired = liveReadUsable
-      ? await settleAbsentCards(
-          wallet,
-          prior.filter(
-            (row) => !heldIds.has(tokenKey(row)) && (row.seenAt ?? 0) <= settledBefore,
-          ),
-        ).catch((err) => {
-          console.warn('[bsv21] absent card check failed', err)
-          return new Set<string>()
-        })
-      : new Set<string>()
-    reportPhase('chain-fate', fateStartedAt)
+    if (unlisted.length > 0) {
+      liveRows = overlayFungibles(aggregateFungibles(unlisted), liveRows)
+    }
     if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
-    const merged = withCardsPaintedDuringRead(
-      mergeLiveFungibles(liveRows, prior, retired),
-      runStartedAt,
-    )
+    // Something took the wallet mid-read — even a send that began and ended
+    // inside it: the answer may omit reserved or rewritten rows. Add what it
+    // listed, drop nothing, read again when idle.
+    if (!walletRegionsIdleSince(readGeneration)) {
+      const kept = withCardsPaintedDuringRead(overlayFungibles(liveRows, cached), runStartedAt)
+      setFungiblesCache(kept, { forEpoch: epoch, forRun: run })
+      console.info('[bsv21] wallet went busy during the read — kept every card, relisting when idle')
+      relistFungiblesWhenIdle()
+      return getCachedFungibles()
+    }
+    const projection = projectHeldFungibles(liveRows, cached)
+    const merged = withCardsPaintedDuringRead(projection.rows, runStartedAt)
+    if (run !== listRunSeq) return getCachedFungibles()
     setFungiblesCache(merged, { forEpoch: epoch, forRun: run })
+    const shown = new Set(
+      merged.flatMap((row) =>
+        heldTipsOf(row).map((tip) => normalizedTokenTipOutpoint(tip.outpoint)),
+      ),
+    )
+    const departed = projection.departed.filter(
+      (tip) => !shown.has(normalizedTokenTipOutpoint(tip.outpoint)),
+    )
+    reportHoldings({
+      asset: 'token',
+      listed: new Set([...listed].map(dottedTip)),
+      leftBasket: departed.map((tip) => ({
+        outpoint: dottedTip(tip.outpoint),
+        label: tip.sym || shortTokenLabel(tip.tokenId),
+      })),
+    })
     const liveTipCount = liveRows.reduce(
       (sum, token) => sum + Math.max(1, token.utxoCount),
       0,
     )
     console.info(
       `[bsv21] listOutputs done ${Date.now() - startedAt}ms — ` +
-        `live ${liveRows.length} token(s) / ${liveTipCount} tip(s), showing ${merged.length}`,
+        `live ${liveRows.length} token(s) / ${liveTipCount} tip(s), showing ${merged.length}` +
+        (departed.length > 0 ? `, ${departed.length} tip(s) left the basket` : ''),
     )
     // Fill missing icons from held bodies, else the raw tx by txid (no HTTP
     // content indexer).
@@ -1577,6 +1466,10 @@ async function listFungiblesNow(
     // Keep prior cache — do not hydrate as empty on transient failures.
     return getCachedFungibles()
   }
+}
+
+function dottedTip(outpoint: string): string {
+  return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
 
 export function getFungible(tokenId: string): FungibleToken | null {
@@ -1618,30 +1511,47 @@ async function watchSpendsForLegacyProofs(): Promise<boolean> {
   }
 }
 
+/**
+ * Held tips the basket did not list, rebuilt from this device's transaction
+ * bytes.
+ *
+ * `restore: false` (display) takes only tips of our own signed, still
+ * unconfirmed transactions — outputs the wallet holds before the basket
+ * projects them. `restore: true` (send) may also re-enable a row, but only
+ * after a live UTXO source proves the outpoint unspent.
+ */
 async function recoverCachedLegacyTips(
   active: ActiveWallet,
-  wanted: Set<string>,
+  opts: { wanted?: ReadonlySet<string>; restore: boolean; skip?: ReadonlySet<string> },
 ): Promise<Bsv21Utxo[]> {
   const recovered: Bsv21Utxo[] = []
   const { getLocalTxForTxid } = await import('../beefCache')
-  const remember = await watchSpendsForLegacyProofs()
+  const remember = opts.restore && (await watchSpendsForLegacyProofs())
+  const tips = new Map<string, { token: FungibleToken; tokenId: string }>()
   for (const token of cached) {
     const tokenId = normalizeTokenId(token.tokenId)
-    if (!tokenId || !wanted.has(tokenId) || isItemSent(token.outpoint)) continue
-    const point = token.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+    if (!tokenId || (opts.wanted && !opts.wanted.has(tokenId))) continue
+    for (const held of heldTipsOf(token)) {
+      if (opts.skip?.has(normalizedTokenTipOutpoint(held.outpoint))) continue
+      if (isItemSent(held.outpoint)) continue
+      const point = held.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+      if (!tips.has(point)) tips.set(point, { token, tokenId })
+    }
+  }
+  for (const [point, { token, tokenId }] of tips) {
     const match = /^([0-9a-f]{64})\.(\d+)$/.exec(point)
     if (!match) continue
     const txid = match[1]!
     const vout = Number(match[2])
+    const ownUnconfirmed = isLocalUnconfirmedTxid(txid)
+    if (!opts.restore && !ownUnconfirmed) continue
     try {
       // A failed/aborted spend can leave this asset row locally retired. Never
       // feed a display-cache outpoint back into createAction unless a live UTXO
       // source proves it still exists and the toolbox row is restored first.
-      // Local unconfirmed change (just signed) is held in txStore, not yet in
-      // the basket — treating that as gone is what emptied inventory after send.
       const recentlyProven =
         remember && Date.now() - (legacyTipProvenAt.get(point) ?? 0) < LEGACY_TIP_PROOF_MS
-      if (!isLocalUnconfirmedTxid(txid) && !recentlyProven) {
+      if (!ownUnconfirmed && !recentlyProven) {
         if (!(await restoreUnspentAssetOutpoint(active, point))) {
           legacyTipProvenAt.delete(point)
           continue
@@ -1769,7 +1679,7 @@ export async function listFungibleTips(
     tips.push(tip)
   }
   if (tips.length === 0) {
-    tips.push(...(await recoverCachedLegacyTips(active, wanted)))
+    tips.push(...(await recoverCachedLegacyTips(active, { wanted, restore: true })))
   }
   return tips
 }

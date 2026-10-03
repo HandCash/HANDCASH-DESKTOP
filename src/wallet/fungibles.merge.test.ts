@@ -37,14 +37,16 @@ function row(opts: { tokenId: string; amt: string; outpoint: string }) {
   }
 }
 
-describe('mergeLiveFungibles', () => {
+describe('projectHeldFungibles', () => {
   beforeEach(() => {
     store.clear()
     vi.resetModules()
   })
 
-  it('drops a legacy activity ghost absent from live (keeps colour tips)', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
+  const aged = 1
+
+  it('projects only what the read listed and files every aged tip it omitted', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
     const legacyGhost = {
       tokenId: `${'ef'.repeat(32)}_0`,
       sym: 'GHOST',
@@ -53,193 +55,180 @@ describe('mergeLiveFungibles', () => {
       utxoCount: 1,
       outpoint: `${'ef'.repeat(32)}.1`,
       spendKind: 'plain' as const,
+      seenAt: aged,
     }
-    const colourHeld = row({
-      tokenId: KING_ORIGIN,
-      amt: '100',
-      outpoint: LIVE_CHANGE,
-    })
-    const colourCacheOnly = row({
-      tokenId: ORIGIN,
-      amt: '5',
-      outpoint: LEFTOVER,
-    })
-    const merged = mergeLiveFungibles([colourHeld], [legacyGhost, colourCacheOnly])
-    expect(merged.map((t) => t.tokenId).sort()).toEqual(
-      [KING_ORIGIN, ORIGIN].sort(),
-    )
-    expect(merged.some((t) => t.sym === 'GHOST')).toBe(false)
-  })
-
-  it('drops a BRC-162 card the chain proved spent, even when live is empty', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const spentCard = row({ tokenId: ORIGIN, amt: '5', outpoint: LEFTOVER })
     const held = row({ tokenId: KING_ORIGIN, amt: '100', outpoint: LIVE_CHANGE })
-    const retired = new Set([ORIGIN.toLowerCase()])
-    expect(mergeLiveFungibles([], [spentCard], retired)).toEqual([])
-    expect(mergeLiveFungibles([held], [spentCard], retired).map((t) => t.tokenId)).toEqual([KING_ORIGIN])
-    expect(mergeLiveFungibles([held], [spentCard]).map((t) => t.tokenId).sort()).toEqual(
-      [KING_ORIGIN, ORIGIN].sort(),
+    const cacheOnly = { ...row({ tokenId: ORIGIN, amt: '5', outpoint: LEFTOVER }), seenAt: aged }
+    const { rows, departed } = projectHeldFungibles([held], [legacyGhost, cacheOnly])
+    expect(rows.map((t) => t.tokenId)).toEqual([KING_ORIGIN])
+    expect(departed.map((t) => t.outpoint).sort()).toEqual(
+      [legacyGhost.outpoint, LEFTOVER].sort(),
     )
   })
 
-  it('keeps a genesis cache tip when live is empty (post-mint toolbox lag)', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
-    const merged = mergeLiveFungibles([], prior)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]!.tokenId).toBe(ORIGIN)
-  })
-
-  it('drops a genesis cache tip absent from a non-empty live list', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
-    const live = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '1',
-        outpoint: RECEIVE_A,
-      }),
-    ]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged.some((t) => t.tokenId === ORIGIN)).toBe(false)
-    expect(merged.some((t) => t.tokenId === KING_ORIGIN)).toBe(true)
+  /** The old merge kept every card on an empty read and every BRC-162 card forever. */
+  it('has no exemption for an empty read or a BRC-162 card', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const card = { ...row({ tokenId: ORIGIN, amt: '5', outpoint: LEFTOVER }), seenAt: aged }
+    const { rows, departed } = projectHeldFungibles([], [card])
+    expect(rows).toEqual([])
+    expect(departed.map((t) => t.outpoint)).toEqual([LEFTOVER])
   })
 
   /**
-   * A mint painted from its own createAction cannot be in the basket yet, and
-   * another token being live said nothing about it. Retiring it on that read
-   * made a fresh mint flash onto the Tokens list and vanish.
+   * A mint painted from its own createAction cannot be in the basket yet.
+   * Retiring it on that read made a fresh mint flash and vanish.
    */
-  it('keeps a just-painted genesis tip the basket has not projected yet', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [
-      { ...row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN }), seenAt: Date.now() },
-    ]
+  it('keeps a just-painted tip the basket has not listed yet', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const fresh = { ...row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN }), seenAt: Date.now() }
     const live = [row({ tokenId: KING_ORIGIN, amt: '1', outpoint: RECEIVE_A })]
+    for (const read of [[], live]) {
+      const { rows, departed } = projectHeldFungibles(read, [fresh])
+      expect(rows.some((t) => t.tokenId === ORIGIN)).toBe(true)
+      expect(departed).toEqual([])
+    }
+  })
 
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged.some((t) => t.tokenId === ORIGIN)).toBe(true)
+  /**
+   * Every publish restamps a row, so judging a missing tip by its row's stamp
+   * kept a spent tip of a multi-tip token inside the grace forever.
+   */
+  it('judges a missing tip by its own first paint, not its freshly stamped row', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const spent = `${'77'.repeat(32)}_2`
+    const prior = {
+      ...row({ tokenId: KING_ORIGIN, amt: '300', outpoint: RECEIVE_A }),
+      utxoCount: 2,
+      seenAt: Date.now(),
+      heldTips: [
+        { outpoint: RECEIVE_A, tokenId: KING_ORIGIN, amt: '100', op: 'transfer' as const, dec: 0, satoshis: 1, seenAt: aged },
+        { outpoint: spent, tokenId: KING_ORIGIN, amt: '200', op: 'transfer' as const, dec: 0, satoshis: 1, seenAt: aged },
+      ],
+    }
+    const live = [row({ tokenId: KING_ORIGIN, amt: '100', outpoint: RECEIVE_A })]
+    const { rows, departed } = projectHeldFungibles(live, [prior])
+    expect(rows[0]).toMatchObject({ amt: '100', utxoCount: 1 })
+    expect(departed.map((t) => t.outpoint)).toEqual([spent])
+  })
+
+  it('carries a tip\'s first paint across reads', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const painted = 1_000
+    const prior = [{ ...row({ tokenId: KING_ORIGIN, amt: '1', outpoint: RECEIVE_A }), seenAt: painted }]
+    const live = [row({ tokenId: KING_ORIGIN, amt: '1', outpoint: RECEIVE_A })]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows[0]!.heldTips?.[0]?.seenAt).toBe(painted)
   })
 
   it('uses live aggregated amt — leftover 68862 + live 69000 is 69000 not 137862', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '68862',
-        outpoint: LIVE_CHANGE,
-      }),
-    ]
-    const live = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '69000',
-        outpoint: RECEIVE_A,
-      }),
-    ]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]!.amt).toBe('69000')
-    expect(merged[0]!.amt).not.toBe('137862')
-    expect(merged[0]!.tokenId).toBe(KING_ORIGIN)
+    const { projectHeldFungibles } = await import('./token/list')
+    const prior = [row({ tokenId: KING_ORIGIN, amt: '68862', outpoint: LIVE_CHANGE })]
+    const live = [row({ tokenId: KING_ORIGIN, amt: '69000', outpoint: RECEIVE_A })]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.amt).toBe('69000')
+    expect(rows[0]!.tokenId).toBe(KING_ORIGIN)
   })
 
-  it('second merge of leftover 68862 + live 69000 stays 69000', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '68862',
-        outpoint: LIVE_CHANGE,
-      }),
-    ]
-    const live = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '69000',
-        outpoint: RECEIVE_A,
-      }),
-    ]
-    const once = mergeLiveFungibles(live, prior)
-    const twice = mergeLiveFungibles(live, once)
-    expect(once).toHaveLength(1)
-    expect(once[0]!.amt).toBe('69000')
-    expect(twice).toHaveLength(1)
-    expect(twice[0]!.amt).toBe('69000')
+  it('a second projection of leftover 68862 + live 69000 stays 69000', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const prior = [row({ tokenId: KING_ORIGIN, amt: '68862', outpoint: LIVE_CHANGE })]
+    const live = [row({ tokenId: KING_ORIGIN, amt: '69000', outpoint: RECEIVE_A })]
+    const once = projectHeldFungibles(live, prior).rows
+    const twice = projectHeldFungibles(live, once).rows
+    expect(once.map((t) => t.amt)).toEqual(['69000'])
+    expect(twice.map((t) => t.amt)).toEqual(['69000'])
   })
 
   it('live listing aggregate wins over a smaller same-outpoint prior leftover', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '68862',
-        outpoint: LIVE_CHANGE,
-      }),
-    ]
-    const live = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '69000',
-        outpoint: LIVE_CHANGE,
-      }),
-    ]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]!.amt).toBe('69000')
-    expect(merged[0]!.outpoint).toBe(LIVE_CHANGE)
+    const { projectHeldFungibles } = await import('./token/list')
+    const prior = [row({ tokenId: KING_ORIGIN, amt: '68862', outpoint: LIVE_CHANGE })]
+    const live = [row({ tokenId: KING_ORIGIN, amt: '69000', outpoint: LIVE_CHANGE })]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.amt).toBe('69000')
+    expect(rows[0]!.outpoint).toBe(LIVE_CHANGE)
   })
 
   it('preserves prior icon when live listing lacks it', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
+    const { projectHeldFungibles } = await import('./token/list')
     const prior = [
       {
-        ...row({
-          tokenId: KING_ORIGIN,
-          amt: '68862',
-          outpoint: LIVE_CHANGE,
-        }),
+        ...row({ tokenId: KING_ORIGIN, amt: '68862', outpoint: LIVE_CHANGE }),
         icon: 'icon-op',
         iconUrl: 'data:image/png;base64,xx',
       },
     ]
-    const live = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '69000',
-        outpoint: RECEIVE_A,
-      }),
-    ]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged[0]!.amt).toBe('69000')
-    expect(merged[0]!.icon).toBe('icon-op')
-    expect(merged[0]!.iconUrl).toBe('data:image/png;base64,xx')
+    const live = [row({ tokenId: KING_ORIGIN, amt: '69000', outpoint: RECEIVE_A })]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows[0]!.amt).toBe('69000')
+    expect(rows[0]!.icon).toBe('icon-op')
+    expect(rows[0]!.iconUrl).toBe('data:image/png;base64,xx')
   })
 
   it('preserves a recovered ticker when live remittance only has a fallback label', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '240',
-        outpoint: LIVE_CHANGE,
-      }),
-    ]
+    const { projectHeldFungibles } = await import('./token/list')
+    const prior = [row({ tokenId: KING_ORIGIN, amt: '240', outpoint: LIVE_CHANGE })]
     const live = [
       {
-        ...row({
-          tokenId: KING_ORIGIN,
-          amt: '240',
-          outpoint: RECEIVE_A,
-        }),
+        ...row({ tokenId: KING_ORIGIN, amt: '240', outpoint: RECEIVE_A }),
         sym: `${KING_ORIGIN.slice(0, 6)}…${KING_ORIGIN.slice(-4)}`,
       },
     ]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows[0]!.sym).toBe('KING')
+    expect(rows[0]!.amt).toBe('240')
+  })
 
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged[0]!.sym).toBe('KING')
-    expect(merged[0]!.amt).toBe('240')
+  it('does not keep inflated prior 275586 over live 69000', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const prior = [row({ tokenId: KING_ORIGIN, amt: '275586', outpoint: RECEIVE_A })]
+    const live = [row({ tokenId: KING_ORIGIN, amt: '69000', outpoint: RECEIVE_A })]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows.map((t) => t.amt)).toEqual(['69000'])
+  })
+
+  it('live BRC-162 row wins over a stale legacy row with the same tokenId', async () => {
+    const { projectHeldFungibles } = await import('./token/list')
+    const tokenId = `${'5a'.repeat(32)}_0`
+    const prior = [
+      { tokenId, sym: 'GOLD', amt: '1', dec: 0, utxoCount: 1, outpoint: tokenId, spendKind: 'plain' as const },
+    ]
+    const live = [
+      {
+        tokenId,
+        sym: 'GOLD',
+        amt: '69240',
+        dec: 0,
+        utxoCount: 1,
+        outpoint: tokenId,
+        spendKind: 'plain' as const,
+        binarySupply: 'locked' as const,
+        icon: `${'5a'.repeat(32)}_1`,
+      },
+    ]
+    const { rows } = projectHeldFungibles(live, prior)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.binarySupply).toBe('locked')
+    expect(rows[0]!.amt).toBe('69240')
+    expect(rows[0]!.icon).toBe(`${'5a'.repeat(32)}_1`)
+  })
+
+  it('overlay adds tips without dropping anything the base holds', async () => {
+    const { overlayFungibles } = await import('./token/list')
+    const base = [{ ...row({ tokenId: ORIGIN, amt: '5', outpoint: LEFTOVER }), seenAt: aged }]
+    const add = [row({ tokenId: KING_ORIGIN, amt: '1', outpoint: RECEIVE_A })]
+    expect(overlayFungibles(add, base).map((t) => t.tokenId).sort()).toEqual(
+      [KING_ORIGIN, ORIGIN].sort(),
+    )
+  })
+})
+
+describe('fungible cache paints', () => {
+  beforeEach(() => {
+    store.clear()
+    vi.resetModules()
   })
 
   it('removes a fully spent token from the immediate cache', async () => {
@@ -370,28 +359,6 @@ describe('mergeLiveFungibles', () => {
     ])
   })
 
-  it('does not keep inflated prior 275586 over live 69000', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const prior = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '275586',
-        outpoint: RECEIVE_A,
-      }),
-    ]
-    const live = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '69000',
-        outpoint: RECEIVE_A,
-      }),
-    ]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]!.amt).toBe('69000')
-    expect(merged[0]!.amt).not.toBe('275586')
-  })
-
   it('leftover floor 68862 does not clobber a 69000 cache with more tips', async () => {
     const { leftoverFloorWouldClobber } = await import('./token/list')
     expect(
@@ -403,40 +370,6 @@ describe('mergeLiveFungibles', () => {
     expect(
       leftoverFloorWouldClobber(undefined, { amt: '68862', utxoCount: 1 }),
     ).toBe(false)
-  })
-
-  it('live BRC-162 row wins over a stale legacy row with the same tokenId', async () => {
-    const { mergeLiveFungibles } = await import('./token/list')
-    const tokenId = `${'5a'.repeat(32)}_0`
-    const prior = [
-      {
-        tokenId,
-        sym: 'GOLD',
-        amt: '1',
-        dec: 0,
-        utxoCount: 1,
-        outpoint: tokenId,
-        spendKind: 'plain' as const,
-      },
-    ]
-    const live = [
-      {
-        tokenId,
-        sym: 'GOLD',
-        amt: '69240',
-        dec: 0,
-        utxoCount: 1,
-        outpoint: tokenId,
-        spendKind: 'plain' as const,
-        binarySupply: 'locked' as const,
-        icon: `${'5a'.repeat(32)}_1`,
-      },
-    ]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]!.binarySupply).toBe('locked')
-    expect(merged[0]!.amt).toBe('69240')
-    expect(merged[0]!.icon).toBe(`${'5a'.repeat(32)}_1`)
   })
 
   it('adds distinct received tips and deduplicates a retried paint', async () => {

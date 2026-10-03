@@ -133,6 +133,7 @@ export type SpendPriorityLease = {
  */
 export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
   dropExpiredSpendPriority()
+  regionGeneration += 1
   const now = Date.now()
   const hold: SpendPriorityHold = {
     id: nextSpendPriorityId++,
@@ -296,6 +297,66 @@ export function waitForChainIngestIdle(maxWaitMs: number): Promise<boolean> {
   return waitFor(actor, idle, maxWaitMs).then(idle)
 }
 
+/**
+ * No region holds the wallet and no spend is waiting for it. Only a basket
+ * read taken in this state is a complete projection of the wallet's outputs:
+ * recompose and history restore rewrite the database, and a spend reserves
+ * inputs mid-read.
+ */
+export function walletRegionsIdle(): boolean {
+  const c = context()
+  return (
+    c.chainIngestDepth === 0 &&
+    c.spendDepth === 0 &&
+    c.historyReplicaDepth === 0 &&
+    c.recomposeDepth === 0 &&
+    !shouldYieldChainIngestToSpend()
+  )
+}
+
+/** Region entries and spend requests since boot; moves on every one. */
+let regionGeneration = 0
+
+/** Capture before a basket read; pass to {@link walletRegionsIdleSince} after it. */
+export function walletRegionsGeneration(): number {
+  return regionGeneration
+}
+
+/**
+ * Idle now, and no region began (or spend asked in) since `generation` was
+ * captured. Idle before and after a read is not enough: a short send can run
+ * entirely inside one `listOutputs` call.
+ */
+export function walletRegionsIdleSince(generation: number): boolean {
+  return regionGeneration === generation && walletRegionsIdle()
+}
+
+/**
+ * Resolve once {@link walletRegionsIdle}, or `false` after `maxWaitMs`.
+ * Spend priority is not chart state, so it is polled alongside the actor.
+ */
+export async function waitForWalletRegionsIdle(maxWaitMs: number): Promise<boolean> {
+  const deadline = Date.now() + maxWaitMs
+  while (!walletRegionsIdle()) {
+    const left = deadline - Date.now()
+    if (left <= 0) return false
+    const c = context()
+    if (c.chainIngestDepth + c.spendDepth + c.historyReplicaDepth + c.recomposeDepth > 0) {
+      await waitFor(
+        actor,
+        () => {
+          const n = context()
+          return n.chainIngestDepth + n.spendDepth + n.historyReplicaDepth + n.recomposeDepth === 0
+        },
+        left,
+      )
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(500, left)))
+    }
+  }
+  return true
+}
+
 /** Notify when region depths change — status pill must not claim Synced on a stale snapshot. */
 export function subscribeWalletCoordinator(
   listener: (snap: WalletCoordinatorLiveStatus) => void,
@@ -381,7 +442,10 @@ async function acquire(
     const before = JSON.stringify(context(coordinatorActor))
     coordinatorActor.send(event)
     const after = JSON.stringify(context(coordinatorActor))
-    if (before !== after) break
+    if (before !== after) {
+      regionGeneration += 1
+      break
+    }
     if (!loggedWait && waited > 5_000) {
       loggedWait = true
       console.info(

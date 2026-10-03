@@ -37,13 +37,14 @@ Legacy JSON BSV-21 (`application/bsv-20`) is read-only. New token transactions u
 3. **Chain refresh** — does **not** import tokens from address scan (recovery via remittance / settle only). No public index (WhatsOnChain, Bitails, JungleBus, GorillaPool) returns an unspent BRC-162 tip by owner: the value prefix hides the P2PKH. A received token lives only in localState and the BRC-39 history replica.
 4. **Recover from transaction** (`recoverFromTx.ts`, Settings → Recover from transaction) — the sender's txid: every 1-sat output locked to this wallet's address and proven unspent goes through `classifyLegacyUtxos` → `importBsv21Tokens` (lineage proven as on receive). This is the way back for a reinstall whose history backup never held the token. Wipe names that loss before it lets the user override an unsynced history gate.
 
-A cached card the basket stops listing is settled against the chain once past its settle grace (`token/absentCardFate.ts`): every tip proven spent retires the card, an unspent tip is reclaimed through the same recover-from-transaction import, and no answer keeps the card. A card that shows must be one Send can spend.
+**The list is a projection.** `listFungibles` reads every page of basket `bsv21` (both encodings, decoded from the script; a remittance-only row projects only as an outpoint already held) and shows exactly those tips, plus tips first painted within `FUNGIBLE_SETTLE_GRACE_MS` that the basket has not listed yet. A read that fails, times out or comes back short publishes nothing; a read taken while any wallet region is busy defers and re-runs when the wallet is idle. Every tip the projection drops goes to the holdings reconcile (`holdingsReconcile.ts`), which asks the chain once per backoff step: proven spent closes it, proven unspent restores the row or re-claims the output from its transaction, and no answer keeps it. Nothing is dropped without being filed, and nothing is shown that the wallet does not hold.
 
 ## BRC-176 prove (`token/prove176.ts`)
 
 - Decodes **both** encodings (BRC-161 JSON and BRC-162 binary; binary wins per output) so mixed lineages prove.
 - Per-id conservation I ≥ O; `burn` counts toward O and contributes nothing as an input.
 - Authority model (`deploy+auth` / `auth` / `mint` / amount 0) fails closed with a named reason.
+- A parent this wallet already proved (the `tokenLineage` verdict map, via `provenTokenDeployOf`) is terminal: its body is decoded for conservation, its ancestry is never walked or fetched again. Held-tip heals and receives use it; send and listing fills still ship full ancestry, since the peer proves offline.
 - Limits: `MAX_PROVE_DEPTH` (walk depth), `MAX_PACKET_TXS` (bodies per fill / ancestry), `PARENT_FILL_DEADLINE_MS`. Tripping a limit reads *unproven*, never counterfeit.
 - Market listing (`buildBsv21ListingProof`) emits `v:176` **only** after a successful walk over a token-parent-complete BEEF; no BEEF or a failed walk is `ITEM_ORIGIN_UNPROVEN`.
 

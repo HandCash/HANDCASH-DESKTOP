@@ -228,8 +228,14 @@ export async function restoreBrc39BackupBytes(
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
   // `password` is only a legacy BRC-39 decrypt fallback — not vault proof.
-  return withActiveStorageProvider((storage) =>
-    importBrc39Bytes(storage, bytes, active.rootKeyHex, password, mode),
+  // The import writes the live database, so it holds the history region:
+  // token and item reads defer instead of projecting a half-merged basket.
+  return runHistoryReplica(
+    () =>
+      withActiveStorageProvider((storage) =>
+        importBrc39Bytes(storage, bytes, active.rootKeyHex, password, mode),
+      ),
+    'starved',
   )
 }
 

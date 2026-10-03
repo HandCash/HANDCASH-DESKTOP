@@ -1765,47 +1765,50 @@ function chainIngestFacts(events) {
     .map(([line, count]) => ({ line, count }))
 }
 
-const BSV21_LIST_DONE_RE = /^\[bsv21\] listOutputs done \d+ms — live (\d+) token\(s\) \/ (\d+) tip\(s\), showing (\d+)/
+const BSV21_LIST_DONE_RE = /^\[bsv21\] listOutputs done \d+ms — live (\d+) token\(s\) \/ (\d+) tip\(s\), showing (\d+)(?:, (\d+) tip\(s\) left the basket)?/
 const ITEMS_KEPT_RE = /^\[collectables\] kept (\d+) cached item\(s\) while basket listed (\d+)/
 const ITEMS_RETIRED_RE = /^\[collectables\] retired (\d+) card\(s\)/
+/** `[holdings] <asset> <txid.vout> [(label)] <event>` — one line per reconcile step. */
+const HOLDINGS_RE = /^\[holdings\] (token|item) ([0-9a-f]{64}\.\d+)(?: \([^)]*\))? (.+)$/
+const HOLDINGS_CLAIM_RE = /^\[holdings\] claim [0-9a-f]{12} — ours=(\d+) tokens=(\d+) items=(\d+)/
 
 /**
- * Cards painted vs what the wallet's basket actually holds. A token or item
- * that shows but cannot be spent is a card the live read stopped listing and
- * nothing retired: this counts every read that answered, every read skipped
- * because the wallet was busy, and how far "showing" ran ahead of "live".
+ * Cards painted vs what the wallet's basket actually holds, and the holdings
+ * reconcile that settles every disagreement with one chain answer. Counts
+ * reads, deferrals, what each reconcile step decided, and which outpoints are
+ * still open at the end of the upload (filed, never closed).
  */
 function holdingsFacts(events) {
-  const tokens = {
-    reads: 0,
-    deferred: 0,
-    timedOut: 0,
-    retired: 0,
-    keptUnknown: 0,
-    reclaims: 0,
-    reclaimedNothing: 0,
-    reclaimFailed: 0,
-    readsShowingMore: 0,
-    last: null,
+  const tokens = { reads: 0, deferred: 0, timedOut: 0, busyMidRead: 0, readsShowingMore: 0, leftBasket: 0, last: null }
+  const items = { kept: 0, retired: 0, deferred: 0, busyMidRead: 0, idleRelists: 0, failed: 0, last: null }
+  const reconcile = {
+    filed: { 'left-basket': 0, 'off-chain-index': 0 },
+    closed: {},
+    retiredSpent: 0,
+    restored: 0,
+    restoreRefused: 0,
+    claimsStarted: 0,
+    claims: 0,
+    claimedNothing: 0,
+    claimFailed: 0,
+    kept: {},
+    open: [],
   }
-  const items = { kept: 0, retired: 0, deferred: 0, idleRelists: 0, failed: 0, last: null }
+  const open = new Map()
   for (const e of events) {
     const t = e.text
     const done = BSV21_LIST_DONE_RE.exec(t)
     if (done) {
-      const [live, tips, showing] = done.slice(1).map(Number)
+      const [live, tips, showing] = done.slice(1, 4).map(Number)
       tokens.reads += 1
+      tokens.leftBasket += Number(done[4] ?? 0)
       if (showing > live) tokens.readsShowingMore += 1
       tokens.last = { live, tips, showing, at: new Date(e.at).toISOString() }
       continue
     }
     if (/^\[bsv21\] deferring listOutputs/.test(t)) tokens.deferred += 1
     else if (/^\[bsv21\] listOutputs timed out/.test(t)) tokens.timedOut += 1
-    else if (/^\[bsv21\] retiring (unconfirmed|absent) card/.test(t)) tokens.retired += 1
-    else if (/^\[bsv21\] keeping absent card/.test(t)) tokens.keptUnknown += 1
-    else if (/^\[bsv21\] absent card \S+ unspent on chain — reclaiming/.test(t)) tokens.reclaims += 1
-    else if (/^\[bsv21\] reclaim \S+ claimed nothing/.test(t)) tokens.reclaimedNothing += 1
-    else if (/^\[bsv21\] reclaim \S+ failed/.test(t)) tokens.reclaimFailed += 1
+    else if (/^\[bsv21\] wallet went busy during the read/.test(t)) tokens.busyMidRead += 1
     const kept = ITEMS_KEPT_RE.exec(t)
     if (kept) {
       items.kept += 1
@@ -1815,10 +1818,48 @@ function holdingsFacts(events) {
     const retired = ITEMS_RETIRED_RE.exec(t)
     if (retired) items.retired += Number(retired[1])
     else if (/^\[collectables\] deferring listOutputs/.test(t)) items.deferred += 1
+    else if (/^\[collectables\] wallet went busy during the read/.test(t)) items.busyMidRead += 1
+    else if (/^\[stale-output\] restore refused — \S+ reserved by/.test(t)) reconcile.restoreRefused += 1
     else if (/^\[collectables\] wallet idle — running the deferred listOutputs/.test(t)) items.idleRelists += 1
     else if (/^\[collectables\] listOutputs (timed out|failed)/.test(t)) items.failed += 1
+
+    const claim = HOLDINGS_CLAIM_RE.exec(t)
+    if (claim) {
+      reconcile.claims += 1
+      if (Number(claim[2]) + Number(claim[3]) === 0) reconcile.claimedNothing += 1
+      continue
+    }
+    if (/^\[holdings\] claim \S+ failed/.test(t)) {
+      reconcile.claimFailed += 1
+      continue
+    }
+    const step = HOLDINGS_RE.exec(t)
+    if (!step) continue
+    const [, asset, outpoint, event] = step
+    const at = new Date(e.at).toISOString()
+    let m
+    if ((m = /^(left-basket|off-chain-index) — checking chain/.exec(event))) {
+      reconcile.filed[m[1]] += 1
+      open.set(outpoint, { asset, outpoint, gap: m[1], last: 'filed', at })
+    } else if ((m = /^closed — (\S+)/.exec(event))) {
+      reconcile.closed[m[1]] = (reconcile.closed[m[1]] ?? 0) + 1
+      open.delete(outpoint)
+    } else if (/^retired — spent on chain/.test(event)) {
+      reconcile.retiredSpent += 1
+      open.delete(outpoint)
+    } else if (/^unspent on chain/.test(event)) {
+      if (/row restored/.test(event)) reconcile.restored += 1
+      if (/claiming/.test(event)) reconcile.claimsStarted += 1
+      const row = open.get(outpoint)
+      open.set(outpoint, { ...(row ?? { asset, outpoint }), last: 'unspent', at })
+    } else if ((m = /^kept — (\S+)/.exec(event))) {
+      reconcile.kept[m[1]] = (reconcile.kept[m[1]] ?? 0) + 1
+      const row = open.get(outpoint)
+      open.set(outpoint, { ...(row ?? { asset, outpoint }), last: m[1], at })
+    }
   }
-  return { tokens, items }
+  reconcile.open = [...open.values()]
+  return { tokens, items, reconcile }
 }
 
 const RECEIPT_MERGE_RE = /^\[activity\] merged earned\/(receive-collectable|receive-token) \d+ sat ([0-9a-f]{12})… — into row \d+ of \d+, first seen (\S+)/
@@ -3126,18 +3167,29 @@ function report(state, answers) {
   }
 
   const holdings = latest.holdings
-  if (holdings && (holdings.tokens.reads || holdings.tokens.deferred || holdings.items.kept || holdings.items.deferred)) {
+  if (holdings && (holdings.tokens.reads || holdings.tokens.deferred || holdings.items.kept || holdings.items.deferred || holdings.reconcile?.open.length || holdings.reconcile?.filed['left-basket'] || holdings.reconcile?.filed['off-chain-index'])) {
     const tk = holdings.tokens
     const it = holdings.items
+    const rc = holdings.reconcile
     console.log('\nHoldings vs basket (code-counted):')
     console.log(
-      `  tokens: ${tk.reads} read(s), ${tk.readsShowingMore} showing more than live · deferred ${tk.deferred} · timed out ${tk.timedOut} · retired ${tk.retired} · kept (spend unknown) ${tk.keptUnknown} · reclaims ${tk.reclaims} (nothing ${tk.reclaimedNothing}, failed ${tk.reclaimFailed})`,
+      `  tokens: ${tk.reads} read(s), ${tk.readsShowingMore} showing more than live · ${tk.leftBasket} tip(s) left the basket · deferred ${tk.deferred} · busy mid-read ${tk.busyMidRead} · timed out ${tk.timedOut}`,
     )
     if (tk.last) console.log(`    last read ${tk.last.at}: live ${tk.last.live} token(s) / ${tk.last.tips} tip(s), showing ${tk.last.showing}`)
     console.log(
-      `  items: kept-while-short ${it.kept} · retired ${it.retired} · deferred ${it.deferred} · idle relists ${it.idleRelists} · failed ${it.failed}`,
+      `  items: kept-while-short ${it.kept} · retired ${it.retired} · deferred ${it.deferred} · busy mid-read ${it.busyMidRead} · idle relists ${it.idleRelists} · failed ${it.failed}`,
     )
     if (it.last) console.log(`    last short read ${it.last.at}: cached ${it.last.cached}, basket listed ${it.last.listed}`)
+    if (rc) {
+      const closed = Object.entries(rc.closed).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
+      const kept = Object.entries(rc.kept).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
+      console.log(
+        `  reconcile: filed left-basket ${rc.filed['left-basket']}, off-chain-index ${rc.filed['off-chain-index']} · closed ${closed} · retired spent ${rc.retiredSpent} · restored ${rc.restored} (refused, reserved ${rc.restoreRefused}) · claims ${rc.claims} (nothing ${rc.claimedNothing}, failed ${rc.claimFailed}) · kept ${kept}`,
+      )
+      for (const o of rc.open.slice(0, 12)) {
+        console.log(`    open ${o.asset} ${o.outpoint} — ${o.gap ?? 'filed earlier'}, last ${o.last} at ${o.at}`)
+      }
+    }
   }
 
   const switches = latest.accountSwitches

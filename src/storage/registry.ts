@@ -208,6 +208,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  holdingsReconcile: defineStorage({
+    key: 'handcash.holdings.reconcile.v1',
+    owner: 'collectables',
+    scope: 'wallet',
+    version: 1,
+  }),
   abandonedOutpoints: defineStorage({
     key: 'handcash.collectables.abandonedOutpoints.v1',
     owner: 'collectables',

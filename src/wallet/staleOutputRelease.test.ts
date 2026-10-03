@@ -234,6 +234,34 @@ describe('restoreUnspentAssetOutpoint', () => {
     expect(getUtxoLock(`${txid}.1`)?.spendable).toBe(true)
   })
 
+  it('never releases an asset row a local transaction still reserves', async () => {
+    const txid = '9a'.repeat(32)
+    const updateOutput = vi.fn(async () => undefined)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    for (const status of ['unsigned', 'nosend', 'sending']) {
+      const active = {
+        chain: 'main',
+        services: { isUtxo: vi.fn(async () => ({ isUtxo: true })) },
+        wallet: {
+          storage: {
+            runAsStorageProvider: async (fn: (sp: unknown) => Promise<void>) =>
+              fn({
+                findOutputs: async () => [
+                  { outputId: 9, txid, vout: 0, basket: '1sat', spendable: false, spentBy: 41 },
+                ],
+                findTransactions: async () => [{ transactionId: 41, status }],
+                updateOutput,
+              }),
+          },
+        },
+      }
+      await expect(restoreUnspentAssetOutpoint(active as never, `${txid}.0`)).resolves.toBe(false)
+    }
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(info.mock.calls.filter(([line]) => String(line).includes('restore refused'))).toHaveLength(3)
+    info.mockRestore()
+  })
+
   it('does not restore an asset when live providers cannot prove it unspent', async () => {
     const txid = 'ef'.repeat(32)
     const updateOutput = vi.fn(async () => undefined)

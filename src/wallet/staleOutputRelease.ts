@@ -57,6 +57,7 @@ import {
   APP_HELD_TX_STATUSES,
   isAppHeldTxStatus,
   isLiveLocalTxStatus,
+  isReservingTxStatus,
   LIVE_LOCAL_TX_STATUSES,
   txLivenessFromStatus,
   type TxLiveness,
@@ -1386,10 +1387,59 @@ export async function outpointProvenUnspent(
   );
 }
 
+/** Lower-cased status of the local transaction that spent a row, if any. */
+async function localSpenderStatus(
+  sp: LocalStorage,
+  row: { spentBy?: unknown } | undefined
+): Promise<string | null> {
+  const spentBy = positiveId(row?.spentBy);
+  if (spentBy == null || typeof sp.findTransactions !== "function") return null;
+  const rows = await sp.findTransactions({
+    partial: { transactionId: spentBy },
+    noRawTx: true,
+    paged: { limit: 1, offset: 0 },
+  });
+  const status = (rows?.[0] as { status?: unknown } | undefined)?.status;
+  return status == null ? null : String(status).toLowerCase();
+}
+
+/**
+ * The status of a local transaction that still holds this output — reserving
+ * it (awaiting signature, held from miners, mid-broadcast) or live — or null.
+ * An explorer saying "unspent" does not outrank our own signed spend; only the
+ * transaction lifecycle failing it does. Unreadable storage counts as held.
+ */
+export async function assetRowReservation(
+  active: ActiveWallet,
+  outpoint: string
+): Promise<string | null> {
+  const parsed = parseOutpoint(outpoint);
+  const storage = active.wallet.storage;
+  if (!parsed || !storage?.runAsStorageProvider) return null;
+  let status: string | null = null;
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage;
+      const rows = await findOutputsForTxid(sp, parsed.txid);
+      const row = rows.find(
+        (candidate) =>
+          Number(candidate.vout ?? candidate.outputIndex) === parsed.vout
+      );
+      status = await localSpenderStatus(sp, row);
+    });
+  } catch {
+    return "unreadable";
+  }
+  return status && (isReservingTxStatus(status) || isLiveLocalTxStatus(status))
+    ? status
+    : null;
+}
+
 /**
  * Re-enable one asset basket row only after a live UTXO service proves the
  * outpoint is unspent. Failed/aborted asset spends can leave `spentBy` on the
  * toolbox row, while the inscription remains on chain and in the display cache.
+ * A row a local transaction still reserves is never released.
  */
 export async function restoreUnspentAssetOutpoint(
   active: ActiveWallet,
@@ -1418,6 +1468,14 @@ export async function restoreUnspentAssetOutpoint(
     );
     const outputId = positiveId(row?.outputId);
     if (outputId == null) return;
+    const spender = await localSpenderStatus(sp, row);
+    const reservedBy = isReservingTxStatus(spender) ? spender : null;
+    if (reservedBy) {
+      console.info(
+        `[stale-output] restore refused — ${outpoint} reserved by a ${reservedBy} transaction`
+      );
+      return;
+    }
     await sp.updateOutput(outputId, {
       spendable: true,
       spentBy: undefined,

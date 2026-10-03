@@ -5,9 +5,12 @@ const store = new Map<string, string>()
 
 /** Basket read behaviour, swapped per test. */
 const liveRead = { run: async (): Promise<unknown[]> => [] }
-/** Unbounded await inside the list, used to simulate a stalled read. */
-const restoreAsset = { run: async (): Promise<boolean> => false }
-let restoreCalls = 0
+let liveReads = 0
+/** Whether every wallet region is idle, swapped per test. */
+const regions = { idle: () => true, generation: 0 }
+/** Local transaction read for our own unconfirmed tips — uncancellable. */
+const localTx = { run: async (): Promise<null> => null, unconfirmed: false }
+const reported: Array<{ listed: Set<string>; leftBasket?: Array<{ outpoint: string }> }> = []
 
 vi.mock('../durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
@@ -31,34 +34,35 @@ vi.mock('../session', () => ({
 vi.mock('../appActivity', () => ({ exportAllActivity: () => [] }))
 
 vi.mock('../walletCoordinator', () => ({
-  getSpendPriorityDepth: () => 0,
-  getWalletCoordinatorSnapshot: () => ({ chainIngest: 'idle', spend: 'idle' }),
-  shouldYieldChainIngestToSpend: () => false,
+  walletRegionsIdle: () => regions.idle(),
+  walletRegionsGeneration: () => regions.generation,
+  walletRegionsIdleSince: (generation: number) =>
+    regions.generation === generation && regions.idle(),
+  waitForWalletRegionsIdle: async () => false,
 }))
 
 vi.mock('./listTips', () => ({
-  listBsv21BinaryTokens: () => liveRead.run(),
-}))
-
-vi.mock('../staleOutputRelease', () => ({
-  restoreUnspentAssetOutpoint: () => {
-    restoreCalls += 1
-    return restoreAsset.run()
+  listHeldFungibleTokens: () => {
+    liveReads += 1
+    return liveRead.run()
   },
 }))
 
-vi.mock('../txStore', () => ({ isLocalUnconfirmedTxid: () => false }))
-
-/** Awaited while the list decides whether to retire an aged card. */
-const chainProbe = { run: async (): Promise<boolean | null> => false }
-
-vi.mock('../legacyScan', () => ({
-  txExistsOnChain: () => chainProbe.run(),
+vi.mock('../holdingsReconcile', () => ({
+  reportHoldings: (report: (typeof reported)[number]) => {
+    reported.push(report)
+  },
 }))
+
+vi.mock('../staleOutputRelease', () => ({
+  restoreUnspentAssetOutpoint: async () => false,
+}))
+
+vi.mock('../txStore', () => ({ isLocalUnconfirmedTxid: () => localTx.unconfirmed }))
 
 vi.mock('../beefCache', () => ({
   getLocalBeefForTxid: async () => null,
-  getLocalTxForTxid: async () => null,
+  getLocalTxForTxid: () => localTx.run(),
   rememberBeef: () => {},
   rememberBeefBinary: () => {},
 }))
@@ -93,9 +97,12 @@ describe('listFungibles coalescing', () => {
     vi.resetModules()
     vi.useFakeTimers()
     liveRead.run = async () => []
-    restoreAsset.run = async () => false
-    restoreCalls = 0
-    chainProbe.run = async () => false
+    liveReads = 0
+    regions.idle = () => true
+    regions.generation = 0
+    reported.length = 0
+    localTx.run = async () => null
+    localTx.unconfirmed = false
   })
 
   afterEach(() => {
@@ -115,6 +122,7 @@ describe('listFungibles coalescing', () => {
     await vi.advanceTimersByTimeAsync(13_000)
 
     expect((await pending).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(reported).toEqual([])
   })
 
   /**
@@ -124,7 +132,9 @@ describe('listFungibles coalescing', () => {
   it('serves cache without replacing wallet work that never settled', async () => {
     const { listFungibles, rememberFungibleToken } = await import('./list')
     rememberFungibleToken(card())
-    restoreAsset.run = never
+    liveRead.run = async () => []
+    localTx.unconfirmed = true
+    localTx.run = never
 
     const stalled = listFungibles()
     await vi.advanceTimersByTimeAsync(21_000)
@@ -132,7 +142,61 @@ describe('listFungibles coalescing', () => {
 
     const fresh = listFungibles()
     expect((await fresh).map((t) => t.tokenId)).toEqual([TOKEN])
-    expect(restoreCalls).toBe(1)
+    expect(liveReads).toBe(1)
+  })
+
+  it('a failed read publishes nothing and files nothing', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    liveRead.run = async () => {
+      throw new Error('basket bsv21 listed 1000 of 1400 row(s)')
+    }
+    expect((await listFungibles()).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(reported).toEqual([])
+  })
+
+  it('drops an aged card the basket no longer lists and files its tip', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+
+    expect(await listFungibles()).toEqual([])
+    expect(reported).toHaveLength(1)
+    expect(reported[0]!.leftBasket?.map((l) => l.outpoint)).toEqual([`${'cd'.repeat(32)}.0`])
+  })
+
+  it('defers while the wallet is busy and keeps every card', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    regions.idle = () => false
+
+    expect((await listFungibles()).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(liveReads).toBe(0)
+    expect(reported).toEqual([])
+  })
+
+  it('keeps every card when the wallet went busy during the read', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    liveRead.run = async () => {
+      regions.idle = () => false
+      return []
+    }
+
+    expect((await listFungibles()).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(reported).toEqual([])
+  })
+
+  it('keeps every card when a send began and ended inside the read', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    liveRead.run = async () => {
+      // Idle before and after, but the spend region was entered mid-read.
+      regions.generation += 1
+      return []
+    }
+
+    expect((await listFungibles()).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(reported).toEqual([])
   })
 
   /**
@@ -144,25 +208,21 @@ describe('listFungibles coalescing', () => {
   it('keeps a card painted while the read was in flight', async () => {
     const { listFungibles, rememberFungibleToken, getCachedFungibles } =
       await import('./list')
-    // An aged card absent from the basket makes the list pay for a chain
-    // probe — the await during which a receive can land.
     rememberFungibleToken({
       ...card(),
       tokenId: OTHER,
       outpoint: OTHER,
       seenAt: 1,
     })
-    let paint: () => void = () => {}
-    chainProbe.run = async () => {
-      paint()
-      return false
+    liveRead.run = async () => {
+      rememberFungibleToken(card())
+      return []
     }
-    paint = () => rememberFungibleToken(card())
 
     const rows = await listFungibles()
 
-    expect(rows.map((t) => t.tokenId)).toContain(TOKEN)
-    expect(getCachedFungibles().map((t) => t.tokenId)).toContain(TOKEN)
+    expect(rows.map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(getCachedFungibles().map((t) => t.tokenId)).toEqual([TOKEN])
   })
 
   it('keeps a new tip for a token already present in the stale live read', async () => {
@@ -170,19 +230,7 @@ describe('listFungibles coalescing', () => {
       await import('./list')
     const old = card()
     rememberFungibleToken(old)
-    rememberFungibleToken({
-      ...card(),
-      tokenId: OTHER,
-      outpoint: OTHER,
-      seenAt: 1,
-    })
-    liveRead.run = async () => [old]
-    let paint: () => void = () => {}
-    chainProbe.run = async () => {
-      paint()
-      return false
-    }
-    paint = () => {
+    liveRead.run = async () => {
       rememberFungibleToken({
         ...card(),
         amt: '50',
@@ -191,6 +239,7 @@ describe('listFungibles coalescing', () => {
       expect(
         getCachedFungibles().find((row) => row.tokenId === TOKEN),
       ).toMatchObject({ amt: '550', utxoCount: 2 })
+      return [old]
     }
 
     const rows = await listFungibles()

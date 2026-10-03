@@ -69,6 +69,13 @@ import { getActiveWallet } from './session'
  *   may be several activities (a send to yourself, a batch). Storage pressure
  *   sheds rows the table still shows first; wallet logic reads stored rows
  *   only (`listRecentActivity`), display reads the view (`listActivityFeed`).
+ * - **Holdings** → the token and item lists are projections of baskets
+ *   `bsv21` / `1sat`, read only while every coordinator region is idle and
+ *   only when the read is the whole basket. Each disagreement with the chain
+ *   — a listed output that left the basket, a basket row the address scan
+ *   omits — is filed durably in `holdingsReconcile.ts` and settled by one
+ *   chain answer per backoff step: spent closes or retires, unspent restores
+ *   or re-claims, unknown waits. Nothing leaves silently.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
  * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
@@ -329,6 +336,7 @@ export const WALLET_LAYER_MODULES = {
     "healMisfiledBsv21.ts",
     "healMisfiledCollectables.ts",
     "staleOutputRelease.ts",
+    "holdingsReconcile.ts",
     "spendVerdict/index.ts",
     "chainProbe/index.ts",
     "txReconcile.ts",

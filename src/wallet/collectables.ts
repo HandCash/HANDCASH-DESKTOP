@@ -180,15 +180,13 @@ import {
   getSpendPriorityDepth,
   getWalletCoordinatorSnapshot,
   shouldYieldChainIngestToSpend,
-  waitForChainIngestIdle,
-  waitForForegroundSpendIdle,
+  waitForWalletRegionsIdle,
+  walletRegionsGeneration,
+  walletRegionsIdle,
+  walletRegionsIdleSince,
 } from './walletCoordinator'
-import {
-  BASKET_ABSENCE_MIN_READS,
-  isCompleteBasketPage,
-  judgeBasketAbsence,
-  type BasketAbsence,
-} from './collectableBasketAbsence'
+import { isCompleteBasketPage } from './collectableBasketAbsence'
+import { reportHoldings } from './holdingsReconcile'
 import {
   getResolvedInscription,
   getResolvedInscriptionByOrigin,
@@ -2681,18 +2679,7 @@ function relistWhenWalletIdle(): void {
   const epoch = collectablesAccountEpoch
   relistWhenIdle = (async () => {
     try {
-      const deadline = Date.now() + RELIST_IDLE_WAIT_MS
-      await waitForChainIngestIdle(RELIST_IDLE_WAIT_MS)
-      await Promise.race([
-        waitForForegroundSpendIdle(),
-        new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now()))),
-      ])
-      while (
-        (shouldYieldChainIngestToSpend() || getSpendPriorityDepth() > 0) &&
-        Date.now() < deadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
+      if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
       if (epoch !== collectablesAccountEpoch) return
       console.info('[collectables] wallet idle — running the deferred listOutputs')
       await listCollectables()
@@ -2747,47 +2734,43 @@ export function loadMoreCollectables(
 
 
 /**
- * Cards the basket keeps omitting, by outpoint key. Judged with
- * `judgeBasketAbsence` on every complete short page; cleared whenever a read
- * lists at least as many rows as the cache holds.
+ * Cached cards a complete basket read omitted.
+ *
+ * The basket is the wallet's outputs, so the card leaves now and the holdings
+ * reconcile asks the chain once whether the output really left — restoring it
+ * when it did not. Sent, seeded and ghost-protected cards are never judged.
  */
-const basketAbsence = new Map<string, BasketAbsence>()
-
-/**
- * Cached cards a complete basket page omitted often enough, and long enough,
- * to retire. Seeded, protected, sent and address-live cards are never judged.
- */
-function retireAbsentFromBasket(
+function absentFromCompleteBasket(
   page: ItemOutput[],
   seeded: ItemOutput[],
-  live: { at: number; keys: Set<string> } | null,
-  complete: boolean,
-  now: number,
-): Set<string> {
+): Collectable[] {
   const listed = new Set([...page, ...seeded].map((o) => outpointKey(o.outpoint)))
-  const retire = new Set<string>()
-  const stillCached = new Set<string>()
-  for (const held of cachedCollectables) {
-    const key = outpointKey(held.outpoint)
-    stillCached.add(key)
-    if (listed.has(key) || isItemSent(held.outpoint)) {
-      basketAbsence.delete(key)
-      continue
-    }
-    if (!complete) continue
-    if (isProtectedFromGhostDrop(held.outpoint) || live?.keys.has(key)) {
-      basketAbsence.delete(key)
-      continue
-    }
-    const judged = judgeBasketAbsence(basketAbsence.get(key) ?? null, now)
-    basketAbsence.set(key, judged.next)
-    if (judged.retire) retire.add(key)
-  }
-  for (const key of Array.from(basketAbsence.keys())) {
-    if (!stillCached.has(key)) basketAbsence.delete(key)
-  }
-  for (const key of retire) basketAbsence.delete(key)
-  return retire
+  return cachedCollectables.filter(
+    (held) =>
+      !listed.has(outpointKey(held.outpoint)) &&
+      !isItemSent(held.outpoint) &&
+      !isProtectedFromGhostDrop(held.outpoint),
+  )
+}
+
+/** File a complete, idle read with the holdings reconcile. */
+function reportItemHoldings(args: {
+  listed: ItemOutput[]
+  left: Array<Pick<Collectable, 'outpoint' | 'name'>>
+  offChainIndex?: ItemOutput[]
+}): void {
+  reportHoldings({
+    asset: 'item',
+    listed: new Set(args.listed.map((o) => normalizeOutpoint(o.outpoint))),
+    leftBasket: args.left.map((c) => ({ outpoint: normalizeOutpoint(c.outpoint), label: c.name })),
+    ...(args.offChainIndex
+      ? {
+          offChainIndex: args.offChainIndex.map((o) => ({
+            outpoint: normalizeOutpoint(o.outpoint),
+          })),
+        }
+      : {}),
+  })
 }
 
 /** Short/empty basket page: keep painted cards, append newly listed outpoints. */
@@ -2856,15 +2839,12 @@ async function listCollectablesNow(
     clearCollectablesCache({ notify: false })
   }
 
-  const coord = getWalletCoordinatorSnapshot()
+  // A read is a projection only while nothing rewrites or reserves outputs.
   if (
     !append &&
     !authoritativeAfterReplace &&
     cachedCollectables.length > 0 &&
-    (coord.chainIngest === 'active' ||
-      coord.spend === 'active' ||
-      shouldYieldChainIngestToSpend() ||
-      getSpendPriorityDepth() > 0)
+    !walletRegionsIdle()
   ) {
     console.info(
       `[collectables] deferring listOutputs — wallet busy, using ${cachedCollectables.length} cached item(s)`,
@@ -2875,6 +2855,10 @@ async function listCollectablesNow(
 
   let outputs: ItemOutput[] = []
   const pageOffset = append ? listedOutputCursor : 0
+  /** This read listed the whole basket while no region touched the wallet. */
+  let readComplete = false
+  let listedPage: ItemOutput[] = []
+  const readGeneration = walletRegionsGeneration()
 
   try {
     const result = await Promise.race([
@@ -2902,22 +2886,23 @@ async function listCollectablesNow(
       return getCachedCollectables()
     }
     if (!append) lastListedAt = Date.now()
-    // Recompose / BRC-39 / mobile sync can return 0 or a short page from a
-    // temporary or partially restored database. That is not proof of an empty
-    // inventory. On a real cold launch this painted 777 durable cards, replaced
-    // them with zero, then nine. Keep the complete stale view unless this read
-    // is explicitly authoritative (post-replace relist / identity change / user
-    // spent). Merge newly listed outpoints; do not drop existing ones because
-    // this page is short. Mobile sync/soft pull is often NOT the recompose
-    // coordinator, so that flag must not be required.
-    //
-    // A live-set *count* is not an ownership verdict for omitted rows. During
-    // createAction Toolbox can return a short page while the input is reserved,
-    // and ordinal index cooldown can make the merged live set temporarily
-    // smaller at the same time. The old cardinality shortcut replaced seven
-    // cards with two during a send, then painted them back on the next read.
-    // Keep every omitted card until its exact outpoint is positively spent or
-    // a known signed transaction retires it.
+    listedPage = page
+    readComplete =
+      !append &&
+      walletRegionsIdleSince(readGeneration) &&
+      isCompleteBasketPage({
+        offset: pageOffset,
+        pageLength: result.outputs?.length ?? 0,
+        pageLimit: LIST_PAGE_SIZE,
+      })
+    // Recompose, BRC-39 import and sends rewrite or reserve rows, and a page
+    // read beside them can be short or empty (a cold launch once went 777
+    // cards → 0 → 9; a send once showed 7 → 2). Every such writer holds a
+    // coordinator region, so a page is only the basket's truth when no region
+    // was held from before the read to after it (`readComplete`). Anything
+    // less merges new outpoints and drops nothing. A complete read retires
+    // omitted cards and files each with the holdings reconcile, which restores
+    // or re-claims it if the chain says it never left.
     if (
       !append &&
       cachedCollectables.length > 0 &&
@@ -2926,23 +2911,21 @@ async function listCollectablesNow(
     ) {
       const now = Date.now()
       const seeded = pendingSeededItems(page, now, wallet.identityKey)
-      // A complete page that is merely smaller than the cache is the basket
-      // telling the truth about one card, read after read. Let that converge.
-      const retired = retireAbsentFromBasket(
-        page,
-        seeded,
-        listedOutputTotal > 10_000 ? cachedLiveOneSats : resolveLiveOneSatKeys(wallet),
-        isCompleteBasketPage({
-          offset: pageOffset,
-          pageLength: page.length,
-          pageLimit: LIST_PAGE_SIZE,
-        }),
-        now,
+      // A complete page smaller than the cache is the basket telling the truth.
+      // A card the address scan still lists stays painted until its row is
+      // filed again; the reconcile claims it either way.
+      const absent = readComplete ? absentFromCompleteBasket(page, seeded) : []
+      const live = listedOutputTotal > 10_000 ? cachedLiveOneSats : resolveLiveOneSatKeys(wallet)
+      const retired = new Set(
+        absent
+          .map((held) => outpointKey(held.outpoint))
+          .filter((key) => !live?.keys.has(key)),
       )
       const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain, retired)
+      if (readComplete) reportItemHoldings({ listed: page, left: absent })
       if (retired.size > 0) {
         console.info(
-          `[collectables] retired ${retired.size} card(s) absent from ${BASKET_ABSENCE_MIN_READS}+ complete basket reads`,
+          `[collectables] retired ${retired.size} card(s) absent from a complete basket read`,
           Array.from(retired),
         )
       } else {
@@ -2961,10 +2944,9 @@ async function listCollectablesNow(
         lastItemChain = wallet.chain
       }
       setCollectablesCache(merged, { announceArrivals, forEpoch: epoch })
+      if (!walletRegionsIdleSince(readGeneration)) relistWhenWalletIdle()
       return getCachedCollectables()
     }
-    // The basket answered for every cached card; absence streaks start over.
-    if (!append) basketAbsence.clear()
     listedOutputTotal = inferCollectableOutputTotal({
       offset: pageOffset,
       pageLength: result.outputs?.length ?? 0,
@@ -3004,6 +2986,10 @@ async function listCollectablesNow(
     const key = outpointKey(o.outpoint)
     if (!firstSeenAt.has(key)) firstSeenAt.set(key, seenNow)
   }
+  /** Outbound tips locked to someone else — never this wallet's to reconcile. */
+  const neverOurs = new Set<string>()
+  /** Set only when an address scan answered; `undefined` prunes nothing. */
+  let offChainIndex: ItemOutput[] | undefined
 
   // A tip we minted to ourselves is in hand before the basket will list it.
   // Rebuilding from the read alone is what dropped the card on a send to your
@@ -3032,6 +3018,7 @@ async function listCollectablesNow(
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
     const keptMissing: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
+    offChainIndex = []
     for (let i = 0; i < spentOrMissing.length; i++) {
       if (i > 0 && i % 40 === 0) await yieldToUi()
       const o = spentOrMissing[i]!
@@ -3055,8 +3042,14 @@ async function listCollectablesNow(
       })
       if (fate === 'ghostDrop' && !isProtectedFromGhostDrop(o.outpoint))
         ghosts.push(o)
-      else keptMissing.push(o)
+      else {
+        keptMissing.push(o)
+        // Settled, ours by script, and absent from the address scan: only the
+        // chain can say whether the row is still an output.
+        if (fate === 'graceHold' && !unjudged && paysOurAddress !== false) offChainIndex.push(o)
+      }
     }
+    for (const g of ghosts) neverOurs.add(outpointKey(g.outpoint))
     if (ghosts.length > 0) {
       console.info(
         `[collectables] dropping ${ghosts.length} tip(s) not in the address UTXO set`,
@@ -3092,6 +3085,7 @@ async function listCollectablesNow(
         kept.push(o)
       }
     }
+    for (const g of ghosts) neverOurs.add(outpointKey(g.outpoint))
     if (ghosts.length > 0) {
       console.info(
         `[collectables] dropping ${ghosts.length} outbound tip(s) before address scan`,
@@ -3117,7 +3111,34 @@ async function listCollectablesNow(
 
   // Everything the list renders (name, app, image) comes from the output itself
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
+  // A region took the wallet during the read or the ownership pass: the page
+  // may omit reserved or rewritten rows. Add what it listed, drop nothing.
+  if (
+    !append &&
+    !authoritativeAfterReplace &&
+    cachedCollectables.length > 0 &&
+    !walletRegionsIdleSince(readGeneration)
+  ) {
+    setCollectablesCache(mergeShortBasketPage(outputs, wallet.chain, neverOurs), {
+      announceArrivals,
+      forEpoch: epoch,
+    })
+    console.info('[collectables] wallet went busy during the read — kept every card, relisting when idle')
+    relistWhenWalletIdle()
+    return getCachedCollectables()
+  }
   const deduped = buildItems(outputs, wallet.chain)
+  if (readComplete) {
+    const shown = new Set(deduped.map((c) => outpointKey(c.outpoint)))
+    reportItemHoldings({
+      listed: listedPage,
+      left: cachedCollectables.filter((held) => {
+        const key = outpointKey(held.outpoint)
+        return !shown.has(key) && !neverOurs.has(key) && !isItemSent(held.outpoint)
+      }),
+      ...(offChainIndex ? { offChainIndex } : {}),
+    })
+  }
   setCollectablesCache(deduped, {
     announceArrivals: announceArrivals && !append,
     forEpoch: epoch,

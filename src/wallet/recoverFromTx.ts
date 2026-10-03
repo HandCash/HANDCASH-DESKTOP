@@ -39,7 +39,10 @@ function p2pkhTemplate(address: string): string {
   return `76a914${Utils.toHex(data as number[])}88ac`
 }
 
-export async function recoverFromTx(rawTxid: string): Promise<RecoverFromTxResult> {
+export async function recoverFromTx(
+  rawTxid: string,
+  opts: { only?: ReadonlySet<string> } = {},
+): Promise<RecoverFromTxResult> {
   const txid = parseRecoverTxid(rawTxid)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first.')
@@ -53,6 +56,7 @@ export async function recoverFromTx(rawTxid: string): Promise<RecoverFromTxResul
   tx.outputs.forEach((out, vout) => {
     if (out.satoshis !== 1) return
     if (!out.lockingScript.toHex().includes(lock)) return
+    if (opts.only && !opts.only.has(`${txid}.${vout}`)) return
     ours.push({ outpoint: `${txid}.${vout}`, txid, vout, satoshis: 1 })
   })
 

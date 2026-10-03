@@ -34,6 +34,26 @@ export const APP_HELD_TX_STATUSES = Object.freeze(['nosend', 'unsent'] as const)
 
 const appHeldStatuses: ReadonlySet<string> = new Set(APP_HELD_TX_STATUSES)
 
+/**
+ * A transaction that still holds its inputs while the chain cannot see it yet:
+ * awaiting signature, held back from miners, or mid-broadcast. "Unspent on
+ * chain" is expected for these inputs and is never a reason to release them.
+ */
+export const RESERVING_TX_STATUSES = Object.freeze([
+  'unsigned',
+  'unprocessed',
+  'nosend',
+  'unsent',
+  'sending',
+  'nonfinal',
+] as const)
+
+const reservingStatuses: ReadonlySet<string> = new Set(RESERVING_TX_STATUSES)
+
+export function isReservingTxStatus(status: unknown): boolean {
+  return reservingStatuses.has(String(status ?? '').toLowerCase())
+}
+
 export type TxLiveness = 'pending' | 'settled' | 'dead' | 'none'
 
 /** True when a local transaction is still this wallet's spend. */

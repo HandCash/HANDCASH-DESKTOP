@@ -142,6 +142,13 @@ export function rememberProvenTokenTips(outpoints: readonly string[], deployOutp
   durableSetItem(VERDICT_KEY, JSON.stringify(Object.fromEntries(rows)))
 }
 
+/** Deploy a recorded walk bound this output to — a terminal for later walks. */
+export function provenTokenDeployOf(outpoint: string): string | null {
+  const tip = underscore(outpoint)
+  if (!OUTPOINT_RE.test(tip)) return null
+  return loadVerdicts().get(tip) ?? null
+}
+
 /**
  * Prove `outpoints` against `beef` and file the ones that reach `tokenId`'s
  * deploy. Returns the deploy outpoint when at least one did.
@@ -155,7 +162,7 @@ export function recordProvenTokenTips(
   if (!tokenId) return null
   const proven: string[] = []
   for (const outpoint of outpoints) {
-    const result = prove(outpoint, beef)
+    const result = prove(outpoint, beef, provenTokenDeployOf)
     if (result.ok && result.tokenId === tokenId) proven.push(outpoint)
   }
   if (proven.length === 0) return null
@@ -317,7 +324,7 @@ async function walkHeldTip(
   const tipTxid = tip.split('_')[0]!
   const start = await source.body(tipTxid)
   if (!start) return 'no-tip-body'
-  const filled = await fillTokenParentBodies(start, source.body, [tipTxid])
+  const filled = await fillTokenParentBodies(start, source.body, [tipTxid], provenTokenDeployOf)
   const deploy = recordProvenTokenTips(filled, [tip], tokenId)
   if (!deploy) return 'walk-failed'
   await retainTokenGenesis(filled, deploy.split('_')[0]!, await chainTrackerFor(wallet))

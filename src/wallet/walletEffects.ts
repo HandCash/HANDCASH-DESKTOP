@@ -15,6 +15,7 @@ import { clearPaymentProgress } from './paymentProgress'
 import { rebindOneSatImportGuardForAccount } from './oneSatImportGuard'
 import { rebindSentItemGuardForAccount } from './sentItemGuard'
 import { rebindFungiblesForAccount } from './token/list'
+import { rebindHoldingsReconcileForAccount } from './holdingsReconcile'
 import { assertNeverOutcome, type WalletOutcome } from './kernel/outcomes'
 import { rebindTxStoreForAccount } from './txStore'
 import { rebindUtxoLocksForAccount } from './utxoLockManager'
@@ -61,6 +62,7 @@ export function applyWalletOutcome(outcome: WalletOutcome): void {
       rebindOneSatImportGuardForAccount()
       rebindCollectablesForAccount()
       rebindFungiblesForAccount()
+      rebindHoldingsReconcileForAccount()
       clearPaymentProgress()
       return
     case 'SpendCompleted':

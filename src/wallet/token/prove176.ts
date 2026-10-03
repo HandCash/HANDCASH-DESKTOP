@@ -45,6 +45,16 @@ export type Bsv21ProofFailure = {
 
 export type Bsv21ProofResult = Bsv21Proof | Bsv21ProofFailure
 
+/**
+ * Deploy outpoint a previous walk already bound this output to, or null.
+ *
+ * A proven parent is terminal: its body is still decoded so the child's
+ * conservation counts real amounts, but its own ancestry is never walked or
+ * fetched again. The verdict is this wallet's own record (BRC-176 is
+ * inductive, like BRC-150 remittance) — never an indexer answer.
+ */
+export type KnownTokenDeploy = (outpoint: string) => string | null
+
 /** Encoding-neutral view of one BSV-21 output for the walk. */
 export type TokenOutput = {
   role: 'deploy' | 'value' | 'authority' | 'burn'
@@ -160,6 +170,7 @@ export async function fillTokenParentBodies(
   beef: Beef,
   fetchBody: (txid: string) => Promise<Beef | null | undefined>,
   startTxids: string[],
+  known?: KnownTokenDeploy,
 ): Promise<Beef> {
   const work = beef.clone()
   work.atomicTxid = undefined
@@ -201,7 +212,9 @@ export async function fillTokenParentBodies(
       if (seen.has(prev)) continue
       const parentTx = await ensureBody(prev)
       if (!parentTx) continue
-      if (isTokenOutput(parentTx, prevVout)) queue.push(prev)
+      if (!isTokenOutput(parentTx, prevVout)) continue
+      if (known?.(`${prev}_${prevVout}`)) continue
+      queue.push(prev)
     }
   }
 
@@ -214,35 +227,40 @@ function tokenIdOf(decoded: TokenOutput, txid: string, vout: number): string | n
   return null
 }
 
+type WalkScope = {
+  beef: Beef
+  seen: Set<string>
+  known?: KnownTokenDeploy
+}
+
 function walk(
-  beef: Beef,
+  scope: WalkScope,
   txid: string,
   vout: number,
-  seen: Set<string>,
   hops: number,
 ): Bsv21ProofResult {
   if (hops > MAX_PROVE_DEPTH) {
     return fail(`token parent walk exceeded depth limit ${MAX_PROVE_DEPTH}`)
   }
   const key = `${txid}_${vout}`
-  if (seen.has(key)) return fail(`cycle in token parent walk at ${key}`)
-  seen.add(key)
+  if (scope.seen.has(key)) return fail(`cycle in token parent walk at ${key}`)
+  scope.seen.add(key)
   try {
-    return walkBody(beef, txid, vout, key, seen, hops)
+    return walkBody(scope, txid, vout, key, hops)
   } finally {
     // Path-scoped: a shared deploy ancestor of a merge is not a cycle.
-    seen.delete(key)
+    scope.seen.delete(key)
   }
 }
 
 function walkBody(
-  beef: Beef,
+  scope: WalkScope,
   txid: string,
   vout: number,
   key: string,
-  seen: Set<string>,
   hops: number,
 ): Bsv21ProofResult {
+  const { beef } = scope
   const tx = txBody(beef, txid)
   if (!tx) return fail(`missing token-parent body ${key}`)
 
@@ -276,7 +294,17 @@ function walkBody(
 
   let deployOutpoint: string | undefined
   for (const parent of conservation.parents) {
-    const parentResult = walk(beef, parent.txid, parent.vout, seen, hops + 1)
+    const provenDeploy = scope.known?.(`${parent.txid}_${parent.vout}`) ?? null
+    const parentResult: Bsv21ProofResult = provenDeploy
+      ? {
+          ok: true,
+          tokenId: provenDeploy,
+          amount: parent.amount,
+          deployOutpoint: provenDeploy,
+          role: 'value',
+          encoding: decoded.encoding,
+        }
+      : walk(scope, parent.txid, parent.vout, hops + 1)
     if (!parentResult.ok) return parentResult
     if (parentResult.tokenId !== tokenId) {
       return fail(
@@ -303,7 +331,7 @@ function checkConservation(
   tx: Transaction,
   tokenId: string,
 ):
-  | { ok: true; parents: { txid: string; vout: number }[]; input: bigint; output: bigint }
+  | { ok: true; parents: { txid: string; vout: number; amount: bigint }[]; input: bigint; output: bigint }
   | Bsv21ProofFailure {
   let output = 0n
   const txid = tx.id('hex')
@@ -320,7 +348,7 @@ function checkConservation(
   }
 
   let input = 0n
-  const parents: { txid: string; vout: number }[] = []
+  const parents: { txid: string; vout: number; amount: bigint }[] = []
   const sameIdMissing: string[] = []
 
   for (const vin of tx.inputs) {
@@ -348,7 +376,7 @@ function checkConservation(
     // A spent burn contributes nothing; it is not a parent to walk either.
     if (decoded.role === 'burn') continue
     input += decoded.amount
-    parents.push({ txid: prev, vout: prevVout })
+    parents.push({ txid: prev, vout: prevVout, amount: decoded.amount })
   }
 
   if (sameIdMissing.length) {
@@ -376,12 +404,13 @@ function checkConservation(
 export function prove(
   outpoint: string,
   beef: Beef | number[] | Uint8Array,
+  known?: KnownTokenDeploy,
 ): Bsv21ProofResult {
   const parsed = parseDisplayOutpoint(toUnderscoreOutpoint(outpoint))
   if (!parsed) return fail(`invalid outpoint ${outpoint}`)
   const parsedBeef = asBeef(beef)
   if (!parsedBeef) return fail('invalid BEEF')
-  return walk(parsedBeef, parsed.txid, parsed.vout, new Set(), 0)
+  return walk({ beef: parsedBeef, seen: new Set(), known }, parsed.txid, parsed.vout, 0)
 }
 
 /**

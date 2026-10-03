@@ -42,7 +42,7 @@ import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { fillTokenParentBodies, prove } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
 import { inboundTokenLineage } from './inboundLineage'
-import { chainTrackerFor, rememberProvenTokenTips, withTokenLineage } from './lineage'
+import { chainTrackerFor, provenTokenDeployOf, rememberProvenTokenTips, withTokenLineage } from './lineage'
 import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { broadcastAtomicBeef } from '../sendBrc29Payment'
 import { type ActiveWallet } from '../session'
@@ -311,7 +311,7 @@ export async function internalizePeerFungibleSettle(opts: {
     // naming a real token id never paints a balance.
     const provingStarted = Date.now()
     let proofBeef = withTokenLineage(beef, inboundTokenLineage(id))
-    const offline = tips.every((tip) => prove(`${id}_${tip.vout}`, proofBeef).ok)
+    const offline = tips.every((tip) => prove(`${id}_${tip.vout}`, proofBeef, provenTokenDeployOf).ok)
     if (!offline) {
       const { getBeefForTxidCached } = await import('../beefCache')
       proofBeef = await fillTokenParentBodies(
@@ -327,11 +327,12 @@ export async function internalizePeerFungibleSettle(opts: {
           }
         },
         [id],
+        provenTokenDeployOf,
       )
     }
     let deployOutpoint: string | undefined
     for (const tip of tips) {
-      const proof = prove(`${id}_${tip.vout}`, proofBeef)
+      const proof = prove(`${id}_${tip.vout}`, proofBeef, provenTokenDeployOf)
       if (!proof.ok) {
         console.warn(
           `[fungible-settle] ${id.slice(0, 12)}_${tip.vout} BRC-176 unproven — ${proof.reason} (${Date.now() - provingStarted}ms)`,

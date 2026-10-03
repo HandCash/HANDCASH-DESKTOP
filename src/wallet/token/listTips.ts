@@ -12,8 +12,10 @@ import {
   detectCosignFromLockingScript,
   issuerFromRemittance,
   issuerFromSigmaLockingScript,
+  isBalanceBearingOp,
   normalizeTokenId,
   parseBsv21CustomInstructions,
+  parseBsv21Json,
   type Bsv21Op,
   type Bsv21Utxo,
 } from './types'
@@ -25,7 +27,7 @@ import {
   getSentItemRecord,
   isItemSent,
 } from '../sentItemGuard'
-import { scriptPaysAddress } from '../ordinalOwnership'
+import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 
@@ -228,6 +230,92 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
 }
 
 /**
+ * Decode a listed basket row whose script carries a BRC-161 JSON inscription.
+ *
+ * The amount and id come from the inscription on the script itself — never
+ * from remittance or tags, which are metadata a basket row can carry without
+ * holding the token.
+ */
+export function decodeListedLegacyTip(raw: ListedOutput): Bsv21Utxo | null {
+  const outpointRaw = (raw.outpoint ?? '').trim()
+  if (!outpointRaw) return null
+  if ((typeof raw.satoshis === 'number' ? raw.satoshis : 1) !== 1) return null
+  const scriptHex = lockingScriptHex(raw.lockingScript)
+  if (!scriptHex || decodeBsv21Binary(scriptHex)) return null
+  const tags = Array.isArray(raw.tags) ? raw.tags.map(String) : []
+  if (
+    looksLikeRetiredFungibleTip({
+      tags,
+      customInstructions: raw.customInstructions,
+      lockingScriptHex: scriptHex,
+    })
+  ) {
+    return null
+  }
+  const envelope = parseOrdEnvelope(scriptHex)
+  if (!envelope?.body?.length) return null
+  let payload: ReturnType<typeof parseBsv21Json> = null
+  try {
+    payload = parseBsv21Json(JSON.parse(new TextDecoder().decode(envelope.body)))
+  } catch {
+    return null
+  }
+  if (!payload?.amt || !isBalanceBearingOp(payload.op)) return null
+  const outpoint = outpointUnderscore(outpointRaw).toLowerCase()
+  const tokenId =
+    payload.op === 'deploy+mint' ? normalizeTokenId(outpoint) : normalizeTokenId(payload.id ?? '')
+  if (!tokenId || BigInt(payload.amt) <= 0n) return null
+  const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
+  const sym = payload.sym ?? fromCi?.sym ?? tagValue(tags, 'sym:')
+  const icon = payload.icon ?? fromCi?.icon
+  return {
+    outpoint,
+    tokenId,
+    amt: payload.amt,
+    op: payload.op,
+    dec: payload.dec ?? fromCi?.dec ?? 0,
+    satoshis: 1,
+    encoding: 'legacy-json',
+    lockingScript: scriptHex,
+    ...(sym ? { sym } : {}),
+    ...(icon ? { icon } : {}),
+  }
+}
+
+/**
+ * A remittance-only row (plain script, token named in custom instructions)
+ * that this wallet already held as that exact outpoint.
+ *
+ * Remittance is metadata, so it never introduces a token; it only keeps
+ * projecting one the wallet held before inscriptions were kept on the row.
+ */
+function decodeContinuingRemittanceTip(
+  raw: ListedOutput,
+  continuing: ReadonlySet<string>,
+): Bsv21Utxo | null {
+  const outpoint = outpointUnderscore((raw.outpoint ?? '').trim()).toLowerCase()
+  if (!outpoint || !continuing.has(outpoint)) return null
+  if ((typeof raw.satoshis === 'number' ? raw.satoshis : 1) !== 1) return null
+  const ci = parseBsv21CustomInstructions(raw.customInstructions)
+  if (!ci?.amt || !isBalanceBearingOp(ci.op)) return null
+  const tokenId =
+    ci.op === 'deploy+mint' ? normalizeTokenId(outpoint) : normalizeTokenId(ci.id ?? '')
+  if (!tokenId || !/^\d+$/.test(ci.amt) || BigInt(ci.amt) <= 0n) return null
+  const scriptHex = lockingScriptHex(raw.lockingScript)
+  return {
+    outpoint,
+    tokenId,
+    amt: ci.amt,
+    op: ci.op,
+    dec: ci.dec ?? 0,
+    satoshis: 1,
+    ...(scriptHex ? { lockingScript: scriptHex } : {}),
+    ...(ci.sym ? { sym: ci.sym } : {}),
+    ...(ci.icon ? { icon: ci.icon } : {}),
+  }
+}
+
+/**
  * Un-hide a tip whose hide mark can only have been written by a different
  * wallet on this device.
  *
@@ -267,15 +355,11 @@ function reportPhase(phase: string, startedAt: number, detail?: string): void {
   console.info(`[bsv21] ${phase} done ${ms}ms${detail ? ` — ${detail}` : ''}`)
 }
 
-export async function listBsv21BinaryTips(
+async function decodeHeldRows(
   wallet: ActiveWallet,
-  opts: { includeCustomInstructions?: boolean } = {},
+  rows: ListedOutput[],
+  decode: (row: ListedOutput) => Bsv21Utxo | null,
 ): Promise<Bsv21Utxo[]> {
-  const readStartedAt = Date.now()
-  const rows = await listBasketTips(wallet, BSV21_BASKET, {
-    includeCustomInstructions: opts.includeCustomInstructions,
-  })
-  reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
   const decodeStartedAt = Date.now()
   const tips: Bsv21Utxo[] = []
   const seen = new Set<string>()
@@ -283,7 +367,7 @@ export async function listBsv21BinaryTips(
     // Each decode may verify a Sigma signature; keep the thread answerable
     // between rows rather than for the whole basket.
     if (uiBudgetExpired()) await yieldToUi()
-    const tip = decodeListedBsv21Tip(row, wallet.identityKey)
+    const tip = decode(row)
     if (!tip) continue
     if (isItemSent(tip.outpoint) && !healStaleReceivedHide(tip, wallet)) {
       continue
@@ -296,12 +380,97 @@ export async function listBsv21BinaryTips(
   return tips
 }
 
+export async function listBsv21BinaryTips(
+  wallet: ActiveWallet,
+  opts: { includeCustomInstructions?: boolean } = {},
+): Promise<Bsv21Utxo[]> {
+  const readStartedAt = Date.now()
+  const rows = await listBasketTips(wallet, BSV21_BASKET, {
+    includeCustomInstructions: opts.includeCustomInstructions,
+  })
+  reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
+  return decodeHeldRows(wallet, rows, (row) => decodeListedBsv21Tip(row, wallet.identityKey))
+}
+
+/** Rows per basket page for the held-tokens projection. */
+const HELD_PAGE_SIZE = 1000
+
+/**
+ * Every row of basket `bsv21`, all pages, or a throw.
+ *
+ * The token list is a projection of this answer, so a failed or truncated read
+ * must never look like a smaller wallet: an error propagates and a page count
+ * that does not reach the reported total refuses.
+ */
+async function readWholeBasket(wallet: ActiveWallet, basket: string): Promise<ListedOutput[]> {
+  const rows: ListedOutput[] = []
+  for (let offset = 0; ; offset += HELD_PAGE_SIZE) {
+    const listed = (await wallet.wallet.listOutputs({
+      basket,
+      limit: HELD_PAGE_SIZE,
+      offset,
+      include: 'locking scripts',
+      includeCustomInstructions: true,
+      includeTags: true,
+      seekPermission: false,
+    })) as { outputs?: ListedOutput[]; totalOutputs?: number }
+    const page = listed.outputs
+    if (!Array.isArray(page)) throw new Error(`basket ${basket} answered without outputs`)
+    rows.push(...page)
+    const total = typeof listed.totalOutputs === 'number' ? listed.totalOutputs : null
+    if (page.length < HELD_PAGE_SIZE) {
+      if (total != null && rows.length < total) {
+        throw new Error(`basket ${basket} listed ${rows.length} of ${total} row(s)`)
+      }
+      return rows
+    }
+    if (total != null && rows.length >= total) return rows
+  }
+}
+
+/**
+ * Every fungible tip the wallet holds in basket `bsv21`, both encodings —
+ * the source the token list projects. Throws when the basket cannot answer
+ * in full.
+ */
+export async function listHeldFungibleTips(
+  wallet: ActiveWallet,
+  opts: { continuing?: ReadonlySet<string> } = {},
+): Promise<Bsv21Utxo[]> {
+  const readStartedAt = Date.now()
+  const rows = await readWholeBasket(wallet, BSV21_BASKET)
+  reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
+  const continuing = opts.continuing ?? new Set<string>()
+  return decodeHeldRows(
+    wallet,
+    rows,
+    (row) =>
+      decodeListedBsv21Tip(row, wallet.identityKey) ??
+      decodeListedLegacyTip(row) ??
+      decodeContinuingRemittanceTip(row, continuing),
+  )
+}
+
+/** Held tokens, aggregated by deploy, with deploy caps filled. Throws like {@link listHeldFungibleTips}. */
+export async function listHeldFungibleTokens(
+  wallet: ActiveWallet,
+  opts: { continuing?: ReadonlySet<string> } = {},
+): Promise<ReturnType<typeof aggregateFungibles>> {
+  return withDeployCaps(wallet, aggregateFungibles(await listHeldFungibleTips(wallet, opts)))
+}
+
 export async function listBsv21BinaryTokens(
   wallet?: ActiveWallet | null,
 ): Promise<ReturnType<typeof aggregateFungibles>> {
   const active = wallet ?? getActiveWallet()
   if (!active) return []
-  const tokens = aggregateFungibles(await listBsv21BinaryTips(active))
+  return withDeployCaps(active, aggregateFungibles(await listBsv21BinaryTips(active)))
+}
+
+async function withDeployCaps(
+  active: ActiveWallet,
+  tokens: ReturnType<typeof aggregateFungibles>,
+): Promise<ReturnType<typeof aggregateFungibles>> {
   const capsStartedAt = Date.now()
   let lookups = 0
   for (const token of tokens) {
