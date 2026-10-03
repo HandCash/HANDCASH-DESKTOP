@@ -845,6 +845,7 @@ const WIPE = `stateDiagram-v2
   syncing --> wiping : SYNCED\\n(history holds localState)
   syncing --> blocked : BLOCKED
   blocked --> syncing : RETRY
+  blocked --> wiping : OVERRIDE\\n(loss named + confirmed)
   blocked --> idle : BACK
   wiping --> success : SUCCESS
   wiping --> failure : FAIL

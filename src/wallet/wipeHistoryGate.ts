@@ -14,7 +14,12 @@ import { sessionBackupCredential } from './sessionBackupAuth'
 import { appendAppLog } from './appLog'
 
 export type WipeHistoryGate = Readonly<{
-  kind: 'backup-off' | 'nothing-to-lose' | 'synced'
+  /**
+   * `overridden`: the user wiped after being told what the backup lacks. The
+   * gate's job is to make that loss a decision — refusing outright only sent
+   * people to uninstall, which loses the same state with no warning at all.
+   */
+  kind: 'backup-off' | 'nothing-to-lose' | 'synced' | 'overridden'
   checkedAt: number
 }>
 
@@ -37,8 +42,27 @@ function pass(kind: WipeHistoryGate['kind']): WipeHistoryCheck {
 }
 
 function refuse(refusal: WipeHistoryRefusal): WipeHistoryCheck {
-  appendAppLog('warn', `[wipe] history gate refused ${refusal.kind}`)
+  const detail = 'detail' in refusal ? ` — ${refusal.detail}` : ''
+  appendAppLog('warn', `[wipe] history gate refused ${refusal.kind}${detail}`)
   return { ok: false, refusal }
+}
+
+/** The user confirmed wiping without a synced backup, knowing `refusal`. */
+export function overrideWipeGate(refusal: WipeHistoryRefusal, tokens: number): WipeHistoryGate {
+  appendAppLog('warn', `[wipe] history gate overridden ${refusal.kind} — ${tokens} token(s) held`)
+  return Object.freeze({ kind: 'overridden', checkedAt: Date.now() })
+}
+
+/**
+ * What a wipe without a synced backup destroys. Tokens and peer-to-peer
+ * payments are only in localState: no address scan can find a BRC-162 tip.
+ */
+export function wipeLossWarning(tokens: number): string {
+  const held =
+    tokens > 0
+      ? `${tokens} token${tokens === 1 ? '' : 's'} and any payments received peer to peer`
+      : 'Payments and tokens received peer to peer'
+  return `${held} exist only on this device until history syncs. Your recovery phrase alone cannot bring them back.`
 }
 
 export async function syncHistoryBeforeWipe(): Promise<WipeHistoryCheck> {

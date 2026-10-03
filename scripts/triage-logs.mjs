@@ -273,6 +273,8 @@ function sessionFacts(header, events) {
   const deadCoins = deadCoinFacts(events)
   const receiptReplays = receiptReplayFacts(events)
   const serverWallet = serverWalletFacts(events)
+  const tokenSends = tokenSendFacts(events)
+  const chainIngest = chainIngestFacts(events)
   const accountSwitches = accountSwitchFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
@@ -351,6 +353,8 @@ function sessionFacts(header, events) {
     // Dev-key server wallet: funds, storage internalizes (landed / deferred
     // with reason), refresh and recover failures.
     serverWallet,
+    tokenSends,
+    chainIngest,
     accountSwitches,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
@@ -1676,6 +1680,89 @@ function serverWalletFacts(events) {
   return facts
 }
 
+/**
+ * BSV-21 sends: how far each attempt got (panel start → plan → createAction
+ * → txid) and the named reason it stopped, tagged with the build that hit it.
+ */
+function tokenSendFacts(events) {
+  const facts = {
+    started: 0,
+    planned: 0,
+    signing: 0,
+    signed: 0,
+    sent: 0,
+    failed: {},
+    blocked: {},
+    refused: {},
+    lastPlan: null,
+    // Every later line naming a signed send's txid, in order and deduped:
+    // where the transfer went after the wallet signed it.
+    trails: [],
+  }
+  let build = 'unknown'
+  const bump = (bucket, reason) => {
+    const key = `${reason.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 200)} [v${build}]`
+    bucket[key] = (bucket[key] ?? 0) + 1
+  }
+  const open = new Map()
+  for (const e of events) {
+    const launch = /^App log capture started — v(\S+)/.exec(e.text)
+    if (launch) build = launch[1]
+    const t = e.text
+    for (const [prefix, trail] of open) {
+      if (!t.includes(prefix) || trail.lines.length >= 25) continue
+      const line = `${t.replaceAll(prefix, '<send>').replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 220)} [v${build}]`
+      if (!trail.lines.includes(line)) trail.lines.push(line)
+    }
+    let r
+    if (
+      (r = /^\[bsv21\] createAction done txid=([0-9a-f]{64})/.exec(t)) &&
+      !open.has(r[1].slice(0, 12))
+    ) {
+      const trail = { txid: r[1], build, lines: [] }
+      facts.trails.push(trail)
+      open.set(r[1].slice(0, 12), trail)
+    }
+    if (/^\[send-token\] send start/.test(t)) facts.started += 1
+    else if (/^\[send-token\] sent$/.test(t)) facts.sent += 1
+    else if ((r = /^\[send-token\] send failed — (.*)$/.exec(t))) bump(facts.failed, r[1])
+    else if ((r = /^\[send-token\] blocked — (.*)$/.exec(t))) bump(facts.blocked, r[1])
+    else if ((r = /^\[bsv21\] send plan (.*)$/.exec(t))) {
+      facts.planned += 1
+      facts.lastPlan = `${r[1]} at ${new Date(e.at).toISOString()}`
+    } else if (/^\[bsv21\] createAction start/.test(t)) facts.signing += 1
+    else if (/^\[bsv21\] createAction done/.test(t)) facts.signed += 1
+    else if ((r = /^\[bsv21\] send refused before sign: (.*)$/.exec(t))) bump(facts.refused, r[1])
+    else if ((r = /^\[bsv21\] pre-sign refuse (.*)$/.exec(t))) bump(facts.refused, r[1])
+    else if ((r = /^\[bsv21\] (tip restore after failed send skipped.*)$/.exec(t))) bump(facts.refused, r[1])
+  }
+  return facts
+}
+
+/**
+ * Chain ingest and recovery as they ran: every address scan, token / ordinal
+ * index answer, import outcome, wipe-gate verdict and recover-from-tx claim,
+ * grouped. A recovered wallet missing an asset shows here as a scan that never
+ * ran, an index that failed, a tip that never imported, or a wipe overridden.
+ */
+function chainIngestFacts(events) {
+  const lines = {}
+  let build = 'unknown'
+  for (const e of events) {
+    const launch = /^App log capture started — v(\S+)/.exec(e.text)
+    if (launch) build = launch[1]
+    if (!/^\[(chain-ingest|token-scan|ordinal-scan|wipe|recover-tx)\]/.test(e.text)) continue
+    const key = `${e.text
+      .replace(/[0-9a-f]{12,}(\.\d+)?/g, '<id>')
+      .replace(/\b\d+\b/g, '<n>')
+      .slice(0, 200)} [v${build}]`
+    lines[key] = (lines[key] ?? 0) + 1
+  }
+  return Object.entries(lines)
+    .sort((a, b) => b[1] - a[1])
+    .map(([line, count]) => ({ line, count }))
+}
+
 const RECEIPT_MERGE_RE = /^\[activity\] merged earned\/(receive-collectable|receive-token) \d+ sat ([0-9a-f]{12})… — into row \d+ of \d+, first seen (\S+)/
 const CARD_REENTRY_RE = /^\[collectables\] re-entered (\d+) announced card\(s\)/
 
@@ -2954,6 +3041,30 @@ function report(state, answers) {
     ]) {
       for (const [reason, n] of Object.entries(bucket)) console.log(`  ${label} ×${n}: ${reason}`)
     }
+  }
+
+  const ts = latest.tokenSends
+  if (ts && (ts.started || ts.planned || [ts.failed, ts.blocked, ts.refused].some((b) => Object.keys(b).length))) {
+    console.log('\nToken sends (code-counted):')
+    console.log(
+      `  started ${ts.started} · planned ${ts.planned} · signing ${ts.signing} · signed ${ts.signed} · sent ${ts.sent}${ts.lastPlan ? ` · last plan ${ts.lastPlan}` : ''}`,
+    )
+    for (const [label, bucket] of [
+      ['failed', ts.failed],
+      ['blocked in panel', ts.blocked],
+      ['refused', ts.refused],
+    ]) {
+      for (const [reason, n] of Object.entries(bucket)) console.log(`  ${label} ×${n}: ${reason}`)
+    }
+    for (const trail of ts.trails) {
+      console.log(`  ${trail.txid.slice(0, 16)}… [v${trail.build}]`)
+      for (const line of trail.lines) console.log(`    ${line}`)
+    }
+  }
+
+  if (latest.chainIngest?.length) {
+    console.log('\nChain ingest & recovery (code-counted):')
+    for (const { line, count } of latest.chainIngest.slice(0, 12)) console.log(`  ${count}× ${line}`)
   }
 
   const switches = latest.accountSwitches

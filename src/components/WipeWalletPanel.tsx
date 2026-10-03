@@ -4,16 +4,23 @@ import { wipeMachine } from "../machines/wipeMachine";
 import { StatusBanner } from "@aeon-ui/react";
 import { wipeAllWalletData } from "../wallet/wipeWallet";
 import {
+  overrideWipeGate,
   syncHistoryBeforeWipe,
+  wipeLossWarning,
   wipeRefusalMessage,
+  type WipeHistoryGate,
 } from "../wallet/wipeHistoryGate";
+import { getCachedFungibles } from "../wallet/token/list";
 import { playWalletSound } from "../wallet/soundService";
+import { useAsyncAction } from "../hooks/useAsyncAction";
+import { AsyncActionPrompt } from "./AsyncActionPrompt";
 import { ConfirmPasswordGate } from "./ConfirmPasswordGate";
 
 const CONFIRM_WORD = "DELETE";
 
 export function WipeWalletPanel() {
   const [snapshot, send] = useMachine(wipeMachine);
+  const override = useAsyncAction<"override">();
   const stateAttr = stateToAttr(snapshot.value);
   const passwordReady = snapshot.context.unlocked;
   const canSubmit =
@@ -22,17 +29,11 @@ export function WipeWalletPanel() {
     snapshot.context.confirmText.trim().toUpperCase() === CONFIRM_WORD;
 
   const busy = snapshot.matches("syncing") || snapshot.matches("wiping");
+  const tokensHeld = getCachedFungibles().length;
 
-  const syncThenWipe = async () => {
-    const check = await syncHistoryBeforeWipe();
-    if (!check.ok) {
-      send({ type: "BLOCKED", reason: wipeRefusalMessage(check.refusal) });
-      playWalletSound("error");
-      return;
-    }
-    send({ type: "SYNCED", gate: check.gate });
+  const wipeWith = async (gate: WipeHistoryGate) => {
     try {
-      await wipeAllWalletData(snapshot.context.password || null, check.gate);
+      await wipeAllWalletData(snapshot.context.password || null, gate);
       send({ type: "SUCCESS" });
       playWalletSound("soft");
       window.location.reload();
@@ -41,6 +42,42 @@ export function WipeWalletPanel() {
       send({ type: "FAIL", error: message });
       playWalletSound("error");
     }
+  };
+
+  const syncThenWipe = async () => {
+    const check = await syncHistoryBeforeWipe();
+    if (!check.ok) {
+      send({
+        type: "BLOCKED",
+        reason: wipeRefusalMessage(check.refusal),
+        refusal: check.refusal,
+      });
+      playWalletSound("error");
+      return;
+    }
+    send({ type: "SYNCED", gate: check.gate });
+    await wipeWith(check.gate);
+  };
+
+  const wipeAnyway = () => {
+    const refusal = snapshot.context.refusal;
+    if (!refusal) return;
+    void override.run(
+      "override",
+      async () => {
+        const gate = overrideWipeGate(refusal, tokensHeld);
+        send({ type: "OVERRIDE", gate });
+        await wipeWith(gate);
+      },
+      {
+        confirm: {
+          title: "Wipe without a backup?",
+          body: wipeLossWarning(tokensHeld),
+          confirmLabel: "Wipe anyway",
+          danger: true,
+        },
+      }
+    );
   };
 
   const submit = async () => {
@@ -115,7 +152,9 @@ export function WipeWalletPanel() {
             <StatusBanner.Root tone="danger" status="blocked">
               <StatusBanner.Copy>
                 <StatusBanner.Title>History not synced</StatusBanner.Title>
-                <StatusBanner.Body>{snapshot.context.error}</StatusBanner.Body>
+                <StatusBanner.Body>
+                  {snapshot.context.error} {wipeLossWarning(tokensHeld)}
+                </StatusBanner.Body>
               </StatusBanner.Copy>
             </StatusBanner.Root>
           ) : null}
@@ -131,6 +170,7 @@ export function WipeWalletPanel() {
               <button
                 type="button"
                 className="btn btn-primary"
+                disabled={override.busy}
                 onClick={() => {
                   send({ type: "RETRY" });
                   void syncThenWipe();
@@ -140,7 +180,17 @@ export function WipeWalletPanel() {
               </button>
               <button
                 type="button"
+                className="btn btn-danger"
+                data-aeon-part="override"
+                disabled={override.busy}
+                onClick={wipeAnyway}
+              >
+                Wipe anyway
+              </button>
+              <button
+                type="button"
                 className="btn btn-ghost"
+                disabled={override.busy}
                 onClick={() => send({ type: "BACK" })}
               >
                 Back
@@ -178,6 +228,7 @@ export function WipeWalletPanel() {
           )}
         </form>
       )}
+      <AsyncActionPrompt action={override} />
     </div>
   );
 }

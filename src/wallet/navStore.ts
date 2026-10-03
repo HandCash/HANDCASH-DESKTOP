@@ -24,6 +24,7 @@ export type SettingId =
   | 'logs'
   | 'wallet-health'
   | 'dev-keys'
+  | 'recover-tx'
 
 export type NavChild =
   | { type: 'app'; origin: string }

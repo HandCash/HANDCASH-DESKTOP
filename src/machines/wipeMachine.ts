@@ -1,5 +1,5 @@
 import { setup, assign } from 'xstate'
-import type { WipeHistoryGate } from '../wallet/wipeHistoryGate'
+import type { WipeHistoryGate, WipeHistoryRefusal } from '../wallet/wipeHistoryGate'
 
 export type WipeContext = {
   /** HandCash password when used; empty string means device factor already verified. */
@@ -11,11 +11,14 @@ export type WipeContext = {
   error: string | null
   /** Proof the history replica holds localState; wipe refuses without it. */
   gate: WipeHistoryGate | null
+  /** Why the history gate refused; OVERRIDE names it in the log. */
+  refusal: WipeHistoryRefusal | null
 }
 
 /**
  * Chart: wipeWallet
- * States: idle → syncing → wiping → success | failure; syncing → blocked
+ * States: idle → syncing → wiping → success | failure; syncing → blocked;
+ * blocked → wiping only through OVERRIDE (loss named and confirmed)
  */
 export const wipeMachine = setup({
   types: {
@@ -27,7 +30,8 @@ export const wipeMachine = setup({
       | { type: 'TOGGLE_ACK'; acknowledged: boolean }
       | { type: 'SUBMIT' }
       | { type: 'SYNCED'; gate: WipeHistoryGate }
-      | { type: 'BLOCKED'; reason: string }
+      | { type: 'BLOCKED'; reason: string; refusal: WipeHistoryRefusal }
+      | { type: 'OVERRIDE'; gate: WipeHistoryGate }
       | { type: 'BACK' }
       | { type: 'SUCCESS' }
       | { type: 'FAIL'; error: string }
@@ -43,6 +47,7 @@ export const wipeMachine = setup({
     acknowledged: false,
     error: null,
     gate: null,
+    refusal: null,
   },
   states: {
     idle: {
@@ -91,12 +96,20 @@ export const wipeMachine = setup({
         },
         BLOCKED: {
           target: 'blocked',
-          actions: assign({ error: ({ event }) => event.reason }),
+          actions: assign({
+            error: ({ event }) => event.reason,
+            refusal: ({ event }) => event.refusal,
+          }),
         },
       },
     },
     blocked: {
       on: {
+        OVERRIDE: {
+          guard: ({ event }) => event.gate.kind === 'overridden',
+          target: 'wiping',
+          actions: assign({ gate: ({ event }) => event.gate, error: null }),
+        },
         RETRY: {
           target: 'syncing',
           actions: assign({ error: null }),

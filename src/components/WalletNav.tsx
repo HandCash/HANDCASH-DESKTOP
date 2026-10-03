@@ -77,6 +77,7 @@ import { HistoryBackupPanel } from './HistoryBackupPanel'
 import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { DevKeysPanel } from './DevKeysPanel'
+import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCachedCollectable, getCollectable } from '../wallet/collectables'
@@ -723,6 +724,9 @@ export const WalletNav = memo(function WalletNav({
                 <AboutHandCashPanel />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'dev-keys' && <DevKeysPanel />}
+              {stageChild.type === 'setting' && stageChild.settingId === 'recover-tx' && (
+                <RecoverFromTxPanel />
+              )}
               {stageChild.type === 'setting' && stageChild.settingId === 'statecharts' && (
                 <StatechartsPanel />
               )}

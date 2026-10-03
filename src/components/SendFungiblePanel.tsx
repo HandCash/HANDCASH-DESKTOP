@@ -115,11 +115,12 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     let cancelled = false
     void listFungibles().then((list) => {
       if (cancelled) return
-      setToken(
-        list.find(
-          (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId),
-        ) ?? null,
-      )
+      const found =
+        list.find((t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId)) ?? null
+      if (!found) {
+        console.warn(`[send-token] blocked — token not found ${tokenId.slice(0, 16)} in ${list.length}`)
+      }
+      setToken(found)
     })
     return () => {
       cancelled = true
@@ -155,6 +156,9 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     !sendBlocked && to.trim().length > 0 && amount.trim().length > 0
 
   useEffect(() => {
+    if (!pathVerdict.allowed) {
+      console.warn(`[send-token] blocked — ${pathVerdict.error ?? 'refused'}`)
+    }
     sendUi({
       type: 'CLASSIFY',
       refuseReason: pathVerdict.allowed ? null : pathVerdict.error,
@@ -220,6 +224,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
           setError(null)
         },
         onError: (err) => {
+          console.warn(`[send-token] blocked — recipient: ${err.message}`)
           setTo('')
           setRecipientIdentityKey(null)
           setError(err.message)
@@ -284,9 +289,11 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     sendUi({ type: 'CONFIRM' })
     clearNavChild()
 
+    console.info(`[send-token] send start ${sym ?? token.tokenId.slice(0, 16)}`)
     void (async () => {
       try {
         await sendFungible(send)
+        console.info('[send-token] sent')
         playPaymentSuccessSound()
         toastSuccess('Sent', `${sym} on the way to ${label}.`)
         void listFungibles().catch(() => {})
@@ -296,8 +303,10 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
           console.warn('[send-token] balance refresh failed', err)
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(`[send-token] send failed — ${message}`)
         playWalletSound('error')
-        toastError('Send failed', err instanceof Error ? err.message : String(err))
+        toastError('Send failed', message)
       } finally {
         sendingRef.current = false
       }
@@ -321,6 +330,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       sendUi({ type: 'REVIEW' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[send-token] blocked — review: ${message}`)
       setError(message)
       playWalletSound('deny')
     }

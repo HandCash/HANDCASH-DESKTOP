@@ -34,7 +34,8 @@ Legacy JSON BSV-21 (`application/bsv-20`) is read-only. New token transactions u
 
 1. **P2P settle** — `internalizePeerFungibleSettle` → basket `bsv21`. Every accepted tip is walked to its deploy with `prove()` (token-parent bodies filled from local/network raw tx; the toolbox does SPV on `internalizeAction`). An unprovable tip is refused with `lineage-unproven:<reason>` — a forged output naming a real token id never paints a balance. Display fields (`sym`, `dec`, `icon`) are inherited from the proven deploy, not from the sender's envelope.
 2. **BRC-100** — connected apps via `createAction` / `internalizeAction`; issuer enrich in `token/issuer.ts`.
-3. **Chain refresh** — does **not** import tokens from address scan (recovery via remittance / settle only).
+3. **Chain refresh** — does **not** import tokens from address scan (recovery via remittance / settle only). No public index (WhatsOnChain, Bitails, JungleBus, GorillaPool) returns an unspent BRC-162 tip by owner: the value prefix hides the P2PKH. A received token lives only in localState and the BRC-39 history replica.
+4. **Recover from transaction** (`recoverFromTx.ts`, Settings → Recover from transaction) — the sender's txid: every 1-sat output locked to this wallet's address and proven unspent goes through `classifyLegacyUtxos` → `importBsv21Tokens` (lineage proven as on receive). This is the way back for a reinstall whose history backup never held the token. Wipe names that loss before it lets the user override an unsynced history gate.
 
 ## BRC-176 prove (`token/prove176.ts`)
 

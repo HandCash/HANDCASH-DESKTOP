@@ -24,7 +24,13 @@ vi.mock('./historyBackup', () => {
 })
 
 import { HistoryThinOverwriteError } from './historyBackup'
-import { assertWipeGateFresh, syncHistoryBeforeWipe, WIPE_GATE_TTL_MS } from './wipeHistoryGate'
+import {
+  assertWipeGateFresh,
+  overrideWipeGate,
+  syncHistoryBeforeWipe,
+  WIPE_GATE_TTL_MS,
+  wipeLossWarning,
+} from './wipeHistoryGate'
 
 describe('syncHistoryBeforeWipe', () => {
   beforeEach(() => {
@@ -74,6 +80,21 @@ describe('syncHistoryBeforeWipe', () => {
     expect(await syncHistoryBeforeWipe()).toEqual({ ok: false, refusal: { kind: 'unconfirmed' } })
     h.meta.mockResolvedValue(null)
     expect(await syncHistoryBeforeWipe()).toEqual({ ok: false, refusal: { kind: 'unconfirmed' } })
+  })
+})
+
+describe('overrideWipeGate', () => {
+  it('names an overridden gate the wipe accepts while fresh', () => {
+    const gate = overrideWipeGate({ kind: 'upload-failed', detail: 'Failed to fetch' }, 1)
+    expect(gate.kind).toBe('overridden')
+    expect(() => assertWipeGateFresh(gate)).not.toThrow()
+    expect(() => assertWipeGateFresh(gate, gate.checkedAt + WIPE_GATE_TTL_MS + 1)).toThrow(/sync/)
+  })
+
+  it('warns what the recovery phrase cannot bring back', () => {
+    expect(wipeLossWarning(2)).toMatch(/^2 tokens and any payments received peer to peer/)
+    expect(wipeLossWarning(1)).toMatch(/^1 token and/)
+    expect(wipeLossWarning(0)).toMatch(/^Payments and tokens received peer to peer/)
   })
 })
 

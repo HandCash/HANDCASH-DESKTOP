@@ -121,6 +121,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'logs') return 'Session logs'
   if (id === 'wallet-health') return 'Wallet health'
   if (id === 'dev-keys') return 'Developer keys'
+  if (id === 'recover-tx') return 'Recover from transaction'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'change-password') return 'Unlock'
@@ -355,6 +356,12 @@ export function SettingsPanel() {
               ) : undefined
             }
             onClick={() => openSetting('wallet-health')}
+          />
+          <SettingsNavRow
+            label="Recover from transaction"
+            description="Claim a token or item by its txid"
+            icon={settingIconFor('recover-tx').icon}
+            onClick={() => openSetting('recover-tx')}
           />
           <SettingsNavRow
             label="Session logs"
