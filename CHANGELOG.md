@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.422] - 2026-10-03
+
+### Fixed
+
+- **A Refresh no longer freezes token sends and the wallet's records behind slow explorers.** Before reading balances, every Refresh checks that no pending transaction builds on a failed one. That check asked explorers about each affected transaction one at a time, sometimes tens of seconds each, while holding the wallet's storage lock. Every send, listing and signature waited behind it. On one phone a token send sat for over 30 seconds without starting, the Syncing pill timed out, and releasing unsigned reservations timed out four times. Explorers are now asked with the lock released, four at a time. A transaction they confirm isn't asked about again for 30 minutes, and the result is applied in a short second step. A pending transaction that appears while the explorers are answering waits for the next Refresh instead of being judged on an answer nobody asked for.
+
+### Changed
+
+- `npm run triage` lists every token send that never reached planning, with what the wallet was doing meanwhile. Token sends now log how long they took to find their outputs.
+
 ## [1.3.421] - 2026-10-03
 
 ### Fixed

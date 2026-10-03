@@ -1700,7 +1700,11 @@ function tokenSendFacts(events) {
     // Every later line naming a signed send's txid, in order and deduped:
     // where the transfer went after the wallet signed it.
     trails: [],
+    // Wallet lines after each `send start`, until it plans, ends or 20 lines:
+    // where a send that never planned was waiting.
+    starts: [],
   }
+  let startTrail = null
   let build = 'unknown'
   const bump = (bucket, reason) => {
     const key = `${reason.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 200)} [v${build}]`
@@ -1725,7 +1729,25 @@ function tokenSendFacts(events) {
       facts.trails.push(trail)
       open.set(r[1].slice(0, 12), trail)
     }
-    if (/^\[send-token\] send start/.test(t)) facts.started += 1
+    if (startTrail) {
+      const ms = e.at - startTrail.atMs
+      if (ms >= 0 && /^\[[\w-]+\]/.test(t)) {
+        const shape = t.replace(/[0-9a-f]{12,}/g, '<id>').replace(/\d+/g, '<n>').slice(0, 200)
+        const prior = startTrail.lines.find((l) => l.shape === shape)
+        if (prior) prior.times += 1
+        else startTrail.lines.push({ shape, first: `+${ms}ms ${t.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 200)}`, times: 1 })
+      }
+      startTrail.lastSeenMs = ms
+      if (ms < 0 || /^\[bsv21\] send plan|^\[send-token\] (sent|send failed)/.test(t) || startTrail.lines.length >= 30) {
+        startTrail.ended = t.slice(0, 120)
+        startTrail = null
+      }
+    }
+    if ((r = /^\[send-token\] send start (.*)$/.exec(t))) {
+      facts.started += 1
+      startTrail = { token: r[1], build, at: new Date(e.at).toISOString(), atMs: e.at, lines: [], ended: null, lastSeenMs: 0 }
+      facts.starts.push(startTrail)
+    }
     else if (/^\[send-token\] sent$/.test(t)) facts.sent += 1
     else if ((r = /^\[send-token\] send failed — (.*)$/.exec(t))) bump(facts.failed, r[1])
     else if ((r = /^\[send-token\] blocked — (.*)$/.exec(t))) bump(facts.blocked, r[1])
@@ -3158,6 +3180,15 @@ function report(state, answers) {
     for (const trail of ts.trails) {
       console.log(`  ${trail.txid.slice(0, 16)}… [v${trail.build}]`)
       for (const line of trail.lines) console.log(`    ${line}`)
+    }
+    const seenStarts = new Set()
+    for (const st of ts.starts ?? []) {
+      if (st.ended?.startsWith('[bsv21] send plan') || seenStarts.has(st.at)) continue
+      seenStarts.add(st.at)
+      console.log(`  ${st.token} send at ${st.at} [v${st.build}] never planned — ${st.ended ? `ended: ${st.ended}` : `upload ended +${st.lastSeenMs}ms later`}`)
+      for (const line of st.lines.filter((l) => !/^\[nav\]/.test(l.shape)).slice(0, 12)) {
+        console.log(`    ${line.times > 1 ? `${line.times}× ` : ''}${line.first}`)
+      }
     }
   }
 

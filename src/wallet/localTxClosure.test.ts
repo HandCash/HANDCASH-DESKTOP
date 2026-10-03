@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 import {
+  __resetTxClosureMemoForTests,
   failLocalTxClosure,
+  failOrphanedLocalTxs,
   inputTxidsOfRawTx,
   orphanedDescendants,
   planFailureClosure,
@@ -154,6 +156,10 @@ function fakeStorage(rows: Row[], outputs: Array<{ outputId: number; txid: strin
   return { sp, statusLog, rows, outputs }
 }
 
+beforeEach(() => {
+  __resetTxClosureMemoForTests()
+})
+
 describe('failLocalTxClosure', () => {
   it('is a no-op when nothing has failed', async () => {
     const { sp, statusLog } = fakeStorage(
@@ -291,5 +297,95 @@ describe('failLocalTxClosure', () => {
     )
     await failLocalTxClosure(sp, { txExistsOnChain: async () => null })
     expect(rows[1]?.status).toBe('failed')
+  })
+})
+
+const chainLookups = vi.hoisted(() => ({ answer: async (_txid: string): Promise<boolean | null> => null }))
+vi.mock('./legacyScan', () => ({
+  txExistsOnChain: (txid: string) => chainLookups.answer(txid),
+}))
+
+describe('failOrphanedLocalTxs', () => {
+  /** A wallet whose storage session is exclusive, and records when it is held. */
+  function sessionWallet(sp: ClosureStorage) {
+    const held = { now: false, sessions: 0 }
+    return {
+      held,
+      active: {
+        chain: 'main' as const,
+        wallet: {
+          storage: {
+            runAsStorageProvider: async <T,>(fn: (sp: unknown) => Promise<T>): Promise<T> => {
+              held.now = true
+              held.sessions += 1
+              try {
+                return await fn(sp)
+              } finally {
+                held.now = false
+              }
+            },
+          },
+        },
+      },
+    }
+  }
+
+  it('asks the chain with the storage lock released', async () => {
+    const { sp, rows } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([A]) },
+      ],
+      [],
+    )
+    const { active, held } = sessionWallet(sp)
+    const heldDuringLookup: boolean[] = []
+    chainLookups.answer = async () => {
+      heldDuringLookup.push(held.now)
+      return null
+    }
+    const outcome = await failOrphanedLocalTxs(active)
+    expect(heldDuringLookup).toEqual([false])
+    expect(held.sessions).toBe(2)
+    expect(outcome.failed).toEqual([B])
+    expect(rows[1]?.status).toBe('failed')
+  })
+
+  it('remembers a descendant the chain has instead of asking every pass', async () => {
+    const { sp } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([A]) },
+      ],
+      [],
+    )
+    const { active } = sessionWallet(sp)
+    const asked: string[] = []
+    chainLookups.answer = async (txid) => {
+      asked.push(txid)
+      return true
+    }
+    await failOrphanedLocalTxs(active)
+    const second = await failOrphanedLocalTxs(active)
+    expect(asked).toEqual([B])
+    expect(second.keptOnChain).toEqual([B])
+  })
+
+  it('leaves a closure that grew during the chain check for the next pass', async () => {
+    const { sp, rows } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([A]) },
+      ],
+      [],
+    )
+    const { active } = sessionWallet(sp)
+    chainLookups.answer = async () => {
+      rows.push({ transactionId: 3, txid: C, status: 'sending', rawTx: rawTxSpending([B]) })
+      return null
+    }
+    const outcome = await failOrphanedLocalTxs(active)
+    expect(outcome).toEqual({ failed: [], keptOnChain: [] })
+    expect(rows.map((r) => r.status)).toEqual(['failed', 'unproven', 'sending'])
   })
 })

@@ -371,6 +371,7 @@ export async function sendBsv21Tokens(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
+  const tipsStartedAt = Date.now()
   const listed162 = await listBsv21BinaryTips(active, {
     includeCustomInstructions: false,
   })
@@ -399,8 +400,15 @@ export async function sendBsv21Tokens(args: {
       amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
       lockingScript: t.lockingScript,
     }))
+  const listedForToken = fromBasket.length
   if (fromArgs.length === 0 && fromBasket.length === 0) {
     fromBasket.push(...(await recoverBsv21TipsFromLocalBeef(active, tokenId)))
+  }
+  const tipsMs = Date.now() - tipsStartedAt
+  if (tipsMs >= 250) {
+    console.info(
+      `[bsv21] send tips done ${tipsMs}ms — listed ${listedForToken}, recovered ${fromBasket.length - listedForToken}`,
+    )
   }
   const plan = planBsv21Send({
     tokenId,

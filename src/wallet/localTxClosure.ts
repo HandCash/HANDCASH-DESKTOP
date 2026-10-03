@@ -25,6 +25,7 @@
  * tx has a spendable output, no live tx spends a dead one.
  */
 import { Transaction } from '@bsv/sdk'
+import { mapPool } from './asyncPool'
 import type { Chain } from './vault'
 
 /** Statuses a local transaction can hold while the chain has not decided it. */
@@ -263,30 +264,27 @@ export type ClosureOutcome = {
   keptOnChain: string[]
 }
 
-/**
- * Fail every live local transaction that descends from a failed one.
- *
- * Runs inside a storage-provider session. `seedTxids` names transactions the
- * caller has just failed (or is about to treat as failed) so their closure is
- * taken in the same pass; with no seeds it is the invariant check — anything
- * the toolbox failed on its own since the last pass gets its closure now.
- */
-export async function failLocalTxClosure(
+type ClosureState = {
+  failed: Set<string>
+  links: LocalTxLink[]
+  byTxid: Map<string, StorageTxRow>
+  /** Live descendants of a failed transaction, parents first. */
+  reachable: string[]
+}
+
+/** Storage reads only: failed txs, live txs and the descendants between them. */
+async function readClosureState(
   sp: ClosureStorage,
-  opts: {
-    seedTxids?: readonly string[]
-    /** Chain proof that a descendant landed; `null` means unknown. */
-    txExistsOnChain?: (txid: string) => Promise<boolean | null>
-  } = {},
-): Promise<ClosureOutcome> {
+  seedTxids: readonly string[],
+): Promise<ClosureState | null> {
   const failedRows = await pageTransactions(sp, ['failed'], true)
   const failed = new Set<string>()
   for (const row of failedRows) {
     const id = normalize(String(row.txid ?? ''))
     if (/^[0-9a-f]{64}$/.test(id)) failed.add(id)
   }
-  for (const seed of opts.seedTxids ?? []) failed.add(normalize(seed))
-  if (failed.size === 0) return { failed: [], keptOnChain: [] }
+  for (const seed of seedTxids) failed.add(normalize(seed))
+  if (failed.size === 0) return null
 
   const liveRows = await pageTransactions(sp, LIVE_LOCAL_TX_STATUSES, false)
   const byTxid = new Map<string, StorageTxRow>()
@@ -297,26 +295,53 @@ export async function failLocalTxClosure(
     byTxid.set(id, row)
     links.push({ txid: id, inputTxids: inputTxidsOfRawTx(row.rawTx) })
   }
+  const reachable = orphanedDescendants(failed, links)
+  return reachable.length > 0 ? { failed, links, byTxid, reachable } : null
+}
 
+/** A transaction an explorer returned stays on chain; asked once per window. */
+const PRESENT_MEMO_MS = 30 * 60_000
+const presentAt = new Map<string, number>()
+const CHAIN_ASK_CONCURRENCY = 4
+
+/** Chain answers for each txid. `present` is remembered; silence is asked again next pass. */
+async function askChain(
+  txids: readonly string[],
+  txExistsOnChain?: (txid: string) => Promise<boolean | null>,
+): Promise<Map<string, ChainAnswer>> {
+  const chain = new Map<string, ChainAnswer>()
+  const now = Date.now()
+  const ask: string[] = []
+  for (const txid of txids) {
+    if ((presentAt.get(txid) ?? 0) > now - PRESENT_MEMO_MS) chain.set(txid, 'present')
+    else ask.push(txid)
+  }
+  if (!txExistsOnChain) {
+    for (const txid of ask) chain.set(txid, 'unknown')
+    return chain
+  }
+  await mapPool(ask, CHAIN_ASK_CONCURRENCY, async (txid) => {
+    let answer: boolean | null = null
+    try {
+      answer = await txExistsOnChain(txid)
+    } catch {
+      answer = null
+    }
+    if (answer === true) presentAt.set(txid, Date.now())
+    chain.set(txid, answer === true ? 'present' : 'unknown')
+  })
+  return chain
+}
+
+/** Plan from storage state plus chain answers and write it. Storage only. */
+async function applyClosure(
+  sp: ClosureStorage,
+  state: ClosureState,
+  chain: ReadonlyMap<string, ChainAnswer>,
+): Promise<ClosureOutcome> {
   const outcome: ClosureOutcome = { failed: [], keptOnChain: [] }
   if (typeof sp.updateTransactionStatus !== 'function') return outcome
-  const reachable = orphanedDescendants(failed, links)
-  if (reachable.length === 0) return outcome
-
-  // Ask the chain about every reachable descendant once; the plan reads the
-  // answers, it never asks.
-  const chain = new Map<string, ChainAnswer>()
-  if (opts.txExistsOnChain) {
-    for (const txid of reachable) {
-      let answer: boolean | null = null
-      try {
-        answer = await opts.txExistsOnChain(txid)
-      } catch {
-        answer = null
-      }
-      chain.set(txid, answer === true ? 'present' : 'unknown')
-    }
-  }
+  const { failed, links, byTxid } = state
 
   const plan = planFailureClosure({ failed, live: links, chain })
   for (const kept of plan.keep) {
@@ -355,6 +380,29 @@ export async function failLocalTxClosure(
   return outcome
 }
 
+/**
+ * Fail every live local transaction that descends from a failed one, inside
+ * the caller's storage-provider session.
+ *
+ * `seedTxids` names transactions the caller has just failed (or is about to
+ * treat as failed) so their closure is taken in the same pass; with no seeds
+ * it is the invariant check — anything the toolbox failed on its own since the
+ * last pass gets its closure now. Only for callers that must stay in one
+ * session; {@link failOrphanedLocalTxs} asks the chain outside the lock.
+ */
+export async function failLocalTxClosure(
+  sp: ClosureStorage,
+  opts: {
+    seedTxids?: readonly string[]
+    /** Chain proof that a descendant landed; `null` means unknown. */
+    txExistsOnChain?: (txid: string) => Promise<boolean | null>
+  } = {},
+): Promise<ClosureOutcome> {
+  const state = await readClosureState(sp, opts.seedTxids ?? [])
+  if (!state) return { failed: [], keptOnChain: [] }
+  return applyClosure(sp, state, await askChain(state.reachable, opts.txExistsOnChain))
+}
+
 type ClosureWallet = {
   chain: Chain
   wallet?: {
@@ -368,25 +416,57 @@ type ClosureWallet = {
  * Invariant pass for the active wallet: no live local transaction may spend a
  * failed one. Cheap when nothing has failed; safe to run at every boundary a
  * balance is read or a coin is selected.
+ *
+ * The storage-provider lock is exclusive — every listOutputs, signAction and
+ * BEEF read waits on it — so it is held for storage work only. The closure is
+ * read in one session, the chain is asked with no lock held, and a second
+ * session re-reads and applies. A closure that grew in between is left for the
+ * next pass rather than failed on an answer nobody asked for.
  */
 export async function failOrphanedLocalTxs(
   active: ClosureWallet | null | undefined,
   seedTxids: readonly string[] = [],
 ): Promise<ClosureOutcome> {
+  const none: ClosureOutcome = { failed: [], keptOnChain: [] }
   const storage = active?.wallet?.storage
-  if (!active || !storage?.runAsStorageProvider) return { failed: [], keptOnChain: [] }
+  if (!active || !storage?.runAsStorageProvider) return none
   const { txExistsOnChain } = await import('./legacyScan')
   try {
-    return await storage.runAsStorageProvider(async (activeSp) =>
-      failLocalTxClosure(activeSp as ClosureStorage, {
-        seedTxids,
-        txExistsOnChain: (txid) => txExistsOnChain(txid, active.chain),
-      }),
+    const readStartedAt = Date.now()
+    const asked = await storage.runAsStorageProvider((activeSp) =>
+      readClosureState(activeSp as ClosureStorage, seedTxids),
     )
+    if (!asked) return none
+    const askStartedAt = Date.now()
+    const chain = await askChain(asked.reachable, (txid) => txExistsOnChain(txid, active.chain))
+    const askMs = Date.now() - askStartedAt
+    if (askMs >= 250) {
+      console.info(
+        `[tx-closure] chain check done ${askMs}ms — ${asked.reachable.length} descendant(s), read ${askStartedAt - readStartedAt}ms`,
+      )
+    }
+    return await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as ClosureStorage
+      const state = await readClosureState(sp, seedTxids)
+      if (!state) return none
+      const unasked = state.reachable.filter((txid) => !chain.has(txid))
+      if (unasked.length > 0) {
+        console.info(
+          `[tx-closure] ${unasked.length} new descendant(s) appeared during the chain check — next pass`,
+        )
+        return none
+      }
+      return applyClosure(sp, state, chain)
+    })
   } catch (err) {
     console.warn('[tx-closure] pass skipped', err)
-    return { failed: [], keptOnChain: [] }
+    return none
   }
+}
+
+/** Test-only. */
+export function __resetTxClosureMemoForTests(): void {
+  presentAt.clear()
 }
 
 function normalize(txid: string): string {
