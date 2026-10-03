@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.420] - 2026-10-03
+
+### Fixed
+
+- **Token cards the wallet no longer holds now correct themselves.** A BRC-162 token card stayed forever once the wallet's records stopped listing it, and so did every card when the wallet listed no tokens at all; Send then failed with "Need N units; only 0 available". (One phone showed 14 tokens while holding 3.) Past its settle grace, an absent card's outputs are now checked on chain: every output spent retires the card, an unspent output that pays this wallet is reclaimed and becomes spendable, and no answer keeps the card for the next check.
+- `npm run triage` reports holdings against the wallet's records: token reads that showed more cards than held, cards retired, reclaimed or kept, and item reads that kept cards the basket no longer listed.
+
 ## [1.3.419] - 2026-10-03
 
 ### Changed

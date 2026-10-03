@@ -37,6 +37,8 @@ Legacy JSON BSV-21 (`application/bsv-20`) is read-only. New token transactions u
 3. **Chain refresh** — does **not** import tokens from address scan (recovery via remittance / settle only). No public index (WhatsOnChain, Bitails, JungleBus, GorillaPool) returns an unspent BRC-162 tip by owner: the value prefix hides the P2PKH. A received token lives only in localState and the BRC-39 history replica.
 4. **Recover from transaction** (`recoverFromTx.ts`, Settings → Recover from transaction) — the sender's txid: every 1-sat output locked to this wallet's address and proven unspent goes through `classifyLegacyUtxos` → `importBsv21Tokens` (lineage proven as on receive). This is the way back for a reinstall whose history backup never held the token. Wipe names that loss before it lets the user override an unsynced history gate.
 
+A cached card the basket stops listing is settled against the chain once past its settle grace (`token/absentCardFate.ts`): every tip proven spent retires the card, an unspent tip is reclaimed through the same recover-from-transaction import, and no answer keeps the card. A card that shows must be one Send can spend.
+
 ## BRC-176 prove (`token/prove176.ts`)
 
 - Decodes **both** encodings (BRC-161 JSON and BRC-162 binary; binary wins per output) so mixed lineages prove.

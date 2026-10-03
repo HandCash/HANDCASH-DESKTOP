@@ -31,6 +31,8 @@ import {
   type FungibleToken,
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
+import { chooseAbsentCardFate } from './absentCardFate'
+import type { OutpointSpendProbe } from '../createActionInputFate'
 import {
   chooseFungibleChainFate,
   FUNGIBLE_SETTLE_GRACE_MS,
@@ -431,7 +433,11 @@ function projectHeldTips(
     : preferred
 }
 
-export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]): FungibleToken[] {
+export function mergeLiveFungibles(
+  live: FungibleToken[],
+  prior: FungibleToken[],
+  retired: ReadonlySet<string> = new Set(),
+): FungibleToken[] {
   const byId = new Map<string, FungibleToken>()
   const liveIds = new Set<string>()
   for (const t of prior) {
@@ -470,6 +476,11 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   const now = Date.now()
   for (const [k, t] of [...byId.entries()]) {
     if (liveIds.has(k)) continue
+    // Every tip proven spent on chain outranks the lag allowances below.
+    if (retired.has(k)) {
+      byId.delete(k)
+      continue
+    }
     if (live.length === 0) continue
     // A card the basket has not projected *yet* is settling, not a ghost.
     // Retirement belongs to `chooseFungibleChainFate`, which also weighs the
@@ -1223,6 +1234,77 @@ function startFungiblesList(
 }
 
 /** Existence answers for cards the basket did not return — one probe per tx. */
+const absentProbes = new Map<string, { at: number; probe: OutpointSpendProbe }>()
+const ABSENT_PROBE_TTL_MS = 10 * 60_000
+const reclaimTried = new Set<string>()
+
+/**
+ * Settle cards the basket stopped listing against the chain. Returns the
+ * token keys whose every tip is proven spent; unspent tips are reclaimed in
+ * the background and land through the next read.
+ */
+async function settleAbsentCards(
+  wallet: ActiveWallet,
+  absent: FungibleToken[],
+): Promise<Set<string>> {
+  const retired = new Set<string>()
+  if (absent.length === 0) return retired
+  const cards = absent.map((card) => ({
+    card,
+    tips: heldTipsOf(card)
+      .map((tip) => normalizedDottedOutpoint(tip.outpoint))
+      .filter((point): point is string => Boolean(point)),
+  }))
+  const now = Date.now()
+  const stale = [...new Set(cards.flatMap((c) => c.tips))].filter((point) => {
+    const hit = absentProbes.get(point)
+    return !hit || (hit.probe.kind !== 'spent' && now - hit.at >= ABSENT_PROBE_TTL_MS)
+  })
+  if (stale.length > 0) {
+    const { probeOutpointSpends } = await import('../createActionInputFate')
+    const answers = await probeOutpointSpends(stale, '', wallet.chain)
+    for (const [point, probe] of answers) absentProbes.set(point, { at: now, probe })
+  }
+  const fresh = new Set(stale)
+  const probes = new Map([...absentProbes].map(([point, hit]) => [point, hit.probe]))
+  for (const { card, tips } of cards) {
+    const fate = chooseAbsentCardFate(tips, probes)
+    const label = card.tokenId.slice(0, 16)
+    if (fate.kind === 'retire') {
+      retired.add(tokenKey(card))
+      console.info(
+        `[bsv21] retiring absent card ${label} — ${tips.length} tip(s) spent, first by ${fate.spenders[0]!.slice(0, 12)}`,
+      )
+      continue
+    }
+    if (!tips.some((point) => fresh.has(point))) continue
+    if (fate.kind === 'keep') {
+      console.info(`[bsv21] keeping absent card ${label} — ${fate.reason}`)
+      continue
+    }
+    for (const txid of fate.txids) {
+      if (reclaimTried.has(txid)) continue
+      reclaimTried.add(txid)
+      console.info(`[bsv21] absent card ${label} unspent on chain — reclaiming ${txid.slice(0, 12)}`)
+      void import('../recoverFromTx')
+        .then(({ recoverFromTx }) => recoverFromTx(txid))
+        .then((outcome) => {
+          if (outcome.tokens === 0) {
+            console.info(
+              `[bsv21] reclaim ${txid.slice(0, 12)} claimed nothing — ours=${outcome.ours} spent=${outcome.spent}`,
+            )
+          }
+        })
+        .catch((err) =>
+          console.warn(
+            `[bsv21] reclaim ${txid.slice(0, 12)} failed — ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        )
+    }
+  }
+  return retired
+}
+
 const chainPresenceCache = new Map<string, { at: number; onChain: boolean | null }>()
 const CHAIN_PRESENCE_TTL_MS = 5 * 60_000
 
@@ -1457,9 +1539,23 @@ async function listFungiblesNow(
       liveRows,
       liveReadUsable,
     })
+    const heldIds = new Set(liveRows.map(tokenKey))
+    const settledBefore = Date.now() - FUNGIBLE_SETTLE_GRACE_MS
+    const retired = liveReadUsable
+      ? await settleAbsentCards(
+          wallet,
+          prior.filter(
+            (row) => !heldIds.has(tokenKey(row)) && (row.seenAt ?? 0) <= settledBefore,
+          ),
+        ).catch((err) => {
+          console.warn('[bsv21] absent card check failed', err)
+          return new Set<string>()
+        })
+      : new Set<string>()
     reportPhase('chain-fate', fateStartedAt)
+    if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
     const merged = withCardsPaintedDuringRead(
-      mergeLiveFungibles(liveRows, prior),
+      mergeLiveFungibles(liveRows, prior, retired),
       runStartedAt,
     )
     setFungiblesCache(merged, { forEpoch: epoch, forRun: run })

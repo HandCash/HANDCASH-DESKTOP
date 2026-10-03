@@ -275,6 +275,7 @@ function sessionFacts(header, events) {
   const serverWallet = serverWalletFacts(events)
   const tokenSends = tokenSendFacts(events)
   const chainIngest = chainIngestFacts(events)
+  const holdings = holdingsFacts(events)
   const accountSwitches = accountSwitchFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
@@ -355,6 +356,7 @@ function sessionFacts(header, events) {
     serverWallet,
     tokenSends,
     chainIngest,
+    holdings,
     accountSwitches,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
@@ -1763,6 +1765,62 @@ function chainIngestFacts(events) {
     .map(([line, count]) => ({ line, count }))
 }
 
+const BSV21_LIST_DONE_RE = /^\[bsv21\] listOutputs done \d+ms — live (\d+) token\(s\) \/ (\d+) tip\(s\), showing (\d+)/
+const ITEMS_KEPT_RE = /^\[collectables\] kept (\d+) cached item\(s\) while basket listed (\d+)/
+const ITEMS_RETIRED_RE = /^\[collectables\] retired (\d+) card\(s\)/
+
+/**
+ * Cards painted vs what the wallet's basket actually holds. A token or item
+ * that shows but cannot be spent is a card the live read stopped listing and
+ * nothing retired: this counts every read that answered, every read skipped
+ * because the wallet was busy, and how far "showing" ran ahead of "live".
+ */
+function holdingsFacts(events) {
+  const tokens = {
+    reads: 0,
+    deferred: 0,
+    timedOut: 0,
+    retired: 0,
+    keptUnknown: 0,
+    reclaims: 0,
+    reclaimedNothing: 0,
+    reclaimFailed: 0,
+    readsShowingMore: 0,
+    last: null,
+  }
+  const items = { kept: 0, retired: 0, deferred: 0, idleRelists: 0, failed: 0, last: null }
+  for (const e of events) {
+    const t = e.text
+    const done = BSV21_LIST_DONE_RE.exec(t)
+    if (done) {
+      const [live, tips, showing] = done.slice(1).map(Number)
+      tokens.reads += 1
+      if (showing > live) tokens.readsShowingMore += 1
+      tokens.last = { live, tips, showing, at: new Date(e.at).toISOString() }
+      continue
+    }
+    if (/^\[bsv21\] deferring listOutputs/.test(t)) tokens.deferred += 1
+    else if (/^\[bsv21\] listOutputs timed out/.test(t)) tokens.timedOut += 1
+    else if (/^\[bsv21\] retiring (unconfirmed|absent) card/.test(t)) tokens.retired += 1
+    else if (/^\[bsv21\] keeping absent card/.test(t)) tokens.keptUnknown += 1
+    else if (/^\[bsv21\] absent card \S+ unspent on chain — reclaiming/.test(t)) tokens.reclaims += 1
+    else if (/^\[bsv21\] reclaim \S+ claimed nothing/.test(t)) tokens.reclaimedNothing += 1
+    else if (/^\[bsv21\] reclaim \S+ failed/.test(t)) tokens.reclaimFailed += 1
+    const kept = ITEMS_KEPT_RE.exec(t)
+    if (kept) {
+      items.kept += 1
+      items.last = { cached: Number(kept[1]), listed: Number(kept[2]), at: new Date(e.at).toISOString() }
+      continue
+    }
+    const retired = ITEMS_RETIRED_RE.exec(t)
+    if (retired) items.retired += Number(retired[1])
+    else if (/^\[collectables\] deferring listOutputs/.test(t)) items.deferred += 1
+    else if (/^\[collectables\] wallet idle — running the deferred listOutputs/.test(t)) items.idleRelists += 1
+    else if (/^\[collectables\] listOutputs (timed out|failed)/.test(t)) items.failed += 1
+  }
+  return { tokens, items }
+}
+
 const RECEIPT_MERGE_RE = /^\[activity\] merged earned\/(receive-collectable|receive-token) \d+ sat ([0-9a-f]{12})… — into row \d+ of \d+, first seen (\S+)/
 const CARD_REENTRY_RE = /^\[collectables\] re-entered (\d+) announced card\(s\)/
 
@@ -3065,6 +3123,21 @@ function report(state, answers) {
   if (latest.chainIngest?.length) {
     console.log('\nChain ingest & recovery (code-counted):')
     for (const { line, count } of latest.chainIngest.slice(0, 12)) console.log(`  ${count}× ${line}`)
+  }
+
+  const holdings = latest.holdings
+  if (holdings && (holdings.tokens.reads || holdings.tokens.deferred || holdings.items.kept || holdings.items.deferred)) {
+    const tk = holdings.tokens
+    const it = holdings.items
+    console.log('\nHoldings vs basket (code-counted):')
+    console.log(
+      `  tokens: ${tk.reads} read(s), ${tk.readsShowingMore} showing more than live · deferred ${tk.deferred} · timed out ${tk.timedOut} · retired ${tk.retired} · kept (spend unknown) ${tk.keptUnknown} · reclaims ${tk.reclaims} (nothing ${tk.reclaimedNothing}, failed ${tk.reclaimFailed})`,
+    )
+    if (tk.last) console.log(`    last read ${tk.last.at}: live ${tk.last.live} token(s) / ${tk.last.tips} tip(s), showing ${tk.last.showing}`)
+    console.log(
+      `  items: kept-while-short ${it.kept} · retired ${it.retired} · deferred ${it.deferred} · idle relists ${it.idleRelists} · failed ${it.failed}`,
+    )
+    if (it.last) console.log(`    last short read ${it.last.at}: cached ${it.last.cached}, basket listed ${it.last.listed}`)
   }
 
   const switches = latest.accountSwitches

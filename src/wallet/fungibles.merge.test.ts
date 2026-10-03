@@ -71,6 +71,18 @@ describe('mergeLiveFungibles', () => {
     expect(merged.some((t) => t.sym === 'GHOST')).toBe(false)
   })
 
+  it('drops a BRC-162 card the chain proved spent, even when live is empty', async () => {
+    const { mergeLiveFungibles } = await import('./token/list')
+    const spentCard = row({ tokenId: ORIGIN, amt: '5', outpoint: LEFTOVER })
+    const held = row({ tokenId: KING_ORIGIN, amt: '100', outpoint: LIVE_CHANGE })
+    const retired = new Set([ORIGIN.toLowerCase()])
+    expect(mergeLiveFungibles([], [spentCard], retired)).toEqual([])
+    expect(mergeLiveFungibles([held], [spentCard], retired).map((t) => t.tokenId)).toEqual([KING_ORIGIN])
+    expect(mergeLiveFungibles([held], [spentCard]).map((t) => t.tokenId).sort()).toEqual(
+      [KING_ORIGIN, ORIGIN].sort(),
+    )
+  })
+
   it('keeps a genesis cache tip when live is empty (post-mint toolbox lag)', async () => {
     const { mergeLiveFungibles } = await import('./token/list')
     const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
