@@ -14,7 +14,7 @@ import { storageRegistry } from '../storage/registry'
  * `listCertificates` / `proveCertificate` answer the standards path.
  */
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import { accountLocalKey, accountLocalKeyFor, type BoundAccountKeyScope } from './accountLocalKeys'
 
 import { claimHandle, HandleNotFoundError, resolveHandle } from './handleResolve'
 import { BRC169_HANDLE_CERT_TYPE, HANDLE_CERTIFIERS } from './handleCertificate'
@@ -185,7 +185,24 @@ async function syncHeldHandleCertificate(current: WalletHandleCertificate | null
 
 export function readClaimedCloudHandle(): ClaimedHandleState | null {
   try {
-    const raw = durableGetItem(accountLocalKey(STORAGE_KEY))
+    return parseClaimedHandle(durableGetItem(accountLocalKey(STORAGE_KEY)))
+  } catch {
+    return null
+  }
+}
+
+/** Claim stored for any vault account, unlocked or not, when it names that account's key. */
+export function claimedHandleForAccount(account: BoundAccountKeyScope): ClaimedHandleState | null {
+  try {
+    const claimed = parseClaimedHandle(durableGetItem(accountLocalKeyFor(STORAGE_KEY, account)))
+    return claimed?.identityKey === account.identityKey.trim().toLowerCase() ? claimed : null
+  } catch {
+    return null
+  }
+}
+
+function parseClaimedHandle(raw: string | null): ClaimedHandleState | null {
+  try {
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<ClaimedHandleState>
     if (

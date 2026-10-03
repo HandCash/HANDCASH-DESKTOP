@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.409] - 2026-10-03
+
+### Changed
+
+- The wallet switcher shows each account's `$handle` under its name, instead of the identity key, when that account has claimed one.
+
+### Fixed
+
+- Copying your handle (on the switcher and on Identity) copies the full address `@handle@handcash.io`. `$handle` is only how it is displayed.
+
 ## [1.3.408] - 2026-10-03
 
 ### Changed

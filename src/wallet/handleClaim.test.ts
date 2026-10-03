@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { accountLocalKey } from './accountLocalKeys'
+import { storageRegistry } from '../storage/registry'
+import { accountLocalKey, accountLocalKeyFor } from './accountLocalKeys'
 import {
   TEST_CERTIFIER_PUB,
   testIdentityKey,
@@ -249,5 +250,19 @@ describe('getClaimedCloudHandleVerified', () => {
     resolveHandle.mockRejectedValueOnce(new HandleNotFoundError('$alice'))
     expect(await getClaimedCloudHandleVerified()).toBeNull()
     expect(readClaimedCloudHandle()).toBeNull()
+  })
+})
+
+describe('claimedHandleForAccount', () => {
+  it("reads another vault account's claim, only when it names that account's key", async () => {
+    const { claimedHandleForAccount } = await import('./handleClaim')
+    const other = testIdentityKey(22)
+    const scope = { identityKey: other, accountIndex: 2, chain: 'main' as const }
+    const key = accountLocalKeyFor(storageRegistry.claimedHandle.key, scope)
+    expect(claimedHandleForAccount(scope)).toBeNull()
+    store.set(key, JSON.stringify({ handle: 'bob', display: '@bob@handcash.io', identityKey: other, claimedAt: 1 }))
+    expect(claimedHandleForAccount(scope)).toMatchObject({ handle: 'bob', display: '@bob@handcash.io' })
+    store.set(key, JSON.stringify({ handle: 'bob', display: '@bob@handcash.io', identityKey: OWN_KEY, claimedAt: 1 }))
+    expect(claimedHandleForAccount(scope)).toBeNull()
   })
 })

@@ -145,7 +145,7 @@ function walletIdentityChip(
 ): { label: string; copy: string } | null {
   if (claimed?.handle) {
     const label = formatHandCashHandle(claimed.handle, null)
-    if (label) return { label, copy: label }
+    if (label) return { label, copy: claimed.display }
   }
   const key = profile.identityKey.trim()
   if (isCompressedIdentityKeyHex(key)) {

@@ -95,7 +95,7 @@ export function IdentityPanel({ profile }: Props) {
 
   const copyHandle = async () => {
     if (!claimed) return
-    await copyText(handleLabel || claimed.display, { label: 'handle' })
+    await copyText(claimed.display, { label: 'handle' })
   }
 
   const openClaim = () => {

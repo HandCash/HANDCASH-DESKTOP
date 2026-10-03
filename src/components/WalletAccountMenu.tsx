@@ -9,6 +9,8 @@ import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
 import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { copyText } from '../wallet/clipboard'
+import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
+import { formatHandCashHandle } from '../wallet/handleFormat'
 import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
 import { setNavSection } from '../wallet/navStore'
@@ -35,7 +37,7 @@ type Props = {
   onAccountSwitched: (profile: WalletProfile, balanceSats: number) => void
 }
 
-type AccountRow = VaultAccount & { label: string; profile: AccountProfile | null }
+type AccountRow = VaultAccount & { label: string; handle: string | null; profile: AccountProfile | null }
 
 const accountMenuMachine = walletAccountMenuMachine.provide({
   actions: { openProfile: () => setNavSection('identity') },
@@ -103,15 +105,16 @@ export function WalletAccountMenu({
     }
     const store = readVaultAccounts(masterIk)
     setAccounts(
-      store.accounts.map((account) => ({
-        ...account,
-        label: fallbackLabel(account),
-        profile: accountProfile({
-          identityKey: account.identityKey,
-          accountIndex: account.index,
-          chain: profile.chain,
-        }),
-      })),
+      store.accounts.map((account) => {
+        const scope = { identityKey: account.identityKey, accountIndex: account.index, chain: profile.chain }
+        const claimed = claimedHandleForAccount(scope)
+        return {
+          ...account,
+          label: fallbackLabel(account),
+          handle: claimed ? formatHandCashHandle(claimed.handle, null) || null : null,
+          profile: accountProfile(scope),
+        }
+      }),
     )
     setActiveIndex(active?.accountIndex ?? store.activeIndex)
   }
@@ -120,9 +123,11 @@ export function WalletAccountMenu({
     refreshList()
     const offPublic = subscribePublicIdentities(refreshList)
     const offIssuers = subscribeIssuerIdentities(refreshList)
+    const offHandle = subscribeClaimedCloudHandle(refreshList)
     return () => {
       offPublic()
       offIssuers()
+      offHandle()
     }
   }, [profile.identityKey, profile.chain])
 
@@ -324,11 +329,15 @@ export function WalletAccountMenu({
                               <span className="wallet-account-option-tag">Root</span>
                             ) : null}
                           </strong>
-                          <span className="mono">
-                            {switching
-                              ? 'Switching…'
-                              : `${account.identityKey.slice(0, 8)}…${account.identityKey.slice(-6)}`}
-                          </span>
+                          {switching ? (
+                            <span>Switching…</span>
+                          ) : account.handle ? (
+                            <span>{account.handle}</span>
+                          ) : (
+                            <span className="mono">
+                              {`${account.identityKey.slice(0, 8)}…${account.identityKey.slice(-6)}`}
+                            </span>
+                          )}
                         </span>
                       </span>
                       {selected ? (
