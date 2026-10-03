@@ -87,6 +87,14 @@ describe('recoverFromTx', () => {
     expect(result.tokens).toBe(0)
   })
 
+  it('claims an output the caller just proved unspent when the explorers here stay silent', async () => {
+    h.spent.add(`${txid}.0`)
+    const only = new Set([`${txid}.0`])
+    const result = await recoverFromTx(txid, { only, provenUnspent: only })
+    expect((h.classify.mock.calls[0][0] as { vout: number }[]).map((u) => u.vout)).toEqual([0])
+    expect(result).toMatchObject({ ours: 1, spent: 0, tokens: 1 })
+  })
+
   it('reports nothing for a transaction that does not pay this wallet', async () => {
     h.address = PrivateKey.fromRandom().toAddress()
     const result = await recoverFromTx(txid)

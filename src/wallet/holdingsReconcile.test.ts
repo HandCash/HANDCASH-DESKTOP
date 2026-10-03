@@ -4,14 +4,22 @@ import type { OutpointSpendProbe } from './createActionInputFate'
 
 const store = new Map<string, string>()
 const sent = new Set<string>()
+const sealed = new Map<string, string>()
 const consumed: string[] = []
 const relinquished: string[] = []
 const restored: string[] = []
+const restoreProofs: boolean[] = []
 const claims: Array<{ txid: string; only: string[] }> = []
+const claimProofs: string[][] = []
 const markedAtClaim: string[] = []
 const probes = new Map<string, OutpointSpendProbe>()
 const rawTxs = new Map<string, string>()
-const env = { idle: true, restoreAnswer: false, reservedBy: null as string | null }
+const NO_ROW = { kind: 'refused', reason: 'no-row' } as const
+const env = {
+  idle: true,
+  restoreOutcome: NO_ROW as { kind: string; reason?: string; was?: string },
+  reservedBy: null as string | null,
+}
 
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
@@ -28,7 +36,7 @@ vi.mock('./sentItemGuard', () => ({
 }))
 vi.mock('./utxoLockManager', () => ({
   isUtxoBlockedFromRestore: () => false,
-  sealedSpenderOf: () => null,
+  sealedSpenderOf: (op: string) => sealed.get(op) ?? null,
 }))
 vi.mock('./walletCoordinator', () => ({ walletRegionsIdle: () => env.idle }))
 vi.mock('./createActionInputFate', () => ({
@@ -40,15 +48,24 @@ vi.mock('./oneSatImport', () => ({
 }))
 vi.mock('./staleOutputRelease', () => ({
   assetRowReservation: async () => env.reservedBy,
-  restoreUnspentAssetOutpoint: async (_active: unknown, op: string) => {
+  restoreAssetOutpoint: async (
+    _active: unknown,
+    op: string,
+    opts?: { provenUnspent?: boolean },
+  ) => {
     restored.push(op)
-    return env.restoreAnswer
+    restoreProofs.push(opts?.provenUnspent === true)
+    return env.restoreOutcome
   },
 }))
 vi.mock('./recoverFromTx', () => ({
-  recoverFromTx: async (txid: string, opts: { only: Set<string> }) => {
+  recoverFromTx: async (
+    txid: string,
+    opts: { only: Set<string>; provenUnspent?: ReadonlySet<string> },
+  ) => {
     const { isOneSatOutpointKnown } = await import('./oneSatImportGuard')
     claims.push({ txid, only: [...opts.only] })
+    claimProofs.push([...(opts.provenUnspent ?? [])])
     markedAtClaim.push(...[...opts.only].filter((op) => isOneSatOutpointKnown(op)))
     return { ours: 1, spent: 0, tokens: 1, items: 0, unrecognized: 0, skipped: 0 }
   },
@@ -116,15 +133,18 @@ describe('holdings reconcile ledger', () => {
   beforeEach(async () => {
     store.clear()
     sent.clear()
+    sealed.clear()
     probes.clear()
     consumed.length = 0
     relinquished.length = 0
     restored.length = 0
+    restoreProofs.length = 0
     claims.length = 0
+    claimProofs.length = 0
     markedAtClaim.length = 0
     rawTxs.clear()
     env.idle = true
-    env.restoreAnswer = false
+    env.restoreOutcome = NO_ROW
     env.reservedBy = null
     vi.resetModules()
     vi.useFakeTimers()
@@ -181,9 +201,54 @@ describe('holdings reconcile ledger', () => {
     reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
     probes.set(A, { kind: 'unspent' })
     const mod = await due()
-    expect(restored).toEqual([A])
+    // Once from the fate, once after the claim filed the row back.
+    expect(restored).toEqual([A, A])
     expect(claims).toEqual([{ txid: A.split('.')[0], only: [A] }])
     expect(mod.listHoldingsEntries().map((e) => e.outpoint)).toEqual([A])
+  })
+
+  it('restores and claims on the chain answer it just took, never a second explorer round', async () => {
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    probes.set(A, { kind: 'unspent' })
+    await due()
+    expect(restoreProofs).toEqual([true, true])
+    expect(claimProofs).toEqual([[A]])
+  })
+
+  it('does not claim a row it restored on the first check', async () => {
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    probes.set(A, { kind: 'unspent' })
+    env.restoreOutcome = { kind: 'restored', was: 'spendable=false spender=none' }
+    await due()
+    expect(restored).toEqual([A])
+    expect(claims).toEqual([])
+  })
+
+  it('holds a row our own spend sealed until the chain answers, and never closes it on the seal', async () => {
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    sealed.set(A, 'cd'.repeat(32))
+    probes.set(A, { kind: 'unspent' })
+    let mod = await due()
+    expect(restored).toEqual([])
+    expect(mod.listHoldingsEntries()).toMatchObject([{ outpoint: A, checks: 1 }])
+
+    probes.set(A, { kind: 'spent', spender: spenderOf(A) })
+    vi.setSystemTime(Date.now() + 10 * 60_000)
+    mod = await import('./holdingsReconcile')
+    await mod.runReconcile()
+    expect(mod.listHoldingsEntries()).toEqual([])
+  })
+
+  it('claims only a missing row — a reserved or sent row is not re-imported', async () => {
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    probes.set(A, { kind: 'unspent' })
+    env.restoreOutcome = { kind: 'refused', reason: 'reserved' }
+    await due()
+    expect(claims).toEqual([])
   })
 
   it('claims an output whose old import mark outlived its row', async () => {

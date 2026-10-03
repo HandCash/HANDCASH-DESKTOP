@@ -377,7 +377,10 @@ export async function retireSpentInputs(
     )
   }
   console.warn(
-    `[spend] ${txid.slice(0, 12)} inputs spent elsewhere count=${spends.length}`,
+    `[spend] ${txid.slice(0, 12)} inputs spent elsewhere count=${spends.length} — ${spends
+      .slice(0, 6)
+      .map((s) => `${s.outpoint} by ${s.spender.slice(0, 12)}`)
+      .join(', ')}`,
   )
   void import('./deadCoinSweep').then(({ scheduleDeadCoinSweep }) =>
     scheduleDeadCoinSweep(chain, bySpender.keys()),

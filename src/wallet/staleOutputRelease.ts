@@ -1420,12 +1420,7 @@ export async function assetRowReservation(
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
-      const rows = await findOutputsForTxid(sp, parsed.txid);
-      const row = rows.find(
-        (candidate) =>
-          Number(candidate.vout ?? candidate.outputIndex) === parsed.vout
-      );
-      status = await localSpenderStatus(sp, row);
+      status = await localSpenderStatus(sp, await findAssetRow(sp, parsed.txid, parsed.vout));
     });
   } catch {
     return "unreadable";
@@ -1445,27 +1440,50 @@ export async function restoreUnspentAssetOutpoint(
   active: ActiveWallet,
   outpoint: string
 ): Promise<boolean> {
-  if (isItemSent(outpoint)) return false;
+  return (await restoreAssetOutpoint(active, outpoint)).kind === "restored";
+}
+
+/**
+ * Why an asset row was or was not made spendable again. `no-row` is the only
+ * refusal a claim from the creating transaction can fix.
+ */
+export type AssetRestoreOutcome =
+  | { kind: "restored"; was: string }
+  | {
+      kind: "refused";
+      reason: "sent-here" | "not-proven-unspent" | "no-row" | "reserved" | "no-storage";
+      detail?: string;
+    };
+
+/**
+ * {@link restoreUnspentAssetOutpoint} with its reason. `provenUnspent` is a
+ * chain answer the caller just took for this outpoint; without it the
+ * explorers are asked here.
+ */
+export async function restoreAssetOutpoint(
+  active: ActiveWallet,
+  outpoint: string,
+  opts: { provenUnspent?: boolean } = {}
+): Promise<AssetRestoreOutcome> {
+  if (isItemSent(outpoint)) return { kind: "refused", reason: "sent-here" };
   const parsed = parseOutpoint(outpoint);
-  if (!parsed) return false;
+  if (!parsed) return { kind: "refused", reason: "no-row" };
 
   const startedAt = Date.now();
-  if (!(await outpointProvenUnspent(active, outpoint))) return false;
+  if (opts.provenUnspent !== true && !(await outpointProvenUnspent(active, outpoint))) {
+    return { kind: "refused", reason: "not-proven-unspent" };
+  }
   // A spend may have completed while the provider check was in flight. Local
   // confirmed-consumption state always outranks a lagging "unspent" response.
-  if (isItemSent(outpoint)) return false;
+  if (isItemSent(outpoint)) return { kind: "refused", reason: "sent-here" };
   const provenAt = Date.now();
 
   const storage = active.wallet.storage;
-  if (!storage?.runAsStorageProvider) return false;
-  let restored = false;
+  if (!storage?.runAsStorageProvider) return { kind: "refused", reason: "no-storage" };
+  let outcome = { kind: "refused", reason: "no-row" } as AssetRestoreOutcome;
   await storage.runAsStorageProvider(async (activeSp) => {
     const sp = activeSp as unknown as LocalStorage;
-    const rows = await findOutputsForTxid(sp, parsed.txid);
-    const row = rows.find(
-      (candidate) =>
-        Number(candidate.vout ?? candidate.outputIndex) === parsed.vout
-    );
+    const row = await findAssetRow(sp, parsed.txid, parsed.vout);
     const outputId = positiveId(row?.outputId);
     if (outputId == null) return;
     const spender = await localSpenderStatus(sp, row);
@@ -1474,15 +1492,17 @@ export async function restoreUnspentAssetOutpoint(
       console.info(
         `[stale-output] restore refused — ${outpoint} reserved by a ${reservedBy} transaction`
       );
+      outcome = { kind: "refused", reason: "reserved", detail: reservedBy };
       return;
     }
+    const was = `spendable=${row?.spendable === true} spender=${spender ?? "none"}`;
     await sp.updateOutput(outputId, {
       spendable: true,
       spentBy: undefined,
     });
-    restored = true;
+    outcome = { kind: "restored", was };
   });
-  if (!restored) return false;
+  if (outcome.kind !== "restored") return outcome;
 
   const released = releaseConsumedUtxo(
     outpoint,
@@ -1496,9 +1516,9 @@ export async function restoreUnspentAssetOutpoint(
   console.info(
     `[stale-output] restore done ${now - startedAt}ms — proof ${
       provenAt - startedAt
-    }ms, storage ${now - provenAt}ms · restored proven-unspent asset ${outpoint}`
+    }ms, storage ${now - provenAt}ms · restored proven-unspent asset ${outpoint} (${outcome.was})`
   );
-  return true;
+  return outcome;
 }
 
 /** Sealed coins to re-check per pass, so a long-lived wallet cannot stall. */
@@ -2754,6 +2774,18 @@ async function findOutputsForTxid(
     }
     return [];
   }
+}
+
+/** The one storage row for an asset outpoint, addressed by txid or by its parent's transactionId. */
+async function findAssetRow(
+  sp: LocalStorage,
+  txid: string,
+  vout: number
+): Promise<(ChangeRow & { outputIndex?: number; spentBy?: number; spendable?: boolean }) | undefined> {
+  const rows = await findOutputsForTxid(sp, txid, { linkByTransactionId: true });
+  return rows.find(
+    (candidate) => Number(candidate.vout ?? candidate.outputIndex) === vout
+  );
 }
 
 type LocalStorage = {

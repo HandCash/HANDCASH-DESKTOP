@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.424] - 2026-10-03
+
+### Fixed
+
+- **Token outputs the chain proves unspent now come back on that proof.** The holdings reconcile asked Teranode and WhatsOnChain about eleven REF outputs missing from the wallet's records, and both said unspent. All eleven are mined and unspent. The restore step then asked a second set of explorers (Bitails, then BananaBlocks) all over again. On the phone those timed out, so every restore failed and was logged as "row missing". The claim from the transaction re-asked the same explorers and would have counted each output as spent. Restore and claim now act on the chain answer the reconcile just took. Restore also finds a row its transaction links only by numeric id, and after a claim the same pass makes any row the claim found already in storage spendable.
+- **A token sealed under one of the wallet's own transactions is no longer written off as sent.** The reconcile closed an entry as "sent here" whenever a local seal named a spender, even when the chain said the output was unspent. A seal can outlive a transaction that never landed, and closing the entry hid that token for good. A seal now holds the row until the chain answers; only a proven spend closes the entry.
+
+### Changed
+
+- When the reconcile cannot restore a row, it logs why (`no-row`, `reserved`, `sent-here`). A restore records what the row looked like before (`spendable`, spender status). A refused input names each coin and the transaction that spent it. `npm run triage` counts restore refusals by reason and claims that never finished before the upload. `--trace <txid> --all` also lists what the wallet did in the five minutes before an output was first reported missing.
+
 ## [1.3.423] - 2026-10-03
 
 ### Fixed

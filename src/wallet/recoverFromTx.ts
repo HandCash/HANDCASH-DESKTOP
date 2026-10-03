@@ -18,7 +18,7 @@ import type { LegacyUtxo } from './legacyScan'
 export type RecoverFromTxResult = Readonly<{
   /** 1-sat outputs of the transaction locked to this wallet. */
   ours: number
-  /** Of those, already spent on chain — nothing left to claim. */
+  /** Of those, not proven unspent — spent, or the explorers did not answer. */
   spent: number
   tokens: number
   items: number
@@ -43,7 +43,11 @@ function p2pkhTemplate(address: string): string {
 
 export async function recoverFromTx(
   rawTxid: string,
-  opts: { only?: ReadonlySet<string> } = {},
+  opts: {
+    only?: ReadonlySet<string>
+    /** Outpoints the caller just proved unspent on chain; not asked again. */
+    provenUnspent?: ReadonlySet<string>
+  } = {},
 ): Promise<RecoverFromTxResult> {
   const txid = parseRecoverTxid(rawTxid)
   const active = getActiveWallet()
@@ -64,7 +68,9 @@ export async function recoverFromTx(
 
   const live: LegacyUtxo[] = []
   for (const u of ours) {
-    if (await outpointProvenUnspent(active, u.outpoint)) live.push(u)
+    if (opts.provenUnspent?.has(u.outpoint) || (await outpointProvenUnspent(active, u.outpoint))) {
+      live.push(u)
+    }
   }
 
   const { bsv21, oneSats, heldOneSats } = await classifyLegacyUtxos(live, active.chain)

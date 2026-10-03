@@ -69,6 +69,7 @@ const {
   restoreOnChainLocalTx,
   adoptConfirmedSpender,
   restoreUnspentAssetOutpoint,
+  restoreAssetOutpoint,
   chooseUtxoEvidenceAction,
   pinBroadcastLocalTx,
   healAppHeldChange,
@@ -279,6 +280,62 @@ describe('restoreUnspentAssetOutpoint', () => {
       restoreUnspentAssetOutpoint(active as never, `${txid}.0`),
     ).resolves.toBe(false)
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('restores on the chain answer the caller just took, without a second explorer round', async () => {
+    const txid = 'e1'.repeat(32)
+    const updateOutput = vi.fn(async () => undefined)
+    const isUtxo = vi.fn(async () => false)
+    const active = {
+      chain: 'main',
+      services: { isUtxo },
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<void>) =>
+            fn({
+              findOutputs: async () => [{ outputId: 5, txid, vout: 0, spendable: false }],
+              findTransactions: async () => [],
+              updateOutput,
+            }),
+        },
+      },
+    }
+    await expect(
+      restoreAssetOutpoint(active as never, `${txid}.0`, { provenUnspent: true }),
+    ).resolves.toMatchObject({ kind: 'restored', was: 'spendable=false spender=none' })
+    expect(isUtxo).not.toHaveBeenCalled()
+    expect(updateOutput).toHaveBeenCalledWith(5, { spendable: true, spentBy: undefined })
+  })
+
+  it('finds an asset row its transaction links only by id, and names a row that is not there', async () => {
+    const txid = 'e2'.repeat(32)
+    const updateOutput = vi.fn(async () => undefined)
+    const storageWith = (linked: unknown[]) => ({
+      chain: 'main',
+      services: {},
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<void>) =>
+            fn({
+              findOutputs: async ({ partial }: { partial: Record<string, unknown> }) =>
+                partial.transactionId === 7 ? linked : [],
+              findTransactions: async ({ partial }: { partial: Record<string, unknown> }) =>
+                partial.txid === txid ? [{ transactionId: 7, txid, status: 'completed' }] : [],
+              updateOutput,
+            }),
+        },
+      },
+    })
+    await expect(
+      restoreAssetOutpoint(storageWith([{ outputId: 12, vout: 1, spendable: false }]) as never, `${txid}.1`, {
+        provenUnspent: true,
+      }),
+    ).resolves.toMatchObject({ kind: 'restored' })
+    expect(updateOutput).toHaveBeenCalledWith(12, { spendable: true, spentBy: undefined })
+
+    await expect(
+      restoreAssetOutpoint(storageWith([]) as never, `${txid}.1`, { provenUnspent: true }),
+    ).resolves.toEqual({ kind: 'refused', reason: 'no-row' })
   })
 
   it('rechecks a recent spend after an unspent lookup already started', async () => {

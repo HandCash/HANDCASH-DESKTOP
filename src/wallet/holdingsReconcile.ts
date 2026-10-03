@@ -16,7 +16,10 @@
  * Each outpoint is asked about once per backoff step, never per read, and
  * nothing is dropped on an unknown answer. "Spent" counts only when the named
  * spender's body consumes the outpoint — an index is a finder, not a judge.
- * A row a local transaction still reserves is never restored or re-claimed.
+ * "Unspent" is that same answer all the way through restore and claim; a
+ * second explorer round that times out must not read as a missing row.
+ * A row a local transaction still reserves or seals is never restored or
+ * re-claimed, and a seal alone never closes an entry.
  * Mutations run only while every wallet region is idle.
  */
 import { Transaction } from '@bsv/sdk'
@@ -356,9 +359,14 @@ async function reconcileDue(): Promise<void> {
     if (!current) continue
     const fate = chooseReconcileFate({
       gap: current.gap,
-      sentHere: isItemSent(current.outpoint) || sealedSpenderOf(current.outpoint) != null,
+      sentHere: isItemSent(current.outpoint),
       abandoned: isItemAbandoned(current.outpoint),
-      reserved: isUtxoBlockedFromRestore(current.outpoint) || reservedBy.has(current.outpoint),
+      // A seal names our own spend, which may never land: it holds the row
+      // until the chain answers, but never closes the entry on its own.
+      reserved:
+        isUtxoBlockedFromRestore(current.outpoint) ||
+        sealedSpenderOf(current.outpoint) != null ||
+        reservedBy.has(current.outpoint),
       probe: probes.get(current.outpoint) ?? { kind: 'unknown' },
       spenderProven: spenderProven.has(current.outpoint),
     })
@@ -397,11 +405,22 @@ async function reconcileDue(): Promise<void> {
           ledger.entries.set(current.outpoint, { ...current, nextAt: now + BUSY_RETRY_MS })
           break
         }
-        const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
-        const restored = await restoreUnspentAssetOutpoint(active, current.outpoint).catch(() => false)
+        // The probe that chose this fate is the chain answer; asking a second
+        // explorer stack here refused rows the first had just proven unspent.
+        const { restoreAssetOutpoint } = await import('./staleOutputRelease')
+        const outcome = await restoreAssetOutpoint(active, current.outpoint, {
+          provenUnspent: true,
+        }).catch((err: unknown) => ({
+          kind: 'refused' as const,
+          reason: 'no-storage' as const,
+          detail: err instanceof Error ? err.message : String(err),
+        }))
         // A row restored last time that still does not list has lost its
         // basket, not its spendability — only a claim files it again.
-        if (!restored || current.checks > 0) {
+        const claim =
+          (outcome.kind === 'refused' && outcome.reason === 'no-row') ||
+          (outcome.kind === 'restored' && current.checks > 0)
+        if (claim) {
           const txid = current.outpoint.split('.')[0]!
           const only = claimTxids.get(txid) ?? new Set<string>()
           only.add(current.outpoint)
@@ -409,15 +428,19 @@ async function reconcileDue(): Promise<void> {
         }
         ledger.entries.set(current.outpoint, { ...current, checks, nextAt: nextCheckAt(checks, now) })
         touched.add(current.asset)
+        const said =
+          outcome.kind === 'restored'
+            ? `row restored (${outcome.was})`
+            : `row not restored — ${outcome.reason}${outcome.detail ? ` ${outcome.detail}` : ''}`
         console.info(
-          `[holdings] ${describe(current)} unspent on chain — ${restored ? 'row restored' : 'row missing'}${claimTxids.get(current.outpoint.split('.')[0]!)?.has(current.outpoint) ? ', claiming from its transaction' : ''} (check ${checks})`,
+          `[holdings] ${describe(current)} unspent on chain — ${said}${claim ? ', claiming from its transaction' : ''} (check ${checks})`,
         )
         break
       }
       case 'recheck':
         ledger.entries.set(current.outpoint, { ...current, checks, nextAt: nextCheckAt(checks, now) })
         console.info(
-          `[holdings] ${describe(current)} kept — ${fate.reason}${reservedBy.has(current.outpoint) ? ` by a ${reservedBy.get(current.outpoint)} transaction` : ''} (check ${checks})`,
+          `[holdings] ${describe(current)} kept — ${fate.reason}${reservedBy.has(current.outpoint) ? ` by a ${reservedBy.get(current.outpoint)} transaction` : ''}${sealedSpenderOf(current.outpoint) ? ` sealed by ${sealedSpenderOf(current.outpoint)!.slice(0, 12)}` : ''} (check ${checks})`,
         )
         break
     }
@@ -432,9 +455,19 @@ async function reconcileDue(): Promise<void> {
       // it, so a stale mark would make the claim import nothing, silently.
       forgetOneSatImported([...only])
       const { recoverFromTx } = await import('./recoverFromTx')
-      const outcome = await recoverFromTx(txid, { only })
+      const outcome = await recoverFromTx(txid, { only, provenUnspent: only })
+      // Importing into a row the storage already holds re-files its basket
+      // but leaves it unspendable; the chain answer from this pass frees it.
+      const { restoreAssetOutpoint } = await import('./staleOutputRelease')
+      let restored = 0
+      for (const outpoint of only) {
+        const after = await restoreAssetOutpoint(active, outpoint, { provenUnspent: true }).catch(
+          () => null,
+        )
+        if (after?.kind === 'restored') restored += 1
+      }
       console.info(
-        `[holdings] claim ${txid.slice(0, 12)} — ours=${outcome.ours} tokens=${outcome.tokens} items=${outcome.items} unrecognized=${outcome.unrecognized} spent=${outcome.spent} skipped=${outcome.skipped}`,
+        `[holdings] claim ${txid.slice(0, 12)} — ours=${outcome.ours} tokens=${outcome.tokens} items=${outcome.items} unrecognized=${outcome.unrecognized} spent=${outcome.spent} skipped=${outcome.skipped} restored=${restored}`,
       )
     } catch (err) {
       console.warn(

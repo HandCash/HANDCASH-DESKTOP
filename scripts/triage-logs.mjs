@@ -183,6 +183,31 @@ function traceTxid(session, prefix) {
     .map((e) => ({ s: Math.round((e.at - t0) / 1000), level: e.level, text: e.text.slice(0, 400) }))
 }
 
+/**
+ * What the wallet did in the five minutes before `prefix` was first filed as
+ * having left its basket: every tagged line in that window, deduped by shape
+ * with a count. A row that vanishes is rarely named by whatever removed it.
+ */
+function beforeLeftBasket(session, prefix) {
+  const needle = prefix.toLowerCase()
+  const events = session.events ?? []
+  const left = events.find(
+    (e) => /^\[holdings\] \S+ \S+.* left-basket/.test(e.text) && e.text.toLowerCase().includes(needle),
+  )
+  if (!left) return null
+  const t0 = events[0]?.at ?? 0
+  const shapes = new Map()
+  for (const e of events) {
+    if (e.at < left.at - 300_000 || e.at >= left.at) continue
+    if (!/^\[[\w-]+\]/.test(e.text) || /^\[(heartbeat|nav|images)\]/.test(e.text)) continue
+    const shape = e.text.replace(/[0-9a-f]{12,}(\.\d+)?/g, '<id>').replace(/\d+/g, '<n>').slice(0, 160)
+    const row = shapes.get(shape)
+    if (row) row.times += 1
+    else shapes.set(shape, { s: Math.round((e.at - t0) / 1000), shape, times: 1 })
+  }
+  return { leftAtS: Math.round((left.at - t0) / 1000), lines: [...shapes.values()] }
+}
+
 /** A session read from the on-disk ring instead of an upload body. */
 function ringSession(rows, reason) {
   const events = ringEvents(rows)
@@ -1798,7 +1823,7 @@ const ITEMS_KEPT_RE = /^\[collectables\] kept (\d+) cached item\(s\) while baske
 const ITEMS_RETIRED_RE = /^\[collectables\] retired (\d+) card\(s\)/
 /** `[holdings] <asset> <txid.vout> [(label)] <event>` — one line per reconcile step. */
 const HOLDINGS_RE = /^\[holdings\] (token|item) ([0-9a-f]{64}\.\d+)(?: \([^)]*\))? (.+)$/
-const HOLDINGS_CLAIM_RE = /^\[holdings\] claim [0-9a-f]{12} — ours=(\d+) tokens=(\d+) items=(\d+)(?: unrecognized=\d+ spent=(\d+) skipped=(\d+))?/
+const HOLDINGS_CLAIM_RE = /^\[holdings\] claim [0-9a-f]{12} — ours=(\d+) tokens=(\d+) items=(\d+)(?: unrecognized=\d+ spent=(\d+) skipped=(\d+))?(?: restored=(\d+))?/
 
 /**
  * Cards painted vs what the wallet's basket actually holds, and the holdings
@@ -1819,17 +1844,25 @@ function holdingsFacts(events) {
     retiredTokens: [],
     restored: 0,
     restoreRefused: 0,
+    // Unspent-on-chain rows the reconcile could not restore, by named reason.
+    notRestored: {},
     claimsStarted: 0,
     claims: 0,
     claimedNothing: 0,
     // Outputs a claim found ours and unspent that the import guard passed over.
     claimSkipped: 0,
     claimSpent: 0,
+    // Rows a claim left in storage that the same pass then made spendable.
+    claimRestored: 0,
     claimFailed: 0,
+    // Claims queued with no outcome line by the end of the upload, and how
+    // long before the last line each was queued.
+    claimsUnfinished: [],
     kept: {},
     open: [],
   }
   const open = new Map()
+  const pendingClaims = new Map()
   for (const e of events) {
     const t = e.text
     const done = BSV21_LIST_DONE_RE.exec(t)
@@ -1858,12 +1891,15 @@ function holdingsFacts(events) {
     else if (/^\[collectables\] wallet idle — running the deferred listOutputs/.test(t)) items.idleRelists += 1
     else if (/^\[collectables\] listOutputs (timed out|failed)/.test(t)) items.failed += 1
 
+    const ended = /^\[holdings\] claim ([0-9a-f]{12})/.exec(t)
+    if (ended) pendingClaims.delete(ended[1])
     const claim = HOLDINGS_CLAIM_RE.exec(t)
     if (claim) {
       reconcile.claims += 1
       if (Number(claim[2]) + Number(claim[3]) === 0) reconcile.claimedNothing += 1
       reconcile.claimSkipped += Number(claim[5] ?? 0)
       reconcile.claimSpent += Number(claim[4] ?? 0)
+      reconcile.claimRestored += Number(claim[6] ?? 0)
       continue
     }
     if (/^\[holdings\] claim \S+ failed/.test(t)) {
@@ -1888,7 +1924,14 @@ function holdingsFacts(events) {
       open.delete(outpoint)
     } else if (/^unspent on chain/.test(event)) {
       if (/row restored/.test(event)) reconcile.restored += 1
-      if (/claiming/.test(event)) reconcile.claimsStarted += 1
+      const notRestored = /row not restored — (\S+)/.exec(event)
+      if (notRestored) {
+        reconcile.notRestored[notRestored[1]] = (reconcile.notRestored[notRestored[1]] ?? 0) + 1
+      }
+      if (/claiming/.test(event)) {
+        reconcile.claimsStarted += 1
+        if (!pendingClaims.has(outpoint.slice(0, 12))) pendingClaims.set(outpoint.slice(0, 12), e.at)
+      }
       const row = open.get(outpoint)
       open.set(outpoint, { ...(row ?? { asset, outpoint }), last: 'unspent', at })
     } else if ((m = /^kept — (\S+)/.exec(event))) {
@@ -1898,6 +1941,11 @@ function holdingsFacts(events) {
     }
   }
   reconcile.open = [...open.values()]
+  const lastAt = events.at(-1)?.at ?? 0
+  reconcile.claimsUnfinished = [...pendingClaims].map(([txid, at]) => ({
+    txid,
+    queuedSecondsBeforeEnd: Math.round((lastAt - at) / 1000),
+  }))
   // Every line naming an open outpoint's txid, in order and deduped by shape:
   // what removed the row, and what each claim did with it.
   const trailed = [...reconcile.open, ...reconcile.retiredTokens]
@@ -3254,6 +3302,16 @@ function report(state, answers) {
       console.log(
         `  reconcile: filed left-basket ${rc.filed['left-basket']}, off-chain-index ${rc.filed['off-chain-index']} · closed ${closed} · retired spent ${rc.retiredSpent} · restored ${rc.restored} (refused, reserved ${rc.restoreRefused}) · claims ${rc.claims} (nothing ${rc.claimedNothing}, skipped ${rc.claimSkipped}, spent ${rc.claimSpent}, failed ${rc.claimFailed}) · claims started ${rc.claimsStarted} · kept ${kept}`,
       )
+      const notRestored = Object.entries(rc.notRestored).map(([k, n]) => `${k} ${n}`).join(', ')
+      if (notRestored || rc.claimRestored > 0) {
+        console.log(`    not restored: ${notRestored || 'none'} · restored after claim ${rc.claimRestored}`)
+      }
+      if (rc.claimsUnfinished.length > 0) {
+        const ages = rc.claimsUnfinished.map((c) => c.queuedSecondsBeforeEnd)
+        console.log(
+          `    claims with no outcome by the end of the upload: ${rc.claimsUnfinished.length} · queued ${Math.min(...ages)}–${Math.max(...ages)}s before the last line`,
+        )
+      }
       for (const o of rc.open.slice(0, 12)) {
         console.log(`    open ${o.asset} ${o.outpoint} — ${o.gap ?? 'filed earlier'}, last ${o.last} at ${o.at}`)
       }
@@ -3465,7 +3523,7 @@ if (tracePrefix && flags.has('--all') && !filePath && bucketArg !== 'desktop-loc
   const sessions = uploads.map((u) => {
     const s = parseSession(u)
     const from = s.events[0] ? new Date(s.events[0].at).toISOString() : null
-    return { version: s.version, from, events: traceTxid(s, tracePrefix) }
+    return { version: s.version, from, events: traceTxid(s, tracePrefix), beforeLeftBasket: beforeLeftBasket(s, tracePrefix) }
   })
   console.log(JSON.stringify(sessions, null, 2))
   process.exit(0)
