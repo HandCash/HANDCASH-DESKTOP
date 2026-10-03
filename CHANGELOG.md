@@ -2,9 +2,14 @@
 
 ## [1.3.413] - 2026-10-03
 
+### Fixed
+
+- BRC-246 session offers, hellos and welcomes draw their nonces from `crypto.getRandomValues` instead of `Math.random`.
+
 ### Changed
 
-- Patch release (every push must ship a new version).
+- BRC drafts in `docs/bsva/brcs` cleaned up after a Jev review: BRC-246 now specifies the handshake frames, signature scheme and timestamp units the code uses, and has a security section; BRC-230 drops its emphasis and pins down sync, manifest signatures and paging; BRC-147/150/156 lose restatements and HandCash-only lines.
+- `npm run docs:review` (`scripts/jev-doc-review.mjs`) reviews BRC drafts with Jev: code counts and cross-checks, Jev judges each sentence and section.
 
 ## [1.3.412] - 2026-10-03
 
