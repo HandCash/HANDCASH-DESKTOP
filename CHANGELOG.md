@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.423] - 2026-10-03
+
+### Fixed
+
+- **Tokens missing from the wallet's records are claimed back instead of skipped.** On one phone, eleven BRC-162 token outputs were unspent on chain at the wallet's own address, but their basket rows were gone. The holdings reconcile correctly asked to claim each one from its transaction. The claim used the same import guard as Refresh, and that guard still marked them "already imported", so the claim brought back nothing and the tokens never returned. Because no public index can find a BRC-162 output by owner, Refresh could never bring them back either. A reconcile claim now clears that stale mark for exactly the outputs it proved unspent and unlisted, then imports them. A token or item the wallet still holds keeps its mark, so its BRC-150 remittance is never overwritten.
+
+### Changed
+
+- Claims log how many outputs were already spent and how many the import guard passed over. `npm run triage` prints those counts, plus the log lines about each token output the reconcile still has open or retired.
+
 ## [1.3.422] - 2026-10-03
 
 ### Fixed

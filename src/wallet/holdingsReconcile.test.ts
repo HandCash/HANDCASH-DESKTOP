@@ -8,6 +8,7 @@ const consumed: string[] = []
 const relinquished: string[] = []
 const restored: string[] = []
 const claims: Array<{ txid: string; only: string[] }> = []
+const markedAtClaim: string[] = []
 const probes = new Map<string, OutpointSpendProbe>()
 const rawTxs = new Map<string, string>()
 const env = { idle: true, restoreAnswer: false, reservedBy: null as string | null }
@@ -46,8 +47,10 @@ vi.mock('./staleOutputRelease', () => ({
 }))
 vi.mock('./recoverFromTx', () => ({
   recoverFromTx: async (txid: string, opts: { only: Set<string> }) => {
+    const { isOneSatOutpointKnown } = await import('./oneSatImportGuard')
     claims.push({ txid, only: [...opts.only] })
-    return { ours: 1, spent: 0, tokens: 1, items: 0, unrecognized: 0 }
+    markedAtClaim.push(...[...opts.only].filter((op) => isOneSatOutpointKnown(op)))
+    return { ours: 1, spent: 0, tokens: 1, items: 0, unrecognized: 0, skipped: 0 }
   },
 }))
 vi.mock('./session', () => ({
@@ -118,6 +121,7 @@ describe('holdings reconcile ledger', () => {
     relinquished.length = 0
     restored.length = 0
     claims.length = 0
+    markedAtClaim.length = 0
     rawTxs.clear()
     env.idle = true
     env.restoreAnswer = false
@@ -180,6 +184,18 @@ describe('holdings reconcile ledger', () => {
     expect(restored).toEqual([A])
     expect(claims).toEqual([{ txid: A.split('.')[0], only: [A] }])
     expect(mod.listHoldingsEntries().map((e) => e.outpoint)).toEqual([A])
+  })
+
+  it('claims an output whose old import mark outlived its row', async () => {
+    const { markOneSatImported, isOneSatOutpointKnown } = await import('./oneSatImportGuard')
+    markOneSatImported([A, B])
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    probes.set(A, { kind: 'unspent' })
+    await due()
+    expect(claims).toEqual([{ txid: A.split('.')[0], only: [A] }])
+    expect(markedAtClaim).toEqual([])
+    expect(isOneSatOutpointKnown(B)).toBe(true)
   })
 
   it('closes a departure the chain proves spent', async () => {

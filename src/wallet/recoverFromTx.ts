@@ -24,6 +24,8 @@ export type RecoverFromTxResult = Readonly<{
   items: number
   /** Ours, unspent, and neither a token nor an item this wallet can name. */
   unrecognized: number
+  /** Named tokens / items the import guard passed over: already imported, in flight, or backing off. */
+  skipped: number
 }>
 
 const TXID_RE = /^[0-9a-f]{64}$/
@@ -87,9 +89,10 @@ export async function recoverFromTx(
     tokens,
     items,
     unrecognized: heldOneSats.length,
+    skipped: bsv21.length - tokens + (oneSats.length - items),
   }
   console.info(
-    `[recover-tx] ${txid.slice(0, 12)} ours=${outcome.ours} spent=${outcome.spent} tokens=${tokens} items=${items} unrecognized=${outcome.unrecognized}`,
+    `[recover-tx] ${txid.slice(0, 12)} ours=${outcome.ours} spent=${outcome.spent} tokens=${tokens} items=${items} unrecognized=${outcome.unrecognized} skipped=${outcome.skipped}`,
   )
   return outcome
 }

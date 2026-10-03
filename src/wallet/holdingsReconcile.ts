@@ -23,6 +23,7 @@ import { Transaction } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { forgetOneSatImported } from './oneSatImportGuard'
 import { isItemAbandoned, isItemSent, markItemsConsumed } from './sentItemGuard'
 import { isUtxoBlockedFromRestore, sealedSpenderOf } from './utxoLockManager'
 import type { OutpointSpendProbe } from './createActionInputFate'
@@ -426,10 +427,14 @@ async function reconcileDue(): Promise<void> {
   for (const [txid, only] of claimTxids) {
     if (epoch !== accountEpoch) return
     try {
+      // The import guard's "already imported" is a claim that the basket holds
+      // the output. The chain proved it unspent and the basket no longer lists
+      // it, so a stale mark would make the claim import nothing, silently.
+      forgetOneSatImported([...only])
       const { recoverFromTx } = await import('./recoverFromTx')
       const outcome = await recoverFromTx(txid, { only })
       console.info(
-        `[holdings] claim ${txid.slice(0, 12)} — ours=${outcome.ours} tokens=${outcome.tokens} items=${outcome.items} unrecognized=${outcome.unrecognized}`,
+        `[holdings] claim ${txid.slice(0, 12)} — ours=${outcome.ours} tokens=${outcome.tokens} items=${outcome.items} unrecognized=${outcome.unrecognized} spent=${outcome.spent} skipped=${outcome.skipped}`,
       )
     } catch (err) {
       console.warn(

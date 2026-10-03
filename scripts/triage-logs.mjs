@@ -306,6 +306,7 @@ function sessionFacts(header, events) {
     platform: header.platform ?? 'unknown',
     uploadReason: (header.reason ?? 'unknown').split('·')[0].trim(),
     windowSeconds: span,
+    lastLineAt: events.length ? new Date(events.at(-1).at).toISOString() : null,
     lineCount: events.length,
     freezes: {
       total: stalls.length,
@@ -1703,6 +1704,8 @@ function tokenSendFacts(events) {
     // Wallet lines after each `send start`, until it plans, ends or 20 lines:
     // where a send that never planned was waiting.
     starts: [],
+    // Asset rows the stale-output path set spendable again, by outpoint.
+    restoredAssets: [],
   }
   let startTrail = null
   let build = 'unknown'
@@ -1748,6 +1751,9 @@ function tokenSendFacts(events) {
       startTrail = { token: r[1], build, at: new Date(e.at).toISOString(), atMs: e.at, lines: [], ended: null, lastSeenMs: 0 }
       facts.starts.push(startTrail)
     }
+    else if ((r = /^\[stale-output\] restore done .* restored proven-unspent asset ([0-9a-f]{64}\.\d+)/.exec(t))) {
+      facts.restoredAssets.push(r[1])
+    }
     else if (/^\[send-token\] sent$/.test(t)) facts.sent += 1
     else if ((r = /^\[send-token\] send failed — (.*)$/.exec(t))) bump(facts.failed, r[1])
     else if ((r = /^\[send-token\] blocked — (.*)$/.exec(t))) bump(facts.blocked, r[1])
@@ -1792,7 +1798,7 @@ const ITEMS_KEPT_RE = /^\[collectables\] kept (\d+) cached item\(s\) while baske
 const ITEMS_RETIRED_RE = /^\[collectables\] retired (\d+) card\(s\)/
 /** `[holdings] <asset> <txid.vout> [(label)] <event>` — one line per reconcile step. */
 const HOLDINGS_RE = /^\[holdings\] (token|item) ([0-9a-f]{64}\.\d+)(?: \([^)]*\))? (.+)$/
-const HOLDINGS_CLAIM_RE = /^\[holdings\] claim [0-9a-f]{12} — ours=(\d+) tokens=(\d+) items=(\d+)/
+const HOLDINGS_CLAIM_RE = /^\[holdings\] claim [0-9a-f]{12} — ours=(\d+) tokens=(\d+) items=(\d+)(?: unrecognized=\d+ spent=(\d+) skipped=(\d+))?/
 
 /**
  * Cards painted vs what the wallet's basket actually holds, and the holdings
@@ -1807,11 +1813,18 @@ function holdingsFacts(events) {
     filed: { 'left-basket': 0, 'off-chain-index': 0 },
     closed: {},
     retiredSpent: 0,
+    retiredByAsset: {},
+    // A token retired as spent is a balance the wallet stopped counting: each
+    // carries the same trail as an open entry.
+    retiredTokens: [],
     restored: 0,
     restoreRefused: 0,
     claimsStarted: 0,
     claims: 0,
     claimedNothing: 0,
+    // Outputs a claim found ours and unspent that the import guard passed over.
+    claimSkipped: 0,
+    claimSpent: 0,
     claimFailed: 0,
     kept: {},
     open: [],
@@ -1849,6 +1862,8 @@ function holdingsFacts(events) {
     if (claim) {
       reconcile.claims += 1
       if (Number(claim[2]) + Number(claim[3]) === 0) reconcile.claimedNothing += 1
+      reconcile.claimSkipped += Number(claim[5] ?? 0)
+      reconcile.claimSpent += Number(claim[4] ?? 0)
       continue
     }
     if (/^\[holdings\] claim \S+ failed/.test(t)) {
@@ -1868,6 +1883,8 @@ function holdingsFacts(events) {
       open.delete(outpoint)
     } else if (/^retired — spent on chain/.test(event)) {
       reconcile.retiredSpent += 1
+      reconcile.retiredByAsset[asset] = (reconcile.retiredByAsset[asset] ?? 0) + 1
+      if (asset === 'token') reconcile.retiredTokens.push({ asset, outpoint, gap: open.get(outpoint)?.gap, last: 'retired', at })
       open.delete(outpoint)
     } else if (/^unspent on chain/.test(event)) {
       if (/row restored/.test(event)) reconcile.restored += 1
@@ -1881,6 +1898,26 @@ function holdingsFacts(events) {
     }
   }
   reconcile.open = [...open.values()]
+  // Every line naming an open outpoint's txid, in order and deduped by shape:
+  // what removed the row, and what each claim did with it.
+  const trailed = [...reconcile.open, ...reconcile.retiredTokens]
+  const trails = new Map(trailed.map((o) => [o.outpoint.slice(0, 12), []]))
+  let build = 'unknown'
+  for (const e of events) {
+    const launch = /^App log capture started — v(\S+)/.exec(e.text)
+    if (launch) build = launch[1]
+    for (const [prefix, lines] of trails) {
+      if (!e.text.includes(prefix)) continue
+      const text = e.text.replace(new RegExp(`${prefix}[0-9a-f]*`, 'g'), '<this>')
+      const shape = text.replace(/[0-9a-f]{12,}/g, '<id>').replace(/\d+/g, '<n>').slice(0, 200)
+      const prior = lines.find((l) => l.shape === shape)
+      if (prior) prior.times += 1
+      else if (lines.length < 20) {
+        lines.push({ shape, first: `${new Date(e.at).toISOString()} [v${build}] ${text.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 220)}`, times: 1 })
+      }
+    }
+  }
+  for (const o of trailed) o.trail = trails.get(o.outpoint.slice(0, 12)) ?? []
   return { tokens, items, reconcile }
 }
 
@@ -3215,10 +3252,15 @@ function report(state, answers) {
       const closed = Object.entries(rc.closed).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
       const kept = Object.entries(rc.kept).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
       console.log(
-        `  reconcile: filed left-basket ${rc.filed['left-basket']}, off-chain-index ${rc.filed['off-chain-index']} · closed ${closed} · retired spent ${rc.retiredSpent} · restored ${rc.restored} (refused, reserved ${rc.restoreRefused}) · claims ${rc.claims} (nothing ${rc.claimedNothing}, failed ${rc.claimFailed}) · kept ${kept}`,
+        `  reconcile: filed left-basket ${rc.filed['left-basket']}, off-chain-index ${rc.filed['off-chain-index']} · closed ${closed} · retired spent ${rc.retiredSpent} · restored ${rc.restored} (refused, reserved ${rc.restoreRefused}) · claims ${rc.claims} (nothing ${rc.claimedNothing}, skipped ${rc.claimSkipped}, spent ${rc.claimSpent}, failed ${rc.claimFailed}) · claims started ${rc.claimsStarted} · kept ${kept}`,
       )
       for (const o of rc.open.slice(0, 12)) {
         console.log(`    open ${o.asset} ${o.outpoint} — ${o.gap ?? 'filed earlier'}, last ${o.last} at ${o.at}`)
+      }
+      const trailed = rc.open.filter((o) => o.asset === 'token' && o.trail?.length).slice(0, 3)
+      for (const o of trailed) {
+        console.log(`    trail of ${o.outpoint.slice(0, 12)}…:`)
+        for (const l of o.trail.slice(0, 14)) console.log(`      ${l.times > 1 ? `${l.times}× ` : ''}${l.first}`)
       }
     }
   }

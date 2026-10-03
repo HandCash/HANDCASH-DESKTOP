@@ -76,7 +76,7 @@ describe('recoverFromTx', () => {
     const classified = h.classify.mock.calls[0][0] as { vout: number }[]
     expect(classified.map((u) => u.vout)).toEqual([0, 2])
     expect(h.importTokens).toHaveBeenCalledTimes(1)
-    expect(result).toEqual({ ours: 2, spent: 0, tokens: 1, items: 0, unrecognized: 1 })
+    expect(result).toEqual({ ours: 2, spent: 0, tokens: 1, items: 0, unrecognized: 1, skipped: 0 })
   })
 
   it('skips outputs already spent on chain', async () => {
@@ -90,7 +90,7 @@ describe('recoverFromTx', () => {
   it('reports nothing for a transaction that does not pay this wallet', async () => {
     h.address = PrivateKey.fromRandom().toAddress()
     const result = await recoverFromTx(txid)
-    expect(result).toEqual({ ours: 0, spent: 0, tokens: 0, items: 0, unrecognized: 0 })
+    expect(result).toEqual({ ours: 0, spent: 0, tokens: 0, items: 0, unrecognized: 0, skipped: 0 })
     expect(h.importTokens).not.toHaveBeenCalled()
   })
 
