@@ -396,6 +396,28 @@ const ASSET_BURN = `stateDiagram-v2
   end note
 `
 
+const SERVER_WALLET_RECOVER = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> planning : START with ServerWalletRecoverPlan
+  planning --> signing : recover
+  planning --> internalizing : finish (registered, not internalized)
+  planning --> failed : nothing-tracked | uneconomical
+  signing --> registering : SIGNED
+  registering --> internalizing : REGISTERED / signedSendLifecycle
+  internalizing --> done : INTERNALIZED
+  signing --> failed : FAIL
+  registering --> failed : FAIL
+  internalizing --> failed : FAIL / pendingRecover kept
+  done --> idle : RESET
+  failed --> idle : RESET
+  note right of signing
+    The only spend of the server key.
+    Server reports keep the ledger;
+    Refresh never sweeps it.
+  end note
+`
+
 const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   direction TB
   [*] --> tipKind
@@ -1269,6 +1291,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'burnMachine — explicit BSV-21 / 1Sat burn → managed Pay recovery | named refuse',
     source: ASSET_BURN,
+  },
+  {
+    id: 'serverWalletRecover',
+    label: 'Server wallet recover',
+    caption:
+      'serverWalletRecoverMachine — tracked server-key outputs → self BRC-29 → signedSendLifecycle | named refuse',
+    source: SERVER_WALLET_RECOVER,
   },
   {
     id: 'sendPath',

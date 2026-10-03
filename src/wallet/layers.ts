@@ -36,6 +36,14 @@ import { getActiveWallet } from './session'
  *   change between sub-accounts. State is per account, because each account
  *   has its own blob at `/v1/wallets/<identityKey>/wallet.brc39`: last upload,
  *   last error, the spend-down high-water and the crash watchdog.
+ * - **Server wallet** → a BRC-42 self child of the account root
+ *   (`serverWallet.ts`) that a developer's server spends. Watch-only here: an
+ *   account-local ledger outside localState, never in the balance, never
+ *   swept by Refresh. The server reports each transaction to the identity's
+ *   `server_wallet` BRC-33 box (or a BRC-246 session); a report counts only
+ *   from a derived server key, after SPV, and per output only when its lock
+ *   matches its derivation. The wallet spends it only on Recover
+ *   (`serverWalletRecoverMachine`).
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Finder of coins
  *   not yet in localState. Does not pull BRC-39. Does not reclassify a live
  *   unconfirmed cheque as dead because an indexer has not listed it.
@@ -229,7 +237,7 @@ export type WalletLayer =
 
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
-  custody: ["vault.ts", "sessionBackupAuth.ts"],
+  custody: ["vault.ts", "sessionBackupAuth.ts", "serverWallet.ts"],
   localState: [
     "session.ts",
     "walletPool.ts",

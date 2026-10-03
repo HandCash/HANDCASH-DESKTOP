@@ -27,6 +27,7 @@ import { itemSendMachine } from '../wallet/itemSendMachine'
 import { brc29SendMachine } from '../wallet/brc29SendMachine'
 import { bsvSendMachine } from '../wallet/bsvSendMachine'
 import { burnMachine } from '../wallet/burnMachine'
+import { serverWalletRecoverMachine } from '../wallet/serverWalletRecoverMachine'
 import { txLifecycleMachine } from '../wallet/txLifecycleMachine'
 import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { bsv21SendMachine } from '../wallet/token/sendMachine'
@@ -66,6 +67,7 @@ export const machineManifest = Object.freeze({
   bsvSend: bsvSendMachine,
   bsv21Send: bsv21SendMachine,
   burn: burnMachine,
+  serverWalletRecover: serverWalletRecoverMachine,
   txLifecycle: txLifecycleMachine,
   walletCoordinator: walletCoordinatorMachine,
 })

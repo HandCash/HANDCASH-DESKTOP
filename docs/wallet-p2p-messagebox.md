@@ -37,6 +37,46 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 **BRC-CLOUD `/v1/messagebox` is a HandCash convenience host**, not the definition of messaging. Custody (A) must never require it.
 
+### Server wallet reports
+
+A server wallet (Settings → Developer) is a key the wallet derives
+(`[2, 'handcash server wallet']`, keyID = generation, counterparty `self`) and a
+developer's server spends. The wallet tracks it and never spends it except on
+Recover. "Copy key" gives the server one JSON line:
+`{ wif, reportTo, messageBox: "server_wallet", messagebox }`.
+
+The server reports **every** transaction that spends from or pays the key. It
+sends a BRC-33 `sendMessage` to `reportTo` in box `server_wallet`, sealed BRC-78
+with the server key (or over a live BRC-246 session). The plaintext is:
+
+```json
+{
+  "type": "server-wallet.report",
+  "v": 1,
+  "txid": "<hex>",
+  "beef": "<base64 Atomic BEEF of txid>",
+  "outputs": [
+    { "vout": 0, "lock": { "kind": "brc29", "derivationPrefix": "…", "derivationSuffix": "…", "sender": "self" } },
+    { "vout": 2, "lock": { "kind": "root" } }
+  ]
+}
+```
+
+`outputs` lists only outputs locked to the server key. `sender` is the BRC-29
+sender identity key, or `self` for the server's own change; `root` is the bare
+server key. The wallet ingests a report as follows:
+
+- It accepts the sender only if it is a derived server key. A later generation is adopted, which covers a restore from seed; a retired one is refused.
+- It SPV-verifies the package. An incomplete package stays in the box for the next poll.
+- It retires tracked outputs that the transaction spends.
+- It tracks a listed output only when that output's lock is P2PKH of the named child key.
+
+Each report is acknowledged after ingest. Funding is a BRC-29 payment to the
+server identity key, and the wallet tracks it as soon as it is signed. A
+spend the server never reports is invisible to the wallet until Recover fails
+on it, so report every transaction. After a restore, re-report every
+transaction that still holds unspent outputs.
+
 ---
 
 ## 2. Current vs target
@@ -137,6 +177,7 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 | Item identity / remittance | `oneSatProvenance.ts` |
 | Soft-latch | withdrawn (do not revive `oneSatLatch*`) |
 | Chat transport | `messageTransport.ts` / `messageStore.ts` |
+| Server wallet (watch-only, server-spent) | `serverWallet.ts` / `serverWalletRecoverMachine.ts` |
 | Handle + box URL | `handleResolve.ts` → BRC-CLOUD resolve |
 | Box host | `BRC-CLOUD/src/worker.js` `handleMessagebox` |
 | Charts | `appStatecharts.ts` |

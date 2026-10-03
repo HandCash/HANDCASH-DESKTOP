@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.412] - 2026-10-03
+
+### Added
+
+- Settings → Developer → **Server wallet**: a key the wallet derives and your server spends. This wallet tracks it and never spends it except on Recover. It is a BRC-42 self child of the account root, separate from the BAP developer key and from the Toolbox. Its outputs are never in the balance, never selectable by a send and never swept by Refresh.
+- **Copy key** gives the server one JSON line: its key, the identity to report to, and the `server_wallet` BRC-33 box.
+- **Fund** sends a BRC-29 payment to the server key, and the wallet tracks it from the moment it is signed.
+- **Recover** moves every tracked output back into the wallet as a self payment through `signedSendLifecycle` (`serverWalletRecoverMachine`). If internalize is interrupted, the next Recover finishes it.
+- **Rotate** retires the key, and is refused while any output is still tracked.
+- The server reports each transaction, as Atomic BEEF with output derivations, sealed to the wallet in the `server_wallet` box or over a live BRC-246 session:
+  - Reports count only from a derived server key. A later generation is adopted, which covers a restore from seed.
+  - Each report is checked by SPV.
+  - An output is tracked only when its lock matches its derivation.
+  - A report is acknowledged only after ingest. An incomplete package waits for the next poll.
+
 ## [1.3.411] - 2026-10-03
 
 ### Changed

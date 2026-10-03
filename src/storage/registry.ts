@@ -352,6 +352,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  serverWallet: defineStorage({
+    key: 'handcash.serverWallet.ledger.v1',
+    owner: 'server-wallet',
+    scope: 'wallet',
+    version: 1,
+  }),
   vaultSealStatus: defineStorage({
     key: 'handcash.brc100.vaultSealStatus',
     owner: 'custody',

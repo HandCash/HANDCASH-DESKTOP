@@ -19,3 +19,4 @@ export {
 } from './settingsStatus'
 export { SettingsIconToggle } from './SettingsIconToggle'
 export { DevKeyList } from './DevKeyList'
+export { ServerWalletList } from './ServerWalletList'
