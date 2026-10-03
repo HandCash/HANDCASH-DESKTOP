@@ -419,6 +419,7 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'send') return [root, { label: 'Send' }]
     if (stageChild.type === 'scan') return [root, { label: 'Scan' }]
     if (stageChild.type === 'receive') return [root, { label: 'Receive' }]
+    if (stageChild.type === 'dev-keys') return [root, { label: 'Developer keys' }]
     if (stageChild.type === 'add-friend') return [root, { label: 'Add friend' }]
     if (stageChild.type === 'setting') {
       const stack = getSettingBackStack()
@@ -635,6 +636,7 @@ export const WalletNav = memo(function WalletNav({
                 />
               )}
               {stageChild.type === 'scan' && <ScanPanel placement="nav" />}
+              {stageChild.type === 'dev-keys' && <DevKeysPanel />}
               {stageChild.type === 'receive' && (
                 <ReceivePanel address={profile.address} identityKey={profile.identityKey} />
               )}
@@ -723,7 +725,6 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'setting' && stageChild.settingId === 'about-handcash' && (
                 <AboutHandCashPanel />
               )}
-              {stageChild.type === 'setting' && stageChild.settingId === 'dev-keys' && <DevKeysPanel />}
               {stageChild.type === 'setting' && stageChild.settingId === 'recover-tx' && (
                 <RecoverFromTxPanel />
               )}

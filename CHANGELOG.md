@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.419] - 2026-10-03
+
+### Changed
+
+- Developer keys moved from Settings to Connected apps. A `</>` button beside the open-pages button opens it as a page under Connected apps.
+- The Messages button on Friends is no longer the accent colour; it matches Add friend.
+
 ## [1.3.418] - 2026-10-03
 
 ### Changed

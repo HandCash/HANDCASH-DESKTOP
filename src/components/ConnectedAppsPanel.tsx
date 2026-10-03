@@ -28,10 +28,10 @@ import {
   subscribeCollectionView,
   type CollectionView,
 } from '../wallet/collectionView'
-import { openAppDetails } from '../wallet/navStore'
+import { openAppDetails, openDevKeys } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
-import { AppsIcon, SettingsIcon, ViewGridIcon } from './icons'
+import { AppsIcon, CodeIcon, SettingsIcon, ViewGridIcon } from './icons'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import { AppBrowserLauncher } from './AppBrowserLauncher'
 
@@ -259,6 +259,18 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           >
             <ViewGridIcon size={16} />
             <span>{openTabCount}</span>
+          </button>
+          <button
+            type="button"
+            className="connected-app-tabs-button"
+            aria-label="Developer keys"
+            title="Developer keys"
+            onClick={() => {
+              playWalletSound('soft')
+              openDevKeys()
+            }}
+          >
+            <CodeIcon size={16} />
           </button>
           <CollectionViewToggle label="Connected apps view" scope="apps" />
         </div>

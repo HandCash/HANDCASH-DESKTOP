@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 import { Switch } from '@aeon-ui/ui'
 import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
@@ -25,8 +25,6 @@ import {
   TouchAppIcon,
 } from './icons'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
-import { devKeysRevision, readDevKeyLedger, subscribeDevKeys } from '../wallet/devKeys'
-import { getWalletRuntime } from '../wallet/walletRuntime'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import {
@@ -120,7 +118,6 @@ export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Session logs'
   if (id === 'wallet-health') return 'Wallet health'
-  if (id === 'dev-keys') return 'Developer keys'
   if (id === 'recover-tx') return 'Recover from transaction'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
@@ -217,9 +214,6 @@ export function SettingsPanel() {
     void refreshDependencyHealth().catch(() => {})
   }, [])
 
-  useSyncExternalStore(subscribeDevKeys, devKeysRevision)
-  const devActive = getWalletRuntime()?.instance
-  const devKeyCount = devActive ? readDevKeyLedger(devActive).keys.length : 0
   const healthAlert = dependencyHealthAlert(healthSnap)
   const healthDescription =
     healthSnap.at === 0
@@ -320,17 +314,6 @@ export function SettingsPanel() {
               </SettingsControlRow>
             </>
           ) : null}
-        </ul>
-      </SettingsSection>
-
-      <SettingsSection title="Developer" part="developer">
-        <ul className="settings-list">
-          <SettingsNavRow
-            label="Developer keys"
-            description={devKeyCount === 1 ? '1 key' : devKeyCount ? `${devKeyCount} keys` : 'None'}
-            icon={settingIconFor('dev-keys').icon}
-            onClick={() => openSetting('dev-keys')}
-          />
         </ul>
       </SettingsSection>
 

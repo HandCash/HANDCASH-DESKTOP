@@ -23,7 +23,6 @@ export type SettingId =
   | 'statecharts'
   | 'logs'
   | 'wallet-health'
-  | 'dev-keys'
   | 'recover-tx'
 
 export type NavChild =
@@ -31,6 +30,7 @@ export type NavChild =
   | { type: 'app-launch'; origin: string; url: string }
   | { type: 'app-browser'; origin: string; url: string }
   | { type: 'permission'; origin: string; scopeId: string }
+  | { type: 'dev-keys' }
   | { type: 'send'; prefill?: string }
   | { type: 'scan' }
   | { type: 'receive' }
@@ -234,6 +234,10 @@ export function openAppDetails(app: ConnectedApp) {
 
 export function openAppLaunch(origin: string, url: string) {
   openNavChild('apps', { type: 'app-launch', origin, url })
+}
+
+export function openDevKeys() {
+  openNavChild('apps', { type: 'dev-keys' })
 }
 
 export function openEmbeddedAppBrowser(origin: string, url: string) {

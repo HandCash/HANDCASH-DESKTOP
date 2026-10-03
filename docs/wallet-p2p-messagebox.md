@@ -39,7 +39,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 ### Dev keys (not a messagebox client)
 
-Settings → Developer keys lists them. Each is created with the capabilities
+Connected apps → Developer keys (the `</>` button) lists them. Each is created with the capabilities
 ticked: **Sign**, **Wallet**, or both.
 
 - **Sign**: the key is the presented identity's current BAP key

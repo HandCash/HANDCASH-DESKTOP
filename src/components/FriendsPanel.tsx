@@ -105,7 +105,7 @@ export function FriendsPanel({ chain }: Props) {
         <div className="friends-panel-head-actions panel-icon-toolbar">
           <button
             type="button"
-            className="panel-icon-btn panel-icon-btn--accent"
+            className="panel-icon-btn"
             aria-label="Open messages"
             title="Messages"
             onClick={() => {

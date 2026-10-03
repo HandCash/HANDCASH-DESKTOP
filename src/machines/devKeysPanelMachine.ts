@@ -1,7 +1,7 @@
 import { assign, setup } from 'xstate'
 
 /**
- * Settings → Developer keys: the key list, the new-key step (choose what the
+ * Connected apps → Developer keys: the key list, the new-key step (choose what the
  * key may do), and the fund step for one key's wallet. Work inside a step runs
  * on `useAsyncAction`; this chart only says which step is showing.
  */

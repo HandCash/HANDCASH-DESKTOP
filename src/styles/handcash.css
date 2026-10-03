@@ -8331,19 +8331,6 @@ html[data-aeon-mode='light'] .shortcut-key {
   background: color-mix(in srgb, hsl(var(--secondary)) 80%, hsl(var(--accent)));
 }
 
-.panel-icon-btn--accent {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-}
-
-.panel-icon-btn--accent:hover {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary));
-  filter: brightness(1.05);
-  color: hsl(var(--primary-foreground));
-}
-
 .friends-search {
   position: sticky;
   /* Above row content (checkboxes, send buttons) so nothing paints through
