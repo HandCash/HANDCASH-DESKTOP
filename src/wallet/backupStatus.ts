@@ -1,7 +1,8 @@
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
-import { accountLocalKey, accountLocalKeyFor, peekAccountLocalKeyScope } from './accountLocalKeys'
+import { accountLocalKey } from './accountLocalKeys'
 import { readVaultMeta } from './vault'
+import { vaultLocalKey } from './vaultLocalKeys'
 
 const KEYS_KEY = storageRegistry.backupConfirmed.key
 const HISTORY_KEY = storageRegistry.historyBackupConfirmed.key
@@ -19,20 +20,15 @@ const keysHandoffSliceIndices = new Set<number>()
 /** Phrase / emergency key copied once. */
 let keysSingleHandoff = false
 let historyExported = false
+/** Vault whose session evidence the counters above hold. */
+let evidenceVault: string | null = null
 
 /**
- * Key backups cover the vault master, which every sub-account derives from,
- * so their confirmation lives on the master account — never per sub-account.
+ * Backup policy is vault-wide: key backups cover the master every sub-account
+ * derives from, and the history-backup confirmation must not flip when the
+ * user switches accounts. Both live on the master account (`vaultLocalKey`).
  */
-function vaultKey(base: string): string {
-  const masterIdentityKey = readVaultMeta()?.identityKey
-  if (!masterIdentityKey) return accountLocalKey(base)
-  return accountLocalKeyFor(base, {
-    accountIndex: 0,
-    identityKey: masterIdentityKey,
-    chain: peekAccountLocalKeyScope().chain,
-  })
-}
+const vaultKey = vaultLocalKey
 
 function notify() {
   for (const listener of listeners) listener()
@@ -63,7 +59,11 @@ export function clearKeysBackupDeferred(): void {
 
 
 export function isHistoryBackupConfirmed(): boolean {
-  return durableGetItem(accountLocalKey(HISTORY_KEY)) === '1'
+  if (durableGetItem(vaultKey(HISTORY_KEY)) === '1') return true
+  // Confirmations recorded per sub-account before backup policy went vault-wide.
+  if (durableGetItem(accountLocalKey(HISTORY_KEY)) !== '1') return false
+  durableSetItem(vaultKey(HISTORY_KEY), '1')
+  return true
 }
 
 /** Both keys and history backups are confirmed. */
@@ -146,13 +146,14 @@ export function canConfirmHistoryBackup(): boolean {
 
 export function markHistoryBackupConfirmed(): boolean {
   if (!historyExported) return false
-  durableSetItem(accountLocalKey(HISTORY_KEY), '1')
+  durableSetItem(vaultKey(HISTORY_KEY), '1')
   notify()
   return true
 }
 
 export function clearBackupConfirmed(): void {
   durableRemoveItem(vaultKey(KEYS_KEY))
+  durableRemoveItem(vaultKey(HISTORY_KEY))
   durableRemoveItem(accountLocalKey(HISTORY_KEY))
   durableRemoveItem(vaultKey(BACKUP_LATER_KEY))
   keysHandoffs = 0
@@ -162,12 +163,19 @@ export function clearBackupConfirmed(): void {
   notify()
 }
 
-/** Drop account-bound session evidence after the active vault account changes. */
+/**
+ * Backup evidence belongs to the vault, so switching sub-accounts keeps it;
+ * only a different vault starts over.
+ */
 export function rebindBackupStatusForAccount(): void {
-  keysHandoffs = 0
-  keysHandoffSliceIndices.clear()
-  keysSingleHandoff = false
-  historyExported = false
+  const vault = readVaultMeta()?.identityKey ?? null
+  if (vault !== evidenceVault) {
+    evidenceVault = vault
+    keysHandoffs = 0
+    keysHandoffSliceIndices.clear()
+    keysSingleHandoff = false
+    historyExported = false
+  }
   notify()
 }
 

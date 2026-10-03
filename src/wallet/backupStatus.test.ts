@@ -15,6 +15,15 @@ vi.stubGlobal('localStorage', {
 
 vi.stubGlobal('window', { handcash: undefined })
 
+const mockVault = vi.hoisted(() => ({ identityKey: null as string | null }))
+vi.mock('./vault', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./vault')>()),
+  readVaultMeta: () => (mockVault.identityKey ? { identityKey: mockVault.identityKey } : null),
+}))
+
+import { storageRegistry } from '../storage/registry'
+import { accountLocalKey } from './accountLocalKeys'
+import { durableSetItem } from './durableStorage'
 import {
   canConfirmHistoryBackup,
   canConfirmKeysBackup,
@@ -32,6 +41,7 @@ import {
 
 describe('backupStatus evidence gates', () => {
   beforeEach(async () => {
+    mockVault.identityKey = null
     store.clear()
     // Clearing the backing map behind durableStorage bypasses its read cache.
     const { durableForgetCached } = await import('./durableStorage')
@@ -99,20 +109,46 @@ describe('backupStatus evidence gates', () => {
     expect(isKeysBackupDeferred()).toBe(false)
   })
 
-  it('isolates durable status and resets session evidence on account rebind', () => {
-    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+  it('keeps backup policy and session evidence across sub-accounts of one vault', () => {
+    mockVault.identityKey = 'master'
+    bindAccountLocalKeyScope({ accountIndex: 0, identityKey: 'master' })
+    rebindBackupStatusForAccount()
     noteKeysBackupHandoff()
     expect(markKeysBackupConfirmed('phrase')).toBe(true)
+    noteHistoryBackupExport()
+    expect(markHistoryBackupConfirmed()).toBe(true)
 
     bindAccountLocalKeyScope({ accountIndex: 2, identityKey: 'account-two' })
     rebindBackupStatusForAccount()
-    expect(isBackupConfirmed()).toBe(false)
-    expect(canConfirmKeysBackup('phrase')).toBe(false)
+    expect(isBackupConfirmed()).toBe(true)
+    expect(canConfirmKeysBackup('phrase')).toBe(true)
+    expect(canConfirmHistoryBackup()).toBe(true)
+  })
 
-    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+  it('starts over for a different vault', () => {
+    mockVault.identityKey = 'master'
+    bindAccountLocalKeyScope({ accountIndex: 0, identityKey: 'master' })
     rebindBackupStatusForAccount()
-    expect(isKeysBackupConfirmed()).toBe(true)
-    expect(isKeysBackupDeferred()).toBe(false)
+    noteKeysBackupHandoff()
+    markKeysBackupConfirmed('phrase')
+
+    mockVault.identityKey = 'other-master'
+    bindAccountLocalKeyScope({ accountIndex: 0, identityKey: 'other-master' })
+    rebindBackupStatusForAccount()
+    expect(isKeysBackupConfirmed()).toBe(false)
     expect(canConfirmKeysBackup('phrase')).toBe(false)
+    expect(isKeysBackupDeferred()).toBe(false)
+  })
+
+  it('promotes a history confirmation recorded on one sub-account to the vault', () => {
+    mockVault.identityKey = 'master'
+    bindAccountLocalKeyScope({ accountIndex: 1, identityKey: 'account-one' })
+    durableSetItem(accountLocalKey(storageRegistry.historyBackupConfirmed.key), '1')
+    noteKeysBackupHandoff()
+    markKeysBackupConfirmed('phrase')
+    expect(isBackupConfirmed()).toBe(true)
+
+    bindAccountLocalKeyScope({ accountIndex: 3, identityKey: 'account-three' })
+    expect(isBackupConfirmed()).toBe(true)
   })
 })

@@ -32,6 +32,16 @@ import {
   type WalletRuntimeId,
 } from './walletRuntime'
 import { logDiag } from './diagnosticLog'
+import {
+  clearWarmWallets,
+  hasWarmWallet,
+  markWarmWalletSelected,
+  replaceWarmWallet,
+  warmPoolGeneration,
+  warmWallet,
+  warmWalletUnit,
+  type WarmWalletUnit,
+} from './walletPool'
 
 const { specOpWalletBalance } = sdk
 
@@ -287,6 +297,7 @@ export function getActiveWallet(): ActiveWallet | null {
 export function setActiveWallet(next: ActiveWallet | null): void {
   if (!next) {
     disposeWalletRuntime('test')
+    clearWarmWallets()
     active = null
     return
   }
@@ -297,6 +308,7 @@ export function setActiveWallet(next: ActiveWallet | null): void {
 export function clearActiveWallet(): void {
   // Sync health unbinds in the runtime lifecycle (`accountLocalStores`).
   disposeWalletRuntime('locked')
+  clearWarmWallets()
   active = null
   clearSessionBackupPassword()
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
@@ -354,7 +366,7 @@ function startDurablePropagationRecovery(runtime: WalletRuntime): void {
   window.setInterval(retry, 60_000)
 }
 
-export async function bootWallet(args: {
+type WalletBootArgs = {
   rootKeyHex: string
   handle: string
   chain: Chain
@@ -364,10 +376,24 @@ export async function bootWallet(args: {
   masterRootKeyHex?: string
   /** BRC-146 account index. Defaults to 0 (primary). */
   accountIndex?: number
-}): Promise<ActiveWallet> {
-  disposeWalletRuntime('replaced')
-  active = null
+}
+
+async function walletUnitFor(args: WalletBootArgs): Promise<WarmWalletUnit> {
   const { toolboxDatabaseName } = await import('./vaultAccounts')
+  const accountIndex = args.accountIndex ?? 0
+  return warmWalletUnit({
+    chain: args.chain,
+    accountIndex,
+    identityKey: PrivateKey.fromHex(args.rootKeyHex).toPublicKey().toString(),
+    databaseName: toolboxDatabaseName({ chain: args.chain, handle: args.handle, accountIndex }),
+  })
+}
+
+/**
+ * Open one account's Toolbox, services and monitor. Touches no ambient account
+ * scope and starts nothing, so it may run while another account is selected.
+ */
+async function buildWallet(args: WalletBootArgs, databaseName: string): Promise<ActiveWallet> {
   const accountIndex = args.accountIndex ?? 0
   const masterRootKeyHex = args.masterRootKeyHex ?? args.rootKeyHex
   const root = PrivateKey.fromHex(args.rootKeyHex)
@@ -377,11 +403,7 @@ export async function bootWallet(args: {
   const setup = await SetupClient.createWalletIdb({
     chain: args.chain,
     rootKeyHex: args.rootKeyHex,
-    databaseName: toolboxDatabaseName({
-      chain: args.chain,
-      handle: args.handle,
-      accountIndex,
-    }),
+    databaseName,
     scriptVerifier: walletCryptoBackend(args.chain),
   })
   traceSlowToolboxSteps(setup.wallet)
@@ -418,27 +440,7 @@ export async function bootWallet(args: {
     // optional task
   }
 
-  // Defer the remaining monitor loop so unlock + first taps are not racing
-  // TaskNewHeader / proofs / IDB writes on the UI thread. Phone shells wait
-  // longer; desktop only needs a short tick so unlock stays responsive.
-  const startMonitor = () => {
-    try {
-      void setup.monitor?.startTasks?.()
-    } catch {
-      // optional
-    }
-  }
-  if (isPhoneShell()) {
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(startMonitor, { timeout: 8_000 })
-    } else {
-      setTimeout(startMonitor, 3_000)
-    }
-  } else {
-    setTimeout(startMonitor, 400)
-  }
-
-  const wallet: ActiveWallet = {
+  return {
     wallet: setup.wallet,
     services: setup.services as Services,
     monitor: setup.monitor
@@ -456,20 +458,115 @@ export async function bootWallet(args: {
     masterRootKeyHex,
     accountIndex,
   }
+}
+
+const monitorsStarted = new WeakSet<ActiveWallet>()
+
+/**
+ * Start a unit's monitor the first time it is selected. It then keeps running
+ * while other accounts are in the foreground, so this unit's transactions keep
+ * proving; the pool stops it on eviction or lock.
+ */
+function startMonitorOnce(wallet: ActiveWallet): void {
+  if (monitorsStarted.has(wallet)) return
+  monitorsStarted.add(wallet)
+  // Defer so unlock + first taps are not racing TaskNewHeader / proofs / IDB
+  // writes on the UI thread. Phone shells wait longer; desktop only needs a
+  // short tick so unlock stays responsive.
+  const startMonitor = () => {
+    try {
+      void wallet.monitor?.startTasks?.()
+    } catch {
+      // optional
+    }
+  }
+  if (isPhoneShell()) {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(startMonitor, { timeout: 8_000 })
+    } else {
+      setTimeout(startMonitor, 3_000)
+    }
+  } else {
+    setTimeout(startMonitor, 400)
+  }
+}
+
+/** Make a built unit the foreground wallet: bind its stores, then publish its runtime. */
+async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
+  const { prepareAccountLocalStores } = await import('./accountLocalStores')
   active = wallet
   // Bind the namespace and compose feature lifecycle before publishing. The
   // runtime start hook then rebinds every feature as one atomic account switch.
-  const { prepareAccountLocalStores } = await import('./accountLocalStores')
   prepareAccountLocalStores(wallet)
   const runtime = installWalletRuntime(wallet)
   // Cold start begins with the last balance actually read for this identity,
   // never another wallet's figure and never a fabricated address balance.
-  lastKnownBalanceSats = readTrustedBalance(active.identityKey, active.chain)
+  lastKnownBalanceSats = readTrustedBalance(wallet.identityKey, wallet.chain)
   lastBalanceBreakdown = ''
   startDurablePropagationRecovery(runtime)
+  startMonitorOnce(wallet)
   // Sync pill + chain-ingest status rebind inside the runtime lifecycle
   // (`accountLocalStores`), in the same tick as every other account store.
   return wallet
+}
+
+const PREWARM_DELAY_MS = 5_000
+
+/**
+ * Open the vault's other accounts in the background, one at a time, so the
+ * first switch to each is as fast as every later one. Prewarmed units start
+ * no monitor until they are selected.
+ */
+function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): void {
+  if (import.meta.env?.MODE === 'test' || typeof window === 'undefined') return
+  const masterRootKeyHex = selected.masterRootKeyHex
+  if (!masterRootKeyHex) return
+  const generation = warmPoolGeneration()
+  const run = async () => {
+    const { readVaultAccounts, rootKeyHexForAccount } = await import('./vaultAccounts')
+    const masterIdentityKey = PrivateKey.fromHex(masterRootKeyHex).toPublicKey().toString()
+    for (const account of readVaultAccounts(masterIdentityKey).accounts) {
+      if (warmPoolGeneration() !== generation) return
+      if (account.index === selected.accountIndex) continue
+      const accountArgs: WalletBootArgs = {
+        ...args,
+        rootKeyHex: rootKeyHexForAccount(masterRootKeyHex, account.index),
+        masterRootKeyHex,
+        accountIndex: account.index,
+      }
+      const unit = await walletUnitFor(accountArgs)
+      if (hasWarmWallet(unit)) continue
+      const started = Date.now()
+      try {
+        await warmWallet(unit, () => buildWallet(accountArgs, unit.databaseName))
+        const ms = Date.now() - started
+        if (ms > 250) console.info(`[vault-account] prewarm a${account.index} done ${ms}ms`)
+      } catch (error) {
+        console.warn(
+          `[vault-account] prewarm a${account.index} skipped`,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+    }
+  }
+  const start = () => void run()
+  if (typeof requestIdleCallback === 'function') {
+    setTimeout(() => requestIdleCallback(start, { timeout: 10_000 }), PREWARM_DELAY_MS)
+  } else {
+    setTimeout(start, PREWARM_DELAY_MS)
+  }
+}
+
+/** Unlock / restore: build this account fresh and select it. */
+export async function bootWallet(args: WalletBootArgs): Promise<ActiveWallet> {
+  disposeWalletRuntime('replaced')
+  active = null
+  const unit = await walletUnitFor(args)
+  const wallet = await replaceWarmWallet(unit, () => buildWallet(args, unit.databaseName))
+  markWarmWalletSelected(unit)
+  const selected = await selectWallet(wallet)
+  prewarmVaultAccounts(selected, args)
+  return selected
 }
 
 /**
@@ -949,18 +1046,18 @@ export function formatSats(sats: number): string {
 }
 
 /**
- * Stop the current toolbox session and boot another vault account root.
- * Same unlock / mnemonic; different on-chain identity and balance.
- * bootWallet rebinds account-local stores and sync health so Activity /
- * Inventory / Apps / Friends / Sync status do not spill across subwallets.
- */
-/**
  * How long a switch waits for a disposed account's chain-ingest occupant to
  * release. Pinned occupants abort within one await; this only bounds a
  * misbehaving one so the switch cannot hang.
  */
 export const ACCOUNT_SWITCH_INGEST_DRAIN_MS = 8_000
 
+/**
+ * Select another vault account (same unlock / mnemonic; different on-chain
+ * identity and balance). Its warm unit is reused when the pool has one;
+ * selecting rebinds account-local stores and sync health so Activity /
+ * Inventory / Apps / Friends / Sync status do not spill across subwallets.
+ */
 export async function switchVaultAccount(args: {
   masterRootKeyHex: string
   masterIdentityKey: string
@@ -969,46 +1066,58 @@ export async function switchVaultAccount(args: {
   mnemonic?: string | null
   accountIndex: number
 }): Promise<ActiveWallet> {
-  // Do not rebind account-local Activity/inventory while a send continuation
-  // still owns those foreground projections. Its signed miner submission is
-  // retained separately and continues in the background after this fence.
+  const started = Date.now()
   const { waitForForegroundSpendIdle, waitForChainIngestIdle } = await import(
     './walletCoordinator'
   )
-  await waitForForegroundSpendIdle()
   const {
     rootKeyHexForAccount,
     setActiveVaultAccountIndex,
   } = await import('./vaultAccounts')
+  const bootArgs: WalletBootArgs = {
+    rootKeyHex: rootKeyHexForAccount(args.masterRootKeyHex, args.accountIndex),
+    handle: args.handle,
+    chain: args.chain,
+    mnemonic: args.mnemonic,
+    masterRootKeyHex: args.masterRootKeyHex,
+    accountIndex: args.accountIndex,
+  }
+  // The target unit opens while the outgoing account winds down: building
+  // touches no ambient scope, so the two never wait on each other.
+  const unit = await walletUnitFor(bootArgs)
+  const warm = hasWarmWallet(unit)
+  const target = warmWallet(unit, () => buildWallet(bootArgs, unit.databaseName))
+  target.catch(() => {})
+
+  // Do not rebind account-local Activity/inventory while a send continuation
+  // still owns those foreground projections. Its signed miner submission is
+  // retained separately and continues in the background after this fence.
+  await waitForForegroundSpendIdle()
   setActiveVaultAccountIndex(args.masterIdentityKey, args.accountIndex)
-  const prev = active
   logDiag('vault-account', 'info', 'switch', {
-    from: prev?.accountIndex ?? null,
+    from: active?.accountIndex ?? null,
     to: args.accountIndex,
   })
-  try {
-    prev?.monitor?.stopTasks?.()
-  } catch {
-    // optional
-  }
-  // Dispose first: every runtime-pinned occupant (heal, scans) aborts on its
-  // next guard. Then wait for chain ingest to actually let go, so the next
-  // account never boots under the previous account's storage work.
+  // The outgoing unit stays warm and its monitor keeps running; only its
+  // foreground runtime ends. Every runtime-pinned occupant (heal, scans)
+  // aborts on its next guard, and chain ingest must let go before the next
+  // account's stores bind, so no write lands in the wrong account.
   disposeWalletRuntime('account-changed')
   active = null
+  const fenceStarted = Date.now()
   const ingestIdle = await waitForChainIngestIdle(ACCOUNT_SWITCH_INGEST_DRAIN_MS)
   if (!ingestIdle) {
     logDiag('vault-account', 'warn', 'ingest-drain-timeout', {
       waitedMs: ACCOUNT_SWITCH_INGEST_DRAIN_MS,
     })
   }
-  const rootKeyHex = rootKeyHexForAccount(args.masterRootKeyHex, args.accountIndex)
-  return bootWallet({
-    rootKeyHex,
-    handle: args.handle,
-    chain: args.chain,
-    mnemonic: args.mnemonic,
-    masterRootKeyHex: args.masterRootKeyHex,
-    accountIndex: args.accountIndex,
-  })
+  const drainMs = Date.now() - fenceStarted
+  const wallet = await target
+  markWarmWalletSelected(unit)
+  const selected = await selectWallet(wallet)
+  console.info(
+    `[vault-account] switch done ${Date.now() - started}ms — ${warm ? 'warm' : 'cold'} a${args.accountIndex}, ingest drain ${drainMs}ms`,
+  )
+  prewarmVaultAccounts(selected, bootArgs)
+  return selected
 }

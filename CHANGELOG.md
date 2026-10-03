@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.411] - 2026-10-03
+
+### Changed
+
+- Switching wallets reuses each account's already-open wallet instead of rebuilding it. Every account keeps its own Toolbox store, services and monitor, so a switch back is near-instant, the other accounts open in the background after unlock, and a switched-away account keeps confirming its own transactions while another one is in front.
+- The account you are switching to opens while the previous one winds down, rather than after it.
+- Backup is now one setting for the whole vault. The backup host and the "history backed up" confirmation no longer change between sub-accounts. Each account still tracks its own last upload and spend-down guard, because each has its own backup file.
+
+### Added
+
+- Settings → Developer key copies the BAP signing key of the identity this account shares, so a server can sign as that identity. It holds no funds and cannot reveal any wallet key; the identity root never leaves the wallet. It can sign a key rotation, so the copy step says so, and Rotate retires the key.
+
+### Fixed
+
+- Work cancelled by an account switch or lock is logged as a cancellation, not as an error.
+
 ## [1.3.410] - 2026-10-03
 
 ### Fixed

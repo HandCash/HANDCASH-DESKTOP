@@ -117,6 +117,8 @@ const APP_SESSION = `stateDiagram-v2
     UNLOCKED/CREATED publishes one WalletRuntime.
     Account switch and LOCK abort/dispose that runtime first;
     stale feature completions are fenced by runtime generation.
+    A switch selects the account's warm unit (Toolbox + monitor);
+    the outgoing unit keeps proving its transactions. LOCK clears all.
     A switched identity paints before balance; balance remains
     explicitly pending until that runtime's Toolbox answers.
   end note

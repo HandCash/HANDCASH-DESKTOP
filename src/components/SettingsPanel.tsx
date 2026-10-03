@@ -28,6 +28,7 @@ import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import {
+  DevKeyList,
   SettingsNavRow,
   SettingsControlRow,
   SettingsIconToggle,
@@ -314,6 +315,10 @@ export function SettingsPanel() {
             </>
           ) : null}
         </ul>
+      </SettingsSection>
+
+      <SettingsSection title="Developer" part="developer">
+        <DevKeyList />
       </SettingsSection>
 
       <SettingsSection title="Support" part="support">

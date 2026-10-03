@@ -272,6 +272,7 @@ function sessionFacts(header, events) {
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
   const receiptReplays = receiptReplayFacts(events)
+  const accountSwitches = accountSwitchFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
   const broadcast = broadcastFacts(events)
@@ -346,6 +347,7 @@ function sessionFacts(header, events) {
     // Old item receipts re-merged into Activity, and announced cards that left
     // and re-entered the inventory cache (`[collectables] re-entered`).
     receiptReplays,
+    accountSwitches,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
     // and whether legacy deposits were proven by their own path or parents.
@@ -1668,6 +1670,37 @@ function receiptReplayFacts(events) {
   }
 }
 
+const SWITCH_DONE_RE =
+  /^\[vault-account\] switch done (\d+)ms — (warm|cold) a(\d+), ingest drain (\d+)ms$/
+const PREWARM_DONE_RE = /^\[vault-account\] prewarm a(\d+) done (\d+)ms$/
+
+/** Sub-account switches: warm reuse vs cold Toolbox build, and the ingest fence. */
+function accountSwitchFacts(events) {
+  const switches = []
+  const prewarms = []
+  for (const e of events) {
+    const s = SWITCH_DONE_RE.exec(e.text)
+    if (s) {
+      switches.push({ ms: Number(s[1]), kind: s[2], account: Number(s[3]), drainMs: Number(s[4]) })
+      continue
+    }
+    const p = PREWARM_DONE_RE.exec(e.text)
+    if (p) prewarms.push({ account: Number(p[1]), ms: Number(p[2]) })
+  }
+  const of = (kind) => switches.filter((s) => s.kind === kind)
+  const max = (rows, key) => rows.reduce((m, r) => Math.max(m, r[key]), 0)
+  return {
+    switches: switches.length,
+    warm: of('warm').length,
+    cold: of('cold').length,
+    slowestWarmMs: max(of('warm'), 'ms'),
+    slowestColdMs: max(of('cold'), 'ms'),
+    slowestDrainMs: max(switches, 'drainMs'),
+    prewarms: prewarms.length,
+    slowestPrewarmMs: max(prewarms, 'ms'),
+  }
+}
+
 function deadCoinFacts(events) {
   const seen = new Set()
   let resigns = 0
@@ -2860,6 +2893,17 @@ function report(state, answers) {
     )
     for (const r of replays.replayed.slice(0, 5)) {
       console.log(`  ${r.txid} ${r.method} ×${r.merges} (first seen ${r.firstSeen})`)
+    }
+  }
+
+  const switches = latest.accountSwitches
+  if (switches && (switches.switches || switches.prewarms)) {
+    console.log('\nAccount switches (code-counted):')
+    console.log(
+      `  ${switches.switches} switch(es): ${switches.warm} warm (slowest ${switches.slowestWarmMs}ms) · ${switches.cold} cold (slowest ${switches.slowestColdMs}ms) · ingest drain ≤ ${switches.slowestDrainMs}ms`,
+    )
+    if (switches.prewarms) {
+      console.log(`  ${switches.prewarms} account(s) prewarmed, slowest ${switches.slowestPrewarmMs}ms`)
     }
   }
 

@@ -25,6 +25,17 @@ import { getActiveWallet } from './session'
  * Glossary:
  * - **Wallet runtime** → the sole account feature root (`walletRuntime.ts`).
  *   Switch/lock aborts and disposes it before another account is published.
+ * - **Account unit** → one vault account's Toolbox IndexedDB + services +
+ *   monitor (`walletPool.ts`). Units share no mutable state, so they run side
+ *   by side: a switch selects a warm unit instead of rebuilding one, and an
+ *   unselected unit's monitor keeps proving its own transactions. Only the
+ *   selected unit binds the ambient account scope; anything that outlives a
+ *   switch resolves keys from its captured owner (`accountLocalKeyFor`).
+ * - **Backup scope** → policy is vault-wide (`vaultLocalKeys.ts`): the key
+ *   backup, the BRC-39 host and the "history backed up" confirmation do not
+ *   change between sub-accounts. State is per account, because each account
+ *   has its own blob at `/v1/wallets/<identityKey>/wallet.brc39`: last upload,
+ *   last error, the spend-down high-water and the crash watchdog.
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Finder of coins
  *   not yet in localState. Does not pull BRC-39. Does not reclassify a live
  *   unconfirmed cheque as dead because an indexer has not listed it.
@@ -221,6 +232,7 @@ export const WALLET_LAYER_MODULES = {
   custody: ["vault.ts", "sessionBackupAuth.ts"],
   localState: [
     "session.ts",
+    "walletPool.ts",
     "collectables.ts",
     "token/index.ts",
     "token/types.ts",
@@ -322,6 +334,8 @@ export const WALLET_LAYER_MODULES = {
     "cloudBackupHealth.ts",
     "historyEmptyGuard.ts",
     "recompose.ts",
+    "historyBackupPrefs.ts",
+    "vaultLocalKeys.ts",
   ],
   balanceView: [
     "balanceView.ts",

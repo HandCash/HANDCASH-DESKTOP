@@ -353,6 +353,12 @@ export function installAppLogCapture(): void {
   })
   window.addEventListener('unhandledrejection', (ev) => {
     const reason = ev.reason
+    // A disposed runtime cancels its pinned work by design (account switch,
+    // lock). That is not a failure; keep the stack so a missing catch is findable.
+    if (reason instanceof DOMException && reason.name === 'AbortError') {
+      appendAppLog('info', `[wallet-runtime] cancelled: ${reason.stack || reason.message}`)
+      return
+    }
     appendAppLog(
       'error',
       reason instanceof Error ? reason.stack || reason.message : `unhandledrejection ${String(reason)}`,

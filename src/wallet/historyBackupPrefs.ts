@@ -1,6 +1,7 @@
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
+import { vaultLocalKey } from './vaultLocalKeys'
 import { DEFAULT_HISTORY_BACKUP_SETUP_URL, getWalletConfigPrefs } from './walletConfig'
 
 const KEY = storageRegistry.historyBackup.key
@@ -52,20 +53,38 @@ function normalizeBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '')
 }
 
+type StoredPrefs = Partial<HistoryBackupPrefs> & { customBaseUrl?: string; provider?: string }
+
+function readStored(key: string): StoredPrefs | null {
+  try {
+    const raw = durableGetItem(key)
+    return raw ? (JSON.parse(raw) as StoredPrefs) : null
+  } catch {
+    return null
+  }
+}
+
+function storedBaseUrl(stored: StoredPrefs | null): string | null {
+  if (!stored) return null
+  if (typeof stored.baseUrl === 'string') return stored.baseUrl
+  return typeof stored.customBaseUrl === 'string' && stored.customBaseUrl ? stored.customBaseUrl : null
+}
+
+/**
+ * The backup host is vault policy: it lives on the master account's record and
+ * every sub-account uses it. Upload status and the spend-down high-water
+ * describe one account's own blob (`/v1/wallets/<identityKey>/…`) and stay on
+ * that account's record.
+ */
 export function getHistoryBackupPrefs(): HistoryBackupPrefs {
   try {
-    const raw = durableGetItem(accountLocalKey(KEY))
-    if (!raw) return { ...DEFAULTS }
-    const parsed = JSON.parse(raw) as Partial<HistoryBackupPrefs> & {
-      customBaseUrl?: string
-      provider?: string
-    }
-    const legacyUrl =
-      typeof parsed.customBaseUrl === 'string' ? parsed.customBaseUrl : ''
+    const ownKey = accountLocalKey(KEY)
+    const parsed = readStored(ownKey)
+    const vaultKey = vaultLocalKey(KEY)
+    const vault = vaultKey === ownKey ? parsed : readStored(vaultKey)
     const baseUrl =
-      typeof parsed.baseUrl === 'string'
-        ? parsed.baseUrl
-        : legacyUrl || DEFAULT_HISTORY_BACKUP_BASE_URL
+      storedBaseUrl(vault) ?? storedBaseUrl(parsed) ?? DEFAULT_HISTORY_BACKUP_BASE_URL
+    if (!parsed) return { ...DEFAULTS, baseUrl: normalizeBaseUrl(baseUrl) }
     return {
       baseUrl: normalizeBaseUrl(baseUrl),
       lastUploadedAt:
@@ -95,7 +114,22 @@ export function setHistoryBackupPrefs(patch: Partial<HistoryBackupPrefs>): Histo
     baseUrl:
       patch.baseUrl !== undefined ? normalizeBaseUrl(patch.baseUrl) : current.baseUrl,
   }
-  durableSetItem(accountLocalKey(KEY), JSON.stringify(next))
+  const ownKey = accountLocalKey(KEY)
+  const vaultKey = vaultLocalKey(KEY)
+  if (vaultKey === ownKey) {
+    durableSetItem(ownKey, JSON.stringify(next))
+    return next
+  }
+  const vaultStored = readStored(vaultKey)
+  // A sub-account host saved before backup went vault-wide becomes the vault's
+  // when the vault has none; it is never dropped from the account silently.
+  const promoteLegacy =
+    storedBaseUrl(vaultStored) == null && storedBaseUrl(readStored(ownKey)) != null
+  const { baseUrl, ...accountState } = next
+  if (patch.baseUrl !== undefined || promoteLegacy) {
+    durableSetItem(vaultKey, JSON.stringify({ ...vaultStored, baseUrl }))
+  }
+  durableSetItem(ownKey, JSON.stringify(accountState))
   return next
 }
 
