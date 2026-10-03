@@ -2,9 +2,17 @@
 
 ## [1.3.421] - 2026-10-03
 
+### Fixed
+
+- **Tokens and items now show exactly what the wallet holds.** 1.3.420 still kept a multi-output token card forever (each output inherited the card's fresh timestamp) and asked the chain about every absent card on every refresh. Both lists are now a direct reading of the wallet's own records. Tokens are read in full, in both encodings, and include your own unconfirmed sends. A new output that hasn't been listed yet stays visible for up to 10 minutes. A read that fails, comes back incomplete, or overlaps a send, sync or restore (even a send that starts and finishes during the read) changes nothing and runs again once the wallet is idle.
+- **Nothing leaves the lists silently.** Every token or item the wallet stops listing, and every item an address index no longer shows, is recorded and checked on chain once per backoff step (2 minutes, then 1 minute, 5 minutes, 15 minutes, 1 hour, 6 hours, 24 hours), never on every read. If the chain shows it spent, the record closes. If it shows it unspent, the wallet's record is restored, or the output is reclaimed from its transaction. No answer keeps the record open. The record survives restarts.
+- **Asset safety.** An output only counts as spent when the spending transaction's own data shows it consuming that output, so an index's word alone isn't enough. An output that a pending app action or one of your own unconfirmed sends still holds is never released back into the balance because an explorer reports it unspent.
+- Restoring a history backup from a file or an on-device snapshot now pauses sends and wallet reads while it writes, as a cloud restore already did.
+
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Token ownership proofs build on earlier ones. An output this wallet already proved is a finished step, so a received or repaired token checks only its new transfers instead of re-reading the same ancestry. Sends and market listings still ship the full proof the other side needs.
+- `npm run triage` shows each recorded output's state (filed, closed, restored, reclaimed, refused because reserved) and lists those still open.
 
 ## [1.3.420] - 2026-10-03
 
