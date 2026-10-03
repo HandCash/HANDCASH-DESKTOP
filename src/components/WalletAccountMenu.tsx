@@ -294,7 +294,6 @@ export function WalletAccountMenu({
           <header className="wallet-account-heading">
             <div>
               <strong>Choose wallet</strong>
-              <span>Balances and sync stay separate.</span>
             </div>
             <span className="wallet-account-count">{accounts.length}</span>
           </header>

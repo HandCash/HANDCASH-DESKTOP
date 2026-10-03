@@ -785,12 +785,11 @@ function signedMessageboxHeaders(
   method: MessageboxMethod,
   extra: Record<string, string> | undefined,
   box: string,
-  messageBox = 'inbox',
 ): Headers {
   const signed = freshMessageboxAuthHeaders({
     rootKeyHex,
     method,
-    messageBox,
+    messageBox: 'inbox',
     includeAuthrite: messageboxHostAllowsAuthrite(box),
   })
   const headers = new Headers()
@@ -1106,12 +1105,6 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
   }
   if (isIdentityCardControl(inner)) {
     void ingestIdentityCard(sender, inner)
-    return
-  }
-  if (inner.includes('"server-wallet.report"')) {
-    void import('./serverWallet').then(({ acceptServerWalletDirectReport }) =>
-      acceptServerWalletDirectReport(sender, inner),
-    )
     return
   }
   const decoded = decodeMessageBody(inner)
@@ -1697,7 +1690,6 @@ async function acknowledgeMessages(
   messageIds: string[],
   rootKeyHex: string,
   messagebox?: string | null,
-  messageBox = 'inbox',
 ): Promise<void> {
   const box = normalizeMessageboxBase(messagebox)
   try {
@@ -1706,60 +1698,10 @@ async function acknowledgeMessages(
       headers: signedMessageboxHeaders(rootKeyHex, 'acknowledgeMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }, box, messageBox),
-      body: JSON.stringify({ messageBox, messageIds }),
+      }, box),
+      body: JSON.stringify({ messageBox: 'inbox', messageIds }),
     })
   } catch {
     /* ignore */
   }
-}
-
-export type OpenedBoxMessage = {
-  messageId: string
-  sender: string
-  /** BRC-78 plaintext, or null when the body does not open for this wallet. */
-  plaintext: string | null
-}
-
-/**
- * List a named BRC-33 box other than the chat inbox and open each sealed body
- * from its listed sender. The caller decides what to acknowledge.
- */
-export async function listOpenedBoxMessages(args: {
-  rootKeyHex: string
-  messageBox: string
-  messagebox?: string | null
-}): Promise<OpenedBoxMessage[]> {
-  const box = normalizeMessageboxBase(args.messagebox)
-  const res = await authenticatedMessageboxFetch(args.rootKeyHex, box, `${box}/listMessages`, {
-    method: 'POST',
-    headers: signedMessageboxHeaders(args.rootKeyHex, 'listMessages', {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    }, box, args.messageBox),
-    body: JSON.stringify({ messageBox: args.messageBox }),
-  })
-  if (!res.ok) throw new Error(`listMessages ${args.messageBox} failed (${res.status})`)
-  const data = (await res.json()) as { messages?: ListedMessage[] }
-  const list = Array.isArray(data.messages) ? data.messages : []
-  return list
-    .filter((m) => m.messageId)
-    .map((m) => {
-      const sender = listedSender(m)
-      return {
-        messageId: String(m.messageId),
-        sender,
-        plaintext: plaintextFromPeer(m.body, args.rootKeyHex, sender),
-      }
-    })
-}
-
-export async function acknowledgeBoxMessages(args: {
-  rootKeyHex: string
-  messageBox: string
-  messageIds: string[]
-  messagebox?: string | null
-}): Promise<void> {
-  if (args.messageIds.length === 0) return
-  await acknowledgeMessages(args.messageIds, args.rootKeyHex, args.messagebox, args.messageBox)
 }

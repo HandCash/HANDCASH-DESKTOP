@@ -29,8 +29,6 @@ import {
 } from '../wallet/walletProgress'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
-import { SettingsFeatureAbout } from './SettingsFeatureAbout'
-
 type Phase = 'enter' | 'preview' | 'working' | 'done'
 
 /** Tips per transaction the run below uses — the estimate must match it. */
@@ -667,12 +665,6 @@ export function ImportPhrasePanel() {
       ) : null}
 
       <AsyncActionPrompt action={job} />
-
-      <SettingsFeatureAbout tags={['BRC-75', 'BIP39', 'BIP44']}>
-        Scans BRC-75, HD master, Yours / RelayX / Twetch, and the first 20 Centi receive
-        and change addresses under m/44&apos;/145&apos;/0&apos;. Funding uses the foreign
-        key to sign; change lands on this identity. Items are separate on-chain moves.
-      </SettingsFeatureAbout>
     </div>
   )
 }

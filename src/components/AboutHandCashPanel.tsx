@@ -1,8 +1,6 @@
 import { openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { APP_VERSION } from '../version'
-import { SettingsFeatureAbout } from './SettingsFeatureAbout'
-
 export function AboutHandCashPanel() {
   return (
     <div
@@ -39,11 +37,6 @@ export function AboutHandCashPanel() {
           View statecharts
         </button>
       </div>
-
-      <SettingsFeatureAbout tags={['BRC-100']}>
-        Apps talk to this wallet over the local BRC-100 interface. Signing and permissions stay on
-        your device.
-      </SettingsFeatureAbout>
     </div>
   )
 }

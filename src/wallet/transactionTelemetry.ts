@@ -38,7 +38,6 @@ export type TransactionFlow =
   | 'inbound_internalization'
   | 'brc100_action'
   | 'identity_publish'
-  | 'server_wallet_recover'
   | 'payment'
 
 export type TransactionStage =

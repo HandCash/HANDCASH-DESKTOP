@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 
 type Props = {
   title: string
-  body: string
+  body?: string
   icon?: ReactNode
   action?: ReactNode
 }
@@ -17,7 +17,7 @@ export function EmptyState({ title, body, icon, action }: Props) {
         </div>
       ) : null}
       <h3 className="empty-state-title">{title}</h3>
-      <p className="empty-state-body">{body}</p>
+      {body ? <p className="empty-state-body">{body}</p> : null}
       {action ? <div className="empty-state-action">{action}</div> : null}
     </div>
   )

@@ -367,9 +367,6 @@ export function Dashboard({
           pendingBrc29OutboxCount() > 0 || pendingItemOutboxCount() > 0
         await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex, runtime })
         await flushPendingItemOutbox({ rootKeyHex: active.rootKeyHex, runtime })
-        void import('../wallet/serverWallet').then(({ pollServerWalletReports }) =>
-          pollServerWalletReports(runtime),
-        )
         const hints = await pollInboundTipHints({
           rootKeyHex: active.rootKeyHex,
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,

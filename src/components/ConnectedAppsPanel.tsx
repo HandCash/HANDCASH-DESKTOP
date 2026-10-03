@@ -268,7 +268,6 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
         <EmptyState
           icon={<AppsIcon size={28} />}
           title="No apps connected"
-          body="When a site connects through BRC-100, it shows up here with spend and permission history."
         />
       ) : (
         <div className="nav-section-scroll-body">

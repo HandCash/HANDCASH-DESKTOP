@@ -106,7 +106,6 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
           />
           <span className="wallet-setup-option-body">
             <strong>Use a custom history host</strong>
-            <span>Only if you run your own BRC-39 backup server.</span>
           </span>
         </label>
       ) : null}

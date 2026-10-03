@@ -1,33 +1,27 @@
 /**
- * Server wallet — a key this wallet derives, a developer's server spends, and
- * this wallet only tracks.
+ * Server wallet — a stock BRC-100 wallet a developer's server runs, which this
+ * wallet opens too.
  *
- * Custody: the key is a BRC-42 self child of the account root under
- * `[2, 'handcash server wallet']`, keyID = generation. It is never the BAP
- * signing key (published, rotated for identity reasons) and never a Toolbox
- * key, so its outputs are outside `localState`: not in the balance, not
- * selectable by a send, not swept by Refresh. The only spend this wallet makes
- * is the explicit Recover chart.
+ * Custody: the server's root key is a BRC-42 self child of the account root
+ * under `[2, 'handcash server wallet']`, keyID = generation. The server runs a
+ * Toolbox wallet from `SERVER_PRIVATE_KEY` + `WALLET_STORAGE_URL`; this wallet
+ * opens the same key against the same storage, so both read one set of outputs
+ * and no report protocol exists. Those outputs are outside this account's
+ * localState: not in the balance, not selectable by a send, not swept by
+ * Refresh.
  *
- * Tracking: the server reports every transaction that spends from or pays the
- * key to this identity's `server_wallet` BRC-33 box (or a live BRC-246 direct
- * session), sealed with the server key. A report is accepted only from a
- * derived server key, only after the Atomic BEEF SPV-verifies, and each
- * reported output only if its lock is P2PKH of the child key named by the
- * report's derivation. Reports are acknowledged after ingest; an incomplete
- * package stays in the box for the next poll.
+ * Fund is a BRC-29 payment internalized into the server's storage. Recover is
+ * the server wallet paying this one by BRC-29, money only. Items and tokens
+ * are counted and stay with the server.
  */
 import {
-  Beef,
   createNonce,
   KeyDeriver,
-  LockingScript,
   P2PKH,
   PrivateKey,
   PublicKey,
-  SatoshisPerKilobyte,
-  Transaction,
   Utils,
+  type WalletInterface,
   type WalletProtocol,
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
@@ -41,45 +35,34 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import type { ActiveWallet } from './session'
 import { serverWalletRecoverMachine } from './serverWalletRecoverMachine'
+import { BSV21_BASKET, tokenIdFromBsv21Tags } from './token/types'
 import {
-  assertRuntimeCurrent,
-  getWalletRuntime,
+  registerWalletRuntimeLifecycle,
   requireWalletRuntime,
   type WalletRuntime,
 } from './walletRuntime'
 
 export const SERVER_WALLET_PROTOCOL: WalletProtocol = [2, 'handcash server wallet']
-/** BRC-33 box the server posts reports to. */
-export const SERVER_WALLET_BOX = 'server_wallet'
-export const SERVER_WALLET_REPORT_TYPE = 'server-wallet.report'
 /** Toolbox `defaultOptions().feeModel`. */
 const FEE_SAT_PER_KB = 100
-/** Later generations a report may adopt (restore from seed loses the counter). */
-const GENERATION_LOOKAHEAD = 8
-const POLL_INTERVAL_MS = 30_000
+const PAGE = 1000
 
 const KEY = storageRegistry.serverWallet.key
 
-/** Lock of a server-wallet output, named by the derivation that unlocks it. */
-export type ServerWalletLock =
-  | { kind: 'root' }
-  | {
-      kind: 'brc29'
-      derivationPrefix: string
-      derivationSuffix: string
-      /** BRC-29 sender identity key, or `self` for the server's own change. */
-      sender: string
-    }
-
-export type TrackedServerOutput = {
-  outpoint: string
-  satoshis: number
-  generation: number
-  lock: ServerWalletLock
-  seenAt: number
+export function defaultServerWalletStorageUrl(chain: ActiveWallet['chain']): string {
+  return `https://${chain === 'main' ? '' : 'staging-'}storage.babbage.systems`
 }
 
-/** A registered recovery whose self payment is not yet internalized. */
+/** A funding payment not yet internalized into the server's storage. */
+export type PendingServerFund = {
+  txid: string
+  outputIndex: number
+  satoshis: number
+  derivationPrefix: string
+  derivationSuffix: string
+}
+
+/** A recovery the server wallet broadcast that this wallet has not yet internalized. */
 export type PendingServerRecover = {
   txid: string
   atomicBeefB64: string
@@ -89,37 +72,26 @@ export type PendingServerRecover = {
 }
 
 export type ServerWalletLedger = {
-  v: 1
+  v: 2
   generation: number
-  outputs: TrackedServerOutput[]
-  lastReportAt: number | null
+  storageUrl: string
+  pendingFunds: PendingServerFund[]
   pendingRecover: PendingServerRecover | null
 }
 
-export type ServerWalletReport = {
-  txid: string
-  beef: number[]
-  outputs: Array<{ vout: number; lock: ServerWalletLock }>
+export type ServerWalletSummary = {
+  /** Spendable sats in the server's `default` basket. */
+  money: number
+  moneyOutputs: number
+  items: number
+  /** Distinct BSV-21 token ids. */
+  tokens: number
 }
 
-export type ServerWalletReportRefusal =
-  | 'malformed'
-  | 'not-set-up'
-  | 'unknown-sender'
-  | 'retired-key'
-  | 'invalid-package'
-
-export type ServerWalletReportVerdict =
-  | { kind: 'ingested'; added: number; spent: number; generation: number }
-  /** Never ingestible; acknowledge so it leaves the box. */
-  | { kind: 'refused'; reason: ServerWalletReportRefusal }
-  /** Retry on the next poll; do not acknowledge. */
-  | { kind: 'deferred'; reason: string }
-
-export type ServerWalletRecoverRefusal = 'nothing-tracked' | 'uneconomical'
+export type ServerWalletRecoverRefusal = 'nothing-to-recover' | 'uneconomical'
 
 export type ServerWalletRecoverPlan =
-  | { path: 'recover'; outputs: TrackedServerOutput[]; totalSats: number }
+  | { path: 'recover'; satoshis: number }
   | { path: 'finish'; pending: PendingServerRecover }
   | { path: 'refuse'; reason: ServerWalletRecoverRefusal }
 
@@ -129,11 +101,10 @@ export type ServerWalletStatus =
       kind: 'ready'
       generation: number
       identityKey: string
-      address: string
-      trackedSats: number
-      outputs: number
-      lastReportAt: number | null
-      pendingRecover: boolean
+      /** Null until the first read of the server's storage lands. */
+      summary: ServerWalletSummary | null
+      error: string | null
+      pending: boolean
     }
 
 // ── key ────────────────────────────────────────────────────────────────────
@@ -144,47 +115,6 @@ export function serverWalletKey(rootKeyHex: string, generation: number): Private
     String(generation),
     'self',
   )
-}
-
-/** Child key that unlocks an output with this lock. */
-export function serverWalletSpendKey(server: PrivateKey, lock: ServerWalletLock): PrivateKey {
-  if (lock.kind === 'root') return server
-  return new KeyDeriver(server).derivePrivateKey(
-    BRC29_PROTOCOL_ID,
-    `${lock.derivationPrefix} ${lock.derivationSuffix}`,
-    lock.sender === 'self' ? 'self' : PublicKey.fromString(lock.sender),
-  )
-}
-
-function lockingScriptHex(key: PrivateKey): string {
-  return new P2PKH().lock(key.toPublicKey().toHash()).toHex()
-}
-
-/**
- * Which generation signed this sender key. A later one is adopted (restore
- * from seed resets the counter); an earlier one was retired by Rotate.
- */
-export function matchServerWalletGeneration(
-  rootKeyHex: string,
-  current: number,
-  sender: string,
-):
-  | { kind: 'current'; generation: number }
-  | { kind: 'later'; generation: number }
-  | { kind: 'retired' }
-  | { kind: 'unknown' } {
-  const want = sender.trim().toLowerCase()
-  for (let g = current; g <= current + GENERATION_LOOKAHEAD; g += 1) {
-    if (serverWalletKey(rootKeyHex, g).toPublicKey().toString() === want) {
-      return g === current ? { kind: 'current', generation: g } : { kind: 'later', generation: g }
-    }
-  }
-  for (let g = 1; g < current; g += 1) {
-    if (serverWalletKey(rootKeyHex, g).toPublicKey().toString() === want) {
-      return { kind: 'retired' }
-    }
-  }
-  return { kind: 'unknown' }
 }
 
 // ── ledger ─────────────────────────────────────────────────────────────────
@@ -201,20 +131,78 @@ export function serverWalletRevision(): number {
   return revision
 }
 
-export function readServerWalletLedger(owner: BoundAccountKeyScope): ServerWalletLedger | null {
-  const raw = durableGetItem(accountLocalKeyFor(KEY, owner))
+function notify(): void {
+  revision += 1
+  for (const listener of listeners) listener()
+}
+
+type LegacyLedger = {
+  v: 1
+  generation: number
+  outputs?: Array<{
+    outpoint?: string
+    satoshis?: number
+    generation?: number
+    lock?: { kind?: string; derivationPrefix?: string; derivationSuffix?: string; sender?: string }
+  }>
+  pendingRecover?: PendingServerRecover | null
+}
+
+/**
+ * v1 tracked outputs from messagebox reports. Its fund payments are BRC-29
+ * outputs from this identity, which become pending internalizations into the
+ * server's storage; anything else it tracked was the server's own and is
+ * already in that storage.
+ */
+function migrateLegacyLedger(raw: LegacyLedger, active: ActiveWallet): ServerWalletLedger {
+  const sender = active.identityKey.toLowerCase()
+  const pendingFunds: PendingServerFund[] = []
+  for (const out of raw.outputs ?? []) {
+    const [txid = '', vout] = (out.outpoint ?? '').split('.')
+    const lock = out.lock
+    if (
+      out.generation !== raw.generation ||
+      lock?.kind !== 'brc29' ||
+      lock.sender?.toLowerCase() !== sender ||
+      !lock.derivationPrefix ||
+      !lock.derivationSuffix ||
+      !/^[0-9a-f]{64}$/.test(txid) ||
+      !Number.isInteger(Number(vout))
+    ) {
+      continue
+    }
+    pendingFunds.push({
+      txid,
+      outputIndex: Number(vout),
+      satoshis: out.satoshis ?? 0,
+      derivationPrefix: lock.derivationPrefix,
+      derivationSuffix: lock.derivationSuffix,
+    })
+  }
+  return {
+    v: 2,
+    generation: raw.generation,
+    storageUrl: defaultServerWalletStorageUrl(active.chain),
+    pendingFunds,
+    pendingRecover: raw.pendingRecover ?? null,
+  }
+}
+
+export function readServerWalletLedger(active: ActiveWallet): ServerWalletLedger | null {
+  const raw = durableGetItem(accountLocalKeyFor(KEY, accountKeyScopeFor(active)))
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as Partial<ServerWalletLedger>
-    if (parsed.v !== 1 || !Number.isInteger(parsed.generation) || !Array.isArray(parsed.outputs)) {
-      return null
-    }
+    const parsed = JSON.parse(raw) as Partial<ServerWalletLedger> | LegacyLedger
+    if (!Number.isInteger(parsed.generation)) return null
+    if (parsed.v === 1) return migrateLegacyLedger(parsed as LegacyLedger, active)
+    if (parsed.v !== 2) return null
+    const ledger = parsed as Partial<ServerWalletLedger>
     return {
-      v: 1,
-      generation: parsed.generation!,
-      outputs: parsed.outputs,
-      lastReportAt: parsed.lastReportAt ?? null,
-      pendingRecover: parsed.pendingRecover ?? null,
+      v: 2,
+      generation: ledger.generation!,
+      storageUrl: ledger.storageUrl || defaultServerWalletStorageUrl(active.chain),
+      pendingFunds: Array.isArray(ledger.pendingFunds) ? ledger.pendingFunds : [],
+      pendingRecover: ledger.pendingRecover ?? null,
     }
   } catch {
     return null
@@ -225,389 +213,352 @@ function writeLedger(owner: BoundAccountKeyScope, ledger: ServerWalletLedger): v
   if (!durableSetItem(accountLocalKeyFor(KEY, owner), JSON.stringify(ledger))) {
     throw new Error('Could not save the server wallet ledger')
   }
-  revision += 1
-  for (const listener of listeners) listener()
+  notify()
 }
 
-function requireLedger(owner: BoundAccountKeyScope): ServerWalletLedger {
-  const ledger = readServerWalletLedger(owner)
+function requireLedger(active: ActiveWallet): ServerWalletLedger {
+  const ledger = readServerWalletLedger(active)
   if (!ledger) throw new Error('Set up the server wallet first')
   return ledger
 }
 
-export function describeServerWallet(runtime: WalletRuntime): ServerWalletStatus {
-  const active = runtime.instance
-  const ledger = readServerWalletLedger(accountKeyScopeFor(active))
-  if (!ledger) return { kind: 'off' }
-  const pub = serverWalletKey(active.rootKeyHex, ledger.generation).toPublicKey()
-  return {
-    kind: 'ready',
-    generation: ledger.generation,
-    identityKey: pub.toString(),
-    address: pub.toAddress(active.chain === 'main' ? 'mainnet' : 'testnet'),
-    trackedSats: ledger.outputs.reduce((sum, out) => sum + out.satoshis, 0),
-    outputs: ledger.outputs.length,
-    lastReportAt: ledger.lastReportAt,
-    pendingRecover: ledger.pendingRecover != null,
+function updateLedger(
+  active: ActiveWallet,
+  change: (ledger: ServerWalletLedger) => ServerWalletLedger,
+): void {
+  writeLedger(accountKeyScopeFor(active), change(requireLedger(active)))
+}
+
+// ── the server's wallet ────────────────────────────────────────────────────
+
+const opened = new Map<string, Promise<WalletInterface>>()
+const summaries = new Map<string, { summary: ServerWalletSummary | null; error: string | null }>()
+const refreshing = new Map<string, Promise<ServerWalletSummary>>()
+let lifecycleRegistered = false
+let queue: Promise<unknown> = Promise.resolve()
+
+/**
+ * One storage mutation at a time: a pending fund settled by a refresh and by
+ * the Fund that recorded it must not internalize twice.
+ */
+function exclusive<T>(task: () => Promise<T>): Promise<T> {
+  const run = queue.then(task, task)
+  queue = run.catch(() => {})
+  return run
+}
+
+function slot(active: ActiveWallet, ledger: ServerWalletLedger): string {
+  return `${active.chain}:${active.identityKey}:${ledger.generation}:${ledger.storageUrl}`
+}
+
+/** The opened wallet holds the server key; it does not outlive an unlock. */
+function registerLifecycle(): void {
+  if (lifecycleRegistered) return
+  lifecycleRegistered = true
+  registerWalletRuntimeLifecycle({
+    name: 'server-wallet',
+    dispose: (_runtime, reason) => {
+      if (reason !== 'locked' && reason !== 'test') return
+      opened.clear()
+      summaries.clear()
+    },
+  })
+}
+
+/** The same Toolbox wallet the server runs: same key, same storage. */
+async function openServerWallet(
+  active: ActiveWallet,
+  ledger: ServerWalletLedger,
+): Promise<WalletInterface> {
+  registerLifecycle()
+  const key = slot(active, ledger)
+  let wallet = opened.get(key)
+  if (!wallet) {
+    const started = Date.now()
+    wallet = (async () => {
+      const [{ SetupClient }, { walletCryptoBackend }] = await Promise.all([
+        import('@bsv/wallet-toolbox-client'),
+        import('./cryptoBackend'),
+      ])
+      const client = await SetupClient.createWalletClientNoEnv({
+        chain: active.chain,
+        rootKeyHex: serverWalletKey(active.rootKeyHex, ledger.generation).toHex(),
+        storageUrl: ledger.storageUrl,
+        scriptVerifier: walletCryptoBackend(active.chain),
+      })
+      const ms = Date.now() - started
+      if (ms >= 250) console.info(`[server-wallet] open done ${ms}ms`)
+      return client as WalletInterface
+    })()
+    opened.set(key, wallet)
+    wallet.catch(() => opened.delete(key))
+  }
+  return wallet
+}
+
+async function listAll(
+  wallet: WalletInterface,
+  basket: string,
+  includeTags = false,
+): Promise<Array<{ satoshis: number; tags?: string[] }>> {
+  const all: Array<{ satoshis: number; tags?: string[] }> = []
+  for (let offset = 0; ; offset += PAGE) {
+    const page = await wallet.listOutputs({
+      basket,
+      limit: PAGE,
+      offset,
+      ...(includeTags ? { includeTags: true } : {}),
+    })
+    all.push(...page.outputs)
+    if (page.outputs.length < PAGE || all.length >= page.totalOutputs) return all
   }
 }
 
+export async function summarizeServerWallet(wallet: WalletInterface): Promise<ServerWalletSummary> {
+  const [money, items, tokens] = await Promise.all([
+    listAll(wallet, 'default'),
+    wallet.listOutputs({ basket: '1sat', limit: 1 }),
+    listAll(wallet, BSV21_BASKET, true),
+  ])
+  const tokenIds = new Set<string>()
+  for (const out of tokens) {
+    const id = tokenIdFromBsv21Tags(out.tags)
+    if (id) tokenIds.add(id)
+  }
+  return {
+    money: money.reduce((sum, out) => sum + out.satoshis, 0),
+    moneyOutputs: money.length,
+    items: items.totalOutputs,
+    tokens: tokenIds.size,
+  }
+}
+
+export function describeServerWallet(runtime: WalletRuntime): ServerWalletStatus {
+  const active = runtime.instance
+  const ledger = readServerWalletLedger(active)
+  if (!ledger) return { kind: 'off' }
+  const read = summaries.get(slot(active, ledger))
+  return {
+    kind: 'ready',
+    generation: ledger.generation,
+    identityKey: serverWalletKey(active.rootKeyHex, ledger.generation).toPublicKey().toString(),
+    summary: read?.summary ?? null,
+    error: read?.error ?? null,
+    pending: ledger.pendingFunds.length > 0 || ledger.pendingRecover != null,
+  }
+}
+
+/**
+ * Re-read the server's storage. Settles pending fund payments first so a
+ * funding the server cannot see yet is not left out of the count.
+ */
+export function refreshServerWallet(runtime: WalletRuntime): Promise<ServerWalletSummary> {
+  const active = runtime.instance
+  const ledger = requireLedger(active)
+  const key = slot(active, ledger)
+  const inFlight = refreshing.get(key)
+  if (inFlight) return inFlight
+  const run = exclusive(async () => {
+    try {
+      const wallet = await openServerWallet(active, ledger)
+      await settlePendingFunds(active, wallet)
+      const summary = await summarizeServerWallet(wallet)
+      summaries.set(key, { summary, error: null })
+      return summary
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      summaries.set(key, { summary: summaries.get(key)?.summary ?? null, error: reason })
+      console.warn(`[server-wallet] refresh failed — ${reason}`)
+      throw error
+    } finally {
+      refreshing.delete(key)
+      notify()
+    }
+  })
+  refreshing.set(key, run)
+  return run
+}
+
 export function setUpServerWallet(runtime: WalletRuntime): void {
-  const owner = accountKeyScopeFor(runtime.instance)
-  if (readServerWalletLedger(owner)) return
-  writeLedger(owner, {
-    v: 1,
+  const active = runtime.instance
+  if (readServerWalletLedger(active)) return
+  writeLedger(accountKeyScopeFor(active), {
+    v: 2,
     generation: 1,
-    outputs: [],
-    lastReportAt: null,
+    storageUrl: defaultServerWalletStorageUrl(active.chain),
+    pendingFunds: [],
     pendingRecover: null,
   })
   console.info('[server-wallet] set up generation 1')
 }
 
-/** Everything the server needs, as one line: its key and where to report. */
-export async function exportServerWalletConfig(runtime: WalletRuntime): Promise<string> {
+/** The env a BSVA server template reads to open this wallet. */
+export function exportServerWalletConfig(runtime: WalletRuntime): string {
   const active = runtime.instance
-  const ledger = requireLedger(accountKeyScopeFor(active))
-  const { normalizeMessageboxBase } = await import('./messageTransport')
-  const key = serverWalletKey(active.rootKeyHex, ledger.generation)
+  const ledger = requireLedger(active)
   console.info(`[server-wallet] exported generation ${ledger.generation}`)
-  return JSON.stringify({
-    wif: key.toWif(active.chain === 'main' ? [0x80] : [0xef]),
-    reportTo: active.identityKey,
-    messageBox: SERVER_WALLET_BOX,
-    messagebox: normalizeMessageboxBase(),
-  })
+  return [
+    `SERVER_PRIVATE_KEY=${serverWalletKey(active.rootKeyHex, ledger.generation).toHex()}`,
+    `WALLET_STORAGE_URL=${ledger.storageUrl}`,
+    `BSV_NETWORK=${active.chain === 'main' ? 'main' : 'test'}`,
+    '',
+  ].join('\n')
 }
 
-/** Retire the current key. Refused while any output is still tracked under it. */
-export function rotateServerWallet(runtime: WalletRuntime): number {
-  const owner = accountKeyScopeFor(runtime.instance)
-  const ledger = requireLedger(owner)
-  if (ledger.outputs.length > 0 || ledger.pendingRecover) {
-    throw new Error('Recover the tracked funds before rotating the server key')
+/** Retire the current key. Refused while the server wallet holds anything. */
+export async function rotateServerWallet(runtime: WalletRuntime): Promise<number> {
+  const active = runtime.instance
+  const ledger = requireLedger(active)
+  if (ledger.pendingFunds.length > 0 || ledger.pendingRecover) {
+    throw new Error('Finish the pending server wallet payment before rotating')
+  }
+  const summary = await refreshServerWallet(runtime)
+  if (summary.money > 0 || summary.items > 0 || summary.tokens > 0) {
+    throw new Error('Empty the server wallet before rotating its key')
   }
   const generation = ledger.generation + 1
-  writeLedger(owner, { ...ledger, generation })
+  updateLedger(active, (current) => ({ ...current, generation }))
   console.info(`[server-wallet] rotated to generation ${generation}`)
   return generation
 }
 
-// ── reports ────────────────────────────────────────────────────────────────
+// ── fund ───────────────────────────────────────────────────────────────────
 
-const B64_NONCE = /^[A-Za-z0-9+/=]{1,128}$/
-const PUBKEY = /^0[23][0-9a-f]{64}$/
-
-function parseLock(raw: unknown): ServerWalletLock | null {
-  if (!raw || typeof raw !== 'object') return null
-  const lock = raw as Record<string, unknown>
-  if (lock.kind === 'root') return { kind: 'root' }
-  if (lock.kind !== 'brc29') return null
-  const { derivationPrefix, derivationSuffix } = lock
-  const sender = typeof lock.sender === 'string' ? lock.sender.trim().toLowerCase() : ''
-  if (
-    typeof derivationPrefix !== 'string' ||
-    typeof derivationSuffix !== 'string' ||
-    !B64_NONCE.test(derivationPrefix) ||
-    !B64_NONCE.test(derivationSuffix) ||
-    (sender !== 'self' && !PUBKEY.test(sender))
-  ) {
-    return null
-  }
-  return { kind: 'brc29', derivationPrefix, derivationSuffix, sender }
+async function internalizeFund(
+  active: ActiveWallet,
+  wallet: WalletInterface,
+  fund: PendingServerFund,
+  atomicBeef?: number[],
+): Promise<void> {
+  const same = (p: PendingServerFund) => p.txid === fund.txid && p.outputIndex === fund.outputIndex
+  if (!requireLedger(active).pendingFunds.some(same)) return
+  const { atomicBeefForSubject, getBeefForTxidCached } = await import('./beefCache')
+  const tx =
+    atomicBeefForSubject(atomicBeef, fund.txid) ??
+    atomicBeefForSubject((await getBeefForTxidCached(active, fund.txid)).toBinary(), fund.txid)
+  if (!tx) throw new Error(`Could not load funding transaction ${fund.txid.slice(0, 12)}`)
+  await wallet.internalizeAction({
+    tx,
+    description: 'Funded from HandCash',
+    outputs: [
+      {
+        outputIndex: fund.outputIndex,
+        protocol: 'wallet payment',
+        paymentRemittance: {
+          derivationPrefix: fund.derivationPrefix,
+          derivationSuffix: fund.derivationSuffix,
+          senderIdentityKey: active.identityKey,
+        },
+      },
+    ],
+  })
+  updateLedger(active, (ledger) => ({
+    ...ledger,
+    pendingFunds: ledger.pendingFunds.filter((p) => !same(p)),
+  }))
+  console.info(`[server-wallet] fund ${fund.txid.slice(0, 12)} internalized ${fund.satoshis} sats`)
 }
 
-export function parseServerWalletReport(plaintext: string): ServerWalletReport | null {
-  let raw: Record<string, unknown>
-  try {
-    raw = JSON.parse(plaintext) as Record<string, unknown>
-  } catch {
-    return null
+async function settlePendingFunds(active: ActiveWallet, wallet: WalletInterface): Promise<void> {
+  for (const fund of requireLedger(active).pendingFunds) {
+    await internalizeFund(active, wallet, fund)
   }
-  if (raw?.type !== SERVER_WALLET_REPORT_TYPE || raw.v !== 1) return null
-  const txid = typeof raw.txid === 'string' ? raw.txid.trim().toLowerCase() : ''
-  if (!/^[0-9a-f]{64}$/.test(txid) || typeof raw.beef !== 'string') return null
-  let beef: number[]
-  try {
-    beef = Utils.toArray(raw.beef, 'base64')
-  } catch {
-    return null
-  }
-  if (beef.length === 0) return null
-  const outputs: ServerWalletReport['outputs'] = []
-  for (const entry of Array.isArray(raw.outputs) ? raw.outputs : []) {
-    const vout = (entry as { vout?: unknown })?.vout
-    const lock = parseLock((entry as { lock?: unknown })?.lock)
-    if (!Number.isInteger(vout) || (vout as number) < 0 || !lock) return null
-    outputs.push({ vout: vout as number, lock })
-  }
-  return { txid, beef, outputs }
 }
 
 /**
- * Apply a verified report: inputs that spend tracked outputs retire them;
- * reported outputs whose lock matches their derivation are tracked.
+ * BRC-29 payment to the server's identity key, then internalized into its
+ * storage. The payment is recorded before internalizing; a miss retries on the
+ * next refresh.
  */
-export function applyServerWalletReport(args: {
-  ledger: ServerWalletLedger
-  generation: number
-  server: PrivateKey
-  tx: Transaction
-  report: ServerWalletReport
-  now?: number
-}): { ledger: ServerWalletLedger; added: number; spent: number; mismatched: number[] } {
-  const spentOutpoints = new Set(
-    args.tx.inputs.map(
-      (input) => `${String(input.sourceTXID ?? input.sourceTransaction?.id('hex')).toLowerCase()}.${input.sourceOutputIndex}`,
-    ),
-  )
-  const kept = args.ledger.outputs.filter((out) => !spentOutpoints.has(out.outpoint))
-  const known = new Set(kept.map((out) => out.outpoint))
-  const mismatched: number[] = []
-  let added = 0
-  for (const { vout, lock } of args.report.outputs) {
-    const output = args.tx.outputs[vout]
-    const outpoint = `${args.report.txid}.${vout}`
-    if (
-      !output ||
-      output.lockingScript.toHex() !== lockingScriptHex(serverWalletSpendKey(args.server, lock))
-    ) {
-      mismatched.push(vout)
-      continue
-    }
-    if (known.has(outpoint)) continue
-    known.add(outpoint)
-    kept.push({
-      outpoint,
-      satoshis: output.satoshis ?? 0,
-      generation: args.generation,
-      lock,
-      seenAt: args.now ?? Date.now(),
-    })
-    added += 1
-  }
-  return {
-    ledger: {
-      ...args.ledger,
-      generation: Math.max(args.ledger.generation, args.generation),
-      outputs: kept,
-      lastReportAt: args.now ?? Date.now(),
-    },
-    added,
-    spent: args.ledger.outputs.length - (kept.length - added),
-    mismatched,
-  }
-}
-
-export async function ingestServerWalletReport(args: {
-  runtime: WalletRuntime
-  sender: string
-  plaintext: string
-}): Promise<ServerWalletReportVerdict> {
-  const started = Date.now()
-  const active = args.runtime.instance
-  const owner = accountKeyScopeFor(active)
-  const report = parseServerWalletReport(args.plaintext)
-  if (!report) return refuse('malformed')
-  const before = readServerWalletLedger(owner)
-  if (!before) return refuse('not-set-up')
-  const match = matchServerWalletGeneration(active.rootKeyHex, before.generation, args.sender)
-  if (match.kind === 'retired') return refuse('retired-key')
-  if (match.kind === 'unknown') return refuse('unknown-sender')
-
-  const { verifySignedPackage } = await import('./spvPackage')
-  const tracker = await Promise.resolve(active.services?.getChainTracker?.()).catch(() => null)
-  const spv = await verifySignedPackage(report.beef, report.txid, tracker)
-  if (spv.kind === 'incomplete') {
-    console.info(`[server-wallet] report ${report.txid.slice(0, 12)} deferred — ${spv.reason}`)
-    return { kind: 'deferred', reason: spv.reason }
-  }
-  if (spv.kind === 'invalid') {
-    console.warn(`[server-wallet] report ${report.txid.slice(0, 12)} refused — ${spv.reason}`)
-    return refuse('invalid-package')
-  }
-  const tx = Beef.fromBinary(report.beef).findAtomicTransaction(report.txid)
-  if (!tx) return refuse('invalid-package')
-
-  // Read again after the awaits: a concurrent report may have landed.
-  const ledger = readServerWalletLedger(owner) ?? before
-  const applied = applyServerWalletReport({
-    ledger,
-    generation: match.generation,
-    server: serverWalletKey(active.rootKeyHex, match.generation),
-    tx,
-    report,
-  })
-  writeLedger(owner, applied.ledger)
-  if (applied.mismatched.length > 0) {
-    console.warn(
-      `[server-wallet] report ${report.txid.slice(0, 12)} outputs ${applied.mismatched.join(',')} do not match their derivation — not tracked`,
-    )
-  }
-  if (match.kind === 'later') {
-    console.info(`[server-wallet] adopted generation ${match.generation} from a report`)
-  }
-  const ms = Date.now() - started
-  console.info(
-    `[server-wallet] report ${report.txid.slice(0, 12)} ingested +${applied.added} -${applied.spent}` +
-      (ms >= 250 ? ` done ${ms}ms` : ''),
-  )
-  return { kind: 'ingested', added: applied.added, spent: applied.spent, generation: match.generation }
-
-  function refuse(reason: ServerWalletReportRefusal): ServerWalletReportVerdict {
-    console.warn(`[server-wallet] report refused — ${reason}`)
-    return { kind: 'refused', reason }
-  }
-}
-
-let lastPollAt = 0
-let polling = false
-
-/** Drain the `server_wallet` box. Cheap no-op unless this account set one up. */
-export async function pollServerWalletReports(runtime: WalletRuntime): Promise<void> {
-  if (polling || Date.now() - lastPollAt < POLL_INTERVAL_MS) return
-  if (!readServerWalletLedger(accountKeyScopeFor(runtime.instance))) return
-  polling = true
-  lastPollAt = Date.now()
-  try {
-    const { acknowledgeBoxMessages, listOpenedBoxMessages } = await import('./messageTransport')
-    const rootKeyHex = runtime.instance.rootKeyHex
-    const listed = await listOpenedBoxMessages({ rootKeyHex, messageBox: SERVER_WALLET_BOX })
-    const ack: string[] = []
-    for (const message of listed) {
-      if (message.plaintext == null) {
-        console.warn('[server-wallet] report refused — unreadable')
-        ack.push(message.messageId)
-        continue
-      }
-      const verdict = await ingestServerWalletReport({
-        runtime,
-        sender: message.sender,
-        plaintext: message.plaintext,
-      })
-      if (verdict.kind !== 'deferred') ack.push(message.messageId)
-    }
-    await acknowledgeBoxMessages({ rootKeyHex, messageBox: SERVER_WALLET_BOX, messageIds: ack })
-  } catch (err) {
-    console.warn('[server-wallet] poll failed', err)
-  } finally {
-    polling = false
-  }
-}
-
-/** A report that arrived on a live BRC-246 direct session. */
-export function acceptServerWalletDirectReport(sender: string, plaintext: string): void {
-  const runtime = getWalletRuntime()
-  if (!runtime) return
-  void ingestServerWalletReport({ runtime, sender, plaintext }).catch((err) => {
-    console.warn('[server-wallet] direct report failed', err)
-  })
-}
-
-// ── fund ───────────────────────────────────────────────────────────────────
-
-/** BRC-29 payment to the server key; the output is tracked from the moment it is signed. */
 export async function fundServerWallet(satoshis: number): Promise<{ txid: string }> {
   const runtime = requireWalletRuntime()
   const active = runtime.instance
-  const owner = accountKeyScopeFor(active)
-  const { generation } = requireLedger(owner)
-  const server = serverWalletKey(active.rootKeyHex, generation)
+  const ledger = requireLedger(active)
+  const serverIdentity = serverWalletKey(active.rootKeyHex, ledger.generation).toPublicKey()
   const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
   const result = await sendBrc29ToIdentityKey({
-    payeeIdentityKey: server.toPublicKey().toString(),
+    payeeIdentityKey: serverIdentity.toString(),
     satoshis,
     friendLabel: 'Server wallet',
     description: 'Fund server wallet',
   })
-  const ledger = requireLedger(owner)
-  const outpoint = `${result.txid.toLowerCase()}.${result.remittance.outputIndex ?? 0}`
-  if (!ledger.outputs.some((out) => out.outpoint === outpoint)) {
-    writeLedger(owner, {
-      ...ledger,
-      outputs: [
-        ...ledger.outputs,
-        {
-          outpoint,
-          satoshis,
-          generation,
-          lock: {
-            kind: 'brc29',
-            derivationPrefix: result.remittance.derivationPrefix,
-            derivationSuffix: result.remittance.derivationSuffix,
-            sender: active.identityKey.toLowerCase(),
-          },
-          seenAt: Date.now(),
-        },
-      ],
-    })
+  const fund: PendingServerFund = {
+    txid: result.txid.toLowerCase(),
+    outputIndex: result.remittance.outputIndex ?? 0,
+    satoshis,
+    derivationPrefix: result.remittance.derivationPrefix,
+    derivationSuffix: result.remittance.derivationSuffix,
   }
-  console.info(`[server-wallet] funded ${satoshis} sats ${outpoint}`)
-  return { txid: result.txid }
+  updateLedger(active, (current) => ({ ...current, pendingFunds: [...current.pendingFunds, fund] }))
+  console.info(`[server-wallet] funded ${satoshis} sats ${fund.txid.slice(0, 12)}.${fund.outputIndex}`)
+  try {
+    await exclusive(async () =>
+      internalizeFund(active, await openServerWallet(active, ledger), fund, result.atomicBeef),
+    )
+  } catch (error) {
+    console.warn(
+      `[server-wallet] fund ${fund.txid.slice(0, 12)} internalize deferred — ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
+  void refreshServerWallet(runtime).catch(() => {})
+  return { txid: fund.txid }
 }
 
 // ── recover ────────────────────────────────────────────────────────────────
 
-export function planServerWalletRecover(ledger: ServerWalletLedger): ServerWalletRecoverPlan {
-  if (ledger.pendingRecover) return { path: 'finish', pending: ledger.pendingRecover }
-  if (ledger.outputs.length === 0) return { path: 'refuse', reason: 'nothing-tracked' }
-  const totalSats = ledger.outputs.reduce((sum, out) => sum + out.satoshis, 0)
-  const bytes = 10 + 148 * ledger.outputs.length + 34
-  if (totalSats - Math.ceil((bytes * FEE_SAT_PER_KB) / 1000) < 1) {
-    return { path: 'refuse', reason: 'uneconomical' }
-  }
-  return { path: 'recover', outputs: ledger.outputs, totalSats }
+/** Fee the server's funding needs: every money input plus payment and change. */
+function recoverFee(moneyOutputs: number): number {
+  return Math.ceil(((10 + 148 * moneyOutputs + 34 * 2) * FEE_SAT_PER_KB) / 1000)
 }
 
-type SignedRecover = PendingServerRecover & { atomicBeef: number[] }
+export function planServerWalletRecover(
+  ledger: ServerWalletLedger,
+  summary: Pick<ServerWalletSummary, 'money' | 'moneyOutputs'>,
+): ServerWalletRecoverPlan {
+  if (ledger.pendingRecover) return { path: 'finish', pending: ledger.pendingRecover }
+  if (summary.money <= 0) return { path: 'refuse', reason: 'nothing-to-recover' }
+  const satoshis = summary.money - recoverFee(summary.moneyOutputs)
+  if (satoshis < 1) return { path: 'refuse', reason: 'uneconomical' }
+  return { path: 'recover', satoshis }
+}
 
-async function signRecover(
+/** The server wallet pays this one by BRC-29; it signs and broadcasts. */
+async function spendRecover(
   active: ActiveWallet,
-  outputs: TrackedServerOutput[],
-): Promise<SignedRecover> {
-  const { getBeefForTxidCached } = await import('./beefCache')
+  server: WalletInterface,
+  satoshis: number,
+): Promise<PendingServerRecover> {
   const [derivationPrefix, derivationSuffix] = await Promise.all([
-    createNonce(active.wallet, 'self'),
-    createNonce(active.wallet, 'self'),
+    createNonce(server, 'self'),
+    createNonce(server, 'self'),
   ])
-  const { publicKey } = await active.wallet.getPublicKey({
+  const { publicKey } = await server.getPublicKey({
     protocolID: BRC29_PROTOCOL_ID,
     keyID: `${derivationPrefix} ${derivationSuffix}`,
     counterparty: active.identityKey,
   })
-  const tx = new Transaction()
-  for (const out of outputs) {
-    const [txid = '', voutRaw] = out.outpoint.split('.')
-    const vout = Number(voutRaw)
-    const beef = await getBeefForTxidCached(active, txid)
-    const source = beef.findAtomicTransaction(txid) ?? beef.findTxid(txid)?.tx
-    const key = serverWalletSpendKey(serverWalletKey(active.rootKeyHex, out.generation), out.lock)
-    const sourceOutput = source?.outputs[vout]
-    if (!source || !sourceOutput) throw new Error(`Could not load tracked output ${out.outpoint}`)
-    if (sourceOutput.lockingScript.toHex() !== lockingScriptHex(key)) {
-      throw new Error(`Tracked output ${out.outpoint} is not locked to the server key`)
-    }
-    tx.addInput({
-      sourceTransaction: source,
-      sourceOutputIndex: vout,
-      unlockingScriptTemplate: new P2PKH().unlock(key),
-    })
-  }
-  tx.addOutput({
-    lockingScript: LockingScript.fromHex(
-      new P2PKH().lock(PublicKey.fromString(publicKey).toHash()).toHex(),
-    ),
-    change: true,
+  const result = await server.createAction({
+    description: 'Recover to HandCash',
+    outputs: [
+      {
+        lockingScript: new P2PKH().lock(PublicKey.fromString(publicKey).toHash()).toHex(),
+        satoshis,
+        outputDescription: 'Recover to HandCash',
+        customInstructions: JSON.stringify({
+          derivationPrefix,
+          derivationSuffix,
+          payee: active.identityKey,
+        }),
+      },
+    ],
+    options: { randomizeOutputs: false, acceptDelayedBroadcast: false },
   })
-  await tx.fee(new SatoshisPerKilobyte(FEE_SAT_PER_KB))
-  const satoshis = tx.outputs[0]?.satoshis ?? 0
-  if (satoshis < 1) throw new Error('Tracked funds do not cover the network fee')
-  await tx.sign()
-  const atomicBeef = tx.toAtomicBEEF()
+  if (!result.txid || !result.tx) throw new Error('Server wallet did not return the signed recovery')
   return {
-    txid: tx.id('hex'),
-    atomicBeef,
-    atomicBeefB64: Utils.toBase64(atomicBeef),
+    txid: result.txid,
+    atomicBeefB64: Utils.toBase64(result.tx),
     satoshis,
     derivationPrefix,
     derivationSuffix,
@@ -615,54 +566,42 @@ async function signRecover(
 }
 
 /**
- * Move every tracked output back into this wallet. Stop the server first: a
- * spend it signs concurrently makes the miner reject one of the two.
+ * Move the server wallet's money back into this wallet. Items and tokens stay
+ * with the server. Stop the server first: a spend it makes concurrently can
+ * take the same coins.
  */
-export async function recoverServerWallet(): Promise<{ txid: string; satoshis: number }> {
+export function recoverServerWallet(): Promise<{ txid: string; satoshis: number }> {
   const runtime = requireWalletRuntime()
+  return exclusive(() => recoverExclusive(runtime))
+}
+
+async function recoverExclusive(
+  runtime: WalletRuntime,
+): Promise<{ txid: string; satoshis: number }> {
   const active = runtime.instance
-  const owner = accountKeyScopeFor(active)
-  const plan = planServerWalletRecover(requireLedger(owner))
+  const ledger = requireLedger(active)
+  const server = await openServerWallet(active, ledger)
+  const plan = planServerWalletRecover(
+    ledger,
+    ledger.pendingRecover ? { money: 0, moneyOutputs: 0 } : await summarizeServerWallet(server),
+  )
   const chart = createActor(serverWalletRecoverMachine).start()
   chart.send({ type: 'START', plan })
   try {
-    if (chart.getSnapshot().matches('failed')) {
+    if (plan.path === 'refuse') {
       throw new Error(
-        plan.path === 'refuse' && plan.reason === 'uneconomical'
-          ? 'Tracked funds do not cover the network fee'
-          : 'Nothing is tracked to recover',
+        plan.reason === 'uneconomical'
+          ? 'Server wallet money does not cover the network fee'
+          : 'The server wallet holds no money',
       )
     }
     let pending: PendingServerRecover
     if (plan.path === 'recover') {
-      const signed = await signRecover(active, plan.outputs)
-      chart.send({ type: 'SIGNED', txid: signed.txid })
-      assertRuntimeCurrent(runtime)
-      const { registerSignedSend, startSignedSendPropagation } = await import(
-        './signedSendLifecycle'
-      )
-      const handle = await registerSignedSend({
-        txid: signed.txid,
-        atomicBeef: signed.atomicBeef,
-        flow: 'server_wallet_recover',
-        satoshis: signed.satoshis,
-        to: active.address,
-      })
-      const { atomicBeef: _bytes, ...rest } = signed
-      pending = rest
-      const spent = new Set(plan.outputs.map((out) => out.outpoint))
-      const ledger = requireLedger(owner)
-      writeLedger(owner, {
-        ...ledger,
-        outputs: ledger.outputs.filter((out) => !spent.has(out.outpoint)),
-        pendingRecover: pending,
-      })
-      startSignedSendPropagation(handle)
-      chart.send({ type: 'REGISTERED' })
-    } else if (plan.path === 'finish') {
-      pending = plan.pending
+      pending = await spendRecover(active, server, plan.satoshis)
+      updateLedger(active, (current) => ({ ...current, pendingRecover: pending }))
+      chart.send({ type: 'SPENT', txid: pending.txid })
     } else {
-      throw new Error('Recover plan was not classified')
+      pending = plan.pending
     }
 
     const { withVisibleOnChainBeef } = await import('./legacyBeef')
@@ -678,20 +617,23 @@ export async function recoverServerWallet(): Promise<{ txid: string; satoshis: n
             paymentRemittance: {
               derivationPrefix: pending.derivationPrefix,
               derivationSuffix: pending.derivationSuffix,
-              senderIdentityKey: active.identityKey,
+              senderIdentityKey: serverWalletKey(active.rootKeyHex, ledger.generation)
+                .toPublicKey()
+                .toString(),
             },
           },
         ],
         seekPermission: false,
       }),
     )
-    writeLedger(owner, { ...requireLedger(owner), pendingRecover: null })
+    updateLedger(active, (current) => ({ ...current, pendingRecover: null }))
     chart.send({ type: 'INTERNALIZED' })
     console.info(`[server-wallet] recovered ${pending.satoshis} sats txid=${pending.txid.slice(0, 12)}`)
     const { refreshSpendableBalance } = await import('./spendGuard')
     void refreshSpendableBalance().catch(() => {})
     const { scheduleHistoryBackupPush } = await import('./deviceSync')
     scheduleHistoryBackupPush('server-wallet-recover')
+    void refreshServerWallet(runtime).catch(() => {})
     return { txid: pending.txid, satoshis: pending.satoshis }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)

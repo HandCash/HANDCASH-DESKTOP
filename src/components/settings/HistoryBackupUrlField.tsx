@@ -36,15 +36,12 @@ export function HistoryBackupUrlField({
   showActions = true,
   onSaved,
 }: Props) {
-  const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
   const [customHost, setCustomHost] = useState(() => {
     const url = getHistoryBackupPrefs().baseUrl
     return Boolean(url.trim()) && !isHandCashUrl(url)
   })
   const [draft, setDraft] = useState(() => getHistoryBackupPrefs().baseUrl || handCashHistoryUrl())
   const optedOut = getWalletConfigPrefs().mode === 'none'
-  const usingHandCash = !optedOut && !customHost && isHandCashUrl(prefs.baseUrl || handCashHistoryUrl())
-
   useEffect(() => {
     if (!optedOut) {
       try {
@@ -53,9 +50,7 @@ export function HistoryBackupUrlField({
         /* ignore */
       }
     }
-    const next = getHistoryBackupPrefs()
-    setPrefs(next)
-    const url = next.baseUrl.trim()
+    const url = getHistoryBackupPrefs().baseUrl.trim()
     if (url && !isHandCashUrl(url)) {
       setCustomHost(true)
       setDraft(url)
@@ -66,7 +61,6 @@ export function HistoryBackupUrlField({
 
   const save = (url: string) => {
     const next = setHistoryBackupPrefs({ baseUrl: url })
-    setPrefs(next)
     setDraft(next.baseUrl || handCashHistoryUrl())
     playWalletSound('soft')
     toastSuccess(
@@ -105,7 +99,6 @@ export function HistoryBackupUrlField({
         />
         <span className="wallet-setup-option-body">
           <strong>Use a custom history host</strong>
-          <span>Only if you run your own BRC-39 backup server.</span>
         </span>
       </label>
 
@@ -140,10 +133,6 @@ export function HistoryBackupUrlField({
             Use HandCash
           </button>
         </div>
-      ) : null}
-
-      {usingHandCash ? (
-        <p className="settings-row-desc">HandCash is used automatically unless you choose a custom host.</p>
       ) : null}
     </div>
   )

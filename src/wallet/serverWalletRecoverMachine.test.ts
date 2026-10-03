@@ -11,18 +11,18 @@ const pending = {
 }
 
 describe('serverWalletRecoverMachine', () => {
-  it('walks recover through the signed lifecycle', () => {
+  it('walks recover from the server spend to internalize', () => {
     const actor = createActor(serverWalletRecoverMachine).start()
-    actor.send({ type: 'START', plan: { path: 'recover', outputs: [], totalSats: 10_000 } })
-    expect(actor.getSnapshot().value).toBe('signing')
-    actor.send({ type: 'SIGNED', txid: pending.txid })
-    actor.send({ type: 'REGISTERED' })
+    actor.send({ type: 'START', plan: { path: 'recover', satoshis: 9_900 } })
+    expect(actor.getSnapshot().value).toBe('spending')
+    actor.send({ type: 'SPENT', txid: pending.txid })
+    expect(actor.getSnapshot().value).toBe('internalizing')
     actor.send({ type: 'INTERNALIZED' })
     expect(actor.getSnapshot().value).toBe('done')
     expect(actor.getSnapshot().context.txid).toBe(pending.txid)
   })
 
-  it('finishes a registered recovery by internalizing only', () => {
+  it('finishes a broadcast recovery by internalizing only', () => {
     const actor = createActor(serverWalletRecoverMachine).start()
     actor.send({ type: 'START', plan: { path: 'finish', pending } })
     expect(actor.getSnapshot().value).toBe('internalizing')

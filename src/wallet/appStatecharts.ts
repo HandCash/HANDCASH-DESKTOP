@@ -400,21 +400,20 @@ const SERVER_WALLET_RECOVER = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> planning : START with ServerWalletRecoverPlan
-  planning --> signing : recover
-  planning --> internalizing : finish (registered, not internalized)
-  planning --> failed : nothing-tracked | uneconomical
-  signing --> registering : SIGNED
-  registering --> internalizing : REGISTERED / signedSendLifecycle
+  planning --> spending : recover
+  planning --> internalizing : finish (broadcast, not internalized)
+  planning --> failed : nothing-to-recover | uneconomical
+  spending --> internalizing : SPENT / pendingRecover saved
   internalizing --> done : INTERNALIZED
-  signing --> failed : FAIL
-  registering --> failed : FAIL
+  spending --> failed : FAIL
   internalizing --> failed : FAIL / pendingRecover kept
   done --> idle : RESET
   failed --> idle : RESET
-  note right of signing
-    The only spend of the server key.
-    Server reports keep the ledger;
-    Refresh never sweeps it.
+  note right of spending
+    Server wallet (same key + storage
+    as the server) pays this wallet by
+    BRC-29. Money only; items and
+    tokens stay with the server.
   end note
 `
 
@@ -1296,7 +1295,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'serverWalletRecover',
     label: 'Server wallet recover',
     caption:
-      'serverWalletRecoverMachine — tracked server-key outputs → self BRC-29 → signedSendLifecycle | named refuse',
+      'serverWalletRecoverMachine — server wallet money → BRC-29 to this wallet → internalize | named refuse',
     source: SERVER_WALLET_RECOVER,
   },
   {

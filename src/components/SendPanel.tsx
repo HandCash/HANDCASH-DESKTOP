@@ -509,7 +509,6 @@ export function SendPanel({
           <div className="send-layout">
             <header className="send-panel-intro">
               <h3 className="send-panel-title">Send BSV</h3>
-              <p className="send-panel-lede">Pay anyone on Bitcoin SV — instantly settled.</p>
             </header>
 
             <div className="send-amount-hero" data-currency={currency}>
@@ -610,9 +609,6 @@ export function SendPanel({
                     </button>
                   </div>
                 )}
-                <p className="friend-recipient-hint send-recipient-hint">
-                  PeerPay, $handle, or identity key resolves on this network.
-                </p>
                 {resolvedName ? (
                   <p className="send-resolved" aria-live="polite">
                     Sending to <strong>{resolvedName}</strong>

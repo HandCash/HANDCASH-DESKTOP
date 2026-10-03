@@ -1,15 +1,19 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useAsyncAction } from "../../hooks/useAsyncAction";
+import { useDisplayCurrency } from "../../hooks/useDisplayCurrency";
 import { copyText } from "../../wallet/clipboard";
+import { formatPrimaryFromSats } from "../../wallet/fx";
 import {
   describeServerWallet,
   exportServerWalletConfig,
   fundServerWallet,
   recoverServerWallet,
+  refreshServerWallet,
   rotateServerWallet,
   serverWalletRevision,
   setUpServerWallet,
   subscribeServerWallet,
+  type ServerWalletSummary,
 } from "../../wallet/serverWallet";
 import { formatSats } from "../../wallet/session";
 import { playWalletSound } from "../../wallet/soundService";
@@ -24,20 +28,50 @@ import { SettingsControlRow } from "./SettingsControlRow";
 
 type ServerWalletAction = "setup" | "copy" | "fund" | "recover" | "rotate";
 
+function count(n: number, noun: string): string {
+  return `${n.toLocaleString("en-US")} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+function summaryLine(
+  summary: ServerWalletSummary,
+  currency: ReturnType<typeof useDisplayCurrency>
+): string {
+  return [
+    formatPrimaryFromSats(summary.money, currency),
+    count(summary.items, "item"),
+    count(summary.tokens, "token"),
+  ].join(" · ");
+}
+
 /**
- * Server wallet: a derived key a developer's server spends. This wallet tracks
- * it from the server's reports and spends it only on Recover.
+ * Server wallet: the BRC-100 wallet a developer's server runs, opened here
+ * over the same storage. Shows what it holds; spends only on Recover.
  */
 export function ServerWalletList() {
   useSyncExternalStore(subscribeServerWallet, serverWalletRevision);
+  const currency = useDisplayCurrency();
   const action = useAsyncAction<ServerWalletAction>();
   const [amount, setAmount] = useState("");
   const runtime = getWalletRuntime();
-  if (!runtime) return null;
-  const status = describeServerWallet(runtime);
-  const ready = status.kind === "ready" ? status : null;
+  const status = runtime ? describeServerWallet(runtime) : null;
+  const ready = status?.kind === "ready" ? status : null;
+  const generation = ready?.generation ?? null;
+
+  useEffect(() => {
+    if (!runtime || generation == null) return;
+    void refreshServerWallet(runtime).catch(() => {});
+  }, [runtime, generation]);
+
+  if (!status) return null;
+  const summary = ready?.summary ?? null;
   const fundSats = Math.trunc(Number(amount));
   const fundable = Number.isFinite(fundSats) && fundSats > 0;
+  const holdsMoney = (summary?.money ?? 0) > 0 || ready?.pending === true;
+  const empty =
+    summary != null &&
+    summary.money === 0 &&
+    summary.items === 0 &&
+    summary.tokens === 0;
 
   const run = async (
     kind: ServerWalletAction,
@@ -60,15 +94,13 @@ export function ServerWalletList() {
     }
   };
 
-  const description = ready
-    ? `${formatSats(ready.trackedSats)} sats tracked · ${ready.outputs} output${
-        ready.outputs === 1 ? "" : "s"
-      } · ${
-        ready.lastReportAt
-          ? `last report ${new Date(ready.lastReportAt).toLocaleString()}`
-          : "no report yet"
-      }`
-    : "A separate key your server spends. This wallet tracks it from the server's reports and never spends it unless you recover.";
+  const description = !ready
+    ? undefined
+    : summary
+    ? summaryLine(summary, currency)
+    : ready.error
+    ? "Storage unreachable"
+    : "Loading…";
 
   return (
     <>
@@ -107,12 +139,10 @@ export function ServerWalletList() {
                     void run(
                       "copy",
                       async () => {
-                        const config = await exportServerWalletConfig(
+                        const env = exportServerWalletConfig(
                           requireWalletRuntime()
                         );
-                        if (
-                          !(await copyText(config, { label: "server key" }))
-                        ) {
+                        if (!(await copyText(env, { label: "server key" }))) {
                           throw new Error("Could not copy the server key.");
                         }
                         return null;
@@ -120,7 +150,7 @@ export function ServerWalletList() {
                       {
                         confirm: {
                           title: "Copy server key?",
-                          body: "Copies the server key with where to report (this identity's server_wallet box). A server holding it can spend everything you fund it with, so fund only what the server needs. It cannot reach this wallet's balance or other keys.",
+                          body: "Copies SERVER_PRIVATE_KEY and WALLET_STORAGE_URL for your server. It can spend what this wallet funds it with, and nothing else.",
                           confirmLabel: "Copy key",
                         },
                       }
@@ -129,7 +159,7 @@ export function ServerWalletList() {
                 >
                   {action.running("copy") ? "Copying…" : "Copy key"}
                 </button>
-                {ready.outputs > 0 || ready.pendingRecover ? (
+                {holdsMoney ? (
                   <button
                     type="button"
                     className="btn settings-action-btn"
@@ -139,16 +169,15 @@ export function ServerWalletList() {
                         "recover",
                         async () => {
                           const result = await recoverServerWallet();
-                          return `Recovered ${formatSats(
-                            result.satoshis
-                          )} sats`;
+                          return `Recovered ${formatPrimaryFromSats(
+                            result.satoshis,
+                            currency
+                          )}`;
                         },
                         {
                           confirm: {
                             title: "Recover server wallet?",
-                            body: `Moves ${formatSats(
-                              ready.trackedSats
-                            )} tracked sats back into this wallet. Stop the server first: a spend it signs at the same time makes the network reject one of the two.`,
+                            body: "Moves its money back here. Items and tokens stay with the server. Stop the server first.",
                             confirmLabel: "Recover",
                           },
                         }
@@ -157,7 +186,7 @@ export function ServerWalletList() {
                   >
                     {action.running("recover") ? "Recovering…" : "Recover"}
                   </button>
-                ) : (
+                ) : empty ? (
                   <button
                     type="button"
                     className="btn settings-action-btn"
@@ -166,13 +195,13 @@ export function ServerWalletList() {
                       void run(
                         "rotate",
                         async () => {
-                          rotateServerWallet(requireWalletRuntime());
+                          await rotateServerWallet(requireWalletRuntime());
                           return "Server key rotated — copy the new key to your server";
                         },
                         {
                           confirm: {
                             title: "Rotate server key?",
-                            body: "Retires the current key. Reports signed with it are refused from now on; copy the new key to your server.",
+                            body: "Retires the current key. Copy the new one to your server.",
                             confirmLabel: "Rotate",
                           },
                         }
@@ -181,7 +210,7 @@ export function ServerWalletList() {
                   >
                     {action.running("rotate") ? "Rotating…" : "Rotate"}
                   </button>
-                )}
+                ) : null}
               </>
             )}
           </span>
@@ -214,16 +243,12 @@ export function ServerWalletList() {
                   async () => {
                     await fundServerWallet(fundSats);
                     setAmount("");
-                    return `Sent ${formatSats(
-                      fundSats
-                    )} sats to the server wallet`;
+                    return `Sent ${formatSats(fundSats)} sats to the server wallet`;
                   },
                   {
                     confirm: {
                       title: "Fund server wallet?",
-                      body: `Sends ${formatSats(
-                        fundSats
-                      )} sats to the server key. The server can spend them; this wallet keeps tracking them.`,
+                      body: `Sends ${formatSats(fundSats)} sats to your server.`,
                       confirmLabel: "Send",
                     },
                   }

@@ -131,9 +131,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           </div>
         </section>
 
-        {handleFixed ? (
-          <p className="friend-fixed-note">Handle names are managed by their owner.</p>
-        ) : (
+        {handleFixed ? null : (
           <div className="field">
             <label htmlFor="friend-edit-label">Contact name</label>
             <input

@@ -1183,7 +1183,7 @@ export function MessagesPanel({
     else setActivePeerId(null)
   }
 
-  const shellState = navRouted
+  const shellState: 'list' | 'thread' | 'thread-only' = navRouted
     ? activePeerId
       ? 'thread'
       : 'list'
@@ -1592,7 +1592,7 @@ export function MessagesPanel({
           <div className="chat-placeholder">
             <EmptyState
               title="Messages"
-              body="Pick a friend to open a thread. Slash commands follow BRC-218."
+              body="Pick a friend to open a thread."
               action={
                 <button type="button" className="btn btn-primary" onClick={() => openAddFriend()}>
                   Add friend

@@ -8031,14 +8031,9 @@ html[data-aeon-mode='light'] .shortcut-key {
   font-size: 1rem;
 }
 
-.friend-details-overview p,
-.friend-fixed-note {
+.friend-details-overview p {
   color: var(--hc-muted);
   font-size: 0.76rem;
-}
-
-.friend-fixed-note {
-  margin: -4px 0 0;
 }
 
 .friend-copy-row {
@@ -9026,7 +9021,6 @@ html[data-aeon-mode='light'] .shortcut-key {
   color: var(--hc-text);
 }
 
-.send-panel-lede,
 .receive-panel-lede {
   margin: 0;
   color: var(--hc-muted);

@@ -759,7 +759,6 @@ export function PairDevicePanel() {
           />
           <DeviceBackupSection
             title={storingTitle(backupGroups.here.length)}
-            description="You can restore each of these wallets from here."
             empty="No other wallet keeps its copy here."
             headingSaysDirection
             peers={backupGroups.here}
@@ -778,7 +777,6 @@ export function PairDevicePanel() {
           {backupGroups.sameWallet.length > 0 ? (
             <DeviceBackupSection
               title="Already this wallet"
-              description="Same keys on both devices, so no copy is needed."
               peers={backupGroups.sameWallet}
               localIdentityKey={localIk}
               onOpen={openDevice}
@@ -810,7 +808,7 @@ function DeviceBackupSection({
   onOpen,
 }: {
   title: string
-  description: string
+  description?: string
   empty?: string
   headingSaysDirection?: boolean
   peers: DeviceWallet[]
@@ -823,7 +821,7 @@ function DeviceBackupSection({
         <h3>{title}</h3>
         {/* An empty section is explained by its one line below; two lines of
             prose for nothing is the noise this screen had. */}
-        {peers.length > 0 ? <p>{description}</p> : null}
+        {peers.length > 0 && description ? <p>{description}</p> : null}
       </header>
       {peers.length > 0 ? (
         <ul className="device-backup-list">

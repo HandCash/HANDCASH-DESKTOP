@@ -563,9 +563,6 @@ export function SendCollectablePanel({
                     </button>
                   </div>
                 )}
-                <p className="friend-recipient-hint send-recipient-hint">
-                  Handles and identity keys resolve to a payment address on this network.
-                </p>
                 {resolvedName ? (
                   <p className="send-resolved" aria-live="polite">
                     Sending to <strong>{resolvedName}</strong>

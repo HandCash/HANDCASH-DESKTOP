@@ -9,16 +9,15 @@ export type ServerWalletRecoverContext = {
 
 export type ServerWalletRecoverEvent =
   | { type: 'START'; plan: ServerWalletRecoverPlan }
-  | { type: 'SIGNED'; txid: string }
-  | { type: 'REGISTERED' }
+  | { type: 'SPENT'; txid: string }
   | { type: 'INTERNALIZED' }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
 
 /**
- * Server wallet Recover: the only path on which this wallet spends the server
- * key. Tracked outputs → one self payment → signedSendLifecycle → internalize.
- * `finish` re-runs only the internalize step of an already registered recovery.
+ * Server wallet Recover, money only: the server wallet signs and broadcasts a
+ * BRC-29 payment to this wallet, which then internalizes it. `finish` re-runs
+ * only the internalize step of a recovery the server already broadcast.
  */
 export const serverWalletRecoverMachine = setup({
   types: {
@@ -33,7 +32,7 @@ export const serverWalletRecoverMachine = setup({
     begin: assign(({ event }) =>
       event.type === 'START' ? { plan: event.plan, txid: null, error: null } : {},
     ),
-    setTxid: assign(({ event }) => (event.type === 'SIGNED' ? { txid: event.txid } : {})),
+    setTxid: assign(({ event }) => (event.type === 'SPENT' ? { txid: event.txid } : {})),
     setError: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error } : {})),
     clear: assign({ plan: null, txid: null, error: null }),
   },
@@ -45,7 +44,7 @@ export const serverWalletRecoverMachine = setup({
     idle: { on: { START: { target: 'planning', actions: 'begin' } } },
     planning: {
       always: [
-        { guard: 'recover', target: 'signing' },
+        { guard: 'recover', target: 'spending' },
         {
           guard: 'finish',
           target: 'internalizing',
@@ -64,15 +63,9 @@ export const serverWalletRecoverMachine = setup({
         },
       ],
     },
-    signing: {
+    spending: {
       on: {
-        SIGNED: { target: 'registering', actions: 'setTxid' },
-        FAIL: { target: 'failed', actions: 'setError' },
-      },
-    },
-    registering: {
-      on: {
-        REGISTERED: { target: 'internalizing' },
+        SPENT: { target: 'internalizing', actions: 'setTxid' },
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },

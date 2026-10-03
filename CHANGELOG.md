@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.414] - 2026-10-03
+
+### Changed
+
+- Server wallet is now a stock BRC-100 Toolbox wallet. Your server runs it from `SERVER_PRIVATE_KEY` + `WALLET_STORAGE_URL` (Copy key gives exactly that env), and HandCash opens the same key against the same storage. The messagebox report protocol, its polling and its custom ledger are gone; a 1.3.412 ledger's fund payments migrate into the server's storage on first read.
+- Settings → Developer shows the server wallet as money · items · tokens. Fund is a BRC-29 payment internalized into its storage; Recover has it pay this wallet by BRC-29 (money only — items and tokens stay with the server). Storage work is serialized so a pending fund can never be internalized twice.
+- Removed narration copy flagged by a Jev review (`npm run copy:review`): the account menu's "Balances and sync stay separate", send-panel ledes and recipient hints that repeated the placeholder, history-host hints, empty-state and pairing explanations, and the About / Import phrase blurbs.
+
 ## [1.3.413] - 2026-10-03
 
 ### Fixed
