@@ -15747,7 +15747,45 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   min-width: 0;
 }
 
-.wallet-account-rename-btn {
+.wallet-account-option-lead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+[data-aeon-scope='wallet-account-menu'] [data-aeon-part='avatar'] {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+  color: var(--hc-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+[data-aeon-scope='wallet-account-menu'] [data-aeon-part='trigger'] [data-aeon-part='avatar'] {
+  width: 20px;
+  height: 20px;
+  font-size: 0.62rem;
+}
+
+[data-aeon-scope='wallet-account-menu'] [data-aeon-part='avatar'] img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+[data-aeon-scope='wallet-account-menu'] [data-aeon-part='avatar'] svg {
+  width: 100%;
+  height: 100%;
+}
+
+.wallet-account-profile-btn {
   appearance: none;
   flex-shrink: 0;
   display: inline-flex;
@@ -15765,52 +15803,14 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   opacity: 0.7;
 }
 
-.wallet-account-rename-btn:hover:not(:disabled) {
+.wallet-account-profile-btn:hover:not(:disabled) {
   opacity: 1;
   background: color-mix(in srgb, var(--hc-text) 8%, transparent);
 }
 
-.wallet-account-rename-btn:disabled {
+.wallet-account-profile-btn:disabled {
   opacity: 0.4;
   cursor: default;
-}
-
-.wallet-account-rename {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 8px;
-  padding: 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--hc-text) 5%, transparent);
-}
-
-.wallet-account-rename label {
-  grid-column: 1 / -1;
-  color: var(--hc-muted);
-  font-size: 0.7rem;
-  font-weight: 600;
-}
-
-.wallet-account-rename-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--hc-text) 16%, transparent);
-  background: transparent;
-  color: var(--hc-text);
-  font: inherit;
-}
-
-.wallet-account-rename-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.wallet-account-rename-actions .btn {
-  min-height: 34px;
-  padding: 6px 9px;
 }
 
 .identity-compose {

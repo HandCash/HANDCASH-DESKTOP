@@ -1,4 +1,4 @@
-import { PrivateKey } from '@bsv/sdk'
+import { P2PKH, PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { bapAliasScript, bapIdScript, bapKey, BAP_REVOKED_ADDRESS } from './bapRecords'
 import { beefOf, bapIdentityFixture, PNG_1PX, recordTx, rotationTx } from './issuerIdentity.fixture'
@@ -6,6 +6,7 @@ import {
   bapKeyChain,
   buildIssuerIdentityPackage,
   currentIssuerSigningKey,
+  issuerIdentityImageRef,
   issuerIdentityPackageBeef,
   issuerIdentityPackageRoots,
   issuerProfile,
@@ -13,6 +14,7 @@ import {
   parseIssuerIdentityPackage,
   verifyIssuerIdentityPackage,
 } from './issuerIdentity'
+import { ordEnvelopeHex } from './ordScriptPush'
 
 const pub = (key: PrivateKey) => key.toPublicKey().toString()
 
@@ -170,6 +172,58 @@ describe('issuer identity packages', () => {
     expect(identity.name).toBe('Renamed')
     expect(identity.imageTxid).toBe(f.imageTx.id('hex'))
     expect(identity.image).toEqual(PNG_1PX)
+  })
+
+  describe('an ordinal as the profile image', () => {
+    const GIF = { contentType: 'image/gif', bytes: Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2]) }
+    const inscription = (contentType: string, body: Uint8Array) =>
+      recordTx([new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex() + ordEnvelopeHex(contentType, body)])
+    const withImage = (f: ReturnType<typeof bapIdentityFixture>, nft: ReturnType<typeof recordTx>, vout = 0) =>
+      recordTx(
+        [bapAliasScript({ bapId: f.bapId, profile: issuerProfile({ name: 'Punk', description: '' }, `${nft.id('hex')}_${vout}`), signer: f.signer })],
+        900_020,
+      )
+
+    it('names the inscription by outpoint and carries its transaction in the package', () => {
+      const f = bapIdentityFixture({ aliasHeight: 900_010 })
+      const nft = inscription(GIF.contentType, GIF.bytes)
+      const update = withImage(f, nft)
+      expect(issuerProfile({ name: 'Punk', description: '' }, `${nft.id('hex')}_0`).image).toBe(`ord://${nft.id('hex')}_0`)
+      const pkg = buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(nft), beefOf(update)])!
+      const identity = verifyIssuerIdentityPackage(pkg)!
+      expect(identity).toMatchObject({ name: 'Punk', imageOrigin: `${nft.id('hex')}_0` })
+      expect(identity.imageTxid).toBeUndefined()
+      expect(identity.image).toEqual(GIF)
+      expect(issuerIdentityImageRef(identity)).toBe(`${nft.id('hex')}_0`)
+    })
+
+    it('keeps the identity but drops an inscription that is not an image', () => {
+      const f = bapIdentityFixture({ aliasHeight: 900_010 })
+      for (const nft of [
+        inscription('text/plain', Uint8Array.from([1, 2, 3])),
+        inscription('image/svg+xml', Uint8Array.from([0x3c, 0x73, 0x76, 0x67])),
+      ]) {
+        const identity = verifyIssuerIdentityPackage(
+          buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(nft), beefOf(withImage(f, nft))]),
+        )!
+        expect(identity.name).toBe('Punk')
+        expect(identity.image).toBeUndefined()
+      }
+    })
+
+    it('drops an outpoint that names no inscription', () => {
+      const f = bapIdentityFixture({ aliasHeight: 900_010 })
+      const nft = inscription(GIF.contentType, GIF.bytes)
+      const identity = verifyIssuerIdentityPackage(
+        buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(nft), beefOf(withImage(f, nft, 3))]),
+      )!
+      expect(identity.image).toBeUndefined()
+    })
+
+    it('refuses an image reference that is neither a txid nor an outpoint', () => {
+      expect(() => issuerProfile({ name: 'x', description: '' }, 'ab_0')).toThrow(/image reference/)
+      expect(() => issuerProfile({ name: 'x', description: '' }, `${'a'.repeat(64)}_x`)).toThrow(/image reference/)
+    })
   })
 
   describe('which profile is current, decided from the records alone', () => {

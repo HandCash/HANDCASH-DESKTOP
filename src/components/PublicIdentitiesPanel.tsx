@@ -175,24 +175,12 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     action.run('image', async () => {
       send({ type: 'IMAGE', image: await encodeIdentityImage(picked) })
     })
-  const present = (row: PublicIdentityRow | null) =>
-    action.run(
-      'present',
-      async () => {
-        assertOwner()
-        presentPublicIdentity(runtime!, row?.identityKey ?? null)
-        toastSuccess(row ? 'Identity shown to contacts' : 'Identity no longer shown')
-      },
-      row
-        ? {
-            confirm: {
-              title: `Show ${row.identity?.name ?? 'this identity'} to contacts?`,
-              body: 'Contacts you message or pay will see it linked to your handle. Copies they keep stay shared.',
-              confirmLabel: 'Show to contacts',
-            },
-          }
-        : undefined,
-    )
+  const present = (row: PublicIdentityRow) =>
+    action.run('present', async () => {
+      assertOwner()
+      presentPublicIdentity(runtime!, row.identityKey)
+      toastSuccess(`${row.identity?.name ?? 'Identity'} shared with contacts`)
+    })
   const shareCard = () =>
     action.run('share', async () => {
       assertOwner()
@@ -333,7 +321,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                       ) : null}
                       <span className="public-identity-chips" data-aeon-part="chips">
                         {issuer ? <span data-aeon-part="chip" data-aeon-state="issuer">Issuer</span> : null}
-                        {shown ? <span data-aeon-part="chip" data-aeon-state="shown">Shown to contacts</span> : null}
+                        {shown ? <span data-aeon-part="chip" data-aeon-state="shown">Shared with contacts</span> : null}
                         {row.identity?.revoked ? (
                           <span data-aeon-part="chip" data-aeon-state="revoked">Revoked</span>
                         ) : null}
@@ -367,13 +355,10 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                               <Menu.Item onClick={() => void useAsIssuer(row)}>Use as issuer</Menu.Item>
                             ) : null}
                             {live && !shown ? (
-                              <Menu.Item onClick={() => void present(row)}>Show to contacts</Menu.Item>
+                              <Menu.Item onClick={() => void present(row)}>Share this one instead</Menu.Item>
                             ) : null}
                             {live && shown ? (
-                              <>
-                                <Menu.Item onClick={() => void shareCard()}>Share identity card</Menu.Item>
-                                <Menu.Item onClick={() => void present(null)}>Stop showing</Menu.Item>
-                              </>
+                              <Menu.Item onClick={() => void shareCard()}>Share identity card</Menu.Item>
                             ) : null}
                             {live ? (
                               <Menu.Item

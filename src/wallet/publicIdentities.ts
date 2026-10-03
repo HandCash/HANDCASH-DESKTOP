@@ -8,6 +8,7 @@ import {
   currentIssuerSigningKey,
   type IssuerAttribution,
   type IssuerIdentity,
+  type IssuerIdentityImage,
   type IssuerIdentityPackage,
 } from './issuerIdentity'
 import {
@@ -102,14 +103,16 @@ function activeOrThrow(runtime: WalletRuntime | null): ActiveWallet {
   if (!runtimeIsCurrent(runtime)) throw new Error('Wallet changed; retry on the selected account.')
   return runtime.instance
 }
-function keyFor(active: ActiveWallet): string {
+/** The account whose store is read; every vault account has one, unlocked or not. */
+type StoreScope = Pick<ActiveWallet, 'identityKey' | 'chain'> & { accountIndex?: number }
+function keyFor(active: StoreScope): string {
   return accountLocalKeyFor(storageRegistry.publicIdentities.key, {
     identityKey: active.identityKey,
     accountIndex: active.accountIndex ?? 0,
     chain: active.chain,
   })
 }
-function empty(active: ActiveWallet): Store {
+function empty(active: StoreScope): Store {
   return {
     version: 2,
     owner: active.identityKey.toLowerCase(),
@@ -137,7 +140,7 @@ function migrateV1(store: StoreV1): Store {
     identities,
   }
 }
-function validateStore(raw: unknown, active: ActiveWallet): Store {
+function validateStore(raw: unknown, active: StoreScope): Store {
   const input = raw as Store | StoreV1
   const store = input?.version === 1 ? migrateV1(input) : (input as Store)
   if (
@@ -200,7 +203,7 @@ function canonicalTime(value: unknown): string | null {
   return Number.isFinite(ms) && new Date(ms).toISOString() === value ? value : null
 }
 let cached: { owner: string; raw: string; store: Store } | undefined
-function read(active: ActiveWallet): Store {
+function read(active: StoreScope): Store {
   const raw = durableGetItem(keyFor(active))
   if (!raw) return empty(active)
   if (raw.length > MAX_STORE_BYTES) throw new Error('Public identity store is too large.')
@@ -296,6 +299,24 @@ export function listPublicIdentities(runtime: WalletRuntime | null): PublicIdent
     }
   })
 }
+export type AccountProfile = { bapId: string; name: string; image?: IssuerIdentityImage }
+
+/**
+ * The profile a vault account shows in the wallet switcher: the identity it
+ * presents, else its own key's published identity. Reads any account's store
+ * without unlocking it; null when nothing verified is published.
+ */
+export function accountProfile(account: StoreScope): AccountProfile | null {
+  try {
+    const row = presentedRow(read(account), account.chain)
+    const identity = row?.published ? issuerIdentityFor(account.chain, row.published) : null
+    if (!identity || identity.revoked) return null
+    return { bapId: identity.bapId, name: identity.name, ...(identity.image ? { image: identity.image } : {}) }
+  } catch {
+    return null
+  }
+}
+
 export function selectedPublicIdentityKey(runtime: WalletRuntime | null): string {
   return read(activeOrThrow(runtime)).selected
 }
@@ -358,6 +379,7 @@ export function recordPublishedIdentity(
   const identity = rememberIssuerIdentityPackage(active.chain, pkg, { pin: true, replace: true })
   if (!identity) throw new Error('The published identity did not verify or could not be saved.')
   if (row.published !== identity.bapId) write(runtime, upsert(store, { ...row, published: identity.bapId }))
+  autoPresent(runtime)
   return identity
 }
 export function selectPublicIdentity(runtime: WalletRuntime, identityKey: string) {
@@ -379,21 +401,33 @@ export function removePublicIdentity(runtime: WalletRuntime, identityKey: string
       ? { presentedAt: nextPresentedAt(presentedAt) }
       : { ...(presented ? { presented } : {}), ...(presentedAt ? { presentedAt } : {}) }),
   })
+  autoPresent(runtime)
 }
 /** Strictly after the previous statement, so peers never see two cards at one time. */
 function nextPresentedAt(previous: string | undefined): string {
   const floor = previous ? Date.parse(previous) + 1 : 0
   return new Date(Math.max(Date.now(), floor)).toISOString()
 }
-export function presentedPublicIdentityKey(runtime: WalletRuntime | null): string | null {
-  return read(activeOrThrow(runtime)).presented ?? null
+/**
+ * Every published identity is shared; there is no opt-out. Which one: the one
+ * chosen with `presentPublicIdentity`, else the wallet's own, else an imported
+ * one. A revoked identity is never shared.
+ */
+function presentedRow(store: Store, chain: ActiveWallet['chain']): ManagedPublicIdentity | null {
+  const live = (row: ManagedPublicIdentity) => !!row.published && !issuerIdentityFor(chain, row.published)?.revoked
+  const rows = rowsOf(store)
+  return (
+    rows.find((row) => row.identityKey === store.presented && live(row)) ??
+    rows.find((row) => row.identityKey === store.owner && live(row)) ??
+    rows.find(live) ??
+    null
+  )
 }
-/** Present a published identity to peers, or stop presenting with `null`. */
-export function presentPublicIdentity(runtime: WalletRuntime, identityKey: string | null) {
-  const store = read(activeOrThrow(runtime))
-  const key = identityKey === null ? null : normalizeIssuerIdentityKey(identityKey)
-  if (identityKey !== null && !store.identities.some((row) => row.identityKey === key && row.published))
-    throw new Error('Publish this identity before presenting it.')
+/** Persist the shared identity with a strictly later statement whenever it changes. */
+function autoPresent(runtime: WalletRuntime) {
+  const active = activeOrThrow(runtime)
+  const store = read(active)
+  const key = presentedRow(store, active.chain)?.identityKey ?? null
   if ((store.presented ?? null) === key) return
   const { presented: _drop, ...rest } = store
   write(runtime, {
@@ -401,6 +435,19 @@ export function presentPublicIdentity(runtime: WalletRuntime, identityKey: strin
     ...(key ? { presented: key } : {}),
     presentedAt: nextPresentedAt(store.presentedAt),
   })
+}
+export function presentedPublicIdentityKey(runtime: WalletRuntime | null): string | null {
+  const active = activeOrThrow(runtime)
+  return presentedRow(read(active), active.chain)?.identityKey ?? null
+}
+/** Choose which published identity contacts see. */
+export function presentPublicIdentity(runtime: WalletRuntime, identityKey: string) {
+  const store = read(activeOrThrow(runtime))
+  const key = normalizeIssuerIdentityKey(identityKey)
+  if (!rowsOf(store).some((row) => row.identityKey === key && row.published))
+    throw new Error('Publish this identity before presenting it.')
+  if (store.presented === key) return
+  write(runtime, { ...store, presented: key!, presentedAt: nextPresentedAt(store.presentedAt) })
 }
 export type PresentedIdentityMaterial =
   | {
@@ -413,6 +460,7 @@ export type PresentedIdentityMaterial =
   | { kind: 'withdrawn'; issuedAt: string }
 /** What this wallet's identity card says now; null before it ever presented one. */
 export function presentedIdentityMaterial(runtime: WalletRuntime): PresentedIdentityMaterial | null {
+  autoPresent(runtime)
   const active = activeOrThrow(runtime)
   const store = read(active)
   if (!store.presentedAt) return null
@@ -467,6 +515,7 @@ export function restorePublicIdentityBackup(runtime: WalletRuntime, raw: unknown
     byKey.set(row.identityKey, { ...rest, ...(published ? { published } : {}) })
   }
   write(runtime, { ...existing, identities: [...byKey.values()] })
+  autoPresent(runtime)
 }
 /** Identity the given master key publishes, when this wallet controls it. */
 export function publishedIdentityForIssuer(

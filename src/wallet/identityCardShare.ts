@@ -105,7 +105,7 @@ async function ownCard(runtime: WalletRuntime): Promise<OwnCard | null> {
 /** Our current card as a file a person can hand over any way they like. */
 export async function exportIdentityCard(runtime: WalletRuntime): Promise<string> {
   const card = await ownCard(runtime)
-  if (!card || card.card.bapId === null) throw new Error('Present a published identity first.')
+  if (!card || card.card.bapId === null) throw new Error('Publish an identity first.')
   return JSON.stringify(card.card, null, 2)
 }
 

@@ -9,19 +9,23 @@ import {
   type BapRecord,
 } from './bapRecords'
 import { normalizeBapId } from './issuerMetadata'
+import { parseOrdEnvelope } from './ordinalOwnership'
 
 /**
  * Issuer identity: a BAP identity whose ALIAS is a schema.org profile with a
- * B:// image. Nothing about it is a spendable output, so nothing about it can
- * be moved or sold; authority is the BAP key chain.
+ * B:// image or an `ord://<txid>_<vout>` inscription. The ALIAS itself is not
+ * a spendable output, so it cannot be moved or sold; authority is the BAP key
+ * chain. An inscription image is only a picture: whoever holds that ordinal
+ * later does not gain the identity.
  *
  * An identity package is a BEEF of exactly the transactions a verifier needs:
- * the ID chain, the ALIAS and the image file, each with its merkle proof once
- * mined. It is stored once per BAP ID and travels beside BRC-150 remittance.
+ * the ID chain, the ALIAS and the image transaction, each with its merkle proof
+ * once mined. It is stored once per BAP ID and travels beside BRC-150 remittance.
  */
 
 export const IDENTITY_IMAGE_MAX_BYTES = 64 * 1024
 export const IDENTITY_IMAGE_TYPES = ['image/webp', 'image/png', 'image/jpeg'] as const
+export const IDENTITY_ORD_IMAGE_TYPES = [...IDENTITY_IMAGE_TYPES, 'image/gif'] as const
 export const IDENTITY_NAME_MAX = 80
 export const IDENTITY_DESCRIPTION_MAX = 280
 export const IDENTITY_PACKAGE_MAX_BYTES = 160 * 1024
@@ -41,6 +45,8 @@ export type IssuerIdentity = IssuerIdentityFields & {
   image?: IssuerIdentityImage
   /** B:// file transaction the profile names; reused by later profile updates. */
   imageTxid?: string
+  /** Inscription outpoint (`txid_vout`) the profile names instead of a B:// file. */
+  imageOrigin?: string
   alias: { txid: string; signer: string; minedHeight?: number }
 }
 
@@ -80,17 +86,43 @@ export function issuerIdentityImage(image: IssuerIdentityImage): IssuerIdentityI
   return image
 }
 
-/** schema.org Person profile for a BAP ALIAS, as 1Sat / Yours wallets publish it. */
-export function issuerProfile(fields: IssuerIdentityFields, imageTxid: string): Record<string, unknown> {
+const ORD_ORIGIN = /^([0-9a-f]{64})_(\d{1,6})$/
+
+/**
+ * schema.org Person profile for a BAP ALIAS, as 1Sat / Yours wallets publish it.
+ * `imageRef` is a B:// file txid or an inscription outpoint `txid_vout`.
+ */
+export function issuerProfile(fields: IssuerIdentityFields, imageRef: string): Record<string, unknown> {
   const clean = issuerIdentityFields(fields)
-  if (!/^[0-9a-f]{64}$/.test(imageTxid)) throw new Error('Invalid identity image reference.')
+  const image = /^[0-9a-f]{64}$/.test(imageRef)
+    ? `b://${imageRef}`
+    : ORD_ORIGIN.test(imageRef)
+      ? `ord://${imageRef}`
+      : null
+  if (!image) throw new Error('Invalid identity image reference.')
   return {
     '@context': 'https://schema.org',
     '@type': 'Person',
     name: clean.name,
     ...(clean.description ? { description: clean.description } : {}),
-    image: `b://${imageTxid}`,
+    image,
   }
+}
+
+/** The image reference a profile update keeps when the bitmap is unchanged. */
+export function issuerIdentityImageRef(identity: Pick<IssuerIdentity, 'imageTxid' | 'imageOrigin'>): string | undefined {
+  return identity.imageTxid ?? identity.imageOrigin
+}
+
+function inscriptionImage(beef: Beef, origin: string): IssuerIdentityImage | null {
+  const [, txid, vout] = ORD_ORIGIN.exec(origin) ?? []
+  const output = txid ? beef.findTxid(txid)?.tx?.outputs[Number(vout)] : undefined
+  const envelope = output ? parseOrdEnvelope(output.lockingScript.toHex()) : null
+  const contentType = envelope?.contentType?.split(';')[0]!.trim().toLowerCase()
+  if (!envelope || !contentType || !(IDENTITY_ORD_IMAGE_TYPES as readonly string[]).includes(contentType))
+    return null
+  if (envelope.body.length === 0 || envelope.body.length > IDENTITY_IMAGE_MAX_BYTES) return null
+  return { contentType, bytes: envelope.body }
 }
 
 export function parseIssuerIdentityPackage(raw: unknown): IssuerIdentityPackage | null {
@@ -173,7 +205,7 @@ export function currentIssuerSigningKey(master: PrivateKey, identity: Pick<Issue
 function imageFrom(
   value: unknown,
   beef: Beef,
-): { image: IssuerIdentityImage; imageTxid?: string } | null {
+): { image: IssuerIdentityImage; imageTxid?: string; imageOrigin?: string } | null {
   const ref =
     typeof value === 'string'
       ? value
@@ -191,6 +223,12 @@ function imageFrom(
       }
       return null
     }
+    const ord = /^ord:\/\/([0-9a-f]{64}_\d{1,6})$/i.exec(ref)
+    if (ord) {
+      const imageOrigin = ord[1]!.toLowerCase()
+      const image = inscriptionImage(beef, imageOrigin)
+      return image ? { image, imageOrigin } : null
+    }
     const data = /^data:([a-z/]+);base64,([A-Za-z0-9+/=]+)$/i.exec(ref)
     if (data && data[2]!.length <= Math.ceil((IDENTITY_IMAGE_MAX_BYTES * 4) / 3) + 4)
       return {
@@ -205,7 +243,7 @@ function imageFrom(
 function profileFrom(
   profile: Record<string, unknown>,
   beef: Beef,
-): (IssuerIdentityFields & { image?: IssuerIdentityImage; imageTxid?: string }) | null {
+): (IssuerIdentityFields & { image?: IssuerIdentityImage; imageTxid?: string; imageOrigin?: string }) | null {
   if (typeof profile.name !== 'string') return null
   let fields: IssuerIdentityFields
   try {
@@ -347,6 +385,7 @@ function analyze(beef: Beef, bapId: string, preferAlias?: string): Analysis | nu
     const txids = new Set([...keys.map((key) => key.txid), alias.txid])
     if (revoked) txids.add(revoked.txid)
     if (profile.imageTxid) txids.add(profile.imageTxid)
+    if (profile.imageOrigin) txids.add(profile.imageOrigin.split('_')[0]!)
     return { identity, txids: [...txids] }
   }
   return null

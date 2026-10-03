@@ -3,12 +3,16 @@ import { getActiveWallet } from '../wallet/session'
 import { stateToAttr } from '@aeon-ui/core'
 import { PrivateKey } from '@bsv/sdk'
 import { useMachine } from '@xstate/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
 import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { copyText } from '../wallet/clipboard'
+import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
+import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
+import { setNavSection } from '../wallet/navStore'
+import { accountProfile, subscribePublicIdentities, type AccountProfile } from '../wallet/publicIdentities'
 import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
@@ -17,9 +21,10 @@ import {
   createVaultAccount,
   ensureVaultAccounts,
   readVaultAccounts,
-  renameVaultAccount,
   type VaultAccount,
 } from '../wallet/vaultAccounts'
+import { BapIdenticon } from './BapIdenticon'
+import { DeferredImage } from './DeferredImage'
 import { AddIcon, CheckIcon, CopyIcon, EditIcon, ExpandMoreIcon } from './icons'
 
 type Props = {
@@ -30,6 +35,12 @@ type Props = {
   onAccountSwitched: (profile: WalletProfile, balanceSats: number) => void
 }
 
+type AccountRow = VaultAccount & { label: string; profile: AccountProfile | null }
+
+const accountMenuMachine = walletAccountMenuMachine.provide({
+  actions: { openProfile: () => setNavSection('identity') },
+})
+
 function masterIdentityKeyFromActive(): string | null {
   const root = getActiveWallet()?.masterRootKeyHex
   return root ? PrivateKey.fromHex(root).toPublicKey().toString() : null
@@ -39,6 +50,36 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function fallbackLabel(account: VaultAccount): string {
+  return account.name || (account.index === 0 ? 'Primary' : `Wallet ${account.index}`)
+}
+
+function AccountAvatar({ profile, label }: { profile: AccountProfile | null; label: string }) {
+  const image = profile?.image
+  const src = useMemo(() => (image ? issuerIdentityImageDataUrl(image) : null), [image])
+  const identicon = profile ? <BapIdenticon bapId={profile.bapId} size={32} /> : null
+  return (
+    <span
+      data-aeon-part="avatar"
+      data-aeon-state={src ? 'image' : profile ? 'identicon' : 'initial'}
+      aria-hidden
+    >
+      {src ? (
+        <DeferredImage
+          src={src}
+          alt=""
+          skeletonWidth="100%"
+          skeletonHeight="100%"
+          skeletonRadius="50%"
+          fallback={identicon}
+        />
+      ) : (
+        (identicon ?? label.trim().slice(0, 1).toUpperCase())
+      )}
+    </span>
+  )
+}
+
 export function WalletAccountMenu({
   profile,
   identityLabel,
@@ -46,15 +87,12 @@ export function WalletAccountMenu({
   onAccountSwitchStarted,
   onAccountSwitched,
 }: Props) {
-  const [snapshot, send] = useMachine(walletAccountMenuMachine)
-  const [accounts, setAccounts] = useState<VaultAccount[]>([])
+  const [snapshot, send] = useMachine(accountMenuMachine)
+  const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
   const open = !snapshot.matches('closed')
-  const busy =
-    snapshot.matches('switching') ||
-    snapshot.matches('creating') ||
-    snapshot.matches('renaming')
+  const busy = snapshot.matches('switching') || snapshot.matches('creating')
   const stateAttr = stateToAttr(snapshot.value)
 
   const refreshList = () => {
@@ -64,13 +102,29 @@ export function WalletAccountMenu({
       ensureVaultAccounts(active.masterRootKeyHex, masterIk)
     }
     const store = readVaultAccounts(masterIk)
-    setAccounts(store.accounts)
+    setAccounts(
+      store.accounts.map((account) => ({
+        ...account,
+        label: fallbackLabel(account),
+        profile: accountProfile({
+          identityKey: account.identityKey,
+          accountIndex: account.index,
+          chain: profile.chain,
+        }),
+      })),
+    )
     setActiveIndex(active?.accountIndex ?? store.activeIndex)
   }
 
   useEffect(() => {
     refreshList()
-  }, [profile.identityKey])
+    const offPublic = subscribePublicIdentities(refreshList)
+    const offIssuers = subscribeIssuerIdentities(refreshList)
+    return () => {
+      offPublic()
+      offIssuers()
+    }
+  }, [profile.identityKey, profile.chain])
 
   useEffect(() => {
     if (!open || busy) return
@@ -91,17 +145,22 @@ export function WalletAccountMenu({
     }
   }, [busy, open, send])
 
-  const runSwitch = async (index: number) => {
+  const runSwitch = async (index: number, then: 'stay' | 'profile' = 'stay') => {
     const active = getActiveWallet()
     if (!active?.masterRootKeyHex) {
       toastError('Accounts', 'Unlock the vault before switching wallets.')
       return
     }
-    if (index === active.accountIndex) {
+    const isActive = index === active.accountIndex
+    if (then === 'profile') {
+      send({ type: 'EDIT_PROFILE', accountIndex: index, active: isActive })
+      if (isActive) return
+    } else if (isActive) {
       send({ type: 'CLOSE' })
       return
+    } else {
+      send({ type: 'CHOOSE', accountIndex: index })
     }
-    send({ type: 'CHOOSE', accountIndex: index })
     try {
       const masterIk = PrivateKey.fromHex(active.masterRootKeyHex)
         .toPublicKey()
@@ -178,23 +237,7 @@ export function WalletAccountMenu({
     }
   }
 
-  const commitRename = () => {
-    const index = snapshot.context.targetAccountIndex
-    const name = snapshot.context.draftName.trim()
-    if (index == null || !name) return
-    try {
-      renameVaultAccount({
-        masterIdentityKey: masterIdentityKeyFromActive() ?? profile.identityKey,
-        index,
-        name,
-      })
-      refreshList()
-      playWalletSound('soft')
-      send({ type: 'RENAMED' })
-    } catch (error) {
-      send({ type: 'FAIL', error: messageOf(error) })
-    }
-  }
+  const current = accounts.find((account) => account.index === activeIndex)
 
   return (
     <div
@@ -218,7 +261,8 @@ export function WalletAccountMenu({
             send({ type: 'TOGGLE' })
           }}
         >
-          <span>{identityLabel}</span>
+          {current?.profile ? <AccountAvatar profile={current.profile} label={current.profile.name} /> : null}
+          <span>{current?.profile?.name ?? identityLabel}</span>
           <ExpandMoreIcon
             size={16}
             className={open ? 'wallet-account-caret is-open' : 'wallet-account-caret'}
@@ -253,70 +297,29 @@ export function WalletAccountMenu({
           <ul className="wallet-account-list" role="listbox" aria-label="Wallets">
             {accounts.map((account) => {
               const selected = account.index === activeIndex
-              const editing =
-                snapshot.matches('renaming') &&
-                snapshot.context.targetAccountIndex === account.index
               const switching =
                 snapshot.matches('switching') &&
                 snapshot.context.targetAccountIndex === account.index
-              const label =
-                account.name || (account.index === 0 ? 'Primary' : `Wallet ${account.index}`)
+              const name = account.profile?.name ?? account.label
+              const editLabel = account.profile ? `Edit ${name} profile` : `Publish a profile for ${name}`
               return (
                 <li key={account.index}>
-                  {editing ? (
-                    <form
-                      className="wallet-account-rename"
-                      data-aeon-part="form"
-                      onSubmit={(event) => {
-                        event.preventDefault()
-                        commitRename()
-                      }}
+                  <div className="wallet-account-row">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={
+                        selected ? 'wallet-account-option is-selected' : 'wallet-account-option'
+                      }
+                      disabled={busy}
+                      onClick={() => void runSwitch(account.index)}
                     >
-                      <label htmlFor={`wallet-name-${account.index}`}>Wallet name</label>
-                      <input
-                        id={`wallet-name-${account.index}`}
-                        className="wallet-account-rename-input"
-                        value={snapshot.context.draftName}
-                        maxLength={40}
-                        autoFocus
-                        onChange={(event) =>
-                          send({ type: 'EDIT_NAME', name: event.target.value })
-                        }
-                      />
-                      <div className="wallet-account-rename-actions">
-                        <button
-                          type="submit"
-                          className="btn btn-primary"
-                          disabled={!snapshot.context.draftName.trim()}
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => send({ type: 'CANCEL_RENAME' })}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="wallet-account-row">
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className={
-                          selected
-                            ? 'wallet-account-option is-selected'
-                            : 'wallet-account-option'
-                        }
-                        disabled={busy}
-                        onClick={() => void runSwitch(account.index)}
-                      >
+                      <span className="wallet-account-option-lead">
+                        <AccountAvatar profile={account.profile} label={name} />
                         <span className="wallet-account-option-copy">
                           <strong>
-                            {label}
+                            {name}
                             {account.index === 0 ? (
                               <span className="wallet-account-option-tag">Root</span>
                             ) : null}
@@ -327,28 +330,22 @@ export function WalletAccountMenu({
                               : `${account.identityKey.slice(0, 8)}…${account.identityKey.slice(-6)}`}
                           </span>
                         </span>
-                        {selected ? (
-                          <CheckIcon size={17} className="wallet-account-option-check" />
-                        ) : null}
-                      </button>
-                      <button
-                        type="button"
-                        className="wallet-account-rename-btn"
-                        disabled={busy}
-                        title={`Rename ${label}`}
-                        aria-label={`Rename ${label}`}
-                        onClick={() =>
-                          send({
-                            type: 'RENAME',
-                            accountIndex: account.index,
-                            name: label,
-                          })
-                        }
-                      >
-                        <EditIcon size={16} />
-                      </button>
-                    </div>
-                  )}
+                      </span>
+                      {selected ? (
+                        <CheckIcon size={17} className="wallet-account-option-check" />
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      className="wallet-account-profile-btn"
+                      disabled={busy}
+                      title={editLabel}
+                      aria-label={editLabel}
+                      onClick={() => void runSwitch(account.index, 'profile')}
+                    >
+                      <EditIcon size={16} />
+                    </button>
+                  </div>
                 </li>
               )
             })}

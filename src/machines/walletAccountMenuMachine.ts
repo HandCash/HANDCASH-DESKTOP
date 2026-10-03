@@ -2,32 +2,36 @@ import { assign, setup } from 'xstate'
 
 type MenuError = string | null
 
+/** What follows a successful switch: stay on the current screen, or open that account's profile. */
+type AfterSwitch = 'stay' | 'profile'
+
 export const walletAccountMenuMachine = setup({
   types: {
     context: {} as {
       targetAccountIndex: number | null
-      draftName: string
+      afterSwitch: AfterSwitch
       error: MenuError
     },
     events: {} as
       | { type: 'TOGGLE' }
       | { type: 'CLOSE' }
       | { type: 'CHOOSE'; accountIndex: number }
+      | { type: 'EDIT_PROFILE'; accountIndex: number; active: boolean }
       | { type: 'SWITCHED' }
       | { type: 'CREATE' }
       | { type: 'CREATED' }
-      | { type: 'RENAME'; accountIndex: number; name: string }
-      | { type: 'EDIT_NAME'; name: string }
-      | { type: 'CANCEL_RENAME' }
-      | { type: 'RENAMED' }
       | { type: 'FAIL'; error: string },
+  },
+  actions: {
+    /** Provided by the projection: navigate to Publish identity. */
+    openProfile: () => {},
   },
 }).createMachine({
   id: 'walletAccountMenu',
   initial: 'closed',
   context: {
     targetAccountIndex: null,
-    draftName: '',
+    afterSwitch: 'stay',
     error: null,
   },
   states: {
@@ -44,65 +48,53 @@ export const walletAccountMenuMachine = setup({
           target: 'switching',
           actions: assign({
             targetAccountIndex: ({ event }) => event.accountIndex,
+            afterSwitch: 'stay',
             error: null,
           }),
         },
+        EDIT_PROFILE: [
+          {
+            guard: ({ event }) => event.active,
+            target: 'closed',
+            actions: [assign({ error: null }), 'openProfile'],
+          },
+          {
+            target: 'switching',
+            actions: assign({
+              targetAccountIndex: ({ event }) => event.accountIndex,
+              afterSwitch: 'profile',
+              error: null,
+            }),
+          },
+        ],
         CREATE: {
           target: 'creating',
           actions: assign({ error: null }),
-        },
-        RENAME: {
-          target: 'renaming',
-          actions: assign({
-            targetAccountIndex: ({ event }) => event.accountIndex,
-            draftName: ({ event }) => event.name,
-            error: null,
-          }),
         },
       },
     },
     switching: {
       on: {
-        SWITCHED: {
-          target: 'closed',
-          actions: assign({ targetAccountIndex: null, error: null }),
-        },
+        SWITCHED: [
+          {
+            guard: ({ context }) => context.afterSwitch === 'profile',
+            target: 'closed',
+            actions: [assign({ targetAccountIndex: null, afterSwitch: 'stay', error: null }), 'openProfile'],
+          },
+          {
+            target: 'closed',
+            actions: assign({ targetAccountIndex: null, afterSwitch: 'stay', error: null }),
+          },
+        ],
         FAIL: {
           target: 'open',
-          actions: assign({ error: ({ event }) => event.error }),
+          actions: assign({ afterSwitch: 'stay', error: ({ event }) => event.error }),
         },
       },
     },
     creating: {
       on: {
         CREATED: { target: 'closed', actions: assign({ error: null }) },
-        FAIL: {
-          target: 'open',
-          actions: assign({ error: ({ event }) => event.error }),
-        },
-      },
-    },
-    renaming: {
-      on: {
-        EDIT_NAME: {
-          actions: assign({ draftName: ({ event }) => event.name }),
-        },
-        CANCEL_RENAME: {
-          target: 'open',
-          actions: assign({
-            targetAccountIndex: null,
-            draftName: '',
-            error: null,
-          }),
-        },
-        RENAMED: {
-          target: 'open',
-          actions: assign({
-            targetAccountIndex: null,
-            draftName: '',
-            error: null,
-          }),
-        },
         FAIL: {
           target: 'open',
           actions: assign({ error: ({ event }) => event.error }),

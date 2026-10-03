@@ -19,6 +19,7 @@ import {
   issuerIdentityImage,
   issuerIdentityPackageBeef,
   issuerIdentityPackageRoots,
+  issuerIdentityImageRef,
   issuerProfile,
   type IssuerIdentity,
   type IssuerIdentityFields,
@@ -360,14 +361,15 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
   const steps: Step[] = []
   let base: PlanBase
   let imageTxid: string | undefined
+  const priorImage = prior ? issuerIdentityImageRef(prior) : undefined
   if (!fields) {
     if (!prior) refuse('not-published', 'Publish the identity before rotating its key.')
-    if (!prior.imageTxid) refuse('no-image', 'Publish an image before rotating the key.')
+    if (!priorImage) refuse('no-image', 'Publish an image before rotating the key.')
     if (!chain) refuse('missing-package', 'The identity package is missing; restore an identity backup.')
     const seq = chain.keys.at(-1)!.seq
     const outgoing = currentIssuerSigningKey(master, chain)
     const next = bapKey(master, seq + 1)
-    imageTxid = prior.imageTxid
+    imageTxid = priorImage
     const profile = issuerProfile({ name: prior.name, description: prior.description }, imageTxid)
     const outputs = [
       idOutput(signer, bapId, seq + 1, bapIdScript({ bapId, address: next.toAddress(), signer: outgoing })),
@@ -385,7 +387,7 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
     }
   } else {
     imageTxid =
-      prior?.imageTxid && (!bitmap || (prior.image && sameImage(prior.image, bitmap))) ? prior.imageTxid : undefined
+      priorImage && (!bitmap || (prior?.image && sameImage(prior.image, bitmap))) ? priorImage : undefined
     if (!imageTxid && !bitmap) refuse('no-image', 'Choose an image first.')
     const seq = chain ? chain.keys.at(-1)!.seq : 1
     const signingKey = chain ? currentIssuerSigningKey(master, chain) : bapKey(master, 1)

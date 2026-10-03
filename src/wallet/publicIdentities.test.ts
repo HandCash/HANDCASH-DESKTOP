@@ -26,6 +26,7 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 import {
+  accountProfile,
   displayIssuerIdentity,
   exportPublicIdentityBackup,
   importIssuerPrivateKey,
@@ -216,31 +217,65 @@ describe('published identity', () => {
   })
 })
 describe('presented identity', () => {
-  it('presents only a published identity and signs with its current BAP key', () => {
+  it('shares a published identity automatically and signs with its current BAP key', () => {
     expect(presentedIdentityMaterial(runtime())).toBeNull()
+    expect(presentedPublicIdentityKey(runtime())).toBeNull()
     expect(() => presentPublicIdentity(runtime(), rootId)).toThrow(/Publish this identity/)
     const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
     recordPublishedIdentity(runtime(), rootId, f.pkg)
-    presentPublicIdentity(runtime(), rootId)
     expect(presentedPublicIdentityKey(runtime())).toBe(rootId)
     const material = presentedIdentityMaterial(runtime())
     expect(material).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId }, pkg: { bapId: f.bapId } })
     expect(material?.kind === 'presented' && pub(material.signingKey)).toBe(pub(f.signer))
+    expect(presentedIdentityMaterial(runtime())?.issuedAt).toBe(material!.issuedAt)
   })
 
-  it('stopping, or removing the presented signer, withdraws with a strictly later statement', () => {
+  it('shares an existing published identity that was never presented', () => {
+    const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
+    recordPublishedIdentity(runtime(), rootId, f.pkg)
+    const key = accountLocalKeyFor(storageRegistry.publicIdentities.key, { identityKey: rootId, accountIndex: 0, chain: 'main' })
+    const { presented: _p, presentedAt: _at, ...unshared } = JSON.parse(state.values.get(key)!)
+    state.values.set(key, JSON.stringify(unshared))
+    expect(presentedIdentityMaterial(runtime())).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId } })
+  })
+
+  it('removing the shared signer falls back to the wallet identity with a strictly later statement', () => {
     importIssuerPrivateKey(runtime(), imported.toWif())
-    const f = bapIdentityFixture({ master: imported, name: 'Imported studio' })
-    recordPublishedIdentity(runtime(), importedId, f.pkg)
-    presentPublicIdentity(runtime(), importedId)
+    recordPublishedIdentity(runtime(), importedId, bapIdentityFixture({ master: imported, name: 'Imported studio' }).pkg)
+    const shown = presentedIdentityMaterial(runtime())!
+    expect(presentedPublicIdentityKey(runtime())).toBe(importedId)
+    const own = bapIdentityFixture({ master: root, name: 'Wallet studio' })
+    recordPublishedIdentity(runtime(), rootId, own.pkg)
+    expect(presentedPublicIdentityKey(runtime())).toBe(importedId)
+    removePublicIdentity(runtime(), importedId)
+    const next = presentedIdentityMaterial(runtime())!
+    expect(next).toMatchObject({ kind: 'presented', identity: { bapId: own.bapId } })
+    expect(Date.parse(next.issuedAt)).toBeGreaterThan(Date.parse(shown.issuedAt))
+    presentPublicIdentity(runtime(), rootId)
+    expect(presentedIdentityMaterial(runtime())?.issuedAt).toBe(next.issuedAt)
+  })
+
+  it('withdraws only when no published identity is left', () => {
+    importIssuerPrivateKey(runtime(), imported.toWif())
+    recordPublishedIdentity(runtime(), importedId, bapIdentityFixture({ master: imported, name: 'Imported studio' }).pkg)
     const shown = presentedIdentityMaterial(runtime())!
     removePublicIdentity(runtime(), importedId)
     const withdrawn = presentedIdentityMaterial(runtime())!
     expect(withdrawn.kind).toBe('withdrawn')
     expect(Date.parse(withdrawn.issuedAt)).toBeGreaterThan(Date.parse(shown.issuedAt))
     expect(presentedPublicIdentityKey(runtime())).toBeNull()
-    presentPublicIdentity(runtime(), null)
-    expect(presentedIdentityMaterial(runtime())?.issuedAt).toBe(withdrawn.issuedAt)
+  })
+
+  it('reads any vault account profile without unlocking it', () => {
+    expect(accountProfile({ identityKey: rootId, accountIndex: 0, chain: 'main' })).toBeNull()
+    const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
+    recordPublishedIdentity(runtime(), rootId, f.pkg)
+    state.active = active(imported)
+    expect(accountProfile({ identityKey: rootId, accountIndex: 0, chain: 'main' })).toMatchObject({
+      bapId: f.bapId,
+      name: 'Wallet studio',
+    })
+    expect(accountProfile({ identityKey: rootId, accountIndex: 1, chain: 'main' })).toBeNull()
   })
 
   it('refuses a stored presentation that names an unpublished identity', () => {
