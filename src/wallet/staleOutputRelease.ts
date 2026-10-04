@@ -1431,6 +1431,37 @@ export async function assetRowReservation(
 }
 
 /**
+ * What storage holds for an asset outpoint. `absent` is the only state in which
+ * an output the basket did not list may still be ours without a chain answer —
+ * a row that exists and was not listed is one the basket let go.
+ */
+export type AssetRowState = "absent" | "spendable" | "released" | "unreadable";
+
+export async function assetRowState(
+  active: ActiveWallet,
+  outpoint: string
+): Promise<AssetRowState> {
+  const parsed = parseOutpoint(outpoint);
+  const storage = active.wallet.storage;
+  if (!parsed || !storage?.runAsStorageProvider) return "unreadable";
+  let state: AssetRowState = "absent";
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const row = await findAssetRow(
+        activeSp as unknown as LocalStorage,
+        parsed.txid,
+        parsed.vout
+      );
+      if (positiveId(row?.outputId) == null) return;
+      state = row?.spendable === true ? "spendable" : "released";
+    });
+  } catch {
+    return "unreadable";
+  }
+  return state;
+}
+
+/**
  * Re-enable one asset basket row only after a live UTXO service proves the
  * outpoint is unspent. Failed/aborted asset spends can leave `spentBy` on the
  * toolbox row, while the inscription remains on chain and in the display cache.

@@ -14,31 +14,12 @@ export function normalizeCollectableBatchOutpoints(outpoints: string[]): string[
 }
 
 /**
- * Tips one atomic 1-sat transaction may carry — send or burn.
- *
- * Five is the measured UI-safe ceiling for provenance-heavy tips.
- *
- * Twenty-five was inherited from phrase migration, whose inputs are simpler.
- * A real collectable send at ten tips repeatedly blocked the renderer for
- * 1.5–3.4 seconds and failed before being split; five signed successfully.
- * Keep migration's independent ceiling there — these are different workloads.
- */
-export const MAX_ITEMS_PER_ONE_SAT_TX = 5
-
-/**
- * Maximum user selection for one deliberate send run.
- *
- * A 700-item click created hours of stale probes and recovery work. Twenty-five
- * remains practical as five measured-safe atomic legs while the bulk protocol
- * is hardened further.
- */
-export const MAX_ITEMS_PER_COLLECTABLE_SEND_RUN = 25
-
-/**
  * How a selection becomes one send transaction — never a silent fallthrough.
  *
- * This is the *atomic* decision. A selection above the ceiling refuses here;
- * `planCollectableSendRun` is what turns it into a sequence of legs.
+ * There is no item ceiling: any selection is one atomic transaction, send or
+ * burn. The old five-tip cap measured `Transaction.sign()` copying the whole
+ * graph once per input; tips are signed one template at a time
+ * (`signTipInputs`), and every per-tip loop yields to the UI.
  */
 export type CollectableSendBatch =
   /** One tip, one `sendCollectable`. */
@@ -46,7 +27,6 @@ export type CollectableSendBatch =
   /** Several tips paired input-to-output in one atomic transaction. */
   | { kind: 'atomic'; outpoints: string[] }
   | { kind: 'refuse'; reason: 'empty' }
-  | { kind: 'refuse'; reason: 'tooMany'; count: number; max: number }
 
 /** Decide the send shape for a raw user selection. */
 export function chooseCollectableSendBatch(
@@ -57,14 +37,6 @@ export function chooseCollectableSendBatch(
   if (normalized.length === 1) {
     return { kind: 'single', outpoint: normalized[0]! }
   }
-  if (normalized.length > MAX_ITEMS_PER_ONE_SAT_TX) {
-    return {
-      kind: 'refuse',
-      reason: 'tooMany',
-      count: normalized.length,
-      max: MAX_ITEMS_PER_ONE_SAT_TX,
-    }
-  }
   return { kind: 'atomic', outpoints: normalized }
 }
 
@@ -74,15 +46,7 @@ export function collectableSendBatchRefusal(
   switch (batch.reason) {
     case 'empty':
       return 'Select at least one collectable'
-    case 'tooMany':
-      return `One transaction carries up to ${batch.max} collectables, not ${batch.count}. Send a larger selection as a run of legs (sendCollectablesRun).`
   }
-}
-
-/** Burn is the same atomic ceiling: n tips in, one recovery output. */
-export function collectableBurnBatchRefusal(count: number): string | null {
-  if (count <= MAX_ITEMS_PER_ONE_SAT_TX) return null
-  return `One burn carries up to ${MAX_ITEMS_PER_ONE_SAT_TX} collectables. Select ${MAX_ITEMS_PER_ONE_SAT_TX} or fewer of the ${count}.`
 }
 
 /** Outputs are deliberately not randomized, so each input's remittance keeps its index. */

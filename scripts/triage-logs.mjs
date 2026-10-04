@@ -1723,6 +1723,8 @@ function tokenSendFacts(events) {
     blocked: {},
     refused: {},
     lastPlan: null,
+    // Combine tips: started / done, with every refusal and failure reason.
+    combine: { started: 0, done: 0, failed: {} },
     // Every later line naming a signed send's txid, in order and deduped:
     // where the transfer went after the wallet signed it.
     trails: [],
@@ -1790,6 +1792,11 @@ function tokenSendFacts(events) {
     else if ((r = /^\[bsv21\] send refused before sign: (.*)$/.exec(t))) bump(facts.refused, r[1])
     else if ((r = /^\[bsv21\] pre-sign refuse (.*)$/.exec(t))) bump(facts.refused, r[1])
     else if ((r = /^\[bsv21\] (tip restore after failed send skipped.*)$/.exec(t))) bump(facts.refused, r[1])
+    else if (/^\[bsv21\] combine start/.test(t)) facts.combine.started += 1
+    else if (/^\[bsv21\] combine done/.test(t)) facts.combine.done += 1
+    else if ((r = /^\[bsv21\] combine (?:failed|refused) — (.*)$/.exec(t))) {
+      bump(facts.combine.failed, r[1].replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 200))
+    }
   }
   return facts
 }
@@ -3250,11 +3257,16 @@ function report(state, answers) {
   }
 
   const ts = latest.tokenSends
-  if (ts && (ts.started || ts.planned || [ts.failed, ts.blocked, ts.refused].some((b) => Object.keys(b).length))) {
+  const combine = ts?.combine
+  if (ts && (ts.started || ts.planned || combine?.started || Object.keys(combine?.failed ?? {}).length || [ts.failed, ts.blocked, ts.refused].some((b) => Object.keys(b).length))) {
     console.log('\nToken sends (code-counted):')
     console.log(
       `  started ${ts.started} · planned ${ts.planned} · signing ${ts.signing} · signed ${ts.signed} · sent ${ts.sent}${ts.lastPlan ? ` · last plan ${ts.lastPlan}` : ''}`,
     )
+    if (combine && (combine.started || Object.keys(combine.failed).length)) {
+      console.log(`  combine: started ${combine.started} · done ${combine.done}`)
+      for (const [reason, n] of Object.entries(combine.failed)) console.log(`  combine failed ×${n}: ${reason}`)
+    }
     for (const [label, bucket] of [
       ['failed', ts.failed],
       ['blocked in panel', ts.blocked],

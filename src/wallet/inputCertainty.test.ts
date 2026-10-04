@@ -321,7 +321,11 @@ describe('installSpendCertainty', () => {
     const signable = { signableTransaction: { reference: 'ref-dead', tx: dead.result.tx } }
     const { wallet, raw } = fakeWallet(signable, dead.result)
     installSpendCertainty(wallet as unknown as Wallet, 'main')
-    await wallet.createAction({ description: 'x' } as never)
+    await wallet.createAction({
+      description: 'x',
+      inputs: [{ outpoint: dead.input, inputDescription: 'item' }],
+    } as never)
+    expect(raw.createAction).toHaveBeenCalledOnce()
     const err = await wallet
       .signAction({ reference: 'ref-dead', spends: {}, options: { acceptDelayedBroadcast: false } } as never)
       .catch((e: unknown) => e)
@@ -329,6 +333,25 @@ describe('installSpendCertainty', () => {
     expect(raw.signAction).not.toHaveBeenCalled()
     expect(raw.abortAction).toHaveBeenCalledWith({ reference: 'ref-dead' }, undefined)
     expect(calls).toContain('hide 1 by dddd')
+  })
+
+  it('builds a signable again when funding it did not name is already spent', async () => {
+    resetSignablesForTests()
+    const dead = signedOver({ parentMined: true })
+    const live = signedOver({ parentMined: true })
+    peerSpent.set(dead.input, SPENDER)
+    const deadSignable = { signableTransaction: { reference: 'ref-dead', tx: dead.result.tx } }
+    const liveSignable = { signableTransaction: { reference: 'ref-live', tx: live.result.tx } }
+    const { wallet, raw } = fakeWallet(deadSignable, live.result)
+    raw.createAction.mockResolvedValueOnce(deadSignable).mockResolvedValueOnce(liveSignable)
+    wallet.createAction = raw.createAction
+    installSpendCertainty(wallet as unknown as Wallet, 'main')
+    wocAnswers(() => ({}))
+    await expect(wallet.createAction({ description: 'x' } as never)).resolves.toBe(liveSignable)
+    expect(raw.createAction).toHaveBeenCalledTimes(2)
+    expect(raw.abortAction).toHaveBeenCalledWith({ reference: 'ref-dead' }, undefined)
+    expect(calls).toContain('hide 1 by dddd')
+    await expect(wallet.signAction({ reference: 'ref-live', spends: {} } as never)).resolves.toBe(live.result)
   })
 
   it('signs a signable whose coins clear, and certifies the signed tx', async () => {

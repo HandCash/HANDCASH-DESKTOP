@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.425] - 2026-10-04
+
+### Fixed
+
+- **Bulk send and bulk burn take any number of items in one transaction.** The old five-item ceiling (25 per run) measured how `Transaction.sign()` works in this SDK, not the cost of signing. It deep-copies the whole transaction graph, inscriptions included, once for every input, so a send of n items cost n² copies in a single task. Item, burn and token tips are now signed one template at a time on the live transaction (`signTipInputs`), with byte-identical output, and the UI gets a turn between inputs. The send's preparation loop yields per item. Burn fetches its source transactions four at a time instead of all at once. The Activity rows of a bulk send or burn land in one storage write instead of one full-ledger rewrite per item. A run still halves the transaction only when an item conflict rejects it.
+- **Combine tips spends exactly the tips it counted.** Combine added up amounts as JavaScript numbers, which round past 2^53, and left the send to pick tips again. It now passes the exact tips and the exact bigint total, and logs `combine start / done / failed` so the next upload names any refusal.
+- **Token cards no longer count tips the chain already spent.** Two REF tips were confirmed 547 blocks ago and spent since. The card kept adding them back on every read because the local transaction record still said "unconfirmed", which inflated the balance and the tip count that Combine is offered on. That record alone now only covers an output storage has not projected yet. A row the basket released needs the chain.
+- **"Already spent" on a send whose funding coin was spent elsewhere.** When the toolbox builds a signable transaction over a funding coin the chain shows spent by another transaction, the wallet retires that coin and builds again over live coins, up to five times, before any signature. Before, it handed the dead coin to the signer and the send failed as "already spent" every time.
+- **Items the chain says are gone leave the inventory.** A card missing from the basket stayed on screen whenever the address scan still listed it, so spent items lived on in the database. A complete read now drops and files every card the basket let go. Items that an index keeps re-listing no longer reset their own check, so the reconcile actually comes due and retires the spent ones.
+
+### Changed
+
+- Triage counts combine attempts and their failure reasons under token sends.
+
 ## [1.3.424] - 2026-10-03
 
 ### Fixed

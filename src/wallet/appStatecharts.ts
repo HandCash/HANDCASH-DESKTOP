@@ -1262,7 +1262,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'sendCollectableRun',
     label: 'Bulk item send',
     caption:
-      'collectableSendRunMachine — selection → atomic legs; split only an item conflict, halt on every other fault',
+      'collectableSendRunMachine — selection → one atomic tx; split only an item conflict, halt on every other fault',
     source: SEND_COLLECTABLE_RUN,
   },
   {

@@ -94,9 +94,11 @@ while the balance reads near zero. `nosend` change belongs to neither
 `spendable` nor `pendingChange`, so heal gates on the Arcade pin registry
 (`hasArcadeSubmitContacts`), never on projected pending change.
 
-Collectable sends admit at most 25 selected items per run. Each run preserves
-the measured-safe five-item atomic leg ceiling; larger selections fail before
-Activity rows, reservations, signing, or network work begin.
+Collectable sends and burns have no item ceiling: a selection is one atomic
+transaction. Tip inputs are signed one template at a time (`signTipInputs`) —
+`Transaction.sign()` copies the whole graph per input, which is what once
+froze the renderer at ten tips — and every per-tip loop yields to the UI. A
+send run halves the transaction only when an item conflict rejects it.
 
 ## Proof fetch cost (receive-side verify)
 

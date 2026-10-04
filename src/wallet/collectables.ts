@@ -23,6 +23,7 @@ import {
 } from '@bsv/sdk'
 import { type ActiveWallet } from './session'
 import {
+  batchActivityWrites,
   noteOutboundSendComplete,
   noteOutboundSendPending,
   clearOutboundSendPending,
@@ -159,7 +160,8 @@ import {
   SCAN_SPENT_MARK_PREFIX,
   type SentItemSettle,
 } from './sentItemGuard'
-import { yieldToUi } from './yieldToUi'
+import { signTipInputs } from './signTipInputs'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 import {
   clearGenesisFailure,
   getProvenVerdict,
@@ -2911,16 +2913,12 @@ async function listCollectablesNow(
     ) {
       const now = Date.now()
       const seeded = pendingSeededItems(page, now, wallet.identityKey)
-      // A complete page smaller than the cache is the basket telling the truth.
-      // A card the address scan still lists stays painted until its row is
-      // filed again; the reconcile claims it either way.
+      // A complete page smaller than the cache is the basket telling the truth:
+      // the list shows what the basket holds. An address scan that still sees
+      // an absent output does not keep its card — the reconcile files it and
+      // re-claims it when the chain proves it unspent.
       const absent = readComplete ? absentFromCompleteBasket(page, seeded) : []
-      const live = listedOutputTotal > 10_000 ? cachedLiveOneSats : resolveLiveOneSatKeys(wallet)
-      const retired = new Set(
-        absent
-          .map((held) => outpointKey(held.outpoint))
-          .filter((key) => !live?.keys.has(key)),
-      )
+      const retired = new Set(absent.map((held) => outpointKey(held.outpoint)))
       const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain, retired)
       if (readComplete) reportItemHoldings({ listed: page, left: absent })
       if (retired.size > 0) {
@@ -2930,7 +2928,9 @@ async function listCollectablesNow(
         )
       } else {
         console.info(
-          `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
+          `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length} — ${
+            readComplete ? 'complete read, nothing absent' : 'read not quiet'
+          }`
         )
       }
       if (page.length > 0) {
@@ -3493,7 +3493,6 @@ async function signOrdinalTransfer(args: {
   }
 
   const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
-  const spends: Record<number, { unlockingScript: string }> = {}
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     // The sighash covers the source value, so read each value from its source
@@ -3517,13 +3516,7 @@ async function signOrdinalTransfer(args: {
       lockingScript,
     )
   }
-  await unsigned.sign()
-  for (const vin of vins) {
-    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
-    if (!unlockingScript)
-      throw new Error('Could not sign the collectable transfer')
-    spends[vin] = { unlockingScript }
-  }
+  const spends = await signTipInputs(unsigned, vins)
 
   // noSend gives the shared lifecycle the signed body so it can seal, durably
   // queue, and propagate exactly once for every asset/payment data type.
@@ -4698,34 +4691,38 @@ export async function sendCollectables(
   const sendGroupId = `batch-${Date.now().toString(36)}-${Math.random()
     .toString(16)
     .slice(2, 8)}`
-  const pending = earlyItems.map((item) => {
-    const send = beginPendingSend({
-      to: args.toAddress,
-      sats: 1,
-      friendLabel: args.friendLabel ?? null,
-    })
-    noteOutboundSendPending({
-      pendingId: send.id,
-      sats: 1,
-      to: args.toAddress,
-      friendLabel: args.friendLabel ?? null,
-      recipientIdentityKey: args.recipientIdentityKey ?? null,
-      item,
-      sendGroupId,
-    })
-    return send
-  })
+  const pending = batchActivityWrites(() =>
+    earlyItems.map((item) => {
+      const send = beginPendingSend({
+        to: args.toAddress,
+        sats: 1,
+        friendLabel: args.friendLabel ?? null,
+      })
+      noteOutboundSendPending({
+        pendingId: send.id,
+        sats: 1,
+        to: args.toAddress,
+        friendLabel: args.friendLabel ?? null,
+        recipientIdentityKey: args.recipientIdentityKey ?? null,
+        item,
+        sendGroupId,
+      })
+      return send
+    }),
+  )
 
   const failPending = (reason: unknown) => {
     const message = reason instanceof Error ? reason.message : String(reason)
-    for (const send of pending) {
-      clearPendingSend(send.id)
-      if (args.failureActivity === 'discard') {
-        clearOutboundSendPending(send.id)
-      } else {
-        failOutboundSendPending({ pendingId: send.id, reason: message })
+    batchActivityWrites(() => {
+      for (const send of pending) {
+        clearPendingSend(send.id)
+        if (args.failureActivity === 'discard') {
+          clearOutboundSendPending(send.id)
+        } else {
+          failOutboundSendPending({ pendingId: send.id, reason: message })
+        }
       }
-    }
+    })
   }
 
   try {
@@ -4781,7 +4778,11 @@ export async function sendCollectables(
           const cachedNow = new Map(
             cachedCollectables.map((item) => [item.outpoint, item] as const),
           )
+          const prepareStartedAt = Date.now()
           for (const outpoint of outpoints) {
+            // Tip classification scans each inscription byte by byte; a bulk
+            // selection must not hold the thread for all of them at once.
+            if (uiBudgetExpired()) await yieldToUi()
             const cached = cachedNow.get(outpoint) ?? null
             const match =
               heldByOutpoint.get(outpoint) ??
@@ -4920,6 +4921,12 @@ export async function sendCollectables(
               tags,
               imageUrl: item?.imageUrl,
             })
+          }
+          const prepareMs = Date.now() - prepareStartedAt
+          if (prepareMs >= 250) {
+            console.info(
+              `[collectables] batch prepare done ${prepareMs}ms — ${prepared.length} tip(s)`,
+            )
           }
 
           const knownTxids = knownTxidsForCollectableSend(inputBEEF, [
@@ -5077,27 +5084,30 @@ export async function sendCollectables(
             )
           }
 
-          for (let index = 0; index < prepared.length; index++) {
-            const item = prepared[index]!
-            const send = pending[index]!
-            completePendingSend(send.id, txid)
-            noteOutboundSendComplete({
-              pendingId: send.id,
-              txid,
-              sats: 1,
-              to,
-              friendLabel: args.friendLabel ?? null,
-              recipientIdentityKey: args.recipientIdentityKey ?? null,
-              item: {
-                name: item.name,
-                origin: item.origin,
-                outpoint: item.outpoint,
-                ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
-                ...(item.app ? { app: item.app } : {}),
-              },
-            })
-            clearPendingSend(send.id)
-          }
+          const settled = prepared
+          batchActivityWrites(() => {
+            for (let index = 0; index < settled.length; index++) {
+              const item = settled[index]!
+              const send = pending[index]!
+              completePendingSend(send.id, txid)
+              noteOutboundSendComplete({
+                pendingId: send.id,
+                txid,
+                sats: 1,
+                to,
+                friendLabel: args.friendLabel ?? null,
+                recipientIdentityKey: args.recipientIdentityKey ?? null,
+                item: {
+                  name: item.name,
+                  origin: item.origin,
+                  outpoint: item.outpoint,
+                  ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
+                  ...(item.app ? { app: item.app } : {}),
+                },
+              })
+              clearPendingSend(send.id)
+            }
+          })
 
           setCollectablesCache(
             cachedCollectables.filter(

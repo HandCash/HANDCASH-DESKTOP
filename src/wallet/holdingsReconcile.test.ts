@@ -317,6 +317,26 @@ describe('holdings reconcile ledger', () => {
     expect(mod.listHoldingsEntries()).toEqual([])
   })
 
+  it('keeps an off-index item filed while the index flickers, and retires it when it comes due', async () => {
+    const { reportHoldings, listHoldingsEntries } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'item', listed: new Set([A]), offChainIndex: [{ outpoint: A }] })
+    const [filed] = listHoldingsEntries()
+    // A scan that lists A again is not a verdict; the timer must not restart.
+    reportHoldings({ asset: 'item', listed: new Set([A]), offChainIndex: [] })
+    reportHoldings({ asset: 'item', listed: new Set([A]), offChainIndex: [{ outpoint: A }] })
+    expect(listHoldingsEntries()).toEqual([filed])
+    probes.set(A, { kind: 'spent', spender: spenderOf(A) })
+    await due()
+    expect(relinquished).toEqual([A])
+  })
+
+  it('closes an off-index item once the basket no longer lists it', async () => {
+    const { reportHoldings, listHoldingsEntries } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'item', listed: new Set([A]), offChainIndex: [{ outpoint: A }] })
+    reportHoldings({ asset: 'item', listed: new Set(), offChainIndex: [] })
+    expect(listHoldingsEntries()).toEqual([])
+  })
+
   it('mutates nothing while the wallet is busy', async () => {
     const { reportHoldings } = await import('./holdingsReconcile')
     reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })

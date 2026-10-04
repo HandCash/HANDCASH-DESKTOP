@@ -53,7 +53,7 @@ import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { decodeBsv21Binary } from './decode162'
-import { restoreUnspentAssetOutpoint } from '../staleOutputRelease'
+import { assetRowState, restoreUnspentAssetOutpoint } from '../staleOutputRelease'
 import { isLocalUnconfirmedTxid } from '../txStore'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
@@ -1543,7 +1543,11 @@ async function recoverCachedLegacyTips(
     if (!match) continue
     const txid = match[1]!
     const vout = Number(match[2])
-    const ownUnconfirmed = isLocalUnconfirmedTxid(txid)
+    // The local tx record can stay "unconfirmed" long after the chain mined
+    // and spent the output. Only an output storage has not projected yet is
+    // ours on that record alone; a row the basket released needs the chain.
+    const ownUnconfirmed =
+      isLocalUnconfirmedTxid(txid) && (await assetRowState(active, point)) === 'absent'
     if (!opts.restore && !ownUnconfirmed) continue
     try {
       // A failed/aborted spend can leave this asset row locally retired. Never

@@ -209,9 +209,13 @@ export function reportHoldings(report: HoldingsReport, now = Date.now()): void {
       continue
     }
     if (entry.asset !== report.asset) continue
-    if (entry.gap === 'off-chain-index' && offIndex && !offIndex.has(entry.outpoint)) {
+    // An index that lists the output again is not a verdict — that churn
+    // re-filed spent items every read, so no check ever came due. Only the
+    // chain closes it, or the basket letting the row go.
+    if (entry.gap === 'off-chain-index' && !listed.has(entry.outpoint)) {
       ledger.entries.delete(entry.outpoint)
       changed = true
+      console.info(`[holdings] ${describe(entry)} closed — unlisted after ${entry.checks} check(s)`)
     }
   }
 

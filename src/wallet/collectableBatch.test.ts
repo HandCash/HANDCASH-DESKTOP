@@ -3,7 +3,6 @@ import {
   chooseCollectableSendBatch,
   collectableBatchOutputOutpoint,
   collectableSendBatchRefusal,
-  MAX_ITEMS_PER_ONE_SAT_TX,
   normalizeCollectableBatchOutpoints,
 } from './collectableBatch'
 
@@ -38,7 +37,7 @@ describe('collectable batch transaction ordering', () => {
   })
 })
 
-describe('collectable send batch ceiling', () => {
+describe('collectable send batch shape', () => {
   it('refuses an empty selection', () => {
     expect(chooseCollectableSendBatch([])).toEqual({
       kind: 'refuse',
@@ -58,26 +57,18 @@ describe('collectable send batch ceiling', () => {
     })
   })
 
-  it('keeps a selection at the ceiling atomic', () => {
-    const batch = chooseCollectableSendBatch(selection(MAX_ITEMS_PER_ONE_SAT_TX))
-    expect(batch.kind).toBe('atomic')
-    expect(batch.kind === 'atomic' && batch.outpoints).toHaveLength(
-      MAX_ITEMS_PER_ONE_SAT_TX,
-    )
+  it('keeps any multi-tip selection one atomic transaction', () => {
+    for (const count of [2, 6, 25, 700]) {
+      expect(chooseCollectableSendBatch(selection(count))).toEqual({
+        kind: 'atomic',
+        outpoints: selection(count),
+      })
+    }
   })
 
-  it('refuses above the ceiling instead of building a stalling transaction', () => {
-    const batch = chooseCollectableSendBatch(selection(700))
-    expect(batch).toEqual({
-      kind: 'refuse',
-      reason: 'tooMany',
-      count: 700,
-      max: MAX_ITEMS_PER_ONE_SAT_TX,
-    })
-    expect(
-      collectableSendBatchRefusal(
-        batch as Extract<typeof batch, { kind: 'refuse' }>,
-      ),
-    ).toContain(String(MAX_ITEMS_PER_ONE_SAT_TX))
+  it('names the empty refusal', () => {
+    expect(collectableSendBatchRefusal({ kind: 'refuse', reason: 'empty' })).toBe(
+      'Select at least one collectable',
+    )
   })
 })

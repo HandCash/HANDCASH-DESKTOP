@@ -60,6 +60,7 @@ import {
 import { scheduleHistoryBackupPush } from '../deviceSync'
 import { listFriends, resolvePaymentRecipient } from '../friends'
 import { stampBrc164Id } from '../itemAccess'
+import { signTipInputs } from '../signTipInputs'
 import { isCovenantLockedScript } from '../collectableTipKind'
 import { p2pkhScriptHex } from '../ordinalOwnership'
 import { assertOnlineForPayment } from '../paymentPolicy'
@@ -264,7 +265,6 @@ export async function signBsv21TipTransfer(args: {
   }
 
   const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
-  const spends: Record<number, { unlockingScript: string }> = {}
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
@@ -286,12 +286,7 @@ export async function signBsv21TipTransfer(args: {
       lockingScript,
     )
   }
-  await unsigned.sign()
-  for (const vin of vins) {
-    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
-    if (!unlockingScript) throw new Error('Could not sign the token transfer')
-    spends[vin] = { unlockingScript }
-  }
+  const spends = await signTipInputs(unsigned, vins)
 
   let signed
   try {
@@ -344,7 +339,7 @@ export async function signBsv21TipTransfer(args: {
 export async function sendBsv21Tokens(args: {
   tokenId: string
   /** Face-value units to send. */
-  amount: number
+  amount: number | bigint
   toAddress: string
   friendLabel?: string | null
   recipientIdentityKey?: string | null
@@ -1092,23 +1087,45 @@ export async function combineBsv21Tips(args: {
   if (!active) throw new Error('Unlock the wallet first')
 
   const listed162 = await listBsv21BinaryTips(active)
-  const mine = listed162.filter((t) => t.tokenId === tokenId)
+  const mine = listed162.filter(
+    (t) =>
+      t.tokenId === tokenId && !!t.lockingScript && !!decodeBsv21Binary(t.lockingScript),
+  )
   if (mine.length < 2) {
+    console.warn(
+      `[bsv21] combine refused — basket holds ${mine.length} spendable tip(s) of ${tokenId.slice(0, 16)}`,
+    )
     throw new Error('Already a single tip — nothing to combine')
   }
-  const amount = mine.reduce((s, t) => s + Number(t.amt.replace(/\D/g, '') || '0'), 0)
+  // Exact units: a Number sum rounds past 2^53 and asks the plan for more than is held.
+  const amount = mine.reduce((s, t) => s + BigInt(t.amt.replace(/\D/g, '') || '0'), 0n)
   const dec = mine.find((t) => t.dec > 0)?.dec
   const icon = mine.find((t) => t.icon)?.icon
-  const result = await sendBsv21Tokens({
-    tokenId,
-    amount,
-    toAddress: active.address,
-    skipPeerNotify: true,
-    sym: args.sym ?? mine.find((t) => t.sym)?.sym,
-    ...(dec != null ? { dec } : {}),
-    ...(icon ? { icon } : {}),
-    actionDescription: 'Combine token tips',
-    actionLabel: 'handcash-combine-bsv21',
-  })
-  return { txid: result.txid, tipsSpent: result.tipsSpent }
+  console.info(`[bsv21] combine start tips=${mine.length} token=${tokenId.slice(0, 16)}`)
+  try {
+    const result = await sendBsv21Tokens({
+      tokenId,
+      amount,
+      toAddress: active.address,
+      tips: mine.map((t) => ({
+        outpoint: t.outpoint,
+        tokenId: t.tokenId,
+        amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+        lockingScript: t.lockingScript,
+      })),
+      skipPeerNotify: true,
+      sym: args.sym ?? mine.find((t) => t.sym)?.sym,
+      ...(dec != null ? { dec } : {}),
+      ...(icon ? { icon } : {}),
+      actionDescription: 'Combine token tips',
+      actionLabel: 'handcash-combine-bsv21',
+    })
+    console.info(`[bsv21] combine done ${result.txid.slice(0, 12)} — ${result.tipsSpent} tip(s) → 1`)
+    return { txid: result.txid, tipsSpent: result.tipsSpent }
+  } catch (err) {
+    console.warn(
+      `[bsv21] combine failed — ${err instanceof Error ? err.message : String(err)}`,
+    )
+    throw err
+  }
 }

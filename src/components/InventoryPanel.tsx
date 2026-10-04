@@ -93,11 +93,6 @@ import {
   inspectCollectableSendReady,
 } from '../wallet/collectableSendReady'
 import {
-  collectableBurnBatchRefusal,
-  MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
-  MAX_ITEMS_PER_ONE_SAT_TX,
-} from '../wallet/collectableBatch'
-import {
   reconcileCollectableSelection,
   selectableCollectables,
   selectionState,
@@ -886,7 +881,6 @@ export function InventoryPanel() {
 
   const selectedCanSend =
     selectedCount > 0 &&
-    selectedCount <= MAX_ITEMS_PER_COLLECTABLE_SEND_RUN &&
     selectedItems.every((item) =>
       inspectCollectableSendReady({
         outpoint: item.outpoint,
@@ -894,12 +888,8 @@ export function InventoryPanel() {
         verifying: isOutpointVerifying(item.outpoint, verification),
       }).ready,
     )
-  /** Burn is a single atomic transaction — it has no leg loop to fall back on. */
-  const overBurnCeiling = selectedCount > MAX_ITEMS_PER_ONE_SAT_TX
   const selectedCanBurn =
-    selectedCount > 0 &&
-    !overBurnCeiling &&
-    selectedItems.every((item) => !item.covenantLocked)
+    selectedCount > 0 && selectedItems.every((item) => !item.covenantLocked)
 
   useWalletActionDock(
     selectedCount > 0
@@ -921,8 +911,7 @@ export function InventoryPanel() {
             icon: <FireIcon size={18} />,
             title: selectedCanBurn
               ? `Burn ${selectedCount} collectables`
-              : (collectableBurnBatchRefusal(selectedCount) ??
-                'A selected item cannot be burned'),
+              : 'A covenant-locked item cannot be burned',
           },
           primary: {
             label: `Send (${selectedCount})`,
@@ -934,9 +923,7 @@ export function InventoryPanel() {
             icon: <SendIcon size={18} />,
             title: selectedCanSend
               ? `Send ${selectedCount} collectables`
-              : selectedCount > MAX_ITEMS_PER_COLLECTABLE_SEND_RUN
-                ? `Send up to ${MAX_ITEMS_PER_COLLECTABLE_SEND_RUN} collectables at a time`
-                : 'Wait for selected items to finish verification',
+              : 'Wait for selected items to finish verification',
           },
         }
       : null,

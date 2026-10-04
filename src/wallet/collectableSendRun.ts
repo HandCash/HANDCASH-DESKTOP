@@ -1,29 +1,18 @@
 /**
- * Bulk item send: one selection becomes a sequence of atomic transactions.
+ * Bulk item send: one selection is one atomic transaction.
  *
- * `sendCollectables` is atomic and capped at `MAX_ITEMS_PER_ONE_SAT_TX` — every
- * extra input is another sighash to sign and another BEEF ancestor to carry, so
- * a large selection cannot be one transaction. A run splits the selection into
- * measured UI-safe legs and sends them in order.
+ * There is no item ceiling. A run starts as a single leg holding the whole
+ * selection; legs exist so a rejection can be isolated without stranding the
+ * rest:
  *
- * Two things make the loop reliable rather than 28 chances to lose the wallet:
- *
- * 1. **A leg is still atomic.** Each leg either signs completely or transfers
- *    nothing, so a partial run is a set of whole transactions, never a
- *    half-moved leg.
+ * 1. **A leg is atomic.** It either signs completely or transfers nothing, so
+ *    a partial run is a set of whole transactions, never a half-moved leg.
  * 2. **Failure is classified, never retried blindly.** Only a recognized
  *    item-local conflict may halve a leg and retry down to singles. Wallet,
  *    network, timeout, ancestry and unknown faults stop the run once — an
  *    unknown error must never multiply itself into a retry storm.
- *
- * The plan is a value, so the caller can say how many transactions a selection
- * costs before anyone signs anything.
  */
-import {
-  MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
-  MAX_ITEMS_PER_ONE_SAT_TX,
-  normalizeCollectableBatchOutpoints,
-} from './collectableBatch'
+import { normalizeCollectableBatchOutpoints } from './collectableBatch'
 
 /** One transaction's worth of tips within a run. */
 export type CollectableSendLeg = {
@@ -34,36 +23,17 @@ export type CollectableSendLeg = {
 
 export type CollectableSendRunPlan =
   | { kind: 'refuse'; reason: 'empty' }
-  | {
-      kind: 'refuse'
-      reason: 'tooMany'
-      count: number
-      max: number
-    }
-  /** One leg means one ordinary atomic send; several means a run. */
   | { kind: 'legs'; legs: CollectableSendLeg[]; itemCount: number }
 
-/** Split a selection into atomic legs, preserving selection order. */
-export function planCollectableSendRun(
-  outpoints: string[],
-  perTx = MAX_ITEMS_PER_ONE_SAT_TX,
-): CollectableSendRunPlan {
+/** The whole selection as one atomic leg, in selection order. */
+export function planCollectableSendRun(outpoints: string[]): CollectableSendRunPlan {
   const normalized = normalizeCollectableBatchOutpoints(outpoints)
   if (normalized.length === 0) return { kind: 'refuse', reason: 'empty' }
-  if (normalized.length > MAX_ITEMS_PER_COLLECTABLE_SEND_RUN) {
-    return {
-      kind: 'refuse',
-      reason: 'tooMany',
-      count: normalized.length,
-      max: MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
-    }
+  return {
+    kind: 'legs',
+    legs: [{ index: 1, outpoints: normalized }],
+    itemCount: normalized.length,
   }
-  const size = Math.max(1, Math.min(Math.floor(perTx), MAX_ITEMS_PER_ONE_SAT_TX))
-  const legs: CollectableSendLeg[] = []
-  for (let at = 0; at < normalized.length; at += size) {
-    legs.push({ index: legs.length + 1, outpoints: normalized.slice(at, at + size) })
-  }
-  return { kind: 'legs', legs, itemCount: normalized.length }
 }
 
 /**

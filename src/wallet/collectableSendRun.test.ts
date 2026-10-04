@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createActor } from 'xstate'
 import {
-  MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
-  MAX_ITEMS_PER_ONE_SAT_TX,
-} from './collectableBatch'
-import {
   classifySendRunFailure,
   collectableSendRunItemCount,
   failedSendAttemptActivity,
@@ -26,49 +22,19 @@ describe('planCollectableSendRun', () => {
     expect(planCollectableSendRun([])).toEqual({ kind: 'refuse', reason: 'empty' })
   })
 
-  it('keeps a selection at the ceiling as one leg', () => {
-    const plan = planCollectableSendRun(selection(MAX_ITEMS_PER_ONE_SAT_TX))
-    expect(plan.kind === 'legs' && plan.legs).toHaveLength(1)
-  })
-
-  it('splits the largest allowed selection into ceiling-sized legs in order', () => {
-    const plan = planCollectableSendRun(selection(MAX_ITEMS_PER_COLLECTABLE_SEND_RUN))
-    if (plan.kind !== 'legs') throw new Error('expected legs')
-
-    expect(plan.itemCount).toBe(MAX_ITEMS_PER_COLLECTABLE_SEND_RUN)
-    expect(plan.legs).toHaveLength(
-      Math.ceil(MAX_ITEMS_PER_COLLECTABLE_SEND_RUN / MAX_ITEMS_PER_ONE_SAT_TX),
-    )
-    expect(plan.legs[0]!.index).toBe(1)
-    expect(plan.legs[0]!.outpoints).toHaveLength(MAX_ITEMS_PER_ONE_SAT_TX)
-    expect(plan.legs.at(-1)!.outpoints).toHaveLength(
-      MAX_ITEMS_PER_COLLECTABLE_SEND_RUN % MAX_ITEMS_PER_ONE_SAT_TX ||
-        MAX_ITEMS_PER_ONE_SAT_TX,
-    )
-    // Every tip travels exactly once, in selection order.
-    expect(plan.legs.flatMap((leg) => leg.outpoints)).toEqual(
-      selection(MAX_ITEMS_PER_COLLECTABLE_SEND_RUN),
-    )
-  })
-
-  it('never exceeds the ceiling even when asked for a bigger leg', () => {
-    const plan = planCollectableSendRun(
-      selection(MAX_ITEMS_PER_COLLECTABLE_SEND_RUN),
-      500,
-    )
-    if (plan.kind !== 'legs') throw new Error('expected legs')
-    for (const leg of plan.legs) {
-      expect(leg.outpoints.length).toBeLessThanOrEqual(MAX_ITEMS_PER_ONE_SAT_TX)
+  it('sends any selection as one atomic leg, in selection order', () => {
+    for (const count of [2, 5, 25, 700]) {
+      const plan = planCollectableSendRun(selection(count))
+      if (plan.kind !== 'legs') throw new Error('expected legs')
+      expect(plan.itemCount).toBe(count)
+      expect(plan.legs).toEqual([{ index: 1, outpoints: selection(count) }])
     }
   })
 
-  it('refuses a 700-item retry storm before creating any legs', () => {
-    expect(planCollectableSendRun(selection(700))).toEqual({
-      kind: 'refuse',
-      reason: 'tooMany',
-      count: 700,
-      max: MAX_ITEMS_PER_COLLECTABLE_SEND_RUN,
-    })
+  it('sends a duplicated tip once', () => {
+    const [only] = selection(1)
+    const plan = planCollectableSendRun([only!, only!.toUpperCase()])
+    expect(plan.kind === 'legs' && plan.legs[0]!.outpoints).toEqual([only])
   })
 })
 

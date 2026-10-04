@@ -69,11 +69,7 @@ export async function sendCollectablesRun(
 ): Promise<CollectableSendRunResult> {
   const plan = planCollectableSendRun(args.outpoints)
   if (plan.kind === 'refuse') {
-    throw new Error(
-      plan.reason === 'empty'
-        ? collectableSendBatchRefusal({ kind: 'refuse', reason: 'empty' })
-        : `Send up to ${plan.max} collectables at a time, not ${plan.count}.`,
-    )
+    throw new Error(collectableSendBatchRefusal(plan))
   }
 
   const chart = createActor(collectableSendRunMachine).start()

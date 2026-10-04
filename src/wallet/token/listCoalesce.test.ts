@@ -10,6 +10,8 @@ let liveReads = 0
 const regions = { idle: () => true, generation: 0 }
 /** Local transaction read for our own unconfirmed tips — uncancellable. */
 const localTx = { run: async (): Promise<null> => null, unconfirmed: false }
+/** Storage row for an unlisted tip, swapped per test. */
+const assetRow = { state: 'absent' as 'absent' | 'spendable' | 'released' | 'unreadable' }
 const reported: Array<{ listed: Set<string>; leftBasket?: Array<{ outpoint: string }> }> = []
 
 vi.mock('../durableStorage', () => ({
@@ -56,6 +58,7 @@ vi.mock('../holdingsReconcile', () => ({
 
 vi.mock('../staleOutputRelease', () => ({
   restoreUnspentAssetOutpoint: async () => false,
+  assetRowState: async () => assetRow.state,
 }))
 
 vi.mock('../txStore', () => ({ isLocalUnconfirmedTxid: () => localTx.unconfirmed }))
@@ -103,6 +106,7 @@ describe('listFungibles coalescing', () => {
     reported.length = 0
     localTx.run = async () => null
     localTx.unconfirmed = false
+    assetRow.state = 'absent'
   })
 
   afterEach(() => {
@@ -161,6 +165,26 @@ describe('listFungibles coalescing', () => {
 
     expect(await listFungibles()).toEqual([])
     expect(reported).toHaveLength(1)
+    expect(reported[0]!.leftBasket?.map((l) => l.outpoint)).toEqual([`${'cd'.repeat(32)}.0`])
+  })
+
+  /**
+   * The local tx record said "unconfirmed" 547 blocks after the chain mined
+   * and spent the tip. A row the basket released is not ours on that record.
+   */
+  it('drops a released tip of a stale unconfirmed record and never re-reads it', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    localTx.unconfirmed = true
+    assetRow.state = 'released'
+    let txReads = 0
+    localTx.run = async () => {
+      txReads += 1
+      return null
+    }
+
+    expect(await listFungibles()).toEqual([])
+    expect(txReads).toBe(0)
     expect(reported[0]!.leftBasket?.map((l) => l.outpoint)).toEqual([`${'cd'.repeat(32)}.0`])
   })
 

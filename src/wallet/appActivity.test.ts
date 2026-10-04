@@ -53,6 +53,7 @@ import {
   recordWalletEvent,
   isFailedMarketListingActivity,
   removeActivityForTxids,
+  batchActivityWrites,
   reconcilePendingActivityWithHeldItems,
   reconcilePendingItemActivityWithSpentOutpoints,
   sameActivityRow,
@@ -1323,5 +1324,40 @@ describe("burn activity handoff", () => {
       status: "failed",
       failureReason: "source transaction timed out",
     });
+  });
+});
+
+describe("batchActivityWrites", () => {
+  beforeEach(() => {
+    store.clear();
+    clearAppActivity();
+  });
+
+  it("writes a bulk send's rows once and reads them back mid-batch", () => {
+    let writes = 0;
+    const set = store.set.bind(store);
+    store.set = (key: string, value: string) => {
+      if (key === "handcash.brc100.appActivity") writes += 1;
+      return set(key, value);
+    };
+    try {
+      const seenMidBatch = batchActivityWrites(() => {
+        for (let i = 0; i < 40; i++) {
+          noteOutboundSendPending({
+            pendingId: `bulk-${i}`,
+            sats: 1,
+            to: "1abc",
+            item: { name: `Fox ${i}`, origin: `${"cd".repeat(32)}_${i}`, outpoint: `${"cd".repeat(32)}.${i}` },
+            sendGroupId: "bulk",
+          });
+        }
+        return listRecentActivity(100).filter((row) => row.sendGroupId === "bulk").length;
+      });
+      expect(seenMidBatch).toBe(40);
+      expect(writes).toBe(1);
+      expect(listRecentActivity(100).filter((row) => row.sendGroupId === "bulk")).toHaveLength(40);
+    } finally {
+      store.set = set;
+    }
   });
 });

@@ -198,7 +198,34 @@ const DAY_MS = 24 * 60 * 60_000;
 let parsedRaw: string | null = null;
 let parsedEntries: ActivityEntry[] = [];
 
+/**
+ * Ledger written inside {@link batchActivityWrites}, not yet durable. Every
+ * write re-encodes the whole ledger, so one row per item of a bulk send was
+ * n full encodes in one task; the batch makes it one.
+ */
+let batchDepth = 0;
+let batched: { key: string; entries: ActivityEntry[]; owner?: BoundAccountKeyScope } | null =
+  null;
+
+/** Run synchronous Activity writes as one durable write. */
+export function batchActivityWrites<T>(fn: () => T): T {
+  batchDepth += 1;
+  try {
+    return fn();
+  } finally {
+    batchDepth -= 1;
+    if (batchDepth === 0) flushBatchedActivity();
+  }
+}
+
+function flushBatchedActivity(): void {
+  const pending = batched;
+  batched = null;
+  if (pending) writeDurable(pending.entries, pending.owner);
+}
+
 function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
+  if (batched && batched.key === activityStorageKey(owner)) return batched.entries;
   try {
     const raw = durableGetItem(activityStorageKey(owner));
     if (!raw) return [];
@@ -644,6 +671,19 @@ function storableActivityRow(entry: ActivityEntry): ActivityEntry {
 }
 
 function writeAll(
+  entries: ActivityEntry[],
+  owner?: BoundAccountKeyScope,
+): void {
+  if (batchDepth === 0) {
+    writeDurable(entries, owner);
+    return;
+  }
+  const key = activityStorageKey(owner);
+  if (batched && batched.key !== key) flushBatchedActivity();
+  batched = { key, entries, owner };
+}
+
+function writeDurable(
   entries: ActivityEntry[],
   owner?: BoundAccountKeyScope,
 ): void {
@@ -1795,8 +1835,8 @@ export function expireStaleOutboundPending(
 /**
  * Archive debris from legacy oversized bulk attempts that could never be sent.
  *
- * Current UI refuses above 25 before writing Activity. Older builds wrote one
- * unsigned failed row per selected item, leaving hundreds of identical errors.
+ * Older builds wrote one unsigned failed row per selected item, leaving
+ * hundreds of identical errors.
  * No txid means there is no cheque or custody state to preserve.
  */
 export function archiveOversizedBulkSendDebris(maxItems = 25): number {

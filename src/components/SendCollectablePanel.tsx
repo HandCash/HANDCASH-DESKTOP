@@ -10,7 +10,6 @@ import {
   getCollectable,
   listCollectables,
   sendCollectable,
-  sendCollectables,
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
@@ -33,7 +32,7 @@ import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handle
 import { interpretCollectableSendPath } from '../wallet/collectableSendMachine'
 import { heldCollectableSendPath } from '../wallet/collectableTipKind'
 import {
-  planCollectableSendRun,
+  collectableSendRunItemCount,
   summarizeCollectableSendRun,
 } from '../wallet/collectableSendRun'
 import {
@@ -97,16 +96,7 @@ export function SendCollectablePanel({
     [outpoint, outpoints],
   )
   const outpointKey = requestedOutpoints.join('|')
-  /**
-   * A selection larger than one transaction's tip ceiling is sent as a run of
-   * atomic legs, so the panel needs the leg count before anyone confirms.
-   */
-  const sendPlan = useMemo(
-    () => planCollectableSendRun(requestedOutpoints),
-    [outpointKey],
-  )
-  const legCount = sendPlan.kind === 'legs' ? sendPlan.legs.length : 0
-  const multiLeg = legCount > 1
+  const batch = requestedOutpoints.length > 1
   const [items, setItems] = useState<Collectable[]>(() =>
     requestedOutpoints
       .map((value) => getCachedCollectable(value))
@@ -142,9 +132,9 @@ export function SendCollectablePanel({
     sendUi({ type: 'RESET' })
     setError(null)
     // `getCollectable` enriches and re-verifies one tip: an indexer walk we must
-    // not fire hundreds of times to draw a count. A run paints from the cache
-    // the grid already filled; only a single-transaction selection resolves.
-    if (multiLeg) {
+    // not fire hundreds of times to draw a count. A selection paints from the
+    // cache the grid already filled; only a single item resolves.
+    if (requestedOutpoints.length > 1) {
       setLoading(cached.length !== requestedOutpoints.length)
     } else {
       setLoading(cached.length !== requestedOutpoints.length)
@@ -183,7 +173,6 @@ export function SendCollectablePanel({
   }, [outpointKey])
 
   const item = items[0] ?? null
-  const batch = requestedOutpoints.length > 1
 
   const matches = useMemo(
     () => searchFriends(recipientQuery, friends).slice(0, 8),
@@ -204,12 +193,10 @@ export function SendCollectablePanel({
     }
     return { allowed: true, error: null as string | null }
   }, [items, requestedOutpoints.length])
-  const sendBlocked = sendPlan.kind === 'refuse' || !pathVerdict.allowed
+  const sendBlocked = requestedOutpoints.length === 0 || !pathVerdict.allowed
   const sendBlockMessage =
-    sendPlan.kind === 'refuse'
-      ? sendPlan.reason === 'empty'
-        ? 'Select at least one collectable'
-        : `Send up to ${sendPlan.max} collectables at a time, not ${sendPlan.count}`
+    requestedOutpoints.length === 0
+      ? 'Select at least one collectable'
       : pathVerdict.error
   const selectionReady = items.length === requestedOutpoints.length
   const canReview =
@@ -325,9 +312,9 @@ export function SendCollectablePanel({
     void (async () => {
       try {
         // Activity is recorded inside finishSend as soon as the txid exists.
-        if (multiLeg) {
-          // Several atomic transactions, so the outcome can be partial — report
-          // what actually signed instead of a blanket "Sent".
+        if (batch) {
+          // One atomic transaction; a rejected item splits it so the rest still
+          // send — the outcome can be partial, so report what actually signed.
           const run = await sendCollectablesRun({
             ...common,
             outpoints: requestedOutpoints,
@@ -349,7 +336,10 @@ export function SendCollectablePanel({
           }
           playPaymentSuccessSound()
           if (run.stopped || run.failed.length > 0) {
-            toastError(`Sent ${run.sent.length} of ${legCount} transactions`, summary)
+            toastError(
+              `Sent ${collectableSendRunItemCount(run).sent} of ${total} collectables`,
+              summary,
+            )
           } else {
             toastSuccess('Sent', `${summary.replace(/\.$/, '')} to ${label}.`)
           }
@@ -361,21 +351,9 @@ export function SendCollectablePanel({
           }
           return
         }
-        if (batch) {
-          await sendCollectables({
-            ...common,
-            outpoints: requestedOutpoints,
-          })
-        } else {
-          await sendCollectable(send)
-        }
+        await sendCollectable(send)
         playPaymentSuccessSound()
-        toastSuccess(
-          'Sent',
-          batch
-            ? `${total} collectables on the way to ${label}.`
-            : `${send.name} on the way to ${label}.`,
-        )
+        toastSuccess('Sent', `${send.name} on the way to ${label}.`)
         void listCollectables().catch(() => {})
         // Local state is authoritative for the spend; Dashboard poll reconciles after.
         try {
@@ -647,12 +625,6 @@ export function SendCollectablePanel({
                 to <strong>{recipientLabel}</strong>
               </p>
               {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
-              {multiLeg ? (
-                <p className="friend-recipient-hint send-recipient-hint">
-                  Too many for one transaction — sent as {legCount} transactions,
-                  each one all-or-nothing. Progress shows in the sidebar.
-                </p>
-              ) : null}
             </div>
           </div>
         </div>

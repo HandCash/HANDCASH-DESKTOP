@@ -11,6 +11,7 @@ import {
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
+  batchActivityWrites,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityItem,
@@ -25,7 +26,8 @@ import {
   planOneSatBurn,
 } from './burnPlan'
 import { burnMachine } from './burnMachine'
-import { collectableBurnBatchRefusal } from './collectableBatch'
+import { mapPool } from './asyncPool'
+import { signTipInputs } from './signTipInputs'
 import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
 import {
   BSV21_BASKET,
@@ -180,7 +182,6 @@ async function signBurnInputs(args: {
   }
 
   const rootKey = PrivateKey.fromHex(args.active.rootKeyHex)
-  const spends: Record<number, { unlockingScript: string }> = {}
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     const outpoint = `${String(input.sourceTXID).toLowerCase()}.${
@@ -219,7 +220,7 @@ async function signBurnInputs(args: {
       source.lockingScript
     )
   }
-  await unsigned.sign()
+  const spends = await signTipInputs(unsigned, vins)
   const sourceValues = unsigned.inputs.map(
     (input) =>
       input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
@@ -231,11 +232,6 @@ async function signBurnInputs(args: {
       ? sourceValues.reduce((sum, value) => sum + value, 0) -
         outputValues.reduce((sum, value) => sum + value, 0)
       : undefined
-  for (const vin of vins) {
-    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
-    if (!unlockingScript) throw new Error('Could not sign burn input')
-    spends[vin] = { unlockingScript }
-  }
 
   const signed = await args.active.wallet.signAction({
     reference: args.signable.reference,
@@ -890,8 +886,6 @@ export async function burnOneSat(
 ): Promise<{ txid: string; recoveredSatoshis: number; feeSatoshis?: number }> {
   const wanted = [...new Set(outpoints.map(wireOutpoint).filter(Boolean))]
   if (wanted.length === 0) throw new Error('No collectables selected to burn')
-  const overCeiling = collectableBurnBatchRefusal(wanted.length)
-  if (overCeiling) throw new Error(overCeiling)
   const pendingId = `burn-${Date.now()}-${Math.random()
     .toString(16)
     .slice(2, 8)}`
@@ -919,7 +913,7 @@ export async function burnOneSat(
     failureReason?: string
     recoveredSatoshis?: number
     feeSatoshis?: number
-  }) => {
+  }) => batchActivityWrites(() => {
     for (const leg of activityLegs) {
       const verb =
         args.status === 'pending'
@@ -951,7 +945,7 @@ export async function burnOneSat(
         ...(args.failureReason ? { failureReason: args.failureReason } : {}),
       })
     }
-  }
+  })
   // One durable leg per NFT lets Activity compose a truthful transaction:
   // count, shared collection name, and icon cluster. A synthetic "N items" leg
   // lost every member except the first and linked details to that one NFT.
@@ -985,8 +979,8 @@ export async function burnOneSat(
       )
       // Resolve keyed source outputs directly. Paging the basket until a selected
       // item appears is both slow and wrong for six-figure inventories.
-      const hydrated = await Promise.all(
-        wanted.map(async (outpoint) => {
+      const hydrateStartedAt = Date.now()
+      const hydrated = await mapPool(wanted, 4, async (outpoint) => {
           const held = heldByOutpoint.get(outpoint)
           if (held?.lockingScript) {
             return {
@@ -1018,7 +1012,10 @@ export async function burnOneSat(
             }
           }
         })
-      )
+      const hydrateMs = Date.now() - hydrateStartedAt
+      if (hydrateMs >= 250) {
+        console.info(`[burn] source hydrate done ${hydrateMs}ms — ${wanted.length} item(s)`)
+      }
       const loadFailure = hydrated.find(
         (tip) => 'loadError' in tip && tip.loadError
       )

@@ -48,6 +48,8 @@ const SECOND_PROBE_MS = 4_000
 const PARENT_WAIT_MS = 3_000
 const PARENT_POLL_MS = 750
 const MAX_SIGNS = 3
+/** Each rebuild retires every dead coin the toolbox picked, so a few clear a stale pool. */
+const MAX_FUNDING_REBUILDS = 5
 /**
  * How long a signature waits on a snapshot another install just uploaded.
  * Past this the explorer answer stands alone and the read finishes behind.
@@ -344,6 +346,59 @@ export async function certifyBeforeSigning(
   throw new InputsUnverifiedError(verdict.reason, refusalMessage(verdict.reason))
 }
 
+function signableOf(result: unknown): { reference: string; tx: number[] } | null {
+  const s =
+    result && typeof result === 'object'
+      ? (result as { signableTransaction?: { reference?: unknown; tx?: unknown } }).signableTransaction
+      : undefined
+  if (!s || typeof s.reference !== 'string') return null
+  const tx =
+    s.tx instanceof Uint8Array ? Array.from(s.tx) : Array.isArray(s.tx) ? (s.tx as number[]) : null
+  return tx?.length ? { reference: s.reference, tx } : null
+}
+
+/**
+ * A signable is built over funding the toolbox chose, and the caller signs its
+ * own inputs over that exact transaction. A dead funding coin found later, in
+ * `signAction`, can only refuse. So the funding is judged here, before the
+ * caller sees the signable: a dead coin the caller did not name is retired and
+ * the action built again over live coins. Anything else is left for
+ * {@link certifyBeforeSigning} to refuse with its named reason.
+ */
+export async function rebuildOverDeadFunding<T>(
+  create: () => Promise<T>,
+  first: T,
+  chain: Chain,
+  opts: {
+    named: ReadonlySet<string>
+    abort: (reference: string) => Promise<void>
+  },
+): Promise<T> {
+  let result = first
+  for (let rebuilds = 0; rebuilds < MAX_FUNDING_REBUILDS; rebuilds += 1) {
+    const signable = signableOf(result)
+    if (!signable) return result
+    let subject = ''
+    try {
+      subject = Transaction.fromAtomicBEEF(Uint8Array.from(signable.tx)).id('hex')
+    } catch {
+      return result
+    }
+    const judged = await judgeSignedInputs({ txid: subject, tx: signable.tx }, chain)
+    const verdict = judged?.verdict
+    if (verdict?.kind !== 'retire' || retireHitsNamedInput(verdict, opts.named)) return result
+    await opts.abort(signable.reference)
+    await retireDeadInputs(subject, verdict, chain)
+    console.warn(
+      `[certainty] ${subject.slice(0, 12)} funding spent elsewhere — building again over live coins (${verdict.spends
+        .map((s) => s.outpoint)
+        .join(', ')})`,
+    )
+    result = await create()
+  }
+  return result
+}
+
 function namedInputs(args: unknown): Set<string> {
   const named = new Set<string>()
   const list = args && typeof args === 'object' ? (args as { inputs?: unknown }).inputs : null
@@ -406,16 +461,25 @@ export function installSpendCertainty(wallet: Wallet, chain: Chain): void {
       if (txid) console.warn(`[certainty] ${txid.slice(0, 12)} unjudged — createAction broadcast inline`)
       return result
     }
-    const result = await signWithCertainInputs(() => create(args, originator), chain, {
-      named: namedInputs(args),
-    })
+    const named = namedInputs(args)
+    let result = await signWithCertainInputs(() => create(args, originator), chain, { named })
+    if (abortAct && signableOf(result)) {
+      result = await rebuildOverDeadFunding(() => create(args, originator), result, chain, {
+        named,
+        abort: async (reference) => {
+          await abortAct({ reference }, originator).catch((err: unknown) => {
+            console.warn('[certainty] abort before rebuild failed', err)
+          })
+        },
+      })
+    }
     rememberSignable(result)
     return result
   }
+  const abortAct = typeof wallet.abortAction === 'function' ? wallet.abortAction.bind(wallet) : null
   ;(wallet as { createAction: Wallet['createAction'] }).createAction = createGated
   if (typeof wallet.signAction !== 'function') return
   const signAct = wallet.signAction.bind(wallet)
-  const abortAct = typeof wallet.abortAction === 'function' ? wallet.abortAction.bind(wallet) : null
   const signGated: Wallet['signAction'] = async (args, originator) => {
     const reference = typeof args?.reference === 'string' ? args.reference : ''
     const unsigned = signables.get(reference)

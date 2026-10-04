@@ -297,7 +297,7 @@ describe('collectables across a cold open', () => {
     expect(filedDepartures()).toHaveLength(2)
   })
 
-  it('keeps a card the address scan still lists, and still files it', async () => {
+  it('drops a card the address scan still lists once the basket lets it go, and files it', async () => {
     const onAddress = `${'ef'.repeat(32)}.0`
     seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(onAddress, 'On Address')])
     active.wallet.listOutputs.mockResolvedValue({
@@ -311,9 +311,7 @@ describe('collectables across a cold open', () => {
 
     await listCollectables(active as never)
 
-    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual(
-      expect.arrayContaining([TIP, onAddress]),
-    )
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
     expect(filedDepartures()).toEqual([onAddress])
   })
 
