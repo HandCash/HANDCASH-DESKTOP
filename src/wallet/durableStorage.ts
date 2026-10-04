@@ -65,8 +65,9 @@ const REBUILDABLE_CACHE_KEYS = Object.values(storageRegistry)
  * `shell` — the host app owns a file store; origin storage is only a mirror for
  * small keys, because writing multi-megabyte values there costs the renderer a
  * synchronous write it does not need.
- * `origin` — the WebView's own storage *is* the store (mobile shell, dev
- * browser), so every value must be written there in full.
+ * `origin` — the WebView's own storage *is* the store (dev browser, a Mobile
+ * build without its app file store), so every value must be written there in
+ * full.
  *
  * A shell that answers `storageSetSync` with `true` while storing nothing is
  * indistinguishable from Electron by return value alone: writes report success,
@@ -347,8 +348,9 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
       // ignore
     }
   }
-  // No shell store (mobile shell, dev browser): localStorage is the store, not
-  // a mirror, so the whole value goes in regardless of size.
+  // No shell store (dev browser, a Mobile build without its file store):
+  // localStorage is the store, not a mirror, so the whole value goes in
+  // regardless of size.
   // Hermetic/node tests have neither bridge nor localStorage; preserve the
   // process-local cache there so independent wallet modules remain testable.
   if (typeof localStorage === 'undefined') {

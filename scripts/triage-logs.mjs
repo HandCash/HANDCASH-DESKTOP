@@ -583,6 +583,10 @@ function storagePressure(events) {
     /^\[storage\] durable write refused for (\S+)(?: \((\d+)KB\) — (\d+)KB held across (\d+) keys · largest: (.*))?$/
   const SLOW_RE = /^\[storage\] slow (\S+) (\d+)ms · (\S+) \((\d+)KB\)/
   const RECLAIM_RE = /^\[storage\] reclaimed (\d+)KB/
+  // Mobile 0.1.592+: the wallet's durable store moved from WebView storage
+  // (≈5MB cap) to app files. `store` stays null on builds that predate it.
+  const MOVED_RE = /^\[durable\] origin move done (\d+)ms — (\d+) key\(s\) \((\d+)KB\) into the app file store · freed (\d+)KB/
+  const NO_FILE_STORE_RE = /^\[durable\] native file store missing/
   const shortKey = (k) => k.split(':wallet:')[0]
 
   const out = {
@@ -594,6 +598,8 @@ function storagePressure(events) {
     slowOps: 0,
     worstSlowOp: null,
     reclaimedKB: 0,
+    store: null,
+    originMove: null,
   }
   const refusedKeys = new Set()
   for (const e of events) {
@@ -622,7 +628,17 @@ function storagePressure(events) {
       continue
     }
     m = RECLAIM_RE.exec(e.text)
-    if (m) out.reclaimedKB += Number(m[1])
+    if (m) {
+      out.reclaimedKB += Number(m[1])
+      continue
+    }
+    m = MOVED_RE.exec(e.text)
+    if (m) {
+      out.store = 'app-files'
+      out.originMove = { ms: Number(m[1]), keys: Number(m[2]), kb: Number(m[3]), freedKB: Number(m[4]) }
+      continue
+    }
+    if (NO_FILE_STORE_RE.test(e.text)) out.store = 'webview'
   }
   out.refusedKeys = [...refusedKeys].slice(0, 6)
   return out
@@ -3279,8 +3295,13 @@ function report(state, answers) {
     }
   }
   const st = latest.storage
-  if (st.refusedWrites || st.slowOps) {
+  if (st.refusedWrites || st.slowOps || st.store) {
     console.log('\nOrigin storage:')
+    if (st.store === 'webview') console.log('  durable store: WebView storage (≈5MB cap) — native file store missing')
+    if (st.originMove) {
+      const mv = st.originMove
+      console.log(`  durable store: app files · moved ${mv.keys} key(s) (${mv.kb}KB) in ${mv.ms}ms, freed ${mv.freedKB}KB of WebView storage`)
+    }
     if (st.heldKB != null) {
       console.log(
         `  ${st.heldKB}KB held across ${st.keyCount} keys · ${st.refusedWrites} refused write(s) for ${st.refusedKeys.join(', ')}`,

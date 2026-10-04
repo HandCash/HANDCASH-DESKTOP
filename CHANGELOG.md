@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.434] - 2026-10-04
+
+### Changed
+
+- Triage now reports where Mobile keeps wallet state. Mobile 0.1.592 moves it out of WebView storage, which is capped at about 5 MB, into app files. Triage shows how many keys moved on first launch and how much WebView storage that freed. It also flags a build still running without the file store.
+- Storage comments now treat WebView-only storage as a fallback for builds without a file store, not as how Mobile works.
+
 ## [1.3.433] - 2026-10-04
 
 ### Fixed

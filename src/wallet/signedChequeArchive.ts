@@ -23,9 +23,9 @@ const MAX_ROWS = 500
 /**
  * Byte ceiling for the serialized archive.
  *
- * On the mobile shell, origin storage *is* the durable store, and its
- * whole-origin quota is a few megabytes shared with Activity, chat and item
- * art. An unbounded row count of full Atomic BEEFs filled it, every write
+ * Where origin storage *is* the durable store (a Mobile build without its app
+ * file store), its whole-origin quota is a few megabytes shared with Activity,
+ * chat and item art. An unbounded row count of full Atomic BEEFs filled it, every write
  * threw `QuotaExceededError`, and — because a refused archive fails the send
  * closed — the wallet stopped signing anything at all. A cheque is only needed
  * until its transaction is proven, so budget the store and evict the oldest.
