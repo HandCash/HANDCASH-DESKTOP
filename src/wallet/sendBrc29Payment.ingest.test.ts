@@ -14,12 +14,14 @@ const {
   peekRawTxLookup,
   fetchRawTxHex,
   ghosts,
+  spv,
   chatMessages,
   updateMessage,
 } = vi.hoisted(() => ({
   peekRawTxLookup: vi.fn((): 'hit' | 'miss' | 'unknown' => 'unknown'),
   fetchRawTxHex: vi.fn(async (): Promise<string | null> => null),
   ghosts: new Set<string>(),
+  spv: { verdict: { kind: 'verified' } as { kind: string; reason?: string } },
   chatMessages: [] as Array<Record<string, unknown>>,
   updateMessage: vi.fn(),
 }))
@@ -44,7 +46,7 @@ const RECEIVING_ACCOUNT = {
 }
 
 vi.mock('./spvPackage', () => ({
-  verifySignedPackage: async () => ({ kind: 'verified' }),
+  verifySignedPackage: async () => spv.verdict,
   spvVerifiedHere: () => true,
 }))
 
@@ -196,6 +198,7 @@ beforeEach(async () => {
   chatMessages.length = 0
   updateMessage.mockClear()
   ghosts.clear()
+  spv.verdict = { kind: 'verified' }
   peekRawTxLookup.mockReset()
   peekRawTxLookup.mockReturnValue('unknown')
   fetchRawTxHex.mockReset()
@@ -261,6 +264,27 @@ describe('broadcastAtomicBeef', () => {
     await expect(broadcastAtomicBeef('a'.repeat(64), ATOMIC)).resolves.toBe(true)
     expect(txExistsOnChain).not.toHaveBeenCalled()
     expect(postBeef).toHaveBeenCalledTimes(1)
+  })
+
+  it('never ghosts a transfer this device alone refused', async () => {
+    spv.verdict = { kind: 'invalid', reason: 'Script verification failed for transaction x' }
+    txExistsOnChain.mockResolvedValue(false)
+    const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
+
+    await expect(broadcastAtomicBeef('b'.repeat(64), ATOMIC)).resolves.toBe(false)
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(ghosts.has('b'.repeat(64))).toBe(false)
+  })
+
+  it('keeps a landed peer transfer local SPV refuses and clears its ghost mark', async () => {
+    ghosts.add('c'.repeat(64))
+    spv.verdict = { kind: 'invalid', reason: 'Script verification failed for transaction x' }
+    txExistsOnChain.mockResolvedValue(true)
+    const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
+
+    await expect(broadcastAtomicBeef('c'.repeat(64), ATOMIC)).resolves.toBe(true)
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(ghosts.has('c'.repeat(64))).toBe(false)
   })
 
   it('refuses an invalid txid or empty body without touching the network', async () => {

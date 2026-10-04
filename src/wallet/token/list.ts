@@ -1460,13 +1460,17 @@ async function listFungiblesNow(
     const departed = projection.departed.filter(
       (tip) => !shown.has(normalizedTokenTipOutpoint(tip.outpoint)),
     )
+    const filed = (tip: Bsv21Utxo) => ({
+      outpoint: dottedTip(tip.outpoint),
+      label: tip.sym || shortTokenLabel(tip.tokenId),
+    })
+    // A tip shown only from our own local bytes has no storage row. Unless a
+    // receive lands it, only a claim puts it where a send can spend it.
     reportHoldings({
       asset: 'token',
       listed: new Set([...listed].map(dottedTip)),
-      leftBasket: departed.map((tip) => ({
-        outpoint: dottedTip(tip.outpoint),
-        label: tip.sym || shortTokenLabel(tip.tokenId),
-      })),
+      leftBasket: departed.map(filed),
+      unstored: unlisted.map(filed),
     })
     const liveTipCount = liveRows.reduce(
       (sum, token) => sum + Math.max(1, token.utxoCount),
@@ -1475,7 +1479,8 @@ async function listFungiblesNow(
     console.info(
       `[bsv21] listOutputs done ${Date.now() - startedAt}ms — ` +
         `live ${liveRows.length} token(s) / ${liveTipCount} tip(s), showing ${merged.length}` +
-        (departed.length > 0 ? `, ${departed.length} tip(s) left the basket` : ''),
+        (departed.length > 0 ? `, ${departed.length} tip(s) left the basket` : '') +
+        (unlisted.length > 0 ? `, ${unlisted.length} tip(s) unstored` : ''),
     )
     // Fill missing icons from held bodies, else the raw tx by txid (no HTTP
     // content indexer).

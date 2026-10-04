@@ -1,4 +1,6 @@
+import { LockingScript, PrivateKey, Transaction } from '@bsv/sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildBsv21ValueLock } from './sendPlan'
 import type { FungibleToken } from './types'
 
 const store = new Map<string, string>()
@@ -9,10 +11,14 @@ let liveReads = 0
 /** Whether every wallet region is idle, swapped per test. */
 const regions = { idle: () => true, generation: 0 }
 /** Local transaction read for our own unconfirmed tips — uncancellable. */
-const localTx = { run: async (): Promise<null> => null, unconfirmed: false }
+const localTx = { run: async (): Promise<Transaction | null> => null, unconfirmed: false }
 /** Storage row for an unlisted tip, swapped per test. */
 const assetRow = { state: 'absent' as 'absent' | 'spendable' | 'released' | 'unreadable' }
-const reported: Array<{ listed: Set<string>; leftBasket?: Array<{ outpoint: string }> }> = []
+const reported: Array<{
+  listed: Set<string>
+  leftBasket?: Array<{ outpoint: string }>
+  unstored?: Array<{ outpoint: string }>
+}> = []
 
 vi.mock('../durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
@@ -296,6 +302,31 @@ describe('listFungibles coalescing', () => {
     expect(getCachedFungibles().find((row) => row.tokenId === TOKEN)?.amt).toBe(
       '550',
     )
+  })
+
+  it('files a tip shown only from our own unconfirmed transaction for a claim', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    const tip = `${'cd'.repeat(32)}.0`
+    const signed = new Transaction()
+    signed.addOutput({
+      lockingScript: LockingScript.fromHex(
+        buildBsv21ValueLock({
+          tokenId: TOKEN,
+          amount: 500n,
+          address: PrivateKey.fromRandom().toAddress(),
+        }),
+      ),
+      satoshis: 1,
+    })
+    rememberFungibleToken(card())
+    localTx.unconfirmed = true
+    localTx.run = async () => signed
+
+    const rows = await listFungibles()
+
+    expect(rows.map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(reported.at(-1)?.unstored?.map((u) => u.outpoint)).toEqual([tip])
+    expect(reported.at(-1)?.leftBasket).toEqual([])
   })
 
   it('joins a read that is still within the deadline', async () => {

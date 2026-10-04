@@ -570,6 +570,20 @@ async function submitAtomicBeefToMinersOnce(
       : untrackedMinerResult("unverified", telemetry);
   }
   if (spv.kind === "invalid") {
+    // Arcade ran these scripts when it accepted the tx, and a node that holds
+    // it ran them too: the verdict here is wrong, not the tx. A payee's
+    // re-post of a landed transfer used to ghost it on this verdict.
+    const { txExistsOnChain } = await import("./legacyScan");
+    const networkHolds =
+      txHadArcadeSubmitContact(id) ||
+      (await txExistsOnChain(id, active.chain).catch(() => null)) === true;
+    if (networkHolds) {
+      console.warn(
+        `[spv] ${id.slice(0, 12)} refused here but the network holds it — ${spv.reason}; kept`
+      );
+      removePendingMinerSubmit(id, owner);
+      return { kind: "accepted", ancestryComplete, keepPropagating: false };
+    }
     console.warn(`[spv] ${id.slice(0, 12)} invalid — ${spv.reason}; not sent`);
     if (detached) {
       return outboxDurable

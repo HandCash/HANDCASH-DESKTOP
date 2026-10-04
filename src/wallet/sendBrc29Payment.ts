@@ -166,12 +166,16 @@ async function broadcastAtomicBeefOnce(
       const { txExistsOnChain } = await import('./legacyScan')
       const onChain = await txExistsOnChain(id, active.chain)
       mark(`exists=${String(onChain)}`)
-      if (onChain === true) return true
+      if (onChain === true) {
+        forgetGhostTx(id)
+        return true
+      }
     }
 
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(id, atomic)
     mark(`postBeef ${result.kind}`)
+    if (result.kind === 'accepted') forgetGhostTx(id)
     return true
   } catch (err) {
     console.warn(
@@ -179,13 +183,11 @@ async function broadcastAtomicBeefOnce(
       id,
       err instanceof Error ? err.message : String(err),
     )
-    // Arcade (via minerSubmit) flat-out rejected — discard. Explorer lag never
-    // throws here; unproven conflicts keep the sealed cheque and queue retry.
-    try {
-      const { rememberGhostTx } = await import('./ghostTxSuppress')
+    // Only Arcade's verdict makes a tx dead for every view on this device. A
+    // refusal this device reached alone (local SPV, an incomplete ancestry)
+    // says nothing about a transfer the sender already broadcast.
+    if ((err as { code?: unknown } | null)?.code === 'ARCADE_HARD_REJECT') {
       rememberGhostTx(id)
-    } catch {
-      /* discard is best-effort */
     }
     return false
   }

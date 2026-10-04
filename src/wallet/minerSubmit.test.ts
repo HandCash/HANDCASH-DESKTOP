@@ -143,12 +143,27 @@ describe('submitAtomicBeefToMiners', () => {
     expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalledWith(TXID, ATOMIC)
   })
 
-  it('keeps the seal of an invalid package an earlier round already posted', async () => {
+  it('keeps a tx Arcade already accepted when local SPV refuses it', async () => {
     spvVerdict = { kind: 'invalid', reason: 'Script evaluation error' }
     const { rememberArcadeSubmitContact } = await import('./arcadeSubmitGuard')
     rememberArcadeSubmitContact(TXID)
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow(/does not verify/)
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).resolves.toMatchObject({
+      kind: 'accepted',
+      keepPropagating: false,
+    })
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('keeps a peer transfer the chain holds when local SPV refuses it', async () => {
+    spvVerdict = { kind: 'invalid', reason: 'Script verification failed for transaction x' }
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValue(true)
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).resolves.toMatchObject({
+      kind: 'accepted',
+    })
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 

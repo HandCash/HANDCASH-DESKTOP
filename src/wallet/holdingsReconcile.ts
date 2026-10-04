@@ -181,6 +181,13 @@ export type HoldingsReport = {
   /** Outpoints the previous projection held that this read did not list. */
   leftBasket?: ReadonlyArray<{ outpoint: string; label?: string }>
   /**
+   * Outputs a card shows from our own local transactions that no storage row
+   * holds: a send whose write was dropped, or a receive still internalizing.
+   * Only a claim makes the first spendable; the settle window lets the second
+   * land. A send that needs one sooner asks with {@link reconcileNow}.
+   */
+  unstored?: ReadonlyArray<{ outpoint: string; label?: string }>
+  /**
    * The full set of listed items the address scan omits, when a scan answered.
    * Omit when there was no scan — nothing is pruned then.
    */
@@ -236,6 +243,24 @@ export function reportHoldings(report: HoldingsReport, now = Date.now()): void {
     })
     changed = true
     console.info(`[holdings] ${describe({ asset: report.asset, outpoint: op, label: left.label })} left-basket — checking chain`)
+  }
+
+  for (const gone of report.unstored ?? []) {
+    const op = key(gone.outpoint)
+    if (!/^[0-9a-f]{64}\.\d+$/.test(op) || listed.has(op)) continue
+    if (isItemSent(op) || isItemAbandoned(op)) continue
+    if (ledger.entries.get(op)?.gap === 'left-basket') continue
+    ledger.entries.set(op, {
+      outpoint: op,
+      asset: report.asset,
+      gap: 'left-basket',
+      ...(gone.label ? { label: gone.label } : {}),
+      since: now,
+      checks: 0,
+      nextAt: now + RECONCILE_SETTLE_MS,
+    })
+    changed = true
+    console.info(`[holdings] ${describe({ asset: report.asset, outpoint: op, label: gone.label })} unstored — claiming from its transaction`)
   }
 
   for (const [op, gap] of offIndex ?? []) {
@@ -350,6 +375,36 @@ async function spenderConsumes(
 async function walletIdle(): Promise<boolean> {
   const { walletRegionsIdle } = await import('./walletCoordinator')
   return walletRegionsIdle()
+}
+
+/**
+ * Check these outpoints now rather than at their due time, and wait for the
+ * pass. A send that cannot cover its amount from the basket asks once before
+ * it fails, for the tips its card shows and no row holds.
+ */
+export async function reconcileNow(
+  asset: HoldingsAsset,
+  outpoints: readonly string[],
+): Promise<void> {
+  const ledger = readLedger()
+  const now = Date.now()
+  let changed = false
+  for (const raw of outpoints) {
+    const op = key(raw)
+    if (!/^[0-9a-f]{64}\.\d+$/.test(op) || isItemSent(op) || isItemAbandoned(op)) continue
+    const entry = ledger.entries.get(op)
+    if (entry && entry.nextAt <= now) continue
+    ledger.entries.set(
+      op,
+      entry
+        ? { ...entry, nextAt: now }
+        : { outpoint: op, asset, gap: 'left-basket', since: now, checks: 0, nextAt: now },
+    )
+    changed = true
+  }
+  if (changed) writeLedger(ledger)
+  if (running) await running.catch(() => undefined)
+  await runReconcile()
 }
 
 export function runReconcile(): Promise<void> {

@@ -1885,7 +1885,7 @@ function chainIngestFacts(events) {
     .map(([line, count]) => ({ line, count }))
 }
 
-const BSV21_LIST_DONE_RE = /^\[bsv21\] listOutputs done \d+ms — live (\d+) token\(s\) \/ (\d+) tip\(s\), showing (\d+)(?:, (\d+) tip\(s\) left the basket)?/
+const BSV21_LIST_DONE_RE = /^\[bsv21\] listOutputs done \d+ms — live (\d+) token\(s\) \/ (\d+) tip\(s\), showing (\d+)(?:, (\d+) tip\(s\) left the basket)?(?:, (\d+) tip\(s\) unstored)?/
 const ITEMS_KEPT_RE = /^\[collectables\] kept (\d+) cached item\(s\) while basket listed (\d+)/
 const ITEMS_RETIRED_RE = /^\[collectables\] retired (\d+) card\(s\)/
 /** `[holdings] <asset> <txid.vout> [(label)] <event>` — one line per reconcile step. */
@@ -1902,7 +1902,7 @@ function holdingsFacts(events) {
   const tokens = { reads: 0, deferred: 0, timedOut: 0, busyMidRead: 0, readsShowingMore: 0, leftBasket: 0, last: null }
   const items = { kept: 0, retired: 0, deferred: 0, busyMidRead: 0, idleRelists: 0, failed: 0, last: null }
   const reconcile = {
-    filed: { 'left-basket': 0, 'off-chain-index': 0 },
+    filed: { 'left-basket': 0, 'off-chain-index': 0, unstored: 0, 'failed-send': 0 },
     closed: {},
     retiredSpent: 0,
     retiredByAsset: {},
@@ -1938,7 +1938,9 @@ function holdingsFacts(events) {
       tokens.reads += 1
       tokens.leftBasket += Number(done[4] ?? 0)
       if (showing > live) tokens.readsShowingMore += 1
-      tokens.last = { live, tips, showing, at: new Date(e.at).toISOString() }
+      // Shown from our own signed bytes with no storage row — not spendable until claimed.
+      const unstored = Number(done[5] ?? 0)
+      tokens.last = { live, tips, showing, unstored, at: new Date(e.at).toISOString() }
       continue
     }
     if (/^\[bsv21\] deferring listOutputs/.test(t)) tokens.deferred += 1
@@ -1981,6 +1983,12 @@ function holdingsFacts(events) {
     if ((m = /^(left-basket|off-chain-index) — checking chain/.exec(event))) {
       reconcile.filed[m[1]] += 1
       open.set(outpoint, { asset, outpoint, gap: m[1], last: 'filed', at })
+    } else if (/^unstored — claiming/.test(event)) {
+      reconcile.filed.unstored += 1
+      open.set(outpoint, { asset, outpoint, gap: 'unstored', last: 'filed', at })
+    } else if (/^returned by a failed send/.test(event)) {
+      reconcile.filed['failed-send'] += 1
+      open.set(outpoint, { asset, outpoint, gap: 'failed-send', last: 'filed', at })
     } else if ((m = /^closed — (\S+)/.exec(event))) {
       reconcile.closed[m[1]] = (reconcile.closed[m[1]] ?? 0) + 1
       open.delete(outpoint)
@@ -2320,6 +2328,8 @@ const MINER_OUTCOMES = [
   ['certaintyRefused', /^\[certainty\] ([0-9a-f]{12}) refused\b/],
   ['spvHeld', /^\[spv\] ([0-9a-f]{12}) held\b/],
   ['spvInvalid', /^\[spv\] ([0-9a-f]{12}) invalid\b/],
+  // Local SPV refused a tx Arcade or a node already holds: the verdict, not the tx, is wrong.
+  ['spvDisputed', /^\[spv\] ([0-9a-f]{12}) refused here but the network holds it\b/],
 ]
 /** Stopped on this device by a pre-send gate (1.3.380+): unproven coins or a package that fails SPV. */
 const MINER_GATED = new Set(['certaintyRefused', 'spvInvalid'])
@@ -2418,6 +2428,7 @@ function broadcastFacts(events) {
     // Pinned after broadcast with no local transaction row: the next spend of
     // its change (token, item or BSV) fails on this device.
     unstoredSends: rows.filter((row) => row.outcomes.includes('pinNoLocalRow')).map((row) => row.txid),
+    gatedTxids: rows.filter((row) => row.outcomes.some((o) => MINER_GATED.has(o))).map((row) => row.txid),
     lastOutcome,
     everSeen,
     unlanded,
@@ -3083,15 +3094,32 @@ const QUESTIONS = {
  */
 const MODEL_TRAILED_ROWS = 4
 const MODEL_TRAIL_LINES = 4
+/** Send starts / trails the model sees; the full lists stay in `--state`. */
+const MODEL_SEND_STARTS = 4
+const MODEL_SEND_LINES = 8
 
 function modelState(state) {
+  const slimSends = (sends) =>
+    sends && {
+      ...sends,
+      starts: (sends.starts ?? []).slice(-MODEL_SEND_STARTS).map((start) => ({
+        ...start,
+        lines: (start.lines ?? []).slice(-MODEL_SEND_LINES),
+      })),
+      trails: (sends.trails ?? []).map((trail) => ({
+        ...trail,
+        lines: (trail.lines ?? []).slice(-MODEL_SEND_LINES),
+      })),
+    }
   const slim = (session) => {
-    const rc = session?.holdings?.reconcile
-    if (!rc) return session
+    if (!session) return session
+    const withSends = session.tokenSends ? { ...session, tokenSends: slimSends(session.tokenSends) } : session
+    const rc = withSends.holdings?.reconcile
+    if (!rc) return withSends
     const open = rc.open.map(({ trail, ...row }, i) =>
       i < MODEL_TRAILED_ROWS && trail?.length ? { ...row, trail: trail.slice(0, MODEL_TRAIL_LINES) } : row,
     )
-    return { ...session, holdings: { ...session.holdings, reconcile: { ...rc, open } } }
+    return { ...withSends, holdings: { ...withSends.holdings, reconcile: { ...rc, open } } }
   }
   return Object.fromEntries(Object.entries(state).map(([key, session]) => [key, slim(session)]))
 }
@@ -3449,7 +3477,7 @@ function report(state, answers) {
   }
 
   const holdings = latest.holdings
-  if (holdings && (holdings.tokens.reads || holdings.tokens.deferred || holdings.items.kept || holdings.items.deferred || holdings.reconcile?.open.length || holdings.reconcile?.filed['left-basket'] || holdings.reconcile?.filed['off-chain-index'])) {
+  if (holdings && (holdings.tokens.reads || holdings.tokens.deferred || holdings.items.kept || holdings.items.deferred || holdings.reconcile?.open.length || holdings.reconcile?.filed['left-basket'] || holdings.reconcile?.filed['off-chain-index'] || holdings.reconcile?.filed.unstored || holdings.reconcile?.filed['failed-send'])) {
     const tk = holdings.tokens
     const it = holdings.items
     const rc = holdings.reconcile
@@ -3457,7 +3485,7 @@ function report(state, answers) {
     console.log(
       `  tokens: ${tk.reads} read(s), ${tk.readsShowingMore} showing more than live · ${tk.leftBasket} tip(s) left the basket · deferred ${tk.deferred} · busy mid-read ${tk.busyMidRead} · timed out ${tk.timedOut}`,
     )
-    if (tk.last) console.log(`    last read ${tk.last.at}: live ${tk.last.live} token(s) / ${tk.last.tips} tip(s), showing ${tk.last.showing}`)
+    if (tk.last) console.log(`    last read ${tk.last.at}: live ${tk.last.live} token(s) / ${tk.last.tips} tip(s), showing ${tk.last.showing}${tk.last.unstored ? ` · ${tk.last.unstored} unstored` : ''}`)
     console.log(
       `  items: kept-while-short ${it.kept} · retired ${it.retired} · deferred ${it.deferred} · busy mid-read ${it.busyMidRead} · idle relists ${it.idleRelists} · failed ${it.failed}`,
     )
@@ -3466,7 +3494,7 @@ function report(state, answers) {
       const closed = Object.entries(rc.closed).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
       const kept = Object.entries(rc.kept).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
       console.log(
-        `  reconcile: filed left-basket ${rc.filed['left-basket']}, off-chain-index ${rc.filed['off-chain-index']} · closed ${closed} · retired spent ${rc.retiredSpent} · restored ${rc.restored} (refused, reserved ${rc.restoreRefused}) · claims ${rc.claims} (nothing ${rc.claimedNothing}, skipped ${rc.claimSkipped}, spent ${rc.claimSpent}, failed ${rc.claimFailed}) · claims started ${rc.claimsStarted} · kept ${kept}`,
+        `  reconcile: filed left-basket ${rc.filed['left-basket']}, off-chain-index ${rc.filed['off-chain-index']}, unstored ${rc.filed.unstored ?? 0}, failed-send ${rc.filed['failed-send'] ?? 0} · closed ${closed} · retired spent ${rc.retiredSpent} · restored ${rc.restored} (refused, reserved ${rc.restoreRefused}) · claims ${rc.claims} (nothing ${rc.claimedNothing}, skipped ${rc.claimSkipped}, spent ${rc.claimSpent}, failed ${rc.claimFailed}) · claims started ${rc.claimsStarted} · kept ${kept}`,
       )
       const notRestored = Object.entries(rc.notRestored).map(([k, n]) => `${k} ${n}`).join(', ')
       if (notRestored || rc.claimRestored > 0) {

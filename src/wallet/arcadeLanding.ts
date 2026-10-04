@@ -27,7 +27,7 @@ import {
   runtimeIsCurrent,
   type WalletRuntime,
 } from './walletRuntime'
-import { createDurableTtlTxidMap } from './durableTtlTxidMap'
+import { noteTxLanded, resetLandedTxForTests, txLanded } from './landedTx'
 import { normalizeTxid } from './txid'
 import {
   decideLanding,
@@ -54,27 +54,15 @@ const UNLOCK_GAP_MS = 400
 const SPEND_POLL_MS = 500
 const SPEND_WAIT_MAX_MS = 60_000
 
-const landed = createDurableTtlTxidMap({
-  key: 'handcash.wallet.arcadeLanded.v1',
-  max: 1_000,
-  ttlMs: 14 * 24 * 60 * 60_000,
-})
+export { noteTxLanded, txLanded } from './landedTx'
 
 const watching = new Set<string>()
 const unlockedRuntimes = new Set<string>()
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-export function txLanded(txid: string): boolean {
-  return landed.has(txid)
-}
-
-export function noteTxLanded(txid: string): void {
-  landed.remember(txid)
-}
-
 export function resetArcadeLandingForTests(): void {
-  landed.reset()
+  resetLandedTxForTests()
   watching.clear()
   unlockedRuntimes.clear()
 }
@@ -278,7 +266,7 @@ async function checkLanding(args: {
     return { fate: { kind: 'waiting', reason: 'account changed' }, arcade, evidence }
   }
   if (fate.kind === 'landed') {
-    landed.remember(txid)
+    noteTxLanded(txid)
     console.info(`[landing] ${txid.slice(0, 12)} landed ${fate.reason} done ${elapsedMs}ms`)
   } else if (fate.kind === 'dead' && evidence) {
     const retired = await retireDeadCheque({
@@ -303,7 +291,7 @@ export function watchArcadeLanding(
   opts?: { atomic?: number[]; owner?: BoundAccountKeyScope; since?: number },
 ): void {
   const id = normalizeTxid(txid)
-  if (!id || watching.has(id) || landed.has(id)) return
+  if (!id || watching.has(id) || txLanded(id)) return
   const runtime = getWalletRuntime()
   if (!runtime) return
   watching.add(id)
@@ -377,7 +365,7 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
       .filter(
         (pin) =>
           now - pin.at >= UNLOCK_MIN_AGE_MS &&
-          !landed.has(pin.txid) &&
+          !txLanded(pin.txid) &&
           !txIsArcadeRejected(pin.txid) &&
           !watching.has(pin.txid),
       )

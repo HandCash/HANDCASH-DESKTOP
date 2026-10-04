@@ -132,6 +132,20 @@ export function chooseBsv21ValueTipPath(
   )
 }
 
+/** Every tip outpoint the cached card of this token shows. */
+async function cardTipOutpoints(tokenId: string): Promise<Set<string>> {
+  const { getCachedFungibles } = await import('./list')
+  const outpoints = new Set<string>()
+  for (const token of getCachedFungibles()) {
+    const ids = [token.tokenId, ...(token.tokenIds ?? [])].map(normalizeTokenId)
+    if (!ids.includes(tokenId)) continue
+    if (token.outpoint) outpoints.add(token.outpoint)
+    for (const outpoint of token.tipOutpoints ?? []) outpoints.add(outpoint)
+    for (const tip of token.heldTips ?? []) outpoints.add(tip.outpoint)
+  }
+  return outpoints
+}
+
 /**
  * A mint that never got a locking script on listOutputs still has the 162
  * body in local BEEF. Spend that — do not wait for an indexer to rewrite it.
@@ -145,29 +159,11 @@ export async function recoverBsv21TipsFromLocalBeef(
     peekSessionBeef,
     getBeefForTxidCached,
   } = await import('../beefCache')
-  const { getCachedFungibles } = await import('./list')
   const { restoreUnspentAssetOutpoint } = await import('../staleOutputRelease')
   const { isItemSent } = await import('../sentItemGuard')
   const want = requireTokenId(tokenId)
-  const candidates = new Set<string>()
-  for (const token of getCachedFungibles()) {
-    const id = normalizeTokenId(token.tokenId)
-    const aliases = (token.tokenIds ?? []).flatMap((candidate) => {
-      const normalized = normalizeTokenId(candidate)
-      return normalized ? [normalized] : []
-    })
-    if (id === want || aliases.includes(want)) {
-      if (token.outpoint) candidates.add(token.outpoint)
-      for (const outpoint of token.tipOutpoints ?? []) {
-        candidates.add(outpoint)
-      }
-      for (const tip of token.heldTips ?? []) {
-        candidates.add(tip.outpoint)
-      }
-    }
-  }
   const tips: Bsv21SendTip[] = []
-  for (const op of candidates) {
+  for (const op of await cardTipOutpoints(want)) {
     const wire = wireOutpoint(op)
     if (isItemSent(wire)) continue
     const [txid, voutRaw] = wire.split('.')
@@ -391,9 +387,23 @@ export async function sendBsv21Tokens(args: {
   if (!active) throw new Error('Unlock the wallet first')
 
   const tipsStartedAt = Date.now()
-  const listed162 = await listBsv21BinaryTips(active, {
+  let listed162 = await listBsv21BinaryTips(active, {
     includeCustomInstructions: false,
   })
+  const tipsOfToken = (listed: typeof listed162): Bsv21SendTip[] =>
+    listed
+      .filter(
+        (t) =>
+          t.tokenId === tokenId &&
+          !!t.lockingScript &&
+          !!decodeBsv21Binary(t.lockingScript),
+      )
+      .map((t) => ({
+        outpoint: t.outpoint,
+        tokenId: t.tokenId,
+        amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+        lockingScript: t.lockingScript,
+      }))
   const fromArgs: Bsv21SendTip[] = (args.tips ?? []).flatMap((t) => {
     const decoded = tipFromBsv21Script({
       outpoint: t.outpoint,
@@ -406,27 +416,40 @@ export async function sendBsv21Tokens(args: {
     }
     return []
   })
-  const fromBasket: Bsv21SendTip[] = listed162
-    .filter(
-      (t) =>
-        t.tokenId === tokenId &&
-        !!t.lockingScript &&
-        !!decodeBsv21Binary(t.lockingScript),
-    )
-    .map((t) => ({
-      outpoint: t.outpoint,
-      tokenId: t.tokenId,
-      amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
-      lockingScript: t.lockingScript,
-    }))
-  const listedForToken = fromBasket.length
+  let fromBasket = tipsOfToken(listed162)
+  let listedForToken = fromBasket.length
   if (fromArgs.length === 0 && fromBasket.length === 0) {
     fromBasket.push(...(await recoverBsv21TipsFromLocalBeef(active, tokenId)))
   }
+  let claimedNote = ''
+  const covered = fromBasket.reduce((sum, t) => sum + t.amt, 0n)
+  if (fromArgs.length === 0 && covered < BigInt(args.amount)) {
+    // The card can show a tip no row holds (a send whose storage write was
+    // dropped). Only the reconcile's chain-proven claim makes it spendable.
+    const have = new Set(fromBasket.map((t) => wireOutpoint(t.outpoint)))
+    const shownOnly = [...(await cardTipOutpoints(tokenId))]
+      .map(wireOutpoint)
+      .filter((op) => !have.has(op))
+    if (shownOnly.length > 0) {
+      const { reconcileNow } = await import('../holdingsReconcile')
+      await reconcileNow('token', shownOnly)
+      listed162 = await listBsv21BinaryTips(active, {
+        includeCustomInstructions: false,
+      })
+      const after = tipsOfToken(listed162)
+      if (after.length > listedForToken) {
+        claimedNote = `, claimed ${after.length - listedForToken} shown-only tip(s)`
+        fromBasket = after
+        listedForToken = after.length
+      } else {
+        claimedNote = `, ${shownOnly.length} shown-only tip(s) not claimed`
+      }
+    }
+  }
   const tipsMs = Date.now() - tipsStartedAt
-  if (tipsMs >= 250) {
+  if (tipsMs >= 250 || claimedNote) {
     console.info(
-      `[bsv21] send tips done ${tipsMs}ms — listed ${listedForToken}, recovered ${fromBasket.length - listedForToken}`,
+      `[bsv21] send tips done ${tipsMs}ms — listed ${listedForToken}, recovered ${fromBasket.length - listedForToken}${claimedNote}`,
     )
   }
   const plan = planBsv21Send({

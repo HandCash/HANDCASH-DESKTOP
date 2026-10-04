@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.429] - 2026-10-04
+
+### Fixed
+
+- A token received from another account on this device no longer vanishes from Activity and token history. The payee's redundant re-post of a landed transfer failed local SPV, and that local refusal marked the transaction dead for every account on the device. Local SPV now keeps any transaction Arcade already accepted or the chain already holds, and only an Arcade hard reject marks a transaction dead. A transaction reported landed outranks an older dead mark, which heals transfers already hidden this way.
+- A token card that shows a tip with no storage row (a send whose write was dropped before 1.3.428) files that tip for a chain-proven claim. A send that cannot cover its amount from the basket claims those tips first, so a token that showed 800 but sent "listed 0, recovered 0" spends again.
+- Triage counts unstored and failed-send holdings filings, and local SPV verdicts the network disputes.
+
 ## [1.3.428] - 2026-10-04
 
 ### Fixed

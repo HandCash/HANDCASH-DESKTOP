@@ -2,8 +2,12 @@
  * Txids treated as dead locally (Arcade hard-reject, or later proven-dead).
  * Tip-hint polls must not keep re-pinning Activity "Verifying…" for those.
  * Explorer 404 alone is not enough — Arcade is tip validity truth.
+ *
+ * The newer verdict wins: a ghost mark clears the landed mark, and a landing
+ * reported after a ghost mark outranks it.
  */
 import { createDurableTtlTxidMap } from './durableTtlTxidMap'
+import { forgetTxLanded, txLanded } from './landedTx'
 
 const ghosts = createDurableTtlTxidMap({
   key: 'handcash.wallet.ghostTx.v1',
@@ -12,11 +16,12 @@ const ghosts = createDurableTtlTxidMap({
 })
 
 export function isGhostTxSuppressed(txid: string): boolean {
-  return ghosts.has(txid)
+  return ghosts.has(txid) && !txLanded(txid)
 }
 
 export function rememberGhostTx(txid: string): void {
   ghosts.remember(txid)
+  forgetTxLanded(txid)
 }
 
 export function forgetGhostTx(txid: string): void {

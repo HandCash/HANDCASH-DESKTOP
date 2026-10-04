@@ -197,6 +197,34 @@ describe('holdings reconcile ledger', () => {
     expect(restored).toEqual([])
   })
 
+  it('claims an unstored tip once the settle window passes', async () => {
+    const { reportHoldings, runReconcile } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), unstored: [{ outpoint: A, label: 'REF' }] })
+    probes.set(A, { kind: 'unspent' })
+    await runReconcile()
+    expect(claims).toEqual([])
+    await due()
+    expect(claims).toEqual([{ txid: A.split('.')[0], only: [A] }])
+  })
+
+  it('keeps the backoff of an unstored tip a later read reports again', async () => {
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), unstored: [{ outpoint: A }] })
+    const mod = await due()
+    const [checked] = mod.listHoldingsEntries()
+    expect(checked).toMatchObject({ checks: 1 })
+    mod.reportHoldings({ asset: 'token', listed: new Set(), unstored: [{ outpoint: A }] })
+    expect(mod.listHoldingsEntries()).toEqual([checked])
+  })
+
+  it('claims a shown-only tip a send asks for now, filing it first', async () => {
+    const { reconcileNow, listHoldingsEntries } = await import('./holdingsReconcile')
+    probes.set(A, { kind: 'unspent' })
+    await reconcileNow('token', [A.replace(/\.(\d+)$/, '_$1')])
+    expect(claims).toEqual([{ txid: A.split('.')[0], only: [A] }])
+    expect(listHoldingsEntries()).toMatchObject([{ outpoint: A, asset: 'token', checks: 1 }])
+  })
+
   it('keeps an unknown answer and backs off', async () => {
     const { reportHoldings } = await import('./holdingsReconcile')
     reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })

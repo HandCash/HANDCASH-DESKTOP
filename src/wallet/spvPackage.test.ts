@@ -130,4 +130,27 @@ describe('verifySignedPackage', () => {
     ).resolves.toEqual({ kind: 'verified' })
     expect(tracker.roots).toEqual([])
   })
+
+  it('verifies the same package again for a second account on this device', async () => {
+    const funding = minedFunding()
+    const token = await spend(funding, 9_000)
+    const change = await spend(minedFunding(5_000), 4_900)
+    const tx = new Transaction()
+    for (const parent of [token, change]) {
+      tx.addInput({
+        sourceTransaction: parent,
+        sourceOutputIndex: 0,
+        unlockingScriptTemplate: new P2PKH().unlock(key),
+      })
+    }
+    tx.addOutput({ lockingScript: lock, satoshis: 13_000 })
+    await tx.sign()
+    const atomic = atomicOf(tx)
+    const tracker = (): ChainTracker => ({
+      isValidRootForHeight: async () => true,
+      currentHeight: async () => HEIGHT + 200,
+    })
+    await expect(verifySignedPackage(atomic, tx.id('hex'), tracker())).resolves.toEqual({ kind: 'verified' })
+    await expect(verifySignedPackage(atomic, tx.id('hex'), tracker())).resolves.toEqual({ kind: 'verified' })
+  })
 })
