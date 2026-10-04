@@ -23,6 +23,12 @@ vi.mock('./beefCache', () => ({
 
 const RECEIVER = '19aXSPsoR45Uuxk4LUonJ672zGFf57wfrD'
 
+const ownSends = new Set<string>()
+vi.mock('./signedChequeArchive', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./signedChequeArchive')>()),
+  signedChequeAtomic: (txid: string) => (ownSends.has(txid) ? [1] : undefined),
+}))
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     address: RECEIVER,
@@ -39,6 +45,7 @@ beforeEach(() => {
   getBeefForTxidCached.mockReset()
   getBeefForTxidCached.mockRejectedValue(new Error('offline'))
   internalizeAction.mockReset()
+  ownSends.clear()
 })
 
 describe('internalizePeerFungibleSettle', () => {
@@ -235,6 +242,37 @@ describe('internalizePeerFungibleSettle', () => {
       }
       expect(ci.sym).toBe('GOLD')
       expect(String(ci.dec)).toBe('2')
+    })
+
+    it('accepts our own send from the basket instead of internalizing it again', async () => {
+      const genesis = deploy()
+      const tokenId = `${genesis.id('hex')}_0`
+      const transfer = new Transaction()
+      transfer.addInput({
+        sourceTransaction: genesis,
+        sourceOutputIndex: 0,
+        unlockingScript: new UnlockingScript(),
+      })
+      transfer.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
+      })
+      const beef = new Beef()
+      beef.mergeTransaction(transfer)
+      const txid = transfer.id('hex')
+      const atomic = Array.from(beef.toBinaryAtomic(txid))
+      atomicBeefForSubject.mockReturnValue(atomic)
+      completeAtomicBeefForSubject.mockResolvedValue({ atomic, missing: [], completed: [] })
+      ownSends.add(txid)
+
+      const result = await internalizePeerFungibleSettle({
+        txid,
+        tx: atomic,
+        beefPurpose: 'inboundItemHint',
+        token: { kind: 'fungible', tokenId, amount: '1000', sym: 'GOLD', dec: 2 },
+      })
+      expect(result).toEqual({ accepted: true, outpoints: [`${txid}.0`], reason: 'already-imported' })
+      expect(internalizeAction).not.toHaveBeenCalled()
     })
   })
 })

@@ -4,6 +4,7 @@ import type { Wallet } from '@bsv/wallet-toolbox-client'
 import {
   InputsUnverifiedError,
   installSpendCertainty,
+  rebuildOverDeadFunding,
   resetSignablesForTests,
   signWithCertainInputs,
 } from './inputCertainty'
@@ -423,5 +424,74 @@ describe('installSpendCertainty', () => {
       .catch((e: unknown) => e)
     expect((err as InputsUnverifiedError).reason).toBe('input-spent')
     expect(raw.createAction).toHaveBeenCalledOnce()
+  })
+})
+
+describe('rebuildOverDeadFunding', () => {
+  beforeEach(() => {
+    calls.length = 0
+    arcade.clear()
+    rejected.clear()
+    peerSpent.clear()
+    sealed.clear()
+    resetSpendCertaintyForTests()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  /** An unsigned createAction result funded by output 0 of `parent`. */
+  function signableOver(parent: Transaction, sats: number, reference: string) {
+    const child = tx(parent.id('hex'), sats)
+    const beef = new Beef()
+    beef.mergeTransaction(parent)
+    beef.mergeRawTx(child.toBinary())
+    return { signableTransaction: { reference, tx: Array.from(beef.toBinaryAtomic(child.id('hex'))) } }
+  }
+  function minedParent(): Transaction {
+    seq += 1
+    const parent = tx(`${seq.toString(16).padStart(2, '0')}`.repeat(32), 10_000)
+    parent.merklePath = MerklePath.fromCoinbaseTxidAndHeight(parent.id('hex'), 900_000)
+    return parent
+  }
+  const deadAt = (parent: Transaction) =>
+    wocAnswers((utxo) =>
+      utxo.txid === parent.id('hex') ? { spentIn: { txid: SPENDER, vin: 0, status: 'confirmed' } } : {},
+    )
+
+  it('retires dead funding the caller did not name and builds again over live coins', async () => {
+    const dead = minedParent()
+    const live = minedParent()
+    deadAt(dead)
+    const first = signableOver(dead, 9_000, 'r1')
+    const rebuilt = signableOver(live, 9_000, 'r2')
+    const create = vi.fn(async () => rebuilt)
+    const abort = vi.fn(async () => undefined)
+    await expect(rebuildOverDeadFunding(create, first, 'main', { named: new Set(), abort })).resolves.toBe(rebuilt)
+    expect(abort).toHaveBeenCalledWith('r1')
+    expect(create).toHaveBeenCalledOnce()
+    expect(calls).toContain('hide 1 by dddd')
+  })
+
+  it('stops building once storage hands back a coin it was told to hide', async () => {
+    const dead = minedParent()
+    deadAt(dead)
+    const first = signableOver(dead, 9_000, 'r1')
+    const again = signableOver(dead, 8_000, 'r2')
+    const create = vi.fn(async () => again)
+    const abort = vi.fn(async () => undefined)
+    await expect(rebuildOverDeadFunding(create, first, 'main', { named: new Set(), abort })).resolves.toBe(again)
+    expect(create).toHaveBeenCalledOnce()
+    expect(abort).toHaveBeenCalledOnce()
+  })
+
+  it('leaves a dead input the caller named for the certify step to refuse', async () => {
+    const dead = minedParent()
+    deadAt(dead)
+    const first = signableOver(dead, 9_000, 'r1')
+    const create = vi.fn(async () => first)
+    const abort = vi.fn(async () => undefined)
+    const named = new Set([`${dead.id('hex')}.0`])
+    await expect(rebuildOverDeadFunding(create, first, 'main', { named, abort })).resolves.toBe(first)
+    expect(create).not.toHaveBeenCalled()
+    expect(abort).not.toHaveBeenCalled()
   })
 })

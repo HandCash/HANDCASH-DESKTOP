@@ -375,6 +375,7 @@ export async function rebuildOverDeadFunding<T>(
   },
 ): Promise<T> {
   let result = first
+  const retired = new Set<string>()
   for (let rebuilds = 0; rebuilds < MAX_FUNDING_REBUILDS; rebuilds += 1) {
     const signable = signableOf(result)
     if (!signable) return result
@@ -387,6 +388,16 @@ export async function rebuildOverDeadFunding<T>(
     const judged = await judgeSignedInputs({ txid: subject, tx: signable.tx }, chain)
     const verdict = judged?.verdict
     if (verdict?.kind !== 'retire' || retireHitsNamedInput(verdict, opts.named)) return result
+    // Building again cannot help once storage hands back a coin it was told to
+    // hide; the caller's certify step refuses it with its named reason.
+    const again = verdict.spends.map((s) => s.outpoint).filter((outpoint) => retired.has(outpoint))
+    if (again.length > 0) {
+      console.warn(
+        `[certainty] ${subject.slice(0, 12)} retired funding chosen again (${again.join(', ')}) — not building again`,
+      )
+      return result
+    }
+    for (const s of verdict.spends) retired.add(s.outpoint)
     await opts.abort(signable.reference)
     await retireDeadInputs(subject, verdict, chain)
     console.warn(

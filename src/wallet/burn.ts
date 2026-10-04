@@ -9,7 +9,6 @@ import {
   type SignableTransaction,
   type Transaction,
 } from '@bsv/sdk'
-import { createActor } from 'xstate'
 import {
   batchActivityWrites,
   upsertAppActivity,
@@ -25,7 +24,7 @@ import {
   planBsv21Burn,
   planOneSatBurn,
 } from './burnPlan'
-import { burnMachine } from './burnMachine'
+import { executeBurnLifecycle } from './burnMachine'
 import { mapPool } from './asyncPool'
 import { signTipInputs } from './signTipInputs'
 import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
@@ -269,63 +268,7 @@ type BurnOutput = {
   customInstructions?: string
 }
 
-export type BurnExecutionEffects = {
-  build: () => Promise<{ reference?: string }>
-  sign: () => Promise<{ txid: string }>
-  broadcast: (txid: string) => Promise<void>
-  internalize: (txid: string) => Promise<void>
-  relinquish: (txid: string) => Promise<void>
-  refresh: () => Promise<void>
-  backup: () => void
-  abort: (reference?: string) => Promise<void>
-}
-
-/** Execute the machine-owned burn phases. Effects are injectable for focused tests. */
-export async function executeBurnLifecycle(
-  plan: Exclude<BurnPlan, { path: 'refuse' }>,
-  effects: BurnExecutionEffects
-): Promise<{ txid: string }> {
-  const chart = createActor(burnMachine).start()
-  chart.send({ type: 'START', plan })
-  if (!chart.getSnapshot().matches('building')) {
-    chart.stop()
-    throw new Error('Burn state machine refused the execution plan')
-  }
-  let reference: string | undefined
-  let signedTxid: string | null = null
-  try {
-    const built = await effects.build()
-    reference = built.reference
-    chart.send({ type: 'BUILT', reference })
-    const signed = await effects.sign()
-    signedTxid = signed.txid
-    chart.send({ type: 'SIGNED', txid: signed.txid })
-    await effects.broadcast(signed.txid)
-    chart.send({ type: 'BROADCASTED' })
-    await effects.internalize(signed.txid)
-    chart.send({ type: 'INTERNALIZED' })
-    await effects.relinquish(signed.txid)
-    await effects.refresh()
-    chart.send({ type: 'REFRESHED' })
-    if (!chart.getSnapshot().matches('done')) {
-      throw new Error('Burn state machine did not reach done')
-    }
-    effects.backup()
-    chart.stop()
-    return { txid: signed.txid }
-  } catch (error) {
-    chart.send({
-      type: 'FAIL',
-      error: error instanceof Error ? error.message : String(error),
-    })
-    // Only an unsigned action is safe to abort. Once a transaction is signed it
-    // may already be propagating; releasing its inputs would permit a competing
-    // burn. Keep the signed action reserved for review/rebroadcast instead.
-    if (!signedTxid) await effects.abort(reference)
-    chart.stop()
-    throw error
-  }
-}
+export { executeBurnLifecycle, type BurnExecutionEffects } from './burnMachine'
 
 async function executeBurnPlan(args: {
   active: ActiveWallet

@@ -7,9 +7,12 @@
  * ordinal index alike — so an install whose history backup never held a
  * received token cannot rediscover it from keys. The sender's txid can: every
  * 1-sat output of that transaction locked to `active.address` and proven
- * unspent goes through the same classification and import as chain ingest.
+ * unspent goes through the same classification and import as chain ingest —
+ * except that, with no index behind the claim, a token tip must walk BRC-176
+ * to its deploy before it is filed.
  */
-import { Transaction, Utils } from '@bsv/sdk'
+import { Transaction } from '@bsv/sdk'
+import { scriptPaysAddress } from './ordinalOwnership'
 import { getActiveWallet } from './session'
 import { classifyLegacyUtxos, fetchRawTxHex, importOneSatOrdinals } from './oneSatImport'
 import { outpointProvenUnspent } from './staleOutputRelease'
@@ -36,11 +39,6 @@ export function parseRecoverTxid(raw: string): string {
   return txid
 }
 
-function p2pkhTemplate(address: string): string {
-  const { data } = Utils.fromBase58Check(address)
-  return `76a914${Utils.toHex(data as number[])}88ac`
-}
-
 export async function recoverFromTx(
   rawTxid: string,
   opts: {
@@ -57,11 +55,10 @@ export async function recoverFromTx(
   if (!hex) throw new Error('Transaction not found on chain.')
   const tx = Transaction.fromHex(hex)
 
-  const lock = p2pkhTemplate(active.address)
   const ours: LegacyUtxo[] = []
   tx.outputs.forEach((out, vout) => {
     if (out.satoshis !== 1) return
-    if (!out.lockingScript.toHex().includes(lock)) return
+    if (!scriptPaysAddress(out.lockingScript.toHex(), active.address)) return
     if (opts.only && !opts.only.has(`${txid}.${vout}`)) return
     ours.push({ outpoint: `${txid}.${vout}`, txid, vout, satoshis: 1 })
   })
@@ -78,7 +75,7 @@ export async function recoverFromTx(
   let items = 0
   if (bsv21.length > 0) {
     const { importBsv21Tokens, listFungibles } = await import('./token/list')
-    const result = await importBsv21Tokens(bsv21, active)
+    const result = await importBsv21Tokens(bsv21, active, { requireLineage: true })
     if (result.failed > 0) throw new Error(result.errors[0] ?? 'Token import failed.')
     tokens = result.imported
     void listFungibles().catch(() => {})

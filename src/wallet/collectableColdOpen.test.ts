@@ -286,13 +286,23 @@ describe('collectables across a cold open', () => {
     expect(reportHoldings).not.toHaveBeenCalled()
   })
 
-  it('files an empty idle read too, so a wrongly emptied basket is restored from the chain', async () => {
+  it('keeps every card through one empty idle read, and files them when a second agrees', async () => {
     seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(`${'ef'.repeat(32)}.0`, 'Kept')])
-    active.wallet.listOutputs.mockResolvedValueOnce({ outputs: [], totalOutputs: 0 })
+    active.wallet.listOutputs.mockResolvedValue({ outputs: [], totalOutputs: 0 })
     const { listCollectables, getCachedCollectables } = await import('./collectables')
+    const { EMPTY_READ_CONFIRM_MS } = await import('./emptyBasketRead')
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
 
     await listCollectables(active as never)
+    expect(getCachedCollectables()).toHaveLength(2)
+    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(2)
+    expect(filedDepartures()).toEqual([])
 
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    clock.mockReturnValue(now + EMPTY_READ_CONFIRM_MS)
+    await listCollectables(active as never)
+    clock.mockRestore()
     expect(getCachedCollectables()).toEqual([])
     expect(filedDepartures()).toHaveLength(2)
   })

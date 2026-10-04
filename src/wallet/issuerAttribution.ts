@@ -11,6 +11,8 @@ type Entry = RetainedIssuer & {
   scriptLength: number
   /** Last listed script that matched; a refresh compares it instead of rehashing an inscription. */
   matched?: string
+  /** The script carries a Sigma marker, whether or not it verifies. */
+  sigma: boolean
   signer: SigmaSigner | null
   minedHeight?: number
   heightCheckedAt?: number
@@ -74,6 +76,7 @@ function entryFor(outpoint: string): Entry | null {
   const script = retained?.tx.outputs[at.vout]?.lockingScript.toHex()
   if (!retained || !script) return null
   const metadata = issuerMetadataFromScript(script)
+  const sigma = script.toLowerCase().includes(SIGMA_MARKER)
   return remember(at.key, {
     ...(metadata.issuer ? { issuer: metadata.issuer } : {}),
     ...(metadata.bapId ? { bapId: metadata.bapId } : {}),
@@ -82,7 +85,8 @@ function entryFor(outpoint: string): Entry | null {
       : { heightCheckedAt: Date.now() }),
     scriptHash: hashScript(script),
     scriptLength: script.length,
-    signer: script.toLowerCase().includes(SIGMA_MARKER) ? verifiedSigmaSigner(retained.tx, at.vout) : null,
+    sigma,
+    signer: sigma ? verifiedSigmaSigner(retained.tx, at.vout) : null,
   })
 }
 
@@ -125,6 +129,11 @@ export function retainedScriptIs(outpoint: string, scriptHex: string | undefined
 export function retainedSignedBy(outpoint: string, issuer: string): boolean {
   const entry = entryFor(outpoint)
   return !!entry && sigmaSignerIs(entry.signer, issuer)
+}
+
+/** The retained output carries a Sigma, valid or not; false until its transaction is held. */
+export function retainedCarriesSigma(outpoint: string): boolean {
+  return entryFor(outpoint)?.sigma ?? false
 }
 
 export function resetIssuerAttributionForTests(): void {

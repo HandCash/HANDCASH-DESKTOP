@@ -17,6 +17,9 @@ const rawTxs = new Map<string, string>()
 const NO_ROW = { kind: 'refused', reason: 'no-row' } as const
 const env = {
   idle: true,
+  /** 1-based idle query from which the wallet reads busy; null keeps `idle`. */
+  busyFromCall: null as number | null,
+  idleCalls: 0,
   restoreOutcome: NO_ROW as { kind: string; reason?: string; was?: string },
   reservedBy: null as string | null,
 }
@@ -38,7 +41,12 @@ vi.mock('./utxoLockManager', () => ({
   isUtxoBlockedFromRestore: () => false,
   sealedSpenderOf: (op: string) => sealed.get(op) ?? null,
 }))
-vi.mock('./walletCoordinator', () => ({ walletRegionsIdle: () => env.idle }))
+vi.mock('./walletCoordinator', () => ({
+  walletRegionsIdle: () => {
+    env.idleCalls += 1
+    return env.busyFromCall == null ? env.idle : env.idleCalls < env.busyFromCall
+  },
+}))
 vi.mock('./createActionInputFate', () => ({
   probeOutpointSpends: async (ops: string[]) =>
     new Map(ops.map((op) => [op, probes.get(op) ?? { kind: 'unknown' }])),
@@ -144,6 +152,8 @@ describe('holdings reconcile ledger', () => {
     markedAtClaim.length = 0
     rawTxs.clear()
     env.idle = true
+    env.busyFromCall = null
+    env.idleCalls = 0
     env.restoreOutcome = NO_ROW
     env.reservedBy = null
     vi.resetModules()
@@ -345,5 +355,67 @@ describe('holdings reconcile ledger', () => {
     const mod = await due()
     expect(restored).toEqual([])
     expect(mod.listHoldingsEntries()).toMatchObject([{ outpoint: A, checks: 0 }])
+  })
+
+  it('files the inputs a failed send returned without pruning what a read filed', async () => {
+    const mod = await import('./holdingsReconcile')
+    mod.reportHoldings({ asset: 'item', listed: new Set([B]), offChainIndex: [{ outpoint: B }] })
+    sent.add(`${'cc'.repeat(32)}.0`)
+    mod.fileHoldingsDepartures('token', [A, `${'cc'.repeat(32)}.0`, 'not-an-outpoint'])
+    expect(
+      mod.listHoldingsEntries().map(({ outpoint, asset, gap }) => ({ outpoint, asset, gap })),
+    ).toEqual([
+      { outpoint: B, asset: 'item', gap: 'off-chain-index' },
+      { outpoint: A, asset: 'token', gap: 'left-basket' },
+    ])
+    probes.set(A, { kind: 'unspent' })
+    await due()
+    expect(restored).toContain(A)
+  })
+
+  it('files the inputs a failed send returned without pruning what a read filed', async () => {
+    const mod = await import('./holdingsReconcile')
+    mod.reportHoldings({ asset: 'item', listed: new Set([B]), offChainIndex: [{ outpoint: B }] })
+    sent.add(`${'cc'.repeat(32)}.0`)
+    mod.fileHoldingsDepartures('token', [A, `${'cc'.repeat(32)}.0`, 'not-an-outpoint'])
+    expect(
+      mod.listHoldingsEntries().map(({ outpoint, asset, gap }) => ({ outpoint, asset, gap })),
+    ).toEqual([
+      { outpoint: B, asset: 'item', gap: 'off-chain-index' },
+      { outpoint: A, asset: 'token', gap: 'left-basket' },
+    ])
+    probes.set(A, { kind: 'unspent' })
+    await due()
+    expect(restored).toContain(A)
+  })
+
+  it('defers a claim when the wallet takes a region after the fates were chosen', async () => {
+    const { reportHoldings } = await import('./holdingsReconcile')
+    reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    probes.set(A, { kind: 'unspent' })
+    // Idle for the pass and for the restore; busy by the time the claim runs.
+    env.busyFromCall = 3
+    const mod = await due()
+    expect(restored).toEqual([A])
+    expect(claims).toEqual([])
+    const [entry] = mod.listHoldingsEntries()
+    expect(entry).toMatchObject({ outpoint: A, checks: 1 })
+    expect(entry!.nextAt - Date.now()).toBeLessThanOrEqual(30_000)
+  })
+
+  it('wakes for a fresh departure filed behind one backed off for minutes', async () => {
+    const mod = await import('./holdingsReconcile')
+    mod.reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: A }] })
+    const checksOfA = () => mod.listHoldingsEntries().find((e) => e.outpoint === A)?.checks
+    await vi.advanceTimersByTimeAsync(mod.RECONCILE_SETTLE_MS + 1)
+    await vi.waitFor(() => expect(checksOfA()).toBe(1))
+    await vi.advanceTimersByTimeAsync(mod.RECONCILE_BACKOFF_MS[1] + 1)
+    await vi.waitFor(() => expect(checksOfA()).toBe(2))
+    // A now waits RECONCILE_BACKOFF_MS[2]; B settles well before that.
+    probes.set(B, { kind: 'unspent' })
+    mod.reportHoldings({ asset: 'token', listed: new Set(), leftBasket: [{ outpoint: B }] })
+    await vi.advanceTimersByTimeAsync(mod.RECONCILE_SETTLE_MS + 1)
+    await vi.waitFor(() => expect(restored).toContain(B))
+    expect(checksOfA()).toBe(2)
   })
 })

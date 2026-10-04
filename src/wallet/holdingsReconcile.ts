@@ -258,16 +258,58 @@ export function reportHoldings(report: HoldingsReport, now = Date.now()): void {
   if (ledger.entries.size > 0) scheduleReconcile()
 }
 
+/**
+ * File outpoints known to have come back without a basket read to show it —
+ * the inputs of a send this wallet failed. Unlike {@link reportHoldings} this
+ * prunes nothing: it is not a read.
+ */
+export function fileHoldingsDepartures(
+  asset: HoldingsAsset,
+  outpoints: readonly string[],
+  now = Date.now(),
+): void {
+  const ledger = readLedger()
+  let changed = false
+  for (const raw of outpoints) {
+    const op = key(raw)
+    if (!/^[0-9a-f]{64}\.\d+$/.test(op) || ledger.entries.get(op)?.gap === 'left-basket') continue
+    if (isItemSent(op) || isItemAbandoned(op)) continue
+    ledger.entries.set(op, {
+      outpoint: op,
+      asset,
+      gap: 'left-basket',
+      since: now,
+      checks: 0,
+      nextAt: now + RECONCILE_SETTLE_MS,
+    })
+    changed = true
+    console.info(`[holdings] ${describe({ asset, outpoint: op })} returned by a failed send — checking chain`)
+  }
+  if (!changed) return
+  writeLedger(ledger)
+  scheduleReconcile()
+}
+
 let timer: ReturnType<typeof setTimeout> | null = null
+let timerDueAt = 0
 let running: Promise<void> | null = null
 let accountEpoch = 0
 
+/**
+ * Wake at the soonest due entry. A pending wake-up is moved earlier, never
+ * later: a fresh departure filed behind one in hours otherwise waited hours.
+ */
 function scheduleReconcile(delayMs?: number): void {
-  if (timer) return
   const entries = [...readLedger().entries.values()]
   if (entries.length === 0) return
   const soonest = Math.min(...entries.map((e) => e.nextAt))
   const wait = delayMs ?? Math.max(1_000, soonest - Date.now())
+  const dueAt = Date.now() + wait
+  if (timer) {
+    if (dueAt >= timerDueAt) return
+    clearTimeout(timer)
+  }
+  timerDueAt = dueAt
   timer = setTimeout(() => {
     timer = null
     void runReconcile()
@@ -391,12 +433,17 @@ async function reconcileDue(): Promise<void> {
           break
         }
         markItemsConsumed([current.outpoint])
+        // A row left spendable is a dead coin the next send can choose.
         await active.wallet
           .relinquishOutput({
             basket: current.asset === 'item' ? '1sat' : 'bsv21',
             output: current.outpoint,
           })
-          .catch(() => undefined)
+          .catch((err: unknown) =>
+            console.warn(
+              `[holdings] ${describe(current)} relinquish failed — ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          )
         ledger.entries.delete(current.outpoint)
         touched.add(current.asset)
         console.info(
@@ -453,6 +500,18 @@ async function reconcileDue(): Promise<void> {
 
   for (const [txid, only] of claimTxids) {
     if (epoch !== accountEpoch) return
+    // A claim writes rows; a send or recompose that took the wallet since the
+    // fates were chosen must not race it. The next pass claims again.
+    if (!(await walletIdle())) {
+      const later = readLedger()
+      for (const outpoint of only) {
+        const entry = later.entries.get(outpoint)
+        if (entry) later.entries.set(outpoint, { ...entry, nextAt: Date.now() + BUSY_RETRY_MS })
+      }
+      writeLedger(later)
+      console.info(`[holdings] claim ${txid.slice(0, 12)} deferred — wallet busy`)
+      continue
+    }
     try {
       // The import guard's "already imported" is a claim that the basket holds
       // the output. The chain proved it unspent and the basket no longer lists
@@ -495,6 +554,7 @@ async function reconcileDue(): Promise<void> {
 export function __resetHoldingsReconcileForTests(): void {
   if (timer) clearTimeout(timer)
   timer = null
+  timerDueAt = 0
   running = null
   accountEpoch = 0
 }

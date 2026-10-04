@@ -25,10 +25,12 @@ import { fillTokenParentBodies } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
 import { chainTrackerFor, recordProvenTokenTips, tokenLineageFromBeef } from './lineage'
 import {
+  type Bsv21SendPath,
   type Bsv21TipKind,
   chooseBsv21BatchSendPath,
   classifyBsv21TipKind,
 } from './tipKind'
+import { interpretBsv21SendPath } from './sendMachine'
 import {
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
@@ -106,6 +108,28 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
   }
   if (raw instanceof Uint8Array) return Array.from(raw)
   return undefined
+}
+
+/**
+ * BRC-163: a value tip whose rest script is not plain P2PKH fails closed before
+ * createAction reserves anything, not at unlock time. Every selected input is
+ * classified as one batch: cosigner, covenant or an unknown lock is a named
+ * refusal, never a P2PKH unlock attempt.
+ */
+export function chooseBsv21ValueTipPath(
+  tips: ReadonlyArray<Pick<Bsv21SendTip, 'lockingScript'>>,
+): Bsv21SendPath {
+  return chooseBsv21BatchSendPath(
+    tips.map((tip): Bsv21TipKind => {
+      const rest = tip.lockingScript
+        ? decodeBsv21Binary(tip.lockingScript)?.restScriptHex
+        : undefined
+      if (!rest) return { kind: 'unknown' }
+      const kind = classifyBsv21TipKind({ lockingScript: rest })
+      // The covenant matcher also matches a cosigner suffix; it only vetoes plain.
+      return kind.kind === 'plain' && isCovenantLockedScript(rest) ? { kind: 'unknown' } : kind
+    }),
+  )
 }
 
 /**
@@ -361,7 +385,7 @@ export async function sendBsv21Tokens(args: {
   skipPeerNotify?: boolean
   actionDescription?: string
   actionLabel?: string
-}): Promise<{ txid: string; tipsSpent: number; change: number }> {
+}): Promise<{ txid: string; tipsSpent: number; change: bigint }> {
   const tokenId = requireTokenId(args.tokenId)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
@@ -411,27 +435,14 @@ export async function sendBsv21Tokens(args: {
     tips: fromArgs.length ? fromArgs : fromBasket,
   })
   const selected = plan.selected
-  const change = Number(plan.changeAmt)
-  const amount = Number(plan.payeeAmt)
+  const change = plan.changeAmt
+  const amount = plan.payeeAmt
   console.info(
     `[bsv21] send plan tips=${selected.length} amount=${amount} change=${change} token=${tokenId.slice(0, 16)}`,
   )
-  // BRC-163: a tip whose lock is not plain P2PKH MUST fail closed — before
-  // createAction reserves anything, not at unlock time. Classify the rest
-  // script of every selected input as one batch: cosigner, covenant or an
-  // unknown lock is a named refusal, never a P2PKH unlock attempt.
-  const lockPath = chooseBsv21BatchSendPath(
-    selected.map((tip): Bsv21TipKind => {
-      const rest = tip.lockingScript
-        ? decodeBsv21Binary(tip.lockingScript)?.restScriptHex
-        : undefined
-      if (!rest) return { kind: 'unknown' }
-      if (isCovenantLockedScript(rest)) return { kind: 'unknown' }
-      return classifyBsv21TipKind({ lockingScript: rest })
-    }),
-  )
-  if (lockPath.path !== 'plain') {
-    const reason = lockPath.path === 'refuse' ? lockPath.reason : 'cosigner_required'
+  const lockVerdict = interpretBsv21SendPath(tokenId, chooseBsv21ValueTipPath(selected))
+  if (!lockVerdict.allowed) {
+    const reason = lockVerdict.error ?? 'unknown_lock'
     console.warn(`[bsv21] send refused before sign: ${reason}`)
     throw new Error(
       reason === 'cosigner_required'
@@ -806,9 +817,7 @@ export async function sendBsv21Tokens(args: {
             ...(payeeIsSelf ? classified.payee : []),
             ...classified.change,
           ].map((out) => ({ outpoint: `${txid}_${out.vout}`, amt: out.amt }))
-          remainingAmt = Number(
-            heldAfter.reduce((sum, out) => sum + out.amt, 0n),
-          )
+          remainingAmt = heldAfter.reduce((sum, out) => sum + out.amt, 0n)
           remainingOp = heldAfter[0]?.outpoint
           payeeOutpoints = classified.payee.map((out) => `${txid}_${out.vout}`)
           console.info(
@@ -958,13 +967,14 @@ export async function sendBsv21Tokens(args: {
       setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
       markItemsSent([
-        ...spent.map((outpoint) => ({ outpoint, txid })),
+        ...spent.map((outpoint) => ({ outpoint, txid, asset: 'token' as const })),
         ...(payeeIsSelf
           ? []
           : payeeOutpoints.map((outpoint) => ({
               outpoint,
               txid,
               settle: 'senderBroadcast' as const,
+              asset: 'token' as const,
             }))),
       ])
       if (!payeeIsSelf) {

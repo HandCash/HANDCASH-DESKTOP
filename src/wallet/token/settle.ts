@@ -38,6 +38,7 @@ import {
   markOneSatImportFailed,
 } from '../oneSatImportGuard'
 import { forgetItemsSent } from '../sentItemGuard'
+import { signedChequeAtomic } from '../signedChequeArchive'
 import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { fillTokenParentBodies, prove } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
@@ -424,17 +425,7 @@ export async function internalizePeerFungibleSettle(opts: {
   // guards were scoped per account wrote both device-wide, which is how a
   // same-device transfer arrived hidden from the very wallet that accepted it.
   forgetItemsSent(outpoints)
-  let claimed = beginOneSatImport(outpoints)
-  if (claimed.length === 0) {
-    const held = await Promise.all(
-      outpoints.map((op) => basketHoldsTip(active, op)),
-    )
-    if (held.some((yes) => !yes)) {
-      forgetOneSatImported(outpoints)
-      claimed = beginOneSatImport(outpoints)
-    }
-  }
-  if (claimed.length === 0) {
+  const acceptFromBasket = (): IngestFungibleSettleResult => {
     paintReceivedToken()
     noteInboundReceiveComplete({
       txid: id,
@@ -451,6 +442,26 @@ export async function internalizePeerFungibleSettle(opts: {
     }, owner)
     return { accepted: true, outpoints, reason: 'already-imported' }
   }
+  // Our own send coming back through the box: createAction already filed these
+  // tips in `bsv21`, and internalizing the same transaction again can detach
+  // its managed-change row. The signed archive is account-scoped, so this is a
+  // self-send, not another wallet on this device receiving it.
+  if (signedChequeAtomic(id)?.length) {
+    markOneSatImported(outpoints)
+    console.info(`[fungible-settle] accepted self-send ${outpoints.join(', ')} from existing basket`)
+    return acceptFromBasket()
+  }
+  let claimed = beginOneSatImport(outpoints)
+  if (claimed.length === 0) {
+    const held = await Promise.all(
+      outpoints.map((op) => basketHoldsTip(active, op)),
+    )
+    if (held.some((yes) => !yes)) {
+      forgetOneSatImported(outpoints)
+      claimed = beginOneSatImport(outpoints)
+    }
+  }
+  if (claimed.length === 0) return acceptFromBasket()
 
   try {
     rememberBeefTree(atomic, id)

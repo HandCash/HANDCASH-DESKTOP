@@ -91,7 +91,7 @@ import { approveWalletPayment } from './permissions'
 import { registerSignedSend } from './signedSendLifecycle'
 import { encodeBsv21Binary } from './token/decode162'
 import { resetTokenGenesisForTests, retainTokenGenesis } from './token/genesisStore'
-import { verifySigmaIssuer } from './token/issuer'
+import { sigmaSignDeployLockingScript, verifySigmaIssuer } from './token/issuer'
 import {
   proveHeldTokenTip,
   recordProvenTokenTips,
@@ -768,5 +768,43 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(retainedIssuerMetadata(tokenId)).toMatchObject({ issuer: signingKey(h), bapId: identity.bapId })
     expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(true)
     expect(tokenAttestationGap({ tokenId, tipOutpoints: [`${'33'.repeat(32)}_0`] })).toBe('unbound')
+  })
+})
+
+describe('token attestation gap names the step a held deploy lacks', () => {
+  const claimed = PrivateKey.fromRandom().toPublicKey().toString()
+  const fundTxid = '22'.repeat(32)
+  const deployScript = () => tokenOutput(new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex()).lockingScript
+
+  function retainDeploy(lockingScript: string): string {
+    const tx = new Transaction()
+    tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
+    tx.addOutput({ satoshis: 1, lockingScript: Script.fromHex(lockingScript) })
+    const beef = new Beef()
+    beef.mergeRawTx(tx.toBinary())
+    state.retained.set(tx.id('hex'), beef)
+    return `${tx.id('hex')}_0`
+  }
+
+  it('a deploy with neither issuer tape nor Sigma stands on a remittance claim only', () => {
+    const tokenId = retainDeploy(deployScript())
+    expect(tokenAttestationGap({ tokenId, issuer: claimed, tipOutpoints: [tokenId] })).toBe('remittance-only')
+    expect(tokenAttestationGap({ tokenId, tipOutpoints: [tokenId] })).toBe('unsigned-mint')
+  })
+
+  it('a deploy whose tape names an issuer it carries no Sigma for is unsigned', () => {
+    const tokenId = retainDeploy(appendIssuerMetadata(deployScript(), claimed))
+    expect(tokenAttestationGap({ tokenId, tipOutpoints: [tokenId] })).toBe('unsigned')
+  })
+
+  it('a deploy Sigma-signed by another key does not attest the claimed issuer', () => {
+    const signer = PrivateKey.fromRandom()
+    const tokenId = retainDeploy(
+      sigmaSignDeployLockingScript({ lockingScriptHex: deployScript(), fundTxid, fundVout: 0, identityKeyHex: signer.toHex() }),
+    )
+    expect(tokenAttestationGap({ tokenId, issuer: claimed, tipOutpoints: [tokenId] })).toBe('unsigned')
+    expect(
+      tokenAttestationGap({ tokenId, issuer: signer.toPublicKey().toString(), tipOutpoints: [tokenId] }),
+    ).toBe('attested')
   })
 })

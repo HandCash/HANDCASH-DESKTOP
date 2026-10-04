@@ -55,6 +55,17 @@ describe('executeBurnLifecycle', () => {
     expect(fx.backup).not.toHaveBeenCalled()
   })
 
+  it('lets the chart refuse a named plan before any effect runs', async () => {
+    const fx = effects()
+    await expect(
+      executeBurnLifecycle(
+        { path: 'refuse', asset: 'bsv21', reason: 'cosigner_required' },
+        fx,
+      ),
+    ).rejects.toThrow('Burn refused: cosigner_required')
+    for (const effect of Object.values(fx)) expect(effect).not.toHaveBeenCalled()
+  })
+
   it('never releases inputs after a burn has been signed', async () => {
     const fx = effects()
     vi.mocked(fx.broadcast).mockRejectedValueOnce(new Error('ARC unavailable'))

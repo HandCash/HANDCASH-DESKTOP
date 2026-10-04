@@ -94,6 +94,15 @@ function card(): FungibleToken {
 
 const never = () => new Promise<never>(() => {})
 
+/** An empty read retires cards only once a second one, past the window, agrees. */
+async function confirmedEmptyRead(list: () => Promise<FungibleToken[]>): Promise<FungibleToken[]> {
+  const { EMPTY_READ_CONFIRM_MS } = await import('../emptyBasketRead')
+  await list()
+  await vi.advanceTimersByTimeAsync(0)
+  vi.setSystemTime(Date.now() + EMPTY_READ_CONFIRM_MS)
+  return list()
+}
+
 describe('listFungibles coalescing', () => {
   beforeEach(() => {
     store.clear()
@@ -163,7 +172,7 @@ describe('listFungibles coalescing', () => {
     const { listFungibles, rememberFungibleToken } = await import('./list')
     rememberFungibleToken({ ...card(), seenAt: 1 })
 
-    expect(await listFungibles()).toEqual([])
+    expect(await confirmedEmptyRead(listFungibles)).toEqual([])
     expect(reported).toHaveLength(1)
     expect(reported[0]!.leftBasket?.map((l) => l.outpoint)).toEqual([`${'cd'.repeat(32)}.0`])
   })
@@ -183,9 +192,22 @@ describe('listFungibles coalescing', () => {
       return null
     }
 
-    expect(await listFungibles()).toEqual([])
+    expect(await confirmedEmptyRead(listFungibles)).toEqual([])
     expect(txReads).toBe(0)
     expect(reported[0]!.leftBasket?.map((l) => l.outpoint)).toEqual([`${'cd'.repeat(32)}.0`])
+  })
+
+  it('keeps every card through one empty read and asks again before retiring', async () => {
+    const { listFungibles, rememberFungibleToken } = await import('./list')
+    const { EMPTY_READ_CONFIRM_MS } = await import('../emptyBasketRead')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+
+    expect((await listFungibles()).map((t) => t.tokenId)).toEqual([TOKEN])
+    expect(reported).toEqual([])
+    // The gate asks again by itself once the window has passed.
+    await vi.advanceTimersByTimeAsync(EMPTY_READ_CONFIRM_MS)
+    await vi.waitFor(() => expect(reported).toHaveLength(1))
+    expect(liveReads).toBe(2)
   })
 
   it('defers while the wallet is busy and keeps every card', async () => {
@@ -243,7 +265,7 @@ describe('listFungibles coalescing', () => {
       return []
     }
 
-    const rows = await listFungibles()
+    const rows = await confirmedEmptyRead(listFungibles)
 
     expect(rows.map((t) => t.tokenId)).toEqual([TOKEN])
     expect(getCachedFungibles().map((t) => t.tokenId)).toEqual([TOKEN])

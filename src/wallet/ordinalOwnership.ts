@@ -9,6 +9,7 @@
  */
 
 import { P2PKH } from '@bsv/sdk'
+import { decodeBsv21Binary } from './token/decode162'
 
 /** Opcode values used by the 1Sat `ord` envelope. */
 const OP_FALSE = 0x00
@@ -222,9 +223,62 @@ export function p2pkhScriptHex(address: string): string {
   return new P2PKH().lock(address).toHex().toLowerCase()
 }
 
+const OP_NOTIF = 0x64
+const OP_RETURN = 0x6a
+const BRC162_TAG_PUSH = '054253563231'
+
+/** Index just past the opcode at `at`, or null when its push runs off the end. */
+function opEnd(bytes: Uint8Array, at: number): number | null {
+  const op = bytes[at]!
+  let head = 1
+  let len = 0
+  if (op >= 1 && op <= 75) {
+    len = op
+  } else if (op === 0x4c) {
+    if (at + 1 >= bytes.length) return null
+    head = 2
+    len = bytes[at + 1]!
+  } else if (op === 0x4d) {
+    if (at + 2 >= bytes.length) return null
+    head = 3
+    len = bytes[at + 1]! | (bytes[at + 2]! << 8)
+  } else if (op === 0x4e) {
+    if (at + 4 >= bytes.length) return null
+    head = 5
+    len = (bytes[at + 1]! | (bytes[at + 2]! << 8) | (bytes[at + 3]! << 16)) + bytes[at + 4]! * 2 ** 24
+  }
+  const end = at + head + len
+  return end <= bytes.length ? end : null
+}
+
+/** Index just past an `OP_FALSE OP_IF … OP_ENDIF` branch at `at`, or null. */
+function skippedBranchEnd(bytes: Uint8Array, at: number): number | null {
+  if (bytes[at] !== OP_FALSE || bytes[at + 1] !== OP_IF) return null
+  let depth = 1
+  let i = at + 2
+  while (i < bytes.length) {
+    const op = bytes[i]!
+    if (op === OP_IF || op === OP_NOTIF) depth += 1
+    else if (op === OP_ENDIF && --depth === 0) return i + 1
+    const end = opEnd(bytes, i)
+    if (end == null) return null
+    i = end
+  }
+  return null
+}
+
+function hexToUint8(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
 /**
- * True when `scriptHex` pays `address` through a P2PKH branch, allowing an
- * inscription envelope on either side of it.
+ * True when `scriptHex` is a key spend to `address`: exactly one P2PKH lock,
+ * read opcode by opcode, beside only what that spend ignores — skipped
+ * `OP_FALSE OP_IF … OP_ENDIF` branches (the `ord` envelope) on either side,
+ * a BRC-162 token prefix, and trailing `OP_RETURN` data. The template inside
+ * push data, an `ord` listing, or any other contract is not ownership.
  */
 export function scriptPaysAddress(
   scriptHex: string | undefined,
@@ -232,7 +286,7 @@ export function scriptPaysAddress(
 ): boolean {
   if (!scriptHex) return false
   const script = scriptHex.trim().toLowerCase()
-  if (!script) return false
+  if (!script || script.length % 2 !== 0 || !/^[0-9a-f]+$/.test(script)) return false
 
   let expected: string
   try {
@@ -240,11 +294,29 @@ export function scriptPaysAddress(
   } catch {
     return false
   }
+  if (!script.includes(expected)) return false
 
-  let at = script.indexOf(expected)
-  while (at >= 0) {
-    if (at % 2 === 0) return true
-    at = script.indexOf(expected, at + 1)
+  if (script.startsWith(BRC162_TAG_PUSH)) {
+    const binary = decodeBsv21Binary(script)
+    return binary != null && scriptPaysAddress(binary.restScriptHex, address)
   }
-  return false
+
+  const bytes = hexToUint8(script)
+  const lock = hexToUint8(expected)
+  let paid = false
+  let at = 0
+  while (at < bytes.length) {
+    const branch = skippedBranchEnd(bytes, at)
+    if (branch != null) {
+      at = branch
+      continue
+    }
+    if (!paid && lock.every((b, i) => bytes[at + i] === b)) {
+      paid = true
+      at += lock.length
+      continue
+    }
+    return paid && bytes[at] === OP_RETURN
+  }
+  return paid
 }

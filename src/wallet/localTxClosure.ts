@@ -445,7 +445,7 @@ export async function failOrphanedLocalTxs(
         `[tx-closure] chain check done ${askMs}ms — ${asked.reachable.length} descendant(s), read ${askStartedAt - readStartedAt}ms`,
       )
     }
-    return await storage.runAsStorageProvider(async (activeSp) => {
+    const outcome = await storage.runAsStorageProvider(async (activeSp): Promise<ClosureOutcome> => {
       const sp = activeSp as ClosureStorage
       const state = await readClosureState(sp, seedTxids)
       if (!state) return none
@@ -458,6 +458,11 @@ export async function failOrphanedLocalTxs(
       }
       return applyClosure(sp, state, chain)
     })
+    if (outcome.failed.length > 0) {
+      const { releaseTipsOfFailedSends } = await import('./sentItemGuard')
+      await releaseTipsOfFailedSends(outcome.failed)
+    }
+    return outcome
   } catch (err) {
     console.warn('[tx-closure] pass skipped', err)
     return none

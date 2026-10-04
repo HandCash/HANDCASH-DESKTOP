@@ -235,11 +235,12 @@ describe('restoreUnspentAssetOutpoint', () => {
     expect(getUtxoLock(`${txid}.1`)?.spendable).toBe(true)
   })
 
-  it('never releases an asset row a local transaction still reserves', async () => {
+  it('never releases an asset row a local transaction still reserves or already spent', async () => {
     const txid = '9a'.repeat(32)
     const updateOutput = vi.fn(async () => undefined)
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-    for (const status of ['unsigned', 'nosend', 'sending']) {
+    const statuses = ['unsigned', 'nosend', 'sending', 'unproven', 'completed']
+    for (const status of statuses) {
       const active = {
         chain: 'main',
         services: { isUtxo: vi.fn(async () => ({ isUtxo: true })) },
@@ -259,8 +260,35 @@ describe('restoreUnspentAssetOutpoint', () => {
       await expect(restoreUnspentAssetOutpoint(active as never, `${txid}.0`)).resolves.toBe(false)
     }
     expect(updateOutput).not.toHaveBeenCalled()
-    expect(info.mock.calls.filter(([line]) => String(line).includes('restore refused'))).toHaveLength(3)
+    expect(info.mock.calls.filter(([line]) => String(line).includes('restore refused'))).toHaveLength(
+      statuses.length,
+    )
     info.mockRestore()
+  })
+
+  it('restores an asset row whose local spender failed', async () => {
+    const txid = '9b'.repeat(32)
+    const updateOutput = vi.fn(async () => undefined)
+    const active = {
+      chain: 'main',
+      services: {},
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<void>) =>
+            fn({
+              findOutputs: async () => [
+                { outputId: 9, txid, vout: 0, basket: '1sat', spendable: false, spentBy: 41 },
+              ],
+              findTransactions: async () => [{ transactionId: 41, status: 'failed' }],
+              updateOutput,
+            }),
+        },
+      },
+    }
+    await expect(
+      restoreAssetOutpoint(active as never, `${txid}.0`, { provenUnspent: true }),
+    ).resolves.toMatchObject({ kind: 'restored', was: 'spendable=false spender=failed' })
+    expect(updateOutput).toHaveBeenCalledWith(9, { spendable: true, spentBy: undefined })
   })
 
   it('does not restore an asset when live providers cannot prove it unspent', async () => {
@@ -1600,6 +1628,29 @@ describe('hideSpentOutpoints', () => {
     expect(getUtxoLock(`${txid}.1`)?.spentBy).toBeNull()
     expect(getUtxoLock(`${txid}.1`)?.diagnostic).toBe('quarantine:spent-unknown')
   })
+
+  it('hides a coin storage links to its parent only by transactionId', async () => {
+    const txid = 'ef'.repeat(32)
+    const spender = 'ab'.repeat(32)
+    findOutputs.mockImplementation(async ({ partial }: { partial: Record<string, unknown> }) =>
+      partial.transactionId === 7 ? [{ outputId: 5, vout: 0, satoshis: 900, spendable: true }] : [],
+    )
+    const findTransactions = vi.fn(async ({ partial }: { partial: Record<string, unknown> }) =>
+      partial.txid === txid ? [{ transactionId: 7, txid, status: 'completed' }] : [],
+    )
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<unknown>) =>
+            fn({ updateOutput, findOutputs, findTransactions }),
+        },
+      },
+    })
+
+    await expect(hideSpentOutpoints([`${txid}.0`], spender)).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(5, { spendable: false })
+  })
 })
 
 describe('rehideInputsOfLiveLocalTxs', () => {
@@ -1886,6 +1937,40 @@ describe('failUnsentLocalTx', () => {
     await expect(failUnsentLocalTx(txid)).resolves.toBe(false)
     expect(updateTransactionStatus).not.toHaveBeenCalled()
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('gives back the tips of a send that is already failed or forced dead without a row', async () => {
+    const tipOf = (txid: string) => `${'0e'.repeat(32)}.${txid.slice(0, 1) === 'a' ? 1 : 2}`
+    const already = 'a1'.repeat(32)
+    const vanished = 'b2'.repeat(32)
+    sentItemGuard.resetSentItemsForTests()
+    sentItemGuard.markItemsSent([
+      { outpoint: tipOf(already), txid: already },
+      { outpoint: tipOf(vanished), txid: vanished },
+    ])
+    findTransactions.mockImplementation(async ({ partial }: { partial: { txid: string } }) =>
+      partial.txid === already ? [{ transactionId: 9, txid: already, status: 'failed' }] : [],
+    )
+
+    await expect(failUnsentLocalTx(already)).resolves.toBe(false)
+    expect(sentItemGuard.isItemSent(tipOf(already))).toBe(false)
+
+    await expect(failUnsentLocalTx(vanished)).resolves.toBe(false)
+    expect(sentItemGuard.isItemSent(tipOf(vanished))).toBe(true)
+    await expect(failUnsentLocalTx(vanished, { force: true })).resolves.toBe(false)
+    expect(sentItemGuard.isItemSent(tipOf(vanished))).toBe(false)
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+  })
+
+  it('keeps the tips of a send that completed', async () => {
+    const txid = 'c3'.repeat(32)
+    const tip = `${'0f'.repeat(32)}.0`
+    sentItemGuard.resetSentItemsForTests()
+    sentItemGuard.markItemsSent([{ outpoint: tip, txid }])
+    findTransactions.mockResolvedValue([{ transactionId: 10, txid, status: 'completed' }])
+
+    await expect(failUnsentLocalTx(txid, { force: true })).resolves.toBe(false)
+    expect(sentItemGuard.isItemSent(tip)).toBe(true)
   })
 })
 

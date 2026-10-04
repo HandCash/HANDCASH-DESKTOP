@@ -25,7 +25,7 @@ import {
 import { logDiag } from "./diagnosticLog";
 import { type ActiveWallet } from "./session"
 import type { Chain } from "./vault";
-import { isItemSent } from "./sentItemGuard";
+import { isItemSent, releaseTipsOfFailedSends } from "./sentItemGuard";
 import {
   creditUtxo,
   getUtxoLock,
@@ -674,10 +674,17 @@ export async function failUnsentLocalTx(
   const chain = active?.chain;
   if (!storage?.runAsStorageProvider) return false;
 
+  const failedWith: string[] = [];
+  /**
+   * `already-failed` and a forced `missing` are dead sends too: the toolbox or
+   * an earlier pass failed the row, or the noSend row never became queryable.
+   * Their tips must come back now, not after the 24h sent-hide expiry.
+   */
+  type FailPass = "failed" | "already-failed" | "missing" | "kept";
   try {
-    const failed = await storage.runAsStorageProvider(async (activeSp) => {
+    const pass = await storage.runAsStorageProvider(async (activeSp): Promise<FailPass> => {
       const sp = activeSp as unknown as LocalStorage;
-      if (typeof sp.findTransactions !== "function") return false;
+      if (typeof sp.findTransactions !== "function") return "kept";
 
       let rows: TxStatusRow[] | undefined;
       try {
@@ -694,16 +701,17 @@ export async function failUnsentLocalTx(
             err
           );
         }
-        return false;
+        return "kept";
       }
       const row = rows?.[0] as
         | (TxStatusRow & { transactionId?: number; status?: string })
         | undefined;
       const transactionId = positiveId(row?.transactionId);
-      if (transactionId == null) return false;
+      if (transactionId == null) return "missing";
 
       const status = String(row?.status ?? "").toLowerCase();
-      if (status === "failed" || status === "completed") return false;
+      if (status === "failed") return "already-failed";
+      if (status === "completed") return "kept";
       // Submit ACK is success. Explorers lag for minutes after Arcade accepts
       // the BEEF (hc-a580a: unmined + post.status success, then send-cleanup
       // heal marked the tx failed and un-deducted change).
@@ -718,7 +726,7 @@ export async function failUnsentLocalTx(
             txHadArcadeSubmitContact(id) ? "Arcade-pinned" : status
           } after submit`
         );
-        return false;
+        return "kept";
       }
 
       if (typeof sp.updateTransactionStatus === "function") {
@@ -738,12 +746,13 @@ export async function failUnsentLocalTx(
       // first, so no balance read can see the parent's inputs restored
       // beside a child's change (hc-a580a 2026-09-29, 2× balance).
       if (!opts?.noDescendants) {
-        await failLocalTxClosure(sp as unknown as ClosureStorage, {
+        const closure = await failLocalTxClosure(sp as unknown as ClosureStorage, {
           seedTxids: [id],
           ...(chain
             ? { txExistsOnChain: (child: string) => txExistsOnChain(child, chain) }
             : {}),
         });
+        failedWith.push(...closure.failed);
       }
 
       const outs = await findOutputsForTxid(sp, id);
@@ -763,9 +772,9 @@ export async function failUnsentLocalTx(
           );
         }
       }
-      return true;
+      return "failed";
     });
-    if (failed) {
+    if (pass === "failed") {
       forgetTxCertified(id);
       console.info(
         `[stale-output] failed ghost local tx ${id.slice(
@@ -773,8 +782,11 @@ export async function failUnsentLocalTx(
           12
         )} — pending change retired`
       );
+      await releaseTipsOfFailedSends([id, ...failedWith]);
+    } else if (pass === "already-failed" || (pass === "missing" && opts?.force)) {
+      await releaseTipsOfFailedSends([id]);
     }
-    return failed === true;
+    return pass === "failed";
   } catch (err) {
     console.warn("[stale-output] fail-unsent skipped", id.slice(0, 12), err);
     return false;
@@ -1323,22 +1335,37 @@ async function hideToolboxOutputs(
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
+      const unmatched: string[] = [];
       for (let i = 0; i < unique.length; i++) {
         if (uiBudgetExpired()) await yieldToUi();
         const op = unique[i]!;
         const parsed = parseOutpoint(op);
         if (!parsed) continue;
-        const rows = await findOutputsForTxid(sp, parsed.txid);
+        // A coin coin-selection can choose may be linked to its parent only by
+        // `transactionId`; missing it here leaves the dead coin spendable.
+        const rows = await findOutputsForTxid(sp, parsed.txid, {
+          linkByTransactionId: true,
+        });
         const match = rows.find(
           (row) => Number(row.vout ?? row.outputIndex) === parsed.vout
         );
         const outputId = positiveId(match?.outputId);
-        if (outputId == null) continue;
+        if (outputId == null) {
+          unmatched.push(op);
+          continue;
+        }
         try {
           await sp.updateOutput(outputId, { spendable: false });
         } catch (err) {
           console.warn("[stale-output] hide spendable=false skipped", op, err);
         }
+      }
+      if (unmatched.length > 0) {
+        console.warn(
+          `[stale-output] hide found no storage row for ${unmatched.length} of ${unique.length}: ${unmatched
+            .slice(0, 6)
+            .join(", ")}`
+        );
       }
     });
   } catch (err) {
@@ -1518,7 +1545,10 @@ export async function restoreAssetOutpoint(
     const outputId = positiveId(row?.outputId);
     if (outputId == null) return;
     const spender = await localSpenderStatus(sp, row);
-    const reservedBy = isReservingTxStatus(spender) ? spender : null;
+    // Same rule as `assetRowReservation`: a lagging explorer's "unspent" must
+    // not re-enable a row our own live or completed spend consumed.
+    const reservedBy =
+      isReservingTxStatus(spender) || isLiveLocalTxStatus(spender) ? spender : null;
     if (reservedBy) {
       console.info(
         `[stale-output] restore refused — ${outpoint} reserved by a ${reservedBy} transaction`

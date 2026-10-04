@@ -67,12 +67,16 @@ export type SentItemSettle = 'senderBroadcast' | 'peerDeliver'
 export const SENDER_GHOST_GRACE_MS = 2 * 60_000
 export const PEER_DELIVER_GHOST_GRACE_MS = 12 * 60 * 60_000
 
+/** Which list hides the outpoint. Legacy rows read as `item`. */
+export type SentItemAsset = 'item' | 'token'
+
 export type SentItemRecord = {
   at: number
   /** Sending transaction, for log correlation. */
   txid?: string
   /** Broadcaster for this send. Legacy rows read as `senderBroadcast`. */
   settle: SentItemSettle
+  asset: SentItemAsset
 }
 
 /** Explicit fate for one hidden send, so a 404 never silently un-hides. */
@@ -133,6 +137,7 @@ function readSent(): Map<string, SentItemRecord> {
         at?: unknown
         txid?: unknown
         settle?: unknown
+        asset?: unknown
       }
       const at =
         typeof row.at === 'number' && Number.isFinite(row.at) ? row.at : 0
@@ -144,6 +149,7 @@ function readSent(): Map<string, SentItemRecord> {
             : undefined,
         settle:
           row.settle === 'peerDeliver' ? 'peerDeliver' : 'senderBroadcast',
+        asset: row.asset === 'token' ? 'token' : 'item',
       })
     }
     cachedRaw = raw
@@ -228,7 +234,8 @@ export const SCAN_SPENT_MARK_PREFIX = 'spent-on-chain:'
 /** Hide outpoints a send just spent. Call only once the send has a txid. */
 export function markItemsSent(
   outpoints: Array<
-    string | { outpoint: string; txid?: string; settle?: SentItemSettle }
+    | string
+    | { outpoint: string; txid?: string; settle?: SentItemSettle; asset?: SentItemAsset }
   >,
 ): void {
   if (outpoints.length === 0) return
@@ -240,11 +247,12 @@ export function markItemsSent(
     const op = key(entry.outpoint)
     if (!op) continue
     const settle: SentItemSettle = entry.settle ?? 'senderBroadcast'
+    const asset: SentItemAsset = entry.asset ?? 'item'
     records.set(
       op,
       entry.txid
-        ? { at, txid: entry.txid.trim().toLowerCase(), settle }
-        : { at, settle },
+        ? { at, txid: entry.txid.trim().toLowerCase(), settle, asset }
+        : { at, settle, asset },
     )
     spent.push(op)
   }
@@ -367,6 +375,43 @@ export function forgetItemsSent(outpoints: string[]): void {
     if (records.delete(key(raw))) changed = true
   }
   if (changed) writeSent(records)
+}
+
+/**
+ * Give back every tip whose recorded send this wallet just failed.
+ *
+ * Failing a local transaction hands its inputs back, so the tip is ours now —
+ * not after {@link SENT_HIDE_MS}. A send may have relinquished its inputs from
+ * the basket, so each one is filed with the holdings reconcile, which claims
+ * it back once the chain shows it unspent. Outputs of the failed transaction
+ * itself never existed and are only un-hidden.
+ */
+export async function releaseTipsOfFailedSends(txids: Iterable<string>): Promise<string[]> {
+  const failed = new Set(
+    [...txids].map((txid) => txid.trim().toLowerCase()).filter((txid) => /^[0-9a-f]{64}$/.test(txid)),
+  )
+  if (failed.size === 0) return []
+  const records = new Map(readSent())
+  const inputs: Record<SentItemAsset, string[]> = { item: [], token: [] }
+  const released: string[] = []
+  for (const [op, record] of records) {
+    if (!record.txid || !failed.has(record.txid)) continue
+    records.delete(op)
+    released.push(op)
+    if (!failed.has(op.split('.')[0]!)) inputs[record.asset].push(op)
+  }
+  if (released.length === 0) return []
+  writeSent(records)
+  console.info(
+    `[sent-item-guard] released ${released.length} tip(s) of ${failed.size} failed send(s) — ${
+      inputs.item.length + inputs.token.length
+    } input(s) filed to reclaim`,
+  )
+  const { fileHoldingsDepartures } = await import('./holdingsReconcile')
+  for (const asset of ['item', 'token'] as const) {
+    if (inputs[asset].length > 0) fileHoldingsDepartures(asset, inputs[asset])
+  }
+  return released
 }
 
 /**

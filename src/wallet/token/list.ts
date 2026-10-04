@@ -1,6 +1,7 @@
 import { issuerMetadataFromScript } from '../issuerMetadata'
 import { retainedIssuerMetadata } from '../issuerAttribution'
-import { proveHeldTokenTip, tokenAttestationGap, tokenIssuerAttested } from './lineage'
+import { proveHeldTokenTip, rememberProvenTokenTips, tokenAttestationGap, tokenIssuerAttested } from './lineage'
+import { judgeTokenImport } from './importProof'
 import { getActiveWallet } from '../session'
 import { storageRegistry } from '../../storage/registry'
 
@@ -32,6 +33,7 @@ import {
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
 import { reportHoldings } from '../holdingsReconcile'
+import { createEmptyReadGate } from '../emptyBasketRead'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
 import { accountLocalKey } from '../accountLocalKeys'
 import {
@@ -810,6 +812,7 @@ export function clearFungiblesCache(options?: { notify?: boolean }): void {
 /** Swap Tokens inventory to the active vault account. */
 export function rebindFungiblesForAccount(): void {
   fungiblesAccountEpoch += 1
+  emptyTokenRead.reset()
   cached = []
   hydrated = false
   listInFlight = null
@@ -1030,34 +1033,40 @@ async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken
     key: 0,
     'no-genesis': 0,
     unbound: 0,
+    'remittance-only': 0,
     unsigned: 0,
     'unsigned-mint': 0,
   }
+  const offShelf: string[] = []
   for (const row of rows) {
+    let shelf: string
     if (row.issuerAttested && row.issuer) {
-      const shelf = row.bapId
+      shelf = row.bapId
         ? issuerAttribution(wallet.chain, { bapId: row.bapId, signer: row.issuer })?.kind === 'verified'
           ? 'bap'
           : 'bap-unconfirmed'
         : 'key'
-      counts[shelf]! += 1
-      continue
+    } else {
+      const gap = tokenAttestationGap({
+        tokenId: row.tokenId,
+        issuer: row.issuer,
+        tipOutpoints: heldTipsOf(row).map((tip) => tip.outpoint),
+      })
+      shelf = gap === 'attested' ? 'key' : gap
     }
-    const gap = tokenAttestationGap({
-      tokenId: row.tokenId,
-      issuer: row.issuer,
-      tipOutpoints: heldTipsOf(row).map((tip) => tip.outpoint),
-    })
-    counts[gap === 'attested' ? 'key' : gap]! += 1
+    counts[shelf]! += 1
+    if (shelf !== 'bap') offShelf.push(`${row.sym || '?'} ${row.tokenId.slice(0, 12)} ${shelf}`)
   }
   const census =
     `${rows.length} token(s) — ` +
     Object.entries(counts)
       .map(([kind, n]) => `${kind} ${n}`)
       .join(', ')
-  if (census === lastAttestationCensus) return
-  lastAttestationCensus = census
+  const named = offShelf.join('; ')
+  if (`${census}|${named}` === lastAttestationCensus) return
+  lastAttestationCensus = `${census}|${named}`
   console.info(`[bsv21] attestation census ${census}`)
+  if (named) console.info(`[bsv21] off issuer shelf ${named}`)
 }
 
 /**
@@ -1262,6 +1271,10 @@ function startFungiblesList(
 const RELIST_IDLE_WAIT_MS = 60_000
 let relistWhenIdle: Promise<void> | null = null
 
+const emptyTokenRead = createEmptyReadGate(() => {
+  void listFungibles().catch((err) => console.warn('[bsv21] empty-read confirm skipped', err))
+})
+
 /**
  * A read deferred because the wallet was busy still owes the list an answer:
  * wait for every region to release once, then read. Coalesced, so all
@@ -1425,6 +1438,13 @@ async function listFungiblesNow(
       setFungiblesCache(kept, { forEpoch: epoch, forRun: run })
       console.info('[bsv21] wallet went busy during the read — kept every card, relisting when idle')
       relistFungiblesWhenIdle()
+      return getCachedFungibles()
+    }
+    const empty = emptyTokenRead.judge(liveRows.length, cached.length)
+    if (empty.kind === 'wait') {
+      console.info(
+        `[bsv21] empty basket read beside ${cached.length} token(s) — kept, confirming in ${Math.ceil(empty.confirmInMs / 1000)}s`,
+      )
       return getCachedFungibles()
     }
     const projection = projectHeldFungibles(liveRows, cached)
@@ -1724,6 +1744,10 @@ export function fungibleFromImport(
 export async function importBsv21Tokens(
   items: Bsv21ImportItem[],
   active?: ActiveWallet | null,
+  opts: {
+    /** A claim by txid has no index behind it: refuse any tip BRC-176 cannot walk. */
+    requireLineage?: boolean
+  } = {},
 ): Promise<{ imported: number; failed: number; errors: string[]; outpoints: string[] }> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
@@ -1804,9 +1828,39 @@ export async function importBsv21Tokens(
         releaseOneSatImport(skipped.map((i) => i.outpoint))
         failed += skipped.length
       }
-      if (valid.length === 0) continue
+      const accepted: Bsv21ImportItem[] = []
+      const proven: { outpoint: string; deployOutpoint: string }[] = []
+      const refused: Bsv21ImportItem[] = []
+      for (const item of valid) {
+        const verdict = await judgeTokenImport({
+          beef,
+          txid,
+          vout: item.vout,
+          tokenId: item.tokenId,
+          amt: item.amt,
+          op: item.op,
+          requireLineage: opts.requireLineage === true,
+          fetchBody: (parent) =>
+            getBeefForTxidCached(wallet, parent, { needProof: false, allowUnprovenRawTx: true }).catch(() => null),
+        })
+        if (verdict.kind === 'refused') {
+          console.warn(`[bsv21] refusing to import ${item.outpoint} — ${verdict.reason}`)
+          errors.push(`${item.outpoint}: ${verdict.reason}`)
+          refused.push(item)
+          continue
+        }
+        if (verdict.kind === 'proven') {
+          proven.push({ outpoint: `${txid}_${item.vout}`, deployOutpoint: verdict.deployOutpoint })
+        }
+        accepted.push(item)
+      }
+      if (refused.length > 0) {
+        markOneSatImportFailed(refused.map((i) => i.outpoint))
+        failed += refused.length
+      }
+      if (accepted.length === 0) continue
 
-      const remittanceOutputs = valid.map((item) => {
+      const remittanceOutputs = accepted.map((item) => {
         const scriptHex = sourceTx?.outputs?.[item.vout]?.lockingScript?.toHex?.()
         const cosign =
           item.cosign ??
@@ -1862,10 +1916,11 @@ export async function importBsv21Tokens(
       })
       await yieldToUi()
 
-      imported += valid.length
-      const ops = valid.map((i) => i.outpoint)
+      imported += accepted.length
+      const ops = accepted.map((i) => i.outpoint)
       outpoints.push(...ops)
       markOneSatImported(ops)
+      for (const tip of proven) rememberProvenTokenTips([tip.outpoint], tip.deployOutpoint)
     } catch (err) {
       markOneSatImportFailed(groupOps)
       failed += group.length

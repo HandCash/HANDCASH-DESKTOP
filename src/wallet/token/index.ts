@@ -107,6 +107,7 @@ export {
 
 export {
   assertBsv21AmtConservation,
+  assertBsv21BurnConservation,
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
   buildBsv21SendRemittance,

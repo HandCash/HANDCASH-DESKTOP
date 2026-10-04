@@ -1275,7 +1275,7 @@ async function splitBsv21CoverToExactAmt(args: {
   })
   const signable = created.signableTransaction
   if (!signable) throw new Error('BSV-21 list split did not return a signable action')
-  const reference = signable.reference
+  let reference: string | null = signable.reference
   try {
     const beef = Beef.fromBinary(signable.tx)
     const vin0Vout = Number(vin0.outpoint.split('_')[1])
@@ -1335,23 +1335,30 @@ async function splitBsv21CoverToExactAmt(args: {
       spends,
       options: { acceptDelayedBroadcast: false },
     })
+    // Signed: the toolbox holds this spend, so it is never aborted from here.
+    reference = null
     const txid = signed.txid?.toLowerCase() ?? ''
-    if (!/^[0-9a-f]{64}$/.test(txid)) {
+    const atomic = signed.tx ? Array.from(signed.tx) : []
+    if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) {
       throw new MarketListingError(
         'MARKET_LISTING_BROADCAST_UNKNOWN',
         'BSV-21 list split was signed but did not return a transaction.',
       )
     }
     rememberGhostTx(txid)
+    const { registerSignedSend, startSignedSendPropagation } = await import(
+      './signedSendLifecycle'
+    )
+    startSignedSendPropagation(
+      await registerSignedSend({ txid, atomicBeef: atomic, flow: 'market_listing' }),
+    )
     return {
       outpoint: `${txid}_0`,
       lockingScript: listedLock,
-      beef: signed.tx
-        ? Beef.fromBinary(Array.from(signed.tx))
-        : splitBeef,
+      beef: Beef.fromBinary(atomic),
     }
   } catch (err) {
-    await args.active.wallet.abortAction({ reference }).catch(() => {})
+    if (reference) await args.active.wallet.abortAction({ reference }).catch(() => {})
     throw err
   }
 }

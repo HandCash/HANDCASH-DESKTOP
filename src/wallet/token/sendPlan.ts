@@ -166,6 +166,34 @@ export function assertBsv21SendConservation(args: {
   }
 }
 
+/**
+ * A burn re-emits only the planned change, and only to us. Any other value
+ * lock of the token in the signed tx would hand units away instead of
+ * destroying them; a change mismatch strands or invalidates the remainder.
+ */
+export function assertBsv21BurnConservation(args: {
+  tx: Transaction
+  tokenId: string
+  changeRestHex: string
+  changeAmt: bigint
+}): void {
+  const tokenId = normalizeTokenId(args.tokenId)
+  if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
+  const changeRest = args.changeRestHex.trim().toLowerCase()
+  let kept = 0n
+  for (let vout = 0; vout < args.tx.outputs.length; vout++) {
+    const decoded = decodeBsv21Binary(args.tx.outputs[vout]?.lockingScript)
+    if (!decoded || decoded.tokenId !== tokenId) continue
+    if (decoded.role !== 'value' || (decoded.restScriptHex ?? '').trim().toLowerCase() !== changeRest) {
+      throw new Error(`Token burn emits output ${vout} of this token to someone else`)
+    }
+    kept += decoded.amount
+  }
+  if (kept !== args.changeAmt) {
+    throw new Error(`Token burn change mismatch (tx ${kept}, planned ${args.changeAmt})`)
+  }
+}
+
 export function assertBsv21AmtConservation(
   inputAmts: bigint[],
   outputAmts: bigint[],

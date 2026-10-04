@@ -1,4 +1,4 @@
-import { assign, setup, type SnapshotFrom } from 'xstate'
+import { assign, createActor, setup, type SnapshotFrom } from 'xstate'
 import type { BurnPlan } from './burnPlan'
 
 export type BurnMachineContext = {
@@ -101,3 +101,65 @@ export const burnMachine = setup({
 })
 
 export type BurnSnapshot = SnapshotFrom<typeof burnMachine>
+
+export type BurnExecutionEffects = {
+  build: () => Promise<{ reference?: string }>
+  sign: () => Promise<{ txid: string }>
+  broadcast: (txid: string) => Promise<void>
+  internalize: (txid: string) => Promise<void>
+  relinquish: (txid: string) => Promise<void>
+  refresh: () => Promise<void>
+  backup: () => void
+  abort: (reference?: string) => Promise<void>
+}
+
+/**
+ * Execute the machine-owned burn phases. The chart refuses a `refuse` plan
+ * before any effect runs. Effects are injectable for focused tests.
+ */
+export async function executeBurnLifecycle(
+  plan: BurnPlan,
+  effects: BurnExecutionEffects
+): Promise<{ txid: string }> {
+  const chart = createActor(burnMachine).start()
+  chart.send({ type: 'START', plan })
+  const planned = chart.getSnapshot()
+  if (!planned.matches('building')) {
+    chart.stop()
+    throw new Error(`Burn refused: ${planned.context.error ?? 'unclassified plan'}`)
+  }
+  let reference: string | undefined
+  let signedTxid: string | null = null
+  try {
+    const built = await effects.build()
+    reference = built.reference
+    chart.send({ type: 'BUILT', reference })
+    const signed = await effects.sign()
+    signedTxid = signed.txid
+    chart.send({ type: 'SIGNED', txid: signed.txid })
+    await effects.broadcast(signed.txid)
+    chart.send({ type: 'BROADCASTED' })
+    await effects.internalize(signed.txid)
+    chart.send({ type: 'INTERNALIZED' })
+    await effects.relinquish(signed.txid)
+    await effects.refresh()
+    chart.send({ type: 'REFRESHED' })
+    if (!chart.getSnapshot().matches('done')) {
+      throw new Error('Burn state machine did not reach done')
+    }
+    effects.backup()
+    chart.stop()
+    return { txid: signed.txid }
+  } catch (error) {
+    chart.send({
+      type: 'FAIL',
+      error: error instanceof Error ? error.message : String(error),
+    })
+    // Only an unsigned action is safe to abort. Once a transaction is signed it
+    // may already be propagating; releasing its inputs would permit a competing
+    // burn. Keep the signed action reserved for review/rebroadcast instead.
+    if (!signedTxid) await effects.abort(reference)
+    chart.stop()
+    throw error
+  }
+}

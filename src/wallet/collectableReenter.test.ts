@@ -26,6 +26,9 @@ const ORIGIN = `${'bb'.repeat(32)}_0`
 const OLD_TIP = `${'aa'.repeat(32)}.0`
 const NEW_TIP = `${'cc'.repeat(32)}.1`
 const RESOLUTION_KEY = 'handcash.inscriptionResolution.v1'
+/** A received tip painted from its receipt; no basket read has listed it yet. */
+const SEEDED_TIP = `${'f1'.repeat(32)}.0`
+const SEEDED_ORIGIN = `${'f2'.repeat(32)}_0`
 
 const active = {
   identityKey: '02'.repeat(33),
@@ -73,6 +76,15 @@ const active = {
 
 vi.mock('./session', () => ({
   getActiveWallet: () => active,
+}))
+
+vi.mock('./oneSatGenesisProof', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./oneSatGenesisProof')>()),
+  proveGenesisLineage: async ({ tipOutpoint }: { tipOutpoint: string }) => ({
+    origin: SEEDED_ORIGIN,
+    path: [tipOutpoint.split('.')[0]],
+    hops: 1,
+  }),
 }))
 
 vi.mock('./legacyScan', async (importOriginal) => ({
@@ -131,5 +143,29 @@ describe('re-entered collectables', () => {
     expect(seeded?.collectionId).toBe('pixel-foxes')
     expect(seeded?.imageUrl).toContain(ORIGIN)
     expect(seeded?.imageUrl).not.toContain(NEW_TIP.split('.')[0]!)
+  })
+
+  it('never publishes a list without a seeded receipt while it proves its origin', async () => {
+    const { listCollectables, noteIngestedItem, subscribeCollectables, verifyItemAuthenticity } =
+      await import('./collectables')
+    await listCollectables(active)
+    noteIngestedItem({ outpoint: SEEDED_TIP, chain: 'main', origin: SEEDED_ORIGIN, name: 'Gift' })
+    // A drop the next relist re-adds is the "re-entered announced cards" churn.
+    const published: string[][] = []
+    const stop = subscribeCollectables((items) => published.push(items.map((item) => item.outpoint)))
+
+    const verdict = await verifyItemAuthenticity(SEEDED_TIP, SEEDED_ORIGIN, active as never)
+    await vi.waitFor(() => expect(published.length).toBeGreaterThan(1))
+    stop()
+    expect(verdict.proven).toBe(true)
+    expect(published.filter((list) => !list.includes(SEEDED_TIP))).toEqual([])
+  })
+
+  it('keeps a receipt painted before the first basket read through its proof', async () => {
+    const { noteIngestedItem, getCachedCollectables, verifyItemAuthenticity } =
+      await import('./collectables')
+    noteIngestedItem({ outpoint: SEEDED_TIP, chain: 'main', origin: SEEDED_ORIGIN, name: 'Gift' })
+    await verifyItemAuthenticity(SEEDED_TIP, SEEDED_ORIGIN, active as never)
+    expect(getCachedCollectables().map((item) => item.outpoint)).toEqual([SEEDED_TIP])
   })
 })

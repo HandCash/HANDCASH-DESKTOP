@@ -6,9 +6,11 @@
  * before the app hears back — seconds, and the difference between a 4s and a
  * 20s background payment. So the pool is swept right after unlock, before the
  * first payment, and again whenever a sign still finds a dead coin. It hides
- * only on the same evidence the per-sign probe uses: a named, confirmed
- * spender that is not us. A timeout, rate limit, unknown output or unconfirmed
- * spender never writes a coin off; those coins are asked again after a pause
+ * only on the same evidence the per-sign probe uses: a named spender that is
+ * not us, either confirmed per an explorer or held by a Teranode miner's own
+ * UTXO set (that miner refuses our spend of the coin; mining is not needed).
+ * A timeout, rate limit, unknown output or explorer-only unconfirmed spender
+ * never writes a coin off; those coins are asked again after a pause
  * (hc-a580a 0.1.540: 21 of 50 went unanswered one-per-request, and the next
  * six payments resigned over them).
  *

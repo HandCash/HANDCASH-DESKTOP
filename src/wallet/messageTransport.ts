@@ -1438,6 +1438,8 @@ export async function notifyPeerItemIncoming(args: {
   itemOutputIndex?: number
   asset?: ItemTransferAsset
   atomicBeef?: number[]
+  /** The caller already merged local unconfirmed ancestry into `atomicBeef`. */
+  ancestryComplete?: boolean
   provenance?: unknown
   /** BRC-176 lineage for a fungible; derived from `atomicBeef` when absent. */
   tokenLineage?: number[]
@@ -1452,7 +1454,7 @@ export async function notifyPeerItemIncoming(args: {
     return none
   }
   let atomicBeef = args.atomicBeef
-  if (atomicBeef?.length) {
+  if (atomicBeef?.length && !args.ancestryComplete) {
     try {
       const active = getActiveWallet()
       if (active) {

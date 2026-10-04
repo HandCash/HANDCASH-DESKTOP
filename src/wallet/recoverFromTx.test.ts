@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
 import { encodeBsv21Binary } from './token/decode162'
 
 const ours = PrivateKey.fromRandom().toAddress()
@@ -76,7 +76,24 @@ describe('recoverFromTx', () => {
     const classified = h.classify.mock.calls[0][0] as { vout: number }[]
     expect(classified.map((u) => u.vout)).toEqual([0, 2])
     expect(h.importTokens).toHaveBeenCalledTimes(1)
+    expect(h.importTokens.mock.calls[0][2]).toEqual({ requireLineage: true })
     expect(result).toEqual({ ours: 2, spent: 0, tokens: 1, items: 0, unrecognized: 1, skipped: 0 })
+  })
+
+  it('does not count our lock carried as data in someone else\'s output', async () => {
+    const tx = new Transaction()
+    tx.addOutput({
+      satoshis: 1,
+      lockingScript: Script.fromHex(`006a19${new P2PKH().lock(ours).toHex()}`),
+    })
+    tx.addOutput({
+      satoshis: 1,
+      lockingScript: Script.fromHex(`${new P2PKH().lock(theirs).toHex()}6a19${new P2PKH().lock(ours).toHex()}`),
+    })
+    h.hex = tx.toHex()
+    const result = await recoverFromTx(tx.id('hex'))
+    expect(result.ours).toBe(0)
+    expect(h.classify.mock.calls[0][0]).toEqual([])
   })
 
   it('skips outputs already spent on chain', async () => {

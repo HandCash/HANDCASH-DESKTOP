@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.426] - 2026-10-04
+
+### Fixed
+
+- **Token burns keep exact change and are checked before they leave the wallet.** The burn read the typed amount as a JavaScript number, so change above 2^53 was locked to the wrong unit count. Amounts are bigint end to end now. The signed transaction must send every token output back to this wallet for exactly the planned change, or the action is aborted before broadcast.
+- **Binary token burns run on the burn chart.** A BRC-162 burn skipped tip classification and `burnMachine`, so a cosigned or unknown lock failed only at signing. It now plans once, refuses with a named reason (`cosigner_required`, `mixed_tips`, `unknown_lock`) before anything is reserved, and runs build → sign → broadcast → internalize → refresh on the same chart as item burns. Token send obeys `bsv21SendMachine` at runtime instead of only in the compose panel, and a cosigned tip is named as one rather than as an unknown lock.
+- **A funding coin that is already dead is never chosen twice.** Rebuilding over dead funding now remembers every coin it retired and stops if the toolbox picks one of them again. Hiding those coins also matches rows linked only by transaction id, and warns when a row cannot be found.
+- **Failed sends give their items back.** A send already marked failed, or forced dead with no row left, now releases the items it had hidden. A send that completed keeps them hidden.
+- **A received item can no longer vanish from the list.** A repaint rebuilt the list from the last basket read alone and could drop a receipt shown before the first read. Receipts stay until the basket confirms them. An empty basket read must hold for 30 seconds before items or tokens are cleared, so one slow read never blanks the inventory.
+- **Holdings reconcile waits for the wallet to be idle.** A claim no longer competes with a send in progress. It is deferred and retried, and a fresh departure brings the next pass forward. A restored token row stays reserved while one of the wallet's own unsent transactions still spends it.
+- **Token imports need proof.** Imported bytes must match the token id and amount, and recovering a token from a transaction id requires the BRC-176 walk to its deploy. Ownership checks read the script opcode by opcode, so a P2PKH template inside push data or a listing contract no longer counts as owned.
+- **Market list splits use the signed-send lifecycle.** Once the split is signed it is registered for miner retry and BUMP finality. It is never aborted.
+- **Sending a token to yourself no longer detaches change.** When your own send comes back through the box, the token is accepted from the basket instead of being internalized a second time.
+- **Bulk item sends notify the recipient in linear time.** Local unconfirmed ancestry is merged into the package once per batch, not once per item. With no item cap, the old way cost n² merges.
+- **Tokens minted before Sigma issuance are labelled correctly.** A deploy whose only issuer claim is this wallet's remittance shows as remittance-only instead of "unsigned".
+
+### Changed
+
+- Triage reports tokens held but missing from the card list, and dead funding coins found and rebuilt around.
+
 ## [1.3.425] - 2026-10-04
 
 ### Fixed

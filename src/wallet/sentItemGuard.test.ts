@@ -11,8 +11,14 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
+const filed: Array<{ asset: string; outpoints: string[] }> = []
+vi.mock('./holdingsReconcile', () => ({
+  fileHoldingsDepartures: (asset: string, outpoints: string[]) => filed.push({ asset, outpoints }),
+}))
+
 describe('sentItemGuard', () => {
   beforeEach(() => {
+    filed.length = 0
     store.clear()
     vi.resetModules()
     vi.useRealTimers()
@@ -24,6 +30,62 @@ describe('sentItemGuard', () => {
 
     expect(guard.isItemSent('aa.0')).toBe(true)
     expect(guard.isItemSent('aa.1')).toBe(false)
+  })
+
+  it('gives back the tips of a send this wallet failed, not after a day', async () => {
+    const guard = await import('./sentItemGuard')
+    const dead = 'd'.repeat(64)
+    const live = 'e'.repeat(64)
+    const item = `${'a1'.repeat(32)}.0`
+    const token = `${'a2'.repeat(32)}.1`
+    const other = `${'a3'.repeat(32)}.0`
+    guard.markItemsSent([
+      { outpoint: item, txid: dead },
+      { outpoint: token, txid: dead, asset: 'token' },
+      // The payee tip of the dead send never existed: un-hide, never reclaim.
+      { outpoint: `${dead}.0`, txid: dead },
+      { outpoint: other, txid: live },
+    ])
+
+    const released = await guard.releaseTipsOfFailedSends([dead.toUpperCase()])
+
+    expect(released.sort()).toEqual([item, token, `${dead}.0`].sort())
+    expect(guard.isItemSent(item)).toBe(false)
+    expect(guard.isItemSent(token)).toBe(false)
+    expect(guard.isItemSent(other)).toBe(true)
+    expect(filed).toEqual([
+      { asset: 'item', outpoints: [item] },
+      { asset: 'token', outpoints: [token] },
+    ])
+    await expect(guard.releaseTipsOfFailedSends([dead])).resolves.toEqual([])
+  })
+
+  it('gives back the tips of a send this wallet failed, not after a day', async () => {
+    const guard = await import('./sentItemGuard')
+    const dead = 'd'.repeat(64)
+    const live = 'e'.repeat(64)
+    const item = `${'a1'.repeat(32)}.0`
+    const token = `${'a2'.repeat(32)}.1`
+    const other = `${'a3'.repeat(32)}.0`
+    guard.markItemsSent([
+      { outpoint: item, txid: dead },
+      { outpoint: token, txid: dead, asset: 'token' },
+      // The payee tip of the dead send never existed: un-hide, never reclaim.
+      { outpoint: `${dead}.0`, txid: dead },
+      { outpoint: other, txid: live },
+    ])
+
+    const released = await guard.releaseTipsOfFailedSends([dead.toUpperCase()])
+
+    expect(released.sort()).toEqual([item, token, `${dead}.0`].sort())
+    expect(guard.isItemSent(item)).toBe(false)
+    expect(guard.isItemSent(token)).toBe(false)
+    expect(guard.isItemSent(other)).toBe(true)
+    expect(filed).toEqual([
+      { asset: 'item', outpoints: [item] },
+      { asset: 'token', outpoints: [token] },
+    ])
+    await expect(guard.releaseTipsOfFailedSends([dead])).resolves.toEqual([])
   })
 
   it('matches underscore outpoints from the latch basket', async () => {

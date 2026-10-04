@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { PrivateKey } from '@bsv/sdk'
+import { P2PKH, PrivateKey, Script } from '@bsv/sdk'
 import { hasOrdEnvelope, p2pkhScriptHex, scriptPaysAddress } from './ordinalOwnership'
+import { encodeBsv21Binary } from './token/decode162'
 
 const ADDRESS = PrivateKey.fromRandom().toAddress()
 const OTHER = PrivateKey.fromRandom().toAddress()
@@ -39,6 +40,40 @@ describe('ordinal ownership', () => {
   it('rejects empty or missing scripts', () => {
     expect(scriptPaysAddress(undefined, ADDRESS)).toBe(false)
     expect(scriptPaysAddress('', ADDRESS)).toBe(false)
+  })
+
+  it('matches a tip with trailing OP_RETURN data after the key spend', () => {
+    const script = ORD_ENVELOPE + p2pkhScriptHex(ADDRESS) + '6a' + '044d415020'
+    expect(scriptPaysAddress(script, ADDRESS)).toBe(true)
+  })
+
+  it('matches a BRC-162 token tip by its remainder lock', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const ours = encodeBsv21Binary({ tokenId, amount: 7n, rest: new P2PKH().lock(ADDRESS) }).toHex()
+    const theirs = encodeBsv21Binary({ tokenId, amount: 7n, rest: new P2PKH().lock(OTHER) }).toHex()
+    const inscribed = encodeBsv21Binary({
+      tokenId,
+      amount: 7n,
+      rest: Script.fromHex(p2pkhScriptHex(ADDRESS) + ORD_ENVELOPE),
+    }).toHex()
+    expect(scriptPaysAddress(ours, ADDRESS)).toBe(true)
+    expect(scriptPaysAddress(inscribed, ADDRESS)).toBe(true)
+    expect(scriptPaysAddress(theirs, ADDRESS)).toBe(false)
+  })
+
+  it('rejects the template carried as data rather than as the lock', () => {
+    const template = p2pkhScriptHex(ADDRESS)
+    const asData = '006a19' + template
+    const inEnvelopeBody = '0063036f726451' + '0a746578742f706c61696e' + '0019' + template + '68' + p2pkhScriptHex(OTHER)
+    expect(scriptPaysAddress(asData, ADDRESS)).toBe(false)
+    expect(scriptPaysAddress(inEnvelopeBody, ADDRESS)).toBe(false)
+  })
+
+  it('rejects a second lock or contract code beside the key spend', () => {
+    const ours = p2pkhScriptHex(ADDRESS)
+    expect(scriptPaysAddress(ours + p2pkhScriptHex(OTHER), ADDRESS)).toBe(false)
+    expect(scriptPaysAddress(`5175${ours}`, ADDRESS)).toBe(false)
+    expect(scriptPaysAddress(`${ours}ac`, ADDRESS)).toBe(false)
   })
 
   it('recognizes a complete ord envelope and rejects a truncated one', () => {

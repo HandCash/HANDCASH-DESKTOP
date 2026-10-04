@@ -1269,7 +1269,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'sendFungible',
     label: 'Send token',
     caption:
-      'bsv21SendMachine builds asset outputs; signedSendLifecycle owns the same miner + BUMP path as BSV',
+      'bsv21SendMachine is the runtime verdict on every selected value tip; signedSendLifecycle owns the same miner + BUMP path as BSV',
     source: SEND_FUNGIBLE,
   },
   {
@@ -1289,7 +1289,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'assetBurn',
     label: 'Asset burn',
     caption:
-      'burnMachine — explicit BSV-21 / 1Sat burn → managed Pay recovery | named refuse',
+      'burnMachine — inscribed + binary BSV-21 / 1Sat burn → managed Pay recovery | named refuse',
     source: ASSET_BURN,
   },
   {

@@ -188,6 +188,7 @@ import {
   walletRegionsIdleSince,
 } from './walletCoordinator'
 import { isCompleteBasketPage } from './collectableBasketAbsence'
+import { createEmptyReadGate } from './emptyBasketRead'
 import { reportHoldings } from './holdingsReconcile'
 import {
   getResolvedInscription,
@@ -665,6 +666,7 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
  */
 export function rebindCollectablesForAccount(): void {
   collectablesAccountEpoch += 1
+  emptyItemRead.reset()
   explicitVerificationRequests.clear()
   if (durableListTimer) clearTimeout(durableListTimer)
   durableListTimer = null
@@ -1699,6 +1701,24 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
 }
 
 /**
+ * The shown cards repainted after art, an origin or a proof landed. Only a
+ * basket read changes which cards show: the last read lacks seeded receipts
+ * and is empty before the first read, so rebuilding the list from it alone
+ * dropped held cards until the next read put them back.
+ */
+function repaintedCollectables(): Collectable[] {
+  const byOp = new Map(lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]))
+  for (const seed of seededItems.values()) {
+    const key = outpointKey(seed.outpoint)
+    if (!byOp.has(key)) byOp.set(key, seed)
+  }
+  const painted = new Map(
+    buildItems([...byOp.values()], lastItemChain).map((c) => [outpointKey(c.outpoint), c]),
+  )
+  return cachedCollectables.map((c) => painted.get(outpointKey(c.outpoint)) ?? c)
+}
+
+/**
  * Local BEEF for paint and lineage while the collectables screen is opening.
  *
  * Chain ingest and this lookup share the renderer's synchronous IndexedDB.
@@ -1746,7 +1766,7 @@ async function hydrateLocalItemArt(
   }
   if (found === 0 || epoch !== collectablesAccountEpoch) return
   console.info(`[items] painted ${found} item(s) from local art — no content indexer`)
-  setCollectablesCache(buildItems(lastItemOutputs, lastItemChain), {
+  setCollectablesCache(repaintedCollectables(), {
     announceArrivals: false,
     forEpoch: epoch,
   })
@@ -1848,7 +1868,7 @@ async function resolveUnknownOrigins(): Promise<void> {
       clearVerificationProgress(outpoint)
     }
     if (changed)
-      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+      setCollectablesCache(repaintedCollectables())
   } finally {
     resolvingOrigins = false
     clearVerificationProgress()
@@ -2121,7 +2141,7 @@ async function proveHeldGenesis(
       await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
       await yieldToUi()
       if (epoch !== collectablesAccountEpoch) return
-      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain), {
+      setCollectablesCache(repaintedCollectables(), {
         forEpoch: epoch,
       })
       await yieldToUi()
@@ -2566,7 +2586,7 @@ export async function verifyItemAuthenticity(
     if (provenOrigin) {
       await adoptProvenOrigin(target, provenOrigin, wallet.chain)
       if (epoch !== collectablesAccountEpoch) return accountChanged()
-      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain), {
+      setCollectablesCache(repaintedCollectables(), {
         forEpoch: epoch,
       })
     }
@@ -2668,6 +2688,10 @@ export function getCollectablesLastListedAt(): number {
 /** Longest the wallet may stay busy before a deferred read gives up waiting. */
 const RELIST_IDLE_WAIT_MS = 60_000
 let relistWhenIdle: Promise<void> | null = null
+
+const emptyItemRead = createEmptyReadGate(() => {
+  void listCollectables().catch((err) => console.warn('[collectables] empty-read confirm skipped', err))
+})
 
 /**
  * A read deferred because the wallet was busy still owes the panel an answer.
@@ -2897,6 +2921,15 @@ async function listCollectablesNow(
         pageLength: result.outputs?.length ?? 0,
         pageLimit: LIST_PAGE_SIZE,
       })
+    if (readComplete && !authoritativeAfterReplace) {
+      const empty = emptyItemRead.judge(page.length, cachedCollectables.length)
+      if (empty.kind === 'wait') {
+        readComplete = false
+        console.info(
+          `[collectables] empty basket read beside ${cachedCollectables.length} card(s) — kept, confirming in ${Math.ceil(empty.confirmInMs / 1000)}s`,
+        )
+      }
+    }
     // Recompose, BRC-39 import and sends rewrite or reserve rows, and a page
     // read beside them can be short or empty (a cold launch once went 777
     // cards → 0 → 9; a send once showed 7 → 2). Every such writer holds a
@@ -2933,13 +2966,14 @@ async function listCollectablesNow(
           }`
         )
       }
-      if (page.length > 0) {
+      if (page.length > 0 || retired.size > 0) {
         const byOp = new Map(
           lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
         )
         for (const o of [...page, ...seeded]) {
           byOp.set(outpointKey(o.outpoint), o)
         }
+        for (const key of retired) byOp.delete(key)
         lastItemOutputs = [...byOp.values()]
         lastItemChain = wallet.chain
       }
@@ -5157,6 +5191,12 @@ export async function sendCollectables(
                   candidate.identityKey.toLowerCase() ===
                   settlePath.recipientIdentityKey.toLowerCase(),
               )
+              // Every card carries the same package: complete it once, not once
+              // per item (quadratic in the selection, now that it has no cap).
+              const batchAtomic = atomicBeef?.length
+                ? await mergeLocalUnconfirmedAncestry(wallet, atomicBeef)
+                : atomicBeef
+              if (batchAtomic?.length) rememberBeefTree(batchAtomic, txid)
               for (const [itemOutputIndex, item] of prepared.entries()) {
                 try {
                   const delivered = await notifyPeerItemIncoming({
@@ -5169,7 +5209,8 @@ export async function sendCollectables(
                     itemOrigin: item.origin,
                     itemCollectionId: item.collectionId,
                     itemOutputIndex,
-                    atomicBeef,
+                    atomicBeef: batchAtomic,
+                    ancestryComplete: true,
                     provenance: item.provenance,
                   })
                   if (delivered.delivered === 'cloud' || delivered.delivered === 'direct') continue

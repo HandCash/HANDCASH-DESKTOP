@@ -1,7 +1,12 @@
 import { Beef, type ChainTracker } from '@bsv/sdk'
 import { storageRegistry } from '../../storage/registry'
 import { durableGetItem, durableSetItem } from '../durableStorage'
-import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from '../issuerAttribution'
+import {
+  retainedCarriesSigma,
+  retainedIssuerMetadata,
+  retainedScriptIs,
+  retainedSignedBy,
+} from '../issuerAttribution'
 import type { ActiveWallet } from '../session'
 import { retainedTokenGenesis, retainTokenGenesis } from './genesisStore'
 import { TOKEN_LINEAGE_MAX_BYTES } from './inboundLineage'
@@ -339,7 +344,12 @@ export type TokenAttestationGap =
   | 'unsigned-mint'
   /** No held tip has a walk that reached the deploy. */
   | 'unbound'
-  /** The deploy's Sigma does not verify for the named issuer. */
+  /**
+   * The deploy carries neither issuer tape nor Sigma; only this wallet's
+   * remittance names an issuer. A mint from before Sigma-signed issuance.
+   */
+  | 'remittance-only'
+  /** The deploy names an issuer (tape or Sigma) that its Sigma does not verify for. */
   | 'unsigned'
 
 /** Which attestation step a held token still lacks. */
@@ -355,7 +365,8 @@ export function tokenAttestationGap(token: {
   const issuer = deploy.issuer ?? token.issuer
   if (!issuer) return 'unsigned-mint'
   if (!token.tipOutpoints.some((tip) => tokenTipBound(tip, tokenId))) return 'unbound'
-  return retainedSignedBy(tokenId, issuer) ? 'attested' : 'unsigned'
+  if (retainedSignedBy(tokenId, issuer)) return 'attested'
+  return deploy.issuer || retainedCarriesSigma(tokenId) ? 'unsigned' : 'remittance-only'
 }
 
 export function resetTokenLineageForTests(): void {

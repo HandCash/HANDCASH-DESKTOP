@@ -414,7 +414,8 @@ function sessionFacts(header, events) {
     // Token deposits that ingest kept pending, refused, or failed to internalize.
     tokenDeposits,
     // Held tokens per issuer shelf (bap / bap-unconfirmed / key) or the step
-    // they lack (no-genesis / unbound / unsigned / unsigned-mint), plus heals.
+    // they lack (no-genesis / unbound / remittance-only / unsigned /
+    // unsigned-mint), the token on each, plus heals.
     tokenAttestation,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
@@ -1015,14 +1016,17 @@ const ANCESTRY_INCOMPLETE_RE = /^\[(?:fungible|item)-settle\] ([0-9a-f]{12}) anc
  */
 const TOKEN_CENSUS_RE = /^\[bsv21\] attestation census (\d+) token\(s\) — (.*)$/
 const TOKEN_HEAL_RE = /^\[bsv21\] lineage heal ([0-9a-f]{12}) — (?:bound \((\S+)\)|refused (\S+))/
+const TOKEN_OFF_SHELF_RE = /^\[bsv21\] off issuer shelf (.*)$/
 
 /**
  * Why held BSV-21 tokens are or are not on their issuer's shelf: the last
- * attestation census (counts per shelf / missing step) and every heal outcome.
+ * attestation census (counts per shelf / missing step), which token sits on
+ * each non-`bap` step, and every heal outcome.
  */
 function tokenAttestationFacts(events) {
   let census = null
   let censusLines = 0
+  let offShelf = []
   const heals = { bound: {}, refused: {} }
   const healedTips = new Set()
   for (const e of events) {
@@ -1030,10 +1034,19 @@ function tokenAttestationFacts(events) {
     if (m) {
       censusLines += 1
       census = { tokens: Number(m[1]) }
+      offShelf = []
       for (const part of m[2].split(',')) {
         const kv = /^\s*(\S+) (\d+)\s*$/.exec(part)
         if (kv) census[kv[1]] = Number(kv[2])
       }
+      continue
+    }
+    m = TOKEN_OFF_SHELF_RE.exec(e.text)
+    if (m) {
+      offShelf = m[1].split(';').map((entry) => {
+        const [sym, tokenId, step] = entry.trim().split(/\s+/)
+        return { sym, tokenId, step }
+      })
       continue
     }
     m = TOKEN_HEAL_RE.exec(e.text)
@@ -1044,7 +1057,7 @@ function tokenAttestationFacts(events) {
       bucket[key] = (bucket[key] ?? 0) + 1
     }
   }
-  return { census, censusLines, heals, tipsHealed: healedTips.size }
+  return { census, censusLines, offShelf, heals, tipsHealed: healedTips.size }
 }
 
 function tokenDepositFacts(events) {
@@ -1779,7 +1792,7 @@ function tokenSendFacts(events) {
       facts.starts.push(startTrail)
     }
     else if ((r = /^\[stale-output\] restore done .* restored proven-unspent asset ([0-9a-f]{64}\.\d+)/.exec(t))) {
-      facts.restoredAssets.push(r[1])
+      if (!facts.restoredAssets.includes(r[1])) facts.restoredAssets.push(r[1])
     }
     else if (/^\[send-token\] sent$/.test(t)) facts.sent += 1
     else if ((r = /^\[send-token\] send failed — (.*)$/.exec(t))) bump(facts.failed, r[1])
@@ -2048,6 +2061,7 @@ function accountSwitchFacts(events) {
 
 function deadCoinFacts(events) {
   const seen = new Set()
+  const found = new Map()
   let resigns = 0
   const sweeps = []
   // Outcome of adopting the named spenders of hidden coins: `restored` = this
@@ -2090,10 +2104,34 @@ function deadCoinFacts(events) {
         unknown: Number(m[3]),
         ms: Number(m[4]),
       })
+      continue
+    }
+    const dead = SPENT_ELSEWHERE_RE.exec(e.text) ?? FUNDING_REBUILD_RE.exec(e.text)
+    if (dead) {
+      for (const [outpoint] of dead[1].matchAll(/[0-9a-f]{64}\.\d+/g)) {
+        found.set(outpoint, (found.get(outpoint) ?? 0) + 1)
+      }
     }
   }
-  return { resigns, sweeps, spenders, peerDevice, unscriptedChange: unscriptedChangeFacts(events) }
+  // A coin found dead more than once was hidden and then chosen again: the
+  // hide did not stick, and every spend over it is refused or rebuilt.
+  const reselected = [...found]
+    .filter(([, times]) => times > 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([outpoint, times]) => ({ outpoint, times }))
+  return {
+    resigns,
+    sweeps,
+    spenders,
+    peerDevice,
+    deadFound: { coins: found.size, sightings: [...found.values()].reduce((a, b) => a + b, 0), reselected },
+    unscriptedChange: unscriptedChangeFacts(events),
+  }
 }
+
+const SPENT_ELSEWHERE_RE = /^\[spend\] [0-9a-f]{12} inputs spent elsewhere count=\d+ — (.*)$/
+const FUNDING_REBUILD_RE = /^\[certainty\] [0-9a-f]{12} funding spent elsewhere — building again over live coins \((.*)\)$/
 
 const UNSCRIPTED_CHANGE_RE =
   /^\[stale-output\] (\d+) change output\(s\) of ([0-9a-f]{12}) have no locking script\b/
@@ -2701,7 +2739,7 @@ function forensicQuestions(latest) {
           token_off_issuer_shelf: {
             type: 'choice',
             instructions:
-              'Some held BSV-21 tokens are not shelved under a verified BAP identity in Collect. `latest.tokenAttestation.census` is the last per-token count: `bap` are on a verified identity shelf, `bap-unconfirmed` are attested but this device holds no identity package for their BAP ID, `key` are attested with no BAP ID on the deploy, `no-genesis` lack the retained deploy transaction, `unbound` have no held tip whose BRC-176 walk reached the deploy, `unsigned` have a deploy whose Sigma does not verify for the named issuer, `unsigned-mint` have a deploy that names no issuer at all. `heals.bound` / `heals.refused` count background heal outcomes by source or reason (`no-tip-body`, `walk-failed`, `no-genesis`). Which step keeps the most tokens off a verified shelf?',
+              'Some held BSV-21 tokens are not shelved under a verified BAP identity in Collect. `latest.tokenAttestation.census` is the last per-token count: `bap` are on a verified identity shelf, `bap-unconfirmed` are attested but this device holds no identity package for their BAP ID, `key` are attested with no BAP ID on the deploy, `no-genesis` lack the retained deploy transaction, `unbound` have no held tip whose BRC-176 walk reached the deploy, `remittance-only` have a deploy with neither issuer tape nor Sigma — only this wallet\'s local remittance names an issuer (minted before Sigma-signed issuance), `unsigned` have a deploy that names an issuer (tape or Sigma) its Sigma does not verify for, `unsigned-mint` have a deploy that names no issuer at all. `offShelf` names the token on each non-`bap` step. Uploads from before `remittance-only` existed count those tokens under `unsigned`, and carry no `offShelf`. `heals.bound` / `heals.refused` count background heal outcomes by source or reason (`no-tip-body`, `walk-failed`, `no-genesis`). Which step keeps the most tokens off a verified shelf?',
             criteria: {
               missing_identity_package:
                 '`bap-unconfirmed` is the largest non-`bap` count: tokens are attested, but the identity package for their BAP ID never reached this device.',
@@ -2710,9 +2748,9 @@ function forensicQuestions(latest) {
               lineage_unbound:
                 '`unbound` is the largest non-`bap` count, or `heals.refused` is dominated by `walk-failed` / `no-tip-body`: no tip has been walked back to its deploy.',
               signature_mismatch:
-                '`unsigned` is the largest non-`bap` count: the deploy Sigma does not verify for the issuer the token names.',
+                '`unsigned` is the largest non-`bap` count and the census also carries a `remittance-only` count: the deploy names an issuer its Sigma does not verify for.',
               minted_unsigned:
-                '`unsigned-mint` or `key` is the largest non-`bap` count: those tokens were minted without a BAP-stamped signature and can never join an identity shelf.',
+                '`unsigned-mint`, `remittance-only` or `key` is the largest non-`bap` count, or `unsigned` is largest on an upload whose census has no `remittance-only` count: those tokens were minted without a BAP-stamped signature and can never join an identity shelf.',
               unclear: 'The census does not say which step is missing.',
             },
           },
@@ -2961,7 +2999,28 @@ const QUESTIONS = {
   },
 }
 
-async function askJev(state, apiKey) {
+/**
+ * Jev judges from counts and a few trails. Every open holdings row carrying its
+ * whole trail, for both uploads, overflows the model's context; the printed
+ * report still reads the full state.
+ */
+const MODEL_TRAILED_ROWS = 4
+const MODEL_TRAIL_LINES = 4
+
+function modelState(state) {
+  const slim = (session) => {
+    const rc = session?.holdings?.reconcile
+    if (!rc) return session
+    const open = rc.open.map(({ trail, ...row }, i) =>
+      i < MODEL_TRAILED_ROWS && trail?.length ? { ...row, trail: trail.slice(0, MODEL_TRAIL_LINES) } : row,
+    )
+    return { ...session, holdings: { ...session.holdings, reconcile: { ...rc, open } } }
+  }
+  return Object.fromEntries(Object.entries(state).map(([key, session]) => [key, slim(session)]))
+}
+
+async function askJev(fullState, apiKey) {
+  const state = modelState(fullState)
   const questions = { ...QUESTIONS, ...forensicQuestions(state.latest) }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const res = await fetch(TYPESAFE_URL, {
@@ -3179,6 +3238,7 @@ function report(state, answers) {
           .map(([k, n]) => `${k} ${n}`)
           .join(' · '),
     )
+    for (const t of att.offShelf ?? []) console.log(`    off shelf: ${t.sym} ${t.tokenId} — ${t.step}`)
     const fmt = (bucket) =>
       Object.entries(bucket)
         .map(([k, n]) => `${k} ${n}`)
@@ -3351,10 +3411,22 @@ function report(state, answers) {
   const peerActive = peer && (peer.reads || peer.unread || peer.spent)
   if (
     dead &&
-    (dead.resigns || dead.sweeps.length || Object.keys(dead.spenders ?? {}).length || peerActive)
+    (dead.resigns ||
+      dead.sweeps.length ||
+      Object.keys(dead.spenders ?? {}).length ||
+      peerActive ||
+      dead.deadFound?.coins)
   ) {
     console.log('\nDead coins (code-counted):')
     console.log(`  ${dead.resigns} resign(s) over coins a dead or foreign spend held`)
+    if (dead.deadFound?.coins) {
+      console.log(
+        `  found spent elsewhere: ${dead.deadFound.coins} coin(s), ${dead.deadFound.sightings} sighting(s)`,
+      )
+      for (const r of dead.deadFound.reselected) {
+        console.log(`    chosen again after hide: ${r.outpoint} ×${r.times}`)
+      }
+    }
     if (peerActive) {
       console.log(
         `  another install: ${peer.reads} snapshot read(s) · ${peer.spent} coin(s) it spent · ${peer.withdrawn} withdrawn · ${peer.unread} unread · slowest ${peer.slowestMs}ms`,

@@ -2,8 +2,10 @@ import { Beef, LockingScript, PrivateKey, Transaction, UnlockingScript } from '@
 import { describe, expect, it } from 'vitest'
 import { decodeBsv21Binary, encodeBsv21Binary } from './token'
 import { hasOrdEnvelope, parseOrdEnvelope, p2pkhScriptHex } from './ordinalOwnership'
+import { parseBurnUnits, planBinaryBsv21Burn } from './token/burn'
 import {
   assertBsv21AmtConservation,
+  assertBsv21BurnConservation,
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
   buildBsv21SendRemittance,
@@ -287,6 +289,116 @@ describe('bsv21Send conservation', () => {
         classified: { payee: classified.payee, change: [] },
       }),
     ).toThrow(/change missing/)
+  })
+})
+
+describe('binary bsv21 burn plan', () => {
+  const id = `${'cd'.repeat(32)}_0`
+  const plainTip = (n: number, amt: bigint) => ({
+    outpoint: `${String(n).repeat(64).slice(0, 64)}_0`,
+    tokenId: id,
+    amt,
+    lockingScript: buildBsv21ValueLock({ tokenId: id, amount: amt, address: CHANGE }),
+  })
+  const cosignedRest = `76a914${'22'.repeat(20)}88ad21${'02'}${'ef'.repeat(32)}ac`
+
+  it('plans a plain burn with exact change and packed recovery', () => {
+    const { plan, selected } = planBinaryBsv21Burn({
+      tokenId: id,
+      amount: 70n,
+      tips: [plainTip(1, 50n), plainTip(2, 40n)],
+    })
+    expect(selected).toHaveLength(2)
+    expect(plan).toMatchObject({
+      path: 'burnBsv21',
+      burnAmount: 70n,
+      selectedAmount: 90n,
+      changeAmount: 20n,
+      recoverSatoshis: 2,
+    })
+    expect(plan.path === 'burnBsv21' && plan.inputs[0]!.outpoint).toMatch(/\.0$/)
+  })
+
+  it('names the lock refusal instead of attempting a P2PKH unlock', () => {
+    const cosigned = {
+      ...plainTip(3, 100n),
+      lockingScript: encodeBsv21Binary({ tokenId: id, amount: 100n, rest: cosignedRest }).toHex(),
+    }
+    expect(
+      planBinaryBsv21Burn({ tokenId: id, amount: 10n, tips: [cosigned] }).plan,
+    ).toEqual({ path: 'refuse', asset: 'bsv21', reason: 'cosigner_required' })
+    expect(
+      planBinaryBsv21Burn({
+        tokenId: id,
+        amount: 10n,
+        tips: [{ ...plainTip(4, 100n), lockingScript: P2PKH_REST }],
+      }).plan,
+    ).toEqual({ path: 'refuse', asset: 'bsv21', reason: 'unknown_lock' })
+  })
+})
+
+describe('bsv21 burn conservation', () => {
+  const id = `${'cd'.repeat(32)}_0`
+  /** Above 2^53: a float round-trip rounds this to ...992. */
+  const BIG_CHANGE = 9_007_199_254_740_993n
+
+  function burnTx(locks: Array<{ amount: bigint; address: string }>): Transaction {
+    const tx = new Transaction()
+    tx.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex(P2PKH_REST) })
+    for (const lock of locks) {
+      tx.addOutput({ satoshis: 1, lockingScript: buildBsv21ValueLock({ tokenId: id, ...lock }) })
+    }
+    return tx
+  }
+
+  it('keeps change above 2^53 exact from the typed amount to the lock', () => {
+    expect(parseBurnUnits('9,007,199,254,740,993')).toBe(BIG_CHANGE)
+    expect(parseBurnUnits('12.75')).toBe(12n)
+    expect(() => parseBurnUnits('0')).toThrow(/positive whole number/)
+    expect(() => parseBurnUnits('-5')).toThrow(/positive whole number/)
+    expect(() =>
+      assertBsv21BurnConservation({
+        tx: burnTx([{ amount: BIG_CHANGE, address: CHANGE }]),
+        tokenId: id,
+        changeRestHex: p2pkhScriptHex(CHANGE),
+        changeAmt: BIG_CHANGE,
+      }),
+    ).not.toThrow()
+    expect(() =>
+      assertBsv21BurnConservation({
+        tx: burnTx([{ amount: BigInt(Number(BIG_CHANGE)), address: CHANGE }]),
+        tokenId: id,
+        changeRestHex: p2pkhScriptHex(CHANGE),
+        changeAmt: BIG_CHANGE,
+      }),
+    ).toThrow(/change mismatch/)
+  })
+
+  it('refuses a burn that emits the token to anyone but us, or none when change was planned', () => {
+    expect(() =>
+      assertBsv21BurnConservation({
+        tx: burnTx([{ amount: 40n, address: CHANGE }, { amount: 10n, address: PAYEE }]),
+        tokenId: id,
+        changeRestHex: p2pkhScriptHex(CHANGE),
+        changeAmt: 40n,
+      }),
+    ).toThrow(/to someone else/)
+    expect(() =>
+      assertBsv21BurnConservation({
+        tx: burnTx([]),
+        tokenId: id,
+        changeRestHex: p2pkhScriptHex(CHANGE),
+        changeAmt: 40n,
+      }),
+    ).toThrow(/change mismatch/)
+    expect(() =>
+      assertBsv21BurnConservation({
+        tx: burnTx([]),
+        tokenId: id,
+        changeRestHex: p2pkhScriptHex(CHANGE),
+        changeAmt: 0n,
+      }),
+    ).not.toThrow()
   })
 })
 

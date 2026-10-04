@@ -48,6 +48,17 @@ const listingHarness = vi.hoisted(() => ({
   address: '',
   identityKey: '',
   listOutputsCalls: [] as Array<{ basket?: string; tags?: string[]; limit?: number }>,
+  signAction: vi.fn(async (): Promise<{ txid?: string; tx?: number[] }> => {
+    throw new Error('signAction not staged')
+  }),
+  abortAction: vi.fn(async () => ({})),
+  registerSignedSend: vi.fn(async (args: { txid: string }) => ({ txid: args.txid })),
+  startSignedSendPropagation: vi.fn(),
+}))
+
+vi.mock('./signedSendLifecycle', () => ({
+  registerSignedSend: listingHarness.registerSignedSend,
+  startSignedSendPropagation: listingHarness.startSignedSendPropagation,
 }))
 
 vi.mock('./session', () => ({
@@ -71,7 +82,8 @@ vi.mock('./session', () => ({
         }
       },
       createAction: listingHarness.createAction,
-      abortAction: async () => ({}),
+      signAction: listingHarness.signAction,
+      abortAction: listingHarness.abortAction,
     },
   }),
 }))
@@ -408,6 +420,10 @@ describe('162 market list createAction lock', () => {
     listingHarness.listed = null
     listingHarness.beef = null
     listingHarness.listOutputsCalls.length = 0
+    listingHarness.signAction.mockReset().mockRejectedValue(new Error('signAction not staged'))
+    listingHarness.abortAction.mockClear()
+    listingHarness.registerSignedSend.mockClear()
+    listingHarness.startSignedSendPropagation.mockClear()
     listingHarness.address = seller.toAddress()
     listingHarness.identityKey = seller.toPublicKey().toString()
   })
@@ -573,6 +589,76 @@ describe('162 market list createAction lock', () => {
     expect(listed).toMatchObject({ role: 'value', tokenId: minted.tokenId, amount: 240n })
     const change = decodeBsv21Binary(args.outputs[1]!.lockingScript)
     expect(change).toMatchObject({ role: 'value', tokenId: minted.tokenId, amount: 68760n })
+  })
+
+  describe('list split cheque', () => {
+    function stageSplit(minted: ReturnType<typeof mintTip>) {
+      listingHarness.beef = minted.beef
+      listingHarness.listed = {
+        outpoint: minted.tip.replace('_', '.'),
+        satoshis: 1,
+        lockingScript: minted.lockingScriptHex,
+        tags: ['bsv21', `bsv21:${minted.tokenId}`, 'amt:69000'],
+        customInstructions: JSON.stringify({ p: 'bsv-20', op: 'transfer', id: minted.tokenId, amt: '69000' }),
+      }
+      const [tipTxid, tipVout] = minted.tip.split('_') as [string, string]
+      const split = new Transaction()
+      listingHarness.createAction.mockImplementationOnce((async (args: {
+        outputs: Array<{ lockingScript: string; satoshis: number }>
+      }) => {
+        split.addInput({
+          sourceTransaction: minted.beef.findTxid(tipTxid)!.tx!,
+          sourceOutputIndex: Number(tipVout),
+          unlockingScript: new UnlockingScript(),
+        })
+        for (const out of args.outputs) {
+          split.addOutput({ satoshis: out.satoshis, lockingScript: LockingScript.fromHex(out.lockingScript) })
+        }
+        const staged = new Beef()
+        staged.mergeTransaction(split)
+        return { signableTransaction: { reference: 'split-ref', tx: staged.toBinary() } }
+      }) as never)
+      return split
+    }
+
+    const listSplit = () =>
+      createMarketListingAdvert({ outpoint: mintTip(69000n).tip, assetType: 'bsv21', priceSats: 57600, listAmt: 240 })
+
+    it('registers a signed split as a cheque and never aborts it', async () => {
+      const minted = mintTip(69000n)
+      const split = stageSplit(minted)
+      listingHarness.signAction.mockImplementationOnce(async () => {
+        const signed = new Beef()
+        signed.mergeTransaction(split)
+        const txid = split.id('hex')
+        return { txid, tx: Array.from(signed.toBinaryAtomic(txid)) }
+      })
+
+      await expect(
+        createMarketListingAdvert({ outpoint: minted.tip, assetType: 'bsv21', priceSats: 57600, listAmt: 240 }),
+      ).rejects.toThrow(/stop-after-createAction/)
+
+      expect(listingHarness.registerSignedSend).toHaveBeenCalledWith(
+        expect.objectContaining({ txid: split.id('hex'), flow: 'market_listing' }),
+      )
+      expect(listingHarness.startSignedSendPropagation).toHaveBeenCalledTimes(1)
+      expect(listingHarness.abortAction).not.toHaveBeenCalled()
+    })
+
+    it('aborts a split that never signed', async () => {
+      stageSplit(mintTip(69000n))
+      void listSplit
+      const minted = mintTip(69000n)
+      listingHarness.createAction.mockReset()
+      stageSplit(minted)
+      listingHarness.signAction.mockRejectedValueOnce(new Error('signer refused'))
+
+      await expect(
+        createMarketListingAdvert({ outpoint: minted.tip, assetType: 'bsv21', priceSats: 57600, listAmt: 240 }),
+      ).rejects.toThrow(/signer refused/)
+      expect(listingHarness.abortAction).toHaveBeenCalledWith({ reference: 'split-ref' })
+      expect(listingHarness.registerSignedSend).not.toHaveBeenCalled()
+    })
   })
 
   it('does not treat remittance-only 1-sat as a 162 listable tip', () => {
