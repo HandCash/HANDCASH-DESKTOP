@@ -1449,15 +1449,18 @@ const CANCEL_PROVEN_RE = /^\[market\] cancel offer \S+ missing from market-offer
 const PIN_MISS_RE = /^\[stale-output\] pin (found no local row|could not read) for ([0-9a-f]{12})/
 const PIN_HIT_RE = /^\[stale-output\] (?:pinned broadcast|restored Arcade-pinned) local tx ([0-9a-f]{12})/
 const STORE_USER_MOVED_RE = /^\[stale-output\] storage user moved (\S+) → (\S+)/
+const NEVER_SENT_RE = /^\[market-list\] never sent txid=([0-9a-f]{12})/
 
 /**
  * Listings the overlay never indexed and whether each came back, cancels the
  * wallet refused (by code), and Arcade pins that found — or missed — the local
- * tx row. `stillUnpublished` is on chain, signed, and invisible to buyers.
+ * tx row. `stillUnpublished` is on chain, signed, and invisible to buyers;
+ * `neverSent` listings no miner took, retired so the item is listable again.
  */
 function listingOutcomeFacts(events) {
   const failed = new Map()
   const republished = new Set()
+  const neverSent = new Set()
   const cancelRefused = {}
   let cancelProvenBySignedListing = 0
   const pins = { hit: 0, noLocalRow: 0, unreadable: 0, storageUserMoved: [] }
@@ -1471,6 +1474,10 @@ function listingOutcomeFacts(events) {
     }
     if ((m = REPUBLISHED_RE.exec(t))) {
       republished.add(m[1])
+      continue
+    }
+    if ((m = NEVER_SENT_RE.exec(t))) {
+      neverSent.add(m[1])
       continue
     }
     if ((m = CANCEL_REFUSED_RE.exec(t))) {
@@ -1495,7 +1502,11 @@ function listingOutcomeFacts(events) {
   return {
     publishFailed: [...failed].map(([txid, reason]) => ({ txid: txid.slice(0, 12), reason })),
     republished: republished.size,
-    stillUnpublished: [...failed.keys()].filter((t) => !republished.has(t)).map((t) => t.slice(0, 12)),
+    stillUnpublished: [...failed.keys()]
+      .filter((t) => !republished.has(t))
+      .map((t) => t.slice(0, 12))
+      .filter((t) => !neverSent.has(t)),
+    neverSent: [...neverSent],
     cancelRefused,
     cancelProvenBySignedListing,
     pins: { ...pins, storageUserMoved: [...new Set(pins.storageUserMoved)] },
@@ -3661,6 +3672,7 @@ function report(state, answers) {
   if (
     outcomes &&
     (outcomes.publishFailed.length ||
+      outcomes.neverSent?.length ||
       Object.keys(outcomes.cancelRefused).length ||
       outcomes.pins.hit ||
       outcomes.pins.noLocalRow ||
@@ -3674,6 +3686,9 @@ function report(state, answers) {
       console.log(
         `  ${outcomes.republished} republished · still unpublished: ${outcomes.stillUnpublished.join(', ') || 'none'}`,
       )
+    }
+    if (outcomes.neverSent?.length) {
+      console.log(`  never reached a miner (retired, item kept): ${outcomes.neverSent.join(', ')}`)
     }
     for (const [code, n] of Object.entries(outcomes.cancelRefused)) {
       console.log(`  cancel refused ${code} ×${n}`)

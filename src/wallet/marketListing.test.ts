@@ -236,11 +236,22 @@ describe('BRC-48 one-sat market offer', () => {
     expect(
       chooseMarketCancelPath({
         offerOutpoint: 'offer',
+        neverSent: false,
         held: false,
         valid: true,
         active: true,
       }),
     ).toEqual({ path: 'refuse', reason: 'offer-not-held' })
+    // The signed cheque still "carries" the offer, but no miner took it.
+    expect(
+      chooseMarketCancelPath({
+        offerOutpoint: 'offer',
+        neverSent: true,
+        held: true,
+        valid: true,
+        active: true,
+      }),
+    ).toEqual({ path: 'refuse', reason: 'listing-never-sent' })
   })
 
   it('allows abort until Arcade accepts, then routes unknown signing to recovery', () => {

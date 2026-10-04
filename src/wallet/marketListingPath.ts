@@ -90,7 +90,11 @@ export type MarketCancelPath =
   | { path: 'spendOffer'; offerOutpoint: string }
   | {
       path: 'refuse'
-      reason: 'offer-not-held' | 'offer-invalid' | 'listing-not-active'
+      reason:
+        | 'listing-never-sent'
+        | 'offer-not-held'
+        | 'offer-invalid'
+        | 'listing-not-active'
     }
 
 export function chooseMarketListingPath(args: {
@@ -109,10 +113,13 @@ export function chooseMarketListingPath(args: {
 
 export function chooseMarketCancelPath(args: {
   offerOutpoint: string
+  /** The signed listing was refused before any miner took it: no offer exists. */
+  neverSent: boolean
   held: boolean
   valid: boolean
   active: boolean
 }): MarketCancelPath {
+  if (args.neverSent) return { path: 'refuse', reason: 'listing-never-sent' }
   if (!args.held) return { path: 'refuse', reason: 'offer-not-held' }
   if (!args.valid) return { path: 'refuse', reason: 'offer-invalid' }
   if (!args.active) return { path: 'refuse', reason: 'listing-not-active' }

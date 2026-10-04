@@ -797,6 +797,8 @@ export async function reportLateMinerSubmitFailure(args: {
     if (record && record.status !== "FAILED_REJECTED") {
       markTxFailed(record.id, "ARC_REJECTED", compactFailureLabel(args.reason));
     }
+    const { markMarketListingNeverSent } = await import("./marketListing");
+    markMarketListingNeverSent({ txid, reason: compactFailureLabel(args.reason) });
   }
   if (!noteOutboundSendBroadcastFailed(args)) return;
   if (args.toast === false) return;

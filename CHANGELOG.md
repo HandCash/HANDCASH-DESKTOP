@@ -1,10 +1,20 @@
 # Changelog
 
+## [1.3.432] - 2026-10-04
+
+### Fixed
+
+- Listing a freshly minted item no longer fails with "Payment was signed but does not verify — nothing was sent". This device's script engine checked already-verified ancestors at block height 0, which applies pre-Genesis rules. Under those rules the MAP metadata after a Mint Studio item's P2PKH (an executed `OP_RETURN`), or any inscription over 10 KB, fails. Those ancestors are now checked at a recent height under today's rules.
+- The market index accepts an item whose lock carries `OP_RETURN` MAP metadata after its P2PKH, instead of refusing the listing with `invalid-previous-item-tip`.
+- A listing that no miner ever took is retired instead of being offered for Cancel. Cancelling one used to fail with "inputs[0] … appears to have been spent". The item stays in your wallet and can be listed again, and triage counts these listings.
+
 ## [1.3.431] - 2026-10-04
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- A token send or burn no longer fails with "The inputBEEF parameter must be valid Beef when factoring options.trustSelf". The token-ancestry fill pulled the funding parent of the spent tip into the package. When that parent was unconfirmed change, it arrived with none of its own parents, and the Toolbox refuses the whole package if any body cannot reach a proof. The send now folds in the unconfirmed parents this wallet signed. It then drops whatever still cannot reach a proof, and the Toolbox reads those inputs from storage. If a chain tracker still refuses a proof root, the send signs once more from storage-held tips and logs it.
+- A send whose tip was claimed from its transaction, but listed without its BRC-162 lock, reads the lock from the transaction this wallet signed. A claimed 800-unit tip no longer ends "Need 500 units; only 0 available".
+- Each token tip shown from remittance metadata alone logs its listed script state once. Triage counts those states, counts `inputBEEF` framing, and traces every planned send that failed before it had a txid.
 
 ## [1.3.430] - 2026-10-04
 

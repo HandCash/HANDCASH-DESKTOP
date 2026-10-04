@@ -531,7 +531,8 @@ const MARKET_LISTING = `stateDiagram-v2
     Abort + restore tip until the cheque is registered.
     BROADCASTED = registered + sealed; miners run
     in the background (durable retry, late reject).
-    Never abort after BROADCASTED.
+    Never abort after BROADCASTED. A late reject
+    retires the listing auth (never-sent): no Cancel.
   end note
   note right of committed
     MarketReceiptDeliveryPath:

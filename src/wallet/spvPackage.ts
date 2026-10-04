@@ -8,9 +8,16 @@
  *
  * A chain of change payments re-verifies the same unmined parents on every
  * send, so a tx already verified here stands in for its own subtree on the
- * next package: it gets a height-0 single-leaf proof whose root is its own
- * txid, and the tracker below vouches for exactly those roots. Genesis is the
- * only real block at height 0 and its root is never a wallet txid.
+ * next package: it gets a single-leaf proof whose root is its own txid, and
+ * the tracker below vouches for exactly those roots. A single-leaf root is a
+ * coinbase txid, never a wallet txid, so no real block can collide.
+ *
+ * The script engine reads the UTXO height from that proof and picks the
+ * consensus rules for it. Height 0 is pre-Genesis: an executed `OP_RETURN`
+ * (the MAP suffix of a minted 1Sat) and any script over 10 KB fail there, so
+ * a fresh mint could never be listed. The stand-in sits just deep enough for
+ * coinbase maturity below the tracker's tip, under today's rules — where an
+ * unmined source is evaluated too.
  */
 import { Beef, MerklePath, type ChainTracker, type Transaction } from '@bsv/sdk'
 import {
@@ -20,13 +27,26 @@ import {
 } from './kernel/spvVerdict'
 
 const VERIFIED_MAX = 5_000
-const VERIFIED_HEIGHT = 0
+/** A single-leaf proof is a coinbase, which the SDK spends only 100 blocks deep. */
+const COINBASE_MATURITY = 100
+/** `@bsv/verifast` POST_CHRONICLE_HEIGHT_FALLBACK — not exported by the package. */
+const POST_CHRONICLE_HEIGHT = 943_816
 const verified = new Set<string>()
 
-function trackerVouchingVerified(inner: ChainTracker): ChainTracker {
+async function standInHeight(tracker: ChainTracker): Promise<number> {
+  try {
+    const tip = await tracker.currentHeight()
+    if (Number.isSafeInteger(tip) && tip >= COINBASE_MATURITY) return tip - COINBASE_MATURITY
+  } catch {
+    // An unreachable tip fails the maturity check in verify as `incomplete`.
+  }
+  return POST_CHRONICLE_HEIGHT
+}
+
+function trackerVouchingVerified(inner: ChainTracker, standIn: number): ChainTracker {
   return {
     isValidRootForHeight: async (root, height) =>
-      (height === VERIFIED_HEIGHT && verified.has(root.toLowerCase())) ||
+      (height === standIn && verified.has(root.toLowerCase())) ||
       inner.isValidRootForHeight(root, height),
     currentHeight: () => inner.currentHeight(),
   }
@@ -54,7 +74,7 @@ function rememberVerified(txids: Iterable<string>): void {
 }
 
 /** Unmined txs of the package, subject first; seals ones already verified. */
-function unminedGraph(subject: Transaction): string[] {
+function unminedGraph(subject: Transaction, standIn: number): string[] {
   const unmined: string[] = []
   const seen = new Set<Transaction>()
   const queue: Transaction[] = [subject]
@@ -65,7 +85,7 @@ function unminedGraph(subject: Transaction): string[] {
     if (typeof tx.merklePath === 'object') continue
     const id = tx.id('hex')
     if (tx !== subject && verified.has(id)) {
-      tx.merklePath = MerklePath.fromCoinbaseTxidAndHeight(id, VERIFIED_HEIGHT)
+      tx.merklePath = MerklePath.fromCoinbaseTxidAndHeight(id, standIn)
       continue
     }
     unmined.push(id)
@@ -93,10 +113,11 @@ export async function verifySignedPackage(
     return { kind: 'incomplete', reason: 'package does not carry this tx' }
   }
   const started = Date.now()
-  const unmined = unminedGraph(subject)
+  const standIn = await standInHeight(tracker)
+  const unmined = unminedGraph(subject, standIn)
   let verdict: SpvVerdict
   try {
-    verdict = (await subject.verify(trackerVouchingVerified(tracker)))
+    verdict = (await subject.verify(trackerVouchingVerified(tracker, standIn)))
       ? { kind: 'verified' }
       : SPV_SCRIPT_FAILED
   } catch (err) {

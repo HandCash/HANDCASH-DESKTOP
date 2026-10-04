@@ -63,6 +63,7 @@ import {
   type ActivityEntry,
 } from './appActivity'
 import { signedChequeAtomic } from './signedChequeArchive'
+import { getTxByTxid } from './txStore'
 import { getCachedCollectables } from './collectables'
 import { rememberGhostTx } from './ghostTxSuppress'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -2914,7 +2915,9 @@ async function createCancelMarketListingAdvertExclusive(args: {
   const inBasket = held.outputs.some(
     (output) => normalizeOutpoint(output.outpoint) === normalizeOutpoint(listing.offerOutpoint)
   )
-  const offerHeld = inBasket || signedListingCarriesOffer(listing)
+  const offerTxid = listing.offerOutpoint.slice(0, 64).toLowerCase()
+  const neverSent = signedListingNeverSent(offerTxid)
+  const offerHeld = !neverSent && (inBasket || signedListingCarriesOffer(listing))
   if (!inBasket && offerHeld) {
     console.info(
       `[market] cancel offer ${listing.offerOutpoint.slice(0, 18)}… missing from market-offers — proven by its signed listing`,
@@ -2922,10 +2925,18 @@ async function createCancelMarketListingAdvertExclusive(args: {
   }
   const path = chooseMarketCancelPath({
     offerOutpoint: listing.offerOutpoint,
+    neverSent,
     held: offerHeld,
     valid,
     active: current.state === 'active',
   })
+  if (path.path === 'refuse' && path.reason === 'listing-never-sent') {
+    markMarketListingNeverSent({ txid: offerTxid, reason: 'Listing never reached the network' })
+    throw new MarketListingError(
+      'MARKET_CANCEL_REFUSED',
+      'This listing never reached the network, so there is nothing to cancel — the item is still in your wallet.',
+    )
+  }
   if (path.path === 'refuse') {
     throw new MarketListingError('MARKET_CANCEL_REFUSED', path.reason)
   }
@@ -2933,7 +2944,6 @@ async function createCancelMarketListingAdvertExclusive(args: {
   chart.send({ type: 'CANCEL', path })
   let reference: string | null = null
   try {
-    const offerTxid = listing.offerOutpoint.slice(0, 64)
     const inputBEEF = (await getBeefForTxidCached(active, offerTxid, { needProof: true })).toBinary()
     const created = await active.wallet.createAction({
       description: 'Cancel BRC-48 market offer',
@@ -3141,6 +3151,32 @@ export function markMarketListingPublishFailed(args: {
   }
   setMarketListingPublish(auth, { kind: 'unpublished', reason: reason.slice(0, 160), at: Date.now() })
   noteMarketListingUnpublished({ txid: args.txid, reason })
+}
+
+/** No miner will take this signed listing: it was refused here or rejected. */
+function signedListingNeverSent(txid: string): boolean {
+  return getTxByTxid(txid)?.status === 'FAILED_REJECTED'
+}
+
+/**
+ * A signed listing that no miner took put no offer on chain, so the item
+ * never left. Retire the auth so no surface offers Cancel or re-publish.
+ */
+export function markMarketListingNeverSent(args: { txid?: string; reason: string }): boolean {
+  const auth = authorizationForListingTxid(args.txid)
+  if (!auth || (auth.state !== 'active' && auth.state !== 'reserved')) return false
+  updateMarketListingAuthorization({
+    outpoint: auth.outpoint,
+    nonce: auth.nonce,
+    from: ['active', 'reserved'],
+    to: 'failed',
+    reason: 'never-sent',
+  })
+  failMarketListingActivity({ txid: args.txid, reason: args.reason })
+  console.warn(
+    `[market-list] never sent txid=${args.txid?.trim().toLowerCase()} — listing retired, item kept`,
+  )
+  return true
 }
 
 /** The index accepted this listing (first publish or a re-publish). */

@@ -123,6 +123,36 @@ describe('invalidateMarketListingsForSpentOutpoints', () => {
     )
   })
 
+  it('retires a listing whose signed cheque never reached a miner', async () => {
+    const underscored = `${TX}_0`
+    store.set(
+      authKey(),
+      JSON.stringify([
+        {
+          key: `${underscored}:n5`,
+          outpoint: underscored,
+          nonce: 'n5',
+          seller: '02' + '11'.repeat(32),
+          origin: `${TX}_0`,
+          provenanceHash: '34'.repeat(32),
+          priceSats: 3_000,
+          state: 'active',
+          publish: { kind: 'unpublished', reason: 'invalid-previous-item-tip', at: 1 },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]),
+    )
+    const market = await import('./marketListing')
+
+    expect(market.markMarketListingNeverSent({ txid: TX, reason: 'does not verify' })).toBe(true)
+    const auth = market.getMarketListingAuthorization({ outpoint: underscored })
+    expect(auth?.state).toBe('failed')
+    expect(auth?.reason).toBe('never-sent')
+    expect(market.marketListingMark(auth)).toBeNull()
+    expect(market.markMarketListingNeverSent({ txid: TX, reason: 'again' })).toBe(false)
+  })
+
   it('keeps listing authorizations isolated across account rebinds', async () => {
     const underscored = `${TX}_3`
     const record = {
