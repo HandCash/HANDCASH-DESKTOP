@@ -10,6 +10,14 @@ vi.mock('./sentItemGuard', async (importOriginal) => ({
   getSentItemRecord: () => null,
 }))
 
+// The background genesis walk fails offline and logs after the last test,
+// which races the worker closing. Seeding never waits on it.
+vi.mock('./oneSatGenesisProof', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./oneSatGenesisProof')>()),
+  proveGenesisLineage: () => new Promise<never>(() => {}),
+  walkGenesisLineage: () => new Promise<never>(() => {}),
+}))
+
 vi.mock('./legacyScan', () => ({
   scanLegacyAddress: vi.fn(async () => ({
     address: '1HandCashTestAddressAAAAAAAAAAAAAA',
