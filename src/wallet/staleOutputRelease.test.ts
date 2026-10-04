@@ -18,6 +18,11 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
+const fileUnstoredSendTips = vi.fn(() => ({ tokens: 0, items: 0 }))
+vi.mock('./unstoredSendTips', () => ({
+  fileUnstoredSendTips: (...a: unknown[]) => fileUnstoredSendTips(...(a as [])),
+}))
+
 const txExistsOnChain = vi.fn(async () => null as boolean | null)
 const spentStatusOfOutpoint = vi.fn(async () => 'unknown' as const)
 
@@ -1499,6 +1504,29 @@ describe('healAppHeldChange', () => {
         },
       },
     })
+  })
+
+  it('files the tips of a broadcast tx local storage never recorded', async () => {
+    const { P2PKH, Transaction } = await import('@bsv/sdk')
+    const body = new Transaction()
+    body.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock('1BitcoinEaterAddressDontSendf59kuE') })
+    const txid = body.id('hex')
+    findTransactions.mockResolvedValue([])
+    fileUnstoredSendTips.mockClear()
+
+    await pinBroadcastLocalTx(txid, body.toBinary())
+
+    expect(fileUnstoredSendTips).toHaveBeenCalledWith(txid, body.toBinary(), '1abc')
+  })
+
+  it('files nothing when the pin found the local row', async () => {
+    const txid = '8e'.repeat(32)
+    findTransactions.mockResolvedValue([{ transactionId: 31, txid, status: 'nosend' }])
+    fileUnstoredSendTips.mockClear()
+
+    await pinBroadcastLocalTx(txid, [1, 2, 3])
+
+    expect(fileUnstoredSendTips).not.toHaveBeenCalled()
   })
 
   it('frees change held behind a nosend parent the network already took', async () => {

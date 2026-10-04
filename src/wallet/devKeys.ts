@@ -506,6 +506,7 @@ async function openDevWallet(runtime: WalletRuntime, n: number): Promise<WalletI
         storage,
         services: active.services,
         scriptVerifier: walletCryptoBackend(active.chain),
+        actionBatchMode: 'legacy',
       })
       await storage.addWalletStorageProvider(new StorageClient(server, config.storageUrl))
       await storage.makeAvailable()

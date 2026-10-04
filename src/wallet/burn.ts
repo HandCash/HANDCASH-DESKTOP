@@ -440,11 +440,6 @@ async function executeBurnPlan(args: {
         inputs: args.plan.inputs,
       })
       rememberBeefTree(signed.atomicBeef, signed.txid)
-      try {
-        await args.active.wallet.actionBatch.abort()
-      } catch {
-        // Only unused funding reservations remain after signAction.
-      }
       return { txid: signed.txid }
     },
     broadcast: async () => {

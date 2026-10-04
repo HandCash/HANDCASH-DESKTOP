@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.428] - 2026-10-04
+
+### Fixed
+
+- A token, item or burn sent once could not be spent again — on the sender
+  (its change) or, after their own first send, on the receiver. Toolbox 2.13
+  stages a `noSend` action with ≤ 8 inputs in an in-memory action batch that
+  reaches storage only through `sendWith`; every signed send then called
+  `actionBatch.abort()`, which discarded the signed action, its token change,
+  its BSV change and the spent marks on its inputs, while the transaction was
+  still broadcast. The session wallet now runs the Toolbox in `legacy` batch
+  mode, so each signed `noSend` action is written as a `nosend` row the Arcade
+  pin seals, and the post-sign aborts are gone.
+- The token and item change of a send storage never recorded is filed with the
+  holdings reconcile, which proves it unspent and claims it from the
+  transaction — at the Arcade pin, and from the signed-cheque archive when
+  Settings → Wallet health heal runs. BSV change of those sends cannot be
+  re-derived: its key lived only in the discarded batch.
+
+### Added
+
+- Triage reports `broadcast.unstoredSends`: sends pinned after broadcast with
+  no local transaction row.
+
 ## [1.3.427] - 2026-10-04
 
 ### Changed

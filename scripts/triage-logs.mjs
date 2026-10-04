@@ -2304,6 +2304,9 @@ const MINER_OUTCOMES = [
   ['rejectReleased', /^\[minerSubmit\] hard reject — releasing seal[^0-9a-f]*([0-9a-f]{12})/],
   ['offline', /^\[minerSubmit\] offline — signed cheque queued\s+([0-9a-f]{12})/],
   ['pinDidNotFree', /^\[minerSubmit\] post-Arcade pin did not free change\s+([0-9a-f]{12})/],
+  // Broadcast a transaction local storage never held: its change and spent
+  // marks are gone (Toolbox auto action batch dropped the signed `noSend`).
+  ['pinNoLocalRow', /^\[stale-output\] pin found no local row for ([0-9a-f]{12})/],
   ['registered', /^\[signed-send\] registered\s+([0-9a-f]{12})/],
   ['funnelDeferred', /^\[brc100\] signed cheque funnel deferred\s+([0-9a-f]{12})/],
   ['postSignDeferred', /^\[brc100\] post-sign cheque\/seal deferred\s+([0-9a-f]{12})/],
@@ -2412,6 +2415,9 @@ function broadcastFacts(events) {
     // Refused before any miner saw it: a coin nobody could prove unspent, or
     // a package that fails local SPV. Nothing left the device.
     gated,
+    // Pinned after broadcast with no local transaction row: the next spend of
+    // its change (token, item or BSV) fails on this device.
+    unstoredSends: rows.filter((row) => row.outcomes.includes('pinNoLocalRow')).map((row) => row.txid),
     lastOutcome,
     everSeen,
     unlanded,

@@ -861,12 +861,6 @@ export async function sendBsv21Tokens(args: {
       rememberBeefTree(atomic, txid)
       rememberBeefTree(peerAtomic, txid)
 
-      try {
-        await wallet.wallet.actionBatch.abort()
-      } catch {
-        /* unused funding reservations only */
-      }
-
       const { registerSignedSend, startSignedSendPropagation } =
         await import('../signedSendLifecycle')
       const signedSend = await registerSignedSend({

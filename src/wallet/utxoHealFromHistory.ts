@@ -23,6 +23,7 @@ import {
   txHadArcadeSubmitContact,
 } from "./arcadeSubmitGuard";
 import { runChangeHeal, type ChangeHealStats } from "./chainedChangeHeal";
+import { fileUnstoredSendTips } from "./unstoredSendTips";
 import { logDiag, snapshotWalletBalance } from "./diagnosticLog";
 import { txExistsOnChain } from "./legacyScan";
 import { bumpBalanceAfterHeal} from "./session";
@@ -35,6 +36,7 @@ import {
 import {
   keepChangeOfSignedTx,
   listFailedLocalTxids,
+  localTxRecorded,
   listPendingLocalChangeTxids,
   reconcileKnownUtxosByEvidence,
   reclaimOutputsSealedByDeadTxs,
@@ -338,6 +340,10 @@ async function processTxidBatch(
     }
     await sealSpentInputsOfSignedTx(txid, atomic);
     owner.guard();
+    if ((await localTxRecorded(txid)) === false) {
+      owner.guard();
+      fileUnstoredSendTips(txid, atomic, owner.runtime.instance.address);
+    }
     // The archived template is the body that created this change — heal can
     // rebuild a script-less row from it instead of refusing the coin.
     changeKept += await keepChangeOfSignedTx(txid, undefined, true, atomic);

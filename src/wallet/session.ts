@@ -7,6 +7,7 @@ import { installArcadeV2Services } from './arcadeV2'
 import { installInternalizeMinerDeferral } from './internalizeMinerDeferral'
 import { walletCryptoBackend } from './cryptoBackend'
 import { traceSlowToolboxSteps } from './toolboxTelemetry'
+import { persistNoSendActions } from './toolboxActionBatch'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -407,6 +408,7 @@ async function buildWallet(args: WalletBootArgs, databaseName: string): Promise<
     scriptVerifier: walletCryptoBackend(args.chain),
   })
   traceSlowToolboxSteps(setup.wallet)
+  persistNoSendActions(setup.wallet)
 
   installFallbackChainTracker(setup.services as Services, args.chain)
   // Arcade V2: POST /tx success completes the send. No SSE / callback webhook.

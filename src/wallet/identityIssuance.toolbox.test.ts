@@ -51,6 +51,7 @@ vi.mock('./beefCache', () => ({
 }))
 
 import { withImmediateAppBroadcast } from './appCreateAction'
+import { persistNoSendActions } from './toolboxActionBatch'
 import {
   bapAliasScript,
   bapIdFor,
@@ -122,6 +123,7 @@ async function fundedWallet(): Promise<Harness> {
     rootKeyHex: root.toHex(),
     databaseName: 'issuance',
   } as Parameters<typeof SetupClient.createWalletIdb>[0])
+  persistNoSendActions(setup.wallet)
   const services = setup.services as unknown as Record<string, unknown>
   services.getChainTracker = async () => ({
     isValidRootForHeight: async () => true,

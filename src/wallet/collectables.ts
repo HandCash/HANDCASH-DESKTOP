@@ -4437,11 +4437,6 @@ export async function sendCollectable(args: {
             return failSend(new Error('Send completed without signed BEEF'))
           }
           rememberBeefTree(atomicBeef, txid)
-          try {
-            await wallet.wallet.actionBatch.abort()
-          } catch {
-            /* unused funding reservations only */
-          }
           const {
             registerSignedSend,
             startSignedSendPropagation,
@@ -5076,11 +5071,6 @@ export async function sendCollectables(
             throw new Error('Send completed without signed BEEF')
           }
           rememberBeefTree(atomicBeef, txid)
-          try {
-            await wallet.wallet.actionBatch.abort()
-          } catch {
-            /* unused funding reservations only */
-          }
           const {
             registerSignedSend,
             startSignedSendPropagation,

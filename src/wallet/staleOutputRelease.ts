@@ -867,7 +867,8 @@ export async function pinBroadcastLocalTx(
 ): Promise<boolean> {
   const id = normalizedTxidOrNull(txid);
   if (!id) return false;
-  if (!getActiveWallet()?.wallet?.storage?.runAsStorageProvider) return false;
+  const active = getActiveWallet();
+  if (!active?.wallet?.storage?.runAsStorageProvider) return false;
 
   try {
     let lookup = await lookupLocalTx(id);
@@ -889,6 +890,10 @@ export async function pinBroadcastLocalTx(
         } for ${id.slice(0, 12)} — kept ${kept} change output(s)`
       );
       if (lookup.kind === "unreadable") rememberUnpinnedAppHeldTx(id);
+      if (lookup.kind === "missing" && signedBody?.length && active.address) {
+        const { fileUnstoredSendTips } = await import("./unstoredSendTips");
+        fileUnstoredSendTips(id, signedBody, active.address);
+      }
       return kept > 0;
     }
     const looked: LocalTxRowRef = {
@@ -1141,6 +1146,14 @@ async function lookupLocalTx(id: string): Promise<LocalTxLookup> {
   return storage.runAsStorageProvider(async (activeSp) =>
     lookupLocalTxOnProvider(activeSp as unknown as LocalStorage, id)
   ) as Promise<LocalTxLookup>;
+}
+
+/** Whether local storage holds a row for this txid; `null` when it could not answer. */
+export async function localTxRecorded(txid: string): Promise<boolean | null> {
+  const id = normalizedTxidOrNull(txid);
+  if (!id) return null;
+  const looked = await lookupLocalTx(id);
+  return looked.kind === "unreadable" ? null : looked.kind === "row";
 }
 
 async function lookupLocalTxRow(id: string): Promise<LocalTxRowRef | null> {

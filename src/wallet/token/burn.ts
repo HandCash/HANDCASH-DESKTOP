@@ -444,7 +444,6 @@ export async function burnBsv21Tokens(args: {
         atomic = signedAtomic
         burnTxid = signedTxid
         rememberBeefTree(atomic, signedTxid)
-        await active.wallet.actionBatch.abort().catch(() => undefined)
         return { txid: signedTxid }
       },
 

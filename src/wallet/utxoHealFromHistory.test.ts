@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => {
   listFailedLocalTxids: vi.fn(async () => [] as string[]),
   listPendingLocalChangeTxids: vi.fn(async () => [] as string[]),
   pinBroadcastLocalTx: vi.fn(async () => true),
+  localTxRecorded: vi.fn(async () => true as boolean | null),
+  fileUnstoredSendTips: vi.fn(() => ({ tokens: 0, items: 0 })),
   hasArcadeSubmitContacts: vi.fn(() => false),
   txHadArcadeSubmitContact: vi.fn(() => false),
   reconcileKnownUtxosByEvidence: vi.fn(async () => ({
@@ -105,6 +107,11 @@ vi.mock('./staleOutputRelease', () => ({
     mocks.reclaimOutputsSealedByDeadTxs(...args),
   pinBroadcastLocalTx: (...args: unknown[]) =>
     mocks.pinBroadcastLocalTx(...args),
+  localTxRecorded: (txid: string) => mocks.localTxRecorded(txid),
+}))
+
+vi.mock('./unstoredSendTips', () => ({
+  fileUnstoredSendTips: (...args: unknown[]) => mocks.fileUnstoredSendTips(...args),
 }))
 
 vi.mock('./arcadeSubmitGuard', () => ({
@@ -151,6 +158,7 @@ const TX = '9ca339904b54368bf32503f0903a1f42e06009bebb19ce97b6fd6e1ce06c6cd1'
 /** Existing assertions read the raw durable key; the setup identity keeps it hermetic. */
 const ACCOUNT_A = {
   chain: 'main',
+  address: '1AccountAAddress',
   identityKey: 'vitest-primary-identity',
   accountIndex: 0,
 } as unknown as ActiveWallet
@@ -272,6 +280,23 @@ describe('healUtxoFromActivityHistory', () => {
     })
     expect(result.recoveredSats).toBe(2614)
     expect(formatUtxoHealResult(result)).toBe('Recovered 2,614 sats')
+  })
+
+  it('files the token and item tips of a signed send local storage never recorded', async () => {
+    mocks.localTxRecorded.mockResolvedValue(false)
+
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    expect(mocks.fileUnstoredSendTips).toHaveBeenCalledWith(TX, [1, 2, 3], '1AccountAAddress')
+  })
+
+  it('leaves recorded and unreadable sends to the change heal', async () => {
+    mocks.localTxRecorded.mockResolvedValueOnce(true)
+    await runUtxoHealPass({ source: 'manual', force: true })
+    mocks.localTxRecorded.mockResolvedValueOnce(null)
+    await runUtxoHealPass({ source: 'manual', force: true })
+
+    expect(mocks.fileUnstoredSendTips).not.toHaveBeenCalled()
   })
 
   it('recovers signed change before auditing old output history', async () => {
