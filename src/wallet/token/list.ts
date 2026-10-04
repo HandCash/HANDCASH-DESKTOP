@@ -2,6 +2,7 @@ import { issuerMetadataFromScript } from '../issuerMetadata'
 import { retainedIssuerMetadata } from '../issuerAttribution'
 import { proveHeldTokenTip, rememberProvenTokenTips, tokenAttestationGap, tokenIssuerAttested } from './lineage'
 import { judgeTokenImport } from './importProof'
+import { formatTokenLedger, tokenLedger } from './ledger'
 import { getActiveWallet } from '../session'
 import { storageRegistry } from '../../storage/registry'
 
@@ -1480,11 +1481,27 @@ async function listFungiblesNow(
     // content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
     void attestHeldTokenLineages(wallet, merged)
+    void logTokenLedgers(merged)
     return merged
   } catch (err) {
     console.warn('[bsv21] list failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.
     return getCachedFungibles()
+  }
+}
+
+/** Last ledger line per token; a line is logged again only when it changes. */
+const loggedLedgers = new Map<string, string>()
+
+async function logTokenLedgers(rows: FungibleToken[]): Promise<void> {
+  const { exportAllActivity } = await import('../appActivity')
+  const activity = exportAllActivity()
+  for (const token of rows) {
+    const line = formatTokenLedger(tokenLedger(token, heldTipsOf(token), activity))
+    const key = tokenKey(token)
+    if (loggedLedgers.get(key) === line) continue
+    loggedLedgers.set(key, line)
+    console.info(line)
   }
 }
 

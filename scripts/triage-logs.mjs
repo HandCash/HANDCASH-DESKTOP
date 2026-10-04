@@ -292,6 +292,7 @@ function sessionFacts(header, events) {
   const nftImport = nftImportFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
   const tokenAttestation = tokenAttestationFacts(events)
+  const tokenLedger = tokenLedgerFacts(events)
   const appFlow = appFlowFacts(events)
   const toolboxSteps = toolboxStepFacts(events)
   const notifications = notificationFacts(events)
@@ -417,6 +418,8 @@ function sessionFacts(header, events) {
     // they lack (no-genesis / unbound / remittance-only / unsigned /
     // unsigned-mint), the token on each, plus heals.
     tokenAttestation,
+    // Each token card split by tip kind beside its Activity net.
+    tokenLedger,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
@@ -1058,6 +1061,50 @@ function tokenAttestationFacts(events) {
     }
   }
   return { census, censusLines, offShelf, heals, tipsHealed: healedTips.size }
+}
+
+const TOKEN_LEDGER_RE =
+  /^\[bsv21\] ledger (\S+) ([0-9a-f]{12}) holds (\d+) in (\d+) tip\(s\) — brc162 (\d+)\/(\d+), legacy-json (\d+)\/(\d+), remittance (\d+)\/(\d+); history in (\d+) out (\d+) over (\d+) row\(s\)(?:; tips (.*))?$/
+
+/**
+ * Each token card beside the history that should explain it: the last ledger
+ * line per token, split by tip kind (BRC-162 = spendable by send, legacy JSON =
+ * read-only, remittance = amount from row metadata alone), the Activity net,
+ * and what the card shows beyond that net. Amounts stay strings — they exceed
+ * 2^53.
+ */
+function tokenLedgerFacts(events) {
+  const last = new Map()
+  for (const e of events) {
+    const m = TOKEN_LEDGER_RE.exec(e.text)
+    if (m) last.set(m[2], m)
+  }
+  const tokens = [...last.values()].map((m) => {
+    const [held, brc162, legacy, remittance, historyIn, historyOut] = [3, 5, 7, 9, 11, 12].map((i) => BigInt(m[i]))
+    const historyNet = historyIn - historyOut
+    return {
+      sym: m[1],
+      tokenId: m[2],
+      held: String(held),
+      tips: Number(m[4]),
+      spendable: String(brc162),
+      byKind: {
+        brc162: { amt: m[5], tips: Number(m[6]) },
+        'legacy-json': { amt: m[7], tips: Number(m[8]) },
+        remittance: { amt: m[9], tips: Number(m[10]) },
+      },
+      historyNet: String(historyNet),
+      historyRows: Number(m[13]),
+      heldBeyondHistory: String(held > historyNet ? held - historyNet : 0n),
+      unspendable: String(legacy + remittance),
+      tipList: m[14] ? m[14].split(' ') : [],
+    }
+  })
+  return {
+    tokens,
+    beyondHistory: tokens.filter((t) => t.heldBeyondHistory !== '0').length,
+    withUnspendable: tokens.filter((t) => t.unspendable !== '0').length,
+  }
 }
 
 function tokenDepositFacts(events) {
@@ -2757,6 +2804,29 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const tokenCards = latest.tokenLedger
+  const tokenCardQuestions =
+    tokenCards?.beyondHistory > 0 || tokenCards?.withUnspendable > 0
+      ? {
+          token_balance_beyond_history: {
+            type: 'choice',
+            instructions:
+              'A token card shows more than its history explains, or holds tips send cannot spend. `latest.tokenLedger.tokens` lists each card: `held` is the card total, `byKind` splits it — `brc162` value locks are what send spends (`spendable`), `legacy-json` tips are read-only inscriptions, `remittance` tips are plain-script rows whose amount comes from row metadata alone, kept because the card held that outpoint before. `historyNet` is received minus sent/burned in this wallet\'s Activity for the token, `heldBeyondHistory` is `held` minus that net (0 when history covers it), `tipList` names the largest tips as `outpoint=amount:kind`. Amounts are raw units. What does the excess come from?',
+            criteria: {
+              remittance_claims:
+                'For the token with the largest `heldBeyondHistory`, `remittance` amount is at least that excess: the card counts metadata claims on plain-script rows the chain does not carry as tokens.',
+              legacy_read_only:
+                'For that token, `legacy-json` amount is at least the excess and `remittance` is smaller: real legacy inscriptions the wallet shows but cannot send.',
+              history_incomplete:
+                'For that token the excess is carried by `brc162` tips: spendable value locks that reached the wallet without an Activity row (reconcile restore, claim, chain ingest), so the history is short, not the balance.',
+              unspendable_only:
+                'Every token has `heldBeyondHistory` 0 but some hold `legacy-json` or `remittance` tips: the balance matches history, part of it is simply not spendable.',
+              unclear: 'The ledger does not separate the excess by kind.',
+            },
+          },
+        }
+      : {}
+
   const flow = latest.appFlow
   const appFlowQuestions =
     flow && flow.steps > 0
@@ -2901,6 +2971,7 @@ function forensicQuestions(latest) {
     ...ledgerQuestions,
     ...depositQuestions,
     ...attestationQuestions,
+    ...tokenCardQuestions,
     ...appFlowQuestions,
     ...nftQuestions,
     ...notifyQuestions,
@@ -3245,6 +3316,23 @@ function report(state, answers) {
         .join(', ') || 'none'
     console.log(`  heals: bound ${fmt(att.heals.bound)} · refused ${fmt(att.heals.refused)} · ${att.tipsHealed} tip(s)`)
     if (answers.token_off_issuer_shelf) choiceBlock('Token off issuer shelf', answers.token_off_issuer_shelf)
+  }
+
+  const cards = latest.tokenLedger
+  if (cards?.tokens.length) {
+    console.log('\nToken balance vs history (code-counted, raw units):')
+    for (const t of cards.tokens) {
+      const kinds = Object.entries(t.byKind)
+        .map(([k, v]) => `${k} ${v.amt}/${v.tips}`)
+        .join(' · ')
+      console.log(
+        `  ${t.sym} ${t.tokenId} · holds ${t.held} in ${t.tips} tip(s) (${kinds}) · ` +
+          `history net ${t.historyNet} over ${t.historyRows} row(s) · beyond history ${t.heldBeyondHistory} · spendable ${t.spendable}`,
+      )
+    }
+    if (answers.token_balance_beyond_history) {
+      choiceBlock('Token balance beyond history', answers.token_balance_beyond_history)
+    }
   }
 
   const flow = latest.appFlow

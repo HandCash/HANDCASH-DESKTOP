@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.427] - 2026-10-04
+
+### Changed
+
+- **Each token card logs what its balance is made of.** A card can show more than its history explains. The REF card showed a balance while a REF send found no spendable tips. A card adds up three kinds of tip: BRC-162 value locks, which send can spend; legacy JSON tips, which are read-only; and remittance rows, plain scripts whose amount comes from row metadata alone. The wallet now logs one `[bsv21] ledger` line per token whenever it changes. The line gives the total, the split by kind, the largest tips, and the token's Activity received minus sent. `npm run triage` reports each card beside its history and what the history does not cover, and Jev judges whether the excess is metadata claims, read-only legacy tips, or real tips that arrived without an Activity row.
+- The collectable seed tests stub the background lineage walk, so it can no longer log while the test worker shuts down. That race failed the 1.3.426 Linux release run once.
+
 ## [1.3.426] - 2026-10-04
 
 ### Fixed
