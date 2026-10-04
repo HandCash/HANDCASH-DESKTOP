@@ -359,9 +359,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
 
   useEffect(() => {
     const pick = (list: FungibleToken[]) =>
-      list.find(
-        (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId)
-      ) ?? null
+      list.find((t) => t.tokenId === tokenId) ?? null
     const unsubscribe = subscribeFungibles((list) => setToken(pick(list)))
     let cancelled = false
     void listFungibles().then((list) => {
@@ -428,15 +426,12 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   } catch {
     typedUnits = null
   }
-  const multiDeploy = (token.tokenIds?.length ?? 1) > 1
   const refusal =
     token.spendKind === 'cosigned'
       ? 'This token requires a cosigner, so it cannot be burned here.'
       : token.spendKind === 'mixed'
         ? 'This balance mixes plain and cosigned outputs — separate them first.'
-        : multiDeploy
-          ? 'This balance combines several deploy IDs. Burn each deploy separately.'
-          : null
+        : null
   const tokenChange = typedUnits != null && typedUnits < heldUnits
   const preview = snapshot.context.preview
   // A real plan selects real outputs, so it replaces the estimate outright.

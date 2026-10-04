@@ -41,11 +41,7 @@ function tokenIconUrl(iconOutpoint: string | undefined | null): string | undefin
 export function viewActivityItem(item: ActivityItem): ActivityItem {
   if (item.tokenId?.trim()) {
     const tokenId = item.tokenId.trim().toLowerCase()
-    const held = getCachedFungibles().find(
-      (t) =>
-        t.tokenId === tokenId ||
-        t.tokenIds?.some((x) => x.toLowerCase() === tokenId),
-    )
+    const held = getCachedFungibles().find((t) => t.tokenId === tokenId)
     if (held) {
       const icon = held.icon || item.icon
       return {

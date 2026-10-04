@@ -18,10 +18,10 @@ export function activityForFungible(
   entries: readonly ActivityEntry[],
 ): ActivityEntry[] {
   if (!token) return []
-  const ids = new Set([token.tokenId, ...(token.tokenIds ?? [])].map((id) => id.trim().toLowerCase()))
+  const want = token.tokenId.trim().toLowerCase()
   return entries.filter((entry) => {
     const id = entry.item?.tokenId?.trim().toLowerCase()
-    return Boolean(id && ids.has(id))
+    return Boolean(id && id === want)
   })
 }
 

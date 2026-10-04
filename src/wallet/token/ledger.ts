@@ -37,7 +37,7 @@ function units(raw: string | undefined): bigint {
 }
 
 export function tokenLedger(
-  token: Pick<FungibleToken, 'tokenId' | 'tokenIds' | 'sym'>,
+  token: Pick<FungibleToken, 'tokenId' | 'sym'>,
   tips: ReadonlyArray<Pick<Bsv21Utxo, 'outpoint' | 'amt' | 'encoding'>>,
   activity: readonly ActivityEntry[],
 ): TokenLedger {
@@ -56,15 +56,13 @@ export function tokenLedger(
     held += amt
     shown.push({ outpoint: tip.outpoint, amt, kind })
   }
-  const ids = new Set(
-    [token.tokenId, ...(token.tokenIds ?? [])].map((id) => id.trim().toLowerCase()),
-  )
+  const want = token.tokenId.trim().toLowerCase()
   let historyIn = 0n
   let historyOut = 0n
   let historyRows = 0
   for (const row of activity) {
     const id = row.item?.tokenId?.trim().toLowerCase()
-    if (!id || !ids.has(id)) continue
+    if (id !== want) continue
     if (row.status === 'pending' || row.status === 'failed') continue
     if (row.kind === 'earned') {
       historyIn += units(row.item?.amt)

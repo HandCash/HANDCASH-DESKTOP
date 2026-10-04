@@ -183,10 +183,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       : 'BSV-21 · no supply cap'
     : null
   const issuerBap = issuerView?.bap ? issuerView : null
-  const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   // Legacy BSV-21 tips are read-only except Burn (cleanup path).
   const burnBlocked =
-    isUnknown || (isBinary && token.spendKind !== 'plain') || tokenIds.length > 1
+    isUnknown || (isBinary && token.spendKind !== 'plain')
   const spendLabel = isUnknown
     ? 'BSV-21 encoding unverified'
     : isLegacy
@@ -199,11 +198,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const burnTitle = burnBlocked
     ? isUnknown
       ? 'Burn unavailable until token encoding is verified'
-      : isBinary && token.spendKind !== 'plain'
-      ? `${spendLabel}; burn unavailable`
-      : tokenIds.length > 1
-        ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
-        : `Burn ${token.sym}`
+      : `${spendLabel}; burn unavailable`
     : `Burn ${token.sym}`
   const inFlight = inFlightVerb(token.outpoint)
   const burning = sending && /^burn/i.test(inFlight ?? '')
@@ -385,12 +380,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             {token.utxoCount === 1 ? 'Tip' : 'Tips'}
           </MetricStrip.Label>
         </MetricStrip.Chip>
-        {isLegacy ? (
-          <MetricStrip.Chip>
-            <MetricStrip.Value>{tokenIds.length}</MetricStrip.Value>
-            <MetricStrip.Label>{tokenIds.length === 1 ? 'Deploy' : 'Deploys'}</MetricStrip.Label>
-          </MetricStrip.Chip>
-        ) : null}
       </MetricStrip.Root>
 
       {isBinary ? (
@@ -439,16 +428,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             value={token.outpoint}
             copyLabel="held tip"
           />
-          {tokenIds.length > 1
-            ? tokenIds.map((id, index) => (
-                <MetaRow
-                  key={id}
-                  label={`Deploy ID ${index + 1}`}
-                  value={id}
-                  copyLabel={`deploy ID ${index + 1}`}
-                />
-              ))
-            : null}
           {token.icon ? (
             <MetaRow label="Icon" value={token.icon} copyLabel="icon inscription" />
           ) : null}

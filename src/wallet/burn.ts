@@ -573,9 +573,7 @@ export async function previewBsv21Burn(args: {
   if (!token) throw new Error('Token not found')
   const tips = await hydrateBsv21Scripts(
     active,
-    await listFungibleTips(active, {
-      tokenIds: token.tokenIds ?? [token.tokenId],
-    })
+    await listFungibleTips(active, { tokenIds: [token.tokenId] })
   )
   if (tips.length === 0) {
     forgetFungibleToken(token.tokenId)

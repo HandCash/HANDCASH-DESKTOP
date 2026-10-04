@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.430] - 2026-10-04
+
+### Fixed
+
+- Two different tokens that share an issuer and ticker no longer merge into one card. A card's balance is now always one token id's tips, which is all a transfer can spend. A merged card could show a total that Send could not move, and history that mixed both tokens. Merged cards cached by earlier builds split into one card per token id when they load. The Deploys chip and the Deploy ID rows are gone from token details.
+
 ## [1.3.429] - 2026-10-04
 
 ### Fixed

@@ -87,6 +87,49 @@ describe('cached fungible field migration', () => {
     expect(token?.maxSupply).toBe(69420)
   })
 
+  it('splits a cached card that merged two deploys sharing a ticker', async () => {
+    const other = `${'cc'.repeat(32)}_0`
+    const tip = (tokenId: string, outpoint: string, amt: string) => ({
+      outpoint,
+      tokenId,
+      amt,
+      op: 'transfer' as const,
+      sym: 'KING',
+      dec: 0,
+      satoshis: 1,
+    })
+    store.set(
+      CACHE_KEY,
+      JSON.stringify({
+        at: Date.now(),
+        v: 2,
+        items: [
+          {
+            ...preRenameCacheRow(),
+            amt: '350',
+            utxoCount: 2,
+            icon: 'icon-ref',
+            tokenIds: [KING_ORIGIN, other],
+            heldTips: [
+              tip(KING_ORIGIN, `${'aa'.repeat(32)}.1`, '100'),
+              tip(other, `${'dd'.repeat(32)}.0`, '250'),
+            ],
+          },
+        ],
+      }),
+    )
+    const { getCachedFungibles } = await import('./token/list')
+    const cards = getCachedFungibles()
+    expect(cards.map((t) => [t.tokenId, t.amt, t.utxoCount]).sort()).toEqual(
+      [
+        [KING_ORIGIN, '100', 1],
+        [other, '250', 1],
+      ].sort(),
+    )
+    expect(cards.every((t) => t.sym === 'KING' && t.icon === 'icon-ref')).toBe(true)
+    expect(cards.some((t) => 'tokenIds' in t)).toBe(false)
+  })
+
   it('paints a fresh mint as unclassified when the script was not decoded', async () => {
     const { fungibleFromImport } = await import('./token/list')
     const painted = fungibleFromImport({

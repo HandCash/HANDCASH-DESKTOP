@@ -9,7 +9,6 @@ import {
 
 const token: FungibleToken = {
   tokenId: `${'a'.repeat(64)}_0`,
-  tokenIds: [`${'a'.repeat(64)}_0`, `${'b'.repeat(64)}_1`],
   sym: 'TEST',
   amt: '1250',
   dec: 2,
@@ -62,17 +61,16 @@ describe('fungibleDetailsMachine', () => {
     expect(actor.getSnapshot().value).toBe('ready')
   })
 
-  it('scopes activity to every grouped deploy id', () => {
+  it('scopes activity to its own token id, never another deploy', () => {
     const entries = [
       activity('representative', token.tokenId.toUpperCase()),
-      activity('grouped', token.tokenIds![1]),
+      activity('same-ticker deploy', `${'b'.repeat(64)}_1`),
       activity('other', `${'d'.repeat(64)}_0`),
       activity('bsv'),
     ]
 
     expect(activityForFungible(token, entries).map((entry) => entry.id)).toEqual([
       'representative',
-      'grouped',
     ])
   })
 

@@ -104,7 +104,7 @@ describe('bsv21 parse', () => {
     })
   })
 
-  it('aggregates distinct deploy ids that share issuer + ticker', () => {
+  it('keeps distinct deploy ids apart even when issuer and ticker match', () => {
     const issuer = '02' + 'ab'.repeat(32)
     const idA = `${'11'.repeat(32)}_0`
     const idB = `${'22'.repeat(32)}_0`
@@ -130,15 +130,12 @@ describe('bsv21 parse', () => {
         issuer,
       },
     ])
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({
-      tokenId: idB, // larger balance wins representative id
-      amt: '350',
-      utxoCount: 2,
-      sym: 'DEMO',
-      issuer,
-    })
-    expect(rows[0]?.tokenIds?.sort()).toEqual([idA, idB].sort())
+    expect(rows.map((r) => [r.tokenId, r.amt, r.utxoCount]).sort()).toEqual(
+      [
+        [idA, '100', 1],
+        [idB, '250', 1],
+      ].sort(),
+    )
   })
 
   it('aggregates mint tips that share one genesis token id', () => {
@@ -174,7 +171,6 @@ describe('bsv21 parse', () => {
       sym: 'DEMO',
       issuer,
     })
-    expect(rows[0]?.tokenIds).toBeUndefined()
   })
 
   it('groups by token id even when issuer/sym missing on one tip', () => {

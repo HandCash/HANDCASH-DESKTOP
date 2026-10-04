@@ -145,9 +145,7 @@ export async function sendFungible(args: {
   const tokenId = normalizeTokenId(args.tokenId) ?? args.tokenId.trim().toLowerCase()
   const token =
     getFungible(tokenId) ??
-    getCachedFungibles().find(
-      (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId),
-    )
+    getCachedFungibles().find((t) => t.tokenId === tokenId)
   if (!token) throw new Error('Token not found in this wallet')
 
   const { units } = parseFungibleSendAmount(args.amount, token)

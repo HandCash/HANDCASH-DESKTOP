@@ -30,6 +30,7 @@ import {
   type Bsv21ImportItem,
   type Bsv21Op,
   type Bsv21Utxo,
+  type FungibleHeldTip,
   type FungibleToken,
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
@@ -168,6 +169,23 @@ function dropUnprovenLegacyStamp(raw: unknown): unknown {
   return rest
 }
 
+/**
+ * Builds before 1.3.430 merged distinct token ids sharing an issuer and a
+ * ticker into one card. Each id is its own asset, so such a cached row is split
+ * back into one card per id from the tips it held.
+ */
+export function splitMergedTokenIds(raw: unknown): unknown[] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [raw]
+  const { tokenIds, ...row } = raw as Record<string, unknown>
+  const tips = Array.isArray(row.heldTips) ? (row.heldTips as FungibleHeldTip[]) : []
+  if (!Array.isArray(tokenIds) || tokenIds.length < 2 || tips.length === 0) return [row]
+  return aggregateFungibles(tips).map((card) => ({
+    ...row,
+    ...card,
+    sym: tips.find((tip) => tip.tokenId === card.tokenId && tip.sym)?.sym || row.sym,
+  }))
+}
+
 function loadDurableList(): FungibleToken[] {
   try {
     const raw = durableGetItem(listCacheKey())
@@ -178,6 +196,7 @@ function loadDurableList(): FungibleToken[] {
     return parsed.items
       .map((row) => (trusted ? row : dropUnprovenLegacyStamp(row)))
       .map(migrateCachedFungibleFields)
+      .flatMap(splitMergedTokenIds)
       .filter(isFungibleShape)
       .filter((t) => !leftoverCollectableSym(t.sym))
       .map((t) => ({
@@ -219,7 +238,6 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.bapId ? { bapId: t.bapId } : {}),
           ...(t.issuerHandle ? { issuerHandle: t.issuerHandle } : {}),
           ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
-          ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
           ...(t.binarySupply ? { binarySupply: t.binarySupply } : {}),
           ...(t.encoding ? { encoding: t.encoding } : {}),
           ...(t.seenAt != null ? { seenAt: t.seenAt } : {}),
@@ -442,8 +460,7 @@ function sortFungibles(rows: FungibleToken[]): FungibleToken[] {
 }
 
 function sameToken(row: FungibleToken, projected: FungibleToken): boolean {
-  const k = tokenKey(row)
-  return k === tokenKey(projected) || Boolean(projected.tokenIds?.includes(k))
+  return tokenKey(row) === tokenKey(projected)
 }
 
 /**
@@ -841,21 +858,20 @@ function normalizedDottedOutpoint(raw: string): string | null {
 
 /** Pure locking-script verdict used by local proof and regression tests. */
 export function fungibleEncodingFromLockingScript(
-  row: Pick<FungibleToken, 'tokenId' | 'tokenIds' | 'outpoint'>,
+  row: Pick<FungibleToken, 'tokenId' | 'outpoint'>,
   lockingScript: string,
   satoshis = 1,
 ): Pick<FungibleToken, 'binarySupply' | 'encoding'> | null {
   if (satoshis !== 1) return null
   const point = normalizedDottedOutpoint(row.outpoint)
   if (!point) return null
-  const ids = new Set([row.tokenId, ...(row.tokenIds ?? [])])
   const binary = tipFromBsv21Script({
     outpoint: point,
     lockingScript,
     satoshis,
   })
   if (binary) {
-    return ids.has(binary.tokenId)
+    return binary.tokenId === row.tokenId
       ? { binarySupply: 'locked', encoding: 'brc162' }
       : null
   }
@@ -873,7 +889,7 @@ export function fungibleEncodingFromLockingScript(
     payload.op === 'deploy+mint' || payload.op === 'deploy+auth'
       ? normalizeTokenId(point)
       : normalizeTokenId(payload.id ?? '')
-  return payloadId && ids.has(payloadId) ? { encoding: 'legacy-json' } : null
+  return payloadId && payloadId === row.tokenId ? { encoding: 'legacy-json' } : null
 }
 
 /**
@@ -1517,7 +1533,7 @@ function dottedTip(outpoint: string): string {
 export function getFungible(tokenId: string): FungibleToken | null {
   const id = normalizeTokenId(tokenId) ?? tokenId.trim().toLowerCase()
   return (
-    cached.find((t) => t.tokenId === id || t.tokenIds?.includes(id)) ?? null
+    cached.find((t) => t.tokenId === id) ?? null
   )
 }
 

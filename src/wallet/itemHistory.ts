@@ -212,12 +212,10 @@ export function itemHistory(
 
 /** Newest-first local history for a BSV-21 balance. */
 export function tokenHistory(
-  token: { tokenId: string; tokenIds?: string[]; sym: string },
+  token: { tokenId: string; sym: string },
   activity: readonly ActivityEntry[],
 ): ItemHistoryEvent[] {
-  const ids = new Set(
-    [token.tokenId, ...(token.tokenIds ?? [])].map((id) => id.trim().toLowerCase()),
-  )
+  const want = token.tokenId.trim().toLowerCase()
   const selfAsset: HistoryAssetLink = {
     kind: 'token',
     tokenId: token.tokenId,
@@ -227,7 +225,7 @@ export function tokenHistory(
   const events: ItemHistoryEvent[] = []
   for (const entry of [...activity].sort((a, b) => b.at - a.at)) {
     const id = entry.item?.tokenId?.trim().toLowerCase()
-    if (!id || !ids.has(id)) continue
+    if (id !== want) continue
     const key = `${entry.txid ?? ''}:${entry.id}`
     if (seen.has(key)) continue
     seen.add(key)

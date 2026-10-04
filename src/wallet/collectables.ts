@@ -816,7 +816,6 @@ function fungibleTipKeys(): ReadonlySet<string> {
   }
   for (const tok of source) {
     add(tok.tokenId)
-    for (const id of tok.tokenIds ?? []) add(id)
     add(tok.outpoint)
     for (const tip of tok.tipOutpoints ?? []) add(tip)
     for (const tip of tok.heldTips ?? []) add(tip.outpoint)

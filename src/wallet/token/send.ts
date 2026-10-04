@@ -137,8 +137,7 @@ async function cardTipOutpoints(tokenId: string): Promise<Set<string>> {
   const { getCachedFungibles } = await import('./list')
   const outpoints = new Set<string>()
   for (const token of getCachedFungibles()) {
-    const ids = [token.tokenId, ...(token.tokenIds ?? [])].map(normalizeTokenId)
-    if (!ids.includes(tokenId)) continue
+    if (normalizeTokenId(token.tokenId) !== tokenId) continue
     if (token.outpoint) outpoints.add(token.outpoint)
     for (const outpoint of token.tipOutpoints ?? []) outpoints.add(outpoint)
     for (const tip of token.heldTips ?? []) outpoints.add(tip.outpoint)

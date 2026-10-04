@@ -104,9 +104,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   useEffect(() => {
     return subscribeFungibles((list) => {
       setToken(
-        list.find(
-          (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId),
-        ) ?? null,
+        list.find((t) => t.tokenId === tokenId) ?? null,
       )
     })
   }, [tokenId])
@@ -116,7 +114,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     void listFungibles().then((list) => {
       if (cancelled) return
       const found =
-        list.find((t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId)) ?? null
+        list.find((t) => t.tokenId === tokenId) ?? null
       if (!found) {
         console.warn(`[send-token] blocked — token not found ${tokenId.slice(0, 16)} in ${list.length}`)
       }

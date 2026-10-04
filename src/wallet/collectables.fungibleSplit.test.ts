@@ -33,7 +33,7 @@ describe('collectableIsFungible — Tokens shelf claims every held tip', () => {
     vi.resetModules()
   })
 
-  it('claims tips beyond the representative one (tipOutpoints, heldTips) and every member deploy id', async () => {
+  it('claims tips beyond the representative one (tipOutpoints, heldTips)', async () => {
     const { collectableIsFungible } = await import('./collectables')
     fungibles.cached = [
       token({
@@ -41,7 +41,6 @@ describe('collectableIsFungible — Tokens shelf claims every held tip', () => {
         heldTips: [
           { outpoint: `${TXID_C}_2`, tokenId: `${DEPLOY}_0`, amt: '1', op: 'transfer', dec: 0, satoshis: 1 },
         ],
-        tokenIds: [`${DEPLOY}_0`, `${'e'.repeat(64)}_0`],
       }),
     ]
 
@@ -49,8 +48,8 @@ describe('collectableIsFungible — Tokens shelf claims every held tip', () => {
     // Previously painted as NFTs: the second and third one-sat tips.
     expect(collectableIsFungible({ outpoint: `${TXID_B}.1` })).toBe(true)
     expect(collectableIsFungible({ outpoint: `${TXID_C}.2` })).toBe(true)
-    // Origin-matched deploy ids, including non-representative members.
-    expect(collectableIsFungible({ outpoint: `${'f'.repeat(64)}.0`, origin: `${'e'.repeat(64)}_0` })).toBe(true)
+    // Another deploy's origin is not this token.
+    expect(collectableIsFungible({ outpoint: `${'f'.repeat(64)}.0`, origin: `${'e'.repeat(64)}_0` })).toBe(false)
     // A real one-sat item stays an item.
     expect(collectableIsFungible({ outpoint: `${'9'.repeat(64)}.0`, origin: `${'9'.repeat(64)}_0` })).toBe(false)
   })

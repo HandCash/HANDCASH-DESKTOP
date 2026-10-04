@@ -348,10 +348,7 @@ function isTokenSendRetryable(
   try {
     const token =
       getFungible(retry.tokenId) ??
-      getCachedFungibles().find(
-        (t) =>
-          t.tokenId === retry.tokenId || t.tokenIds?.includes(retry.tokenId)
-      );
+      getCachedFungibles().find((t) => t.tokenId === retry.tokenId);
     if (!token) return false;
     if (token.spendKind === "cosigned" || token.spendKind === "mixed")
       return false;
