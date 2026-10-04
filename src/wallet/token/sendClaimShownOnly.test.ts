@@ -7,7 +7,14 @@ const ADDR = PrivateKey.fromRandom().toAddress()
 const TIP = `${'cd'.repeat(32)}.1`
 const LOCK = buildBsv21ValueLock({ tokenId: TOKEN, amount: 800n, address: ADDR })
 
-const basket = { claimed: false, claimable: true }
+const basket = { claimed: false, claimable: true, listsLock: true }
+const getLocalBeefForTxid = vi.fn(async (_wallet: unknown, _txid: string) => ({
+  findTxid: () => ({
+    tx: {
+      outputs: [{ lockingScript: { toHex: () => '51' } }, { lockingScript: { toHex: () => LOCK } }],
+    },
+  }),
+}))
 const reconcileNow = vi.fn(async (_asset: string, _outpoints: string[]) => {
   if (basket.claimable) basket.claimed = true
 })
@@ -23,7 +30,7 @@ vi.mock('../session', () => ({
 
 vi.mock('./listTips', () => ({
   listBsv21BinaryTips: async () =>
-    basket.claimed
+    basket.claimed && basket.listsLock
       ? [{ outpoint: TIP, tokenId: TOKEN, amt: '800', dec: 0, lockingScript: LOCK }]
       : [],
   listBsv21BinaryTokens: async () => [],
@@ -40,14 +47,32 @@ vi.mock('../holdingsReconcile', () => ({
 }))
 
 vi.mock('../staleOutputRelease', () => ({
-  restoreUnspentAssetOutpoint: async () => false,
+  restoreUnspentAssetOutpoint: async () => basket.claimed,
+}))
+
+vi.mock('../beefCache', async (importActual) => ({
+  ...(await importActual<typeof import('../beefCache')>()),
+  getLocalBeefForTxid: (wallet: unknown, txid: string) => getLocalBeefForTxid(wallet, txid),
+  peekSessionBeef: () => undefined,
 }))
 
 describe('token send over a tip only its card shows', () => {
   beforeEach(() => {
     basket.claimed = false
     basket.claimable = true
+    basket.listsLock = true
     reconcileNow.mockClear()
+    getLocalBeefForTxid.mockClear()
+  })
+
+  it('reads the claimed tip from local BEEF when its row lists without the 162 lock', async () => {
+    basket.listsLock = false
+    const { sendBsv21Tokens } = await import('./send')
+    await expect(
+      sendBsv21Tokens({ tokenId: TOKEN, amount: 200, toAddress: ADDR }),
+    ).rejects.not.toThrow(/only 0 available/)
+    expect(reconcileNow).toHaveBeenCalledWith('token', [TIP])
+    expect(getLocalBeefForTxid).toHaveBeenCalledWith(expect.anything(), TIP.split('.')[0])
   })
 
   it('claims the shown-only tip before planning the spend', async () => {

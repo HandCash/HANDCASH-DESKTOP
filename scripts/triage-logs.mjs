@@ -1073,11 +1073,17 @@ const TOKEN_LEDGER_RE =
  * and what the card shows beyond that net. Amounts stay strings — they exceed
  * 2^53.
  */
+const REMITTANCE_ONLY_RE = /^\[bsv21\] remittance-only tip (\S+) amt=\d+ — (script absent|script \d+B (.+))$/
+
 function tokenLedgerFacts(events) {
   const last = new Map()
+  // Why each remittance tip is not spendable, by script state, per outpoint.
+  const remittanceScripts = new Map()
   for (const e of events) {
     const m = TOKEN_LEDGER_RE.exec(e.text)
     if (m) last.set(m[2], m)
+    const r = REMITTANCE_ONLY_RE.exec(e.text)
+    if (r) remittanceScripts.set(r[1], r[3] ?? 'script absent')
   }
   const tokens = [...last.values()].map((m) => {
     const [held, brc162, legacy, remittance, historyIn, historyOut] = [3, 5, 7, 9, 11, 12].map((i) => BigInt(m[i]))
@@ -1100,10 +1106,15 @@ function tokenLedgerFacts(events) {
       tipList: m[14] ? m[14].split(' ') : [],
     }
   })
+  const remittanceByScript = {}
+  for (const state of remittanceScripts.values()) {
+    remittanceByScript[state] = (remittanceByScript[state] ?? 0) + 1
+  }
   return {
     tokens,
     beyondHistory: tokens.filter((t) => t.heldBeyondHistory !== '0').length,
     withUnspendable: tokens.filter((t) => t.unspendable !== '0').length,
+    remittanceByScript,
   }
 }
 
@@ -1791,10 +1802,17 @@ function tokenSendFacts(events) {
     // Wallet lines after each `send start`, until it plans, ends or 20 lines:
     // where a send that never planned was waiting.
     starts: [],
+    // Wallet lines from each `send plan` to its failure: where a planned
+    // send died before it had a txid to trail.
+    failedPlans: [],
+    // Toolbox inputBEEF packaging: bodies dropped for missing parents, and
+    // packages a chain tracker still refused (send then signs from storage).
+    inputBeef: { framed: 0, dropped: 0, trackerRefused: 0 },
     // Asset rows the stale-output path set spendable again, by outpoint.
     restoredAssets: [],
   }
   let startTrail = null
+  let planTrail = null
   let build = 'unknown'
   const bump = (bucket, reason) => {
     const key = `${reason.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 200)} [v${build}]`
@@ -1833,6 +1851,23 @@ function tokenSendFacts(events) {
         startTrail = null
       }
     }
+    if (planTrail) {
+      const ms = e.at - planTrail.atMs
+      if (ms >= 0 && /^\[[\w-]+\]/.test(t) && !/^\[nav\]/.test(t)) {
+        const shape = t.replace(/[0-9a-f]{12,}/g, '<id>').replace(/\d+/g, '<n>').slice(0, 240)
+        const prior = planTrail.lines.find((l) => l.shape === shape)
+        if (prior) prior.times += 1
+        else if (planTrail.lines.length < 30) planTrail.lines.push({ shape, first: `+${ms}ms ${t.replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 240)}`, times: 1 })
+      }
+      if (ms < 0 || /^\[send-token\] sent$/.test(t)) planTrail = null
+      else if (/^\[send-token\] send failed/.test(t)) {
+        facts.failedPlans.push(planTrail)
+        planTrail = null
+      }
+    }
+    if ((r = /^\[bsv21\] send plan (.*)$/.exec(t))) {
+      planTrail = { plan: r[1].replace(/[0-9a-f]{12,}/g, '<id>'), build, at: new Date(e.at).toISOString(), atMs: e.at, lines: [] }
+    }
     if ((r = /^\[send-token\] send start (.*)$/.exec(t))) {
       facts.started += 1
       startTrail = { token: r[1], build, at: new Date(e.at).toISOString(), atMs: e.at, lines: [], ended: null, lastSeenMs: 0 }
@@ -1841,6 +1876,11 @@ function tokenSendFacts(events) {
     else if ((r = /^\[stale-output\] restore done .* restored proven-unspent asset ([0-9a-f]{64}\.\d+)/.exec(t))) {
       if (!facts.restoredAssets.includes(r[1])) facts.restoredAssets.push(r[1])
     }
+    else if ((r = /^\[bsv21(?:-burn)?\] inputBEEF framed — dropped (\d+)/.exec(t))) {
+      facts.inputBeef.framed += 1
+      facts.inputBeef.dropped += Number(r[1])
+    }
+    else if (/^\[bsv21(?:-burn)?\] inputBEEF refused by the chain tracker/.test(t)) facts.inputBeef.trackerRefused += 1
     else if (/^\[send-token\] sent$/.test(t)) facts.sent += 1
     else if ((r = /^\[send-token\] send failed — (.*)$/.exec(t))) bump(facts.failed, r[1])
     else if ((r = /^\[send-token\] blocked — (.*)$/.exec(t))) bump(facts.blocked, r[1])
@@ -3364,6 +3404,10 @@ function report(state, answers) {
           `history net ${t.historyNet} over ${t.historyRows} row(s) · beyond history ${t.heldBeyondHistory} · spendable ${t.spendable}`,
       )
     }
+    const scripts = Object.entries(cards.remittanceByScript ?? {})
+    if (scripts.length) {
+      console.log(`  remittance tips by listed script: ${scripts.map(([k, n]) => `${k} ${n}`).join(' · ')}`)
+    }
     if (answers.token_balance_beyond_history) {
       choiceBlock('Token balance beyond history', answers.token_balance_beyond_history)
     }
@@ -3445,6 +3489,10 @@ function report(state, answers) {
     console.log(
       `  started ${ts.started} · planned ${ts.planned} · signing ${ts.signing} · signed ${ts.signed} · sent ${ts.sent}${ts.lastPlan ? ` · last plan ${ts.lastPlan}` : ''}`,
     )
+    const ib = ts.inputBeef
+    if (ib && (ib.framed || ib.trackerRefused)) {
+      console.log(`  inputBEEF: framed ${ib.framed} (dropped ${ib.dropped} parentless bod(ies)) · chain tracker refused ${ib.trackerRefused}`)
+    }
     if (combine && (combine.started || Object.keys(combine.failed).length)) {
       console.log(`  combine: started ${combine.started} · done ${combine.done}`)
       for (const [reason, n] of Object.entries(combine.failed)) console.log(`  combine failed ×${n}: ${reason}`)
@@ -3466,6 +3514,15 @@ function report(state, answers) {
       seenStarts.add(st.at)
       console.log(`  ${st.token} send at ${st.at} [v${st.build}] never planned — ${st.ended ? `ended: ${st.ended}` : `upload ended +${st.lastSeenMs}ms later`}`)
       for (const line of st.lines.filter((l) => !/^\[nav\]/.test(l.shape)).slice(0, 12)) {
+        console.log(`    ${line.times > 1 ? `${line.times}× ` : ''}${line.first}`)
+      }
+    }
+    const seenPlans = new Set()
+    for (const fp of ts.failedPlans ?? []) {
+      if (seenPlans.has(fp.at)) continue
+      seenPlans.add(fp.at)
+      console.log(`  planned at ${fp.at} [v${fp.build}] then failed — plan ${fp.plan}`)
+      for (const line of fp.lines.slice(0, 20)) {
         console.log(`    ${line.times > 1 ? `${line.times}× ` : ''}${line.first}`)
       }
     }

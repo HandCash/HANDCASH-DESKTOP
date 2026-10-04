@@ -282,6 +282,30 @@ export function decodeListedLegacyTip(raw: ListedOutput): Bsv21Utxo | null {
   }
 }
 
+const remittanceOnlyNoted = new Set<string>()
+
+/**
+ * `[bsv21] remittance-only tip …` — parsed by `scripts/triage-logs.mjs`.
+ * Says whether storage listed the row without a script or with one that is
+ * not a 162 lock: send can only spend the second kind after a local-BEEF read.
+ */
+function noteRemittanceOnlyTip(outpoint: string, amt: string, scriptHex: string | undefined): void {
+  if (remittanceOnlyNoted.has(outpoint)) return
+  remittanceOnlyNoted.add(outpoint)
+  const script = !scriptHex
+    ? 'script absent'
+    : `script ${scriptHex.length / 2}B ${
+        decodeBsv21Binary(scriptHex)
+          ? '162 lock the tip decode refused'
+          : /^76a914[0-9a-f]{40}88ac$/i.test(scriptHex)
+            ? 'plain p2pkh'
+            : parseOrdEnvelope(scriptHex)
+              ? 'ord envelope'
+              : 'unrecognized'
+      }`
+  console.info(`[bsv21] remittance-only tip ${outpoint} amt=${amt} — ${script}`)
+}
+
 /**
  * A remittance-only row (plain script, token named in custom instructions)
  * that this wallet already held as that exact outpoint.
@@ -302,6 +326,7 @@ function decodeContinuingRemittanceTip(
     ci.op === 'deploy+mint' ? normalizeTokenId(outpoint) : normalizeTokenId(ci.id ?? '')
   if (!tokenId || !/^\d+$/.test(ci.amt) || BigInt(ci.amt) <= 0n) return null
   const scriptHex = lockingScriptHex(raw.lockingScript)
+  noteRemittanceOnlyTip(outpoint, ci.amt, scriptHex)
   return {
     outpoint,
     tokenId,

@@ -7,6 +7,12 @@ import { getActiveWallet } from '../session'
 import { Beef, createNonce, P2PKH, PublicKey, type SignableTransaction } from '@bsv/sdk'
 import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
 import { buildMergedInputBeef, rememberBeefTree } from '../beefCache'
+import {
+  EMPTY_INPUT_BEEF,
+  describeInputBeefFrame,
+  isInputBeefRefusal,
+  verifiableInputBeef,
+} from './verifiableInputBeef'
 import { BSV21_BASKET, requireTokenId } from './types'
 import {
   assertBsv21BurnConservation,
@@ -301,11 +307,12 @@ export async function burnBsv21Tokens(args: {
               .filter((id): id is string => Boolean(id)),
           ),
         ]
-        const inputBEEF = await buildMergedInputBeef(
-          active,
-          spendOutpoints,
-          wireOutpoint,
+        const frame = verifiableInputBeef(
+          await buildMergedInputBeef(active, spendOutpoints, wireOutpoint),
         )
+        if (frame.dropped.length > 0) {
+          console.info(`[bsv21-burn] inputBEEF framed — ${describeInputBeefFrame(frame)}`)
+        }
         const payment = await deriveSelfPayment(active)
         self = payment
         const outputs: Array<{
@@ -356,7 +363,7 @@ export async function burnBsv21Tokens(args: {
         console.info(
           `[bsv21-burn] createAction start tips=${selected.length} amount=${amount} change=${change}`,
         )
-        const createBurnAction = () =>
+        const createBurnAction = (inputBEEF = frame.inputBEEF) =>
           withFungibleCreateActionTimeout(
             active.wallet.createAction({
               description: `Burn ${sym}`.slice(0, 50),
@@ -383,16 +390,25 @@ export async function burnBsv21Tokens(args: {
           created = await createBurnAction()
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
-          if (!/no longer spendable|insufficient/i.test(msg)) throw err
-          // Fee coin sealed behind an app-held parent — free it and retry once.
-          const { healAppHeldChange } = await import('../staleOutputRelease')
-          const freed = await healAppHeldChange()
-          console.warn(
-            `[bsv21-burn] createAction refused (${msg.slice(0, 80)}); healed ${freed} parent(s), retrying`,
-          )
-          await releaseStuckNosends(active)
-          await abortReservedActionBatches(active)
-          created = await createBurnAction()
+          if (isInputBeefRefusal(err) && frame.inputBEEF !== EMPTY_INPUT_BEEF) {
+            // Structure is proven by the frame, so a proof root the chain
+            // tracker would not confirm refused it; storage holds the tips.
+            console.warn(
+              `[bsv21-burn] inputBEEF refused by the chain tracker — ${describeInputBeefFrame(frame)}; signing from storage-held tips`,
+            )
+            created = await createBurnAction(EMPTY_INPUT_BEEF)
+          } else {
+            if (!/no longer spendable|insufficient/i.test(msg)) throw err
+            // Fee coin sealed behind an app-held parent — free it and retry once.
+            const { healAppHeldChange } = await import('../staleOutputRelease')
+            const freed = await healAppHeldChange()
+            console.warn(
+              `[bsv21-burn] createAction refused (${msg.slice(0, 80)}); healed ${freed} parent(s), retrying`,
+            )
+            await releaseStuckNosends(active)
+            await abortReservedActionBatches(active)
+            created = await createBurnAction()
+          }
         }
         const createdTxid =
           typeof created.txid === 'string' && /^[0-9a-f]{64}$/i.test(created.txid)

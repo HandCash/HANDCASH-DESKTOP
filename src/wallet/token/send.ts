@@ -43,6 +43,12 @@ import {
 import { listBsv21BinaryTips, listBsv21BinaryTokens } from './listTips'
 import { mergeIconTxIntoBeef } from './icons/resolve'
 import {
+  EMPTY_INPUT_BEEF,
+  describeInputBeefFrame,
+  isInputBeefRefusal,
+  verifiableInputBeef,
+} from './verifiableInputBeef'
+import {
   failOutboundSendPending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
@@ -441,7 +447,17 @@ export async function sendBsv21Tokens(args: {
         fromBasket = after
         listedForToken = after.length
       } else {
-        claimedNote = `, ${shownOnly.length} shown-only tip(s) not claimed`
+        // A claimed row can list without its 162 lock. The row now exists, so
+        // the local-BEEF recovery that refused it before the claim can read
+        // the lock from the transaction this wallet signed.
+        const held = new Set(fromBasket.map((t) => wireOutpoint(t.outpoint)))
+        const recovered = (await recoverBsv21TipsFromLocalBeef(active, tokenId)).filter(
+          (t) => !held.has(wireOutpoint(t.outpoint)),
+        )
+        fromBasket = [...fromBasket, ...recovered]
+        claimedNote = recovered.length
+          ? `, ${recovered.length} shown-only tip(s) read from local BEEF after the claim`
+          : `, ${shownOnly.length} shown-only tip(s) not claimed`
       }
     }
   }
@@ -646,7 +662,7 @@ export async function sendBsv21Tokens(args: {
             `[bsv21] pre-sign valid token ancestry=${validity.ancestryTxids.length}`,
           )
           if (icon) await mergeIconTxIntoBeef(wallet, beef, icon)
-          inputBEEF = beef.toBinary()
+          inputBEEF = await mergeLocalUnconfirmedAncestry(wallet, beef.toBinary())
         }
       } catch (err) {
         throw new Error(
@@ -677,14 +693,15 @@ export async function sendBsv21Tokens(args: {
       console.info(
         `[bsv21] createAction start tips=${selected.length} amount=${amount} change=${change}`,
       )
-      let actionReference: string | undefined
-      try {
-      let created: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
-      try {
-        created = await withFungibleCreateActionTimeout(
+      const frame = verifiableInputBeef(inputBEEF)
+      if (frame.dropped.length > 0) {
+        console.info(`[bsv21] inputBEEF framed — ${describeInputBeefFrame(frame)}`)
+      }
+      const createTransfer = (packaged: number[]) =>
+        withFungibleCreateActionTimeout(
           wallet.wallet.createAction({
             description: actionDescription,
-            inputBEEF,
+            inputBEEF: packaged,
             inputs: selected.map((tip) => ({
               outpoint: wireOutpoint(tip.outpoint),
               inputDescription: 'BSV-21 value',
@@ -702,35 +719,30 @@ export async function sendBsv21Tokens(args: {
           }),
           FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
         )
-      } catch (err) {
-        const { isReservedActionBatchError, abortReservedActionBatches } =
-          await import('../actionReview')
-        if (isReservedActionBatchError(err)) {
+      const createWithReservedRetry = async (packaged: number[]) => {
+        try {
+          return await createTransfer(packaged)
+        } catch (err) {
+          const { isReservedActionBatchError, abortReservedActionBatches } =
+            await import('../actionReview')
+          if (!isReservedActionBatchError(err)) throw err
           await abortReservedActionBatches(wallet)
-          created = await withFungibleCreateActionTimeout(
-            wallet.wallet.createAction({
-              description: actionDescription,
-              inputBEEF,
-              inputs: selected.map((tip) => ({
-                outpoint: wireOutpoint(tip.outpoint),
-                inputDescription: 'BSV-21 value',
-                unlockingScriptLength: 108,
-              })),
-              outputs,
-              options: {
-                trustSelf: 'known',
-                ...(knownTxids.length > 0 ? { knownTxids } : {}),
-                noSend: true,
-                randomizeOutputs: false,
-                signAndProcess: true,
-              },
-              labels: [BSV21_BASKET, actionLabel],
-            }),
-            FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
-          )
-        } else {
-          throw err
+          return await createTransfer(packaged)
         }
+      }
+      let actionReference: string | undefined
+      try {
+      let created: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
+      try {
+        created = await createWithReservedRetry(frame.inputBEEF)
+      } catch (err) {
+        if (!isInputBeefRefusal(err) || frame.inputBEEF === EMPTY_INPUT_BEEF) throw err
+        // Structure is already proven above, so a proof root the chain tracker
+        // would not confirm refused it; storage-held tips need no caller proof.
+        console.warn(
+          `[bsv21] inputBEEF refused by the chain tracker — ${describeInputBeefFrame(frame)}; signing from storage-held tips`,
+        )
+        created = await createWithReservedRetry(EMPTY_INPUT_BEEF)
       }
 
       actionReference =
