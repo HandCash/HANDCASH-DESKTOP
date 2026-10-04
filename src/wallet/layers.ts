@@ -343,6 +343,7 @@ export const WALLET_LAYER_MODULES = {
   ],
   historyReplica: [
     "historyBackup.ts",
+    "provenTxReqPurge.ts",
     "walletSetupApply.ts",
     "deviceSync.ts",
     "deviceWallets.ts",

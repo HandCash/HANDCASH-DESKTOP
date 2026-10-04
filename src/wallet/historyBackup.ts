@@ -43,6 +43,7 @@ import {
   type ProvenTxReqHistoryStore,
 } from './brc38HistoryRepair'
 import { decideHistoryPush } from './historyEmptyGuard'
+import { purgeRetiredProofRequests, type ProofRequestStore } from './provenTxReqPurge'
 import { assertHistoryDocumentEncryptable, HISTORY_BACKUP_MAX_BYTES } from './historyDocumentBudget'
 import { inspectLocalToolboxState } from './layers'
 
@@ -140,9 +141,14 @@ function parseOptionalIntHeader(res: Response, name: string): number | null {
 
 /** Live BRC-38 JSON under the caller's historyReplica session (or none). */
 async function exportLiveBrc38Json(): Promise<string> {
-  return withActiveStorageProvider((storage, identityKey) =>
-    exportBrc38JsonRepairingNulls(storage, identityKey),
-  )
+  return withActiveStorageProvider(async (storage, identityKey) => {
+    try {
+      await purgeRetiredProofRequests(storage as unknown as ProofRequestStore)
+    } catch (err) {
+      appendAppLog('warn', `[proof-purge] skipped — ${(err as Error)?.message ?? String(err)}`)
+    }
+    return exportBrc38JsonRepairingNulls(storage, identityKey)
+  })
 }
 
 async function encryptLiveDocument(rootKeyHex: string, json: string): Promise<Uint8Array> {

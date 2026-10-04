@@ -587,6 +587,7 @@ function storagePressure(events) {
   // (≈5MB cap) to app files. `store` stays null on builds that predate it.
   const MOVED_RE = /^\[durable\] origin move done (\d+)ms — (\d+) key\(s\) \((\d+)KB\) into the app file store · freed (\d+)KB/
   const NO_FILE_STORE_RE = /^\[durable\] native file store missing/
+  const PROOF_PURGE_RE = /^\[proof-purge\] purge done \d+ms — (\d+) completed proof request\(s\), (\d+)KB/
   const shortKey = (k) => k.split(':wallet:')[0]
 
   const out = {
@@ -600,6 +601,8 @@ function storagePressure(events) {
     reclaimedKB: 0,
     store: null,
     originMove: null,
+    proofRequestsPurged: 0,
+    proofPurgedKB: 0,
   }
   const refusedKeys = new Set()
   for (const e of events) {
@@ -636,6 +639,12 @@ function storagePressure(events) {
     if (m) {
       out.store = 'app-files'
       out.originMove = { ms: Number(m[1]), keys: Number(m[2]), kb: Number(m[3]), freedKB: Number(m[4]) }
+      continue
+    }
+    m = PROOF_PURGE_RE.exec(e.text)
+    if (m) {
+      out.proofRequestsPurged += Number(m[1])
+      out.proofPurgedKB += Number(m[2])
       continue
     }
     if (NO_FILE_STORE_RE.test(e.text)) out.store = 'webview'
@@ -3295,8 +3304,11 @@ function report(state, answers) {
     }
   }
   const st = latest.storage
-  if (st.refusedWrites || st.slowOps || st.store) {
+  if (st.refusedWrites || st.slowOps || st.store || st.proofRequestsPurged) {
     console.log('\nOrigin storage:')
+    if (st.proofRequestsPurged) {
+      console.log(`  proof requests retired: ${st.proofRequestsPurged} (${st.proofPurgedKB}KB) before history backup`)
+    }
     if (st.store === 'webview') console.log('  durable store: WebView storage (≈5MB cap) — native file store missing')
     if (st.originMove) {
       const mv = st.originMove

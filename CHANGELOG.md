@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.435] - 2026-10-04
+
+### Fixed
+
+- The History backup no longer grows without bound. Each confirmed transaction kept a pending-proof record with a full copy of the transaction and every input it spent, long after its proof was stored. On a busy wallet those records were 29 MB of a 40 MB backup, and they filled the phone's database too. Before each backup, the wallet now deletes a record once it is three days old and its proof is safely stored. The server version of the wallet library already does this, but the version the app uses never did. The proof keeps everything needed to show or spend the transaction, and triage logs how much each cleanup freed.
+
 ## [1.3.434] - 2026-10-04
 
 ### Changed
