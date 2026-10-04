@@ -1816,6 +1816,9 @@ function tokenSendFacts(events) {
     // Wallet lines from each `send plan` to its failure: where a planned
     // send died before it had a txid to trail.
     failedPlans: [],
+    // A plan the upload ended on with no `sent` and no failure: where the
+    // send was still waiting when the user gave up.
+    stalledPlans: [],
     // Toolbox inputBEEF packaging: bodies dropped for missing parents, and
     // packages a chain tracker still refused (send then signs from storage).
     inputBeef: { framed: 0, dropped: 0, trackerRefused: 0 },
@@ -1877,6 +1880,7 @@ function tokenSendFacts(events) {
       }
     }
     if ((r = /^\[bsv21\] send plan (.*)$/.exec(t))) {
+      if (planTrail) facts.stalledPlans.push(planTrail)
       planTrail = { plan: r[1].replace(/[0-9a-f]{12,}/g, '<id>'), build, at: new Date(e.at).toISOString(), atMs: e.at, lines: [] }
     }
     if ((r = /^\[send-token\] send start (.*)$/.exec(t))) {
@@ -1908,6 +1912,10 @@ function tokenSendFacts(events) {
     else if ((r = /^\[bsv21\] combine (?:failed|refused) — (.*)$/.exec(t))) {
       bump(facts.combine.failed, r[1].replace(/[0-9a-f]{12,}/g, '<id>').slice(0, 200))
     }
+  }
+  if (planTrail) {
+    planTrail.waitedMs = (events.at(-1)?.at ?? planTrail.atMs) - planTrail.atMs
+    facts.stalledPlans.push(planTrail)
   }
   return facts
 }
@@ -3534,6 +3542,15 @@ function report(state, answers) {
       seenPlans.add(fp.at)
       console.log(`  planned at ${fp.at} [v${fp.build}] then failed — plan ${fp.plan}`)
       for (const line of fp.lines.slice(0, 20)) {
+        console.log(`    ${line.times > 1 ? `${line.times}× ` : ''}${line.first}`)
+      }
+    }
+    for (const sp of ts.stalledPlans ?? []) {
+      if (seenPlans.has(sp.at)) continue
+      seenPlans.add(sp.at)
+      const tail = sp.waitedMs != null ? `still waiting ${sp.waitedMs}ms later when the upload ended` : 'superseded by a new plan'
+      console.log(`  planned at ${sp.at} [v${sp.build}] never sent nor failed — ${tail} · plan ${sp.plan}`)
+      for (const line of sp.lines.slice(0, 25)) {
         console.log(`    ${line.times > 1 ? `${line.times}× ` : ''}${line.first}`)
       }
     }

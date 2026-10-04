@@ -85,6 +85,7 @@ import {
 import { type ActiveWallet } from '../session'
 import { markItemsSent } from '../sentItemGuard'
 import { runExclusiveSpend } from '../spendGuard'
+import { startPreSignDeadline, TokenPreSignTimeoutError } from './preSignDeadline'
 import { leaseSpendPriority } from '../walletCoordinator'
 
 function wireOutpoint(op: string): string {
@@ -537,23 +538,28 @@ export async function sendBsv21Tokens(args: {
     item: activityItem,
   })
 
+  const queuedAt = Date.now()
   try {
     return await runExclusiveSpend(
       async () => {
       assertOnlineForPayment()
       const wallet = getActiveWallet()
       if (!wallet) throw new Error('Wallet locked')
-      {
+      const preSign = startPreSignDeadline('bsv21')
+      await preSign.step('clearing reservations', async () => {
         const { abortReservedActionBatches } = await import('../actionReview')
         await abortReservedActionBatches(wallet, { budgetMs: 1500 })
-      }
+      })
 
       setPaymentProgress(
         'building',
         args.skipPeerNotify ? 'Combining tips…' : 'Preparing token…',
         primary.outpoint,
       )
-      const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
+      const to = await preSign.step(
+        'resolving the recipient',
+        resolvePaymentRecipient(args.toAddress, wallet.chain),
+      )
       // Resolved, not typed: a handle that resolves to this wallet is a
       // self-send too. Self outputs stay in basket `bsv21` (BRC-163).
       const payeeIsSelf =
@@ -618,26 +624,32 @@ export async function sendBsv21Tokens(args: {
       )
       let inputBEEF: number[]
       try {
-        inputBEEF = await buildMergedInputBeef(
-          wallet,
-          spendOutpoints,
-          wireOutpoint,
-          { needProof: false, allowUnprovenRawTx: true, hydrate: false },
+        inputBEEF = await preSign.step(
+          'loading the tip transactions',
+          buildMergedInputBeef(
+            wallet,
+            spendOutpoints,
+            wireOutpoint,
+            { needProof: false, allowUnprovenRawTx: true, hydrate: false },
+          ),
         )
         {
-          const beef = await fillTokenParentBodies(
-            Beef.fromBinary(inputBEEF),
-            (txid) => fetchRawTokenBody(wallet, txid),
-            knownTxids,
+          const beef = await preSign.step(
+            'loading token parents',
+            fillTokenParentBodies(
+              Beef.fromBinary(inputBEEF),
+              (txid) => fetchRawTokenBody(wallet, txid),
+              knownTxids,
+            ),
           )
-          const { checkBsv21BroadcastValidity } = await import(
-            './broadcastValidity'
-          )
-          const validity = await checkBsv21BroadcastValidity({
-            beef,
-            outpoints: selected.map((tip) => tip.outpoint),
-            tokenId,
-            chain: wallet.chain,
+          const validity = await preSign.step('checking token ancestry', async () => {
+            const { checkBsv21BroadcastValidity } = await import('./broadcastValidity')
+            return checkBsv21BroadcastValidity({
+              beef,
+              outpoints: selected.map((tip) => tip.outpoint),
+              tokenId,
+              chain: wallet.chain,
+            })
           })
           if (validity.kind === 'refuse') {
             const ancestor = validity.txid
@@ -661,10 +673,16 @@ export async function sendBsv21Tokens(args: {
           console.info(
             `[bsv21] pre-sign valid token ancestry=${validity.ancestryTxids.length}`,
           )
-          if (icon) await mergeIconTxIntoBeef(wallet, beef, icon)
-          inputBEEF = await mergeLocalUnconfirmedAncestry(wallet, beef.toBinary())
+          if (icon) {
+            await preSign.step('loading the icon', mergeIconTxIntoBeef(wallet, beef, icon))
+          }
+          inputBEEF = await preSign.step(
+            'merging unconfirmed ancestry',
+            mergeLocalUnconfirmedAncestry(wallet, beef.toBinary()),
+          )
         }
       } catch (err) {
+        if (err instanceof TokenPreSignTimeoutError) throw err
         throw new Error(
           err instanceof Error
             ? err.message.replace(/collectable/i, 'token tip')
@@ -1079,6 +1097,8 @@ export async function sendBsv21Tokens(args: {
       }
     },
       () => {
+        const waitedMs = Date.now() - queuedAt
+        if (waitedMs >= 250) console.info(`[bsv21] spend region acquired after ${waitedMs}ms`)
         setPaymentProgress(
           'preparing',
           args.skipPeerNotify ? 'Waiting to combine tips' : 'Waiting to send token',

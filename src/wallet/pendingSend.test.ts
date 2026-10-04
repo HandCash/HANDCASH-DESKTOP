@@ -49,6 +49,24 @@ describe('reconcilePendingSends', () => {
     )
   })
 
+  it('keeps a send this runtime still has in flight past the fresh window', async () => {
+    vi.useFakeTimers()
+    try {
+      const { beginPendingSend, clearPendingSend, reconcilePendingSends } = await import(
+        './pendingSend'
+      )
+      const live = beginPendingSend({ to: '1RecipientAddress', sats: 1 })
+      vi.advanceTimersByTime(60_000)
+      reconcilePendingSends()
+      expect(store.get('handcash.brc100.pendingSend')).toContain(live.id)
+
+      clearPendingSend(live.id)
+      expect(store.get('handcash.brc100.pendingSend')).not.toContain(live.id)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('never invents history for a send that never got a txid', async () => {
     seedPending({ ageMs: 60_000 })
 

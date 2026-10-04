@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.433] - 2026-10-04
+
+### Fixed
+
+- A token send can no longer hang on "Waiting to send token" while holding up every send queued behind it. Before signing, a send clears reservations, resolves the recipient, loads its tip and parent transactions, and checks the token's ancestry. All of that now shares one 45-second deadline. A step that runs past it fails the send with the step's name ("Token send stalled while loading the tip transactions — nothing was signed"). Nothing is reserved at that point, so the next send starts right away. Before, a wait during that work held the spend lock until the 4-minute region ceiling, and on Android the app was killed first.
+- Chain ingest no longer drops the pending record of a send this session is still preparing. A token send can take a minute to reach its txid, and the old 5-second cutoff treated it as interrupted.
+
+### Changed
+
+- Each pre-sign step that takes over 250 ms logs `[bsv21] pre-sign <step> done <N>ms`. The wait for the spend lock and the change-promote step log too, and triage traces a planned send that never signed or failed up to the end of the upload.
+
 ## [1.3.432] - 2026-10-04
 
 ### Fixed

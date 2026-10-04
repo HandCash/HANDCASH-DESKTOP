@@ -23,6 +23,9 @@ export type PendingSend = {
   txid?: string
 }
 
+/** Sends this runtime began and has not cleared: in flight, never interrupted. */
+const inFlight = new Set<string>()
+
 function readPending(): PendingSend[] {
   try {
     const raw = durableGetItem(pendingStorageKey())
@@ -60,6 +63,7 @@ export function beginPendingSend(args: {
     friendLabel: args.friendLabel?.trim() || null,
     startedAt: Date.now(),
   }
+  inFlight.add(entry.id)
   writePending([...readPending(), entry])
   return entry
 }
@@ -71,6 +75,7 @@ export function completePendingSend(id: string, txid?: string): void {
 }
 
 export function clearPendingSend(id: string): void {
+  inFlight.delete(id)
   writePending(readPending().filter((e) => e.id !== id))
 }
 
@@ -112,8 +117,9 @@ export function reconcilePendingSends(): number {
   const keep: PendingSend[] = []
   for (const entry of pending) {
     const ageMs = Date.now() - entry.startedAt
-    // Keep very fresh pendings (send may still be in flight).
-    if (ageMs < 5_000) {
+    // A token send can take a minute to reach its txid; only a pending this
+    // runtime did not begin was interrupted.
+    if ((inFlight.has(entry.id) && !entry.txid) || ageMs < 5_000) {
       keep.push(entry)
       continue
     }

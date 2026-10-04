@@ -249,7 +249,10 @@ export function runExclusiveSpend<T>(
       const resumeMonitor = pauseMonitorForSpend()
       try {
         if (promote === 'full' || promote === 'light') {
+          const promoteAt = Date.now()
           await promoteSpendableChange(promote, abort.signal)
+          const promoteMs = Date.now() - promoteAt
+          if (promoteMs >= 250) console.info(`[spend-guard] promote ${promote} done ${promoteMs}ms`)
         }
         throwIfAborted()
         spendChainPromoted = promote === 'full' || promote === 'light'
