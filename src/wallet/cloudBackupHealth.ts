@@ -1,4 +1,4 @@
-import { signedIdentityFetch } from './identityRequestAuth'
+import { probeRemoteBrc39 } from './historyRemoteProbe'
 import { getActiveWallet } from './session'
 
 /**
@@ -18,7 +18,8 @@ import {
 import { getWalletConfigPrefs } from './walletConfig'
 import { ensureHandCashServiceDefaults } from './walletSetupApply'
 
-export type CloudBackupPhase = 'off' | 'checking' | 'pending' | 'ok' | 'error'
+/** `delayed` = the host is down or throttling everyone; `error` = this backup is misconfigured or refused. */
+export type CloudBackupPhase = 'off' | 'checking' | 'pending' | 'ok' | 'delayed' | 'error'
 
 export type CloudBackupHealth = {
   phase: CloudBackupPhase
@@ -76,23 +77,8 @@ export function ensureHistoryBackupUrlFromConfig(): string {
   return ''
 }
 
-async function probeRemoteBrc39Exists(identityKey: string, rootKeyHex: string): Promise<{
-  exists: boolean
-  exportedAt: number | null
-}> {
-  const url = historyBackupObjectUrl(identityKey)
-  const res = await signedIdentityFetch(rootKeyHex, 'history', url, {
-    method: 'HEAD',
-    headers: { Accept: 'application/vnd.brc39.wallet, application/octet-stream, */*' },
-  })
-  if (res.status === 404) return { exists: false, exportedAt: null }
-  if (!res.ok) throw new Error(`Remote backup check failed (${res.status})`)
-  const exportedRaw = res.headers.get('X-HandCash-Exported-At')
-  const exportedAt = exportedRaw ? Number(exportedRaw) : null
-  return {
-    exists: true,
-    exportedAt: Number.isFinite(exportedAt) && exportedAt! > 0 ? exportedAt : null,
-  }
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 /**
@@ -110,7 +96,7 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
     })
   }
 
-  if (prefs.lastError) {
+  if (prefs.lastError && health.phase !== 'delayed') {
     setHealth({
       phase: 'error',
       label: 'Backup failed',
@@ -150,8 +136,20 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
   }
 
   try {
-    const meta = await probeRemoteBrc39Exists(active.identityKey, active.rootKeyHex)
-    if (!meta.exists) {
+    const head = await probeRemoteBrc39(active.rootKeyHex, historyBackupObjectUrl(active.identityKey))
+    if (head.kind === 'unavailable') {
+      return setHealth({
+        phase: 'delayed',
+        label: 'Backup delayed',
+        message:
+          `Backup host is not accepting requests (${head.status ?? 'unreachable'}: ${head.reason}). ` +
+          `Retrying after ${clockTime(head.retryAt)}.`,
+      })
+    }
+    if (head.kind === 'refused') {
+      throw new Error(`Remote backup check refused (${head.status}: ${head.reason})`)
+    }
+    if (head.kind === 'absent') {
       // Local already pushed — treat as ok even if HEAD briefly lags.
       if (prefs.lastUploadedAt) {
         appendAppLog('info', '[cloud-backup] local upload recorded; remote HEAD not found yet')

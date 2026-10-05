@@ -80,6 +80,22 @@ describe('resolveStatus', () => {
     expect(view.detail).toMatch(/Signing and broadcasting/i)
   })
 
+  it('a busy backup host reads as delayed, not failed', () => {
+    const delayed: CloudBackupHealth = {
+      phase: 'delayed',
+      label: 'Backup delayed',
+      message: 'Backup host is not accepting requests (503: store-unavailable). Retrying after 14:05.',
+      checkedAt: 0,
+    }
+    const view = resolveStatus('ready', health(), delayed, true, true, idlePayment, idleWalletProgress)
+    expect(view.label).toBe('Backup delayed')
+    expect(view.tone).toBe('warn')
+    expect(view.detail).toMatch(/catches up automatically/)
+    const failed = resolveStatus('ready', health(), { ...delayed, phase: 'error', label: 'Backup failed' }, true, true, idlePayment, idleWalletProgress)
+    expect(failed.label).toBe('Backup failed')
+    expect(failed.tone).toBe('error')
+  })
+
   it('keeps Sending visible over sync failure while a payment is in flight', () => {
     const view = resolveStatus(
       'ready',

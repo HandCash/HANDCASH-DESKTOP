@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.442] - 2026-10-05
+
+### Fixed
+
+- **"Backup failed" while the backup host was down.** The history backup host had used up its daily database write quota, and every signed request — backup checks, uploads and messagebox polls — returned an error. The host is fixed separately: backup checks and inbox polls no longer write to its database. Your backups were never lost. Existing backups stayed stored and readable the whole time.
+- One check for every caller. Every check for whether a history backup exists goes through a single request: callers that ask at the same time share one request. When the host returns a server error or rate limit, or can't be reached, every caller waits for the host's `Retry-After` or a backoff from 30 s up to 15 min, instead of asking again. A failed upload sets the same wait.
+- A host outage now reads **Backup delayed** (amber) and says when it will retry. **Backup failed** (red) is kept for a backup the host actually rejected, such as a bad signature or the wrong identity.
+
+### Changed
+
+- Log triage keeps HTTP status codes such as `(500)` and `(429: rate-limit)` in error families instead of collapsing them to `<n>`.
+
 ## [1.3.441] - 2026-10-05
 
 ### Changed

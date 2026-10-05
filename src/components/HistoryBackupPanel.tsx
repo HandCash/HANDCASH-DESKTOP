@@ -97,7 +97,9 @@ export function HistoryBackupPanel() {
       if (health.phase === 'ok') toastSuccess(health.label, health.message ?? undefined)
       else if (health.phase === 'pending')
         toastSuccess(health.label, health.message ?? 'Upload will retry automatically')
-      else if (health.phase === 'error') toastError(health.label, health.message ?? 'Check the URL')
+      else if (health.phase === 'error' || health.phase === 'delayed') {
+        toastError(health.label, health.message ?? 'Check the URL')
+      }
       else toastSuccess(health.label, health.message ?? undefined)
     })
   }

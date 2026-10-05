@@ -31,6 +31,7 @@ import {
 import { bootWallet } from './session'
 import { revealRootKeyHex } from './vault'
 import { refreshCloudBackupHealth } from './cloudBackupHealth'
+import { holdHistoryHost, probeRemoteBrc39, releaseHistoryHost } from './historyRemoteProbe'
 import {
   archiveBrc39Locally,
   listLocalBrc39Archive,
@@ -357,11 +358,15 @@ export async function uploadBrc39Backup(
     const detail = (await res.text().catch(() => '')).slice(0, 200)
     const msg = `Upload failed (${res.status})${detail ? `: ${detail}` : ''}`
     appendAppLog('error', `[cloud-backup] ${msg}`)
+    if (res.status === 429 || res.status >= 500) {
+      holdHistoryHost(url, res.status, res.headers.get('Retry-After'), `upload ${res.status}`)
+    }
     setHistoryBackupPrefs({ lastError: msg })
     void refreshCloudBackupHealth()
     throw new Error(msg)
   }
 
+  releaseHistoryHost(url)
   setHistoryBackupPrefs({ lastUploadedAt: exportedAt, lastError: null })
   setSpendableHighWaterFromPush(local.spendableSats, local.actionCount)
   appendAppLog('info', '[cloud-backup] upload ok (root-key)')
@@ -392,34 +397,26 @@ export async function fetchRemoteBrc39Meta(): Promise<{
   } catch {
     return null
   }
-  try {
-    const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
-      method: 'HEAD',
-      headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
-    })
-    if (res.status === 404) {
+  const head = await probeRemoteBrc39(
+    active.rootKeyHex,
+    url,
+    `${BRC39_MEDIA}, application/octet-stream, */*`,
+  )
+  switch (head.kind) {
+    case 'absent':
+      return { exists: false, exportedAt: null, bytes: null, spendableSats: null, actionCount: null }
+    case 'present':
       return {
-        exists: false,
-        exportedAt: null,
-        bytes: null,
-        spendableSats: null,
-        actionCount: null,
+        exists: true,
+        etag: head.etag,
+        exportedAt: head.exportedAt,
+        bytes: head.bytes,
+        spendableSats: head.spendableSats,
+        actionCount: head.actionCount,
       }
-    }
-    if (!res.ok) return null
-    const exportedRaw = res.headers.get('X-HandCash-Exported-At')
-    const exportedAt = exportedRaw ? Number(exportedRaw) : null
-    const len = res.headers.get('Content-Length')
-    return {
-      exists: true,
-      etag: res.headers.get('ETag'),
-      exportedAt: Number.isFinite(exportedAt) && exportedAt! > 0 ? exportedAt : null,
-      bytes: len ? Number(len) : null,
-      spendableSats: parseOptionalIntHeader(res, 'X-HandCash-Spendable-Sats'),
-      actionCount: parseOptionalIntHeader(res, 'X-HandCash-Action-Count'),
-    }
-  } catch {
-    return null
+    case 'refused':
+    case 'unavailable':
+      return null
   }
 }
 

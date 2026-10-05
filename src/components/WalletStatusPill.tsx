@@ -126,6 +126,13 @@ function resolveStatus(
       } This device is fine — only the off-device history copy is behind.`,
     }
   }
+  if (cloud.phase === 'delayed') {
+    return {
+      label: cloud.label,
+      tone: 'warn',
+      detail: `${cloud.message ?? 'Backup host is busy.'} This device is fine — the off-device copy catches up automatically.`,
+    }
+  }
   // Coordinator is ground truth for the spend lock. Soft Syncing clear / the
   // 45s syncing watchdog can paint phase:ok while chainIngest is still active —
   // that is the "Synced but Wallet is busy" report.

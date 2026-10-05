@@ -134,12 +134,15 @@ function parseElectronLog(text) {
 
 const LINE = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\[(\w+)\]\s+(.*)$/
 
-/** Collapse ids, hashes, sizes and timings so repeats group into one family. */
+/** Collapse ids, hashes, sizes and timings so repeats group into one family.
+ * A parenthesised HTTP status — `failed (503)`, `(429: rate-limit)` — stays:
+ * a 500 and a 401 are different families with different fixes. */
 function family(message) {
   return message
     .replace(/\b[0-9a-f]{12,64}\b/gi, '<id>')
     .replace(/\btrace-[0-9a-f-]+/gi, '<trace>')
-    .replace(/\b\d{3,}\b/g, '<n>')
+    .replace(/\b\d{4,}\b/g, '<n>')
+    .replace(/\b\d{3}\b/g, (n, at, s) => (s[at - 1] === '(' && /[):]/.test(s[at + 3] ?? '') ? n : '<n>'))
     .replace(/\b\d+(\.\d+)?(ms|s|MB|KB|sats?)\b/gi, '<qty>')
     .replace(/\s+/g, ' ')
     .trim()
