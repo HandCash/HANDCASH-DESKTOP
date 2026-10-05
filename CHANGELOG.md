@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.445] - 2026-10-05
+
+### Changed
+
+- **HandCash key recovery in seconds, not minutes.** When you're signed in on the HandCash migrate page, **Open key recovery in Desktop** also sends your HandCash transaction list, BSV balance and item list. Your keys never go through the page. When you paste the export, Desktop first reads your own transactions (20 per WhatsOnChain request) and matches the HandCash key paths against the addresses in them on your computer. Before, it asked the network about thousands of addresses one batch at a time.
+- That faster result is kept only if HandCash's whole history was read, and the chain shows at least the balance and the number of items your HandCash account reports. Otherwise Desktop checks every address, as before. Hints never decide what you own: every coin and item shown is read from the chain. Hints for one handle are ignored for keys whose HandCash handle is different, and they expire after 6 hours.
+- The scan shows **Reading your HandCash history · N/M transactions**. A saved wallet found this way reads **matched to your HandCash balance**.
+- `openKeyRecovery` (HandCash hosts only) takes optional `{ hints }` and returns `hints: 'accepted' | 'none'`. Mirrored in items-market `docs/migrate-brc100.md`.
+- Log lines `[import] hinted history done …`, `[import] hinted scan settled …` and `[import] hinted scan refused reason=…` show in a support upload which path a scan took.
+
 ## [1.3.444] - 2026-10-05
 
 ### Fixed
