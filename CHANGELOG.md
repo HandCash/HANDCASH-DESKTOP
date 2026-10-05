@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.446] - 2026-10-05
+
+### Fixed
+
+- **Mobile kept losing token icons, contact IDs and publisher info on every cold start.** The wallet core decided where to store data before the Android shell had installed its file store. It then wrote the whole session to WebView storage, and on the next launch the shell deleted every WebView value over 64KB. That included the token list, the icon cache, retained token deploys, and issuer and contact identity packages. The core now waits until a shell bridge answers before choosing a store. Reads made before then are forgotten, and writes made before then are handed to the shell. `[durable] shell store attached after N early read(s)` shows in a support upload when this happens. Mobile 0.1.604 installs its bridge first and recovers the last session's data once.
+- **BRC-162 tokens show their real name and icon.** Binary deploys were never decoded for the token list, so a received token could show `00f654…aa_0` for good. The name, decimals and icon pointer now come from the retained deploy, or from the deploy body fetched by txid. A deploy that can't be found is asked for again after 10 minutes, not on every pass.
+- **Retained deploys of tokens you hold are kept.** The deploy store dropped its oldest entries first once it passed 1MB, whether or not you still held the token. Deploys of held tokens now give way only above 4MB. `[bsv21] deploy store evicted N deploy(s), M held` logs every eviction.
+- **Lineage heal works on the tokens that need it.** Each pass spent its four proofs re-proving tips that were already bound. It now skips tokens a walk cannot improve (unsigned mints, attested tokens), so tokens missing their deploy get proven.
+- Triage: per-launch token-card timeline (`holdings.tokens.byLaunch`), plus late shell attach, one-time recovery and deploy eviction facts under `storage`.
+
 ## [1.3.445] - 2026-10-05
 
 ### Changed
