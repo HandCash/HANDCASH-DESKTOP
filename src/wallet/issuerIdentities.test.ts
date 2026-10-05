@@ -17,6 +17,7 @@ vi.mock('./durableStorage', () => ({
 import { bapAliasScript, bapIdScript } from './bapRecords'
 import { bapIdentityFixture, beefOf, recordTx, rotationTx } from './issuerIdentity.fixture'
 import {
+  holdIssuerIdentities,
   issuerAttribution,
   issuerIdentityFor,
   issuerIdentityForSigner,
@@ -159,6 +160,46 @@ describe('store once', () => {
     expect(issuerIdentityFor('main', own.bapId)?.name).toBe('Mine')
     const entries = [...state.values.keys()].filter((key) => /:main:[1-9A-HJ-NP-Za-km-z]+$/.test(key))
     expect(entries.length).toBe(9)
+  })
+
+  it('never evicts a package a persisted list names, whatever its age', () => {
+    const contact = bapIdentityFixture({ name: 'Contact' })
+    const issuer = bapIdentityFixture({ name: 'Token issuer' })
+    rememberIssuerIdentityPackage('main', contact.pkg)
+    rememberIssuerIdentityPackage('main', issuer.pkg)
+    holdIssuerIdentities('main', 'contacts', [contact.bapId, null, 'not-a-bap-id'])
+    holdIssuerIdentities('main', 'tokens:account-0', [issuer.bapId, issuer.bapId])
+    for (let i = 0; i < 12; i++) rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: `Peer ${i}` }).pkg)
+    resetIssuerIdentitiesForTests()
+    expect(issuerIdentityFor('main', contact.bapId)?.name).toBe('Contact')
+    expect(issuerIdentityFor('main', issuer.bapId)?.name).toBe('Token issuer')
+    const entries = [...state.values.keys()].filter((key) => /:main:[1-9A-HJ-NP-Za-km-z]+$/.test(key))
+    expect(entries.length).toBe(10)
+  })
+
+  it('a package stays held while any list still names it', () => {
+    const shared = bapIdentityFixture({ name: 'Shared' })
+    rememberIssuerIdentityPackage('main', shared.pkg)
+    holdIssuerIdentities('main', 'tokens:account-0', [shared.bapId])
+    holdIssuerIdentities('main', 'items:account-1', [shared.bapId])
+    holdIssuerIdentities('main', 'tokens:account-0', [])
+    for (let i = 0; i < 9; i++) rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: `Peer ${i}` }).pkg)
+    expect(issuerIdentityPackage('main', shared.bapId)).not.toBeNull()
+    holdIssuerIdentities('main', 'items:account-1', [])
+    rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: 'Newest' }).pkg)
+    expect(issuerIdentityPackage('main', shared.bapId)).toBeNull()
+  })
+
+  it('a hold that names nothing new writes nothing', () => {
+    const f = bapIdentityFixture({})
+    rememberIssuerIdentityPackage('main', f.pkg)
+    holdIssuerIdentities('main', 'contacts', [f.bapId])
+    const index = [...state.values.entries()].find(([key]) => key.endsWith(':main'))![1]
+    state.writable = false
+    holdIssuerIdentities('main', 'contacts', [f.bapId, f.bapId])
+    state.writable = true
+    expect([...state.values.entries()].find(([key]) => key.endsWith(':main'))![1]).toBe(index)
+    expect(JSON.parse(index).holds).toEqual({ contacts: [f.bapId] })
   })
 
   it('refuses packages it cannot persist', () => {

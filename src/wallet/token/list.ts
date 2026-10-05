@@ -37,7 +37,8 @@ import { tipFromBsv21Script } from './sendPlan'
 import { reportHoldings } from '../holdingsReconcile'
 import { createEmptyReadGate } from '../emptyBasketRead'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
-import { accountLocalKey } from '../accountLocalKeys'
+import { holdIssuerIdentities, issuerAttribution } from '../issuerIdentities'
+import { accountLocalKey, peekAccountLocalKeyScope } from '../accountLocalKeys'
 import {
   beginOneSatImport,
   markOneSatImportFailed,
@@ -248,6 +249,20 @@ function persistDurableList(items: FungibleToken[]): void {
     )
   } catch {
     // Cache is an optimisation.
+  }
+  holdNamedIssuers(items)
+}
+
+/** Keep the identity package of every issuer the persisted list names. */
+function holdNamedIssuers(items: readonly FungibleToken[]): void {
+  try {
+    holdIssuerIdentities(
+      peekAccountLocalKeyScope().chain,
+      listCacheKey(),
+      items.map((t) => t.bapId),
+    )
+  } catch {
+    // No bound account: nothing was persisted for it either.
   }
 }
 
@@ -823,6 +838,7 @@ export function clearFungiblesCache(options?: { notify?: boolean }): void {
   hydrated = false
   listInFlight = null
   listWorkInFlight = null
+  holdNamedIssuers([])
   durableRemoveItem(listCacheKey())
   if (options?.notify !== false) notify()
 }
@@ -843,6 +859,7 @@ export function rebindFungiblesForAccount(): void {
     cached = durable
     hydrated = true
   }
+  holdNamedIssuers(durable)
   notify()
   void startFungiblesList(undefined)
 }
@@ -1043,7 +1060,6 @@ let lastAttestationCensus = ''
  * which step keeps a token off its issuer's shelf without anyone reading it.
  */
 async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken[]): Promise<void> {
-  const { issuerAttribution } = await import('../issuerIdentities')
   const counts: Record<string, number> = {
     bap: 0,
     'bap-unconfirmed': 0,

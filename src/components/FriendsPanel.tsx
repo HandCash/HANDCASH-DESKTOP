@@ -24,7 +24,7 @@ type Props = {
 }
 
 function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
-  const peer = usePeerIdentity(chain, friend.identityKey)
+  const peer = usePeerIdentity(chain, friend.identityKey, friend)
   return (
     <li className="friend-row">
       <button
@@ -52,7 +52,7 @@ function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
 }
 
 function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
-  const peer = usePeerIdentity(chain, friend.identityKey)
+  const peer = usePeerIdentity(chain, friend.identityKey, friend)
   return (
     <li className="collection-grid-card friend-grid-card">
       <button

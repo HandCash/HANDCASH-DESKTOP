@@ -7,7 +7,11 @@ import {
   type IssuerIdentity,
   type IssuerIdentityPackage,
 } from './issuerIdentity'
-import { issuerIdentityFor, rememberConfirmedIssuerIdentityPackage } from './issuerIdentities'
+import {
+  holdIssuerIdentities,
+  issuerIdentityFor,
+  rememberConfirmedIssuerIdentityPackage,
+} from './issuerIdentities'
 import { normalizeBapId, normalizeIssuerIdentityKey } from './issuerMetadata'
 import type { Chain } from './vault'
 
@@ -209,7 +213,16 @@ function readLinks(chain: Chain): Links {
     /* start empty */
   }
   cache.set(chain, links)
+  holdLinkedIdentities(chain, links)
   return links
+}
+
+function holdLinkedIdentities(chain: Chain, links: Links): void {
+  holdIssuerIdentities(
+    chain,
+    linksKey(chain),
+    Object.values(links.links).map((link) => link.bapId),
+  )
 }
 
 function writeLink(chain: Chain, identityKey: string, link: Link): void {
@@ -219,6 +232,7 @@ function writeLink(chain: Chain, identityKey: string, link: Link): void {
   const next: Links = { version: 1, links: Object.fromEntries(entries) }
   if (!durableSetItem(linksKey(chain), JSON.stringify(next))) return
   cache.set(chain, next)
+  holdLinkedIdentities(chain, next)
   generation++
   for (const listener of listeners) listener()
 }

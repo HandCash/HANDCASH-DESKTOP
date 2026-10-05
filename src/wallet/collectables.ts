@@ -1,5 +1,6 @@
 import { issuerMetadataFromScript } from './issuerMetadata'
 import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from './issuerAttribution'
+import { holdIssuerIdentities } from './issuerIdentities'
 import { issuerFromRemittance } from './token/issuer'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
@@ -207,7 +208,7 @@ import {
   durableRemoveItem,
   durableSetItem,
 } from './durableStorage'
-import { accountKeyScopeFor, accountLocalKey } from './accountLocalKeys'
+import { accountKeyScopeFor, accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys'
 import {
   isAlreadySpentInputError,
   hideSpentOutpoints,
@@ -449,7 +450,21 @@ function flushPendingDurableLists(): void {
   })()
 }
 
+/** Keep the identity package of every issuer the persisted list names. */
+function holdNamedIssuers(items: readonly Collectable[]): void {
+  try {
+    holdIssuerIdentities(
+      peekAccountLocalKeyScope().chain,
+      listCacheKey(),
+      items.map((item) => item.bapId),
+    )
+  } catch {
+    // No bound account: nothing was persisted for it either.
+  }
+}
+
 function persistDurableList(items: Collectable[]): void {
+  holdNamedIssuers(items)
   try {
     const bounded = items.slice(0, DURABLE_LIST_LIMIT)
     const active = getActiveWallet()
@@ -653,6 +668,7 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
   firstSeenAt.clear()
   seededItems.clear()
   loadedSeedIdentity = null
+  holdNamedIssuers([])
   durableRemoveItem(listCacheKey())
   durableRemoveItem(seededItemsKey())
   // Skip the empty notify when a re-read is about to replace the list —
@@ -705,6 +721,7 @@ export function rebindCollectablesForAccount(): void {
       firstSeenAt.set(outpointKey(item.outpoint), aged)
     }
   }
+  holdNamedIssuers(durable)
   notifyCollectables(cachedCollectables)
   // Authoritative list so short-page "keep cached" cannot retain the prior wallet.
   const run = listCollectablesNow(undefined, false, true, false)

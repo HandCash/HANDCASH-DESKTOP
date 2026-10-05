@@ -25,14 +25,17 @@ import type { Chain } from './vault'
  * by sending a package of its own. Identities this wallet controls are pinned:
  * only this wallet's publish, rotate and proof-upgrade flows rewrite them.
  *
- * Each package holds an image of up to 64 KB, and Mobile's store is synchronous
- * localStorage, so every package has its own key and peers' packages are capped.
+ * Each package holds an image of up to 64 KB, and Mobile's store can be
+ * synchronous localStorage, so every package has its own key. A package that a
+ * contact or a held asset names is held and never evicted; only packages
+ * nothing on this device names are capped.
  */
 
 type IndexEntry = { bapId: string; storedAt: number; pinned?: true }
-type Index = { version: 1; entries: IndexEntry[] }
+/** `holds` maps a persisted list's durable key to the BAP IDs it names. */
+type Index = { version: 1; entries: IndexEntry[]; holds?: Record<string, string[]> }
 
-const MAX_UNPINNED = 8
+const MAX_UNHELD = 8
 const BASE = storageRegistry.issuerIdentities.key
 const indexKey = (chain: Chain) => `${BASE}:${chain}`
 const entryKey = (chain: Chain, bapId: string) => `${BASE}:${chain}:${bapId}`
@@ -57,17 +60,39 @@ function announce() {
   for (const listener of listeners) listener()
 }
 
+function bapIdList(raw: Iterable<unknown>): string[] {
+  const ids = new Set<string>()
+  for (const value of new Set(raw)) {
+    const id = normalizeBapId(value)
+    if (id) ids.add(id)
+  }
+  return [...ids].sort()
+}
+
+function readHolds(raw: unknown): Record<string, string[]> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const holds: Record<string, string[]> = {}
+  for (const [holder, ids] of Object.entries(raw as Record<string, unknown>)) {
+    const list = Array.isArray(ids) ? bapIdList(ids) : []
+    if (holder && list.length) holds[holder] = list
+  }
+  return Object.keys(holds).length ? holds : undefined
+}
+
 function readIndex(chain: Chain): Index {
   try {
     const raw = durableGetItem(indexKey(chain))
     const parsed = raw ? (JSON.parse(raw) as Index) : null
-    if (parsed?.version === 1 && Array.isArray(parsed.entries))
+    if (parsed?.version === 1 && Array.isArray(parsed.entries)) {
+      const holds = readHolds(parsed.holds)
       return {
         version: 1,
         entries: parsed.entries.filter(
           (entry) => normalizeBapId(entry?.bapId) === entry.bapId && Number.isFinite(entry.storedAt),
         ),
+        ...(holds ? { holds } : {}),
       }
+    }
   } catch {
     /* rebuilt below */
   }
@@ -79,15 +104,41 @@ function writeIndex(chain: Chain, index: Index): boolean {
 }
 
 function evict(chain: Chain, index: Index): Index {
-  const unpinned = index.entries
-    .filter((entry) => !entry.pinned)
-    .sort((a, b) => b.storedAt - a.storedAt)
-  const dropped = new Set(unpinned.slice(MAX_UNPINNED).map((entry) => entry.bapId))
+  const held = new Set(Object.values(index.holds ?? {}).flat())
+  // Entries are appended as they arrive, so position breaks a same-millisecond tie.
+  const strangers = index.entries
+    .map((entry, at) => ({ entry, at }))
+    .filter(({ entry }) => !entry.pinned && !held.has(entry.bapId))
+    .sort((a, b) => b.entry.storedAt - a.entry.storedAt || b.at - a.at)
+  const dropped = new Set(strangers.slice(MAX_UNHELD).map(({ entry }) => entry.bapId))
   for (const bapId of dropped) {
     durableRemoveItem(entryKey(chain, bapId))
     verified.delete(`${chain}:${bapId}`)
   }
-  return { version: 1, entries: index.entries.filter((entry) => !dropped.has(entry.bapId)) }
+  if (dropped.size > 0)
+    console.info(`[identity] evicted ${dropped.size} identity package(s) no contact or held asset names`)
+  return { ...index, entries: index.entries.filter((entry) => !dropped.has(entry.bapId)) }
+}
+
+/**
+ * Record every BAP ID a persisted list names, replacing what that list named
+ * before. `holder` is the list's own durable key, so each account's contacts,
+ * tokens and items hold for themselves. Held packages are never evicted.
+ */
+export function holdIssuerIdentities(chain: Chain, holder: string, bapIds: Iterable<unknown>): void {
+  if (!holder) return
+  const ids = bapIdList(bapIds)
+  const index = readIndex(chain)
+  const prior = index.holds?.[holder] ?? []
+  if (prior.length === ids.length && prior.every((id, i) => id === ids[i])) return
+  const holds = { ...index.holds }
+  if (ids.length) holds[holder] = ids
+  else delete holds[holder]
+  writeIndex(chain, {
+    version: 1,
+    entries: index.entries,
+    ...(Object.keys(holds).length ? { holds } : {}),
+  })
 }
 
 export function issuerIdentityPackage(chain: Chain, bapId: string): IssuerIdentityPackage | null {
@@ -181,7 +232,7 @@ export function rememberIssuerIdentityPackage(
   const pinned = !!(opts?.pin || prior?.pinned)
   if (prior && !changed && pinned === !!prior.pinned) return issuerIdentityFor(chain, bapId)
   const next = evict(chain, {
-    version: 1,
+    ...index,
     entries: [
       ...index.entries.filter((entry) => entry.bapId !== bapId),
       { bapId, storedAt: prior?.storedAt ?? Date.now(), ...(pinned ? { pinned: true as const } : {}) },

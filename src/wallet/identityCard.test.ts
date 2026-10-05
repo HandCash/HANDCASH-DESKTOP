@@ -28,7 +28,7 @@ import {
 } from './identityCard'
 import { bapIdentityFixture, beefOf, rotationTx } from './issuerIdentity.fixture'
 import { buildIssuerIdentityPackage, issuerIdentityPackageBeef } from './issuerIdentity'
-import { resetIssuerIdentitiesForTests } from './issuerIdentities'
+import { rememberIssuerIdentityPackage, resetIssuerIdentitiesForTests } from './issuerIdentities'
 
 const alice = PrivateKey.fromHex('0a'.padStart(64, '0'))
 const mallory = PrivateKey.fromHex('0b'.padStart(64, '0'))
@@ -67,6 +67,20 @@ describe('identity card', () => {
     expect(chain.isValidRootForHeight).toHaveBeenCalled()
     expect(peerIdentityFor('main', pub(alice))).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId } })
     expect(peerIdentityFor('test', pub(alice))).toBeNull()
+  })
+
+  it('a contact keeps its presented identity however many strangers arrive later', async () => {
+    const f = studio()
+    const card = await signIdentityCard({
+      rootKeyHex: hex(alice),
+      issuedAt: T0,
+      presented: { pkg: f.pkg, signingKey: f.signer },
+    })
+    await rememberIdentityCard('main', card, { tracker: tracker(), expectedIdentityKey: pub(alice), now: NOW })
+    for (let i = 0; i < 12; i++) rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: `Stranger ${i}` }).pkg)
+    resetIdentityCardsForTests()
+    resetIssuerIdentitiesForTests()
+    expect(peerIdentityFor('main', pub(alice))).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId } })
   })
 
   it('refuses a card relayed by another sender', async () => {
