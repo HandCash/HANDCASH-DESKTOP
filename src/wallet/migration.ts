@@ -3,7 +3,7 @@ import { storageRegistry } from '../storage/registry'
 
 /**
  * HandCash migration helpers exposed over the BRC-100 HTTP bridge.
- * Hosts: handcash.io / market.handcash.io (+ localhost / preprod).
+ * Hosts: handcash.io / market.handcash.io / preprod (+ localhost in dev builds or Labs).
  * Methods: getLegacyAddress, refreshLegacyAddress, listMigrationTxids, openKeyRecovery.
  * Handle claim (separate): claimCloudHandle, getClaimedCloudHandle — see handleClaim.ts.
  */
@@ -11,6 +11,7 @@ import { storageRegistry } from '../storage/registry'
 import { normalizeAppHost } from './appIdentity'
 import { brc100Contract } from '../contracts/brc100'
 import { requestImportKind } from './import'
+import { trustsLocalHandCashHosts } from './labs'
 import { openSetting } from './navStore'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
@@ -50,7 +51,7 @@ export type RefreshLegacyAddressArgs = {
 export function isMigrationOrigin(origin: string | undefined): boolean {
   const host = normalizeAppHost(origin)
   const bare = (host.split(':')[0] ?? host).toLowerCase()
-  if (bare === 'localhost' || bare === '127.0.0.1') return true
+  if (bare === 'localhost' || bare === '127.0.0.1') return trustsLocalHandCashHosts()
   return (
     bare === 'handcash.io' ||
     bare === 'www.handcash.io' ||

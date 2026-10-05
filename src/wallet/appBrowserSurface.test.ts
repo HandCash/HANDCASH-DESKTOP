@@ -1,10 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { setLabEnabled } from './labs'
 import {
   appBrowserSurfaceLabel,
   chooseAppBrowserSurface,
 } from './appBrowserSurface'
 
 describe('chooseAppBrowserSurface', () => {
+  beforeEach(() => setLabEnabled('inAppBrowser', true))
+  afterEach(() => setLabEnabled('inAppBrowser', false))
+
+  it('offers no in-app surface while Labs › In-app browser is off', () => {
+    setLabEnabled('inAppBrowser', false)
+    expect(chooseAppBrowserSurface({ embeddedAppBrowser: true })).toEqual({ surface: 'external' })
+    expect(chooseAppBrowserSurface({ openAppBrowser: () => undefined })).toEqual({ surface: 'external' })
+    expect(chooseAppBrowserSurface({ embeddedAppBrowser: true }, false)).toEqual({ surface: 'external' })
+  })
+
   it('hosts an embedded tab only when the shell says it can', () => {
     expect(chooseAppBrowserSurface({ embeddedAppBrowser: true })).toEqual({
       surface: 'embedded',

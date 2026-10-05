@@ -6,6 +6,7 @@ import {
 import { clearNavChild, openEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
+import { useLab } from '../hooks/useLab'
 import { AppAvatar } from './AppAvatar'
 import { AppsIcon, CloseIcon, LaunchIcon } from './icons'
 import { WalletRequestTemplate } from './WalletRequestTemplate'
@@ -19,7 +20,8 @@ type Props = {
 export function AppLaunchPanel({ origin, name, url }: Props) {
   const target = decideAppBrowserTarget(url)
   const safeUrl = target.kind === 'open' ? target.url : null
-  const surface = chooseAppBrowserSurface(window.handcash)
+  const inAppBrowser = useLab('inAppBrowser')
+  const surface = chooseAppBrowserSurface(window.handcash, inAppBrowser)
   const inAppAvailable = surface.surface !== 'external'
 
   const openExternal = async () => {
@@ -88,7 +90,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
   const actions = {
     ariaLabel: `Launch ${name}`,
     tertiary: cancelAction,
-    secondary: inAppAction,
+    ...(inAppAvailable ? { secondary: inAppAction } : {}),
     primary: {
       ...browserAction,
       tone: 'primary' as const,
@@ -113,7 +115,9 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       <p className="permission-note">
         {inAppAvailable
           ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
-          : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
+          : inAppBrowser
+            ? 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'
+            : 'Opens in your system browser with the same connected wallet permissions. The in-app browser is in Settings → Labs.'}
       </p>
     </WalletRequestTemplate>
   )

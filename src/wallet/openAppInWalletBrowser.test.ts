@@ -4,6 +4,11 @@ vi.mock('./navStore', () => ({
   openEmbeddedAppBrowser: vi.fn(),
 }))
 
+const labs = vi.hoisted(() => ({ inAppBrowser: true }))
+vi.mock('./labs', () => ({
+  isLabEnabled: (id: string) => id === 'inAppBrowser' && labs.inAppBrowser,
+}))
+
 vi.mock('./appBrowserUrl', () => ({
   decideAppBrowserTarget: vi.fn((url: string) =>
     url.startsWith('http')
@@ -38,6 +43,19 @@ describe('openAppInWalletBrowser', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    labs.inAppBrowser = true
+  })
+
+  it('uses the system browser even when asked for in-app while the lab is off', async () => {
+    labs.inAppBrowser = false
+    await expect(
+      openAppInWalletBrowser({
+        origin: 'https://pixelwar.click',
+        url: 'https://pixelwar.click/',
+        preferInApp: true,
+      }),
+    ).resolves.toBe('external')
+    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
   })
 
   it('opens safe http(s) apps in the system browser by default', async () => {

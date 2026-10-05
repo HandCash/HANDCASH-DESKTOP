@@ -18,3 +18,4 @@ export {
   deviceHandoffStatus,
 } from './settingsStatus'
 export { SettingsIconToggle } from './SettingsIconToggle'
+export { LabsPanel } from './LabsPanel'

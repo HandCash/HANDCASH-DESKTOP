@@ -1,10 +1,24 @@
 # Changelog
 
-## [1.3.439] - 2026-10-05
+## [1.3.440] - 2026-10-05
+
+### Added
+
+- **Settings → Labs** holds experimental features. Each one is off until you turn it on on this device, and wiping the wallet turns them all off again.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- The in-app browser is now a Labs feature and is off by default. With it off, apps open in your system browser on Desktop, and the "Open in HandCash" action and the Apps browser button are hidden. Turning it off closes any open in-app tabs. On Mobile the in-app browser is how web apps reach the wallet, so app connections on a phone need Labs → In-app browser turned on.
+
+### Security
+
+- Shipped builds no longer treat pages on `localhost` as HandCash sites for migrate, handle claim or market listing. Any program on the computer can serve `localhost`, so it could have posed as HandCash and used those methods. Development builds still trust it, and Labs → Local HandCash hosts turns it back on for local testing.
+
+## [1.3.439] - 2026-10-05
+
+### Added
+
+- The HandCash migrate page now leads to key recovery. A new HandCash-only bridge method, `openKeyRecovery`, brings Desktop forward on Settings → Import with the HandCash export form already chosen, ready for the user to paste the two keys. It reads nothing and moves nothing. If a scan, a sweep or a half-typed secret is in progress, the form waits until that screen is idle. The cloud's automatic migrate is no longer part of the web flow.
 
 ## [1.3.438] - 2026-10-05
 

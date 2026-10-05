@@ -3,6 +3,7 @@ import type { SettingId } from '../../wallet/navStore'
 import {
   ActivityIcon,
   CloudUploadIcon,
+  CodeIcon,
   DevicesIcon,
   DownloadIcon,
   EncryptIcon,
@@ -53,6 +54,8 @@ function iconFor(id: SettingId): SettingIconSpec {
       return { icon: <ActivityIcon size={ICON_SIZE} /> }
     case 'recover-tx':
       return { icon: <RefreshIcon size={ICON_SIZE} /> }
+    case 'labs':
+      return { icon: <CodeIcon size={ICON_SIZE} /> }
     default:
       return { icon: <InfoIcon size={ICON_SIZE} /> }
   }

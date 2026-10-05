@@ -119,6 +119,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'logs') return 'Session logs'
   if (id === 'wallet-health') return 'Wallet health'
   if (id === 'recover-tx') return 'Recover from transaction'
+  if (id === 'labs') return 'Labs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'change-password') return 'Unlock'
@@ -376,6 +377,17 @@ export function SettingsPanel() {
               </span>
             </SettingsControlRow>
           ) : null}
+        </ul>
+      </SettingsSection>
+
+      <SettingsSection title="Labs" part="labs">
+        <ul className="settings-list">
+          <SettingsNavRow
+            label="Labs"
+            description="Experimental features, off by default"
+            icon={settingIconFor('labs').icon}
+            onClick={() => openSetting('labs')}
+          />
         </ul>
       </SettingsSection>
 

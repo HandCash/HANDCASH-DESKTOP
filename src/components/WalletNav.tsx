@@ -68,6 +68,7 @@ import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { WalletHealthPanel } from './settings/WalletHealthPanel'
+import { LabsPanel } from './settings/LabsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
 import { UnlockSettingsPanel } from './UnlockSettingsPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
@@ -719,6 +720,7 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'setting' && stageChild.settingId === 'wallet-health' && (
                 <WalletHealthPanel />
               )}
+              {stageChild.type === 'setting' && stageChild.settingId === 'labs' && <LabsPanel />}
               {stageChild.type === 'setting' && stageChild.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />
               )}

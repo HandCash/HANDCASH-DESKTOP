@@ -461,6 +461,12 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  labs: defineStorage({
+    key: 'handcash.labs.v1',
+    owner: 'labs',
+    scope: 'device',
+    version: 1,
+  }),
   logsUploadUrl: defineStorage({
     key: 'handcash.logs.uploadUrl',
     owner: 'diagnostics',

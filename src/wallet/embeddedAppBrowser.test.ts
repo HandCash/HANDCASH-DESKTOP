@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { setLabEnabled } from './labs'
 import {
   clearNavChild,
   closeAllEmbeddedAppBrowsers,
@@ -12,9 +13,32 @@ import {
   setNavSection,
 } from './navStore'
 
+beforeEach(() => {
+  setLabEnabled('inAppBrowser', true)
+})
+
 afterEach(() => {
   closeAllEmbeddedAppBrowsers()
   setNavSection('activity')
+  setLabEnabled('inAppBrowser', false)
+})
+
+describe('in-app browser behind Labs', () => {
+  it('refuses to open a tab while the lab is off', () => {
+    setLabEnabled('inAppBrowser', false)
+    openEmbeddedAppBrowser('https://app.example', 'https://app.example/play')
+    expect(getEmbeddedAppBrowserTabs()).toEqual([])
+    expect(getNavState().child).toBeNull()
+  })
+
+  it('closes every tab when the lab is turned off', () => {
+    openEmbeddedAppBrowser('https://a.example', 'https://a.example/')
+    openEmbeddedAppBrowser('https://b.example', 'https://b.example/')
+    expect(getEmbeddedAppBrowserTabs()).toHaveLength(2)
+    setLabEnabled('inAppBrowser', false)
+    expect(getEmbeddedAppBrowserTabs()).toEqual([])
+    expect(getNavState().child).toBeNull()
+  })
 })
 
 describe('embedded app browser session', () => {

@@ -1,3 +1,5 @@
+import { isLabEnabled } from './labs'
+
 /**
  * Which in-app surface a connected app opens on. Both shells have one, but
  * they are different mechanisms and picking the wrong one shows an empty panel.
@@ -28,9 +30,12 @@ export type AppBrowserCapabilities = {
   openAppBrowser?: unknown
 }
 
+/** In-app surfaces exist only while Settings → Labs → In-app browser is on. */
 export function chooseAppBrowserSurface(
   caps: AppBrowserCapabilities | undefined,
+  inAppEnabled: boolean = isLabEnabled('inAppBrowser'),
 ): AppBrowserSurface {
+  if (!inAppEnabled) return { surface: 'external' }
   if (caps?.embeddedAppBrowser) return { surface: 'embedded' }
   if (typeof caps?.openAppBrowser === 'function') return { surface: 'native' }
   return { surface: 'external' }

@@ -3,6 +3,7 @@ import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { appBrowserMachine, type AppBrowserOpener } from '../machines/appBrowserMachine'
 import { playWalletSound } from '../wallet/soundService'
+import { useLab } from '../hooks/useLab'
 
 /**
  * Entry point for BRC-100 apps on a phone.
@@ -12,6 +13,7 @@ import { playWalletSound } from '../wallet/soundService'
  * embedded `<webview>` tab instead, so this renders nothing there.
  */
 export function AppBrowserLauncher() {
+  const inAppBrowser = useLab('inAppBrowser')
   const opener = useMemo<AppBrowserOpener | null>(() => {
     // Prefer the native shell browser. Never treat Desktop's embedded capability
     // as this launcher — that path is AppLaunchPanel → AppBrowserPanel.
@@ -21,7 +23,7 @@ export function AppBrowserLauncher() {
     return (url: string) => open(url)
   }, [])
 
-  if (!opener) return null
+  if (!opener || !inAppBrowser) return null
   return <Launcher open={opener} />
 }
 

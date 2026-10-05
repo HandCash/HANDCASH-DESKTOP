@@ -22,6 +22,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
 import { runExclusiveSpend } from './spendGuard'
 import { isAlreadySpentListingFailure } from './spendVerdict'
+import { trustsLocalHandCashHosts } from './labs'
 import {
   buildCollectableCustomInstructions,
   completeProvenanceForPublish,
@@ -551,9 +552,8 @@ export function buildMarketHeldRemittance(args: {
 export function isMarketListingOrigin(origin: string | undefined): boolean {
   const host = normalizeAppHost(origin)
   const bare = (host.split(':')[0] ?? host).toLowerCase()
+  if (bare === 'localhost' || bare === '127.0.0.1') return trustsLocalHandCashHosts()
   return (
-    bare === 'localhost' ||
-    bare === '127.0.0.1' ||
     bare === 'handcash.io' ||
     bare === 'www.handcash.io' ||
     bare === 'market.handcash.io' ||

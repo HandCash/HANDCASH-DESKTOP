@@ -1,6 +1,7 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
 import { isCompactShell } from './isCompactShell'
+import { isLabEnabled, subscribeLabs } from './labs'
 
 export type NavSection =
   | 'activity'
@@ -18,6 +19,7 @@ export type SettingId =
   | 'device-handoff'
   | 'history-backup'
   | 'import'
+  | 'labs'
   | 'wipe-wallet'
   | 'about-handcash'
   | 'statecharts'
@@ -181,6 +183,11 @@ export function closeAllEmbeddedAppBrowsers() {
   }
 }
 
+// Turning the lab off closes every tab; parked webviews must not keep sessions alive.
+subscribeLabs((labs) => {
+  if (!labs.inAppBrowser) closeAllEmbeddedAppBrowsers()
+})
+
 /** Bring a parked browser tab back to the Apps foreground. */
 export function focusEmbeddedAppBrowser(origin = activeEmbeddedBrowserOrigin ?? undefined) {
   const tab = embeddedAppBrowsers.find((candidate) => candidate.origin === origin)
@@ -202,6 +209,10 @@ export function setNavSection(section: NavSection) {
 }
 
 export function openNavChild(section: NavSection, child: NavChild) {
+  if (child.type === 'app-browser' && !isLabEnabled('inAppBrowser')) {
+    console.warn(`[nav] refused in-app browser for ${child.origin} — Labs › In-app browser is off`)
+    return
+  }
   if (section !== 'settings' || child.type !== 'setting') {
     settingBackStack = []
   }
