@@ -22,8 +22,10 @@ import {
   probeHandCashHandle,
   removeImportedSource,
   scanImportedSource,
+  subscribeImportIntent,
   subscribeImportedSources,
   sweepImportedSource,
+  takeImportIntent,
   updateImportedSource,
   type ImportedSource,
 } from '../../wallet/import'
@@ -71,6 +73,21 @@ export function ImportPanel() {
       offCursor()
     }
   }, [send])
+
+  // Key recovery opened from the migrate page waits until no scan, sweep or
+  // half-typed secret would be interrupted.
+  const takesIntent =
+    snapshot.matches('list') || snapshot.matches('picking') || snapshot.matches({ source: 'viewing' })
+  useEffect(() => {
+    if (!takesIntent) return
+    return subscribeImportIntent((requested) => {
+      if (!requested) return
+      const kind = takeImportIntent()
+      if (!kind) return
+      if (actor.getSnapshot().matches({ source: 'viewing' })) send({ type: 'BACK' })
+      send({ type: 'PICK', kind })
+    })
+  }, [takesIntent, actor, send])
 
   const runScan = async (sourceId: string) => {
     try {

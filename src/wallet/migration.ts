@@ -4,12 +4,14 @@ import { storageRegistry } from '../storage/registry'
 /**
  * HandCash migration helpers exposed over the BRC-100 HTTP bridge.
  * Hosts: handcash.io / market.handcash.io (+ localhost / preprod).
- * Methods: getLegacyAddress, refreshLegacyAddress, listMigrationTxids.
+ * Methods: getLegacyAddress, refreshLegacyAddress, listMigrationTxids, openKeyRecovery.
  * Handle claim (separate): claimCloudHandle, getClaimedCloudHandle — see handleClaim.ts.
  */
 
 import { normalizeAppHost } from './appIdentity'
 import { brc100Contract } from '../contracts/brc100'
+import { requestImportKind } from './import'
+import { openSetting } from './navStore'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { accountLocalKey } from './accountLocalKeys'
@@ -164,4 +166,21 @@ async function refreshLegacyAddressExclusive(
 
 export function listMigrationTxids(): ListMigrationTxidsPayload {
   return { txids: readTxidLog().slice(0, MAX_TXIDS) }
+}
+
+export type OpenKeyRecoveryPayload = {
+  opened: true
+  kind: 'handcash'
+}
+
+/**
+ * Bring Desktop forward on Settings → Import with the HandCash two-key form
+ * chosen. Nothing is read, stored or moved: the user pastes the export, and
+ * any sweep is still their explicit confirm on a preview.
+ */
+export function openKeyRecoveryPayload(): OpenKeyRecoveryPayload {
+  requestImportKind('handcash')
+  openSetting('import')
+  if (typeof window !== 'undefined') void window.handcash?.focusWindow?.()
+  return { opened: true, kind: 'handcash' }
 }

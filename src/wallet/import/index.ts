@@ -50,3 +50,4 @@ export {
   type SweepProgress,
 } from './sweep'
 export { HANDCASH_GAP } from './pathCatalog'
+export { requestImportKind, subscribeImportIntent, takeImportIntent } from './importIntent'

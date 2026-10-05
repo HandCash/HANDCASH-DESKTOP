@@ -88,6 +88,8 @@ export const legacyImportMachine = setup({
       entry: 'leaveSource',
       on: {
         ADD: { target: 'picking' },
+        // The migrate page opens key recovery with the kind already chosen.
+        PICK: { target: 'entering', actions: 'pick' },
         OPEN: { target: 'source', actions: 'select' },
         FAIL: { actions: 'fail' },
       },

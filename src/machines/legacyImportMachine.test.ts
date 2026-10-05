@@ -30,6 +30,13 @@ describe('legacyImportMachine', () => {
     expect(after.matches({ source: 'viewing' })).toBe(true)
   })
 
+  it('opens the HandCash form straight from the list for key recovery', () => {
+    const snap = run({ type: 'LOADED' }, { type: 'PICK', kind: 'handcash' })
+    expect(snap.matches('entering')).toBe(true)
+    expect(snap.context.kind).toBe('handcash')
+    expect(run({ type: 'LOADED' }, { type: 'PICK', kind: 'handcash' }, { type: 'BACK' }).matches('picking')).toBe(true)
+  })
+
   it('reaches sweeping only through review and confirm', () => {
     const opened: LegacyImportEvent[] = [{ type: 'LOADED' }, { type: 'OPEN', sourceId: 's1' }]
     expect(run(...opened, { type: 'CONFIRM' }).matches({ source: 'viewing' })).toBe(true)

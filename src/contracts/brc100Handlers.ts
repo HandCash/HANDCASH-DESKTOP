@@ -10,6 +10,7 @@ export const BRC100_HANDLER_MANIFEST = Object.freeze({
   getLegacyAddress: 'migration',
   refreshLegacyAddress: 'migration',
   listMigrationTxids: 'migration',
+  openKeyRecovery: 'migration',
   createMarketListingAdvert: 'market',
   getTokenIcon: 'tokens',
   createMarketPurchaseIntent: 'market',

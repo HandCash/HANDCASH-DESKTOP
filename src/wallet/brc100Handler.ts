@@ -72,6 +72,7 @@ import {
   isMigrationMethod,
   isMigrationOrigin,
   listMigrationTxids,
+  openKeyRecoveryPayload,
   refreshLegacyAddressPayload,
 } from './migration'
 import {
@@ -461,6 +462,9 @@ async function dispatchWalletMethod(
       )
     case 'listMigrationTxids':
       return listMigrationTxids()
+    case 'openKeyRecovery':
+      appendAppLog('info', `[migrate] key recovery opened by ${normalizeOrigin(originator) || 'unknown origin'}`)
+      return openKeyRecoveryPayload()
     case 'createMarketListingAdvert':
       return createMarketListingAdvert((args ?? {}) as CreateMarketListingArgs)
     case 'getTokenIcon': {

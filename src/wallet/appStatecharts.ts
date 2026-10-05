@@ -759,6 +759,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
   loading --> list : LOADED / FAIL
   list --> picking : ADD
   list --> source : OPEN
+  list --> entering : PICK (openKeyRecovery from migrate page)
   picking --> entering : PICK (HandCash first)
   picking --> list : BACK
   entering --> saving : SUBMIT
