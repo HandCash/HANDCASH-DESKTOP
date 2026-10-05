@@ -15887,3 +15887,50 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   outline-offset: 0;
   border-color: color-mix(in srgb, var(--hc-accent) 60%, hsl(var(--border)));
 }
+
+/* Settings → Import: saved legacy wallets (legacyImportMachine). */
+[data-aeon-scope='legacy-import'] :is([data-aeon-part='sources'], [data-aeon-part='kinds']) {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-aeon-scope='legacy-import'] :is([data-aeon-part='sources'], [data-aeon-part='kinds']) > li > button {
+  width: 100%;
+  text-align: left;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='kinds'] > li:first-child > button {
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='source'] {
+  display: grid;
+  gap: 12px;
+}
+
+[data-aeon-scope='legacy-import'] :is([data-aeon-part='held'], [data-aeon-part='tokens'], [data-aeon-part='review'] ul) {
+  margin: 0;
+  padding-left: 18px;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='handle'][data-aeon-state='proven'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='addresses'] ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='addresses'] li {
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='identity'] .mono {
+  overflow-wrap: anywhere;
+}

@@ -37,7 +37,7 @@ function iconFor(id: SettingId): SettingIconSpec {
       return { icon: <DownloadIcon size={ICON_SIZE} /> }
     case 'device-handoff':
       return { icon: <DevicesIcon size={ICON_SIZE} /> }
-    case 'import-phrase':
+    case 'import':
       return { icon: <RefreshIcon size={ICON_SIZE} /> }
     case 'change-password':
       return { icon: <LockIcon size={ICON_SIZE} /> }

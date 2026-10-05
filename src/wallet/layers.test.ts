@@ -74,6 +74,7 @@ describe('WALLET_FEATURE_MODULES', () => {
     expect(WALLET_FEATURE_MODULES.spendVerdict).toBe('spendVerdict/index.ts')
     expect(WALLET_FEATURE_MODULES.chainProbe).toBe('chainProbe/index.ts')
     expect(WALLET_FEATURE_MODULES.marketOffer).toBe('marketOffer/index.ts')
+    expect(WALLET_FEATURE_MODULES.legacyImport).toBe('import/index.ts')
     expect(WALLET_FEATURE_MODULES.uiFeed).toBe('components/uiFeed/index.ts')
   })
 })

@@ -10,7 +10,14 @@ import { storageRegistry } from '../storage/registry'
  * 3. Optionally migrate 1-sat ordinals in small batches (resumable). Huge
  *    collections (e.g. 100k+) take a long time — progress is explicit.
  */
-import { Beef, P2PKH, PrivateKey, type BEEF, type LockingScript } from '@bsv/sdk'
+import {
+  Beef,
+  P2PKH,
+  PrivateKey,
+  type BEEF,
+  type CreateActionOutput,
+  type LockingScript,
+} from '@bsv/sdk'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
 import {
@@ -127,6 +134,8 @@ export type PhraseScheme =
   | 'yours-sweep'
   | 'yours-identity'
   | 'twetch'
+  /** A key from a saved Import section source. */
+  | 'import'
 
 export type PhraseCandidate = {
   scheme: PhraseScheme
@@ -436,7 +445,7 @@ export function validatePhraseInput(raw: string): string | null {
   return null
 }
 
-async function scanAddressAny(
+export async function scanAddressAny(
   address: string,
   chain: Chain,
 ): Promise<LegacyScanResult> {
@@ -454,7 +463,7 @@ async function scanAddressAny(
  * The indexer lists every unspent output for the address, so counting rows made
  * the preview promise cash outputs as collectables.
  */
-async function countOrdinalsAtLeast(
+export async function countOrdinalsAtLeast(
   address: string,
   chain: Chain,
   cap: number,
@@ -748,8 +757,6 @@ function backfillSweptFundingActivity(
  * Sweep funding UTXOs from the phrase into the unlocked wallet.
  */
 export async function sweepPhraseFunding(args: {
-  mnemonic: string
-  passphrase?: string
   candidate: PhraseCandidate
   utxos: LegacyUtxo[]
 }): Promise<PhraseFundingSweepResult> {
@@ -1349,16 +1356,13 @@ async function buildAndPostItemMigrate(args: {
   inputBeef: BEEF
   items: PendingItemMigrate[]
 }): Promise<string> {
-  const { active, destLockHex, items } = args
+  const { destLockHex, items } = args
   const first = items[0]!
-
-  const car = await active.wallet.createAction({
-    inputBEEF: args.inputBeef,
-    inputs: items.map((item) => ({
-      outpoint: item.outpoint,
-      unlockingScriptLength: 108,
-      inputDescription: 'migrate ordinal from phrase',
-    })),
+  return postForeignInputAction({
+    active: args.active,
+    spendKey: args.spendKey,
+    inputBeef: args.inputBeef,
+    inputs: items.map((item) => ({ ...item, description: 'migrate ordinal from phrase' })),
     outputs: items.map((item) => ({
       lockingScript: destLockHex,
       satoshis: 1,
@@ -1372,17 +1376,62 @@ async function buildAndPostItemMigrate(args: {
       items.length === 1
         ? `Migrate ordinal ${first.outpoint.slice(0, 18)}…`
         : `Migrate ${items.length} ordinals from phrase`,
+  })
+}
+
+/** A source output signed by a foreign key against its real locking script. */
+export type ForeignInput = {
+  outpoint: string
+  txid: string
+  vout: number
+  /** Real value of the source output — the sighash amount must match exactly. */
+  satoshis: number
+  /** Real locking script — the sighash scriptCode must be the whole script. */
+  sourceLock: LockingScript
+  description: string
+}
+
+/**
+ * One transaction spending foreign-key inputs, funded by this wallet's change.
+ *
+ * The wallet adds funding and change; the foreign inputs are signed here with
+ * `spendKey`. A failure before broadcast aborts the action so its reserved
+ * change and listed outputs are released.
+ */
+export async function postForeignInputAction(args: {
+  active: ActiveWallet
+  spendKey: PrivateKey
+  inputBeef: BEEF
+  inputs: ForeignInput[]
+  outputs: CreateActionOutput[]
+  labels: string[]
+  description: string
+}): Promise<string> {
+  const { active, inputs } = args
+  const car = await active.wallet.createAction({
+    inputBEEF: args.inputBeef,
+    inputs: inputs.map((input) => ({
+      outpoint: input.outpoint,
+      unlockingScriptLength: 108,
+      inputDescription: input.description,
+    })),
+    outputs: args.outputs,
+    labels: args.labels,
+    description: args.description,
     options: {
       trustSelf: 'known',
       signAndProcess: false,
-      // Outputs carry per-item provenance, so their order must survive.
+      // Outputs carry per-item provenance or a token's exact amount; order must survive.
       randomizeOutputs: false,
     },
   })
 
   const reference = car.signableTransaction?.reference
   try {
-    return await signAndPostItemMigrate(args, car)
+    return await signAndPostForeignInputs(
+      { active, spendKey: args.spendKey, inputBeef: args.inputBeef, inputs },
+      car,
+    )
   } catch (err) {
     // An unsigned action keeps its reserved inputs and still lists its `1sat`
     // outputs, so a failed migrate showed up in Collect as real collectables —
@@ -1395,7 +1444,7 @@ async function buildAndPostItemMigrate(args: {
       } catch (abortErr) {
         appendAppLog(
           'warn',
-          `[phrase-sweep] could not abort failed migrate of ${items.length} tip(s): ${
+          `[phrase-sweep] could not abort failed migrate of ${inputs.length} input(s): ${
             abortErr instanceof Error ? abortErr.message : String(abortErr)
           }`,
         )
@@ -1405,23 +1454,23 @@ async function buildAndPostItemMigrate(args: {
   }
 }
 
-async function signAndPostItemMigrate(
+async function signAndPostForeignInputs(
   args: {
     active: ActiveWallet
     spendKey: PrivateKey
     inputBeef: BEEF
-    items: PendingItemMigrate[]
+    inputs: ForeignInput[]
   },
   car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
 ): Promise<string> {
-  const { active, spendKey, items } = args
+  const { active, spendKey, inputs: items } = args
   let sweepTxid = (car.txid ?? '').toLowerCase()
   let sweepAtomic = asBytes(car.tx)
   if (car.signableTransaction) {
     const stBeef = Beef.fromBinary(asBytes(car.signableTransaction.tx))
     const wanted = new Map(items.map((item) => [`${item.txid}.${item.vout}`, item]))
     let unsignedTx
-    const inputIndexes = new Map<number, PendingItemMigrate>()
+    const inputIndexes = new Map<number, ForeignInput>()
     for (const stbtx of stBeef.txs) {
       if (stbtx.tx == null) continue
       for (let i = 0; i < stbtx.tx.inputs.length; i++) {

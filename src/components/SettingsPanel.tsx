@@ -70,9 +70,9 @@ const SECURITY_ITEMS: SettingItem[] = [
     description: 'Keep a copy on your other device',
   },
   {
-    id: 'import-phrase',
-    label: 'Sweep',
-    description: 'Move another wallet in here',
+    id: 'import',
+    label: 'Import',
+    description: 'HandCash, Twetch, Yours, phrases and keys',
   },
   {
     id: 'change-password',

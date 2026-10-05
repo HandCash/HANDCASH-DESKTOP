@@ -107,7 +107,6 @@ describe('sweepPhraseFunding stale import marks', () => {
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
     const result = await sweepPhraseFunding({
-      mnemonic: 'x',
       candidate: CANDIDATE,
       utxos: FUNDING,
     })
@@ -127,7 +126,6 @@ describe('sweepPhraseFunding stale import marks', () => {
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
     const result = await sweepPhraseFunding({
-      mnemonic: 'x',
       candidate: CANDIDATE,
       utxos: FUNDING,
     })
@@ -143,7 +141,7 @@ describe('sweepPhraseFunding stale import marks', () => {
     legacySweepRecord.mockReturnValue({ at: Date.now(), txid: 'cc'.repeat(32) })
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
-    await sweepPhraseFunding({ mnemonic: 'x', candidate: CANDIDATE, utxos: FUNDING })
+    await sweepPhraseFunding({ candidate: CANDIDATE, utxos: FUNDING })
 
     expect(recordFundingReceipts).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -161,7 +159,7 @@ describe('sweepPhraseFunding stale import marks', () => {
     retryableStuckSweeps.mockResolvedValue([])
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
-    await sweepPhraseFunding({ mnemonic: 'x', candidate: CANDIDATE, utxos: FUNDING })
+    await sweepPhraseFunding({ candidate: CANDIDATE, utxos: FUNDING })
 
     expect(recordFundingReceipts).toHaveBeenCalledTimes(1)
     expect(recordFundingReceipts).toHaveBeenCalledWith([])

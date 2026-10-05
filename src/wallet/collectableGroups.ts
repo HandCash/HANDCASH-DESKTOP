@@ -71,7 +71,7 @@ export type CollectableIssuer = {
 export type GroupedCollectables = {
   issuers: CollectableIssuer[]
   ungrouped: Collectable[]
-  /** Fungibles whose issuer is unknown — shown on a top shelf. */
+  /** Fungibles whose issuer is unknown — shown on the last shelf. */
   ungroupedTokens: FungibleToken[]
   /** Flattened collections (every size, including one). */
   groups: CollectableGroup[]
@@ -388,10 +388,26 @@ export function groupCollectables(
     })
   }
 
-  issuers.sort((a, b) =>
-    a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+  issuers.sort(
+    (a, b) =>
+      issuerPublisherRank(a) - issuerPublisherRank(b) ||
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
   )
   return { issuers, ungrouped, ungroupedTokens, groups, singles: [] }
+}
+
+/**
+ * Shelf order: publishers we can name come first, unknown publishers last.
+ * A signed key with no profile, an unconfirmed profile and a bare claim are
+ * all unknown — the shelf shows a key fragment, not a name anyone vouched for.
+ */
+export function issuerPublisherRank(
+  issuer: Pick<CollectableIssuer, 'bap' | 'app' | 'identityKey' | 'issuerAttested'>,
+): number {
+  if (issuer.bap?.state === 'verified') return issuer.bap.listed ? 0 : 1
+  if (!issuer.identityKey) return 2
+  if (issuer.bap?.state === 'unconfirmed') return 4
+  return issuer.issuerAttested ? 3 : 5
 }
 
 export function groupQuantityLabel(group: {

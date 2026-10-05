@@ -51,6 +51,7 @@ const MASTER = `stateDiagram-v2
   settingsFlow --> backupKeys : keys
   settingsFlow --> historyBackup : history
   settingsFlow --> deviceBackup : device backup
+  settingsFlow --> legacyImport : import
   settingsFlow --> aboutHandCash : about
   settingsFlow --> wipeWallet : wipe
   aboutHandCash --> statecharts : view charts
@@ -74,6 +75,7 @@ const MASTER = `stateDiagram-v2
   backupKeys : Keys backup
   historyBackup : History backup
   deviceBackup : Device backup · one-way copy
+  legacyImport : Import · legacy wallets
   aboutHandCash : About HandCash
   statecharts : Statecharts
   wipeWallet : Wipe wallet
@@ -722,6 +724,8 @@ const SETTINGS = `stateDiagram-v2
   settingsHome --> historyBackup : open
   settingsHome --> wipeWallet : open
   settingsHome --> aboutHandCash : open
+  settingsHome --> legacyImport : open
+  legacyImport --> settingsHome : back
   changePassword --> settingsHome : back
   backupKeys --> settingsHome : back
   deviceHandoff --> backupKeys : open keys
@@ -746,6 +750,53 @@ const SETTINGS = `stateDiagram-v2
   wipeWallet : Wipe
   aboutHandCash : About HandCash
   statecharts : Statecharts
+  legacyImport : Import · legacy wallets
+`
+
+const LEGACY_IMPORT = `stateDiagram-v2
+  direction TB
+  [*] --> loading
+  loading --> list : LOADED / FAIL
+  list --> picking : ADD
+  list --> source : OPEN
+  picking --> entering : PICK (HandCash first)
+  picking --> list : BACK
+  entering --> saving : SUBMIT
+  entering --> picking : BACK
+  saving --> source : SAVED (enters scanning)
+  saving --> entering : FAIL
+
+  state source {
+    [*] --> viewing
+    viewing --> scanning : RESCAN
+    scanning --> viewing : SCANNED / FAIL
+    viewing --> probing : PROBE_HANDLE
+    probing --> viewing : PROBED / FAIL
+    viewing --> reviewing : REVIEW
+    reviewing --> sweeping : CONFIRM
+    reviewing --> viewing : BACK
+    sweeping --> viewing : SWEPT / FAIL
+    viewing --> confirmingRemove : REMOVE
+    confirmingRemove --> removing : CONFIRM
+    confirmingRemove --> viewing : BACK
+    removing --> viewing : FAIL
+
+    viewing : Read-only · identity, addresses, holdings, held reasons
+    scanning : Gap walk · history + 1Sat index · PAUSE
+    probing : HandCash PKI key vs composed shares
+    reviewing : Preview · compatible only
+    sweeping : Cash → items (BRC-150) → BSV-21 · PAUSE
+  }
+
+  source --> list : BACK (viewing) / REMOVED
+
+  list : Saved legacy wallets · never BRC-100, never accounts
+  entering : HandCash keys | phrase | Twetch | Yours file | WIF
+  note right of reviewing
+    No path reaches sweeping except CONFIRM here.
+    Uncompressed keys, BSV-20 ticks, listings,
+    cosigned (MNEE), RUN jigs and covenants stay.
+  end note
 `
 
 const DEVICE_BACKUP = `stateDiagram-v2
@@ -1394,6 +1445,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Settings',
     caption: 'settings — keys, history, about, nested panels',
     source: SETTINGS,
+  },
+  {
+    id: 'legacyImport',
+    label: 'Import',
+    caption: 'legacyImportMachine — saved legacy wallets · scan · explicit compatible-only sweep',
+    source: LEGACY_IMPORT,
   },
   {
     id: 'deviceBackup',

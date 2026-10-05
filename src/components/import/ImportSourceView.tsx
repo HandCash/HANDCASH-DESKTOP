@@ -1,0 +1,413 @@
+import { useMemo, useState } from 'react'
+import { Accordion, MetricStrip, Progress, StatusBanner } from '@aeon-ui/react'
+import { formatBsv } from '../../wallet/session'
+import { estimateItemMigrateCost } from '../../wallet/phraseSweep'
+import { CLAIM_HANDLE_URL } from '../../wallet/walletConfig'
+import {
+  IMPORT_ITEMS_PER_TX,
+  IMPORT_SOURCE_LABELS,
+  describeImportHold,
+  formatTokenAmount,
+  keyDeriverFor,
+  locateAddress,
+  planSweep,
+  type HeldTally,
+  type ImportHoldReason,
+  type ImportedSource,
+} from '../../wallet/import'
+import { useAsyncAction } from '../../hooks/useAsyncAction'
+import { AsyncActionPrompt } from '../AsyncActionPrompt'
+
+export type SourceFace =
+  | 'viewing'
+  | 'scanning'
+  | 'probing'
+  | 'reviewing'
+  | 'sweeping'
+  | 'confirmingRemove'
+  | 'removing'
+
+function HeldList({ held }: { held: HeldTally }) {
+  const rows = (Object.entries(held) as Array<[ImportHoldReason, number | undefined]>).filter(
+    ([, count]) => (count ?? 0) > 0,
+  )
+  if (rows.length === 0) return null
+  return (
+    <ul className="settings-row-desc" data-aeon-part="held">
+      {rows.map(([reason, count]) => (
+        <li key={reason}>
+          <strong>{count?.toLocaleString()}</strong> — {describeImportHold(reason)}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function identityOf(source: ImportedSource): { label: string; address: string; pubkey: string } | null {
+  try {
+    const deriver = keyDeriverFor(source.secret)
+    if (!deriver.identity) return null
+    const pub = deriver.privateKeyAt(deriver.identity.path).toPublicKey()
+    return { label: deriver.identity.label, address: pub.toAddress(), pubkey: pub.toString() }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One saved source. Every face is a `legacyImportMachine` state under
+ * `source`; this component only renders it and forwards intents.
+ */
+export function ImportSourceView(props: {
+  source: ImportedSource
+  face: SourceFace
+  progress: string | null
+  percent: number | null
+  error: string | null
+  onBack: () => void
+  onRescan: () => void
+  onProbeHandle: (handle: string) => void
+  onReview: () => void
+  onConfirm: () => void
+  onCancel: () => void
+  onRemove: () => void
+  onPause: () => void
+}) {
+  const { source, face } = props
+  const plan = useMemo(() => planSweep(source), [source])
+  const identity = useMemo(() => identityOf(source), [source])
+  const [handle, setHandle] = useState(source.handle?.handle ?? '')
+  const [locateInput, setLocateInput] = useState('')
+  const [located, setLocated] = useState<string | null>(null)
+  const locate = useAsyncAction<'locate'>()
+  const working = face === 'scanning' || face === 'sweeping'
+  const totals = plan.totals
+  const scan = source.scan
+  const itemCost = estimateItemMigrateCost({
+    itemCount: totals.itemCount,
+    itemsPerTx: IMPORT_ITEMS_PER_TX,
+  })
+  const movable = totals.cashCount > 0 || totals.itemCount > 0 || totals.tokens.length > 0
+
+  const runLocate = async () => {
+    const address = locateInput.trim()
+    if (!address) return
+    const outcome = await locate.run('locate', async () => {
+      const hit = await locateAddress({ deriver: keyDeriverFor(source.secret), address })
+      setLocated(
+        hit
+          ? `${hit.label} · ${hit.path}${hit.uncompressed ? ' (uncompressed)' : ''}`
+          : 'Not derived by this wallet’s keys on any known path.',
+      )
+    })
+    if (!outcome.ok && outcome.error !== null) setLocated(outcome.error)
+  }
+
+  return (
+    <div data-aeon-part="source" data-aeon-state={face}>
+      <div className="confirm-password-copy">
+        <h3 className="confirm-password-title">{source.label}</h3>
+        <p className="confirm-password-lede">
+          {IMPORT_SOURCE_LABELS[source.kind]} · saved {new Date(source.createdAt).toLocaleDateString()}
+          {scan
+            ? ` · ${scan.checked.toLocaleString()} addresses checked${scan.complete ? '' : ' (incomplete)'}`
+            : ' · not scanned yet'}
+        </p>
+      </div>
+
+      {identity ? (
+        <div className="settings-row" data-aeon-part="identity">
+          <h4 className="settings-row-label">{identity.label}</h4>
+          <p className="settings-row-desc">
+            Shown here only — it never signs in to apps and is not your wallet identity.
+          </p>
+          <p className="settings-row-desc mono">{identity.address}</p>
+          <p className="settings-row-desc mono">{identity.pubkey}</p>
+        </div>
+      ) : null}
+
+      {source.kind === 'handcash' ? (
+        <div className="settings-row" data-aeon-part="handle" data-aeon-state={source.handle?.match ? 'proven' : source.handle ? 'unproven' : 'none'}>
+          <h4 className="settings-row-label">HandCash handle</h4>
+          {source.handle ? (
+            <p className="settings-row-desc">
+              <strong>${source.handle.handle}</strong>{' '}
+              {source.handle.match
+                ? `— this export owns it (identity key matches ${source.handle.match}).`
+                : `— not proven by these keys${source.handle.error ? `: ${source.handle.error}` : ''}.`}
+            </p>
+          ) : (
+            <p className="settings-row-desc">Check which handle these keys control.</p>
+          )}
+          <div className="field" data-aeon-part="field">
+            <label htmlFor="import-handle-probe">Handle</label>
+            <input
+              id="import-handle-probe"
+              value={handle}
+              onChange={(e) => setHandle(e.target.value)}
+              placeholder="$handle"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={face !== 'viewing'}
+            />
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={face !== 'viewing' || !handle.trim()}
+              onClick={() => props.onProbeHandle(handle)}
+            >
+              {face === 'probing' ? 'Checking…' : 'Check handle'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={face !== 'viewing'}
+              onClick={() => void window.handcash?.openExternal?.(CLAIM_HANDLE_URL)}
+            >
+              {source.handle ? `Claim $${source.handle.handle} here` : 'Claim your handle here'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {scan ? (
+        <MetricStrip.Root density="loose" data-aeon-part="totals">
+          <MetricStrip.Chip>
+            <MetricStrip.Value>{formatBsv(totals.cashSats)}</MetricStrip.Value>
+            <MetricStrip.Label>BSV</MetricStrip.Label>
+          </MetricStrip.Chip>
+          <MetricStrip.Chip>
+            <MetricStrip.Value>
+              {totals.itemCount.toLocaleString()}
+              {totals.itemCountCapped ? '+' : ''}
+            </MetricStrip.Value>
+            <MetricStrip.Label>Items</MetricStrip.Label>
+          </MetricStrip.Chip>
+          <MetricStrip.Chip>
+            <MetricStrip.Value>{totals.tokens.length}</MetricStrip.Value>
+            <MetricStrip.Label>Tokens</MetricStrip.Label>
+          </MetricStrip.Chip>
+        </MetricStrip.Root>
+      ) : null}
+
+      {totals.partial > 0 ? (
+        <StatusBanner.Root tone="warning" status="partial">
+          <StatusBanner.Copy>
+            <StatusBanner.Body>
+              {totals.partial} address{totals.partial === 1 ? '' : 'es'} could not be read fully —
+              numbers are a floor. Rescan later.
+            </StatusBanner.Body>
+          </StatusBanner.Copy>
+        </StatusBanner.Root>
+      ) : null}
+
+      {totals.tokens.length > 0 ? (
+        <ul className="settings-row-desc" data-aeon-part="tokens">
+          {totals.tokens.map((token) => (
+            <li key={token.id ?? token.tick ?? token.sym}>
+              <strong>{formatTokenAmount(token.amount, token.dec)}</strong> {token.sym}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <HeldList held={totals.held} />
+
+      {working ? (
+        <div className="history-progress-block settings-sweep-progress" data-aeon-part="work" data-aeon-state={face}>
+          <p className="settings-hint">{props.progress ?? (face === 'scanning' ? 'Scanning…' : 'Sweeping…')}</p>
+          <Progress.Root
+            value={props.percent ?? 0}
+            max={100}
+            indeterminate={props.percent == null}
+            className="history-progress"
+          >
+            <Progress.Track className="history-progress-track">
+              <Progress.Range className="history-progress-range" />
+            </Progress.Track>
+          </Progress.Root>
+          <div className="actions">
+            <button type="button" className="btn btn-ghost" onClick={props.onPause}>
+              Pause after this step
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {face === 'reviewing' ? (
+        <div className="settings-row" data-aeon-part="review">
+          <h4 className="settings-row-label">Sweep into this wallet</h4>
+          <ul className="settings-row-desc">
+            {totals.cashCount > 0 ? (
+              <li>
+                {formatBsv(totals.cashSats)} BSV from {totals.cashCount} output
+                {totals.cashCount === 1 ? '' : 's'}
+              </li>
+            ) : null}
+            {totals.itemCount > 0 ? (
+              <li>
+                {totals.itemCount.toLocaleString()}
+                {totals.itemCountCapped ? '+' : ''} collectable
+                {totals.itemCount === 1 ? '' : 's'} — ~{itemCost.transactions.toLocaleString()}{' '}
+                transaction{itemCost.transactions === 1 ? '' : 's'}, ~{formatBsv(itemCost.feeSats)} BSV
+                in fees paid by this wallet
+              </li>
+            ) : null}
+            {totals.tokens.map((token) => (
+              <li key={token.id ?? token.sym}>
+                {formatTokenAmount(token.amount, token.dec)} {token.sym} (valid outputs only)
+              </li>
+            ))}
+          </ul>
+          {Object.keys(totals.held).length > 0 ? (
+            <>
+              <p className="settings-row-desc">Stays at the source:</p>
+              <HeldList held={totals.held} />
+            </>
+          ) : null}
+          <div className="actions">
+            <button type="button" className="btn btn-primary" onClick={props.onConfirm}>
+              Sweep compatible assets
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={props.onCancel}>
+              Back
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {face === 'confirmingRemove' || face === 'removing' ? (
+        <StatusBanner.Root tone="danger" status="remove">
+          <StatusBanner.Copy>
+            <StatusBanner.Title>Remove {source.label}?</StatusBanner.Title>
+            <StatusBanner.Body>
+              The keys are deleted from this device. Anything not swept stays on chain, reachable
+              only with your own copy of these keys.
+            </StatusBanner.Body>
+          </StatusBanner.Copy>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={face === 'removing'}
+              onClick={props.onConfirm}
+            >
+              Remove
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={face === 'removing'}
+              onClick={props.onCancel}
+            >
+              Keep
+            </button>
+          </div>
+        </StatusBanner.Root>
+      ) : null}
+
+      {props.error ? (
+        <p className="error" role="alert">
+          {props.error}
+        </p>
+      ) : null}
+
+      {source.lastSweep ? (
+        <div className="settings-row" data-aeon-part="last-sweep">
+          <h4 className="settings-row-label">
+            Last sweep · {new Date(source.lastSweep.at).toLocaleString()}
+          </h4>
+          <p className="settings-row-desc">
+            {formatBsv(source.lastSweep.cashSats)} BSV · {source.lastSweep.items.toLocaleString()} items
+            {source.lastSweep.tokens.length > 0
+              ? ` · ${source.lastSweep.tokens.map((t) => t.sym).join(', ')}`
+              : ''}
+            {source.lastSweep.failed > 0 ? ` · ${source.lastSweep.failed} failed` : ''}
+          </p>
+          {source.lastSweep.notes.map((note) => (
+            <p key={note} className="settings-row-desc">
+              {note}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
+      {face === 'viewing' ? (
+        <div className="actions" data-aeon-part="actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!movable}
+            onClick={props.onReview}
+          >
+            Sweep compatible…
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={props.onRescan}>
+            Rescan
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={props.onRemove}>
+            Remove
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={props.onBack}>
+            Back
+          </button>
+        </div>
+      ) : null}
+
+      {scan && scan.holdings.length > 0 ? (
+        <Accordion.Root collapsible data-aeon-part="addresses">
+          <Accordion.Item value="addresses">
+            <Accordion.ItemTrigger value="addresses">
+              {scan.holdings.length} used address{scan.holdings.length === 1 ? '' : 'es'}
+            </Accordion.ItemTrigger>
+            <Accordion.ItemContent value="addresses">
+              <ul className="settings-row-desc">
+                {scan.holdings.map((h) => (
+                  <li key={`${h.path}:${h.address}`}>
+                    <strong>{h.label}</strong> · <span className="mono">{h.path}</span>
+                    <br />
+                    <span className="mono">{h.address}</span>
+                    <br />
+                    {formatBsv(h.cashSats)} BSV · {h.itemCount}
+                    {h.itemCountCapped ? '+' : ''} items · {h.tokens.length} tokens
+                    {h.uncompressed ? ' · uncompressed (view only)' : ''}
+                    {h.error ? ` · ${h.error}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </Accordion.ItemContent>
+          </Accordion.Item>
+        </Accordion.Root>
+      ) : null}
+
+      {face === 'viewing' ? (
+        <div className="field" data-aeon-part="locate" data-aeon-state={locate.stateAttr}>
+          <label htmlFor="import-locate">Find an address in these keys</label>
+          <input
+            id="import-locate"
+            value={locateInput}
+            onChange={(e) => setLocateInput(e.target.value)}
+            placeholder="1…"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={locate.busy}
+          />
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={locate.busy || !locateInput.trim()}
+              onClick={() => void runLocate()}
+            >
+              {locate.running('locate') ? 'Searching…' : 'Find'}
+            </button>
+          </div>
+          {located ? <p className="settings-row-desc">{located}</p> : null}
+        </div>
+      ) : null}
+      <AsyncActionPrompt action={locate} />
+    </div>
+  )
+}

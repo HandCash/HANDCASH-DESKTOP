@@ -188,7 +188,7 @@ function PendingPhraseImportRow({
         className="history-row history-row-btn"
         onClick={() => {
           playWalletSound("soft");
-          openSetting("import-phrase");
+          openSetting("import");
         }}
         aria-label={`Review paused collectable import, ${detail}`}
       >

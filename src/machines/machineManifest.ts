@@ -21,6 +21,7 @@ import { walletAccountMenuMachine } from './walletAccountMenuMachine'
 import { devKeysPanelMachine } from './devKeysPanelMachine'
 import { wipeMachine } from './wipeMachine'
 import { assetSendMachine } from './assetSendMachine'
+import { legacyImportMachine } from './legacyImportMachine'
 import { collectableSendMachine } from '../wallet/collectableSendMachine'
 import { collectableSendRunMachine } from '../wallet/collectableSendRunMachine'
 import { authenticityMachine } from '../wallet/authenticityMachine'
@@ -61,6 +62,7 @@ export const machineManifest = Object.freeze({
   devKeysPanel: devKeysPanelMachine,
   wipe: wipeMachine,
   assetSend: assetSendMachine,
+  legacyImport: legacyImportMachine,
   collectableSend: collectableSendMachine,
   collectableSendRun: collectableSendRunMachine,
   authenticity: authenticityMachine,

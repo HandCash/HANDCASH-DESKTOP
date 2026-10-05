@@ -984,19 +984,8 @@ export function InventoryPanel() {
               <span>Try another name, trait, origin, or id.</span>
             </div>
           ) : null}
-      {ungroupedTokens.length > 0 ? (
-        <section className="collect-tokens-section" aria-label="Tokens">
-          <h3 className="collect-section-title">Tokens</h3>
-          <TokenShelf tokens={ungroupedTokens} view={view} label="Tokens without an issuer" />
-        </section>
-      ) : null}
-
       {visibleItems.length > 0 || issuers.length > 0 ? (
         <section className="collect-items-section" aria-label="Issuers and items">
-          {ungroupedTokens.length > 0 ? (
-            <h3 className="collect-section-title">Issuers</h3>
-          ) : null}
-
           {issuers.length > 0 ? (
             <Accordion.Root
               collapsible
@@ -1049,6 +1038,13 @@ export function InventoryPanel() {
               </span>
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {ungroupedTokens.length > 0 ? (
+        <section className="collect-tokens-section" aria-label="Tokens without an issuer">
+          <h3 className="collect-section-title">Tokens without an issuer</h3>
+          <TokenShelf tokens={ungroupedTokens} view={view} label="Tokens without an issuer" />
         </section>
       ) : null}
 

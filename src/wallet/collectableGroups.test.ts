@@ -123,6 +123,39 @@ describe('groupCollectables', () => {
     expect(retired.issuers[0]?.bapId).toBeUndefined()
   })
 
+  it('puts named publishers first and unknown publishers last, whatever their labels', () => {
+    const f = bapIdentityFixture({ name: 'Zebra Studio' })
+    const identity = verifyIssuerIdentityPackage(f.pkg)!
+    const signer = f.signer.toPublicKey().toString()
+    const bare = PrivateKey.fromHex('02').toPublicKey().toString()
+    const claimant = PrivateKey.fromHex('03').toPublicKey().toString()
+    const stamper = PrivateKey.fromHex('04').toPublicKey().toString()
+    const stampId = bapIdentityFixture({}).bapId
+    const result = groupCollectables(
+      [
+        item({ outpoint: 'a1.0', issuer: claimant, issuerAttested: false }),
+        item({ outpoint: 'a2.0', issuer: bare }),
+        item({ outpoint: 'a3.0', issuer: stamper, bapId: stampId }),
+        item({ outpoint: 'a4.0', app: 'Aardvark app' }),
+        item({ outpoint: 'a5.0', issuer: signer, bapId: f.bapId }),
+      ],
+      [],
+      (asset) =>
+        asset.issuer === signer
+          ? { kind: 'verified', identity }
+          : asset.bapId === stampId
+            ? { kind: 'unconfirmed', bapId: stampId, reason: 'unknown-key' }
+            : null,
+    )
+    expect(result.issuers.map((i) => i.key)).toEqual([
+      `issuer:bap:${f.bapId}`,
+      'issuer:app:aardvark app',
+      `issuer:pubkey:${bare}`,
+      `issuer:bap-unconfirmed:${stampId}`,
+      `issuer:claim:${claimant}`,
+    ])
+  })
+
   it('groups unconfirmed stamps by BAP ID across signers, with no name or image', () => {
     const f = bapIdentityFixture({ name: 'Example Studio' })
     const identity = verifyIssuerIdentityPackage(f.pkg)!

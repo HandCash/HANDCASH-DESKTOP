@@ -316,6 +316,13 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** Import section: legacy key sets, AES-GCM sealed under the account root. */
+  importedSources: defineStorage({
+    key: 'handcash.import.sources.v1',
+    owner: 'legacy-import',
+    scope: 'wallet',
+    version: 1,
+  }),
   listingAuthorizations: defineStorage({
     key: 'handcash.market.listingAuthorizations.v2',
     owner: 'market',

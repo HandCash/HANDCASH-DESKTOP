@@ -392,6 +392,8 @@ export const WALLET_FEATURE_MODULES = {
   spendVerdict: "spendVerdict/index.ts",
   chainProbe: "chainProbe/index.ts",
   marketOffer: "marketOffer/index.ts",
+  /** Import section: stored legacy wallets, scan, explicit compatible-only sweep. */
+  legacyImport: "import/index.ts",
   uiFeed: "components/uiFeed/index.ts",
 } as const;
 
