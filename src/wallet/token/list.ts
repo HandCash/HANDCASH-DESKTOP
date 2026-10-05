@@ -58,6 +58,8 @@ import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { decodeBsv21Binary } from './decode162'
+import { deployDisplayFromScript } from './deployDisplay'
+import { holdTokenGenesis, retainedTokenGenesis } from './genesisStore'
 import { assetRowState, restoreUnspentAssetOutpoint } from '../staleOutputRelease'
 import { isLocalUnconfirmedTxid } from '../txStore'
 
@@ -255,6 +257,7 @@ function persistDurableList(items: FungibleToken[]): void {
 
 /** Keep the identity package of every issuer the persisted list names. */
 function holdNamedIssuers(items: readonly FungibleToken[]): void {
+  holdTokenGenesis(items.map((t) => normalizeTokenId(t.tokenId)?.split('_')[0] ?? ''))
   try {
     holdIssuerIdentities(
       peekAccountLocalKeyScope().chain,
@@ -741,52 +744,55 @@ async function recoverBsv21DeployMetadata(
   const [txid, rawVout] = normalized.split('_')
   const vout = Number(rawVout)
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
-  // Deploy metadata is a script decode; the raw body is enough. A received
-  // token's deploy is rarely local — the body comes by txid, hash-checked.
-  const tx = await tokenTxBody(wallet, txid)
-  if (!tx) return null
-  const beef = { findTxid: (id: string) => (id.toLowerCase() === txid ? { tx } : undefined) }
-  const scriptHex = tx.outputs[vout]?.lockingScript?.toHex()
-  const envelope = parseOrdEnvelope(scriptHex)
-  if (!envelope?.body?.length) return null
-  try {
-    const payload = parseBsv21Json(
-      JSON.parse(new TextDecoder().decode(envelope.body)),
-    )
-    const icon = payload?.icon
-      ? normalizeTokenId(payload.icon) ?? undefined
-      : undefined
-    const iconUrl = icon
-      ? cacheTokenIconFromBeef(icon, beef) ??
-        (await resolveTokenIconDataUrl(icon, wallet))
-      : undefined
-    return {
-      ...(payload?.sym ? { sym: payload.sym } : {}),
-      ...(payload?.dec != null ? { dec: payload.dec } : {}),
-      ...(icon ? { icon } : {}),
-      ...(iconUrl ? { iconUrl } : {}),
-      ...(payload?.issuer ? { issuer: payload.issuer } : {}),
-    }
-  } catch {
+  const missedAt = deployMetadataMisses.get(normalized)
+  if (missedAt != null && Date.now() - missedAt < DEPLOY_METADATA_RETRY_MS) return null
+  // Deploy metadata is a script decode; the raw body is enough. The lineage
+  // walk retains the deploy it proved; otherwise the body comes by txid,
+  // hash-checked — a received token's deploy is rarely local.
+  const tx =
+    retainedTokenGenesis(txid)?.findTxid(txid)?.tx ?? (await tokenTxBody(wallet, txid))
+  const deploy = deployDisplayFromScript(tx?.outputs[vout]?.lockingScript?.toHex(), normalized)
+  if (!tx || !deploy || (!deploy.sym && !deploy.icon)) {
+    deployMetadataMisses.set(normalized, Date.now())
     return null
   }
+  deployMetadataMisses.delete(normalized)
+  const icon = deploy.icon ? normalizeTokenId(deploy.icon) ?? undefined : undefined
+  // A binary deploy's icon resolves through the BRC-162 icon pointer below.
+  const beef = { findTxid: (id: string) => (id.toLowerCase() === txid ? { tx } : undefined) }
+  const iconUrl =
+    icon && deploy.encoding === 'json'
+      ? cacheTokenIconFromBeef(icon, beef) ?? (await resolveTokenIconDataUrl(icon, wallet))
+      : undefined
+  return {
+    ...(deploy.sym ? { sym: deploy.sym } : {}),
+    ...(deploy.dec != null ? { dec: deploy.dec } : {}),
+    ...(icon ? { icon } : {}),
+    ...(iconUrl ? { iconUrl } : {}),
+    ...(deploy.issuer ? { issuer: deploy.issuer } : {}),
+  }
 }
+
+/** Deploys no source could answer; asked again after the retry window. */
+const deployMetadataMisses = new Map<string, number>()
+const DEPLOY_METADATA_RETRY_MS = 10 * 60_000
 
 export async function hydrateCachedTokenIcons(
   wallet: ActiveWallet,
   tokens: FungibleToken[] = cached,
 ): Promise<void> {
+  const epoch = fungiblesAccountEpoch
   let changed = false
   for (let token of tokens) {
-    if (token.iconUrl) continue
+    if (epoch !== fungiblesAccountEpoch) return
     if (!cacheExtraLooksLikeFungible(token)) continue
     const symIsFallback =
       !token.sym.trim() || token.sym === shortTokenLabel(token.tokenId)
-    if (
-      !token.binarySupply &&
-      (!token.icon || symIsFallback || !token.issuer)
-    ) {
+    if (token.iconUrl && !symIsFallback) continue
+    // A BRC-162 deploy names no issuer; its Sigma is the attestation path.
+    if (!token.icon || symIsFallback || (!token.binarySupply && !token.issuer)) {
       const metadata = await recoverBsv21DeployMetadata(wallet, token.tokenId)
+      if (epoch !== fungiblesAccountEpoch) return
       if (metadata) {
         const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
         if (idx >= 0) {
@@ -800,6 +806,7 @@ export async function hydrateCachedTokenIcons(
         }
       }
     }
+    if (token.iconUrl) continue
     const url = token.binarySupply
       ? (await resolveBsv21IconDataUrl({
           origin: token.tokenId,
@@ -812,14 +819,14 @@ export async function hydrateCachedTokenIcons(
       : token.icon
         ? await resolveTokenIconDataUrl(token.icon, wallet)
         : undefined
-    if (!url) continue
+    if (!url || epoch !== fungiblesAccountEpoch) continue
     const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
     if (idx < 0) continue
     cached[idx] = { ...cached[idx]!, iconUrl: url }
     changed = true
   }
   if (changed) {
-    setFungiblesCache([...cached])
+    setFungiblesCache([...cached], { forEpoch: epoch })
   }
 }
 
@@ -1134,7 +1141,16 @@ async function attestHeldTokenLineagesNow(
   let tried = 0
   for (const row of heal ? rows : []) {
     if (row.issuerAttested) continue
-    for (const tip of heldTipsOf(row)) {
+    const tips = heldTipsOf(row)
+    // Only a missing deploy or an unbound tip is something a walk can supply;
+    // proving the same bound tip again spends the pass and changes nothing.
+    const gap = tokenAttestationGap({
+      tokenId: row.tokenId,
+      issuer: row.issuer,
+      tipOutpoints: tips.map((tip) => tip.outpoint),
+    })
+    if (gap !== 'no-genesis' && gap !== 'unbound') continue
+    for (const tip of tips) {
       if (tried >= LINEAGE_PROOFS_PER_PASS || epoch !== fungiblesAccountEpoch) break
       const proof = await proveHeldTokenTip(wallet, tip.outpoint, tip.tokenId).catch(
         () => ({ kind: 'refused', reason: 'walk-failed' }) as const,

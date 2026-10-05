@@ -590,6 +590,11 @@ function storagePressure(events) {
   // (≈5MB cap) to app files. `store` stays null on builds that predate it.
   const MOVED_RE = /^\[durable\] origin move done (\d+)ms — (\d+) key\(s\) \((\d+)KB\) into the app file store · freed (\d+)KB/
   const NO_FILE_STORE_RE = /^\[durable\] native file store missing/
+  // 1.3.446+: the core met the shell bridge after reading/writing origin storage.
+  const LATE_ATTACH_RE = /^\[durable\] shell store attached after (\d+) early read\(s\) — handed it (\d+) early write\(s\)/
+  // Mobile 0.1.604: one-time recovery from sessions that ran on WebView storage.
+  const RECOVERED_RE = /^\[durable\] recovered (\d+) key\(s\) the file store held stale · dropped (\d+) drained queue\(s\)/
+  const DEPLOY_EVICT_RE = /^\[bsv21\] deploy store evicted (\d+) deploy\(s\), (\d+) held/
   const PROOF_PURGE_RE = /^\[proof-purge\] purge done \d+ms — (\d+) completed proof request\(s\), (\d+)KB/
   const shortKey = (k) => k.split(':wallet:')[0]
 
@@ -604,6 +609,12 @@ function storagePressure(events) {
     reclaimedKB: 0,
     store: null,
     originMove: null,
+    // A boot move that freed large WebView values while moving none means the
+    // previous session wrote WebView storage, not the file store.
+    lateShellAttach: null,
+    originRecovery: null,
+    deployEvictions: 0,
+    heldDeployEvictions: 0,
     proofRequestsPurged: 0,
     proofPurgedKB: 0,
   }
@@ -641,13 +652,37 @@ function storagePressure(events) {
     m = MOVED_RE.exec(e.text)
     if (m) {
       out.store = 'app-files'
-      out.originMove = { ms: Number(m[1]), keys: Number(m[2]), kb: Number(m[3]), freedKB: Number(m[4]) }
+      out.originMove = {
+        ms: Number(m[1]),
+        keys: Number(m[2]),
+        kb: Number(m[3]),
+        freedKB: Number(m[4]),
+        // The core mirrors at most 64KB values; anything larger in WebView
+        // storage at boot was written there by a session that bypassed the file store.
+        previousSessionOnWebView: Number(m[4]) > 0,
+      }
       continue
     }
     m = PROOF_PURGE_RE.exec(e.text)
     if (m) {
       out.proofRequestsPurged += Number(m[1])
       out.proofPurgedKB += Number(m[2])
+      continue
+    }
+    m = LATE_ATTACH_RE.exec(e.text)
+    if (m) {
+      out.lateShellAttach = { earlyReads: Number(m[1]), earlyWrites: Number(m[2]) }
+      continue
+    }
+    m = RECOVERED_RE.exec(e.text)
+    if (m) {
+      out.originRecovery = { recovered: Number(m[1]), droppedQueues: Number(m[2]) }
+      continue
+    }
+    m = DEPLOY_EVICT_RE.exec(e.text)
+    if (m) {
+      out.deployEvictions += Number(m[1])
+      out.heldDeployEvictions += Number(m[2])
       continue
     }
     if (NO_FILE_STORE_RE.test(e.text)) out.store = 'webview'
@@ -1986,7 +2021,28 @@ const HOLDINGS_CLAIM_RE = /^\[holdings\] claim [0-9a-f]{12} — ours=(\d+) token
  * still open at the end of the upload (filed, never closed).
  */
 function holdingsFacts(events) {
-  const tokens = { reads: 0, deferred: 0, timedOut: 0, busyMidRead: 0, readsShowingMore: 0, leftBasket: 0, last: null }
+  const tokens = {
+    reads: 0,
+    deferred: 0,
+    timedOut: 0,
+    busyMidRead: 0,
+    readsShowingMore: 0,
+    leftBasket: 0,
+    last: null,
+    // Per launch: how many token cards were painted at each read decision.
+    // A launch whose first entry shows 0 painted nothing from the saved list.
+    byLaunch: [],
+  }
+  let launch = null
+  const tokenStep = (e, kind, cards) => {
+    if (!launch) {
+      launch = { build: null, at: new Date(e.at).toISOString(), steps: [] }
+      tokens.byLaunch.push(launch)
+    }
+    if (launch.steps.length < 12) {
+      launch.steps.push({ s: Math.round((e.at - Date.parse(launch.at)) / 1000), kind, cards })
+    }
+  }
   const items = { kept: 0, retired: 0, deferred: 0, busyMidRead: 0, idleRelists: 0, failed: 0, last: null }
   const reconcile = {
     filed: { 'left-basket': 0, 'off-chain-index': 0, unstored: 0, 'failed-send': 0 },
@@ -2019,9 +2075,20 @@ function holdingsFacts(events) {
   const pendingClaims = new Map()
   for (const e of events) {
     const t = e.text
+    const started = /^App log capture started — v(\S+)/.exec(t)
+    if (started) {
+      launch = { build: started[1], at: new Date(e.at).toISOString(), steps: [] }
+      tokens.byLaunch.push(launch)
+      continue
+    }
+    const cardsAt =
+      /^\[bsv21\] deferring listOutputs — wallet busy, using (\d+) cached/.exec(t) ??
+      /^\[bsv21\] listOutputs timed out after \S+ — keeping (\d+) cached/.exec(t)
+    if (cardsAt) tokenStep(e, t.includes('deferring') ? 'deferred' : 'timed-out', Number(cardsAt[1]))
     const done = BSV21_LIST_DONE_RE.exec(t)
     if (done) {
       const [live, tips, showing] = done.slice(1, 4).map(Number)
+      tokenStep(e, 'read', showing)
       tokens.reads += 1
       tokens.leftBasket += Number(done[4] ?? 0)
       if (showing > live) tokens.readsShowingMore += 1

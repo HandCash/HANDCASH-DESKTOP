@@ -14,10 +14,20 @@ import { durableGetItem, durableSetItem } from '../durableStorage'
  */
 const STORE_KEY = storageRegistry.tokenGenesis.key
 const MAX_ENTRY_CHARS = 96 * 1024
+/** Deploys of tokens no list holds yield first, oldest first, above this. */
 const MAX_TOTAL_CHARS = 1024 * 1024
+/** Held deploys yield only above this — a token without one cannot attest. */
+const MAX_HELD_TOTAL_CHARS = 4 * 1024 * 1024
 
 let store: Map<string, string> | null = null
 const parsed = new Map<string, Beef>()
+/** Deploy txids of tokens a persisted list still holds. */
+let held = new Set<string>()
+
+/** Name the deploys of every token the active list holds. */
+export function holdTokenGenesis(deployTxids: Iterable<string>): void {
+  held = new Set([...deployTxids].map(keyOf).filter((txid) => /^[0-9a-f]{64}$/.test(txid)))
+}
 
 const keyOf = (txid: string): string => txid.trim().toLowerCase()
 
@@ -41,11 +51,25 @@ function load(): Map<string, string> {
 function save(rows: Map<string, string>): void {
   let total = 0
   for (const b64 of rows.values()) total += b64.length
-  for (const [txid, b64] of rows) {
-    if (total <= MAX_TOTAL_CHARS) break
-    rows.delete(txid)
-    parsed.delete(txid)
-    total -= b64.length
+  let evictedHeld = 0
+  let evicted = 0
+  const evict = (keep: (txid: string) => boolean, cap: number) => {
+    for (const [txid, b64] of rows) {
+      if (total <= cap) return
+      if (keep(txid)) continue
+      rows.delete(txid)
+      parsed.delete(txid)
+      total -= b64.length
+      evicted += 1
+      if (held.has(txid)) evictedHeld += 1
+    }
+  }
+  evict((txid) => held.has(txid), MAX_TOTAL_CHARS)
+  evict(() => false, MAX_HELD_TOTAL_CHARS)
+  if (evicted > 0) {
+    console.info(
+      `[bsv21] deploy store evicted ${evicted} deploy(s), ${evictedHeld} held — ${Math.round(total / 1024)}KB kept`,
+    )
   }
   durableSetItem(STORE_KEY, JSON.stringify(Object.fromEntries(rows)))
 }
@@ -117,4 +141,5 @@ export async function retainTokenGenesis(
 export function resetTokenGenesisForTests(): void {
   store = null
   parsed.clear()
+  held = new Set()
 }

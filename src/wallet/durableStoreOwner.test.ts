@@ -165,6 +165,41 @@ describe('durable store ownership', () => {
     expect(local.has('handcash.brc100.vault.openSecret.v1')).toBe(false)
   })
 
+  it('hands the session to a shell store installed after the core evaluated', async () => {
+    const local = installLocalStorage()
+    const shell = new Map<string, string>([
+      ['handcash.tokens.list.v1:wallet:main:0:root', 'file-store copy'],
+      ['handcash.removed.early', 'stale'],
+    ])
+    // Mobile imports the App graph before its bridge body runs; a module read
+    // state at import time and the whole session used to stay in origin storage.
+    const win: { handcash?: unknown } = { handcash: undefined }
+    vi.stubGlobal('window', win)
+    const { durableGetItem, durableSetItem, durableRemoveItem } = await loadDurable()
+
+    expect(durableGetItem('handcash.tokens.list.v1:wallet:main:0:root')).toBeNull()
+    expect(durableSetItem('handcash.rawTxMisses.v1', 'early write')).toBe(true)
+    durableRemoveItem('handcash.removed.early')
+
+    win.handcash = {
+      storageGetSync: (key: string) => shell.get(key) ?? null,
+      storageSetSync: (key: string, value: string) => {
+        if (value === '') shell.delete(key)
+        else shell.set(key, value)
+        return true
+      },
+    }
+
+    // The early miss came from origin storage; the file store answers now.
+    expect(durableGetItem('handcash.tokens.list.v1:wallet:main:0:root')).toBe('file-store copy')
+    expect(shell.get('handcash.rawTxMisses.v1')).toBe('early write')
+    expect(shell.has('handcash.removed.early')).toBe(false)
+
+    expect(durableSetItem('handcash.brc100.appActivity', BIG)).toBe(true)
+    expect(shell.get('handcash.brc100.appActivity')).toBe(BIG)
+    expect(local.has('handcash.brc100.appActivity')).toBe(false)
+  })
+
   it('reclaims rebuildable image caches before refusing wallet state', async () => {
     const local = installLocalStorage()
     vi.stubGlobal('window', { handcash: undefined })

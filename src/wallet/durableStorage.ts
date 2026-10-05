@@ -79,10 +79,31 @@ type DurableStoreOwner = 'shell' | 'origin'
 
 let storeOwner: DurableStoreOwner | null = null
 
+/**
+ * Store traffic before any bridge existed.
+ *
+ * A shell may install `window.handcash` after the core's modules evaluate —
+ * Mobile's entry imports the App graph before its bridge body runs, and some
+ * modules read state at import time. Settling on `origin` then sent a whole
+ * session to WebView storage while the file store kept a stale copy, and the
+ * shell's boot move deleted every large WebView value on the next launch. So
+ * no bridge means "origin for now", and once a shell answers, what was read
+ * early is forgotten and what was written early is handed to it.
+ */
+let readsBeforeBridge = 0
+/** Keys only: the values are in origin storage, where those writes went. */
+const writesBeforeBridge = new Set<string>()
+
+function noteTrafficBeforeBridge(key: string | null): void {
+  if (storeOwner || typeof window === 'undefined') return
+  if (key == null) readsBeforeBridge += 1
+  else writesBeforeBridge.add(key)
+}
+
 function durableStoreOwner(): DurableStoreOwner {
   if (storeOwner) return storeOwner
   const bridge = typeof window === 'undefined' ? undefined : window.handcash
-  if (!bridge?.storageSetSync || !bridge.storageGetSync) return (storeOwner = 'origin')
+  if (!bridge?.storageSetSync || !bridge.storageGetSync) return 'origin'
   try {
     const token = `probe:${Date.now()}:${Math.random().toString(36).slice(2)}`
     const accepted = bridge.storageSetSync(PROBE_KEY, token)
@@ -96,14 +117,40 @@ function durableStoreOwner(): DurableStoreOwner {
   if (storeOwner === 'origin') {
     console.info('[durable] shell store does not read back — origin storage owns wallet state')
   } else {
+    adoptTrafficBeforeBridge(bridge)
     purgeSealedMirrors()
   }
   return storeOwner
 }
 
+function adoptTrafficBeforeBridge(bridge: NonNullable<Window['handcash']>): void {
+  const reads = readsBeforeBridge
+  let rehomed = 0
+  for (const key of writesBeforeBridge) {
+    try {
+      const value = localStorage.getItem(key)
+      if (bridge.storageSetSync?.(key, value ?? '') === true) rehomed += 1
+    } catch {
+      // The origin copy remains; the shell's next boot move can still take it.
+    }
+  }
+  writesBeforeBridge.clear()
+  readsBeforeBridge = 0
+  if (reads === 0 && rehomed === 0) return
+  // Every early read came from origin storage, not the store that owns it now.
+  cache.clear()
+  cleanedLegacyKeys.clear()
+  cleanedLegacyScopes.clear()
+  console.info(
+    `[durable] shell store attached after ${reads} early read(s) — handed it ${rehomed} early write(s)`,
+  )
+}
+
 /** Re-probe after a test swaps the bridge. */
 export function __resetDurableStoreOwnerForTests(): void {
   storeOwner = null
+  readsBeforeBridge = 0
+  writesBeforeBridge.clear()
 }
 
 /**
@@ -195,6 +242,7 @@ function readThrough(key: string): string | null {
     }
   }
 
+  noteTrafficBeforeBridge(null)
   try {
     return localStorage.getItem(key)
   } catch {
@@ -361,6 +409,7 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
     localStorage.setItem(key, value)
     noteStoreCost('write', key, writeStartedAt, value.length)
     cache.set(key, value)
+    noteTrafficBeforeBridge(key)
     return true
   } catch (err) {
     // Mobile's origin store has a shared ~5MB quota. Custody overlays, queues,
@@ -374,6 +423,7 @@ export function durableSetItem(key: string, value: string, opts?: DurableSetOpti
           localStorage.setItem(key, value)
           noteStoreCost('write-after-cache-reclaim', key, writeStartedAt, value.length)
           cache.set(key, value)
+          noteTrafficBeforeBridge(key)
           console.warn(
             `[storage] reclaimed ${Math.round(
               reclaimed / 1024,
@@ -482,6 +532,8 @@ export function durableRemoveItem(key: string): void {
     } catch {
       // ignore
     }
+  } else {
+    noteTrafficBeforeBridge(key)
   }
   cache.set(key, null)
 }

@@ -39,7 +39,8 @@ import {
 } from '../oneSatImportGuard'
 import { forgetItemsSent } from '../sentItemGuard'
 import { signedChequeAtomic } from '../signedChequeArchive'
-import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
+import { decodeBsv21Binary } from './decode162'
+import { deployDisplayFromScript, type DeployDisplay } from './deployDisplay'
 import { fillTokenParentBodies, prove } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
 import { inboundTokenLineage } from './inboundLineage'
@@ -75,45 +76,12 @@ export type IngestFungibleSettleResult = {
   missingParents?: string[]
 }
 
-type DeployDisplay = { sym?: string; icon?: string; issuer?: string; dec?: number }
-
-/**
- * Display fields from the deploy output — the record later outputs inherit
- * (BRC-162 §roles). BRC-162 binary CBOR payload first, BRC-161 JSON body
- * second; a value tip's own payload is OP_0 and carries nothing.
- */
 function deployMetadataFromBeef(beef: Beef, tokenId: string): DeployDisplay | null {
   const [txid, rawVout] = tokenId.split('_')
   const vout = Number(rawVout)
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
-  const tx = beef.findTxid(txid)?.tx
-  const scriptHex = tx?.outputs[vout]?.lockingScript?.toHex()
-  if (!scriptHex) return null
-  const binary = decodeBsv21Binary(scriptHex)
-  if (binary?.role === 'deploy') {
-    const icon = iconOutpointFromPayload(binary.payload?.icon, tokenId)
-    return {
-      ...(binary.payload?.sym ? { sym: binary.payload.sym } : {}),
-      ...(binary.payload?.dec != null ? { dec: binary.payload.dec } : {}),
-      ...(icon ? { icon } : {}),
-    }
-  }
-  const envelope = parseOrdEnvelope(scriptHex)
-  if (!envelope?.body?.length) return null
-  try {
-    const json = parseBsv21Json(
-      JSON.parse(new TextDecoder().decode(envelope.body)),
-    )
-    if (!json) return null
-    return {
-      ...(json.sym ? { sym: json.sym } : {}),
-      ...(json.icon ? { icon: json.icon } : {}),
-      ...(json.issuer ? { issuer: json.issuer } : {}),
-      ...(json.dec != null ? { dec: json.dec } : {}),
-    }
-  } catch {
-    return null
-  }
+  const scriptHex = beef.findTxid(txid)?.tx?.outputs[vout]?.lockingScript?.toHex()
+  return deployDisplayFromScript(scriptHex, tokenId)
 }
 
 type PayingTip = { vout: number; encoding: 'binary' | 'json' }
