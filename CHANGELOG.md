@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.444] - 2026-10-05
+
+### Fixed
+
+- **Contacts forgetting their published identity, and tokens losing their verified-issuer badge.** The device kept identity packages for only 8 people or issuers. Each new one deleted the one it had held longest, and the people you deal with most were usually the oldest. Contacts' identity cards and the issuer badge on tokens and items both read those packages, so they went blank as soon as a ninth identity arrived. Now a package is kept for as long as a contact presents it or a token or item you hold names it, on every account. The limit of 8 applies only to identities nothing on the device refers to.
+- A contact whose identity was already lost asks for its card again from the contacts list, not only when you open it. A token or item badge lost before this release comes back the next time that issuer's package is delivered.
+- The identity store logs `[identity] evicted N identity package(s)` when it removes one, so a support upload shows it.
+
 ## [1.3.443] - 2026-10-05
 
 ### Changed
