@@ -96,6 +96,44 @@ describe('importLegacyUtxos economic floor', () => {
     expect(offered).toEqual([`${'ab'.repeat(32)}.3`])
   })
 
+  it('holds a RUN jig and an inscribed output, and sweeps only the cash beside them', async () => {
+    const { Beef, LockingScript, Transaction } = await import('@bsv/sdk')
+    const p2pkh = '76a914aabbccddeeff00112233445566778899aabbccdd88ac'
+    const hexOf = (text: string) => Buffer.from(text, 'utf8').toString('hex')
+    const push = (text: string) => `${text.length.toString(16).padStart(2, '0')}${hexOf(text)}`
+    const marker = `006a${push('run')}0105${push('app')}${push('{"out":["aa"]}')}`
+    const source = new Transaction()
+    for (const [hex, satoshis] of [
+      [marker, 0],
+      [p2pkh, 1000],
+      [p2pkh, 5000],
+      [`0063036f726451${push('text/plain')}00${push('hi')}68${p2pkh}`, 500],
+    ] as const) {
+      source.addOutput({ lockingScript: LockingScript.fromHex(hex), satoshis })
+    }
+    const txid = source.id('hex')
+    const beef = new Beef()
+    beef.mergeRawTx(source.toBinary())
+    buildLegacyInputBeef.mockImplementation(async (_services, ops: string[]) => ({
+      ready: ops,
+      beef: beef.toBinary(),
+      failures: [],
+    }))
+    sweepVisibleP2pkhOutpoints.mockResolvedValue([
+      { outpoint: `${txid}.2`, success: true, txid: 'cd'.repeat(32) },
+    ])
+    const at = (vout: number, satoshis: number) => ({ outpoint: `${txid}.${vout}`, txid, vout, satoshis })
+
+    const result = await importLegacyUtxos([at(1, 1000), at(2, 5000), at(3, 500)])
+
+    const [, swept] = sweepVisibleP2pkhOutpoints.mock.calls[0] as [unknown, string[]]
+    expect(swept).toEqual([`${txid}.2`])
+    expect(result.skippedAssets).toBe(2)
+    expect(result.imported).toBe(1)
+    expect(markLegacyImported).toHaveBeenCalledWith([{ outpoint: `${txid}.2`, txid: 'cd'.repeat(32) }])
+    expect(releaseLegacyImport).toHaveBeenCalledWith([`${txid}.1`, `${txid}.3`])
+  })
+
   it('sweeps an output sitting exactly on the floor', async () => {
     sweepVisibleP2pkhOutpoints.mockResolvedValue([
       { outpoint: `${'ab'.repeat(32)}.1`, success: true, txid: 'cd'.repeat(32) },

@@ -16,6 +16,7 @@
  * - anything else → hold (refuse closed)
  */
 import { DUST_LIMIT_SATS } from './protocolValidate'
+import { isBareP2pkhScript } from './legacyAssetScript'
 
 /**
  * Bytes one legacy P2PKH input adds to a sweep: 32 txid + 4 vout + 1 script
@@ -80,6 +81,31 @@ export function chooseLegacySweepPath(utxo: LegacySweepableUtxo): LegacySweepPat
   if (sats < MIN_SWEEPABLE_SATS) {
     return { path: 'hold', reason: 'uneconomical' }
   }
+  return { path: 'sweep' }
+}
+
+/** Why a fundable-sized output still may not be swept as cash. */
+export type LegacyFundingScriptHold =
+  /** The source transaction's RUN marker claims it: sweeping destroys the jig. */
+  | 'runJig'
+  /** Anything but a bare P2PKH — an inscription, token or contract. */
+  | 'notPlainP2pkh'
+
+export type LegacyFundingScriptPath =
+  | { path: 'sweep' }
+  | { path: 'hold'; reason: LegacyFundingScriptHold }
+
+/**
+ * Second gate, read from the source transaction once it is loaded: cash is a
+ * bare P2PKH output that no protocol marker in its transaction claims. The
+ * amount alone cannot tell a RUN jig from change.
+ */
+export function chooseLegacyFundingScript(output: {
+  lockingScriptHex: string | null | undefined
+  runJig: boolean
+}): LegacyFundingScriptPath {
+  if (output.runJig) return { path: 'hold', reason: 'runJig' }
+  if (!isBareP2pkhScript(output.lockingScriptHex)) return { path: 'hold', reason: 'notPlainP2pkh' }
   return { path: 'sweep' }
 }
 

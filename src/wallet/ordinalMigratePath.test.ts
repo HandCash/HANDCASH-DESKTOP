@@ -14,8 +14,21 @@ const THEIRS = '76a914ffffffffffffffffffffffffffffffffffffffff88ac'
  * refused every one of these.
  */
 const SIGMA_TIP = `${OURS}6a0553494758`
+const hexOf = (text: string) => Buffer.from(text, 'utf8').toString('hex')
+const push = (text: string) =>
+  `${text.length.toString(16).padStart(2, '0')}${hexOf(text)}`
+/** `OP_FALSE OP_IF "ord" OP_1 <type> OP_0 <body> OP_ENDIF`. */
+const envelope = (contentType: string, body: string) =>
+  `0063036f726451${push(contentType)}00${push(body)}68`
+
 /** 1Sat inscription envelope ahead of the P2PKH. */
-const INSCRIBED_TIP = `0063036f726451${OURS}`
+const INSCRIBED_TIP = `${envelope('text/plain', 'hi')}${OURS}`
+/** The same envelope after the P2PKH, as some minters write it. */
+const TRAILING_INSCRIPTION_TIP = `${OURS}${envelope('image/png', 'x')}`
+const BSV21_TIP = `${envelope('application/bsv-20', '{"p":"bsv-20","op":"transfer","id":"aa_0","amt":"5"}')}${OURS}`
+const BSV20_TIP = `${envelope('application/bsv-20', '{"p":"bsv-20","op":"transfer","tick":"PEPE","amt":"5"}')}${OURS}`
+/** Sigil v1: collection hash lock, then the owner's P2PKH, then metadata. */
+const SIGIL_V1_TIP = `a914${'11'.repeat(20)}88${OURS}6a${push('{"name":"Twonk #1"}')}`
 
 describe('chooseOrdinalMigratePath', () => {
   it('migrates a 1-sat tip locked to the phrase key', () => {
@@ -56,6 +69,39 @@ describe('chooseOrdinalMigratePath', () => {
     expect(
       chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: null }, OURS),
     ).toEqual({ path: 'skip', reason: 'unreadable' })
+  })
+
+  it('migrates a tip whose inscription follows the P2PKH', () => {
+    expect(
+      chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: TRAILING_INSCRIPTION_TIP }, OURS),
+    ).toEqual({ path: 'migrate', satoshis: 1 })
+  })
+
+  it('refuses BSV-21 and BSV-20 tokens — a bare 1-sat output would burn them', () => {
+    for (const lockingScriptHex of [BSV21_TIP, BSV20_TIP]) {
+      expect(chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex }, OURS)).toEqual({
+        path: 'skip',
+        reason: 'token',
+      })
+    }
+  })
+
+  it('refuses a RUN jig even though its script is a bare P2PKH', () => {
+    expect(
+      chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: OURS, runJig: true }, OURS),
+    ).toEqual({ path: 'skip', reason: 'runJig' })
+  })
+
+  it('refuses a contract that merely contains the key (Sigil v1)', () => {
+    expect(
+      chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: SIGIL_V1_TIP }, OURS),
+    ).toEqual({ path: 'skip', reason: 'covenant' })
+  })
+
+  it('refuses an incomplete envelope ahead of the P2PKH', () => {
+    expect(
+      chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: `0063036f726451${OURS}` }, OURS),
+    ).toEqual({ path: 'skip', reason: 'covenant' })
   })
 
   it('ignores lock hex casing', () => {

@@ -1,6 +1,6 @@
 import { getActiveWallet } from './session'
 
-import { P2PKH } from '@bsv/sdk'
+import { Beef, P2PKH, type BEEF } from '@bsv/sdk'
 import {
   cloudAddressUnspent,
   cloudSpentStatus,
@@ -19,9 +19,11 @@ import {
 import { buildLegacyInputBeef } from './legacyBeef'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 import {
+  chooseLegacyFundingScript,
   chooseLegacySweepPath,
   MIN_SWEEPABLE_SATS,
 } from './legacySweepPath'
+import { runJigVouts } from './legacyAssetScript'
 import {
   classifyBitailsUtxoStatus,
   type OutpointSpentStatus,
@@ -714,6 +716,53 @@ export type LegacyFundingReceipt = {
   sweepTxid?: string
 }
 
+/**
+ * Split loaded outpoints into cash and assets. Held outputs stay on the
+ * address and are released by the caller, never marked imported.
+ */
+function holdLegacyAssets(
+  outpoints: string[],
+  beefBin: BEEF,
+): { ready: string[]; held: number } {
+  if (outpoints.length === 0) return { ready: [], held: 0 }
+  // An unreadable package cannot be signed against either; the sweep that
+  // follows refuses it, so nothing here may be mistaken for cash.
+  let beef: Beef | null = null
+  try {
+    beef = beefBin.length > 0 ? Beef.fromBinary(Array.from(beefBin)) : null
+  } catch {
+    beef = null
+  }
+  const jigsByTxid = new Map<string, Set<number>>()
+  const ready: string[] = []
+  let held = 0
+  for (const outpoint of outpoints) {
+    const point = parseOutpoint(outpoint)
+    const tx = point ? beef?.findTxid(point.txid)?.tx : undefined
+    const output = point ? tx?.outputs[point.vout] : undefined
+    if (!point || !tx || !output) {
+      ready.push(outpoint)
+      continue
+    }
+    let jigs = jigsByTxid.get(point.txid)
+    if (!jigs) {
+      jigs = runJigVouts(tx)
+      jigsByTxid.set(point.txid, jigs)
+    }
+    const decision = chooseLegacyFundingScript({
+      lockingScriptHex: output.lockingScript?.toHex(),
+      runJig: jigs.has(point.vout),
+    })
+    if (decision.path === 'sweep') {
+      ready.push(outpoint)
+      continue
+    }
+    held += 1
+    console.warn(`[legacy] holding ${outpoint} — ${decision.reason}, not cash`)
+  }
+  return { ready, held }
+}
+
 export async function importLegacyUtxos(
   utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
@@ -726,6 +775,8 @@ export async function importLegacyUtxos(
   /** Outputs that cannot fund their own sweep — see {@link MIN_SWEEPABLE_SATS}. */
   skippedUneconomical: number
   skippedKnown: number
+  /** Fundable-sized outputs that are assets, not cash — see {@link chooseLegacyFundingScript}. */
+  skippedAssets: number
   importedOutpoints: string[]
   importedReceipts: LegacyFundingReceipt[]
 }> {
@@ -764,6 +815,7 @@ export async function importLegacyUtxos(
       skippedOneSats,
       skippedUneconomical,
       skippedKnown: 0,
+      skippedAssets: 0,
       importedOutpoints: [],
       importedReceipts: [],
     }
@@ -772,6 +824,7 @@ export async function importLegacyUtxos(
   const candidates = safe.map((u) => u.outpoint)
   const outpoints = beginLegacyImport(candidates)
   const skippedKnown = candidates.length - outpoints.length
+  let skippedAssets = 0
   if (skippedKnown > 0) {
     console.info(`[legacy] skipped ${skippedKnown} already-imported or in-flight outpoint(s)`)
   }
@@ -783,6 +836,7 @@ export async function importLegacyUtxos(
       skippedOneSats,
       skippedUneconomical,
       skippedKnown,
+      skippedAssets: 0,
       importedOutpoints: [],
       importedReceipts: [],
     }
@@ -793,11 +847,13 @@ export async function importLegacyUtxos(
     // ancestry. Visible-on-chain (unconfirmed included) is enough for cash.
     // The sweep is not a receive until ARC accepts it.
     const built = await buildLegacyInputBeef(wallet.services, outpoints)
+    const cash = holdLegacyAssets(built.ready, built.beef)
+    skippedAssets = cash.held
     const results =
-      built.ready.length > 0
+      cash.ready.length > 0
         ? await sweepVisibleP2pkhOutpoints(
             wallet,
-            built.ready,
+            cash.ready,
             built.beef,
             opts?.spendKeyHex,
           )
@@ -862,6 +918,7 @@ export async function importLegacyUtxos(
       skippedOneSats,
       skippedUneconomical,
       skippedKnown,
+      skippedAssets,
       importedOutpoints,
       importedReceipts,
     }

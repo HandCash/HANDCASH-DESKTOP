@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.437] - 2026-10-05
+
+### Fixed
+
+- Importing from another wallet no longer destroys assets the wallet cannot hold. The item import moved every one-sat output on the source address into a plain collectable output. For a BSV-20 or BSV-21 token, that is a burn. The cash sweep treated any output above the fee floor as money, including a RUN jig, which looks like a plain payment but is destroyed by any spend outside RUN. Imports now move only what this wallet holds natively:
+  - plain P2PKH cash that no RUN marker in its transaction claims;
+  - 1-sat collectables whose script is the key's P2PKH with an inscription and optional `OP_RETURN` data.
+- Tokens, RUN jigs and contracts that merely contain the key (Sigils, STAS) stay on the source address, refused by name and never marked imported. The same check guards the wallet's own legacy-address deposits.
+
 ## [1.3.436] - 2026-10-05
 
 ### Fixed

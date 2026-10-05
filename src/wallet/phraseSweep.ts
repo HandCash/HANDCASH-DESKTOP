@@ -29,6 +29,7 @@ import {
   type LegacyUtxo,
 } from './legacyScan'
 import { chooseLegacySweepPath } from './legacySweepPath'
+import { runJigVouts } from './legacyAssetScript'
 import { buildLegacyInputBeef, withVisibleOnChainBeef } from './legacyBeef'
 import { forgetLegacyImported, legacySweepRecord } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
@@ -1210,12 +1211,17 @@ function planOrdinalMigrate(
   if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isInteger(vout) || vout < 0) {
     return { kind: 'unreadable' }
   }
-  const sourceOut = sourceBeef?.findTxid(txid)?.tx?.outputs[vout] ?? null
-  if (!sourceOut) return { kind: 'unreadable' }
+  const sourceTx = sourceBeef?.findTxid(txid)?.tx ?? null
+  const sourceOut = sourceTx?.outputs[vout] ?? null
+  if (!sourceTx || !sourceOut) return { kind: 'unreadable' }
 
   const sourceLock = sourceOut.lockingScript ?? null
   const eligibility = chooseOrdinalMigratePath(
-    { satoshis: sourceOut.satoshis ?? null, lockingScriptHex: sourceLock?.toHex() ?? null },
+    {
+      satoshis: sourceOut.satoshis ?? null,
+      lockingScriptHex: sourceLock?.toHex() ?? null,
+      runJig: runJigVouts(sourceTx).has(vout),
+    },
     spendLockHex,
   )
   if (eligibility.path === 'skip') return { kind: 'skip', reason: eligibility.reason }

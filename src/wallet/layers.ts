@@ -320,6 +320,7 @@ export const WALLET_LAYER_MODULES = {
     "ingestLegacyAddress.ts",
     "legacyScan.ts",
     "legacySweepPath.ts",
+    "legacyAssetScript.ts",
     "legacyStuckSweep.ts",
     "legacyReceiptActivity.ts",
     "ordinalMigratePath.ts",
