@@ -28,6 +28,8 @@ export type SourceScan = {
   checked: number
   addresses: DiscoveredAddress[]
   holdings: AddressHoldings[]
+  /** Set when the HandCash history pass covered the reported balance and items. */
+  via?: 'handcash-history'
 }
 
 export type SweepSummary = {

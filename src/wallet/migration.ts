@@ -10,7 +10,7 @@ import { storageRegistry } from '../storage/registry'
 
 import { normalizeAppHost } from './appIdentity'
 import { brc100Contract } from '../contracts/brc100'
-import { requestImportKind } from './import'
+import { parseRecoveryHints, rememberRecoveryHints, requestImportKind } from './import'
 import { trustsLocalHandCashHosts } from './labs'
 import { openSetting } from './navStore'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
@@ -172,16 +172,22 @@ export function listMigrationTxids(): ListMigrationTxidsPayload {
 export type OpenKeyRecoveryPayload = {
   opened: true
   kind: 'handcash'
+  /** Whether the HandCash history hints were usable. */
+  hints: 'accepted' | 'none'
 }
 
 /**
  * Bring Desktop forward on Settings → Import with the HandCash two-key form
- * chosen. Nothing is read, stored or moved: the user pastes the export, and
- * any sweep is still their explicit confirm on a preview.
+ * chosen. Nothing is moved: the user pastes the export, and any sweep is
+ * still their explicit confirm on a preview. Optional `hints` (txids, balance
+ * and item count from the user's HandCash account) are held in memory so the
+ * scan reads their own history before walking thousands of addresses.
  */
-export function openKeyRecoveryPayload(): OpenKeyRecoveryPayload {
+export function openKeyRecoveryPayload(args?: { hints?: unknown }): OpenKeyRecoveryPayload {
+  const hints = parseRecoveryHints(args?.hints)
+  if (hints) rememberRecoveryHints(hints)
   requestImportKind('handcash')
   openSetting('import')
   if (typeof window !== 'undefined') void window.handcash?.focusWindow?.()
-  return { opened: true, kind: 'handcash' }
+  return { opened: true, kind: 'handcash', hints: hints ? 'accepted' : 'none' }
 }

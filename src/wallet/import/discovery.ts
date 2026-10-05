@@ -225,45 +225,52 @@ export function resetDiscoveryPacingForTests(): void {
   wocNextSlot = 0
 }
 
-type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
+
+/** One paced, retried WhatsOnChain bulk POST. Throws when it cannot answer. */
+export async function wocBulkPost(
+  chain: Chain,
+  path: string,
+  body: unknown,
+  fetchImpl: FetchLike = fetch,
+): Promise<unknown> {
+  let lastError = 'no answer'
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    await wocSlot()
+    try {
+      const res = await fetchImpl(`${wocBase(chain)}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (res.ok) return (await res.json()) as unknown
+      lastError = `WhatsOnChain ${res.status}`
+      if (res.status !== 429 && res.status < 500) break
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+    }
+    const delay = RETRY_DELAYS_MS[attempt]
+    if (delay == null) break
+    await new Promise((resolve) => setTimeout(resolve, delay))
+  }
+  throw new Error(lastError)
+}
 
 /** Bulk history via `POST /addresses/history`, paced and retried. */
 export function wocHistoryLookup(chain: Chain, fetchImpl: FetchLike = fetch): HistoryLookup {
   return async (addresses) => {
-    let lastError = 'no answer'
-    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
-      await wocSlot()
-      try {
-        const res = await fetchImpl(`${wocBase(chain)}/addresses/history`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({ addresses }),
-          signal: AbortSignal.timeout(15_000),
-        })
-        if (res.ok) {
-          const rows = (await res.json()) as Array<{
-            address?: string
-            history?: unknown[]
-            error?: string
-          }>
-          const used = new Set<string>()
-          for (const row of Array.isArray(rows) ? rows : []) {
-            if (row?.address && Array.isArray(row.history) && row.history.length > 0) {
-              used.add(row.address)
-            }
-          }
-          return used
-        }
-        lastError = `WhatsOnChain ${res.status}`
-        if (res.status !== 429 && res.status < 500) break
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err)
+    const rows = (await wocBulkPost(chain, '/addresses/history', { addresses }, fetchImpl)) as Array<{
+      address?: string
+      history?: unknown[]
+    }>
+    const used = new Set<string>()
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (row?.address && Array.isArray(row.history) && row.history.length > 0) {
+        used.add(row.address)
       }
-      const delay = RETRY_DELAYS_MS[attempt]
-      if (delay == null) break
-      await new Promise((resolve) => setTimeout(resolve, delay))
     }
-    throw new Error(lastError)
+    return used
   }
 }
 

@@ -39,6 +39,8 @@ export type AddressHoldings = {
   cashCount: number
   /** Outputs too small to pay their own way, left where they are. */
   dustCount: number
+  /** Absent on scans saved before it was recorded. */
+  dustSats?: number
   itemCount: number
   itemCountCapped: boolean
   tokens: TokenHolding[]
@@ -183,6 +185,7 @@ export async function inspectAddressHoldings(
     cashSats: 0,
     cashCount: 0,
     dustCount: 0,
+    dustSats: 0,
     itemCount: 0,
     itemCountCapped: false,
     tokens: [],
@@ -198,6 +201,7 @@ export async function inspectAddressHoldings(
         out.cashCount += 1
       } else if (path.reason === 'uneconomical') {
         out.dustCount += 1
+        out.dustSats = (out.dustSats ?? 0) + utxo.satoshis
       }
     }
     // Transferred items are plain 1-sat P2PKH; minted ones only the ord index sees.

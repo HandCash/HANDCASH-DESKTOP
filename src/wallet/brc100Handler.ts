@@ -464,7 +464,9 @@ async function dispatchWalletMethod(
       return listMigrationTxids()
     case 'openKeyRecovery':
       appendAppLog('info', `[migrate] key recovery opened by ${normalizeOrigin(originator) || 'unknown origin'}`)
-      return openKeyRecoveryPayload()
+      return openKeyRecoveryPayload(
+        args && typeof args === 'object' && !Array.isArray(args) ? (args as { hints?: unknown }) : undefined,
+      )
     case 'createMarketListingAdvert':
       return createMarketListingAdvert((args ?? {}) as CreateMarketListingArgs)
     case 'getTokenIcon': {

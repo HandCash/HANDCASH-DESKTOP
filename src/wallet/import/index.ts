@@ -51,3 +51,8 @@ export {
 } from './sweep'
 export { HANDCASH_GAP } from './pathCatalog'
 export { requestImportKind, subscribeImportIntent, takeImportIntent } from './importIntent'
+export {
+  parseRecoveryHints,
+  rememberRecoveryHints,
+  type HandCashRecoveryHints,
+} from './recoveryHints'

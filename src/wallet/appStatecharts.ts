@@ -783,7 +783,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
     removing --> viewing : FAIL
 
     viewing : Read-only · identity, addresses, holdings, held reasons
-    scanning : Gap walk · history + 1Sat index · PAUSE
+    scanning : HandCash hints → own-history pass, kept only if it covers HandCash balance + items · else gap walk · history + 1Sat index · PAUSE
     probing : HandCash PKI key vs composed shares
     reviewing : Preview · compatible only
     sweeping : Cash → items (BRC-150) → BSV-21 · PAUSE

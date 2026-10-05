@@ -104,7 +104,10 @@ export function ImportPanel() {
                 }
               : {
                   type: 'PROGRESS',
-                  message: `Reading holdings · ${p.done}/${p.total}`,
+                  message:
+                    p.phase === 'history'
+                      ? `Reading your HandCash history · ${p.done.toLocaleString()}/${p.total.toLocaleString()} transactions`
+                      : `Reading holdings · ${p.done}/${p.total}`,
                   percent: p.total > 0 ? Math.round((p.done / p.total) * 100) : null,
                 },
           ),

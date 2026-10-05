@@ -110,7 +110,9 @@ export function ImportSourceView(props: {
         <p className="confirm-password-lede">
           {IMPORT_SOURCE_LABELS[source.kind]} · saved {new Date(source.createdAt).toLocaleDateString()}
           {scan
-            ? ` · ${scan.checked.toLocaleString()} addresses checked${scan.complete ? '' : ' (incomplete)'}`
+            ? ` · ${scan.checked.toLocaleString()} addresses checked${scan.complete ? '' : ' (incomplete)'}${
+                scan.via === 'handcash-history' ? ' · matched to your HandCash balance' : ''
+              }`
             : ' · not scanned yet'}
         </p>
       </div>
