@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.436] - 2026-10-05
+
+### Fixed
+
+- Token tips no longer show "encoding unverified" when the wallet database stored the output without its locking script. BRC-162 puts the token fields in the on-chain locking script, and BRC-163 admits a tip only if that script parses. Some rows had only the remittance claim, so the wallet could not prove the encoding. The wallet now reads the script from the transaction itself. It uses the local copy when there is one. Otherwise it fetches from the chain in the background, at most 20 per pass and once per output per session. It accepts the body only if it hashes to the tip's txid and the output carries a valid 162 lock. The script is then written back to the row, so the next listing proves it from storage. Unconfirmed chained token sends were never affected.
+
+### Changed
+
+- Triage traces each dead payment: what it lost to and the wallet lines just before and after it. It also compacts its facts step by step when they are too large for Jev, so the verdict no longer fails on busy uploads.
+
 ## [1.3.435] - 2026-10-04
 
 ### Fixed

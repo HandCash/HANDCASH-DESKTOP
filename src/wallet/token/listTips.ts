@@ -2,6 +2,7 @@ import { issuerMetadataFromScript } from '../issuerMetadata'
 import { retainedIssuerMetadata } from '../issuerAttribution'
 import { tokenIssuerAttested } from './lineage'
 import { getActiveWallet } from '../session'
+import { getWalletRuntime } from '../walletRuntime'
 
 /** List BRC-162 value tips from basket `bsv21` (BRC-163). */
 import { type ActiveWallet } from '../session'
@@ -19,6 +20,7 @@ import {
   type Bsv21Op,
   type Bsv21Utxo,
 } from './types'
+import { Transaction, Utils } from '@bsv/sdk'
 import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { tipFromBsv21Script } from './sendPlan'
 import { durableGetItem, durableSetItem } from '../durableStorage'
@@ -405,15 +407,164 @@ async function decodeHeldRows(
   return tips
 }
 
+function splitOutpoint(outpoint: string | undefined): { txid: string; vout: number } | null {
+  const m = /^([0-9a-f]{64})[._](\d+)$/i.exec((outpoint ?? '').trim())
+  return m ? { txid: m[1]!.toLowerCase(), vout: Number(m[2]) } : null
+}
+
+/** The output's script when the body hashes to `txid` and the output is a one-sat BRC-162 lock. */
+export function tokenLockFromBody(
+  tx: Transaction | null | undefined,
+  txid: string,
+  vout: number,
+): string | null {
+  if (!tx || tx.id('hex') !== txid) return null
+  const output = tx.outputs[vout]
+  if (output?.satoshis !== 1) return null
+  const hex = output.lockingScript.toHex()
+  return decodeBsv21Binary(hex) ? hex : null
+}
+
+/** Outpoints whose transaction was already asked of the chain this session. */
+const chainScriptAsked = new Set<string>()
+const CHAIN_SCRIPT_READS_PER_PASS = 20
+
+/**
+ * Give a basket row storage listed without a lock the script its transaction
+ * carries.
+ *
+ * BRC-162 puts the token fields in the output's on-chain locking script, and
+ * BRC-163 admits a held tip by parsing that script — remittance is only a
+ * claim. Storage can still hold a one-sat token row with no `lockingScript`
+ * and no script offset to read one from; `listOutputs` then answers with
+ * remittance only and the tip shows "encoding unverified" with send and burn
+ * refused. The script is a fact of the transaction that created the output, so
+ * any body whose hash is that txid settles it: the locally held one inline,
+ * otherwise the chain's, off the list path. Only a script that decodes as a
+ * BRC-162 lock is used, and it is written back so the next list, send and
+ * listing read it from storage.
+ */
+async function withTokenScripts(
+  wallet: ActiveWallet,
+  rows: ListedOutput[],
+): Promise<ListedOutput[]> {
+  const unscripted = rows.filter(
+    (row) =>
+      !lockingScriptHex(row.lockingScript) &&
+      (typeof row.satoshis === 'number' ? row.satoshis : 1) === 1 &&
+      splitOutpoint(row.outpoint),
+  )
+  if (unscripted.length === 0) return rows
+  const { getLocalTxForTxid } = await import('../beefCache')
+  const filled = new Map<string, string>()
+  const notLocal: string[] = []
+  for (const row of unscripted) {
+    const point = splitOutpoint(row.outpoint)!
+    const hex = tokenLockFromBody(await getLocalTxForTxid(wallet, point.txid), point.txid, point.vout)
+    if (hex) filled.set(row.outpoint!, hex)
+    else notLocal.push(row.outpoint!)
+  }
+  if (filled.size > 0) {
+    void persistTokenScripts(wallet, filled, 'local').catch(noteScriptHealFailure)
+  }
+  const ask = notLocal.filter((op) => !chainScriptAsked.has(op)).slice(0, CHAIN_SCRIPT_READS_PER_PASS)
+  if (ask.length > 0) void readTokenScriptsFromChain(wallet, ask).catch(noteScriptHealFailure)
+  if (filled.size === 0) return rows
+  return rows.map((row) =>
+    filled.has(row.outpoint!) ? { ...row, lockingScript: filled.get(row.outpoint!) } : row,
+  )
+}
+
+function noteScriptHealFailure(err: unknown): void {
+  console.warn('[bsv21] script heal skipped', err instanceof Error ? err.message : String(err))
+}
+
+async function readTokenScriptsFromChain(wallet: ActiveWallet, outpoints: string[]): Promise<void> {
+  for (const op of outpoints) chainScriptAsked.add(op)
+  const startedAt = Date.now()
+  const { fetchRawTxHex } = await import('../oneSatImport')
+  const filled = new Map<string, string>()
+  for (const op of outpoints) {
+    if (getWalletRuntime()?.instance !== wallet) return
+    const point = splitOutpoint(op)!
+    const raw = await fetchRawTxHex(point.txid, wallet.chain).catch(() => null)
+    if (!raw) continue
+    let tx: Transaction
+    try {
+      tx = Transaction.fromHex(raw)
+    } catch {
+      continue
+    }
+    const hex = tokenLockFromBody(tx, point.txid, point.vout)
+    if (hex) filled.set(op, hex)
+  }
+  console.info(
+    `[bsv21] chain script read done ${Date.now() - startedAt}ms — ${filled.size} of ${outpoints.length} unscripted row(s) carry a 162 lock`,
+  )
+  if (filled.size === 0 || getWalletRuntime()?.instance !== wallet) return
+  await persistTokenScripts(wallet, filled, 'chain')
+  const { listFungibles } = await import('./list')
+  void listFungibles(wallet)
+}
+
+type ScriptHealStorage = {
+  findUserByIdentityKey?: (identityKey: string) => Promise<{ userId: number } | undefined>
+  findOutputs?: (args: {
+    partial: { userId: number; txid: string; vout: number }
+    noScript?: boolean
+  }) => Promise<Array<{ outputId: number }> | undefined>
+  updateOutput?: (id: number, update: { lockingScript: number[] }) => Promise<unknown>
+}
+
+async function persistTokenScripts(
+  wallet: ActiveWallet,
+  filled: Map<string, string>,
+  source: 'local' | 'chain',
+): Promise<void> {
+  const storage = wallet.wallet?.storage
+  if (!storage?.runAsStorageProvider) return
+  const startedAt = Date.now()
+  const healed = await storage.runAsStorageProvider(async (activeSp) => {
+    const sp = activeSp as ScriptHealStorage
+    if (
+      typeof sp.findUserByIdentityKey !== 'function' ||
+      typeof sp.findOutputs !== 'function' ||
+      typeof sp.updateOutput !== 'function'
+    ) {
+      return 0
+    }
+    const user = await sp.findUserByIdentityKey(wallet.identityKey)
+    if (!user) return 0
+    let count = 0
+    for (const [outpoint, hex] of filled) {
+      const point = splitOutpoint(outpoint)!
+      const found =
+        (await sp.findOutputs({
+          partial: { userId: user.userId, txid: point.txid, vout: point.vout },
+          noScript: true,
+        })) ?? []
+      for (const row of found) {
+        await sp.updateOutput(row.outputId, { lockingScript: Utils.toArray(hex, 'hex') })
+        count += 1
+      }
+    }
+    return count
+  })
+  console.info(
+    `[bsv21] script heal done ${Date.now() - startedAt}ms — ${healed} token row(s) given the lock their transaction carries (${source})`,
+  )
+}
+
 export async function listBsv21BinaryTips(
   wallet: ActiveWallet,
   opts: { includeCustomInstructions?: boolean } = {},
 ): Promise<Bsv21Utxo[]> {
   const readStartedAt = Date.now()
-  const rows = await listBasketTips(wallet, BSV21_BASKET, {
+  const listed = await listBasketTips(wallet, BSV21_BASKET, {
     includeCustomInstructions: opts.includeCustomInstructions,
   })
-  reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
+  reportPhase('basket-read', readStartedAt, `${listed.length} row(s)`)
+  const rows = await withTokenScripts(wallet, listed)
   return decodeHeldRows(wallet, rows, (row) => decodeListedBsv21Tip(row, wallet.identityKey))
 }
 
@@ -463,7 +614,7 @@ export async function listHeldFungibleTips(
   opts: { continuing?: ReadonlySet<string> } = {},
 ): Promise<Bsv21Utxo[]> {
   const readStartedAt = Date.now()
-  const rows = await readWholeBasket(wallet, BSV21_BASKET)
+  const rows = await withTokenScripts(wallet, await readWholeBasket(wallet, BSV21_BASKET))
   reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
   const continuing = opts.continuing ?? new Set<string>()
   return decodeHeldRows(

@@ -2495,6 +2495,7 @@ function broadcastFacts(events) {
       spanSeconds: Math.round((row.lastAt - row.firstAt) / 1000),
     }))
   return {
+    deadTrails: deadTrails(events, rows.filter((row) => row.outcomes.includes('dead'))),
     appSignReplies: appSigned,
     txidsSeen: rows.length,
     // A node holds it (`[landing] … landed`, 1.3.380+) or it is on chain.
@@ -2521,6 +2522,69 @@ function broadcastFacts(events) {
       .slice(0, 12)
       .map(([detail, count]) => ({ detail, count })),
   }
+}
+
+const DEAD_RE = /^\[landing\] ([0-9a-f]{12}) dead cause=(\S+).*?already spent by ([0-9a-f]{12})/
+
+/**
+ * For each cheque the landing watch failed: every line naming it and every
+ * line naming the transaction that spent its coin first, in order. `<dead>`
+ * and `<winner>` mark the pair; other ids are masked. This is what tells a
+ * stale cheque replayed after a newer send from two live sends racing.
+ */
+function deadTrails(events, deadRows) {
+  const out = []
+  for (const row of deadRows.slice(0, 4)) {
+    let winner = null
+    let cause = null
+    for (const e of events) {
+      const m = DEAD_RE.exec(e.text)
+      if (m && m[1] === row.txid) {
+        cause = m[2]
+        winner = m[3]
+        break
+      }
+    }
+    const mask = (e) => {
+      let line = e.text.replaceAll(row.txid, '<dead>')
+      if (winner) line = line.replaceAll(winner, '<winner>')
+      return `${new Date(e.at).toISOString().slice(11, 19)} ${line
+        .replace(/<dead>[0-9a-f]+/g, '<dead>')
+        .replace(/<winner>[0-9a-f]+/g, '<winner>')
+        .replace(/[0-9a-f]{12,}/g, '<id>')
+        .slice(0, 240)}`
+    }
+    const lines = []
+    const seen = new Set()
+    let firstIndex = -1
+    for (const [i, e] of events.entries()) {
+      const t = e.text
+      if (!t.includes(row.txid) && !(winner && t.includes(winner))) continue
+      if (firstIndex < 0) firstIndex = i
+      const line = mask(e)
+      if (seen.has(line)) continue
+      seen.add(line)
+      lines.push(line)
+      if (lines.length >= 40) break
+    }
+    // The wallet lines just before the dead cheque first appears: which flow
+    // signed it, when its own txid is only logged by the seal.
+    const before = []
+    for (let i = firstIndex - 1; i >= 0 && before.length < 15; i -= 1) {
+      if (!/^\[[\w-]+\]/.test(events[i].text)) continue
+      const line = mask(events[i])
+      if (!before.includes(line)) before.unshift(line)
+    }
+    const after = []
+    for (let i = firstIndex + 1; i < events.length && after.length < 20; i += 1) {
+      if (events[i].at - events[firstIndex].at > 8_000) break
+      if (!/^\[[\w-]+\]/.test(events[i].text)) continue
+      const line = mask(events[i])
+      if (!after.includes(line)) after.push(line)
+    }
+    out.push({ txid: row.txid, cause, winner, before, lines, after })
+  }
+  return out
 }
 
 function appFlowFacts(events) {
@@ -3195,9 +3259,22 @@ function modelState(state) {
         lines: (trail.lines ?? []).slice(-MODEL_SEND_LINES),
       })),
     }
+  const slimBroadcast = (broadcast) =>
+    broadcast?.deadTrails && {
+      ...broadcast,
+      deadTrails: broadcast.deadTrails.map(({ before, after, lines, ...trail }) => ({
+        ...trail,
+        lines: (lines ?? []).slice(-MODEL_TRAIL_LINES),
+      })),
+    }
   const slim = (session) => {
     if (!session) return session
-    const withSends = session.tokenSends ? { ...session, tokenSends: slimSends(session.tokenSends) } : session
+    const withBroadcast = session.broadcast?.deadTrails
+      ? { ...session, broadcast: slimBroadcast(session.broadcast) }
+      : session
+    const withSends = withBroadcast.tokenSends
+      ? { ...withBroadcast, tokenSends: slimSends(withBroadcast.tokenSends) }
+      : withBroadcast
     const rc = withSends.holdings?.reconcile
     if (!rc) return withSends
     const open = rc.open.map(({ trail, ...row }, i) =>
@@ -3208,25 +3285,56 @@ function modelState(state) {
   return Object.fromEntries(Object.entries(state).map(([key, session]) => [key, slim(session)]))
 }
 
-async function askJev(fullState, apiKey) {
-  const state = modelState(fullState)
-  const questions = { ...QUESTIONS, ...forensicQuestions(state.latest) }
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const res = await fetch(TYPESAFE_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ state, model: 'jev-latest', questions }),
-    })
-    if (res.ok) return res.json()
-    if (res.status !== 429 && res.status !== 529) {
-      throw new Error(`typesafe ${res.status}: ${(await res.text()).slice(0, 300)}`)
-    }
-    await new Promise((r) => setTimeout(r, 600 * 2 ** attempt))
+/** Every array capped to its last few entries and every string shortened. */
+function compactFacts(value, items, chars) {
+  if (typeof value === 'string') return value.length > chars ? `${value.slice(0, chars)}…` : value
+  if (Array.isArray(value)) return value.slice(-items).map((v) => compactFacts(v, items, chars))
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, compactFacts(v, items, chars)]))
   }
-  throw new Error('typesafe overloaded after retries')
+  return value
+}
+
+/**
+ * States offered to the model, largest first. Counts survive every tier; only
+ * example rows and trail lines shrink, and `previous` shrinks before `latest`.
+ */
+function modelStateTiers(fullState) {
+  const slim = modelState(fullState)
+  return [
+    slim,
+    { ...slim, previous: compactFacts(slim.previous, 3, 160) },
+    { latest: compactFacts(slim.latest, 3, 160), previous: compactFacts(slim.previous, 1, 80) },
+    { latest: compactFacts(slim.latest, 1, 120), previous: compactFacts(slim.previous, 0, 60) },
+  ]
+}
+
+async function askJev(fullState, apiKey) {
+  const questions = { ...QUESTIONS, ...forensicQuestions(fullState.latest) }
+  for (const [tier, state] of modelStateTiers(fullState).entries()) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const res = await fetch(TYPESAFE_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ state, model: 'jev-latest', questions }),
+      })
+      if (res.ok) {
+        if (tier > 0) console.error(`[triage] model state compacted to tier ${tier} to fit Jev's input`)
+        return res.json()
+      }
+      const body = await res.text()
+      if (res.status === 400 && body.includes('max_tokens_exceeded')) break
+      if (res.status !== 429 && res.status !== 529) {
+        throw new Error(`typesafe ${res.status}: ${body.slice(0, 300)}`)
+      }
+      await new Promise((r) => setTimeout(r, 600 * 2 ** attempt))
+      if (attempt === 3) throw new Error('typesafe overloaded after retries')
+    }
+  }
+  throw new Error('typesafe max_tokens_exceeded even with the smallest model state')
 }
 
 /* ----------------------------------------------------------------- report */
@@ -3351,6 +3459,16 @@ function report(state, answers) {
     }
     if (answers.rejected_chain_cause) choiceBlock('Why the chain was refused', answers.rejected_chain_cause)
     if (answers.quarantine_next_step) choiceBlock('Quarantine next step', answers.quarantine_next_step)
+  }
+
+  const deadPayments = latest.broadcast?.deadTrails ?? []
+  if (deadPayments.length) {
+    console.log('\nDead payments (code-traced):')
+    for (const d of deadPayments) {
+      console.log(`  ${d.txid} ${d.cause}${d.winner ? ` · lost to ${d.winner}` : ''}`)
+      for (const line of d.before.slice(-3)) console.log(`    before: ${line}`)
+      for (const line of d.after.slice(0, 3)) console.log(`    after:  ${line}`)
+    }
   }
 
   const ac = latest.activity
