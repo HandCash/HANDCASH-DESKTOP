@@ -2,6 +2,7 @@ import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
 import {
   appBrowserSurfaceLabel,
   chooseAppBrowserSurface,
+  inAppBrowserNeedsLab,
 } from '../wallet/appBrowserSurface'
 import { clearNavChild, openEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
@@ -23,6 +24,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
   const inAppBrowser = useLab('inAppBrowser')
   const surface = chooseAppBrowserSurface(window.handcash, inAppBrowser)
   const inAppAvailable = surface.surface !== 'external'
+  const inAppInLabs = !inAppAvailable && inAppBrowserNeedsLab(window.handcash)
 
   const openExternal = async () => {
     if (!safeUrl) return
@@ -39,26 +41,10 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     }
   }
 
-  const openInApp = async () => {
-    if (!safeUrl) return
+  const openInApp = () => {
+    if (!safeUrl || surface.surface !== 'embedded') return
     playWalletSound('soft')
-    if (surface.surface === 'embedded') {
-      openEmbeddedAppBrowser(origin, safeUrl)
-      return
-    }
-    // Mobile: the shell owns the in-app browser (DappBrowserActivity), which
-    // Android can render and a `<webview>` tab could never load.
-    if (surface.surface === 'native') {
-      clearNavChild()
-      try {
-        const result = await window.handcash?.openAppBrowser?.(safeUrl)
-        if (result && result.ok === false) {
-          toastError('Could not open app', result.error)
-        }
-      } catch (err) {
-        toastError('Could not open app', err instanceof Error ? err.message : String(err))
-      }
-    }
+    openEmbeddedAppBrowser(origin, safeUrl)
   }
 
   const cancelAction = {
@@ -71,7 +57,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
 
   const inAppAction = {
     ...appBrowserSurfaceLabel(surface),
-    onClick: () => void openInApp(),
+    onClick: openInApp,
     disabled: !safeUrl || !inAppAvailable,
     icon: <AppsIcon size={18} />,
     tone: 'secondary' as const,
@@ -115,9 +101,9 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       <p className="permission-note">
         {inAppAvailable
           ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
-          : inAppBrowser
-            ? 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'
-            : 'Opens in your system browser with the same connected wallet permissions. The in-app browser is in Settings → Labs.'}
+          : inAppInLabs
+            ? 'Opens in your system browser with the same connected wallet permissions. The in-app browser is in Settings → Labs.'
+            : 'Opens in your system browser with the same connected wallet permissions.'}
       </p>
     </WalletRequestTemplate>
   )

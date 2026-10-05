@@ -4,7 +4,7 @@ vi.mock('./navStore', () => ({
   openEmbeddedAppBrowser: vi.fn(),
 }))
 
-const labs = vi.hoisted(() => ({ inAppBrowser: true }))
+const labs = vi.hoisted(() => ({ inAppBrowser: false }))
 vi.mock('./labs', () => ({
   isLabEnabled: (id: string) => id === 'inAppBrowser' && labs.inAppBrowser,
 }))
@@ -28,6 +28,8 @@ import {
   openAppInWalletBrowser,
 } from './openAppInWalletBrowser'
 
+const nativeGuest = { create: vi.fn() }
+
 describe('openAppInWalletBrowser', () => {
   const openExternal = vi.fn(async () => {})
 
@@ -43,19 +45,7 @@ describe('openAppInWalletBrowser', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
-    labs.inAppBrowser = true
-  })
-
-  it('uses the system browser even when asked for in-app while the lab is off', async () => {
     labs.inAppBrowser = false
-    await expect(
-      openAppInWalletBrowser({
-        origin: 'https://pixelwar.click',
-        url: 'https://pixelwar.click/',
-        preferInApp: true,
-      }),
-    ).resolves.toBe('external')
-    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
   })
 
   it('opens safe http(s) apps in the system browser by default', async () => {
@@ -69,7 +59,7 @@ describe('openAppInWalletBrowser', () => {
     expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
   })
 
-  it('opens the embedded browser only when preferInApp is set', async () => {
+  it('opens a Desktop tab when preferInApp is set, with no lab needed', async () => {
     await expect(
       openAppInWalletBrowser({
         origin: 'https://pixelwar.click',
@@ -84,32 +74,24 @@ describe('openAppInWalletBrowser', () => {
     expect(openExternal).not.toHaveBeenCalled()
   })
 
-  /**
-   * Mobile has no Electron `<webview>`, but `openAppBrowser` launches its
-   * native DappBrowserActivity with the CWI bridge to :3321.
-   */
-  it('opens the native in-app browser on mobile', async () => {
-    const openAppBrowser = vi.fn(async () => ({ ok: true as const }))
-    vi.stubGlobal('window', {
-      handcash: { openExternal, openAppBrowser },
-    })
+  it('opens the same tab on mobile once Labs › In-app browser is on', async () => {
+    labs.inAppBrowser = true
+    vi.stubGlobal('window', { handcash: { openExternal, appBrowserGuest: nativeGuest } })
     await expect(
       openAppInWalletBrowser({
         origin: 'https://pixelwar.click',
         url: 'https://pixelwar.click/',
         preferInApp: true,
       }),
-    ).resolves.toBe('native')
-    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
-    expect(openAppBrowser).toHaveBeenCalledWith('https://pixelwar.click/')
-    expect(openExternal).not.toHaveBeenCalled()
+    ).resolves.toBe('embedded')
+    expect(openEmbeddedAppBrowser).toHaveBeenCalledWith(
+      'https://pixelwar.click',
+      'https://pixelwar.click/',
+    )
   })
 
-  it('falls back to the system browser when the native browser refuses', async () => {
-    const openAppBrowser = vi.fn(async () => ({ ok: false as const, error: 'failed' }))
-    vi.stubGlobal('window', {
-      handcash: { openExternal, openAppBrowser },
-    })
+  it('uses the system browser on mobile while the lab is off', async () => {
+    vi.stubGlobal('window', { handcash: { openExternal, appBrowserGuest: nativeGuest } })
     await expect(
       openAppInWalletBrowser({
         origin: 'https://pixelwar.click',
@@ -117,6 +99,7 @@ describe('openAppInWalletBrowser', () => {
         preferInApp: true,
       }),
     ).resolves.toBe('external')
+    expect(openEmbeddedAppBrowser).not.toHaveBeenCalled()
     expect(openExternal).toHaveBeenCalledWith('https://pixelwar.click/')
   })
 

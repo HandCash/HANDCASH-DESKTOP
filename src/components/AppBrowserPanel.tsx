@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
+import { chooseAppBrowserSurface } from '../wallet/appBrowserSurface'
 import {
   closeEmbeddedAppBrowser,
   noteEmbeddedAppBrowserUrl,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { createAppBrowserGuest, type AppBrowserGuest } from './appBrowserGuest'
 import { BackIcon, CloseIcon, LaunchIcon, RefreshIcon } from './icons'
 
 type Props = {
@@ -13,21 +15,6 @@ type Props = {
   url: string
   previewRequested: boolean
   onPreview: (origin: string, dataUrl: string) => void
-}
-
-type CapturedImage = {
-  resize: (options: { width: number; quality?: 'good' | 'better' | 'best' }) => CapturedImage
-  toDataURL: () => string
-}
-
-type WebviewElement = HTMLElement & {
-  src: string
-  canGoBack: () => boolean
-  canGoForward: () => boolean
-  goBack: () => void
-  goForward: () => void
-  reload: () => void
-  capturePage: () => Promise<CapturedImage>
 }
 
 export function AppBrowserPanel({
@@ -42,105 +29,77 @@ export function AppBrowserPanel({
   /**
    * The URL this guest was built with. Tabs are keyed by origin in the nav, so
    * a new tab remounts and captures afresh. Keying the guest on the live `url`
-   * prop instead would tear the webview down and reload the page every time
+   * prop instead would tear the guest down and reload the page every time
    * the store learned where the user had browsed to.
    */
   const [entryUrl] = useState(safeUrl)
+  const panelRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
-  const webviewRef = useRef<WebviewElement | null>(null)
+  const guestRef = useRef<AppBrowserGuest | null>(null)
   const [currentUrl, setCurrentUrl] = useState(safeUrl ?? '')
   const [loading, setLoading] = useState(Boolean(safeUrl))
   const [failure, setFailure] = useState<string | null>(null)
   const [history, setHistory] = useState({ back: false, forward: false })
   const captureTimerRef = useRef(0)
   const capturePreview = useCallback(() => {
-    const view = webviewRef.current
-    if (!view) return
+    const guest = guestRef.current
+    if (!guest) return
     window.clearTimeout(captureTimerRef.current)
     captureTimerRef.current = window.setTimeout(() => {
-      void view
-        .capturePage()
-        .then((image) =>
-          onPreview(origin, image.resize({ width: 720, quality: 'better' }).toDataURL()),
-        )
-        .catch(() => undefined)
+      void guest.capture(720).then((dataUrl) => {
+        if (dataUrl) onPreview(origin, dataUrl)
+      })
     }, 180)
   }, [onPreview, origin])
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host || !entryUrl) return
-    const view = document.createElement('webview') as WebviewElement
-    view.className = 'app-browser-webview'
-    view.setAttribute('partition', 'persist:handcash-app-browser')
-    view.src = entryUrl
-
-    // Electron upgrades `<webview>` only once it is attached. A runtime with no
-    // such element (Android) leaves an inert node that never loads and never
-    // errors, so say so rather than spin on the loading bar forever.
-    const attachCheck = window.setTimeout(() => {
-      if (typeof view.reload !== 'function') {
-        setFailure('This device cannot open apps inside HandCash.')
-        setLoading(false)
-      }
-    }, 1_200)
-
-    const syncNavigation = (event?: Event) => {
-      const navigated = event as Event & { url?: string }
-      if (navigated?.url) {
-        setCurrentUrl(navigated.url)
-        // Remember it on the tab so closing and reopening resumes here.
-        noteEmbeddedAppBrowserUrl(origin, navigated.url)
-      }
-      setHistory({
-        back: view.canGoBack(),
-        forward: view.canGoForward(),
-      })
-    }
-    const start = () => {
-      setFailure(null)
-      setLoading(true)
-    }
-    const stop = () => {
-      setLoading(false)
-      syncNavigation()
-      capturePreview()
-    }
-    // Sub-frame failures are normal on real sites; only the main document
-    // failing means the tab has nothing to show.
-    const fail = (event: Event) => {
-      const detail = event as Event & {
-        isMainFrame?: boolean
-        errorCode?: number
-        errorDescription?: string
-      }
-      if (detail.isMainFrame === false) return
-      // -3 is ERR_ABORTED, which a redirect raises on the way to a good page.
-      if (detail.errorCode === -3) return
-      setFailure(detail.errorDescription || 'This app could not be loaded.')
-      setLoading(false)
-    }
-
-    view.addEventListener('did-start-loading', start)
-    view.addEventListener('did-stop-loading', stop)
-    view.addEventListener('did-fail-load', fail)
-    view.addEventListener('did-navigate', syncNavigation)
-    view.addEventListener('did-navigate-in-page', syncNavigation)
-    host.replaceChildren(view)
-    webviewRef.current = view
+    const panel = panelRef.current
+    if (!host || !panel || !entryUrl) return
+    const surface = chooseAppBrowserSurface(window.handcash, true)
+    const guest = createAppBrowserGuest(
+      surface.surface === 'embedded' ? surface.host : 'webview',
+      {
+        host,
+        panel,
+        url: entryUrl,
+        emit: (event) => {
+          switch (event.type) {
+            case 'loading':
+              setFailure(null)
+              setLoading(true)
+              return
+            case 'loaded':
+              setLoading(false)
+              setHistory(event.history)
+              capturePreview()
+              return
+            case 'navigated':
+              setCurrentUrl(event.url)
+              setHistory(event.history)
+              // Remember it on the tab so closing and reopening resumes here.
+              noteEmbeddedAppBrowserUrl(origin, event.url)
+              return
+            case 'failed':
+              setFailure(event.description)
+              setLoading(false)
+              return
+          }
+        },
+      },
+    )
+    guestRef.current = guest
 
     return () => {
       window.clearTimeout(captureTimerRef.current)
-      window.clearTimeout(attachCheck)
-      view.removeEventListener('did-start-loading', start)
-      view.removeEventListener('did-stop-loading', stop)
-      view.removeEventListener('did-fail-load', fail)
-      view.removeEventListener('did-navigate', syncNavigation)
-      view.removeEventListener('did-navigate-in-page', syncNavigation)
-      webviewRef.current = null
-      view.remove()
+      guestRef.current = null
+      guest.destroy()
     }
   }, [capturePreview, entryUrl, origin])
+
+  useEffect(() => {
+    guestRef.current?.setSuppressed(failure != null)
+  }, [failure])
 
   useEffect(() => {
     if (previewRequested) capturePreview()
@@ -169,6 +128,7 @@ export function AppBrowserPanel({
 
   return (
     <div
+      ref={panelRef}
       className="nav-child-panel app-browser-panel"
       data-aeon-scope="app-browser"
       data-aeon-state={failure ? 'failed' : loading ? 'loading' : 'ready'}
@@ -179,7 +139,7 @@ export function AppBrowserPanel({
             type="button"
             aria-label="Back"
             disabled={!history.back}
-            onClick={() => webviewRef.current?.goBack()}
+            onClick={() => guestRef.current?.goBack()}
           >
             <BackIcon size={16} />
           </button>
@@ -188,14 +148,14 @@ export function AppBrowserPanel({
             className="app-browser-forward"
             aria-label="Forward"
             disabled={!history.forward}
-            onClick={() => webviewRef.current?.goForward()}
+            onClick={() => guestRef.current?.goForward()}
           >
             <BackIcon size={16} />
           </button>
           <button
             type="button"
             aria-label="Reload"
-            onClick={() => webviewRef.current?.reload()}
+            onClick={() => guestRef.current?.reload()}
           >
             <RefreshIcon size={16} />
           </button>

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.441] - 2026-10-05
+
+### Changed
+
+- The in-app browser is back on Desktop by default. Labs no longer gates it there, and the Labs row for it appears only on Mobile.
+- Mobile now uses the same in-app browser as Desktop, with the same panel, tabs, toolbar and tab previews. The shell draws each tab with a native WebView laid over the panel instead of opening a separate browser screen. As on Desktop and in Chrome, the page reaches the wallet over the local bridge. The page gets no wallet interface. It is moved off screen whenever wallet UI covers the panel, and always while a permission prompt is open, so it can never sit on top of an approval. On Mobile it stays behind Settings → Labs → In-app browser, off by default, until it has been proven on phones.
+
+### Removed
+
+- Desktop's unused standalone app window (`openAppBrowser`). Connected apps open in a tab or in the system browser.
+
 ## [1.3.440] - 2026-10-05
 
 ### Added

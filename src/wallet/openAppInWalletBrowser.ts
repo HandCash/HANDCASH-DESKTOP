@@ -31,24 +31,13 @@ export async function openAppInWalletBrowser(args: {
   url: string
   /** Only when the user explicitly asked for the in-app browser. */
   preferInApp?: boolean
-}): Promise<'embedded' | 'native' | 'external' | 'unavailable'> {
+}): Promise<'embedded' | 'external' | 'unavailable'> {
   const target = decideAppBrowserTarget(args.url)
   if (target.kind !== 'open') return 'unavailable'
 
-  if (args.preferInApp) {
-    const surface = chooseAppBrowserSurface(window.handcash)
-    if (surface.surface === 'embedded') {
-      openEmbeddedAppBrowser(args.origin, target.url)
-      return 'embedded'
-    }
-    if (surface.surface === 'native') {
-      try {
-        const result = await window.handcash?.openAppBrowser?.(target.url)
-        if (result?.ok) return 'native'
-      } catch {
-        /* fall through to the system browser */
-      }
-    }
+  if (args.preferInApp && chooseAppBrowserSurface(window.handcash).surface === 'embedded') {
+    openEmbeddedAppBrowser(args.origin, target.url)
+    return 'embedded'
   }
 
   if (await openSystemBrowser(target.url)) return 'external'

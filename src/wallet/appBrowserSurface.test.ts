@@ -1,58 +1,69 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { setLabEnabled } from './labs'
 import {
   appBrowserSurfaceLabel,
   chooseAppBrowserSurface,
+  inAppBrowserNeedsLab,
+  inAppBrowserRefused,
 } from './appBrowserSurface'
 
+const nativeGuest = { create: () => Promise.resolve() }
+
 describe('chooseAppBrowserSurface', () => {
-  beforeEach(() => setLabEnabled('inAppBrowser', true))
   afterEach(() => setLabEnabled('inAppBrowser', false))
 
-  it('offers no in-app surface while Labs › In-app browser is off', () => {
-    setLabEnabled('inAppBrowser', false)
-    expect(chooseAppBrowserSurface({ embeddedAppBrowser: true })).toEqual({ surface: 'external' })
-    expect(chooseAppBrowserSurface({ openAppBrowser: () => undefined })).toEqual({ surface: 'external' })
-    expect(chooseAppBrowserSurface({ embeddedAppBrowser: true }, false)).toEqual({ surface: 'external' })
-  })
-
-  it('hosts an embedded tab only when the shell says it can', () => {
-    expect(chooseAppBrowserSurface({ embeddedAppBrowser: true })).toEqual({
+  it('always hosts a Desktop `<webview>` tab; the lab does not apply there', () => {
+    expect(chooseAppBrowserSurface({ embeddedAppBrowser: true }, false)).toEqual({
       surface: 'embedded',
+      host: 'webview',
     })
+    expect(inAppBrowserNeedsLab({ embeddedAppBrowser: true })).toBe(false)
+    expect(inAppBrowserRefused({ embeddedAppBrowser: true })).toBe(false)
   })
 
-  /**
-   * Mobile exposes `openAppBrowser` for DappBrowserActivity. That is native,
-   * not proof that the shell can host an Electron `<webview>` tab.
-   */
-  it('does not infer an embedded tab from openAppBrowser alone', () => {
-    expect(chooseAppBrowserSurface({ openAppBrowser: () => undefined })).toEqual({
-      surface: 'native',
+  it('hosts the native guest on mobile only while Labs › In-app browser is on', () => {
+    expect(chooseAppBrowserSurface({ appBrowserGuest: nativeGuest }, false)).toEqual({
+      surface: 'external',
     })
+    expect(chooseAppBrowserSurface({ appBrowserGuest: nativeGuest }, true)).toEqual({
+      surface: 'embedded',
+      host: 'native',
+    })
+    expect(inAppBrowserNeedsLab({ appBrowserGuest: nativeGuest })).toBe(true)
+    expect(inAppBrowserRefused({ appBrowserGuest: nativeGuest })).toBe(true)
+    setLabEnabled('inAppBrowser', true)
+    expect(chooseAppBrowserSurface({ appBrowserGuest: nativeGuest })).toEqual({
+      surface: 'embedded',
+      host: 'native',
+    })
+    expect(inAppBrowserRefused({ appBrowserGuest: nativeGuest })).toBe(false)
   })
 
   it('falls back to the system browser with no shell at all', () => {
-    expect(chooseAppBrowserSurface(undefined)).toEqual({ surface: 'external' })
-    expect(chooseAppBrowserSurface({})).toEqual({ surface: 'external' })
-    // A non-callable value is not a browser the shell can drive.
-    expect(chooseAppBrowserSurface({ openAppBrowser: true })).toEqual({
+    expect(chooseAppBrowserSurface(undefined, true)).toEqual({ surface: 'external' })
+    expect(chooseAppBrowserSurface({}, true)).toEqual({ surface: 'external' })
+    // A guest the shell cannot create is not a browser.
+    expect(chooseAppBrowserSurface({ appBrowserGuest: true }, true)).toEqual({
+      surface: 'external',
+    })
+    expect(chooseAppBrowserSurface({ appBrowserGuest: {} }, true)).toEqual({
       surface: 'external',
     })
   })
 
-  it('prefers the embedded tab when a shell offers both', () => {
+  it('prefers the `<webview>` when a shell offers both', () => {
     expect(
-      chooseAppBrowserSurface({
-        embeddedAppBrowser: true,
-        openAppBrowser: () => undefined,
-      }),
-    ).toEqual({ surface: 'embedded' })
+      chooseAppBrowserSurface({ embeddedAppBrowser: true, appBrowserGuest: nativeGuest }, true),
+    ).toEqual({ surface: 'embedded', host: 'webview' })
   })
 
-  it('labels both real wallet-owned surfaces as in-app', () => {
-    expect(appBrowserSurfaceLabel({ surface: 'embedded' }).label).toBe('Open in-app')
-    expect(appBrowserSurfaceLabel({ surface: 'native' }).label).toBe('Open in-app')
+  it('labels both hosts as in-app', () => {
+    expect(appBrowserSurfaceLabel({ surface: 'embedded', host: 'webview' }).label).toBe(
+      'Open in-app',
+    )
+    expect(appBrowserSurfaceLabel({ surface: 'embedded', host: 'native' }).label).toBe(
+      'Open in-app',
+    )
     expect(appBrowserSurfaceLabel({ surface: 'external' }).label).not.toMatch(/in-app/i)
   })
 })

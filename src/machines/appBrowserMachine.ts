@@ -10,9 +10,9 @@ export type AppBrowserOpener = (
  * States: editing → opening → handedOff | refused → editing
  * Events: TYPE, OPEN, DISMISS
  *
- * The wallet does not render the page — a native in-app browser does — so this
- * chart owns only the hand-off: what was typed, whether it is allowed, and what
- * the shell said. A refused address never reaches the shell.
+ * The browser panel renders the page, so this chart owns only the hand-off:
+ * what was typed, whether it is allowed, and what the opener said. A refused
+ * address never reaches the opener.
  */
 export const appBrowserMachine = setup({
   types: {

@@ -19,7 +19,7 @@ export const LAB_FEATURES: readonly LabFeature[] = [
     id: 'inAppBrowser',
     label: 'In-app browser',
     description:
-      'Open connected apps inside HandCash instead of your system browser. Apps still ask before anything moves.',
+      'Open connected apps in a tab inside HandCash on this phone, the same browser Desktop uses. Apps still ask before anything moves.',
   },
   {
     id: 'localHandCashHosts',

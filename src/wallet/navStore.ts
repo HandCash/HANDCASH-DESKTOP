@@ -1,7 +1,8 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
 import { isCompactShell } from './isCompactShell'
-import { isLabEnabled, subscribeLabs } from './labs'
+import { subscribeLabs } from './labs'
+import { inAppBrowserNeedsLab, inAppBrowserRefused } from './appBrowserSurface'
 
 export type NavSection =
   | 'activity'
@@ -183,9 +184,10 @@ export function closeAllEmbeddedAppBrowsers() {
   }
 }
 
-// Turning the lab off closes every tab; parked webviews must not keep sessions alive.
+// Where the lab gates the browser, turning it off closes every tab so parked
+// guests do not keep app sessions alive.
 subscribeLabs((labs) => {
-  if (!labs.inAppBrowser) closeAllEmbeddedAppBrowsers()
+  if (!labs.inAppBrowser && inAppBrowserNeedsLab()) closeAllEmbeddedAppBrowsers()
 })
 
 /** Bring a parked browser tab back to the Apps foreground. */
@@ -209,7 +211,7 @@ export function setNavSection(section: NavSection) {
 }
 
 export function openNavChild(section: NavSection, child: NavChild) {
-  if (child.type === 'app-browser' && !isLabEnabled('inAppBrowser')) {
+  if (child.type === 'app-browser' && inAppBrowserRefused()) {
     console.warn(`[nav] refused in-app browser for ${child.origin} — Labs › In-app browser is off`)
     return
   }

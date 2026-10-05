@@ -1,34 +1,31 @@
-import { useMemo, type FormEvent } from 'react'
+import type { FormEvent } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { appBrowserMachine, type AppBrowserOpener } from '../machines/appBrowserMachine'
+import { chooseAppBrowserSurface } from '../wallet/appBrowserSurface'
+import { openEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { useLab } from '../hooks/useLab'
 
+const openTab: AppBrowserOpener = async (url) => {
+  openEmbeddedAppBrowser(new URL(url).origin, url)
+  return { ok: true }
+}
+
 /**
- * Entry point for BRC-100 apps on a phone.
- *
- * Chrome cannot reach the wallet's bridge on loopback, so a web app opened from
- * here runs in the wallet's own in-app browser. Desktop hosts apps as an
- * embedded `<webview>` tab instead, so this renders nothing there.
+ * Type-an-address entry for the phone's in-app browser. Desktop reaches its
+ * tabs from connected apps and the address bar of the system browser, so this
+ * renders only where the native guest hosts tabs.
  */
 export function AppBrowserLauncher() {
   const inAppBrowser = useLab('inAppBrowser')
-  const opener = useMemo<AppBrowserOpener | null>(() => {
-    // Prefer the native shell browser. Never treat Desktop's embedded capability
-    // as this launcher — that path is AppLaunchPanel → AppBrowserPanel.
-    const open = window.handcash?.openAppBrowser
-    if (typeof open !== 'function') return null
-    if (window.handcash?.embeddedAppBrowser) return null
-    return (url: string) => open(url)
-  }, [])
-
-  if (!opener || !inAppBrowser) return null
-  return <Launcher open={opener} />
+  const surface = chooseAppBrowserSurface(window.handcash, inAppBrowser)
+  if (surface.surface !== 'embedded' || surface.host !== 'native') return null
+  return <Launcher />
 }
 
-function Launcher({ open }: { open: AppBrowserOpener }) {
-  const [state, send] = useMachine(appBrowserMachine, { input: { open } })
+function Launcher() {
+  const [state, send] = useMachine(appBrowserMachine, { input: { open: openTab } })
   const { input, error, host } = state.context
   const busy = state.matches('opening')
 
@@ -67,8 +64,8 @@ function Launcher({ open }: { open: AppBrowserOpener }) {
       ) : (
         <p className="settings-row-desc" data-aeon-part="hint">
           {state.matches('handedOff') && host
-            ? `${host} is open in the wallet browser. Payment requests come back here for approval.`
-            : 'Apps only reach your wallet from inside the wallet browser.'}
+            ? `${host} is open in a tab. Payment requests come back here for approval.`
+            : 'Opens in a tab inside HandCash. Apps still ask here before anything moves.'}
         </p>
       )}
       <div className="actions">

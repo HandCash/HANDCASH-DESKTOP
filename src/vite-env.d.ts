@@ -78,6 +78,31 @@ type UpdateStatus = {
   canInstall: boolean
 }
 
+/** CSS pixels in the wallet viewport. */
+type AppBrowserGuestBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+  visible: boolean
+}
+
+type AppBrowserGuestEvent =
+  | { id: string; type: 'loading'; url: string }
+  | { id: string; type: 'loaded'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | { id: string; type: 'navigated'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | { id: string; type: 'failed'; url: string; description: string }
+
+interface AppBrowserGuestBridge {
+  create(options: { id: string; url: string } & AppBrowserGuestBounds): Promise<void>
+  setBounds(options: { id: string } & AppBrowserGuestBounds): Promise<void>
+  navigate(options: { id: string; action: 'back' | 'forward' | 'reload' }): Promise<void>
+  /** JPEG data URL of the page scaled to `width`, or null when nothing is drawn. */
+  capture(options: { id: string; width: number }): Promise<{ dataUrl: string | null }>
+  destroy(options: { id: string }): Promise<void>
+  onEvent(handler: (event: AppBrowserGuestEvent) => void): () => void
+}
+
 interface HandCashBridge {
   platform?: string
   getAppInfo: () => Promise<{
@@ -108,15 +133,13 @@ interface HandCashBridge {
    */
   releasePromptFocus?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
-  /** Open a BRC-100 web app in a wallet-controlled browser surface. */
-  openAppBrowser?: (
-    url: string,
-  ) => Promise<{ ok: true } | { ok: false; error: string }>
-  /**
-   * Shell can host embedded `<webview>` app tabs. Desktop only — mobile's
-   * `openAppBrowser` hands off to the system browser instead.
-   */
+  /** Shell can host embedded `<webview>` app tabs. Desktop only. */
   embeddedAppBrowser?: boolean
+  /**
+   * Mobile only: a native WebView the shell lays over the browser panel's
+   * content area, so app tabs draw where Desktop's `<webview>` would.
+   */
+  appBrowserGuest?: AppBrowserGuestBridge
   getLogInfo?: () => Promise<{ file: string | null; dir: string | null }>
   openLogs?: () => Promise<{ ok: true; file: string } | { ok: false; error: string }>
   readLogs?: (opts?: {

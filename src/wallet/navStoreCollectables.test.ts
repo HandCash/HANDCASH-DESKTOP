@@ -7,10 +7,8 @@ import {
   openSendCollectables,
   setNavSection,
 } from './navStore'
-import { setLabEnabled } from './labs'
 
 afterEach(() => {
-  setLabEnabled('inAppBrowser', false)
   closeAllEmbeddedAppBrowsers()
   setNavSection('activity')
 })
@@ -33,7 +31,6 @@ describe('collectable batch navigation', () => {
   })
 
   it('opens an embedded app browser in the Apps section', () => {
-    setLabEnabled('inAppBrowser', true)
     openEmbeddedAppBrowser('https://handcash.io', 'https://handcash.io/apps')
     expect(getNavState()).toEqual({
       section: 'apps',
