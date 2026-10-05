@@ -15934,3 +15934,233 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 [data-aeon-scope='legacy-import'] [data-aeon-part='identity'] .mono {
   overflow-wrap: anywhere;
 }
+
+/* Developer keys — each key is a card: what it can do, what its wallet holds,
+   one status line, then its actions. The metric cards match token details. */
+[data-aeon-scope='dev-keys'] {
+  display: grid;
+  gap: var(--hc-gap-stack);
+  align-content: start;
+}
+
+[data-aeon-scope='dev-keys'] .settings-hint {
+  margin: 0;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='head'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+[data-aeon-scope='dev-keys'] .dev-wallet-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+[data-aeon-scope='dev-keys'] .dev-wallet-metrics [data-aeon-part='chip'] {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
+  border-radius: 10px;
+  background: var(--hc-sunken-soft);
+  text-align: left;
+}
+
+[data-aeon-scope='dev-keys'] .dev-wallet-metrics [data-aeon-part='value'] {
+  min-height: 1.2em;
+  overflow: hidden;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='dev-keys'] .dev-wallet-metrics [data-aeon-part='label'] {
+  overflow: hidden;
+  color: var(--hc-muted);
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='keys'] {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key'] {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 85%, transparent);
+  border-radius: 12px;
+  background: var(--hc-surface);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key'][data-aeon-state='unreachable'] {
+  border-color: color-mix(in srgb, var(--hc-warn) 45%, var(--hc-border));
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-head'] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-icon'] {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--hc-accent-dim);
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-title'] {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-title'] strong {
+  font-size: var(--hc-text-lg);
+  line-height: var(--hc-leading-tight);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-meta'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-xs);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='pubkey'] {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: inherit;
+  cursor: copy;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='pubkey']:hover {
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='capabilities'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='capability'] {
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 90%, transparent);
+  border-radius: 999px;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='capability'][data-aeon-state='signing'],
+[data-aeon-scope='dev-keys'] [data-aeon-part='capability'][data-aeon-state='wallet'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 40%, transparent);
+  background: var(--hc-accent-dim);
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-note'] {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-sm);
+  line-height: var(--hc-leading-snug);
+  overflow-wrap: anywhere;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-note'][data-aeon-state='settling'] {
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-note'][data-aeon-state='unreachable'] {
+  color: color-mix(in srgb, var(--hc-warn) 80%, var(--hc-text));
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-actions'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='key-actions'] [data-aeon-part='remove'] {
+  margin-left: auto;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='fund'] {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--hc-border) 70%, transparent);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='fund-presets'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='fund-presets'] [data-aeon-state='idle'] {
+  border-color: color-mix(in srgb, var(--hc-border) 90%, transparent);
+  color: var(--hc-muted);
+  cursor: pointer;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='fund-presets'] [data-aeon-state='selected'] {
+  background: var(--hc-accent-dim);
+  cursor: pointer;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='fund-preview'] {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-sm);
+}
+
+@media (max-width: 520px) {
+  [data-aeon-scope='dev-keys'] [data-aeon-part='head'] {
+    grid-template-columns: 1fr;
+  }
+
+  [data-aeon-scope='dev-keys'] [data-aeon-part='key-head'] {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  [data-aeon-scope='dev-keys'] [data-aeon-part='capabilities'] {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  [data-aeon-scope='dev-keys'] [data-aeon-part='key-actions'] .btn {
+    flex: 1 1 auto;
+  }
+}

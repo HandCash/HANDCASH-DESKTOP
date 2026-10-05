@@ -109,10 +109,23 @@ export type DevWalletSummary = {
   tokens: number
 }
 
+/**
+ * What can be said about a key's wallet right now. `settling` = a fund payment
+ * not yet internalized into the server's storage, or a recovery not yet
+ * internalized here; the summary excludes it until it lands.
+ */
+export type DevWalletStatus =
+  | { kind: 'loading' }
+  | { kind: 'ready'; summary: DevWalletSummary }
+  | { kind: 'settling'; summary: DevWalletSummary | null; funding: number; recovering: number }
+  | { kind: 'unreachable'; summary: DevWalletSummary | null; error: string }
+
 export type DevKeyView = {
   n: number
   /** Null while a sign key's identity is not the one presented. */
   publicKey: string | null
+  /** 0 for a key migrated from a ledger that did not record it. */
+  createdAt: number
   sign: null | {
     bapId: string
     seq: number
@@ -121,10 +134,37 @@ export type DevKeyView = {
     state: 'active' | 'retired'
   }
   wallet: null | {
-    /** Null until the first read of the server's storage lands. */
-    summary: DevWalletSummary | null
-    error: string | null
-    pending: boolean
+    status: DevWalletStatus
+    /** Host of the Toolbox storage the server and this wallet both open. */
+    storageHost: string
+    refreshing: boolean
+  }
+}
+
+export function devWalletStatus(
+  wallet: Pick<DevKeyWallet, 'pendingFunds' | 'pendingRecover'>,
+  read: { summary: DevWalletSummary | null; error: string | null } | undefined,
+  refreshing: boolean,
+): DevWalletStatus {
+  const summary = read?.summary ?? null
+  if (read?.error && !refreshing) return { kind: 'unreachable', summary, error: read.error }
+  const funding = wallet.pendingFunds.reduce((sum, fund) => sum + fund.satoshis, 0)
+  const recovering = wallet.pendingRecover?.satoshis ?? 0
+  if (wallet.pendingFunds.length > 0 || wallet.pendingRecover) {
+    return { kind: 'settling', summary, funding, recovering }
+  }
+  return summary ? { kind: 'ready', summary } : { kind: 'loading' }
+}
+
+export function devWalletHoldings(status: DevWalletStatus): DevWalletSummary | null {
+  return status.kind === 'loading' ? null : status.summary
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
   }
 }
 
@@ -560,18 +600,21 @@ export async function summarizeDevWallet(wallet: WalletInterface): Promise<DevWa
 export function listDevKeys(runtime: WalletRuntime): DevKeyView[] {
   const active = runtime.instance
   return readDevKeyLedger(active).keys.map((record) => {
-    const read = record.wallet ? summaries.get(slot(active, record.n, record.wallet)) : undefined
+    const key = record.wallet ? slot(active, record.n, record.wallet) : null
+    const refreshingNow = key != null && refreshing.has(key)
     return {
       n: record.n,
       publicKey: privateKeyOf(runtime, record)?.toPublicKey().toString() ?? null,
+      createdAt: record.createdAt,
       sign: record.material.kind === 'bap' ? signOf(runtime, record.material) : null,
-      wallet: record.wallet
-        ? {
-            summary: read?.summary ?? null,
-            error: read?.error ?? null,
-            pending: record.wallet.pendingFunds.length > 0 || record.wallet.pendingRecover != null,
-          }
-        : null,
+      wallet:
+        record.wallet && key
+          ? {
+              status: devWalletStatus(record.wallet, summaries.get(key), refreshingNow),
+              storageHost: hostOf(record.wallet.storageUrl),
+              refreshing: refreshingNow,
+            }
+          : null,
     }
   })
 }
@@ -603,6 +646,7 @@ export function refreshDevWallet(runtime: WalletRuntime, n: number): Promise<Dev
     }
   })
   refreshing.set(key, run)
+  notify()
   return run
 }
 

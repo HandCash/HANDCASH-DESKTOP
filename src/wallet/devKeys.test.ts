@@ -133,6 +133,7 @@ import {
   derivedDevKey,
   DevKeyRefused,
   devSignEligibility,
+  devWalletStatus,
   exportDevKeyConfig,
   feeShortfall,
   fundDevWallet,
@@ -378,6 +379,40 @@ describe('summary', () => {
       { basket: 'bsv21', satoshis: 1, tags: ['bsv21', `bsv21:${'b'.repeat(64)}_1`, 'amt:9'] },
     )
     expect(await refreshDevWallet(runtime, n)).toEqual({ money: 1000, moneyOutputs: 2, items: 2, tokens: 2 })
+  })
+})
+
+describe('wallet status', () => {
+  const summary = { money: 1000, moneyOutputs: 2, items: 1, tokens: 0 }
+  const fund = { txid: 'a'.repeat(64), outputIndex: 0, satoshis: 400, derivationPrefix: 'p', derivationSuffix: 's' }
+  const recover = { txid: 'b'.repeat(64), atomicBeefB64: '', satoshis: 900, derivationPrefix: 'p', derivationSuffix: 's' }
+  const idle = { pendingFunds: [], pendingRecover: null }
+
+  it('is loading until the first read, then ready', () => {
+    expect(devWalletStatus(idle, undefined, true)).toEqual({ kind: 'loading' })
+    expect(devWalletStatus(idle, { summary, error: null }, false)).toEqual({ kind: 'ready', summary })
+  })
+
+  it('names what is still settling in each direction', () => {
+    expect(devWalletStatus({ pendingFunds: [fund, fund], pendingRecover: recover }, { summary, error: null }, false))
+      .toEqual({ kind: 'settling', summary, funding: 800, recovering: 900 })
+  })
+
+  it('is unreachable after a failed read, keeping the last summary, but not while a retry runs', () => {
+    const read = { summary, error: 'Failed to fetch' }
+    expect(devWalletStatus(idle, read, false)).toEqual({ kind: 'unreachable', summary, error: 'Failed to fetch' })
+    expect(devWalletStatus(idle, read, true)).toEqual({ kind: 'ready', summary })
+  })
+
+  it('lists a wallet key with its storage host and status', async () => {
+    const n = walletKey()
+    fakeServerWallet(derivedDevKey(rootHex, n))
+    await refreshDevWallet(runtime, n)
+    expect(listDevKeys(runtime)[0]!.wallet).toEqual({
+      status: { kind: 'ready', summary: { money: 0, moneyOutputs: 0, items: 0, tokens: 0 } },
+      storageHost: expect.stringMatching(/storage\.babbage\.systems$/),
+      refreshing: false,
+    })
   })
 })
 
