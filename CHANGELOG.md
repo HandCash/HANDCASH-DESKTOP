@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.438] - 2026-10-05
+
+### Added
+
+- **Settings → Import** keeps your old wallets in one place, separate from your BRC-100 identity. An imported wallet never signs for apps and never appears in the account switcher. Supported sources, HandCash first:
+  - **HandCash export (the two `xprv` keys from the recovery tool).** The spending key is the product of the two shares at each path. The wallet scans `m/0` to `m/9` with HandCash's 1000-address gap, and checks the items root `m/9` against the ordinals index, because minted items never appear in address history.
+  - **Recovery phrase**, checked against the common BSV, BTC, BCH, HandCash v1, Yours, 1Sat, Electrum and bare-branch layouts.
+  - **Twetch phrase**, with its identity address shown as a read-only identity.
+  - **Yours backup** (file or JSON) and **private keys (WIF)**.
+- Secrets are stored encrypted with AES-GCM under a key derived from this account, so they stay readable only by this account on this device.
+- The scan finds used addresses with a gap walk. A failed lookup marks the scan incomplete instead of ending the walk early. It reports cash, items and tokens per address, with a reason for each holding the wallet cannot take: listed, cosigned (MNEE), RUN jig, covenant, BSV-20 v1, pending or invalid token, uncompressed key, or dust.
+- **Sweep never runs on its own.** "Sweep compatible…" first shows exactly what will move and what it will cost, then asks you to confirm. Only three kinds of asset move: plain cash, 1-sat collectables, and BSV-21 tokens that the indexer marks valid and unlisted, whose on-chain script carries the same token id and amount and is locked to that key alone. Each token's tips merge into one output at their exact total. Everything else stays where it is, and the sweep can be paused.
+- HandCash imports can check a `$handle`. The wallet compares the handle's published key with keys derived from the export, then links to the claim page to bind the same handle.
+
+### Changed
+
+- The Items page lists items from unknown publishers, and tokens without an issuer, after everything else.
+- The Import section replaces the old "Import phrase" panel. If an item import was paused there, add that wallet in Import and sweep it again to resume, or forget the paused import.
+
 ## [1.3.437] - 2026-10-05
 
 ### Fixed
