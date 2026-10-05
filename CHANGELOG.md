@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.443] - 2026-10-05
+
+### Changed
+
+- **Developer keys, redesigned.** Settings → Connected apps → Developer keys now opens on a summary showing how many keys you have, how many hold a server wallet, and how much your servers hold in total. Each key is a card showing what it can do (**Signs as …**, **Wallet**, **Signing retired**), its short public key (click to copy) and the date it was created.
+- A server wallet shows its balance (in your currency and in BSV), items and tokens side by side. One status line says where the wallet is stored, what is on its way to or back from the server, or that its storage host can't be reached. A wallet whose host is unreachable shows dashes and an amber border, not a loading skeleton that never ends.
+- Fund opens inline in the card, with an amount field, 1,000 / 10,000 / 100,000 sat presets and a preview of what it costs in your currency. Fund is the main action on a wallet key. Copy server config and Recover come after it, then Refresh. Remove appears only for a key that no longer signs and whose wallet is empty.
+
 ## [1.3.442] - 2026-10-05
 
 ### Fixed
