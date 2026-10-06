@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.449] - 2026-10-06
+
+### Added
+
+- **Faster HandCash scans from Settings → Import.** A saved HandCash export has a new **Sign in to HandCash** button. It opens the HandCash key recovery page in your browser. Once you sign in, the page sends your HandCash transaction list, balance and item count to Desktop, and the export rescans by reading the addresses you've used instead of checking thousands. As before, the result is kept only if the chain shows everything HandCash reports; otherwise the full address check runs. Nothing moves, and your keys never leave this computer.
+- While it waits, the export shows "Waiting for your HandCash history" with buttons to reopen the page or cancel. History that arrives after the last scan shows **Rescan with it**. If you sign in as a different handle than the one the keys prove, it names both and asks you to sign in as the right one.
+- Desktop only for now. The browser can't reach the phone app the way it reaches Desktop's local bridge.
+
+### Changed
+
+- Key recovery opened from the HandCash page while a HandCash export is already on screen now stays on that export instead of starting a new form.
+
 ## [1.3.448] - 2026-10-06
 
 ### Fixed
