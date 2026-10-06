@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.456] - 2026-10-06
+
+### Fixed
+
+- **Fewer lag spikes after a refresh, especially with lots of items.** After every refresh the wallet re-read and re-parsed up to 2,000 item scripts in one go, checking whether any were tokens filed in the wrong place. The screen could not respond until it finished, and importing items made the pass bigger each time. Each item is now checked once; later refreshes skip items already checked, and the check gives the screen a turn every few milliseconds.
+- **Importing one item no longer fails with "no provider had raw transaction" when only one host is missing it.** If Bitails had not indexed a transaction yet, the wallet stopped asking and never tried JungleBus or WhatsOnChain. Each host now answers for itself.
+- While Browse items is still finding items, each new batch no longer re-renders every card on screen, and scrolling pauses background item work the same way Collect does.
+
+### Changed
+
+- Diagnostics: every named wallet step that runs a quarter second or longer now logs how long it took, and the post-refresh steps (token list, misfiled-item checks, collection list, balance read) are named. The support log can now say which step froze the screen.
+
 ## [1.3.455] - 2026-10-06
 
 ### Fixed
