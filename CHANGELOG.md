@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.447] - 2026-10-06
+
+### Added
+
+- **Custody journal: the wallet can no longer forget how to spend a coin.** Change and BRC-29 receipts are locked by a random derivation the seed cannot regenerate, and basket outputs need their basket. That knowledge lived only in the wallet database, which a wipe, a restore from an older backup, or a lost device replaces wholesale. Every output the wallet learns is now also written to a journal that only grows. Each entry is exactly the `internalizeAction` instruction that brings that output back. Entries are never edited or removed. A spend is recorded only when the chain shows one, and two copies always merge into their union, so no copy can overwrite another or be "thinner" than it.
+- The journal is written inside the wallet's own `createAction`, `signAction` and `internalizeAction` before each returns, so your own sends are journaled before they are broadcast. A full sweep also runs before any wipe or History replace. It survives a factory wipe.
+- **It is backed up beside your History backup** as `custody.journal`, encrypted with a key derived from your account key (no password). It syncs within seconds of growing, with conditional writes so two devices never overwrite each other. The server accepts it only from requests signed by your identity.
+- **After every unlock, restore or Pair Sync,** the wallet merges the backed-up journal in, asks the chain about every journaled output it has no record of, and restores each one that is still unspent. Settings → Heal does the same. Outputs the database already holds are never touched, so an output reserved by an unbroadcast send can't be spent twice. An item you relinquished stays relinquished, but money always comes back.
+- Item recipes keep what's needed to restore the item and drop the BRC-150 proof, which is rebuilt from chain on demand. The SDK refuses anything longer anyway.
+- Triage: a **Custody journal** section with captures, refused writes, write-ahead failures, backup syncs and recovery results.
+
+### Changed
+
+- The derived-change echo now feeds the journal, and its recovery entry points run journal recovery, so there's one recovery path.
+
 ## [1.3.446] - 2026-10-05
 
 ### Fixed
