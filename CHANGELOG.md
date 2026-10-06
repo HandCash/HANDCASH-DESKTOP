@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.461] - 2026-10-06
+
+### Changed
+
+- **Item and token art has rounded corners again, as squares, never circles.** In Activity and Collect, the rounding now sits on the artwork itself, so a tall or wide piece keeps its rounded corners and is still shown whole, never cropped. Token icons and shelf face piles are rounded squares instead of circles. Borders stay off. Small pixel art scales up to fill its square.
+
 ## [1.3.460] - 2026-10-06
 
 ### Changed
