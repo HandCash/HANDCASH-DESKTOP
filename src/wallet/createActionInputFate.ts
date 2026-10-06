@@ -44,6 +44,10 @@ const TERANODE_UTXO_HOSTS: Record<Chain, readonly string[]> = {
   test: [],
 }
 
+export function teranodeUtxoHosts(chain: Chain): readonly string[] {
+  return TERANODE_UTXO_HOSTS[chain]
+}
+
 /** `utxo.Status` in Teranode's store. */
 const TERANODE_UTXO_OK = 0
 const TERANODE_UTXO_SPENT = 1

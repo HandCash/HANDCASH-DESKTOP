@@ -5,10 +5,13 @@ vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi
 vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
 
 import type { KeyDeriver } from './importSource'
+import { resetDiscoveryPacingForTests } from './discovery'
 import {
   UTXO_SET_PROBE_PATHS,
   fetchHandCashUtxoSet,
+  readUnspentCash,
   readUnspentOutpoints,
+  type CashOutput,
   utxoSetPreimage,
   utxoSetSealingKey,
   verifyUtxoSet,
@@ -142,12 +145,12 @@ describe('fetchHandCashUtxoSet', () => {
 })
 
 describe('verifyUtxoSet', () => {
-  it('keeps only rows whose path these keys derive to the named address and script', () => {
+  it('keeps only rows whose path these keys derive to the named address and script', async () => {
     const deriver = makeDeriver()
     const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
     const lock = (path: string) => new P2PKH().lock(at(path)).toHex()
     const inscribed = (path: string) => `0063036f7264510a746578742f706c61696e000268696800${lock(path)}`
-    const verified = verifyUtxoSet(deriver, [
+    const verified = await verifyUtxoSet(deriver, [
       utxo(1, { path: 'm/0/3', address: at('m/0/3'), script: lock('m/0/3'), satoshis: 5_000 }),
       utxo(2, { path: 'm/9/7', address: at('m/9/7'), script: inscribed('m/9/7') }),
       utxo(2, { path: 'm/9/7', address: at('m/9/7'), script: inscribed('m/9/7') }),
@@ -155,14 +158,81 @@ describe('verifyUtxoSet', () => {
       utxo(4, { path: 'm/1/2', address: at('m/1/9'), script: lock('m/1/9') }),
       utxo(5, { path: 'm/1/2', address: at('m/1/2'), script: lock('m/1/9') }),
       utxo(6, { path: "m/44'/0'/0'/0/0", address: '1x', script: '' }),
+      utxo(7, { path: 'm/7/0', address: at('m/7/0'), script: inscribed('m/7/0'), type: 'instrument' }),
+      utxo(8, { path: 'm/9/8', address: at('m/9/8'), script: inscribed('m/9/8'), satoshis: 546, type: 'ordinal' }),
     ])
     expect(verified.addresses.map((a) => [a.path, a.label])).toEqual([
       ['m/0/3', 'HandCash'],
       ['m/9/7', 'HandCash items'],
+      ['m/7/0', expect.any(String)],
+      ['m/9/8', 'HandCash items'],
     ])
-    expect([...verified.cashAddresses]).toEqual([at('m/0/3')])
+    expect([...verified.cashOutputs]).toEqual([
+      [at('m/0/3'), [{ outpoint: `${utxo(1).txid}_0`, txid: utxo(1).txid, vout: 0, satoshis: 5_000 }]],
+    ])
     expect(verified.itemOutpoints.get(at('m/9/7'))).toEqual([`${utxo(2).txid}_0`, `${utxo(3).txid}_0`])
+    expect([...verified.readAddresses]).toEqual([at('m/7/0'), at('m/9/8')])
     expect(verified.rejected).toBe(3)
+  })
+})
+
+describe('readUnspentCash', () => {
+  const outputs: CashOutput[] = Array.from({ length: 150 }, (_, i) => {
+    const txid = (i + 1).toString(16).padStart(64, '0')
+    return { outpoint: `${txid}_0`, txid, vout: 0, satoshis: 5_000 }
+  })
+  /** txids of a Teranode `/utxos/json` body, in record order. */
+  const recordTxids = (body: Uint8Array) =>
+    Array.from({ length: body.length / 36 }, (_, r) =>
+      Array.from(body.subarray(r * 36, r * 36 + 32))
+        .reverse()
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(''),
+    )
+  const nth = (txid: string) => parseInt(txid, 16)
+
+  it('places outputs on a node a hundred at a time and asks the explorer only for the rest', async () => {
+    resetDiscoveryPacingForTests()
+    const explorerAsked: string[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/utxos/json')) {
+        if (url.startsWith('https://mainnet.gorillanode.io')) return new Response('down', { status: 503 })
+        // Node: multiples of 3 unknown to it, even spent, odd unspent.
+        return new Response(
+          JSON.stringify(
+            recordTxids(init?.body as Uint8Array).map((txid) =>
+              nth(txid) % 3 === 0 ? { errorCode: 'NOT_FOUND' } : nth(txid) % 2 === 0 ? { status: 1, spendingData: { txId: 'ab'.repeat(32) } } : { status: 0 },
+            ),
+          ),
+        )
+      }
+      expect(url).toBe('https://api.whatsonchain.com/v1/bsv/main/utxos/spent')
+      const { utxos } = JSON.parse(String(init?.body)) as { utxos: Array<{ txid: string; vout: number }> }
+      explorerAsked.push(...utxos.map((u) => u.txid))
+      // Explorer: the first it is asked is unknown to it too; the rest unspent.
+      return new Response(JSON.stringify(utxos.map((utxo, i) => (i === 0 && explorerAsked.length <= 20 ? { utxo, error: 'unknown' } : { utxo, spentIn: null }))))
+    })
+    const read = await readUnspentCash({ chain: 'main', outputs, fetchImpl })
+    const nodeCalls = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/utxos/json'))
+    expect(nodeCalls).toHaveLength(4)
+    expect(explorerAsked.map(nth)).toEqual(outputs.map((o) => nth(o.txid)).filter((n) => n % 3 === 0))
+    expect(read.unknown).toEqual(new Set([outputs[2].outpoint]))
+    const odd = outputs.filter((o) => nth(o.txid) % 3 !== 0 && nth(o.txid) % 2 === 1)
+    const thirds = outputs.filter((o) => nth(o.txid) % 3 === 0).slice(1)
+    expect(read.unspent).toEqual(new Set([...odd, ...thirds].map((o) => o.outpoint)))
+    expect(read.stopped).toBe(false)
+  })
+
+  it('leaves everything unknown when no source answers', async () => {
+    resetDiscoveryPacingForTests()
+    vi.useFakeTimers()
+    const fetchImpl = vi.fn(async () => new Response('busy', { status: 400 }))
+    const pending = readUnspentCash({ chain: 'main', outputs: outputs.slice(0, 5), fetchImpl })
+    await vi.runAllTimersAsync()
+    const read = await pending
+    vi.useRealTimers()
+    expect(read.unspent.size).toBe(0)
+    expect(read.unknown.size).toBe(5)
   })
 })
 

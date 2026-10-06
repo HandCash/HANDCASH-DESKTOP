@@ -787,7 +787,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
 
     viewing : Read-only · identity, addresses, holdings, held reasons
     awaitingHints : Sign in on /migrate · history, balance, items cross the bridge · moves nothing
-    scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash read live, items by outpoint · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
+    scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for tokens or an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
     probing : HandCash PKI key vs composed shares
     reviewing : Preview · compatible only
     sweeping : Cash → items (BRC-150) → BSV-21 · PAUSE

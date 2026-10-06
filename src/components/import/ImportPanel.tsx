@@ -67,6 +67,8 @@ function scanProgressMessage(p: ScanProgress): { message: string; percent: numbe
       return { message: `Fetching your coins from HandCash · ${p.fetched.toLocaleString()}`, percent: null }
     case 'discover':
       return { message: `Checking ${p.walk} · ${p.checked.toLocaleString()} addresses · ${p.found} used`, percent: null }
+    case 'cash':
+      return { message: `Checking your coins on chain · ${p.done.toLocaleString()}/${p.total.toLocaleString()}`, percent: of(p.done, p.total) }
     case 'items':
       return { message: `Checking your items on chain · ${p.done.toLocaleString()}/${p.total.toLocaleString()}`, percent: of(p.done, p.total) }
     case 'history':

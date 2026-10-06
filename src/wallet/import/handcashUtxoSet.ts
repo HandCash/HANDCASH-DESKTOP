@@ -3,7 +3,16 @@ import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
 import { yieldToUi } from '../yieldToUi'
 import { HANDCASH_UTXO_SET_URL } from '../walletConfig'
-import { gorillaBase, type DiscoveredAddress, type FetchLike } from './discovery'
+import {
+  SPENT_PROBE_BATCH,
+  TERANODE_PROBE_BATCH,
+  parseBulkSpentEntry,
+  parseTeranodeUtxoEntry,
+  teranodeUtxoHosts,
+  teranodeUtxoRequestBody,
+  type OutpointSpendProbe,
+} from '../createActionInputFate'
+import { gorillaBase, wocBulkPost, type DiscoveredAddress, type FetchLike } from './discovery'
 import type { KeyDeriver } from './importSource'
 import { HANDCASH_TEMPLATES } from './pathCatalog'
 
@@ -212,26 +221,35 @@ export async function fetchHandCashUtxoSet(args: {
   return { kind: 'fetched', utxos }
 }
 
+/** A plain output over one sat; `outpoint` is `txid_vout`. */
+export type CashOutput = { outpoint: string; txid: string; vout: number; satoshis: number }
+
 export type VerifiedUtxoSet = {
   addresses: DiscoveredAddress[]
-  /** Addresses HandCash says hold cash or tokens — read live from the chain. */
-  cashAddresses: Set<string>
+  /** Plain outputs over one sat, by address — checked by outpoint. */
+  cashOutputs: Map<string, CashOutput[]>
   /** One-sat outputs by address (`txid_vout`) — checked by outpoint. */
   itemOutpoints: Map<string, string[]>
+  /** Addresses holding tokens or multi-sat inscriptions — read in full from the chain. */
+  readAddresses: Set<string>
   rejected: number
 }
 
 const HANDCASH_PATH = /^m\/(\d)\/(\d{1,9})$/
+/** Derivations between yields: a phone derives a few hundred a second. */
+const DERIVE_SLICE = 25
 
 /**
  * Keep only rows whose path these keys derive to the address and script
  * HandCash names. A row the keys cannot reach is HandCash's claim, not ours.
  */
-export function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCashUtxo[]): VerifiedUtxoSet {
+export async function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCashUtxo[]): Promise<VerifiedUtxoSet> {
+  const startedAt = Date.now()
   const derived = new Map<string, { address: string; lock: string } | null>()
   const addresses = new Map<string, DiscoveredAddress>()
-  const cashAddresses = new Set<string>()
+  const cashOutputs = new Map<string, CashOutput[]>()
   const itemOutpoints = new Map<string, string[]>()
+  const readAddresses = new Set<string>()
   const seen = new Set<string>()
   let rejected = 0
   for (const utxo of utxos) {
@@ -243,6 +261,7 @@ export function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCashUtxo[
     if (key === undefined) {
       key = null
       if (m) {
+        if (derived.size % DERIVE_SLICE === 0) await yieldToUi()
         const publicKey = deriver.privateKeyAt(utxo.path).toPublicKey()
         key = { address: publicKey.toAddress(), lock: `76a914${publicKey.toHash('hex') as string}88ac` }
       }
@@ -261,19 +280,99 @@ export function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCashUtxo[
         wallets: 'HandCash',
       })
     }
-    if (utxo.satoshis === 1) {
+    if (utxo.type === 'instrument' || (utxo.satoshis > 1 && utxo.type !== 'standard')) {
+      readAddresses.add(key.address)
+    } else if (utxo.satoshis === 1) {
       const list = itemOutpoints.get(key.address) ?? []
       list.push(outpoint)
       itemOutpoints.set(key.address, list)
     } else {
-      cashAddresses.add(key.address)
+      const list = cashOutputs.get(key.address) ?? []
+      list.push({ outpoint, txid: utxo.txid, vout: utxo.vout, satoshis: utxo.satoshis })
+      cashOutputs.set(key.address, list)
     }
   }
   appendAppLog(
     'info',
-    `[import] utxo set verified addresses=${addresses.size} cash=${cashAddresses.size} itemAddresses=${itemOutpoints.size} rejected=${rejected}`,
+    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} done ${Date.now() - startedAt}ms`,
   )
-  return { addresses: [...addresses.values()], cashAddresses, itemOutpoints, rejected }
+  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected }
+}
+
+const TERANODE_CHUNK = TERANODE_PROBE_BATCH
+const WOC_CHUNK = SPENT_PROBE_BATCH
+
+/**
+ * Which cash outputs the chain shows unspent, by outpoint: a Teranode node a
+ * hundred at a time, then WhatsOnChain for any the node could not place.
+ * `unknown` is what neither answered; those addresses are read in full.
+ */
+export async function readUnspentCash(args: {
+  chain: Chain
+  outputs: readonly CashOutput[]
+  fetchImpl?: FetchLike
+  onProgress?: (done: number, total: number) => void
+  shouldStop?: () => boolean
+}): Promise<{ unspent: Set<string>; unknown: Set<string>; stopped: boolean }> {
+  const startedAt = Date.now()
+  const fetchImpl = args.fetchImpl ?? fetch
+  const answers = new Map<string, OutpointSpendProbe['kind']>()
+  let stopped = false
+  const stop = () => (stopped ||= args.shouldStop?.() === true)
+
+  for (let i = 0; i < args.outputs.length && !stop(); i += TERANODE_CHUNK) {
+    const chunk = args.outputs.slice(i, i + TERANODE_CHUNK)
+    for (const host of teranodeUtxoHosts(args.chain)) {
+      try {
+        const res = await fetchImpl(`${host}/utxos/json`, {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/octet-stream' },
+          body: teranodeUtxoRequestBody(chunk),
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (!res.ok) continue
+        const body = (await res.json()) as unknown
+        if (!Array.isArray(body) || body.length !== chunk.length) continue
+        chunk.forEach((o, j) => answers.set(o.outpoint, parseTeranodeUtxoEntry(body[j], '').kind))
+        break
+      } catch {
+        /* the next node, then WhatsOnChain */
+      }
+    }
+    args.onProgress?.(Math.min(i + TERANODE_CHUNK, args.outputs.length), args.outputs.length)
+    await yieldToUi()
+  }
+
+  const rest = args.outputs.filter((o) => (answers.get(o.outpoint) ?? 'unknown') === 'unknown')
+  for (let i = 0; i < rest.length && !stop(); i += WOC_CHUNK) {
+    const chunk = rest.slice(i, i + WOC_CHUNK)
+    const asked = new Set(chunk.map((o) => o.outpoint))
+    try {
+      const body = await wocBulkPost(args.chain, '/utxos/spent', { utxos: chunk.map(({ txid, vout }) => ({ txid, vout })) }, fetchImpl)
+      for (const entry of Array.isArray(body) ? body : []) {
+        const utxo = (entry as { utxo?: { txid?: unknown; vout?: unknown } } | null)?.utxo
+        const outpoint = `${String(utxo?.txid ?? '').toLowerCase()}_${Number(utxo?.vout)}`
+        if (asked.has(outpoint)) answers.set(outpoint, parseBulkSpentEntry(entry, '').kind)
+      }
+    } catch {
+      /* stays unknown */
+    }
+    args.onProgress?.(Math.min(i + WOC_CHUNK, rest.length), rest.length)
+    await yieldToUi()
+  }
+
+  const unspent = new Set<string>()
+  const unknown = new Set<string>()
+  for (const o of args.outputs) {
+    const kind = answers.get(o.outpoint) ?? 'unknown'
+    if (kind === 'unspent') unspent.add(o.outpoint)
+    else if (kind === 'unknown') unknown.add(o.outpoint)
+  }
+  appendAppLog(
+    'info',
+    `[import] utxo set cash done ${Date.now() - startedAt}ms outputs=${args.outputs.length} unspent=${unspent.size} unknown=${unknown.size} viaExplorer=${rest.length}`,
+  )
+  return { unspent, unknown, stopped }
 }
 
 /**

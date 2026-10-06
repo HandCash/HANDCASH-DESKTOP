@@ -9,8 +9,8 @@ import {
   type HistoryLookup,
   type ItemsLookup,
 } from './discovery'
-import { emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
-import { fetchHandCashUtxoSet, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
+import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
+import { fetchHandCashUtxoSet, readUnspentCash, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import {
   createHistoryReader,
@@ -25,6 +25,7 @@ import { loadImportedSources, updateImportedSource, type ImportedSource, type So
 
 export type ScanProgress =
   | { phase: 'utxoSet'; fetched: number }
+  | { phase: 'cash'; done: number; total: number }
   | { phase: 'items'; done: number; total: number }
   | { phase: 'history'; done: number; total: number }
   | { phase: 'discover'; checked: number; found: number; walk: string }
@@ -124,21 +125,31 @@ export async function utxoSetScan(
     shouldStop: args.shouldStop,
   })
   if (set.kind === 'refused') return null
-  const verified = verifyUtxoSet(deriver, set.utxos)
+  const verified = await verifyUtxoSet(deriver, set.utxos)
   if (set.utxos.length > 0 && verified.addresses.length === 0) {
     appendAppLog('warn', `[import] utxo set refused reason=underived rows=${set.utxos.length} — falling back`)
     return null
   }
+  const cash = await readUnspentCash({
+    chain,
+    outputs: [...verified.cashOutputs.values()].flat(),
+    onProgress: (done, total) => args.onProgress?.({ phase: 'cash', done, total }),
+    shouldStop: args.shouldStop,
+  })
   const items = await readUnspentOutpoints({
     chain,
     outpoints: [...verified.itemOutpoints.values()].flat(),
     onProgress: (done, total) => args.onProgress?.({ phase: 'items', done, total }),
     shouldStop: args.shouldStop,
   })
+  const readAddresses = new Set(verified.readAddresses)
+  for (const [address, outputs] of verified.cashOutputs) {
+    if (outputs.some((o) => cash.unknown.has(o.outpoint))) readAddresses.add(address)
+  }
+  const toRead = verified.addresses.filter((a) => readAddresses.has(a.address))
   const read = await inspectHoldings({
-    addresses: verified.addresses,
+    addresses: toRead,
     chain,
-    mayHold: verified.cashAddresses,
     cache,
     onProgress: (done, total) => args.onProgress?.({ phase: 'holdings', done, total }),
     shouldStop: args.shouldStop,
@@ -146,11 +157,15 @@ export async function utxoSetScan(
   const byAddress = new Map(read.map((h) => [h.address, h]))
   const holdings = verified.addresses.map((address) => {
     const live = byAddress.get(address.address)
-    if (live && verified.cashAddresses.has(address.address)) return live
-    const itemCount = (verified.itemOutpoints.get(address.address) ?? []).filter((o) => items.unspent.has(o)).length
-    return { ...(live ?? emptyHoldings(address)), itemCount }
+    if (live) return live
+    const out = emptyHoldings(address)
+    for (const o of verified.cashOutputs.get(address.address) ?? []) {
+      if (cash.unspent.has(o.outpoint)) addCashOutput(out, o)
+    }
+    out.itemCount = (verified.itemOutpoints.get(address.address) ?? []).filter((o) => items.unspent.has(o)).length
+    return out
   })
-  const stopped = items.stopped || args.shouldStop?.() === true || read.length < verified.addresses.length
+  const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
   return {
     at: Date.now(),
     complete: !stopped && items.failed === 0,

@@ -185,6 +185,18 @@ export function emptyHoldings(discovered: DiscoveredAddress): AddressHoldings {
   }
 }
 
+/** Count one unspent plain output as cash or dust; anything else is not cash. */
+export function addCashOutput(out: AddressHoldings, utxo: { satoshis: number }): void {
+  const path = chooseLegacySweepPath(utxo)
+  if (path.path === 'sweep') {
+    out.cashSats += utxo.satoshis
+    out.cashCount += 1
+  } else if (path.reason === 'uneconomical') {
+    out.dustCount += 1
+    out.dustSats = (out.dustSats ?? 0) + utxo.satoshis
+  }
+}
+
 export async function inspectAddressHoldings(
   discovered: DiscoveredAddress,
   chain: Chain,
@@ -193,16 +205,7 @@ export async function inspectAddressHoldings(
   const errors: string[] = []
   try {
     const scan = await scanAddressAny(discovered.address, chain)
-    for (const utxo of scan.utxos) {
-      const path = chooseLegacySweepPath(utxo)
-      if (path.path === 'sweep') {
-        out.cashSats += utxo.satoshis
-        out.cashCount += 1
-      } else if (path.reason === 'uneconomical') {
-        out.dustCount += 1
-        out.dustSats = (out.dustSats ?? 0) + utxo.satoshis
-      }
-    }
+    for (const utxo of scan.utxos) addCashOutput(out, utxo)
     // Transferred items are plain 1-sat P2PKH; minted ones only the ord index sees.
     const items = await countOrdinalsAtLeast(discovered.address, chain, PREVIEW_ITEM_CAP)
     out.itemCount = items.count
