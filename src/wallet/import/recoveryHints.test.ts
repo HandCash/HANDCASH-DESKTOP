@@ -2,7 +2,7 @@ import { P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn() }))
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 
 import { discoverAddresses, resetDiscoveryPacingForTests } from './discovery'
 import type { AddressHoldings } from './holdings'

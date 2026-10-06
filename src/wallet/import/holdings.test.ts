@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
 vi.mock('../phraseSweep', () => ({ countOrdinalsAtLeast: vi.fn(), scanAddressAny: vi.fn() }))
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 
 import { countOrdinalsAtLeast, scanAddressAny } from '../phraseSweep'
 import type { DiscoveredAddress } from './discovery'

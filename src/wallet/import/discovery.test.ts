@@ -2,7 +2,7 @@ import { PrivateKey } from '@bsv/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn() }))
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 
 import { discoverAddresses, locateAddress, uncompressedAddress, wocHistoryLookup } from './discovery'
 import type { KeyDeriver } from './importSource'

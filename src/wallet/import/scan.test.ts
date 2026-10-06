@@ -2,7 +2,7 @@ import { PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 vi.mock('../walletRuntime', () => ({ getWalletRuntime: () => null }))
 vi.mock('../paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
 vi.mock('./store', () => ({ loadImportedSources: vi.fn(), updateImportedSource: vi.fn() }))

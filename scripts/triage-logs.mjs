@@ -2285,7 +2285,7 @@ const IMPORT_LINES = [
   ['mismatch', /^\[import\] HandCash history is for \$(\S+), these keys prove \$(\S+)/],
   ['utxoSet', /^\[import\] utxo set done (\d+)ms utxos=(\d+) pages=(\d+)/],
   ['utxoSetRefused', /^\[import\] utxo set refused reason=(\S+)(?: detail=(.*?))?(?: after (\d+)ms| rows=(\d+)|$)/],
-  ['utxoSetVerified', /^\[import\] utxo set verified addresses=(\d+) cash=(\d+) itemAddresses=(\d+)(?: read=(\d+))? rejected=(\d+)(?: done (\d+)ms)?/],
+  ['utxoSetVerified', /^\[import\] utxo set verified addresses=(\d+) cash=(\d+) itemAddresses=(\d+)(?: read=(\d+))? rejected=(\d+)(?: derived=(\d+))?(?: done (\d+)ms)?/],
   ['utxoSetCash', /^\[import\] utxo set cash done (\d+)ms outputs=(\d+) unspent=(\d+) unknown=(\d+) viaExplorer=(\d+)/],
   ['utxoSetItems', /^\[import\] utxo set items done (\d+)ms outpoints=(\d+) unspent=(\d+) failed=(\d+)/],
   ['itemOwners', /^\[import\] item owners done (\d+)ms origins=(\d+) located=(\d+) unspent=(\d+) owners=(\d+)(?: missing=(\d+))? failed=(\d+)/],
@@ -2317,7 +2317,7 @@ function legacyImportFacts(events) {
       const detail =
         step === 'utxoSet' ? { ms: n(1), utxos: n(2), pages: n(3) }
         : step === 'utxoSetRefused' ? { reason: m[1], detail: m[2] ?? null, ms: n(3) }
-        : step === 'utxoSetVerified' ? { addresses: n(1), cashAddresses: n(2), itemAddresses: n(3), readAddresses: n(4), rejected: n(5), ms: n(6) }
+        : step === 'utxoSetVerified' ? { addresses: n(1), cashAddresses: n(2), itemAddresses: n(3), readAddresses: n(4), rejected: n(5), derived: n(6), ms: n(7) }
         : step === 'utxoSetCash' ? { ms: n(1), outputs: n(2), unspent: n(3), unknown: n(4), viaExplorer: n(5) }
         : step === 'utxoSetItems' ? { ms: n(1), outpoints: n(2), unspent: n(3), failed: n(4) }
         : step === 'hints' ? { txids: n(1), complete: m[2] === 'true', sats: n(3), items: n(4), origins: n(5) }

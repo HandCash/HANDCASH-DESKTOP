@@ -1,18 +1,25 @@
-import { assign, fromPromise, setup, type SnapshotFrom } from 'xstate'
+import { assign, fromCallback, fromPromise, setup, type SnapshotFrom } from 'xstate'
 import type { ImportItem, ImportItemList, ImportItemResult } from '../wallet/import'
 
 /**
  * Settings → Import → a saved source → Items.
  *
- * Browse the source's 1-sat items and move one at a time. Nothing moves while
- * listing; each move is the user's choice of one item (`IMPORT`), runs alone,
- * and returns to `ready` with a named outcome. A moved or not-an-item row
- * leaves the list; every other outcome keeps it so it can be tried again.
+ * Two regions. `list` finds the source's 1-sat items and streams them in
+ * (`FOUND`) so the grid fills while thousands are still being checked; leaving
+ * the browser stops the search. `move` moves one item at a time: each move is
+ * the user's choice of one listed item (`IMPORT`), runs alone, and returns to
+ * `idle` with a named outcome. A moved or not-an-item row leaves the list and
+ * stays out even if a later batch names it again; every other outcome keeps
+ * it so it can be tried again.
  */
 
 /** Wallet calls the chart invokes; the panel binds them to the source. */
 export type ImportItemPorts = {
-  list: (sourceId: string) => Promise<ImportItemList>
+  list: (
+    sourceId: string,
+    onItems: (items: ImportItem[]) => void,
+    shouldStop: () => boolean,
+  ) => Promise<ImportItemList>
   importOne: (sourceId: string, item: ImportItem) => Promise<ImportItemResult>
 }
 
@@ -23,23 +30,24 @@ export type ImportItemNotice = {
   body: string
 }
 
-export const IMPORT_ITEM_PAGE = 24
-
 export type ImportItemBrowserContext = {
   ports: ImportItemPorts
   sourceId: string
   items: ImportItem[]
+  /** Outpoints that left the list; later batches must not bring them back. */
+  removed: string[]
   complete: boolean
   query: string
-  shown: number
   importing: ImportItem | null
   notice: ImportItemNotice | null
   error: string | null
 }
 
 export type ImportItemBrowserEvent =
+  | { type: 'FOUND'; items: ImportItem[] }
+  | { type: 'LISTED'; complete: boolean }
+  | { type: 'LIST_FAILED'; error: string }
   | { type: 'RETRY' }
-  | { type: 'MORE' }
   | { type: 'FILTER'; query: string }
   | { type: 'IMPORT'; outpoint: string }
   | { type: 'DISMISS' }
@@ -97,6 +105,8 @@ export function filteredImportItems(context: Pick<ImportItemBrowserContext, 'ite
   )
 }
 
+type ListInput = { ports: ImportItemPorts; sourceId: string }
+
 export const importItemBrowserMachine = setup({
   types: {
     context: {} as ImportItemBrowserContext,
@@ -104,9 +114,28 @@ export const importItemBrowserMachine = setup({
     input: {} as { ports: ImportItemPorts; sourceId: string },
   },
   actors: {
-    list: fromPromise(({ input }: { input: { ports: ImportItemPorts; sourceId: string } }) =>
-      input.ports.list(input.sourceId),
-    ),
+    list: fromCallback<ImportItemBrowserEvent, ListInput>(({ input, sendBack }) => {
+      let stopped = false
+      input.ports
+        .list(
+          input.sourceId,
+          (items) => {
+            if (!stopped) sendBack({ type: 'FOUND', items })
+          },
+          () => stopped,
+        )
+        .then(
+          (list) => {
+            if (!stopped) sendBack({ type: 'LISTED', complete: list.complete })
+          },
+          (err: unknown) => {
+            if (!stopped) sendBack({ type: 'LIST_FAILED', error: message(err) })
+          },
+        )
+      return () => {
+        stopped = true
+      }
+    }),
     importOne: fromPromise(
       ({ input }: { input: { ports: ImportItemPorts; sourceId: string; item: ImportItem } }) =>
         input.ports.importOne(input.sourceId, input.item),
@@ -117,96 +146,113 @@ export const importItemBrowserMachine = setup({
       event.type === 'IMPORT' && context.items.some((i) => i.outpoint === event.outpoint),
   },
   actions: {
+    found: assign(({ context, event }) => {
+      if (event.type !== 'FOUND') return {}
+      const known = new Set([...context.removed, ...context.items.map((i) => i.outpoint)])
+      const fresh = event.items.filter((i) => !known.has(i.outpoint))
+      return fresh.length > 0 ? { items: [...context.items, ...fresh] } : {}
+    }),
     pick: assign(({ context, event }) =>
       event.type === 'IMPORT'
         ? { importing: context.items.find((i) => i.outpoint === event.outpoint) ?? null, notice: null }
         : {},
     ),
-    more: assign(({ context }) => ({ shown: context.shown + IMPORT_ITEM_PAGE })),
-    filter: assign(({ event }) =>
-      event.type === 'FILTER' ? { query: event.query, shown: IMPORT_ITEM_PAGE } : {},
-    ),
+    filter: assign(({ event }) => (event.type === 'FILTER' ? { query: event.query } : {})),
     dismiss: assign({ notice: null }),
   },
 }).createMachine({
   id: 'importItemBrowser',
-  initial: 'loading',
+  type: 'parallel',
   context: ({ input }) => ({
     ports: input.ports,
     sourceId: input.sourceId,
     items: [],
+    removed: [],
     complete: true,
     query: '',
-    shown: IMPORT_ITEM_PAGE,
     importing: null,
     notice: null,
     error: null,
   }),
+  on: {
+    FILTER: { actions: 'filter' },
+    DISMISS: { actions: 'dismiss' },
+  },
   states: {
-    loading: {
-      entry: assign({ error: null }),
-      invoke: {
-        src: 'list',
-        input: ({ context }) => ({ ports: context.ports, sourceId: context.sourceId }),
-        onDone: {
-          target: 'ready',
-          actions: assign(({ event }) => ({ items: event.output.items, complete: event.output.complete })),
-        },
-        onError: {
-          target: 'failed',
-          actions: assign({ error: ({ event }) => message(event.error) }),
-        },
-      },
-    },
-    ready: {
-      on: {
-        MORE: { actions: 'more' },
-        FILTER: { actions: 'filter' },
-        DISMISS: { actions: 'dismiss' },
-        IMPORT: { guard: 'listed', target: 'importing', actions: 'pick' },
-      },
-    },
-    /** One item, one transaction. Filter and paging stay live; other imports wait. */
-    importing: {
-      invoke: {
-        src: 'importOne',
-        input: ({ context }) => ({
-          ports: context.ports,
-          sourceId: context.sourceId,
-          item: context.importing!,
-        }),
-        onDone: {
-          target: 'ready',
-          actions: assign(({ context, event }) => {
-            const item = context.importing!
-            const { notice, keep } = noticeFor(item, event.output)
-            return {
-              importing: null,
-              notice,
-              items: keep ? context.items : context.items.filter((i) => i.outpoint !== item.outpoint),
-            }
-          }),
-        },
-        onError: {
-          target: 'ready',
-          actions: assign(({ context, event }) => ({
-            importing: null,
-            notice: {
-              tone: 'danger' as const,
-              outcome: 'failed' as const,
-              title: `${itemTitle(context.importing!)} not imported`,
-              body: message(event.error),
+    list: {
+      initial: 'loading',
+      states: {
+        loading: {
+          entry: assign({ error: null }),
+          invoke: {
+            src: 'list',
+            input: ({ context }) => ({ ports: context.ports, sourceId: context.sourceId }),
+          },
+          on: {
+            FOUND: { actions: 'found' },
+            LISTED: {
+              target: 'ready',
+              actions: assign(({ event }) => ({ complete: event.complete })),
             },
-          })),
+            LIST_FAILED: {
+              target: 'failed',
+              actions: assign(({ event }) => ({ error: event.error })),
+            },
+          },
+        },
+        ready: {},
+        failed: {
+          on: { RETRY: { target: 'loading' } },
         },
       },
-      on: {
-        MORE: { actions: 'more' },
-        FILTER: { actions: 'filter' },
-      },
     },
-    failed: {
-      on: { RETRY: { target: 'loading' } },
+    move: {
+      initial: 'idle',
+      states: {
+        idle: {
+          on: {
+            IMPORT: { guard: 'listed', target: 'importing', actions: 'pick' },
+          },
+        },
+        /** One item, one transaction; other imports wait. */
+        importing: {
+          invoke: {
+            src: 'importOne',
+            input: ({ context }) => ({
+              ports: context.ports,
+              sourceId: context.sourceId,
+              item: context.importing!,
+            }),
+            onDone: {
+              target: 'idle',
+              actions: assign(({ context, event }) => {
+                const item = context.importing!
+                const { notice, keep } = noticeFor(item, event.output)
+                return keep
+                  ? { importing: null, notice }
+                  : {
+                      importing: null,
+                      notice,
+                      items: context.items.filter((i) => i.outpoint !== item.outpoint),
+                      removed: [...context.removed, item.outpoint],
+                    }
+              }),
+            },
+            onError: {
+              target: 'idle',
+              actions: assign(({ context, event }) => ({
+                importing: null,
+                notice: {
+                  tone: 'danger' as const,
+                  outcome: 'failed' as const,
+                  title: `${itemTitle(context.importing!)} not imported`,
+                  body: message(event.error),
+                },
+              })),
+            },
+          },
+        },
+      },
     },
   },
 })

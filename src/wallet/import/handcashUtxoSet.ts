@@ -1,7 +1,7 @@
 import { Utils, type PrivateKey } from '@bsv/sdk'
 import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
-import { yieldToUi } from '../yieldToUi'
+import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 import { HANDCASH_UTXO_SET_URL } from '../walletConfig'
 import {
   SPENT_PROBE_BATCH,
@@ -237,16 +237,34 @@ export type VerifiedUtxoSet = {
 }
 
 const HANDCASH_PATH = /^m\/(\d)\/(\d{1,9})$/
-/** Derivations between yields: a phone derives a few hundred a second. */
-const DERIVE_SLICE = 25
+
+function p2pkhLockFor(address: string): string | null {
+  try {
+    const { data } = Utils.fromBase58Check(address)
+    const hash = typeof data === 'string' ? data : Utils.toHex(data)
+    return hash.length === 40 ? `76a914${hash}88ac` : null
+  } catch {
+    return null
+  }
+}
 
 /**
  * Keep only rows whose path these keys derive to the address and script
  * HandCash names. A row the keys cannot reach is HandCash's claim, not ours.
+ *
+ * `known` is path → address from this source's own last scan, sealed on this
+ * device and derived by these same keys; those paths are not derived again.
+ * A phone pays ~20ms per derivation, which made every rescan and item list of
+ * a 2,000-address account re-spend most of a minute.
  */
-export async function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCashUtxo[]): Promise<VerifiedUtxoSet> {
+export async function verifyUtxoSet(
+  deriver: KeyDeriver,
+  utxos: readonly HandCashUtxo[],
+  known: ReadonlyMap<string, string> = new Map(),
+): Promise<VerifiedUtxoSet> {
   const startedAt = Date.now()
   const derived = new Map<string, { address: string; lock: string } | null>()
+  let derivations = 0
   const addresses = new Map<string, DiscoveredAddress>()
   const cashOutputs = new Map<string, CashOutput[]>()
   const itemOutpoints = new Map<string, string[]>()
@@ -261,10 +279,15 @@ export async function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCas
     let key = derived.get(utxo.path)
     if (key === undefined) {
       key = null
-      if (m) {
-        if (derived.size % DERIVE_SLICE === 0) await yieldToUi()
+      const knownAddress = m ? known.get(utxo.path) : undefined
+      const knownLock = knownAddress ? p2pkhLockFor(knownAddress) : null
+      if (knownAddress && knownLock) {
+        key = { address: knownAddress, lock: knownLock }
+      } else if (m) {
+        if (uiBudgetExpired()) await yieldToUi()
         const publicKey = deriver.privateKeyAt(utxo.path).toPublicKey()
         key = { address: publicKey.toAddress(), lock: `76a914${publicKey.toHash('hex') as string}88ac` }
+        derivations += 1
       }
       derived.set(utxo.path, key)
     }
@@ -295,7 +318,7 @@ export async function verifyUtxoSet(deriver: KeyDeriver, utxos: readonly HandCas
   }
   appendAppLog(
     'info',
-    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} done ${Date.now() - startedAt}ms`,
+    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms`,
   )
   return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected }
 }
@@ -385,6 +408,8 @@ export async function readUnspentOutpoints(args: {
   outpoints: readonly string[]
   fetchImpl?: FetchLike
   onProgress?: (done: number, total: number) => void
+  /** Each chunk's unspent outpoints as it lands, for a list that fills in. */
+  onUnspent?: (found: ReadonlyArray<{ outpoint: string; facts: ImportItemFacts }>) => void
   shouldStop?: () => boolean
 }): Promise<{
   unspent: Set<string>
@@ -423,13 +448,17 @@ export async function readUnspentOutpoints(args: {
       failed += chunk.length
     } else {
       const asked = new Set(chunk)
+      const found: Array<{ outpoint: string; facts: ImportItemFacts }> = []
       for (const row of rows) {
         const { outpoint, spend } = (row ?? {}) as { outpoint?: unknown; spend?: unknown }
-        if (typeof outpoint === 'string' && asked.has(outpoint) && !spend) {
+        if (typeof outpoint === 'string' && asked.has(outpoint) && !spend && !unspent.has(outpoint)) {
+          const rowFacts = importItemFacts(row, outpoint)
           unspent.add(outpoint)
-          facts.set(outpoint, importItemFacts(row, outpoint))
+          facts.set(outpoint, rowFacts)
+          found.push({ outpoint, facts: rowFacts })
         }
       }
+      if (found.length > 0) args.onUnspent?.(found)
     }
     args.onProgress?.(Math.min(i + OUTPOINT_CHUNK, args.outpoints.length), args.outpoints.length)
     await yieldToUi()

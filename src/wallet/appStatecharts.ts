@@ -806,19 +806,25 @@ const LEGACY_IMPORT = `stateDiagram-v2
 
 const IMPORT_ITEM_BROWSER = `stateDiagram-v2
   direction TB
-  [*] --> loading
-  loading --> ready : done (scan's item list, else HandCash set or 1Sat index by address)
-  loading --> failed : error
-  failed --> loading : RETRY
-  ready --> ready : MORE / FILTER / DISMISS
-  ready --> importing : IMPORT (listed item)
-  importing --> ready : done (moved | skipped | funds | refused | unreadable | failed) / error
-
-  ready : Index view · name + art unproven · paged
-  importing : One tip · one tx · same P2PKH item migrate (BRC-150 remittance)
-  note right of importing
+  state list {
+    [*] --> loading
+    loading --> loading : FOUND (batch streams into the grid)
+    loading --> ready : LISTED
+    loading --> failed : LIST_FAILED
+    failed --> loading : RETRY
+    loading : scan's list, else HandCash set (saved paths, no re-derive) → 1Sat index by outpoint · else 1Sat index by address · leaving stops it
+  }
+  --
+  state move {
+    [*] --> idle
+    idle --> importing : IMPORT (listed item)
+    importing --> idle : done (moved | skipped | funds | refused | unreadable | failed) / error
+    importing : One tip · one tx · same P2PKH item migrate (BRC-150 remittance)
+  }
+  note right of move
+    Runs while the list still fills.
     Refused while a paused sweep reads the same address.
-    Moved and not-an-item rows leave the list; the rest stay.
+    Moved and not-an-item rows leave the list and stay out.
   end note
 `
 

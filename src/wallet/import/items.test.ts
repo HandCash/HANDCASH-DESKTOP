@@ -2,7 +2,7 @@ import { PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 const active = { chain: 'main' as const, identityKey: PrivateKey.fromRandom().toPublicKey().toString() }
 vi.mock('../walletRuntime', () => ({ getWalletRuntime: () => ({ instance: active }) }))
 vi.mock('./store', () => ({ loadImportedSources: vi.fn(), updateImportedSource: vi.fn() }))
@@ -76,7 +76,13 @@ describe('listImportItems', () => {
         ]),
       )
     })
-    const list = await listImportItems({ sourceId: 's1', fetchImpl })
+    const batches: string[][] = []
+    const list = await listImportItems({
+      sourceId: 's1',
+      fetchImpl,
+      onItems: (items) => batches.push(items.map((i) => i.outpoint)),
+    })
+    expect(batches).toEqual([[op(1)], [op(2), op(3)]])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(fetchHandCashUtxoSet).not.toHaveBeenCalled()
     expect(list.complete).toBe(true)
@@ -95,6 +101,35 @@ describe('listImportItems', () => {
       fetchImpl: vi.fn(async () => new Response('busy', { status: 503 })),
     })
     expect(list).toEqual({ items: [], complete: false })
+  })
+
+  it('does not keep a stopped run', async () => {
+    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 1)])])
+    const list = await listImportItems({ sourceId: 's1', fetchImpl: vi.fn(), shouldStop: () => true })
+    expect(list).toEqual({ items: [], complete: false })
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify([{ outpoint: op(5), satoshis: 1, spend: '' }])))
+    expect((await listImportItems({ sourceId: 's1', fetchImpl })).items.map((i) => i.outpoint)).toEqual([op(5)])
+  })
+
+  it('reads a HandCash set without re-deriving the paths the last scan saved', async () => {
+    const s = source([holding('1a', 0)], 'handcash-utxo-set')
+    const key = PrivateKey.fromRandom()
+    const address = key.toAddress()
+    const lock = `76a914${key.toPublicKey().toHash('hex') as string}88ac`
+    s.scan!.addresses = [{ path: 'm/9/4', address, label: 'HandCash items', wallets: 'HandCash' }]
+    s.scan!.holdings = [holding(address, 1)]
+    vi.mocked(loadImportedSources).mockResolvedValue([s])
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({
+      kind: 'fetched',
+      utxos: [
+        { txid: '7'.repeat(64), vout: 0, satoshis: 1, script: lock, address, path: 'm/9/4', type: 'standard', status: 'available', height: 1 },
+      ],
+    })
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify([{ outpoint: `${'7'.repeat(64)}_0`, spend: '', origin: null, data: null }])),
+    )
+    const list = await listImportItems({ sourceId: 's1', fetchImpl })
+    expect(list.items.map((i) => [i.outpoint, i.address])).toEqual([[`${'7'.repeat(64)}_0`, address]])
   })
 
   it('refuses an unscanned source', async () => {

@@ -15925,75 +15925,13 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   gap: 12px;
 }
 
-[data-aeon-scope='legacy-import'] [data-aeon-part='items'] {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] {
-  display: grid;
-  grid-template-rows: auto auto auto auto;
-  gap: 6px;
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 12px;
-  background: var(--hc-hover);
+/* Items use Collect's grid cards; nothing opens on the card itself. */
+[data-aeon-scope='legacy-import'] [data-aeon-part='item'] .collection-grid-main {
+  cursor: default;
 }
 
 [data-aeon-scope='legacy-import'] [data-aeon-part='item'][data-aeon-state='importing'] {
   border-color: color-mix(in srgb, var(--hc-accent) 55%, hsl(var(--border)));
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'][data-aeon-state='loading'] {
-  aspect-ratio: 3 / 4;
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] :is(img, .media-preload, .skeleton, .import-item-fallback) {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 1;
-  border-radius: 10px;
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] img {
-  display: block;
-  object-fit: cover;
-  background: var(--hc-sunken-soft);
-}
-
-[data-aeon-scope='legacy-import'] .import-item-fallback {
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 4px;
-  color: var(--hc-muted);
-  background: var(--hc-sunken-soft);
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] > strong,
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] > .mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] > strong {
-  color: var(--hc-text);
-  font-size: 0.85rem;
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] > .mono {
-  color: var(--hc-muted);
-  font-size: 0.7rem;
-}
-
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] > .btn {
-  width: 100%;
 }
 
 /* Developer keys — each key is a card: what it can do, what its wallet holds,

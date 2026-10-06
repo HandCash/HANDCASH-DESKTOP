@@ -2,7 +2,7 @@ import { P2PKH, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
-vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 
 import type { KeyDeriver } from './importSource'
 import { resetDiscoveryPacingForTests } from './discovery'
@@ -173,6 +173,27 @@ describe('verifyUtxoSet', () => {
     expect(verified.itemOutpoints.get(at('m/9/7'))).toEqual([`${utxo(2).txid}_0`, `${utxo(3).txid}_0`])
     expect([...verified.readAddresses]).toEqual([at('m/7/0'), at('m/9/8')])
     expect(verified.rejected).toBe(3)
+  })
+
+  it('reuses the last scan’s addresses instead of deriving, and still rejects a row naming another address', async () => {
+    const deriver = makeDeriver()
+    const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
+    const lock = (path: string) => new P2PKH().lock(at(path)).toHex()
+    const known = new Map([
+      ['m/0/3', at('m/0/3')],
+      ['m/9/7', at('m/9/7')],
+    ])
+    const rows = [
+      utxo(1, { path: 'm/0/3', address: at('m/0/3'), script: lock('m/0/3'), satoshis: 5_000 }),
+      utxo(2, { path: 'm/9/7', address: at('m/9/7'), script: lock('m/9/7') }),
+      utxo(3, { path: 'm/9/7', address: at('m/0/3'), script: lock('m/0/3') }),
+      utxo(4, { path: 'm/9/9', address: at('m/9/9'), script: lock('m/9/9') }),
+    ]
+    const spy = vi.spyOn(deriver, 'privateKeyAt')
+    const verified = await verifyUtxoSet(deriver, rows, known)
+    expect(spy.mock.calls.map(([path]) => path)).toEqual(['m/9/9'])
+    expect(verified.addresses.map((a) => a.path)).toEqual(['m/0/3', 'm/9/7', 'm/9/9'])
+    expect(verified.rejected).toBe(1)
   })
 })
 

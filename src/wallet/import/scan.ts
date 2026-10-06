@@ -12,7 +12,7 @@ import {
 import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
 import { fetchHandCashUtxoSet, readUnspentCash, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
-import { itemsFromOutpoints, rememberImportItems } from './items'
+import { itemsFromOutpoints, knownAddresses, rememberImportItems } from './items'
 import {
   createHistoryReader,
   hintedLookups,
@@ -59,7 +59,9 @@ export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource
   const hints = args.gap == null ? recoveryHintsFor(source) : null
   const cache = new Map<string, AddressHoldings>()
   const scan =
-    (args.gap == null && source.secret.kind === 'handcash' ? await utxoSetScan(deriver, active.chain, args, cache) : null) ??
+    (args.gap == null && source.secret.kind === 'handcash'
+      ? await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
+      : null) ??
     (hints ? await hintedScan(deriver, active.chain, hints, args, cache) : null) ??
     (await walkScan(
       deriver,
@@ -119,6 +121,7 @@ export async function utxoSetScan(
   chain: Chain,
   args: ScanArgs,
   cache: Map<string, AddressHoldings> = new Map(),
+  known?: ReadonlyMap<string, string>,
 ): Promise<SourceScan | null> {
   const set = await fetchHandCashUtxoSet({
     deriver,
@@ -126,7 +129,7 @@ export async function utxoSetScan(
     shouldStop: args.shouldStop,
   })
   if (set.kind === 'refused') return null
-  const verified = await verifyUtxoSet(deriver, set.utxos)
+  const verified = await verifyUtxoSet(deriver, set.utxos, known)
   if (set.utxos.length > 0 && verified.addresses.length === 0) {
     appendAppLog('warn', `[import] utxo set refused reason=underived rows=${set.utxos.length} — falling back`)
     return null
