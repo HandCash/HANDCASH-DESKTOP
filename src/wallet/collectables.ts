@@ -58,6 +58,7 @@ import {
   looksLikeRetiredFungibleTip,
 } from './retiredFungible'
 import { decodeBProtocol } from './bProtocol'
+import { isMneeItem } from './mneeTip'
 import { getWalletRuntime } from './walletRuntime'
 import {
   getItemArtDataUrl,
@@ -851,6 +852,7 @@ export function collectableIsFungible(item: {
 }): boolean {
   // Protocol / mime / a matching Tokens tip or origin — not "no name yet".
   // Transfer tips paint tip-as-origin until BRC-150 / indexer fills traits.
+  if (isMneeItem({ collectionId: item.collectionId })) return false
   if (isRetiredFungibleMime(item.mimeType) || isBsv21Mime(item.mimeType)) return true
   try {
     const keys = fungibleTipKeys()
@@ -1643,6 +1645,8 @@ function isListableItem(o: ItemOutput): boolean {
   if ((o.satoshis ?? 1) !== 1) return false
   // A tip we already spent lingers in the basket until a review runs.
   if (isItemSent(o.outpoint)) return false
+  // Accepted MNEE is a cosigned BSV-21 tip filed in Collect until a cosigned send path exists.
+  if (isMneeItem({ tags: o.tags })) return true
   // BSV-21 fungibles belong under Collect → Tokens (basket bsv21), not NFT cards.
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
   if (isBsv21Mime(resolved?.mimeType)) return false

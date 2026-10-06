@@ -12,6 +12,8 @@ import {
 import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
 import { fetchHandCashUtxoSet, readUnspentCash, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
+import { readMneeBalances } from '../mnee'
+import { MNEE_DECIMALS, MNEE_SYMBOL, MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
 import { itemsFromOutpoints, knownAddresses, rememberImportItems } from './items'
 import {
   createHistoryReader,
@@ -169,6 +171,7 @@ export async function utxoSetScan(
     out.itemCount = (verified.itemOutpoints.get(address.address) ?? []).filter((o) => items.unspent.has(o)).length
     return out
   })
+  await addMneeHoldings(holdings, verified.mneeAddresses)
   const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
   const at = Date.now()
   rememberImportItems(args.sourceId, at, itemsFromOutpoints(verified.itemOutpoints, items))
@@ -179,6 +182,45 @@ export async function utxoSetScan(
     addresses: verified.addresses,
     holdings,
     via: 'handcash-utxo-set',
+  }
+}
+
+/**
+ * MNEE balances from MNEE's own index, replacing any 1Sat-index guess. A
+ * failed read marks those addresses partial rather than showing zero.
+ */
+async function addMneeHoldings(holdings: AddressHoldings[], addresses: ReadonlySet<string>): Promise<void> {
+  if (addresses.size === 0) return
+  let balances: Map<string, bigint>
+  try {
+    balances = await readMneeBalances([...addresses])
+  } catch (err) {
+    const reason = `MNEE index: ${err instanceof Error ? err.message : String(err)}`
+    for (const h of holdings) {
+      if (addresses.has(h.address)) h.error = h.error ? `${h.error}; ${reason}` : reason
+    }
+    return
+  }
+  for (const h of holdings) {
+    if (!addresses.has(h.address)) continue
+    const amount = balances.get(h.address) ?? 0n
+    h.tokens = [
+      ...h.tokens.filter((t) => !isMneeTokenId(t.id)),
+      ...(amount > 0n
+        ? [
+            {
+              id: MNEE_TOKEN_ID,
+              tick: null,
+              sym: MNEE_SYMBOL,
+              dec: MNEE_DECIMALS,
+              icon: null,
+              amount: amount.toString(),
+              listed: '0',
+              standard: 'bsv21' as const,
+            },
+          ]
+        : []),
+    ]
   }
 }
 

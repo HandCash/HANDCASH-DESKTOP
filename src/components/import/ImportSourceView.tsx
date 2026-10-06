@@ -257,13 +257,13 @@ export function ImportSourceView(props: {
                 {totals.itemCount.toLocaleString()}
                 {totals.itemCountCapped ? '+' : ''} item
                 {totals.itemCount === 1 ? '' : 's'} — ~{itemCost.transactions.toLocaleString()}{' '}
-                transaction{itemCost.transactions === 1 ? '' : 's'}, ~{formatBsv(itemCost.feeSats)} BSV
-                in fees paid by this wallet
+                transaction{itemCost.transactions === 1 ? '' : 's'}, ~{formatBsv(itemCost.feeSats)} BSV in
+                fees
               </li>
             ) : null}
             {totals.tokens.map((token) => (
               <li key={token.id ?? token.sym}>
-                {formatTokenAmount(token.amount, token.dec)} {token.sym} (valid outputs only)
+                {formatTokenAmount(token.amount, token.dec)} {token.sym}
               </li>
             ))}
           </ul>

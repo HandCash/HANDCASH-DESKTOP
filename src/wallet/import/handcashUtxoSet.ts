@@ -16,6 +16,7 @@ import { gorillaBase, wocBulkPost, type DiscoveredAddress, type FetchLike } from
 import type { KeyDeriver } from './importSource'
 import { HANDCASH_TEMPLATES } from './pathCatalog'
 import { importItemFacts, type ImportItemFacts } from './importItem'
+import { cosignedOwnerHash } from '../mneeTip'
 
 /**
  * A HandCash account's UTXO set, asked of HandCash's own records and proven
@@ -233,6 +234,8 @@ export type VerifiedUtxoSet = {
   itemOutpoints: Map<string, string[]>
   /** Addresses holding tokens or multi-sat inscriptions — read in full from the chain. */
   readAddresses: Set<string>
+  /** Addresses holding cosigned MNEE — read from MNEE's own index. */
+  mneeAddresses: Set<string>
   rejected: number
 }
 
@@ -269,6 +272,7 @@ export async function verifyUtxoSet(
   const cashOutputs = new Map<string, CashOutput[]>()
   const itemOutpoints = new Map<string, string[]>()
   const readAddresses = new Set<string>()
+  const mneeAddresses = new Set<string>()
   const seen = new Set<string>()
   let rejected = 0
   for (const utxo of utxos) {
@@ -291,7 +295,16 @@ export async function verifyUtxoSet(
       }
       derived.set(utxo.path, key)
     }
-    if (!m || !key || key.address !== utxo.address || !utxo.script.includes(key.lock)) {
+    if (!m || !key || key.address !== utxo.address) {
+      rejected += 1
+      continue
+    }
+    // Cosigned (MNEE) outputs carry the same owner hash under CHECKSIGVERIFY +
+    // approver CHECKSIG. Routing only — the sweep re-reads every script.
+    const plain = utxo.script.includes(key.lock)
+    const cosignedOwner = plain ? null : cosignedOwnerHash(utxo.script)
+    const mnee = cosignedOwner != null && `76a914${cosignedOwner}88ac` === key.lock
+    if (!plain && !mnee) {
       rejected += 1
       continue
     }
@@ -304,7 +317,9 @@ export async function verifyUtxoSet(
         wallets: 'HandCash',
       })
     }
-    if (utxo.type === 'instrument' || (utxo.satoshis > 1 && utxo.type !== 'standard')) {
+    if (mnee) {
+      mneeAddresses.add(key.address)
+    } else if (utxo.type === 'instrument' || (utxo.satoshis > 1 && utxo.type !== 'standard')) {
       readAddresses.add(key.address)
     } else if (utxo.satoshis === 1) {
       const list = itemOutpoints.get(key.address) ?? []
@@ -318,9 +333,9 @@ export async function verifyUtxoSet(
   }
   appendAppLog(
     'info',
-    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms`,
+    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} mnee=${mneeAddresses.size} done ${Date.now() - startedAt}ms`,
   )
-  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected }
+  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, mneeAddresses, rejected }
 }
 
 const TERANODE_CHUNK = TERANODE_PROBE_BATCH

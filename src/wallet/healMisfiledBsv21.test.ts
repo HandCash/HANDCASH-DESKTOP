@@ -50,14 +50,14 @@ function transferEnv(): string {
 describe('healMisfiledBsv21', () => {
   afterEach(() => __resetHealMisfiledBsv21ForTests())
 
-  function walletWith(rows: Array<{ outpoint: string; lockingScript: string }>, identityKey = '02aa') {
+  function walletWith(rows: Array<{ outpoint: string; lockingScript: string; tags?: string[] }>, identityKey = '02aa') {
     const listOutputs = vi.fn(async (args: { basket: string; include?: string }) => ({
       outputs:
         args.basket === '1sat'
           ? rows.map((r) => ({
               outpoint: r.outpoint,
               satoshis: 1,
-              ...(args.include ? { lockingScript: r.lockingScript, tags: [] } : {}),
+              ...(args.include ? { lockingScript: r.lockingScript, tags: r.tags ?? [] } : {}),
             }))
           : [],
     }))
@@ -92,6 +92,14 @@ describe('healMisfiledBsv21', () => {
     const again = walletWith(rows, '02bb')
     await healMisfiledBsv21(again.active)
     expect(again.listOutputs.mock.calls.some(([a]) => a.include)).toBe(true)
+  })
+
+  it('leaves accepted MNEE in Collect although its envelope is a BSV-21 transfer', async () => {
+    const rows = [{ outpoint: `${'dd'.repeat(32)}.0`, lockingScript: transferEnv() + P2PKH, tags: ['ordinal', 'mnee'] }]
+    const { active } = walletWith(rows)
+    const result = await healMisfiledBsv21(active)
+    expect(result.skipped).toBe(1)
+    expect(result.moved).toBe(0)
   })
 })
 

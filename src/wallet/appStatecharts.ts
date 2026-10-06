@@ -790,7 +790,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
     scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for tokens or an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
     browsing : importItemBrowser · one item per move
     reviewing : Preview · compatible only
-    sweeping : Cash → items (BRC-150) → BSV-21 · PAUSE
+    sweeping : Cash → items (BRC-150) → BSV-21 → MNEE (MNEE cosigner → Collect) · PAUSE
   }
 
   source --> list : BACK (viewing) / REMOVED
@@ -800,7 +800,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
   note right of reviewing
     No path reaches sweeping except CONFIRM here.
     Uncompressed keys, BSV-20 ticks, listings,
-    cosigned (MNEE), RUN jigs and covenants stay.
+    other cosigned tokens, RUN jigs and covenants stay.
   end note
 `
 

@@ -77,7 +77,7 @@ export function describeImportHold(reason: ImportHoldReason): string {
     case 'listed':
       return 'Listed for sale in a market contract — cancel the listing at the source first.'
     case 'cosigned':
-      return 'Needs the issuer’s cosignature (e.g. MNEE) — stays at the source.'
+      return 'Needs a cosigner this wallet does not support — stays at the source.'
     case 'tokenPending':
       return 'The token indexer has not validated it yet — rescan later.'
     case 'tokenInvalid':

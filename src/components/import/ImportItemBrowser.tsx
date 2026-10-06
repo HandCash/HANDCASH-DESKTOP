@@ -138,9 +138,8 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
         <h3 className="confirm-password-title">Items in {props.label}</h3>
         <p className="confirm-password-lede">
           {loading
-            ? `Finding items… ${count.toLocaleString()} so far`
-            : `${count.toLocaleString()} item${count === 1 ? '' : 's'}${context.complete ? '' : ' — some could not be read, rescan later'}`}
-          {' · each import is its own transaction, paid by this wallet'}
+            ? `Finding items… ${count.toLocaleString()}`
+            : `${count.toLocaleString()} item${count === 1 ? '' : 's'}${context.complete ? '' : ' (incomplete)'}`}
         </p>
       </div>
 
@@ -174,13 +173,13 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
 
       {count > 0 ? (
         <div className="field" data-aeon-part="field">
-          <label htmlFor="import-item-filter">Search by name</label>
           <input
             id="import-item-filter"
             type="search"
+            aria-label="Search items"
             value={context.query}
             onChange={(e) => send({ type: 'FILTER', query: e.target.value })}
-            placeholder="Name or outpoint"
+            placeholder="Search"
             autoComplete="off"
             spellCheck={false}
           />
@@ -217,7 +216,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
         </ul>
       ) : snapshot.matches({ list: 'failed' }) || loading ? null : (
         <p className="settings-row-desc">
-          {context.query.trim() ? 'No item matches that search.' : 'No items left in this wallet.'}
+          {context.query.trim() ? 'No matches.' : 'No items left.'}
         </p>
       )}
 

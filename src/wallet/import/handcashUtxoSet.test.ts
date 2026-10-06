@@ -195,6 +195,22 @@ describe('verifyUtxoSet', () => {
     expect(verified.addresses.map((a) => a.path)).toEqual(['m/0/3', 'm/9/7', 'm/9/9'])
     expect(verified.rejected).toBe(1)
   })
+
+  it('routes cosigned MNEE owned by these keys to the MNEE index, and rejects one owned by anyone else', async () => {
+    const deriver = makeDeriver()
+    const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
+    const hash = (path: string) => deriver.privateKeyAt(path).toPublicKey().toHash('hex') as string
+    const approver = `02${'ab'.repeat(32)}`
+    const cosigned = (path: string) => `76a914${hash(path)}88ad21${approver}ac`
+    const verified = await verifyUtxoSet(deriver, [
+      utxo(1, { path: 'm/7/0', address: at('m/7/0'), script: cosigned('m/7/0'), type: 'instrument' }),
+      utxo(2, { path: 'm/7/1', address: at('m/7/1'), script: cosigned('m/7/2'), type: 'instrument' }),
+    ])
+    expect([...verified.mneeAddresses]).toEqual([at('m/7/0')])
+    expect([...verified.readAddresses]).toEqual([])
+    expect(verified.addresses.map((a) => a.path)).toEqual(['m/7/0'])
+    expect(verified.rejected).toBe(1)
+  })
 })
 
 describe('readUnspentCash', () => {

@@ -9,6 +9,8 @@ import { runExclusiveSpend } from '../spendGuard'
 import { isInsufficientFundsError } from '../insufficientFunds'
 import { buildBsv21TransferLockingScript } from '../token/legacyInscribe'
 import { detectCosignFromLockingScript } from '../token/tipKind'
+import { sweepMneeFromKey, type MneeHold } from '../mnee'
+import { MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
 import { yieldToUi } from '../yieldToUi'
 import { gorillaBase } from './discovery'
 import { addHeld, type HeldTally, type ImportHoldReason, type TokenHolding } from './holdings'
@@ -132,6 +134,42 @@ export type TokenSweepResult = {
   errors: string[]
 }
 
+const MNEE_HOLDS: Record<MneeHold, ImportHoldReason> = {
+  unreadable: 'tokenUnreadable',
+  amount: 'tokenUnreadable',
+  foreign: 'foreign',
+  cosigner: 'cosigned',
+}
+
+/** MNEE never takes the generic path: its cosigner moves it, `mnee.ts` files it. */
+async function sweepMnee(active: ActiveWallet, spendKey: PrivateKey, result: TokenSweepResult): Promise<void> {
+  const mnee = await sweepMneeFromKey({ active, key: spendKey })
+  if (mnee.kind === 'moved' || mnee.kind === 'empty') {
+    for (const [reason, count] of Object.entries(mnee.held) as Array<[MneeHold, number]>) {
+      result.held = addHeld(result.held, MNEE_HOLDS[reason], count)
+    }
+  }
+  switch (mnee.kind) {
+    case 'moved':
+      result.moved.push({ tokenId: MNEE_TOKEN_ID, amount: mnee.amount.toString(), txid: mnee.txid })
+      if (mnee.unfinished) {
+        result.failed += 1
+        result.errors.push(`Some MNEE did not move: ${mnee.unfinished}`)
+      }
+      return
+    case 'empty':
+      return
+    case 'refused':
+      result.held = addHeld(result.held, mnee.reason === 'belowFee' ? 'dust' : 'cosigned')
+      return
+    case 'failed':
+      result.failed += 1
+      result.errors.push(`MNEE ${mnee.stage}: ${mnee.message}`)
+      appendAppLog('warn', `[import] mnee sweep failed stage=${mnee.stage}: ${mnee.message}`)
+      return
+  }
+}
+
 /** Sweep every compatible BSV-21 balance held by one imported address. */
 export async function sweepTokensFromAddress(args: {
   active: ActiveWallet
@@ -146,6 +184,10 @@ export async function sweepTokensFromAddress(args: {
   for (const token of args.tokens) {
     if (token.standard !== 'bsv21' || !token.id) {
       result.held = addHeld(result.held, 'bsv20v1')
+      continue
+    }
+    if (isMneeTokenId(token.id)) {
+      await sweepMnee(active, spendKey, result)
       continue
     }
     let indexed: IndexedTip[]

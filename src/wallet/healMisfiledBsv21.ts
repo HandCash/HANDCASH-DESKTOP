@@ -28,6 +28,7 @@ import { normalizeLockingScriptHex } from './collectableTipKind'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
 import { wireCollectableOutpoint } from './oneSatCollectableGuard'
+import { isMneeItem } from './mneeTip'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { type ActiveWallet } from './session'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
@@ -320,6 +321,11 @@ export async function healMisfiledBsv21(
     if (uiBudgetExpired()) await yieldToUi()
     const op = wireCollectableOutpoint(row.outpoint)
     if (op && known.has(op)) {
+      result.skipped++
+      continue
+    }
+    if (op && isMneeItem({ tags: row.tags })) {
+      known.add(op)
       result.skipped++
       continue
     }
