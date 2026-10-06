@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.453] - 2026-10-06
+
+### Changed
+
+- **Scanning a HandCash export no longer crawls through "Reading holdings".** HandCash's list already names every coin, so the app now checks those coins on chain directly, a hundred per request (a Teranode node first, then WhatsOnChain), instead of making three slow lookups per address. An account with 89 cash addresses goes from minutes of one-at-a-time progress to a request or two.
+  - An address is still read in full only when it holds tokens, an inscription worth more than 1 sat, or a coin neither source could answer for.
+  - Progress shows "Checking your coins on chain" for this step.
+- Checking HandCash's list against your keys no longer freezes the screen on large accounts (it took 11 seconds on a phone for 2,181 addresses); it now yields to the UI as it goes.
+
+### Fixed
+
+- The HandCash account service now returns large accounts in full and quickly. An item's record holds its whole inscription, so only the part that pays your address is sent, and the second page of a big account no longer times out.
+
 ## [1.3.452] - 2026-10-06
 
 ### Added
