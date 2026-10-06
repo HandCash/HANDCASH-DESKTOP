@@ -65,7 +65,7 @@ function HandCashHistory(props: {
           <StatusBanner.Title>Waiting for your HandCash history</StatusBanner.Title>
           <StatusBanner.Body>
             Sign in on the HandCash page that opened in your browser. The scan starts as soon as your
-            transaction list arrives. Your keys never leave this computer.
+            transaction list arrives. Your keys never leave this device.
           </StatusBanner.Body>
         </StatusBanner.Copy>
         <div className="actions">
@@ -109,7 +109,7 @@ function HandCashHistory(props: {
       <p className="settings-row-desc">
         {offer.kind === 'mismatch'
           ? `HandCash sent the history of $${offer.hinted}, but these keys prove $${offer.saved}. Sign in as $${offer.saved}.`
-          : 'Sign in to HandCash in your browser and it sends your transaction list here, so the scan reads the addresses you have used instead of checking thousands. Nothing moves, and your keys never leave this computer.'}
+          : 'Sign in to HandCash in your browser and it sends your transaction list here, so the scan reads the addresses you have used instead of checking thousands. Nothing moves, and your keys never leave this device.'}
       </p>
       <div className="actions">
         <button type="button" className="btn btn-ghost" onClick={props.onAsk}>

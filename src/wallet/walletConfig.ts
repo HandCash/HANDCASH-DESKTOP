@@ -93,8 +93,8 @@ export const MIGRATE_URL =
     import.meta.env.VITE_MIGRATE_URL.trim()) ||
   'https://preprod-market.handcash.io/migrate'
 
-/** `/migrate` opened by a Desktop import that is waiting for the account's history. */
-export const MIGRATE_HINTS_URL = `${MIGRATE_URL}?from=desktop-import`
+/** `/migrate` opened by a saved import that is waiting for the account's history. */
+export const MIGRATE_HINTS_URL = `${MIGRATE_URL}?from=wallet-import`
 
 export type WalletConfigMode = 'history' | 'none'
 

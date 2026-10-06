@@ -95,7 +95,8 @@ export function ImportPanel() {
     [source, hintsGeneration],
   )
   const platform = window.handcash?.platform
-  const canAskHints = platform != null && platform !== 'web' && platform !== 'android' && platform !== 'ios'
+  // The migrate page reaches Desktop's bridge and the Android app's :3321 bridge.
+  const canAskHints = platform != null && platform !== 'web' && platform !== 'ios'
 
   const handcashOpen = source?.kind === 'handcash' || context.kind === 'handcash'
   const intentRoute: IntentRoute = snapshot.matches({ source: 'awaitingHints' })
