@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.455] - 2026-10-06
+
+### Fixed
+
+- **Scanning or browsing a HandCash export no longer freezes the phone.** Checking HandCash's list against your keys held the screen for up to 42 seconds at a time on Android (167 seconds in all on one run).
+  - Addresses the last scan already derived from your keys are reused instead of derived again; on a 2,000-address account that was most of a minute of work on every rescan and every item list.
+  - Anything that still has to be derived now gives the screen a turn every few milliseconds instead of every 25 keys.
+- Leaving the item browser stops its search. Opening it twice no longer runs two searches side by side.
+
+### Changed
+
+- **Browse items now looks like Collect.** Items use the same cards as your own collection (picture, name, and an **Import** button where Send would be), in the same grid, with the same loading placeholders.
+- **Items appear as they are found.** The grid fills batch by batch instead of waiting for every item to be checked, and you can import an item while the rest are still loading.
+- Long lists only draw the cards on screen, like Collect, so thousands of items scroll smoothly; "Show more" is gone.
+
 ## [1.3.454] - 2026-10-06
 
 ### Added
