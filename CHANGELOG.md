@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.459] - 2026-10-06
+
+### Changed
+
+- **Item and token art is shown whole, without frames.** In Activity and Collect (cards, list rows, the token strip, shelf face piles, and the item and payment details), artwork no longer sits in a rounded, bordered tile and is no longer cropped to a square. A tall or wide piece now fits inside its space with nothing cut off. Token icons are no longer clipped to circles. Activity rows without art (payments, events) keep their usual tile.
+
 ## [1.3.458] - 2026-10-06
 
 ### Changed
