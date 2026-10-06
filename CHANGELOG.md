@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.454] - 2026-10-06
+
+### Added
+
+- **Browse a saved wallet's items and import them one at a time.** Settings → Import → a saved wallet → **Browse items** shows every item it holds as a grid with its picture and name, a search box, and an **Import** button on each.
+  - Each import is its own transaction, paid by this wallet, on the same item path the full import uses (BRC-150 remittance kept).
+  - An imported item leaves the list and the wallet's item count. A failure says why (not enough BSV, the item was rejected) and leaves the item there to try again.
+  - Items that turn out not to be collectables (a token, for example) say so and stay at the source.
+  - For a HandCash export the list comes from the scan you just ran, so it opens instantly; otherwise it is read from the 1Sat index.
+  - Names and pictures come from the 1Sat index and are shown as-is; the import still checks each item against its own transaction.
+
+### Changed
+
+- **The saved wallet view is simpler.** The HandCash handle section, the key details, the "Find an address" tool, and the list of every used address are gone. What's left: totals, **Browse items**, **Import all…** (previously "Sweep compatible…"), **Rescan**, and **Remove this wallet**.
+- The HandCash handle field is gone from the add-a-wallet form.
+- "Sign in to HandCash" only appears when the HandCash account service could not be used for the scan.
+
 ## [1.3.453] - 2026-10-06
 
 ### Changed
