@@ -1,10 +1,20 @@
 # Changelog
 
-## [1.3.450] - 2026-10-06
+## [1.3.451] - 2026-10-06
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **Signing in to HandCash makes the scan read only what you still own.** A large account used to download its whole transaction history (up to 10,000 transactions, about 500 requests) and then often throw that work away and check every address anyway. Now:
+  - **Items** are found straight from the item list HandCash sends: the 1Sat index is asked where each item is now, a hundred at a time. An item the index no longer knows (burned, or never indexed) is skipped instead of failing the other 99 in its batch.
+  - **Coins** come from the newest 500 transactions first, then 2,500, then the rest, stopping as soon as the chain shows your HandCash balance and items.
+  - **Only addresses that may still hold something are read.** If a later transaction spent everything an address received, it isn't checked again. An address already read is never read twice in one scan, including when the full address check has to run after all.
+- The scan's progress now says "Locating your items" and "Finding your coins in recent history". "Rescan with it" names how many items and transactions arrived.
+
+## [1.3.450] - 2026-10-06
+
+### Added
+
+- **Sign in to HandCash works on the phone too.** A saved HandCash export on Android now has the same button. It opens the HandCash key recovery page in Chrome. Once you sign in, the page sends your history to the HandCash app over its own local bridge, the app comes back to the front, and the export rescans from the addresses you've used. The phone has to be unlocked; if the app is locked, the page says so.
 
 ## [1.3.449] - 2026-10-06
 
