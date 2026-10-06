@@ -57,3 +57,23 @@ export function BapFingerprint({
     </span>
   )
 }
+
+/**
+ * The same pill for a Sigma signer address the 1Sat index reports. A claim,
+ * never verified here, so it always tints as one.
+ */
+export function SignerFingerprint({ address, className }: { address: string; className?: string }) {
+  return (
+    <span
+      className={className ? `identity-pill ${className}` : 'identity-pill'}
+      data-aeon-part="signer-fingerprint"
+      data-aeon-state="claim"
+      title={`Signed by ${address} · as the index reports it, not checked here`}
+    >
+      <span className="identity-pill-lead">
+        <BapIdenticon bapId={address} size={10} />
+      </span>
+      <span className="identity-pill-id mono">{bapFingerprint(address).short}</span>
+    </span>
+  )
+}

@@ -51,10 +51,17 @@ export {
 } from './sweep'
 export {
   importOneItem,
-  listImportItems,
+  importShelfOutpoints,
+  readImportItems,
+  readImportShelves,
+  syncImportItems,
   type ImportItem,
-  type ImportItemList,
+  type ImportItemChange,
+  type ImportItemGroup,
+  type ImportItemPage,
   type ImportItemResult,
+  type ImportItemShelf,
+  type ImportItemSync,
 } from './items'
 export { HANDCASH_GAP } from './pathCatalog'
 export { requestImportKind, subscribeImportIntent, takeImportIntent } from './importIntent'

@@ -423,20 +423,24 @@ export async function readUnspentOutpoints(args: {
   outpoints: readonly string[]
   fetchImpl?: FetchLike
   onProgress?: (done: number, total: number) => void
-  /** Each chunk's unspent outpoints as it lands, for a list that fills in. */
-  onUnspent?: (found: ReadonlyArray<{ outpoint: string; facts: ImportItemFacts }>) => void
+  /**
+   * Each chunk as it lands, awaited before the next: the outpoints the index
+   * shows spent and the unspent ones with their facts. An outpoint the index
+   * returned no row for is in neither and stays unchecked.
+   */
+  onChecked?: (chunk: {
+    spent: string[]
+    found: Array<{ outpoint: string; facts: ImportItemFacts }>
+  }) => void | Promise<void>
   shouldStop?: () => boolean
 }): Promise<{
   unspent: Set<string>
-  /** Index facts for each unspent outpoint, for the item browser. */
-  facts: Map<string, ImportItemFacts>
   failed: number
   stopped: boolean
 }> {
   const startedAt = Date.now()
   const fetchImpl = args.fetchImpl ?? fetch
   const unspent = new Set<string>()
-  const facts = new Map<string, ImportItemFacts>()
   let failed = 0
   let stopped = false
   for (let i = 0; i < args.outpoints.length; i += OUTPOINT_CHUNK) {
@@ -464,16 +468,20 @@ export async function readUnspentOutpoints(args: {
     } else {
       const asked = new Set(chunk)
       const found: Array<{ outpoint: string; facts: ImportItemFacts }> = []
+      const spent: string[] = []
       for (const row of rows) {
         const { outpoint, spend } = (row ?? {}) as { outpoint?: unknown; spend?: unknown }
-        if (typeof outpoint === 'string' && asked.has(outpoint) && !spend && !unspent.has(outpoint)) {
-          const rowFacts = importItemFacts(row, outpoint)
-          unspent.add(outpoint)
-          facts.set(outpoint, rowFacts)
-          found.push({ outpoint, facts: rowFacts })
+        if (typeof outpoint !== 'string' || !asked.has(outpoint)) continue
+        asked.delete(outpoint)
+        if (spend) {
+          spent.push(outpoint)
+          continue
         }
+        const rowFacts = importItemFacts(row, outpoint)
+        unspent.add(outpoint)
+        found.push({ outpoint, facts: rowFacts })
       }
-      if (found.length > 0) args.onUnspent?.(found)
+      if (found.length > 0 || spent.length > 0) await args.onChecked?.({ spent, found })
     }
     args.onProgress?.(Math.min(i + OUTPOINT_CHUNK, args.outpoints.length), args.outpoints.length)
     await yieldToUi()
@@ -482,5 +490,5 @@ export async function readUnspentOutpoints(args: {
     'info',
     `[import] utxo set items done ${Date.now() - startedAt}ms outpoints=${args.outpoints.length} unspent=${unspent.size} failed=${failed}`,
   )
-  return { unspent, facts, failed, stopped }
+  return { unspent, failed, stopped }
 }

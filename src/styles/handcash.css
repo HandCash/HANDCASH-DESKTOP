@@ -15925,12 +15925,16 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   gap: 12px;
 }
 
-/* Items use Collect's grid cards; nothing opens on the card itself. */
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'] .collection-grid-main {
-  cursor: default;
+/* Items use Collect's cards and shelves; tapping a card selects it. */
+[data-aeon-scope='legacy-import'] [data-aeon-part='browser'] .connected-panel-head {
+  margin: 0;
 }
 
-[data-aeon-scope='legacy-import'] [data-aeon-part='item'][data-aeon-state='importing'] {
+[data-aeon-scope='legacy-import'] [data-aeon-part='sync'] {
+  margin: 0;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='item']:is([data-aeon-state='importing'], [data-aeon-state='selected']) {
   border-color: color-mix(in srgb, var(--hc-accent) 55%, hsl(var(--border)));
 }
 

@@ -7,6 +7,7 @@ import { getWalletRuntime } from '../walletRuntime'
 import type { AddressHoldings, HeldTally } from './holdings'
 import type { DiscoveredAddress } from './discovery'
 import type { HandleProbe } from './handcashHandle'
+import { forgetImportItemStore } from './itemStore'
 import {
   sourceFingerprint,
   type ImportSecret,
@@ -219,5 +220,6 @@ export function removeImportedSource(id: string): Promise<void> {
       o,
       sources.filter((s) => s.id !== id),
     )
+    await forgetImportItemStore(id).catch(() => undefined)
   })
 }

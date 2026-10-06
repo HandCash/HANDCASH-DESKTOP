@@ -13,6 +13,8 @@ import {
 } from '../hooks/useIssuerView'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
+import { CollectFacepile } from './CollectFacepile'
+import { SelectionCheckbox } from './SelectionCheckbox'
 import { DeferredImage } from './DeferredImage'
 import { BapFingerprint } from './BapIdenticon'
 import { IssuerTrustBadge, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
@@ -104,44 +106,6 @@ import { useWalletActionDock } from './WalletActionDock'
 const RENDER_CHUNK = 6
 /** A basket answer this recent is reused on a tab visit instead of re-read. */
 const INVENTORY_VISIT_FRESH_MS = 30_000
-
-function SelectionCheckbox({
-  checked,
-  mixed = false,
-  disabled = false,
-  label,
-  onChange,
-  className = '',
-}: {
-  checked: boolean
-  mixed?: boolean
-  disabled?: boolean
-  label: string
-  onChange: (checked: boolean) => void
-  className?: string
-}) {
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = mixed
-  }, [mixed])
-  return (
-    <label
-      className={`collect-select ${className}`.trim()}
-      title={label}
-      onClick={(event) => event.stopPropagation()}
-    >
-      <input
-        ref={ref}
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        aria-label={label}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span aria-hidden />
-    </label>
-  )
-}
 
 function liveMarketListing(outpoint: string): MarketListingMark | null {
   // Spent tips can still have a local listing auth until the next write;
@@ -414,35 +378,8 @@ function CollectableItems({
   )
 }
 
-/** Stacked art for a folded collection. Faces defer like any other bitmap. */
 function CollectableFacepile({ group }: { group: CollectableGroup }) {
-  return (
-    <span className="collect-facepile" aria-hidden>
-      {group.faces.map((face) => (
-        <span key={face.outpoint} className="collect-facepile-face">
-          <DeferredImage
-            src={face.imageUrl}
-            alt=""
-            width={40}
-            height={40}
-            skeletonWidth={40}
-            skeletonHeight={40}
-            skeletonRadius={999}
-            skeletonClassName="skeleton-qr"
-            decoding="async"
-            fallback={
-              <span className="collectable-media-fallback" aria-hidden>
-                <CollectablesIcon size={18} />
-              </span>
-            }
-          />
-        </span>
-      ))}
-      {group.overflow > 0 ? (
-        <span className="collect-facepile-more">+{group.overflow.toLocaleString()}</span>
-      ) : null}
-    </span>
-  )
+  return <CollectFacepile faces={group.faces} overflow={group.overflow} />
 }
 
 function IssuerGroupItem({

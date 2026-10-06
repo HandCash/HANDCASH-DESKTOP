@@ -806,25 +806,56 @@ const LEGACY_IMPORT = `stateDiagram-v2
 
 const IMPORT_ITEM_BROWSER = `stateDiagram-v2
   direction TB
-  state list {
-    [*] --> loading
-    loading --> loading : FOUND (batch streams into the grid)
-    loading --> ready : LISTED
-    loading --> failed : LIST_FAILED
-    failed --> loading : RETRY
-    loading : scan's list, else HandCash set (saved paths, no re-derive) → 1Sat index by outpoint · else 1Sat index by address · leaving stops it
+  state sync {
+    [*] --> checking
+    checking --> checking : CHANGED (batch saved to disk)
+    checking --> done : SYNCED
+    checking --> failed : SYNC_FAILED
+    failed --> checking : RETRY
+    checking : prune what the source no longer names · ask the 1Sat index only about outputs never checked · leaving stops it, progress stays
+  }
+  --
+  state shelves {
+    [*] --> reading
+    reading --> idle : read (issuer shelves from disk)
+    reading --> failed : error
+    idle --> settling : list changed
+    settling --> reading : after 1.2s
+    failed --> reading : RETRY
+    reading : signer (index claim) → app → collection → no issuer
+  }
+  --
+  state page {
+    [*] --> closed
+    closed --> routing : OPEN / FILTER
+    routing --> reading : a shelf open or a search
+    routing --> closed : neither
+    reading --> ready : page of 60
+    reading --> failed : error
+    ready --> reading : MORE (near the end, more saved)
+    failed --> reading : RETRY
+  }
+  --
+  state gather {
+    [*] --> idle
+    idle --> reading : SELECT_SHELF (checked)
+    reading --> idle : shelf outpoints from disk
   }
   --
   state move {
     [*] --> idle
-    idle --> importing : IMPORT (listed item)
-    importing --> idle : done (moved | skipped | funds | refused | unreadable | failed) / error
+    idle --> importing : IMPORT / IMPORT_SELECTED (one chosen)
+    idle --> confirming : IMPORT_SELECTED (several)
+    confirming --> importing : CONFIRM
+    confirming --> idle : CANCEL
+    importing --> importing : answer (more queued, not stopped)
+    importing --> idle : last answer / funds / STOP honoured / error
     importing : One tip · one tx · same P2PKH item migrate (BRC-150 remittance)
   }
   note right of move
-    Runs while the list still fills.
     Refused while a paused sweep reads the same address.
     Moved and not-an-item rows leave the list and stay out.
+    The list lives on this device until the item leaves the source.
   end note
 `
 
@@ -1484,7 +1515,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'importItemBrowser',
     label: 'Import items',
-    caption: 'importItemBrowserMachine — browse a saved wallet’s items · move one at a time',
+    caption: 'importItemBrowserMachine — saved items shelved by issuer · page · select · one tx per item',
     source: IMPORT_ITEM_BROWSER,
   },
   {

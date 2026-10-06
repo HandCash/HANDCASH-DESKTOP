@@ -8,38 +8,63 @@ import {
 } from '../phraseSweep'
 import { gorillaBase, type FetchLike } from './discovery'
 import { fetchHandCashUtxoSet, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
+import type { AddressHoldings } from './holdings'
 import { keyDeriverFor } from './importSource'
-import { importItemFacts, withImportItemArt, type ImportItem } from './importItem'
+import { importItemFacts, withImportItemArt, type ImportItem, type ImportItemGroup } from './importItem'
+import {
+  countImportItems,
+  decidedImportOutpoints,
+  forgetImportItemStore,
+  groupImportOutpoints,
+  listedImportOutpoints,
+  markImportOutpointsGone,
+  pruneImportItems,
+  readImportGroups,
+  readImportItemPage,
+  readImportListMeta,
+  readStoredImportItem,
+  replaceAddressItems,
+  saveImportItems,
+  writeImportListMeta,
+  type StoredImportItem,
+} from './itemStore'
 import { loadImportedSources, updateImportedSource, type ImportedSource } from './store'
 
-export type { ImportItem } from './importItem'
+export type { ImportItem, ImportItemGroup } from './importItem'
 
 /**
  * The 1-sat items a saved source holds, for browsing and moving one at a time.
  *
- * The list lives for the session only, keyed by the scan it came from: a few
- * thousand rows do not belong in sealed prefs, and the next scan replaces it.
- * Moving an item re-decides it from its source transaction — the list is the
- * index's view, never proof.
+ * The list is saved on this device (`itemStore.ts`) as it is found and read
+ * back a page at a time, so closing the browser or the app keeps it and the
+ * next run asks the index only about outputs it has never checked. It holds
+ * an item for as long as the source does. Moving an item re-decides it from
+ * its source transaction — the list is the index's view, never proof.
  */
-const remembered = new Map<string, { scanAt: number; items: ImportItem[]; complete: boolean }>()
 
 const ADDRESS_PAGE = 100
 const ADDRESS_MAX_PAGES = 50
 const ADDRESS_CONCURRENCY = 4
 
-export type ImportItemList = { items: ImportItem[]; complete: boolean }
+type AddressItems = { items: ImportItem[]; complete: boolean }
 
-export function rememberImportItems(
-  sourceId: string,
-  scanAt: number,
-  list: ImportItemList,
-): void {
-  remembered.set(sourceId, { scanAt, items: list.items, complete: list.complete })
-}
+/** What one sync step changed in the saved list. */
+export type ImportItemChange = { added: number; gone: string[] }
 
-export function forgetImportItems(sourceId: string): void {
-  remembered.delete(sourceId)
+export type ImportItemSync = { complete: boolean; total: number }
+
+export type ImportItemPage = { items: ImportItem[]; last: number | null; more: boolean; total: number }
+
+/** A shelf of the saved list: who issued its items, how many, and its face pile. */
+export type ImportItemShelf = ImportItemGroup & { count: number; faces: ImportItem[] }
+
+/** Forget a source's saved list (removed or swept). Never throws. */
+export async function forgetImportItems(sourceId: string): Promise<void> {
+  try {
+    await forgetImportItemStore(sourceId)
+  } catch (err) {
+    appendAppLog('warn', `[import] saved item list not cleared: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 /** Path → address this source's last scan derived; reused instead of re-derived. */
@@ -47,17 +72,65 @@ export function knownAddresses(source: Pick<ImportedSource, 'scan'>): Map<string
   return new Map((source.scan?.addresses ?? []).map((a) => [a.path, a.address]))
 }
 
-/**
- * Every item of the last scan, handed to `onItems` batch by batch as it is
- * found so a browser fills in instead of waiting for thousands of checks.
- * Reuses the scan's own list while it is current. A stopped run is not kept.
- */
-export async function listImportItems(args: {
+function storedItem(item: ImportItem | StoredImportItem): StoredImportItem {
+  return {
+    outpoint: item.outpoint,
+    address: item.address,
+    origin: item.origin,
+    media: item.media,
+    name: item.name,
+    mimeType: item.mimeType,
+    app: item.app,
+    collectionId: item.collectionId,
+    signer: item.signer,
+  }
+}
+
+function withArt(items: readonly StoredImportItem[]): ImportItem[] {
+  const chain = getWalletRuntime()?.instance?.chain ?? 'main'
+  return items.map((item) => withImportItemArt({ ...item, imageUrl: null }, chain))
+}
+
+/** One page of the saved list (or one shelf of it), in the order items were found. */
+export async function readImportItems(args: {
   sourceId: string
-  onItems?: (items: ImportItem[]) => void
+  after: number | null
+  limit: number
+  query?: string
+  group?: string
+}): Promise<ImportItemPage> {
+  const [page, total] = await Promise.all([
+    readImportItemPage(args.sourceId, args),
+    countImportItems(args.sourceId),
+  ])
+  return { items: withArt(page.items), last: page.last, more: page.more, total }
+}
+
+/** The saved list's shelves, in Collect's issuer order. */
+export async function readImportShelves(sourceId: string): Promise<ImportItemShelf[]> {
+  const startedAt = Date.now()
+  const shelves = await readImportGroups(sourceId)
+  const ms = Date.now() - startedAt
+  if (ms >= 250) appendAppLog('info', `[import] shelves read ${shelves.length} done ${ms}ms`)
+  return shelves.map((shelf) => ({ ...shelf, faces: withArt(shelf.faces) }))
+}
+
+/** Every outpoint on one shelf, for selecting the whole shelf. */
+export function importShelfOutpoints(sourceId: string, group: string): Promise<string[]> {
+  return groupImportOutpoints(sourceId, group)
+}
+
+/**
+ * Bring the saved list up to date with the source: drop what it no longer
+ * holds, then check only outputs never checked before. Each found batch is
+ * saved before `onChange` hears of it, so a stopped run keeps its progress.
+ */
+export async function syncImportItems(args: {
+  sourceId: string
+  onChange?: (change: ImportItemChange) => void
   shouldStop?: () => boolean
   fetchImpl?: FetchLike
-}): Promise<ImportItemList> {
+}): Promise<ImportItemSync> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
   const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
@@ -67,108 +140,135 @@ export async function listImportItems(args: {
   const startedAt = Date.now()
   const chain = active.chain
   const stop = () => args.shouldStop?.() === true
-
-  const seen = new Set<string>()
-  const items: ImportItem[] = []
-  const take = (batch: readonly ImportItem[]) => {
-    const fresh: ImportItem[] = []
-    for (const item of batch) {
-      if (seen.has(item.outpoint)) continue
-      seen.add(item.outpoint)
-      const art = withImportItemArt(item, chain)
-      items.push(art)
-      fresh.push(art)
-    }
-    if (fresh.length > 0) args.onItems?.(fresh)
+  const changed = (change: ImportItemChange) => {
+    if (change.added > 0 || change.gone.length > 0) args.onChange?.(change)
   }
 
-  const kept = remembered.get(source.id)
-  const reused = kept?.scanAt === scan.at
+  const meta = await readImportListMeta(source.id)
+  const paged = new Set(meta.scanAt === scan.at ? meta.pagedAddresses : [])
+  const holdings = scan.holdings.filter((h) => !h.uncompressed)
   let complete = true
-  if (kept && reused) {
-    take(kept.items)
-    complete = kept.complete
-  } else if (scan.via === 'handcash-utxo-set') {
-    complete = await utxoSetItems(source, chain, take, stop, args.fetchImpl)
+  let toPage: AddressHoldings[]
+
+  if (scan.via === 'handcash-utxo-set') {
+    const deriver = keyDeriverFor(source.secret)
+    const set = await fetchHandCashUtxoSet({
+      deriver,
+      shouldStop: args.shouldStop,
+      ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+    })
+    if (set.kind === 'fetched') {
+      const verified = await verifyUtxoSet(deriver, set.utxos, knownAddresses(source))
+      const covered = new Set(verified.itemOutpoints.keys())
+      const keep = new Set([
+        ...paged,
+        ...verified.readAddresses,
+        ...holdings.filter((h) => h.itemCount > 0 && !covered.has(h.address)).map((h) => h.address),
+      ])
+      const read = await checkUtxoSetItems({
+        sourceId: source.id,
+        chain,
+        itemOutpoints: verified.itemOutpoints,
+        keepAddresses: keep,
+        onChange: changed,
+        shouldStop: args.shouldStop,
+        ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+      })
+      complete = read.failed === 0 && !read.stopped
+      const unspentAt = new Map<string, number>()
+      for (const [address, outpoints] of verified.itemOutpoints) {
+        unspentAt.set(address, outpoints.filter((o) => read.unspent.has(o)).length)
+      }
+      toPage = holdings.filter((h) =>
+        paged.has(h.address)
+          ? false
+          : covered.has(h.address)
+            ? complete && h.itemCount > (unspentAt.get(h.address) ?? 0)
+            : h.itemCount > 0,
+      )
+    } else if (set.reason === 'unknown-keys') {
+      toPage = holdings.filter((h) => h.itemCount > 0 && !paged.has(h.address))
+      changed({ added: 0, gone: await pruneImportItems(source.id, new Set(), new Set([...paged, ...toPage.map((h) => h.address)])) })
+    } else {
+      if (set.reason !== 'stopped') {
+        appendAppLog('warn', `[import] items kept as saved — HandCash set ${set.reason}: ${set.detail}`)
+      }
+      return { complete: false, total: await countImportItems(source.id) }
+    }
+  } else {
+    toPage = holdings.filter((h) => h.itemCount > 0 && !paged.has(h.address))
+    changed({ added: 0, gone: await pruneImportItems(source.id, new Set(), new Set([...paged, ...toPage.map((h) => h.address)])) })
   }
 
-  const listed = new Map<string, number>()
-  for (const item of items) listed.set(item.address, (listed.get(item.address) ?? 0) + 1)
-  const unlisted = scan.holdings.filter(
-    (h) => !h.uncompressed && h.itemCount > (listed.get(h.address) ?? 0),
-  )
-  for (let i = 0; i < unlisted.length && !stop(); i += ADDRESS_CONCURRENCY) {
-    const pages = await Promise.all(
-      unlisted
-        .slice(i, i + ADDRESS_CONCURRENCY)
-        .map((h) => addressItems(h.address, chain, args.fetchImpl ?? fetch)),
-    )
-    for (const page of pages) {
-      complete &&= page.complete
-      take(page.items)
+  for (let i = 0; i < toPage.length && !stop(); i += ADDRESS_CONCURRENCY) {
+    const group = toPage.slice(i, i + ADDRESS_CONCURRENCY)
+    const pages = await Promise.all(group.map((h) => addressItems(h.address, chain, args.fetchImpl ?? fetch)))
+    for (const [j, page] of pages.entries()) {
+      const address = group[j]!.address
+      if (page.complete) {
+        const { removed, added } = await replaceAddressItems(source.id, address, page.items.map(storedItem))
+        paged.add(address)
+        changed({ added: added.length, gone: removed })
+      } else {
+        complete = false
+        changed({ added: (await saveImportItems(source.id, page.items.map(storedItem))).length, gone: [] })
+      }
     }
   }
+
   const stopped = stop()
-  const list = { items, complete: complete && !stopped }
-  if (!stopped) rememberImportItems(source.id, scan.at, list)
+  complete &&= !stopped
+  await writeImportListMeta(source.id, { scanAt: scan.at, complete, pagedAddresses: [...paged] })
+  const total = await countImportItems(source.id)
   appendAppLog(
     'info',
-    `[import] items listed ${items.length} reused=${reused} addresses=${unlisted.length} complete=${list.complete} stopped=${stopped} done ${Date.now() - startedAt}ms`,
+    `[import] items synced ${total} addresses=${toPage.length} complete=${complete} stopped=${stopped} done ${Date.now() - startedAt}ms`,
   )
-  return list
+  return { complete, total }
 }
 
 /**
- * The scan's own path, items only: HandCash's set, then the 1Sat index by
- * outpoint. Paths the last scan derived are not derived again. Returns
- * whether every item was checked.
+ * HandCash's one-sat outputs against the saved list: outputs it no longer
+ * names leave (unless their address is listed in full), and only outputs
+ * never checked go to the 1Sat index. Returns which of `itemOutpoints` are
+ * listed items now.
  */
-async function utxoSetItems(
-  source: ImportedSource,
-  chain: Chain,
-  take: (batch: readonly ImportItem[]) => void,
-  shouldStop: () => boolean,
-  fetchImpl?: FetchLike,
-): Promise<boolean> {
-  const deriver = keyDeriverFor(source.secret)
-  const set = await fetchHandCashUtxoSet({ deriver, shouldStop, ...(fetchImpl ? { fetchImpl } : {}) })
-  if (set.kind === 'refused') return true
-  const verified = await verifyUtxoSet(deriver, set.utxos, knownAddresses(source))
+export async function checkUtxoSetItems(args: {
+  sourceId: string
+  chain: Chain
+  itemOutpoints: ReadonlyMap<string, readonly string[]>
+  keepAddresses: ReadonlySet<string>
+  onChange?: (change: ImportItemChange) => void
+  onProgress?: (done: number, total: number) => void
+  shouldStop?: () => boolean
+  fetchImpl?: FetchLike
+}): Promise<{ unspent: Set<string>; failed: number; stopped: boolean }> {
   const addressOf = new Map<string, string>()
-  for (const [address, outpoints] of verified.itemOutpoints) {
+  for (const [address, outpoints] of args.itemOutpoints) {
     for (const outpoint of outpoints) addressOf.set(outpoint, address)
   }
+  const live = new Set(addressOf.keys())
+  const gone = await pruneImportItems(args.sourceId, live, args.keepAddresses)
+  if (gone.length > 0) args.onChange?.({ added: 0, gone })
+  const decided = await decidedImportOutpoints(args.sourceId)
   const read = await readUnspentOutpoints({
-    chain,
-    outpoints: [...addressOf.keys()],
-    shouldStop,
-    onUnspent: (found) =>
-      take(
-        found.map(({ outpoint, facts }) => ({
-          outpoint,
-          address: addressOf.get(outpoint)!,
-          ...facts,
-          imageUrl: null,
-        })),
-      ),
-    ...(fetchImpl ? { fetchImpl } : {}),
+    chain: args.chain,
+    outpoints: [...live].filter((outpoint) => !decided.has(outpoint)),
+    shouldStop: args.shouldStop,
+    ...(args.onProgress ? { onProgress: args.onProgress } : {}),
+    ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+    onChecked: async ({ spent, found }) => {
+      await markImportOutpointsGone(args.sourceId, spent)
+      const added = await saveImportItems(
+        args.sourceId,
+        found.map(({ outpoint, facts }) => ({ outpoint, address: addressOf.get(outpoint)!, ...facts })),
+      )
+      if (added.length > 0) args.onChange?.({ added: added.length, gone: [] })
+    },
   })
-  return read.failed === 0 && !read.stopped
-}
-
-export function itemsFromOutpoints(
-  byAddress: ReadonlyMap<string, readonly string[]>,
-  read: Pick<Awaited<ReturnType<typeof readUnspentOutpoints>>, 'unspent' | 'facts' | 'failed' | 'stopped'>,
-): ImportItemList {
-  const items: ImportItem[] = []
-  for (const [address, outpoints] of byAddress) {
-    for (const outpoint of outpoints) {
-      if (!read.unspent.has(outpoint)) continue
-      const facts = read.facts.get(outpoint) ?? { origin: null, media: null, name: null, mimeType: null }
-      items.push({ outpoint, address, ...facts, imageUrl: null })
-    }
-  }
-  return { items, complete: read.failed === 0 && !read.stopped }
+  const listed = await listedImportOutpoints(args.sourceId)
+  const unspent = new Set([...live].filter((outpoint) => listed.has(outpoint)))
+  return { unspent, failed: read.failed, stopped: read.stopped }
 }
 
 /** One address's 1-sat outputs from the 1Sat index, every page. */
@@ -176,7 +276,7 @@ async function addressItems(
   address: string,
   chain: Chain,
   fetchImpl: FetchLike,
-): Promise<ImportItemList> {
+): Promise<AddressItems> {
   const items: ImportItem[] = []
   for (let page = 0; page < ADDRESS_MAX_PAGES; page += 1) {
     let rows: unknown = null
@@ -204,13 +304,14 @@ async function addressItems(
   return { items, complete: false }
 }
 
-export type ImportItemRefusal = 'gone' | 'ownKey' | 'pausedBatch'
+export type ImportItemRefusal = 'unlisted' | 'gone' | 'ownKey' | 'pausedBatch'
 
 export type ImportItemResult =
   | SingleItemMigrate
   | { kind: 'refused'; reason: ImportItemRefusal; message: string }
 
 const REFUSAL_MESSAGES: Record<ImportItemRefusal, string> = {
+  unlisted: 'This item is no longer in the saved list.',
   gone: 'This item’s address is not in the last scan. Rescan, then try again.',
   ownKey: 'That address is this wallet’s own key — use Refresh instead.',
   pausedBatch:
@@ -218,24 +319,27 @@ const REFUSAL_MESSAGES: Record<ImportItemRefusal, string> = {
 }
 
 /**
- * Move one item into this wallet. Explicit and single: it runs from the user's
- * choice of this item, on the same item-migrate path the sweep uses.
+ * Move one saved item into this wallet. Explicit and single: it runs from the
+ * user's choice of this item (alone or in a selection, one transaction each),
+ * on the same item-migrate path the sweep uses.
  */
 export async function importOneItem(args: {
   sourceId: string
-  item: ImportItem
+  outpoint: string
 }): Promise<ImportItemResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
   const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
   if (!source) throw new Error('That saved wallet is gone')
   const refuse = (reason: ImportItemRefusal): ImportItemResult => {
-    appendAppLog('warn', `[import] item refused reason=${reason} outpoint=${args.item.outpoint}`)
+    appendAppLog('warn', `[import] item refused reason=${reason} outpoint=${args.outpoint}`)
     return { kind: 'refused', reason, message: REFUSAL_MESSAGES[reason] }
   }
 
+  const item = await readStoredImportItem(source.id, args.outpoint)
+  if (!item) return refuse('unlisted')
   const holding = source.scan?.holdings.find(
-    (h) => h.address === args.item.address && !h.uncompressed,
+    (h) => h.address === item.address && !h.uncompressed,
   )
   if (!source.scan || !holding) return refuse('gone')
   const key = keyDeriverFor(source.secret).privateKeyAt(holding.path)
@@ -252,14 +356,15 @@ export async function importOneItem(args: {
       identityKey,
       address: holding.address,
     },
-    outpoint: args.item.outpoint,
-    ...(args.item.origin ? { origin: args.item.origin } : {}),
-    ...(args.item.name ? { name: args.item.name } : {}),
+    outpoint: item.outpoint,
+    ...(item.origin ? { origin: item.origin } : {}),
+    ...(item.name ? { name: item.name } : {}),
   })
 
   if (result.kind === 'moved' || result.kind === 'skipped') {
-    const kept = remembered.get(source.id)
-    if (kept) kept.items = kept.items.filter((i) => i.outpoint !== args.item.outpoint)
+    await markImportOutpointsGone(source.id, [item.outpoint]).catch((err: unknown) => {
+      appendAppLog('warn', `[import] saved item list not updated: ${err instanceof Error ? err.message : String(err)}`)
+    })
   }
   if (result.kind === 'moved') {
     const scan = source.scan

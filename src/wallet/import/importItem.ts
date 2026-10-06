@@ -3,8 +3,8 @@ import type { Chain } from '../vault'
 
 /**
  * One 1-sat tip held by a saved source, as the 1Sat index describes it.
- * Display only: the name and media come from the index (unproven) and the
- * move re-decides the tip from its source transaction.
+ * Display only: the name, media, app and signer come from the index
+ * (unproven) and the move re-decides the tip from its source transaction.
  */
 export type ImportItem = {
   /** `txid_vout`. */
@@ -16,13 +16,55 @@ export type ImportItem = {
   media: string | null
   name: string | null
   mimeType: string | null
+  /** MAP `app` on the origin. */
+  app: string | null
+  collectionId: string | null
+  /**
+   * Sigma signer address the index reports on the origin. HandCash signs
+   * every item it mints with the creator's identity for that app, so items
+   * sharing a signer share a creator. Attribution only — never verified here.
+   */
+  signer: string | null
   /** Thumbnail for image content; null for text, HTML, models and unknown media. */
   imageUrl: string | null
 }
 
-export type ImportItemFacts = Pick<ImportItem, 'origin' | 'media' | 'name' | 'mimeType'>
+export type ImportItemFacts = Omit<ImportItem, 'outpoint' | 'address' | 'imageUrl'>
 
-const NO_FACTS: ImportItemFacts = { origin: null, media: null, name: null, mimeType: null }
+const NO_FACTS: ImportItemFacts = {
+  origin: null,
+  media: null,
+  name: null,
+  mimeType: null,
+  app: null,
+  collectionId: null,
+  signer: null,
+}
+
+const ADDRESS = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/
+
+/** The first BSM signer the index lists that it did not mark invalid. */
+function signerOf(sigma: unknown): string | null {
+  if (!Array.isArray(sigma)) return null
+  for (const entry of sigma) {
+    const { address, algorithm, valid } = (entry ?? {}) as { address?: unknown; algorithm?: unknown; valid?: unknown }
+    if (valid === false) continue
+    if (algorithm != null && String(algorithm).toUpperCase() !== 'BSM') continue
+    if (typeof address === 'string' && ADDRESS.test(address)) return address
+  }
+  return null
+}
+
+/** The origin's signer: the origin data, or the row's own data when the row is the origin. */
+function indexedSigner(row: Record<string, unknown>, outpoint: string): string | null {
+  const origin = row.origin as { outpoint?: unknown; data?: { sigma?: unknown } } | string | undefined
+  if (origin && typeof origin === 'object') {
+    const fromOrigin = signerOf(origin.data?.sigma)
+    if (fromOrigin) return fromOrigin
+    if (typeof origin.outpoint === 'string' && origin.outpoint !== outpoint) return null
+  }
+  return signerOf((row.data as { sigma?: unknown } | undefined)?.sigma)
+}
 
 /** Facts from a GorillaPool txo row; never throws on a malformed row. */
 export function importItemFacts(row: unknown, outpoint: string): ImportItemFacts {
@@ -39,6 +81,9 @@ export function importItemFacts(row: unknown, outpoint: string): ImportItemFacts
     media: resolved.content ?? resolved.origin,
     name: resolved.name?.trim() || null,
     mimeType: resolved.mimeType?.trim() || null,
+    app: resolved.app?.trim() || null,
+    collectionId: resolved.collectionId?.trim() || null,
+    signer: indexedSigner(row as Record<string, unknown>, outpoint),
   }
 }
 
@@ -49,4 +94,61 @@ export function withImportItemArt(item: ImportItem, chain: Chain): ImportItem {
       ? contentUrlForOrigin(item.media, chain)
       : null
   return imageUrl === item.imageUrl ? item : { ...item, imageUrl }
+}
+
+/**
+ * Shelf an item sits on, in Collect's order: the identity that signed it,
+ * else the app named on it, else its collection. `key` is stable for a shelf.
+ */
+export type ImportItemGroup = {
+  key: string
+  kind: 'signer' | 'app' | 'collection' | 'none'
+  label: string
+  app: string | null
+  signer: string | null
+  collectionId: string | null
+}
+
+export const NO_GROUP_KEY = 'none'
+
+function seriesName(name: string | null): string | null {
+  const stem = name?.replace(/\s*#\d+\s*$/u, '').trim()
+  return stem || null
+}
+
+function shortId(value: string): string {
+  return value.length > 10 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value
+}
+
+export function importItemGroup(
+  item: Pick<ImportItem, 'signer' | 'app' | 'collectionId' | 'name'>,
+): ImportItemGroup {
+  const app = item.app?.trim() || null
+  const collectionId = item.collectionId?.trim() || null
+  if (item.signer) {
+    return { key: `signer:${item.signer}`, kind: 'signer', label: app ?? 'Signed items', app, signer: item.signer, collectionId: null }
+  }
+  if (app) return { key: `app:${app.toLowerCase()}`, kind: 'app', label: app, app, signer: null, collectionId: null }
+  if (collectionId) {
+    return {
+      key: `collection:${collectionId.toLowerCase()}`,
+      kind: 'collection',
+      label: seriesName(item.name) ?? `Collection ${shortId(collectionId)}`,
+      app: null,
+      signer: null,
+      collectionId,
+    }
+  }
+  return { key: NO_GROUP_KEY, kind: 'none', label: 'No issuer', app: null, signer: null, collectionId: null }
+}
+
+const GROUP_RANK: Record<ImportItemGroup['kind'], number> = { signer: 0, app: 1, collection: 2, none: 3 }
+
+/** Shelf order: signed identities, then apps, then collections, then the rest. */
+export function compareImportGroups(a: ImportItemGroup, b: ImportItemGroup): number {
+  return (
+    GROUP_RANK[a.kind] - GROUP_RANK[b.kind] ||
+    a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) ||
+    a.key.localeCompare(b.key)
+  )
 }

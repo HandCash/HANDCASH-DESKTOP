@@ -522,11 +522,35 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
 }
 
 const PREWARM_DELAY_MS = 5_000
+/** The foreground must stay idle this long before an account warms. */
+const PREWARM_QUIET_MS = 15_000
+const PREWARM_QUIET_PHONE_MS = 30_000
+
+/**
+ * Wait until the foreground wallet has been idle — no ingest, spend, history
+ * or recompose, and no spend waiting — for a full quiet window. Building an
+ * account is tens of seconds of main-thread work; it must never overlap the
+ * startup recompose or a send. False once the warm pool moved on.
+ */
+async function prewarmQuietWindow(generation: number): Promise<boolean> {
+  const { waitForWalletRegionsIdle, walletRegionsGeneration, walletRegionsIdleSince } =
+    await import('./walletCoordinator')
+  const quietMs = isPhoneShell() ? PREWARM_QUIET_PHONE_MS : PREWARM_QUIET_MS
+  for (;;) {
+    if (warmPoolGeneration() !== generation) return false
+    if (!(await waitForWalletRegionsIdle(60_000))) continue
+    const since = walletRegionsGeneration()
+    await new Promise((resolve) => setTimeout(resolve, quietMs))
+    if (warmPoolGeneration() !== generation) return false
+    if (walletRegionsIdleSince(since)) return true
+  }
+}
 
 /**
  * Open the vault's other accounts in the background, one at a time, so the
- * first switch to each is as fast as every later one. Prewarmed units start
- * no monitor until they are selected.
+ * first switch to each is as fast as every later one. Each waits for a quiet
+ * foreground (`prewarmQuietWindow`). Prewarmed units start no monitor until
+ * they are selected.
  */
 function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): void {
   if (import.meta.env?.MODE === 'test' || typeof window === 'undefined') return
@@ -547,6 +571,10 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
       }
       const unit = await walletUnitFor(accountArgs)
       if (hasWarmWallet(unit)) continue
+      const waitStarted = Date.now()
+      if (!(await prewarmQuietWindow(generation))) return
+      const waited = Date.now() - waitStarted
+      if (waited > 250) console.info(`[vault-account] prewarm a${account.index} quiet wait ${waited}ms`)
       const started = Date.now()
       try {
         await warmWallet(unit, () => buildWallet(accountArgs, unit.databaseName))

@@ -291,8 +291,9 @@ describe('readUnspentOutpoints', () => {
     expect(read).toMatchObject({ failed: 0, stopped: false })
   })
 
-  it('keeps the index facts of each unspent item for browsing', async () => {
+  it('hands each chunk over with the spent outpoints and the facts of unspent items', async () => {
     const origin = `${'a'.repeat(64)}_0`
+    const signer = '1BHLmsoMt4J4oyKbpPu2PoBDiP8C5h2sQx'
     const fetchImpl = vi.fn(async () =>
       new Response(
         JSON.stringify([
@@ -302,23 +303,50 @@ describe('readUnspentOutpoints', () => {
             origin: {
               outpoint: origin,
               data: {
-                map: { app: 'vanitas', name: 'VANITAS #3', type: 'ord' },
+                map: { app: 'vanitas', name: 'VANITAS #3', type: 'ord', subTypeData: { collectionId: 'c1' } },
                 insc: { file: { type: 'image/png', size: 10 } },
+                sigma: [{ algorithm: 'BSM', address: signer, signature: 'sig', vin: 0, valid: true }],
               },
             },
           },
           { outpoint: outpoints[1], spend: '', origin: null, data: null },
+          { outpoint: outpoints[2], spend: 'f'.repeat(64) },
         ]),
       ),
     )
-    const read = await readUnspentOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 2), fetchImpl })
-    expect(read.facts.get(outpoints[0])).toEqual({
-      origin,
-      media: origin,
-      name: 'VANITAS #3',
-      mimeType: 'image/png',
+    const chunks: Array<{ spent: string[]; found: Array<{ outpoint: string; facts: unknown }> }> = []
+    const read = await readUnspentOutpoints({
+      chain: 'main',
+      outpoints: outpoints.slice(0, 4),
+      fetchImpl,
+      onChecked: (chunk) => {
+        chunks.push(chunk)
+      },
     })
-    expect(read.facts.get(outpoints[1])).toEqual({ origin: null, media: null, name: null, mimeType: null })
+    expect(read.unspent).toEqual(new Set([outpoints[0], outpoints[1]]))
+    expect(chunks).toEqual([
+      {
+        spent: [outpoints[2]],
+        found: [
+          {
+            outpoint: outpoints[0],
+            facts: {
+              origin,
+              media: origin,
+              name: 'VANITAS #3',
+              mimeType: 'image/png',
+              app: 'vanitas',
+              collectionId: 'c1',
+              signer,
+            },
+          },
+          {
+            outpoint: outpoints[1],
+            facts: { origin: null, media: null, name: null, mimeType: null, app: null, collectionId: null, signer: null },
+          },
+        ],
+      },
+    ])
   })
 
   it('retries a chunk once, then counts it as failed', async () => {

@@ -329,6 +329,14 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** IndexedDB: each saved source's item list, shelved by issuer — the index's view, keyed by source id. */
+  importItems: defineStorage({
+    key: 'handcash.import-items',
+    owner: 'legacy-import',
+    scope: 'device',
+    version: 2,
+    retention: 'rebuildable',
+  }),
   listingAuthorizations: defineStorage({
     key: 'handcash.market.listingAuthorizations.v2',
     owner: 'market',

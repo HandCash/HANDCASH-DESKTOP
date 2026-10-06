@@ -10,11 +10,11 @@ import {
   type ItemsLookup,
 } from './discovery'
 import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
-import { fetchHandCashUtxoSet, readUnspentCash, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, readUnspentCash, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import { readMneeBalances } from '../mnee'
 import { MNEE_DECIMALS, MNEE_SYMBOL, MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
-import { itemsFromOutpoints, knownAddresses, rememberImportItems } from './items'
+import { checkUtxoSetItems, knownAddresses } from './items'
 import {
   createHistoryReader,
   hintedLookups,
@@ -142,17 +142,19 @@ export async function utxoSetScan(
     onProgress: (done, total) => args.onProgress?.({ phase: 'cash', done, total }),
     shouldStop: args.shouldStop,
   })
-  const items = await readUnspentOutpoints({
-    chain,
-    outpoints: [...verified.itemOutpoints.values()].flat(),
-    onProgress: (done, total) => args.onProgress?.({ phase: 'items', done, total }),
-    shouldStop: args.shouldStop,
-  })
   const readAddresses = new Set(verified.readAddresses)
   for (const [address, outputs] of verified.cashOutputs) {
     if (outputs.some((o) => cash.unknown.has(o.outpoint))) readAddresses.add(address)
   }
   const toRead = verified.addresses.filter((a) => readAddresses.has(a.address))
+  const items = await checkUtxoSetItems({
+    sourceId: args.sourceId,
+    chain,
+    itemOutpoints: verified.itemOutpoints,
+    keepAddresses: readAddresses,
+    onProgress: (done, total) => args.onProgress?.({ phase: 'items', done, total }),
+    shouldStop: args.shouldStop,
+  })
   const read = await inspectHoldings({
     addresses: toRead,
     chain,
@@ -173,10 +175,8 @@ export async function utxoSetScan(
   })
   await addMneeHoldings(holdings, verified.mneeAddresses)
   const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
-  const at = Date.now()
-  rememberImportItems(args.sourceId, at, itemsFromOutpoints(verified.itemOutpoints, items))
   return {
-    at,
+    at: Date.now(),
     complete: !stopped && items.failed === 0,
     checked: verified.addresses.length,
     addresses: verified.addresses,
