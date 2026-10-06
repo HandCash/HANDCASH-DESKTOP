@@ -148,6 +148,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  custodyJournal: defineStorage({
+    key: 'handcash.custodyJournal.v1',
+    owner: 'custody',
+    scope: 'wallet',
+    version: 1,
+  }),
   transactionTelemetry: defineStorage({
     key: 'handcash.wallet.transactionTelemetry.v1',
     owner: 'telemetry',

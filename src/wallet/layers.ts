@@ -84,12 +84,24 @@ import { getActiveWallet } from './session'
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
  *   Each change lock is derived from a random BRC-29 prefix/suffix that the
- *   seed cannot regenerate. `derivedChangeEcho.ts` keeps a durable,
- *   identity-scoped copy that survives factory wipe; `echoAllDerivedOutputs`
- *   refreshes it before any wipe or History replace and after every recompose,
- *   and `recoverEchoedChange` re-imports echoed coins that are unspent on chain
- *   but missing from `localState`. Change scripts are rebuilt from those keys
+ *   seed cannot regenerate. Change scripts are rebuilt from those keys
  *   (`changeScriptFate.derivedLockingScript`), never guessed from an address.
+ * - **Custody journal** (`custodyJournal.ts`) → how to spend every output this
+ *   wallet ever controlled, outside `localState`. Each entry is exactly an
+ *   `internalizeAction` output spec (`wallet payment` prefix/suffix/sender, or
+ *   `basket insertion` basket/replayable customInstructions/tags), immutable
+ *   and content-addressed; a `spent` entry is written only on chain evidence,
+ *   `released` only by a user relinquish (and never retires a wallet payment).
+ *   Copies merge by set union and are named by a root hash, so no replica is
+ *   ever thinner than another. Capture wraps the wallet's own `createAction` /
+ *   `signAction` / `internalizeAction` (`custodyJournalCapture.ts`) — every
+ *   output is journaled before the call returns, ahead of propagation — plus a
+ *   full sweep before any wipe or History replace. It survives factory wipe,
+ *   replicates sealed (HKDF root key, AES-GCM) beside BRC-39 as
+ *   `custody.journal` with conditional writes (`custodyJournalBackup.ts`), and
+ *   after every recompose `custodyJournalRecovery.ts` re-internalizes each
+ *   journaled output the chain says is unspent and `localState` has no row for.
+ *   `derivedChangeEcho.ts` is the legacy capped copy; it feeds the journal.
  * - **Items (1sat / recursive)** → basket `1sat` in `localState`.
  *   - **BRC-150 remittance** (`oneSatProvenance.ts`) — tip→origin proof in
  *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
@@ -331,6 +343,10 @@ export const WALLET_LAYER_MODULES = {
     "legacyImportGuard.ts",
     "derivedChangeEcho.ts",
     "reimportDerivedChange.ts",
+    "custodyJournal.ts",
+    "custodyJournalCapture.ts",
+    "custodyJournalRecovery.ts",
+    "custodyJournalBackup.ts",
     "reclaimSealBatch.ts",
     "oneSatImportGuard.ts",
     "oneSatCollectableGuard.ts",

@@ -425,6 +425,15 @@ async function buildWallet(args: WalletBootArgs, databaseName: string): Promise<
   // No signature leaves the toolbox until every coin it spends is proven good.
   const { installSpendCertainty } = await import('./inputCertainty')
   installSpendCertainty(setup.wallet, args.chain)
+  // Outermost: every action's spend recipes are journaled before it returns.
+  const { installCustodyJournal } = await import('./custodyJournalCapture')
+  installCustodyJournal(setup.wallet, {
+    identityKey: setup.identityKey || identityKey,
+    accountIndex,
+    chain: args.chain,
+  })
+  const { startCustodyJournalBackup } = await import('./custodyJournalBackup')
+  startCustodyJournalBackup()
   syncMonitorChaintracks(setup.monitor, (setup.services as Services).options.chaintracks)
 
   try {

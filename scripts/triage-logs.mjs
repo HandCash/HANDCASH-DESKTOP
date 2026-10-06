@@ -391,6 +391,7 @@ function sessionFacts(header, events) {
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
     // and whether legacy deposits were proven by their own path or parents.
+    // `journal`: custody-journal captures, refused writes, backup syncs.
     derivations,
     // Incoming packages refused before crediting because an unmined tx in
     // them is not final (BRC-67 step 4), or its lock time met no chain height.
@@ -2371,10 +2372,19 @@ function unscriptedChangeFacts(events) {
   }
 }
 
-const ECHOED_RE = /^\[derived-change\] echoed (\d+) derivation\(s\) from (\d+) output row\(s\)(?: done (\d+)ms)?/
+const ECHOED_RE =
+  /^\[derived-change\] echoed (\d+) derivation\(s\)(?:, journaled (\d+) recipe\(s\))? from (\d+) output row\(s\)(?: done (\d+)ms)?/
 const ECHO_RECOVERY_RE =
-  /^\[derived-change\] echo recovery checked=(\d+) live=(\d+) sats=(\d+) imported=(\d+) failed=(\d+) spent=(\d+) unknown=(\d+) done (\d+)ms/
+  /^\[(?:derived-change\] echo|custody-journal\]) recovery checked=(\d+) live=(\d+) sats=(\d+) imported=(\d+) failed=(\d+) spent=(\d+) unknown=(\d+) done (\d+)ms/
 const NO_ECHO_RE = /^\[derived-change\] ([0-9a-f]{12})… (\d+) output\(s\) live on chain with no toolbox row and no remittance echo/
+const NO_RECIPE_RE = /^\[custody-journal\] (\d+) outpoint\(s\) live on chain with no recipe/
+const JOURNAL_CAPTURED_RE = /^\[custody-journal\] captured (\d+) new recipe\(s\) from (\d+) output row\(s\) done (\d+)ms/
+const JOURNAL_REFUSED_RE = /^\[custody-journal\] write refused — (\d+) recipe\(s\) held in memory only \((\d+) total\)/
+const JOURNAL_WRITE_AHEAD_RE = /^\[custody-journal\] write-ahead failed after (\w+)/
+const JOURNAL_BACKUP_RE =
+  /^\[custody-journal\] backup (\S+) pulled=(\d+) pushed=(true|false) entries=(\d+) root=([0-9a-f]+) done (\d+)ms/
+const JOURNAL_BACKUP_FAIL_RE = /^\[custody-journal\] backup (\S+) failed: (.*)$/
+const JOURNAL_UNREADABLE_RE = /^\[custody-journal\] remote object unreadable/
 const DERIVED_SCRIPT_RE = /^\[change-script\] derived (\d+) change locking script/
 const LEGACY_BEEF_RE = /^\[legacy-beef\] ([0-9a-f]{12})… via=(proof|parents|tip)( FAIL)?/
 const REPLACE_RE = /^\[cloud-backup\] replace local history\b/
@@ -2389,6 +2399,17 @@ function derivationFacts(events) {
     noEcho: [],
     derivedScripts: 0,
     legacyProof: { proof: 0, parents: 0, tipFail: 0 },
+    // Custody journal: recipes captured, writes the store refused, off-device copy.
+    journal: {
+      captured: 0,
+      sweeps: 0,
+      slowestSweepMs: 0,
+      refusedWrites: 0,
+      heldInMemory: 0,
+      writeAheadFailures: {},
+      noRecipe: 0,
+      backup: { syncs: 0, pushes: 0, pulled: 0, failures: [], unreadable: 0, lastEntries: null, lastRoot: null },
+    },
   }
   for (const e of events) {
     const key = `${e.at}|${e.text}`
@@ -2400,7 +2421,54 @@ function derivationFacts(events) {
     }
     let m = ECHOED_RE.exec(e.text)
     if (m) {
-      facts.echoes.push({ added: Number(m[1]), rows: Number(m[2]), ms: m[3] ? Number(m[3]) : null })
+      facts.echoes.push({
+        added: Number(m[1]),
+        journaled: m[2] != null ? Number(m[2]) : null,
+        rows: Number(m[3]),
+        ms: m[4] ? Number(m[4]) : null,
+      })
+      continue
+    }
+    m = JOURNAL_CAPTURED_RE.exec(e.text)
+    if (m) {
+      facts.journal.captured += Number(m[1])
+      facts.journal.sweeps += 1
+      facts.journal.slowestSweepMs = Math.max(facts.journal.slowestSweepMs, Number(m[3]))
+      continue
+    }
+    m = JOURNAL_REFUSED_RE.exec(e.text)
+    if (m) {
+      facts.journal.refusedWrites += 1
+      facts.journal.heldInMemory = Math.max(facts.journal.heldInMemory, Number(m[2]))
+      continue
+    }
+    m = JOURNAL_WRITE_AHEAD_RE.exec(e.text)
+    if (m) {
+      facts.journal.writeAheadFailures[m[1]] = (facts.journal.writeAheadFailures[m[1]] ?? 0) + 1
+      continue
+    }
+    m = NO_RECIPE_RE.exec(e.text)
+    if (m) {
+      facts.journal.noRecipe += Number(m[1])
+      continue
+    }
+    m = JOURNAL_BACKUP_RE.exec(e.text)
+    if (m) {
+      const b = facts.journal.backup
+      b.syncs += 1
+      b.pulled += Number(m[2])
+      if (m[3] === 'true') b.pushes += 1
+      b.lastEntries = Number(m[4])
+      b.lastRoot = m[5]
+      continue
+    }
+    m = JOURNAL_BACKUP_FAIL_RE.exec(e.text)
+    if (m) {
+      facts.journal.backup.failures.push({ reason: m[1], error: m[2].slice(0, 120) })
+      continue
+    }
+    if (JOURNAL_UNREADABLE_RE.test(e.text)) {
+      facts.journal.backup.unreadable += 1
       continue
     }
     m = ECHO_RECOVERY_RE.exec(e.text)
@@ -3895,6 +3963,29 @@ function report(state, answers) {
     if (der.derivedScripts) console.log(`  ${der.derivedScripts} locking script(s) rebuilt from BRC-29 keys`)
     if (lp.proof || lp.parents || lp.tipFail) {
       console.log(`  legacy deposits: ${lp.proof} own proof · ${lp.parents} via parents · ${lp.tipFail} unprovable`)
+    }
+  }
+
+  const cj = der?.journal
+  const cjb = cj?.backup
+  const writeAhead = Object.entries(cj?.writeAheadFailures ?? {})
+  if (cj && (cj.sweeps || cj.refusedWrites || cj.noRecipe || writeAhead.length || cjb.syncs || cjb.failures.length)) {
+    console.log('\nCustody journal (code-counted):')
+    if (cj.sweeps) console.log(`  ${cj.sweeps} sweep(s) captured ${cj.captured} new recipe(s), slowest ${cj.slowestSweepMs}ms`)
+    if (cj.refusedWrites) {
+      console.log(`  ${cj.refusedWrites} write(s) refused by the store — up to ${cj.heldInMemory} entr(ies) held in memory only`)
+    }
+    if (writeAhead.length) {
+      console.log(`  write-ahead failures: ${writeAhead.map(([step, n]) => `${step} ${n}`).join(', ')} (sweep catches them)`)
+    }
+    if (cj.noRecipe) console.log(`  ${cj.noRecipe} live outpoint(s) with no recipe anywhere`)
+    if (cjb.syncs || cjb.failures.length) {
+      console.log(
+        `  backup: ${cjb.syncs} sync(s) · ${cjb.pushes} push(es) · pulled ${cjb.pulled} · ${cjb.failures.length} failure(s)` +
+          `${cjb.unreadable ? ` · ${cjb.unreadable} unreadable remote(s) replaced` : ''}` +
+          `${cjb.lastEntries != null ? ` · last ${cjb.lastEntries} entries root ${cjb.lastRoot}` : ''}`,
+      )
+      for (const f of cjb.failures.slice(-3)) console.log(`    ${f.reason}: ${f.error}`)
     }
   }
 

@@ -23,6 +23,7 @@ const probeOutpointSpends = vi.fn()
 function makeWallet(identityKey = '02ab') {
   return {
     identityKey,
+    accountIndex: 0,
     chain: 'main' as const,
     wallet: {
       internalizeAction: (...args: unknown[]) => internalizeAction(...args),
@@ -97,7 +98,7 @@ describe('reimportDerivedChangeOutpoints', () => {
     expect(result).toEqual({ imported: 1, skipped: 0, failed: 0 })
     expect(internalizeAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        description: 'Reimport derived change',
+        description: 'Recover from custody journal',
         outputs: [
           expect.objectContaining({
             outputIndex: 4,

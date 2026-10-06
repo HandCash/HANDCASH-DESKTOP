@@ -14,6 +14,7 @@
  * prefix/suffix of change outputs. Those exist nowhere else: a snapshot older
  * than the wiped store lacks them, and without them the coins are unspendable
  * (hc-a580a 2026-09-30: wipe + seed reimport stranded 1,007,412 live sats).
+ * The custody journal survives for the same reason; it is the superset.
  */
 import { storageRegistry } from '../storage/registry'
 
@@ -27,7 +28,10 @@ export const WIPE_SURVIVE_KEYS = new Set<string>([
 ])
 
 /** Prefixes that intentionally survive wipe. */
-export const WIPE_SURVIVE_PREFIXES: readonly string[] = [storageRegistry.derivedChangeEcho.key]
+export const WIPE_SURVIVE_PREFIXES: readonly string[] = [
+  storageRegistry.derivedChangeEcho.key,
+  storageRegistry.custodyJournal.key,
+]
 
 export function shouldWipeHandcashKey(key: string): boolean {
   if (!key.startsWith('handcash.')) return false

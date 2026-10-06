@@ -524,10 +524,13 @@ async function runHealCore(
     owner.guard();
   }
 
-  // Change whose toolbox row a restore or wipe removed has no row to reclaim;
-  // only its echoed derivation can bring it back.
+  // An output whose toolbox row a restore or wipe removed has no row to
+  // reclaim; only its custody-journal recipe can bring it back.
   if (opts.source === "manual") {
     try {
+      const { syncCustodyJournal } = await import("./custodyJournalBackup");
+      await syncCustodyJournal(owner.runtime.instance, "manual-heal");
+      owner.guard();
       const { recoverEchoedChange } = await import("./reimportDerivedChange");
       await recoverEchoedChange(owner.runtime.instance);
     } catch (err) {

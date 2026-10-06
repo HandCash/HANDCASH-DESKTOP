@@ -309,10 +309,11 @@ async function runRecomposeBody(
 const DERIVED_PASS_YIELD_MS = 2_000
 
 /**
- * After every recompose: bring back echoed change a restore left out, then
- * echo every derivation this store holds. A wipe or an older snapshot deletes
- * the only other copy of those random prefixes/suffixes, and change without
- * them is unspendable forever.
+ * After every recompose: union the off-device custody journal in, bring back
+ * every journaled output a restore or wipe left out, then journal every
+ * recipe this store holds. A wipe or an older snapshot deletes the only other
+ * copy of those random prefixes/suffixes, and change without them is
+ * unspendable forever.
  */
 function scheduleDerivedChangePass(runtime: WalletRuntime): void {
   setTimeout(() => {
@@ -322,6 +323,9 @@ function scheduleDerivedChangePass(runtime: WalletRuntime): void {
         if (!runtimeIsCurrent(runtime)) return
         await new Promise((resolve) => setTimeout(resolve, DERIVED_PASS_YIELD_MS))
       }
+      if (!runtimeIsCurrent(runtime)) return
+      const { syncCustodyJournal } = await import('./custodyJournalBackup')
+      await syncCustodyJournal(runtime.instance, 'recompose')
       if (!runtimeIsCurrent(runtime)) return
       const { echoAllDerivedOutputs, recoverEchoedChange } = await import(
         './reimportDerivedChange'

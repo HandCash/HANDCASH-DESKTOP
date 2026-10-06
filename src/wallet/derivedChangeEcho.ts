@@ -16,7 +16,8 @@ import { getActiveWallet } from './session'
  */
 import { Utils } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys'
+import { appendCustody } from './custodyJournal'
 import { storageRegistry } from '../storage/registry'
 import { parseOutpoint } from './legacyScan'
 import { type ActiveWallet } from './session'
@@ -158,7 +159,28 @@ export function rememberDerivedChange(echoes: DerivedChangeEcho[]): number {
     added += 1
   }
   if (added > 0) writeEcho(known)
+  journalEchoes(echoes)
   return added
+}
+
+/** The echo is capped and forgets; the journal keeps every recipe. */
+function journalEchoes(echoes: DerivedChangeEcho[]): void {
+  const { identityKey, accountIndex, chain } = peekAccountLocalKeyScope()
+  if (!identityKey) return
+  appendCustody(
+    { identityKey, accountIndex, chain },
+    echoes.map((echo) => ({
+      k: 'out',
+      op: `${echo.txid}.${echo.vout}`,
+      sats: echo.satoshis,
+      r: {
+        p: 'wallet payment',
+        prefix: echo.derivationPrefix,
+        suffix: echo.derivationSuffix,
+        ...(echo.senderIdentityKey ? { sender: echo.senderIdentityKey } : {}),
+      },
+    })),
+  )
 }
 
 export function rememberDerivedChangeFromRows(rows: DerivedChangeRow[]): number {
