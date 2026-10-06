@@ -1,0 +1,194 @@
+import { P2PKH, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
+
+import type { KeyDeriver } from './importSource'
+import {
+  UTXO_SET_PROBE_PATHS,
+  fetchHandCashUtxoSet,
+  readUnspentOutpoints,
+  utxoSetPreimage,
+  utxoSetSealingKey,
+  verifyUtxoSet,
+  type HandCashUtxo,
+} from './handcashUtxoSet'
+
+function makeDeriver(): KeyDeriver {
+  const keys = new Map<string, PrivateKey>()
+  return {
+    templates: [],
+    fixed: [],
+    identity: null,
+    privateKeyAt: (path) => {
+      let key = keys.get(path)
+      if (!key) keys.set(path, (key = PrivateKey.fromRandom()))
+      return key
+    },
+  }
+}
+
+const enc = new TextEncoder()
+const b64 = (bytes: Uint8Array) => Utils.toBase64(Array.from(bytes))
+const unb64 = (s: string) => new Uint8Array(Utils.toArray(s, 'base64'))
+
+async function seal(value: unknown, responseKey: string, nonce: string) {
+  const pair = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair
+  const key = await utxoSetSealingKey(pair.privateKey, unb64(responseKey), nonce)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const gz = new Uint8Array(
+    await new Response(new Blob([enc.encode(JSON.stringify(value))]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer(),
+  )
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(nonce) }, key, gz))
+  return { v: 1, key: b64(new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))), iv: b64(iv), data: b64(data) }
+}
+
+type Body = {
+  v: number
+  timestamp: number
+  nonce: string
+  responseKey: string
+  after: string | null
+  limit: number
+  proofs: Array<{ publicKey: string; signature: string }>
+}
+
+/** The worker's contract: every proof over the whole request, answer sealed to its key. */
+function fakeWorker(pages: Array<{ utxos: unknown[]; next: string | null }>, opts: { tamper?: boolean; sealTo?: string } = {}) {
+  const seen: Body[] = []
+  const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as Body
+    seen.push(body)
+    const message = Utils.toArray(utxoSetPreimage(body), 'utf8')
+    for (const proof of body.proofs) {
+      if (!PublicKey.fromString(proof.publicKey).verify(message, Signature.fromDER(proof.signature, 'hex'))) {
+        return new Response(JSON.stringify({ error: 'bad-signature' }), { status: 401 })
+      }
+    }
+    const page = pages[seen.length - 1]
+    const sealed = await seal(page, opts.sealTo ?? body.responseKey, body.nonce)
+    if (opts.tamper) sealed.data = b64(unb64(sealed.data).map((b, i) => (i === 5 ? b ^ 1 : b)))
+    return new Response(JSON.stringify(sealed))
+  })
+  return { fetchImpl, seen }
+}
+
+const utxo = (n: number, over: Partial<HandCashUtxo> = {}): HandCashUtxo => ({
+  txid: n.toString(16).padStart(64, '0'),
+  vout: 0,
+  satoshis: 1,
+  script: '',
+  address: '',
+  path: 'm/9/0',
+  type: 'standard',
+  status: 'available',
+  height: 900_000,
+  ...over,
+})
+
+describe('fetchHandCashUtxoSet', () => {
+  it('signs every request with the probe keys and opens every sealed page', async () => {
+    const deriver = makeDeriver()
+    const worker = fakeWorker([
+      { utxos: [utxo(1)], next: 'a'.repeat(24) },
+      { utxos: [utxo(2), { txid: 'bad' }], next: null },
+    ])
+    const progress: number[] = []
+    const set = await fetchHandCashUtxoSet({ deriver, baseUrl: 'https://utxos.test', fetchImpl: worker.fetchImpl, onProgress: (n) => progress.push(n) })
+
+    expect(set).toEqual({ kind: 'fetched', utxos: [utxo(1), utxo(2)] })
+    expect(progress).toEqual([1, 2])
+    expect(worker.seen.map((b) => b.after)).toEqual([null, 'a'.repeat(24)])
+    expect(worker.seen[0].proofs.map((p) => PublicKey.fromString(p.publicKey).toAddress())).toEqual(
+      UTXO_SET_PROBE_PATHS.map((path) => deriver.privateKeyAt(path).toPublicKey().toAddress()),
+    )
+    expect(new Set(worker.seen.map((b) => b.responseKey)).size).toBe(2)
+    expect(new Set(worker.seen.map((b) => b.nonce)).size).toBe(2)
+  })
+
+  it('refuses an answer that was altered or sealed to another key', async () => {
+    const tampered = fakeWorker([{ utxos: [utxo(1)], next: null }], { tamper: true })
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: tampered.fetchImpl })).toMatchObject({
+      kind: 'refused',
+      reason: 'bad-response',
+    })
+    const stranger = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair
+    const sealTo = b64(new Uint8Array(await crypto.subtle.exportKey('raw', stranger.publicKey)))
+    const misdirected = fakeWorker([{ utxos: [utxo(1)], next: null }], { sealTo })
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: misdirected.fetchImpl })).toMatchObject({
+      kind: 'refused',
+      reason: 'bad-response',
+    })
+  })
+
+  it('names why the set could not be had', async () => {
+    const answer = (status: number, body: unknown) => vi.fn(async () => new Response(JSON.stringify(body), { status }))
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: answer(404, { error: 'unknown-keys' }) })).toMatchObject({
+      reason: 'unknown-keys',
+    })
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: answer(502, { error: 'database-unavailable' }) })).toMatchObject({
+      reason: 'unavailable',
+      detail: 'database-unavailable',
+    })
+    const offline = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: offline })).toMatchObject({ reason: 'unavailable' })
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: offline, shouldStop: () => true })).toMatchObject({
+      reason: 'stopped',
+    })
+  })
+})
+
+describe('verifyUtxoSet', () => {
+  it('keeps only rows whose path these keys derive to the named address and script', () => {
+    const deriver = makeDeriver()
+    const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
+    const lock = (path: string) => new P2PKH().lock(at(path)).toHex()
+    const inscribed = (path: string) => `0063036f7264510a746578742f706c61696e000268696800${lock(path)}`
+    const verified = verifyUtxoSet(deriver, [
+      utxo(1, { path: 'm/0/3', address: at('m/0/3'), script: lock('m/0/3'), satoshis: 5_000 }),
+      utxo(2, { path: 'm/9/7', address: at('m/9/7'), script: inscribed('m/9/7') }),
+      utxo(2, { path: 'm/9/7', address: at('m/9/7'), script: inscribed('m/9/7') }),
+      utxo(3, { path: 'm/9/7', address: at('m/9/7'), script: inscribed('m/9/7') }),
+      utxo(4, { path: 'm/1/2', address: at('m/1/9'), script: lock('m/1/9') }),
+      utxo(5, { path: 'm/1/2', address: at('m/1/2'), script: lock('m/1/9') }),
+      utxo(6, { path: "m/44'/0'/0'/0/0", address: '1x', script: '' }),
+    ])
+    expect(verified.addresses.map((a) => [a.path, a.label])).toEqual([
+      ['m/0/3', 'HandCash'],
+      ['m/9/7', 'HandCash items'],
+    ])
+    expect([...verified.cashAddresses]).toEqual([at('m/0/3')])
+    expect(verified.itemOutpoints.get(at('m/9/7'))).toEqual([`${utxo(2).txid}_0`, `${utxo(3).txid}_0`])
+    expect(verified.rejected).toBe(3)
+  })
+})
+
+describe('readUnspentOutpoints', () => {
+  const outpoints = Array.from({ length: 150 }, (_, i) => `${(i + 1).toString(16).padStart(64, '0')}_0`)
+
+  it('counts only outpoints the index shows unspent, a hundred per request', async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('https://ordinals.gorillapool.io/api/txos/outpoints?script=false')
+      const asked = JSON.parse(String(init?.body)) as string[]
+      return new Response(
+        JSON.stringify(asked.slice(1).map((outpoint, i) => ({ outpoint, spend: i % 2 ? 'f'.repeat(64) : '' }))),
+      )
+    })
+    const read = await readUnspentOutpoints({ chain: 'main', outpoints, fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(read.unspent.size).toBe(50 + 25)
+    expect(read.unspent.has(outpoints[0])).toBe(false)
+    expect(read).toMatchObject({ failed: 0, stopped: false })
+  })
+
+  it('retries a chunk once, then counts it as failed', async () => {
+    const fetchImpl = vi.fn(async () => new Response('busy', { status: 503 }))
+    const read = await readUnspentOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 10), fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(read).toMatchObject({ failed: 10 })
+    expect(read.unspent.size).toBe(0)
+  })
+})

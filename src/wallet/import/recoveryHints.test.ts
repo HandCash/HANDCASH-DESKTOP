@@ -157,6 +157,13 @@ describe('recoveryHintsOffer', () => {
     expect(recoveryHintsOffer(handcash({ scanAt: 1_500 }), 2_000)).toEqual({ kind: 'used' })
   })
 
+  it('offers nothing once the export was read from its UTXO set', () => {
+    rememberRecoveryHints(hints({ receivedAt: 1_000 }))
+    expect(
+      recoveryHintsOffer({ kind: 'handcash', handle: null, scan: { at: 500, via: 'handcash-utxo-set' } }, 2_000),
+    ).toEqual({ kind: 'none' })
+  })
+
   it('names both handles when the signed-in account is not the one these keys prove', () => {
     rememberRecoveryHints(hints({ receivedAt: 1_000, handle: 'bob' }))
     expect(recoveryHintsOffer(handcash({ handle: '$Alice' }), 2_000)).toEqual({

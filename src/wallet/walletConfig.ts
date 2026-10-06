@@ -45,6 +45,16 @@ export const DEFAULT_HISTORY_BACKUP_SETUP_URL =
     import.meta.env.VITE_HISTORY_BACKUP_BASE_URL.trim()) ||
   DEFAULT_BRC_CLOUD_BASE_URL
 
+/**
+ * HandCash UTXO set by key proof (BRC-CLOUD `workers/handcash-utxos`). Requests
+ * are signed by the export's own keys; answers are sealed to a one-time key.
+ */
+export const HANDCASH_UTXO_SET_URL =
+  (typeof import.meta !== 'undefined' &&
+    typeof import.meta.env?.VITE_HANDCASH_UTXO_SET_URL === 'string' &&
+    import.meta.env.VITE_HANDCASH_UTXO_SET_URL.trim()) ||
+  'https://handcash-utxos.bcryderman.workers.dev'
+
 /** Marketplace operator identity committed by every signed listing. */
 export const MARKET_FEE_IDENTITY_KEY =
   (typeof import.meta !== 'undefined' &&

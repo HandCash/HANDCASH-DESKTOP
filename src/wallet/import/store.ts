@@ -28,8 +28,11 @@ export type SourceScan = {
   checked: number
   addresses: DiscoveredAddress[]
   holdings: AddressHoldings[]
-  /** Set when the HandCash history pass covered the reported balance and items. */
-  via?: 'handcash-history'
+  /**
+   * How a HandCash export was read when not by the full walk: its UTXO set from
+   * HandCash, checked on chain, or the history pass that covered the balance.
+   */
+  via?: 'handcash-utxo-set' | 'handcash-history'
 }
 
 export type SweepSummary = {

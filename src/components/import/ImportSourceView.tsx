@@ -29,6 +29,13 @@ export type SourceFace =
   | 'confirmingRemove'
   | 'removing'
 
+
+const SCAN_VIA = {
+  'handcash-utxo-set': ' · from your HandCash account, checked on chain',
+  'handcash-history': ' · matched to your HandCash balance',
+  walk: '',
+} as const
+
 function HeldList({ held }: { held: HeldTally }) {
   const rows = (Object.entries(held) as Array<[ImportHoldReason, number | undefined]>).filter(
     ([, count]) => (count ?? 0) > 0,
@@ -189,9 +196,7 @@ export function ImportSourceView(props: {
         <p className="confirm-password-lede">
           {IMPORT_SOURCE_LABELS[source.kind]} · saved {new Date(source.createdAt).toLocaleDateString()}
           {scan
-            ? ` · ${scan.checked.toLocaleString()} addresses checked${scan.complete ? '' : ' (incomplete)'}${
-                scan.via === 'handcash-history' ? ' · matched to your HandCash balance' : ''
-              }`
+            ? ` · ${scan.checked.toLocaleString()} addresses checked${scan.complete ? '' : ' (incomplete)'}${SCAN_VIA[scan.via ?? 'walk']}`
             : ' · not scanned yet'}
         </p>
       </div>

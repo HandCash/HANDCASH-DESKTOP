@@ -31,6 +31,7 @@ import {
   takeImportIntent,
   updateImportedSource,
   type ImportedSource,
+  type ScanProgress,
 } from '../../wallet/import'
 import { playWalletSound } from '../../wallet/soundService'
 import { toastError, toastSuccess } from '../../wallet/toast'
@@ -58,6 +59,23 @@ type IntentRoute = 'route' | 'absorb' | 'hints' | null
  * the BRC-100 identity and the account switcher; value moves only on an
  * explicit, compatible-only sweep. Every face is `legacyImportMachine`.
  */
+
+function scanProgressMessage(p: ScanProgress): { message: string; percent: number | null } {
+  const of = (done: number, total: number) => (total > 0 ? Math.round((done / total) * 100) : null)
+  switch (p.phase) {
+    case 'utxoSet':
+      return { message: `Fetching your coins from HandCash · ${p.fetched.toLocaleString()}`, percent: null }
+    case 'discover':
+      return { message: `Checking ${p.walk} · ${p.checked.toLocaleString()} addresses · ${p.found} used`, percent: null }
+    case 'items':
+      return { message: `Checking your items on chain · ${p.done.toLocaleString()}/${p.total.toLocaleString()}`, percent: of(p.done, p.total) }
+    case 'history':
+      return { message: `Finding your coins in recent history · ${p.done.toLocaleString()} transactions read`, percent: of(p.done, p.total) }
+    case 'holdings':
+      return { message: `Reading holdings · ${p.done}/${p.total}`, percent: of(p.done, p.total) }
+  }
+}
+
 export function ImportPanel() {
   const [snapshot, send, actor] = useMachine(legacyImportMachine)
   const [sources, setSources] = useState<ImportedSource[]>([])
@@ -148,25 +166,7 @@ export function ImportPanel() {
       await scanImportedSource({
         sourceId,
         shouldStop: stopRequested,
-        onProgress: (p) =>
-          send(
-            p.phase === 'discover'
-              ? {
-                  type: 'PROGRESS',
-                  message: `Checking ${p.walk} · ${p.checked.toLocaleString()} addresses · ${p.found} used`,
-                  percent: null,
-                }
-              : {
-                  type: 'PROGRESS',
-                  message:
-                    p.phase === 'items'
-                      ? `Locating your items · ${p.done.toLocaleString()}/${p.total.toLocaleString()}`
-                      : p.phase === 'history'
-                        ? `Finding your coins in recent history · ${p.done.toLocaleString()} transactions read`
-                        : `Reading holdings · ${p.done}/${p.total}`,
-                  percent: p.total > 0 ? Math.round((p.done / p.total) * 100) : null,
-                },
-          ),
+        onProgress: (p) => send({ type: 'PROGRESS', ...scanProgressMessage(p) }),
       })
       send({ type: 'SCANNED' })
     } catch (err) {

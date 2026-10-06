@@ -127,7 +127,7 @@ export function recoveryHintsFor(
 
 /**
  * What a saved source's view offers about HandCash history:
- * - `none`: not a HandCash export;
+ * - `none`: not a HandCash export, or one already read from its UTXO set;
  * - `ask`: no history on this device — the user can sign in to send it;
  * - `ready`: history arrived after the last scan, so a rescan would use it;
  * - `used`: the last scan ran after this history arrived, whether it settled
@@ -142,10 +142,10 @@ export type RecoveryHintsOffer =
   | { kind: 'mismatch'; hinted: string; saved: string }
 
 export function recoveryHintsOffer(
-  source: { kind: string; handle: { handle: string } | null; scan: { at: number } | null },
+  source: { kind: string; handle: { handle: string } | null; scan: { at: number; via?: string } | null },
   now = Date.now(),
 ): RecoveryHintsOffer {
-  if (source.kind !== 'handcash') return { kind: 'none' }
+  if (source.kind !== 'handcash' || source.scan?.via === 'handcash-utxo-set') return { kind: 'none' }
   const hints = recoveryHintsFor(source, now)
   if (!hints) {
     const saved = source.handle?.handle.trim().replace(/^\$/, '').toLowerCase()

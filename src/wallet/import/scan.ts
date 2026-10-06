@@ -9,7 +9,8 @@ import {
   type HistoryLookup,
   type ItemsLookup,
 } from './discovery'
-import { inspectHoldings, type AddressHoldings } from './holdings'
+import { emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
+import { fetchHandCashUtxoSet, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import {
   createHistoryReader,
@@ -23,6 +24,7 @@ import {
 import { loadImportedSources, updateImportedSource, type ImportedSource, type SourceScan } from './store'
 
 export type ScanProgress =
+  | { phase: 'utxoSet'; fetched: number }
   | { phase: 'items'; done: number; total: number }
   | { phase: 'history'; done: number; total: number }
   | { phase: 'discover'; checked: number; found: number; walk: string }
@@ -55,6 +57,7 @@ export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource
   const hints = args.gap == null ? recoveryHintsFor(source) : null
   const cache = new Map<string, AddressHoldings>()
   const scan =
+    (args.gap == null && source.secret.kind === 'handcash' ? await utxoSetScan(deriver, active.chain, args, cache) : null) ??
     (hints ? await hintedScan(deriver, active.chain, hints, args, cache) : null) ??
     (await walkScan(
       deriver,
@@ -98,6 +101,63 @@ async function walkScan(
     checked: discovered.checked,
     addresses: discovered.addresses,
     holdings,
+  }
+}
+
+/**
+ * The HandCash export read from its own account's UTXO set, or null when the
+ * set cannot be had and the hinted pass or full walk must run instead.
+ *
+ * Rows count only when the keys derive their path to their address. Cash and
+ * token addresses are read live; one-sat items are counted by outpoint where
+ * the 1Sat index shows them unspent.
+ */
+export async function utxoSetScan(
+  deriver: KeyDeriver,
+  chain: Chain,
+  args: ScanArgs,
+  cache: Map<string, AddressHoldings> = new Map(),
+): Promise<SourceScan | null> {
+  const set = await fetchHandCashUtxoSet({
+    deriver,
+    onProgress: (fetched) => args.onProgress?.({ phase: 'utxoSet', fetched }),
+    shouldStop: args.shouldStop,
+  })
+  if (set.kind === 'refused') return null
+  const verified = verifyUtxoSet(deriver, set.utxos)
+  if (set.utxos.length > 0 && verified.addresses.length === 0) {
+    appendAppLog('warn', `[import] utxo set refused reason=underived rows=${set.utxos.length} — falling back`)
+    return null
+  }
+  const items = await readUnspentOutpoints({
+    chain,
+    outpoints: [...verified.itemOutpoints.values()].flat(),
+    onProgress: (done, total) => args.onProgress?.({ phase: 'items', done, total }),
+    shouldStop: args.shouldStop,
+  })
+  const read = await inspectHoldings({
+    addresses: verified.addresses,
+    chain,
+    mayHold: verified.cashAddresses,
+    cache,
+    onProgress: (done, total) => args.onProgress?.({ phase: 'holdings', done, total }),
+    shouldStop: args.shouldStop,
+  })
+  const byAddress = new Map(read.map((h) => [h.address, h]))
+  const holdings = verified.addresses.map((address) => {
+    const live = byAddress.get(address.address)
+    if (live && verified.cashAddresses.has(address.address)) return live
+    const itemCount = (verified.itemOutpoints.get(address.address) ?? []).filter((o) => items.unspent.has(o)).length
+    return { ...(live ?? emptyHoldings(address)), itemCount }
+  })
+  const stopped = items.stopped || args.shouldStop?.() === true || read.length < verified.addresses.length
+  return {
+    at: Date.now(),
+    complete: !stopped && items.failed === 0,
+    checked: verified.addresses.length,
+    addresses: verified.addresses,
+    holdings,
+    via: 'handcash-utxo-set',
   }
 }
 

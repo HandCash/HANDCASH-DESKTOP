@@ -2283,6 +2283,10 @@ const IMPORT_LINES = [
   ['arrived', /^\[import\] HandCash history arrived txids=(\d+)/],
   ['noHints', /^\[import\] key recovery opened without HandCash history/],
   ['mismatch', /^\[import\] HandCash history is for \$(\S+), these keys prove \$(\S+)/],
+  ['utxoSet', /^\[import\] utxo set done (\d+)ms utxos=(\d+) pages=(\d+)/],
+  ['utxoSetRefused', /^\[import\] utxo set refused reason=(\S+)(?: detail=(.*?))?(?: after (\d+)ms| rows=(\d+)|$)/],
+  ['utxoSetVerified', /^\[import\] utxo set verified addresses=(\d+) cash=(\d+) itemAddresses=(\d+) rejected=(\d+)/],
+  ['utxoSetItems', /^\[import\] utxo set items done (\d+)ms outpoints=(\d+) unspent=(\d+) failed=(\d+)/],
   ['itemOwners', /^\[import\] item owners done (\d+)ms origins=(\d+) located=(\d+) unspent=(\d+) owners=(\d+)(?: missing=(\d+))? failed=(\d+)/],
   ['history', /^\[import\] hinted history done (\d+)ms txs=(\d+) unknown=(\d+) failed=(\d+) addresses=(\d+)(?: upTo=(\d+)\/(\d+))?/],
   ['window', /^\[import\] hinted window txs=(\d+)\/(\d+) mayHold=(\d+) used=(\d+) verdict=(\S+)/],
@@ -2310,7 +2314,11 @@ function legacyImportFacts(events) {
       counts[step] = (counts[step] ?? 0) + 1
       const n = (i) => (m[i] == null ? null : /^\d+$/.test(m[i]) ? Number(m[i]) : m[i])
       const detail =
-        step === 'hints' ? { txids: n(1), complete: m[2] === 'true', sats: n(3), items: n(4), origins: n(5) }
+        step === 'utxoSet' ? { ms: n(1), utxos: n(2), pages: n(3) }
+        : step === 'utxoSetRefused' ? { reason: m[1], detail: m[2] ?? null, ms: n(3) }
+        : step === 'utxoSetVerified' ? { addresses: n(1), cashAddresses: n(2), itemAddresses: n(3), rejected: n(4) }
+        : step === 'utxoSetItems' ? { ms: n(1), outpoints: n(2), unspent: n(3), failed: n(4) }
+        : step === 'hints' ? { txids: n(1), complete: m[2] === 'true', sats: n(3), items: n(4), origins: n(5) }
         : step === 'itemOwners' ? { ms: n(1), origins: n(2), located: n(3), unspent: n(4), owners: n(5), missing: n(6), failed: n(7) }
         : step === 'window' ? { txsRead: n(1), txsTotal: n(2), mayHold: n(3), used: n(4), verdict: m[5] }
         : step === 'arrived' ? { txids: n(1) }
