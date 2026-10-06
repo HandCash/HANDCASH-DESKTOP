@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.460] - 2026-10-06
+
+### Changed
+
+- **Importing chosen items is much faster.** When you select items in Import → Browse items, they now move together, up to 25 in each transaction, instead of one transaction per item. Their source transactions are fetched in parallel, and the saved list and scan counts are updated once per batch. A selection of hundreds now takes a handful of transactions. Progress and Stop update between batches of 100. If the wallet runs out of BSV for fees, the items it could not fund stay selected so you can try again after adding funds.
+
 ## [1.3.459] - 2026-10-06
 
 ### Changed
