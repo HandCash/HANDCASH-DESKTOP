@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.463] - 2026-10-06
+
+### Fixed
+- Collect and Import: the shelf face pile is now a compact overlapping deck of rounded cards (up to four, about 84px), so shelf names are no longer cut off. Each card holds its art whole on a solid tile; the "+N" counter is gone since the item count already sits under the name.
+
 ## [1.3.462] - 2026-10-06
 
 ### Changed
