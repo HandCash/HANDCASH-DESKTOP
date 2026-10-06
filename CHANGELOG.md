@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.458] - 2026-10-06
+
+### Changed
+
+- **Browse items keeps its list.** The items a saved wallet holds are now saved on this device as they are found and read back a page at a time, instead of being held in memory and lost on close. Closing the browser, or the app, keeps everything found so far; the next visit paints the saved list at once and asks the 1Sat index only about outputs it has never checked. An item stays listed as long as the source still holds it, and leaves when it moves, is spent, or the saved wallet is removed.
+- **Browse items looks like Collect.** Items sit on the same shelves, with the same face pile, grid/list toggle (shared with Collect), search, and cards. Each card has **Import** and a select box; select single items or a whole shelf, then **Import (N)** from the action bar. Several items ask once, then move one transaction each, stopping at the first "add BSV" answer or when you press Stop.
+- **Shelved by the identity that minted them.** HandCash signed every item it minted with the creator's identity for that app (a Sigma signature on the mint). Where the 1Sat index reports that signer, items from the same creator share a shelf with an identicon of the signing address, marked as the index's claim rather than verified. Otherwise items shelve by app, then by collection, then under "No issuer".
+- **Fewer lag spikes after unlock.** Opening the vault's other accounts in the background now waits until the wallet has been idle for a while (15 s, 30 s on phones) instead of starting 5 s after unlock, so it no longer competes with the startup sync or a send. The item check also no longer keeps a second in-memory copy of every item it reads.
+
 ## [1.3.457] - 2026-10-06
 
 ### Added
