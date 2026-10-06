@@ -35,13 +35,26 @@ export function beginUiPhase(name: string): () => void {
   }
 }
 
-/** Run `fn` inside a named phase. */
+/** Phases shorter than this cannot own a freeze; logging them is noise. */
+const TIMED_PHASE_MS = 250
+
+const now = (): number =>
+  typeof performance?.now === 'function' ? performance.now() : Date.now()
+
+/**
+ * Run `fn` inside a named phase. A phase that ran {@link TIMED_PHASE_MS} or
+ * longer logs `[ui-phase] <name> done <N>ms`, which triage turns into a
+ * workload span — so a freeze inside it has an owner without anyone reading.
+ */
 export async function inUiPhase<T>(name: string, fn: () => Promise<T>): Promise<T> {
   const leave = beginUiPhase(name)
+  const startedAt = now()
   try {
     return await fn()
   } finally {
     leave()
+    const ms = Math.round(now() - startedAt)
+    if (ms >= TIMED_PHASE_MS) console.info(`[ui-phase] ${name} done ${ms}ms`)
   }
 }
 

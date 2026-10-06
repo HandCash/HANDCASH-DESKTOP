@@ -24,6 +24,7 @@ import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { normalizeLockingScriptHex } from './collectableTipKind'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { type ActiveWallet } from './session'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 import {
   applyCollectableRemittance,
   wireCollectableOutpoint,
@@ -248,7 +249,7 @@ export async function healMisfiledCollectables(
   const drop: Cand[] = []
   const move: Cand[] = []
 
-  const consider = (
+  const consider = async (
     basket: string,
     rows: Array<{
       outpoint: string
@@ -259,6 +260,7 @@ export async function healMisfiledCollectables(
     }>,
   ) => {
     for (const row of rows) {
+      if (uiBudgetExpired()) await yieldToUi()
       const op = wireCollectableOutpoint(row.outpoint)
       const sats =
         typeof row.satoshis === 'number'
@@ -296,7 +298,7 @@ export async function healMisfiledCollectables(
     }
   }
 
-  consider(BSV21_BASKET, bsv21Listed.outputs ?? [])
+  await consider(BSV21_BASKET, bsv21Listed.outputs ?? [])
 
   for (const cand of drop) {
     try {

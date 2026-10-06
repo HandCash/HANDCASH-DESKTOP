@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Utils } from '@bsv/sdk'
 
-import { installRawTxFallback } from './rawTxFallback'
+import { __resetRawTxMissesForTests, installRawTxFallback } from './rawTxFallback'
 
 vi.mock('./appLog', () => ({ appendAppLog: () => {} }))
 
@@ -32,6 +32,7 @@ function textResponse(body: string, ok = true): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  __resetRawTxMissesForTests()
 })
 
 describe('installRawTxFallback', () => {
@@ -119,6 +120,52 @@ describe('installRawTxFallback', () => {
     const local = fakeServices()
     installRawTxFallback(local as never, 'local' as never)
     expect(local.getRawTxServices.services).toHaveLength(1)
+  })
+
+  it('still asks the next host after one host 404s the txid', async () => {
+    const raw = Utils.toArray(RAW_HEX, 'hex')
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('bitails')
+        ? ({ ok: false, status: 404, text: async () => '' } as Response)
+        : ({
+            ok: true,
+            status: 200,
+            json: async () => ({ transaction: Utils.toBase64(raw) }),
+            text: async () => '',
+          } as Response),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const services = fakeServices()
+    installRawTxFallback(services as never, 'main')
+    const [bitails, jungle] = services.getRawTxServices.services
+    const txid = 'b'.repeat(64)
+
+    expect(await bitails.service(txid)).toEqual({ name: 'BitailsRawTx', txid })
+    expect(await jungle.service(txid)).toEqual({ name: 'JungleBusRawTx', txid, rawTx: raw })
+    // The 404 is remembered for Bitails alone.
+    await bitails.service(txid)
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('bitails'))).toHaveLength(1)
+  })
+
+  it('skips the default WhatsOnChain only after the WhatsOnChain hex endpoint 404s', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 404, text: async () => '' }) as Response),
+    )
+    const inner = vi.fn(async (txid: string) => ({ name: 'WhatsOnChain', txid }))
+    const services = fakeServices()
+    services.getRawTxServices.services[0].service = inner
+    installRawTxFallback(services as never, 'main')
+    const byName = new Map(services.getRawTxServices.services.map((s) => [s.name, s]))
+    const txid = 'c'.repeat(64)
+
+    await byName.get('BitailsRawTx')!.service(txid)
+    await byName.get('WhatsOnChain')!.service(txid)
+    expect(inner).toHaveBeenCalledTimes(1)
+
+    await byName.get('WhatsOnChainRawTxHex')!.service(txid)
+    await byName.get('WhatsOnChain')!.service(txid)
+    expect(inner).toHaveBeenCalledTimes(1)
   })
 
   it('does not register the same provider twice across boots', () => {

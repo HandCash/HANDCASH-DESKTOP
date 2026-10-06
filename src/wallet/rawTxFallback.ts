@@ -12,9 +12,11 @@
  * transaction it asked for, so a bad host can cost a round trip but cannot
  * corrupt a BEEF.
  *
- * A 404 from any host is treated as "this txid is not on the public indexers"
- * for 30 minutes. Later providers in the same walk (and later Refresh walks)
- * skip instead of Bitails → JungleBus → WoC 404 triplets that 429 WhatsOnChain.
+ * A 404 is remembered per host for 30 minutes, so later Refresh walks do not
+ * repeat Bitails → JungleBus → WoC 404 triplets that 429 WhatsOnChain. A 404
+ * from one host says nothing about the others: Bitails lags recent
+ * transactions, and letting its 404 skip JungleBus and WhatsOnChain failed
+ * item imports with "no provider had raw transaction" for txids both had.
  */
 import { Utils } from '@bsv/sdk'
 import type { Services } from '@bsv/wallet-toolbox-client'
@@ -26,11 +28,13 @@ import type { Chain } from './vault'
 const REQUEST_TIMEOUT_MS = 8_000
 const MISSING_TTL_MS = 30 * 60_000
 
-/** txids any public host already answered 404. */
+/** `host txid` pairs that host already answered 404. */
 const missingTxids = new Map<string, number>()
 
-function isMissingTxid(txid: string): boolean {
-  const key = txid.trim().toLowerCase()
+const missingKey = (host: string, txid: string) => `${host} ${txid.trim().toLowerCase()}`
+
+function isMissingTxid(host: string, txid: string): boolean {
+  const key = missingKey(host, txid)
   const at = missingTxids.get(key)
   if (at == null) return false
   if (Date.now() - at >= MISSING_TTL_MS) {
@@ -40,14 +44,20 @@ function isMissingTxid(txid: string): boolean {
   return true
 }
 
-function markMissingTxid(txid: string): void {
-  missingTxids.set(txid.trim().toLowerCase(), Date.now())
+function markMissingTxid(host: string, txid: string): void {
+  missingTxids.set(missingKey(host, txid), Date.now())
+}
+
+export function __resetRawTxMissesForTests(): void {
+  missingTxids.clear()
 }
 
 /** What `Services.getRawTx` expects back from a registered provider. */
 type RawTxResult = { name: string; txid: string; rawTx?: number[] }
 
 type FetchResult = number[] | null | 'missing'
+
+const WOC_HEX = 'WhatsOnChainRawTxHex'
 
 type RawTxSource = {
   name: string
@@ -105,7 +115,7 @@ function sourcesFor(chain: Chain): RawTxSource[] {
           fetchJungleBusTx(`https://junglebus.gorillapool.io/v1/transaction/get/${txid}`),
       },
       {
-        name: 'WhatsOnChainRawTxHex',
+        name: WOC_HEX,
         fetch: (txid) =>
           fetchHexTx(`https://api.whatsonchain.com/v1/bsv/main/tx/${txid}/hex`),
       },
@@ -151,10 +161,10 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
       collection.add({
         name: source.name,
         service: async (txid: string): Promise<RawTxResult> => {
-          if (isMissingTxid(txid)) return { name: source.name, txid }
+          if (isMissingTxid(source.name, txid)) return { name: source.name, txid }
           const rawTx = await source.fetch(txid)
           if (rawTx === 'missing') {
-            markMissingTxid(txid)
+            markMissingTxid(source.name, txid)
             return { name: source.name, txid }
           }
           // No bytes is reported as "this provider has nothing", which rotates
@@ -180,14 +190,15 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
     )
 
     // Toolbox still calls its default WhatsOnChain after our extras return
-    // empty. If Bitails already 404'd, skip that last hit so we do not 429.
+    // empty. When our WhatsOnChain hex endpoint already 404'd, the binary one
+    // is the same index — skip that last hit so we do not 429.
     for (const entry of collection.services ?? []) {
       if (entry.name !== 'WhatsOnChain') continue
       const raw = entry as { name: string; service?: (txid: string) => Promise<RawTxResult> }
       const inner = raw.service
       if (typeof inner !== 'function') continue
       raw.service = async (txid: string): Promise<RawTxResult> => {
-        if (isMissingTxid(txid)) return { name: 'WhatsOnChain', txid }
+        if (isMissingTxid(WOC_HEX, txid)) return { name: 'WhatsOnChain', txid }
         return inner(txid)
       }
     }

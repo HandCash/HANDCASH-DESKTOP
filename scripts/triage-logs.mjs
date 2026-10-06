@@ -288,7 +288,7 @@ function sessionFacts(header, events) {
   const workloads = workloadOverlap(events, stalls, blockedMsTotal)
   const precedingLines = stallTriggers(events, stalls, blockedMsTotal)
   const storage = storagePressure(events)
-  const bursts = stallBursts(events, stalls, workloads.spans)
+  const bursts = stallBursts(events, stalls, workloads.spans, workloads.waits)
   const custody = custodyFacts(events)
   const activity = activityFacts(events)
   const ui = uiFacts(events)
@@ -554,7 +554,7 @@ function workloadOverlap(events, stalls, blockedMsTotal) {
         ? Number((r.blockedMsInside / blockedMsTotal).toFixed(2))
         : 0,
     }))
-  return { rows, spans }
+  return { rows, spans, waits }
 }
 
 /** Family of the last line before each freeze started, grouped. */
@@ -701,9 +701,14 @@ function storagePressure(events) {
 }
 
 /** Cluster freezes closer than 3s and describe each cluster's surroundings. */
-function stallBursts(events, stalls, spans) {
+function stallBursts(events, stalls, spans, waits = []) {
   const GAP_MS = 3_000
-  const launches = events.filter((e) => /^App log capture started/.test(e.text)).map((e) => e.at)
+  const launchEvents = events.filter((e) => /^App log capture started/.test(e.text))
+  const launches = launchEvents.map((e) => e.at)
+  const buildAt = (t) => {
+    const launch = launchEvents.filter((e) => e.at <= t).at(-1)
+    return launch ? (/— v(\S+)/.exec(launch.text)?.[1] ?? 'unknown') : 'unknown'
+  }
   const sorted = [...stalls].sort((a, b) => stallStart(a) - stallStart(b))
   const clusters = []
   for (const s of sorted) {
@@ -725,7 +730,16 @@ function stallBursts(events, stalls, spans) {
         const o = overlapMs(sp.start, sp.end, c.start, c.end)
         if (o > 0) overlapping.set(sp.label, (overlapping.get(sp.label) ?? 0) + o)
       }
+      // What the wallet was logging while the thread was held — the owner
+      // when no `done <N>ms` span covers the burst.
+      const inside = new Map()
+      for (const e of nonFreeze) {
+        if (e.at < c.start || e.at > c.end) continue
+        const f = family(e.text).slice(0, 120)
+        inside.set(f, (inside.get(f) ?? 0) + 1)
+      }
       return {
+        build: buildAt(c.start),
         secondsAfterLaunch: launch != null ? Math.round((c.start - launch) / 1000) : null,
         durationSeconds: Math.round((c.end - c.start) / 1000),
         freezes: c.stalls.length,
@@ -735,7 +749,28 @@ function stallBursts(events, stalls, spans) {
           .sort((a, b) => b[1] - a[1])
           .slice(0, 4)
           .map(([label, ms]) => `${label} (${Math.round(ms)}ms overlap)`),
+        // Never owners on their own (see WAIT_SPAN_MS), but a long streaming
+        // job that is mostly network can still do its per-chunk work inside
+        // the burst — name it so the burst is not left ownerless.
+        overlappingWaits: [
+          ...new Set(
+            waits
+              .filter((sp) => overlapMs(sp.start, sp.end, c.start, c.end) > 0)
+              .map((sp) => `${sp.label} (${Math.round(sp.ms / 1000)}s)`),
+          ),
+        ].slice(0, 4),
         lineBefore: before ? family(before.text) : null,
+        linesBefore: [
+          ...new Set(
+            nonFreeze
+              .filter((e) => e.at < c.start && e.at >= c.start - 15_000)
+              .map((e) => family(e.text).slice(0, 120)),
+          ),
+        ].slice(-8),
+        linesInside: [...inside.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([line, n]) => `${n}× ${line}`),
       }
     })
     .sort((a, b) => b.blockedMs - a.blockedMs)
@@ -3665,12 +3700,14 @@ function report(state, answers) {
   if (latest.bursts.length) {
     console.log('\nFreeze bursts:')
     for (const b of latest.bursts.slice(0, 4)) {
-      const when = b.secondsAfterLaunch != null ? `+${b.secondsAfterLaunch}s after launch` : 'launch unknown'
+      const when = `v${b.build} ${b.secondsAfterLaunch != null ? `+${b.secondsAfterLaunch}s after launch` : 'launch unknown'}`
       console.log(
         `  ${when}: ${b.freezes} freeze(s), ${(b.blockedMs / 1000).toFixed(1)}s blocked over ${b.durationSeconds}s · ${b.activeLayers.join(' | ')}`,
       )
       if (b.overlappingWorkloads.length) console.log(`      during: ${b.overlappingWorkloads.join(', ')}`)
+      if (b.overlappingWaits?.length) console.log(`      inside wait: ${b.overlappingWaits.join(', ')}`)
       if (b.lineBefore) console.log(`      preceded by: ${b.lineBefore}`)
+      for (const line of b.linesInside ?? []) console.log(`      inside: ${line}`)
     }
   }
   const st = latest.storage

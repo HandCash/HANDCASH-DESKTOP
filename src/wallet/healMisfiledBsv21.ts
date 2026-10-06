@@ -30,6 +30,7 @@ import { stampBrc164Id } from './itemAccess'
 import { wireCollectableOutpoint } from './oneSatCollectableGuard'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { type ActiveWallet } from './session'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
 /**
  * `encoding` names how the holding was proven by the locking script: `binary`
@@ -236,6 +237,23 @@ export type HealMisfiledBsv21Result = {
 }
 
 /**
+ * Outpoints already judged "not a token" for one identity. An output's script,
+ * tags and remittance are fixed once it is in the basket, so the judgment
+ * cannot change — and re-parsing two thousand item scripts after every
+ * ingest held the main thread for seconds.
+ */
+let settled: { identityKey: string; outpoints: Set<string> } | null = null
+
+function settledFor(identityKey: string): Set<string> {
+  if (settled?.identityKey !== identityKey) settled = { identityKey, outpoints: new Set() }
+  return settled.outpoints
+}
+
+export function __resetHealMisfiledBsv21ForTests(): void {
+  settled = null
+}
+
+/**
  * Relinquish misfiled BSV-21 tips from basket `1sat` and re-insert under
  * `bsv21`. Duplicate rows already in `bsv21` are dropped from `1sat` only.
  */
@@ -250,6 +268,24 @@ export async function healMisfiledBsv21(
     failed: 0,
   }
   if (!wallet) return result
+  const startedAt = Date.now()
+  const known = settledFor(wallet.identityKey)
+
+  // Outpoints first: when every row was judged before, the script read and
+  // the parse are skipped entirely.
+  const outpointsOnly = await wallet.wallet.listOutputs({
+    basket: '1sat',
+    limit: 2000,
+    seekPermission: false,
+  })
+  const unjudged = (outpointsOnly.outputs ?? []).filter((o) => {
+    const op = wireCollectableOutpoint(o.outpoint)
+    return op != null && !known.has(op)
+  }).length
+  if (unjudged === 0) {
+    result.skipped = outpointsOnly.outputs?.length ?? 0
+    return result
+  }
 
   const [itemListed, tokenListed] = await Promise.all([
     wallet.wallet.listOutputs({
@@ -281,7 +317,12 @@ export async function healMisfiledBsv21(
   const move: Cand[] = []
 
   for (const row of itemListed.outputs ?? []) {
+    if (uiBudgetExpired()) await yieldToUi()
     const op = wireCollectableOutpoint(row.outpoint)
+    if (op && known.has(op)) {
+      result.skipped++
+      continue
+    }
     const sats =
       typeof row.satoshis === 'number'
         ? row.satoshis
@@ -298,6 +339,7 @@ export async function healMisfiledBsv21(
       tags: row.tags,
     })
     if (kind.kind !== 'bsv21') {
+      known.add(op)
       result.skipped++
       continue
     }
@@ -395,5 +437,7 @@ export async function healMisfiledBsv21(
     )
   }
 
+  const ms = Date.now() - startedAt
+  if (ms >= 250) console.info(`[bsv21-heal] checked ${unjudged} new tip(s) done ${ms}ms`)
   return result
 }

@@ -602,19 +602,25 @@ export async function refreshFromChainExclusive(
               setCollectableVerifyWalkDeferred(true)
             })
             .then(() =>
-              import('./token/list').then(({ listFungibles }) => listFungibles(active)),
-            )
-            .then(() =>
-              import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>
-                healMisfiledCollectables(active),
+              inUiPhase('fungibles-list', () =>
+                import('./token/list').then(({ listFungibles }) => listFungibles(active)),
               ),
             )
             .then(() =>
-              import('./healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
-                healMisfiledBsv21(active),
+              inUiPhase('heal-misfiled-items', () =>
+                import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>
+                  healMisfiledCollectables(active),
+                ),
               ),
             )
-            .then(() => listCollectables(active))
+            .then(() =>
+              inUiPhase('heal-misfiled-bsv21', () =>
+                import('./healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
+                  healMisfiledBsv21(active),
+                ),
+              ),
+            )
+            .then(() => inUiPhase('collectables-list', () => listCollectables(active)))
             .finally(() => {
               void import('./collectables').then(
                 ({ setCollectableVerifyWalkDeferred, resumeCollectableVerifyWalk }) => {
@@ -686,7 +692,7 @@ export async function refreshFromChainExclusive(
     // Fresh read — do not reuse a pre-sweep coalesced flight while activity
     // already shows the newly ingested receives.
     invalidateBalanceReads(active.wallet)
-    const balanceAfter = await fetchBalanceSats(active.wallet)
+    const balanceAfter = await inUiPhase('balance-read', () => fetchBalanceSats(active.wallet))
     publishBalance(balanceAfter)
     if (addressUnspentAfterIngest > 0 && fundingSkippedKnownAfterIngest > 0) {
       console.warn(

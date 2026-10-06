@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { memo, useCallback, useMemo, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { StatusBanner } from '@aeon-ui/react'
@@ -12,6 +12,7 @@ import { playWalletSound } from '../../wallet/soundService'
 import { DeferredImage } from '../DeferredImage'
 import { Skeleton, SkeletonLine } from '../Skeleton'
 import { CollectablesIcon, DownloadIcon } from '../icons'
+import { useScrollIdle } from '../uiFeed/useScrollIdle'
 import { useWindowedRange } from '../uiFeed/useWindowedRange'
 
 const PORTS: ImportItemPorts = {
@@ -30,10 +31,17 @@ function mediaLabel(item: ImportItem): string {
   return type ? type.replace(/^(image|text|model|application)\//, '') : 'unknown media'
 }
 
-/** Same card as Collect's grid; the action is Import instead of Send. */
-function ImportItemCard(props: { item: ImportItem; importing: string | null; onImport: () => void }) {
-  const { item } = props
-  const busy = props.importing === item.outpoint
+/**
+ * Same card as Collect's grid; the action is Import instead of Send. Memoised
+ * on primitives so a streamed batch re-renders only the cards it adds.
+ */
+const ImportItemCard = memo(function ImportItemCard(props: {
+  item: ImportItem
+  busy: boolean
+  locked: boolean
+  onImport: (outpoint: string) => void
+}) {
+  const { item, busy } = props
   const name = item.name ?? 'Untitled'
   const label = busy ? `Importing ${name}` : `Import ${name}`
   return (
@@ -74,8 +82,8 @@ function ImportItemCard(props: { item: ImportItem; importing: string | null; onI
           className="collectable-send-btn"
           title={label}
           aria-label={label}
-          disabled={props.importing !== null}
-          onClick={props.onImport}
+          disabled={props.locked}
+          onClick={() => props.onImport(item.outpoint)}
         >
           <DownloadIcon size={14} />
           {busy ? 'Importing…' : 'Import'}
@@ -83,7 +91,7 @@ function ImportItemCard(props: { item: ImportItem; importing: string | null; onI
       </div>
     </li>
   )
-}
+})
 
 function SkeletonCard() {
   return (
@@ -111,6 +119,8 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
   const loading = snapshot.matches({ list: 'loading' })
   const matching = useMemo(() => filteredImportItems(context), [context.items, context.query])
   const listRef = useRef<HTMLUListElement>(null)
+  useScrollIdle(listRef)
+  const onImport = useCallback((outpoint: string) => send({ type: 'IMPORT', outpoint }), [send])
   const windowed = useWindowedRange({
     total: matching.length,
     itemExtent: 220,
@@ -199,8 +209,9 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
             <ImportItemCard
               key={item.outpoint}
               item={item}
-              importing={importing}
-              onImport={() => send({ type: 'IMPORT', outpoint: item.outpoint })}
+              busy={importing === item.outpoint}
+              locked={importing !== null}
+              onImport={onImport}
             />
           ))}
         </ul>
