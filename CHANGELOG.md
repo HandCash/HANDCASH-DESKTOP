@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.450] - 2026-10-06
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.449] - 2026-10-06
 
 ### Added
