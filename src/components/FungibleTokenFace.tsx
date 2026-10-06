@@ -1,3 +1,4 @@
+import { noteArtRatio } from './artRatio'
 import { DeferredImage } from './DeferredImage'
 import { CollectablesIcon } from './icons'
 
@@ -20,8 +21,8 @@ function TokenPlaceholder({ size }: { size: number }) {
 
 /**
  * Token face: real icon when we have one, otherwise the same collectables
- * placeholder. No generated identicon scheme. The icon is shown whole —
- * no frame, no rounding, never cropped to a square.
+ * placeholder. No generated identicon scheme. The icon is shown whole in a
+ * rounded square, never cropped and never a circle.
  * Avatar.Root swallows non-Avatar.Image children — use a plain span so
  * local data: URLs from BEEF actually paint.
  */
@@ -34,7 +35,11 @@ export function FungibleTokenFace({
 }: Props) {
   const cls = ['fungible-avatar', className].filter(Boolean).join(' ')
   const local = Boolean(iconUrl && (iconUrl.startsWith('data:') || iconUrl.startsWith('blob:')))
-  const faceStyle = { ['--fungible-face' as string]: `${size}px` }
+  const radius = size >= 120 ? 12 : size <= 56 ? 6 : 10
+  const faceStyle = {
+    ['--fungible-face' as string]: `${size}px`,
+    ['--art-radius' as string]: `${radius}px`,
+  }
 
   return (
     <span
@@ -49,6 +54,7 @@ export function FungibleTokenFace({
           alt={sym}
           width={size}
           height={size}
+          onLoad={(event) => noteArtRatio(event.currentTarget)}
         />
       ) : iconUrl ? (
         <DeferredImage
@@ -59,7 +65,7 @@ export function FungibleTokenFace({
           height={size}
           skeletonWidth={size}
           skeletonHeight={size}
-          skeletonRadius={0}
+          skeletonRadius={radius}
           retainDecoded
           fallback={<TokenPlaceholder size={size} />}
         />

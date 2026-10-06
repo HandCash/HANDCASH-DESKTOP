@@ -411,7 +411,7 @@ export function HistoryIconCluster({
                   height={28}
                   skeletonWidth={28}
                   skeletonHeight={28}
-                  skeletonRadius={0}
+                  skeletonRadius={6}
                   retainDecoded
                   decoding="async"
                 />
@@ -434,7 +434,7 @@ export function HistoryIconCluster({
             height={28}
             skeletonWidth={28}
             skeletonHeight={28}
-            skeletonRadius={0}
+            skeletonRadius={6}
             retainDecoded
             decoding="async"
             fallback={

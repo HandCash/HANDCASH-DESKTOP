@@ -6,6 +6,7 @@ import {
   type ImgHTMLAttributes,
   type ReactNode,
 } from 'react'
+import { noteArtRatio } from './artRatio'
 import { Skeleton } from './Skeleton'
 import { acquireImageLoadSlot, releaseImageLoadSlot } from './imageLoadSlots'
 import { shouldAttachDeferredSrc } from './uiFeed/attachSrc'
@@ -382,6 +383,7 @@ export function DeferredImage({
     const img = imgRef.current
     if (!img) return
     const next = markFromElement(img)
+    if (next === 'ready') noteArtRatio(img)
     if (next !== 'loading') setStatus(next)
   }, [src, near, loadSlot])
 
@@ -456,7 +458,8 @@ export function DeferredImage({
         loading="eager"
         decoding="async"
         hidden={!showImg}
-        onLoad={() => {
+        onLoad={(event) => {
+          noteArtRatio(event.currentTarget)
           if (typeof src === 'string' && src !== '') rememberDecodedUrl(src)
           if (retainDecoded) retained.current = true
           setStatus('ready')

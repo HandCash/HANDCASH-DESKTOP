@@ -5523,18 +5523,18 @@ a.history-row-link:hover .history-tx-hint {
   object-fit: cover;
 }
 
-/* Item or token art takes the whole tile, unframed and uncropped. */
+/* Item or token art takes the whole tile: no border, rounded, uncropped. */
 .history-icon:has(> .deferred-image > .history-item-thumb) {
   border: none;
-  border-radius: 0;
   background: transparent;
+}
+
+.history-icon {
+  --art-radius: 10px;
 }
 
 .history-item-thumb {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 .history-asset-logo {
@@ -5806,9 +5806,9 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 .history-icon-stack-face {
+  --art-radius: 10px;
   position: absolute;
   inset: 0;
-  overflow: hidden;
   opacity: 0.7;
 }
 
@@ -9779,23 +9779,45 @@ html[data-aeon-mode='light'] .skeleton {
   justify-self: center;
 }
 
-/* Item and token art is shown whole: no frame, no rounding, and a tall or
-   wide piece letterboxes inside its square instead of being cropped. */
+/* Item and token art is shown whole in a rounded square: no border, never a
+   circle, and a tall or wide piece fits inside its square instead of being
+   cropped. */
 .collectable-media {
+  --art-radius: calc(var(--hc-radius) + 2px);
   width: 120px;
   height: 120px;
+  border-radius: var(--art-radius);
   overflow: hidden;
 }
 
-/* The frame's box, not the bitmap, sizes the image so `contain` can fit it. */
+/* The frame is a size container; the img sizes itself from its own ratio
+   (`--art-ratio`, published on decode) so the rounding lands on the art, not
+   on empty letterbox around it. */
 .collectable-media > .deferred-image,
 .history-icon > .deferred-image,
 .history-icon-stack-face > .deferred-image,
 .collect-facepile-face > .deferred-image,
-.fungible-avatar > .deferred-image {
-  display: block;
+.fungible-avatar > .deferred-image,
+.fungible-avatar:has(> img) {
+  display: grid;
+  place-items: center;
   width: 100%;
   height: 100%;
+  container-type: size;
+}
+
+.collectable-media > .deferred-image > img,
+.history-icon > .deferred-image > img,
+.history-icon-stack-face > .deferred-image > img,
+.collect-facepile-face > .deferred-image > img,
+.fungible-avatar > .deferred-image > img,
+.fungible-avatar > img.fungible-avatar-image {
+  display: block;
+  width: min(100cqw, 100cqh * var(--art-ratio, 1));
+  height: auto;
+  max-height: 100cqh;
+  object-fit: contain;
+  border-radius: var(--art-radius, 8px);
 }
 
 .collectable-media-fallback {
@@ -9803,6 +9825,7 @@ html[data-aeon-mode='light'] .skeleton {
   place-items: center;
   width: 100%;
   height: 100%;
+  border-radius: var(--art-radius, 8px);
   background: var(--hc-hover);
   color: hsl(var(--muted-foreground));
   opacity: 0.7;
@@ -9816,18 +9839,21 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .collectable-media-sm {
+  --art-radius: 8px;
   width: 48px;
   height: 48px;
   flex-shrink: 0;
 }
 
 .collectable-media-md {
+  --art-radius: 10px;
   width: 96px;
   height: 96px;
   flex-shrink: 0;
 }
 
 .collectable-media-lg {
+  --art-radius: 12px;
   width: 200px;
   height: 200px;
 }
@@ -10937,12 +10963,13 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 .collect-facepile-face,
 .collect-facepile-more {
+  --art-radius: 8px;
   display: grid;
   grid-template: 100% / 100%;
   width: 40px;
   height: 40px;
   place-items: center;
-  overflow: hidden;
+  border-radius: var(--art-radius);
   margin-left: 4px;
 }
 
@@ -10950,14 +10977,8 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   margin-left: 0;
 }
 
-.collect-facepile-face img,
-.collect-facepile-face .deferred-image {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
 .collect-facepile-more {
+  background: var(--hc-hover);
   color: var(--hc-text);
   font-size: 0.68rem;
   font-weight: 600;
@@ -11151,14 +11172,6 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .fungible-avatar [data-aeon-part='fallback'] img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.fungible-avatar > .deferred-image,
-.fungible-avatar .fungible-avatar-image {
   display: block;
   width: 100%;
   height: 100%;

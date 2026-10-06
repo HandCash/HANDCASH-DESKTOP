@@ -670,7 +670,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             <DeferredImage
               src={shownItem.imageUrl}
               alt={shownItem.name}
-              skeletonRadius={0}
+              skeletonRadius={8}
               skeletonClassName="skeleton-qr"
               decoding="async"
             />
@@ -680,7 +680,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             <DeferredImage
               src={shownItem.imageUrl}
               alt={shownItem.name}
-              skeletonRadius={0}
+              skeletonRadius={8}
               skeletonClassName="skeleton-qr"
               decoding="async"
             />
@@ -988,7 +988,7 @@ function ListingActivityDetails({
                 height={32}
                 skeletonWidth={32}
                 skeletonHeight={32}
-                skeletonRadius={0}
+                skeletonRadius={6}
                 retainDecoded
                 decoding="async"
               />
@@ -1026,7 +1026,7 @@ function ListingActivityDetails({
           <DeferredImage
             src={imageUrl}
             alt={name}
-            skeletonRadius={0}
+            skeletonRadius={8}
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
