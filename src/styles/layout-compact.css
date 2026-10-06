@@ -945,7 +945,7 @@ html:is(.platform-mobile, .layout-compact)
   border-color: hsl(var(--primary));
   background: hsl(var(--primary));
   color: #0a0a0a;
-  box-shadow: 0 5px 16px color-mix(in srgb, hsl(var(--primary)) 24%, transparent);
+  box-shadow: none;
 }
 
 html:is(.platform-mobile, .layout-compact)
@@ -965,7 +965,7 @@ html:is(.platform-mobile, .layout-compact)
   border-color: color-mix(in srgb, var(--hc-danger) 78%, #fff);
   background: color-mix(in srgb, var(--hc-danger) 78%, #fff);
   color: #0a0a0a;
-  box-shadow: 0 5px 16px color-mix(in srgb, var(--hc-danger) 24%, transparent);
+  box-shadow: none;
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)

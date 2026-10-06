@@ -967,16 +967,6 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   }
 }
 
-@keyframes pulse-glow {
-  0%,
-  100% {
-    box-shadow: 0 0 20px -6px hsl(var(--primary) / 0.45);
-  }
-  50% {
-    box-shadow: 0 0 32px -8px hsl(var(--primary) / 0.7);
-  }
-}
-
 .display {
   font-family: var(--hc-display);
   font-weight: 700;
@@ -1139,7 +1129,7 @@ button.link-btn:hover {
 .btn-primary {
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
-  animation: pulse-glow 2.8s ease-in-out infinite;
+  box-shadow: none;
 }
 
 .btn-primary:hover {

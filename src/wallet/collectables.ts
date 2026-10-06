@@ -1375,9 +1375,12 @@ function cachedLiveOutpoints(
  * silence hid good collectables behind a `spent-on-chain:` mark, which carries
  * no txid, so {@link healGhostSentItems} can never give them back.
  *
- * Only a positive spend hides a tip. An inconclusive chain still stops the
- * send: building on an input we cannot vouch for risks the UTXO_SPENT
- * rejection that also kills the honest change in the same transaction.
+ * Only a positive spend hides a tip. Wallet state defines what is held; the
+ * chain solidifies it. When every provider is silent the wallet's own basket
+ * row is the answer, and the send goes ahead on it — a desktop refused all 19
+ * verified Pixel Foxes on `unknown` while the indexers were down. If Arcade
+ * then rejects the spend (UTXO_SPENT), the failure path retires the input and
+ * fails its closure; nothing is lost by trying.
  */
 async function assertTipNotProvenSpent(
   wallet: ActiveWallet,
@@ -1392,13 +1395,10 @@ async function assertTipNotProvenSpent(
     void listCollectables(wallet).catch(() => {})
     throw new Error(refusal)
   }
-  if (status === 'unknown') {
-    throw new Error(
-      'Could not confirm this collectable is still unspent on chain. Try again in a moment.',
-    )
-  }
   console.info(
-    `[collectables] live scan missed ${outpointKey(outpoint)} — chain says unspent, continuing send`,
+    status === 'unknown'
+      ? `[collectables] live scan missed ${outpointKey(outpoint)} — chain silent, trusting the basket row`
+      : `[collectables] live scan missed ${outpointKey(outpoint)} — chain says unspent, continuing send`,
   )
 }
 

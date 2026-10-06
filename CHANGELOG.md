@@ -1600,6 +1600,16 @@
 
 ## [1.3.447] - 2026-10-06
 
+### Fixed
+
+- A collectable send no longer stops on "Could not confirm this collectable is
+  still unspent on chain". When the live address scan missed a tip the gate
+  asked the explorers whether it was spent and treated silence as a refusal —
+  a desktop refused all 19 verified Pixel Foxes while the indexers were down.
+  Wallet state defines what is held; the chain solidifies it. Only a positive
+  spent answer hides a tip now; silence trusts the basket row and sends. If
+  Arcade rejects the spend, the failure path retires the input and its closure.
+
 ### Added
 
 - **Custody journal: the wallet can no longer forget how to spend a coin.** Change and BRC-29 receipts are locked by a random derivation the seed cannot regenerate, and basket outputs need their basket. That knowledge lived only in the wallet database, which a wipe, a restore from an older backup, or a lost device replaces wholesale. Every output the wallet learns is now also written to a journal that only grows. Each entry is exactly the `internalizeAction` instruction that brings that output back. Entries are never edited or removed. A spend is recorded only when the chain shows one, and two copies always merge into their union, so no copy can overwrite another or be "thinner" than it.
@@ -1612,6 +1622,9 @@
 ### Changed
 
 - The derived-change echo now feeds the journal, and its recovery entry points run journal recovery, so there's one recovery path.
+- Primary buttons are flat. The pulsing green halo (`pulse-glow`) is gone, and
+  the compact request dock no longer casts a drop shadow under the accept /
+  cancel action — on light surfaces that halo was the first thing you saw.
 
 ## [1.3.446] - 2026-10-05
 
