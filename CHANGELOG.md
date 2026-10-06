@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.464] - 2026-10-06
+
+### Changed
+
+- **Importing items now runs in the background.** Choosing items in Import → Browse items hands them to the wallet's import queue, and the page stays usable: you can keep selecting and queue more while a batch moves, and leaving the page (or opening another saved wallet) no longer stops the import. Items already queued show "Importing…" or "Queued"; everything else stays clickable. Progress shows on the status pill, and Stop drops what has not started yet.
+- **Imports are faster.** Items from every key of a saved wallet now share transactions (up to 25 each) instead of one batch per address, source transactions are read four at a time while the next batch is prepared, and the next batch's sources are fetched while the current one signs.
+
+### Fixed
+
+- An import no longer splits down to one item per transaction when the wallet's fee coin was spent elsewhere. It rebuilds the same batch once, then waits a few seconds for the coin to clear and carries on. A spent coin that had more than one storage row is now hidden everywhere, so it is not chosen again.
+
 ## [1.3.463] - 2026-10-06
 
 ### Fixed
