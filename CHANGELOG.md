@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.457] - 2026-10-06
+
+### Added
+
+- **MNEE now imports from a HandCash export.** MNEE (the USD stablecoin) is a BSV-21 token that needs MNEE's own cosignature to move, so it used to stay behind as "rejected". Import now reads your MNEE balance from MNEE's index, signs one transfer per batch with your HandCash key, and hands it to MNEE's cosigner, which adds its signature and broadcasts. The cosigner's usual fee is paid in MNEE (0.001 MNEE up to 10 MNEE, 0.01 above); no BSV is spent.
+  - The wallet checks that the transaction MNEE broadcasts spends exactly your MNEE and pays exactly the amounts you signed before it files anything.
+  - Received MNEE shows in **Collect** for now, as a card named by its amount (for example "4.999 MNEE"). Sending MNEE from this wallet is not supported yet, so it stays there until it is.
+  - MNEE held by another key, or cosigned by anyone other than MNEE's published cosigner, stays at the source.
+
+### Changed
+
+- Shorter import screens: Browse items drops the "each import is its own transaction…" note and the search label, and the import preview no longer says "(valid outputs only)" or "paid by this wallet".
+
 ## [1.3.456] - 2026-10-06
 
 ### Fixed
