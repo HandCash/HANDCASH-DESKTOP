@@ -10955,33 +10955,55 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   background: var(--hc-surface-hover, rgb(255 255 255 / 4%));
 }
 
+/* A compact overlapping deck (≤ 84px for four faces) so the shelf name keeps
+   its room. Each face is a filled rounded card holding its art whole, set off
+   from the card behind by a ring of the shelf's own colour rather than a
+   border. The first face is on top. */
 .collect-facepile {
+  --facepile-bg: var(--hc-surface-2, var(--hc-surface));
   display: flex;
   align-items: center;
-  padding-left: 2px;
+  flex-shrink: 0;
+  padding: 2px;
 }
 
-.collect-facepile-face,
-.collect-facepile-more {
+.collect-collection-trigger:hover .collect-facepile {
+  --facepile-bg: color-mix(in srgb, var(--hc-surface-2, var(--hc-surface)), rgb(255 255 255) 4%);
+}
+
+.collect-facepile-face {
   --art-radius: 8px;
+  position: relative;
   display: grid;
   grid-template: 100% / 100%;
-  width: 40px;
-  height: 40px;
   place-items: center;
+  width: 36px;
+  height: 36px;
   border-radius: var(--art-radius);
-  margin-left: 4px;
+  background: color-mix(in srgb, var(--facepile-bg), var(--hc-text) 8%);
+  box-shadow: 0 0 0 2px var(--facepile-bg);
+  overflow: hidden;
+  margin-left: -20px;
 }
 
 .collect-facepile-face:first-child {
   margin-left: 0;
 }
 
-.collect-facepile-more {
-  background: var(--hc-hover);
-  color: var(--hc-text);
-  font-size: 0.68rem;
-  font-weight: 600;
+.collect-facepile-face:nth-child(1) {
+  z-index: 4;
+}
+
+.collect-facepile-face:nth-child(2) {
+  z-index: 3;
+}
+
+.collect-facepile-face:nth-child(3) {
+  z-index: 2;
+}
+
+.collect-facepile-face:nth-child(4) {
+  z-index: 1;
 }
 
 .collect-collection-body {

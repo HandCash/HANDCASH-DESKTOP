@@ -379,7 +379,7 @@ function CollectableItems({
 }
 
 function CollectableFacepile({ group }: { group: CollectableGroup }) {
-  return <CollectFacepile faces={group.faces} overflow={group.overflow} />
+  return <CollectFacepile faces={group.faces} />
 }
 
 function IssuerGroupItem({

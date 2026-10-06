@@ -327,7 +327,7 @@ const ImportShelf = memo(function ImportShelf({
     >
       <div className="collect-collection-head">
         <Accordion.ItemTrigger value={shelf.key} className="collect-collection-trigger">
-          <CollectFacepile faces={shelf.faces} overflow={Math.max(0, shelf.count - shelf.faces.length)} />
+          <CollectFacepile faces={shelf.faces} />
           <span className="collect-collection-body">
             <strong className="collect-collection-name" title={shelfTitle(shelf)}>
               <span className="collect-collection-name-text">{shelf.label}</span>

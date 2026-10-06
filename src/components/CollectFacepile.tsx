@@ -1,13 +1,15 @@
 import { DeferredImage } from './DeferredImage'
 import { CollectablesIcon } from './icons'
 
-/** Stacked art for a folded shelf. Faces defer like any other bitmap. */
+/**
+ * Stacked art for a folded shelf: a compact overlapping deck, so the shelf's
+ * name keeps the room. The count lives in the shelf's meta line, not here.
+ * Faces defer like any other bitmap.
+ */
 export function CollectFacepile({
   faces,
-  overflow,
 }: {
   faces: ReadonlyArray<{ outpoint: string; imageUrl: string | null | undefined }>
-  overflow: number
 }) {
   return (
     <span className="collect-facepile" aria-hidden>
@@ -16,24 +18,21 @@ export function CollectFacepile({
           <DeferredImage
             src={face.imageUrl ?? undefined}
             alt=""
-            width={40}
-            height={40}
-            skeletonWidth={40}
-            skeletonHeight={40}
+            width={36}
+            height={36}
+            skeletonWidth={36}
+            skeletonHeight={36}
             skeletonRadius={8}
             skeletonClassName="skeleton-qr"
             decoding="async"
             fallback={
               <span className="collectable-media-fallback" aria-hidden>
-                <CollectablesIcon size={18} />
+                <CollectablesIcon size={16} />
               </span>
             }
           />
         </span>
       ))}
-      {overflow > 0 ? (
-        <span className="collect-facepile-more">+{overflow.toLocaleString()}</span>
-      ) : null}
     </span>
   )
 }
