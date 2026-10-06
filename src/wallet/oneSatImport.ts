@@ -215,7 +215,7 @@ type GpBsv20 = {
   dec?: string | number
 }
 
-type GpTxo = {
+export type GpTxo = {
   origin?:
     | string
     | {
@@ -262,7 +262,7 @@ function parseTraits(raw: unknown): CollectableTrait[] {
   return traits
 }
 
-function extractResolved(
+export function extractResolved(
   meta: GpTxo,
   requestedOutpoint?: string,
 ): ResolvedInscription | null {

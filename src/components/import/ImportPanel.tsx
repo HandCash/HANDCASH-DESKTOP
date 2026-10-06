@@ -15,11 +15,9 @@ import {
   IMPORT_SOURCE_KINDS,
   IMPORT_SOURCE_LABELS,
   addImportedSource,
-  keyDeriverFor,
   loadImportedSources,
   parseImportSecret,
   planSweep,
-  probeHandCashHandle,
   recoveryHintsGeneration,
   recoveryHintsOffer,
   removeImportedSource,
@@ -29,7 +27,6 @@ import {
   subscribeRecoveryHints,
   sweepImportedSource,
   takeImportIntent,
-  updateImportedSource,
   type ImportedSource,
   type ScanProgress,
 } from '../../wallet/import'
@@ -189,28 +186,12 @@ export function ImportPanel() {
     try {
       const { source: saved, existing } = await addImportedSource(parsed.secret, fields.label)
       if (existing) toastSuccess('Already saved', `${saved.label} holds these keys.`)
-      if (kind === 'handcash' && fields.handle.trim()) {
-        const handle = await probeHandCashHandle(fields.handle, keyDeriverFor(parsed.secret))
-        await updateImportedSource(saved.id, { handle })
-      }
       send({ type: 'SAVED', sourceId: saved.id })
       playWalletSound('soft')
       await runScan(saved.id)
     } catch (err) {
       send({ type: 'FAIL', error: errorText(err) })
       playWalletSound('error')
-    }
-  }
-
-  const probe = async (handle: string) => {
-    if (!source) return
-    send({ type: 'PROBE_HANDLE' })
-    try {
-      const result = await probeHandCashHandle(handle, keyDeriverFor(source.secret))
-      await updateImportedSource(source.id, { handle: result })
-      send({ type: 'PROBED' })
-    } catch (err) {
-      send({ type: 'FAIL', error: errorText(err) })
     }
   }
 
@@ -262,7 +243,7 @@ export function ImportPanel() {
     if (outcome.ok) toastSuccess('Paused import forgotten', 'Moved collectables were not changed.')
   }
 
-  const face = (['viewing', 'awaitingHints', 'scanning', 'probing', 'reviewing', 'sweeping', 'confirmingRemove', 'removing'] as const).find(
+  const face = (['viewing', 'awaitingHints', 'scanning', 'browsing', 'reviewing', 'sweeping', 'confirmingRemove', 'removing'] as const).find(
     (state) => snapshot.matches({ source: state }),
   ) as SourceFace | undefined
 
@@ -397,7 +378,7 @@ export function ImportPanel() {
             send({ type: 'RESCAN' })
             void runScan(source.id)
           }}
-          onProbeHandle={(handle) => void probe(handle)}
+          onBrowse={() => send({ type: 'BROWSE' })}
           onReview={() => send({ type: 'REVIEW' })}
           onConfirm={() => void (face === 'reviewing' ? sweep() : remove())}
           onCancel={() => send({ type: 'BACK' })}

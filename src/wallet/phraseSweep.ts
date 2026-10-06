@@ -1184,6 +1184,82 @@ export async function migratePhraseItemsBatch(args: {
   }
 }
 
+export type SingleItemMigrate =
+  | { kind: 'moved'; txid: string }
+  | { kind: 'skipped'; reason: OrdinalMigrateSkipReason; message: string }
+  | { kind: 'unreadable'; message: string }
+  | { kind: 'funds'; message: string }
+  | { kind: 'failed'; message: string }
+
+/**
+ * Move one chosen tip on the same P2PKH item-migrate path as the batch, in its
+ * own transaction. It never touches the batch cursor, so the caller refuses
+ * while a paused batch is reading the same address — removing a row ahead of
+ * that cursor would shift its offset past an unmoved tip.
+ */
+export async function migrateOnePhraseItem(args: {
+  candidate: PhraseCandidate
+  /** `txid_vout` or `txid.vout`. */
+  outpoint: string
+  origin?: string
+  name?: string
+}): Promise<SingleItemMigrate> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock this wallet first')
+  assertOnlineForPayment()
+  if (args.candidate.identityKey.toLowerCase() === active.identityKey.toLowerCase()) {
+    throw new Error('That phrase is already this wallet')
+  }
+  const startedAt = Date.now()
+  const outpoint = args.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1')
+  const spendKey = PrivateKey.fromHex(args.candidate.rootKeyHex)
+  const destLock = new P2PKH().lock(active.address).toHex()
+  const spendLockHex = new P2PKH().lock(spendKey.toAddress()).toHex()
+
+  const built = await buildLegacyInputBeef(active.services, [outpoint], { concurrency: 1 })
+  const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
+  const plan = planOrdinalMigrate(
+    sourceBeef,
+    { outpoint, ...(args.origin ? { origin: args.origin } : {}), ...(args.name ? { name: args.name } : {}) },
+    spendLockHex,
+  )
+  if (plan.kind === 'skip') {
+    const message = describeOrdinalMigrateSkip(plan.reason)
+    appendAppLog('info', `[phrase-sweep] single skip ${outpoint}: ${message}`)
+    return { kind: 'skipped', reason: plan.reason, message }
+  }
+  if (plan.kind === 'unreadable') {
+    const message = built.failures.find((f) => f.outpoint === outpoint)?.reason ?? 'source output could not be read'
+    appendAppLog('warn', `[phrase-sweep] single unreadable ${outpoint}: ${message}`)
+    return { kind: 'unreadable', message }
+  }
+
+  const outcome = await migrateOrdinalUnit({
+    active,
+    spendKey,
+    destLockHex: destLock,
+    inputBeef: built.beef,
+    items: [plan.item],
+    itemsPerTx: 1,
+  })
+  const receipt = outcome.moved[0]
+  if (!receipt) {
+    const message =
+      outcome.stopped === 'funds'
+        ? 'Not enough spendable BSV in this wallet for the item fee.'
+        : (outcome.lastError ?? 'The item transaction was not accepted.')
+    appendAppLog('warn', `[phrase-sweep] single ${outcome.stopped === 'funds' ? 'funds' : 'failed'} ${outpoint}: ${message}`)
+    return outcome.stopped === 'funds' ? { kind: 'funds', message } : { kind: 'failed', message }
+  }
+  recordMigratedItemActivity(outcome.moved, active.chain)
+  const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
+  recent.add(receipt.outpoint)
+  recentlyMovedPhraseItems.set(args.candidate.address, recent)
+  scheduleHistoryBackupPush('phrase-sweep')
+  appendAppLog('info', `[phrase-sweep] single moved ${outpoint} → ${receipt.sweepTxid} done ${Date.now() - startedAt}ms`)
+  return { kind: 'moved', txid: receipt.sweepTxid }
+}
+
 /** One tip that passed eligibility, with everything signing needs. */
 type PendingItemMigrate = {
   outpoint: string

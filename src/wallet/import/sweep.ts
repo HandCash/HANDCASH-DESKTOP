@@ -16,6 +16,7 @@ import {
   type HoldingsTotals,
 } from './holdings'
 import { keyDeriverFor } from './importSource'
+import { forgetImportItems } from './items'
 import { sweepTokensFromAddress } from './tokenSweep'
 import { loadImportedSources, updateImportedSource, type ImportedSource, type SweepSummary } from './store'
 
@@ -203,6 +204,7 @@ export async function sweepImportedSource(args: {
     failed,
     notes: [...new Set(notes)].slice(0, 8),
   }
+  forgetImportItems(source.id)
   await updateImportedSource(source.id, { lastSweep: summary })
   appendAppLog(
     'info',

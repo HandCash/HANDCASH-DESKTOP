@@ -774,8 +774,8 @@ const LEGACY_IMPORT = `stateDiagram-v2
     awaitingHints --> scanning : HINTS (openKeyRecovery with history)
     awaitingHints --> viewing : BACK / FAIL (other handle)
     scanning --> viewing : SCANNED / FAIL
-    viewing --> probing : PROBE_HANDLE
-    probing --> viewing : PROBED / FAIL
+    viewing --> browsing : BROWSE
+    browsing --> viewing : BACK
     viewing --> reviewing : REVIEW
     reviewing --> sweeping : CONFIRM
     reviewing --> viewing : BACK
@@ -785,10 +785,10 @@ const LEGACY_IMPORT = `stateDiagram-v2
     confirmingRemove --> viewing : BACK
     removing --> viewing : FAIL
 
-    viewing : Read-only · identity, addresses, holdings, held reasons
+    viewing : Read-only · totals, tokens, held reasons
     awaitingHints : Sign in on /migrate · history, balance, items cross the bridge · moves nothing
     scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for tokens or an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
-    probing : HandCash PKI key vs composed shares
+    browsing : importItemBrowser · one item per move
     reviewing : Preview · compatible only
     sweeping : Cash → items (BRC-150) → BSV-21 · PAUSE
   }
@@ -801,6 +801,24 @@ const LEGACY_IMPORT = `stateDiagram-v2
     No path reaches sweeping except CONFIRM here.
     Uncompressed keys, BSV-20 ticks, listings,
     cosigned (MNEE), RUN jigs and covenants stay.
+  end note
+`
+
+const IMPORT_ITEM_BROWSER = `stateDiagram-v2
+  direction TB
+  [*] --> loading
+  loading --> ready : done (scan's item list, else HandCash set or 1Sat index by address)
+  loading --> failed : error
+  failed --> loading : RETRY
+  ready --> ready : MORE / FILTER / DISMISS
+  ready --> importing : IMPORT (listed item)
+  importing --> ready : done (moved | skipped | funds | refused | unreadable | failed) / error
+
+  ready : Index view · name + art unproven · paged
+  importing : One tip · one tx · same P2PKH item migrate (BRC-150 remittance)
+  note right of importing
+    Refused while a paused sweep reads the same address.
+    Moved and not-an-item rows leave the list; the rest stay.
   end note
 `
 
@@ -1456,6 +1474,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Import',
     caption: 'legacyImportMachine — saved legacy wallets · scan · explicit compatible-only sweep',
     source: LEGACY_IMPORT,
+  },
+  {
+    id: 'importItemBrowser',
+    label: 'Import items',
+    caption: 'importItemBrowserMachine — browse a saved wallet’s items · move one at a time',
+    source: IMPORT_ITEM_BROWSER,
   },
   {
     id: 'deviceBackup',

@@ -57,6 +57,14 @@ describe('legacyImportMachine', () => {
     expect(run(...opened, { type: 'REVIEW' }, { type: 'CONFIRM' }).matches({ source: 'sweeping' })).toBe(true)
   })
 
+  it('browses items from the view and comes back; browsing never reaches sweeping', () => {
+    const opened: LegacyImportEvent[] = [{ type: 'LOADED' }, { type: 'OPEN', sourceId: 's1' }]
+    expect(run(...opened, { type: 'BROWSE' }).matches({ source: 'browsing' })).toBe(true)
+    expect(run(...opened, { type: 'BROWSE' }, { type: 'CONFIRM' }).matches({ source: 'browsing' })).toBe(true)
+    expect(run(...opened, { type: 'BROWSE' }, { type: 'BACK' }).matches({ source: 'viewing' })).toBe(true)
+    expect(run(...opened, { type: 'RESCAN' }, { type: 'BROWSE' }).matches({ source: 'scanning' })).toBe(true)
+  })
+
   it('pauses long work cooperatively and clears the request on exit', () => {
     const sweeping: LegacyImportEvent[] = [
       { type: 'LOADED' },

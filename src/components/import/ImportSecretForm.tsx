@@ -10,10 +10,9 @@ export type SecretFields = {
   secondary: string
   passphrase: string
   label: string
-  handle: string
 }
 
-const EMPTY: SecretFields = { primary: '', secondary: '', passphrase: '', label: '', handle: '' }
+const EMPTY: SecretFields = { primary: '', secondary: '', passphrase: '', label: '' }
 
 /**
  * Secret entry for one source kind. Holds field values only — the step it is
@@ -77,18 +76,6 @@ export function ImportSecretForm(props: {
               value={fields.secondary}
               onChange={(e) => set({ secondary: e.target.value })}
               placeholder="xprv…"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={saving}
-            />
-          </div>
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="import-hc-handle">Your HandCash handle (optional)</label>
-            <input
-              id="import-hc-handle"
-              value={fields.handle}
-              onChange={(e) => set({ handle: e.target.value })}
-              placeholder="$handle"
               autoComplete="off"
               spellCheck={false}
               disabled={saving}

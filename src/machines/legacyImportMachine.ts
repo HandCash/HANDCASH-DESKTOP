@@ -6,9 +6,10 @@ import type { ImportSourceKind } from '../wallet/import'
  *
  * The section is a vault of legacy wallets, not a sweep wizard: the list is
  * home, a source opens into a read-only view, and value moves only through
- * `reviewing → CONFIRM → sweeping`. There is no transition into `sweeping`
- * from saving or scanning — a sweep is always the user's explicit confirm on
- * a preview. Removing a source is its own confirm.
+ * `reviewing → CONFIRM → sweeping`, or one item at a time in `browsing`
+ * (`importItemBrowserMachine`). There is no transition into `sweeping` from
+ * saving or scanning — a sweep is always the user's explicit confirm on a
+ * preview. Removing a source is its own confirm.
  *
  * A HandCash source can wait for the user's HandCash account history: the
  * migrate page signs in and hands it over the bridge (`HINTS`), which starts
@@ -25,8 +26,7 @@ export type LegacyImportEvent =
   | { type: 'ASK_HINTS' }
   | { type: 'HINTS' }
   | { type: 'SCANNED' }
-  | { type: 'PROBE_HANDLE' }
-  | { type: 'PROBED' }
+  | { type: 'BROWSE' }
   | { type: 'REVIEW' }
   | { type: 'CONFIRM' }
   | { type: 'SWEPT' }
@@ -120,7 +120,7 @@ export const legacyImportMachine = setup({
         FAIL: { target: 'entering', actions: 'fail' },
       },
     },
-    /** One saved source: view, scan, prove a handle, or sweep on confirm. */
+    /** One saved source: view, scan, browse its items, or sweep on confirm. */
     source: {
       initial: 'viewing',
       states: {
@@ -128,7 +128,7 @@ export const legacyImportMachine = setup({
           on: {
             RESCAN: { target: 'scanning' },
             ASK_HINTS: { target: 'awaitingHints', actions: 'clearError' },
-            PROBE_HANDLE: { target: 'probing', actions: 'clearError' },
+            BROWSE: { target: 'browsing', actions: 'clearError' },
             REVIEW: { target: 'reviewing', actions: 'clearError' },
             REMOVE: { target: 'confirmingRemove', actions: 'clearError' },
             BACK: { target: '#legacyImport.list' },
@@ -152,10 +152,10 @@ export const legacyImportMachine = setup({
             FAIL: { target: 'viewing', actions: 'fail' },
           },
         },
-        probing: {
+        /** Item browser; each single move is its own child chart step. */
+        browsing: {
           on: {
-            PROBED: { target: 'viewing' },
-            FAIL: { target: 'viewing', actions: 'fail' },
+            BACK: { target: 'viewing' },
           },
         },
         /** Preview of exactly what moves and what stays. */

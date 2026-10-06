@@ -254,6 +254,36 @@ describe('readUnspentOutpoints', () => {
     expect(read).toMatchObject({ failed: 0, stopped: false })
   })
 
+  it('keeps the index facts of each unspent item for browsing', async () => {
+    const origin = `${'a'.repeat(64)}_0`
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify([
+          {
+            outpoint: outpoints[0],
+            spend: '',
+            origin: {
+              outpoint: origin,
+              data: {
+                map: { app: 'vanitas', name: 'VANITAS #3', type: 'ord' },
+                insc: { file: { type: 'image/png', size: 10 } },
+              },
+            },
+          },
+          { outpoint: outpoints[1], spend: '', origin: null, data: null },
+        ]),
+      ),
+    )
+    const read = await readUnspentOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 2), fetchImpl })
+    expect(read.facts.get(outpoints[0])).toEqual({
+      origin,
+      media: origin,
+      name: 'VANITAS #3',
+      mimeType: 'image/png',
+    })
+    expect(read.facts.get(outpoints[1])).toEqual({ origin: null, media: null, name: null, mimeType: null })
+  })
+
   it('retries a chunk once, then counts it as failed', async () => {
     const fetchImpl = vi.fn(async () => new Response('busy', { status: 503 }))
     const read = await readUnspentOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 10), fetchImpl })

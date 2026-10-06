@@ -49,6 +49,13 @@ export {
   type SweepPlan,
   type SweepProgress,
 } from './sweep'
+export {
+  importOneItem,
+  listImportItems,
+  type ImportItem,
+  type ImportItemList,
+  type ImportItemResult,
+} from './items'
 export { HANDCASH_GAP } from './pathCatalog'
 export { requestImportKind, subscribeImportIntent, takeImportIntent } from './importIntent'
 export {

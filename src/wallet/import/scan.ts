@@ -12,6 +12,7 @@ import {
 import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
 import { fetchHandCashUtxoSet, readUnspentCash, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
+import { itemsFromOutpoints, rememberImportItems } from './items'
 import {
   createHistoryReader,
   hintedLookups,
@@ -166,8 +167,10 @@ export async function utxoSetScan(
     return out
   })
   const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
+  const at = Date.now()
+  rememberImportItems(args.sourceId, at, itemsFromOutpoints(verified.itemOutpoints, items))
   return {
-    at: Date.now(),
+    at,
     complete: !stopped && items.failed === 0,
     checked: verified.addresses.length,
     addresses: verified.addresses,

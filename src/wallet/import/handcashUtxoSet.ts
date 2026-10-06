@@ -15,6 +15,7 @@ import {
 import { gorillaBase, wocBulkPost, type DiscoveredAddress, type FetchLike } from './discovery'
 import type { KeyDeriver } from './importSource'
 import { HANDCASH_TEMPLATES } from './pathCatalog'
+import { importItemFacts, type ImportItemFacts } from './importItem'
 
 /**
  * A HandCash account's UTXO set, asked of HandCash's own records and proven
@@ -385,10 +386,17 @@ export async function readUnspentOutpoints(args: {
   fetchImpl?: FetchLike
   onProgress?: (done: number, total: number) => void
   shouldStop?: () => boolean
-}): Promise<{ unspent: Set<string>; failed: number; stopped: boolean }> {
+}): Promise<{
+  unspent: Set<string>
+  /** Index facts for each unspent outpoint, for the item browser. */
+  facts: Map<string, ImportItemFacts>
+  failed: number
+  stopped: boolean
+}> {
   const startedAt = Date.now()
   const fetchImpl = args.fetchImpl ?? fetch
   const unspent = new Set<string>()
+  const facts = new Map<string, ImportItemFacts>()
   let failed = 0
   let stopped = false
   for (let i = 0; i < args.outpoints.length; i += OUTPOINT_CHUNK) {
@@ -417,7 +425,10 @@ export async function readUnspentOutpoints(args: {
       const asked = new Set(chunk)
       for (const row of rows) {
         const { outpoint, spend } = (row ?? {}) as { outpoint?: unknown; spend?: unknown }
-        if (typeof outpoint === 'string' && asked.has(outpoint) && !spend) unspent.add(outpoint)
+        if (typeof outpoint === 'string' && asked.has(outpoint) && !spend) {
+          unspent.add(outpoint)
+          facts.set(outpoint, importItemFacts(row, outpoint))
+        }
       }
     }
     args.onProgress?.(Math.min(i + OUTPOINT_CHUNK, args.outpoints.length), args.outpoints.length)
@@ -427,5 +438,5 @@ export async function readUnspentOutpoints(args: {
     'info',
     `[import] utxo set items done ${Date.now() - startedAt}ms outpoints=${args.outpoints.length} unspent=${unspent.size} failed=${failed}`,
   )
-  return { unspent, failed, stopped }
+  return { unspent, facts, failed, stopped }
 }
