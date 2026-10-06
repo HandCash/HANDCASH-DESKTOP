@@ -41,31 +41,6 @@ const NO_FACTS: ImportItemFacts = {
   signer: null,
 }
 
-const ADDRESS = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/
-
-/** The first BSM signer the index lists that it did not mark invalid. */
-function signerOf(sigma: unknown): string | null {
-  if (!Array.isArray(sigma)) return null
-  for (const entry of sigma) {
-    const { address, algorithm, valid } = (entry ?? {}) as { address?: unknown; algorithm?: unknown; valid?: unknown }
-    if (valid === false) continue
-    if (algorithm != null && String(algorithm).toUpperCase() !== 'BSM') continue
-    if (typeof address === 'string' && ADDRESS.test(address)) return address
-  }
-  return null
-}
-
-/** The origin's signer: the origin data, or the row's own data when the row is the origin. */
-function indexedSigner(row: Record<string, unknown>, outpoint: string): string | null {
-  const origin = row.origin as { outpoint?: unknown; data?: { sigma?: unknown } } | string | undefined
-  if (origin && typeof origin === 'object') {
-    const fromOrigin = signerOf(origin.data?.sigma)
-    if (fromOrigin) return fromOrigin
-    if (typeof origin.outpoint === 'string' && origin.outpoint !== outpoint) return null
-  }
-  return signerOf((row.data as { sigma?: unknown } | undefined)?.sigma)
-}
-
 /** Facts from a GorillaPool txo row; never throws on a malformed row. */
 export function importItemFacts(row: unknown, outpoint: string): ImportItemFacts {
   if (!row || typeof row !== 'object') return NO_FACTS
@@ -83,7 +58,7 @@ export function importItemFacts(row: unknown, outpoint: string): ImportItemFacts
     mimeType: resolved.mimeType?.trim() || null,
     app: resolved.app?.trim() || null,
     collectionId: resolved.collectionId?.trim() || null,
-    signer: indexedSigner(row as Record<string, unknown>, outpoint),
+    signer: resolved.signer ?? null,
   }
 }
 

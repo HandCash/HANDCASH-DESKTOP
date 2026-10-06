@@ -481,3 +481,34 @@ describe('collectionSeriesLabel', () => {
     ).toBe('Pixel Foxes')
   })
 })
+
+describe('signer shelves', () => {
+  const SIGNER = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
+
+  it('shelves items with no issuer tape by their origin signer, labelled by app, as Import does', () => {
+    const result = groupCollectables([
+      item({ outpoint: 'a1.0', app: 'Dragons', signer: SIGNER, signerVerified: true }),
+      item({ outpoint: 'a2.0', signer: SIGNER }),
+      item({ outpoint: 'a3.0', app: 'Dragons' }),
+    ])
+    const signed = result.issuers.find((group) => group.key === `issuer:signer:${SIGNER}`)
+    expect(signed).toMatchObject({ label: 'Dragons', app: 'Dragons', signer: SIGNER, quantity: 2 })
+    expect(signed?.signerVerified).toBeUndefined()
+    expect(result.issuers.find((group) => group.key === 'issuer:app:dragons')?.quantity).toBe(1)
+  })
+
+  it('marks a signer shelf verified only when every item was checked on its origin', () => {
+    const result = groupCollectables([
+      item({ outpoint: 'b1.0', signer: SIGNER, signerVerified: true }),
+      item({ outpoint: 'b2.0', signer: SIGNER, signerVerified: true }),
+    ])
+    expect(result.issuers[0]).toMatchObject({ label: 'Signed items', signer: SIGNER, signerVerified: true })
+  })
+
+  it('keeps a keyed issuer tape ahead of the signer', () => {
+    const issuer = PrivateKey.fromHex('02').toPublicKey().toString()
+    const result = groupCollectables([item({ outpoint: 'c1.0', issuer, issuerAttested: true, signer: SIGNER })])
+    expect(result.issuers[0]!.key).toBe(`issuer:pubkey:${issuer}`)
+    expect(result.issuers[0]!.signer).toBeUndefined()
+  })
+})

@@ -17,7 +17,9 @@ import type { FungibleToken } from './token/types'
  * Collect hierarchy is issuer → collections → assets. A signed asset that
  * names a BAP ID shelves under that BAP ID, so a key rotation keeps one shelf
  * labelled with the newest profile held; other signed assets are keyed by
- * their normalized issuer public key. Handles are display only.
+ * their normalized issuer public key. Handles are display only. Items without
+ * an issuer tape but with a Sigma signer on their origin — every item the
+ * HandCash cloud minted — shelve by that signer, as Import shows them.
  * Label-only item shelves stay separate and cannot impersonate a keyed issuer.
  * Grouping is presentation, not signature verification or transfer policy.
  * This remains applicable to transferable assets, identity records and awards.
@@ -56,6 +58,10 @@ export type CollectableIssuer = {
   issuerAttested?: boolean
   label: string
   app?: string
+  /** Sigma signer address the shelf's items share, when that is its identity. */
+  signer?: string
+  /** Every item's signer verified on its held origin transaction. */
+  signerVerified?: boolean
   /** Fungibles this identity issued — one horizontal shelf. */
   tokens: FungibleToken[]
   collections: CollectableGroup[]
@@ -219,6 +225,7 @@ type IssuerMeta = {
   key: string
   label: string
   app?: string
+  signer?: string
   identityKey?: string
   issuerAttested?: boolean
   bap?: IssuerBap
@@ -232,6 +239,9 @@ function issuerKeyFor(
   const keyed = issuerViewFor(item, identityFor, trust)
   if (keyed) return keyed
   const app = item.app?.trim()
+  if (item.signer) {
+    return { key: `issuer:signer:${item.signer}`, label: app || 'Signed items', ...(app ? { app } : {}), signer: item.signer }
+  }
   if (app) return { key: `issuer:app:${app.toLowerCase()}`, label: app, app }
   if (item.collectionId?.trim()) {
     return {
@@ -377,6 +387,12 @@ export function groupCollectables(
           }
         : {}),
       ...(bucket.meta.app ? { app: bucket.meta.app } : {}),
+      ...(bucket.meta.signer
+        ? {
+            signer: bucket.meta.signer,
+            ...(bucket.items.every((item) => item.signerVerified) ? { signerVerified: true } : {}),
+          }
+        : {}),
       tokens: bucket.tokens,
       collections,
       loose,

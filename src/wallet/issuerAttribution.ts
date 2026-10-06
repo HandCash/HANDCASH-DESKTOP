@@ -131,6 +131,11 @@ export function retainedSignedBy(outpoint: string, issuer: string): boolean {
   return !!entry && sigmaSignerIs(entry.signer, issuer)
 }
 
+/** Address of the Sigma that verifies on the retained output, bound to its funding input. */
+export function retainedSigmaSignerAddress(outpoint: string): string | null {
+  return entryFor(outpoint)?.signer?.address ?? null
+}
+
 /** The retained output carries a Sigma, valid or not; false until its transaction is held. */
 export function retainedCarriesSigma(outpoint: string): boolean {
   return entryFor(outpoint)?.sigma ?? false

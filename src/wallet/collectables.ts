@@ -1,5 +1,10 @@
 import { issuerMetadataFromScript } from './issuerMetadata'
-import { retainedIssuerMetadata, retainedScriptIs, retainedSignedBy } from './issuerAttribution'
+import {
+  retainedIssuerMetadata,
+  retainedScriptIs,
+  retainedSigmaSignerAddress,
+  retainedSignedBy,
+} from './issuerAttribution'
 import { holdIssuerIdentities } from './issuerIdentities'
 import { issuerFromRemittance } from './token/issuer'
 import { getActiveWallet } from './session'
@@ -204,6 +209,7 @@ import {
   shouldResolveInscription,
   shouldUpgradeResolution,
 } from './inscriptionCache'
+import { backfillOriginSigners } from './originSigners'
 import {
   durableGetItem,
   durableRemoveItem,
@@ -234,6 +240,13 @@ export type Collectable = {
   issuerAttested?: boolean
   /** Issuer BAP ID named by the item's signed tape; trusted only via its key chain. */
   bapId?: string
+  /**
+   * BSM Sigma signer address on the origin — how HandCash-minted items name
+   * their creator. From the origin transaction when held, else the index.
+   */
+  signer?: string
+  /** The signer's Sigma verified on the held origin transaction, bound to this tip's origin. */
+  signerVerified?: boolean
   imageUrl: string
   satoshis: number
   /** Held tip script retained so send/burn planning does not require a network fetch. */
@@ -413,6 +426,8 @@ function durableListJson(snapshot: DurableListSnapshot): string {
       issuer: item.issuer,
       issuerAttested: item.issuerAttested,
       bapId: item.bapId,
+      ...(item.signer ? { signer: item.signer } : {}),
+      ...(item.signerVerified ? { signerVerified: true } : {}),
       // Art bytes belong to the item art store — inlining the data URL here
       // would write every picture twice and blow the list cache budget.
       imageUrl: item.imageUrl.startsWith('data:')
@@ -996,6 +1011,11 @@ function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
     issuer: next.issuer ?? held.issuer,
     issuerAttested: next.issuerAttested ?? held.issuerAttested,
     bapId: next.bapId ?? held.bapId,
+    ...(next.signer
+      ? { signer: next.signer, ...(next.signerVerified ? { signerVerified: true } : {}) }
+      : held.signer
+        ? { signer: held.signer, ...(held.signerVerified ? { signerVerified: true } : {}) }
+        : {}),
     ...(content ? { content } : held.content ? { content: held.content } : {}),
     name:
       next.name === shortOrigin(next.origin) &&
@@ -1106,6 +1126,8 @@ function toCollectable(
     : proven && !!verdict?.origin && normalizeOutpoint(verdict.origin) === normalizeOutpoint(origin)
   const issuerAttested =
     !!fromOrigin && !!issuerMetadata.issuer && boundOrigin && retainedSignedBy(origin, issuerMetadata.issuer)
+  const chainSigner = retainedSigmaSignerAddress(origin)
+  const signer = chainSigner ?? resolved?.signer ?? undefined
   // An unmoved tip *is* its origin, so its locking script still carries the ord
   // envelope this wallet (or the minting app) wrote. Keep those bytes: the
   // indexer has not seen a fresh mint yet, and asking it paints the placeholder.
@@ -1123,6 +1145,8 @@ function toCollectable(
     issuer: issuerMetadata.issuer ?? issuerFromRemittance(o) ?? undefined,
     bapId: issuerMetadata.bapId,
     issuerAttested,
+    ...(signer ? { signer } : {}),
+    ...(chainSigner && boundOrigin ? { signerVerified: true } : {}),
     imageUrl: getItemArtDataUrl(mediaOrigin) ?? contentUrlForOrigin(mediaOrigin, chain),
     satoshis: o.satoshis,
     ...(o.lockingScript ? { lockingScript: o.lockingScript } : {}),
@@ -1786,6 +1810,28 @@ async function hydrateLocalItemArt(
   }
   if (found === 0 || epoch !== collectablesAccountEpoch) return
   console.info(`[items] painted ${found} item(s) from local art — no content indexer`)
+  setCollectablesCache(repaintedCollectables(), {
+    announceArrivals: false,
+    forEpoch: epoch,
+  })
+}
+
+/** Shelve items cached before origin signers were kept under their creator, as Import does. */
+async function backfillItemSigners(items: readonly Collectable[], chain: Chain): Promise<void> {
+  const epoch = collectablesAccountEpoch
+  const keys = new Set<string>()
+  for (const item of items) {
+    if (item.signer) continue
+    keys.add(normalizeOutpoint(item.outpoint))
+    keys.add(item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1'))
+  }
+  if (keys.size === 0) return
+  const updated = await backfillOriginSigners({
+    chain,
+    outpoints: [...keys],
+    shouldStop: () => epoch !== collectablesAccountEpoch,
+  })
+  if (updated === 0 || epoch !== collectablesAccountEpoch) return
   setCollectablesCache(repaintedCollectables(), {
     announceArrivals: false,
     forEpoch: epoch,
@@ -3200,6 +3246,9 @@ async function listCollectablesNow(
   // Art the device already holds, before any indexer is asked for a picture.
   void hydrateLocalItemArt(outputs, wallet).catch((err) => {
     console.warn('[items] local art hydrate failed', err)
+  })
+  void backfillItemSigners(deduped, wallet.chain).catch((err) => {
+    console.warn('[items] origin signer backfill failed', err)
   })
   // Identity first, then authenticity — a lineage walk is the expensive one and
   // must never delay getting a name and an image onto the card.

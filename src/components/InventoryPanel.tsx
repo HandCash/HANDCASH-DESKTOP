@@ -16,7 +16,7 @@ import { CollectionViewToggle } from './CollectionViewToggle'
 import { CollectFacepile } from './CollectFacepile'
 import { SelectionCheckbox } from './SelectionCheckbox'
 import { DeferredImage } from './DeferredImage'
-import { BapFingerprint } from './BapIdenticon'
+import { BapFingerprint, SignerFingerprint } from './BapIdenticon'
 import { IssuerTrustBadge, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
@@ -440,7 +440,9 @@ function IssuerGroupItem({
                   ? `${issuer.bap.state === 'verified' ? `${issuer.label} · ` : ''}Profile ID ${issuer.bap.id} · ${issuerTrustNote(issuer)}`
                   : issuer.identityKey
                     ? `${issuer.label} · issuer attribution: ${issuer.identityKey}`
-                    : issuer.label
+                    : issuer.signer
+                      ? `${issuer.label} · signed by ${issuer.signer}${issuer.signerVerified ? ', checked on the origin transaction' : ', as the index reports it'}`
+                      : issuer.label
               }
             >
               <span className="collect-collection-name-text">{issuer.label}</span>
@@ -454,6 +456,8 @@ function IssuerGroupItem({
                   showId={issuer.bap.state === 'verified'}
                   state={issuerViewState(issuer)}
                 />
+              ) : issuer.signer ? (
+                <SignerFingerprint address={issuer.signer} className="collect-issuer-fingerprint" />
               ) : null}
               {groupQuantityLabel(issuer)}
               {selectedCount > 0 ? ` · ${selectedCount} selected` : ''}

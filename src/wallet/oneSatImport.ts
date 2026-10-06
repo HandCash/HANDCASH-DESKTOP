@@ -131,13 +131,18 @@ export type ResolvedInscription = {
   collectionId?: string
   /** Shared media outpoint for derivative / reference tips. */
   content?: string
+  /**
+   * BSM Sigma signer address the index reports on the origin; null when it
+   * reports none, absent when it was never asked. Attribution, not proof.
+   */
+  signer?: string | null
   traits: CollectableTrait[]
   /** Other string map fields worth showing in details */
   extras: CollectableTrait[]
 }
 
 
-function gorillaBase(chain: Chain): string {
+export function gorillaBase(chain: Chain): string {
   return chain === 'main'
     ? 'https://ordinals.gorillapool.io'
     : 'https://testnet.ordinals.gorillapool.io'
@@ -216,6 +221,7 @@ type GpBsv20 = {
 }
 
 export type GpTxo = {
+  outpoint?: string
   origin?:
     | string
     | {
@@ -224,13 +230,49 @@ export type GpTxo = {
           map?: GpMap
           insc?: { file?: { type?: string }; text?: string; json?: unknown }
           bsv20?: GpBsv20
+          sigma?: unknown
         }
       }
   data?: {
     map?: GpMap
     insc?: { file?: { type?: string }; text?: string; json?: unknown }
     bsv20?: GpBsv20
+    sigma?: unknown
   }
+}
+
+const BSM_ADDRESS = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/
+
+/** The first BSM signer the index lists that it did not mark invalid. */
+function sigmaSignerOf(sigma: unknown): string | null {
+  if (!Array.isArray(sigma)) return null
+  for (const entry of sigma) {
+    const { address, algorithm, valid } = (entry ?? {}) as { address?: unknown; algorithm?: unknown; valid?: unknown }
+    if (valid === false) continue
+    if (algorithm != null && String(algorithm).toUpperCase() !== 'BSM') continue
+    if (typeof address === 'string' && BSM_ADDRESS.test(address)) return address
+  }
+  return null
+}
+
+/**
+ * The origin's Sigma signer as the index reports it: the origin's data, else
+ * the row's own data when the row is the origin. HandCash signs every item it
+ * mints with the creator's identity for that app, so items sharing a signer
+ * share a creator. Attribution only — never verified here.
+ */
+export function indexedOriginSigner(meta: GpTxo, requestedOutpoint?: string): string | null {
+  const key = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  const origin = meta.origin
+  const at = requestedOutpoint ?? meta.outpoint
+  if (origin && typeof origin === 'object') {
+    const fromOrigin = sigmaSignerOf(origin.data?.sigma)
+    if (fromOrigin) return fromOrigin
+    if (typeof origin.outpoint === 'string' && (!at || key(origin.outpoint) !== key(at))) return null
+  } else if (typeof origin === 'string' && (!at || key(origin) !== key(at))) {
+    return null
+  }
+  return sigmaSignerOf(meta.data?.sigma)
 }
 
 function asString(value: unknown): string | undefined {
@@ -344,6 +386,7 @@ export function extractResolved(
     subType: asString(map.subType),
     collectionId,
     ...(content ? { content } : {}),
+    signer: indexedOriginSigner(meta, requestedOutpoint),
     traits,
     extras,
   }

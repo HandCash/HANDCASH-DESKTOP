@@ -296,6 +296,31 @@ export function rememberResolvedInscription(
   persist(map)
 }
 
+/** Hits the index was never asked for a signer about (cached before signers were kept). */
+export function resolvedWithoutSigner(outpoints: readonly string[]): Array<{ outpoint: string; origin: string }> {
+  const map = load()
+  const out: Array<{ outpoint: string; origin: string }> = []
+  for (const outpoint of outpoints) {
+    const hit = map.get(outpoint)
+    if (hit && hit.signer === undefined) out.push({ outpoint, origin: hit.origin })
+  }
+  return out
+}
+
+/** Record origin signers on cached hits in one write; order and other fields stay. */
+export function rememberResolvedSigners(signers: ReadonlyMap<string, string | null>): number {
+  const map = load()
+  let changed = 0
+  for (const [outpoint, signer] of signers) {
+    const hit = map.get(outpoint)
+    if (!hit || hit.signer === signer) continue
+    map.set(outpoint, { ...hit, signer })
+    changed += 1
+  }
+  if (changed > 0) persist(map)
+  return changed
+}
+
 /** Note that the indexer had nothing for this outpoint, so we back off. */
 export function rememberUnresolved(outpoint: string, now = Date.now()): void {
   const map = loadMisses()
