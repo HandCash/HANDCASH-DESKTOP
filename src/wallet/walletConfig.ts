@@ -82,6 +82,20 @@ export const CLAIM_HANDLE_URL =
     import.meta.env.VITE_CLAIM_HANDLE_URL.trim()) ||
   'https://preprod-market.handcash.io/claim-handle'
 
+/**
+ * HandCash key recovery (items-market `/migrate`). Opened from Settings →
+ * Import so a signed-in HandCash account can hand its history to the scan.
+ * Default: preprod until it ships to production; override with VITE_MIGRATE_URL.
+ */
+export const MIGRATE_URL =
+  (typeof import.meta !== 'undefined' &&
+    typeof import.meta.env?.VITE_MIGRATE_URL === 'string' &&
+    import.meta.env.VITE_MIGRATE_URL.trim()) ||
+  'https://preprod-market.handcash.io/migrate'
+
+/** `/migrate` opened by a Desktop import that is waiting for the account's history. */
+export const MIGRATE_HINTS_URL = `${MIGRATE_URL}?from=desktop-import`
+
 export type WalletConfigMode = 'history' | 'none'
 
 export type WalletConfigPrefs = {

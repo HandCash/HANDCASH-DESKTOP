@@ -53,6 +53,10 @@ export { HANDCASH_GAP } from './pathCatalog'
 export { requestImportKind, subscribeImportIntent, takeImportIntent } from './importIntent'
 export {
   parseRecoveryHints,
+  recoveryHintsGeneration,
+  recoveryHintsOffer,
   rememberRecoveryHints,
+  subscribeRecoveryHints,
   type HandCashRecoveryHints,
+  type RecoveryHintsOffer,
 } from './recoveryHints'

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { ListRow, StatusBanner } from '@aeon-ui/react'
@@ -20,10 +20,13 @@ import {
   parseImportSecret,
   planSweep,
   probeHandCashHandle,
+  recoveryHintsGeneration,
+  recoveryHintsOffer,
   removeImportedSource,
   scanImportedSource,
   subscribeImportIntent,
   subscribeImportedSources,
+  subscribeRecoveryHints,
   sweepImportedSource,
   takeImportIntent,
   updateImportedSource,
@@ -31,6 +34,7 @@ import {
 } from '../../wallet/import'
 import { playWalletSound } from '../../wallet/soundService'
 import { toastError, toastSuccess } from '../../wallet/toast'
+import { MIGRATE_HINTS_URL } from '../../wallet/walletConfig'
 import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { AsyncActionPrompt } from '../AsyncActionPrompt'
 import { ImportSecretForm, type SecretFields } from './ImportSecretForm'
@@ -41,6 +45,15 @@ function errorText(err: unknown): string {
 }
 
 /**
+ * What a key-recovery request from the migrate page does in each state:
+ * `route` opens a new HandCash entry, `absorb` keeps the screen (the open
+ * HandCash entry or source will use any history that came with it), `hints`
+ * feeds a source waiting for it, and `null` waits until no scan, sweep or
+ * half-typed secret would be interrupted.
+ */
+type IntentRoute = 'route' | 'absorb' | 'hints' | null
+
+/**
  * Settings → Import. Legacy wallets are stored and viewed here, apart from
  * the BRC-100 identity and the account switcher; value moves only on an
  * explicit, compatible-only sweep. Every face is `legacyImportMachine`.
@@ -48,6 +61,8 @@ function errorText(err: unknown): string {
 export function ImportPanel() {
   const [snapshot, send, actor] = useMachine(legacyImportMachine)
   const [sources, setSources] = useState<ImportedSource[]>([])
+  const sourcesRef = useRef(sources)
+  sourcesRef.current = sources
   const [pending, setPending] = useState<PhraseItemMigrateCursor | null>(() =>
     peekPhraseItemMigrateCursor(),
   )
@@ -74,20 +89,58 @@ export function ImportPanel() {
     }
   }, [send])
 
-  // Key recovery opened from the migrate page waits until no scan, sweep or
-  // half-typed secret would be interrupted.
-  const takesIntent =
-    snapshot.matches('list') || snapshot.matches('picking') || snapshot.matches({ source: 'viewing' })
+  const hintsGeneration = useSyncExternalStore(subscribeRecoveryHints, recoveryHintsGeneration)
+  const hintsOffer = useMemo(
+    () => (source ? recoveryHintsOffer(source) : null),
+    [source, hintsGeneration],
+  )
+  const platform = window.handcash?.platform
+  const canAskHints = platform != null && platform !== 'web' && platform !== 'android' && platform !== 'ios'
+
+  const handcashOpen = source?.kind === 'handcash' || context.kind === 'handcash'
+  const intentRoute: IntentRoute = snapshot.matches({ source: 'awaitingHints' })
+    ? 'hints'
+    : (snapshot.matches('entering') || snapshot.matches('saving') || snapshot.matches({ source: 'viewing' })) &&
+        handcashOpen
+      ? 'absorb'
+      : snapshot.matches('list') || snapshot.matches('picking') || snapshot.matches({ source: 'viewing' })
+        ? 'route'
+        : null
   useEffect(() => {
-    if (!takesIntent) return
+    if (!intentRoute) return
     return subscribeImportIntent((requested) => {
       if (!requested) return
       const kind = takeImportIntent()
       if (!kind) return
+      if (intentRoute === 'absorb') return
+      if (intentRoute === 'hints') {
+        const waiting = sourcesRef.current.find((s) => s.id === actor.getSnapshot().context.sourceId)
+        const offer = waiting ? recoveryHintsOffer(waiting) : null
+        if (offer?.kind === 'ready' && waiting) {
+          console.info(`[import] HandCash history arrived txids=${offer.txids} — scanning`)
+          send({ type: 'HINTS' })
+          void runScan(waiting.id)
+        } else if (offer?.kind === 'mismatch') {
+          console.info(`[import] HandCash history is for $${offer.hinted}, these keys prove $${offer.saved}`)
+          send({
+            type: 'FAIL',
+            error: `You signed in to HandCash as $${offer.hinted}, but these keys prove $${offer.saved}. Sign in as $${offer.saved} and try again.`,
+          })
+        } else {
+          console.info('[import] key recovery opened without HandCash history — still waiting for sign-in')
+        }
+        return
+      }
       if (actor.getSnapshot().matches({ source: 'viewing' })) send({ type: 'BACK' })
       send({ type: 'PICK', kind })
     })
-  }, [takesIntent, actor, send])
+  }, [intentRoute, actor, send])
+
+  const askHints = () => {
+    send({ type: 'ASK_HINTS' })
+    console.info('[import] opened /migrate for HandCash history')
+    void window.handcash?.openExternal?.(MIGRATE_HINTS_URL)
+  }
 
   const runScan = async (sourceId: string) => {
     try {
@@ -204,7 +257,7 @@ export function ImportPanel() {
     if (outcome.ok) toastSuccess('Paused import forgotten', 'Moved collectables were not changed.')
   }
 
-  const face = (['viewing', 'scanning', 'probing', 'reviewing', 'sweeping', 'confirmingRemove', 'removing'] as const).find(
+  const face = (['viewing', 'awaitingHints', 'scanning', 'probing', 'reviewing', 'sweeping', 'confirmingRemove', 'removing'] as const).find(
     (state) => snapshot.matches({ source: state }),
   ) as SourceFace | undefined
 
@@ -332,6 +385,8 @@ export function ImportPanel() {
           progress={context.progress}
           percent={context.percent}
           error={context.error}
+          hintsOffer={canAskHints ? hintsOffer : null}
+          onAskHints={askHints}
           onBack={() => send({ type: 'BACK' })}
           onRescan={() => {
             send({ type: 'RESCAN' })

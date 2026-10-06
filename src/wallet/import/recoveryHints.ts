@@ -35,6 +35,24 @@ const RAW_TX_CHUNK = 20
 const TXID = /^[0-9a-f]{64}$/
 
 let current: HandCashRecoveryHints | null = null
+let generation = 0
+const listeners = new Set<() => void>()
+
+function changed(): void {
+  generation += 1
+  for (const listener of listeners) listener()
+}
+
+export function subscribeRecoveryHints(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export function recoveryHintsGeneration(): number {
+  return generation
+}
 
 function txidOf(value: unknown): string | null {
   if (typeof value !== 'string') return null
@@ -78,6 +96,7 @@ export function parseRecoveryHints(raw: unknown, now = Date.now()): HandCashReco
 
 export function rememberRecoveryHints(hints: HandCashRecoveryHints): void {
   current = hints
+  changed()
   appendAppLog(
     'info',
     `[import] HandCash recovery hints txids=${hints.txids.length} complete=${hints.historyComplete} sats=${hints.satoshis} items=${hints.itemCount}`,
@@ -99,9 +118,44 @@ export function recoveryHintsFor(
   return current
 }
 
+/**
+ * What a saved source's view offers about HandCash history:
+ * - `none`: not a HandCash export;
+ * - `ask`: no history on this device — the user can sign in to send it;
+ * - `ready`: history arrived after the last scan, so a rescan would use it;
+ * - `used`: the last scan ran after this history arrived, whether it settled
+ *   on it or fell back to the full walk;
+ * - `mismatch`: the history belongs to another handle than the one these keys prove.
+ */
+export type RecoveryHintsOffer =
+  | { kind: 'none' }
+  | { kind: 'ask' }
+  | { kind: 'ready'; txids: number; historyComplete: boolean }
+  | { kind: 'used' }
+  | { kind: 'mismatch'; hinted: string; saved: string }
+
+export function recoveryHintsOffer(
+  source: { kind: string; handle: { handle: string } | null; scan: { at: number } | null },
+  now = Date.now(),
+): RecoveryHintsOffer {
+  if (source.kind !== 'handcash') return { kind: 'none' }
+  const hints = recoveryHintsFor(source, now)
+  if (!hints) {
+    const saved = source.handle?.handle.trim().replace(/^\$/, '').toLowerCase()
+    if (current?.handle && saved && current.handle !== saved) {
+      return { kind: 'mismatch', hinted: current.handle, saved }
+    }
+    return { kind: 'ask' }
+  }
+  if (source.scan && source.scan.at >= hints.receivedAt) return { kind: 'used' }
+  return { kind: 'ready', txids: hints.txids.length, historyComplete: hints.historyComplete }
+}
+
 /** Test-only. */
 export function clearRecoveryHintsForTests(): void {
   current = null
+  generation = 0
+  listeners.clear()
 }
 
 /** Every P2PKH hash in a script, including one wrapped by an ordinal envelope or lock. */

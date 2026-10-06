@@ -15,7 +15,10 @@ import {
   parseRecoveryHints,
   readHintedAddresses,
   recoveryHintsFor,
+  recoveryHintsGeneration,
+  recoveryHintsOffer,
   rememberRecoveryHints,
+  subscribeRecoveryHints,
   type HandCashRecoveryHints,
 } from './recoveryHints'
 
@@ -116,6 +119,55 @@ describe('recoveryHintsFor', () => {
   it('expires', () => {
     rememberRecoveryHints(hints({ receivedAt: 0 }))
     expect(recoveryHintsFor({ kind: 'handcash', handle: null }, 7 * 60 * 60 * 1000)).toBeNull()
+  })
+})
+
+describe('recoveryHintsOffer', () => {
+  beforeEach(() => clearRecoveryHintsForTests())
+  const handcash = (over: { handle?: string; scanAt?: number } = {}) => ({
+    kind: 'handcash',
+    handle: over.handle ? { handle: over.handle } : null,
+    scan: over.scanAt != null ? { at: over.scanAt } : null,
+  })
+
+  it('offers nothing to a source that is not a HandCash export', () => {
+    rememberRecoveryHints(hints({ receivedAt: 1_000 }))
+    expect(recoveryHintsOffer({ kind: 'mnemonic', handle: null, scan: null }, 2_000)).toEqual({ kind: 'none' })
+  })
+
+  it('asks for history until some arrives, and again once it expires', () => {
+    expect(recoveryHintsOffer(handcash(), 2_000)).toEqual({ kind: 'ask' })
+    rememberRecoveryHints(hints({ receivedAt: 0 }))
+    expect(recoveryHintsOffer(handcash(), 7 * 60 * 60 * 1000)).toEqual({ kind: 'ask' })
+  })
+
+  it('is ready when history arrived after the last scan, and used once a scan ran with it', () => {
+    rememberRecoveryHints(hints({ receivedAt: 1_000, txids: [txid(1), txid(2)], historyComplete: false }))
+    expect(recoveryHintsOffer(handcash({ scanAt: 500 }), 2_000)).toEqual({
+      kind: 'ready',
+      txids: 2,
+      historyComplete: false,
+    })
+    expect(recoveryHintsOffer(handcash(), 2_000)).toMatchObject({ kind: 'ready' })
+    expect(recoveryHintsOffer(handcash({ scanAt: 1_500 }), 2_000)).toEqual({ kind: 'used' })
+  })
+
+  it('names both handles when the signed-in account is not the one these keys prove', () => {
+    rememberRecoveryHints(hints({ receivedAt: 1_000, handle: 'bob' }))
+    expect(recoveryHintsOffer(handcash({ handle: '$Alice' }), 2_000)).toEqual({
+      kind: 'mismatch',
+      hinted: 'bob',
+      saved: 'alice',
+    })
+  })
+
+  it('tells subscribers when history arrives', () => {
+    const seen: number[] = []
+    const off = subscribeRecoveryHints(() => seen.push(recoveryHintsGeneration()))
+    rememberRecoveryHints(hints())
+    off()
+    rememberRecoveryHints(hints())
+    expect(seen).toEqual([1])
   })
 })
 

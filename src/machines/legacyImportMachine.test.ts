@@ -37,6 +37,19 @@ describe('legacyImportMachine', () => {
     expect(run({ type: 'LOADED' }, { type: 'PICK', kind: 'handcash' }, { type: 'BACK' }).matches('picking')).toBe(true)
   })
 
+  it('waits for HandCash history from a source, then scans; cancel or a wrong account returns to the view', () => {
+    const opened: LegacyImportEvent[] = [{ type: 'LOADED' }, { type: 'OPEN', sourceId: 's1' }]
+    const waiting = run(...opened, { type: 'ASK_HINTS' })
+    expect(waiting.matches({ source: 'awaitingHints' })).toBe(true)
+    expect(run(...opened, { type: 'ASK_HINTS' }, { type: 'HINTS' }).matches({ source: 'scanning' })).toBe(true)
+    expect(run(...opened, { type: 'ASK_HINTS' }, { type: 'BACK' }).matches({ source: 'viewing' })).toBe(true)
+    const refused = run(...opened, { type: 'ASK_HINTS' }, { type: 'FAIL', error: 'other handle' })
+    expect(refused.matches({ source: 'viewing' })).toBe(true)
+    expect(refused.context.error).toBe('other handle')
+    expect(run(...opened, { type: 'ASK_HINTS' }, { type: 'CONFIRM' }).matches({ source: 'awaitingHints' })).toBe(true)
+    expect(run(...opened, { type: 'HINTS' }).matches({ source: 'viewing' })).toBe(true)
+  })
+
   it('reaches sweeping only through review and confirm', () => {
     const opened: LegacyImportEvent[] = [{ type: 'LOADED' }, { type: 'OPEN', sourceId: 's1' }]
     expect(run(...opened, { type: 'CONFIRM' }).matches({ source: 'viewing' })).toBe(true)

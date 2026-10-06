@@ -9,6 +9,10 @@ import type { ImportSourceKind } from '../wallet/import'
  * `reviewing → CONFIRM → sweeping`. There is no transition into `sweeping`
  * from saving or scanning — a sweep is always the user's explicit confirm on
  * a preview. Removing a source is its own confirm.
+ *
+ * A HandCash source can wait for the user's HandCash account history: the
+ * migrate page signs in and hands it over the bridge (`HINTS`), which starts
+ * a scan that reads that history first. Hints never move anything.
  */
 export type LegacyImportEvent =
   | { type: 'LOADED' }
@@ -18,6 +22,8 @@ export type LegacyImportEvent =
   | { type: 'SAVED'; sourceId: string }
   | { type: 'OPEN'; sourceId: string }
   | { type: 'RESCAN' }
+  | { type: 'ASK_HINTS' }
+  | { type: 'HINTS' }
   | { type: 'SCANNED' }
   | { type: 'PROBE_HANDLE' }
   | { type: 'PROBED' }
@@ -121,10 +127,19 @@ export const legacyImportMachine = setup({
         viewing: {
           on: {
             RESCAN: { target: 'scanning' },
+            ASK_HINTS: { target: 'awaitingHints', actions: 'clearError' },
             PROBE_HANDLE: { target: 'probing', actions: 'clearError' },
             REVIEW: { target: 'reviewing', actions: 'clearError' },
             REMOVE: { target: 'confirmingRemove', actions: 'clearError' },
             BACK: { target: '#legacyImport.list' },
+          },
+        },
+        /** The migrate page is open in the browser; the user signs in there. */
+        awaitingHints: {
+          on: {
+            HINTS: { target: 'scanning' },
+            FAIL: { target: 'viewing', actions: 'fail' },
+            BACK: { target: 'viewing' },
           },
         },
         scanning: {

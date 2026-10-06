@@ -770,6 +770,9 @@ const LEGACY_IMPORT = `stateDiagram-v2
   state source {
     [*] --> viewing
     viewing --> scanning : RESCAN
+    viewing --> awaitingHints : ASK_HINTS (HandCash · opens /migrate)
+    awaitingHints --> scanning : HINTS (openKeyRecovery with history)
+    awaitingHints --> viewing : BACK / FAIL (other handle)
     scanning --> viewing : SCANNED / FAIL
     viewing --> probing : PROBE_HANDLE
     probing --> viewing : PROBED / FAIL
@@ -783,6 +786,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
     removing --> viewing : FAIL
 
     viewing : Read-only · identity, addresses, holdings, held reasons
+    awaitingHints : Sign in on /migrate · history, balance, items cross the bridge · moves nothing
     scanning : HandCash hints → own-history pass, kept only if it covers HandCash balance + items · else gap walk · history + 1Sat index · PAUSE
     probing : HandCash PKI key vs composed shares
     reviewing : Preview · compatible only

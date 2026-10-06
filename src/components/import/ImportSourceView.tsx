@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Accordion, MetricStrip, Progress, StatusBanner } from '@aeon-ui/react'
 import { formatBsv } from '../../wallet/session'
 import { estimateItemMigrateCost } from '../../wallet/phraseSweep'
-import { CLAIM_HANDLE_URL } from '../../wallet/walletConfig'
+import { CLAIM_HANDLE_URL, MIGRATE_HINTS_URL } from '../../wallet/walletConfig'
 import {
   IMPORT_ITEMS_PER_TX,
   IMPORT_SOURCE_LABELS,
@@ -14,12 +14,14 @@ import {
   type HeldTally,
   type ImportHoldReason,
   type ImportedSource,
+  type RecoveryHintsOffer,
 } from '../../wallet/import'
 import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { AsyncActionPrompt } from '../AsyncActionPrompt'
 
 export type SourceFace =
   | 'viewing'
+  | 'awaitingHints'
   | 'scanning'
   | 'probing'
   | 'reviewing'
@@ -40,6 +42,81 @@ function HeldList({ held }: { held: HeldTally }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+/**
+ * HandCash history for the scan: ask for it, wait for it, or rescan with it.
+ * `offer` is null where the migrate page cannot reach this shell's bridge.
+ */
+function HandCashHistory(props: {
+  offer: RecoveryHintsOffer | null
+  face: SourceFace
+  onAsk: () => void
+  onRescan: () => void
+  onCancel: () => void
+}) {
+  const { offer, face } = props
+  if (!offer || offer.kind === 'none') return null
+  if (face === 'awaitingHints') {
+    return (
+      <StatusBanner.Root tone="info" status="awaiting" data-aeon-part="hints">
+        <StatusBanner.Copy>
+          <StatusBanner.Title>Waiting for your HandCash history</StatusBanner.Title>
+          <StatusBanner.Body>
+            Sign in on the HandCash page that opened in your browser. The scan starts as soon as your
+            transaction list arrives. Your keys never leave this computer.
+          </StatusBanner.Body>
+        </StatusBanner.Copy>
+        <div className="actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => void window.handcash?.openExternal?.(MIGRATE_HINTS_URL)}
+          >
+            Open the page again
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={props.onCancel}>
+            Cancel
+          </button>
+        </div>
+      </StatusBanner.Root>
+    )
+  }
+  if (face !== 'viewing' || offer.kind === 'used') return null
+  if (offer.kind === 'ready') {
+    return (
+      <StatusBanner.Root tone="info" status="ready" data-aeon-part="hints">
+        <StatusBanner.Copy>
+          <StatusBanner.Title>Your HandCash history is here</StatusBanner.Title>
+          <StatusBanner.Body>
+            {offer.txids.toLocaleString()} transaction{offer.txids === 1 ? '' : 's'}
+            {offer.historyComplete ? '' : ' (not your full history, so the scan will also check every address)'}.
+            Rescan to read the addresses you have used first.
+          </StatusBanner.Body>
+        </StatusBanner.Copy>
+        <div className="actions">
+          <button type="button" className="btn btn-primary" onClick={props.onRescan}>
+            Rescan with it
+          </button>
+        </div>
+      </StatusBanner.Root>
+    )
+  }
+  return (
+    <div className="settings-row" data-aeon-part="hints" data-aeon-state={offer.kind}>
+      <h4 className="settings-row-label">Faster scan from your HandCash account</h4>
+      <p className="settings-row-desc">
+        {offer.kind === 'mismatch'
+          ? `HandCash sent the history of $${offer.hinted}, but these keys prove $${offer.saved}. Sign in as $${offer.saved}.`
+          : 'Sign in to HandCash in your browser and it sends your transaction list here, so the scan reads the addresses you have used instead of checking thousands. Nothing moves, and your keys never leave this computer.'}
+      </p>
+      <div className="actions">
+        <button type="button" className="btn btn-ghost" onClick={props.onAsk}>
+          Sign in to HandCash
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -64,6 +141,8 @@ export function ImportSourceView(props: {
   progress: string | null
   percent: number | null
   error: string | null
+  hintsOffer: RecoveryHintsOffer | null
+  onAskHints: () => void
   onBack: () => void
   onRescan: () => void
   onProbeHandle: (handle: string) => void
@@ -173,6 +252,14 @@ export function ImportSourceView(props: {
           </div>
         </div>
       ) : null}
+
+      <HandCashHistory
+        offer={props.hintsOffer}
+        face={face}
+        onAsk={props.onAskHints}
+        onRescan={props.onRescan}
+        onCancel={props.onCancel}
+      />
 
       {scan ? (
         <MetricStrip.Root density="loose" data-aeon-part="totals">
