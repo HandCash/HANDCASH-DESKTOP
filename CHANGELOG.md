@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.452] - 2026-10-06
+
+### Added
+
+- **A saved HandCash export now reads straight from your HandCash account.** Scanning a HandCash export asks HandCash which coins and items the account holds, instead of checking thousands of addresses. No sign-in needed: the export's own keys are the proof.
+  - **Signed by your keys.** The request is signed by keys from the export and covers every detail of the request. A request changed in transit is refused.
+  - **Encrypted to this request.** The answer comes back encrypted to a one-time key the app makes for that request and never shares, the same kind of protection History backup uses. Nobody else can read your list of coins: not a proxy, not a log, not someone replaying the request.
+  - **Checked on chain.** Each coin counts only if your keys derive the address HandCash names. Cash is then read from the chain, and items are checked one by one against the 1Sat index. HandCash's list decides where to look, never what you own.
+  - If HandCash doesn't know the keys or can't be reached, the scan falls back to Sign in to HandCash, then the full address check, as before.
+- After a scan read this way, the export says "from your HandCash account, checked on chain" and no longer offers Sign in to HandCash.
+
 ## [1.3.451] - 2026-10-06
 
 ### Changed
