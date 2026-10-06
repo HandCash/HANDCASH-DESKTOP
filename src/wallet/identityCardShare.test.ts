@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   delivered: [] as Array<{ recipientIdentityKey: string; body: string; messagebox?: string | null }>,
   reach: 'cloud' as 'local' | 'cloud' | 'direct',
   runtime: null as unknown,
+  accounts: [] as Array<{ master: string; identityKey: string; index: number }>,
+  accountIdentities: new Map<string, unknown>(),
 }))
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => state.values.get(key) ?? null,
@@ -29,6 +31,12 @@ vi.mock('./walletRuntime', () => ({
 }))
 vi.mock('./publicIdentities', () => ({
   presentedIdentityMaterial: () => state.material,
+  presentedIdentityOfAccount: (scope: { identityKey: string; accountIndex?: number; chain: string }) =>
+    state.accountIdentities.get(`${scope.chain}:${scope.accountIndex}:${scope.identityKey}`) ?? null,
+}))
+vi.mock('./vaultAccounts', () => ({
+  findVaultAccountByIdentityKey: (master: string, key: string) =>
+    state.accounts.find((a) => a.master === master && a.identityKey === key.toLowerCase()) ?? null,
 }))
 vi.mock('./messageTransport', () => ({
   MESSAGEBOX_INNER_MAX: 160_000,
@@ -44,6 +52,7 @@ import {
   ingestIdentityCardBody,
   resetIdentityCardShareForTests,
   shareIdentityCardAfterDelivery,
+  siblingAccountIdentity,
 } from './identityCardShare'
 import { IDENTITY_CARD_REQUEST, identityCardFromWire, parseIdentityCard } from './identityCard'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
@@ -52,6 +61,9 @@ const me = PrivateKey.fromHex('0c'.padStart(64, '0'))
 const friendKey = PrivateKey.fromHex('0d'.padStart(64, '0')).toPublicKey().toString().toLowerCase()
 const strangerKey = PrivateKey.fromHex('0e'.padStart(64, '0')).toPublicKey().toString().toLowerCase()
 const meHex = me.toHex().padStart(64, '0')
+const master = PrivateKey.fromHex('0b'.padStart(64, '0'))
+const masterKey = master.toPublicKey().toString()
+const siblingKey = PrivateKey.fromHex('0f'.padStart(64, '0')).toPublicKey().toString().toLowerCase()
 const fixture = bapIdentityFixture({ name: 'Me' })
 
 function presented(issuedAt = '2026-09-01T00:00:00.000Z'): PresentedIdentityMaterial {
@@ -83,8 +95,16 @@ beforeEach(() => {
   state.delivered = []
   state.reach = 'cloud'
   state.runtime = {
-    instance: { identityKey: me.toPublicKey().toString(), rootKeyHex: meHex, chain: 'main', accountIndex: 0 },
+    instance: {
+      identityKey: me.toPublicKey().toString(),
+      rootKeyHex: meHex,
+      masterRootKeyHex: master.toHex().padStart(64, '0'),
+      chain: 'main',
+      accountIndex: 0,
+    },
   }
+  state.accounts = [{ master: masterKey, identityKey: siblingKey, index: 2 }]
+  state.accountIdentities.clear()
   resetIdentityCardShareForTests()
 })
 
@@ -139,6 +159,31 @@ describe('identity card sharing', () => {
       'card',
       'request',
     ])
+  })
+
+  it('counts another account of this vault as a contact: answers its asks and volunteers the card', async () => {
+    await ingestIdentityCardBody(siblingKey, IDENTITY_CARD_REQUEST)
+    expect(cards()).toHaveLength(1)
+    expect(cards()[0]).toMatchObject({ recipientIdentityKey: siblingKey, messagebox: null })
+    state.material = presented('2026-09-02T00:00:00.000Z')
+    await sent(siblingKey)
+    expect(cards()).toHaveLength(2)
+  })
+
+  it('does not treat an account of a different vault as a sibling', async () => {
+    state.accounts = [{ master: strangerKey, identityKey: siblingKey, index: 2 }]
+    await ingestIdentityCardBody(siblingKey, IDENTITY_CARD_REQUEST)
+    expect(state.delivered).toEqual([])
+    expect(siblingAccountIdentity('main', siblingKey)).toBeNull()
+  })
+
+  it("reads a sibling account's presented identity on this device, per chain", () => {
+    const identity = { bapId: 'sibling-bap', name: 'Sub' }
+    state.accountIdentities.set(`main:2:${siblingKey}`, identity)
+    expect(siblingAccountIdentity('main', siblingKey.toUpperCase())).toBe(identity)
+    expect(siblingAccountIdentity('test', siblingKey)).toBeNull()
+    expect(siblingAccountIdentity('main', friendKey)).toBeNull()
+    expect(siblingAccountIdentity('main', me.toPublicKey().toString())).toBeNull()
   })
 
   it('does not share in reply to its own card traffic', async () => {

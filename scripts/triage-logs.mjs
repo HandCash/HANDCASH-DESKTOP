@@ -306,6 +306,7 @@ function sessionFacts(header, events) {
   const chainIngest = chainIngestFacts(events)
   const holdings = holdingsFacts(events)
   const accountSwitches = accountSwitchFacts(events)
+  const identityCards = identityCardFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
   const broadcast = broadcastFacts(events)
@@ -388,6 +389,9 @@ function sessionFacts(header, events) {
     chainIngest,
     holdings,
     accountSwitches,
+    // BAP identity cards per peer key: sent, asked, kept, refused, ignored as
+    // not a contact, and asks this account could not answer with a card.
+    identityCards,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
     // and whether legacy deposits were proven by their own path or parents.
@@ -2269,6 +2273,59 @@ function accountSwitchFacts(events) {
   }
 }
 
+const CARD_SENT_RE = /^\[identity-card\] sent (card|withdrawal) to ([0-9a-f]{12}) via (\S+)( \(asked\))?/
+const CARD_UNDELIVERED_RE = /^\[identity-card\] (card|withdrawal) to ([0-9a-f]{12}) not delivered \((\S+)\)/
+const CARD_ASK_RE = /^\[identity-card\] (asked|could not ask) ([0-9a-f]{12}) for their card via (\S+)/
+const CARD_ASKED_NO_IDENTITY_RE = /^\[identity-card\] asked by ([0-9a-f]{12}) but this account presents no identity/
+const CARD_IGNORED_RE = /^\[identity-card\] request from ([0-9a-f]{12}) ignored — not a contact/
+const CARD_KEPT_RE = /^\[identity-card\] kept (card|withdrawal) from ([0-9a-f]{12})(?:: (\S+))?/
+const CARD_REFUSED_RE = /^\[identity-card\] refused card from ([0-9a-f]{12}): (.*)$/
+const CARD_FAILED_RE = /^\[identity-card\] (share|exchange) failed (.*)$/
+const CARD_TOO_BIG_RE = /^\[identity-card\] card exceeds the messagebox limit/
+
+/** Identity cards per peer key prefix, so a missing card names its last step. */
+function identityCardFacts(events) {
+  const peers = {}
+  const failures = []
+  let oversized = 0
+  const peer = (key) => (peers[key] ??= { sent: 0, undelivered: 0, asked: 0, askFailed: 0, askedNoIdentity: 0, ignored: 0, kept: 0, refused: [], last: null })
+  const note = (key, step, at) => {
+    peer(key).last = { step, at: new Date(at).toISOString() }
+  }
+  for (const e of events) {
+    let m
+    if ((m = CARD_SENT_RE.exec(e.text))) {
+      peer(m[2]).sent += 1
+      note(m[2], `sent ${m[1]} via ${m[3]}${m[4] ? ' (asked)' : ''}`, e.at)
+    } else if ((m = CARD_UNDELIVERED_RE.exec(e.text))) {
+      peer(m[2]).undelivered += 1
+      note(m[2], `${m[1]} not delivered (${m[3]})`, e.at)
+    } else if ((m = CARD_ASK_RE.exec(e.text))) {
+      if (m[1] === 'asked') peer(m[2]).asked += 1
+      else peer(m[2]).askFailed += 1
+      note(m[2], `${m[1]} via ${m[3]}`, e.at)
+    } else if ((m = CARD_ASKED_NO_IDENTITY_RE.exec(e.text))) {
+      peer(m[1]).askedNoIdentity += 1
+      note(m[1], 'asked, but this account presents no identity', e.at)
+    } else if ((m = CARD_IGNORED_RE.exec(e.text))) {
+      peer(m[1]).ignored += 1
+      note(m[1], 'request ignored — not a contact', e.at)
+    } else if ((m = CARD_KEPT_RE.exec(e.text))) {
+      peer(m[2]).kept += 1
+      note(m[2], m[1] === 'card' ? `kept card ${m[3] ?? ''}`.trim() : 'kept withdrawal', e.at)
+    } else if ((m = CARD_REFUSED_RE.exec(e.text))) {
+      const p = peer(m[1])
+      if (!p.refused.includes(m[2])) p.refused.push(m[2])
+      note(m[1], `refused: ${m[2]}`, e.at)
+    } else if ((m = CARD_FAILED_RE.exec(e.text))) {
+      failures.push({ step: m[1], error: m[2].slice(0, 120) })
+    } else if (CARD_TOO_BIG_RE.test(e.text)) {
+      oversized += 1
+    }
+  }
+  return { peers, failures: failures.slice(0, 10), oversized }
+}
+
 function deadCoinFacts(events) {
   const seen = new Set()
   const found = new Map()
@@ -3900,6 +3957,27 @@ function report(state, answers) {
     if (switches.prewarms) {
       console.log(`  ${switches.prewarms} account(s) prewarmed, slowest ${switches.slowestPrewarmMs}ms`)
     }
+  }
+
+  const idCards = latest.identityCards
+  const idCardPeers = Object.entries(idCards?.peers ?? {})
+  if (idCardPeers.length || idCards?.failures?.length || idCards?.oversized) {
+    console.log('\nIdentity cards (code-counted, per peer key):')
+    for (const [key, p] of idCardPeers) {
+      const counts = [
+        p.sent && `sent ${p.sent}`,
+        p.undelivered && `undelivered ${p.undelivered}`,
+        p.asked && `asked ${p.asked}`,
+        p.askFailed && `ask failed ${p.askFailed}`,
+        p.askedNoIdentity && `asked with no identity to give ${p.askedNoIdentity}`,
+        p.ignored && `ignored as not a contact ${p.ignored}`,
+        p.kept && `kept ${p.kept}`,
+        p.refused.length && `refused (${p.refused.join('; ')})`,
+      ].filter(Boolean)
+      console.log(`  ${key}… ${counts.join(' · ')} — last: ${p.last?.step ?? 'none'}`)
+    }
+    if (idCards.oversized) console.log(`  ${idCards.oversized} card(s) over the messagebox limit`)
+    for (const f of idCards.failures) console.log(`  ${f.step} failed: ${f.error}`)
   }
 
   const dead = latest.deadCoins

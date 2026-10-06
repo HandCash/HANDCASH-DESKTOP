@@ -307,11 +307,18 @@ export type AccountProfile = { bapId: string; name: string; image?: IssuerIdenti
  * without unlocking it; null when nothing verified is published.
  */
 export function accountProfile(account: StoreScope): AccountProfile | null {
+  const identity = presentedIdentityOfAccount(account)
+  return identity
+    ? { bapId: identity.bapId, name: identity.name, ...(identity.image ? { image: identity.image } : {}) }
+    : null
+}
+
+/** The verified identity a vault account presents, read from its own store without unlocking it. */
+export function presentedIdentityOfAccount(account: StoreScope): IssuerIdentity | null {
   try {
     const row = presentedRow(read(account), account.chain)
     const identity = row?.published ? issuerIdentityFor(account.chain, row.published) : null
-    if (!identity || identity.revoked) return null
-    return { bapId: identity.bapId, name: identity.name, ...(identity.image ? { image: identity.image } : {}) }
+    return identity && !identity.revoked ? identity : null
   } catch {
     return null
   }

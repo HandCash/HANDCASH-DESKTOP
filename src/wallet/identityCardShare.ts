@@ -19,15 +19,20 @@ import {
   deliveryReachedPeer,
   type OutboundEnvelope,
 } from './messageTransport'
-import { presentedIdentityMaterial } from './publicIdentities'
+import { presentedIdentityMaterial, presentedIdentityOfAccount } from './publicIdentities'
+import type { IssuerIdentity } from './issuerIdentity'
+import type { Chain } from './vault'
+import { findVaultAccountByIdentityKey } from './vaultAccounts'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 /**
  * Identity cards ride the same sealed peer channel as chat: the direct IPv6
  * session when one is live, otherwise the recipient's BRC-33 box. A card goes
  * to a contact this wallet just reached, once per card version, and a contact
- * can ask for it again. Market counterparties and strangers never get one
- * unasked. No card ever gates the delivery it follows.
+ * can ask for it again. The other accounts of this vault count as contacts:
+ * a subwallet need not add its own primary back to share its card. Market
+ * counterparties and strangers never get one unasked. No card ever gates the
+ * delivery it follows.
  */
 
 type OwnCard = { owner: string; version: string; card: IdentityCard; fits: boolean }
@@ -44,6 +49,46 @@ const inFlight = new Map<string, Promise<boolean>>()
 function currentRuntime(): WalletRuntime | null {
   const runtime = getWalletRuntime()
   return runtime && runtimeIsCurrent(runtime) ? runtime : null
+}
+
+let masterIdentity: { rootKeyHex: string; identityKey: string } | null = null
+
+function masterIdentityKeyOf(rootKeyHex: string): string {
+  if (masterIdentity?.rootKeyHex !== rootKeyHex) {
+    masterIdentity = { rootKeyHex, identityKey: PrivateKey.fromHex(rootKeyHex).toPublicKey().toString() }
+  }
+  return masterIdentity.identityKey
+}
+
+/** Another account of this wallet's vault, derived from the same master. */
+function siblingAccount(runtime: WalletRuntime, peer: string) {
+  const active = runtime.instance
+  if (!active.masterRootKeyHex || peer === active.identityKey.toLowerCase()) return null
+  try {
+    return findVaultAccountByIdentityKey(masterIdentityKeyOf(active.masterRootKeyHex), peer)
+  } catch {
+    return null
+  }
+}
+
+/** Who may get our card unasked or on request: a contact, or a sibling account. */
+function knownPeer(runtime: WalletRuntime, peer: string): Pick<Friend, 'identityKey' | 'messagebox'> | null {
+  const friend = getFriendByIdentityKey(peer)
+  if (friend) return friend
+  return siblingAccount(runtime, peer) ? { identityKey: peer, messagebox: null } : null
+}
+
+/**
+ * The identity a sibling account presents, read on this device without a
+ * card: it is this wallet's own published identity.
+ */
+export function siblingAccountIdentity(chain: Chain, identityKey: string | null | undefined): IssuerIdentity | null {
+  const runtime = currentRuntime()
+  const peer = identityKey?.trim().toLowerCase()
+  if (!runtime || !peer) return null
+  const sibling = siblingAccount(runtime, peer)
+  if (!sibling) return null
+  return presentedIdentityOfAccount({ identityKey: sibling.identityKey, accountIndex: sibling.index, chain })
 }
 
 function sentKey(runtime: WalletRuntime): string {
@@ -119,14 +164,23 @@ async function sendCard(
   if (pending) return pending
   const task = (async () => {
     const card = await ownCard(runtime)
-    if (!card?.fits || !runtimeIsCurrent(runtime)) return false
+    if (!card) {
+      if (opts.force) console.info(`[identity-card] asked by ${peer.slice(0, 12)} but this account presents no identity`)
+      return false
+    }
+    if (!card.fits || !runtimeIsCurrent(runtime)) return false
     const prior = readSent(runtime)[peer]
     if (prior === card.version && !opts.force) return false
     // A withdrawal only matters to someone who saw a card.
     if (card.card.bapId === null && (!prior || prior.startsWith('none:'))) return false
     const sent = await deliverOutbound(envelope(runtime, peer, to.messagebox, identityCardWire(card.card)))
-    if (!deliveryReachedPeer(sent.delivered)) return false
+    const kind = card.card.bapId ? 'card' : 'withdrawal'
+    if (!deliveryReachedPeer(sent.delivered)) {
+      console.warn(`[identity-card] ${kind} to ${peer.slice(0, 12)} not delivered (${sent.delivered})`)
+      return false
+    }
     recordSent(runtime, peer, card.version)
+    console.info(`[identity-card] sent ${kind} to ${peer.slice(0, 12)} via ${sent.delivered}${opts.force ? ' (asked)' : ''}`)
     return true
   })().finally(() => inFlight.delete(peer))
   inFlight.set(peer, task)
@@ -151,9 +205,9 @@ function envelope(
 
 /** After a delivery reached a contact: send our card if they lack this version. */
 export async function shareIdentityCardAfterDelivery(env: OutboundEnvelope): Promise<void> {
-  if (isIdentityCardControl(env.body) || !getFriendByIdentityKey(env.recipientIdentityKey)) return
+  if (isIdentityCardControl(env.body)) return
   const runtime = currentRuntime()
-  if (!runtime) return
+  if (!runtime || !knownPeer(runtime, env.recipientIdentityKey.trim().toLowerCase())) return
   try {
     const sender = PrivateKey.fromHex(env.rootKeyHex.trim()).toPublicKey().toString().toLowerCase()
     if (sender !== runtime.instance.identityKey.toLowerCase()) return
@@ -175,7 +229,11 @@ export async function requestIdentityCard(
   if (!opts?.manual && now - (lastRequested.get(peer) ?? 0) < REQUEST_INTERVAL_MS) return false
   lastRequested.set(peer, now)
   const sent = await deliverOutbound(envelope(runtime, peer, friend.messagebox, IDENTITY_CARD_REQUEST))
-  return deliveryReachedPeer(sent.delivered)
+  const reached = deliveryReachedPeer(sent.delivered)
+  console.info(
+    `[identity-card] ${reached ? 'asked' : 'could not ask'} ${peer.slice(0, 12)} for their card via ${sent.delivered}${opts?.manual ? ' (manual)' : ''}`,
+  )
+  return reached
 }
 
 /** A new contact gets our card and is asked for theirs. */
@@ -209,9 +267,12 @@ export async function ingestIdentityCardBody(senderKey: string, inner: string): 
   const runtime = currentRuntime()
   if (!runtime) return
   const peer = senderKey.trim().toLowerCase()
-  const friend = getFriendByIdentityKey(peer)
+  const friend = knownPeer(runtime, peer)
   if (inner === IDENTITY_CARD_REQUEST) {
-    if (!friend) return
+    if (!friend) {
+      console.info(`[identity-card] request from ${peer.slice(0, 12)} ignored — not a contact`)
+      return
+    }
     const now = Date.now()
     if (now - (lastAnswered.get(peer) ?? 0) < REQUEST_INTERVAL_MS) return
     lastAnswered.set(peer, now)
@@ -229,6 +290,11 @@ export async function ingestIdentityCardBody(senderKey: string, inner: string): 
     console.warn(`[identity-card] refused card from ${peer.slice(0, 12)}: ${outcome.reason}`)
     return
   }
+  console.info(
+    outcome.kind === 'presented'
+      ? `[identity-card] kept card from ${peer.slice(0, 12)}: ${outcome.identity.bapId}`
+      : `[identity-card] kept withdrawal from ${peer.slice(0, 12)}`,
+  )
   if (friend) await sendCard(runtime, friend, { force: false }).catch(() => false)
 }
 
