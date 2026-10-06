@@ -788,7 +788,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
     viewing : Read-only · totals, tokens, held reasons
     awaitingHints : Sign in on /migrate · history, balance, items cross the bridge · moves nothing
     scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for tokens or an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
-    browsing : importItemBrowser · chosen items share transactions
+    browsing : importItemBrowser · chosen items queue to importQueue · share transactions
     reviewing : Preview · compatible only
     sweeping : Cash → items (BRC-150) → BSV-21 → MNEE (MNEE cosigner → Collect) · PAUSE
   }
@@ -844,19 +844,42 @@ const IMPORT_ITEM_BROWSER = `stateDiagram-v2
   --
   state move {
     [*] --> idle
-    idle --> importing : IMPORT / IMPORT_SELECTED (one chosen)
+    idle --> idle : IMPORT / IMPORT_SELECTED (one chosen) → enqueue
     idle --> confirming : IMPORT_SELECTED (several)
-    confirming --> importing : CONFIRM
+    confirming --> idle : CONFIRM → enqueue
     confirming --> idle : CANCEL
-    importing --> importing : chunk answered (more queued, not stopped)
-    importing --> idle : last chunk / funds / STOP honoured / error
-    importing : 100 chosen per call · grouped by source key · 25 tips per tx · same P2PKH item migrate (BRC-150 remittance)
+    idle : enqueue hands items to importQueue · rows already queued stay disabled · the rest stay usable
   }
   note right of move
-    Refused while a paused sweep reads the same address.
-    A rejected bundle splits down to singles on the same path.
-    Moved and not-an-item rows leave the list and stay out; unfunded stay selected.
+    watchQueue (root invoke) mirrors importQueue for this source:
+    run (moving · waiting · done) · report · paused.
+    ANSWERED: moved and not-an-item rows leave the list and stay out; unfunded stay selected.
+    STOP and DISMISS go to the queue. Leaving the page leaves the queue running.
     The list lives on this device until the item leaves the source.
+  end note
+`
+
+const IMPORT_QUEUE = `stateDiagram-v2
+  direction TB
+  [*] --> idle
+  idle --> deciding : ENQUEUE
+  deciding --> moving : queue not empty
+  deciding --> idle : queue empty
+  moving --> moving : ENQUEUE (appended, deduped per source) / STOP (drops waiting)
+  moving --> cooling : chunk answered · spent fee coin (pauses left)
+  moving --> deciding : chunk answered / error
+  cooling --> deciding : after 8s (untried items first)
+  cooling --> deciding : STOP (paused source)
+
+  moving : next 100 of one source + wallet → importItems · one migrate call across source keys · 25 tips per tx · same P2PKH item migrate (BRC-150 remittance) · prefetch next chunk's source txs
+  cooling : the wallet retires the spent coin before the retry
+  note right of moving
+    Lives for the unlocked session, not the page.
+    Missing funds drop the wallet's waiting items.
+    A spent fee coin retries the same bundle once, then pauses (2 pauses max).
+    A wallet change drops that wallet's items.
+    Refused while a paused sweep reads the same address.
+    Progress → walletProgress (item-import) → status pill.
   end note
 `
 
@@ -1516,8 +1539,14 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'importItemBrowser',
     label: 'Import items',
-    caption: 'importItemBrowserMachine — saved items shelved by issuer · page · select · 25 tips per tx',
+    caption: 'importItemBrowserMachine — saved items shelved by issuer · page · select · enqueue',
     source: IMPORT_ITEM_BROWSER,
+  },
+  {
+    id: 'importQueue',
+    label: 'Import queue',
+    caption: 'importQueueMachine — background item import · 100 per call · 25 tips per tx · survives leaving the page',
+    source: IMPORT_QUEUE,
   },
   {
     id: 'deviceBackup',

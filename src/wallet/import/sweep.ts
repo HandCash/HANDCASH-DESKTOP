@@ -139,13 +139,16 @@ export async function sweepImportedSource(args: {
           ...(h.itemCountCapped ? {} : { expectedItemCount: h.itemCount }),
         })
         report('items', `Moving collectables from ${h.label}… ${(items + batch.moved).toLocaleString()} so far`)
-        if (batch.done || batch.stopped === 'funds') {
+        if (batch.done || batch.stopped) {
           items += batch.moved
           failed += batch.failed
           held = addHeld(held, 'notCollectable', batch.skipped)
           if (batch.stopped === 'funds') {
             outOfFunds = true
             notes.push('This wallet ran low on BSV for item fees. Add funds and sweep again — it resumes.')
+          } else if (batch.stopped === 'stale-funding') {
+            outOfFunds = true
+            notes.push('A spent fee coin is being cleared from this wallet. Sweep again in a moment — it resumes.')
           }
           break
         }

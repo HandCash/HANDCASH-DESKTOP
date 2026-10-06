@@ -3,11 +3,13 @@ import type {
   ImportItem,
   ImportItemChange,
   ImportItemPage,
-  ImportItemResult,
   ImportItemsResult,
   ImportItemShelf,
   ImportItemSync,
 } from '../wallet/import'
+import { noticeFor, type ImportItemNotice, type ImportSourceView } from './importQueueMachine'
+
+export { batchNotice, IMPORT_CHUNK, noticeFor, type ImportItemNotice } from './importQueueMachine'
 
 /**
  * Settings → Import → a saved source → Browse items. Collect's face, with
@@ -20,18 +22,20 @@ import type {
  * - `shelves`: the list grouped by issuer, re-read (debounced) as it changes.
  * - `page`: one open shelf, or search results, a page at a time (`MORE`).
  * - `gather`: selecting a whole shelf reads its outpoints from disk.
- * - `move`: `IMPORT` moves one; `IMPORT_SELECTED` queues the selection behind
- *   a confirm and hands the wallet `IMPORT_CHUNK` items per call, which it
- *   packs into shared transactions. It stops after the chunk in flight on a
- *   missing-funds answer or `STOP`. A moved or not-an-item row leaves the
- *   list; every other outcome keeps it so it can be tried again, and items
- *   left unfunded stay selected.
+ * - `move`: `IMPORT` hands one item to the wallet's background import queue;
+ *   `IMPORT_SELECTED` hands the selection over behind a confirm and clears
+ *   it, so more can be chosen while it moves. Nothing here waits on the
+ *   import: the queue keeps going when the browser closes.
+ * - `watchQueue` (root): the queue's run for this source (`QUEUE_VIEW`) and
+ *   each chunk's answers (`ANSWERED`) — a moved or not-an-item row leaves
+ *   the list; every other outcome keeps it so it can be tried again.
  */
 
 export const IMPORT_PAGE_SIZE = 60
-/** Items per wallet call: whole 25-tip transactions, with progress and Stop between. */
-export const IMPORT_CHUNK = 100
 const SHELF_REREAD_MS = 1_200
+
+/** The background queue as this browser sees one source. */
+export type ImportQueueView = ImportSourceView
 
 /** Wallet calls the chart invokes; the panel binds them to the source. */
 export type ImportItemPorts = {
@@ -46,20 +50,18 @@ export type ImportItemPorts = {
     opts: { group?: string; after: number | null; limit: number; query?: string },
   ) => Promise<ImportItemPage>
   shelfOutpoints: (sourceId: string, group: string) => Promise<string[]>
-  importMany: (sourceId: string, outpoints: string[]) => Promise<ImportItemsResult>
-}
-
-export type ImportItemNotice = {
-  tone: 'success' | 'warning' | 'danger'
-  outcome: ImportItemResult['kind'] | 'batch'
-  title: string
-  body: string
+  enqueue: (sourceId: string, items: Array<{ outpoint: string; name: string | null }>) => void
+  stop: (sourceId: string) => void
+  dismiss: (sourceId: string) => void
+  watch: (
+    sourceId: string,
+    onView: (view: ImportQueueView) => void,
+    onAnswered: (results: ImportItemsResult['results']) => void,
+  ) => () => void
 }
 
 /** A chosen item and the shelf it sits on. */
 export type ImportSelection = { outpoint: string; group: string }
-
-type Tally = { total: number; moved: number; failure: ImportItemNotice | null; stopped: boolean }
 
 export type ImportItemBrowserContext = {
   ports: ImportItemPorts
@@ -81,9 +83,8 @@ export type ImportItemBrowserContext = {
   grew: boolean
   selected: ImportSelection[]
   gathering: string | null
-  /** Outpoints still to move; the first `IMPORT_CHUNK` are moving. */
-  queue: string[]
-  tally: Tally
+  queue: ImportQueueView
+  /** The queue refused the hand-over (a locked wallet). */
   notice: ImportItemNotice | null
 }
 
@@ -91,6 +92,8 @@ export type ImportItemBrowserEvent =
   | { type: 'CHANGED'; change: ImportItemChange }
   | { type: 'SYNCED'; sync: ImportItemSync }
   | { type: 'SYNC_FAILED'; error: string }
+  | { type: 'QUEUE_VIEW'; view: ImportQueueView }
+  | { type: 'ANSWERED'; results: ImportItemsResult['results'] }
   | { type: 'RETRY' }
   | { type: 'OPEN'; group: string | null }
   | { type: 'FILTER'; query: string }
@@ -109,63 +112,6 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-function itemTitle(name: string | null | undefined): string {
-  return name ?? 'Item'
-}
-
-/** The outcome as the user reads it, and whether the row stays listed. */
-export function noticeFor(
-  name: string | null,
-  result: ImportItemResult,
-): { notice: ImportItemNotice; keep: boolean } {
-  const title = itemTitle(name)
-  switch (result.kind) {
-    case 'moved':
-      return {
-        keep: false,
-        notice: { tone: 'success', outcome: result.kind, title: `${title} imported`, body: 'It is in this wallet now.' },
-      }
-    case 'skipped':
-      return {
-        keep: false,
-        notice: { tone: 'warning', outcome: result.kind, title: `${title} stays at the source`, body: result.message },
-      }
-    case 'funds':
-      return {
-        keep: true,
-        notice: { tone: 'warning', outcome: result.kind, title: 'Add BSV to import', body: result.message },
-      }
-    case 'refused':
-      return {
-        keep: true,
-        notice: { tone: 'warning', outcome: result.kind, title: `${title} not imported`, body: result.message },
-      }
-    case 'unreadable':
-    case 'failed':
-      return {
-        keep: true,
-        notice: { tone: 'danger', outcome: result.kind, title: `${title} not imported`, body: result.message },
-      }
-  }
-}
-
-/** What a finished selection import says: how many moved, and why it stopped short. */
-export function batchNotice(tally: Tally): ImportItemNotice {
-  const { total, moved, failure, stopped } = tally
-  const count = `${moved.toLocaleString()} of ${total.toLocaleString()} imported`
-  if (moved === total) {
-    return { tone: 'success', outcome: 'batch', title: `${total.toLocaleString()} items imported`, body: 'They are in this wallet now.' }
-  }
-  if (failure?.outcome === 'funds') return { ...failure, body: `${count}. ${failure.body}` }
-  if (stopped) return { tone: 'warning', outcome: 'batch', title: 'Import stopped', body: `${count}.` }
-  return { tone: failure?.tone ?? 'warning', outcome: 'batch', title: count, body: failure ? `${failure.title}: ${failure.body}` : '' }
-}
-
-/** The outpoints the wallet is moving now. Pure. */
-export function importChunk(queue: readonly string[]): string[] {
-  return queue.slice(0, IMPORT_CHUNK)
-}
-
 /** Chosen items per shelf. Pure. */
 export function selectedPerShelf(selected: readonly ImportSelection[]): Map<string, number> {
   const out = new Map<string, number>()
@@ -178,6 +124,11 @@ export function shelvedTotal(shelves: readonly ImportItemShelf[]): number {
   return shelves.reduce((sum, shelf) => sum + shelf.count, 0)
 }
 
+/** Outpoints the queue holds for this source: moving now, and waiting. Pure. */
+export function queuedOutpoints(view: ImportQueueView): { moving: Set<string>; waiting: Set<string> } {
+  return { moving: new Set(view.run?.moving ?? []), waiting: new Set(view.run?.waiting ?? []) }
+}
+
 function withSelection(
   selected: readonly ImportSelection[],
   items: readonly ImportSelection[],
@@ -188,7 +139,7 @@ function withSelection(
   return checked ? [...rest, ...items] : rest
 }
 
-const NO_TALLY: Tally = { total: 0, moved: 0, failure: null, stopped: false }
+const NO_QUEUE: ImportQueueView = { run: null, report: null, paused: false }
 
 type SyncInput = { ports: ImportItemPorts; sourceId: string }
 type PageInput = { ports: ImportItemPorts; sourceId: string; open: string | null; query: string; after: number | null }
@@ -222,6 +173,13 @@ export const importItemBrowserMachine = setup({
         stopped = true
       }
     }),
+    watchQueue: fromCallback<ImportItemBrowserEvent, SyncInput>(({ input, sendBack }) =>
+      input.ports.watch(
+        input.sourceId,
+        (view) => sendBack({ type: 'QUEUE_VIEW', view }),
+        (results) => sendBack({ type: 'ANSWERED', results }),
+      ),
+    ),
     readShelves: fromPromise(({ input }: { input: SyncInput }) => input.ports.readShelves(input.sourceId)),
     readPage: fromPromise(({ input }: { input: PageInput }) =>
       input.ports.readPage(input.sourceId, {
@@ -233,9 +191,6 @@ export const importItemBrowserMachine = setup({
     shelfOutpoints: fromPromise(({ input }: { input: SyncInput & { group: string } }) =>
       input.ports.shelfOutpoints(input.sourceId, input.group),
     ),
-    importMany: fromPromise(({ input }: { input: SyncInput & { outpoints: string[] } }) =>
-      input.ports.importMany(input.sourceId, input.outpoints),
-    ),
   },
   guards: {
     showing: ({ context }) => context.open != null || context.query.trim() !== '',
@@ -246,8 +201,6 @@ export const importItemBrowserMachine = setup({
     oneSelected: ({ context }) => context.selected.length === 1,
     deselectShelf: ({ event }) => event.type === 'SELECT_SHELF' && !event.checked,
     selectShelf: ({ event }) => event.type === 'SELECT_SHELF' && event.checked,
-    outOfFunds: ({ event }) => (event as { output?: ImportItemsResult }).output?.stopped === 'funds',
-    queueContinues: ({ context }) => context.queue.length > IMPORT_CHUNK && !context.tally.stopped,
   },
   actions: {
     changed: assign(({ context, event }) => {
@@ -272,48 +225,38 @@ export const importItemBrowserMachine = setup({
     deselectShelf: assign(({ context, event }) =>
       event.type === 'SELECT_SHELF' ? { selected: context.selected.filter((s) => s.group !== event.group) } : {},
     ),
-    queueOne: assign(({ event }) =>
-      event.type === 'IMPORT'
-        ? { queue: [event.outpoint], tally: { ...NO_TALLY, total: 1 }, notice: null }
-        : {},
-    ),
-    queueSelected: assign(({ context }) => ({
-      queue: context.selected.map((s) => s.outpoint),
-      tally: { ...NO_TALLY, total: context.selected.length },
-      notice: null,
-    })),
-    /**
-     * One chunk's answers: tally them, drop answered items from the selection
-     * (unfunded ones stay chosen) and from the list unless they stay.
-     */
-    recordImport: enqueueActions(({ context, event, enqueue }) => {
-      const { results, stopped } = (event as unknown as { output: ImportItemsResult }).output
+    /** Hand items to the background queue; a refusal (locked wallet) is the only answer here. */
+    enqueue: enqueueActions(({ context, event, enqueue }) => {
+      const outpoints =
+        event.type === 'IMPORT' ? [event.outpoint] : context.selected.map((s) => s.outpoint)
+      if (outpoints.length === 0) return
       const names = new Map(context.items.map((i) => [i.outpoint, i.name]))
-      let moved = 0
-      let failure = context.tally.failure
-      let last: ImportItemNotice | null = null
-      const gone: string[] = []
-      const answered = new Set<string>()
-      for (const { outpoint, result } of results) {
-        const { notice, keep } = noticeFor(names.get(outpoint) ?? null, result)
-        last = notice
-        if (result.kind === 'moved') moved += 1
-        else if (failure?.outcome !== 'funds') failure = notice
-        if (!keep) gone.push(outpoint)
-        if (result.kind !== 'funds') answered.add(outpoint)
+      try {
+        context.ports.enqueue(
+          context.sourceId,
+          outpoints.map((outpoint) => ({ outpoint, name: names.get(outpoint) ?? null })),
+        )
+        enqueue.assign({ notice: null, ...(event.type === 'IMPORT' ? {} : { selected: [] }) })
+      } catch (err) {
+        enqueue.assign({
+          notice: { tone: 'danger', outcome: 'failed', title: 'Items not imported', body: message(err) },
+        })
       }
-      const tally: Tally = { ...context.tally, moved: context.tally.moved + moved, failure }
-      const rest = context.queue.slice(IMPORT_CHUNK)
-      const finished = rest.length === 0 || stopped === 'funds' || tally.stopped
-      enqueue.assign({
-        queue: finished ? [] : rest,
-        tally,
-        selected: context.selected.filter((s) => !answered.has(s.outpoint)),
-        notice: finished ? (tally.total === 1 && last ? last : batchNotice(tally)) : null,
-      })
+    }),
+    /** A chunk's answers: rows that moved or are not items leave the list. */
+    answered: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== 'ANSWERED') return
+      const names = new Map(context.items.map((i) => [i.outpoint, i.name]))
+      const gone = event.results
+        .filter(({ outpoint, result }) => !noticeFor(names.get(outpoint) ?? null, result).keep)
+        .map(({ outpoint }) => outpoint)
       if (gone.length > 0) enqueue.raise({ type: 'CHANGED', change: { added: 0, gone } })
     }),
-    dismiss: assign({ notice: null }),
+    stop: ({ context }) => context.ports.stop(context.sourceId),
+    dismiss: enqueueActions(({ context, enqueue }) => {
+      if (context.notice) enqueue.assign({ notice: null })
+      else if (context.queue.report) context.ports.dismiss(context.sourceId)
+    }),
   },
 }).createMachine({
   id: 'importItemBrowser',
@@ -334,15 +277,21 @@ export const importItemBrowserMachine = setup({
     grew: false,
     selected: [],
     gathering: null,
-    queue: [],
-    tally: NO_TALLY,
+    queue: NO_QUEUE,
     notice: null,
   }),
+  invoke: {
+    src: 'watchQueue',
+    input: ({ context }) => ({ ports: context.ports, sourceId: context.sourceId }),
+  },
   on: {
     CHANGED: { actions: 'changed' },
+    QUEUE_VIEW: { actions: assign(({ event }) => ({ queue: event.view })) },
+    ANSWERED: { actions: 'answered' },
     SELECT: { actions: 'select' },
     SELECT_SHELF: { guard: 'deselectShelf', actions: 'deselectShelf' },
     CLEAR: { actions: assign({ selected: [] }) },
+    STOP: { actions: 'stop' },
     DISMISS: { actions: 'dismiss' },
   },
   states: {
@@ -490,9 +439,9 @@ export const importItemBrowserMachine = setup({
       states: {
         idle: {
           on: {
-            IMPORT: { target: 'importing', actions: 'queueOne' },
+            IMPORT: { actions: 'enqueue' },
             IMPORT_SELECTED: [
-              { guard: 'oneSelected', target: 'importing', actions: 'queueSelected' },
+              { guard: 'oneSelected', actions: 'enqueue' },
               { guard: 'hasSelection', target: 'confirming' },
             ],
           },
@@ -501,49 +450,10 @@ export const importItemBrowserMachine = setup({
         confirming: {
           on: {
             CONFIRM: [
-              { guard: 'hasSelection', target: 'importing', actions: 'queueSelected' },
+              { guard: 'hasSelection', target: 'idle', actions: 'enqueue' },
               { target: 'idle' },
             ],
             CANCEL: { target: 'idle' },
-          },
-        },
-        /** The head chunk moves in shared transactions; the next waits for its answers. */
-        importing: {
-          on: {
-            STOP: { actions: assign(({ context }) => ({ tally: { ...context.tally, stopped: true } })) },
-          },
-          invoke: {
-            src: 'importMany',
-            input: ({ context }) => ({
-              ports: context.ports,
-              sourceId: context.sourceId,
-              outpoints: importChunk(context.queue),
-            }),
-            onDone: [
-              { guard: 'outOfFunds', target: 'idle', actions: 'recordImport' },
-              { guard: 'queueContinues', target: 'importing', reenter: true, actions: 'recordImport' },
-              { target: 'idle', actions: 'recordImport' },
-            ],
-            onError: {
-              target: 'idle',
-              actions: assign(({ context, event }) => {
-                const chunk = importChunk(context.queue)
-                const name =
-                  chunk.length === 1 ? (context.items.find((i) => i.outpoint === chunk[0])?.name ?? null) : null
-                const failure: ImportItemNotice = {
-                  tone: 'danger',
-                  outcome: 'failed',
-                  title: chunk.length === 1 ? `${itemTitle(name)} not imported` : 'Items not imported',
-                  body: message(event.error),
-                }
-                const tally = { ...context.tally, failure }
-                return {
-                  queue: [],
-                  tally,
-                  notice: tally.total === 1 ? failure : batchNotice(tally),
-                }
-              }),
-            },
           },
         },
       },

@@ -30,6 +30,7 @@ const txCache = new Map<string, Transaction>()
 /** Test seam: a fresh build should not inherit a previous test's cache. */
 export function resetLegacyBeefCache(): void {
   txCache.clear()
+  nextStartAt = 0
 }
 
 function remember<V>(cache: Map<string, V>, key: string, value: V): void {
@@ -41,19 +42,49 @@ function remember<V>(cache: Map<string, V>, key: string, value: V): void {
   }
 }
 
-/**
- * Serializes provider calls with a gap between them.
- *
- * Concurrency is what triggered the rate limiting, so requests queue rather than
- * race. A rejected call must not poison the queue for the next one.
- */
-let gate: Promise<unknown> = Promise.resolve()
+/** Provider calls allowed in flight at once. */
+const MAX_IN_FLIGHT = 4
 
-function throttled<T>(fn: () => Promise<T>): Promise<T> {
-  const run = gate.then(fn, fn)
-  const pause = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_GAP_MS))
-  gate = run.then(pause, pause)
-  return run
+let inFlight = 0
+let nextStartAt = 0
+let wake: ReturnType<typeof setTimeout> | null = null
+const waiting: Array<() => void> = []
+
+/** Start queued calls, spaced `MIN_REQUEST_GAP_MS` apart, up to `MAX_IN_FLIGHT`. */
+function pump(): void {
+  while (inFlight < MAX_IN_FLIGHT && waiting.length > 0) {
+    const now = Date.now()
+    if (now < nextStartAt) {
+      wake ??= setTimeout(() => {
+        wake = null
+        pump()
+      }, nextStartAt - now)
+      return
+    }
+    nextStartAt = now + MIN_REQUEST_GAP_MS
+    inFlight += 1
+    waiting.shift()!()
+  }
+}
+
+/**
+ * Spaces provider calls and caps how many run at once.
+ *
+ * Bursts are what triggered the rate limiting, so starts stay spaced; waiting
+ * for each answer before the next start made a 100-item import read its
+ * source transactions one round trip at a time. A rejected call frees its slot.
+ */
+async function throttled<T>(fn: () => Promise<T>): Promise<T> {
+  await new Promise<void>((resolve) => {
+    waiting.push(resolve)
+    pump()
+  })
+  try {
+    return await fn()
+  } finally {
+    inFlight -= 1
+    pump()
+  }
 }
 
 type BuildContext = {

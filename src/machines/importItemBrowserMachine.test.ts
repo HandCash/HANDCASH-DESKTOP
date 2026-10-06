@@ -6,9 +6,11 @@ import {
   IMPORT_CHUNK,
   importItemBrowserMachine,
   noticeFor,
+  queuedOutpoints,
   selectedPerShelf,
   type ImportItemPorts,
 } from './importItemBrowserMachine'
+import { importQueueMachine, watchSource, type ImportQueuePorts } from './importQueueMachine'
 
 const op = (n: number) => `${n.toString(16).padStart(64, '0')}_0`
 
@@ -73,12 +75,38 @@ function savedList(groups: Record<string, ImportItem[]>) {
 
 type Sync = { onChange: (change: ImportItemChange) => void; finish: (sync: ImportItemSync) => void }
 
+type ImportMany = ImportQueuePorts['importMany']
+
+/** A real background queue behind the browser's ports, for wallet `id1`. */
+function backgroundQueue(importMany: ImportMany) {
+  const queue = createActor(importQueueMachine, {
+    input: { ports: { importMany: vi.fn(importMany), prefetch: vi.fn(async () => undefined) } },
+  }).start()
+  const ports: Pick<ImportItemPorts, 'enqueue' | 'stop' | 'dismiss' | 'watch'> = {
+    enqueue: (sourceId, items) => queue.send({ type: 'ENQUEUE', sourceId, identityKey: 'id1', items }),
+    stop: (sourceId) => queue.send({ type: 'STOP', sourceId }),
+    dismiss: (sourceId) => queue.send({ type: 'DISMISS', sourceId }),
+    watch: (sourceId, onView, onAnswered) => watchSource(queue, sourceId, onView, onAnswered),
+  }
+  const importManyMock = queue.getSnapshot().context.ports.importMany as ReturnType<typeof vi.fn<ImportMany>>
+  return { queue, ports, importMany: importManyMock }
+}
+
+const outpointsOf = (mock: ReturnType<typeof vi.fn<ImportMany>>) => mock.mock.calls.map(([chunk]) => chunk.outpoints)
+
 function start(
   groups: Record<string, ImportItem[]>,
-  ports: Partial<ImportItemPorts> = {},
+  opts: { ports?: Partial<ImportItemPorts>; importMany?: ImportMany } = {},
 ) {
   const list = savedList(groups)
   const syncs: Sync[] = []
+  const background = backgroundQueue(
+    opts.importMany ??
+      (async ({ outpoints }) => {
+        for (const outpoint of outpoints) list.drop(outpoint)
+        return answer(outpoints, () => MOVED)
+      }),
+  )
   const full: ImportItemPorts = {
     sync: vi.fn(
       (_id, onChange) =>
@@ -89,15 +117,25 @@ function start(
     readShelves: list.readShelves,
     readPage: list.readPage,
     shelfOutpoints: list.shelfOutpoints,
-    importMany: vi.fn(async (_id: string, outpoints: string[]): Promise<ImportItemsResult> => {
-      for (const outpoint of outpoints) list.drop(outpoint)
-      return answer(outpoints, () => MOVED)
-    }),
-    ...ports,
+    ...background.ports,
+    ...opts.ports,
   }
   const actor = createActor(importItemBrowserMachine, { input: { ports: full, sourceId: 's1' } }).start()
-  return { actor, ports: full, list, syncs }
+  return { actor, ports: full, list, syncs, queue: background.queue, importMany: background.importMany }
 }
+
+/** Hold each chunk until the test releases it. */
+function heldChunks() {
+  const releases: Array<() => void> = []
+  const importMany: ImportMany = ({ outpoints }) =>
+    new Promise<ImportItemsResult>((resolve) => {
+      releases.push(() => resolve(answer(outpoints, () => MOVED)))
+    })
+  return { importMany, release: () => releases.shift()?.() }
+}
+
+const settledReport = (actor: ReturnType<typeof start>['actor']) =>
+  waitFor(actor, (s) => s.context.queue.run == null && s.context.queue.report != null)
 
 afterEach(() => {
   vi.useRealTimers()
@@ -149,21 +187,63 @@ describe('importItemBrowserMachine', () => {
   })
 
   it('moves exactly the chosen item and drops it from the list', async () => {
-    const { actor, ports } = start({ zoo: [item(1), item(2)] })
+    const { actor, importMany } = start({ zoo: [item(1), item(2)] })
     actor.send({ type: 'OPEN', group: 'zoo' })
     await waitFor(actor, (s) => s.matches({ page: 'ready' }))
     actor.send({ type: 'IMPORT', outpoint: op(2) })
-    expect(actor.getSnapshot().matches({ move: 'importing' })).toBe(true)
-    actor.send({ type: 'IMPORT', outpoint: op(1) })
-    const done = await waitFor(actor, (s) => s.matches({ move: 'idle' }))
-    expect(ports.importMany).toHaveBeenCalledTimes(1)
-    expect(ports.importMany).toHaveBeenCalledWith('s1', [op(2)])
+    expect(actor.getSnapshot().context.queue.run?.moving).toEqual([op(2)])
+    const done = await settledReport(actor)
+    expect(importMany).toHaveBeenCalledTimes(1)
+    expect(importMany).toHaveBeenCalledWith({ sourceId: 's1', identityKey: 'id1', outpoints: [op(2)] })
     expect(done.context.items.map((i) => i.outpoint)).toEqual([op(1)])
-    expect(done.context.notice).toMatchObject({ tone: 'success', outcome: 'moved', title: 'Item 2 imported' })
+    expect(done.context.queue.report).toMatchObject({ tone: 'success', outcome: 'moved', title: 'Item 2 imported' })
+  })
+
+  it('keeps every button live while a chunk moves, and queues what is chosen next', async () => {
+    const held = heldChunks()
+    const { actor, importMany } = start({ zoo: [item(1), item(2), item(3)] }, { importMany: held.importMany })
+    actor.send({ type: 'OPEN', group: 'zoo' })
+    await waitFor(actor, (s) => s.matches({ page: 'ready' }))
+    actor.send({ type: 'IMPORT', outpoint: op(1) })
+    expect(actor.getSnapshot().matches({ move: 'idle' })).toBe(true)
+
+    actor.send({ type: 'SELECT', items: [{ outpoint: op(2), group: 'zoo' }, { outpoint: op(3), group: 'zoo' }], checked: true })
+    actor.send({ type: 'IMPORT_SELECTED' })
+    actor.send({ type: 'CONFIRM' })
+    const queued = actor.getSnapshot()
+    expect(queued.context.selected).toEqual([])
+    expect(queuedOutpoints(queued.context.queue)).toEqual({ moving: new Set([op(1)]), waiting: new Set([op(2), op(3)]) })
+
+    held.release()
+    await vi.waitFor(() => expect(importMany).toHaveBeenCalledTimes(2))
+    held.release()
+    const done = await settledReport(actor)
+    expect(outpointsOf(importMany)).toEqual([[op(1)], [op(2), op(3)]])
+    expect(done.context.items).toEqual([])
+    expect(done.context.queue.report).toMatchObject({ tone: 'success', title: '3 items imported' })
+  })
+
+  it('keeps importing after the browser closes', async () => {
+    const held = heldChunks()
+    const zoo = Array.from({ length: IMPORT_CHUNK + 3 }, (_, i) => item(i + 1))
+    const { actor, queue, importMany } = start({ zoo }, { importMany: held.importMany })
+    await waitFor(actor, (s) => s.matches({ shelves: 'idle' }))
+    actor.send({ type: 'SELECT_SHELF', group: 'zoo', checked: true })
+    await waitFor(actor, (s) => s.context.selected.length === zoo.length)
+    actor.send({ type: 'IMPORT_SELECTED' })
+    actor.send({ type: 'CONFIRM' })
+    actor.stop()
+
+    held.release()
+    await vi.waitFor(() => expect(importMany).toHaveBeenCalledTimes(2))
+    held.release()
+    const idle = await waitFor(queue, (s) => s.matches('idle'))
+    expect(outpointsOf(importMany).map((o) => o.length)).toEqual([IMPORT_CHUNK, 3])
+    expect(idle.context.reports.s1).toMatchObject({ title: `${zoo.length} items imported` })
   })
 
   it('selects a whole shelf from disk and imports the selection behind one confirm', async () => {
-    const { actor, ports } = start({ zoo: [item(1), item(2)], alpha: [item(3)] })
+    const { actor, importMany } = start({ zoo: [item(1), item(2)], alpha: [item(3)] })
     await waitFor(actor, (s) => s.matches({ shelves: 'idle' }))
     actor.send({ type: 'SELECT_SHELF', group: 'zoo', checked: true })
     const gathered = await waitFor(actor, (s) => s.matches({ gather: 'idle' }) && s.context.selected.length === 2)
@@ -174,75 +254,67 @@ describe('importItemBrowserMachine', () => {
     actor.send({ type: 'IMPORT_SELECTED' })
     expect(actor.getSnapshot().matches({ move: 'confirming' })).toBe(true)
     actor.send({ type: 'CONFIRM' })
-    const done = await waitFor(actor, (s) => s.matches({ move: 'idle' }) && s.context.notice != null)
-    expect(vi.mocked(ports.importMany).mock.calls.map(([, outpoints]) => outpoints)).toEqual([[op(1), op(2), op(3)]])
-    expect(done.context.selected).toEqual([])
-    expect(done.context.notice).toMatchObject({ tone: 'success', title: '3 items imported' })
+    expect(actor.getSnapshot().context.selected).toEqual([])
+    const done = await settledReport(actor)
+    expect(outpointsOf(importMany)).toEqual([[op(1), op(2), op(3)]])
+    expect(done.context.queue.report).toMatchObject({ tone: 'success', title: '3 items imported' })
 
     actor.send({ type: 'SELECT', items: [{ outpoint: op(9), group: 'zoo' }], checked: true })
     actor.send({ type: 'SELECT_SHELF', group: 'zoo', checked: false })
     expect(actor.getSnapshot().context.selected).toEqual([])
+    actor.send({ type: 'DISMISS' })
+    expect(actor.getSnapshot().context.queue.report).toBeNull()
   })
 
   it('hands the wallet a large selection in chunks and counts every answer', async () => {
     const zoo = Array.from({ length: IMPORT_CHUNK * 2 + 5 }, (_, i) => item(i + 1))
-    const { actor, ports } = start({ zoo })
+    const { actor, importMany } = start({ zoo })
     await waitFor(actor, (s) => s.matches({ shelves: 'idle' }))
     actor.send({ type: 'SELECT_SHELF', group: 'zoo', checked: true })
     await waitFor(actor, (s) => s.context.selected.length === zoo.length)
     actor.send({ type: 'IMPORT_SELECTED' })
     actor.send({ type: 'CONFIRM' })
-    const done = await waitFor(actor, (s) => s.matches({ move: 'idle' }) && s.context.notice != null)
-    expect(vi.mocked(ports.importMany).mock.calls.map(([, outpoints]) => outpoints.length)).toEqual([
-      IMPORT_CHUNK,
-      IMPORT_CHUNK,
-      5,
-    ])
-    expect(done.context.selected).toEqual([])
-    expect(done.context.notice).toMatchObject({ tone: 'success', title: `${zoo.length} items imported` })
+    const done = await settledReport(actor)
+    expect(outpointsOf(importMany).map((o) => o.length)).toEqual([IMPORT_CHUNK, IMPORT_CHUNK, 5])
+    expect(done.context.queue.report).toMatchObject({ tone: 'success', title: `${zoo.length} items imported` })
   })
 
-  it('stops a selection when the wallet runs out of BSV and keeps the unfunded selected', async () => {
-    const importMany = vi.fn(async (_id: string, outpoints: string[]) =>
-      answer(outpoints, (outpoint) =>
-        outpoint === op(1) ? MOVED : { kind: 'funds', message: 'Add 120 sats.' },
-      ),
-    )
+  it('stops when the wallet runs out of BSV and keeps the unfunded listed', async () => {
     const zoo = Array.from({ length: IMPORT_CHUNK + 3 }, (_, i) => item(i + 1))
-    const { actor } = start({ zoo }, { importMany })
-    await waitFor(actor, (s) => s.matches({ shelves: 'idle' }))
+    const { actor, importMany } = start(
+      { zoo },
+      {
+        importMany: async ({ outpoints }) =>
+          answer(outpoints, (outpoint) => (outpoint === op(1) ? MOVED : { kind: 'funds', message: 'Add 120 sats.' })),
+      },
+    )
+    actor.send({ type: 'OPEN', group: 'zoo' })
+    await waitFor(actor, (s) => s.matches({ page: 'ready' }))
     actor.send({ type: 'SELECT_SHELF', group: 'zoo', checked: true })
     await waitFor(actor, (s) => s.context.selected.length === zoo.length)
     actor.send({ type: 'IMPORT_SELECTED' })
     actor.send({ type: 'CONFIRM' })
-    const done = await waitFor(actor, (s) => s.matches({ move: 'idle' }) && s.context.notice != null)
+    const done = await settledReport(actor)
     expect(importMany).toHaveBeenCalledTimes(1)
-    expect(done.context.selected).toHaveLength(zoo.length - 1)
-    expect(done.context.selected[0]!.outpoint).toBe(op(2))
-    expect(done.context.notice).toMatchObject({ outcome: 'funds', body: `1 of ${zoo.length} imported. Add 120 sats.` })
+    expect(done.context.items[0]!.outpoint).toBe(op(2))
+    expect(done.context.queue.report).toMatchObject({ outcome: 'funds', body: `1 of ${zoo.length} imported. Add 120 sats.` })
   })
 
   it('stops a selection on request after the chunk in flight', async () => {
-    let release: () => void = () => undefined
-    const importMany = vi.fn(
-      (_id: string, outpoints: string[]) =>
-        new Promise<ImportItemsResult>((resolve) => {
-          release = () => resolve(answer(outpoints, () => MOVED))
-        }),
-    )
+    const held = heldChunks()
     const zoo = Array.from({ length: IMPORT_CHUNK + 3 }, (_, i) => item(i + 1))
-    const { actor } = start({ zoo }, { importMany })
+    const { actor, importMany } = start({ zoo }, { importMany: held.importMany })
     await waitFor(actor, (s) => s.matches({ shelves: 'idle' }))
     actor.send({ type: 'SELECT_SHELF', group: 'zoo', checked: true })
     await waitFor(actor, (s) => s.context.selected.length === zoo.length)
     actor.send({ type: 'IMPORT_SELECTED' })
     actor.send({ type: 'CONFIRM' })
     actor.send({ type: 'STOP' })
-    release()
-    const done = await waitFor(actor, (s) => s.matches({ move: 'idle' }) && s.context.notice != null)
+    expect(actor.getSnapshot().context.queue.run).toMatchObject({ waiting: [], stopping: true })
+    held.release()
+    const done = await settledReport(actor)
     expect(importMany).toHaveBeenCalledTimes(1)
-    expect(done.context.selected).toHaveLength(3)
-    expect(done.context.notice).toMatchObject({ title: 'Import stopped', body: `${IMPORT_CHUNK} of ${zoo.length} imported.` })
+    expect(done.context.queue.report).toMatchObject({ title: 'Import stopped', body: `${IMPORT_CHUNK} of ${zoo.length} imported.` })
   })
 
   it('keeps the item listed when the move throws, and retries a failed check', async () => {
@@ -250,10 +322,15 @@ describe('importItemBrowserMachine', () => {
       .fn<ImportItemPorts['sync']>()
       .mockRejectedValueOnce(new Error('index down'))
       .mockResolvedValue({ complete: true, total: 1 })
-    const importMany = vi.fn(async (): Promise<ImportItemsResult> => {
-      throw new Error('Wallet is busy')
-    })
-    const { actor } = start({ zoo: [item(1)] }, { sync, importMany })
+    const { actor } = start(
+      { zoo: [item(1)] },
+      {
+        ports: { sync },
+        importMany: async () => {
+          throw new Error('Wallet is busy')
+        },
+      },
+    )
     const failed = await waitFor(actor, (s) => s.matches({ sync: 'failed' }))
     expect(failed.context.syncError).toBe('index down')
     actor.send({ type: 'RETRY' })
@@ -262,9 +339,29 @@ describe('importItemBrowserMachine', () => {
     actor.send({ type: 'OPEN', group: 'zoo' })
     await waitFor(actor, (s) => s.matches({ page: 'ready' }))
     actor.send({ type: 'IMPORT', outpoint: op(1) })
-    const done = await waitFor(actor, (s) => s.matches({ move: 'idle' }) && s.context.notice != null)
+    const done = await settledReport(actor)
     expect(done.context.items.map((i) => i.outpoint)).toEqual([op(1)])
-    expect(done.context.notice).toMatchObject({ tone: 'danger', title: 'Item 1 not imported', body: 'Wallet is busy' })
+    expect(done.context.queue.report).toMatchObject({ tone: 'danger', title: 'Item 1 not imported', body: 'Wallet is busy' })
+  })
+
+  it('says why a hand-over was refused and keeps the selection', async () => {
+    const { actor } = start(
+      { zoo: [item(1), item(2)] },
+      {
+        ports: {
+          enqueue: () => {
+            throw new Error('Unlock this wallet first')
+          },
+        },
+      },
+    )
+    await waitFor(actor, (s) => s.matches({ shelves: 'idle' }))
+    actor.send({ type: 'SELECT', items: [{ outpoint: op(1), group: 'zoo' }], checked: true })
+    actor.send({ type: 'IMPORT_SELECTED' })
+    expect(actor.getSnapshot().context.selected).toHaveLength(1)
+    expect(actor.getSnapshot().context.notice).toMatchObject({ tone: 'danger', body: 'Unlock this wallet first' })
+    actor.send({ type: 'DISMISS' })
+    expect(actor.getSnapshot().context.notice).toBeNull()
   })
 })
 

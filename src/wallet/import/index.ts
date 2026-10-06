@@ -64,6 +64,14 @@ export {
   type ImportItemShelf,
   type ImportItemSync,
 } from './items'
+export {
+  dismissImportReport,
+  enqueueImportItems,
+  importSourceView,
+  stopImportItems,
+  watchImportSource,
+  type ImportSourceView,
+} from './importQueue'
 export { HANDCASH_GAP } from './pathCatalog'
 export { requestImportKind, subscribeImportIntent, takeImportIntent } from './importIntent'
 export {

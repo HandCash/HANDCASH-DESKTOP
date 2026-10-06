@@ -1357,20 +1357,33 @@ async function hideToolboxOutputs(
         // A coin coin-selection can choose may be linked to its parent only by
         // `transactionId`; missing it here leaves the dead coin spendable.
         const rows = await findOutputsForTxid(sp, parsed.txid, {
-          linkByTransactionId: true,
+          linkByTransactionId: "always",
         });
-        const match = rows.find(
-          (row) => Number(row.vout ?? row.outputIndex) === parsed.vout
-        );
-        const outputId = positiveId(match?.outputId);
-        if (outputId == null) {
+        // Coin selection reads every row, so a second row for the same
+        // outpoint left spendable hands the dead coin straight back.
+        const outputIds = [
+          ...new Set(
+            rows
+              .filter((row) => Number(row.vout ?? row.outputIndex) === parsed.vout)
+              .map((row) => positiveId(row.outputId))
+              .filter((id): id is number => id != null)
+          ),
+        ];
+        if (outputIds.length === 0) {
           unmatched.push(op);
           continue;
         }
-        try {
-          await sp.updateOutput(outputId, { spendable: false });
-        } catch (err) {
-          console.warn("[stale-output] hide spendable=false skipped", op, err);
+        if (outputIds.length > 1) {
+          console.warn(
+            `[stale-output] hide matched ${outputIds.length} storage rows for ${op}`
+          );
+        }
+        for (const outputId of outputIds) {
+          try {
+            await sp.updateOutput(outputId, { spendable: false });
+          } catch (err) {
+            console.warn("[stale-output] hide spendable=false skipped", op, err);
+          }
         }
       }
       if (unmatched.length > 0) {
@@ -2792,8 +2805,10 @@ async function findOutputsForTxid(
    * `transactionId`. Costs an extra parent-row read plus a second output page,
    * so only the change-promotion callers ask for it — the seal / hide / revive
    * loops address outputs by exact outpoint and page this once per coin.
+   * `'always'` reads the linked rows even when the txid read found some, for
+   * callers that must reach every row of a coin.
    */
-  opts?: { linkByTransactionId?: boolean }
+  opts?: { linkByTransactionId?: boolean | "always" }
 ): Promise<
   Array<ChangeRow & { outputIndex?: number; basket?: string; spentBy?: number }>
 > {
@@ -2818,8 +2833,8 @@ async function findOutputsForTxid(
     // lookup therefore found no change at the exact moment a bulk leg needed
     // to promote it, despite the signed AtomicBEEF already being durable.
     if (
-      opts?.linkByTransactionId === true &&
-      rows.length === 0 &&
+      (opts?.linkByTransactionId === "always" ||
+        (opts?.linkByTransactionId === true && rows.length === 0)) &&
       typeof sp.findTransactions === "function"
     ) {
       const looked = await lookupLocalTxOnProvider(

@@ -159,6 +159,31 @@ describe('buildLegacyInputBeef', () => {
     expect(await beef.verify(tracker, true)).toBe(false)
   })
 
+  it('overlaps source reads without ever running more than four at once', async () => {
+    const txs = Array.from({ length: 8 }, (_, i) => buildChain(1, 10_000 + i)[0]!)
+    const { services } = makeServices(txs.map((tx, i) => ({ tx, proof: provenAt(tx, 800_100 + i) })))
+    let live = 0
+    let peak = 0
+    const getRawTx = services.getRawTx.bind(services)
+    services.getRawTx = (async (txid: string) => {
+      live += 1
+      peak = Math.max(peak, live)
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      live -= 1
+      return getRawTx(txid)
+    }) as Services['getRawTx']
+
+    const built = await buildLegacyInputBeef(
+      services,
+      txs.map((tx) => `${tx.id('hex')}.0`),
+      { concurrency: 8 },
+    )
+
+    expect(built.ready).toHaveLength(8)
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThanOrEqual(4)
+  })
+
   it('reports a malformed outpoint without asking the network', async () => {
     const { services, rawTxCalls } = makeServices([])
 

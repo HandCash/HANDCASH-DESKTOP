@@ -23,6 +23,7 @@ import { emptyHoldings, type AddressHoldings } from './holdings'
 import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem } from './itemStore'
 import {
   importItems,
+  ImportWalletChangedError,
   readImportItems,
   readImportShelves,
   syncImportItems,
@@ -209,7 +210,7 @@ function migrateAnswers(resultOf: (outpoint: string) => SingleItemMigrate) {
 const MOVED: SingleItemMigrate = { kind: 'moved', txid: 'f'.repeat(64) }
 
 describe('importItems', () => {
-  it('moves each key’s chosen items in one call, counts them out of the scan, and drops them from the list', async () => {
+  it('moves every key’s chosen items in one call, counts them out of the scan, and drops them from the list', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 3), holding('1b', 2)])])
     await saveImportItems('s1', [stored(1, '1a'), stored(2, '1b'), stored(3, '1a'), stored(4, '1a'), stored(5, '1b')])
     migrateAnswers(() => MOVED)
@@ -223,13 +224,15 @@ describe('importItems', () => {
       [op(5), 'moved'],
     ])
     const calls = vi.mocked(migrateChosenPhraseItems).mock.calls.map(([a]) => a)
-    expect(calls).toHaveLength(2)
-    expect(calls[0]).toMatchObject({ candidate: { address: '1a', scheme: 'import' } })
+    expect(calls).toHaveLength(1)
+    const keyHex = calls[0]!.items[0]!.keyHex
+    expect(keyHex).toMatch(/^[0-9a-f]{64}$/)
     expect(calls[0]!.items).toEqual([
-      { outpoint: op(1), origin: op(1), name: 'Item 1' },
-      { outpoint: op(3), origin: op(3), name: 'Item 3' },
+      { outpoint: op(1), keyHex, origin: op(1), name: 'Item 1' },
+      { outpoint: op(2), keyHex, origin: op(2), name: 'Item 2' },
+      { outpoint: op(3), keyHex, origin: op(3), name: 'Item 3' },
+      { outpoint: op(5), keyHex, origin: op(5), name: 'Item 5' },
     ])
-    expect(calls[1]!.items.map((i) => i.outpoint)).toEqual([op(2), op(5)])
     expect(updateImportedSource).toHaveBeenCalledTimes(1)
     expect(vi.mocked(updateImportedSource).mock.calls[0]![1].scan?.holdings.map((h) => h.itemCount)).toEqual([1, 0])
     expect(await listed()).toEqual([op(4)])
@@ -249,7 +252,18 @@ describe('importItems', () => {
     expect(migrateChosenPhraseItems).not.toHaveBeenCalled()
   })
 
-  it('keeps unmoved items and the scan, and stops later keys once BSV runs out', async () => {
+  it('refuses a chunk queued for a wallet that is no longer open', async () => {
+    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 1)])])
+    await saveImportItems('s1', [stored(1, '1a')])
+    const other = PrivateKey.fromRandom().toPublicKey().toString()
+    await expect(importItems({ sourceId: 's1', outpoints: [op(1)], identityKey: other })).rejects.toBeInstanceOf(
+      ImportWalletChangedError,
+    )
+    expect(migrateChosenPhraseItems).not.toHaveBeenCalled()
+    expect(await listed()).toEqual([op(1)])
+  })
+
+  it('keeps unmoved items and the scan once BSV runs out', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 2), holding('1b', 1)])])
     await saveImportItems('s1', [stored(1, '1a'), stored(2, '1a'), stored(3, '1b')])
     migrateAnswers((outpoint) => (outpoint === op(1) ? MOVED : { kind: 'funds', message: 'low' }))

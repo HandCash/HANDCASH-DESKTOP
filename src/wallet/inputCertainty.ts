@@ -65,6 +65,8 @@ export class InputsUnverifiedError extends Error {
   constructor(
     readonly reason: RefusalReason,
     message: string,
+    /** Outpoints found spent elsewhere, when that is why it refused. */
+    readonly dead: readonly string[] = [],
   ) {
     super(message)
     this.name = 'InputsUnverifiedError'
@@ -291,7 +293,11 @@ export async function signWithCertainInputs<T>(
       await retireDeadInputs(txid, verdict, chain)
       if (opts.resign === false || retireHitsNamedInput(verdict, opts.named ?? new Set())) {
         console.warn(`[certainty] ${txid.slice(0, 12)} refused reason=input-spent — nothing sent`)
-        throw new InputsUnverifiedError('input-spent', refusalMessage('input-spent'))
+        throw new InputsUnverifiedError(
+          'input-spent',
+          refusalMessage('input-spent'),
+          verdict.spends.map((s) => s.outpoint),
+        )
       }
       if (attempt >= MAX_SIGNS) {
         throw new InputsUnverifiedError('still-dead', refusalMessage('still-dead'))
@@ -338,7 +344,11 @@ export async function certifyBeforeSigning(
   if (verdict.kind === 'retire') {
     await retireDeadInputs(subject, verdict, chain)
     console.warn(`[certainty] ${subject.slice(0, 12)} refused reason=input-spent — aborted before signing`)
-    throw new InputsUnverifiedError('input-spent', refusalMessage('input-spent'))
+    throw new InputsUnverifiedError(
+      'input-spent',
+      refusalMessage('input-spent'),
+      verdict.spends.map((s) => s.outpoint),
+    )
   }
   console.warn(
     `[certainty] ${subject.slice(0, 12) || 'signable'} refused reason=${verdict.reason} — aborted before signing`,

@@ -27,3 +27,17 @@ describe('phraseSweep validatePhraseInput', () => {
     expect(validatePhraseInput('abandon '.repeat(11).trim())).toMatch(/12- or 24|valid/i)
   })
 })
+
+describe('phraseSweep refusedOverFunding', () => {
+  const tip = `${'a'.repeat(64)}.1`
+  const refusal = (reason: string, dead: string[] = []) => Object.assign(new Error(reason), { code: 'INPUTS_UNVERIFIED', reason, dead })
+
+  it('blames the wallet’s fee coin only when the bundle’s own tips are not the dead inputs', async () => {
+    const { refusedOverFunding } = await import('./phraseSweep')
+    expect(refusedOverFunding(refusal('still-dead'), [{ outpoint: tip }])).toBe(true)
+    expect(refusedOverFunding(refusal('input-spent', [`${'b'.repeat(64)}.0`]), [{ outpoint: tip }])).toBe(true)
+    expect(refusedOverFunding(refusal('input-spent', [`${'A'.repeat(64)}_1`]), [{ outpoint: tip }])).toBe(false)
+    expect(refusedOverFunding(refusal('input-spent'), [{ outpoint: tip }])).toBe(false)
+    expect(refusedOverFunding(new Error('Insufficient funds'), [{ outpoint: tip }])).toBe(false)
+  })
+})

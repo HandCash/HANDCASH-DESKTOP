@@ -3,18 +3,21 @@ import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { Accordion, StatusBanner } from '@aeon-ui/react'
 import {
-  importChunk,
   importItemBrowserMachine,
+  queuedOutpoints,
   selectedPerShelf,
   shelvedTotal,
   type ImportItemPorts,
 } from '../../machines/importItemBrowserMachine'
 import {
-  importItems,
+  dismissImportReport,
+  enqueueImportItems,
   importShelfOutpoints,
   readImportItems,
   readImportShelves,
+  stopImportItems,
   syncImportItems,
+  watchImportSource,
   type ImportItem,
   type ImportItemShelf,
 } from '../../wallet/import'
@@ -42,7 +45,10 @@ const PORTS: ImportItemPorts = {
   readShelves: readImportShelves,
   readPage: (sourceId, opts) => readImportItems({ sourceId, ...opts }),
   shelfOutpoints: importShelfOutpoints,
-  importMany: (sourceId, outpoints) => importItems({ sourceId, outpoints }),
+  enqueue: enqueueImportItems,
+  stop: stopImportItems,
+  dismiss: dismissImportReport,
+  watch: watchImportSource,
 }
 
 /** Collect's view preference — the browser is Collect's face. */
@@ -56,11 +62,22 @@ type ItemActions = {
   onSelect: (item: ImportItem, checked: boolean) => void
 }
 
+/** Where the background queue has this item: moving in the chunk in flight, or waiting. */
+type QueueSpot = 'moving' | 'waiting' | null
+
 type CardProps = ItemActions & {
   item: ImportItem
   selected: boolean
-  importing: boolean
+  spot: QueueSpot
   locked: boolean
+}
+
+function cardState(spot: QueueSpot, selected: boolean): string {
+  return spot ?? (selected ? 'selected' : 'idle')
+}
+
+function importLabel(spot: QueueSpot): string {
+  return spot === 'moving' ? 'Importing…' : spot === 'waiting' ? 'Queued' : 'Import'
 }
 
 function itemName(item: ImportItem): string {
@@ -93,20 +110,21 @@ function ItemArt({ item, size }: { item: ImportItem; size: 120 | 48 }) {
 }
 
 /** Collect's grid card with Import in place of Send; the card itself selects. */
-const ImportGridItem = memo(function ImportGridItem({ item, selected, importing, locked, onImport, onSelect }: CardProps) {
+const ImportGridItem = memo(function ImportGridItem({ item, selected, spot, locked, onImport, onSelect }: CardProps) {
   const name = itemName(item)
-  const action = importing ? `Importing ${name}` : `Import ${name}`
+  const action = `${importLabel(spot).replace('…', '')} ${name}`
+  const busy = locked || spot != null
   return (
     <li
       className="collection-grid-card collectable-card"
       data-aeon-part="item"
-      data-aeon-state={importing ? 'importing' : selected ? 'selected' : 'idle'}
+      data-aeon-state={cardState(spot, selected)}
     >
       <button
         type="button"
         className="collection-grid-main collectable-main"
         aria-pressed={selected}
-        disabled={locked}
+        disabled={busy}
         onClick={() => onSelect(item, !selected)}
       >
         <div className="collectable-media">
@@ -125,16 +143,16 @@ const ImportGridItem = memo(function ImportGridItem({ item, selected, importing,
           className="collectable-send-btn"
           title={action}
           aria-label={action}
-          disabled={locked}
+          disabled={busy}
           onClick={() => onImport(item.outpoint)}
         >
           <DownloadIcon size={14} />
-          {importing ? 'Importing…' : 'Import'}
+          {importLabel(spot)}
         </button>
         <SelectionCheckbox
           className="collect-select--inline"
           checked={selected}
-          disabled={locked}
+          disabled={busy}
           label={`${selected ? 'Deselect' : 'Select'} ${name}`}
           onChange={(checked) => onSelect(item, checked)}
         />
@@ -144,20 +162,21 @@ const ImportGridItem = memo(function ImportGridItem({ item, selected, importing,
 })
 
 /** Collect's list row with Import in place of Send. */
-const ImportListItem = memo(function ImportListItem({ item, selected, importing, locked, onImport, onSelect }: CardProps) {
+const ImportListItem = memo(function ImportListItem({ item, selected, spot, locked, onImport, onSelect }: CardProps) {
   const name = itemName(item)
-  const action = importing ? `Importing ${name}` : `Import ${name}`
+  const action = `${importLabel(spot).replace('…', '')} ${name}`
+  const busy = locked || spot != null
   return (
     <li
       className="connected-app-row collectable-row"
       data-aeon-part="item"
-      data-aeon-state={importing ? 'importing' : selected ? 'selected' : 'idle'}
+      data-aeon-state={cardState(spot, selected)}
     >
       <button
         type="button"
         className="connected-app-main collectable-row-main"
         aria-pressed={selected}
-        disabled={locked}
+        disabled={busy}
         onClick={() => onSelect(item, !selected)}
       >
         <div className="collectable-media collectable-media-sm">
@@ -176,7 +195,7 @@ const ImportListItem = memo(function ImportListItem({ item, selected, importing,
           className="collectable-send-btn collectable-send-btn--row"
           title={action}
           aria-label={action}
-          disabled={locked}
+          disabled={busy}
           onClick={() => onImport(item.outpoint)}
         >
           <DownloadIcon size={14} />
@@ -184,7 +203,7 @@ const ImportListItem = memo(function ImportListItem({ item, selected, importing,
         <SelectionCheckbox
           className="collect-select--row"
           checked={selected}
-          disabled={locked}
+          disabled={busy}
           label={`${selected ? 'Deselect' : 'Select'} ${name}`}
           onChange={(checked) => onSelect(item, checked)}
         />
@@ -231,6 +250,7 @@ function ImportItems({
   reading,
   selected,
   moving,
+  waiting,
   locked,
   onImport,
   onSelect,
@@ -243,6 +263,7 @@ function ImportItems({
   reading: boolean
   selected: ReadonlySet<string>
   moving: ReadonlySet<string>
+  waiting: ReadonlySet<string>
   locked: boolean
   onMore: () => void
 }) {
@@ -279,7 +300,7 @@ function ImportItems({
           key={item.outpoint}
           item={item}
           selected={selected.has(item.outpoint)}
-          importing={moving.has(item.outpoint)}
+          spot={moving.has(item.outpoint) ? 'moving' : waiting.has(item.outpoint) ? 'waiting' : null}
           locked={locked}
           onImport={onImport}
           onSelect={onSelect}
@@ -372,18 +393,15 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
   const perShelf = useMemo(() => selectedPerShelf(context.selected), [context.selected])
   const total = shelvedTotal(context.shelves)
   const checking = snapshot.matches({ sync: 'checking' })
-  const importing = snapshot.matches({ move: 'importing' })
   const confirming = snapshot.matches({ move: 'confirming' })
-  const locked = !snapshot.matches({ move: 'idle' })
-  const moving = useMemo(
-    () => new Set(importing ? importChunk(context.queue) : []),
-    [importing, context.queue],
-  )
+  const locked = confirming
+  const run = context.queue.run
+  const { moving, waiting } = useMemo(() => queuedOutpoints(context.queue), [context.queue])
   const reading = snapshot.matches({ page: 'reading' })
   const searching = context.query.trim() !== ''
   const firstRead = snapshot.matches({ shelves: 'reading' }) && context.shelves.length === 0
-  const batch = context.tally.total > 1
   const selectedCount = context.selected.length
+  const notice = context.notice ?? context.queue.report
 
   const onImport = useCallback((outpoint: string) => send({ type: 'IMPORT', outpoint }), [send])
   const onSelect = useCallback(
@@ -399,66 +417,69 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
   const onOpen = useCallback((value: string[]) => send({ type: 'OPEN', group: value[0] ?? null }), [send])
 
   useEffect(() => {
-    if (context.notice) playWalletSound(context.notice.tone === 'success' ? 'success' : 'error')
-  }, [context.notice])
+    if (notice) playWalletSound(notice.tone === 'success' ? 'success' : 'error')
+  }, [notice])
+
+  const runDock = run
+    ? {
+        ariaLabel: 'Importing items in the background',
+        tertiary: {
+          label: 'Stop',
+          onClick: () => send({ type: 'STOP' }),
+          disabled: run.stopping || run.waiting.length === 0,
+          icon: <CloseIcon size={18} />,
+          tone: 'danger' as const,
+        },
+        primary: {
+          label: context.queue.paused
+            ? 'Waiting for a spent fee coin to clear…'
+            : `Importing… ${run.done.toLocaleString()} of ${run.total.toLocaleString()} done`,
+          onClick: () => undefined,
+          disabled: true,
+          tone: 'primary' as const,
+          icon: <DownloadIcon size={18} />,
+        },
+      }
+    : null
 
   useWalletActionDock(
-    importing && batch
+    confirming
       ? {
-          ariaLabel: 'Importing selected items',
+          ariaLabel: `Import ${selectedCount} items`,
           tertiary: {
-            label: 'Stop',
-            onClick: () => send({ type: 'STOP' }),
-            disabled: context.tally.stopped,
+            label: 'Cancel',
+            onClick: () => send({ type: 'CANCEL' }),
             icon: <CloseIcon size={18} />,
             tone: 'danger',
           },
           primary: {
-            label: `Importing… ${(context.tally.total - context.queue.length).toLocaleString()} of ${context.tally.total.toLocaleString()} done`,
-            onClick: () => undefined,
-            disabled: true,
+            label: `Confirm (${selectedCount.toLocaleString()})`,
+            shortLabel: `Confirm (${selectedCount.toLocaleString()})`,
+            onClick: () => send({ type: 'CONFIRM' }),
             tone: 'primary',
             icon: <DownloadIcon size={18} />,
+            title: `Import ${selectedCount.toLocaleString()} items`,
           },
         }
-      : confirming
+      : selectedCount > 0
         ? {
-            ariaLabel: `Import ${selectedCount} items`,
+            ariaLabel: `${selectedCount} selected items`,
             tertiary: {
               label: 'Cancel',
-              onClick: () => send({ type: 'CANCEL' }),
+              onClick: () => send({ type: 'CLEAR' }),
               icon: <CloseIcon size={18} />,
               tone: 'danger',
             },
             primary: {
-              label: `Confirm (${selectedCount.toLocaleString()})`,
-              shortLabel: `Confirm (${selectedCount.toLocaleString()})`,
-              onClick: () => send({ type: 'CONFIRM' }),
+              label: `Import (${selectedCount.toLocaleString()})`,
+              shortLabel: `Import (${selectedCount.toLocaleString()})`,
+              onClick: () => send({ type: 'IMPORT_SELECTED' }),
               tone: 'primary',
               icon: <DownloadIcon size={18} />,
               title: `Import ${selectedCount.toLocaleString()} items`,
             },
           }
-        : selectedCount > 0
-          ? {
-              ariaLabel: `${selectedCount} selected items`,
-              tertiary: {
-                label: 'Cancel',
-                onClick: () => send({ type: 'CLEAR' }),
-                icon: <CloseIcon size={18} />,
-                tone: 'danger',
-              },
-              primary: {
-                label: `Import (${selectedCount.toLocaleString()})`,
-                shortLabel: `Import (${selectedCount.toLocaleString()})`,
-                onClick: () => send({ type: 'IMPORT_SELECTED' }),
-                disabled: locked,
-                tone: 'primary',
-                icon: <DownloadIcon size={18} />,
-                title: `Import ${selectedCount.toLocaleString()} items`,
-              },
-            }
-          : null,
+        : runDock,
   )
 
   const status = checking
@@ -474,6 +495,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
       reading={reading}
       selected={selected}
       moving={moving}
+      waiting={waiting}
       locked={locked}
       onImport={onImport}
       onSelect={onSelect}
@@ -509,16 +531,18 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
         <StatusBanner.Root tone="info" status="confirming">
           <StatusBanner.Copy>
             <StatusBanner.Title>Import {selectedCount.toLocaleString()} items?</StatusBanner.Title>
-            <StatusBanner.Body>They move together, up to 25 in each transaction.</StatusBanner.Body>
+            <StatusBanner.Body>
+              They move together, up to 25 in each transaction. The import keeps going if you leave this page.
+            </StatusBanner.Body>
           </StatusBanner.Copy>
         </StatusBanner.Root>
       ) : null}
 
-      {context.notice ? (
-        <StatusBanner.Root tone={context.notice.tone} status={context.notice.outcome}>
+      {notice ? (
+        <StatusBanner.Root tone={notice.tone} status={notice.outcome}>
           <StatusBanner.Copy>
-            <StatusBanner.Title>{context.notice.title}</StatusBanner.Title>
-            {context.notice.body ? <StatusBanner.Body>{context.notice.body}</StatusBanner.Body> : null}
+            <StatusBanner.Title>{notice.title}</StatusBanner.Title>
+            {notice.body ? <StatusBanner.Body>{notice.body}</StatusBanner.Body> : null}
           </StatusBanner.Copy>
           <div className="actions">
             <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'DISMISS' })}>
@@ -589,7 +613,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
       )}
 
       <div className="actions">
-        <button type="button" className="btn btn-ghost" disabled={importing} onClick={props.onBack}>
+        <button type="button" className="btn btn-ghost" onClick={props.onBack}>
           Back
         </button>
       </div>

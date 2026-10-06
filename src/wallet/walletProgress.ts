@@ -13,6 +13,8 @@ export type WalletProgressKind =
   | 'refresh'
   | 'phrase-import'
   | 'one-sat-import'
+  /** Chosen saved items moving in from Settings → Import, in the background. */
+  | 'item-import'
 
 export type WalletProgressStatus =
   | 'idle'
@@ -121,6 +123,12 @@ export function walletProgressPercent(
 export function walletProgressLabel(
   snapshot: WalletProgress = progress,
 ): string {
+  if (snapshot.kind === 'item-import') {
+    if (snapshot.status === 'failed') return 'Import failed'
+    if (snapshot.status === 'done') return 'Import complete'
+    if (snapshot.status === 'needs-resume') return 'Import paused'
+    return 'Importing'
+  }
   if (snapshot.status === 'failed') return 'Sweep failed'
   if (snapshot.status === 'done') return 'Sweep complete'
   if (snapshot.status === 'needs-resume') return 'Sweep paused'

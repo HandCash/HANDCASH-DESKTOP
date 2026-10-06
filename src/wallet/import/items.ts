@@ -1,9 +1,11 @@
 import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
+import { buildLegacyInputBeef } from '../legacyBeef'
 import type { Chain } from '../vault'
 import {
   migrateChosenPhraseItems,
   peekPhraseItemMigrateCursor,
+  type PhraseItemStopReason,
   type SingleItemMigrate,
 } from '../phraseSweep'
 import { gorillaBase, type FetchLike } from './discovery'
@@ -304,6 +306,28 @@ async function addressItems(
   return { items, complete: false }
 }
 
+/**
+ * Read the source transactions of items about to be imported, so the chunk
+ * that moves them finds its BEEF cached. Never throws; a miss is read again
+ * by the import itself.
+ */
+export async function prefetchImportItems(args: { sourceId: string; outpoints: readonly string[] }): Promise<void> {
+  const active = getWalletRuntime()?.instance
+  if (!active || args.outpoints.length === 0) return
+  const startedAt = Date.now()
+  try {
+    const stored = await readStoredImportItems(args.sourceId, [...new Set(args.outpoints)])
+    const outpoints = [...stored.keys()].map((outpoint) => outpoint.toLowerCase().replace(/_(\d+)$/, '.$1'))
+    const built = await buildLegacyInputBeef(active.services, outpoints, { concurrency: 8 })
+    const ms = Date.now() - startedAt
+    if (ms >= 250) {
+      appendAppLog('info', `[import] prefetch done ${ms}ms items=${outpoints.length} unread=${built.failures.length}`)
+    }
+  } catch (err) {
+    appendAppLog('warn', `[import] prefetch skipped: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 export type ImportItemRefusal = 'unlisted' | 'gone' | 'ownKey' | 'pausedBatch'
 
 export type ImportItemResult =
@@ -321,23 +345,41 @@ const REFUSAL_MESSAGES: Record<ImportItemRefusal, string> = {
 export type ImportItemsResult = {
   /** Every chosen outpoint's answer, in the order given. */
   results: Array<{ outpoint: string; result: ImportItemResult }>
-  /** The wallet ran out of BSV for fees; unmoved items answered `funds`. */
-  stopped: 'funds' | null
+  /**
+   * Why the rest was not tried: out of BSV for fees (unmoved items answer
+   * `funds`), or the fee coin was spent elsewhere (unmoved items answer `deferred`).
+   */
+  stopped: PhraseItemStopReason | null
+}
+
+/** A queued chunk outlived the wallet it was queued for. */
+export class ImportWalletChangedError extends Error {
+  constructor() {
+    super('The wallet changed, so the import stopped. Nothing moved into the other wallet.')
+    this.name = 'ImportWalletChangedError'
+  }
 }
 
 /**
  * Move the chosen saved items into this wallet. Explicit: it runs only from
- * the user's choice. Items on one source key share transactions on the same
- * item-migrate path the sweep uses, so a selection costs a handful of
- * transactions rather than one per item. Keys run one after another; running
- * out of BSV stops the rest.
+ * the user's choice. Every chosen item rides the same item-migrate path the
+ * sweep uses, signed by the key of the address holding it, so items spread
+ * over many addresses — a HandCash export keeps nearly every item at its own —
+ * still share transactions, 25 at a time. Running out of BSV stops the rest.
+ *
+ * `identityKey` pins the wallet a background queue chose: when another wallet
+ * is open by the time this chunk runs, it refuses without moving anything.
  */
 export async function importItems(args: {
   sourceId: string
   outpoints: readonly string[]
+  identityKey?: string
 }): Promise<ImportItemsResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
+  if (args.identityKey && args.identityKey.toLowerCase() !== active.identityKey.toLowerCase()) {
+    throw new ImportWalletChangedError()
+  }
   const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
   if (!source) throw new Error('That saved wallet is gone')
   const startedAt = Date.now()
@@ -352,7 +394,8 @@ export async function importItems(args: {
   const stored = await readStoredImportItems(source.id, outpoints)
   const cursorAddress = peekPhraseItemMigrateCursor()?.sourceAddress ?? null
   const deriver = keyDeriverFor(source.secret)
-  const byAddress = new Map<string, { holding: AddressHoldings; items: StoredImportItem[] }>()
+  const keyOf = new Map<string, { keyHex: string } | 'ownKey'>()
+  const chosen: Array<{ item: StoredImportItem; holding: AddressHoldings; keyHex: string }> = []
   for (const outpoint of outpoints) {
     const item = stored.get(outpoint)
     if (!item) {
@@ -368,54 +411,45 @@ export async function importItems(args: {
       refuse(outpoint, 'pausedBatch')
       continue
     }
-    const group = byAddress.get(holding.address)
-    if (group) group.items.push(item)
-    else byAddress.set(holding.address, { holding, items: [item] })
+    let key = keyOf.get(holding.address)
+    if (!key) {
+      const privateKey = deriver.privateKeyAt(holding.path)
+      key =
+        privateKey.toPublicKey().toString().toLowerCase() === active.identityKey.toLowerCase()
+          ? 'ownKey'
+          : { keyHex: privateKey.toHex() }
+      keyOf.set(holding.address, key)
+    }
+    if (key === 'ownKey') {
+      refuse(outpoint, 'ownKey')
+      continue
+    }
+    chosen.push({ item, holding, keyHex: key.keyHex })
   }
 
-  let stopped: ImportItemsResult['stopped'] = null
-  let transactions = 0
+  const run =
+    chosen.length > 0
+      ? await migrateChosenPhraseItems({
+          items: chosen.map(({ item, keyHex }) => ({
+            outpoint: item.outpoint,
+            keyHex,
+            ...(item.origin ? { origin: item.origin } : {}),
+            ...(item.name ? { name: item.name } : {}),
+          })),
+        })
+      : null
+  const stopped: ImportItemsResult['stopped'] = run?.stopped ?? null
+  const transactions = run?.transactions ?? 0
   const movedPerAddress = new Map<string, number>()
   const leftList: string[] = []
-  for (const { holding, items } of byAddress.values()) {
-    const key = deriver.privateKeyAt(holding.path)
-    const identityKey = key.toPublicKey().toString()
-    if (identityKey.toLowerCase() === active.identityKey.toLowerCase()) {
-      for (const item of items) refuse(item.outpoint, 'ownKey')
-      continue
+  for (const { item, holding } of chosen) {
+    const result: SingleItemMigrate = run?.results.get(item.outpoint) ?? {
+      kind: 'failed',
+      message: 'The item transaction was not accepted.',
     }
-    if (stopped) {
-      for (const item of items) {
-        answers.set(item.outpoint, { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' })
-      }
-      continue
-    }
-    const run = await migrateChosenPhraseItems({
-      candidate: {
-        scheme: 'import',
-        label: holding.label,
-        path: holding.path,
-        rootKeyHex: key.toHex(),
-        identityKey,
-        address: holding.address,
-      },
-      items: items.map((item) => ({
-        outpoint: item.outpoint,
-        ...(item.origin ? { origin: item.origin } : {}),
-        ...(item.name ? { name: item.name } : {}),
-      })),
-    })
-    transactions += run.transactions
-    if (run.stopped) stopped = run.stopped
-    for (const item of items) {
-      const result: SingleItemMigrate = run.results.get(item.outpoint) ?? {
-        kind: 'failed',
-        message: 'The item transaction was not accepted.',
-      }
-      answers.set(item.outpoint, result)
-      if (result.kind === 'moved' || result.kind === 'skipped') leftList.push(item.outpoint)
-      if (result.kind === 'moved') movedPerAddress.set(holding.address, (movedPerAddress.get(holding.address) ?? 0) + 1)
-    }
+    answers.set(item.outpoint, result)
+    if (result.kind === 'moved' || result.kind === 'skipped') leftList.push(item.outpoint)
+    if (result.kind === 'moved') movedPerAddress.set(holding.address, (movedPerAddress.get(holding.address) ?? 0) + 1)
   }
 
   if (leftList.length > 0) {
@@ -441,7 +475,7 @@ export async function importItems(args: {
   appendAppLog(
     refused.size > 0 || stopped ? 'warn' : 'info',
     `[import] items done ${Date.now() - startedAt}ms chosen=${outpoints.length} moved=${moved} tx=${transactions}` +
-      ` keys=${byAddress.size}${refusedNote}${stopped ? ` stopped=${stopped}` : ''}`,
+      ` keys=${keyOf.size}${refusedNote}${stopped ? ` stopped=${stopped}` : ''}`,
   )
   return {
     results: args.outpoints.map((outpoint) => ({

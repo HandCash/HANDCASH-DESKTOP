@@ -2488,7 +2488,7 @@ function deadCoinFacts(events) {
     .filter(([, times]) => times > 1)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
-    .map(([outpoint, times]) => ({ outpoint, times }))
+    .map(([outpoint, times]) => ({ outpoint, times, mentions: coinMentions(events, outpoint) }))
   return {
     resigns,
     sweeps,
@@ -2497,6 +2497,29 @@ function deadCoinFacts(events) {
     deadFound: { coins: found.size, sightings: [...found.values()].reduce((a, b) => a + b, 0), reselected },
     unscriptedChange: unscriptedChangeFacts(events),
   }
+}
+
+/**
+ * Every line family that names a re-chosen coin — by full outpoint or by its
+ * 12-char txid prefix — so whatever revives it between hides shows up by name.
+ */
+function coinMentions(events, outpoint) {
+  const txid = outpoint.split('.')[0]
+  const short = txid.slice(0, 12)
+  const counts = new Map()
+  const seen = new Set()
+  for (const e of events) {
+    if (!e.text.includes(short)) continue
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const f = family(e.text)
+    const row = counts.get(f) ?? { family: f, count: 0, first: e.at, last: e.at }
+    row.count += 1
+    row.last = e.at
+    counts.set(f, row)
+  }
+  return [...counts.values()].sort((a, b) => a.first - b.first).slice(0, 14)
 }
 
 const SPENT_ELSEWHERE_RE = /^\[spend\] [0-9a-f]{12} inputs spent elsewhere count=\d+ — (.*)$/
@@ -2545,7 +2568,7 @@ const JOURNAL_BACKUP_RE =
 const JOURNAL_BACKUP_FAIL_RE = /^\[custody-journal\] backup (\S+) failed: (.*)$/
 const JOURNAL_UNREADABLE_RE = /^\[custody-journal\] remote object unreadable/
 const DERIVED_SCRIPT_RE = /^\[change-script\] derived (\d+) change locking script/
-const LEGACY_BEEF_RE = /^\[legacy-beef\] ([0-9a-f]{12})… via=(proof|parents|tip)( FAIL)?/
+const LEGACY_BEEF_RE = /^\[legacy-beef\] ([0-9a-f]{12})… via=(proof|parents|tip)( FAIL)?(?: fetches=\d+)? (\d+)ms/
 const REPLACE_RE = /^\[cloud-backup\] replace local history\b/
 
 /** Change spendable only through its random BRC-29 prefix/suffix, and whether we still had it. */
@@ -2557,7 +2580,7 @@ function derivationFacts(events) {
     recoveries: [],
     noEcho: [],
     derivedScripts: 0,
-    legacyProof: { proof: 0, parents: 0, tipFail: 0 },
+    legacyProof: { proof: 0, parents: 0, tipFail: 0, ms: [] },
     // Custody journal: recipes captured, writes the store refused, off-device copy.
     journal: {
       captured: 0,
@@ -2651,8 +2674,16 @@ function derivationFacts(events) {
       if (m[3]) facts.legacyProof.tipFail += 1
       else if (m[2] === 'proof') facts.legacyProof.proof += 1
       else if (m[2] === 'parents') facts.legacyProof.parents += 1
+      facts.legacyProof.ms.push(Number(m[4]))
     }
   }
+  // Per-source-tx read time: the item import's BEEF build is this, serially.
+  const ms = facts.legacyProof.ms.sort((a, b) => a - b)
+  const at = (q) => ms[Math.min(ms.length - 1, Math.floor(q * ms.length))]
+  facts.legacyProof.timing = ms.length
+    ? { reads: ms.length, p50: at(0.5), p90: at(0.9), max: ms[ms.length - 1], totalMs: ms.reduce((a, b) => a + b, 0) }
+    : null
+  delete facts.legacyProof.ms
   return facts
 }
 
@@ -4116,6 +4147,9 @@ function report(state, answers) {
       )
       for (const r of dead.deadFound.reselected) {
         console.log(`    chosen again after hide: ${r.outpoint} ×${r.times}`)
+        for (const m of r.mentions ?? []) {
+          console.log(`      ${String(m.count).padStart(4)}× ${m.family}`)
+        }
       }
     }
     if (peerActive) {
@@ -4142,6 +4176,11 @@ function report(state, answers) {
       der.derivedScripts || lp.proof || lp.parents || lp.tipFail)
   ) {
     console.log('\nChange derivations (code-counted):')
+    if (lp.timing) {
+      console.log(
+        `  source-tx reads: ${lp.timing.reads} · p50 ${lp.timing.p50}ms · p90 ${lp.timing.p90}ms · max ${lp.timing.max}ms · total ${lp.timing.totalMs}ms`,
+      )
+    }
     if (der.replaces) console.log(`  ${der.replaces} history replace(s) — local toolbox wiped`)
     for (const echo of der.echoes) {
       console.log(`  echoed ${echo.added} new of ${echo.rows} row(s)${echo.ms != null ? ` · ${echo.ms}ms` : ''}`)

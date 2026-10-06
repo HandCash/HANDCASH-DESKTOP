@@ -308,8 +308,12 @@ export type PhraseFundingSweepResult = {
  * fee for every migrate, so a large collection can simply exhaust the wallet
  * mid-run. Counting that as a failed item would blame the tip and keep grinding
  * through the remainder, each one failing the same way.
+ *
+ * `stale-funding` is the same kind of stop: the wallet kept choosing a fee coin
+ * the chain shows spent elsewhere. Splitting the bundle cannot help — every
+ * smaller one is funded the same way — so the run stops with the tips intact.
  */
-export type PhraseItemStopReason = 'funds'
+export type PhraseItemStopReason = 'funds' | 'stale-funding'
 
 export type PhraseItemMigrateProgress = {
   moved: number
@@ -1003,7 +1007,7 @@ export async function migratePhraseItemsBatch(args: {
   let lastError: string | null = null
   const spendKey = PrivateKey.fromHex(args.candidate.rootKeyHex)
   const destLock = new P2PKH().lock(active.address).toHex()
-  const spendLockHex = new P2PKH().lock(spendKey.toAddress()).toHex()
+  const spender: ItemSpender = { key: spendKey, lockHex: new P2PKH().lock(spendKey.toAddress()).toHex() }
   const movedItems: MigratedItemReceipt[] = []
 
   const built = await buildLegacyInputBeef(
@@ -1020,7 +1024,7 @@ export async function migratePhraseItemsBatch(args: {
     | { kind: 'move'; items: PendingItemMigrate[] }
   > = []
   for (const row of slice) {
-    const plan = planOrdinalMigrate(sourceBeef, row, spendLockHex)
+    const plan = planOrdinalMigrate(sourceBeef, row, spender)
     if (plan.kind === 'skip') {
       units.push({ kind: 'skip', reason: plan.reason })
       continue
@@ -1064,7 +1068,6 @@ export async function migratePhraseItemsBatch(args: {
     await yieldToUi()
     const outcome = await migrateOrdinalUnit({
       active,
-      spendKey,
       destLockHex: destLock,
       inputBeef: built.beef,
       items: unit.items,
@@ -1085,6 +1088,14 @@ export async function migratePhraseItemsBatch(args: {
         'warn',
         `[phrase-sweep] stopping at offset ${cursor.offset + consumed}: not enough spendable BSV` +
           ` (moved ${cursor.moved + moved} so far; ~${estimateItemMigrateCost({ itemsPerTx, itemCount: itemsPerTx }).feeSats} sats per ${itemsPerTx}-item transaction)`,
+      )
+      break
+    }
+    if (outcome.stopped === 'stale-funding') {
+      stopped = 'stale-funding'
+      appendAppLog(
+        'warn',
+        `[phrase-sweep] stopping at offset ${cursor.offset + consumed}: the wallet's fee coin was spent elsewhere`,
       )
       break
     }
@@ -1145,6 +1156,14 @@ export async function migratePhraseItemsBatch(args: {
       skipped: next.skipped ?? 0,
       message: 'Paused — add BSV to continue',
     })
+  } else if (stopped === 'stale-funding') {
+    finishWalletProgress('needs-resume', {
+      current: next.moved,
+      total: expected ?? null,
+      failed: next.failed,
+      skipped: next.skipped ?? 0,
+      message: 'Paused — a spent coin is being cleared; resume in a moment',
+    })
   } else {
     updateWalletProgress({
       current: next.moved,
@@ -1189,12 +1208,16 @@ export type SingleItemMigrate =
   | { kind: 'skipped'; reason: OrdinalMigrateSkipReason; message: string }
   | { kind: 'unreadable'; message: string }
   | { kind: 'funds'; message: string }
+  /** Not tried: the wallet's fee coin was spent elsewhere and is being cleared. */
+  | { kind: 'deferred'; message: string }
   | { kind: 'failed'; message: string }
 
-/** A tip the user chose, with the index's names for it. */
+/** A tip the user chose, the key that unlocks it, and the index's names for it. */
 export type ChosenPhraseItem = {
   /** `txid_vout` or `txid.vout`. */
   outpoint: string
+  /** Private key (hex) of the address holding the tip. */
+  keyHex: string
   origin?: string
   name?: string
 }
@@ -1207,36 +1230,49 @@ export type ChosenItemsMigrate = {
 }
 
 /**
- * Move the chosen tips of one key on the same P2PKH item-migrate path as the
- * batch: their source transactions are read together and the eligible tips
- * share transactions, `MAX_ITEMS_PER_MIGRATE_TX` at a time, split down to
- * singles only when a bundle is rejected. It never touches the batch cursor,
+ * Move chosen tips on the same P2PKH item-migrate path as the batch. Each tip
+ * names the key that unlocks it, so tips held at different addresses of one
+ * source — a HandCash export keeps nearly every item at its own — still share
+ * transactions, `MAX_ITEMS_PER_MIGRATE_TX` at a time, split down to singles
+ * only when a bundle itself is rejected. It never touches the batch cursor,
  * so the caller refuses while a paused batch is reading the same address —
  * removing a row ahead of that cursor would shift its offset past an unmoved
  * tip.
  */
 export async function migrateChosenPhraseItems(args: {
-  candidate: PhraseCandidate
   items: readonly ChosenPhraseItem[]
 }): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
   assertOnlineForPayment()
-  if (args.candidate.identityKey.toLowerCase() === active.identityKey.toLowerCase()) {
-    throw new Error('That phrase is already this wallet')
-  }
   const results = new Map<string, SingleItemMigrate>()
   if (args.items.length === 0) return { results, stopped: null, transactions: 0 }
   const startedAt = Date.now()
-  const spendKey = PrivateKey.fromHex(args.candidate.rootKeyHex)
   const destLock = new P2PKH().lock(active.address).toHex()
-  const spendLockHex = new P2PKH().lock(spendKey.toAddress()).toHex()
+  const spenders = new Map<string, ItemSpender & { address: string }>()
+  const spenderOf = (keyHex: string) => {
+    const known = spenders.get(keyHex)
+    if (known) return known
+    const key = PrivateKey.fromHex(keyHex)
+    if (key.toPublicKey().toString().toLowerCase() === active.identityKey.toLowerCase()) {
+      throw new Error('That phrase is already this wallet')
+    }
+    const address = key.toAddress()
+    const spender = { key, address, lockHex: new P2PKH().lock(address).toHex() }
+    spenders.set(keyHex, spender)
+    return spender
+  }
 
   const givenOf = new Map<string, string>()
   const rows = args.items.map((item) => {
     const outpoint = item.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1')
     givenOf.set(outpoint, item.outpoint)
-    return { outpoint, ...(item.origin ? { origin: item.origin } : {}), ...(item.name ? { name: item.name } : {}) }
+    return {
+      outpoint,
+      spender: spenderOf(item.keyHex),
+      ...(item.origin ? { origin: item.origin } : {}),
+      ...(item.name ? { name: item.name } : {}),
+    }
   })
   const built = await buildLegacyInputBeef(
     active.services,
@@ -1250,7 +1286,7 @@ export async function migrateChosenPhraseItems(args: {
   let unreadable = 0
   for (const row of rows) {
     const given = givenOf.get(row.outpoint)!
-    const plan = planOrdinalMigrate(sourceBeef, row, spendLockHex)
+    const plan = planOrdinalMigrate(sourceBeef, row, row.spender)
     if (plan.kind === 'skip') {
       skipped += 1
       results.set(given, { kind: 'skipped', reason: plan.reason, message: describeOrdinalMigrateSkip(plan.reason) })
@@ -1267,7 +1303,6 @@ export async function migrateChosenPhraseItems(args: {
 
   const outcome = await migrateOrdinalUnit({
     active,
-    spendKey,
     destLockHex: destLock,
     inputBeef: built.beef,
     items: pending,
@@ -1279,28 +1314,39 @@ export async function migrateChosenPhraseItems(args: {
   for (const failure of outcome.failures) {
     results.set(givenOf.get(failure.outpoint)!, { kind: 'failed', message: failure.reason })
   }
-  const fundsMessage = 'Not enough spendable BSV in this wallet for the item fee.'
+  const unmoved: SingleItemMigrate =
+    outcome.stopped === 'stale-funding'
+      ? { kind: 'deferred', message: STALE_FUNDING_MESSAGE }
+      : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
   for (const item of pending.slice(outcome.resolved)) {
-    results.set(givenOf.get(item.outpoint)!, { kind: 'funds', message: fundsMessage })
+    results.set(givenOf.get(item.outpoint)!, unmoved)
   }
 
   const transactions = new Set(outcome.moved.map((m) => m.sweepTxid)).size
   if (outcome.moved.length > 0) {
     recordMigratedItemActivity(outcome.moved, active.chain)
-    const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
-    for (const item of outcome.moved) recent.add(item.outpoint)
-    recentlyMovedPhraseItems.set(args.candidate.address, recent)
+    const addressOf = new Map(rows.map((row) => [row.outpoint, row.spender.address]))
+    for (const item of outcome.moved) {
+      const address = addressOf.get(item.outpoint)
+      if (!address) continue
+      const recent = recentlyMovedPhraseItems.get(address) ?? new Set<string>()
+      recent.add(item.outpoint)
+      recentlyMovedPhraseItems.set(address, recent)
+    }
     scheduleHistoryBackupPush('phrase-sweep')
   }
   appendAppLog(
     outcome.failures.length > 0 || unreadable > 0 || outcome.stopped ? 'warn' : 'info',
-    `[phrase-sweep] chosen done ${Date.now() - startedAt}ms items=${rows.length} moved=${outcome.moved.length}` +
+    `[phrase-sweep] chosen done ${Date.now() - startedAt}ms items=${rows.length} keys=${spenders.size} moved=${outcome.moved.length}` +
       ` tx=${transactions} skipped=${skipped} unreadable=${unreadable} failed=${outcome.failures.length}` +
       (outcome.stopped ? ` stopped=${outcome.stopped}` : '') +
       (outcome.lastError ? ` lastError=${outcome.lastError}` : ''),
   )
   return { results, stopped: outcome.stopped, transactions }
 }
+
+/** A source key and the P2PKH lock its tips must carry. */
+type ItemSpender = { key: PrivateKey; lockHex: string }
 
 /** One tip that passed eligibility, with everything signing needs. */
 type PendingItemMigrate = {
@@ -1313,6 +1359,26 @@ type PendingItemMigrate = {
   satoshis: number
   /** Real locking script of the tip — the sighash scriptCode must match it. */
   sourceLock: LockingScript
+  spendKey: PrivateKey
+}
+
+const STALE_FUNDING_MESSAGE =
+  'The wallet’s fee coin was spent elsewhere and is being cleared. Nothing was sent — try again in a moment.'
+/** Builds of one bundle over fresh funding before the run stops on `stale-funding`. */
+const STALE_FUNDING_RETRIES = 1
+
+/**
+ * The certainty gate refused over a coin this bundle did not name — the
+ * wallet's own fee funding. Duck-typed: `inputCertainty` sits above this module.
+ */
+export function refusedOverFunding(err: unknown, group: ReadonlyArray<{ outpoint: string }>): boolean {
+  const refusal = err as { code?: unknown; reason?: unknown; dead?: unknown } | null
+  if (!refusal || refusal.code !== 'INPUTS_UNVERIFIED') return false
+  if (refusal.reason === 'still-dead') return true
+  if (refusal.reason !== 'input-spent' || !Array.isArray(refusal.dead) || refusal.dead.length === 0) return false
+  const key = (outpoint: string) => outpoint.trim().toLowerCase().replace(/[_:]/, '.')
+  const named = new Set(group.map((item) => key(item.outpoint)))
+  return !refusal.dead.some((outpoint) => named.has(key(String(outpoint))))
 }
 
 type ItemMigratePlan =
@@ -1328,7 +1394,7 @@ type ItemMigratePlan =
 function planOrdinalMigrate(
   sourceBeef: Beef | null,
   row: { outpoint: string; origin?: string; name?: string },
-  spendLockHex: string,
+  spender: ItemSpender,
 ): ItemMigratePlan {
   const [txidPart, voutPart] = row.outpoint.split('.')
   const txid = (txidPart ?? '').toLowerCase()
@@ -1347,7 +1413,7 @@ function planOrdinalMigrate(
       lockingScriptHex: sourceLock?.toHex() ?? null,
       runJig: runJigVouts(sourceTx).has(vout),
     },
-    spendLockHex,
+    spender.lockHex,
   )
   if (eligibility.path === 'skip') return { kind: 'skip', reason: eligibility.reason }
 
@@ -1365,6 +1431,7 @@ function planOrdinalMigrate(
       }),
       satoshis: eligibility.satoshis,
       sourceLock: sourceLock!,
+      spendKey: spender.key,
     },
   }
 }
@@ -1387,7 +1454,6 @@ type UnitOutcome = {
  */
 async function migrateOrdinalUnit(args: {
   active: ActiveWallet
-  spendKey: PrivateKey
   destLockHex: string
   inputBeef: BEEF
   items: PendingItemMigrate[]
@@ -1403,6 +1469,7 @@ async function migrateOrdinalUnit(args: {
   }
   let pending = args.items.slice()
   let perTx = args.itemsPerTx
+  let fundingRetries = 0
 
   while (pending.length > 0) {
     if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
@@ -1419,7 +1486,6 @@ async function migrateOrdinalUnit(args: {
         withVisibleOnChainBeef(async () =>
           buildAndPostItemMigrate({
             active: args.active,
-            spendKey: args.spendKey,
             destLockHex: args.destLockHex,
             inputBeef: args.inputBeef,
             items: group,
@@ -1432,11 +1498,28 @@ async function migrateOrdinalUnit(args: {
       out.resolved += group.length
       pending = pending.slice(group.length)
       perTx = args.itemsPerTx
+      fundingRetries = 0
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       if (isInsufficientFundsError(err)) {
         out.stopped = 'funds'
         out.lastError = reason
+        return out
+      }
+      if (refusedOverFunding(err, group)) {
+        // The dead fee coin is retired by now; one fresh build usually funds
+        // over live change. A bundle split would only repeat the refusal.
+        if (fundingRetries < STALE_FUNDING_RETRIES) {
+          fundingRetries += 1
+          appendAppLog(
+            'warn',
+            `[phrase-sweep] fee coin spent elsewhere — building ${group.length} again (${fundingRetries}/${STALE_FUNDING_RETRIES})`,
+          )
+          continue
+        }
+        out.stopped = 'stale-funding'
+        out.lastError = STALE_FUNDING_MESSAGE
+        appendAppLog('warn', `[phrase-sweep] stopped: fee coin still spent elsewhere after ${fundingRetries} rebuild(s)`)
         return out
       }
       if (group.length > 1) {
@@ -1474,7 +1557,6 @@ export async function refreshAfterPhraseItemMigrate(): Promise<void> {
 /** Build, sign and broadcast one transaction carrying `items` tips. */
 async function buildAndPostItemMigrate(args: {
   active: ActiveWallet
-  spendKey: PrivateKey
   destLockHex: string
   inputBeef: BEEF
   items: PendingItemMigrate[]
@@ -1483,7 +1565,6 @@ async function buildAndPostItemMigrate(args: {
   const first = items[0]!
   return postForeignInputAction({
     active: args.active,
-    spendKey: args.spendKey,
     inputBeef: args.inputBeef,
     inputs: items.map((item) => ({ ...item, description: 'migrate ordinal from phrase' })),
     outputs: items.map((item) => ({
@@ -1512,18 +1593,20 @@ export type ForeignInput = {
   /** Real locking script — the sighash scriptCode must be the whole script. */
   sourceLock: LockingScript
   description: string
+  /** Key for this input; defaults to the action's `spendKey`. */
+  spendKey?: PrivateKey
 }
 
 /**
  * One transaction spending foreign-key inputs, funded by this wallet's change.
  *
- * The wallet adds funding and change; the foreign inputs are signed here with
- * `spendKey`. A failure before broadcast aborts the action so its reserved
- * change and listed outputs are released.
+ * The wallet adds funding and change; each foreign input is signed here with
+ * its own `spendKey`, or the action's. A failure before broadcast aborts the
+ * action so its reserved change and listed outputs are released.
  */
 export async function postForeignInputAction(args: {
   active: ActiveWallet
-  spendKey: PrivateKey
+  spendKey?: PrivateKey
   inputBeef: BEEF
   inputs: ForeignInput[]
   outputs: CreateActionOutput[]
@@ -1531,6 +1614,9 @@ export async function postForeignInputAction(args: {
   description: string
 }): Promise<string> {
   const { active, inputs } = args
+  if (inputs.some((input) => !(input.spendKey ?? args.spendKey))) {
+    throw new Error('Every foreign input needs a key to sign it')
+  }
   const car = await active.wallet.createAction({
     inputBEEF: args.inputBeef,
     inputs: inputs.map((input) => ({
@@ -1580,7 +1666,7 @@ export async function postForeignInputAction(args: {
 async function signAndPostForeignInputs(
   args: {
     active: ActiveWallet
-    spendKey: PrivateKey
+    spendKey?: PrivateKey
     inputBeef: BEEF
     inputs: ForeignInput[]
   },
@@ -1615,7 +1701,7 @@ async function signAndPostForeignInputs(
     // top stack element must be truthy" while plain-P2PKH funding swept fine.
     for (const [index, item] of inputIndexes) {
       unsignedTx.inputs[index]!.unlockingScriptTemplate = new P2PKH().unlock(
-        spendKey,
+        (item.spendKey ?? spendKey)!,
         'all',
         false,
         item.satoshis,

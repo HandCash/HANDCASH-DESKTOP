@@ -15950,8 +15950,13 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   margin: 0;
 }
 
-[data-aeon-scope='legacy-import'] [data-aeon-part='item']:is([data-aeon-state='importing'], [data-aeon-state='selected']) {
+[data-aeon-scope='legacy-import'] [data-aeon-part='item']:is([data-aeon-state='moving'], [data-aeon-state='selected']) {
   border-color: color-mix(in srgb, var(--hc-accent) 55%, hsl(var(--border)));
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='item'][data-aeon-state='waiting'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 25%, hsl(var(--border)));
+  opacity: 0.72;
 }
 
 /* Developer keys — each key is a card: what it can do, what its wallet holds,
