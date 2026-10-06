@@ -179,7 +179,7 @@ function CollectableGridItem({
             height={120}
             skeletonWidth={120}
             skeletonHeight={120}
-            skeletonRadius={8}
+            skeletonRadius={0}
             skeletonClassName="skeleton-qr"
             decoding="async"
             fallback={
@@ -271,7 +271,7 @@ function CollectableListItem({
             height={48}
             skeletonWidth={48}
             skeletonHeight={48}
-            skeletonRadius={6}
+            skeletonRadius={0}
             skeletonClassName="skeleton-qr"
             decoding="async"
             fallback={
@@ -575,7 +575,6 @@ function FungibleItem({
             sym={token.sym}
             iconUrl={token.iconUrl}
             size={face}
-            shape="circle"
           />
           <CollectableSendingMark sending={sending} verb={verb} />
           {listing ? (

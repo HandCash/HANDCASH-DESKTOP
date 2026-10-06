@@ -20,7 +20,7 @@ export function CollectFacepile({
             height={40}
             skeletonWidth={40}
             skeletonHeight={40}
-            skeletonRadius={999}
+            skeletonRadius={0}
             skeletonClassName="skeleton-qr"
             decoding="async"
             fallback={

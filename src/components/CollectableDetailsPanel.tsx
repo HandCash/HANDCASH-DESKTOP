@@ -438,7 +438,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
               height={96}
               skeletonWidth={96}
               skeletonHeight={96}
-              skeletonRadius={10}
+              skeletonRadius={0}
               skeletonClassName="skeleton-qr"
               decoding="async"
               retainDecoded

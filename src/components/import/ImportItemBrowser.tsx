@@ -79,7 +79,7 @@ function ItemArt({ item, size }: { item: ImportItem; size: 120 | 48 }) {
       height={size}
       skeletonWidth={size}
       skeletonHeight={size}
-      skeletonRadius={size === 120 ? 8 : 6}
+      skeletonRadius={0}
       skeletonClassName="skeleton-qr"
       decoding="async"
       fallback={
@@ -197,7 +197,7 @@ function SkeletonItem({ view }: { view: CollectionView }) {
     <li className="collection-grid-card collectable-card" data-aeon-part="item" data-aeon-state="loading">
       <div className="collection-grid-main collectable-main">
         <div className="collectable-media">
-          <Skeleton className="skeleton-qr" width={120} height={120} radius={8} />
+          <Skeleton className="skeleton-qr" width={120} height={120} radius={0} />
         </div>
         <SkeletonLine width="70%" />
         <SkeletonLine width="45%" height={10} />
@@ -207,7 +207,7 @@ function SkeletonItem({ view }: { view: CollectionView }) {
     <li className="connected-app-row collectable-row" data-aeon-part="item" data-aeon-state="loading">
       <div className="connected-app-main collectable-row-main">
         <div className="collectable-media collectable-media-sm">
-          <Skeleton className="skeleton-qr" width={48} height={48} radius={6} />
+          <Skeleton className="skeleton-qr" width={48} height={48} radius={0} />
         </div>
         <div className="connected-app-body">
           <SkeletonLine width="60%" />

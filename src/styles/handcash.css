@@ -5502,6 +5502,7 @@ a.history-row-link:hover .history-tx-hint {
   height: 36px;
   border-radius: 12px;
   display: grid;
+  grid-template: 100% / 100%;
   place-items: center;
   background: var(--hc-sunken);
   border: 1px solid var(--hc-border);
@@ -5522,11 +5523,18 @@ a.history-row-link:hover .history-tx-hint {
   object-fit: cover;
 }
 
+/* Item or token art takes the whole tile, unframed and uncropped. */
+.history-icon:has(> .deferred-image > .history-item-thumb) {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
 .history-item-thumb {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .history-asset-logo {
@@ -5800,10 +5808,8 @@ button.payment-details-item-thumb-btn:hover {
 .history-icon-stack-face {
   position: absolute;
   inset: 0;
-  border-radius: 12px;
   overflow: hidden;
-  border: 1px solid var(--hc-border);
-  background: var(--hc-sunken);
+  opacity: 0.7;
 }
 
 .history-icon-stack-face:nth-child(1) {
@@ -9773,13 +9779,23 @@ html[data-aeon-mode='light'] .skeleton {
   justify-self: center;
 }
 
+/* Item and token art is shown whole: no frame, no rounding, and a tall or
+   wide piece letterboxes inside its square instead of being cropped. */
 .collectable-media {
   width: 120px;
   height: 120px;
-  border-radius: calc(var(--hc-radius) + 2px);
   overflow: hidden;
-  background: var(--hc-hover);
-  border: 1px solid hsl(var(--border));
+}
+
+/* The frame's box, not the bitmap, sizes the image so `contain` can fit it. */
+.collectable-media > .deferred-image,
+.history-icon > .deferred-image,
+.history-icon-stack-face > .deferred-image,
+.collect-facepile-face > .deferred-image,
+.fungible-avatar > .deferred-image {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .collectable-media-fallback {
@@ -9787,6 +9803,7 @@ html[data-aeon-mode='light'] .skeleton {
   place-items: center;
   width: 100%;
   height: 100%;
+  background: var(--hc-hover);
   color: hsl(var(--muted-foreground));
   opacity: 0.7;
 }
@@ -9795,27 +9812,24 @@ html[data-aeon-mode='light'] .skeleton {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .collectable-media-sm {
   width: 48px;
   height: 48px;
-  border-radius: 8px;
   flex-shrink: 0;
 }
 
 .collectable-media-md {
   width: 96px;
   height: 96px;
-  border-radius: 10px;
   flex-shrink: 0;
 }
 
 .collectable-media-lg {
   width: 200px;
   height: 200px;
-  border-radius: 12px;
 }
 
 .collectable-row-main {
@@ -10419,13 +10433,11 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 .collectable-media-token {
   width: 56px;
   height: 56px;
-  border-radius: 8px;
 }
 
 .collection-grid-card .collectable-media-token {
   width: 120px;
   height: 120px;
-  border-radius: calc(var(--hc-radius) + 2px);
 }
 
 .collectable-media-token .fungible-avatar {
@@ -10655,36 +10667,24 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 [data-aeon-scope='collectables'] .token-chip-main:hover .token-chip-face,
 [data-aeon-scope='collectables'] .token-chip-main:focus-visible .token-chip-face {
-  border-color: color-mix(in srgb, var(--hc-accent) 55%, hsl(var(--border)));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hc-accent) 18%, transparent);
+  transform: translateY(-2px);
 }
 
 [data-aeon-scope='collectables'] .token-chip-main:focus-visible {
-  outline: none;
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  outline-offset: 2px;
 }
 
 [data-aeon-scope='collectables'] .token-chip-face {
   position: relative;
   width: var(--token-face);
   height: var(--token-face);
-  border-radius: 50%;
-  background: var(--hc-sunken);
-  border: 1px solid hsl(var(--border));
-  overflow: hidden;
-  transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease;
+  transition: transform 0.18s ease;
 }
 
 [data-aeon-scope='collectables'] .token-chip-face .fungible-avatar {
   width: 100% !important;
   height: 100% !important;
-  border-radius: 50% !important;
-}
-
-[data-aeon-scope='collectables'] .token-chip-face .fungible-avatar-image,
-[data-aeon-scope='collectables'] .token-chip-face .deferred-image img {
-  object-fit: cover;
 }
 
 [data-aeon-scope='collectables'] .token-chip-face .collectable-sending-mark {
@@ -10717,14 +10717,6 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 [data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='sending'] {
   opacity: 0.85;
-}
-
-[data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='listed'] .token-chip-face {
-  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
-}
-
-[data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='unpublished'] .token-chip-face {
-  border-color: color-mix(in srgb, var(--hc-warn, #ffc857) 45%, hsl(var(--border)));
 }
 
 /* Inside an issuer folder the item grid is always two-up: the folder's own
@@ -10946,14 +10938,12 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 .collect-facepile-face,
 .collect-facepile-more {
   display: grid;
+  grid-template: 100% / 100%;
   width: 40px;
   height: 40px;
   place-items: center;
   overflow: hidden;
-  margin-left: -10px;
-  border: 2px solid var(--hc-surface-2, var(--hc-surface));
-  border-radius: 999px;
-  background: var(--hc-surface);
+  margin-left: 4px;
 }
 
 .collect-facepile-face:first-child {
@@ -10964,8 +10954,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 .collect-facepile-face .deferred-image {
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  border-radius: 999px;
+  object-fit: contain;
 }
 
 .collect-facepile-more {
@@ -11140,15 +11129,8 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 .fungible-avatar {
   width: var(--fungible-face, 48px) !important;
   height: var(--fungible-face, 48px) !important;
-  border-radius: var(--fungible-face-radius, 8px) !important;
   flex-shrink: 0;
   overflow: hidden;
-  background: var(--hc-sunken);
-}
-
-.fungible-avatar [data-aeon-part='image'],
-.fungible-avatar [data-aeon-part='fallback'] {
-  border-radius: inherit !important;
 }
 
 /* Panda `display:block` on image beats the HTML `hidden` attribute — force it. */
@@ -11181,7 +11163,6 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: inherit;
 }
 
 [data-aeon-scope='fungible-details'] {
