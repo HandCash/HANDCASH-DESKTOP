@@ -788,7 +788,7 @@ const LEGACY_IMPORT = `stateDiagram-v2
     viewing : Read-only · totals, tokens, held reasons
     awaitingHints : Sign in on /migrate · history, balance, items cross the bridge · moves nothing
     scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for tokens or an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
-    browsing : importItemBrowser · one item per move
+    browsing : importItemBrowser · chosen items share transactions
     reviewing : Preview · compatible only
     sweeping : Cash → items (BRC-150) → BSV-21 → MNEE (MNEE cosigner → Collect) · PAUSE
   }
@@ -848,13 +848,14 @@ const IMPORT_ITEM_BROWSER = `stateDiagram-v2
     idle --> confirming : IMPORT_SELECTED (several)
     confirming --> importing : CONFIRM
     confirming --> idle : CANCEL
-    importing --> importing : answer (more queued, not stopped)
-    importing --> idle : last answer / funds / STOP honoured / error
-    importing : One tip · one tx · same P2PKH item migrate (BRC-150 remittance)
+    importing --> importing : chunk answered (more queued, not stopped)
+    importing --> idle : last chunk / funds / STOP honoured / error
+    importing : 100 chosen per call · grouped by source key · 25 tips per tx · same P2PKH item migrate (BRC-150 remittance)
   }
   note right of move
     Refused while a paused sweep reads the same address.
-    Moved and not-an-item rows leave the list and stay out.
+    A rejected bundle splits down to singles on the same path.
+    Moved and not-an-item rows leave the list and stay out; unfunded stay selected.
     The list lives on this device until the item leaves the source.
   end note
 `
@@ -1515,7 +1516,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'importItemBrowser',
     label: 'Import items',
-    caption: 'importItemBrowserMachine — saved items shelved by issuer · page · select · one tx per item',
+    caption: 'importItemBrowserMachine — saved items shelved by issuer · page · select · 25 tips per tx',
     source: IMPORT_ITEM_BROWSER,
   },
   {

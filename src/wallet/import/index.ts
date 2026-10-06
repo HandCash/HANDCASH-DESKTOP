@@ -50,7 +50,7 @@ export {
   type SweepProgress,
 } from './sweep'
 export {
-  importOneItem,
+  importItems,
   importShelfOutpoints,
   readImportItems,
   readImportShelves,
@@ -60,6 +60,7 @@ export {
   type ImportItemGroup,
   type ImportItemPage,
   type ImportItemResult,
+  type ImportItemsResult,
   type ImportItemShelf,
   type ImportItemSync,
 } from './items'

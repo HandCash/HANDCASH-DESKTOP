@@ -9,7 +9,7 @@ vi.mock('../walletRuntime', () => ({ getWalletRuntime: () => ({ instance: active
 vi.mock('./store', () => ({ loadImportedSources: vi.fn(), updateImportedSource: vi.fn() }))
 vi.mock('../phraseSweep', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../phraseSweep')>()),
-  migrateOnePhraseItem: vi.fn(),
+  migrateChosenPhraseItems: vi.fn(),
   peekPhraseItemMigrateCursor: vi.fn(() => null),
 }))
 vi.mock('./handcashUtxoSet', async (importOriginal) => ({
@@ -17,12 +17,12 @@ vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   fetchHandCashUtxoSet: vi.fn(),
 }))
 
-import { migrateOnePhraseItem, peekPhraseItemMigrateCursor } from '../phraseSweep'
+import { migrateChosenPhraseItems, peekPhraseItemMigrateCursor, type SingleItemMigrate } from '../phraseSweep'
 import { fetchHandCashUtxoSet } from './handcashUtxoSet'
 import { emptyHoldings, type AddressHoldings } from './holdings'
 import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem } from './itemStore'
 import {
-  importOneItem,
+  importItems,
   readImportItems,
   readImportShelves,
   syncImportItems,
@@ -81,7 +81,7 @@ beforeEach(async () => {
   await __resetImportItemStoreForTests()
   vi.mocked(loadImportedSources).mockReset()
   vi.mocked(updateImportedSource).mockReset()
-  vi.mocked(migrateOnePhraseItem).mockReset()
+  vi.mocked(migrateChosenPhraseItems).mockReset()
   vi.mocked(fetchHandCashUtxoSet).mockReset()
   vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue(null)
 })
@@ -193,35 +193,72 @@ describe('syncImportItems', () => {
   })
 })
 
-describe('importOneItem', () => {
-  it('moves the saved item on its address key, counts it out of the scan, and drops it from the list', async () => {
-    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 2)])])
-    await saveImportItems('s1', [stored(1, '1a'), stored(2, '1a')])
-    vi.mocked(migrateOnePhraseItem).mockResolvedValue({ kind: 'moved', txid: 'f'.repeat(64) })
+/** The chosen-items migrate answering each tip by outpoint. */
+function migrateAnswers(resultOf: (outpoint: string) => SingleItemMigrate) {
+  vi.mocked(migrateChosenPhraseItems).mockImplementation(async ({ items }) => {
+    const results = new Map(items.map((item) => [item.outpoint, resultOf(item.outpoint)] as const))
+    const moved = [...results.values()].filter((r) => r.kind === 'moved')
+    return {
+      results,
+      stopped: [...results.values()].some((r) => r.kind === 'funds') ? 'funds' : null,
+      transactions: moved.length > 0 ? 1 : 0,
+    }
+  })
+}
 
-    expect(await importOneItem({ sourceId: 's1', outpoint: op(1) })).toEqual({ kind: 'moved', txid: 'f'.repeat(64) })
-    const call = vi.mocked(migrateOnePhraseItem).mock.calls[0]![0]
-    expect(call).toMatchObject({ outpoint: op(1), origin: op(1), name: 'Item 1', candidate: { address: '1a', scheme: 'import' } })
-    expect(vi.mocked(updateImportedSource).mock.calls[0]![1].scan?.holdings[0]!.itemCount).toBe(1)
-    expect(await listed()).toEqual([op(2)])
+const MOVED: SingleItemMigrate = { kind: 'moved', txid: 'f'.repeat(64) }
+
+describe('importItems', () => {
+  it('moves each key’s chosen items in one call, counts them out of the scan, and drops them from the list', async () => {
+    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 3), holding('1b', 2)])])
+    await saveImportItems('s1', [stored(1, '1a'), stored(2, '1b'), stored(3, '1a'), stored(4, '1a'), stored(5, '1b')])
+    migrateAnswers(() => MOVED)
+
+    const run = await importItems({ sourceId: 's1', outpoints: [op(1), op(2), op(3), op(5)] })
+    expect(run.stopped).toBeNull()
+    expect(run.results.map((r) => [r.outpoint, r.result.kind])).toEqual([
+      [op(1), 'moved'],
+      [op(2), 'moved'],
+      [op(3), 'moved'],
+      [op(5), 'moved'],
+    ])
+    const calls = vi.mocked(migrateChosenPhraseItems).mock.calls.map(([a]) => a)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toMatchObject({ candidate: { address: '1a', scheme: 'import' } })
+    expect(calls[0]!.items).toEqual([
+      { outpoint: op(1), origin: op(1), name: 'Item 1' },
+      { outpoint: op(3), origin: op(3), name: 'Item 3' },
+    ])
+    expect(calls[1]!.items.map((i) => i.outpoint)).toEqual([op(2), op(5)])
+    expect(updateImportedSource).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(updateImportedSource).mock.calls[0]![1].scan?.holdings.map((h) => h.itemCount)).toEqual([1, 0])
+    expect(await listed()).toEqual([op(4)])
   })
 
   it('refuses an unlisted item, an address outside the scan, and a paused sweep’s address', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 1)])])
     await saveImportItems('s1', [stored(1, '1a'), stored(2, '1z')])
-    expect(await importOneItem({ sourceId: 's1', outpoint: op(9) })).toMatchObject({ kind: 'refused', reason: 'unlisted' })
-    expect(await importOneItem({ sourceId: 's1', outpoint: op(2) })).toMatchObject({ kind: 'refused', reason: 'gone' })
+    const first = await importItems({ sourceId: 's1', outpoints: [op(9), op(2)] })
+    expect(first.results.map((r) => r.result)).toMatchObject([
+      { kind: 'refused', reason: 'unlisted' },
+      { kind: 'refused', reason: 'gone' },
+    ])
     vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue({ sourceAddress: '1a' } as never)
-    expect(await importOneItem({ sourceId: 's1', outpoint: op(1) })).toMatchObject({ kind: 'refused', reason: 'pausedBatch' })
-    expect(migrateOnePhraseItem).not.toHaveBeenCalled()
+    const paused = await importItems({ sourceId: 's1', outpoints: [op(1)] })
+    expect(paused.results[0]!.result).toMatchObject({ kind: 'refused', reason: 'pausedBatch' })
+    expect(migrateChosenPhraseItems).not.toHaveBeenCalled()
   })
 
-  it('keeps the item and the scan when the move did not happen', async () => {
-    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 1)])])
-    await saveImportItems('s1', [stored(1, '1a')])
-    vi.mocked(migrateOnePhraseItem).mockResolvedValue({ kind: 'funds', message: 'low' })
-    expect(await importOneItem({ sourceId: 's1', outpoint: op(1) })).toMatchObject({ kind: 'funds' })
-    expect(updateImportedSource).not.toHaveBeenCalled()
-    expect(await listed()).toEqual([op(1)])
+  it('keeps unmoved items and the scan, and stops later keys once BSV runs out', async () => {
+    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 2), holding('1b', 1)])])
+    await saveImportItems('s1', [stored(1, '1a'), stored(2, '1a'), stored(3, '1b')])
+    migrateAnswers((outpoint) => (outpoint === op(1) ? MOVED : { kind: 'funds', message: 'low' }))
+
+    const run = await importItems({ sourceId: 's1', outpoints: [op(1), op(2), op(3)] })
+    expect(run.stopped).toBe('funds')
+    expect(run.results.map((r) => r.result.kind)).toEqual(['moved', 'funds', 'funds'])
+    expect(migrateChosenPhraseItems).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(updateImportedSource).mock.calls[0]![1].scan?.holdings.map((h) => h.itemCount)).toEqual([1, 1])
+    expect(await listed()).toEqual([op(2), op(3)])
   })
 })

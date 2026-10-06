@@ -312,10 +312,18 @@ export async function groupImportOutpoints(sourceId: string, group: string): Pro
   return keys.map((key) => (key as [string, string])[1])
 }
 
-export async function readStoredImportItem(sourceId: string, outpoint: string): Promise<StoredImportItem | null> {
-  const db = await open()
-  const row = (await request(db.transaction(ITEMS).objectStore(ITEMS).get([sourceId, outpoint]))) as ItemRow | undefined
-  return row ? toStored(row) : null
+/** The listed rows among `outpoints`, read in one transaction. */
+export async function readStoredImportItems(
+  sourceId: string,
+  outpoints: readonly string[],
+): Promise<Map<string, StoredImportItem>> {
+  const store = (await open()).transaction(ITEMS).objectStore(ITEMS)
+  const rows = (await Promise.all(outpoints.map((outpoint) => request(store.get([sourceId, outpoint]))))) as Array<
+    ItemRow | undefined
+  >
+  const out = new Map<string, StoredImportItem>()
+  for (const row of rows) if (row) out.set(row.outpoint, toStored(row))
+  return out
 }
 
 export async function countImportItems(sourceId: string): Promise<number> {

@@ -4,6 +4,7 @@ import type {
   ImportItemChange,
   ImportItemPage,
   ImportItemResult,
+  ImportItemsResult,
   ImportItemShelf,
   ImportItemSync,
 } from '../wallet/import'
@@ -19,13 +20,17 @@ import type {
  * - `shelves`: the list grouped by issuer, re-read (debounced) as it changes.
  * - `page`: one open shelf, or search results, a page at a time (`MORE`).
  * - `gather`: selecting a whole shelf reads its outpoints from disk.
- * - `move`: one item at a time. `IMPORT` moves one; `IMPORT_SELECTED` queues
- *   the selection behind a confirm, one transaction per item, and stops at
- *   the first missing-funds answer or on `STOP`. A moved or not-an-item row
- *   leaves the list; every other outcome keeps it so it can be tried again.
+ * - `move`: `IMPORT` moves one; `IMPORT_SELECTED` queues the selection behind
+ *   a confirm and hands the wallet `IMPORT_CHUNK` items per call, which it
+ *   packs into shared transactions. It stops after the chunk in flight on a
+ *   missing-funds answer or `STOP`. A moved or not-an-item row leaves the
+ *   list; every other outcome keeps it so it can be tried again, and items
+ *   left unfunded stay selected.
  */
 
 export const IMPORT_PAGE_SIZE = 60
+/** Items per wallet call: whole 25-tip transactions, with progress and Stop between. */
+export const IMPORT_CHUNK = 100
 const SHELF_REREAD_MS = 1_200
 
 /** Wallet calls the chart invokes; the panel binds them to the source. */
@@ -41,7 +46,7 @@ export type ImportItemPorts = {
     opts: { group?: string; after: number | null; limit: number; query?: string },
   ) => Promise<ImportItemPage>
   shelfOutpoints: (sourceId: string, group: string) => Promise<string[]>
-  importOne: (sourceId: string, outpoint: string) => Promise<ImportItemResult>
+  importMany: (sourceId: string, outpoints: string[]) => Promise<ImportItemsResult>
 }
 
 export type ImportItemNotice = {
@@ -76,7 +81,7 @@ export type ImportItemBrowserContext = {
   grew: boolean
   selected: ImportSelection[]
   gathering: string | null
-  /** Outpoints still to move; the head is moving. */
+  /** Outpoints still to move; the first `IMPORT_CHUNK` are moving. */
   queue: string[]
   tally: Tally
   notice: ImportItemNotice | null
@@ -156,6 +161,11 @@ export function batchNotice(tally: Tally): ImportItemNotice {
   return { tone: failure?.tone ?? 'warning', outcome: 'batch', title: count, body: failure ? `${failure.title}: ${failure.body}` : '' }
 }
 
+/** The outpoints the wallet is moving now. Pure. */
+export function importChunk(queue: readonly string[]): string[] {
+  return queue.slice(0, IMPORT_CHUNK)
+}
+
 /** Chosen items per shelf. Pure. */
 export function selectedPerShelf(selected: readonly ImportSelection[]): Map<string, number> {
   const out = new Map<string, number>()
@@ -223,8 +233,8 @@ export const importItemBrowserMachine = setup({
     shelfOutpoints: fromPromise(({ input }: { input: SyncInput & { group: string } }) =>
       input.ports.shelfOutpoints(input.sourceId, input.group),
     ),
-    importOne: fromPromise(({ input }: { input: SyncInput & { outpoint: string } }) =>
-      input.ports.importOne(input.sourceId, input.outpoint),
+    importMany: fromPromise(({ input }: { input: SyncInput & { outpoints: string[] } }) =>
+      input.ports.importMany(input.sourceId, input.outpoints),
     ),
   },
   guards: {
@@ -236,9 +246,8 @@ export const importItemBrowserMachine = setup({
     oneSelected: ({ context }) => context.selected.length === 1,
     deselectShelf: ({ event }) => event.type === 'SELECT_SHELF' && !event.checked,
     selectShelf: ({ event }) => event.type === 'SELECT_SHELF' && event.checked,
-    outOfFunds: ({ event }) =>
-      (event as { output?: ImportItemResult }).output?.kind === 'funds',
-    queueContinues: ({ context }) => context.queue.length > 1 && !context.tally.stopped,
+    outOfFunds: ({ event }) => (event as { output?: ImportItemsResult }).output?.stopped === 'funds',
+    queueContinues: ({ context }) => context.queue.length > IMPORT_CHUNK && !context.tally.stopped,
   },
   actions: {
     changed: assign(({ context, event }) => {
@@ -273,27 +282,36 @@ export const importItemBrowserMachine = setup({
       tally: { ...NO_TALLY, total: context.selected.length },
       notice: null,
     })),
-    /** One queue answer: tally it, drop it from the selection, and from the list unless it stays. */
+    /**
+     * One chunk's answers: tally them, drop answered items from the selection
+     * (unfunded ones stay chosen) and from the list unless they stay.
+     */
     recordImport: enqueueActions(({ context, event, enqueue }) => {
-      const result = (event as unknown as { output: ImportItemResult }).output
-      const outpoint = context.queue[0]!
-      const name = context.items.find((i) => i.outpoint === outpoint)?.name ?? null
-      const { notice, keep } = noticeFor(name, result)
-      const moved = result.kind === 'moved'
-      const tally: Tally = {
-        ...context.tally,
-        moved: context.tally.moved + (moved ? 1 : 0),
-        failure: moved ? context.tally.failure : notice,
+      const { results, stopped } = (event as unknown as { output: ImportItemsResult }).output
+      const names = new Map(context.items.map((i) => [i.outpoint, i.name]))
+      let moved = 0
+      let failure = context.tally.failure
+      let last: ImportItemNotice | null = null
+      const gone: string[] = []
+      const answered = new Set<string>()
+      for (const { outpoint, result } of results) {
+        const { notice, keep } = noticeFor(names.get(outpoint) ?? null, result)
+        last = notice
+        if (result.kind === 'moved') moved += 1
+        else if (failure?.outcome !== 'funds') failure = notice
+        if (!keep) gone.push(outpoint)
+        if (result.kind !== 'funds') answered.add(outpoint)
       }
-      const rest = context.queue.slice(1)
-      const finished = rest.length === 0 || result.kind === 'funds' || tally.stopped
+      const tally: Tally = { ...context.tally, moved: context.tally.moved + moved, failure }
+      const rest = context.queue.slice(IMPORT_CHUNK)
+      const finished = rest.length === 0 || stopped === 'funds' || tally.stopped
       enqueue.assign({
         queue: finished ? [] : rest,
         tally,
-        selected: context.selected.filter((s) => s.outpoint !== outpoint),
-        notice: finished ? (tally.total === 1 ? notice : batchNotice(tally)) : null,
+        selected: context.selected.filter((s) => !answered.has(s.outpoint)),
+        notice: finished ? (tally.total === 1 && last ? last : batchNotice(tally)) : null,
       })
-      if (!keep) enqueue.raise({ type: 'CHANGED', change: { added: 0, gone: [outpoint] } })
+      if (gone.length > 0) enqueue.raise({ type: 'CHANGED', change: { added: 0, gone } })
     }),
     dismiss: assign({ notice: null }),
   },
@@ -479,7 +497,7 @@ export const importItemBrowserMachine = setup({
             ],
           },
         },
-        /** More than one item: each is its own transaction, so ask once. */
+        /** More than one item spends fees across several transactions, so ask once. */
         confirming: {
           on: {
             CONFIRM: [
@@ -489,14 +507,18 @@ export const importItemBrowserMachine = setup({
             CANCEL: { target: 'idle' },
           },
         },
-        /** The queue head moves alone; the next waits for its answer. */
+        /** The head chunk moves in shared transactions; the next waits for its answers. */
         importing: {
           on: {
             STOP: { actions: assign(({ context }) => ({ tally: { ...context.tally, stopped: true } })) },
           },
           invoke: {
-            src: 'importOne',
-            input: ({ context }) => ({ ports: context.ports, sourceId: context.sourceId, outpoint: context.queue[0]! }),
+            src: 'importMany',
+            input: ({ context }) => ({
+              ports: context.ports,
+              sourceId: context.sourceId,
+              outpoints: importChunk(context.queue),
+            }),
             onDone: [
               { guard: 'outOfFunds', target: 'idle', actions: 'recordImport' },
               { guard: 'queueContinues', target: 'importing', reenter: true, actions: 'recordImport' },
@@ -505,12 +527,13 @@ export const importItemBrowserMachine = setup({
             onError: {
               target: 'idle',
               actions: assign(({ context, event }) => {
-                const outpoint = context.queue[0]!
-                const name = context.items.find((i) => i.outpoint === outpoint)?.name ?? null
+                const chunk = importChunk(context.queue)
+                const name =
+                  chunk.length === 1 ? (context.items.find((i) => i.outpoint === chunk[0])?.name ?? null) : null
                 const failure: ImportItemNotice = {
                   tone: 'danger',
                   outcome: 'failed',
-                  title: `${itemTitle(name)} not imported`,
+                  title: chunk.length === 1 ? `${itemTitle(name)} not imported` : 'Items not imported',
                   body: message(event.error),
                 }
                 const tally = { ...context.tally, failure }

@@ -11,7 +11,7 @@ import {
   readImportGroups,
   readImportItemPage,
   readImportListMeta,
-  readStoredImportItem,
+  readStoredImportItems,
   replaceAddressItems,
   saveImportItems,
   writeImportListMeta,
@@ -95,7 +95,7 @@ describe('saved import items', () => {
     expect(outpoints(page.items)).toEqual([op(1), op(2), op(6)])
     expect(page.more).toBe(true)
     expect(await groupImportOutpoints('s', 'app:alpha')).toEqual([op(3)])
-    expect(await readStoredImportItem('s', op(4))).toMatchObject({ collectionId: 'C1' })
+    expect((await readStoredImportItems('s', [op(4), op(99)])).get(op(4))).toMatchObject({ collectionId: 'C1' })
 
     await markImportOutpointsGone('s', [op(3)])
     expect((await readImportGroups('s')).map((s) => s.key)).not.toContain('app:alpha')

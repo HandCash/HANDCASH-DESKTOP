@@ -1191,47 +1191,78 @@ export type SingleItemMigrate =
   | { kind: 'funds'; message: string }
   | { kind: 'failed'; message: string }
 
-/**
- * Move one chosen tip on the same P2PKH item-migrate path as the batch, in its
- * own transaction. It never touches the batch cursor, so the caller refuses
- * while a paused batch is reading the same address — removing a row ahead of
- * that cursor would shift its offset past an unmoved tip.
- */
-export async function migrateOnePhraseItem(args: {
-  candidate: PhraseCandidate
+/** A tip the user chose, with the index's names for it. */
+export type ChosenPhraseItem = {
   /** `txid_vout` or `txid.vout`. */
   outpoint: string
   origin?: string
   name?: string
-}): Promise<SingleItemMigrate> {
+}
+
+export type ChosenItemsMigrate = {
+  /** Every chosen tip's answer, keyed by the outpoint as given. */
+  results: Map<string, SingleItemMigrate>
+  stopped: PhraseItemStopReason | null
+  transactions: number
+}
+
+/**
+ * Move the chosen tips of one key on the same P2PKH item-migrate path as the
+ * batch: their source transactions are read together and the eligible tips
+ * share transactions, `MAX_ITEMS_PER_MIGRATE_TX` at a time, split down to
+ * singles only when a bundle is rejected. It never touches the batch cursor,
+ * so the caller refuses while a paused batch is reading the same address —
+ * removing a row ahead of that cursor would shift its offset past an unmoved
+ * tip.
+ */
+export async function migrateChosenPhraseItems(args: {
+  candidate: PhraseCandidate
+  items: readonly ChosenPhraseItem[]
+}): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
   assertOnlineForPayment()
   if (args.candidate.identityKey.toLowerCase() === active.identityKey.toLowerCase()) {
     throw new Error('That phrase is already this wallet')
   }
+  const results = new Map<string, SingleItemMigrate>()
+  if (args.items.length === 0) return { results, stopped: null, transactions: 0 }
   const startedAt = Date.now()
-  const outpoint = args.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1')
   const spendKey = PrivateKey.fromHex(args.candidate.rootKeyHex)
   const destLock = new P2PKH().lock(active.address).toHex()
   const spendLockHex = new P2PKH().lock(spendKey.toAddress()).toHex()
 
-  const built = await buildLegacyInputBeef(active.services, [outpoint], { concurrency: 1 })
-  const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
-  const plan = planOrdinalMigrate(
-    sourceBeef,
-    { outpoint, ...(args.origin ? { origin: args.origin } : {}), ...(args.name ? { name: args.name } : {}) },
-    spendLockHex,
+  const givenOf = new Map<string, string>()
+  const rows = args.items.map((item) => {
+    const outpoint = item.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1')
+    givenOf.set(outpoint, item.outpoint)
+    return { outpoint, ...(item.origin ? { origin: item.origin } : {}), ...(item.name ? { name: item.name } : {}) }
+  })
+  const built = await buildLegacyInputBeef(
+    active.services,
+    rows.map((row) => row.outpoint),
+    { concurrency: 8 },
   )
-  if (plan.kind === 'skip') {
-    const message = describeOrdinalMigrateSkip(plan.reason)
-    appendAppLog('info', `[phrase-sweep] single skip ${outpoint}: ${message}`)
-    return { kind: 'skipped', reason: plan.reason, message }
-  }
-  if (plan.kind === 'unreadable') {
-    const message = built.failures.find((f) => f.outpoint === outpoint)?.reason ?? 'source output could not be read'
-    appendAppLog('warn', `[phrase-sweep] single unreadable ${outpoint}: ${message}`)
-    return { kind: 'unreadable', message }
+  const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
+
+  const pending: PendingItemMigrate[] = []
+  let skipped = 0
+  let unreadable = 0
+  for (const row of rows) {
+    const given = givenOf.get(row.outpoint)!
+    const plan = planOrdinalMigrate(sourceBeef, row, spendLockHex)
+    if (plan.kind === 'skip') {
+      skipped += 1
+      results.set(given, { kind: 'skipped', reason: plan.reason, message: describeOrdinalMigrateSkip(plan.reason) })
+    } else if (plan.kind === 'unreadable') {
+      unreadable += 1
+      results.set(given, {
+        kind: 'unreadable',
+        message: built.failures.find((f) => f.outpoint === row.outpoint)?.reason ?? 'source output could not be read',
+      })
+    } else {
+      pending.push(plan.item)
+    }
   }
 
   const outcome = await migrateOrdinalUnit({
@@ -1239,25 +1270,36 @@ export async function migrateOnePhraseItem(args: {
     spendKey,
     destLockHex: destLock,
     inputBeef: built.beef,
-    items: [plan.item],
-    itemsPerTx: 1,
+    items: pending,
+    itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
   })
-  const receipt = outcome.moved[0]
-  if (!receipt) {
-    const message =
-      outcome.stopped === 'funds'
-        ? 'Not enough spendable BSV in this wallet for the item fee.'
-        : (outcome.lastError ?? 'The item transaction was not accepted.')
-    appendAppLog('warn', `[phrase-sweep] single ${outcome.stopped === 'funds' ? 'funds' : 'failed'} ${outpoint}: ${message}`)
-    return outcome.stopped === 'funds' ? { kind: 'funds', message } : { kind: 'failed', message }
+  for (const receipt of outcome.moved) {
+    results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })
   }
-  recordMigratedItemActivity(outcome.moved, active.chain)
-  const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
-  recent.add(receipt.outpoint)
-  recentlyMovedPhraseItems.set(args.candidate.address, recent)
-  scheduleHistoryBackupPush('phrase-sweep')
-  appendAppLog('info', `[phrase-sweep] single moved ${outpoint} → ${receipt.sweepTxid} done ${Date.now() - startedAt}ms`)
-  return { kind: 'moved', txid: receipt.sweepTxid }
+  for (const failure of outcome.failures) {
+    results.set(givenOf.get(failure.outpoint)!, { kind: 'failed', message: failure.reason })
+  }
+  const fundsMessage = 'Not enough spendable BSV in this wallet for the item fee.'
+  for (const item of pending.slice(outcome.resolved)) {
+    results.set(givenOf.get(item.outpoint)!, { kind: 'funds', message: fundsMessage })
+  }
+
+  const transactions = new Set(outcome.moved.map((m) => m.sweepTxid)).size
+  if (outcome.moved.length > 0) {
+    recordMigratedItemActivity(outcome.moved, active.chain)
+    const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
+    for (const item of outcome.moved) recent.add(item.outpoint)
+    recentlyMovedPhraseItems.set(args.candidate.address, recent)
+    scheduleHistoryBackupPush('phrase-sweep')
+  }
+  appendAppLog(
+    outcome.failures.length > 0 || unreadable > 0 || outcome.stopped ? 'warn' : 'info',
+    `[phrase-sweep] chosen done ${Date.now() - startedAt}ms items=${rows.length} moved=${outcome.moved.length}` +
+      ` tx=${transactions} skipped=${skipped} unreadable=${unreadable} failed=${outcome.failures.length}` +
+      (outcome.stopped ? ` stopped=${outcome.stopped}` : '') +
+      (outcome.lastError ? ` lastError=${outcome.lastError}` : ''),
+  )
+  return { results, stopped: outcome.stopped, transactions }
 }
 
 /** One tip that passed eligibility, with everything signing needs. */
@@ -1330,6 +1372,8 @@ function planOrdinalMigrate(
 type UnitOutcome = {
   moved: MigratedItemReceipt[]
   failed: number
+  /** Tips refused alone, after any bundle they rode was split down to them. */
+  failures: Array<{ outpoint: string; reason: string }>
   /** Rows this unit settled, whether moved or failed — the cursor prefix. */
   resolved: number
   stopped: PhraseItemStopReason | null
@@ -1352,6 +1396,7 @@ async function migrateOrdinalUnit(args: {
   const out: UnitOutcome = {
     moved: [],
     failed: 0,
+    failures: [],
     resolved: 0,
     stopped: null,
     lastError: null,
@@ -1360,6 +1405,7 @@ async function migrateOrdinalUnit(args: {
   let perTx = args.itemsPerTx
 
   while (pending.length > 0) {
+    if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
     const unit = chooseItemMigrateUnit(pending, perTx)
     if (unit.kind === 'refuse') break
     const group = unit.kind === 'bundle' ? unit.items : [unit.item]
@@ -1405,6 +1451,7 @@ async function migrateOrdinalUnit(args: {
         continue
       }
       out.failed += 1
+      out.failures.push({ outpoint: group[0]!.outpoint, reason })
       out.resolved += 1
       out.lastError = reason
       console.warn('[phrase-sweep] item migrate failed', group[0]!.outpoint, reason)

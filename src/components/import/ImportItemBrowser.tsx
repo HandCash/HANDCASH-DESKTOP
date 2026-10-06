@@ -3,13 +3,14 @@ import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { Accordion, StatusBanner } from '@aeon-ui/react'
 import {
+  importChunk,
   importItemBrowserMachine,
   selectedPerShelf,
   shelvedTotal,
   type ImportItemPorts,
 } from '../../machines/importItemBrowserMachine'
 import {
-  importOneItem,
+  importItems,
   importShelfOutpoints,
   readImportItems,
   readImportShelves,
@@ -41,7 +42,7 @@ const PORTS: ImportItemPorts = {
   readShelves: readImportShelves,
   readPage: (sourceId, opts) => readImportItems({ sourceId, ...opts }),
   shelfOutpoints: importShelfOutpoints,
-  importOne: (sourceId, outpoint) => importOneItem({ sourceId, outpoint }),
+  importMany: (sourceId, outpoints) => importItems({ sourceId, outpoints }),
 }
 
 /** Collect's view preference — the browser is Collect's face. */
@@ -229,7 +230,7 @@ function ImportItems({
   more,
   reading,
   selected,
-  head,
+  moving,
   locked,
   onImport,
   onSelect,
@@ -241,7 +242,7 @@ function ImportItems({
   more: boolean
   reading: boolean
   selected: ReadonlySet<string>
-  head: string | null
+  moving: ReadonlySet<string>
   locked: boolean
   onMore: () => void
 }) {
@@ -278,7 +279,7 @@ function ImportItems({
           key={item.outpoint}
           item={item}
           selected={selected.has(item.outpoint)}
-          importing={head === item.outpoint}
+          importing={moving.has(item.outpoint)}
           locked={locked}
           onImport={onImport}
           onSelect={onSelect}
@@ -374,7 +375,10 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
   const importing = snapshot.matches({ move: 'importing' })
   const confirming = snapshot.matches({ move: 'confirming' })
   const locked = !snapshot.matches({ move: 'idle' })
-  const head = importing ? (context.queue[0] ?? null) : null
+  const moving = useMemo(
+    () => new Set(importing ? importChunk(context.queue) : []),
+    [importing, context.queue],
+  )
   const reading = snapshot.matches({ page: 'reading' })
   const searching = context.query.trim() !== ''
   const firstRead = snapshot.matches({ shelves: 'reading' }) && context.shelves.length === 0
@@ -410,7 +414,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
             tone: 'danger',
           },
           primary: {
-            label: `Importing ${(context.tally.total - context.queue.length + 1).toLocaleString()} of ${context.tally.total.toLocaleString()}`,
+            label: `Importing… ${(context.tally.total - context.queue.length).toLocaleString()} of ${context.tally.total.toLocaleString()} done`,
             onClick: () => undefined,
             disabled: true,
             tone: 'primary',
@@ -469,7 +473,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
       more={context.more}
       reading={reading}
       selected={selected}
-      head={head}
+      moving={moving}
       locked={locked}
       onImport={onImport}
       onSelect={onSelect}
@@ -505,7 +509,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
         <StatusBanner.Root tone="info" status="confirming">
           <StatusBanner.Copy>
             <StatusBanner.Title>Import {selectedCount.toLocaleString()} items?</StatusBanner.Title>
-            <StatusBanner.Body>Each item moves in its own transaction.</StatusBanner.Body>
+            <StatusBanner.Body>They move together, up to 25 in each transaction.</StatusBanner.Body>
           </StatusBanner.Copy>
         </StatusBanner.Root>
       ) : null}
