@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.462] - 2026-10-06
+
+### Changed
+
+- **Collect now shows the same creator identity as Import.** Items minted by the HandCash cloud are signed by their creator's identity for that app, but Collect only recognized this wallet's own issuer stamp, so those items fell onto plain app or collection shelves. Collect now shelves them by that signer, labelled with the app and showing the same signer fingerprint you see in Import → Browse items. When the item's origin transaction is on this device, the signature is checked against it. Otherwise the shelf says the signer is as the index reports it. Items already on the device pick up their signer in the background, 100 per index request, once per session.
+
 ## [1.3.461] - 2026-10-06
 
 ### Changed
