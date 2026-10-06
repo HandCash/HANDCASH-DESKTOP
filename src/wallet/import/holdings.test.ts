@@ -1,9 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
 vi.mock('../phraseSweep', () => ({ countOrdinalsAtLeast: vi.fn(), scanAddressAny: vi.fn() }))
+vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined }))
 
-import { fetchTokenBalances, formatTokenAmount, totalHoldings, type AddressHoldings } from './holdings'
+import { countOrdinalsAtLeast, scanAddressAny } from '../phraseSweep'
+import type { DiscoveredAddress } from './discovery'
+import {
+  fetchTokenBalances,
+  formatTokenAmount,
+  inspectHoldings,
+  totalHoldings,
+  type AddressHoldings,
+} from './holdings'
 import { planSweep } from './sweep'
 
 const base: AddressHoldings = {
@@ -83,5 +92,63 @@ describe('fetchTokenBalances', () => {
       { id: ID, tick: null, sym: 'GEM', dec: 1, icon: 'x_0', amount: '105', listed: '10', standard: 'bsv21' },
       { id: null, tick: 'PEPE', sym: 'PEPE', dec: 0, icon: null, amount: '7', listed: '0', standard: 'bsv20' },
     ])
+  })
+})
+
+describe('inspectHoldings', () => {
+  const at = (address: string): DiscoveredAddress =>
+    ({ address, path: `m/${address}`, label: 'HandCash', wallets: 'HandCash' }) as DiscoveredAddress
+
+  afterEach(() => {
+    vi.mocked(scanAddressAny).mockReset()
+    vi.mocked(countOrdinalsAtLeast).mockReset()
+    vi.unstubAllGlobals()
+  })
+
+  function chainHolds(items: Record<string, number>) {
+    vi.mocked(scanAddressAny).mockResolvedValue({ utxos: [] } as unknown as Awaited<ReturnType<typeof scanAddressAny>>)
+    vi.mocked(countOrdinalsAtLeast).mockImplementation(async (address) => ({ count: items[address] ?? 0, capped: false }))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]')))
+  }
+
+  it('reads only addresses that may still hold something, and reuses reads within a scan', async () => {
+    chainHolds({ '1a': 2, '1c': 1 })
+    const cache = new Map<string, AddressHoldings>()
+    const first = await inspectHoldings({
+      addresses: [at('1a'), at('1b')],
+      chain: 'main',
+      mayHold: new Set(['1a']),
+      cache,
+    })
+    expect(first.map((h) => [h.address, h.itemCount])).toEqual([
+      ['1a', 2],
+      ['1b', 0],
+    ])
+    expect(scanAddressAny).toHaveBeenCalledTimes(1)
+
+    const second = await inspectHoldings({
+      addresses: [at('1a'), at('1b'), at('1c')],
+      chain: 'main',
+      mayHold: new Set(['1a', '1c']),
+      cache,
+    })
+    expect(second.map((h) => [h.address, h.itemCount])).toEqual([
+      ['1a', 2],
+      ['1b', 0],
+      ['1c', 1],
+    ])
+    expect(vi.mocked(scanAddressAny).mock.calls.map(([address]) => address)).toEqual(['1a', '1c'])
+  })
+
+  it('does not cache a read that failed, so a wider window asks again', async () => {
+    chainHolds({})
+    vi.mocked(scanAddressAny).mockRejectedValueOnce(new Error('timeout'))
+    const cache = new Map<string, AddressHoldings>()
+    const [failed] = await inspectHoldings({ addresses: [at('1a')], chain: 'main', cache })
+    expect(failed.error).toBe('timeout')
+    expect(cache.size).toBe(0)
+    await inspectHoldings({ addresses: [at('1a')], chain: 'main', cache })
+    expect(scanAddressAny).toHaveBeenCalledTimes(2)
+    expect(cache.has('1a')).toBe(true)
   })
 })

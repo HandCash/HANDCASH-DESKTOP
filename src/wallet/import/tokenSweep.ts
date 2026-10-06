@@ -10,6 +10,7 @@ import { isInsufficientFundsError } from '../insufficientFunds'
 import { buildBsv21TransferLockingScript } from '../token/legacyInscribe'
 import { detectCosignFromLockingScript } from '../token/tipKind'
 import { yieldToUi } from '../yieldToUi'
+import { gorillaBase } from './discovery'
 import { addHeld, type HeldTally, type ImportHoldReason, type TokenHolding } from './holdings'
 
 /**
@@ -91,12 +92,6 @@ export function chooseTokenTip(args: {
     kind: 'move',
     tip: { outpoint: `${indexed.txid}.${indexed.vout}`, txid: indexed.txid, vout: indexed.vout, amt },
   }
-}
-
-function gorillaBase(chain: Chain): string {
-  return chain === 'main'
-    ? 'https://ordinals.gorillapool.io'
-    : 'https://testnet.ordinals.gorillapool.io'
 }
 
 async function fetchIndexedTips(address: string, tokenId: string, chain: Chain): Promise<IndexedTip[]> {

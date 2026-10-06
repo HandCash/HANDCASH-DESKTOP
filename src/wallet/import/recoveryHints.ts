@@ -2,7 +2,7 @@ import { Transaction, Utils } from '@bsv/sdk'
 import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
 import { yieldToUi } from '../yieldToUi'
-import { wocBulkPost, type FetchLike, type HistoryLookup, type ItemsLookup } from './discovery'
+import { gorillaBase, wocBulkPost, type FetchLike, type HistoryLookup, type ItemsLookup } from './discovery'
 import type { AddressHoldings } from './holdings'
 
 /**
@@ -18,7 +18,10 @@ import type { AddressHoldings } from './holdings'
 export type HandCashRecoveryHints = {
   /** HandCash handle the hints were read for, without `$`. */
   handle: string | null
+  /** Account history, in the order HandCash lists it (newest first). */
   txids: string[]
+  /** Item origins (`txid_vout`) from the inventory — located by the 1Sat index, not by history. */
+  origins: string[]
   /** False when the history had more pages than the migrate page read. */
   historyComplete: boolean
   /** BSV balance HandCash reports, in satoshis. */
@@ -32,7 +35,9 @@ export const MAX_HINT_TXIDS = 10_000
 const MAX_HINT_ITEMS = 10_000
 const HINT_TTL_MS = 6 * 60 * 60 * 1000
 const RAW_TX_CHUNK = 20
+const ORIGIN_CHUNK = 100
 const TXID = /^[0-9a-f]{64}$/
+const ORIGIN = /^([0-9a-f]{64})[_.](\d+)$/
 
 let current: HandCashRecoveryHints | null = null
 let generation = 0
@@ -77,19 +82,21 @@ export function parseRecoveryHints(raw: unknown, now = Date.now()): HandCashReco
     if (txid && txids.size < MAX_HINT_TXIDS) txids.add(txid)
   }
   if (Array.isArray(body.txids)) for (const value of body.txids) add(value)
-  // An item's mint pays the holder too; its origin outpoint names that tx.
-  const origins = Array.isArray(body.itemOrigins) ? body.itemOrigins.slice(0, MAX_HINT_ITEMS) : []
-  for (const origin of origins) add(origin)
-  if (txids.size === 0) return null
+  const origins = new Set<string>()
+  for (const value of Array.isArray(body.itemOrigins) ? body.itemOrigins.slice(0, MAX_HINT_ITEMS) : []) {
+    const m = typeof value === 'string' ? ORIGIN.exec(value.trim().toLowerCase()) : null
+    if (m) origins.add(`${m[1]}_${m[2]}`)
+  }
+  if (txids.size === 0 && origins.size === 0) return null
 
   const handle = typeof body.handle === 'string' ? body.handle.trim().replace(/^\$/, '').toLowerCase() : ''
-  const listedItems = origins.filter((origin) => txidOf(origin) != null).length
   return {
     handle: handle || null,
     txids: [...txids],
+    origins: [...origins],
     historyComplete: body.historyComplete === true && txids.size < MAX_HINT_TXIDS,
     satoshis: wholeNumber(body.satoshis) ?? 0,
-    itemCount: wholeNumber(body.itemCount) ?? listedItems,
+    itemCount: wholeNumber(body.itemCount) ?? origins.size,
     receivedAt: now,
   }
 }
@@ -99,7 +106,7 @@ export function rememberRecoveryHints(hints: HandCashRecoveryHints): void {
   changed()
   appendAppLog(
     'info',
-    `[import] HandCash recovery hints txids=${hints.txids.length} complete=${hints.historyComplete} sats=${hints.satoshis} items=${hints.itemCount}`,
+    `[import] HandCash recovery hints txids=${hints.txids.length} complete=${hints.historyComplete} sats=${hints.satoshis} items=${hints.itemCount} origins=${hints.origins.length}`,
   )
 }
 
@@ -130,7 +137,7 @@ export function recoveryHintsFor(
 export type RecoveryHintsOffer =
   | { kind: 'none' }
   | { kind: 'ask' }
-  | { kind: 'ready'; txids: number; historyComplete: boolean }
+  | { kind: 'ready'; txids: number; items: number }
   | { kind: 'used' }
   | { kind: 'mismatch'; hinted: string; saved: string }
 
@@ -148,7 +155,7 @@ export function recoveryHintsOffer(
     return { kind: 'ask' }
   }
   if (source.scan && source.scan.at >= hints.receivedAt) return { kind: 'used' }
-  return { kind: 'ready', txids: hints.txids.length, historyComplete: hints.historyComplete }
+  return { kind: 'ready', txids: hints.txids.length, items: hints.origins.length }
 }
 
 /** Test-only. */
@@ -173,6 +180,11 @@ function p2pkhHashes(scriptHex: string): string[] {
 export type HintedAddresses = {
   /** Base58 (mainnet form, as discovery derives) of every output address seen. */
   addresses: Set<string>
+  /**
+   * Addresses with an output no read transaction spends. Every other address
+   * was emptied by transactions the chain returned, so it holds nothing.
+   */
+  mayHold: Set<string>
   read: number
   /** Txids the chain does not know — another network's, or never broadcast. They hold nothing. */
   unknown: number
@@ -181,7 +193,111 @@ export type HintedAddresses = {
   stopped: boolean
 }
 
-/** Read the hinted transactions and collect the address of every output. */
+export type HistoryReader = {
+  /** Read the first `limit` hinted txids (later calls continue where the last stopped). */
+  readUntil(limit: number, opts?: { onProgress?: (done: number, total: number) => void; shouldStop?: () => boolean }): Promise<void>
+  /** What the transactions read so far say. */
+  snapshot(): HintedAddresses
+  /** How many hinted txids have been asked for. */
+  readonly position: number
+}
+
+/**
+ * Read hinted transactions in order and keep every output address and every
+ * outpoint they spend. An output spent by a read transaction is spent on
+ * chain; one no read transaction spends may still hold value.
+ */
+export function createHistoryReader(args: { chain: Chain; txids: readonly string[]; fetchImpl?: FetchLike }): HistoryReader {
+  const addresses = new Set<string>()
+  const spent = new Set<string>()
+  const outputs: Array<{ outpoint: string; addresses: string[] }> = []
+  let position = 0
+  let read = 0
+  let unknown = 0
+  let failed = 0
+  let stopped = false
+  return {
+    get position() {
+      return position
+    },
+    async readUntil(limit, opts) {
+      const startedAt = Date.now()
+      const end = Math.min(limit, args.txids.length)
+      stopped = false
+      while (position < end) {
+        if (opts?.shouldStop?.()) {
+          stopped = true
+          break
+        }
+        const chunk = args.txids.slice(position, Math.min(position + RAW_TX_CHUNK, end))
+        position += chunk.length
+        let rows: unknown
+        try {
+          rows = await wocBulkPost(args.chain, '/txs/hex', { txids: chunk }, args.fetchImpl)
+        } catch (err) {
+          failed += chunk.length
+          appendAppLog(
+            'warn',
+            `[import] hinted tx read failed for ${chunk.length} tx(s): ${err instanceof Error ? err.message : String(err)}`,
+          )
+          continue
+        }
+        // WhatsOnChain answers a txid it has never seen with `{ txid, error: 'unknown' }`.
+        const hexById = new Map<string, string | 'unknown'>()
+        for (const row of Array.isArray(rows) ? rows : []) {
+          const { txid, hex, error } = (row ?? {}) as { txid?: unknown; hex?: unknown; error?: unknown }
+          if (typeof txid !== 'string') continue
+          if (typeof hex === 'string' && hex) hexById.set(txid.toLowerCase(), hex)
+          else if (error === 'unknown') hexById.set(txid.toLowerCase(), 'unknown')
+        }
+        for (const txid of chunk) {
+          const hex = hexById.get(txid)
+          if (hex == null) {
+            failed += 1
+            continue
+          }
+          if (hex === 'unknown') {
+            unknown += 1
+            continue
+          }
+          try {
+            const tx = Transaction.fromHex(hex)
+            for (const input of tx.inputs) {
+              if (input.sourceTXID) spent.add(`${input.sourceTXID.toLowerCase()}.${input.sourceOutputIndex}`)
+            }
+            tx.outputs.forEach((output, vout) => {
+              const paid = p2pkhHashes(output.lockingScript.toHex()).map((hash) =>
+                Utils.toBase58Check(Utils.toArray(hash, 'hex'), [0x00]),
+              )
+              if (paid.length === 0) return
+              for (const address of paid) addresses.add(address)
+              outputs.push({ outpoint: `${txid}.${vout}`, addresses: paid })
+            })
+            read += 1
+          } catch {
+            failed += 1
+          }
+        }
+        opts?.onProgress?.(position, args.txids.length)
+        await yieldToUi()
+      }
+      appendAppLog(
+        'info',
+        `[import] hinted history done ${Date.now() - startedAt}ms txs=${read} unknown=${unknown} failed=${failed} addresses=${addresses.size} upTo=${position}/${args.txids.length}`,
+      )
+    },
+    snapshot() {
+      const mayHold = new Set<string>()
+      for (const output of outputs) {
+        if (spent.has(output.outpoint)) continue
+        for (const address of output.addresses) mayHold.add(address)
+      }
+      return { addresses: new Set(addresses), mayHold, read, unknown, failed, stopped }
+    },
+  }
+}
+
+/** Read every hinted transaction and collect the address of every output. */
 export async function readHintedAddresses(args: {
   chain: Chain
   txids: readonly string[]
@@ -189,66 +305,104 @@ export async function readHintedAddresses(args: {
   onProgress?: (done: number, total: number) => void
   shouldStop?: () => boolean
 }): Promise<HintedAddresses> {
+  const reader = createHistoryReader(args)
+  await reader.readUntil(args.txids.length, { onProgress: args.onProgress, shouldStop: args.shouldStop })
+  return reader.snapshot()
+}
+
+export type ItemOwners = {
+  /** Addresses holding an unspent item, by the 1Sat index. */
+  owners: Set<string>
+  /** Items whose latest output is unspent. */
+  unspent: number
+  /** Origins the index answered for. */
+  located: number
+  /** Origins the index has no latest output for — burned, or never indexed. */
+  missing: number
+  failed: number
+  stopped: boolean
+}
+
+const NO_LATEST = /No latest outpoint for origin ([0-9a-f]{64}_\d+)/
+
+type LatestAnswer = { rows: unknown[] } | { missing: string } | null
+
+async function askLatest(fetchImpl: FetchLike, chain: Chain, origins: readonly string[]): Promise<LatestAnswer> {
+  try {
+    const res = await fetchImpl(`${gorillaBase(chain)}/api/inscriptions/latest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(origins),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (res.ok) {
+      const rows: unknown = await res.json()
+      return Array.isArray(rows) ? { rows } : null
+    }
+    if (res.status === 404) {
+      const missing = NO_LATEST.exec(await res.text())?.[1]
+      if (missing && origins.includes(missing)) return { missing }
+    }
+  } catch {
+    /* transient: the caller retries once */
+  }
+  return null
+}
+
+/**
+ * Where each item sits now: the 1Sat index's latest output for every origin
+ * HandCash's inventory lists, a hundred per request. Only the owners matter —
+ * the holdings read still counts items from the chain index at each address.
+ */
+export async function readItemOwners(args: {
+  chain: Chain
+  origins: readonly string[]
+  fetchImpl?: FetchLike
+  onProgress?: (done: number, total: number) => void
+  shouldStop?: () => boolean
+}): Promise<ItemOwners> {
   const startedAt = Date.now()
-  const addresses = new Set<string>()
-  let read = 0
-  let unknown = 0
+  const fetchImpl = args.fetchImpl ?? fetch
+  const owners = new Set<string>()
+  let unspent = 0
+  let located = 0
+  let missing = 0
   let failed = 0
   let stopped = false
-  for (let i = 0; i < args.txids.length; i += RAW_TX_CHUNK) {
+  for (let i = 0; i < args.origins.length; i += ORIGIN_CHUNK) {
     if (args.shouldStop?.()) {
       stopped = true
       break
     }
-    const chunk = args.txids.slice(i, i + RAW_TX_CHUNK)
-    let rows: unknown
-    try {
-      rows = await wocBulkPost(args.chain, '/txs/hex', { txids: chunk }, args.fetchImpl)
-    } catch (err) {
-      failed += chunk.length
-      appendAppLog(
-        'warn',
-        `[import] hinted tx read failed for ${chunk.length} tx(s): ${err instanceof Error ? err.message : String(err)}`,
-      )
-      continue
+    // The index refuses the whole batch over one origin it has no output for, naming it.
+    let ask = args.origins.slice(i, i + ORIGIN_CHUNK)
+    let rows: unknown[] | null = null
+    let retried = false
+    while (ask.length > 0 && rows == null) {
+      const answer = await askLatest(fetchImpl, args.chain, ask)
+      if (answer && 'rows' in answer) rows = answer.rows
+      else if (answer) {
+        missing += 1
+        ask = ask.filter((origin) => origin !== answer.missing)
+      } else if (!retried) retried = true
+      else break
     }
-    // WhatsOnChain answers a txid it has never seen with `{ txid, error: 'unknown' }`.
-    const hexById = new Map<string, string | 'unknown'>()
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const { txid, hex, error } = (row ?? {}) as { txid?: unknown; hex?: unknown; error?: unknown }
-      if (typeof txid !== 'string') continue
-      if (typeof hex === 'string' && hex) hexById.set(txid.toLowerCase(), hex)
-      else if (error === 'unknown') hexById.set(txid.toLowerCase(), 'unknown')
+    if (rows == null) failed += ask.length
+    for (const row of rows ?? []) {
+      const { owner, spend } = (row ?? {}) as { owner?: unknown; spend?: unknown }
+      located += 1
+      if (spend) continue
+      unspent += 1
+      if (typeof owner === 'string' && owner) owners.add(owner)
     }
-    for (const txid of chunk) {
-      const hex = hexById.get(txid)
-      if (hex == null) {
-        failed += 1
-        continue
-      }
-      if (hex === 'unknown') {
-        unknown += 1
-        continue
-      }
-      try {
-        for (const output of Transaction.fromHex(hex).outputs) {
-          for (const hash of p2pkhHashes(output.lockingScript.toHex())) {
-            addresses.add(Utils.toBase58Check(Utils.toArray(hash, 'hex'), [0x00]))
-          }
-        }
-        read += 1
-      } catch {
-        failed += 1
-      }
-    }
-    args.onProgress?.(Math.min(i + RAW_TX_CHUNK, args.txids.length), args.txids.length)
+    args.onProgress?.(Math.min(i + ORIGIN_CHUNK, args.origins.length), args.origins.length)
     await yieldToUi()
   }
   appendAppLog(
     'info',
-    `[import] hinted history done ${Date.now() - startedAt}ms txs=${read} unknown=${unknown} failed=${failed} addresses=${addresses.size}`,
+    `[import] item owners done ${Date.now() - startedAt}ms origins=${args.origins.length} located=${located} unspent=${unspent} owners=${owners.size} missing=${missing} failed=${failed}`,
   )
-  return { addresses, read, unknown, failed, stopped }
+  return { owners, unspent, located, missing, failed, stopped }
 }
 
 /** Discovery lookups answered from the hinted outputs — no network. */
@@ -264,25 +418,23 @@ export type HintVerdict =
   | { kind: 'fallback'; reason: HintFallbackReason }
 
 export type HintFallbackReason =
-  | 'history-capped'
-  | 'history-unread'
+  | 'stopped'
   | 'empty-claim'
   | 'balance-short'
   | 'items-short'
 
 /**
- * Is the hinted pass the whole wallet? Only when HandCash's full history was
- * read and the chain shows at least the balance and items HandCash reports.
- * An empty claim never shortcuts: it would make a wrong hint look like an
- * empty wallet.
+ * Is the hinted pass the whole wallet? Only when the chain shows at least the
+ * balance and items HandCash reports at addresses these keys derive — how much
+ * history it took to find them does not matter. An empty claim never
+ * shortcuts: it would make a wrong hint look like an empty wallet.
  */
 export function judgeHintedScan(
   hints: HandCashRecoveryHints,
-  read: Pick<HintedAddresses, 'failed' | 'stopped'>,
+  read: { stopped: boolean },
   holdings: readonly AddressHoldings[],
 ): HintVerdict {
-  if (!hints.historyComplete) return { kind: 'fallback', reason: 'history-capped' }
-  if (read.failed > 0 || read.stopped) return { kind: 'fallback', reason: 'history-unread' }
+  if (read.stopped) return { kind: 'fallback', reason: 'stopped' }
   if (hints.satoshis === 0 && hints.itemCount === 0) return { kind: 'fallback', reason: 'empty-claim' }
   let foundSats = 0
   let foundItems = 0

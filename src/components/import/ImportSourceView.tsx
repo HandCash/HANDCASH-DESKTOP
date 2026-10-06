@@ -90,9 +90,9 @@ function HandCashHistory(props: {
         <StatusBanner.Copy>
           <StatusBanner.Title>Your HandCash history is here</StatusBanner.Title>
           <StatusBanner.Body>
-            {offer.txids.toLocaleString()} transaction{offer.txids === 1 ? '' : 's'}
-            {offer.historyComplete ? '' : ' (not your full history, so the scan will also check every address)'}.
-            Rescan to read the addresses you have used first.
+            {offer.items.toLocaleString()} item{offer.items === 1 ? '' : 's'} and{' '}
+            {offer.txids.toLocaleString()} transaction{offer.txids === 1 ? '' : 's'}. Rescan to read only
+            where your coins and items are now.
           </StatusBanner.Body>
         </StatusBanner.Copy>
         <div className="actions">

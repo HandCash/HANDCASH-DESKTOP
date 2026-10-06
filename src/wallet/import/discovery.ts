@@ -202,7 +202,7 @@ function wocBase(chain: Chain): string {
   return `https://api.whatsonchain.com/v1/bsv/${chain === 'main' ? 'main' : 'test'}`
 }
 
-function gorillaBase(chain: Chain): string {
+export function gorillaBase(chain: Chain): string {
   return chain === 'main'
     ? 'https://ordinals.gorillapool.io'
     : 'https://testnet.ordinals.gorillapool.io'

@@ -3,7 +3,7 @@ import { appendAppLog } from '../appLog'
 import { chooseLegacySweepPath } from '../legacySweepPath'
 import { countOrdinalsAtLeast, scanAddressAny } from '../phraseSweep'
 import { yieldToUi } from '../yieldToUi'
-import type { DiscoveredAddress } from './discovery'
+import { gorillaBase, type DiscoveredAddress } from './discovery'
 
 /**
  * What a discovered address holds right now, and which of it is compatible.
@@ -120,12 +120,6 @@ export type HoldingsTotals = {
   partial: number
 }
 
-function gorillaBase(chain: Chain): string {
-  return chain === 'main'
-    ? 'https://ordinals.gorillapool.io'
-    : 'https://testnet.ordinals.gorillapool.io'
-}
-
 const PREVIEW_ITEM_CAP = 5_000
 
 function digits(value: unknown): string {
@@ -172,11 +166,9 @@ export async function fetchTokenBalances(
   })
 }
 
-export async function inspectAddressHoldings(
-  discovered: DiscoveredAddress,
-  chain: Chain,
-): Promise<AddressHoldings> {
-  const out: AddressHoldings = {
+/** A used address with nothing on it — what a fully spent address reads as. */
+export function emptyHoldings(discovered: DiscoveredAddress): AddressHoldings {
+  return {
     address: discovered.address,
     path: discovered.path,
     label: discovered.label,
@@ -191,6 +183,13 @@ export async function inspectAddressHoldings(
     tokens: [],
     error: null,
   }
+}
+
+export async function inspectAddressHoldings(
+  discovered: DiscoveredAddress,
+  chain: Chain,
+): Promise<AddressHoldings> {
+  const out = emptyHoldings(discovered)
   const errors: string[] = []
   try {
     const scan = await scanAddressAny(discovered.address, chain)
@@ -220,23 +219,44 @@ export async function inspectAddressHoldings(
   return out
 }
 
+/**
+ * Read what each discovered address holds. With `mayHold`, an address outside
+ * it is known to hold nothing (every output it ever received was spent by a
+ * transaction the chain returned) and reads as empty without a network call.
+ */
 export async function inspectHoldings(args: {
   addresses: DiscoveredAddress[]
   chain: Chain
+  mayHold?: ReadonlySet<string>
+  /** Reads already made in this scan, reused by address. */
+  cache?: Map<string, AddressHoldings>
   onProgress?: (done: number, total: number) => void
   shouldStop?: () => boolean
 }): Promise<AddressHoldings[]> {
   const startedAt = Date.now()
   const out: AddressHoldings[] = []
+  let read = 0
   for (const [i, address] of args.addresses.entries()) {
     if (args.shouldStop?.()) break
+    if (args.mayHold && !args.mayHold.has(address.address)) {
+      out.push(emptyHoldings(address))
+      continue
+    }
+    const cached = args.cache?.get(address.address)
+    if (cached) {
+      out.push(cached)
+      continue
+    }
     await yieldToUi()
-    out.push(await inspectAddressHoldings(address, args.chain))
+    const holding = await inspectAddressHoldings(address, args.chain)
+    if (!holding.error) args.cache?.set(address.address, holding)
+    out.push(holding)
+    read += 1
     args.onProgress?.(i + 1, args.addresses.length)
   }
   appendAppLog(
     'info',
-    `[import] holdings done ${Date.now() - startedAt}ms addresses=${out.length}`,
+    `[import] holdings done ${Date.now() - startedAt}ms addresses=${out.length} read=${read}`,
   )
   return out
 }

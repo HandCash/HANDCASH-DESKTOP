@@ -159,9 +159,11 @@ export function ImportPanel() {
               : {
                   type: 'PROGRESS',
                   message:
-                    p.phase === 'history'
-                      ? `Reading your HandCash history · ${p.done.toLocaleString()}/${p.total.toLocaleString()} transactions`
-                      : `Reading holdings · ${p.done}/${p.total}`,
+                    p.phase === 'items'
+                      ? `Locating your items · ${p.done.toLocaleString()}/${p.total.toLocaleString()}`
+                      : p.phase === 'history'
+                        ? `Finding your coins in recent history · ${p.done.toLocaleString()} transactions read`
+                        : `Reading holdings · ${p.done}/${p.total}`,
                   percent: p.total > 0 ? Math.round((p.done / p.total) * 100) : null,
                 },
           ),

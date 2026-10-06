@@ -307,6 +307,7 @@ function sessionFacts(header, events) {
   const holdings = holdingsFacts(events)
   const accountSwitches = accountSwitchFacts(events)
   const identityCards = identityCardFacts(events)
+  const legacyImport = legacyImportFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
   const broadcast = broadcastFacts(events)
@@ -392,6 +393,9 @@ function sessionFacts(header, events) {
     // BAP identity cards per peer key: sent, asked, kept, refused, ignored as
     // not a contact, and asks this account could not answer with a card.
     identityCards,
+    // Settings → Import: HandCash hints asked / received, each scan phase with
+    // its time and counts, the hinted verdict, and sweeps — in order.
+    legacyImport,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
     // and whether legacy deposits were proven by their own path or parents.
@@ -2273,6 +2277,59 @@ function accountSwitchFacts(events) {
   }
 }
 
+const IMPORT_LINES = [
+  ['asked', /^\[import\] opened \/migrate for HandCash history/],
+  ['hints', /^\[import\] HandCash recovery hints txids=(\d+) complete=(true|false) sats=(\d+) items=(\d+)(?: origins=(\d+))?/],
+  ['arrived', /^\[import\] HandCash history arrived txids=(\d+)/],
+  ['noHints', /^\[import\] key recovery opened without HandCash history/],
+  ['mismatch', /^\[import\] HandCash history is for \$(\S+), these keys prove \$(\S+)/],
+  ['itemOwners', /^\[import\] item owners done (\d+)ms origins=(\d+) located=(\d+) unspent=(\d+) owners=(\d+)(?: missing=(\d+))? failed=(\d+)/],
+  ['history', /^\[import\] hinted history done (\d+)ms txs=(\d+) unknown=(\d+) failed=(\d+) addresses=(\d+)(?: upTo=(\d+)\/(\d+))?/],
+  ['window', /^\[import\] hinted window txs=(\d+)\/(\d+) mayHold=(\d+) used=(\d+) verdict=(\S+)/],
+  ['historyReadFailed', /^\[import\] hinted tx read failed for (\d+) tx/],
+  ['discover', /^\[import\] discover done (\d+)ms checked=(\d+) used=(\d+) complete=(true|false)/],
+  ['addressLookupFailed', /^\[import\] history lookup failed for (\d+) address/],
+  ['holdings', /^\[import\] holdings done (\d+)ms addresses=(\d+)(?: read=(\d+))?/],
+  ['settled', /^\[import\] hinted scan settled sats=(\d+) items=(\d+) of sats=(\d+) items=(\d+)/],
+  ['refused', /^\[import\] hinted scan refused reason=(\S+)/],
+  ['sweep', /^\[import\] sweep done (\d+)ms kind=(\S+) cash=(\d+)sats items=(\d+) tokens=(\d+) failed=(\d+)/],
+]
+
+/** Settings → Import steps in order, each with the numbers its log line carries. */
+function legacyImportFacts(events) {
+  const steps = []
+  const counts = {}
+  const seen = new Set()
+  for (const e of events) {
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    for (const [step, re] of IMPORT_LINES) {
+      const m = re.exec(e.text)
+      if (!m) continue
+      counts[step] = (counts[step] ?? 0) + 1
+      const n = (i) => (m[i] == null ? null : /^\d+$/.test(m[i]) ? Number(m[i]) : m[i])
+      const detail =
+        step === 'hints' ? { txids: n(1), complete: m[2] === 'true', sats: n(3), items: n(4), origins: n(5) }
+        : step === 'itemOwners' ? { ms: n(1), origins: n(2), located: n(3), unspent: n(4), owners: n(5), missing: n(6), failed: n(7) }
+        : step === 'window' ? { txsRead: n(1), txsTotal: n(2), mayHold: n(3), used: n(4), verdict: m[5] }
+        : step === 'arrived' ? { txids: n(1) }
+        : step === 'mismatch' ? { hinted: m[1], saved: m[2] }
+        : step === 'history' ? { ms: n(1), txs: n(2), unknown: n(3), failed: n(4), addresses: n(5), upTo: n(6), of: n(7) }
+        : step === 'historyReadFailed' || step === 'addressLookupFailed' ? { count: n(1) }
+        : step === 'discover' ? { ms: n(1), checked: n(2), used: n(3), complete: m[4] === 'true' }
+        : step === 'holdings' ? { ms: n(1), addresses: n(2), networkReads: n(3) }
+        : step === 'settled' ? { foundSats: n(1), foundItems: n(2), claimedSats: n(3), claimedItems: n(4) }
+        : step === 'refused' ? { reason: m[1] }
+        : step === 'sweep' ? { ms: n(1), kind: m[2], cashSats: n(3), items: n(4), tokens: n(5), failed: n(6) }
+        : {}
+      steps.push({ at: new Date(e.at).toISOString(), step, ...detail })
+      break
+    }
+  }
+  return { counts, steps: steps.slice(-40) }
+}
+
 const CARD_SENT_RE = /^\[identity-card\] sent (card|withdrawal) to ([0-9a-f]{12}) via (\S+)( \(asked\))?/
 const CARD_UNDELIVERED_RE = /^\[identity-card\] (card|withdrawal) to ([0-9a-f]{12}) not delivered \((\S+)\)/
 const CARD_ASK_RE = /^\[identity-card\] (asked|could not ask) ([0-9a-f]{12}) for their card via (\S+)/
@@ -3956,6 +4013,19 @@ function report(state, answers) {
     )
     if (switches.prewarms) {
       console.log(`  ${switches.prewarms} account(s) prewarmed, slowest ${switches.slowestPrewarmMs}ms`)
+    }
+  }
+
+  const imp = latest.legacyImport
+  if (imp?.steps?.length) {
+    console.log('\nSettings → Import (code-counted, in order):')
+    for (const step of imp.steps) {
+      const { at, step: name, ...rest } = step
+      const fields = Object.entries(rest)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' ')
+      console.log(`  ${at.slice(11, 19)} ${name}${fields ? ` ${fields}` : ''}`)
     }
   }
 

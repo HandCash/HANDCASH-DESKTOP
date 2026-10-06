@@ -9,11 +9,13 @@ import type { AddressHoldings } from './holdings'
 import type { KeyDeriver } from './importSource'
 import {
   clearRecoveryHintsForTests,
+  createHistoryReader,
   hintedLookups,
   judgeHintedScan,
   MAX_HINT_TXIDS,
   parseRecoveryHints,
   readHintedAddresses,
+  readItemOwners,
   recoveryHintsFor,
   recoveryHintsGeneration,
   recoveryHintsOffer,
@@ -28,6 +30,7 @@ function hints(over: Partial<HandCashRecoveryHints> = {}): HandCashRecoveryHints
   return {
     handle: 'alice',
     txids: [txid(1)],
+    origins: [],
     historyComplete: true,
     satoshis: 10_000,
     itemCount: 1,
@@ -55,9 +58,9 @@ function holding(over: Partial<AddressHoldings> = {}): AddressHoldings {
   }
 }
 
-function rawTx(scripts: Script[]): { txid: string; hex: string } {
+function rawTx(scripts: Script[], spends: { txid: string; vout: number } = { txid: txid(0), vout: 0 }): { txid: string; hex: string } {
   const tx = new Transaction()
-  tx.addInput({ sourceTXID: txid(0), sourceOutputIndex: 0, unlockingScript: new Script(), sequence: 0xffffffff })
+  tx.addInput({ sourceTXID: spends.txid, sourceOutputIndex: spends.vout, unlockingScript: new Script(), sequence: 0xffffffff })
   for (const lockingScript of scripts) tx.addOutput({ lockingScript, satoshis: 1 })
   return { txid: tx.id('hex'), hex: tx.toHex() }
 }
@@ -68,12 +71,12 @@ function inscriptionTo(address: string): Script {
 }
 
 describe('parseRecoveryHints', () => {
-  it('keeps valid txids and item origin txids, deduped', () => {
+  it('keeps valid txids and item origins apart, deduped', () => {
     const parsed = parseRecoveryHints(
       {
         handle: '$Alice',
         txids: [txid(1), txid(1).toUpperCase(), 'nope', 42],
-        itemOrigins: [`${txid(2)}_0`, `${txid(3)}.1`, 'bad'],
+        itemOrigins: [`${txid(2)}_0`, `${txid(3)}.1`, `${txid(2)}_0`, 'bad'],
         historyComplete: true,
         satoshis: 5_000,
       },
@@ -81,7 +84,8 @@ describe('parseRecoveryHints', () => {
     )
     expect(parsed).toEqual({
       handle: 'alice',
-      txids: [txid(1), txid(2), txid(3)],
+      txids: [txid(1)],
+      origins: [`${txid(2)}_0`, `${txid(3)}_1`],
       historyComplete: true,
       satoshis: 5_000,
       itemCount: 2,
@@ -89,8 +93,13 @@ describe('parseRecoveryHints', () => {
     })
   })
 
-  it('treats a payload without a usable txid as no hints', () => {
+  it('takes an inventory without history as hints', () => {
+    expect(parseRecoveryHints({ itemOrigins: [`${txid(4)}_2`] })).toMatchObject({ txids: [], origins: [`${txid(4)}_2`], itemCount: 1 })
+  })
+
+  it('treats a payload without a usable txid or origin as no hints', () => {
     expect(parseRecoveryHints(undefined)).toBeNull()
+    expect(parseRecoveryHints({ itemOrigins: ['x_1'] })).toBeNull()
     expect(parseRecoveryHints({ txids: ['x'], satoshis: 1 })).toBeNull()
     expect(parseRecoveryHints([txid(1)])).toBeNull()
   })
@@ -142,12 +151,8 @@ describe('recoveryHintsOffer', () => {
   })
 
   it('is ready when history arrived after the last scan, and used once a scan ran with it', () => {
-    rememberRecoveryHints(hints({ receivedAt: 1_000, txids: [txid(1), txid(2)], historyComplete: false }))
-    expect(recoveryHintsOffer(handcash({ scanAt: 500 }), 2_000)).toEqual({
-      kind: 'ready',
-      txids: 2,
-      historyComplete: false,
-    })
+    rememberRecoveryHints(hints({ receivedAt: 1_000, txids: [txid(1), txid(2)], origins: [`${txid(3)}_0`] }))
+    expect(recoveryHintsOffer(handcash({ scanAt: 500 }), 2_000)).toEqual({ kind: 'ready', txids: 2, items: 1 })
     expect(recoveryHintsOffer(handcash(), 2_000)).toMatchObject({ kind: 'ready' })
     expect(recoveryHintsOffer(handcash({ scanAt: 1_500 }), 2_000)).toEqual({ kind: 'used' })
   })
@@ -209,6 +214,95 @@ describe('readHintedAddresses', () => {
   })
 })
 
+describe('createHistoryReader', () => {
+  beforeEach(() => resetDiscoveryPacingForTests())
+
+  it('leaves out of mayHold an address whose outputs a later read transaction spent', async () => {
+    const emptied = PrivateKey.fromRandom().toAddress()
+    const holder = PrivateKey.fromRandom().toAddress()
+    const older = rawTx([new P2PKH().lock(emptied)])
+    const newer = rawTx([new P2PKH().lock(holder)], { txid: older.txid, vout: 0 })
+    const byId = new Map([older, newer].map((t) => [t.txid, t.hex]))
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const { txids } = JSON.parse(String(init?.body)) as { txids: string[] }
+      return new Response(JSON.stringify(txids.map((id) => ({ txid: id, hex: byId.get(id) }))))
+    })
+    const reader = createHistoryReader({ chain: 'main', txids: [newer.txid, older.txid], fetchImpl })
+
+    await reader.readUntil(1)
+    expect(reader.position).toBe(1)
+    expect([...reader.snapshot().mayHold]).toEqual([holder])
+
+    await reader.readUntil(2)
+    const read = reader.snapshot()
+    expect([...read.addresses].sort()).toEqual([emptied, holder].sort())
+    expect([...read.mayHold]).toEqual([holder])
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an output nothing read spends as possibly held', async () => {
+    const address = PrivateKey.fromRandom().toAddress()
+    const tx = rawTx([new P2PKH().lock(address)])
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify([{ txid: tx.txid, hex: tx.hex }])))
+    const reader = createHistoryReader({ chain: 'main', txids: [tx.txid], fetchImpl })
+    await reader.readUntil(10)
+    expect([...reader.snapshot().mayHold]).toEqual([address])
+    expect(reader.position).toBe(1)
+  })
+})
+
+describe('readItemOwners', () => {
+  const origins = Array.from({ length: 150 }, (_, i) => `${txid(i + 1)}_0`)
+
+  it('asks the 1Sat index a hundred origins at a time and keeps owners of unspent items', async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('https://ordinals.gorillapool.io/api/inscriptions/latest')
+      const asked = JSON.parse(String(init?.body)) as string[]
+      return new Response(
+        JSON.stringify(asked.map((origin, i) => ({ origin, owner: i % 2 ? '1Spent' : `1Owner${i % 4}`, spend: i % 2 ? txid(999) : '' }))),
+      )
+    })
+    const read = await readItemOwners({ chain: 'main', origins, fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(read).toMatchObject({ located: 150, unspent: 75, missing: 0, failed: 0, stopped: false })
+    expect([...read.owners].sort()).toEqual(['1Owner0', '1Owner2'])
+  })
+
+  it('retries a chunk once, then counts it as failed and moves on', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls += 1
+      if (calls <= 2) return new Response('busy', { status: 503 })
+      const asked = JSON.parse(String(init?.body)) as string[]
+      return new Response(JSON.stringify(asked.map(() => ({ owner: '1Held', spend: '' }))))
+    })
+    const read = await readItemOwners({ chain: 'main', origins, fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(read).toMatchObject({ failed: 100, located: 50, unspent: 50 })
+    expect([...read.owners]).toEqual(['1Held'])
+  })
+
+  it('drops an origin the index has no output for and asks again for the rest', async () => {
+    const burned = new Set([origins[3], origins[7]])
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const asked = JSON.parse(String(init?.body)) as string[]
+      const dead = asked.find((origin) => burned.has(origin))
+      if (dead) return new Response(JSON.stringify({ message: `No latest outpoint for origin ${dead}` }), { status: 404 })
+      return new Response(JSON.stringify(asked.map(() => ({ owner: '1Held', spend: '' }))))
+    })
+    const read = await readItemOwners({ chain: 'main', origins, fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    expect(read).toMatchObject({ located: 148, unspent: 148, missing: 2, failed: 0 })
+  })
+
+  it('stops between chunks when asked', async () => {
+    const fetchImpl = vi.fn(async () => new Response('[]'))
+    const read = await readItemOwners({ chain: 'main', origins, fetchImpl, shouldStop: () => true })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(read.stopped).toBe(true)
+  })
+})
+
 describe('hinted discovery', () => {
   it('walks the key set against the hinted outputs alone', async () => {
     const keys = new Map<string, PrivateKey>()
@@ -231,7 +325,7 @@ describe('hinted discovery', () => {
 })
 
 describe('judgeHintedScan', () => {
-  const clean = { failed: 0, stopped: false }
+  const clean = { stopped: false }
 
   it('settles when the chain covers HandCash balance and items', () => {
     const verdict = judgeHintedScan(hints(), clean, [
@@ -242,14 +336,18 @@ describe('judgeHintedScan', () => {
   })
 
   it.each([
-    ['history-capped', hints({ historyComplete: false }), clean, [holding({ cashSats: 10_000, itemCount: 1 })]],
-    ['history-unread', hints(), { failed: 1, stopped: false }, [holding({ cashSats: 10_000, itemCount: 1 })]],
+    ['stopped', hints(), { stopped: true }, [holding({ cashSats: 10_000, itemCount: 1 })]],
     ['empty-claim', hints({ satoshis: 0, itemCount: 0 }), clean, []],
     ['balance-short', hints(), clean, [holding({ cashSats: 9_999, itemCount: 1 })]],
     ['balance-short', hints(), clean, [holding({ uncompressed: true, cashSats: 10_000, itemCount: 1 })]],
     ['items-short', hints({ itemCount: 2 }), clean, [holding({ cashSats: 10_000, itemCount: 1 })]],
   ] as const)('falls back on %s', (reason, h, read, holdings) => {
     expect(judgeHintedScan(h, read, holdings)).toEqual({ kind: 'fallback', reason })
+  })
+
+  it('settles on a capped history when the chain already covers the claim', () => {
+    const verdict = judgeHintedScan(hints({ historyComplete: false }), clean, [holding({ cashSats: 10_000, itemCount: 1 })])
+    expect(verdict.kind).toBe('settled')
   })
 
   it('accepts a capped item count as a floor that may cover the claim', () => {
