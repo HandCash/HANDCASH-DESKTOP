@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.448] - 2026-10-06
+
+### Fixed
+
+- **A sub-account's published identity now shows on your other accounts.** Identity cards were shared only with contacts, and each account keeps its own contact list. A sub-account that hadn't added your main account as a friend never answered its card request and never sent its card unasked, so the main account showed that contact with no identity. Accounts of the same vault now count as contacts for card exchange. On the same device, the main account reads the sub-account's presented identity directly, with no card needed.
+
+### Added
+
+- Every identity-card step is logged: sent, not delivered, asked, could not ask, request ignored because the sender isn't a contact, asked when this account presents no identity, kept, and refused with the reason.
+- Triage: an **Identity cards** section that lists each peer key's counts and the last step its card reached.
+
 ## [1.3.447] - 2026-10-06
 
 ### Added
