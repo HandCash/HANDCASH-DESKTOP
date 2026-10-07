@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.483] - 2026-10-07
+
+### Fixed
+- **Import no longer scans twice.** A sweep reuses the HandCash set the preview scan just read, moves from a list synced in the last 30 minutes instead of listing every collectable again, and keeps that list when it pauses so a resume (or an app update mid-import) starts moving at once. Before, every sweep re-fetched the set, re-checked ~1,400 outpoints, re-paged addresses and re-checked 3,700 items on chain — 48–74 s — and a paused sweep deleted the list.
+- **Import no longer stalls behind unlock.** Unlock's recompose now holds the payment-blocking region only while it decides about cloud history; its funding pass runs as ordinary chain ingest, which sends and imports run beside. A replaced (restored) wallet stays fenced until reconciled. Background import bundles keep their queue position for up to 10 minutes instead of timing out at 45 s, and the fallback wait no longer waits for chain ingest. The import shows "Waiting for the wallet to finish syncing…" instead of looking stuck.
+- **Unlock history push loop.** The push unlock defers re-ran as "unlock", deferred itself again, and never uploaded — re-reading every Toolbox basket each minute. The deferred push now runs, and skips the upload when the cloud copy already matches this wallet.
+- **Lighter empty-wallet check.** The history empty/overwrite gates no longer count the `1sat` and `bsv21` baskets (thousands of large rows); the unlock probe stops at the first change output.
+
 ## [1.3.482] - 2026-10-07
 
 ### Performance
