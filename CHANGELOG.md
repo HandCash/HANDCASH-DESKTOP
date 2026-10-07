@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.491] - 2026-10-07
+
+### Fixed
+- **Recovery is fast again right after unlock.** The legacy import itself did not slow down. In the earlier fast run it happened to start before unlock. Now it starts right after unlock, while the unlock recompose is still running, and every spend waits for that recompose to finish. On a phone with a large history the recompose took 2–4 minutes, for two reasons:
+  - The history step's "is local state empty?" check asked the toolbox for one output and one action. To do that the toolbox counted every row, deserializing each stored transaction with its raw tx and input BEEF, which took ~160 s while every spend was blocked. It now reads a single row by index (one spendable change output, then one listed action) and stops there. It logs `[layers] empty-check done <N>ms` when it takes 250 ms or more.
+  - The unlock rescue looked for unproven outgoing sends with a status list, which walked the whole transactions store. It now runs one indexed query per status for this user.
+
+### Security
+- **Mobile: grants made in an in-app tab cannot be used from the loopback socket.** Another Android app can open a connection to `127.0.0.1:3321` and claim any `Origin`. Pages opened in the wallet's in-app tab now talk to the wallet over a WebView channel whose origin Android reports and the page cannot forge. A site first connected there is bound to that channel: a socket request using its grant gets `403 ORIGIN_BOUND_IN_APP` and logs `[brc100] refused <method> from <host> on the loopback socket: connected in an app tab`. Sites connected from an external browser keep working over the socket as before.
+
 ## [1.3.490] - 2026-10-07
 
 ### Security
