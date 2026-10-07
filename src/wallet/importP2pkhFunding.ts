@@ -49,6 +49,12 @@ async function postSweep(
 type SweepCoin = { outpoint: string; txid: string; vout: number; satoshis: number }
 
 /**
+ * Who signs each coin: one key for all of them, or a key per outpoint
+ * (`txid.vout`, lowercase) so coins at many addresses share transactions.
+ */
+export type SweepSpendKeys = string | ReadonlyMap<string, string>
+
+/**
  * Coins per sweep transaction. A P2PKH input is ~148 bytes, so a full bundle
  * is ~15 KB and pays for itself many times over versus one fee per coin.
  */
@@ -82,7 +88,7 @@ async function signAndComplete(
   wallet: WalletInterface,
   st: { tx: number[]; reference: string },
   coins: readonly SweepCoin[],
-  priv: PrivateKey,
+  keyOf: (coin: SweepCoin) => PrivateKey,
 ): Promise<{ txid: string; tx: number[] }> {
   const stBeef = Beef.fromBinary(st.tx)
   const wanted = new Map(coins.map((c) => [`${c.txid}.${c.vout}`, c]))
@@ -94,7 +100,7 @@ async function signAndComplete(
   unsignedTx.inputs.forEach((inp, i) => {
     const coin = wanted.get(`${String(inp.sourceTXID).toLowerCase()}.${inp.sourceOutputIndex}`)
     if (!coin) return
-    inp.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(priv, coin.satoshis)
+    inp.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(keyOf(coin), coin.satoshis)
     ours.push(i)
   })
   if (ours.length !== coins.length) throw new Error('Signable transaction is missing requested outpoints')
@@ -114,7 +120,7 @@ async function sweepCoins(
   active: ActiveWallet,
   depositBin: BEEF,
   coins: readonly SweepCoin[],
-  p2pkhKey: ReturnType<typeof SetupClient.getKeyPair>,
+  keyOf: (coin: SweepCoin) => PrivateKey,
 ): Promise<{ txid: string }> {
   const first = coins[0]!
   const car = await active.wallet.createAction({
@@ -142,7 +148,7 @@ async function sweepCoins(
         active.wallet,
         { tx: asBytes(car.signableTransaction.tx), reference },
         coins,
-        p2pkhKey.privateKey,
+        keyOf,
       )
     } catch (err) {
       // Nothing was signed: free whatever the unsigned action reserved.
@@ -184,11 +190,20 @@ export async function sweepVisibleP2pkhOutpoints(
   wallet: ActiveWallet,
   outpoints: string[],
   inputBeef: BEEF,
-  /** Spend key for the P2PKH tips — defaults to this wallet's root. */
-  spendKeyHex?: string,
+  /** Who signs the P2PKH tips — defaults to this wallet's root. */
+  spendKeys?: SweepSpendKeys,
 ): Promise<P2pkhSweepResult[]> {
-  const keyHex = (spendKeyHex ?? wallet.rootKeyHex).trim()
-  const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(keyHex))
+  const keys = new Map<string, PrivateKey>()
+  const keyHexOf = (outpoint: string): string | undefined =>
+    typeof spendKeys === 'string' || spendKeys == null
+      ? (spendKeys ?? wallet.rootKeyHex)
+      : spendKeys.get(outpoint.trim().toLowerCase())
+  const keyOf = (coin: SweepCoin): PrivateKey => {
+    const hex = keyHexOf(coin.outpoint)!.trim()
+    let key = keys.get(hex)
+    if (!key) keys.set(hex, (key = PrivateKey.fromHex(hex)))
+    return key
+  }
   const depositBeef = Beef.fromBinary(inputBeef)
   return withVisibleOnChainBeef(async () => {
     const startedAt = Date.now()
@@ -196,6 +211,7 @@ export async function sweepVisibleP2pkhOutpoints(
     const coins: SweepCoin[] = []
     for (const outpoint of outpoints) {
       try {
+        if (!keyHexOf(outpoint)) throw new Error('no key holds this coin')
         coins.push(resolveCoin(depositBeef, outpoint))
       } catch (err) {
         results.push({ outpoint, success: false, error: err instanceof Error ? err.message : String(err) })
@@ -208,7 +224,7 @@ export async function sweepVisibleP2pkhOutpoints(
       const unit = chooseP2pkhSweepUnit(pending, perTx)
       const group = unit.kind === 'bundle' ? unit.coins : [unit.coin]
       try {
-        const { txid } = await sweepCoins(wallet, inputBeef, group, p2pkhKey)
+        const { txid } = await sweepCoins(wallet, inputBeef, group, keyOf)
         await echoSweepChange(wallet, txid)
         for (const coin of group) results.push({ outpoint: coin.outpoint, txid, success: true })
         transactions += 1

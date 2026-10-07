@@ -2380,7 +2380,7 @@ const IMPORT_LINES = [
   ['utxoSetListed', /^\[import\] utxo set listed done (\d+)ms outputs=(\d+) unspent=(\d+) unknown=(\d+) viaExplorer=(\d+)/],
   ['queued', /^\[import\] queued (\d+) item/],
   ['itemsDone', /^\[import\] items done (\d+)ms chosen=(\d+) moved=(\d+) tx=(\d+) keys=(\d+)((?: refused\.\S+=\d+)*)(?: stopped=(\S+))?/],
-  ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)/],
+  ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)(?: tx=(\d+))?/],
   ['runDone', /^\[import\] run done (\d+)ms items=(\d+) answered=(\d+) sources=(\d+) outcome=(\S+)/],
 ]
 
@@ -2425,9 +2425,9 @@ function legacyImportFacts(events) {
             refused: Object.fromEntries([...(m[6] ?? '').matchAll(/refused\.(\S+)=(\d+)/g)].map((r) => [r[1], Number(r[2])])),
             stopped: m[7] ?? null,
           }
-        : step === 'chosenDone' ? { ms: n(1), items: n(2), keys: n(3), moved: n(4) }
         : step === 'runDone' ? { ms: n(1), items: n(2), answered: n(3), sources: n(4), outcome: m[5] }
         : step === 'batchMoved' ? { moved: n(1), transactions: n(2) }
+        : step === 'chosenDone' ? { ms: n(1), items: n(2), keys: n(3), moved: n(4), transactions: n(5) }
         : step === 'bundleRejected' ? { tips: n(1), retrying: n(2), reason: m[3] }
         : step === 'itemFailed' ? { outpoint: m[1], reason: m[2] }
         : step === 'abortRefused' ? { inputs: n(1) }

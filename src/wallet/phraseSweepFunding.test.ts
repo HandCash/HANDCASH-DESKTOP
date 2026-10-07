@@ -106,10 +106,7 @@ describe('sweepPhraseFunding stale import marks', () => {
     retryableStuckSweeps.mockResolvedValue([FUNDING[0]!.outpoint])
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
-    const result = await sweepPhraseFunding({
-      candidate: CANDIDATE,
-      utxos: FUNDING,
-    })
+    const result = await sweepPhraseFunding({ sources: [{ candidate: CANDIDATE, utxos: FUNDING }] })
 
     expect(forgetLegacyImported).toHaveBeenCalledWith([FUNDING[0]!.outpoint])
     expect(result.imported).toBe(1)
@@ -125,10 +122,7 @@ describe('sweepPhraseFunding stale import marks', () => {
     retryableStuckSweeps.mockResolvedValue([])
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
-    const result = await sweepPhraseFunding({
-      candidate: CANDIDATE,
-      utxos: FUNDING,
-    })
+    const result = await sweepPhraseFunding({ sources: [{ candidate: CANDIDATE, utxos: FUNDING }] })
 
     expect(forgetLegacyImported).not.toHaveBeenCalled()
     expect(result.alreadySwept).toBe(4)
@@ -141,7 +135,7 @@ describe('sweepPhraseFunding stale import marks', () => {
     legacySweepRecord.mockReturnValue({ at: Date.now(), txid: 'cc'.repeat(32) })
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
-    await sweepPhraseFunding({ candidate: CANDIDATE, utxos: FUNDING })
+    await sweepPhraseFunding({ sources: [{ candidate: CANDIDATE, utxos: FUNDING }] })
 
     expect(recordFundingReceipts).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -159,9 +153,33 @@ describe('sweepPhraseFunding stale import marks', () => {
     retryableStuckSweeps.mockResolvedValue([])
 
     const { sweepPhraseFunding } = await import('./phraseSweep')
-    await sweepPhraseFunding({ candidate: CANDIDATE, utxos: FUNDING })
+    await sweepPhraseFunding({ sources: [{ candidate: CANDIDATE, utxos: FUNDING }] })
 
     expect(recordFundingReceipts).toHaveBeenCalledTimes(1)
     expect(recordFundingReceipts).toHaveBeenCalledWith([])
+  })
+
+  it('sweeps coins from many addresses in one call, each signed by its own key', async () => {
+    importLegacyUtxos.mockResolvedValue(importResult({ imported: 2 }))
+    const other = { ...CANDIDATE, rootKeyHex: '22'.repeat(32), address: '1OtherAddress' }
+    const second = { outpoint: 'dd'.repeat(32) + '.1', txid: 'dd'.repeat(32), vout: 1, satoshis: 50_000 }
+
+    const { sweepPhraseFunding } = await import('./phraseSweep')
+    await sweepPhraseFunding({
+      sources: [
+        { candidate: CANDIDATE, utxos: FUNDING },
+        { candidate: other, utxos: [second] },
+      ],
+    })
+
+    expect(importLegacyUtxos).toHaveBeenCalledTimes(1)
+    const [coins, , opts] = importLegacyUtxos.mock.calls[0]!
+    expect(coins).toEqual([FUNDING[0], second])
+    expect(opts.spendKeys).toEqual(
+      new Map([
+        [FUNDING[0]!.outpoint, CANDIDATE.rootKeyHex],
+        [second.outpoint, other.rootKeyHex],
+      ]),
+    )
   })
 })

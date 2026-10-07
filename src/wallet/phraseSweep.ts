@@ -598,28 +598,41 @@ function backfillSweptFundingActivity(
   if (receipts.length > 0) recordFundingReceipts(receipts)
 }
 
+/** One address of a phrase and the coins scanned on it. */
+export type PhraseFundingSource = { candidate: PhraseCandidate; utxos: LegacyUtxo[] }
+
 /**
- * Sweep funding UTXOs from the phrase into the unlocked wallet.
+ * Sweep funding UTXOs from one or more phrase addresses into the unlocked
+ * wallet. Each coin is signed by the key of the address holding it, so coins
+ * at many addresses share transactions instead of costing one per address.
  */
 export async function sweepPhraseFunding(args: {
-  candidate: PhraseCandidate
-  utxos: LegacyUtxo[]
+  sources: readonly PhraseFundingSource[]
 }): Promise<PhraseFundingSweepResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
   assertOnlineForPayment()
-  if (args.candidate.identityKey.toLowerCase() === active.identityKey.toLowerCase()) {
+  if (args.sources.some((s) => s.candidate.identityKey.toLowerCase() === active.identityKey.toLowerCase())) {
     throw new Error('That phrase is already this wallet — use Refresh instead')
   }
 
-  const funding = args.utxos.filter((u) => chooseLegacySweepPath(u).path === 'sweep')
+  const spendKeys = new Map<string, string>()
+  const funding: LegacyUtxo[] = []
+  for (const { candidate, utxos } of args.sources) {
+    for (const utxo of utxos) {
+      if (chooseLegacySweepPath(utxo).path !== 'sweep') continue
+      const op = utxo.outpoint.trim().toLowerCase()
+      if (spendKeys.has(op)) continue
+      spendKeys.set(op, candidate.rootKeyHex)
+      funding.push(utxo)
+    }
+  }
   if (funding.length === 0) {
     return { imported: 0, failed: 0, fundingSatsMoved: 0, errors: [], alreadySwept: 0 }
   }
 
   return runExclusiveSpend(async () => {
-    const spendKeyHex = args.candidate.rootKeyHex
-    let result = await importLegacyUtxos(funding, active, { spendKeyHex })
+    let result = await importLegacyUtxos(funding, active, { spendKeys })
 
     // Everything marked imported, yet the phrase address still lists the coins:
     // the stuck-sweep signature. Same heal as the own-address ingest — retry only
@@ -632,7 +645,7 @@ export async function sweepPhraseFunding(args: {
           'warn',
           `[phrase-sweep] ${retryable.length} funding out(s) marked imported with no sweep tx on chain — retrying`,
         )
-        result = await importLegacyUtxos(funding, active, { spendKeyHex })
+        result = await importLegacyUtxos(funding, active, { spendKeys })
       }
     }
 
@@ -644,7 +657,7 @@ export async function sweepPhraseFunding(args: {
     const moved = result.importedReceipts.reduce((s, r) => s + r.satoshis, 0)
     appendAppLog(
       'info',
-      `[phrase-sweep] swept ${args.candidate.scheme} (${args.candidate.path}): ` +
+      `[phrase-sweep] swept ${args.sources[0]!.candidate.scheme} addresses=${args.sources.length}: ` +
         `imported=${result.imported} failed=${result.failed} ` +
         `alreadySwept=${result.skippedKnown} moved=${moved}sats`,
     )

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { IMPORT_CHUNK } from '../machines/importQueueMachine'
 import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
@@ -59,5 +60,11 @@ describe('splitItemMigrateBundle', () => {
       pending = next.filter((g) => g.length > 0)
     }
     expect(singles.sort()).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+})
+
+describe('bundle ceiling', () => {
+  it('moves a whole import chunk in one transaction', () => {
+    expect(MAX_ITEMS_PER_MIGRATE_TX).toBe(IMPORT_CHUNK)
   })
 })

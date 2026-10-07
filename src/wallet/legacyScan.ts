@@ -17,7 +17,7 @@ import {
   releaseLegacyImport,
 } from './legacyImportGuard'
 import { buildLegacyInputBeef } from './legacyBeef'
-import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
+import { sweepVisibleP2pkhOutpoints, type SweepSpendKeys } from './importP2pkhFunding'
 import {
   chooseLegacyFundingScript,
   chooseLegacySweepPath,
@@ -766,7 +766,8 @@ function holdLegacyAssets(
 export async function importLegacyUtxos(
   utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
-  opts?: { spendKeyHex?: string },
+  /** Who signs the coins — a key per outpoint lets many addresses share transactions. */
+  opts?: { spendKeys?: SweepSpendKeys },
 ): Promise<{
   imported: number
   failed: number
@@ -855,7 +856,7 @@ export async function importLegacyUtxos(
             wallet,
             cash.ready,
             built.beef,
-            opts?.spendKeyHex,
+            opts?.spendKeys,
           )
         : []
     // Unreadable outpoints are reported as ordinary failures so they fall

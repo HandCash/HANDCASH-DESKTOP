@@ -1,10 +1,11 @@
 import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const signers: string[] = []
 vi.mock('@bsv/wallet-toolbox-client', () => ({
   SetupClient: {
     getKeyPair: (privateKey: PrivateKey) => ({ privateKey }),
-    getUnlockP2PKH: () => ({
+    getUnlockP2PKH: (privateKey: PrivateKey) => (signers.push(privateKey.toHex()), {
       sign: async () => UnlockingScript.fromHex('00'),
       estimateLength: async () => 108,
     }),
@@ -75,6 +76,7 @@ function walletRefusing(refuse: (outpoints: string[]) => boolean) {
 
 beforeEach(() => {
   submitted.length = 0
+  signers.length = 0
 })
 
 describe('chooseP2pkhSweepUnit', () => {
@@ -124,5 +126,31 @@ describe('sweepVisibleP2pkhOutpoints', () => {
       { outpoint: `${txid}.0`, txid: submitted[0], success: true },
     ])
     expect(wallet.createAction).toHaveBeenCalledTimes(1)
+  })
+
+  it('signs coins of many addresses in one transaction, each with its own key', async () => {
+    const a = deposit(2)
+    const b = deposit(1)
+    const merged = new Beef()
+    merged.mergeBeef(a.bin)
+    merged.mergeBeef(b.bin)
+    const other = PrivateKey.fromRandom().toHex()
+    const keys = new Map([
+      [`${a.txid}.0`, key.toHex()],
+      [`${a.txid}.1`, key.toHex()],
+      [`${b.txid}.0`, other],
+    ])
+    const { active, wallet } = walletRefusing(() => false)
+
+    const results = await sweepVisibleP2pkhOutpoints(active, [...keys.keys(), `${b.txid}.7`], merged.toBinary(), keys)
+
+    expect(wallet.createAction).toHaveBeenCalledTimes(1)
+    expect(signers.sort()).toEqual([key.toHex(), key.toHex(), other].sort())
+    expect(results.find((r) => r.outpoint === `${b.txid}.7`)).toEqual({
+      outpoint: `${b.txid}.7`,
+      success: false,
+      error: 'no key holds this coin',
+    })
+    expect(results.filter((r) => r.success)).toHaveLength(3)
   })
 })

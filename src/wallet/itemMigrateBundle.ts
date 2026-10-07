@@ -12,8 +12,12 @@
  * tried for the same item.
  */
 
-/** Tips per transaction. Beyond this the sighash work per attempt dominates. */
-export const MAX_ITEMS_PER_MIGRATE_TX = 25
+/**
+ * Tips per transaction: one import chunk. Each action already carries the
+ * chunk's whole input BEEF, so a larger bundle costs no extra download — only
+ * one fee, one signing pass and one broadcast where there used to be four.
+ */
+export const MAX_ITEMS_PER_MIGRATE_TX = 100
 
 export type ItemMigrateUnit<T> =
   /** One transaction carrying several tips. */

@@ -3,12 +3,14 @@ import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
 import { beginWalletJob, type WalletJobHandle } from '../walletJobs'
 import { IMPORT_CHUNK } from '../../machines/importQueueMachine'
+import { MAX_ITEMS_PER_MIGRATE_TX } from '../itemMigrateBundle'
 import {
   clearPhraseItemMigrateCursor,
   peekPhraseItemMigrateCursor,
   refreshAfterPhraseItemMigrate,
   scanAddressAny,
   sweepPhraseFunding,
+  type PhraseFundingSource,
   type PhraseCandidate,
 } from '../phraseSweep'
 import {
@@ -38,7 +40,9 @@ import { loadImportedSources, updateImportedSource, type ImportedSource, type Sw
  */
 
 /** Tips per item transaction; matches the preview's fee estimate. */
-export const IMPORT_ITEMS_PER_TX = 25
+export const IMPORT_ITEMS_PER_TX = MAX_ITEMS_PER_MIGRATE_TX
+/** Address reads in flight while the cash step lists coins. */
+const CASH_SCAN_CONCURRENCY = 4
 
 export type SweepPlan = {
   cash: AddressHoldings[]
@@ -135,22 +139,45 @@ async function runSweep(
     }
   }
 
-  // Cash first: it is what pays for item and token transactions.
-  for (const h of plan.cash) {
-    if (stop()) break
+  // Cash first: it is what pays for item and token transactions. Every address
+  // is read, then all of its coins share transactions, each signed by its own key.
+  const cashFrom = plan.cash.flatMap((h) => {
     const candidate = candidateFor(h)
-    if (!candidate) continue
-    report('cash', `Moving BSV from ${h.label}…`)
-    const scan = await scanAddressAny(h.address, active.chain)
-    const result = await sweepPhraseFunding({ candidate, utxos: scan.utxos })
-    cashSats += result.fundingSatsMoved
-    failed += result.failed
-    notes.push(...result.errors.slice(0, 2))
+    return candidate ? [candidate] : []
+  })
+  if (cashFrom.length > 0 && !stop()) {
+    const scannedAt = Date.now()
+    const sources: PhraseFundingSource[] = []
+    let read = 0
+    let next = 0
+    const reader = async () => {
+      while (next < cashFrom.length && !stop()) {
+        const candidate = cashFrom[next++]!
+        report('cash', `Reading BSV addresses… ${read} of ${cashFrom.length}`)
+        try {
+          const scan = await scanAddressAny(candidate.address, active.chain)
+          if (scan.utxos.length > 0) sources.push({ candidate, utxos: scan.utxos })
+        } catch {
+          notes.push(`${candidate.label} could not be read. Sweep again to move its BSV.`)
+        }
+        read += 1
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CASH_SCAN_CONCURRENCY, cashFrom.length) }, reader))
+    appendAppLog('info', `[import] cash scan addresses=${cashFrom.length} holding=${sources.length} done ${Date.now() - scannedAt}ms`)
+    if (sources.length > 0 && !stop()) {
+      report('cash', `Moving BSV from ${sources.length} address(es)…`)
+      const result = await sweepPhraseFunding({ sources })
+      cashSats += result.fundingSatsMoved
+      failed += result.failed
+      notes.push(...result.errors.slice(0, 2))
+    }
   }
 
   // Items ride the cross-address migrate Browse items uses: each carries the key
   // of the address holding it, so a HandCash export — one item per address —
-  // still shares transactions, 25 at a time, instead of one per address.
+  // still shares transactions — a whole chunk per transaction — instead of one
+  // per address.
   if (plan.items.length > 0 && !stop()) {
     const ownedHere = new Set(plan.items.map((h) => h.address))
     const cursor = peekPhraseItemMigrateCursor()
