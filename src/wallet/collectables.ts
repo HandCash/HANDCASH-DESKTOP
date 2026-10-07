@@ -2970,7 +2970,13 @@ function reportItemHoldings(args: {
   })
 }
 
-/** Short/empty basket page: keep painted cards, append newly listed outpoints. */
+/**
+ * Short/empty basket page: keep painted cards, put newly listed outpoints in
+ * front. The basket reads newest-first and the startup cache keeps only the
+ * first `DURABLE_LIST_LIMIT` cards, so arrivals appended behind a full cache
+ * were cut from it — every import vanished on restart until a minutes-long
+ * basket read listed it again.
+ */
 function mergeShortBasketPage(
   page: ItemOutput[],
   chain: Chain,
@@ -2993,19 +2999,20 @@ function mergeShortBasketPage(
     if (retired.has(outpointKey(held.outpoint))) continue
     byOp.set(normalizeOutpoint(held.outpoint), held)
   }
+  const arrivals = new Map<string, Collectable>()
   for (const item of incoming) {
     const key = normalizeOutpoint(item.outpoint)
     if (isItemSent(key)) continue
     const prev = byOp.get(key)
     if (!prev) {
-      if (!collectableIsFungible(item)) byOp.set(key, item)
+      if (!collectableIsFungible(item)) arrivals.set(key, item)
       continue
     }
     if (collectableIsFungible(item) && !collectableIsFungible(prev)) continue
     if (!collectableIsFungible(item)) byOp.set(key, item)
   }
   return dedupeByOrigin(
-    [...byOp.values()],
+    [...arrivals.values(), ...byOp.values()],
     (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
     cachedLiveOneSats?.keys ?? null,
   )
@@ -3207,8 +3214,8 @@ async function listCollectablesNow(
   // own handle: the spent tip leaves, the replacement is not listed yet, and
   // Collect comes back one card short until a later scan.
   outputs = [
-    ...outputs,
     ...pendingSeededItems(outputs, seenNow, wallet.identityKey),
+    ...outputs,
   ]
 
   // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:

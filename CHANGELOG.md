@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.495] - 2026-10-07
+
+### Fixed
+- **Imported items stop vanishing on restart.** While the wallet is busy (an import, a send or a sync), a basket read keeps the cards already painted and adds the newly listed ones. It used to add them at the end. Startup paints from a saved copy of the first 1,000 cards, so on a wallet past 1,000 items the newest imports were the ones cut. They came back only after a 2–3.5 minute basket read listed them again. Arrivals now go in front, matching the basket's newest-first order, and so do items minted to yourself.
+
 ## [1.3.494] - 2026-10-07
 
 ### Fixed

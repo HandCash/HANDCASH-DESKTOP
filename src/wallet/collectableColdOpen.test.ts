@@ -286,6 +286,32 @@ describe('collectables across a cold open', () => {
     expect(reportHoldings).not.toHaveBeenCalled()
   })
 
+  it('keeps an item that arrives during a busy read in the startup cache of a full wallet', async () => {
+    const held = Array.from({ length: 1_000 }, (_, i) =>
+      itemRow(`${i.toString(16).padStart(4, '0').repeat(16)}.0`, `Held ${i}`),
+    )
+    seedDurableList(IDENTITY, held)
+    const imported = `${'9a'.repeat(32)}.0`
+    const { leaseSpendPriority } = await import('./walletCoordinator')
+    active.wallet.listOutputs.mockImplementationOnce(async () => {
+      leaseSpendPriority('test-import').release()
+      return {
+        outputs: [{ outpoint: imported, satoshis: 1, tags: ['ordinal', `origin:${imported}`, 'name:Imported'] }],
+        totalOutputs: 1_001,
+      }
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables()[0]?.outpoint).toBe(imported)
+    await vi.waitFor(() => {
+      const persisted = JSON.parse(store.get(LIST_CACHE_KEY)!).items as Array<{ outpoint: string }>
+      expect(persisted).toHaveLength(1_000)
+      expect(persisted[0]?.outpoint).toBe(imported)
+    })
+  })
+
   it('keeps every card through one empty idle read, and files them when a second agrees', async () => {
     seedDurableList(IDENTITY, [itemRow(TIP, 'Test Item'), itemRow(`${'ef'.repeat(32)}.0`, 'Kept')])
     active.wallet.listOutputs.mockResolvedValue({ outputs: [], totalOutputs: 0 })
