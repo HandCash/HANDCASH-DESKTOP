@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.474] - 2026-10-07
+
+### Changed
+- Collectable import moves items whose source transactions carry their art about four times more per transaction. The crash-safe retry copy of each migrate now keeps the signed transaction and its unmined ancestors in full, and names mined sources by txid; a retry fetches those back with their proofs. The per-transaction source budget only guards the miner post now, so it rises from 256 KB to 1 MB.
+- A rebuilt retry package larger than 256 KB no longer replaces the thin queued copy in the shared signed-transaction archive, and local lookups skip a thin archived copy and read storage instead.
+
+### Added
+- `[phrase-sweep] migrate <txid> done <N>ms create= sign= post=` log line; triage reports it with the retry body size and busy-wallet waits.
+
 ## [1.3.473] - 2026-10-07
 
 ### Fixed
