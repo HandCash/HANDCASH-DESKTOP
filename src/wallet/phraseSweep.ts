@@ -790,6 +790,8 @@ export async function migrateChosenPhraseItems(args: {
   onSourcesRead?: () => void
   /** Runs as each transaction broadcasts, with how many tips it moved. */
   onProgress?: (moved: number) => void
+  /** True while a bundle queues for the wallet; false once it starts. */
+  onWaiting?: (waiting: boolean) => void
 }): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -862,6 +864,7 @@ export async function migrateChosenPhraseItems(args: {
     sources: sourceBeef,
     items: pending,
     itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
+    ...(args.onWaiting ? { onWaiting: args.onWaiting } : {}),
     onMoved: (receipts) => {
       const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
       recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
@@ -935,10 +938,15 @@ const STALE_FUNDING_RETRIES = 1
 
 const WALLET_BUSY_MESSAGE =
   'The wallet stayed busy with another job, so nothing was sent. Import again to move the rest.'
-/** Waits for the wallet to come free before the run stops on `busy`. */
-const WALLET_BUSY_WAITS = 6
-/** Ceiling on one wait; unlock's recompose and Refresh finish well inside it. */
+/**
+ * Waits for the wallet to come free before the run stops on `busy`. Each one
+ * follows a background acquire that already queued for ten minutes.
+ */
+const WALLET_BUSY_WAITS = 2
+/** Ceiling on one wait for the spend region (not chain ingest — a spend runs beside it). */
 const WALLET_BUSY_WAIT_MS = 120_000
+/** A bundle queued this long says so instead of looking stuck. */
+const WAITING_SHOWN_AFTER_MS = 3_000
 
 const ABANDONED_MESSAGE =
   'A send stopped responding and its result is not known yet, so nothing else was built over those items. Import again to move the rest.'
@@ -1080,6 +1088,8 @@ async function migrateOrdinalUnit(args: {
    * unannotated migrate shows as a row of its own.
    */
   onMoved: (moved: MigratedItemReceipt[]) => void
+  /** True while a bundle queues for the wallet (unlock, another send); false once it starts. */
+  onWaiting?: (waiting: boolean) => void
 }): Promise<UnitOutcome> {
   const out: UnitOutcome = {
     moved: [],
@@ -1135,6 +1145,16 @@ async function migrateOrdinalUnit(args: {
       const inputBeef = args.sources
         ? migrateInputBeef(args.sources, new Set(group.map((item) => item.txid)), args.inputBeef)
         : args.inputBeef
+      let waitingShown = false
+      const waitingTimer = setTimeout(() => {
+        waitingShown = true
+        args.onWaiting?.(true)
+      }, WAITING_SHOWN_AFTER_MS)
+      const regionTaken = () => {
+        clearTimeout(waitingTimer)
+        if (waitingShown) args.onWaiting?.(false)
+        waitingShown = false
+      }
       const txid = await runExclusiveSpend(
         async () =>
           // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
@@ -1150,9 +1170,9 @@ async function migrateOrdinalUnit(args: {
               items: group,
             }),
           ),
-        undefined,
+        regionTaken,
         { lane: 'background' },
-      )
+      ).finally(regionTaken)
       landed(txid)
     } catch (caught) {
       let err: unknown = caught
@@ -1188,13 +1208,13 @@ async function migrateOrdinalUnit(args: {
             'info',
             `[phrase-sweep] wallet busy — waiting to send ${group.length} (${busyWaits}/${WALLET_BUSY_WAITS}) held=${held.slice(0, 160)}`,
           )
-          const { describeWalletCoordinator, waitForWalletRegionsIdle } = await import('./walletCoordinator')
+          const { describeWalletCoordinator, waitForSpendRegionFree } = await import('./walletCoordinator')
           const waitStarted = Date.now()
-          const idle = await waitForWalletRegionsIdle(WALLET_BUSY_WAIT_MS)
+          const free = await waitForSpendRegionFree(WALLET_BUSY_WAIT_MS)
           appendAppLog(
             'info',
-            `[phrase-sweep] busy wait done ${Date.now() - waitStarted}ms idle=${idle}` +
-              (idle ? '' : ` held=${describeWalletCoordinator().summary.slice(0, 160)}`),
+            `[phrase-sweep] busy wait done ${Date.now() - waitStarted}ms idle=${free}` +
+              (free ? '' : ` held=${describeWalletCoordinator().summary.slice(0, 160)}`),
           )
           continue
         }

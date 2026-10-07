@@ -67,6 +67,7 @@ describe('importQueue', () => {
       outpoints: [op(1), op(2), op(3)],
       activityGroup: job!.id,
       onProgress: expect.any(Function),
+      onWaiting: expect.any(Function),
     })
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 0, total: 3 })
     release()

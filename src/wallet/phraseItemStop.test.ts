@@ -21,9 +21,9 @@ vi.mock('./spendGuard', () => ({
 }))
 vi.mock('./collectables', () => ({ noteIngestedItems: vi.fn() }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
-const waitForWalletRegionsIdle = vi.fn(async () => true)
+const waitForSpendRegionFree = vi.fn(async () => true)
 vi.mock('./walletCoordinator', () => ({
-  waitForWalletRegionsIdle: () => waitForWalletRegionsIdle(),
+  waitForSpendRegionFree: () => waitForSpendRegionFree(),
   describeWalletCoordinator: () => ({ summary: 'active: recompose' }),
 }))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
@@ -171,7 +171,7 @@ describe('migrateChosenPhraseItems stops', () => {
     const run = await migrateChosenPhraseItems({ items: chosen })
 
     expect(run.stopped).toBe('busy')
-    expect(waitForWalletRegionsIdle).toHaveBeenCalled()
+    expect(waitForSpendRegionFree).toHaveBeenCalled()
     expect([...run.results.values()].map((r) => r.kind)).toEqual(['deferred', 'deferred'])
     // Never split: every attempt carried both tips.
     expect(createAction.mock.calls.length).toBeGreaterThan(1)

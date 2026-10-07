@@ -46,11 +46,21 @@ describe('localToolboxStateLooksEmpty', () => {
       return { totalOutputs: 0, outputs: [] }
     })
     listActions.mockResolvedValue({ totalActions: 0, actions: [] })
-    const { inspectLocalToolboxState } = await import('./layers')
+    const { inspectLocalToolboxState, localToolboxStateLooksEmpty } = await import('./layers')
     const state = await inspectLocalToolboxState()
-    expect(state.oneSatOutputCount).toBe(36)
-    expect(state.bsv21OutputCount).toBe(3)
     expect(state.looksEmpty).toBe(true)
+    expect(await localToolboxStateLooksEmpty()).toBe(true)
+    const baskets = listOutputs.mock.calls.map(([args]) => (args as { basket?: string }).basket)
+    expect(baskets).not.toContain('1sat')
+    expect(baskets).not.toContain('bsv21')
+  })
+
+  it('stops at the first change output without reading actions or balance', async () => {
+    listOutputs.mockResolvedValue({ totalOutputs: 4, outputs: [{}] })
+    const { localToolboxStateLooksEmpty } = await import('./layers')
+    expect(await localToolboxStateLooksEmpty()).toBe(false)
+    expect(listActions).not.toHaveBeenCalled()
+    expect(balance).not.toHaveBeenCalled()
   })
 
   it('is not empty when default basket outs remain', async () => {

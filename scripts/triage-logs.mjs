@@ -2407,6 +2407,8 @@ const IMPORT_LINES = [
   ['outpointChunkFailed', /^\[import\] outpoint chunk failed (\d+)\+(\d+) after (\d+)ms/],
   ['outpointGaveUp', /^\[import\] outpoint check gave up after (\d+) failed chunks; (\d+) left/],
   ['savedListRead', /^\[import\] saved list prune\+read done (\d+)ms gone=(\d+) decided=(\d+)/],
+  ['listReused', /^\[import\] sweep reuses the list synced (\d+)s ago complete=(\w+)/],
+  ['scanReadReused', /^\[import\] items reuse the scan's set read (\d+)s ago/],
   ['phraseSweepOther', /^\[phrase-sweep\] (.{0,160})/],
   ['importOther', /^\[import\] (.{0,160})/],
 ]
@@ -2472,6 +2474,8 @@ function legacyImportFacts(events) {
         : step === 'outpointChunkFailed' ? { offset: n(1), size: n(2), chunkMs: n(3) }
         : step === 'outpointGaveUp' ? { failedChunks: n(1), unchecked: n(2) }
         : step === 'savedListRead' ? { ms: n(1), gone: n(2), decided: n(3) }
+        : step === 'listReused' ? { ageS: n(1), complete: m[2] === 'true' }
+        : step === 'scanReadReused' ? { ageS: n(1) }
         : step === 'busyStopped' ? { waits: n(1) }
         : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), packMs: n(5), postMs: n(6) }
         : step === 'yieldedToPayments' ? { ms: n(1) }

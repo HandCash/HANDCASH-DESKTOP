@@ -23,6 +23,7 @@ import {
   rebindWalletCoordinatorForRuntime,
   waitForChainIngestIdle,
   waitForForegroundSpendIdle,
+  waitForSpendRegionFree,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -581,5 +582,46 @@ describe('walletCoordinator runtime', () => {
     releaseChain()
     await chain
     expect(order).toEqual(['chain-start', 'spend', 'chain-end'])
+  })
+
+  it('reports the spend region free while chain ingest still runs, and busy under recompose', async () => {
+    let releaseChain!: () => void
+    const chain = runChainIngest(() => new Promise<void>((resolve) => (releaseChain = resolve)))
+    await vi.waitFor(() => expect(getWalletCoordinatorSnapshot().chainIngest).not.toBe('idle'))
+    await expect(waitForSpendRegionFree(50)).resolves.toBe(true)
+    releaseChain()
+    await chain
+
+    let releaseRecompose!: () => void
+    const recompose = runRecompose(() => new Promise<void>((resolve) => (releaseRecompose = resolve)))
+    await vi.waitFor(() => expect(getWalletCoordinatorSnapshot().recompose).not.toBe('idle'))
+    await expect(waitForSpendRegionFree(50)).resolves.toBe(false)
+    const freed = waitForSpendRegionFree(5_000)
+    releaseRecompose()
+    await recompose
+    await expect(freed).resolves.toBe(true)
+  })
+
+  it('keeps a background spend queued past the foreground acquire limit', async () => {
+    vi.useFakeTimers()
+    try {
+      let releaseRecompose!: () => void
+      const recompose = runRecompose(() => new Promise<void>((resolve) => (releaseRecompose = resolve)))
+      await vi.advanceTimersByTimeAsync(0)
+      let outcome: string | null = null
+      const bundle = runExclusiveSpend(async () => 'moved', undefined, { lane: 'background' }).then(
+        (v) => (outcome = v),
+        (err: unknown) => (outcome = err instanceof Error ? err.name : 'error'),
+      )
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(outcome).toBeNull()
+      releaseRecompose()
+      await recompose
+      await vi.advanceTimersByTimeAsync(1_000)
+      await bundle
+      expect(outcome).toBe('moved')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -53,6 +53,10 @@ const PORTS: ImportQueuePorts = {
         if (current.landed?.chunk === key) current.landed.count += moved
         if (actor) report(actor.getSnapshot())
       },
+      onWaiting: (waiting) => {
+        if (waiting) current.job.wait('Waiting for the wallet to finish syncing…')
+        else if (actor) report(actor.getSnapshot())
+      },
     })
   },
   prefetch: (chunk) => prefetchImportItems(chunk),

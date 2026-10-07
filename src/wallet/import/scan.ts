@@ -14,7 +14,7 @@ import { fetchHandCashUtxoSet, readUnspentOnChain, verifyUtxoSet } from './handc
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import { readMneeBalances } from '../mnee'
 import { MNEE_DECIMALS, MNEE_SYMBOL, MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
-import { checkUtxoSetItems, knownAddresses } from './items'
+import { checkUtxoSetItems, knownAddresses, noteScanItemRead } from './items'
 import {
   createHistoryReader,
   hintedLookups,
@@ -175,8 +175,10 @@ export async function utxoSetScan(
   })
   await addMneeHoldings(holdings, verified.mneeAddresses)
   const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
+  const at = Date.now()
+  noteScanItemRead(args.sourceId, { scanAt: at, verified, read: items })
   return {
-    at: Date.now(),
+    at,
     complete: !stopped && items.failed === 0,
     checked: verified.addresses.length,
     addresses: verified.addresses,

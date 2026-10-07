@@ -21,7 +21,7 @@ import {
   type HoldingsTotals,
 } from './holdings'
 import { keyDeriverFor } from './importSource'
-import { listedImportOutpoints } from './itemStore'
+import { listedImportOutpoints, readImportListMeta } from './itemStore'
 import { clearImportItems, importItems, prefetchImportItems, syncImportItems } from './items'
 import { watchImportStage } from './stageWatch'
 import { sweepTokensFromAddress } from './tokenSweep'
@@ -44,6 +44,12 @@ import { loadImportedSources, updateImportedSource, type ImportedSource, type Sw
 export const IMPORT_ITEMS_PER_TX = MAX_ITEMS_PER_MIGRATE_TX
 /** Address reads in flight while the cash step lists coins. */
 const CASH_SCAN_CONCURRENCY = 4
+/**
+ * A sweep moves from the saved list when this scan's sync is younger than
+ * this. Moves made here already leave the list; the list is the index's view
+ * and each move re-decides its item from the source transaction anyway.
+ */
+const IMPORT_LIST_FRESH_MS = 30 * 60_000
 
 export type SweepPlan = {
   cash: AddressHoldings[]
@@ -243,12 +249,19 @@ async function runSweep(
     const cursor = peekPhraseItemMigrateCursor()
     // An older build's paused per-address run on this source: the list below covers it.
     if (cursor && ownedHere.has(cursor.sourceAddress)) clearPhraseItemMigrateCursor()
-    report('items', 'Listing collectables…')
-    const listing = await watchImportStage('listing items', () =>
-      syncImportItems({ sourceId: source.id, shouldStop: stop, onStep: (message) => report('items', message) }),
-    )
-    if (!listing.complete && !stop()) {
-      notes.push('Some addresses could not be read. Sweep again to move what they hold.')
+    const meta = await readImportListMeta(source.id)
+    const listAgeMs = meta.scanAt === source.scan?.at && meta.syncedAt != null ? Date.now() - meta.syncedAt : null
+    if (listAgeMs != null && listAgeMs < IMPORT_LIST_FRESH_MS) {
+      appendAppLog('info', `[import] sweep reuses the list synced ${Math.round(listAgeMs / 1000)}s ago complete=${meta.complete}`)
+      if (!meta.complete) notes.push('Some addresses could not be read. Sweep again to move what they hold.')
+    } else {
+      report('items', 'Listing collectables…')
+      const listing = await watchImportStage('listing items', () =>
+        syncImportItems({ sourceId: source.id, shouldStop: stop, onStep: (message) => report('items', message) }),
+      )
+      if (!listing.complete && !stop()) {
+        notes.push('Some addresses could not be read. Sweep again to move what they hold.')
+      }
     }
     const listed = [...(await listedImportOutpoints(source.id))]
     itemTotal = listed.length || null
@@ -269,6 +282,16 @@ async function runSweep(
           landed += moved
           const shown = items + landed
           report('items', `Moving collectables… ${shown.toLocaleString()} of ${listed.length.toLocaleString()}`, shown)
+        },
+        onWaiting: (waiting) => {
+          const shown = items + landed
+          report(
+            'items',
+            waiting
+              ? 'Waiting for the wallet to finish syncing…'
+              : `Moving collectables… ${shown.toLocaleString()} of ${listed.length.toLocaleString()}`,
+            shown,
+          )
         },
       }))
       for (const { result } of chunk.results) {
@@ -341,7 +364,8 @@ async function runSweep(
     failed,
     notes: [...new Set(notes)].slice(0, 8),
   }
-  await clearImportItems(source.id)
+  // A paused sweep resumes from this list; only a finished one re-reads next time.
+  if (!paused) await clearImportItems(source.id)
   await updateImportedSource(source.id, { lastSweep: summary })
   return { summary, paused }
 }

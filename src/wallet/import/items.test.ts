@@ -25,6 +25,7 @@ import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem 
 import {
   importItems,
   ImportWalletChangedError,
+  noteScanItemRead,
   readImportItems,
   readImportShelves,
   syncImportItems,
@@ -216,6 +217,32 @@ describe('syncImportItems', () => {
     vi.mocked(loadImportedSources).mockResolvedValue([{ ...source([holding('1a', 3)]), scan: { ...source([holding('1a', 3)]).scan!, at: 43 } }])
     await syncImportItems({ sourceId: 's1', fetchImpl: lagging })
     expect(await listed()).toEqual([op(1), op(3)])
+  })
+
+  it('reuses the set the scan just read instead of fetching and checking it again', async () => {
+    const s = source([holding('1a', 1)], 'handcash-utxo-set')
+    vi.mocked(loadImportedSources).mockResolvedValue([s])
+    noteScanItemRead('s1', {
+      scanAt: s.scan!.at,
+      verified: {
+        addresses: [],
+        cashOutputs: new Map(),
+        itemOutpoints: new Map([['1a', [op(1)]]]),
+        readAddresses: new Set(),
+        mneeAddresses: new Set(),
+        rejected: 0,
+      },
+      read: { unspent: new Set([op(1)]), failed: 0, stopped: false },
+    })
+    const fetchImpl = vi.fn(async () => new Response('[]'))
+    expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toMatchObject({ complete: true })
+    expect(fetchHandCashUtxoSet).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+
+    // Used once: the next sync of the same scan reads the set itself.
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'refused', reason: 'unavailable', detail: '503' })
+    await syncImportItems({ sourceId: 's1', fetchImpl })
+    expect(fetchHandCashUtxoSet).toHaveBeenCalledOnce()
   })
 
   it('refuses an unscanned source', async () => {

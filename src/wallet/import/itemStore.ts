@@ -48,6 +48,8 @@ export type ImportListMeta = {
   nextSeq: number
   /** When every listed item was last checked unspent on chain (not by the index). */
   chainCheckedAt?: number
+  /** When a sync of `scanAt` last ran to its end without being stopped. */
+  syncedAt?: number
 }
 
 /** `last` is the list position read up to — pass it as `after` for the next page. */

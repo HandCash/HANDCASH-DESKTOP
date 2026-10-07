@@ -60,6 +60,12 @@ type SpendPriorityHold = {
 const SPEND_PRIORITY_MAX_MS = 90_000
 /** Fail fast when a send cannot acquire the spend region — UI watchdog is 90s. */
 const SPEND_ACQUIRE_MAX_MS = 45_000
+/**
+ * Nobody watches a background bundle acquire. It keeps its place in the queue
+ * behind an unlock recompose (minutes on a large wallet) instead of timing out
+ * and starting over at the back.
+ */
+const BACKGROUND_SPEND_ACQUIRE_MAX_MS = 10 * 60_000
 /** Proof-of-life cadence for a hold whose work is still running. */
 const SPEND_PRIORITY_TOUCH_MS = 30_000
 
@@ -498,13 +504,24 @@ async function acquireChainIngest(nested: boolean): Promise<() => void> {
   )
 }
 
-async function acquireSpend(): Promise<() => void> {
+async function acquireSpend(lane: SpendPriorityHold['lane']): Promise<() => void> {
   return acquire(
     { type: 'SPEND_BEGIN' },
     { type: 'SPEND_END' },
     (ctx) => canBeginSpend(ctx),
-    { maxWaitMs: SPEND_ACQUIRE_MAX_MS },
+    { maxWaitMs: lane === 'background' ? BACKGROUND_SPEND_ACQUIRE_MAX_MS : SPEND_ACQUIRE_MAX_MS },
   )
+}
+
+/**
+ * Nothing that excludes a spend is running: no recompose, history replica or
+ * other spend. Chain ingest does not count — a spend runs beside it.
+ * Resolves `true` once free, `false` on timeout.
+ */
+export async function waitForSpendRegionFree(maxWaitMs: number): Promise<boolean> {
+  const free = () => canBeginSpend(context())
+  await waitFor(actor, free, maxWaitMs)
+  return free()
 }
 
 async function acquireHistoryReplica(): Promise<() => void> {
@@ -685,7 +702,7 @@ export function runExclusiveSpend<T>(
   return queue(async () => {
     try {
       assertCoordinatorEpoch(epoch)
-      const releaseSpend = await acquireSpend()
+      const releaseSpend = await acquireSpend(lane)
       // Region acquired — drop "Waiting to send…".
       onSpendRegion?.()
       try {

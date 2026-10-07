@@ -24,7 +24,10 @@ vi.mock('./holdings', () => ({
   totalHoldings: vi.fn(() => ({ held: {} })),
 }))
 vi.mock('./importSource', () => ({ keyDeriverFor: vi.fn(() => ({})) }))
-vi.mock('./itemStore', () => ({ listedImportOutpoints: vi.fn(async () => new Set()) }))
+vi.mock('./itemStore', () => ({
+  listedImportOutpoints: vi.fn(async () => new Set()),
+  readImportListMeta: vi.fn(async () => ({ scanAt: 0, complete: false, pagedAddresses: [], nextSeq: 0 })),
+}))
 vi.mock('./items', () => ({
   clearImportItems: vi.fn(async () => undefined),
   importItems: vi.fn(),
@@ -57,5 +60,59 @@ describe('sweepImportedSource', () => {
     releaseLoad()
     await next
     expect(loadImportedSources).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('sweep item list', () => {
+  const itemSource = {
+    id: 'items-src',
+    kind: 'handcash',
+    secret: {},
+    scan: { at: 5, holdings: [{ address: 'a1', path: 'm/0', itemCount: 1, cashCount: 0, tokens: [] }] },
+  }
+
+  async function setup(opts: { syncedAgoMs: number | null; stopped?: 'busy' | null }) {
+    const store = await import('./itemStore')
+    const items = await import('./items')
+    loadImportedSources.mockImplementation(async () => [itemSource])
+    vi.mocked(store.readImportListMeta).mockResolvedValue({
+      sourceId: itemSource.id,
+      scanAt: 5,
+      complete: true,
+      pagedAddresses: [],
+      nextSeq: 1,
+      ...(opts.syncedAgoMs == null ? {} : { syncedAt: Date.now() - opts.syncedAgoMs }),
+    })
+    vi.mocked(store.listedImportOutpoints).mockResolvedValue(new Set(['o1']))
+    vi.mocked(items.syncImportItems).mockReset().mockResolvedValue({ complete: true, total: 1 })
+    vi.mocked(items.clearImportItems).mockClear()
+    vi.mocked(items.importItems).mockResolvedValue({
+      results: [{ outpoint: 'o1', result: opts.stopped ? { kind: 'deferred' } : { kind: 'moved' } }],
+      stopped: opts.stopped ?? null,
+    } as unknown as Awaited<ReturnType<typeof items.importItems>>)
+    return items
+  }
+
+  it('moves from a list this scan synced minutes ago instead of listing again', async () => {
+    const items = await setup({ syncedAgoMs: 60_000 })
+    const { sweepImportedSource } = await import('./sweep')
+    const summary = await sweepImportedSource({ sourceId: itemSource.id })
+    expect(items.syncImportItems).not.toHaveBeenCalled()
+    expect(summary.items).toBe(1)
+    expect(items.clearImportItems).toHaveBeenCalledOnce()
+  })
+
+  it('lists again once the saved list is stale', async () => {
+    const items = await setup({ syncedAgoMs: 2 * 60 * 60_000 })
+    const { sweepImportedSource } = await import('./sweep')
+    await sweepImportedSource({ sourceId: itemSource.id })
+    expect(items.syncImportItems).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the list when the sweep pauses so the resume does not list again', async () => {
+    const items = await setup({ syncedAgoMs: 60_000, stopped: 'busy' })
+    const { sweepImportedSource } = await import('./sweep')
+    await sweepImportedSource({ sourceId: itemSource.id })
+    expect(items.clearImportItems).not.toHaveBeenCalled()
   })
 })
