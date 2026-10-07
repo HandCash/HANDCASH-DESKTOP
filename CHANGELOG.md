@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.473] - 2026-10-07
+
+### Fixed
+- Imported items keep the creator the index named when they were chosen. Each item's signer, app, collection and art now travel with the move into Collect, so HandCash-minted items such as Ageless Republic shelve under their creator immediately, instead of waiting for the indexer to learn about the unmined move.
+- Items already imported without a creator are healed. Collect now asks the index about origins that no cached answer covers, 100 per request, once per session, and never replaces an answer it already holds. This is attribution only; authenticity verdicts are unchanged.
+
 ## [1.3.472] - 2026-10-06
 
 ### Fixed
