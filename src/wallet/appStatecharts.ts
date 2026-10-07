@@ -1236,7 +1236,8 @@ const SPEND_SIGN = `stateDiagram-v2
   end note
   note right of landing
     arcadeLanding + kernel/landingFate, never on the reply path.
-    Unlock replays every pinned cheque that never landed.
+    Unlock replays every pinned cheque that never landed,
+    after any running import or saved-wallet sweep ends.
   end note
   signedNoSend --> sendWithOk : BSV BRC-29 same pattern
   sendWithOk --> done : no failure

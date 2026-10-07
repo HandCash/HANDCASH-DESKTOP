@@ -29,6 +29,7 @@ import {
 } from './walletRuntime'
 import { noteTxLanded, resetLandedTxForTests, txLanded } from './landedTx'
 import { normalizeTxid } from './txid'
+import { listWalletJobs } from './walletJobs'
 import {
   decideLanding,
   decideRescue,
@@ -118,18 +119,24 @@ async function landingEvidence(
 
 const IMPORT_POLL_MS = 2_000
 const IMPORT_KINDS = new Set(['item-import', 'phrase-import', 'one-sat-import'])
+const IMPORT_JOB_KINDS = new Set(['item-import', 'wallet-sweep'])
 
 /**
  * Hold the unlock replay while an import runs. Its explorer reads and storage
  * walks queue on the same Toolbox lock as every migrate's createAction, which
- * waited out a five-minute replay of week-old sends.
+ * waited out a five-minute replay of week-old sends. A saved-wallet sweep runs
+ * as a wallet job without the progress bus, so both are asked.
  */
 async function waitForImportsToSettle(runtime: WalletRuntime): Promise<boolean> {
   const { getWalletProgress } = await import('./walletProgress')
   for (;;) {
     if (!runtimeIsCurrent(runtime)) return false
     const progress = getWalletProgress()
-    if (progress.status !== 'running' || !progress.kind || !IMPORT_KINDS.has(progress.kind)) return true
+    const progressBusy = progress.status === 'running' && !!progress.kind && IMPORT_KINDS.has(progress.kind)
+    const jobBusy = listWalletJobs(runtime.instance.identityKey).some(
+      (job) => IMPORT_JOB_KINDS.has(job.kind) && (job.face === 'running' || job.face === 'waiting'),
+    )
+    if (!progressBusy && !jobBusy) return true
     await delay(IMPORT_POLL_MS)
   }
 }

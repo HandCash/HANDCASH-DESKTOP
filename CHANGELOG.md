@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.496] - 2026-10-07
+
+### Fixed
+- **Import transactions no longer spend up to a minute sealing inputs that were never the wallet's.** After signing, a send seals its inputs so no second send can pick them. For an import, every item input comes from the imported phrase's address, not from the wallet. The seal still asked storage twice per input (outputs by txid, then the transaction), on the lock the next createAction waits for. That took 33 s for a 25-item transaction and 58 s for a 44-item one on the phone, and every lookup found nothing. Those inputs are now marked in memory only. createAction already handles any input the wallet does hold.
+- **The unlock landing replay also waits for a saved-wallet sweep.** 1.3.494 held the replay only while the import progress bar ran. A sweep reports through its own Activity row, so about 100 landing checks ran on the storage lock during a sweep.
+- **Each import transaction stays small enough for Arcade.** Arcade accepted a package of 704 KB, but at 1.00–1.04 MB it returned an error or never answered. Another broadcaster then took the transaction, and the import paused for about three minutes until Arcade caught up. The per-transaction budget is now 750 KB. Light items still fit 100 to a transaction. Items carrying large inscriptions split into more transactions.
+
+### Changed
+- **Imported items show in Activity as each transaction lands.** The import's row keeps its bar, and each transaction it lands appears beneath it right away instead of after the run. The wallet's own transaction list was not re-read during an import, so Activity stood still while the count climbed. Once the run ends they fold into one record, as before.
+- Logs: `[foreign-input] … pack= register= post= pin=` splits what was `pack`/`post`, and `[signed-send] register <txid> done <N>ms prepare= seal= archive=` appears when registration takes over 250 ms.
+
 ## [1.3.495] - 2026-10-07
 
 ### Fixed

@@ -434,6 +434,23 @@ export function composeActivityRecords(
  */
 export const ACTIVITY_COMPOSE_WINDOW = 200
 
+/**
+ * A running job's legs, one record per transaction. The job's own row carries
+ * the bar and each transaction it lands shows beneath it as it lands; once the
+ * job leaves, its legs fold back into its single record.
+ */
+export function unfoldLiveJobLegs(
+  entries: readonly ActivityEntry[],
+  liveJobs: ReadonlySet<string>,
+): readonly ActivityEntry[] {
+  if (liveJobs.size === 0) return entries
+  return entries.map((entry) => {
+    if (!entry.sendGroupId || !liveJobs.has(entry.sendGroupId)) return entry
+    const { sendGroupId: _job, ...leg } = entry
+    return leg
+  })
+}
+
 export function previewActivityRecords(
   entries: readonly ActivityEntry[],
   maxRecords: number,

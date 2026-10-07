@@ -84,6 +84,7 @@ import {
   activityBatchName,
   ACTIVITY_COMPOSE_WINDOW,
   previewActivityRecords,
+  unfoldLiveJobLegs,
   type ActivityBatch,
   type ActivityRecord,
 } from "../wallet/activityRecords";
@@ -920,14 +921,10 @@ export function ActivityFeed({
   useEffect(() => subscribeVerificationProgress(setVerification), []);
   const jobs = useWalletJobs();
 
-  // A job's own row speaks for it until it leaves; then its rows fold into one record.
+  // A job's row carries the bar while its transactions show beneath it; once it leaves they fold into one record.
   const filtered = useMemo(() => {
-    const jobIds = walletJobIds(jobs);
-    const settled =
-      jobIds.size > 0
-        ? entries.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
-        : entries;
-    return showFilters ? filterPaymentActivity(settled, filters) : settled;
+    const legs = unfoldLiveJobLegs(entries, walletJobIds(jobs));
+    return showFilters ? filterPaymentActivity(legs, filters) : legs;
   }, [entries, jobs, filters, showFilters]);
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.

@@ -74,7 +74,7 @@ export function matchesPaymentFilters(
 }
 
 export function filterPaymentActivity(
-  entries: ActivityEntry[],
+  entries: readonly ActivityEntry[],
   filters: PaymentFilters,
   now = Date.now(),
 ): ActivityEntry[] {

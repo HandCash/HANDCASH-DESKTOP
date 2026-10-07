@@ -117,21 +117,23 @@ export async function postForeignInputAction(args: {
       ` durable=${durableBody.length} ef=${efBytes} in=${args.inputBeef.length}`,
   )
 
-  const [{ registerSignedSend, propagateSignedSend }, { txHadArcadeSubmitContact }] = await Promise.all([
-    import('./signedSendLifecycle'),
-    import('./arcadeSubmitGuard'),
-  ])
+  const [{ registerSignedSend, propagateSignedSend }, { txHadArcadeSubmitContact }, { noteForeignInputs }] =
+    await Promise.all([import('./signedSendLifecycle'), import('./arcadeSubmitGuard'), import('./staleOutputRelease')])
+  noteForeignInputs(inputs.map((input) => `${input.txid}.${input.vout}`))
+  const registerStarted = Date.now()
   const handle = await registerSignedSend({ txid, atomicBeef, durableBody, flow: 'legacy_import' })
   const postStarted = Date.now()
   // Throws only on a proven reject, after minerSubmit has released the seal.
   const submitted = await propagateSignedSend(handle)
   const arcadeHolds = submitted.kind === 'accepted' && txHadArcadeSubmitContact(txid)
+  const submittedAt = Date.now()
   const propagation: ForeignInputPropagation = arcadeHolds && (await changeSelectable(txid, atomicBeef)) ? 'accepted' : 'propagating'
   const doneAt = Date.now()
   appendAppLog(
     propagation === 'accepted' ? 'info' : 'warn',
     `[foreign-input] ${txid.slice(0, 12)} ${propagation} submit=${submitted.kind} done ${doneAt - startedAt}ms` +
-      ` create=${createMs}ms sign=${packStarted - signStarted}ms pack=${postStarted - packStarted}ms post=${doneAt - postStarted}ms`,
+      ` create=${createMs}ms sign=${packStarted - signStarted}ms pack=${registerStarted - packStarted}ms` +
+      ` register=${postStarted - registerStarted}ms post=${submittedAt - postStarted}ms pin=${doneAt - submittedAt}ms`,
   )
   return { txid, propagation }
 }

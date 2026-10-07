@@ -153,6 +153,21 @@ describe('arcadeLanding', () => {
     progress.resetWalletProgressForTests()
   })
 
+  it('holds the unlock replay while a saved-wallet sweep job runs', async () => {
+    const jobs = await import('./walletJobs')
+    jobs.resetWalletJobsForTests()
+    const sweep = jobs.beginWalletJob({ kind: 'wallet-sweep', identityKey: '02ab' })
+    const { scheduleUnlockLandingPass } = await import('./arcadeLanding')
+    scheduleUnlockLandingPass(runtime)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(calls).toEqual([])
+
+    sweep.finish()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(calls[0]).toBe('promote-nosend')
+    jobs.resetWalletJobsForTests()
+  })
+
   it('unlock fails dead cheques parent-first, hides dead coins after the fail, and toasts once', async () => {
     const { scheduleUnlockLandingPass, txLanded } = await import('./arcadeLanding')
     scheduleUnlockLandingPass(runtime)

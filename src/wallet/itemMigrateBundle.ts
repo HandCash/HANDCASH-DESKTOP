@@ -27,8 +27,10 @@ export const MAX_ITEMS_PER_MIGRATE_TX = 100
  * Parent transactions and BRC-150 ancestry stay on the device — they build the
  * EF and the provenance, never the post — so they are not charged here. Only a
  * never-moved tip is heavy, because its locking script is its inscription.
+ * Arcade accepted a 704 KB post and errored or went silent on every one from
+ * 1.00 to 1.04 MB, handing the round to a fallback and pausing the import.
  */
-export const MAX_MIGRATE_POST_BYTES = 1024 * 1024
+export const MAX_MIGRATE_POST_BYTES = 750_000
 
 /** A P2PKH input with a DER signature and compressed key. */
 const P2PKH_INPUT_BYTES = 148

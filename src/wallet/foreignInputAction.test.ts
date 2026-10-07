@@ -5,6 +5,7 @@ const registerSignedSend = vi.fn()
 const propagateSignedSend = vi.fn()
 const pinBroadcastLocalTx = vi.fn()
 const txHadArcadeSubmitContact = vi.fn()
+const noteForeignInputs = vi.fn()
 
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./signedSendLifecycle', () => ({
@@ -13,6 +14,7 @@ vi.mock('./signedSendLifecycle', () => ({
 }))
 vi.mock('./staleOutputRelease', () => ({
   pinBroadcastLocalTx: (...a: unknown[]) => pinBroadcastLocalTx(...a),
+  noteForeignInputs: (...a: unknown[]) => noteForeignInputs(...a),
 }))
 vi.mock('./arcadeSubmitGuard', () => ({
   txHadArcadeSubmitContact: (...a: unknown[]) => txHadArcadeSubmitContact(...a),
@@ -60,7 +62,7 @@ async function post() {
 describe('postForeignInputAction', () => {
   beforeEach(() => {
     vi.resetModules()
-    for (const fn of [registerSignedSend, propagateSignedSend, pinBroadcastLocalTx, txHadArcadeSubmitContact, createAction, abortAction]) {
+    for (const fn of [registerSignedSend, propagateSignedSend, pinBroadcastLocalTx, txHadArcadeSubmitContact, noteForeignInputs, createAction, abortAction]) {
       fn.mockReset()
     }
     createAction.mockResolvedValue({ txid: signedTxid, tx: beefOf(signed) })
@@ -81,6 +83,8 @@ describe('postForeignInputAction', () => {
       flow: 'legacy_import',
     })
     expect(pinBroadcastLocalTx).toHaveBeenCalledWith(signedTxid, [1, 2, 3])
+    expect(noteForeignInputs).toHaveBeenCalledWith([`${sourceTxid}.0`])
+    expect(noteForeignInputs.mock.invocationCallOrder[0]).toBeLessThan(registerSignedSend.mock.invocationCallOrder[0]!)
   })
 
   it.each([

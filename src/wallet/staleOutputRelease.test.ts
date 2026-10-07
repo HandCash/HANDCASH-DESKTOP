@@ -79,6 +79,7 @@ const {
   pinBroadcastLocalTx,
   promotePinnedNoSendProofRequests,
   healAppHeldChange,
+  noteForeignInputs,
   __resetReclaimSealCursorsForTests,
 } = await import('./staleOutputRelease')
 const sentItemGuard = await import('./sentItemGuard')
@@ -1723,6 +1724,36 @@ describe('hideSpentOutpoints', () => {
 
     await expect(hideSpentOutpoints([`${txid}.0`], spender)).resolves.toBe(1)
     expect(updateOutput).toHaveBeenCalledWith(5, { spendable: false })
+  })
+
+  it('overlays a migrate’s foreign inputs without asking storage for them', async () => {
+    const foreign = 'f1'.repeat(32)
+    const change = 'c1'.repeat(32)
+    const spender = 'ab'.repeat(32)
+    noteForeignInputs([`${foreign}.0`, `${foreign}.1`])
+    findOutputs.mockImplementation(async ({ partial }: { partial: Record<string, unknown> }) =>
+      partial.txid === change ? [{ outputId: 9, txid: change, vout: 2, satoshis: 900, spendable: true }] : [],
+    )
+    const findTransactions = vi.fn(async () => [])
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<unknown>) =>
+            fn({ updateOutput, findOutputs, findTransactions }),
+        },
+      },
+    })
+
+    await hideSpentOutpoints([`${foreign}.0`, `${foreign}.1`, `${change}.2`], spender)
+
+    expect(updateOutput).toHaveBeenCalledWith(9, { spendable: false })
+    const askedTxids = [...findOutputs.mock.calls, ...findTransactions.mock.calls].map(
+      ([args]) => (args as { partial?: { txid?: string } } | undefined)?.partial?.txid,
+    )
+    expect(askedTxids).not.toContain(foreign)
+    expect(getUtxoLock(`${foreign}.0`)?.spentBy).toBe(spender)
+    expect(getUtxoLock(`${foreign}.1`)?.spentBy).toBe(spender)
   })
 })
 

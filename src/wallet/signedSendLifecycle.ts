@@ -30,6 +30,7 @@ import {
   noteDualLayerSigned,
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
+import { appendAppLog } from './appLog'
 import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
 export type SignedSendHandle = {
@@ -71,6 +72,7 @@ export async function registerSignedSend(args: {
   const retention = retainWalletRuntime(runtime)
   const owner = accountKeyScopeFor(runtime.instance)
   try {
+    const startedAt = Date.now()
     let atomicBeef = args.atomicBeef
     try {
       const { prepareBroadcastCheque } = await import('./beefCache')
@@ -90,6 +92,7 @@ export async function registerSignedSend(args: {
       )
     }
 
+    const sealStarted = Date.now()
     // Seal first. A lifecycle must never advertise a signed cheque while its
     // inputs remain selectable by a second send. Use the captured Toolbox even
     // if the user selected another account while BEEF hydration was running.
@@ -109,6 +112,7 @@ export async function registerSignedSend(args: {
         error,
       )
     }
+    const archiveStarted = Date.now()
     // Persist before any Activity/remittance work. Every key is resolved from
     // the immutable owner, never the mutable foreground account.
     const durableBody = args.durableBody?.length ? args.durableBody : atomicBeef
@@ -128,6 +132,14 @@ export async function registerSignedSend(args: {
       console.error(
         '[signed-send] durable retry unavailable; propagating signed cheque now',
         txid.slice(0, 12),
+      )
+    }
+    const registeredAt = Date.now()
+    if (registeredAt - startedAt > 250) {
+      appendAppLog(
+        'info',
+        `[signed-send] register ${txid.slice(0, 12)} done ${registeredAt - startedAt}ms` +
+          ` prepare=${sealStarted - startedAt}ms seal=${archiveStarted - sealStarted}ms archive=${registeredAt - archiveStarted}ms`,
       )
     }
 

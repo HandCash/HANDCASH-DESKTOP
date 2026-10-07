@@ -8,6 +8,7 @@
  * never with an invented time, never persisted.
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { itemMigrateTxDescription } from './activityJobIndex'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
@@ -174,18 +175,98 @@ const EMPTY: readonly ActivityEntry[] = Object.freeze([])
 let snapshot: Snapshot | null = null
 const listeners = new Set<() => void>()
 
+/**
+ * Legs a running import just committed, shaped exactly as the next read will
+ * file them. The read yields to every spend, so for a whole import it never
+ * ran and Activity stood still while the count climbed. Memory only; each leg
+ * leaves when a read holds its row.
+ */
+const MAX_PROVISIONAL = 5_000
+let provisional: { namespace: string; byId: Map<string, ActivityEntry> } | null = null
+let merged: { base: readonly ActivityEntry[]; version: number; rows: readonly ActivityEntry[] } | null = null
+let provisionalVersion = 0
+
 function currentSnapshot(): Snapshot | null {
   const namespace = getWalletRuntime()?.storageNamespace
   return namespace && snapshot?.namespace === namespace ? snapshot : null
 }
 
+function currentProvisional(): Map<string, ActivityEntry> | null {
+  const namespace = getWalletRuntime()?.storageNamespace
+  return namespace && provisional?.namespace === namespace && provisional.byId.size > 0 ? provisional.byId : null
+}
+
 /** Ledger rows for the unlocked account; empty until the first read lands. */
 export function ledgerActivitySnapshot(): readonly ActivityEntry[] {
-  return currentSnapshot()?.rows ?? EMPTY
+  const base = currentSnapshot()?.rows ?? EMPTY
+  const pending = currentProvisional()
+  if (!pending) return base
+  if (merged?.base === base && merged.version === provisionalVersion) return merged.rows
+  const rows = Object.freeze([...base, ...pending.values()].sort((a, b) => a.at - b.at))
+  merged = { base, version: provisionalVersion, rows }
+  return rows
 }
 
 export function ledgerActivityById(id: string): ActivityEntry | null {
-  return currentSnapshot()?.byId.get(id) ?? null
+  return currentSnapshot()?.byId.get(id) ?? currentProvisional()?.get(id) ?? null
+}
+
+export type CommittedItemLeg = { txid: string; vout: number; origin?: string | null; name?: string | null }
+
+/** Show a migrate's legs now; the ledger read replaces them with its own. */
+export function noteCommittedItemLegs(legs: readonly CommittedItemLeg[], at = Date.now()): void {
+  const namespace = getWalletRuntime()?.storageNamespace
+  if (!namespace || legs.length === 0) return
+  if (provisional?.namespace !== namespace) provisional = { namespace, byId: new Map() }
+  const known = currentSnapshot()?.byId
+  const byTx = new Map<string, CommittedItemLeg[]>()
+  for (const leg of legs) {
+    const txid = leg.txid.trim().toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isSafeInteger(leg.vout) || leg.vout < 0) continue
+    const list = byTx.get(txid) ?? []
+    list.push(leg)
+    byTx.set(txid, list)
+  }
+  let added = 0
+  for (const [txid, list] of byTx) {
+    const first = list.reduce((low, leg) => (leg.vout < low.vout ? leg : low))
+    const note = itemMigrateTxDescription(list.length, `${txid}.${first.vout}`)
+    for (const leg of list) {
+      const outpoint = `${txid}.${leg.vout}`
+      const id = `ledger:${txid}:${outpoint}`
+      if (known?.has(id) || provisional.byId.has(id)) continue
+      const origin = leg.origin?.trim().toLowerCase().replace('.', '_')
+      provisional.byId.set(id, {
+        id,
+        origin: WALLET_ORIGIN,
+        kind: 'earned',
+        sats: 1,
+        at,
+        method: 'receive-collectable',
+        note,
+        txid,
+        item: {
+          name: leg.name?.trim().slice(0, 80) || 'Collectable',
+          origin: origin && /^[0-9a-f]{64}_\d+$/.test(origin) ? origin : `${txid}_${leg.vout}`,
+          outpoint,
+        },
+      })
+      added += 1
+    }
+  }
+  for (const id of provisional.byId.keys()) {
+    if (provisional.byId.size <= MAX_PROVISIONAL) break
+    provisional.byId.delete(id)
+  }
+  if (added === 0) return
+  provisionalVersion += 1
+  for (const cb of listeners) cb()
+}
+
+function clearProvisional(): void {
+  provisional = null
+  merged = null
+  provisionalVersion += 1
 }
 
 /** When the ledger says this transaction happened, if it holds it. */
@@ -214,8 +295,16 @@ function sameRows(a: readonly ActivityEntry[], b: readonly ActivityEntry[]): boo
 }
 
 export function publishActivityLedger(namespace: string, rows: ActivityEntry[]): void {
+  let settled = 0
+  if (provisional?.namespace === namespace) {
+    for (const row of rows) if (provisional.byId.delete(row.id)) settled += 1
+    if (settled > 0) provisionalVersion += 1
+  }
   const prev = snapshot?.namespace === namespace ? snapshot.rows : null
-  if (prev && sameRows(prev, rows)) return
+  if (prev && sameRows(prev, rows)) {
+    if (settled > 0) for (const cb of listeners) cb()
+    return
+  }
   const timeByTxid = new Map<string, number>()
   for (const row of rows) {
     const known = timeByTxid.get(row.txid!)
@@ -433,6 +522,7 @@ export function resetActivityLedgerForRuntime(): void {
   if (timer) clearTimeout(timer)
   timer = null
   snapshot = null
+  clearProvisional()
   txCache = null
   lastRefreshAt = 0
   logged = false
@@ -445,6 +535,7 @@ export function resetActivityLedgerForTests(): void {
   timer = null
   inFlights.clear()
   snapshot = null
+  clearProvisional()
   txCache = null
   lastRefreshAt = 0
   logged = false

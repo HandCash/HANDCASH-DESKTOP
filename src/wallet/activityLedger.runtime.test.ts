@@ -7,7 +7,7 @@ vi.mock('./walletRuntime', () => ({
 }))
 vi.mock('./walletCoordinator', () => ({ shouldYieldChainIngestToSpend: () => false, spendNeedsStorage: () => false }))
 vi.mock('./ghostTxSuppress', () => ({ isGhostTxSuppressed: () => false }))
-import { ledgerActivitySnapshot, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests } from './activityLedger'
+import { ledgerActivityById, ledgerActivitySnapshot, noteCommittedItemLegs, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests, subscribeActivityLedger } from './activityLedger'
 const txid = (n: number) => n.toString(16).padStart(64, '0')
 function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.resolve([])) {
   const provider = {
@@ -46,6 +46,27 @@ describe('Activity ledger runtime ownership', () => {
     expect(owner.provider.findTransactions).toHaveBeenCalledWith(expect.objectContaining({ partial: { userId: 9 }, noRawTx: true }))
     expect(owner.provider.findOutputBaskets).toHaveBeenCalledWith({ partial: { userId: 9 } })
     expect(owner.provider.findOutputs).toHaveBeenCalledWith({ partial: { userId: 9, basketId: 3 }, noScript: true })
+  })
+  it('shows a migrate’s legs before the ledger re-reads, then yields them to the read', () => {
+    const owner = wallet('owner'); control.current = owner.runtime
+    const heard = vi.fn(); const off = subscribeActivityLedger(heard)
+    noteCommittedItemLegs([
+      { txid: txid(7), vout: 1, origin: `${txid(5)}.0`, name: 'Fox #1' },
+      { txid: txid(7), vout: 0, origin: null, name: null },
+    ], 50)
+    expect(heard).toHaveBeenCalledOnce()
+    const shown = ledgerActivitySnapshot()
+    expect(shown).toBe(ledgerActivitySnapshot())
+    expect(shown.map(row => row.id)).toEqual([`ledger:${txid(7)}:${txid(7)}.1`, `ledger:${txid(7)}:${txid(7)}.0`])
+    expect(shown[0]).toMatchObject({ kind: 'earned', method: 'receive-collectable', note: 'Migrate 2 ordinals from phrase', item: { name: 'Fox #1', origin: `${txid(5)}_0` } })
+    expect(shown[1]!.item).toMatchObject({ name: 'Collectable', origin: `${txid(7)}_0` })
+    const real = { ...shown[0]!, at: 49, note: 'Migrate 2 ordinals from phrase' }
+    publishActivityLedger('owner', [real])
+    expect(ledgerActivitySnapshot().map(row => row.id)).toEqual([real.id, shown[1]!.id])
+    expect(ledgerActivityById(real.id)!.at).toBe(49)
+    control.current = wallet('other').runtime
+    expect(ledgerActivitySnapshot()).toEqual([])
+    off()
   })
   it('publishes corrections to direction even when time, amount and description stay the same', () => {
     const owner = wallet('owner'); control.current = owner.runtime

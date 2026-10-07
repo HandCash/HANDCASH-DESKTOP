@@ -1432,6 +1432,29 @@ export async function quarantineSpentOutpoints(
   return hideToolboxOutputs(unique);
 }
 
+/**
+ * Inputs a migrate spent from a key outside this wallet. No Toolbox row holds
+ * them, and createAction already reconciles any input it does hold, so the
+ * seal skips their two storage reads: 1.3 s a tip on a phone, 58 s for one
+ * 44-tip migrate, all of it on the lock the next createAction waits for.
+ */
+const foreignInputs = new Set<string>();
+const MAX_FOREIGN_INPUTS = 20_000;
+
+export function noteForeignInputs(outpoints: Iterable<string>): void {
+  for (const raw of outpoints) {
+    const parsed = parseOutpoint(raw);
+    if (!parsed) continue;
+    const key = `${parsed.txid}.${parsed.vout}`;
+    foreignInputs.delete(key);
+    foreignInputs.add(key);
+  }
+  for (const key of foreignInputs) {
+    if (foreignInputs.size <= MAX_FOREIGN_INPUTS) break;
+    foreignInputs.delete(key);
+  }
+}
+
 async function hideToolboxOutputs(
   unique: string[],
   active: ActiveWallet | null = getActiveWallet(),
@@ -1447,6 +1470,7 @@ async function hideToolboxOutputs(
         const op = unique[i]!;
         const parsed = parseOutpoint(op);
         if (!parsed) continue;
+        if (foreignInputs.has(`${parsed.txid}.${parsed.vout}`)) continue;
         // A coin coin-selection can choose may be linked to its parent only by
         // `transactionId`; missing it here leaves the dead coin spendable.
         const rows = await findOutputsForTxid(sp, parsed.txid, {
