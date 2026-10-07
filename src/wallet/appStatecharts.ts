@@ -897,6 +897,7 @@ const ITEM_MIGRATE_RUN = `stateDiagram-v2
   waitingForWallet --> moving : WAITED
   moving --> rebuilding : FAULT stale-funding (1 rebuild)
   rebuilding --> moving
+  moving --> checking : FAULT dead-tips · spent tips leave (skipped), rest sent whole
   moving --> splitting : FAULT rejected · 2+ tips (halve)
   splitting --> moving
   moving --> checking : FAULT rejected · 1 tip (failed)

@@ -46,8 +46,15 @@ describe('classifyItemMigrateFault', () => {
     expect(kind(new TypeError('Failed to fetch'))).toBe('network')
     expect(kind(new Error('ARC status 503'))).toBe('network')
     expect(kind(new Error('Script evaluation failed'))).toBe('rejected')
-    // The bundle's own tip is dead: that is about the tips, worth halving.
-    expect(kind(refusal('input-spent', [tip]))).toBe('rejected')
+  })
+
+  it('names the bundle’s own spent tips so they leave without halving', () => {
+    const other = `${'c'.repeat(64)}.3`
+    const fault = classifyItemMigrateFault(refusal('input-spent', [`${'A'.repeat(64)}_1`, `${'b'.repeat(64)}.0`]), [
+      ...group,
+      { outpoint: other },
+    ])
+    expect(fault).toMatchObject({ kind: 'dead-tips', dead: [tip] })
   })
 })
 

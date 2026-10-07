@@ -178,6 +178,28 @@ describe('migrateChosenPhraseItems stops', () => {
     for (const [args] of createAction.mock.calls) expect((args as { inputs: unknown[] }).inputs).toHaveLength(2)
   })
 
+  it('leaves out tips the chain already shows spent and sends the rest whole, no halving', async () => {
+    // An earlier migrate of this wallet moved TIPS[0] but the list never saw it
+    // land. The certainty gate names it; the run must drop it as `spent`, not
+    // halve down to it and fail it, which kept every later sweep at zero.
+    const refusal = Object.assign(new Error('A coin this action spends was already spent. Nothing was sent.'), {
+      code: 'INPUTS_UNVERIFIED',
+      reason: 'input-spent',
+      dead: [`${TIPS[0]!.txid}.0`],
+    })
+    createAction
+      .mockRejectedValueOnce(refusal)
+      .mockRejectedValueOnce(new Error('Insufficient funds in the available inputs to cover the cost (1 more satoshis are needed, for a total of 1)'))
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen })
+
+    expect(run.results.get(TIPS[0]!.outpoint)).toMatchObject({ kind: 'skipped', reason: 'spent' })
+    expect(run.results.get(TIPS[1]!.outpoint)?.kind).toBe('funds')
+    expect(createAction).toHaveBeenCalledTimes(2)
+    expect((createAction.mock.calls[0]![0] as { inputs: unknown[] }).inputs).toHaveLength(2)
+    expect((createAction.mock.calls[1]![0] as { inputs: unknown[] }).inputs).toHaveLength(1)
+  })
+
   it('aborts the action when signing fails, so no phantom item is left listed', async () => {
     // An unsigned action still lists its `1sat` output until background review
     // fails it — that is the collectable that appeared and then vanished.

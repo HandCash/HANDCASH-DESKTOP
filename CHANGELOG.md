@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.500] - 2026-10-07
+
+### Fixed
+- **A new import sweep no longer stays at zero over items an earlier import already moved.** Three held import transactions (1.3.498) had moved 24 items without the saved import list ever hearing back, so every later sweep tried them again. The pre-sign check refused the bundle naming those inputs as spent, and the run treated that like any rejected bundle: halve, build, abort, halve again, down to each item, then record a failure — which keeps the item on the list. The phone did this 22 times per sweep and moved nothing. When the refusal names the bundle's own tips, those tips now leave the run at once as "already moved — spent on chain", the saved list drops them, and the rest of the bundle is sent again whole at the same size. Items the wallet already holds are never retried.
+
 ## [1.3.499] - 2026-10-07
 
 ### Fixed

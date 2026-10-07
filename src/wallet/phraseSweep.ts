@@ -786,6 +786,10 @@ export async function migrateChosenPhraseItems(args: {
   for (const failure of outcome.failures) {
     results.set(givenOf.get(failure.outpoint)!, { kind: 'failed', message: failure.reason })
   }
+  // Skipped, not failed: the saved list drops them, so the next run does not try them again.
+  for (const outpoint of outcome.spent) {
+    results.set(givenOf.get(outpoint)!, { kind: 'skipped', reason: 'spent', message: describeOrdinalMigrateSkip('spent') })
+  }
   const unmoved: SingleItemMigrate =
     outcome.stopped == null || outcome.stopped === 'funds'
       ? { kind: 'funds', message: ITEM_MIGRATE_STOP_MESSAGES.funds }
@@ -799,7 +803,7 @@ export async function migrateChosenPhraseItems(args: {
   appendAppLog(
     outcome.failures.length > 0 || unreadable > 0 || outcome.stopped ? 'warn' : 'info',
     `[phrase-sweep] chosen done ${Date.now() - startedAt}ms items=${rows.length} keys=${spenders.size} moved=${outcome.moved.length}` +
-      ` tx=${transactions} skipped=${skipped} unreadable=${unreadable} failed=${outcome.failures.length}` +
+      ` tx=${transactions} skipped=${skipped} spent=${outcome.spent.length} unreadable=${unreadable} failed=${outcome.failures.length}` +
       (outcome.stopped ? ` stopped=${outcome.stopped}` : '') +
       (outcome.lastError ? ` lastError=${outcome.lastError.slice(0, 160)}` : ''),
   )
@@ -928,6 +932,8 @@ type UnitOutcome = {
   moved: MigratedItemReceipt[]
   /** Tips refused alone, after any bundle they rode was split down to them. */
   failures: Array<{ outpoint: string; reason: string }>
+  /** Tips the chain already shows spent — moved by an earlier run the list never saw land. */
+  spent: string[]
   /** Leading tips this run settled, moved or failed; the rest were not tried. */
   resolved: number
   stopped: ItemMigrateStop | null
@@ -958,7 +964,7 @@ type UnitArgs = {
  * item-migrate path; the chart alone decides whether another one follows.
  */
 async function migrateOrdinalUnit(args: UnitArgs): Promise<UnitOutcome> {
-  const out: UnitOutcome = { moved: [], failures: [], resolved: 0, stopped: null, lastError: null }
+  const out: UnitOutcome = { moved: [], failures: [], spent: [], resolved: 0, stopped: null, lastError: null }
   let pending = args.items.slice()
   const postBytes = new Map<string, number>()
   const postBytesOf = (item: PendingItemMigrate): number => {
@@ -1031,6 +1037,20 @@ async function migrateOrdinalUnit(args: UnitArgs): Promise<UnitOutcome> {
           continue
         }
         if (settled.kind === 'failed') fault = classifyItemMigrateFault(settled.error, group)
+      }
+      if (fault.kind === 'dead-tips') {
+        // Already moved, usually by this wallet's own earlier migrate. Halving
+        // down to each one cost a build and an abort per tip and moved nothing.
+        const dead = new Set(fault.dead)
+        out.spent.push(...fault.dead)
+        out.resolved += fault.dead.length
+        pending = pending.filter((item) => !dead.has(item.outpoint))
+        appendAppLog(
+          'info',
+          `[phrase-sweep] ${fault.dead.length} of ${group.length} tips already spent on chain — left out, ${pending.length} still queued`,
+        )
+        chart.send({ type: 'FAULT', fault: fault.kind, items: fault.dead.length, message: fault.message })
+        continue
       }
       if (fault.kind === 'busy') {
         appendAppLog('info', `[phrase-sweep] wallet busy before sending ${group.length} held=${fault.held.slice(0, 160)}`)

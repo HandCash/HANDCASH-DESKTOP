@@ -69,6 +69,8 @@ export const itemMigrateRunMachine = setup({
       event.type === 'FAULT' && event.fault === 'stale-funding' && context.fundingRebuilds < ITEM_MIGRATE_FUNDING_REBUILDS,
     staleFunding: ({ event }) => event.type === 'FAULT' && event.fault === 'stale-funding',
     stoppingFault: ({ event }) => event.type === 'FAULT' && STOPPING_FAULTS.has(event.fault),
+    /** Named tips are already spent: they leave, the rest of the bundle goes again whole. */
+    deadTips: ({ event }) => event.type === 'FAULT' && event.fault === 'dead-tips',
     /** A bundle of two or more can be halved; a single has nothing left to isolate. */
     divisible: ({ event }) => event.type === 'FAULT' && event.fault === 'rejected' && event.items > 1,
     hasQueued: ({ context }) => context.queued > 0,
@@ -101,6 +103,11 @@ export const itemMigrateRunMachine = setup({
         ? { queued: Math.max(0, context.queued - 1), failed: context.failed + 1, perTx: context.cap, error: event.message }
         : {},
     ),
+    recordDead: assign(({ context, event }) =>
+      event.type === 'FAULT'
+        ? { queued: Math.max(0, context.queued - event.items), failed: context.failed + event.items, error: event.message }
+        : {},
+    ),
     recordStop: assign(({ event }) =>
       event.type === 'FAULT' ? { stopped: event.fault as ItemMigrateStop, error: event.message } : {},
     ),
@@ -125,6 +132,7 @@ export const itemMigrateRunMachine = setup({
           { guard: 'fundingRebuildLeft', target: 'rebuilding', actions: 'countFundingRebuild' },
           { guard: 'staleFunding', target: 'stopped', actions: 'recordStop' },
           { guard: 'stoppingFault', target: 'stopped', actions: 'recordStop' },
+          { guard: 'deadTips', target: 'checking', actions: 'recordDead' },
           { guard: 'divisible', target: 'splitting', actions: 'halve' },
           { target: 'checking', actions: 'recordFailed' },
         ],

@@ -51,6 +51,15 @@ describe('itemMigrateRunMachine', () => {
     expect(run.getSnapshot().value).toBe('moving')
   })
 
+  it('drops spent tips without halving and sends the rest of the bundle whole', () => {
+    const run = start(25, 25)
+    run.send(fault('dead-tips', 24))
+    expect(run.getSnapshot().value).toBe('moving')
+    expect(run.getSnapshot().context).toMatchObject({ queued: 1, failed: 24, perTx: 25 })
+    run.send({ type: 'SENT', items: 1, propagation: 'accepted' })
+    expect(run.getSnapshot().value).toBe('done')
+  })
+
   it('waits out a busy wallet, then stops', () => {
     const run = start(2, 2)
     for (let i = 0; i < ITEM_MIGRATE_BUSY_WAITS; i++) {
