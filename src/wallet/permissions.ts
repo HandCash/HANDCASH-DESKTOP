@@ -149,7 +149,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
         .filter((a) => a && typeof a.origin === 'string')
         .map((a) => ({
           origin: normalizeAppHost(a.origin),
-          name: typeof a.name === 'string' && a.name ? a.name : appDisplayName(a.origin),
+          name: appDisplayName(a.origin),
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,

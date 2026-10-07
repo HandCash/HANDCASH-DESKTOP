@@ -28,6 +28,7 @@ import {
   requestTokenViewApproval,
 } from './permissions'
 import { normalizeAppHost } from './appIdentity'
+import { bridgeCallerHost, bridgeOriginRefusalDescription, resolveBridgeCaller } from './bridgeOrigin'
 import { getAutoPaySettings, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
   isBsv21ReceiveArgs,
@@ -284,27 +285,6 @@ type HttpRequestEvent = {
   headers: Record<string, string>
   body: string
   request_id: number
-}
-
-function parseOrigin(headers: Record<string, string>): string | undefined {
-  const rawOrigin = headers.origin
-  const rawOriginator = headers.originator
-  if (rawOrigin) {
-    try {
-      return new URL(rawOrigin).host
-    } catch {
-      return undefined
-    }
-  }
-  if (rawOriginator) {
-    try {
-      const candidate = rawOriginator.includes('://') ? rawOriginator : `http://${rawOriginator}`
-      return new URL(candidate).host
-    } catch {
-      return undefined
-    }
-  }
-  return undefined
 }
 
 function methodFromPath(path: string): string {
@@ -607,7 +587,7 @@ export async function handleBrc100Request(
 ): Promise<{ status: number; body: string }> {
   const releaseInbound = noteInboundWalletRequest()
   const method = methodFromPath(event.path)
-  const originator = parseOrigin(event.headers)
+  const originator = bridgeCallerHost(resolveBridgeCaller(event.headers))
   const quiet = isQuietBrc100Success(method)
   const t0 = Date.now()
   let args: unknown
@@ -826,6 +806,21 @@ async function handleBrc100RequestInner(
     }
   }
 
+  const caller = resolveBridgeCaller(event.headers)
+  if (caller.kind === 'refuse' && !isPublicMethod(method)) {
+    appendAppLog('warn', `[brc100] refused ${method}: ${caller.reason}`)
+    return {
+      status: 403,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'ORIGIN_REFUSED',
+        reason: caller.reason,
+        description: bridgeOriginRefusalDescription(caller.reason),
+      }),
+    }
+  }
+  const originator = bridgeCallerHost(caller)
+
   const active = runtime?.instance ?? null
   if (!active) {
     requestUnlockForBridge()
@@ -850,7 +845,6 @@ async function handleBrc100RequestInner(
     }
   }
 
-  const originator = parseOrigin(event.headers)
   if (
     method !== 'listOutputs' &&
     containsRetiredFungibleRequest(args)
