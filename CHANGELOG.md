@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.469] - 2026-10-06
+
+### Changed
+- Collectables move up to 100 per transaction (one import chunk) instead of 25: one fee, one signature pass and one broadcast where there were four.
+- Sweep everything reads every BSV address first, then moves all coins together, each signed by its own address key, up to 100 coins per transaction, instead of one sweep per address. One unreadable address no longer stops the cash step.
+
 ## [1.3.468] - 2026-10-06
 
 ### Fixed
