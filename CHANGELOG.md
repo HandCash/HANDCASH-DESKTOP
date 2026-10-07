@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.489] - 2026-10-07
+
+### Security
+- **Connect no longer lets one site borrow another site's name or grants.** Every grant (Connect, item and token views, receive, auto-pay, identity proofs, and the migrate, market and handle-claim host lists) is keyed by the caller's host.
+  - The bridge refuses a plaintext `http://` page that claims a public host, because whoever controls the network can serve it. This mattered most for `market-v2.handcash.io`: it is on the market list and sends no HSTS. Loopback and private-network addresses still work over http for local development.
+  - Sandboxed iframes and file pages send `Origin: null`. They used to share a single "Unknown app" identity, so connecting one connected all of them, on any site. They are now refused, as are callers that send neither an `Origin` nor an `Originator`, and origins with schemes that are neither web nor browser-extension.
+  - Refusals return `403 ORIGIN_REFUSED` with the reason and log `[brc100] refused <method>: <reason>`.
+- **Prompts no longer title a look-alike site "HandCash".** A host HandCash does not own whose name reads as HandCash (for example `handcash.vercel.app`, `hand-cash.co` or `h4ndca5h.app`), or any internationalized (IDN) host, is now titled with its bare host instead of a friendly name. Connected apps saved under an old name are renamed on load.
+
 ## [1.3.488] - 2026-10-07
 
 ### Diagnostics
