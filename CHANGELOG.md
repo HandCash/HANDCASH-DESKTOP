@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.475] - 2026-10-07
+
+### Fixed
+- Imports, sends and broadcasts keep their pace while Android has HandCash in the background. Hidden-page work no longer yields through the browser scheduler, which Android bills to a ~1% background CPU budget (one migrate spent 452s signing; 30s heartbeats arrived up to 470s apart).
+- The spend watchdog counts only time the app was on screen, so a migrate slowed by the background is no longer abandoned mid-signature.
+- An abandoned migrate is never rebuilt over the same items. The import waits for what the original send actually did — records it if it broadcast, retries only if it truly failed, and otherwise stops with the items kept.
+
+### Diagnostics
+- Triage tags each import step with page visibility and reports heartbeat cadence while hidden.
+
 ## [1.3.474] - 2026-10-07
 
 ### Changed
