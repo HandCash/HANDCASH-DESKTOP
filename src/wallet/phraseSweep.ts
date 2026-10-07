@@ -45,6 +45,7 @@ import {
   recordMigratedItemActivity,
   type MigratedItemReceipt,
 } from './legacyReceiptActivity'
+import { itemMigrateTxDescription } from './activityJobIndex'
 import {
   chooseOrdinalMigratePath,
   describeOrdinalMigrateSkip,
@@ -887,6 +888,8 @@ export async function migratePhraseItemsBatch(args: {
   expectedItemCount?: number
   /** Chain ingest is for the end of a run, not for every batch. */
   refreshAfter?: boolean
+  /** The wallet job this batch belongs to; its Activity rows fold under it. */
+  activityGroup?: string | null
 }): Promise<PhraseItemMigrateProgress> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -1072,6 +1075,8 @@ export async function migratePhraseItemsBatch(args: {
       inputBeef: built.beef,
       items: unit.items,
       itemsPerTx,
+      onMoved: (receipts) =>
+        recordMigratedItemActivity(receipts, active.chain, { groupId: args.activityGroup }),
     })
     consumed += outcome.resolved
     moved += outcome.moved.length
@@ -1180,7 +1185,6 @@ export async function migratePhraseItemsBatch(args: {
   }
 
   if (moved > 0) {
-    recordMigratedItemActivity(movedItems, active.chain)
     const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
     for (const item of movedItems) recent.add(item.outpoint)
     recentlyMovedPhraseItems.set(args.candidate.address, recent)
@@ -1303,12 +1307,19 @@ export async function migrateChosenPhraseItems(args: {
     }
   }
 
+  const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
   const outcome = await migrateOrdinalUnit({
     active,
     destLockHex: destLock,
     inputBeef: built.beef,
     items: pending,
     itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
+    onMoved: (receipts) =>
+      recordMigratedItemActivity(
+        receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null })),
+        active.chain,
+        { groupId: args.activityGroup },
+      ),
   })
   for (const receipt of outcome.moved) {
     results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })
@@ -1326,12 +1337,6 @@ export async function migrateChosenPhraseItems(args: {
 
   const transactions = new Set(outcome.moved.map((m) => m.sweepTxid)).size
   if (outcome.moved.length > 0) {
-    const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
-    recordMigratedItemActivity(
-      outcome.moved.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null })),
-      active.chain,
-      { groupId: args.activityGroup },
-    )
     const addressOf = new Map(rows.map((row) => [row.outpoint, row.spender.address]))
     for (const item of outcome.moved) {
       const address = addressOf.get(item.outpoint)
@@ -1465,6 +1470,12 @@ async function migrateOrdinalUnit(args: {
   inputBeef: BEEF
   items: PendingItemMigrate[]
   itemsPerTx: number
+  /**
+   * Each transaction's receipts, the moment it broadcasts. Its Activity rows
+   * must land before the ledger's next read of the wallet's table, or the
+   * unannotated migrate shows as a row of its own.
+   */
+  onMoved: (moved: MigratedItemReceipt[]) => void
 }): Promise<UnitOutcome> {
   const out: UnitOutcome = {
     moved: [],
@@ -1499,9 +1510,9 @@ async function migrateOrdinalUnit(args: {
           }),
         ),
       )
-      for (const item of group) {
-        out.moved.push({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid })
-      }
+      const receipts = group.map((item) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid }))
+      out.moved.push(...receipts)
+      args.onMoved(receipts)
       out.resolved += group.length
       pending = pending.slice(group.length)
       perTx = args.itemsPerTx
@@ -1583,10 +1594,7 @@ async function buildAndPostItemMigrate(args: {
       customInstructions: item.customInstructions,
     })),
     labels: ['1sat', 'phrase-migrate'],
-    description:
-      items.length === 1
-        ? `Migrate ordinal ${first.outpoint.slice(0, 18)}…`
-        : `Migrate ${items.length} ordinals from phrase`,
+    description: itemMigrateTxDescription(items.length, first.outpoint),
   })
 }
 

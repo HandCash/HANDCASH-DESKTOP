@@ -1,8 +1,8 @@
 /**
  * Wallet jobs: one `walletJobMachine` actor per long job the wallet is running
- * — an item import run, a balance heal. Activity paints each as a single row
- * with a bar; the rows the job writes carry its id as `sendGroupId` and fold
- * into one record once it ends.
+ * — an item import run, a saved-wallet sweep, a balance heal. Activity paints
+ * each as a single row with a bar; the rows the job writes carry its id as
+ * `sendGroupId` and fold into one record once it ends.
  */
 import { createActor, type Actor } from 'xstate'
 import {
@@ -132,6 +132,13 @@ const TITLES: Readonly<Record<WalletJobKind, Readonly<Record<WalletJobFace, stri
     done: 'Import complete',
     stopped: 'Import stopped',
     failed: 'Import failed',
+  },
+  'wallet-sweep': {
+    running: 'Sweeping saved wallet',
+    waiting: 'Sweep waiting',
+    done: 'Sweep complete',
+    stopped: 'Sweep paused',
+    failed: 'Sweep failed',
   },
   'balance-heal': {
     running: 'Healing balance',

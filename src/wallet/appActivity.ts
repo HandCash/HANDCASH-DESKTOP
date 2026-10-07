@@ -21,6 +21,8 @@ import {
   scheduleActivityLedgerRefresh,
   subscribeActivityLedger,
 } from "./activityLedger";
+import { isItemMigrateTxDescription, jobOfTxid } from "./activityJobIndex";
+import { JOB_GROUP_PREFIX } from "../machines/walletJobMachine";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
 
@@ -2822,6 +2824,43 @@ let projection: {
   rows: ActivityEntry[];
 } | null = null;
 
+/** Migrate transactions further apart than this were separate import runs. */
+const IMPORT_RUN_GAP_MS = 15 * 60_000;
+
+/**
+ * Item legs of import migrates whose stored rows are gone (trimmed, or never
+ * written by an older build), told as imports and folded under their job. The
+ * job index names the run; a migrate it never saw joins the run of the migrate
+ * before it unless they are an import gap apart.
+ */
+function foldBareImportLegs(rows: readonly ActivityEntry[]): ActivityEntry[] {
+  const legs = rows
+    .filter((row) => row.item && row.kind === "earned" && isItemMigrateTxDescription(row.note))
+    .sort((a, b) => a.at - b.at);
+  if (legs.length === 0) return [...rows];
+  const groupOf = new Map<string, string>();
+  let run: string | null = null;
+  let lastAt = Number.NEGATIVE_INFINITY;
+  for (const leg of legs) {
+    const txid = leg.txid!;
+    if (groupOf.has(txid)) continue;
+    const job = jobOfTxid(txid);
+    if (job) {
+      groupOf.set(txid, job);
+    } else {
+      if (!run || leg.at - lastAt > IMPORT_RUN_GAP_MS) {
+        run = `${JOB_GROUP_PREFIX}item-import:ledger-${leg.at.toString(36)}`;
+      }
+      groupOf.set(txid, run);
+    }
+    lastAt = leg.at;
+  }
+  return rows.map((row) => {
+    const group = row.item && row.kind === "earned" ? groupOf.get(row.txid!) : undefined;
+    return group ? { ...row, note: IMPORTED_COLLECTABLE_NOTE, sendGroupId: group } : row;
+  });
+}
+
 /**
  * Stored rows plus every settled ledger row no stored row covers. Archived
  * rows cover too — that is how a ledger row is hidden.
@@ -2837,7 +2876,7 @@ function projectedActivity(): ActivityEntry[] {
   const shown = ledger.filter(
     (row) => !coverage.covers(row) && !isGhostTxSuppressed(row.txid!)
   );
-  const rows = shown.length > 0 ? [...stored, ...shown] : stored;
+  const rows = shown.length > 0 ? [...stored, ...foldBareImportLegs(shown)] : stored;
   projection = { stored, ledger, rows };
   return rows;
 }
@@ -2852,7 +2891,8 @@ export function getActivityById(id: string): ActivityEntry | null {
   if (stored) return stored;
   const ledger = ledgerActivityById(id);
   if (!ledger) return null;
-  if (projectedActivity().includes(ledger)) return ledger;
+  const shown = projectedActivity().find((row) => row.id === id);
+  if (shown) return shown;
   // An annotation can replace a ledger-only row while its details are open.
   // Keep that navigation ID and resolve the matching leg, never a sibling.
   const rows = readAll().filter((row) => row.txid?.toLowerCase() === ledger.txid && row.kind === ledger.kind);

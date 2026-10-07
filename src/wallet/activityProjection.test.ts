@@ -17,6 +17,8 @@ vi.mock('./walletRuntime', async (importOriginal) => ({
 }))
 
 import { publishActivityLedger, resetActivityLedgerForTests } from './activityLedger'
+import { itemMigrateTxDescription, noteJobTxids, resetActivityJobIndexForTests } from './activityJobIndex'
+import { composeActivityRecords } from './activityRecords'
 import {
   exportAllActivity,
   getActivityById,
@@ -55,6 +57,7 @@ describe('Activity over the wallet ledger', () => {
     vi.useRealTimers()
     store.clear()
     resetActivityLedgerForTests()
+    resetActivityJobIndexForTests()
   })
 
   it('shows settled history the store no longer holds, to display only', () => {
@@ -171,6 +174,44 @@ describe('Activity over the wallet ledger', () => {
       [tx(6), 2_500, 'Sent'],
       [tx(5), 1_500, 'Received Fox'],
     ])
+  })
+
+  it('folds the bare legs of a trimmed import run under its job, as imports', () => {
+    const migrate = (n: number, at: number, vout: number) => ({
+      ...ledgerItem(n, `${tx(n)}.${vout}`, 'earned'),
+      at,
+      note: itemMigrateTxDescription(25, `${tx(90)}.0`),
+    })
+    noteJobTxids('job:item-import:abc', [tx(1), tx(2)])
+    publishActivityLedger('ns', [migrate(1, 1_000, 0), migrate(1, 1_000, 1), migrate(2, 2_000, 0), ledgerCoin(3, { at: 3_000 })])
+
+    const feed = listActivityFeed(10)
+    const legs = feed.filter((e) => e.item)
+    expect(legs.map((e) => [e.sendGroupId, e.note])).toEqual(
+      Array.from({ length: 3 }, () => ['job:item-import:abc', 'Imported collectable']),
+    )
+    expect(getActivityById(`ledger:${tx(2)}:${tx(2)}.0`)).toMatchObject({ sendGroupId: 'job:item-import:abc' })
+    expect(composeActivityRecords(feed).map((r) => r.entries.length).sort()).toEqual([1, 3])
+  })
+
+  it('groups an older build’s migrates into runs by the gap between them', () => {
+    const migrate = (n: number, at: number) => ({
+      ...ledgerItem(n, `${tx(n)}.0`, 'earned'),
+      at,
+      note: itemMigrateTxDescription(n === 3 ? 1 : 25, `${tx(90)}.0`),
+    })
+    const minute = 60_000
+    publishActivityLedger('ns', [migrate(1, 0), migrate(2, 5 * minute), migrate(3, 9 * minute), migrate(4, 60 * minute)])
+
+    const groups = listActivityFeed(10).map((e) => e.sendGroupId)
+    expect(new Set(groups.slice(1)).size).toBe(1)
+    expect(groups[0]).not.toBe(groups[1])
+    expect(groups.every((g) => g?.startsWith('job:item-import:ledger-'))).toBe(true)
+  })
+
+  it('leaves a ledger collectable that was not an import migrate alone', () => {
+    publishActivityLedger('ns', [{ ...ledgerItem(1, `${tx(1)}.0`, 'earned'), note: 'Received collectable' }])
+    expect(listActivityFeed(10)[0]).not.toHaveProperty('sendGroupId')
   })
 
   it('sheds only rows the ledger still shows when storage is full', () => {

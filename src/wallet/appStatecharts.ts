@@ -903,7 +903,10 @@ const WALLET_JOB = `stateDiagram-v2
   running : one Activity row · determinate bar when total is known · indeterminate when not
   waiting : held outside the job · spent fee coin clearing · wallet sync lock
   note right of running
-    Kinds: item-import (importQueue run) · balance-heal (manual heal pass).
+    Kinds: item-import (importQueue run) · wallet-sweep (Sweep everything)
+      · balance-heal (manual heal pass).
+    Item rows are written as each transaction broadcasts,
+      before the ledger can show the migrate unannotated.
     The job id is the sendGroupId of every row it writes;
     those rows stay hidden while the job row shows,
     then fold into one record (fold kind job).
@@ -1578,7 +1581,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'walletJob',
     label: 'Wallet job',
-    caption: 'walletJobMachine — one long job (import run, balance heal) · one Activity row with a bar · rows fold under its id',
+    caption: 'walletJobMachine — one long job (import run, sweep, balance heal) · one Activity row with a bar · rows fold under its id',
     source: WALLET_JOB,
   },
   {

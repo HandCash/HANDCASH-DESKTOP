@@ -1,5 +1,7 @@
+import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
+import { beginWalletJob, type WalletJobHandle } from '../walletJobs'
 import {
   migratePhraseItemsBatch,
   peekPhraseItemMigrateCursor,
@@ -28,6 +30,8 @@ import { loadImportedSources, updateImportedSource, type ImportedSource, type Sw
  * stays at the source and is reported with its reason. Each asset class uses
  * the path this wallet already trusts for it — legacy cash sweep, the item
  * migrate (BRC-150 remittance, durable resume cursor), and the token sweep.
+ * The whole sweep is one wallet job: one Activity row with a bar, and its item
+ * rows fold into one record.
  */
 
 /** Tips per item transaction; matches the preview's fee estimate. */
@@ -69,9 +73,39 @@ export async function sweepImportedSource(args: {
 
   const startedAt = Date.now()
   const plan = planSweep(source)
+  const job = beginWalletJob({ kind: 'wallet-sweep', identityKey: active.identityKey, startedAt })
+  try {
+    const { summary, paused } = await runSweep(args, source, plan, active, job)
+    if (paused) job.stop(paused)
+    else job.finish(`${summary.items.toLocaleString()} collectable(s) moved`)
+    appendAppLog(
+      'info',
+      `[import] sweep done ${Date.now() - startedAt}ms kind=${source.kind} cash=${summary.cashSats}sats items=${summary.items}` +
+        ` tokens=${summary.tokens.length} failed=${summary.failed}${paused ? ' paused' : ''}`,
+    )
+    return summary
+  } catch (err) {
+    job.fail(err instanceof Error ? err.message : String(err))
+    throw err
+  }
+}
+
+async function runSweep(
+  args: Parameters<typeof sweepImportedSource>[0],
+  source: ImportedSource,
+  plan: SweepPlan,
+  active: ActiveWallet,
+  job: WalletJobHandle,
+): Promise<{ summary: SweepSummary; paused: string | null }> {
   const deriver = keyDeriverFor(source.secret)
-  const report = (phase: SweepProgress['phase'], message: string) =>
+  // A capped count is a floor, not an estimate: the bar runs indeterminate then.
+  const itemTotal = plan.items.some((h) => h.itemCountCapped)
+    ? null
+    : plan.items.reduce((sum, h) => sum + h.itemCount, 0) || null
+  const report = (phase: SweepProgress['phase'], message: string, itemsDone = 0) => {
     args.onProgress?.({ phase, message })
+    job.progress(itemsDone, phase === 'items' ? itemTotal : null, message)
+  }
   const stop = () => args.shouldStop?.() === true
   const notes: string[] = []
   // Listed tips are counted per output by the token sweep itself.
@@ -80,7 +114,8 @@ export async function sweepImportedSource(args: {
   let cashSats = 0
   let items = 0
   let failed = 0
-  let outOfFunds = false
+  /** Why the sweep stopped short and resumes on the next one; null when it ran out of work. */
+  let paused: string | null = null
   const tokens: SweepSummary['tokens'] = []
 
   const candidateFor = (h: AddressHoldings): PhraseCandidate | null => {
@@ -125,7 +160,7 @@ export async function sweepImportedSource(args: {
     )
   } else {
     for (const h of itemOrder) {
-      if (stop() || outOfFunds) break
+      if (stop() || paused) break
       const candidate = candidateFor(h)
       if (!candidate) continue
       let barren = 0
@@ -137,18 +172,23 @@ export async function sweepImportedSource(args: {
           batchSize: 50,
           itemsPerTx: IMPORT_ITEMS_PER_TX,
           ...(h.itemCountCapped ? {} : { expectedItemCount: h.itemCount }),
+          activityGroup: job.id,
         })
-        report('items', `Moving collectables from ${h.label}… ${(items + batch.moved).toLocaleString()} so far`)
+        report(
+          'items',
+          `Moving collectables from ${h.label}… ${(items + batch.moved).toLocaleString()} so far`,
+          items + batch.moved,
+        )
         if (batch.done || batch.stopped) {
           items += batch.moved
           failed += batch.failed
           held = addHeld(held, 'notCollectable', batch.skipped)
           if (batch.stopped === 'funds') {
-            outOfFunds = true
-            notes.push('This wallet ran low on BSV for item fees. Add funds and sweep again — it resumes.')
+            paused = 'This wallet ran low on BSV for item fees. Add funds and sweep again — it resumes.'
+            notes.push(paused)
           } else if (batch.stopped === 'stale-funding') {
-            outOfFunds = true
-            notes.push('A spent fee coin is being cleared from this wallet. Sweep again in a moment — it resumes.')
+            paused = 'A spent fee coin is being cleared from this wallet. Sweep again in a moment — it resumes.'
+            notes.push(paused)
           }
           break
         }
@@ -167,10 +207,10 @@ export async function sweepImportedSource(args: {
   }
 
   for (const h of plan.tokens) {
-    if (stop() || outOfFunds) break
+    if (stop() || paused) break
     const candidate = candidateFor(h)
     if (!candidate) continue
-    report('tokens', `Moving tokens from ${h.label}…`)
+    report('tokens', `Moving tokens from ${h.label}…`, items)
     const result = await sweepTokensFromAddress({
       active,
       spendKey: deriver.privateKeyAt(h.path),
@@ -187,16 +227,19 @@ export async function sweepImportedSource(args: {
     failed += result.failed
     notes.push(...result.errors.slice(0, 2))
     if (result.stopped === 'funds') {
-      outOfFunds = true
-      notes.push('This wallet ran low on BSV for token fees. Add funds and sweep again.')
+      paused = 'This wallet ran low on BSV for token fees. Add funds and sweep again.'
+      notes.push(paused)
     }
   }
 
   if (cashSats > 0 || items > 0 || tokens.length > 0) {
-    report('refresh', 'Checking the chain…')
+    report('refresh', 'Checking the chain…', items)
     await refreshAfterPhraseItemMigrate()
   }
-  if (stop()) notes.push('Paused — sweep again to continue.')
+  if (stop()) {
+    paused ??= 'Paused — sweep again to continue.'
+    notes.push('Paused — sweep again to continue.')
+  }
 
   const summary: SweepSummary = {
     at: Date.now(),
@@ -209,9 +252,5 @@ export async function sweepImportedSource(args: {
   }
   await clearImportItems(source.id)
   await updateImportedSource(source.id, { lastSweep: summary })
-  appendAppLog(
-    'info',
-    `[import] sweep done ${Date.now() - startedAt}ms kind=${source.kind} cash=${cashSats}sats items=${items} tokens=${tokens.length} failed=${failed}`,
-  )
-  return summary
+  return { summary, paused }
 }

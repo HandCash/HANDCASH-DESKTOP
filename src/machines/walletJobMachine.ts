@@ -4,15 +4,16 @@ import { assign, setup, type SnapshotFrom } from 'xstate'
  * Chart: walletJob
  * States: running ⇄ waiting → done | stopped | failed
  *
- * One long wallet job — an item import run, a balance heal — that spans many
- * transactions or chain reads and keeps going after its screen closes.
+ * One long wallet job — an item import run, a saved-wallet sweep, a balance
+ * heal — that spans many transactions or chain reads and keeps going after
+ * its screen closes.
  * `actionLifecycleMachine` is one transaction's phases; a job is the work
  * around many of them, so it carries a count instead of a phase.
  *
  * Activity paints the job as one row with a bar while it runs. When it ends,
  * the durable rows it wrote fold into one record under the job's group id.
  */
-export type WalletJobKind = 'item-import' | 'balance-heal'
+export type WalletJobKind = 'item-import' | 'wallet-sweep' | 'balance-heal'
 
 /** Job ids start here; they double as the `sendGroupId` of every row a job writes. */
 export const JOB_GROUP_PREFIX = 'job:'

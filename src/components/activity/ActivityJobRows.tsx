@@ -18,11 +18,13 @@ import {
 
 const JOB_ICONS: Readonly<Record<WalletJobKind, ReactNode>> = {
   'item-import': <CollectablesIcon size={18} />,
+  'wallet-sweep': <CollectablesIcon size={18} />,
   'balance-heal': <RefreshIcon size={18} />,
 }
 
 const JOB_SETTING: Readonly<Record<WalletJobKind, 'import' | 'wallet-health'>> = {
   'item-import': 'import',
+  'wallet-sweep': 'import',
   'balance-heal': 'wallet-health',
 }
 
@@ -40,7 +42,7 @@ export function useWalletJobs(): readonly WalletJob[] {
   )
 }
 
-/** One long wallet job — an import run, a balance heal — as a single row with a bar. */
+/** One long wallet job — an import run, a sweep, a balance heal — as a single row with a bar. */
 export function WalletJobRow({ job }: { job: WalletJob }) {
   const title = walletJobTitle(job)
   const count = walletJobCount(job)

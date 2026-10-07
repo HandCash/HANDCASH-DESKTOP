@@ -190,6 +190,13 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 2,
   }),
+  activityJobTxids: defineStorage({
+    key: 'handcash.activityJobTxids.v1',
+    owner: 'activity',
+    scope: 'wallet',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   collectablesList: defineStorage({
     key: 'handcash.collectables.list.v1',
     owner: 'collectables',

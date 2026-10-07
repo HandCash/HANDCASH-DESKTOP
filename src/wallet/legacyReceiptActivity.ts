@@ -13,6 +13,7 @@ import {
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
+import { noteJobTxids } from './activityJobIndex'
 import { contentUrlForOrigin } from './oneSatImport'
 import type { LegacyFundingReceipt } from './legacyScan'
 import type { Chain } from './vault'
@@ -59,6 +60,7 @@ export function recordMigratedItemActivity(
   opts?: { groupId?: string | null },
 ): void {
   const groupId = opts?.groupId?.trim()
+  if (groupId) noteJobTxids(groupId, items.map((item) => item.sweepTxid))
   for (const item of items) {
     const op = item.outpoint.trim().toLowerCase()
     if (!op || hasSettledActivityItemOutpoint(op)) continue
