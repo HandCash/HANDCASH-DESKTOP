@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.484] - 2026-10-07
+
+### Diagnostics
+- The triage extractor, Jev questions and Jev call moved to `scripts/triage/core.mjs`, which has no Node built-ins; `scripts/triage-logs.mjs` keeps the CLI, the local sources and the printed report. Output is byte-identical (`--state` diffed on the latest Android uploads). The BRC-CLOUD live log dashboard (`/logs-dashboard`, sign in with a wallet identity proof) runs this same core, so every fact added here reaches it on the next cloud deploy. No app changes.
+
 ## [1.3.483] - 2026-10-07
 
 ### Fixed
