@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.494] - 2026-10-07
+
+### Fixed
+- **Imported items get their merkle proofs again, so each import transaction stops re-reading every earlier one.** Since 1.3.492, import transactions are created with `noSend`. When Arcade accepts one, the pin set the transaction to unproven but left its proof request at `nosend`. The Toolbox's per-block proof task never reads `nosend`; only the hourly-to-weekly no-send check does. So those transactions stayed unproven for days. On every createAction the Toolbox walks back through unproven ancestors and merges each one's stored input BEEF (0.3–3 MB per migrate). On the phone, planning a 5-tip transaction took 13–48 s, and once 381 s. Planning a 100-tip transaction took 19–21 s when those ancestors were proven. A send the network has taken now moves its proof request to `unmined`, as the Toolbox's own `retireNoSendWithoutProof` does. Unlock also moves requests left over from older builds, 10 at a time and only those Arcade accepted or saw land. Log: `[stale-output] proof request <txid> nosend → unmined`.
+- **The unlock landing replay waits while an import runs.** The replay was added in 1.3.486: Arcade fate checks for every pinned send plus a rescue pass over unproven outgoing transactions. It ran for five minutes (71 pins and 18 rescues) on the same Toolbox storage lock as the import's createAction.
+
+### Changed
+- **Recovered items move 100 per transaction again, and 1.3.493's move to 25 is reverted.** Most of each transaction's cost is fixed. On the phone, 100 tips (1.3.469) and 34 tips (1.3.483) per transaction cost about 0.5 s a tip. Bundles of 5–15 tips cost 3.5–5.6 s a tip. One first transaction of 25 replaces the 5/15 ramp, so the first items still land early without two extra transactions.
+
 ## [1.3.493] - 2026-10-07
 
 ### Changed

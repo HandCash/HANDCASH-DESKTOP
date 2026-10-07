@@ -70,6 +70,10 @@ vi.mock('./walletCoordinator', () => ({ shouldYieldChainIngestToSpend: () => fal
 vi.mock('./pendingMinerOutbox', () => ({ removePendingMinerSubmit: vi.fn() }))
 vi.mock('./ghostTxSuppress', () => ({ rememberGhostTx: vi.fn() }))
 vi.mock('./staleOutputRelease', () => ({
+  promotePinnedNoSendProofRequests: async () => {
+    calls.push('promote-nosend')
+    return 0
+  },
   failUnsentLocalTx: async (txid: string) => {
     calls.push(`fail:${txid.slice(0, 4)}`)
     return true
@@ -132,12 +136,30 @@ describe('arcadeLanding', () => {
     vi.useRealTimers()
   })
 
+  it('holds the unlock replay until a running import finishes', async () => {
+    const progress = await import('./walletProgress')
+    progress.resetWalletProgressForTests()
+    progress.bindWalletProgressAccount({ identityKey: '02ab', accountIndex: 0 })
+    progress.startWalletProgress({ kind: 'item-import', phase: 'importing-items', identityKey: '02ab' })
+    const { scheduleUnlockLandingPass } = await import('./arcadeLanding')
+    scheduleUnlockLandingPass(runtime)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(calls).toEqual([])
+
+    progress.finishWalletProgress('done', { identityKey: '02ab' })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(calls[0]).toBe('promote-nosend')
+    expect(calls).toContain(`fail:${DEAD.slice(0, 4)}`)
+    progress.resetWalletProgressForTests()
+  })
+
   it('unlock fails dead cheques parent-first, hides dead coins after the fail, and toasts once', async () => {
     const { scheduleUnlockLandingPass, txLanded } = await import('./arcadeLanding')
     scheduleUnlockLandingPass(runtime)
     await vi.advanceTimersByTimeAsync(30_000)
 
     expect(calls).toEqual([
+      'promote-nosend',
       `reject:${DEAD.slice(0, 4)}`,
       `fail:${DEAD.slice(0, 4)}`,
       `hide:${DEAD_INPUT}@${SPENDER.slice(0, 4)}`,

@@ -24,12 +24,12 @@ import { itemMigrateStopPauses } from '../wallet/itemMigrateRun'
  */
 
 /** One full item transaction per call (`MAX_ITEMS_PER_MIGRATE_TX`). */
-export const IMPORT_CHUNK = 25
+export const IMPORT_CHUNK = 100
 /**
- * The first chunks of a run are smaller so the first items land sooner, then
- * it moves `IMPORT_CHUNK` at a time.
+ * One smaller first transaction so the first items land sooner, then
+ * `IMPORT_CHUNK` at a time. Every extra step costs a whole action.
  */
-export const IMPORT_RAMP = [5, 15] as const
+export const IMPORT_RAMP = [25] as const
 export const IMPORT_PAUSE_MS = 8_000
 export const IMPORT_PAUSES = 2
 

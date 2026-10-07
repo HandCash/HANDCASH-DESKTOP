@@ -116,6 +116,24 @@ async function landingEvidence(
   return { onChain, spentElsewhere, rejectedParents }
 }
 
+const IMPORT_POLL_MS = 2_000
+const IMPORT_KINDS = new Set(['item-import', 'phrase-import', 'one-sat-import'])
+
+/**
+ * Hold the unlock replay while an import runs. Its explorer reads and storage
+ * walks queue on the same Toolbox lock as every migrate's createAction, which
+ * waited out a five-minute replay of week-old sends.
+ */
+async function waitForImportsToSettle(runtime: WalletRuntime): Promise<boolean> {
+  const { getWalletProgress } = await import('./walletProgress')
+  for (;;) {
+    if (!runtimeIsCurrent(runtime)) return false
+    const progress = getWalletProgress()
+    if (progress.status !== 'running' || !progress.kind || !IMPORT_KINDS.has(progress.kind)) return true
+    await delay(IMPORT_POLL_MS)
+  }
+}
+
 async function waitForSpendRegion(): Promise<boolean> {
   const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
   const deadline = Date.now() + SPEND_WAIT_MAX_MS
@@ -391,7 +409,7 @@ async function unprovenOutgoingSends(runtime: WalletRuntime): Promise<Array<{ tx
  * the watch nor this pass's pins could ever find them again.
  */
 async function rescueUnfollowedSends(runtime: WalletRuntime, owner?: BoundAccountKeyScope): Promise<void> {
-  if (!runtimeIsCurrent(runtime)) return
+  if (!(await waitForImportsToSettle(runtime))) return
   const started = Date.now()
   let unproven: Array<{ txid: string; at: number }>
   try {
@@ -426,7 +444,7 @@ async function rescueUnfollowedSends(runtime: WalletRuntime, owner?: BoundAccoun
   const tally = { landed: 0, followed: 0, reposted: 0, accepted: 0, unbuilt: 0, left: 0 }
   for (const [i, row] of candidates.entries()) {
     if (i > 0) await delay(UNLOCK_GAP_MS)
-    if (!runtimeIsCurrent(runtime)) return
+    if (!(await waitForImportsToSettle(runtime))) return
     const arcade = toLandingArcade(await fetchArcadeTxFate(chain, row.txid), arcadeStatusLanded)
     const onChain =
       arcade.kind === 'unknown' ? await txExistsOnChain(row.txid, chain).catch(() => null) : null
@@ -498,7 +516,9 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
       if (!runtimeIsCurrent(runtime)) return
       await delay(SPEND_POLL_MS * 4)
     }
-    if (!runtimeIsCurrent(runtime)) return
+    if (!(await waitForImportsToSettle(runtime))) return
+    const { promotePinnedNoSendProofRequests } = await import('./staleOutputRelease')
+    await promotePinnedNoSendProofRequests()
     const started = Date.now()
     const { listArcadeSubmitContacts, txIsArcadeRejected } = await import('./arcadeSubmitGuard')
     const now = Date.now()
@@ -515,7 +535,7 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
     const tally = { landed: 0, dead: 0, waiting: 0 }
     for (const [i, pin] of pins.entries()) {
       if (i > 0) await delay(UNLOCK_GAP_MS)
-      if (!runtimeIsCurrent(runtime)) return
+      if (!(await waitForImportsToSettle(runtime))) return
       const round = await checkLanding({
         txid: pin.txid,
         runtime,

@@ -55,7 +55,7 @@ describe('importQueueMachine', () => {
     ])
     expect(ports.prefetch.mock.calls[0]![0]).toEqual({
       sourceId: 'a',
-      outpoints: items(IMPORT_RAMP[0] + 1, IMPORT_RAMP[1]).map((i) => i.outpoint),
+      outpoints: items(IMPORT_RAMP[0] + 1, IMPORT_CHUNK + 1 - RAMP_ITEMS).map((i) => i.outpoint),
     })
     expect(idle.context.reports).toMatchObject({
       a: { title: `${IMPORT_CHUNK + 1} items imported` },
@@ -172,10 +172,9 @@ describe('importQueueMachine', () => {
   })
 
   it('starts a run small so the first items land quickly, then moves full chunks', () => {
-    expect([0, 4, 5, 19, 20, 44, 45, 5_000].map(importChunkSize)).toEqual([5, 5, 15, 15, IMPORT_CHUNK, IMPORT_CHUNK, IMPORT_CHUNK, IMPORT_CHUNK])
+    expect([0, 24, 25, 124, 5_000].map(importChunkSize)).toEqual([25, 25, IMPORT_CHUNK, IMPORT_CHUNK, IMPORT_CHUNK])
     const queue = Array.from({ length: 300 }, (_, i) => ({ sourceId: 'a', identityKey: 'k', outpoint: op(i) }))
-    expect(nextChunk(queue, { a: { total: 300 } })).toHaveLength(5)
-    expect(nextChunk(queue.slice(5), { a: { total: 300 } })).toHaveLength(15)
-    expect(nextChunk(queue.slice(20), { a: { total: 300 } })).toHaveLength(IMPORT_CHUNK)
+    expect(nextChunk(queue, { a: { total: 300 } })).toHaveLength(25)
+    expect(nextChunk(queue.slice(25), { a: { total: 300 } })).toHaveLength(IMPORT_CHUNK)
   })
 })

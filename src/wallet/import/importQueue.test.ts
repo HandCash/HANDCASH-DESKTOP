@@ -22,6 +22,7 @@ import {
   watchImportSource,
 } from './importQueue'
 import { importItems } from './items'
+import { IMPORT_RAMP } from '../../machines/importQueueMachine'
 
 const op = (n: number) => `${n.toString(16).padStart(64, '0')}_0`
 const items = (count: number) => Array.from({ length: count }, (_, i) => ({ outpoint: op(i + 1), name: null }))
@@ -105,9 +106,9 @@ describe('importQueue', () => {
     finishWalletProgress('done', { identityKey: 'id1' })
     release()
     await vi.waitFor(() => expect(importItems).toHaveBeenCalledTimes(3))
-    expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 20, total: 250 })
-    // 250 items move as 5, 15, then ten chunks of 25 or fewer.
-    await releaseThrough(release, 12, 3)
+    expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 125, total: 250 })
+    // 250 items move as 25, 100, 100, 25.
+    await releaseThrough(release, 4, 3)
     await vi.waitFor(() => expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'done' }))
   })
 
@@ -119,8 +120,8 @@ describe('importQueue', () => {
     onProgress!(1)
     expect(listWalletJobs('id1')[0]).toMatchObject({ progress: { value: 2, max: 30 } })
     expect(getWalletProgress()).toMatchObject({ current: 2, total: 30 })
-    // 30 items move as 5, 15, 10.
-    await releaseThrough(release, 3)
+    // 30 items move as 25, 5.
+    await releaseThrough(release, 2)
     await vi.waitFor(() => expect(listWalletJobs('id1')[0]).toMatchObject({ face: 'done', progress: { value: 30, max: 30 } }))
   })
 })
@@ -163,7 +164,7 @@ describe('importItemsThroughQueue', () => {
     stopping = true
     await releaseThrough(release, 1)
     const outcome = await done
-    expect(outcome.moved).toBe(5)
+    expect(outcome.moved).toBe(IMPORT_RAMP[0])
     expect(importItems).toHaveBeenCalledTimes(1)
   })
 

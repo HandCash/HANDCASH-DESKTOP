@@ -1038,6 +1038,99 @@ async function sealThenKeepSignedTx(
   // Seal skips promotion when it could not read the inputs; this second pass is
   // idempotent and is the only one that runs in that case.
   await keepChangeOfSignedTx(id, undefined, true, signedBody);
+  await releaseNoSendProofRequest(id);
+}
+
+type ProofRequestRow = { provenTxReqId?: number; txid?: string; status?: string };
+type ProofRequestStorage = {
+  findProvenTxReqs?: (args: unknown) => Promise<ProofRequestRow[] | undefined>;
+  updateProvenTxReq?: (id: number, update: Record<string, unknown>) => Promise<unknown>;
+};
+
+/**
+ * The Toolbox's `retireNoSendWithoutProof`, for a send the network took.
+ *
+ * `TaskCheckForProofs` reads `unmined` / `unknown` / `sending` / `callback` /
+ * `unconfirmed` requests every block and never `nosend`; only
+ * `TaskCheckNoSends` does, hourly to weekly by age. A pinned `nosend` row
+ * stayed unproven for days, and `mergeAllocatedChangeBeefs` recurses through
+ * every unproven ancestor's stored input BEEF, so each later createAction
+ * re-walked every migrate behind its change.
+ */
+async function promoteNoSendRequest(sp: ProofRequestStorage, txid: string): Promise<boolean> {
+  if (typeof sp.findProvenTxReqs !== "function" || typeof sp.updateProvenTxReq !== "function") return false;
+  const rows = await sp.findProvenTxReqs({ partial: { txid }, paged: { limit: 1, offset: 0 } });
+  const req = rows?.[0];
+  if (req?.status !== "nosend" || typeof req.provenTxReqId !== "number") return false;
+  await sp.updateProvenTxReq(req.provenTxReqId, { status: "unmined", wasBroadcast: true });
+  return true;
+}
+
+async function releaseNoSendProofRequest(id: string): Promise<void> {
+  const storage = getActiveWallet()?.wallet?.storage;
+  if (!storage?.runAsStorageProvider) return;
+  try {
+    const promoted = await storage.runAsStorageProvider((sp) =>
+      promoteNoSendRequest(sp as unknown as ProofRequestStorage, id),
+    );
+    if (promoted) console.info(`[stale-output] proof request ${id.slice(0, 12)} nosend → unmined`);
+  } catch (err) {
+    console.warn("[stale-output] proof request handoff skipped", id.slice(0, 12), err);
+  }
+}
+
+/** Each request row carries its raw tx and input BEEF (up to ~3MB for a migrate). */
+const NOSEND_BACKFILL_PAGE = 10;
+const NOSEND_BACKFILL_MAX_PAGES = 40;
+
+/**
+ * Hand every network-accepted `nosend` proof request to the per-block proof
+ * task once per unlock. Rows pinned before the handoff existed are otherwise
+ * left to `TaskCheckNoSends`. Requests nothing has accepted stay `nosend`:
+ * an in-flight listing or batch is not ours to advance.
+ */
+export async function promotePinnedNoSendProofRequests(): Promise<number> {
+  const storage = getActiveWallet()?.wallet?.storage;
+  if (!storage?.runAsStorageProvider) return 0;
+  const started = Date.now();
+  const { txLanded } = await import("./landedTx");
+  let promoted = 0;
+  let offset = 0;
+  try {
+    for (let page = 0; page < NOSEND_BACKFILL_MAX_PAGES; page += 1) {
+      const step = await storage.runAsStorageProvider(async (activeSp) => {
+        const sp = activeSp as unknown as ProofRequestStorage;
+        if (typeof sp.findProvenTxReqs !== "function" || typeof sp.updateProvenTxReq !== "function") {
+          return { read: 0, moved: 0 };
+        }
+        const rows =
+          (await sp.findProvenTxReqs({
+            partial: { status: "nosend" },
+            paged: { limit: NOSEND_BACKFILL_PAGE, offset },
+          })) ?? [];
+        let moved = 0;
+        for (const row of rows) {
+          const txid = normalizedTxidOrNull(row.txid ?? "");
+          if (!txid || typeof row.provenTxReqId !== "number" || row.status !== "nosend") continue;
+          if (!txHadArcadeSubmitContact(txid) && !txLanded(txid)) continue;
+          await sp.updateProvenTxReq(row.provenTxReqId, { status: "unmined", wasBroadcast: true });
+          moved += 1;
+        }
+        return { read: rows.length, moved };
+      });
+      promoted += step.moved;
+      // Promoted rows leave the status index; the rest are skipped next page.
+      offset += step.read - step.moved;
+      if (step.read < NOSEND_BACKFILL_PAGE) break;
+      await yieldToUi();
+    }
+  } catch (err) {
+    console.warn("[stale-output] proof request backfill stopped", err);
+  }
+  if (promoted > 0) {
+    console.info(`[stale-output] proof requests nosend → unmined count=${promoted} done ${Date.now() - started}ms`);
+  }
+  return promoted;
 }
 
 type LocalTxRowRef = { transactionId: number; status: string };

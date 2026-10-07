@@ -14,12 +14,12 @@
 import { Beef, type BEEF } from '@bsv/sdk'
 
 /**
- * Tips per transaction: one import chunk. The Toolbox's storage pass costs
- * about the same for any bundle, so very small bundles repeat it for little;
- * signing costs 1–2 s per tip on a phone and holds the wallet the whole time,
- * so very large ones lock it for minutes. 25 keeps each hold near a minute.
+ * Tips per transaction: one import chunk. Each action pays a near-fixed Toolbox
+ * cost (its storage pass walks the input BEEF of every unconfirmed migrate
+ * behind the change it spends), so throughput follows tips per action: on a
+ * phone 100 or 34 tips ran at ~0.5 s a tip, 5–15 at 3.5–5.6 s.
  */
-export const MAX_ITEMS_PER_MIGRATE_TX = 25
+export const MAX_ITEMS_PER_MIGRATE_TX = 100
 
 /**
  * Bytes one migrate posts to Arcade. Arcade validates Extended Format: the
