@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.466] - 2026-10-06
+
+### Fixed
+
+- **Imports no longer leave a "Migrate 25 ordinals from phrase" row per transaction in Activity.** Each import transaction now writes its Activity rows the moment it broadcasts, so the import shows as one row with a bar while it runs and one "Imported …" record when it ends. Imports from older versions, and imports whose rows were trimmed to save space, fold the same way: every migrate of one run becomes one record.
+- **Sweep everything is one Activity row too.** A sweep of a saved wallet shows a single row with a bar (a loading strip while the count is unknown) and its collectables fold into one record; a sweep that runs out of BSV or is stopped shows as paused.
+
 ## [1.3.465] - 2026-10-06
 
 ### Changed
