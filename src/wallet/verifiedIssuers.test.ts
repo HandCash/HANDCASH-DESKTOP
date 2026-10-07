@@ -6,6 +6,7 @@ import {
   refreshVerifiedIssuers,
   resetVerifiedIssuersForTests,
   verifiedIssuerFor,
+  verifiedIssuersGeneration,
   verifiedIssuersMessage,
   verifyVerifiedIssuerList,
   type VerifiedIssuer,
@@ -90,6 +91,16 @@ describe('refreshVerifiedIssuers', () => {
     await refreshVerifiedIssuers(fetchImpl, 'https://cloud.test')
     expect(verifiedIssuerFor(entry.bapId)).toBeNull()
     expect(listedVerifiedIssuers()).toEqual([])
+  })
+
+  it('leaves the generation alone when the refetched list is the one already held', async () => {
+    const entry = { bapId: bapId(6), name: 'Studio' }
+    const fetchImpl = serving(await signedList([entry]))
+    await refreshVerifiedIssuers(fetchImpl, 'https://cloud.test')
+    const generation = verifiedIssuersGeneration()
+    await refreshVerifiedIssuers(fetchImpl, 'https://cloud.test')
+    expect(verifiedIssuersGeneration()).toBe(generation)
+    expect(verifiedIssuerFor(entry.bapId)).toEqual(entry)
   })
 
   it('keeps the previous list when the server answers with a forged one', async () => {

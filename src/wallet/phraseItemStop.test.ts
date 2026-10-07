@@ -22,7 +22,10 @@ vi.mock('./spendGuard', () => ({
 vi.mock('./collectables', () => ({ noteIngestedItems: vi.fn() }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
 const waitForWalletRegionsIdle = vi.fn(async () => true)
-vi.mock('./walletCoordinator', () => ({ waitForWalletRegionsIdle: () => waitForWalletRegionsIdle() }))
+vi.mock('./walletCoordinator', () => ({
+  waitForWalletRegionsIdle: () => waitForWalletRegionsIdle(),
+  describeWalletCoordinator: () => ({ summary: 'active: recompose' }),
+}))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({
   refreshFromChain: (...a: unknown[]) => refreshFromChain(...a),

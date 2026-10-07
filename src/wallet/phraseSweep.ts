@@ -1122,7 +1122,13 @@ async function migrateOrdinalUnit(args: {
     }
     try {
       // A payment waits for at most the bundle in flight, never the whole import.
-      const yieldedMs = await yieldToForegroundSpends()
+      const yieldedMs = await yieldToForegroundSpends(undefined, {
+        onWaiting: (waitedMs, holders) =>
+          appendAppLog(
+            'info',
+            `[phrase-sweep] waiting for payments ${Math.round(waitedMs / 1000)}s — ${holders.join(', ').slice(0, 160)}`,
+          ),
+      })
       if (yieldedMs >= 250) {
         appendAppLog('info', `[phrase-sweep] yielded to payments done ${yieldedMs}ms`)
       }
@@ -1177,12 +1183,19 @@ async function migrateOrdinalUnit(args: {
       if (err instanceof Error && err.name === 'WalletCoordinatorAcquireTimeoutError') {
         if (busyWaits < WALLET_BUSY_WAITS) {
           busyWaits += 1
+          const held = (err as Error & { coordinatorSummary?: string }).coordinatorSummary ?? 'unknown'
           appendAppLog(
             'info',
-            `[phrase-sweep] wallet busy — waiting to send ${group.length} (${busyWaits}/${WALLET_BUSY_WAITS})`,
+            `[phrase-sweep] wallet busy — waiting to send ${group.length} (${busyWaits}/${WALLET_BUSY_WAITS}) held=${held.slice(0, 160)}`,
           )
-          const { waitForWalletRegionsIdle } = await import('./walletCoordinator')
-          await waitForWalletRegionsIdle(WALLET_BUSY_WAIT_MS)
+          const { describeWalletCoordinator, waitForWalletRegionsIdle } = await import('./walletCoordinator')
+          const waitStarted = Date.now()
+          const idle = await waitForWalletRegionsIdle(WALLET_BUSY_WAIT_MS)
+          appendAppLog(
+            'info',
+            `[phrase-sweep] busy wait done ${Date.now() - waitStarted}ms idle=${idle}` +
+              (idle ? '' : ` held=${describeWalletCoordinator().summary.slice(0, 160)}`),
+          )
           continue
         }
         out.stopped = 'busy'

@@ -2387,13 +2387,28 @@ const IMPORT_LINES = [
   ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)(?: tx=(\d+))?/],
   ['runDone', /^\[import\] run done (\d+)ms items=(\d+) answered=(\d+) sources=(\d+) outcome=(\S+)/],
   ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)(?: durable=(\d+))?(?: ef=(\d+))?(?: in=(\d+))?/],
-  ['busyWait', /^\[phrase-sweep\] wallet busy — waiting to send (\d+) \((\d+)\/(\d+)\)/],
+  ['busyWait', /^\[phrase-sweep\] wallet busy — waiting to send (\d+) \((\d+)\/(\d+)\)(?: held=(.{0,160}))?/],
+  ['busyWaitDone', /^\[phrase-sweep\] busy wait done (\d+)ms idle=(true|false)(?: held=(.{0,160}))?/],
+  ['waitingForPayments', /^\[phrase-sweep\] waiting for payments (\d+)s — (.{0,160})/],
   ['migrateTimed', /^\[phrase-sweep\] migrate ([0-9a-f]{12}) done (\d+)ms create=(\d+)ms sign=(\d+)ms(?: pack=(\d+)ms)? post=(\d+)ms/],
   ['yieldedToPayments', /^\[phrase-sweep\] yielded to payments done (\d+)ms/],
   ['abandonedSettled', /^\[phrase-sweep\] abandoned migrate of (\d+) settled (posted|failed|unknown)(?: ([0-9a-f]{12}))? after (\d+)ms/],
   ['busyStopped', /^\[phrase-sweep\] stopped: wallet still busy after (\d+) wait/],
   ['prefetch', /^\[import\] prefetch done (\d+)ms items=(\d+) unread=(\d+)/],
   ['outboxRefused', /^\[minerOutbox\] refusing durable body ([0-9a-f]{12}) (\S+)(?: bytes=(\d+))?/],
+  ['regionAbandoned', /^\[coordinator\] spend region abandoned \((\w+)\) after (\d+)s/],
+  ['regionWaiting', /^\[coordinator\] waiting to acquire (\S+) — (.{0,160})/],
+  ['priorityExpired', /^\[coordinator\] spend priority expired — "([^"]*)"/],
+  ['abandonedLate', /^\[coordinator\] abandoned spend (finished|failed) late/],
+  ['recompose', /^\[recompose\] (\S+): history=(\S+)/],
+  ['stageStill', /^\[import\] still (.+?) after (\d+)s/],
+  ['sweepFailed', /^\[import\] sweep failed after (\d+)ms: (.{0,160})/],
+  ['sweepJoined', /^\[import\] sweep joined the run in flight callers=(\d+)/],
+  ['outpointChunkFailed', /^\[import\] outpoint chunk failed (\d+)\+(\d+) after (\d+)ms/],
+  ['outpointGaveUp', /^\[import\] outpoint check gave up after (\d+) failed chunks; (\d+) left/],
+  ['savedListRead', /^\[import\] saved list prune\+read done (\d+)ms gone=(\d+) decided=(\d+)/],
+  ['phraseSweepOther', /^\[phrase-sweep\] (.{0,160})/],
+  ['importOther', /^\[import\] (.{0,160})/],
 ]
 
 /** Settings → Import steps in order, each with the numbers its log line carries. */
@@ -2448,13 +2463,27 @@ function legacyImportFacts(events) {
         : step === 'cashSweep' ? { coins: n(1), transactions: n(2), ms: n(3) }
         : step === 'cashBundleRefused' ? { coins: n(1), retrying: n(2) }
         : step === 'migratePackage' ? { txid: m[1], inputs: n(2), bytes: n(3), ...(m[4] ? { durable: n(4) } : {}), ...(m[5] ? { ef: n(5) } : {}), ...(m[6] ? { inputBeef: n(6) } : {}) }
-        : step === 'busyWait' ? { tips: n(1), wait: n(2), of: n(3) }
+        : step === 'busyWait' ? { tips: n(1), wait: n(2), of: n(3), held: m[4] ?? null }
+        : step === 'busyWaitDone' ? { waitedMs: n(1), idle: m[2] === 'true', held: m[3] ?? null }
+        : step === 'waitingForPayments' ? { waitedS: n(1), holders: m[2] }
+        : step === 'stageStill' ? { stage: m[1], afterS: n(2) }
+        : step === 'sweepFailed' ? { afterMs: n(1), reason: m[2] }
+        : step === 'sweepJoined' ? { callers: n(1) }
+        : step === 'outpointChunkFailed' ? { offset: n(1), size: n(2), chunkMs: n(3) }
+        : step === 'outpointGaveUp' ? { failedChunks: n(1), unchecked: n(2) }
+        : step === 'savedListRead' ? { ms: n(1), gone: n(2), decided: n(3) }
         : step === 'busyStopped' ? { waits: n(1) }
         : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), packMs: n(5), postMs: n(6) }
         : step === 'yieldedToPayments' ? { ms: n(1) }
         : step === 'abandonedSettled' ? { tips: n(1), outcome: m[2], txid: m[3] ?? null, waitMs: n(4) }
         : step === 'prefetch' ? { ms: n(1), items: n(2), unread: n(3) }
         : step === 'outboxRefused' ? { txid: m[1], reason: m[2], bytes: n(3) }
+        : step === 'regionAbandoned' ? { cause: m[1], afterS: n(2) }
+        : step === 'regionWaiting' ? { region: m[1], holders: m[2] }
+        : step === 'priorityExpired' ? { reason: m[1] }
+        : step === 'abandonedLate' ? { outcome: m[1] }
+        : step === 'recompose' ? { reason: m[1], history: m[2] }
+        : step === 'phraseSweepOther' || step === 'importOther' ? { line: m[1] }
         : {}
       const spanMs = typeof detail.ms === 'number' ? detail.ms : 0
       steps.push({ at: new Date(e.at).toISOString(), step, visibility: visibilityOver(e.at - spanMs, e.at), ...detail })

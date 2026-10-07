@@ -17,6 +17,7 @@ import {
   shouldYieldChainIngestToSpend,
   getSpendPriorityDepth,
   describeSpendPriorityHolds,
+  describeForegroundSpendPriorityHolds,
   SpendRegionAbandonedError,
   SPEND_REGION_ABANDONED,
   rebindWalletCoordinatorForRuntime,
@@ -407,6 +408,22 @@ describe('walletCoordinator runtime', () => {
     releaseA()
 
     expect(describeSpendPriorityHolds().map((h) => h.split(' ')[0])).toEqual(['b'])
+  })
+
+  it('keeps background holds out of the foreground list while ingest still yields to both', async () => {
+    let finish: (() => void) | undefined
+    const bundle = runExclusiveSpend(() => new Promise<void>((resolve) => { finish = resolve }), undefined, {
+      lane: 'background',
+    })
+    expect(shouldYieldChainIngestToSpend()).toBe(true)
+    expect(describeForegroundSpendPriorityHolds()).toEqual([])
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    const releasePrompt = requestSpendPriority('permission-prompt')
+    expect(describeForegroundSpendPriorityHolds().map((h) => h.split(' ')[0])).toEqual(['permission-prompt'])
+    releasePrompt()
+    finish!()
+    await bundle
+    expect(shouldYieldChainIngestToSpend()).toBe(false)
   })
 
   it('expires a leaked hold instead of disabling item ingest forever', () => {

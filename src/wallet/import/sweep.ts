@@ -23,6 +23,7 @@ import {
 import { keyDeriverFor } from './importSource'
 import { listedImportOutpoints } from './itemStore'
 import { clearImportItems, importItems, prefetchImportItems, syncImportItems } from './items'
+import { watchImportStage } from './stageWatch'
 import { sweepTokensFromAddress } from './tokenSweep'
 import { loadImportedSources, updateImportedSource, type ImportedSource, type SweepSummary } from './store'
 
@@ -67,11 +68,41 @@ export type SweepProgress = {
   message: string
 }
 
-export async function sweepImportedSource(args: {
+type SweepCaller = Pick<Parameters<typeof sweepImportedSource>[0], 'onProgress' | 'shouldStop'>
+
+/**
+ * One sweep per source. A second confirm — the panel reopened mid-sweep —
+ * joins the run in flight; two runs would sign the same tips twice.
+ */
+const sweeps = new Map<string, { promise: Promise<SweepSummary>; callers: Set<SweepCaller>; last: SweepProgress | null }>()
+
+export function sweepImportedSource(args: {
   sourceId: string
   onProgress?: (progress: SweepProgress) => void
   shouldStop?: () => boolean
 }): Promise<SweepSummary> {
+  const caller: SweepCaller = { onProgress: args.onProgress, shouldStop: args.shouldStop }
+  const running = sweeps.get(args.sourceId)
+  if (running) {
+    appendAppLog('info', `[import] sweep joined the run in flight callers=${running.callers.size + 1}`)
+    running.callers.add(caller)
+    if (running.last) caller.onProgress?.(running.last)
+    return running.promise.finally(() => running.callers.delete(caller))
+  }
+  const flight = { promise: null as unknown as Promise<SweepSummary>, callers: new Set([caller]), last: null as SweepProgress | null }
+  flight.promise = startSweep({
+    sourceId: args.sourceId,
+    onProgress: (progress) => {
+      flight.last = progress
+      for (const c of flight.callers) c.onProgress?.(progress)
+    },
+    shouldStop: () => [...flight.callers].some((c) => c.shouldStop?.() === true),
+  }).finally(() => sweeps.delete(args.sourceId))
+  sweeps.set(args.sourceId, flight)
+  return flight.promise
+}
+
+async function startSweep(args: Parameters<typeof sweepImportedSource>[0]): Promise<SweepSummary> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
   const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
@@ -92,8 +123,32 @@ export async function sweepImportedSource(args: {
     )
     return summary
   } catch (err) {
-    job.fail(err instanceof Error ? err.message : String(err))
+    const message = err instanceof Error ? err.message : String(err)
+    appendAppLog('warn', `[import] sweep failed after ${Date.now() - startedAt}ms: ${message.slice(0, 160)}`)
+    job.fail(message)
     throw err
+  }
+}
+
+/**
+ * Addresses read with no coins leave the cash plan, so the next sweep does not
+ * re-read every address an earlier one already emptied. Unread addresses keep
+ * their counts.
+ */
+async function forgetEmptyCash(sourceId: string, empty: ReadonlySet<string>): Promise<void> {
+  try {
+    const scan = (await loadImportedSources()).find((s) => s.id === sourceId)?.scan
+    if (!scan) return
+    await updateImportedSource(sourceId, {
+      scan: {
+        ...scan,
+        holdings: scan.holdings.map((h) =>
+          empty.has(h.address) && h.cashCount > 0 ? { ...h, cashCount: 0, cashSats: 0 } : h,
+        ),
+      },
+    })
+  } catch (err) {
+    appendAppLog('warn', `[import] empty cash addresses not saved: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -148,6 +203,7 @@ async function runSweep(
   if (cashFrom.length > 0 && !stop()) {
     const scannedAt = Date.now()
     const sources: PhraseFundingSource[] = []
+    const empty = new Set<string>()
     let read = 0
     let next = 0
     const reader = async () => {
@@ -157,17 +213,21 @@ async function runSweep(
         try {
           const scan = await scanAddressAny(candidate.address, active.chain)
           if (scan.utxos.length > 0) sources.push({ candidate, utxos: scan.utxos })
+          else empty.add(candidate.address)
         } catch {
           notes.push(`${candidate.label} could not be read. Sweep again to move its BSV.`)
         }
         read += 1
       }
     }
-    await Promise.all(Array.from({ length: Math.min(CASH_SCAN_CONCURRENCY, cashFrom.length) }, reader))
+    await watchImportStage('cash scan', () =>
+      Promise.all(Array.from({ length: Math.min(CASH_SCAN_CONCURRENCY, cashFrom.length) }, reader)),
+    )
     appendAppLog('info', `[import] cash scan addresses=${cashFrom.length} holding=${sources.length} done ${Date.now() - scannedAt}ms`)
+    if (empty.size > 0) await forgetEmptyCash(source.id, empty)
     if (sources.length > 0 && !stop()) {
       report('cash', `Moving BSV from ${sources.length} address(es)…`)
-      const result = await sweepPhraseFunding({ sources })
+      const result = await watchImportStage('cash sweep', () => sweepPhraseFunding({ sources }))
       cashSats += result.fundingSatsMoved
       failed += result.failed
       notes.push(...result.errors.slice(0, 2))
@@ -184,7 +244,9 @@ async function runSweep(
     // An older build's paused per-address run on this source: the list below covers it.
     if (cursor && ownedHere.has(cursor.sourceAddress)) clearPhraseItemMigrateCursor()
     report('items', 'Listing collectables…')
-    const listing = await syncImportItems({ sourceId: source.id, shouldStop: stop })
+    const listing = await watchImportStage('listing items', () =>
+      syncImportItems({ sourceId: source.id, shouldStop: stop, onStep: (message) => report('items', message) }),
+    )
     if (!listing.complete && !stop()) {
       notes.push('Some addresses could not be read. Sweep again to move what they hold.')
     }
@@ -194,7 +256,7 @@ async function runSweep(
       report('items', `Moving collectables… ${items.toLocaleString()} of ${listed.length.toLocaleString()}`, items)
       const next = listed.slice(i + IMPORT_CHUNK, i + 2 * IMPORT_CHUNK)
       let landed = 0
-      const chunk = await importItems({
+      const chunk = await watchImportStage(`moving items ${i}+`, () => importItems({
         sourceId: source.id,
         identityKey: active.identityKey,
         outpoints: listed.slice(i, i + IMPORT_CHUNK),
@@ -208,7 +270,7 @@ async function runSweep(
           const shown = items + landed
           report('items', `Moving collectables… ${shown.toLocaleString()} of ${listed.length.toLocaleString()}`, shown)
         },
-      })
+      }))
       for (const { result } of chunk.results) {
         if (result.kind === 'moved') items += 1
         else if (result.kind === 'skipped') held = addHeld(held, 'notCollectable', 1)
@@ -238,12 +300,14 @@ async function runSweep(
     const candidate = candidateFor(h)
     if (!candidate) continue
     report('tokens', `Moving tokens from ${h.label}…`, items)
-    const result = await sweepTokensFromAddress({
-      active,
-      spendKey: deriver.privateKeyAt(h.path),
-      address: h.address,
-      tokens: h.tokens.filter((t) => t.standard === 'bsv21' && t.id),
-    })
+    const result = await watchImportStage('token sweep', () =>
+      sweepTokensFromAddress({
+        active,
+        spendKey: deriver.privateKeyAt(h.path),
+        address: h.address,
+        tokens: h.tokens.filter((t) => t.standard === 'bsv21' && t.id),
+      }),
+    )
     for (const moved of result.moved) {
       const sym = h.tokens.find((t) => t.id === moved.tokenId)?.sym ?? 'token'
       tokens.push({ tokenId: moved.tokenId, sym, amount: moved.amount })
@@ -261,7 +325,7 @@ async function runSweep(
 
   if (cashSats > 0 || items > 0 || tokens.length > 0) {
     report('refresh', 'Checking the chain…', items)
-    await refreshAfterPhraseItemMigrate()
+    await watchImportStage('refresh after sweep', () => refreshAfterPhraseItemMigrate())
   }
   if (stop()) {
     paused ??= 'Paused — sweep again to continue.'

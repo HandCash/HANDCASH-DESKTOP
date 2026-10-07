@@ -31,6 +31,7 @@ import {
   writeImportListMeta,
   type StoredImportItem,
 } from './itemStore'
+import { watchImportStage } from './stageWatch'
 import { loadImportedSources, updateImportedSource, type ImportedSource } from './store'
 
 export type { ImportItem, ImportItemGroup } from './importItem'
@@ -181,6 +182,8 @@ export function importShelfOutpoints(sourceId: string, group: string): Promise<s
 export async function syncImportItems(args: {
   sourceId: string
   onChange?: (change: ImportItemChange) => void
+  /** A line for the progress bar as each step starts. */
+  onStep?: (message: string) => void
   shouldStop?: () => boolean
   fetchImpl?: FetchLike
 }): Promise<ImportItemSync> {
@@ -207,25 +210,32 @@ export async function syncImportItems(args: {
 
   if (scan.via === 'handcash-utxo-set') {
     const deriver = keyDeriverFor(source.secret)
-    const set = await fetchHandCashUtxoSet({
-      deriver,
-      shouldStop: args.shouldStop,
-      ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
-    })
+    const set = await watchImportStage('utxo set', () =>
+      fetchHandCashUtxoSet({
+        deriver,
+        shouldStop: args.shouldStop,
+        ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+      }),
+    )
     if (set.kind === 'fetched') {
-      const verified = await verifyUtxoSet(deriver, set.utxos, knownAddresses(source))
+      const verified = await watchImportStage('utxo set verify', () =>
+        verifyUtxoSet(deriver, set.utxos, knownAddresses(source)),
+      )
       const covered = new Set(verified.itemOutpoints.keys())
       const keep = new Set([
         ...paged,
         ...verified.readAddresses,
         ...holdings.filter((h) => h.itemCount > 0 && !covered.has(h.address)).map((h) => h.address),
       ])
+      args.onStep?.('Checking collectables…')
       const read = await checkUtxoSetItems({
         sourceId: source.id,
         chain,
         itemOutpoints: verified.itemOutpoints,
         keepAddresses: keep,
         onChange: changed,
+        onProgress: (done, total) =>
+          args.onStep?.(`Checking collectables… ${done.toLocaleString()} of ${total.toLocaleString()}`),
         shouldStop: args.shouldStop,
         ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
       })
@@ -257,7 +267,10 @@ export async function syncImportItems(args: {
 
   for (let i = 0; i < toPage.length && !stop(); i += ADDRESS_CONCURRENCY) {
     const group = toPage.slice(i, i + ADDRESS_CONCURRENCY)
-    const pages = await Promise.all(group.map((h) => addressItems(h.address, chain, args.fetchImpl ?? fetch)))
+    args.onStep?.(`Listing collectables… address ${i + 1} of ${toPage.length}`)
+    const pages = await watchImportStage('address listing', () =>
+      Promise.all(group.map((h) => addressItems(h.address, chain, args.fetchImpl ?? fetch))),
+    )
     for (const [j, page] of pages.entries()) {
       const address = group[j]!.address
       if (page.complete) {
@@ -272,12 +285,15 @@ export async function syncImportItems(args: {
   }
 
   if (!stop() && (grew || Date.now() - (meta.chainCheckedAt ?? 0) > CHAIN_CHECK_MS)) {
-    const checked = await dropChainSpentItems({
-      sourceId: source.id,
-      chain,
-      shouldStop: args.shouldStop,
-      ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
-    })
+    args.onStep?.('Checking collectables on chain…')
+    const checked = await watchImportStage('chain check', () =>
+      dropChainSpentItems({
+        sourceId: source.id,
+        chain,
+        shouldStop: args.shouldStop,
+        ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+      }),
+    )
     if (checked.spent.length > 0) changed({ added: 0, gone: checked.spent })
   }
 
@@ -313,10 +329,13 @@ export async function checkUtxoSetItems(args: {
     for (const outpoint of outpoints) addressOf.set(outpoint, address)
   }
   const live = new Set(addressOf.keys())
-  const gone = await pruneImportItems(args.sourceId, live, args.keepAddresses)
+  const listAt = Date.now()
+  const gone = await watchImportStage('saved list prune', () => pruneImportItems(args.sourceId, live, args.keepAddresses))
   if (gone.length > 0) args.onChange?.({ added: 0, gone })
-  const decided = await decidedImportOutpoints(args.sourceId)
-  const read = await readUnspentOutpoints({
+  const decided = await watchImportStage('saved list read', () => decidedImportOutpoints(args.sourceId))
+  const listMs = Date.now() - listAt
+  if (listMs >= 250) appendAppLog('info', `[import] saved list prune+read done ${listMs}ms gone=${gone.length} decided=${decided.size}`)
+  const read = await watchImportStage('outpoint check', () => readUnspentOutpoints({
     chain: args.chain,
     outpoints: [...live].filter((outpoint) => !decided.has(outpoint)),
     shouldStop: args.shouldStop,
@@ -330,7 +349,7 @@ export async function checkUtxoSetItems(args: {
       )
       if (added.length > 0) args.onChange?.({ added: added.length, gone: [] })
     },
-  })
+  }))
   const listed = await listedImportOutpoints(args.sourceId)
   const unspent = new Set([...live].filter((outpoint) => listed.has(outpoint)))
   return { unspent, failed: read.failed, stopped: read.stopped }

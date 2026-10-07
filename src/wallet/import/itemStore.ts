@@ -81,6 +81,10 @@ function open(): Promise<IDBDatabase> {
         db.close()
         opening = null
       }
+      // The WebView closes connections it reclaims (storage pressure, a frozen renderer).
+      db.onclose = () => {
+        opening = null
+      }
       resolve(db)
     }
     req.onerror = () => reject(req.error ?? new Error('Could not open the saved item list'))

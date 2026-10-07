@@ -81,7 +81,7 @@ vi.mock('./staleOutputRelease', () => ({
 const spendPriorityHeld = vi.fn(() => false)
 vi.mock('./walletCoordinator', () => ({
   runExclusiveSpend: async <T>(fn: () => Promise<T>) => fn(),
-  shouldYieldChainIngestToSpend: () => spendPriorityHeld(),
+  describeForegroundSpendPriorityHolds: () => (spendPriorityHeld() ? ['permission-prompt (3s)'] : []),
   leaseSpendPriority: () => ({
     touch: vi.fn(),
     release: vi.fn(),
@@ -125,6 +125,27 @@ describe('background spend lane', () => {
       spendPriorityHeld.mockReturnValue(false)
       await vi.advanceTimersByTimeAsync(1_000)
       expect(yielded).toBe(true)
+    } finally {
+      spendPriorityHeld.mockReturnValue(false)
+      vi.useRealTimers()
+    }
+  })
+
+  it('names what it waits on and stops yielding at the ceiling', async () => {
+    vi.useFakeTimers()
+    try {
+      const { yieldToForegroundSpends, FOREGROUND_YIELD_MAX_MS } = await import('./spendGuard')
+      spendPriorityHeld.mockReturnValue(true)
+      const reports: string[][] = []
+      let waited = -1
+      void yieldToForegroundSpends(0, { onWaiting: (_ms, holders) => reports.push(holders) }).then((ms) => {
+        waited = ms
+      })
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(reports).toEqual([['permission-prompt (3s)']])
+      await vi.advanceTimersByTimeAsync(FOREGROUND_YIELD_MAX_MS)
+      expect(waited).toBeGreaterThanOrEqual(FOREGROUND_YIELD_MAX_MS)
+      expect(reports.length).toBeGreaterThan(1)
     } finally {
       spendPriorityHeld.mockReturnValue(false)
       vi.useRealTimers()

@@ -49,6 +49,8 @@ let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinato
 type SpendPriorityHold = {
   id: number
   reason: string
+  /** Background bulk work (an import's migrate) — other background lanes do not wait on it. */
+  lane: 'foreground' | 'background'
   /** When the work started — what the stall report should quote. */
   since: number
   /** Last proof of life. Expiry is measured from here, not from `since`. */
@@ -132,13 +134,17 @@ export type SpendPriorityLease = {
  * that may run long should `touch()` while working; everyone else can use
  * `requestSpendPriority`.
  */
-export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
+export function leaseSpendPriority(
+  reason = 'spend',
+  lane: SpendPriorityHold['lane'] = 'foreground',
+): SpendPriorityLease {
   dropExpiredSpendPriority()
   regionGeneration += 1
   const now = Date.now()
   const hold: SpendPriorityHold = {
     id: nextSpendPriorityId++,
     reason,
+    lane,
     since: now,
     at: now,
   }
@@ -214,6 +220,15 @@ export function describeSpendPriorityHolds(): string[] {
   return spendPriorityHolds.map(
     (h) => `${h.reason} (${Math.round((now - h.since) / 1000)}s)`,
   )
+}
+
+/** Holds a person or an app is waiting on — what background lanes step aside for. */
+export function describeForegroundSpendPriorityHolds(): string[] {
+  dropExpiredSpendPriority()
+  const now = Date.now()
+  return spendPriorityHolds
+    .filter((h) => h.lane === 'foreground')
+    .map((h) => `${h.reason} (${Math.round((now - h.since) / 1000)}s)`)
 }
 
 export type WalletCoordinatorLiveStatus = WalletCoordinatorSnapshot & {
@@ -653,12 +668,13 @@ function runSpendBody<T>(
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
+  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number; lane?: SpendPriorityHold['lane'] },
 ): Promise<T> {
   const epoch = coordinatorEpoch
   const queue = spendQueue
   // Before the region waits — so a running refresh can yield ordinal work now.
-  const priority = leaseSpendPriority('runExclusiveSpend')
+  const lane = opts?.lane ?? 'foreground'
+  const priority = leaseSpendPriority(lane === 'background' ? 'runExclusiveSpend:background' : 'runExclusiveSpend', lane)
   // A mint or a legacy sweep can outlive the expiry while doing real work. The
   // heartbeat is what separates that from a leaked hold.
   const heartbeat = setInterval(() => priority.touch(), SPEND_PRIORITY_TOUCH_MS)

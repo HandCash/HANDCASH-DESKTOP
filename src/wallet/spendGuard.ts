@@ -20,8 +20,8 @@ import {
 } from './session'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import {
+  describeForegroundSpendPriorityHolds,
   runExclusiveSpend as runExclusiveSpendCoordinated,
-  shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
 import {
   assertRuntimeCurrent,
@@ -52,6 +52,13 @@ const foregroundWatchers = new Set<() => void>()
  */
 export const FOREGROUND_QUIET_MS = 5_000
 const FOREGROUND_POLL_MS = 1_000
+/**
+ * Longest a background lane steps aside. Past it the region FIFO still orders
+ * the bundle behind whatever is queued; the courtesy just stops.
+ */
+export const FOREGROUND_YIELD_MAX_MS = 120_000
+const FOREGROUND_WAIT_REPORT_MS = 5_000
+const FOREGROUND_WAIT_REPORT_EVERY_MS = 30_000
 
 function noteForegroundSettled(): void {
   foregroundSpends = Math.max(0, foregroundSpends - 1)
@@ -61,19 +68,34 @@ function noteForegroundSettled(): void {
 
 /**
  * Wait until no foreground spend is queued, running or about to be (a held
- * spend priority — an open payment prompt), and the last one finished
- * {@link FOREGROUND_QUIET_MS} ago. Background lanes call this before each
- * region they take, so a payment waits for at most the one bundle in flight.
+ * foreground spend priority — an open payment prompt), and the last one
+ * finished {@link FOREGROUND_QUIET_MS} ago. Background lanes call this before
+ * each region they take, so a payment waits for at most the one bundle in
+ * flight. Another background lane's hold never counts, and the wait ends at
+ * {@link FOREGROUND_YIELD_MAX_MS}. `onWaiting` hears who it waits on after
+ * a few seconds, then every half minute.
  *
  * @returns milliseconds spent waiting.
  */
-export async function yieldToForegroundSpends(quietMs = FOREGROUND_QUIET_MS): Promise<number> {
+export async function yieldToForegroundSpends(
+  quietMs = FOREGROUND_QUIET_MS,
+  opts?: { maxWaitMs?: number; onWaiting?: (waitedMs: number, holders: string[]) => void },
+): Promise<number> {
   const started = Date.now()
+  const maxWaitMs = opts?.maxWaitMs ?? FOREGROUND_YIELD_MAX_MS
+  let reportAt = started + FOREGROUND_WAIT_REPORT_MS
   for (;;) {
-    const busy = foregroundSpends > 0 || shouldYieldChainIngestToSpend()
+    const holders = describeForegroundSpendPriorityHolds()
+    const busy = foregroundSpends > 0 || holders.length > 0
+    const waited = Date.now() - started
+    if (waited >= maxWaitMs) return waited
+    if (busy && Date.now() >= reportAt) {
+      opts?.onWaiting?.(waited, holders.length > 0 ? holders : [`${foregroundSpends} payment(s) in flight`])
+      reportAt = Date.now() + FOREGROUND_WAIT_REPORT_EVERY_MS
+    }
     // Capped so a wall clock stepped backwards cannot stretch the quiet window.
     const left = busy ? FOREGROUND_POLL_MS : Math.min(quietMs, foregroundSettledAt + quietMs - Date.now())
-    if (left <= 0) return Date.now() - started
+    if (left <= 0) return waited
     await new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer)
@@ -328,7 +350,7 @@ export function runExclusiveSpend<T>(
     onSpendRegion,
     // The watchdog's abort is what frees the region: without it a toolbox call
     // that never settles keeps every later payment queued behind this one.
-    { abandonSignal: abort.signal },
+    { abandonSignal: abort.signal, lane: foreground ? 'foreground' : 'background' },
   )
     .catch((err: unknown) => {
       // Its reserved batch may outlive the region — heal before the next select.
