@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.480] - 2026-10-07
+
+### Changed
+- Activity: the item count in a batch row's top-left corner grows into a pill to fit its digits, stopping just short of the top-right mark. From 1,000 it reads in thousands with a `k` (one decimal below 10k, always rounded down: 1,999 shows `1.9k`). Hovering shows the exact count.
+
 ## [1.3.479] - 2026-10-07
 
 ### Changed

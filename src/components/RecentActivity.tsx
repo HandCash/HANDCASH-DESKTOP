@@ -147,6 +147,7 @@ import {
   useWalletJobs,
   WalletJobRow,
 } from "./activity/ActivityJobRows";
+import { batchCountLabel } from "./activity/batchCountLabel";
 
 import { EmptyState } from "./EmptyState";
 import { AppAvatar } from "./AppAvatar";
@@ -328,6 +329,7 @@ export function HistoryIconCluster({
   const showStack = Boolean(
     stacked && batch && batch.count > 1 && assets.length > 0
   );
+  const batchLabel = showStack ? batchCountLabel(batch!.count) : "";
 
   return (
     <div className="history-icon-wrap">
@@ -421,9 +423,12 @@ export function HistoryIconCluster({
       {showStack ? (
         <span
           className="history-batch-count"
+          data-aeon-part="batch-count"
+          data-aeon-state={batchLabel.length > 3 ? "long" : "short"}
           aria-label={`${batch!.count} collectables`}
+          title={`${batch!.count.toLocaleString()} collectables`}
         >
-          {batch!.count}
+          {batchLabel}
         </span>
       ) : null}
       <HistoryAppBadge entry={entry} />
