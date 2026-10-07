@@ -79,8 +79,8 @@ describe('itemsWithinPostBudget', () => {
   const bytes = (sizes: Record<string, number>) => (item: string) => sizes[item] ?? 0
 
   it('takes the whole chunk when tips are plain P2PKH', () => {
-    const items = Array.from({ length: 100 }, (_, i) => `t${i}`)
-    expect(itemsWithinPostBudget(items, 100, () => migrateTipPostBytes(25))).toBe(100)
+    const items = Array.from({ length: MAX_ITEMS_PER_MIGRATE_TX }, (_, i) => `t${i}`)
+    expect(itemsWithinPostBudget(items, MAX_ITEMS_PER_MIGRATE_TX, () => migrateTipPostBytes(25))).toBe(MAX_ITEMS_PER_MIGRATE_TX)
   })
 
   it('stops before the tip that would overflow the post', () => {

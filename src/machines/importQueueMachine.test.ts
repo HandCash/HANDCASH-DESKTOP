@@ -172,10 +172,10 @@ describe('importQueueMachine', () => {
   })
 
   it('starts a run small so the first items land quickly, then moves full chunks', () => {
-    expect([0, 4, 5, 19, 20, 59, 60, 5_000].map(importChunkSize)).toEqual([5, 5, 15, 15, 40, 40, IMPORT_CHUNK, IMPORT_CHUNK])
+    expect([0, 4, 5, 19, 20, 44, 45, 5_000].map(importChunkSize)).toEqual([5, 5, 15, 15, IMPORT_CHUNK, IMPORT_CHUNK, IMPORT_CHUNK, IMPORT_CHUNK])
     const queue = Array.from({ length: 300 }, (_, i) => ({ sourceId: 'a', identityKey: 'k', outpoint: op(i) }))
     expect(nextChunk(queue, { a: { total: 300 } })).toHaveLength(5)
-    expect(nextChunk(queue.slice(20), { a: { total: 300 } })).toHaveLength(40)
-    expect(nextChunk(queue.slice(60), { a: { total: 300 } })).toHaveLength(IMPORT_CHUNK)
+    expect(nextChunk(queue.slice(5), { a: { total: 300 } })).toHaveLength(15)
+    expect(nextChunk(queue.slice(20), { a: { total: 300 } })).toHaveLength(IMPORT_CHUNK)
   })
 })

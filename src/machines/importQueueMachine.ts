@@ -23,14 +23,13 @@ import { itemMigrateStopPauses } from '../wallet/itemMigrateRun'
  * - `STOP` drops a source's waiting items; the chunk in flight finishes.
  */
 
-export const IMPORT_CHUNK = 100
+/** One full item transaction per call (`MAX_ITEMS_PER_MIGRATE_TX`). */
+export const IMPORT_CHUNK = 25
 /**
- * A full chunk reads 100 sources and signs ~40-tip bundles before its first
- * item lands, so a fresh run sat at 0 for most of a minute. The first chunks
- * of a run are small so items land within seconds, then it moves
- * `IMPORT_CHUNK` at a time.
+ * The first chunks of a run are smaller so the first items land sooner, then
+ * it moves `IMPORT_CHUNK` at a time.
  */
-export const IMPORT_RAMP = [5, 15, 40] as const
+export const IMPORT_RAMP = [5, 15] as const
 export const IMPORT_PAUSE_MS = 8_000
 export const IMPORT_PAUSES = 2
 

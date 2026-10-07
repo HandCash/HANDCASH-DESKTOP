@@ -14,11 +14,12 @@
 import { Beef, type BEEF } from '@bsv/sdk'
 
 /**
- * Tips per transaction: one import chunk. The chunk's sources are already
- * fetched, so a larger bundle costs no extra download — only one fee, one
- * storage pass, one signing pass and one broadcast where there used to be four.
+ * Tips per transaction: one import chunk. The Toolbox's storage pass costs
+ * about the same for any bundle, so very small bundles repeat it for little;
+ * signing costs 1–2 s per tip on a phone and holds the wallet the whole time,
+ * so very large ones lock it for minutes. 25 keeps each hold near a minute.
  */
-export const MAX_ITEMS_PER_MIGRATE_TX = 100
+export const MAX_ITEMS_PER_MIGRATE_TX = 25
 
 /**
  * Bytes one migrate posts to Arcade. Arcade validates Extended Format: the

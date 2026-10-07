@@ -871,7 +871,7 @@ const IMPORT_QUEUE = `stateDiagram-v2
   cooling --> deciding : after 8s (untried items first)
   cooling --> deciding : STOP (paused source)
 
-  moving : next chunk of one source + wallet (5 · 15 · 40, then 100) → importItems · itemMigrateRun across source keys · up to 100 tips per tx · prefetch next chunk's source txs
+  moving : next chunk of one source + wallet (5 · 15, then 25) → importItems · itemMigrateRun across source keys · one tx of up to 25 tips · prefetch next chunk's source txs
   cooling : a spent fee coin retires, or the last tx reaches Arcade, before the retry
   note right of moving
     Lives for the unlocked session, not the page.
@@ -1604,7 +1604,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'importQueue',
     label: 'Import queue',
-    caption: 'importQueueMachine — the one item runner · 5/15/40 ramp then 100 per call · survives leaving the page',
+    caption: 'importQueueMachine — the one item runner · 5/15 ramp then 25 per call (one tx) · survives leaving the page',
     source: IMPORT_QUEUE,
   },
   {

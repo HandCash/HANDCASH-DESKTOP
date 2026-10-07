@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.493] - 2026-10-07
+
+### Changed
+- **Recovered items move 25 per transaction again (it was 100).** On the phone the Toolbox's storage pass took 12–166 s per transaction whatever the bundle size, while signing took 1–2 s per tip. A 100-tip transaction held the wallet for minutes, and 10 would repeat the storage pass ten times as often. With 25, each transaction holds the wallet for about a minute. One queue call is still one transaction: 5, then 15, then 25 at a time.
+
 ## [1.3.492] - 2026-10-07
 
 ### Fixed

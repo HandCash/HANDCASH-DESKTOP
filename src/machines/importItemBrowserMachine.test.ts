@@ -290,7 +290,7 @@ describe('importItemBrowserMachine', () => {
     actor.send({ type: 'CONFIRM' })
     const done = await settledReport(actor)
     expect(outpointsOf(importMany).map((o) => o.length)).toEqual(chunkSizes(zoo.length))
-    expect(chunkSizes(zoo.length)).toEqual([...IMPORT_RAMP, IMPORT_CHUNK, 45])
+    expect(chunkSizes(zoo.length)).toEqual([...IMPORT_RAMP, IMPORT_CHUNK, 10])
     expect(done.context.queue.report).toMatchObject({ tone: 'success', title: `${zoo.length} items imported` })
   })
 

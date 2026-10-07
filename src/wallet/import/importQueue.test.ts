@@ -106,8 +106,8 @@ describe('importQueue', () => {
     release()
     await vi.waitFor(() => expect(importItems).toHaveBeenCalledTimes(3))
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 20, total: 250 })
-    // 250 items move as 5, 15, 40, 100, 90.
-    await releaseThrough(release, 5, 3)
+    // 250 items move as 5, 15, then ten chunks of 25 or fewer.
+    await releaseThrough(release, 12, 3)
     await vi.waitFor(() => expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'done' }))
   })
 
