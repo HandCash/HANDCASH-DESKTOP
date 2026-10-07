@@ -741,25 +741,31 @@ function useActivityFeed(limit: number) {
     []
   );
   useEffect(() => {
-    const refresh = () => {
+    // Expiry writes bump the activity generation, so a tick that changed
+    // nothing reads the cached snapshot and React keeps the same arrays.
+    // Only app and asset changes move the projection without a write.
+    const refresh = (projectionMoved = false) => {
+      const startedAt = performance.now();
       archiveOversizedBulkSendDebris()
       expireStaleInboundPending();
       expireStaleOutboundPending();
-      invalidateActivityFeed(limit);
+      if (projectionMoved) invalidateActivityFeed(limit);
       const snapshot = readActivityFeed(limit);
       setEntries(snapshot.entries);
       setOrigins(snapshot.origins);
+      const ms = Math.round(performance.now() - startedAt);
+      if (ms >= 250) console.info(`[activity] feed refresh done ${ms}ms rows=${snapshot.entries.length}`);
     };
     refresh();
-    const unsubActivity = subscribeAppActivity(refresh);
-    const unsubApps = subscribeConnectedApps(refresh);
+    const unsubActivity = subscribeAppActivity(() => refresh());
+    const unsubApps = subscribeConnectedApps(() => refresh(true));
     let assetTimer = 0;
     const refreshAfterAssetPaint = () => {
       // Authenticity, icon, and encoding upgrades can arrive in short bursts.
       // The feed only needs their settled projection; rebuilding it for every
       // intermediate cache paint used to interrupt foreground input.
       window.clearTimeout(assetTimer);
-      assetTimer = window.setTimeout(refresh, 280);
+      assetTimer = window.setTimeout(() => refresh(true), 280);
     };
     const unsubItems = subscribeCollectables(refreshAfterAssetPaint);
     const unsubTokens = subscribeFungibles(refreshAfterAssetPaint);
@@ -767,7 +773,11 @@ function useActivityFeed(limit: number) {
     // stale-row expiry correctly yield. Without a later tick there may be no
     // event after the spend releases, so an old approval placeholder can stay
     // painted forever beside the successful transaction row.
-    const staleTimer = window.setInterval(refresh, 5_000);
+    // A pending row's read-time projection ages with the clock; nothing else does.
+    const staleTimer = window.setInterval(
+      () => refresh(feedCache.get(limit)?.entries.some((entry) => entry.status === "pending") ?? false),
+      5_000,
+    );
     return () => {
       window.clearTimeout(assetTimer);
       window.clearInterval(staleTimer);
@@ -898,9 +908,16 @@ export function ActivityFeed({
   onViewAll,
 }: FeedProps) {
   const headRef = useRef<HTMLDivElement | null>(null);
+  const mountStartedAt = useRef(performance.now());
   const { entries, live, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
+  useEffect(() => {
+    const ms = Math.round(performance.now() - mountStartedAt.current);
+    if (ms >= 250) console.info(`[activity] feed mount done ${ms}ms rows=${entries.length}`);
+    // Mount only: later renders are measured by the feed refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [filters, setFilters] = useState<PaymentFilters>(
     DEFAULT_PAYMENT_FILTERS
   );

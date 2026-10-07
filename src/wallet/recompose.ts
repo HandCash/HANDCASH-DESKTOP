@@ -35,6 +35,7 @@ import {
   type WalletRuntime,
   type WalletRuntimeId,
 } from './walletRuntime'
+import { inUiPhase } from './uiPhase'
 import { yieldToUi } from './yieldToUi'
 
 export type RecomposeHistoryMode = 'auto' | 'skip' | 'forceCloud'
@@ -185,9 +186,11 @@ async function runRecomposeBody(
     } else {
       try {
         // allowEmptyPull derived inside autoPush from reason via historyEmptyGuard.
-        const sync = await autoPushHistoryBackupIfConfigured(password, {
-          reason: historyMode === 'forceCloud' ? 'recompose' : reason,
-        })
+        const sync = await inUiPhase('recompose-history', () =>
+          autoPushHistoryBackupIfConfigured(password, {
+            reason: historyMode === 'forceCloud' ? 'recompose' : reason,
+          }),
+        )
         if (runtime) assertRuntimeCurrent(runtime)
         localStateWasReplaced = sync.pulled
         if (sync.pulled || !sync.skipReason) {
@@ -245,16 +248,18 @@ async function runRecomposeBody(
       // BEEFs synchronously parse on the renderer thread.
       // When a permission prompt is already waiting, funding-only still runs
       // so Pay has coins, but ingest aborts early via shouldYield checks.
-      spendableSats = (await refreshFromChainExclusive({
-        forceReview: false,
-        announceReceive: false,
-        audit: false,
-        fundingOnly: true,
-      })).balanceSats
+      spendableSats = (await inUiPhase('recompose-chain', () =>
+        refreshFromChainExclusive({
+          forceReview: false,
+          announceReceive: false,
+          audit: false,
+          fundingOnly: true,
+        }),
+      )).balanceSats
       if (runtime) assertRuntimeCurrent(runtime)
       if (spendableSats == null) {
         const active = getActiveWallet()
-        spendableSats = active ? await fetchBalanceSats(active.wallet) : 0
+        spendableSats = active ? await inUiPhase('recompose-balance', () => fetchBalanceSats(active.wallet)) : 0
       }
     } catch (err) {
       chainError = err instanceof Error ? err.message : String(err)
@@ -271,7 +276,7 @@ async function runRecomposeBody(
 
   if (localStateWasReplaced) {
     if (runtime) assertRuntimeCurrent(runtime)
-    await relistCollectablesAfterLocalStateReplace()
+    await inUiPhase('recompose-relist', () => relistCollectablesAfterLocalStateReplace())
   }
 
   try {
@@ -325,21 +330,21 @@ function scheduleDerivedChangePass(runtime: WalletRuntime): void {
       }
       if (!runtimeIsCurrent(runtime)) return
       const { syncCustodyJournal } = await import('./custodyJournalBackup')
-      await syncCustodyJournal(runtime.instance, 'recompose')
+      await inUiPhase('derived-journal', () => syncCustodyJournal(runtime.instance, 'recompose'))
       if (!runtimeIsCurrent(runtime)) return
       const { echoAllDerivedOutputs, recoverEchoedChange } = await import(
         './reimportDerivedChange'
       )
-      const recovered = await recoverEchoedChange(runtime.instance)
+      const recovered = await inUiPhase('derived-recover', () => recoverEchoedChange(runtime.instance))
       if (!runtimeIsCurrent(runtime)) return
-      await echoAllDerivedOutputs(runtime.instance)
+      await inUiPhase('derived-echo', () => echoAllDerivedOutputs(runtime.instance))
       if (recovered.imported > 0) {
         const { bumpBalanceAfterHeal } = await import('./session')
         bumpBalanceAfterHeal()
       }
       if (!runtimeIsCurrent(runtime)) return
       const { refreshActivityLedger } = await import('./activityLedger')
-      await refreshActivityLedger(runtime, { full: true })
+      await inUiPhase('activity-ledger-full', () => refreshActivityLedger(runtime, { full: true }))
     })().catch((err) => {
       console.warn('[derived-change] post-recompose pass failed', err)
     })
