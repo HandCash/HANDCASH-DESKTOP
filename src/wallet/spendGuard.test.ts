@@ -78,13 +78,70 @@ vi.mock('./staleOutputRelease', () => ({
     promotePendingLocalChangeOutputs(opts),
 }))
 
+const spendPriorityHeld = vi.fn(() => false)
 vi.mock('./walletCoordinator', () => ({
   runExclusiveSpend: async <T>(fn: () => Promise<T>) => fn(),
+  shouldYieldChainIngestToSpend: () => spendPriorityHeld(),
   leaseSpendPriority: () => ({
     touch: vi.fn(),
     release: vi.fn(),
   }),
 }))
+
+describe('background spend lane', () => {
+  it('holds a background bundle until a queued payment and its quiet window pass', async () => {
+    vi.useFakeTimers()
+    try {
+      const { runExclusiveSpend, yieldToForegroundSpends, FOREGROUND_QUIET_MS } = await import('./spendGuard')
+      let finish!: () => void
+      const payment = runExclusiveSpend(() => new Promise<void>((resolve) => { finish = resolve }))
+      let yielded = false
+      void yieldToForegroundSpends().then(() => { yielded = true })
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(yielded).toBe(false)
+
+      finish()
+      await payment
+      // The second call of an app's create → sign pair lands in this window.
+      await vi.advanceTimersByTimeAsync(FOREGROUND_QUIET_MS - 10)
+      expect(yielded).toBe(false)
+      await vi.advanceTimersByTimeAsync(20)
+      expect(yielded).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits while a payment prompt holds spend priority', async () => {
+    vi.useFakeTimers()
+    try {
+      const { yieldToForegroundSpends } = await import('./spendGuard')
+      spendPriorityHeld.mockReturnValue(true)
+      let yielded = false
+      void yieldToForegroundSpends(0).then(() => { yielded = true })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(yielded).toBe(false)
+      spendPriorityHeld.mockReturnValue(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(yielded).toBe(true)
+    } finally {
+      spendPriorityHeld.mockReturnValue(false)
+      vi.useRealTimers()
+    }
+  })
+
+  it('never makes background work wait on another background bundle', async () => {
+    const { runExclusiveSpend, yieldToForegroundSpends } = await import('./spendGuard')
+    let finish!: () => void
+    const bundle = runExclusiveSpend(() => new Promise<void>((resolve) => { finish = resolve }), undefined, {
+      lane: 'background',
+    })
+    await expect(yieldToForegroundSpends(0)).resolves.toBe(0)
+    finish()
+    await bundle
+  })
+})
 
 describe('refreshSpendableBalance', () => {
   beforeEach(() => {

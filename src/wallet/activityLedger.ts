@@ -14,7 +14,13 @@ import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './wallet
 import { yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
-const SETTLED_STATUSES = ['completed', 'unproven'] as const
+/**
+ * Transactions that are the wallet's history. `sending` is signed and handed to
+ * broadcast: a delayed-broadcast `signAction` files there and only the Monitor's
+ * own resend moves it on, even after Arcade accepted our post. Leaving it out
+ * dropped every just-imported migrate from Activity on restart.
+ */
+const SETTLED_STATUSES = ['completed', 'unproven', 'sending'] as const
 const COLLECTABLE_BASKET = '1sat'
 const TOKEN_BASKET = 'bsv21'
 

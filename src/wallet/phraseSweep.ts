@@ -62,7 +62,7 @@ import {
 } from './itemMigrateBundle'
 import { setVisibleTimeout } from './visibleClock'
 import { yieldToUi } from './yieldToUi'
-import { runExclusiveSpend } from './spendGuard'
+import { runExclusiveSpend, yieldToForegroundSpends } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { isInsufficientFundsError } from './insufficientFunds'
@@ -1109,20 +1109,28 @@ async function migrateOrdinalUnit(args: {
       busyWaits = 0
     }
     try {
-      const txid = await runExclusiveSpend(async () =>
-        // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
-        // verification rejects that outright ("inputBEEF must be valid Beef when
-        // factoring options.trustSelf"), which failed every item migrate. The
-        // funding sweep already treats visible-on-chain as sufficient for a
-        // P2PKH tip; an ordinal tip is the same claim, same relaxation.
-        withVisibleOnChainBeef(async () =>
-          buildAndPostItemMigrate({
-            active: args.active,
-            destLockHex: args.destLockHex,
-            inputBeef: args.inputBeef,
-            items: group,
-          }),
-        ),
+      // A payment waits for at most the bundle in flight, never the whole import.
+      const yieldedMs = await yieldToForegroundSpends()
+      if (yieldedMs >= 250) {
+        appendAppLog('info', `[phrase-sweep] yielded to payments done ${yieldedMs}ms`)
+      }
+      const txid = await runExclusiveSpend(
+        async () =>
+          // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
+          // verification rejects that outright ("inputBEEF must be valid Beef when
+          // factoring options.trustSelf"), which failed every item migrate. The
+          // funding sweep already treats visible-on-chain as sufficient for a
+          // P2PKH tip; an ordinal tip is the same claim, same relaxation.
+          withVisibleOnChainBeef(async () =>
+            buildAndPostItemMigrate({
+              active: args.active,
+              destLockHex: args.destLockHex,
+              inputBeef: args.inputBeef,
+              items: group,
+            }),
+          ),
+        undefined,
+        { lane: 'background' },
       )
       landed(txid)
     } catch (caught) {

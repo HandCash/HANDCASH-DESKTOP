@@ -90,6 +90,23 @@ describe('Activity ledger runtime ownership', () => {
     await refreshActivityLedger(owner.runtime, { full: true })
     expect(gets.sort()).toEqual([1, 3])
   })
+  it('shows a delayed-broadcast migrate that is still sending after a restart', async () => {
+    const records = new Map<number, Record<string, unknown>>([
+      [4, { transactionId: 4, txid: txid(4), satoshis: -30, isOutgoing: true, created_at: 40, status: 'sending', description: 'Migrate 25 ordinals from phrase' }],
+      [5, { transactionId: 5, txid: txid(5), satoshis: 9, created_at: 50, status: 'unsigned' }],
+    ])
+    const owner = wallet('owner'); control.current = owner.runtime
+    const provider = owner.provider as typeof owner.provider & { toDbTrx: unknown }
+    provider.toDbTrx = () => ({
+      objectStore: () => ({
+        index: () => ({ getAllKeys: async ([status]: [string]) => [...records.values()].filter(r => r.status === status).map(r => r.transactionId) }),
+        get: async (id: number) => records.get(id),
+      }),
+      done: Promise.resolve(),
+    })
+    await refreshActivityLedger(owner.runtime)
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(4)])
+  })
   it('refuses an ambiguous or missing wallet owner', async () => {
     const owner = wallet('owner'); control.current = owner.runtime
     owner.provider.findUsers.mockResolvedValueOnce([])

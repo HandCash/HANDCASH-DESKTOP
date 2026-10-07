@@ -17,6 +17,7 @@ const stored = new Map<string, string>()
 const runSpend = vi.fn((fn: () => Promise<unknown>) => fn())
 vi.mock('./spendGuard', () => ({
   runExclusiveSpend: (fn: () => Promise<unknown>) => runSpend(fn),
+  yieldToForegroundSpends: async () => 0,
 }))
 vi.mock('./collectables', () => ({ noteIngestedItems: vi.fn() }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))

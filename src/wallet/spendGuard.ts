@@ -19,7 +19,10 @@ import {
   peekProvenConfirmedSpendable,
 } from './session'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
-import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
+import {
+  runExclusiveSpend as runExclusiveSpendCoordinated,
+  shouldYieldChainIngestToSpend,
+} from './walletCoordinator'
 import {
   assertRuntimeCurrent,
   getWalletRuntime,
@@ -31,6 +34,57 @@ let spendChainPromoted = false
 let spendRecoveryDisabled = false
 
 let liveSpendAbort: AbortController | null = null
+
+/**
+ * Who a spend is for. `foreground` is a person or an app waiting on it;
+ * `background` is bulk work (an import's migrate bundles) that must never sit
+ * in the region while one of those is queued.
+ */
+export type SpendLane = 'foreground' | 'background'
+
+let foregroundSpends = 0
+let foregroundSettledAt = 0
+const foregroundWatchers = new Set<() => void>()
+
+/**
+ * Quiet after a foreground spend before background work takes the region back.
+ * An app's create → sign pair is two spends; the second lands inside this.
+ */
+export const FOREGROUND_QUIET_MS = 5_000
+const FOREGROUND_POLL_MS = 1_000
+
+function noteForegroundSettled(): void {
+  foregroundSpends = Math.max(0, foregroundSpends - 1)
+  foregroundSettledAt = Date.now()
+  for (const watch of [...foregroundWatchers]) watch()
+}
+
+/**
+ * Wait until no foreground spend is queued, running or about to be (a held
+ * spend priority — an open payment prompt), and the last one finished
+ * {@link FOREGROUND_QUIET_MS} ago. Background lanes call this before each
+ * region they take, so a payment waits for at most the one bundle in flight.
+ *
+ * @returns milliseconds spent waiting.
+ */
+export async function yieldToForegroundSpends(quietMs = FOREGROUND_QUIET_MS): Promise<number> {
+  const started = Date.now()
+  for (;;) {
+    const busy = foregroundSpends > 0 || shouldYieldChainIngestToSpend()
+    // Capped so a wall clock stepped backwards cannot stretch the quiet window.
+    const left = busy ? FOREGROUND_POLL_MS : Math.min(quietMs, foregroundSettledAt + quietMs - Date.now())
+    if (left <= 0) return Date.now() - started
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer)
+        foregroundWatchers.delete(done)
+        resolve()
+      }
+      const timer = setTimeout(done, left)
+      foregroundWatchers.add(done)
+    })
+  }
+}
 
 let monitorPauseGeneration = 0
 
@@ -216,12 +270,13 @@ async function reviewAfterAbandonedSpend(): Promise<void> {
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { promote?: SpendPreparation },
+  opts?: { promote?: SpendPreparation; lane?: SpendLane },
 ): Promise<T> {
   const runtime = getWalletRuntime()
   if (!runtime && import.meta.env?.MODE !== 'test') {
     throw new Error('WALLET_LOCKED')
   }
+  const foreground = (opts?.lane ?? 'foreground') === 'foreground'
   // Spending known local UTXOs is the wallet's primary path. Maintenance is
   // demand-driven: only a real local-balance shortage may promote chained
   // change. Callers doing explicit-input work (items/burns) use `false`; repair
@@ -230,7 +285,12 @@ export function runExclusiveSpend<T>(
   const abort = new AbortController()
   const abortForRuntime = () => abort.abort('Wallet account changed')
   runtime?.signal.addEventListener('abort', abortForRuntime, { once: true })
-  liveSpendAbort = abort
+  // The stuck-payment watchdog aborts the spend someone is waiting on, never a
+  // background bundle that happens to be newer.
+  if (foreground) {
+    liveSpendAbort = abort
+    foregroundSpends += 1
+  }
   const throwIfAborted = () => {
     if (!abort.signal.aborted) return
     const reason = abort.signal.reason
@@ -278,6 +338,7 @@ export function runExclusiveSpend<T>(
     .finally(() => {
       runtime?.signal.removeEventListener('abort', abortForRuntime)
       if (liveSpendAbort === abort) liveSpendAbort = null
+      if (foreground) noteForegroundSettled()
     })
 }
 

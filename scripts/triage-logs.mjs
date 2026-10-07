@@ -2389,6 +2389,7 @@ const IMPORT_LINES = [
   ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)(?: durable=(\d+))?/],
   ['busyWait', /^\[phrase-sweep\] wallet busy — waiting to send (\d+) \((\d+)\/(\d+)\)/],
   ['migrateTimed', /^\[phrase-sweep\] migrate ([0-9a-f]{12}) done (\d+)ms create=(\d+)ms sign=(\d+)ms post=(\d+)ms/],
+  ['yieldedToPayments', /^\[phrase-sweep\] yielded to payments done (\d+)ms/],
   ['abandonedSettled', /^\[phrase-sweep\] abandoned migrate of (\d+) settled (posted|failed|unknown)(?: ([0-9a-f]{12}))? after (\d+)ms/],
   ['busyStopped', /^\[phrase-sweep\] stopped: wallet still busy after (\d+) wait/],
   ['prefetch', /^\[import\] prefetch done (\d+)ms items=(\d+) unread=(\d+)/],
@@ -2450,6 +2451,7 @@ function legacyImportFacts(events) {
         : step === 'busyWait' ? { tips: n(1), wait: n(2), of: n(3) }
         : step === 'busyStopped' ? { waits: n(1) }
         : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), postMs: n(5) }
+        : step === 'yieldedToPayments' ? { ms: n(1) }
         : step === 'abandonedSettled' ? { tips: n(1), outcome: m[2], txid: m[3] ?? null, waitMs: n(4) }
         : step === 'prefetch' ? { ms: n(1), items: n(2), unread: n(3) }
         : step === 'outboxRefused' ? { txid: m[1], reason: m[2], bytes: n(3) }
