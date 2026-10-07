@@ -2333,6 +2333,8 @@ const IMPORT_LINES = [
   ['settled', /^\[import\] hinted scan settled sats=(\d+) items=(\d+) of sats=(\d+) items=(\d+)/],
   ['refused', /^\[import\] hinted scan refused reason=(\S+)/],
   ['sweep', /^\[import\] sweep done (\d+)ms kind=(\S+) cash=(\d+)sats items=(\d+) tokens=(\d+) failed=(\d+)/],
+  ['cashSweep', /^\[legacy\] sweep coins=(\d+) tx=(\d+) done (\d+)ms/],
+  ['cashBundleRefused', /^\[legacy\] sweep bundle of (\d+) refused — retrying (\d+)/],
   ['itemsSynced', /^\[import\] items synced (\d+) addresses=(\d+) complete=(true|false) stopped=(true|false) done (\d+)ms/],
   ['itemsChainChecked', /^\[import\] items chain-checked (\d+) spent=(\d+) unknown=(\d+) stopped=(true|false) done (\d+)ms/],
   ['utxoSetListed', /^\[import\] utxo set listed done (\d+)ms outputs=(\d+) unspent=(\d+) unknown=(\d+) viaExplorer=(\d+)/],
@@ -2385,6 +2387,8 @@ function legacyImportFacts(events) {
           }
         : step === 'chosenDone' ? { ms: n(1), items: n(2), keys: n(3), moved: n(4) }
         : step === 'runDone' ? { ms: n(1), items: n(2), answered: n(3), sources: n(4), outcome: m[5] }
+        : step === 'cashSweep' ? { coins: n(1), transactions: n(2), ms: n(3) }
+        : step === 'cashBundleRefused' ? { coins: n(1), retrying: n(2) }
         : {}
       steps.push({ at: new Date(e.at).toISOString(), step, ...detail })
       break

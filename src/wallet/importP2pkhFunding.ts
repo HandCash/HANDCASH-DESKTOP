@@ -45,39 +45,63 @@ async function postSweep(
   }
 }
 
+/** One coin to sweep, resolved against the deposit package. */
+type SweepCoin = { outpoint: string; txid: string; vout: number; satoshis: number }
+
+/**
+ * Coins per sweep transaction. A P2PKH input is ~148 bytes, so a full bundle
+ * is ~15 KB and pays for itself many times over versus one fee per coin.
+ */
+export const MAX_P2PKH_SWEEP_INPUTS = 100
+
+export type P2pkhSweepUnit =
+  | { kind: 'bundle'; coins: SweepCoin[] }
+  | { kind: 'single'; coin: SweepCoin }
+
+/** The next transaction: every waiting coin up to `perTx`, or one alone. Pure. */
+export function chooseP2pkhSweepUnit(coins: readonly SweepCoin[], perTx = MAX_P2PKH_SWEEP_INPUTS): P2pkhSweepUnit {
+  const cap = Math.max(1, Math.min(Math.floor(perTx), MAX_P2PKH_SWEEP_INPUTS))
+  if (coins.length === 1 || cap === 1) return { kind: 'single', coin: coins[0]! }
+  return { kind: 'bundle', coins: coins.slice(0, cap) }
+}
+
+function resolveCoin(depositBeef: Beef, outpoint: string): SweepCoin {
+  const [txidPart, voutPart] = outpoint.split('.')
+  const txid = (txidPart ?? '').toLowerCase()
+  const vout = Number(voutPart)
+  const btx = depositBeef.findTxid(txid)
+  if (btx?.tx == null) throw new Error(`Transaction ${txid} not found in inputBEEF`)
+  const output = btx.tx.outputs[vout]
+  if (!output) throw new Error(`vout ${vout} out of range`)
+  const satoshis = Number(output.satoshis ?? 0)
+  if (!(satoshis > 0)) throw new Error(`Output ${outpoint} has no satoshis`)
+  return { outpoint, txid, vout, satoshis }
+}
+
 async function signAndComplete(
   wallet: WalletInterface,
   st: { tx: number[]; reference: string },
-  sourceTxid: string,
-  vout: number,
-  satoshis: number,
+  coins: readonly SweepCoin[],
   priv: PrivateKey,
 ): Promise<{ txid: string; tx: number[] }> {
   const stBeef = Beef.fromBinary(st.tx)
-  let unsignedTx
-  let inputIndex = -1
-  for (const stbtx of stBeef.txs) {
-    if (stbtx.tx == null) continue
-    for (let i = 0; i < stbtx.tx.inputs.length; i++) {
-      const inp = stbtx.tx.inputs[i]
-      if (String(inp.sourceTXID).toLowerCase() === sourceTxid && inp.sourceOutputIndex === vout) {
-        unsignedTx = stbtx.tx
-        inputIndex = i
-        break
-      }
-    }
-    if (unsignedTx != null) break
-  }
-  if (unsignedTx == null || inputIndex < 0) {
-    throw new Error('Could not find requested outpoint in signable transaction inputs')
-  }
-  unsignedTx.inputs[inputIndex]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(priv, satoshis)
-  await unsignedTx.sign()
-  const unlockingScript = unsignedTx.inputs[inputIndex]!.unlockingScript!.toHex()
-  const sar = await wallet.signAction({
-    reference: st.reference,
-    spends: { [inputIndex]: { unlockingScript } },
+  const wanted = new Map(coins.map((c) => [`${c.txid}.${c.vout}`, c]))
+  const unsignedTx = stBeef.txs
+    .map((btx) => btx.tx)
+    .find((tx) => tx?.inputs.some((inp) => wanted.has(`${String(inp.sourceTXID).toLowerCase()}.${inp.sourceOutputIndex}`)))
+  if (unsignedTx == null) throw new Error('Could not find requested outpoints in signable transaction inputs')
+  const ours: number[] = []
+  unsignedTx.inputs.forEach((inp, i) => {
+    const coin = wanted.get(`${String(inp.sourceTXID).toLowerCase()}.${inp.sourceOutputIndex}`)
+    if (!coin) return
+    inp.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(priv, coin.satoshis)
+    ours.push(i)
   })
+  if (ours.length !== coins.length) throw new Error('Signable transaction is missing requested outpoints')
+  await unsignedTx.sign()
+  const spends: Record<number, { unlockingScript: string }> = {}
+  for (const i of ours) spends[i] = { unlockingScript: unsignedTx.inputs[i]!.unlockingScript!.toHex() }
+  const sar = await wallet.signAction({ reference: st.reference, spends })
   const txid = sar.txid?.toLowerCase() ?? ''
   if (!/^[0-9a-f]{64}$/.test(txid)) throw new Error('signAction returned no valid txid')
   const tx = asBytes(sar.tx)
@@ -85,47 +109,46 @@ async function signAndComplete(
   return { txid, tx }
 }
 
-async function sweepOne(
+/** Sweep `coins` in one transaction; throws when it is not accepted. */
+async function sweepCoins(
   active: ActiveWallet,
-  depositBeef: Beef,
   depositBin: BEEF,
-  outpoint: string,
+  coins: readonly SweepCoin[],
   p2pkhKey: ReturnType<typeof SetupClient.getKeyPair>,
 ): Promise<{ txid: string }> {
-  const [txidPart, voutPart] = outpoint.split('.')
-  const sourceTxid = (txidPart ?? '').toLowerCase()
-  const vout = Number(voutPart)
-  const btx = depositBeef.findTxid(sourceTxid)
-  if (btx?.tx == null) throw new Error(`Transaction ${sourceTxid} not found in inputBEEF`)
-  const output = btx.tx.outputs[vout]
-  if (!output) throw new Error(`vout ${vout} out of range`)
-  const satoshis = Number(output.satoshis ?? 0)
-  if (!(satoshis > 0)) throw new Error(`Output ${outpoint} has no satoshis`)
-
+  const first = coins[0]!
   const car = await active.wallet.createAction({
     inputBEEF: depositBin,
-    inputs: [
-      { outpoint, unlockingScriptLength: 108, inputDescription: 'fund wallet from P2PKH' },
-    ],
+    inputs: coins.map((coin) => ({
+      outpoint: coin.outpoint,
+      unlockingScriptLength: 108,
+      inputDescription: 'fund wallet from P2PKH',
+    })),
     labels: ['p2pkh-funding'],
-    description: `Import P2PKH UTXO ${sourceTxid.slice(0, 16)}...`,
+    description:
+      coins.length === 1
+        ? `Import P2PKH UTXO ${first.txid.slice(0, 16)}...`
+        : `Import ${coins.length} P2PKH UTXOs`,
     options: { trustSelf: 'known', signAndProcess: false },
   })
 
   let sweepTxid = (car.txid ?? '').toLowerCase()
   let sweepAtomic = asBytes(car.tx)
   if (car.signableTransaction) {
-    const signed = await signAndComplete(
-      active.wallet,
-      {
-        tx: asBytes(car.signableTransaction.tx),
-        reference: car.signableTransaction.reference,
-      },
-      sourceTxid,
-      vout,
-      satoshis,
-      p2pkhKey.privateKey,
-    )
+    const reference = car.signableTransaction.reference
+    let signed: { txid: string; tx: number[] }
+    try {
+      signed = await signAndComplete(
+        active.wallet,
+        { tx: asBytes(car.signableTransaction.tx), reference },
+        coins,
+        p2pkhKey.privateKey,
+      )
+    } catch (err) {
+      // Nothing was signed: free whatever the unsigned action reserved.
+      await active.wallet.abortAction({ reference }).catch(() => undefined)
+      throw err
+    }
     sweepTxid = signed.txid
     sweepAtomic = signed.tx
   }
@@ -138,7 +161,7 @@ async function sweepOne(
   if (!posted.ok) {
     throw new Error(`sweep not accepted by the network (${posted.detail})`)
   }
-    return { txid: sweepTxid }
+  return { txid: sweepTxid }
 }
 
 async function echoSweepChange(active: ActiveWallet, sweepTxid: string): Promise<void> {
@@ -150,6 +173,13 @@ async function echoSweepChange(active: ActiveWallet, sweepTxid: string): Promise
   }
 }
 
+/**
+ * Sweep visible P2PKH coins, as many to a transaction as {@link MAX_P2PKH_SWEEP_INPUTS}.
+ *
+ * A rejection does not say which coin was at fault, so a rejected bundle is
+ * halved and retried down to single coins: one bad coin costs a few attempts,
+ * never the rest of the sweep, and every failure is pinned to its own coin.
+ */
 export async function sweepVisibleP2pkhOutpoints(
   wallet: ActiveWallet,
   outpoints: string[],
@@ -161,18 +191,46 @@ export async function sweepVisibleP2pkhOutpoints(
   const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(keyHex))
   const depositBeef = Beef.fromBinary(inputBeef)
   return withVisibleOnChainBeef(async () => {
+    const startedAt = Date.now()
     const results: P2pkhSweepResult[] = []
+    const coins: SweepCoin[] = []
     for (const outpoint of outpoints) {
       try {
-        const { txid } = await sweepOne(wallet, depositBeef, inputBeef, outpoint, p2pkhKey)
+        coins.push(resolveCoin(depositBeef, outpoint))
+      } catch (err) {
+        results.push({ outpoint, success: false, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+    let pending = coins
+    let perTx = MAX_P2PKH_SWEEP_INPUTS
+    let transactions = 0
+    while (pending.length > 0) {
+      const unit = chooseP2pkhSweepUnit(pending, perTx)
+      const group = unit.kind === 'bundle' ? unit.coins : [unit.coin]
+      try {
+        const { txid } = await sweepCoins(wallet, inputBeef, group, p2pkhKey)
         await echoSweepChange(wallet, txid)
-        results.push({ outpoint, txid, success: true })
-        console.info(`[legacy] sweep ${outpoint} txid=${txid.slice(0, 12)}… posted`)
+        for (const coin of group) results.push({ outpoint: coin.outpoint, txid, success: true })
+        transactions += 1
+        console.info(`[legacy] sweep ${group.length} coin(s) txid=${txid.slice(0, 12)}… posted`)
+        pending = pending.slice(group.length)
+        perTx = MAX_P2PKH_SWEEP_INPUTS
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err)
-        results.push({ outpoint, success: false, error })
-        console.warn(`[legacy] sweep ${outpoint} failed`, error)
+        if (unit.kind === 'bundle') {
+          perTx = Math.max(1, Math.ceil(group.length / 2))
+          console.warn(`[legacy] sweep bundle of ${group.length} refused — retrying ${perTx} (${error})`)
+          continue
+        }
+        results.push({ outpoint: unit.coin.outpoint, success: false, error })
+        console.warn(`[legacy] sweep ${unit.coin.outpoint} failed`, error)
+        pending = pending.slice(1)
+        perTx = MAX_P2PKH_SWEEP_INPUTS
       }
+    }
+    const ms = Date.now() - startedAt
+    if (ms >= 250 || coins.length > 1) {
+      console.info(`[legacy] sweep coins=${coins.length} tx=${transactions} done ${ms}ms`)
     }
     return results
   })
