@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.468] - 2026-10-06
+
+### Fixed
+- Sweep everything moves collectables up to 25 per transaction across addresses instead of one transaction per address (HandCash exports hold one item per address, so every item was its own transaction).
+
+### Changed
+- Removed the per-address item batch path and its resume cursor logic; the sweep and Collect share one bundled migrate.
+- Log triage extracts phrase-sweep batch size, bundle rejects, abort refusals and unreadable tips, plus a per-tag line census.
+
 ## [1.3.467] - 2026-10-06
 
 ### Changed
