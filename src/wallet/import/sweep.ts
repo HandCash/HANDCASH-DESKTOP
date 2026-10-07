@@ -22,7 +22,7 @@ import {
 } from './holdings'
 import { keyDeriverFor } from './importSource'
 import { listedImportOutpoints } from './itemStore'
-import { clearImportItems, importItems, syncImportItems } from './items'
+import { clearImportItems, importItems, prefetchImportItems, syncImportItems } from './items'
 import { sweepTokensFromAddress } from './tokenSweep'
 import { loadImportedSources, updateImportedSource, type ImportedSource, type SweepSummary } from './store'
 
@@ -192,11 +192,16 @@ async function runSweep(
     itemTotal = listed.length || null
     for (let i = 0; i < listed.length && !stop() && !paused; i += IMPORT_CHUNK) {
       report('items', `Moving collectables… ${items.toLocaleString()} of ${listed.length.toLocaleString()}`, items)
+      const next = listed.slice(i + IMPORT_CHUNK, i + 2 * IMPORT_CHUNK)
       const chunk = await importItems({
         sourceId: source.id,
         identityKey: active.identityKey,
         outpoints: listed.slice(i, i + IMPORT_CHUNK),
         activityGroup: job.id,
+        // Read the next chunk's sources while this one signs and posts.
+        ...(next.length > 0
+          ? { onSourcesRead: () => void prefetchImportItems({ sourceId: source.id, outpoints: next }) }
+          : {}),
       })
       for (const { result } of chunk.results) {
         if (result.kind === 'moved') items += 1

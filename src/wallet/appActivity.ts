@@ -562,25 +562,37 @@ function ledgerReproducibleOrder(
       net.sats === entry.sats
     );
   };
+  // An imported item leg names its source outpoint, which no ledger leg has,
+  // so it never matched above and outlived real history. The ledger still
+  // holds its migrate's legs and folds them under the same job.
+  const importedLeg = (entry: ActivityEntry, txid: string): boolean =>
+    entry.note === IMPORTED_COLLECTABLE_NOTE &&
+    !!entry.sendGroupId?.startsWith(JOB_GROUP_PREFIX) &&
+    jobOfTxid(txid) === entry.sendGroupId &&
+    (index.items.get(txid)?.size ?? 0) > 0;
+  const imported: ActivityEntry[] = [];
   const plain: ActivityEntry[] = [];
   const annotated: ActivityEntry[] = [];
   for (const entry of entries) {
     const txid = entry.txid?.toLowerCase();
-    if (
-      !txid ||
-      entry.status ||
-      isArchivedActivity(entry) ||
-      entry.retry ||
-      !reproduces(entry, txid)
-    ) {
+    if (!txid || entry.status || isArchivedActivity(entry) || entry.retry) {
       continue;
     }
+    if (importedLeg(entry, txid)) {
+      imported.push(entry);
+      continue;
+    }
+    if (!reproduces(entry, txid)) continue;
     const bare =
       entry.origin === WALLET_ACTIVITY_ORIGIN && !entry.item && !entry.burn;
     (bare ? plain : annotated).push(entry);
   }
   const byAge = (a: ActivityEntry, b: ActivityEntry) => a.at - b.at;
-  return [...plain.sort(byAge), ...annotated.sort(byAge)];
+  return [
+    ...imported.sort(byAge),
+    ...plain.sort(byAge),
+    ...annotated.sort(byAge),
+  ];
 }
 
 function activityBodyWithinBudget(
@@ -2881,9 +2893,31 @@ function projectedActivity(): ActivityEntry[] {
   return rows;
 }
 
-/** Newest-first history for display: stored rows over the wallet's ledger. */
+/**
+ * Newest-first history for display: stored rows over the wallet's ledger.
+ *
+ * `limit` counts what the feed shows, and a wallet job shows as one record
+ * however many legs it folds. Counting raw rows let one import of thousands
+ * of items fill the whole window, and every older record fell out of the feed.
+ * A job inside the window keeps every leg, so its record counts them all.
+ */
 export function listActivityFeed(limit = 40): ActivityEntry[] {
-  return newestVisible(projectedActivity(), limit);
+  const rows = newestVisible(projectedActivity(), Number.MAX_SAFE_INTEGER);
+  const units = new Set<string>();
+  const jobs = new Set<string>();
+  const cap = Math.max(1, limit);
+  for (const row of rows) {
+    const group = row.sendGroupId?.trim() ?? "";
+    const unit = group.startsWith(JOB_GROUP_PREFIX) ? group : row.id;
+    if (units.has(unit)) continue;
+    if (units.size >= cap) break;
+    units.add(unit);
+    if (unit === group) jobs.add(group);
+  }
+  return rows.filter((row) => {
+    const group = row.sendGroupId?.trim() ?? "";
+    return jobs.has(group) || units.has(row.id);
+  });
 }
 
 export function getActivityById(id: string): ActivityEntry | null {

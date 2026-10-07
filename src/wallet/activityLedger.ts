@@ -32,6 +32,7 @@ export type LedgerOutput = {
   basketId?: number | null
   vout?: number
   txid?: string | null
+  customInstructions?: string | null
 }
 
 export type LedgerBasket = { basketId?: number; name?: string }
@@ -42,7 +43,26 @@ function timeOf(value: LedgerTx['created_at']): number | null {
   return Number.isFinite(ms) && ms > 0 ? ms : null
 }
 
-type ItemMove = { outpoint: string; role: 'created' | 'spent' }
+type ItemMove = { outpoint: string; role: 'created' | 'spent'; origin?: string; name?: string }
+
+/** Identity notes are a few hundred bytes; a remittance lineage is not and is never parsed here. */
+const MAX_IDENTITY_NOTE = 4_096
+
+/** The origin and name an item output was filed with, when its note is the small identity form. */
+function filedIdentity(note: LedgerOutput['customInstructions']): { origin?: string; name?: string } {
+  if (typeof note !== 'string' || note.length > MAX_IDENTITY_NOTE || note[0] !== '{') return {}
+  try {
+    const parsed = JSON.parse(note) as { origin?: unknown; name?: unknown }
+    const origin =
+      typeof parsed.origin === 'string' && /^[0-9a-f]{64}[._]\d+$/i.test(parsed.origin.trim())
+        ? parsed.origin.trim().toLowerCase().replace('.', '_')
+        : undefined
+    const name = typeof parsed.name === 'string' ? parsed.name.trim().slice(0, 80) || undefined : undefined
+    return { ...(origin ? { origin } : {}), ...(name ? { name } : {}) }
+  } catch {
+    return {}
+  }
+}
 
 /**
  * One row per settled transaction, or one per 1Sat item it moved.
@@ -80,9 +100,10 @@ export function ledgerActivityRows(
     const creator = Number(out.transactionId)
     const txid = out.txid?.trim().toLowerCase() || txidById.get(creator)
     const outpoint = txid && /^[0-9a-f]{64}$/.test(txid) && Number.isSafeInteger(out.vout) && out.vout! >= 0 ? `${txid}.${out.vout}` : null
-    if (creator > 0) note(creator, basket, outpoint ? { outpoint, role: 'created' } : null)
+    const identity = basket === COLLECTABLE_BASKET ? filedIdentity(out.customInstructions) : {}
+    if (creator > 0) note(creator, basket, outpoint ? { outpoint, role: 'created', ...identity } : null)
     const spender = Number(out.spentBy)
-    if (spender > 0) note(spender, basket, outpoint ? { outpoint, role: 'spent' } : null)
+    if (spender > 0) note(spender, basket, outpoint ? { outpoint, role: 'spent', ...identity } : null)
   }
 
   const rows: ActivityEntry[] = []
@@ -100,7 +121,7 @@ export function ledgerActivityRows(
       const moves = items.moves.filter((m) => !seen.has(m.outpoint) && seen.add(m.outpoint))
       // Both directions in one transaction: its description names only one.
       const oneWay = moves.every((m) => m.role === moves[0]!.role)
-      for (const { outpoint, role } of moves) {
+      for (const { outpoint, role, origin, name } of moves) {
         const received = role === 'created'
         rows.push({
           id: `ledger:${txid}:${outpoint}`,
@@ -113,7 +134,7 @@ export function ledgerActivityRows(
             (oneWay && description) ||
             (received ? 'Received collectable' : 'Sent collectable'),
           txid,
-          item: { name: 'Collectable', origin: outpoint.replace(/\.(\d+)$/, '_$1'), outpoint },
+          item: { name: name ?? 'Collectable', origin: origin ?? outpoint.replace(/\.(\d+)$/, '_$1'), outpoint },
         })
       }
       continue
@@ -180,7 +201,7 @@ function sameRows(a: readonly ActivityEntry[], b: readonly ActivityEntry[]): boo
     const y = b[i]!
     if (x.id !== y.id || x.at !== y.at || x.sats !== y.sats || x.note !== y.note ||
         x.kind !== y.kind || x.method !== y.method || x.item?.outpoint !== y.item?.outpoint ||
-        x.item?.origin !== y.item?.origin) return false
+        x.item?.origin !== y.item?.origin || x.item?.name !== y.item?.name) return false
   }
   return true
 }

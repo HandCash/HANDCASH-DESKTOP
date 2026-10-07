@@ -17,11 +17,12 @@ vi.mock('./walletRuntime', async (importOriginal) => ({
 }))
 
 import { publishActivityLedger, resetActivityLedgerForTests } from './activityLedger'
-import { itemMigrateTxDescription, noteJobTxids, resetActivityJobIndexForTests } from './activityJobIndex'
+import { itemMigrateTxDescription, jobOfTxid, noteJobTxids, resetActivityJobIndexForTests } from './activityJobIndex'
 import { composeActivityRecords } from './activityRecords'
 import {
   exportAllActivity,
   getActivityById,
+  IMPORTED_COLLECTABLE_NOTE,
   listActivityFeed,
   listRecentActivity,
   mergeActivityEntries,
@@ -32,6 +33,7 @@ import {
   sameActivityRow,
   type ActivityEntry,
 } from './appActivity'
+import { recordMigratedItemActivity } from './legacyReceiptActivity'
 
 const tx = (n: number) => n.toString(16).padStart(64, '0')
 
@@ -227,5 +229,59 @@ describe('Activity over the wallet ledger', () => {
     expect(kept).toHaveLength(1_000)
     expect(kept.map((e) => e.id)).toEqual(expect.arrayContaining(['self-out', 'self-in', 'plain-1099']))
     expect(listActivityFeed(5_000)).toHaveLength(1_102)
+  })
+
+  it('counts a running import as one row of the window, so older history still shows', () => {
+    const job = 'job:item-import:big'
+    noteJobTxids(job, [tx(100)])
+    const legs = Array.from({ length: 300 }, (_, i) => ({
+      ...ledgerItem(100, `${tx(100)}.${i}`, 'earned'),
+      at: 10_000,
+      note: itemMigrateTxDescription(100, `${tx(90)}.0`),
+    }))
+    publishActivityLedger('ns', [...legs, ledgerCoin(1), ledgerCoin(2)])
+
+    const feed = listActivityFeed(3)
+    expect(feed.filter((e) => e.sendGroupId === job)).toHaveLength(300)
+    expect(feed.map((e) => e.id)).toEqual(expect.arrayContaining([`ledger:${tx(1)}`, `ledger:${tx(2)}`]))
+  })
+
+  it('files a grouped migrate in the job index only, writing no stored row per item', () => {
+    const job = 'job:item-import:run'
+    recordMigratedItemActivity(
+      Array.from({ length: 100 }, (_, i) => ({ outpoint: `${tx(700 + i)}.0`, origin: `${tx(700 + i)}_0`, sweepTxid: tx(5), sweepVout: i })),
+      'main',
+      { groupId: job },
+    )
+    expect(exportAllActivity()).toEqual([])
+    expect(jobOfTxid(tx(5))).toBe(job)
+  })
+
+  it('sheds imported legs the ledger folds under their job before any older history', () => {
+    const job = 'job:item-import:old'
+    noteJobTxids(job, [tx(5_000)])
+    const coins = Array.from({ length: 1_000 }, (_, i) => ledgerCoin(i + 10))
+    const migrated = Array.from({ length: 3 }, (_, i) => ledgerItem(5_000, `${tx(5_000)}.${i}`, 'earned'))
+    publishActivityLedger('ns', [...coins, ...migrated])
+    mergeActivityEntries([
+      ...coins.map((l, i) => row({ id: `plain-${i}`, txid: l.txid, at: l.at, sats: 100 })),
+      ...Array.from({ length: 3 }, (_, i) =>
+        row({
+          id: `imported-${i}`,
+          txid: tx(5_000),
+          at: 5_000,
+          kind: 'earned',
+          method: 'receive-collectable',
+          note: IMPORTED_COLLECTABLE_NOTE,
+          sendGroupId: job,
+          item: { name: 'Fox', origin: `${tx(7_000 + i)}_0`, outpoint: `${tx(7_000 + i)}.0` },
+        }),
+      ),
+    ])
+
+    const kept = exportAllActivity().map((e) => e.id)
+    expect(kept).toHaveLength(1_000)
+    expect(kept.filter((id) => id.startsWith('imported-'))).toEqual([])
+    expect(kept).toEqual(expect.arrayContaining(['plain-0', 'plain-1', 'plain-2']))
   })
 })

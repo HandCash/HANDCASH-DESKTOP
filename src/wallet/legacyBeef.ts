@@ -22,8 +22,11 @@ const MAX_FETCHES_PER_BUILD = 250
 /** Minimum spacing between provider requests — what keeps us under rate limits. */
 const MIN_REQUEST_GAP_MS = 90
 
-/** Raw transactions are immutable, so a hit is always safe to reuse. */
-const MAX_CACHED_TXS = 400
+/**
+ * Raw transactions are immutable, so a hit is always safe to reuse. Room for
+ * a chunk being moved and the next one being read ahead, with their parents.
+ */
+const MAX_CACHED_TXS = 600
 
 const txCache = new Map<string, Transaction>()
 

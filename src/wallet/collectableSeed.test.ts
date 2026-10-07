@@ -84,6 +84,19 @@ describe('locally seeded collectables', () => {
     expect(getCachedCollectables().map((c) => c.outpoint)).toContain(TIP)
   })
 
+  it('paints a whole migrate batch at once, and keeps it through an empty read', async () => {
+    const { noteIngestedItems, getCachedCollectables, listCollectables } = await import('./collectables')
+    const tips = Array.from({ length: 3 }, (_, i) => ({
+      outpoint: `${'c'.repeat(64)}.${i}`,
+      chain: 'main' as const,
+      name: `Item ${i}`,
+    }))
+    expect(noteIngestedItems(tips)).toBe(3)
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual(expect.arrayContaining(tips.map((t) => t.outpoint)))
+    const after = await listCollectables(walletListing([]) as never)
+    expect(after.map((c) => c.outpoint)).toEqual(expect.arrayContaining(tips.map((t) => t.outpoint)))
+  })
+
   it('survives a basket read that does not list it yet', async () => {
     const { noteIngestedItem, listCollectables } = await import(
       './collectables'

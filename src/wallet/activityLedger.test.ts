@@ -57,6 +57,23 @@ describe('ledgerActivityRows', () => {
     expect(rows[0]!.item).toEqual({ name: 'Collectable', origin: `${tx(1)}_0`, outpoint: `${tx(1)}.0` })
   })
 
+  it('names a collectable by the small identity note it was filed with, and nothing larger', () => {
+    const rows = ledgerActivityRows(
+      [{ transactionId: 1, txid: tx(1), satoshis: 0, created_at: 5, description: 'Migrated 3 collectables' }],
+      [
+        { transactionId: 1, basketId: 2, vout: 0, customInstructions: JSON.stringify({ origin: `${tx(9)}.3`, name: 'Fox' }) },
+        { transactionId: 1, basketId: 2, vout: 1, customInstructions: '{"origin":"not-an-origin","name":7}' },
+        { transactionId: 1, basketId: 2, vout: 2, customInstructions: JSON.stringify({ origin: `${tx(9)}_4`, lineage: 'x'.repeat(5_000) }) },
+      ],
+      baskets,
+    )
+    expect(rows.map((r) => r.item)).toEqual([
+      { name: 'Fox', origin: `${tx(9)}_3`, outpoint: `${tx(1)}.0` },
+      { name: 'Collectable', origin: `${tx(1)}_1`, outpoint: `${tx(1)}.1` },
+      { name: 'Collectable', origin: `${tx(1)}_2`, outpoint: `${tx(1)}.2` },
+    ])
+  })
+
   it('shows a send to yourself as both of its activities', () => {
     const rows = ledgerActivityRows(
       [

@@ -54,6 +54,9 @@ import {
 import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
+  itemsWithinSourceBudget,
+  migratePackage,
+  migrateSourceCosts,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
 import { yieldToUi } from './yieldToUi'
@@ -764,6 +767,8 @@ export async function migrateChosenPhraseItems(args: {
   items: readonly ChosenPhraseItem[]
   /** Wallet job id: every Activity row of the run folds into one record. */
   activityGroup?: string | null
+  /** Runs once this run's source transactions are read — the moment to start reading the next run's. */
+  onSourcesRead?: () => void
 }): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -802,6 +807,7 @@ export async function migrateChosenPhraseItems(args: {
     rows.map((row) => row.outpoint),
     { concurrency: 8 },
   )
+  args.onSourcesRead?.()
   const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
 
   const pending: PendingItemMigrate[] = []
@@ -831,12 +837,22 @@ export async function migrateChosenPhraseItems(args: {
     inputBeef: built.beef,
     items: pending,
     itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
-    onMoved: (receipts) =>
-      recordMigratedItemActivity(
-        receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null })),
-        active.chain,
-        { groupId: args.activityGroup },
-      ),
+    onMoved: (receipts) => {
+      const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
+      recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
+      // Collect cannot re-read the basket while the import holds the wallet;
+      // these tips are known exactly, so they show as each transaction lands.
+      const tips = named.map((item) => ({
+        outpoint: `${item.sweepTxid}.${item.sweepVout}`,
+        chain: active.chain,
+        origin: item.origin.replace(/\.(\d+)$/, '_$1'),
+        name: item.name,
+        identityKey: active.identityKey,
+      }))
+      void import('./collectables')
+        .then(({ noteIngestedItems }) => noteIngestedItems(tips))
+        .catch((err) => console.warn('[phrase-sweep] collectables paint skipped', err))
+    },
   })
   for (const receipt of outcome.moved) {
     results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })
@@ -995,10 +1011,12 @@ async function migrateOrdinalUnit(args: {
   let pending = args.items.slice()
   let perTx = args.itemsPerTx
   let fundingRetries = 0
+  const costOf = migrateSourceCosts(args.inputBeef)
 
   while (pending.length > 0) {
     if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
-    const unit = chooseItemMigrateUnit(pending, perTx)
+    const fit = itemsWithinSourceBudget(pending, perTx, (item) => costOf(item.txid))
+    const unit = chooseItemMigrateUnit(pending, fit)
     if (unit.kind === 'refuse') break
     const group = unit.kind === 'bundle' ? unit.items : [unit.item]
     try {
@@ -1017,7 +1035,8 @@ async function migrateOrdinalUnit(args: {
           }),
         ),
       )
-      const receipts = group.map((item) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid }))
+      // Outputs keep their order (`randomizeOutputs: false`), so item i is output i.
+      const receipts = group.map((item, vout) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid, sweepVout: vout }))
       out.moved.push(...receipts)
       args.onMoved(receipts)
       out.resolved += group.length
@@ -1252,7 +1271,11 @@ async function signAndPostForeignInputs(
   packed.mergeBeef(args.inputBeef)
   packed.mergeBeef(sweepAtomic)
   packed.atomicTxid = undefined
-  const bin = packed.toBinaryAtomic(sweepTxid)
+  const bin = migratePackage(packed, sweepTxid)
+  appendAppLog(
+    'info',
+    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length}`,
+  )
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
   const submitted = await submitAtomicBeefToMiners(sweepTxid, bin)
   if (submitted.kind === 'unproven-conflict') {

@@ -160,6 +160,7 @@ export function enqueuePendingMinerSubmit(
       '[minerOutbox] refusing durable body',
       id.slice(0, 12),
       verdict.reason,
+      `bytes=${atomic.length}`,
     )
     return false
   }

@@ -1338,7 +1338,7 @@ const PHRASE_FAIL_RE = /^\[phrase-sweep\] (tip unreadable|item migrate failed)/
  * The tags we watch are the import path's; extend WATCHED_TAGS when triage
  * needs another subsystem's story without reading the log.
  */
-const WATCHED_TAGS = /^(import|phrase-sweep|legacy|items?|collectables?|1sat|tip-ingest|utxo-heal)$/
+const WATCHED_TAGS = /^(import|phrase-sweep|legacy|items?|collectables?|1sat|tip-ingest|utxo-heal|spv|minerSubmit|minerOutbox|landing|arcade|activity)$/
 function shapeOf(text) {
   return text
     .replace(/[0-9a-f]{64}([._]\d+)?/gi, '<txid>')
@@ -2382,6 +2382,9 @@ const IMPORT_LINES = [
   ['itemsDone', /^\[import\] items done (\d+)ms chosen=(\d+) moved=(\d+) tx=(\d+) keys=(\d+)((?: refused\.\S+=\d+)*)(?: stopped=(\S+))?/],
   ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)(?: tx=(\d+))?/],
   ['runDone', /^\[import\] run done (\d+)ms items=(\d+) answered=(\d+) sources=(\d+) outcome=(\S+)/],
+  ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)/],
+  ['prefetch', /^\[import\] prefetch done (\d+)ms items=(\d+) unread=(\d+)/],
+  ['outboxRefused', /^\[minerOutbox\] refusing durable body ([0-9a-f]{12}) (\S+)(?: bytes=(\d+))?/],
 ]
 
 /** Settings → Import steps in order, each with the numbers its log line carries. */
@@ -2434,6 +2437,9 @@ function legacyImportFacts(events) {
         : step === 'tipUnreadable' ? { outpoint: m[1], reason: m[2] }
         : step === 'cashSweep' ? { coins: n(1), transactions: n(2), ms: n(3) }
         : step === 'cashBundleRefused' ? { coins: n(1), retrying: n(2) }
+        : step === 'migratePackage' ? { txid: m[1], inputs: n(2), bytes: n(3) }
+        : step === 'prefetch' ? { ms: n(1), items: n(2), unread: n(3) }
+        : step === 'outboxRefused' ? { txid: m[1], reason: m[2], bytes: n(3) }
         : {}
       steps.push({ at: new Date(e.at).toISOString(), step, ...detail })
       break
@@ -2857,6 +2863,15 @@ function broadcastFacts(events) {
     }
   }
   const rows = [...byTxid.values()]
+  // Outcome lines carry a 12-hex prefix; any line with the full id lets the
+  // verdict be checked against the chain.
+  const fullTxid = new Map()
+  for (const e of events) {
+    for (const [full] of e.text.matchAll(/\b[0-9a-f]{64}\b/g)) {
+      const prefix = full.slice(0, 12)
+      if (byTxid.has(prefix) && !fullTxid.has(prefix)) fullTxid.set(prefix, full)
+    }
+  }
   const lastOutcome = {}
   const everSeen = {}
   let landed = 0
@@ -2885,6 +2900,7 @@ function broadcastFacts(events) {
     .slice(0, 12)
     .map((row) => ({
       txid: row.txid,
+      fullTxid: fullTxid.get(row.txid) ?? null,
       attempts: row.outcomes.filter((o) => MINER_ATTEMPTED.has(o)).length,
       outcomes: [...new Set(row.outcomes)].join(' → '),
       spanSeconds: Math.round((row.lastAt - row.firstAt) / 1000),

@@ -14,6 +14,7 @@ import {
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 import { noteJobTxids } from './activityJobIndex'
+import { scheduleActivityLedgerRefresh } from './activityLedger'
 import { contentUrlForOrigin } from './oneSatImport'
 import type { LegacyFundingReceipt } from './legacyScan'
 import type { Chain } from './vault'
@@ -46,13 +47,19 @@ export type MigratedItemReceipt = {
   origin: string
   /** Transaction that moved the tip to this wallet. */
   sweepTxid: string
+  /** Output of {@link sweepTxid} now holding the tip. */
+  sweepVout?: number
   name?: string | null
 }
 
 /**
- * Activity rows for collectables migrated in from an imported phrase. A
- * `groupId` (a wallet job's id) folds every row of one import run into one
- * record, however many transactions it took.
+ * Activity for collectables migrated in from an imported phrase.
+ *
+ * A `groupId` (a wallet job's id) folds the whole run into one record. Its
+ * legs are the wallet ledger's own: each migrate output carries the origin and
+ * name it was filed with, and the job index names the run. Writing a stored
+ * row per item as well re-encoded the whole Activity store a hundred times per
+ * transaction and, at thousands of items, pushed every older record out of it.
  */
 export function recordMigratedItemActivity(
   items: MigratedItemReceipt[],
@@ -60,7 +67,11 @@ export function recordMigratedItemActivity(
   opts?: { groupId?: string | null },
 ): void {
   const groupId = opts?.groupId?.trim()
-  if (groupId) noteJobTxids(groupId, items.map((item) => item.sweepTxid))
+  if (groupId) {
+    noteJobTxids(groupId, items.map((item) => item.sweepTxid))
+    scheduleActivityLedgerRefresh()
+    return
+  }
   for (const item of items) {
     const op = item.outpoint.trim().toLowerCase()
     if (!op || hasSettledActivityItemOutpoint(op)) continue
@@ -73,7 +84,6 @@ export function recordMigratedItemActivity(
       note: IMPORTED_COLLECTABLE_NOTE,
       txid: item.sweepTxid.trim().toLowerCase() || undefined,
       status: 'complete',
-      ...(groupId ? { sendGroupId: groupId } : {}),
       item: {
         name: item.name?.trim() || 'Collectable',
         origin,

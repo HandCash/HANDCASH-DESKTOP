@@ -1546,7 +1546,7 @@ function pendingSeededItems(
  * A tip that turns out not to be ours is dropped by the ownership pass; nothing
  * is guessed at here.
  */
-export function noteIngestedItem(args: {
+export type IngestedItem = {
   outpoint: string
   chain: Chain
   origin?: string | null
@@ -1555,10 +1555,13 @@ export function noteIngestedItem(args: {
   collectionId?: string | null
   content?: string | null
   identityKey?: string
-}): void {
-  if (args.identityKey && getActiveWallet()?.identityKey !== args.identityKey) return
+}
+
+/** Seed one tip; the painted card, `'held'` when the grid already shows it, or null. */
+function seedIngestedItem(args: IngestedItem): Collectable | 'held' | null {
+  if (args.identityKey && getActiveWallet()?.identityKey !== args.identityKey) return null
   const target = normalizeOutpoint(args.outpoint)
-  if (!target || isItemSent(target)) return
+  if (!target || isItemSent(target)) return null
   const key = outpointKey(target)
   const origin = args.origin?.trim()
   const name = args.name?.trim()
@@ -1590,23 +1593,14 @@ export function noteIngestedItem(args: {
         }
       : {}),
   }
-  const identityKey = getActiveWallet()?.identityKey
-  if (identityKey) hydrateSeededItems(identityKey)
   // Judged against the scan that ran before this tip existed, it would look
   // missing — record when we first held it so ownership grace applies.
   if (!firstSeenAt.has(key)) firstSeenAt.set(key, Date.now())
   seededItems.set(key, output)
-  if (identityKey) persistSeededItems(identityKey)
-  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
-  // do not wait for the user to open the item. Also re-prefer when the tip was
-  // already on the list so an Activity row for a known item still leads.
-  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) {
-    requestCollectableVerification(target)
-    return
-  }
+  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return 'held'
   // A send to our own handle leaves the outgoing tip on the list until the next
   // ownership pass; without this the same collectable shows twice until then.
-  const seeded = mergeCollectablePaint(
+  return mergeCollectablePaint(
     toCollectable(
       output,
       args.chain,
@@ -1625,16 +1619,56 @@ export function noteIngestedItem(args: {
     ),
     args.chain,
   )
+}
+
+function paintSeeded(painted: readonly Collectable[]): void {
+  if (painted.length === 0) return
   setCollectablesCache(
     dedupeByOrigin(
-      [seeded, ...cachedCollectables],
+      [...painted, ...cachedCollectables],
       (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
       cachedLiveOneSats?.keys ?? null,
     )
   )
+}
+
+export function noteIngestedItem(args: IngestedItem): void {
+  const identityKey = getActiveWallet()?.identityKey
+  if (identityKey) hydrateSeededItems(identityKey)
+  const seeded = seedIngestedItem(args)
+  if (!seeded) return
+  if (identityKey) persistSeededItems(identityKey)
+  if (seeded !== 'held') paintSeeded([seeded])
   // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
-  // do not wait for the user to open the item.
-  requestCollectableVerification(target)
+  // do not wait for the user to open the item. Also re-prefer when the tip was
+  // already on the list so an Activity row for a known item still leads.
+  requestCollectableVerification(normalizeOutpoint(args.outpoint)!)
+}
+
+/**
+ * Paint a whole transaction's tips at once — an import migrate moves a hundred.
+ *
+ * One seed write and one grid update for the lot, where a loop of
+ * {@link noteIngestedItem} re-saved the seeds and re-sorted the grid per tip.
+ * Bulk tips keep their place in the verification queue rather than each one
+ * jumping it: a thousand jumps is no priority at all.
+ */
+export function noteIngestedItems(items: readonly IngestedItem[]): number {
+  if (items.length === 0) return 0
+  const identityKey = getActiveWallet()?.identityKey
+  if (identityKey) hydrateSeededItems(identityKey)
+  const painted: Collectable[] = []
+  let seeded = 0
+  for (const item of items) {
+    const card = seedIngestedItem(item)
+    if (!card) continue
+    seeded += 1
+    if (card !== 'held') painted.push(card)
+  }
+  if (seeded === 0) return 0
+  if (identityKey) persistSeededItems(identityKey)
+  paintSeeded(painted)
+  return painted.length
 }
 
 function lockingScriptIsFungible(hex?: string): boolean {
