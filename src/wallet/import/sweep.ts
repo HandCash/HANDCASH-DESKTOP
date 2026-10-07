@@ -2,7 +2,7 @@ import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
 import { beginWalletJob, type WalletJobHandle } from '../walletJobs'
-import { IMPORT_CHUNK } from '../../machines/importQueueMachine'
+import { importChunkSize } from '../../machines/importQueueMachine'
 import { MAX_ITEMS_PER_MIGRATE_TX } from '../itemMigrateBundle'
 import {
   clearPhraseItemMigrateCursor,
@@ -265,14 +265,14 @@ async function runSweep(
     }
     const listed = [...(await listedImportOutpoints(source.id))]
     itemTotal = listed.length || null
-    for (let i = 0; i < listed.length && !stop() && !paused; i += IMPORT_CHUNK) {
+    for (let i = 0, size = importChunkSize(0); i < listed.length && !stop() && !paused; i += size, size = importChunkSize(i)) {
       report('items', `Moving collectables… ${items.toLocaleString()} of ${listed.length.toLocaleString()}`, items)
-      const next = listed.slice(i + IMPORT_CHUNK, i + 2 * IMPORT_CHUNK)
+      const next = listed.slice(i + size, i + size + importChunkSize(i + size))
       let landed = 0
       const chunk = await watchImportStage(`moving items ${i}+`, () => importItems({
         sourceId: source.id,
         identityKey: active.identityKey,
-        outpoints: listed.slice(i, i + IMPORT_CHUNK),
+        outpoints: listed.slice(i, i + size),
         activityGroup: job.id,
         // Read the next chunk's sources while this one signs and posts.
         ...(next.length > 0

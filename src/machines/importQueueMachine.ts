@@ -7,7 +7,7 @@ import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
  *
  * The browser only enqueues. Leaving it, opening another source, or choosing
  * more while a chunk moves all leave the queue running. It hands the wallet
- * `IMPORT_CHUNK` items of one source at a time, packed 25 to a transaction,
+ * `IMPORT_CHUNK` items of one source at a time (after a short `IMPORT_RAMP`),
  * and reads the next chunk's source transactions while the current one
  * signs. Chunks run one after another: every chunk spends this wallet's
  * change.
@@ -21,6 +21,13 @@ import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
  */
 
 export const IMPORT_CHUNK = 100
+/**
+ * A full chunk reads 100 sources and signs ~40-tip bundles before its first
+ * item lands, so a fresh run sat at 0 for most of a minute. The first chunks
+ * of a run are small so items land within seconds, then it moves
+ * `IMPORT_CHUNK` at a time.
+ */
+export const IMPORT_RAMP = [5, 15, 40] as const
 export const STALE_FUNDING_PAUSE_MS = 8_000
 export const STALE_FUNDING_PAUSES = 2
 
@@ -141,15 +148,36 @@ export function batchNotice(tally: Pick<ImportTally, 'total' | 'moved' | 'failur
   return { tone: failure?.tone ?? 'warning', outcome: 'batch', title: count, body: failure ? `${failure.title}: ${failure.body}` : '' }
 }
 
-/** The next chunk: the head entry's source and wallet, in queue order, up to `IMPORT_CHUNK`. Pure. */
-export function nextChunk(queue: readonly ImportQueueEntry[]): ImportQueueEntry[] {
+/** Chunk size once `taken` items of a run have been handed out: `IMPORT_RAMP`, then `IMPORT_CHUNK`. Pure. */
+export function importChunkSize(taken: number): number {
+  let reached = 0
+  for (const size of IMPORT_RAMP) {
+    reached += size
+    if (taken < reached) return size
+  }
+  return IMPORT_CHUNK
+}
+
+/**
+ * The next chunk: the head entry's source and wallet, in queue order, sized by
+ * how much of that source's run has already been handed out. Pure.
+ */
+export function nextChunk(
+  queue: readonly ImportQueueEntry[],
+  tallies: Readonly<Record<string, Pick<ImportTally, 'total'>>> = {},
+): ImportQueueEntry[] {
   const head = queue[0]
   if (!head) return []
+  const sameRun = (entry: ImportQueueEntry) =>
+    entry.sourceId === head.sourceId && entry.identityKey === head.identityKey
+  const waiting = queue.filter((e) => e.sourceId === head.sourceId).length
+  const total = tallies[head.sourceId]?.total ?? waiting
+  const limit = importChunkSize(Math.max(0, total - waiting))
   const chunk: ImportQueueEntry[] = []
   for (const entry of queue) {
-    if (entry.sourceId !== head.sourceId || entry.identityKey !== head.identityKey) continue
+    if (!sameRun(entry)) continue
     chunk.push(entry)
-    if (chunk.length >= IMPORT_CHUNK) break
+    if (chunk.length >= limit) break
   }
   return chunk
 }
@@ -251,7 +279,7 @@ export const importQueueMachine = setup({
       }
     }),
     takeChunk: assign(({ context }) => {
-      const chunk = nextChunk(context.queue)
+      const chunk = nextChunk(context.queue, context.tallies)
       const taken = new Set(chunk)
       return { moving: chunk, queue: context.queue.filter((e) => !taken.has(e)) }
     }),
@@ -393,7 +421,7 @@ export const importQueueMachine = setup({
         {
           id: 'prefetch',
           src: 'prefetch',
-          input: ({ context }) => ({ ports: context.ports, chunk: nextChunk(context.queue) }),
+          input: ({ context }) => ({ ports: context.ports, chunk: nextChunk(context.queue, context.tallies) }),
         },
       ],
       on: {

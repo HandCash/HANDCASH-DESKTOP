@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.485] - 2026-10-07
+
+### Fixed
+- **Import shows progress within seconds.** A run used to read 100 sources and sign ~40-tip bundles before its first item landed, so the count sat at 0 for most of a minute. The first chunks of a run (Browse items and the sweep) now move 5, then 15, then 40 items, then 100 at a time.
+- **Custody journal backup stuck on 412.** Cloudflare weakens the ETag of a compressed GET (`W/"…"`), and the host compared `If-Match` against the strong form, so once a push fell back to reading the remote copy every retry failed with `push 412` and the off-device journal stopped growing. The client now sends the strong form back (custody journal and the BRC-39 history probe); BRC-CLOUD also accepts the weak form, which unblocks installed builds.
+
 ## [1.3.484] - 2026-10-07
 
 ### Diagnostics

@@ -10,9 +10,20 @@ import {
   selectedPerShelf,
   type ImportItemPorts,
 } from './importItemBrowserMachine'
-import { importQueueMachine, watchSource, type ImportQueuePorts } from './importQueueMachine'
+import { IMPORT_RAMP, importChunkSize, importQueueMachine, watchSource, type ImportQueuePorts } from './importQueueMachine'
 
 const op = (n: number) => `${n.toString(16).padStart(64, '0')}_0`
+
+/** The chunk sizes the queue hands the wallet for a run of `n` items. */
+const chunkSizes = (n: number) => {
+  const sizes: number[] = []
+  for (let taken = 0; taken < n; ) {
+    const size = Math.min(importChunkSize(taken), n - taken)
+    sizes.push(size)
+    taken += size
+  }
+  return sizes
+}
 
 const item = (n: number, name: string | null = `Item ${n}`): ImportItem => ({
   outpoint: op(n),
@@ -234,11 +245,14 @@ describe('importItemBrowserMachine', () => {
     actor.send({ type: 'CONFIRM' })
     actor.stop()
 
-    held.release()
-    await vi.waitFor(() => expect(importMany).toHaveBeenCalledTimes(2))
+    const sizes = chunkSizes(zoo.length)
+    for (let call = 2; call <= sizes.length; call++) {
+      held.release()
+      await vi.waitFor(() => expect(importMany).toHaveBeenCalledTimes(call))
+    }
     held.release()
     const idle = await waitFor(queue, (s) => s.matches('idle'))
-    expect(outpointsOf(importMany).map((o) => o.length)).toEqual([IMPORT_CHUNK, 3])
+    expect(outpointsOf(importMany).map((o) => o.length)).toEqual(sizes)
     expect(idle.context.reports.s1).toMatchObject({ title: `${zoo.length} items imported` })
   })
 
@@ -275,7 +289,8 @@ describe('importItemBrowserMachine', () => {
     actor.send({ type: 'IMPORT_SELECTED' })
     actor.send({ type: 'CONFIRM' })
     const done = await settledReport(actor)
-    expect(outpointsOf(importMany).map((o) => o.length)).toEqual([IMPORT_CHUNK, IMPORT_CHUNK, 5])
+    expect(outpointsOf(importMany).map((o) => o.length)).toEqual(chunkSizes(zoo.length))
+    expect(chunkSizes(zoo.length)).toEqual([...IMPORT_RAMP, IMPORT_CHUNK, 45])
     expect(done.context.queue.report).toMatchObject({ tone: 'success', title: `${zoo.length} items imported` })
   })
 
@@ -314,7 +329,7 @@ describe('importItemBrowserMachine', () => {
     held.release()
     const done = await settledReport(actor)
     expect(importMany).toHaveBeenCalledTimes(1)
-    expect(done.context.queue.report).toMatchObject({ title: 'Import stopped', body: `${IMPORT_CHUNK} of ${zoo.length} imported.` })
+    expect(done.context.queue.report).toMatchObject({ title: 'Import stopped', body: `${IMPORT_RAMP[0]} of ${zoo.length} imported.` })
   })
 
   it('keeps the item listed when the move throws, and retries a failed check', async () => {

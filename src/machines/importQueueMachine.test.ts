@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
 import {
   IMPORT_CHUNK,
+  IMPORT_RAMP,
+  importChunkSize,
   importQueueMachine,
   nextChunk,
   sourceRun,
@@ -13,6 +15,7 @@ import {
 } from './importQueueMachine'
 
 const op = (n: number) => `${n.toString(16).padStart(64, '0')}_0`
+const RAMP_ITEMS = IMPORT_RAMP.reduce((sum, size) => sum + size, 0)
 const MOVED: ImportItemResult = { kind: 'moved', txid: 'f'.repeat(64) }
 const DEFERRED: ImportItemResult = { kind: 'deferred', message: 'A spent fee coin is being cleared.' }
 
@@ -46,11 +49,14 @@ describe('importQueueMachine', () => {
     queue.send({ type: 'ENQUEUE', sourceId: 'a', identityKey: 'id1', items: items(1, 3) })
     const idle = await waitFor(queue, (s) => s.matches('idle'))
     expect(ports.importMany.mock.calls.map(([c]) => [c.sourceId, c.outpoints.length])).toEqual([
-      ['a', IMPORT_CHUNK],
-      ['a', 1],
+      ...IMPORT_RAMP.map((size) => ['a', size]),
+      ['a', IMPORT_CHUNK + 1 - RAMP_ITEMS],
       ['b', 2],
     ])
-    expect(ports.prefetch.mock.calls[0]![0]).toEqual({ sourceId: 'a', outpoints: [op(IMPORT_CHUNK + 1)] })
+    expect(ports.prefetch.mock.calls[0]![0]).toEqual({
+      sourceId: 'a',
+      outpoints: items(IMPORT_RAMP[0] + 1, IMPORT_RAMP[1]).map((i) => i.outpoint),
+    })
     expect(idle.context.reports).toMatchObject({
       a: { title: `${IMPORT_CHUNK + 1} items imported` },
       b: { title: '2 items imported' },
@@ -60,12 +66,14 @@ describe('importQueueMachine', () => {
   it('reports a source’s run while it moves', () => {
     const { queue } = start(() => new Promise<ImportItemsResult>(() => undefined))
     queue.send({ type: 'ENQUEUE', sourceId: 'a', identityKey: 'id1', items: items(1, IMPORT_CHUNK + 2) })
-    expect(sourceRun(queue.getSnapshot().context, 'a')).toMatchObject({
+    const run = sourceRun(queue.getSnapshot().context, 'a')
+    expect(run).toMatchObject({
       total: IMPORT_CHUNK + 2,
       done: 0,
-      waiting: [op(IMPORT_CHUNK + 1), op(IMPORT_CHUNK + 2)],
+      moving: items(1, IMPORT_RAMP[0]).map((i) => i.outpoint),
       stopping: false,
     })
+    expect(run!.waiting).toEqual(items(IMPORT_RAMP[0] + 1, IMPORT_CHUNK + 2 - IMPORT_RAMP[0]).map((i) => i.outpoint))
     expect(sourceRun(queue.getSnapshot().context, 'b')).toBeNull()
   })
 
@@ -161,5 +169,13 @@ describe('importQueueMachine', () => {
     const e = (sourceId: string, identityKey: string, n: number) => ({ sourceId, identityKey, outpoint: op(n) })
     expect(nextChunk([e('a', 'k', 1), e('b', 'k', 2), e('a', 'j', 3), e('a', 'k', 4)])).toEqual([e('a', 'k', 1), e('a', 'k', 4)])
     expect(nextChunk([])).toEqual([])
+  })
+
+  it('starts a run small so the first items land quickly, then moves full chunks', () => {
+    expect([0, 4, 5, 19, 20, 59, 60, 5_000].map(importChunkSize)).toEqual([5, 5, 15, 15, 40, 40, IMPORT_CHUNK, IMPORT_CHUNK])
+    const queue = Array.from({ length: 300 }, (_, i) => ({ sourceId: 'a', identityKey: 'k', outpoint: op(i) }))
+    expect(nextChunk(queue, { a: { total: 300 } })).toHaveLength(5)
+    expect(nextChunk(queue.slice(20), { a: { total: 300 } })).toHaveLength(40)
+    expect(nextChunk(queue.slice(60), { a: { total: 300 } })).toHaveLength(IMPORT_CHUNK)
   })
 })

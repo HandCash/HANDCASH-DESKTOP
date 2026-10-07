@@ -34,6 +34,14 @@ function heldChunks() {
   return () => releases.shift()?.()
 }
 
+/** Release chunk `from` through `last`, each once the queue has handed it over. */
+async function releaseThrough(release: () => void, last: number, from = 1) {
+  for (let call = from; call <= last; call++) {
+    await vi.waitFor(() => expect(importItems).toHaveBeenCalledTimes(call))
+    release()
+  }
+}
+
 beforeEach(() => {
   runtime.instance = { identityKey: 'id1' }
   resetWalletProgressForTests()
@@ -91,8 +99,9 @@ describe('importQueue', () => {
     finishWalletProgress('done', { identityKey: 'id1' })
     release()
     await vi.waitFor(() => expect(importItems).toHaveBeenCalledTimes(3))
-    expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 200, total: 250 })
-    release()
+    expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 20, total: 250 })
+    // 250 items move as 5, 15, 40, 100, 90.
+    await releaseThrough(release, 5, 3)
     await vi.waitFor(() => expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'done' }))
   })
 
@@ -104,7 +113,8 @@ describe('importQueue', () => {
     onProgress!(1)
     expect(listWalletJobs('id1')[0]).toMatchObject({ progress: { value: 2, max: 30 } })
     expect(getWalletProgress()).toMatchObject({ current: 2, total: 30 })
-    release()
+    // 30 items move as 5, 15, 10.
+    await releaseThrough(release, 3)
     await vi.waitFor(() => expect(listWalletJobs('id1')[0]).toMatchObject({ face: 'done', progress: { value: 30, max: 30 } }))
   })
 })
