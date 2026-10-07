@@ -60,6 +60,7 @@ import {
   migrateSourceCosts,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
+import { setVisibleTimeout } from './visibleClock'
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -314,8 +315,12 @@ export type PhraseFundingSweepResult = {
  *
  * `busy` is the wallet itself: unlock's recompose or another job held it past
  * every wait. Nothing was signed, and no tip is to blame.
+ *
+ * `abandoned` is a send the spend region gave up on whose own outcome never
+ * arrived. That work may still broadcast, so its tips are not rebuilt and the
+ * run stops: a second transaction over the same tips is a double-spend.
  */
-export type PhraseItemStopReason = 'funds' | 'stale-funding' | 'busy'
+export type PhraseItemStopReason = 'funds' | 'stale-funding' | 'busy' | 'abandoned'
 
 export type PhraseItemMigrateCursor = {
   sourceAddress: string
@@ -885,7 +890,9 @@ export async function migrateChosenPhraseItems(args: {
       ? { kind: 'deferred', message: STALE_FUNDING_MESSAGE }
       : outcome.stopped === 'busy'
         ? { kind: 'deferred', message: WALLET_BUSY_MESSAGE }
-        : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
+        : outcome.stopped === 'abandoned'
+          ? { kind: 'deferred', message: ABANDONED_MESSAGE }
+          : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
   for (const item of pending.slice(outcome.resolved)) {
     results.set(givenOf.get(item.outpoint)!, unmoved)
   }
@@ -930,6 +937,47 @@ const WALLET_BUSY_MESSAGE =
 const WALLET_BUSY_WAITS = 6
 /** Ceiling on one wait; unlock's recompose and Refresh finish well inside it. */
 const WALLET_BUSY_WAIT_MS = 120_000
+
+const ABANDONED_MESSAGE =
+  'A send stopped responding and its result is not known yet, so nothing else was built over those items. Import again to move the rest.'
+/** Visible time an abandoned migrate gets to report its own outcome. */
+const ABANDONED_SETTLE_MS = 300_000
+
+type AbandonedMigrate =
+  | { kind: 'posted'; txid: string }
+  | { kind: 'failed'; error: unknown }
+  | { kind: 'unknown' }
+
+/** Duck-typed so a mocked coordinator cannot hide an abandoned region. */
+function abandonedSpendWork(err: unknown): Promise<unknown> | null {
+  const abandoned = err as { code?: unknown; late?: unknown } | null
+  if (abandoned?.code !== 'SPEND_REGION_ABANDONED') return null
+  return abandoned.late instanceof Promise ? abandoned.late : Promise.resolve(undefined)
+}
+
+/**
+ * The spend region gave up on a migrate, but the work itself cannot be
+ * cancelled: it may still sign and broadcast every tip of the bundle. Wait for
+ * what it actually did before deciding anything about those tips.
+ */
+async function settleAbandonedMigrate(late: Promise<unknown>): Promise<AbandonedMigrate> {
+  let cancel: (() => void) | undefined
+  const expired = new Promise<AbandonedMigrate>((resolve) => {
+    cancel = setVisibleTimeout(() => resolve({ kind: 'unknown' }), ABANDONED_SETTLE_MS)
+  })
+  try {
+    return await Promise.race([
+      late.then(
+        (txid): AbandonedMigrate =>
+          typeof txid === 'string' && /^[0-9a-f]{64}$/.test(txid) ? { kind: 'posted', txid } : { kind: 'unknown' },
+        (error: unknown): AbandonedMigrate => ({ kind: 'failed', error }),
+      ),
+      expired,
+    ])
+  } finally {
+    cancel?.()
+  }
+}
 
 /**
  * The certainty gate refused over a coin this bundle did not name — the
@@ -1049,6 +1097,17 @@ async function migrateOrdinalUnit(args: {
     const unit = chooseItemMigrateUnit(pending, fit)
     if (unit.kind === 'refuse') break
     const group = unit.kind === 'bundle' ? unit.items : [unit.item]
+    const landed = (txid: string) => {
+      // Outputs keep their order (`randomizeOutputs: false`), so item i is output i.
+      const receipts = group.map((item, vout) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid, sweepVout: vout }))
+      out.moved.push(...receipts)
+      args.onMoved(receipts)
+      out.resolved += group.length
+      pending = pending.slice(group.length)
+      perTx = args.itemsPerTx
+      fundingRetries = 0
+      busyWaits = 0
+    }
     try {
       const txid = await runExclusiveSpend(async () =>
         // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
@@ -1065,16 +1124,30 @@ async function migrateOrdinalUnit(args: {
           }),
         ),
       )
-      // Outputs keep their order (`randomizeOutputs: false`), so item i is output i.
-      const receipts = group.map((item, vout) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid, sweepVout: vout }))
-      out.moved.push(...receipts)
-      args.onMoved(receipts)
-      out.resolved += group.length
-      pending = pending.slice(group.length)
-      perTx = args.itemsPerTx
-      fundingRetries = 0
-      busyWaits = 0
-    } catch (err) {
+      landed(txid)
+    } catch (caught) {
+      let err: unknown = caught
+      const late = abandonedSpendWork(caught)
+      if (late) {
+        const settledAt = Date.now()
+        const outcome = await settleAbandonedMigrate(late)
+        appendAppLog(
+          outcome.kind === 'posted' ? 'info' : 'warn',
+          `[phrase-sweep] abandoned migrate of ${group.length} settled ${outcome.kind}` +
+            (outcome.kind === 'posted' ? ` ${outcome.txid.slice(0, 12)}` : '') +
+            ` after ${Date.now() - settledAt}ms`,
+        )
+        if (outcome.kind === 'posted') {
+          landed(outcome.txid)
+          continue
+        }
+        if (outcome.kind === 'unknown') {
+          out.stopped = 'abandoned'
+          out.lastError = ABANDONED_MESSAGE
+          return out
+        }
+        err = outcome.error
+      }
       const reason = err instanceof Error ? err.message : String(err)
       // The wallet never let this bundle start: no tip is at fault, and a
       // smaller bundle would queue behind the same job. Wait, then retry it whole.

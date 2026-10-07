@@ -368,6 +368,28 @@ describe('walletCoordinator runtime', () => {
     )
   })
 
+  it('hands the abandoned work to the caller, which may still broadcast', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let postLate!: (txid: string) => void
+    const abort = new AbortController()
+
+    const hung = runExclusiveSpend(
+      () =>
+        new Promise<string>((resolve) => {
+          postLate = resolve
+        }),
+      undefined,
+      { abandonSignal: abort.signal },
+    )
+    await Promise.resolve()
+    abort.abort('Send timed out')
+    const err = (await hung.catch((e: unknown) => e)) as SpendRegionAbandonedError
+    expect(err).toBeInstanceOf(SpendRegionAbandonedError)
+
+    postLate('ab'.repeat(32))
+    await expect(err.late).resolves.toBe('ab'.repeat(32))
+  })
+
   it('tracks explicit requestSpendPriority independently of the FIFO', () => {
     expect(shouldYieldChainIngestToSpend()).toBe(false)
     requestSpendPriority()

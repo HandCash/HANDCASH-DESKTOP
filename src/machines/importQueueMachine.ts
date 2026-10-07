@@ -278,7 +278,7 @@ export const importQueueMachine = setup({
     }),
     /**
      * One chunk's answers: tally them per source and tell the browser. A
-     * missing-funds or still-busy answer drops every waiting item of that
+     * missing-funds, still-busy or abandoned-send answer drops every waiting item of that
      * wallet; a spent fee coin keeps the untried items for one more pass after
      * a pause.
      */
@@ -305,7 +305,7 @@ export const importQueueMachine = setup({
       }
       let queue = context.queue
       const tallies = { ...context.tallies, [sourceId]: tally }
-      if (stopped === 'funds' || stopped === 'busy' || (stopped === 'stale-funding' && !pausing)) {
+      if (stopped === 'funds' || stopped === 'busy' || stopped === 'abandoned' || (stopped === 'stale-funding' && !pausing)) {
         queue = queue.filter((e) => e.identityKey !== identityKey)
         const dropped = new Set(context.queue.filter((e) => e.identityKey === identityKey).map((e) => e.sourceId))
         dropped.delete(sourceId)

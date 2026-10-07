@@ -225,6 +225,9 @@ async function runSweep(
       } else if (chunk.stopped === 'busy') {
         paused = 'The wallet stayed busy with another job. Sweep again in a moment — it resumes.'
         notes.push(paused)
+      } else if (chunk.stopped === 'abandoned') {
+        paused = 'A send stopped responding and its result is not known yet. Sweep again in a moment — it resumes.'
+        notes.push(paused)
       }
     }
     report('items', `Moved ${items.toLocaleString()} collectable(s)`, items)

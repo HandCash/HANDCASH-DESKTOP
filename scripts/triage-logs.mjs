@@ -2389,6 +2389,7 @@ const IMPORT_LINES = [
   ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)(?: durable=(\d+))?/],
   ['busyWait', /^\[phrase-sweep\] wallet busy — waiting to send (\d+) \((\d+)\/(\d+)\)/],
   ['migrateTimed', /^\[phrase-sweep\] migrate ([0-9a-f]{12}) done (\d+)ms create=(\d+)ms sign=(\d+)ms post=(\d+)ms/],
+  ['abandonedSettled', /^\[phrase-sweep\] abandoned migrate of (\d+) settled (posted|failed|unknown)(?: ([0-9a-f]{12}))? after (\d+)ms/],
   ['busyStopped', /^\[phrase-sweep\] stopped: wallet still busy after (\d+) wait/],
   ['prefetch', /^\[import\] prefetch done (\d+)ms items=(\d+) unread=(\d+)/],
   ['outboxRefused', /^\[minerOutbox\] refusing durable body ([0-9a-f]{12}) (\S+)(?: bytes=(\d+))?/],
@@ -2399,6 +2400,7 @@ function legacyImportFacts(events) {
   const steps = []
   const counts = {}
   const seen = new Set()
+  const visibilityOver = visibilityTimeline(events)
   for (const e of events) {
     const key = `${e.at}|${e.text}`
     if (seen.has(key)) continue
@@ -2448,14 +2450,62 @@ function legacyImportFacts(events) {
         : step === 'busyWait' ? { tips: n(1), wait: n(2), of: n(3) }
         : step === 'busyStopped' ? { waits: n(1) }
         : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), postMs: n(5) }
+        : step === 'abandonedSettled' ? { tips: n(1), outcome: m[2], txid: m[3] ?? null, waitMs: n(4) }
         : step === 'prefetch' ? { ms: n(1), items: n(2), unread: n(3) }
         : step === 'outboxRefused' ? { txid: m[1], reason: m[2], bytes: n(3) }
         : {}
-      steps.push({ at: new Date(e.at).toISOString(), step, ...detail })
+      const spanMs = typeof detail.ms === 'number' ? detail.ms : 0
+      steps.push({ at: new Date(e.at).toISOString(), step, visibility: visibilityOver(e.at - spanMs, e.at), ...detail })
       break
     }
   }
-  return { counts, steps: steps.slice(-40) }
+  return { counts, steps: steps.slice(-40), background: backgroundCadence(events, steps) }
+}
+
+const HEARTBEAT_RE = /^\[heartbeat\] up (\d+)s .* · (hidden|visible)$/
+
+/**
+ * How the WebView ran while hidden. A 30s heartbeat that keeps its cadence
+ * means timers were throttled at most; gaps of minutes mean Android froze the
+ * renderer and nothing the wallet schedules can run until it is reopened.
+ */
+function backgroundCadence(events, steps) {
+  const spans = []
+  let hiddenFrom = null
+  for (const e of [...events].sort((a, b) => a.at - b.at)) {
+    const m = LIFECYCLE_RE.exec(e.text)
+    if (!m) continue
+    if (m[1] === 'hidden' && hiddenFrom == null) hiddenFrom = e.at
+    else if (m[1] === 'visible' && hiddenFrom != null) {
+      spans.push([hiddenFrom, e.at])
+      hiddenFrom = null
+    }
+  }
+  const lastAt = events.reduce((max, e) => Math.max(max, e.at), 0)
+  if (hiddenFrom != null) spans.push([hiddenFrom, lastAt])
+  const beats = events
+    .filter((e) => HEARTBEAT_RE.test(e.text))
+    .map((e) => e.at)
+    .sort((a, b) => a - b)
+  const periods = spans.map(([from, to]) => {
+    const inside = [from, ...beats.filter((at) => at > from && at < to), to]
+    let longestGapMs = 0
+    for (let i = 1; i < inside.length; i += 1) longestGapMs = Math.max(longestGapMs, inside[i] - inside[i - 1])
+    const fromIso = new Date(from).toISOString()
+    const toIso = new Date(to).toISOString()
+    return {
+      from: fromIso,
+      ms: to - from,
+      heartbeats: inside.length - 2,
+      longestGapMs,
+      importSteps: steps.filter((s) => s.at > fromIso && s.at <= toIso).length,
+    }
+  })
+  return {
+    hiddenMs: periods.reduce((sum, p) => sum + p.ms, 0),
+    longestHiddenGapMs: periods.reduce((max, p) => Math.max(max, p.longestGapMs), 0),
+    periods: periods.slice(-12),
+  }
 }
 
 const CARD_SENT_RE = /^\[identity-card\] sent (card|withdrawal) to ([0-9a-f]{12}) via (\S+)( \(asked\))?/
@@ -4197,6 +4247,12 @@ function report(state, answers) {
         .map(([k, v]) => `${k}=${v}`)
         .join(' ')
       console.log(`  ${at.slice(11, 19)} ${name}${fields ? ` ${fields}` : ''}`)
+    }
+    const bg = imp.background
+    if (bg?.periods?.length) {
+      console.log(
+        `  hidden ${Math.round(bg.hiddenMs / 1000)}s total, longest heartbeat gap while hidden ${Math.round(bg.longestHiddenGapMs / 1000)}s (30s = timers ran normally)`,
+      )
     }
   }
 

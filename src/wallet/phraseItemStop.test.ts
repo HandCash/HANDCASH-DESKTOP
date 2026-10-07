@@ -14,9 +14,11 @@ const abortAction = vi.fn()
 const refreshFromChain = vi.fn()
 const stored = new Map<string, string>()
 
+const runSpend = vi.fn((fn: () => Promise<unknown>) => fn())
 vi.mock('./spendGuard', () => ({
-  runExclusiveSpend: (fn: () => Promise<unknown>) => fn(),
+  runExclusiveSpend: (fn: () => Promise<unknown>) => runSpend(fn),
 }))
+vi.mock('./collectables', () => ({ noteIngestedItems: vi.fn() }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
 const waitForWalletRegionsIdle = vi.fn(async () => true)
 vi.mock('./walletCoordinator', () => ({ waitForWalletRegionsIdle: () => waitForWalletRegionsIdle() }))
@@ -107,6 +109,39 @@ describe('migrateChosenPhraseItems stops', () => {
     createAction.mockReset()
     abortAction.mockReset()
     refreshFromChain.mockReset()
+    runSpend.mockReset()
+    runSpend.mockImplementation((fn) => fn())
+  })
+
+  /** The region gave up on the send; `late` is the work, still running. */
+  const abandoned = (late: Promise<unknown>) =>
+    Object.assign(new Error('The send stopped responding. Nothing further was broadcast — try again.'), {
+      code: 'SPEND_REGION_ABANDONED',
+      late,
+    })
+
+  it('records an abandoned bundle that broadcast late, and never rebuilds over its tips', async () => {
+    const lateTxid = 'cd'.repeat(32)
+    runSpend.mockImplementationOnce(() => Promise.reject(abandoned(Promise.resolve(lateTxid))))
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen })
+
+    expect(run.stopped).toBeNull()
+    expect([...run.results.values()]).toEqual([
+      { kind: 'moved', txid: lateTxid },
+      { kind: 'moved', txid: lateTxid },
+    ])
+    expect(runSpend).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops with every tip kept when an abandoned bundle never reports back', async () => {
+    runSpend.mockImplementationOnce(() => Promise.reject(abandoned(Promise.resolve(undefined))))
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen })
+
+    expect(run.stopped).toBe('abandoned')
+    expect([...run.results.values()].map((r) => r.kind)).toEqual(['deferred', 'deferred'])
+    expect(runSpend).toHaveBeenCalledTimes(1)
   })
 
   it('stops on insufficient funds after one attempt and answers the rest funds', async () => {

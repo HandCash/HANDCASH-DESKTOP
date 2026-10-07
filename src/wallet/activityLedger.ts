@@ -11,6 +11,7 @@ import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
+import { yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
 const SETTLED_STATUSES = ['completed', 'unproven'] as const
@@ -304,7 +305,7 @@ async function settledTransactions(
   const missing = [...settled].filter((id) => !cache.byId.has(id))
   for (let i = 0; i < missing.length; i += TX_CHUNK) {
     if (i > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await yieldToUi()
       assertCurrent(runtime)
     }
     const trx = toDbTrx(['transactions'], 'readonly')
