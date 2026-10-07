@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.481] - 2026-10-07
+
+### Fixed
+- Import hang: a sweep reopened while the first was still running started a second sweep of the same items. The second confirm now joins the run in flight and shows its progress. A sweep that stops (the wallet locking mid-run, for instance) now logs why instead of going quiet.
+- Before each item bundle, the migrate stepped aside for every spend-priority hold, including other background bundles, and waited with no limit and no log line. It now waits only for payments and permission prompts, for at most two minutes (the spend queue still orders the bundle behind them). It logs what it is waiting on after 5 s and then every 30 s. When the wallet stays busy, the log names which layer holds it and whether the wait ended idle.
+- Each sweep step (address reads, the HandCash UTXO set, the saved item list, the 1Sat outpoint check, every item chunk, the token sweep, the closing refresh) logs `[import] still <step> after <N>s` every 30 s while it runs, and the progress bar names the step with counts. The outpoint check stops after three failed index chunks in a row instead of waiting out 40 s per chunk; what is left unchecked is re-read on the next sweep.
+- A re-sweep no longer re-reads every cash address an earlier sweep already emptied (89 addresses, about 30 s, on the lab phone).
+- The saved item list reopens its database after the WebView closes the connection.
+
+### Performance
+- Launch freezes owned by `verified-issuers refresh`: a refetched list identical to the one held re-rendered every collectable and activity row. On top of that, each row built its own issuer resolver, re-parsing the stored identity index and rebuilding the look-alike name map. Unchanged lists no longer bump the generation, and a render pass shares one resolver pair (rebuilt on any identity change, and at least every 30 s for newly mined heights).
+
 ## [1.3.480] - 2026-10-07
 
 ### Changed
