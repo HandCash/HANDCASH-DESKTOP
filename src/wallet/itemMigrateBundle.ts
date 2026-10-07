@@ -21,13 +21,12 @@ import { Beef, type BEEF } from '@bsv/sdk'
 export const MAX_ITEMS_PER_MIGRATE_TX = 100
 
 /**
- * Source bytes one migrate may carry. The signed package is the durable retry
- * body, and the archive holding it is a 1MB store shared by every unproven
- * cheque: a package over this left the migrate with no durable retry at all.
- * Items whose parents carry their art fill it in a few tips; plain transfers
- * still bundle a whole chunk.
+ * Source bytes one migrate posts to miners. The durable retry body is
+ * {@link migrateRetryBody}, not this package, so the ceiling is the miner post
+ * alone. Items whose parents carry their art fill it in a few dozen tips;
+ * plain transfers still bundle a whole chunk.
  */
-export const MAX_MIGRATE_SOURCE_BYTES = 256 * 1024
+export const MAX_MIGRATE_SOURCE_BYTES = 1024 * 1024
 
 /** Bytes a tip adds to its package: the source transactions it needs, by txid. */
 export type ItemSourceCost = ReadonlyArray<{ txid: string; bytes: number }>
@@ -110,6 +109,30 @@ export function migratePackage(packed: Beef, txid: string): number[] {
     /* fall back to the whole package */
   }
   return packed.toBinaryAtomic(txid)
+}
+
+/**
+ * What the archive keeps so a migrate survives the app closing: the signed
+ * transaction and every unmined ancestor in full, mined ones by txid. The
+ * archive is a 1MB store shared by every unproven cheque, and the mined
+ * sources of art-bearing items are most of a package; a retry fetches them
+ * back with their proofs. Unmined bodies stay, because nothing can.
+ */
+export function migrateRetryBody(atomic: number[], txid: string): number[] {
+  try {
+    const full = Beef.fromBinary(atomic)
+    const thin = new Beef()
+    for (const btx of full.txs) {
+      const raw = btx.rawTx
+      if (btx.isTxidOnly || !raw || (btx.txid !== txid && btx.bumpIndex !== undefined)) thin.mergeTxidOnly(btx.txid)
+      else thin.mergeRawTx(raw)
+    }
+    if (!thin.findTxid(txid)?.tx) return atomic
+    const body = thin.toBinaryAtomic(txid)
+    return body.length > 0 && body.length < atomic.length ? body : atomic
+  } catch {
+    return atomic
+  }
 }
 
 export type ItemMigrateUnit<T> =

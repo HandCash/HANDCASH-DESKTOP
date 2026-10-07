@@ -2386,7 +2386,10 @@ const IMPORT_LINES = [
   ['itemsDone', /^\[import\] items done (\d+)ms chosen=(\d+) moved=(\d+) tx=(\d+) keys=(\d+)((?: refused\.\S+=\d+)*)(?: stopped=(\S+))?/],
   ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)(?: tx=(\d+))?/],
   ['runDone', /^\[import\] run done (\d+)ms items=(\d+) answered=(\d+) sources=(\d+) outcome=(\S+)/],
-  ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)/],
+  ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)(?: durable=(\d+))?/],
+  ['busyWait', /^\[phrase-sweep\] wallet busy — waiting to send (\d+) \((\d+)\/(\d+)\)/],
+  ['migrateTimed', /^\[phrase-sweep\] migrate ([0-9a-f]{12}) done (\d+)ms create=(\d+)ms sign=(\d+)ms post=(\d+)ms/],
+  ['busyStopped', /^\[phrase-sweep\] stopped: wallet still busy after (\d+) wait/],
   ['prefetch', /^\[import\] prefetch done (\d+)ms items=(\d+) unread=(\d+)/],
   ['outboxRefused', /^\[minerOutbox\] refusing durable body ([0-9a-f]{12}) (\S+)(?: bytes=(\d+))?/],
 ]
@@ -2441,7 +2444,10 @@ function legacyImportFacts(events) {
         : step === 'tipUnreadable' ? { outpoint: m[1], reason: m[2] }
         : step === 'cashSweep' ? { coins: n(1), transactions: n(2), ms: n(3) }
         : step === 'cashBundleRefused' ? { coins: n(1), retrying: n(2) }
-        : step === 'migratePackage' ? { txid: m[1], inputs: n(2), bytes: n(3) }
+        : step === 'migratePackage' ? { txid: m[1], inputs: n(2), bytes: n(3), ...(m[4] ? { durable: n(4) } : {}) }
+        : step === 'busyWait' ? { tips: n(1), wait: n(2), of: n(3) }
+        : step === 'busyStopped' ? { waits: n(1) }
+        : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), postMs: n(5) }
         : step === 'prefetch' ? { ms: n(1), items: n(2), unread: n(3) }
         : step === 'outboxRefused' ? { txid: m[1], reason: m[2], bytes: n(3) }
         : {}

@@ -423,6 +423,11 @@ export function submitAtomicBeefToMiners(
     retryCount?: number
     runtime?: WalletRuntime
     owner?: BoundAccountKeyScope
+    /**
+     * What the outbox keeps instead of `atomic`: the same signed subject with
+     * ancestry a retry can fetch back left out. `atomic` is still what posts.
+     */
+    durableBody?: number[]
   },
 ): Promise<MinerSubmitResult> {
   const id = normalizeTxid(txid)
@@ -447,6 +452,7 @@ async function submitAtomicBeefToMinersOnce(
     retryCount?: number;
     runtime?: WalletRuntime;
     owner?: BoundAccountKeyScope;
+    durableBody?: number[];
   }
 ): Promise<MinerSubmitResult> {
   const id = normalizeTxid(txid);
@@ -474,7 +480,7 @@ async function submitAtomicBeefToMinersOnce(
   };
   const outboxDurable =
     opts?.fromOutbox === true ||
-    enqueuePendingMinerSubmit(id, atomic, { flow: opts?.flow, owner });
+    enqueuePendingMinerSubmit(id, opts?.durableBody ?? atomic, { flow: opts?.flow, owner });
   recordStage("provider_attempt", telemetry);
   const active = opts?.runtime?.instance ?? getActiveWallet();
   if (!active?.services?.postBeef) {

@@ -56,6 +56,7 @@ import {
   chooseItemMigrateUnit,
   itemsWithinSourceBudget,
   migratePackage,
+  migrateRetryBody,
   migrateSourceCosts,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
@@ -1206,6 +1207,7 @@ export async function postForeignInputAction(args: {
   if (inputs.some((input) => !(input.spendKey ?? args.spendKey))) {
     throw new Error('Every foreign input needs a key to sign it')
   }
+  const startedAt = Date.now()
   const car = await active.wallet.createAction({
     inputBEEF: args.inputBeef,
     inputs: inputs.map((input) => ({
@@ -1227,7 +1229,7 @@ export async function postForeignInputAction(args: {
   const reference = car.signableTransaction?.reference
   try {
     return await signAndPostForeignInputs(
-      { active, spendKey: args.spendKey, inputBeef: args.inputBeef, inputs },
+      { active, spendKey: args.spendKey, inputBeef: args.inputBeef, inputs, startedAt, createMs: Date.now() - startedAt },
       car,
     )
   } catch (err) {
@@ -1258,12 +1260,15 @@ async function signAndPostForeignInputs(
     spendKey?: PrivateKey
     inputBeef: BEEF
     inputs: ForeignInput[]
+    startedAt: number
+    createMs: number
   },
   car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
 ): Promise<string> {
   const { active, spendKey, inputs: items } = args
   let sweepTxid = (car.txid ?? '').toLowerCase()
   let sweepAtomic = asBytes(car.tx)
+  const signStarted = Date.now()
   if (car.signableTransaction) {
     const stBeef = Beef.fromBinary(asBytes(car.signableTransaction.tx))
     const wanted = new Map(items.map((item) => [`${item.txid}.${item.vout}`, item]))
@@ -1326,12 +1331,22 @@ async function signAndPostForeignInputs(
   packed.mergeBeef(sweepAtomic)
   packed.atomicTxid = undefined
   const bin = migratePackage(packed, sweepTxid)
+  const durableBody = migrateRetryBody(bin, sweepTxid)
   appendAppLog(
     'info',
-    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length}`,
+    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length} durable=${durableBody.length}`,
   )
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-  const submitted = await submitAtomicBeefToMiners(sweepTxid, bin)
+  const postStarted = Date.now()
+  const submitted = await submitAtomicBeefToMiners(sweepTxid, bin, { durableBody })
+  const doneAt = Date.now()
+  if (doneAt - args.startedAt >= 250) {
+    appendAppLog(
+      'info',
+      `[phrase-sweep] migrate ${sweepTxid.slice(0, 12)} done ${doneAt - args.startedAt}ms` +
+        ` create=${args.createMs}ms sign=${postStarted - signStarted}ms post=${doneAt - postStarted}ms`,
+    )
+  }
   if (submitted.kind === 'unproven-conflict') {
     throw new Error(
       `Broadcast rejected (${submitted.summary.detail ?? 'unproven conflict'})`,

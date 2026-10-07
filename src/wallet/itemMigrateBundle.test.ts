@@ -6,6 +6,7 @@ import {
   chooseItemMigrateUnit,
   itemsWithinSourceBudget,
   migratePackage,
+  migrateRetryBody,
   migrateSourceCosts,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
@@ -161,5 +162,33 @@ describe('migratePackage', () => {
     expect(sent.atomicTxid).toBe(sweep.id('hex'))
     expect(sent.txs.map((t) => t.txid).sort()).toEqual([spent.id('hex'), sweep.id('hex')].sort())
     expect(sent.isValid()).toBe(true)
+  })
+})
+
+describe('migrateRetryBody', () => {
+  it('keeps the signed transaction and unmined ancestry whole, and names mined sources by txid', () => {
+    const art = mined(deposit(20), 800_020)
+    art.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(KEY.toAddress()) })
+    const minedSource = mined(deposit(21), 800_021)
+    const pending = deposit(22, minedSource)
+    const sweep = deposit(23, pending)
+    sweep.addInput({ sourceTransaction: art, sourceOutputIndex: 0, unlockingScript: new P2PKH().lock(KEY.toAddress()) })
+    const packed = new Beef()
+    for (const tx of [art, minedSource, pending, sweep]) packed.mergeTransaction(tx)
+    const sent = migratePackage(packed, sweep.id('hex'))
+
+    const body = migrateRetryBody(sent, sweep.id('hex'))
+    expect(body.length).toBeLessThan(sent.length)
+    const kept = Beef.fromBinary(body)
+    expect(kept.atomicTxid).toBe(sweep.id('hex'))
+    expect(kept.findTxid(sweep.id('hex'))?.tx?.id('hex')).toBe(sweep.id('hex'))
+    expect(kept.findTxid(pending.id('hex'))?.tx?.id('hex')).toBe(pending.id('hex'))
+    expect(kept.findTxid(art.id('hex'))?.isTxidOnly).toBe(true)
+    expect(kept.findTxid(minedSource.id('hex'))?.isTxidOnly).toBe(true)
+    expect(kept.bumps).toHaveLength(0)
+  })
+
+  it('returns the package itself when it cannot be read', () => {
+    expect(migrateRetryBody([1, 2, 3], 'ab'.repeat(32))).toEqual([1, 2, 3])
   })
 })
