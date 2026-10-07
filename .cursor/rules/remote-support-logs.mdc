@@ -32,6 +32,26 @@ pushed over a WebSocket. Allowed handles: `LOG_DASHBOARD_HANDLES` in
 `BRC-CLOUD/wrangler.jsonc`. Code: `BRC-CLOUD/src/logDashboard.js` (Durable
 Object `LogDashboard`), `logDashboardApp.js`.
 
+### Reading the dashboard from Cursor
+
+```bash
+npm run triage verdicts                 # newest 10 verdicts, every watched device, plain text
+npm run triage verdicts android -- --limit 3
+npm run triage verdicts -- --json       # same, structured
+```
+
+This reads what the dashboard already distilled (no Jev call, no wallet
+sign-in). It sends `Authorization: Bearer $LOG_DASHBOARD_READ_TOKEN`
+(`HANDCASH-DESKTOP/.env`, a wrangler secret on BRC-CLOUD) to
+`GET /logs-dashboard/api/verdicts?bucket=&limit=&format=text`. The token is
+read-only and reaches that route alone. Full facts stay behind the wallet
+sign-in, so use `npm run triage <device> -- --state` for those. Each block
+gives severity, fix first + why, driver/owner, likely/unlikely flags, freezes
+vs previous, workloads, the line before a freeze, repeating problems and
+non-zero counters. Verdicts the dashboard has pruned stay in Workers Logs as
+`event: "log-dashboard.verdict"` records (query them with the Cloudflare
+observability MCP).
+
 Code-derived facts: freezes by active wallet layer, blocked ms, **workloads**
 (every `<phase> done <N>ms` / `+<N>ms` line becomes a span; share of blocked
 time inside it; spans over 60s are waits — hidden WebView, storage lock — and

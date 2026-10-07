@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.487] - 2026-10-07
+
+### Diagnostics
+- `npm run triage verdicts [device] [--limit N] [--json]` prints the live log dashboard's stored Jev verdicts as plain text: severity, fix first and why, driver, flags, freezes vs the previous upload, workloads, repeating problems and counters. It makes no Jev call and needs no wallet sign-in; it reads with `LOG_DASHBOARD_READ_TOKEN` from `.env`, which is read-only and reaches that one route. The dashboard itself is now a single compact feed with a slim top bar. No app changes.
+
 ## [1.3.486] - 2026-10-07
 
 ### Fixed

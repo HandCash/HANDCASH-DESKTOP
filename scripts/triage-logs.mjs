@@ -5,6 +5,8 @@
  *   node scripts/triage-logs.mjs [bucket] [--all] [--json] [--state]
  *   node scripts/triage-logs.mjs desktop-local        # this machine, no upload
  *   node scripts/triage-logs.mjs --file <session.log> # any saved upload / ring
+ *   node scripts/triage-logs.mjs verdicts [device] [--limit N] [--json] [--all]
+ *     # the live dashboard's stored Jev verdicts (LOG_DASHBOARD_READ_TOKEN)
  *
  * Buckets default to the ones in `.cursor/rules/remote-support-logs.mdc`.
  * `desktop-local` reads the renderer ring the Desktop app mirrors into its
@@ -42,18 +44,41 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const LOG_BASE = 'https://brc-cloud.bcryderman.workers.dev/v1/logs'
 
-function jevApiKey() {
-  for (const name of ['JEV_API_KEY', 'JEV_KEY', 'TYPESAFE_API_KEY']) {
+const DASHBOARD_VERDICTS = 'https://brc-cloud.bcryderman.workers.dev/logs-dashboard/api/verdicts'
+
+/** The environment first, then this repo's .env, then the HandCash workspace .env one level up. */
+function envSecret(names) {
+  for (const name of names) {
     if (process.env[name]?.trim()) return process.env[name].trim()
   }
-  // This repo's .env, then the HandCash workspace .env one level up.
   for (const envFile of [path.join(root, '.env'), path.join(root, '..', '.env')]) {
     if (!fs.existsSync(envFile)) continue
     const env = fs.readFileSync(envFile, 'utf8')
-    const hit = env.match(/^\s*(?:JEV_API_KEY|JEV_KEY|TYPESAFE_API_KEY)\s*=\s*(.+)$/m)
+    const hit = env.match(new RegExp(`^\\s*(?:${names.join('|')})\\s*=\\s*(.+)$`, 'm'))
     if (hit) return hit[1].trim().replace(/^["']|["']$/g, '')
   }
-  throw new Error('JEV_API_KEY / JEV_KEY is not set (env, HandCash/.env or HANDCASH-DESKTOP/.env)')
+  return null
+}
+
+function jevApiKey() {
+  const key = envSecret(['JEV_API_KEY', 'JEV_KEY', 'TYPESAFE_API_KEY'])
+  if (!key) throw new Error('JEV_API_KEY / JEV_KEY is not set (env, HandCash/.env or HANDCASH-DESKTOP/.env)')
+  return key
+}
+
+/** The live dashboard's Jev verdicts — already distilled, no Jev call here. */
+async function fetchVerdicts({ bucket, limit, json, all }) {
+  const token = envSecret(['LOG_DASHBOARD_READ_TOKEN'])
+  if (!token) throw new Error('LOG_DASHBOARD_READ_TOKEN is not set (env or HANDCASH-DESKTOP/.env)')
+  const url = new URL(DASHBOARD_VERDICTS)
+  if (bucket) url.searchParams.set('bucket', bucket)
+  if (limit) url.searchParams.set('limit', String(limit))
+  if (!json) url.searchParams.set('format', 'text')
+  if (all) url.searchParams.set('all', '')
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+  const body = await res.text()
+  if (!res.ok) throw new Error(`verdicts ${res.status}: ${body.slice(0, 200)}`)
+  return json ? JSON.stringify(JSON.parse(body), null, 2) : body
 }
 
 async function fetchLogs(bucket, all) {
@@ -906,13 +931,23 @@ const fileIdx = args.indexOf('--file')
 const filePath = fileIdx >= 0 ? args[fileIdx + 1] : null
 const traceIdx = args.indexOf('--trace')
 const tracePrefix = traceIdx >= 0 ? args[traceIdx + 1] : null
+const limitIdx = args.indexOf('--limit')
+const limitArg = limitIdx >= 0 ? Number(args[limitIdx + 1]) : null
 const positional = args.filter(
   (a, i) =>
     !a.startsWith('--') &&
     (fileIdx < 0 || i !== fileIdx + 1) &&
-    (traceIdx < 0 || i !== traceIdx + 1),
+    (traceIdx < 0 || i !== traceIdx + 1) &&
+    (limitIdx < 0 || i !== limitIdx + 1),
 )
 const bucketArg = positional[0] ?? 'android'
+
+if (bucketArg === 'verdicts') {
+  process.stdout.write(
+    await fetchVerdicts({ bucket: positional[1], limit: limitArg, json: flags.has('--json'), all: flags.has('--all') }),
+  )
+  process.exit(0)
+}
 
 if (tracePrefix && flags.has('--all') && !filePath && bucketArg !== 'desktop-local') {
   const uploads = splitUploads(await fetchLogs(KNOWN_BUCKETS[bucketArg] ?? bucketArg, true))
