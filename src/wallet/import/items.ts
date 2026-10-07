@@ -504,6 +504,13 @@ export async function importItems(args: {
             keyHex,
             ...(item.origin ? { origin: item.origin } : {}),
             ...(item.name ? { name: item.name } : {}),
+            indexed: {
+              app: item.app,
+              collectionId: item.collectionId,
+              content: item.media && item.media !== item.origin ? item.media : null,
+              mimeType: item.mimeType,
+              signer: item.signer,
+            },
           })),
           activityGroup: args.activityGroup ?? null,
           ...(args.onSourcesRead ? { onSourcesRead: args.onSourcesRead } : {}),

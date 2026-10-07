@@ -201,7 +201,9 @@ import {
   getResolvedInscription,
   getResolvedInscriptionByOrigin,
   isThinResolution,
+  originsWithoutHit,
   PENDING_RETRY_MS,
+  rememberIndexedOrigins,
   rememberResolvedInscription,
   rememberUnresolved,
   rememberUpgradeAttempt,
@@ -1554,7 +1556,40 @@ export type IngestedItem = {
   app?: string | null
   collectionId?: string | null
   content?: string | null
+  mimeType?: string | null
+  /** The index's Sigma signer on the origin; null when it reports none. Attribution only. */
+  signer?: string | null
   identityKey?: string
+}
+
+/**
+ * What the index said about each tip's origin when it was chosen, filed under
+ * the origin. A moved tip keeps its origin locally, so the list never walks
+ * it, and the index does not know the move until it is mined.
+ */
+function rememberIngestedOrigins(items: readonly IngestedItem[]): void {
+  const indexed = new Map<string, ResolvedInscription>()
+  for (const item of items) {
+    const origin = item.origin?.trim()
+    if (!origin || (item.signer === undefined && !item.mimeType?.trim() && !item.app?.trim())) continue
+    const name = item.name?.trim()
+    const app = item.app?.trim()
+    const collectionId = item.collectionId?.trim()
+    const content = item.content?.trim()
+    const mimeType = item.mimeType?.trim()
+    indexed.set(origin, {
+      origin,
+      ...(name ? { name } : {}),
+      ...(app ? { app } : {}),
+      ...(collectionId ? { collectionId } : {}),
+      ...(content ? { content } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      ...(item.signer !== undefined ? { signer: item.signer } : {}),
+      traits: [],
+      extras: [],
+    })
+  }
+  if (indexed.size > 0) rememberIndexedOrigins(indexed)
 }
 
 /** Seed one tip; the painted card, `'held'` when the grid already shows it, or null. */
@@ -1658,6 +1693,7 @@ export function noteIngestedItems(items: readonly IngestedItem[]): number {
   if (items.length === 0) return 0
   const identityKey = getActiveWallet()?.identityKey
   if (identityKey) hydrateSeededItems(identityKey)
+  rememberIngestedOrigins(items)
   const painted: Collectable[] = []
   let seeded = 0
   for (const item of items) {
@@ -1856,15 +1892,19 @@ async function hydrateLocalItemArt(
 async function backfillItemSigners(items: readonly Collectable[], chain: Chain): Promise<void> {
   const epoch = collectablesAccountEpoch
   const keys = new Set<string>()
+  const unsigned: Array<{ outpoint: string; origin: string }> = []
   for (const item of items) {
     if (item.signer) continue
-    keys.add(normalizeOutpoint(item.outpoint))
+    const outpoint = normalizeOutpoint(item.outpoint)
+    keys.add(outpoint)
     keys.add(item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1'))
+    unsigned.push({ outpoint, origin: item.origin })
   }
   if (keys.size === 0) return
   const updated = await backfillOriginSigners({
     chain,
     outpoints: [...keys],
+    origins: originsWithoutHit(unsigned),
     shouldStop: () => epoch !== collectablesAccountEpoch,
   })
   if (updated === 0 || epoch !== collectablesAccountEpoch) return

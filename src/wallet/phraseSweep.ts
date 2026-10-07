@@ -747,6 +747,15 @@ export type ChosenPhraseItem = {
   keyHex: string
   origin?: string
   name?: string
+  /** The index's view of the origin when chosen; display only, the move re-decides the tip. */
+  indexed?: {
+    app: string | null
+    collectionId: string | null
+    /** Outpoint holding the art, when it is not the origin. */
+    content: string | null
+    mimeType: string | null
+    signer: string | null
+  }
 }
 
 export type ChosenItemsMigrate = {
@@ -836,6 +845,9 @@ export async function migrateChosenPhraseItems(args: {
   }
 
   const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
+  const indexedOf = new Map(
+    args.items.map((item) => [item.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1'), item.indexed]),
+  )
   const outcome = await migrateOrdinalUnit({
     active,
     destLockHex: destLock,
@@ -852,6 +864,7 @@ export async function migrateChosenPhraseItems(args: {
         chain: active.chain,
         origin: item.origin.replace(/\.(\d+)$/, '_$1'),
         name: item.name,
+        ...indexedOf.get(item.outpoint),
         identityKey: active.identityKey,
       }))
       void import('./collectables')
