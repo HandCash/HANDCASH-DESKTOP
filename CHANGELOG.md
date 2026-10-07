@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.476] - 2026-10-07
+
+### Fixed
+- Imported items no longer disappear from Activity after a restart. A migrate is signed for delayed broadcast and stays `sending` in the wallet's ledger after Arcade accepts it; Activity now counts `sending` as history.
+- Importing no longer blocks new payments. Migrate bundles run in a background lane: a bundle never starts while a payment is queued, a payment prompt is open, or within 5 seconds of the last payment (an app's create → sign pair stays together). A payment waits for at most the one bundle already in flight.
+
+### Diagnostics
+- `[phrase-sweep] yielded to payments done <N>ms` is counted by triage.
+
 ## [1.3.475] - 2026-10-07
 
 ### Fixed
