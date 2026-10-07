@@ -24,6 +24,7 @@ import { assetSendMachine } from './assetSendMachine'
 import { legacyImportMachine } from './legacyImportMachine'
 import { importItemBrowserMachine } from './importItemBrowserMachine'
 import { importQueueMachine } from './importQueueMachine'
+import { walletJobMachine } from './walletJobMachine'
 import { collectableSendMachine } from '../wallet/collectableSendMachine'
 import { collectableSendRunMachine } from '../wallet/collectableSendRunMachine'
 import { authenticityMachine } from '../wallet/authenticityMachine'
@@ -67,6 +68,7 @@ export const machineManifest = Object.freeze({
   legacyImport: legacyImportMachine,
   importItemBrowser: importItemBrowserMachine,
   importQueue: importQueueMachine,
+  walletJob: walletJobMachine,
   collectableSend: collectableSendMachine,
   collectableSendRun: collectableSendRunMachine,
   authenticity: authenticityMachine,

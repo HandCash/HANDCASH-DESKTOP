@@ -978,6 +978,7 @@ export function recordAppActivity(args: {
   status?: ActivityStatus;
   failureReason?: string;
   pendingId?: string;
+  sendGroupId?: string;
 }): void {
   upsertAppActivity(args);
 }
@@ -2170,6 +2171,8 @@ export function recordWalletEvent(args: {
   status?: ActivityStatus;
   failureReason?: string;
   pendingId?: string;
+  /** Wallet job that wrote it; the feed shows the job's row instead while it runs. */
+  sendGroupId?: string;
 }): void {
   recordAppActivity({
     origin: args.origin ?? WALLET_ACTIVITY_ORIGIN,
@@ -2182,6 +2185,7 @@ export function recordWalletEvent(args: {
     ...(args.status ? { status: args.status } : {}),
     ...(args.failureReason ? { failureReason: args.failureReason } : {}),
     ...(args.pendingId ? { pendingId: args.pendingId } : {}),
+    ...(args.sendGroupId ? { sendGroupId: args.sendGroupId } : {}),
   });
 }
 
@@ -2190,6 +2194,9 @@ export function isIndexExpansionActivity(entry: ActivityEntry): boolean {
 }
 
 export const UTXO_HEAL_METHOD = "utxo-heal";
+
+/** Note on a collectable moved in from a saved import source. */
+export const IMPORTED_COLLECTABLE_NOTE = "Imported collectable";
 
 export function isUtxoHealActivity(entry: ActivityEntry): boolean {
   return entry.method === UTXO_HEAL_METHOD;
@@ -2763,6 +2770,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     if (isBurnActivity(entry)) return `Burned ${name}`;
     if (entry.method === "market-sale") return `Sold ${name}`;
     if (entry.method === "market-purchase-receive") return `Bought ${name}`;
+    if (entry.note === IMPORTED_COLLECTABLE_NOTE) return `Imported ${name}`;
     if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
       return entry.kind === "spent" ? `Sent ${name}` : `Received ${name}`;
     }

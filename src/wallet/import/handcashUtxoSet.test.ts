@@ -9,7 +9,7 @@ import { resetDiscoveryPacingForTests } from './discovery'
 import {
   UTXO_SET_PROBE_PATHS,
   fetchHandCashUtxoSet,
-  readUnspentCash,
+  readUnspentOnChain,
   readUnspentOutpoints,
   type CashOutput,
   utxoSetPreimage,
@@ -213,7 +213,7 @@ describe('verifyUtxoSet', () => {
   })
 })
 
-describe('readUnspentCash', () => {
+describe('readUnspentOnChain', () => {
   const outputs: CashOutput[] = Array.from({ length: 150 }, (_, i) => {
     const txid = (i + 1).toString(16).padStart(64, '0')
     return { outpoint: `${txid}_0`, txid, vout: 0, satoshis: 5_000 }
@@ -249,7 +249,7 @@ describe('readUnspentCash', () => {
       // Explorer: the first it is asked is unknown to it too; the rest unspent.
       return new Response(JSON.stringify(utxos.map((utxo, i) => (i === 0 && explorerAsked.length <= 20 ? { utxo, error: 'unknown' } : { utxo, spentIn: null }))))
     })
-    const read = await readUnspentCash({ chain: 'main', outputs, fetchImpl })
+    const read = await readUnspentOnChain({ chain: 'main', outputs, fetchImpl })
     const nodeCalls = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/utxos/json'))
     expect(nodeCalls).toHaveLength(4)
     expect(explorerAsked.map(nth)).toEqual(outputs.map((o) => nth(o.txid)).filter((n) => n % 3 === 0))
@@ -264,7 +264,7 @@ describe('readUnspentCash', () => {
     resetDiscoveryPacingForTests()
     vi.useFakeTimers()
     const fetchImpl = vi.fn(async () => new Response('busy', { status: 400 }))
-    const pending = readUnspentCash({ chain: 'main', outputs: outputs.slice(0, 5), fetchImpl })
+    const pending = readUnspentOnChain({ chain: 'main', outputs: outputs.slice(0, 5), fetchImpl })
     await vi.runAllTimersAsync()
     const read = await pending
     vi.useRealTimers()

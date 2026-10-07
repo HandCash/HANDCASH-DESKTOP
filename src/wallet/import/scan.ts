@@ -10,7 +10,7 @@ import {
   type ItemsLookup,
 } from './discovery'
 import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
-import { fetchHandCashUtxoSet, readUnspentCash, verifyUtxoSet } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, readUnspentOnChain, verifyUtxoSet } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import { readMneeBalances } from '../mnee'
 import { MNEE_DECIMALS, MNEE_SYMBOL, MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
@@ -136,7 +136,7 @@ export async function utxoSetScan(
     appendAppLog('warn', `[import] utxo set refused reason=underived rows=${set.utxos.length} — falling back`)
     return null
   }
-  const cash = await readUnspentCash({
+  const cash = await readUnspentOnChain({
     chain,
     outputs: [...verified.cashOutputs.values()].flat(),
     onProgress: (done, total) => args.onProgress?.({ phase: 'cash', done, total }),

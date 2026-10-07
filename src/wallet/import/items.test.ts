@@ -15,10 +15,11 @@ vi.mock('../phraseSweep', async (importOriginal) => ({
 vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./handcashUtxoSet')>()),
   fetchHandCashUtxoSet: vi.fn(),
+  readUnspentOnChain: vi.fn(),
 }))
 
 import { migrateChosenPhraseItems, peekPhraseItemMigrateCursor, type SingleItemMigrate } from '../phraseSweep'
-import { fetchHandCashUtxoSet } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, readUnspentOnChain } from './handcashUtxoSet'
 import { emptyHoldings, type AddressHoldings } from './holdings'
 import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem } from './itemStore'
 import {
@@ -85,6 +86,12 @@ beforeEach(async () => {
   vi.mocked(migrateChosenPhraseItems).mockReset()
   vi.mocked(fetchHandCashUtxoSet).mockReset()
   vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue(null)
+  vi.mocked(readUnspentOnChain).mockReset()
+  vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
+    unspent: new Set(outputs.map((o) => o.outpoint)),
+    unknown: new Set(),
+    stopped: false,
+  }))
 })
 
 describe('syncImportItems', () => {
@@ -186,6 +193,29 @@ describe('syncImportItems', () => {
 
     vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'refused', reason: 'unavailable', detail: '503' })
     expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toEqual({ complete: false, total: 2 })
+  })
+
+  it('drops listed items the chain shows spent, and never lists them again while the index lags', async () => {
+    vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 3)])])
+    // The index still names op(2) unspent: its spend was an Arcade broadcast it has not seen.
+    const lagging = addressIndex({ '1a': [unspentRow(1), unspentRow(2), unspentRow(3)] })
+    vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
+      unspent: new Set(outputs.map((o) => o.outpoint).filter((o) => o !== op(2) && o !== op(3))),
+      unknown: new Set([op(3)]),
+      stopped: false,
+    }))
+    const changes: ImportItemChange[] = []
+    expect(await syncImportItems({ sourceId: 's1', fetchImpl: lagging, onChange: (c) => changes.push(c) })).toEqual({
+      complete: true,
+      total: 2,
+    })
+    expect(changes.at(-1)).toEqual({ added: 0, gone: [op(2)] })
+    expect(await listed()).toEqual([op(1), op(3)])
+
+    // A new scan pages the address again; the index still lags, the gone mark holds.
+    vi.mocked(loadImportedSources).mockResolvedValue([{ ...source([holding('1a', 3)]), scan: { ...source([holding('1a', 3)]).scan!, at: 43 } }])
+    await syncImportItems({ sourceId: 's1', fetchImpl: lagging })
+    expect(await listed()).toEqual([op(1), op(3)])
   })
 
   it('refuses an unscanned source', async () => {

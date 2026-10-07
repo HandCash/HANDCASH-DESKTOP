@@ -1241,6 +1241,8 @@ export type ChosenItemsMigrate = {
  */
 export async function migrateChosenPhraseItems(args: {
   items: readonly ChosenPhraseItem[]
+  /** Wallet job id: every Activity row of the run folds into one record. */
+  activityGroup?: string | null
 }): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -1324,7 +1326,12 @@ export async function migrateChosenPhraseItems(args: {
 
   const transactions = new Set(outcome.moved.map((m) => m.sweepTxid)).size
   if (outcome.moved.length > 0) {
-    recordMigratedItemActivity(outcome.moved, active.chain)
+    const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
+    recordMigratedItemActivity(
+      outcome.moved.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null })),
+      active.chain,
+      { groupId: args.activityGroup },
+    )
     const addressOf = new Map(rows.map((row) => [row.outpoint, row.spender.address]))
     for (const item of outcome.moved) {
       const address = addressOf.get(item.outpoint)

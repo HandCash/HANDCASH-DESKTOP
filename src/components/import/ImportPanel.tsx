@@ -37,6 +37,7 @@ import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { AsyncActionPrompt } from '../AsyncActionPrompt'
 import { ImportSecretForm, type SecretFields } from './ImportSecretForm'
 import { ImportSourceView, type SourceFace } from './ImportSourceView'
+import { ImportSourceIcon } from './importSourceIcons'
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -294,17 +295,19 @@ export function ImportPanel() {
                       as="button"
                       type="button"
                       className="settings-row"
+                      data-aeon-state={s.kind}
                       onClick={() => send({ type: 'OPEN', sourceId: s.id })}
                     >
-                      <span>
-                        <ListRow.Label>{s.label}</ListRow.Label>
-                        <ListRow.Description>
-                          {IMPORT_SOURCE_LABELS[s.kind]}
-                          {s.scan
-                            ? ` · ${formatBsv(totals.cashSats)} BSV · ${totals.itemCount}${totals.itemCountCapped ? '+' : ''} items · ${totals.tokens.length} tokens`
-                            : ' · not scanned'}
-                        </ListRow.Description>
-                      </span>
+                      <ListRow.Leading aria-hidden>
+                        <ImportSourceIcon kind={s.kind} />
+                      </ListRow.Leading>
+                      <ListRow.Label>{s.label}</ListRow.Label>
+                      <ListRow.Description>
+                        {IMPORT_SOURCE_LABELS[s.kind]}
+                        {s.scan
+                          ? ` · ${formatBsv(totals.cashSats)} BSV · ${totals.itemCount}${totals.itemCountCapped ? '+' : ''} items · ${totals.tokens.length} tokens`
+                          : ' · not scanned'}
+                      </ListRow.Description>
                     </ListRow.Root>
                   </li>
                 )
@@ -338,10 +341,11 @@ export function ImportPanel() {
                   data-aeon-state={kind}
                   onClick={() => send({ type: 'PICK', kind })}
                 >
-                  <span>
-                    <ListRow.Label>{IMPORT_SOURCE_LABELS[kind]}</ListRow.Label>
-                    <ListRow.Description>{IMPORT_SOURCE_HINTS[kind]}</ListRow.Description>
-                  </span>
+                  <ListRow.Leading aria-hidden>
+                    <ImportSourceIcon kind={kind} />
+                  </ListRow.Leading>
+                  <ListRow.Label>{IMPORT_SOURCE_LABELS[kind]}</ListRow.Label>
+                  <ListRow.Description>{IMPORT_SOURCE_HINTS[kind]}</ListRow.Description>
                 </ListRow.Root>
               </li>
             ))}

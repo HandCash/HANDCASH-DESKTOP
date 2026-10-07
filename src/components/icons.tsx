@@ -146,6 +146,38 @@ export function LockIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `vpn_key` */
+export function KeyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" />
+    </Icon>
+  )
+}
+
+/** HandCash mark (ring, hub and spoke) as a one-colour glyph, from `assets/brand/handcash-mark-round.svg`. */
+export function HandCashMarkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path
+        fillRule="evenodd"
+        d="M12 4.125a7.875 7.875 0 1 0 0 15.75 7.875 7.875 0 0 0 0-15.75zm0 2.25a5.625 5.625 0 1 1 0 11.25 5.625 5.625 0 0 1 0-11.25z"
+      />
+      <path d="M12 9.56a2.44 2.44 0 1 0 0 4.88 2.44 2.44 0 0 0 0-4.88z" />
+      <path d="M12 10.6h7.1v2.8H12z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `notes` (a recovery phrase: lines of words) */
+export function PhraseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 18h12v-2H3v2zM3 6v2h18V6H3zm0 7h18v-2H3v2z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `content_copy` */
 export function CopyIcon(props: IconProps) {
   return (

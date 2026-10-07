@@ -3621,6 +3621,91 @@ li[data-aeon-state='failed'] .history-progress-range {
   background: color-mix(in srgb, var(--hc-danger, #e35) 80%, var(--hc-accent));
 }
 
+/* Activity — one long wallet job (walletJobMachine): import run, balance heal */
+[data-aeon-scope='wallet-job'] {
+  animation: wallet-job-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-aeon-scope='wallet-job'] > .history-row {
+  grid-template-columns: 36px minmax(0, 1fr);
+  background: color-mix(in srgb, var(--hc-accent) 4%, transparent);
+}
+
+[data-aeon-scope='wallet-job'] .history-progress-track {
+  height: 5px;
+}
+
+[data-aeon-scope='wallet-job'] .history-progress-range {
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-aeon-scope='wallet-job'][data-aeon-state='running']
+  .history-progress[data-aeon-state='idle']
+  .history-progress-range {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--hc-accent) 85%, white),
+    var(--hc-accent),
+    color-mix(in srgb, var(--hc-accent) 65%, white),
+    var(--hc-accent)
+  );
+  background-size: 200% 100%;
+  animation: history-recovery-flow 1.6s linear infinite;
+}
+
+[data-aeon-scope='wallet-job'][data-aeon-state='waiting'] .history-progress-range {
+  background: color-mix(in srgb, var(--hc-warn) 70%, var(--hc-accent));
+  opacity: 0.7;
+}
+
+[data-aeon-scope='wallet-job'][data-aeon-state='stopped'] .history-progress-range {
+  background: color-mix(in srgb, var(--hc-warn) 80%, var(--hc-accent));
+}
+
+[data-aeon-scope='wallet-job'][data-aeon-state='done'] .history-progress-count {
+  color: var(--hc-success);
+}
+
+[data-aeon-scope='wallet-job'][data-aeon-state='failed'] .history-when {
+  color: var(--hc-danger, #e35);
+}
+
+/* Import browser — the background run, in place of a parked dock */
+[data-aeon-scope='legacy-import'] [data-aeon-part='run'] .history-progress {
+  margin: 0.45rem 0 0.2rem;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='run'][data-aeon-state~='importing'] .history-progress-range {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--hc-accent) 85%, white),
+    var(--hc-accent),
+    color-mix(in srgb, var(--hc-accent) 65%, white),
+    var(--hc-accent)
+  );
+  background-size: 200% 100%;
+  animation: history-recovery-flow 1.6s linear infinite;
+}
+
+@keyframes wallet-job-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-aeon-scope='wallet-job'],
+  [data-aeon-scope='wallet-job'] .history-progress-range,
+  [data-aeon-scope='legacy-import'] [data-aeon-part='run'] .history-progress-range {
+    animation: none;
+  }
+}
+
 .key-slice-accordion {
   display: grid;
   gap: 8px;

@@ -24,6 +24,7 @@ import {
   isFailedActivity,
   type ActivityEntry,
 } from './appActivity'
+import { JOB_GROUP_PREFIX } from '../machines/walletJobMachine'
 
 export type ActivityRecord = {
   key: string
@@ -94,6 +95,12 @@ export type ActivityFold =
    * Sending 25 foxes is one thing happening, not 25 things.
    */
   | { kind: 'sendGroup'; key: string }
+  /**
+   * Legs one background wallet job wrote across its many transactions. An
+   * import of 300 items is one thing the user asked for, not 60 receipts.
+   */
+  | { kind: 'job'; key: string }
+
 
 function txidOf(entry: ActivityEntry): string | null {
   const txid = (entry.txid ?? '').trim().toLowerCase()
@@ -149,19 +156,21 @@ export function chooseActivityFold(
   marketKeys: ReadonlySet<string>,
   selfDeals: ReadonlySet<string> = new Set(),
 ): ActivityFold {
+  const group = (entry.sendGroupId ?? '').trim()
   // Failed send legs are cleared and retried independently. A grouped burn is
   // one atomic transaction attempt with no per-NFT retry, so its members must
   // remain one truthful failed record rather than exploding into N rows.
   if (isFailedActivity(entry)) {
-    const group = (entry.sendGroupId ?? '').trim()
     return isBurnActivity(entry) && group
       ? { kind: 'sendGroup', key: `${entry.origin}|send-group:${group}` }
       : { kind: 'solo' }
   }
+  if (group.startsWith(JOB_GROUP_PREFIX)) {
+    return { kind: 'job', key: `${entry.origin}|${group}` }
+  }
   const txid = txidOf(entry)
   if (!txid) {
     // No txid yet — the send group is the transaction's identity in flight.
-    const group = (entry.sendGroupId ?? '').trim()
     return group
       ? { kind: 'sendGroup', key: `${entry.origin}|send-group:${group}` }
       : { kind: 'solo' }

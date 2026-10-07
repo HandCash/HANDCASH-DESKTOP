@@ -13,7 +13,7 @@ vi.mock('./holdings', async (importOriginal) => ({
 vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./handcashUtxoSet')>()),
   fetchHandCashUtxoSet: vi.fn(),
-  readUnspentCash: vi.fn(),
+  readUnspentOnChain: vi.fn(),
 }))
 vi.mock('./items', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./items')>()),
@@ -29,7 +29,7 @@ import { emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings
 import type { DiscoveredAddress } from './discovery'
 import type { KeyDeriver } from './importSource'
 import { createHistoryReader, readItemOwners, type HandCashRecoveryHints, type HintedAddresses } from './recoveryHints'
-import { fetchHandCashUtxoSet, readUnspentCash, type HandCashUtxo } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, readUnspentOnChain, type HandCashUtxo } from './handcashUtxoSet'
 import { checkUtxoSetItems } from './items'
 import { hintedScan, utxoSetScan } from './scan'
 import { P2PKH } from '@bsv/sdk'
@@ -152,10 +152,10 @@ describe('hintedScan', () => {
 describe('utxoSetScan', () => {
   beforeEach(() => {
     vi.mocked(fetchHandCashUtxoSet).mockReset()
-    vi.mocked(readUnspentCash).mockReset()
+    vi.mocked(readUnspentOnChain).mockReset()
     vi.mocked(checkUtxoSetItems).mockReset()
     vi.mocked(inspectHoldings).mockReset()
-    vi.mocked(readUnspentCash).mockResolvedValue({ unspent: new Set(), unknown: new Set(), stopped: false })
+    vi.mocked(readUnspentOnChain).mockResolvedValue({ unspent: new Set(), unknown: new Set(), stopped: false })
   })
 
   const row = (n: number, path: string, satoshis: number, type = 'standard'): HandCashUtxo => ({
@@ -185,7 +185,7 @@ describe('utxoSetScan', () => {
         row(8, 'm/7/0', 1, 'instrument'),
       ],
     })
-    vi.mocked(readUnspentCash).mockResolvedValue({
+    vi.mocked(readUnspentOnChain).mockResolvedValue({
       unspent: new Set([op(1), op(5)]),
       unknown: new Set([op(7)]),
       stopped: false,
@@ -206,7 +206,7 @@ describe('utxoSetScan', () => {
       ['m/0/5', 4_000, 1, 0, 0],
       ['m/7/0', 0, 0, 0, 0],
     ])
-    expect(vi.mocked(readUnspentCash).mock.calls[0][0].outputs.map((o) => o.outpoint)).toEqual([op(1), op(5), op(6), op(7)])
+    expect(vi.mocked(readUnspentOnChain).mock.calls[0][0].outputs.map((o) => o.outpoint)).toEqual([op(1), op(5), op(6), op(7)])
     expect(vi.mocked(inspectHoldings).mock.calls[0][0].addresses.map((a) => a.path)).toEqual(['m/0/5', 'm/7/0'])
     const items = vi.mocked(checkUtxoSetItems).mock.calls[0][0]
     expect(items.sourceId).toBe('s')

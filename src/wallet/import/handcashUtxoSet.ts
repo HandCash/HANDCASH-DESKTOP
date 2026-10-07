@@ -342,13 +342,15 @@ const TERANODE_CHUNK = TERANODE_PROBE_BATCH
 const WOC_CHUNK = SPENT_PROBE_BATCH
 
 /**
- * Which cash outputs the chain shows unspent, by outpoint: a Teranode node a
+ * Which outputs the chain shows unspent, by outpoint: a Teranode node a
  * hundred at a time, then WhatsOnChain for any the node could not place.
- * `unknown` is what neither answered; those addresses are read in full.
+ * `unknown` is what neither answered. Spend status only — never ownership.
  */
-export async function readUnspentCash(args: {
+export async function readUnspentOnChain(args: {
   chain: Chain
-  outputs: readonly CashOutput[]
+  outputs: ReadonlyArray<Pick<CashOutput, 'outpoint' | 'txid' | 'vout'>>
+  /** Log tag: `[import] utxo set <label> done`. */
+  label?: 'cash' | 'listed'
   fetchImpl?: FetchLike
   onProgress?: (done: number, total: number) => void
   shouldStop?: () => boolean
@@ -409,7 +411,7 @@ export async function readUnspentCash(args: {
   }
   appendAppLog(
     'info',
-    `[import] utxo set cash done ${Date.now() - startedAt}ms outputs=${args.outputs.length} unspent=${unspent.size} unknown=${unknown.size} viaExplorer=${rest.length}`,
+    `[import] utxo set ${args.label ?? 'cash'} done ${Date.now() - startedAt}ms outputs=${args.outputs.length} unspent=${unspent.size} unknown=${unknown.size} viaExplorer=${rest.length}`,
   )
   return { unspent, unknown, stopped }
 }

@@ -13,6 +13,7 @@ import {
   resetWalletProgressForTests,
   startWalletProgress,
 } from '../walletProgress'
+import { listWalletJobs, resetWalletJobsForTests } from '../walletJobs'
 import { enqueueImportItems, importSourceView, resetImportQueueForTests, watchImportSource } from './importQueue'
 import { importItems } from './items'
 
@@ -38,6 +39,7 @@ beforeEach(() => {
   resetWalletProgressForTests()
   bindWalletProgressAccount({ identityKey: 'id1', accountIndex: 0 })
   resetImportQueueForTests()
+  resetWalletJobsForTests()
   vi.mocked(importItems).mockReset()
 })
 
@@ -57,10 +59,18 @@ describe('importQueue', () => {
     const answered: string[][] = []
     const stop = watchImportSource('s1', () => undefined, (results) => answered.push(results.map((r) => r.outpoint)))
     enqueueImportItems('s1', items(3))
-    expect(importItems).toHaveBeenCalledWith({ sourceId: 's1', identityKey: 'id1', outpoints: [op(1), op(2), op(3)] })
+    const [job] = listWalletJobs('id1')
+    expect(job).toMatchObject({ kind: 'item-import', face: 'running', progress: { value: 0, max: 3 } })
+    expect(importItems).toHaveBeenCalledWith({
+      sourceId: 's1',
+      identityKey: 'id1',
+      outpoints: [op(1), op(2), op(3)],
+      activityGroup: job!.id,
+    })
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 0, total: 3 })
     release()
     await vi.waitFor(() => expect(getWalletProgress().status).toBe('done'))
+    expect(listWalletJobs('id1')).toEqual([expect.objectContaining({ id: job!.id, face: 'done', progress: { value: 3, max: 3 } })])
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', message: 'Items imported' })
     expect(answered).toEqual([[op(1), op(2), op(3)]])
     expect(importSourceView('s1').report).toMatchObject({ title: '3 items imported' })

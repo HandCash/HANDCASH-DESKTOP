@@ -26,7 +26,9 @@ import { runChangeHeal, type ChangeHealStats } from "./chainedChangeHeal";
 import { fileUnstoredSendTips } from "./unstoredSendTips";
 import { logDiag, snapshotWalletBalance } from "./diagnosticLog";
 import { txExistsOnChain } from "./legacyScan";
-import { bumpBalanceAfterHeal} from "./session";
+import { bumpBalanceAfterHeal } from "./session";
+import { appendAppLog } from "./appLog";
+import { beginWalletJob } from "./walletJobs";
 import type { Chain } from "./vault";
 import { releaseSpendAttemptFunds } from "./spendAttempt";
 import {
@@ -351,12 +353,16 @@ async function processTxidBatch(
   return { changeKept, txidsOnChain, processed };
 }
 
+/** How far a pass has got; `total` null once it leaves the countable txid walk. */
+type HealProgress = (checked: number, total: number | null, detail: string) => void;
+
 async function runHealCore(
   orderedTxids: string[],
   balanceBefore: UtxoHealBalanceSnapshot | null,
   failed: Set<string>,
   opts: UtxoHealPassOpts,
-  owner: HealOwner
+  owner: HealOwner,
+  progress: HealProgress = () => {}
 ): Promise<{
   changeKept: number;
   txidsOnChain: number;
@@ -437,6 +443,10 @@ async function runHealCore(
   // Recover the two or three signed transactions named by the checkpoint
   // before auditing years of output history. On hc-a580a the old order spent
   // 195 seconds probing 873 rows before it reached the missing change.
+  const walkTotal = orderedTxids.length;
+  const walked = () =>
+    `${txidsChecked.toLocaleString()} of ${walkTotal.toLocaleString()} transactions checked`;
+  if (walkTotal > 0) progress(0, walkTotal, walked());
   for (let offset = 0; offset < orderedTxids.length; ) {
     if (await healShouldYieldToSpend(opts, owner)) {
       logDiag("utxo-heal", "info", "yield-to-spend", {
@@ -454,6 +464,7 @@ async function runHealCore(
     txidsOnChain += batchResult.txidsOnChain;
     txidsChecked += batchResult.processed.length;
     allProcessed.push(...batchResult.processed);
+    progress(Math.min(offset, walkTotal), walkTotal, walked());
 
     owner.guard();
     bumpBalanceAfterHeal();
@@ -475,6 +486,7 @@ async function runHealCore(
     if (!runAllBatches) break;
   }
 
+  progress(txidsChecked, null, "Reconciling coins with the chain…");
   const fastBalance = toBalanceSnapshot(await snapshotWalletBalance());
   owner.guard();
   const recoveredCurrentBalance =
@@ -693,17 +705,29 @@ export async function runUtxoHealPass(
 
   const { runChainIngest } = await import("./walletCoordinator");
   owner.guard();
+  // Only a heal the user asked for is theirs to watch; automatic passes stay quiet.
+  const job =
+    opts.source === "manual"
+      ? beginWalletJob({
+          kind: "balance-heal",
+          identityKey: owner.runtime.instance.identityKey,
+          detail: "Waiting for wallet sync to finish…",
+        })
+      : null;
+  const startedAt = Date.now();
   const depthKey = owner.runtime.runtimeId;
   return runChainIngest(async () => {
     owner.guard();
     healDepthByRuntime.set(depthKey, (healDepthByRuntime.get(depthKey) ?? 0) + 1);
     try {
+      job?.progress(0, null, "Checking signed transactions…");
       const core = await runHealCore(
         txidList,
         balanceBefore,
         new Set(failedTxids),
         opts,
-        owner
+        owner,
+        (checked, total, detail) => job?.progress(checked, total, detail)
       );
       owner.guard();
       const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0;
@@ -738,8 +762,18 @@ export async function runUtxoHealPass(
               ? `Recovered ${core.recoveredSats.toLocaleString()} sats`
               : formatUtxoHealResult(result),
           status: "complete",
+          ...(job ? { sendGroupId: job.id } : {}),
         });
       }
+      job?.finish(
+        core.recoveredSats > 0
+          ? `Recovered ${core.recoveredSats.toLocaleString()} sats`
+          : formatUtxoHealResult(result)
+      );
+      appendAppLog(
+        "info",
+        `[utxo-heal] pass done ${Date.now() - startedAt}ms source=${opts.source} txids=${core.txidsChecked} recovered=${core.recoveredSats}`
+      );
 
       logDiag("utxo-heal", "info", "done", {
         source: opts.source,
@@ -761,6 +795,7 @@ export async function runUtxoHealPass(
           source: opts.source,
           reason: "account-changed",
         });
+        job?.stop("Stopped — the wallet account changed");
         throw err;
       }
       const reason = err instanceof Error ? err.message : String(err);
@@ -771,8 +806,10 @@ export async function runUtxoHealPass(
           note: "Balance heal failed",
           status: "failed",
           failureReason: reason,
+          ...(job ? { sendGroupId: job.id } : {}),
         });
       }
+      job?.fail(reason);
       logDiag("utxo-heal", "warn", "failed", { source: opts.source, reason });
       throw err;
     } finally {
@@ -780,6 +817,10 @@ export async function runUtxoHealPass(
       if (depth <= 0) healDepthByRuntime.delete(depthKey);
       else healDepthByRuntime.set(depthKey, depth);
     }
+  }).catch((err: unknown) => {
+    // The coordinator refused before the pass began; the job must not spin on.
+    job?.fail(err instanceof Error ? err.message : String(err));
+    throw err;
   });
 }
 

@@ -9,6 +9,7 @@
 import {
   hasSettledActivityItemOutpoint,
   hasSettledActivityTxid,
+  IMPORTED_COLLECTABLE_NOTE,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
@@ -44,13 +45,20 @@ export type MigratedItemReceipt = {
   origin: string
   /** Transaction that moved the tip to this wallet. */
   sweepTxid: string
+  name?: string | null
 }
 
-/** Activity rows for collectables migrated in from an imported phrase. */
+/**
+ * Activity rows for collectables migrated in from an imported phrase. A
+ * `groupId` (a wallet job's id) folds every row of one import run into one
+ * record, however many transactions it took.
+ */
 export function recordMigratedItemActivity(
   items: MigratedItemReceipt[],
   chain: Chain,
+  opts?: { groupId?: string | null },
 ): void {
+  const groupId = opts?.groupId?.trim()
   for (const item of items) {
     const op = item.outpoint.trim().toLowerCase()
     if (!op || hasSettledActivityItemOutpoint(op)) continue
@@ -60,11 +68,12 @@ export function recordMigratedItemActivity(
       kind: 'earned',
       sats: 1,
       method: 'receive-collectable',
-      note: 'Imported collectable',
+      note: IMPORTED_COLLECTABLE_NOTE,
       txid: item.sweepTxid.trim().toLowerCase() || undefined,
       status: 'complete',
+      ...(groupId ? { sendGroupId: groupId } : {}),
       item: {
-        name: 'Collectable',
+        name: item.name?.trim() || 'Collectable',
         origin,
         outpoint: op,
         imageUrl: contentUrlForOrigin(origin, chain),

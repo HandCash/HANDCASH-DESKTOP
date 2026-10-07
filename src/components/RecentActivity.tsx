@@ -131,7 +131,6 @@ import {
 } from "../features/activity/activityRowState";
 import {
   openPaymentDetails,
-  openSetting,
   setNavSection,
 } from "../wallet/navStore";
 import { subscribeConnectedApps } from "../wallet/permissions";
@@ -141,8 +140,13 @@ import {
   phraseImportBelongsToWallet,
   peekPhraseItemMigrateCursor,
   subscribePhraseItemMigrateCursor,
-  type PhraseItemMigrateCursor,
 } from "../wallet/phraseSweep";
+import { walletJobIds } from "../wallet/walletJobs";
+import {
+  PendingPhraseImportRow,
+  useWalletJobs,
+  WalletJobRow,
+} from "./activity/ActivityJobRows";
 
 import { EmptyState } from "./EmptyState";
 import { AppAvatar } from "./AppAvatar";
@@ -154,71 +158,6 @@ import { appDisplayName } from "../wallet/appIdentity";
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24;
-
-function PendingPhraseImportRow({
-  cursor,
-}: {
-  cursor: PhraseItemMigrateCursor;
-}) {
-  const skipped = Math.max(0, Math.trunc(cursor.skipped ?? 0));
-  const failed = Math.max(0, Math.trunc(cursor.failed));
-  const moved = Math.max(0, Math.trunc(cursor.moved));
-  const detail = [
-    `${moved.toLocaleString()} imported`,
-    `${Math.max(0, Math.trunc(cursor.offset)).toLocaleString()} scanned`,
-    failed > 0 ? `${failed.toLocaleString()} failed` : null,
-    skipped > 0 ? `${skipped.toLocaleString()} skipped` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const status =
-    cursor.stopped === "funds"
-      ? "Paused — add BSV to continue"
-      : "Paused — review details";
-
-  return (
-    <li
-      data-aeon-scope="phrase-import"
-      data-aeon-state="paused"
-      data-activity-key={`phrase-import:${cursor.sourceAddress}`}
-      data-activity-pending=""
-    >
-      <button
-        type="button"
-        className="history-row history-row-btn"
-        onClick={() => {
-          playWalletSound("soft");
-          openSetting("import");
-        }}
-        aria-label={`Review paused collectable import, ${detail}`}
-      >
-        <div className="history-icon-wrap">
-          <div className="history-icon">
-            <span className="history-item-thumb-icon" aria-hidden>
-              <CollectablesIcon size={18} />
-            </span>
-          </div>
-          <span
-            className="history-pending-mark"
-            aria-label="Import paused"
-            title="Import paused safely"
-          >
-            <LoadingSpinner size="sm" />
-          </span>
-        </div>
-        <div className="history-body">
-          <strong className="history-title">Collectable import paused</strong>
-          <span className="history-when" title={`${status}. ${detail}`}>
-            {status} · {detail}
-          </span>
-        </div>
-        <div className="history-amount-block">
-          <span className="history-amount history-amount-item">Review</span>
-        </div>
-      </button>
-    </li>
-  );
-}
 
 type ActivityFeedSnapshot = {
   generation: number;
@@ -976,11 +915,17 @@ export function ActivityFeed({
   )
     ? phraseImport
     : null;
+  const jobs = useWalletJobs();
 
-  const filtered = useMemo(
-    () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
-    [entries, filters, showFilters]
-  );
+  // A job's own row speaks for it until it leaves; then its rows fold into one record.
+  const filtered = useMemo(() => {
+    const jobIds = walletJobIds(jobs);
+    const settled =
+      jobIds.size > 0
+        ? entries.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
+        : entries;
+    return showFilters ? filterPaymentActivity(settled, filters) : settled;
+  }, [entries, jobs, filters, showFilters]);
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
   const records = useMemo(
@@ -993,7 +938,8 @@ export function ActivityFeed({
     total: shownCount,
     itemExtent: 72,
     overscan: 10,
-    rowSelector: '[data-activity-key]:not([data-aeon-scope="phrase-import"])',
+    rowSelector:
+      '[data-activity-key]:not([data-aeon-scope="phrase-import"]):not([data-aeon-scope="wallet-job"])',
     scrollRef: listRef,
   });
   const visibleRecords = records.slice(windowed.start, windowed.end);
@@ -1171,7 +1117,7 @@ export function ActivityFeed({
   }, [origins, filters.origin]);
 
   const body =
-    filtered.length === 0 && !visiblePhraseImport ? (
+    filtered.length === 0 && !visiblePhraseImport && jobs.length === 0 ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : "Nothing matches"}
@@ -1185,6 +1131,12 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
+        {jobs.map((job) => (
+          <WalletJobRow key={job.id} job={job} />
+        ))}
+        {visiblePhraseImport ? (
+          <PendingPhraseImportRow cursor={visiblePhraseImport} />
+        ) : null}
         {windowed.padStart > 0 ? (
           <li
             className="history-window-pad"
@@ -1192,9 +1144,6 @@ export function ActivityFeed({
             style={{ height: windowed.padStart }}
             aria-hidden
           />
-        ) : null}
-        {visiblePhraseImport ? (
-          <PendingPhraseImportRow cursor={visiblePhraseImport} />
         ) : null}
         {visibleRecords.map((record, index) => (
           <HistoryRow

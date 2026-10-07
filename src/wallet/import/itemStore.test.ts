@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   __resetImportItemStoreForTests,
+  clearImportListing,
   countImportItems,
   decidedImportOutpoints,
   forgetImportItemStore,
@@ -101,12 +102,23 @@ describe('saved import items', () => {
     expect((await readImportGroups('s')).map((s) => s.key)).not.toContain('app:alpha')
   })
 
-  it('prunes what the source no longer names, except at addresses listed in full', async () => {
+  it('prunes what the source no longer names, except at addresses listed in full, and keeps every gone mark', async () => {
     await saveImportItems('s', [item(1), item(2, { address: '1b' }), item(3)])
     await markImportOutpointsGone('s', [op(8), op(9)])
     expect(await pruneImportItems('s', new Set([op(1), op(9)]), new Set(['1b']))).toEqual([op(3)])
     expect(outpoints((await readImportItemPage('s', { after: null, limit: 10 })).items)).toEqual([op(1), op(2)])
-    expect(await decidedImportOutpoints('s')).toEqual(new Set([op(1), op(2), op(9)]))
+    expect(await decidedImportOutpoints('s')).toEqual(new Set([op(1), op(2), op(8), op(9)]))
+    // An index that still names a moved output cannot list it again.
+    expect(await saveImportItems('s', [item(8)])).toEqual([])
+  })
+
+  it('clears a swept listing but remembers what left', async () => {
+    await saveImportItems('s', [item(1), item(2)])
+    await markImportOutpointsGone('s', [op(2)])
+    await clearImportListing('s')
+    expect(await countImportItems('s')).toBe(0)
+    expect(await decidedImportOutpoints('s')).toEqual(new Set([op(2)]))
+    expect(outpoints(await saveImportItems('s', [item(1), item(2)]))).toEqual([op(1)])
   })
 
   it('makes an address listed in full hold exactly what its pages showed', async () => {

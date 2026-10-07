@@ -9,11 +9,12 @@ import {
   type SingleItemMigrate,
 } from '../phraseSweep'
 import { gorillaBase, type FetchLike } from './discovery'
-import { fetchHandCashUtxoSet, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, readUnspentOnChain, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
 import type { AddressHoldings } from './holdings'
 import { keyDeriverFor } from './importSource'
 import { importItemFacts, withImportItemArt, type ImportItem, type ImportItemGroup } from './importItem'
 import {
+  clearImportListing,
   countImportItems,
   decidedImportOutpoints,
   forgetImportItemStore,
@@ -60,13 +61,63 @@ export type ImportItemPage = { items: ImportItem[]; last: number | null; more: b
 /** A shelf of the saved list: who issued its items, how many, and its face pile. */
 export type ImportItemShelf = ImportItemGroup & { count: number; faces: ImportItem[] }
 
-/** Forget a source's saved list (removed or swept). Never throws. */
+/** Forget everything saved about a removed source. Never throws. */
 export async function forgetImportItems(sourceId: string): Promise<void> {
   try {
     await forgetImportItemStore(sourceId)
   } catch (err) {
     appendAppLog('warn', `[import] saved item list not cleared: ${err instanceof Error ? err.message : String(err)}`)
   }
+}
+
+/** After a sweep: re-read the list next time, keeping what is known gone. Never throws. */
+export async function clearImportItems(sourceId: string): Promise<void> {
+  try {
+    await clearImportListing(sourceId)
+  } catch (err) {
+    appendAppLog('warn', `[import] saved item list not cleared: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/** A full on-chain recheck of the list at most this often, unless the list just grew. */
+const CHAIN_CHECK_MS = 10 * 60_000
+
+const OUTPOINT = /^([0-9a-f]{64})[_.](\d+)$/
+
+/**
+ * Listed items the chain shows spent leave the list for good. The 1Sat index
+ * lags Arcade broadcasts and HandCash never learns of spends made elsewhere,
+ * so an item moved or burned from this wallet would otherwise be offered again.
+ */
+async function dropChainSpentItems(args: {
+  sourceId: string
+  chain: Chain
+  shouldStop?: () => boolean
+  fetchImpl?: FetchLike
+}): Promise<{ spent: string[]; checked: number; unknown: number; stopped: boolean }> {
+  const startedAt = Date.now()
+  const outputs = [...(await listedImportOutpoints(args.sourceId))].flatMap((outpoint) => {
+    const m = OUTPOINT.exec(outpoint.toLowerCase())
+    return m ? [{ listed: outpoint, outpoint: `${m[1]}_${m[2]}`, txid: m[1]!, vout: Number(m[2]) }] : []
+  })
+  if (outputs.length === 0) return { spent: [], checked: 0, unknown: 0, stopped: false }
+  const read = await readUnspentOnChain({
+    chain: args.chain,
+    outputs,
+    label: 'listed',
+    ...(args.shouldStop ? { shouldStop: args.shouldStop } : {}),
+    ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+  })
+  const spent = read.stopped
+    ? []
+    : outputs.filter((o) => !read.unspent.has(o.outpoint) && !read.unknown.has(o.outpoint)).map((o) => o.listed)
+  if (spent.length > 0) await markImportOutpointsGone(args.sourceId, spent)
+  if (!read.stopped) await writeImportListMeta(args.sourceId, { chainCheckedAt: Date.now() })
+  appendAppLog(
+    spent.length > 0 ? 'warn' : 'info',
+    `[import] items chain-checked ${outputs.length} spent=${spent.length} unknown=${read.unknown.size} stopped=${read.stopped} done ${Date.now() - startedAt}ms`,
+  )
+  return { spent, checked: outputs.length, unknown: read.unknown.size, stopped: read.stopped }
 }
 
 /** Path → address this source's last scan derived; reused instead of re-derived. */
@@ -142,7 +193,9 @@ export async function syncImportItems(args: {
   const startedAt = Date.now()
   const chain = active.chain
   const stop = () => args.shouldStop?.() === true
+  let grew = false
   const changed = (change: ImportItemChange) => {
+    if (change.added > 0) grew = true
     if (change.added > 0 || change.gone.length > 0) args.onChange?.(change)
   }
 
@@ -216,6 +269,16 @@ export async function syncImportItems(args: {
         changed({ added: (await saveImportItems(source.id, page.items.map(storedItem))).length, gone: [] })
       }
     }
+  }
+
+  if (!stop() && (grew || Date.now() - (meta.chainCheckedAt ?? 0) > CHAIN_CHECK_MS)) {
+    const checked = await dropChainSpentItems({
+      sourceId: source.id,
+      chain,
+      shouldStop: args.shouldStop,
+      ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
+    })
+    if (checked.spent.length > 0) changed({ added: 0, gone: checked.spent })
   }
 
   const stopped = stop()
@@ -374,6 +437,8 @@ export async function importItems(args: {
   sourceId: string
   outpoints: readonly string[]
   identityKey?: string
+  /** Wallet job id the moved items' Activity rows fold under. */
+  activityGroup?: string | null
 }): Promise<ImportItemsResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
@@ -436,6 +501,7 @@ export async function importItems(args: {
             ...(item.origin ? { origin: item.origin } : {}),
             ...(item.name ? { name: item.name } : {}),
           })),
+          activityGroup: args.activityGroup ?? null,
         })
       : null
   const stopped: ImportItemsResult['stopped'] = run?.stopped ?? null

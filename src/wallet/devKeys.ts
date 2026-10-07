@@ -382,7 +382,7 @@ function signEligibility(runtime: WalletRuntime, keys: DevKeyRecord[]): DevSignE
     return {
       kind: 'refused',
       reason: 'sign-key-held',
-      message: `Key ${holder.n} signs as ${name}. Rotate the identity key to issue another.`,
+      message: `Key ${holder.n} already holds ${name}’s signing key — an identity signs with one key at a time. Give another server Key ${holder.n}’s config, or rotate the identity key to issue a new one.`,
     }
   }
   return { kind: 'ready', bapId, name, seq: current.seq }

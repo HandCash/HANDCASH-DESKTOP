@@ -2333,6 +2333,13 @@ const IMPORT_LINES = [
   ['settled', /^\[import\] hinted scan settled sats=(\d+) items=(\d+) of sats=(\d+) items=(\d+)/],
   ['refused', /^\[import\] hinted scan refused reason=(\S+)/],
   ['sweep', /^\[import\] sweep done (\d+)ms kind=(\S+) cash=(\d+)sats items=(\d+) tokens=(\d+) failed=(\d+)/],
+  ['itemsSynced', /^\[import\] items synced (\d+) addresses=(\d+) complete=(true|false) stopped=(true|false) done (\d+)ms/],
+  ['itemsChainChecked', /^\[import\] items chain-checked (\d+) spent=(\d+) unknown=(\d+) stopped=(true|false) done (\d+)ms/],
+  ['utxoSetListed', /^\[import\] utxo set listed done (\d+)ms outputs=(\d+) unspent=(\d+) unknown=(\d+) viaExplorer=(\d+)/],
+  ['queued', /^\[import\] queued (\d+) item/],
+  ['itemsDone', /^\[import\] items done (\d+)ms chosen=(\d+) moved=(\d+) tx=(\d+) keys=(\d+)((?: refused\.\S+=\d+)*)(?: stopped=(\S+))?/],
+  ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)/],
+  ['runDone', /^\[import\] run done (\d+)ms items=(\d+) answered=(\d+) sources=(\d+) outcome=(\S+)/],
 ]
 
 /** Settings → Import steps in order, each with the numbers its log line carries. */
@@ -2367,6 +2374,17 @@ function legacyImportFacts(events) {
         : step === 'settled' ? { foundSats: n(1), foundItems: n(2), claimedSats: n(3), claimedItems: n(4) }
         : step === 'refused' ? { reason: m[1] }
         : step === 'sweep' ? { ms: n(1), kind: m[2], cashSats: n(3), items: n(4), tokens: n(5), failed: n(6) }
+        : step === 'itemsSynced' ? { listed: n(1), addressesPaged: n(2), complete: m[3] === 'true', stopped: m[4] === 'true', ms: n(5) }
+        : step === 'itemsChainChecked' ? { listed: n(1), spentDropped: n(2), unknown: n(3), stopped: m[4] === 'true', ms: n(5) }
+        : step === 'utxoSetListed' ? { ms: n(1), outputs: n(2), unspent: n(3), unknown: n(4), viaExplorer: n(5) }
+        : step === 'queued' ? { items: n(1) }
+        : step === 'itemsDone' ? {
+            ms: n(1), chosen: n(2), moved: n(3), transactions: n(4), keys: n(5),
+            refused: Object.fromEntries([...(m[6] ?? '').matchAll(/refused\.(\S+)=(\d+)/g)].map((r) => [r[1], Number(r[2])])),
+            stopped: m[7] ?? null,
+          }
+        : step === 'chosenDone' ? { ms: n(1), items: n(2), keys: n(3), moved: n(4) }
+        : step === 'runDone' ? { ms: n(1), items: n(2), answered: n(3), sources: n(4), outcome: m[5] }
         : {}
       steps.push({ at: new Date(e.at).toISOString(), step, ...detail })
       break

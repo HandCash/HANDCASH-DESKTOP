@@ -879,7 +879,34 @@ const IMPORT_QUEUE = `stateDiagram-v2
     A spent fee coin retries the same bundle once, then pauses (2 pauses max).
     A wallet change drops that wallet's items.
     Refused while a paused sweep reads the same address.
-    Progress → walletProgress (item-import) → status pill.
+    One run (idle → idle) is one walletJob: one Activity row with a bar.
+    Progress also mirrors walletProgress (item-import) → status pill.
+  end note
+`
+
+const WALLET_JOB = `stateDiagram-v2
+  direction TB
+  [*] --> running
+  running --> running : PROGRESS (current / total | unknown)
+  running --> waiting : WAIT
+  waiting --> running : RESUME / PROGRESS
+  running --> done : FINISH
+  running --> stopped : STOP
+  running --> failed : FAIL
+  waiting --> done : FINISH
+  waiting --> stopped : STOP
+  waiting --> failed : FAIL
+  done --> [*]
+  stopped --> [*]
+  failed --> [*]
+
+  running : one Activity row · determinate bar when total is known · indeterminate when not
+  waiting : held outside the job · spent fee coin clearing · wallet sync lock
+  note right of running
+    Kinds: item-import (importQueue run) · balance-heal (manual heal pass).
+    The job id is the sendGroupId of every row it writes;
+    those rows stay hidden while the job row shows,
+    then fold into one record (fold kind job).
   end note
 `
 
@@ -1547,6 +1574,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Import queue',
     caption: 'importQueueMachine — background item import · 100 per call · 25 tips per tx · survives leaving the page',
     source: IMPORT_QUEUE,
+  },
+  {
+    id: 'walletJob',
+    label: 'Wallet job',
+    caption: 'walletJobMachine — one long job (import run, balance heal) · one Activity row with a bar · rows fold under its id',
+    source: WALLET_JOB,
   },
   {
     id: 'deviceBackup',

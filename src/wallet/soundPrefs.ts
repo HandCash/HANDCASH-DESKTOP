@@ -1,6 +1,6 @@
 import { durableGetItem, durableSetItem } from './durableStorage'
 
-/** Survives wallet wipe (allowlisted in wipePolicy). Default off — opt-in. */
+/** Survives wallet wipe (allowlisted in wipePolicy). Default on — only an explicit off ('0') mutes. */
 export const SFX_PREF_KEY = 'handcash.sfx.enabled'
 
 type Listener = (enabled: boolean) => void
@@ -8,7 +8,7 @@ type Listener = (enabled: boolean) => void
 const listeners = new Set<Listener>()
 
 export function isWalletSfxEnabled(): boolean {
-  return durableGetItem(SFX_PREF_KEY) === '1'
+  return durableGetItem(SFX_PREF_KEY) !== '0'
 }
 
 export function setWalletSfxEnabled(enabled: boolean): void {

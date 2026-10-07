@@ -37,7 +37,7 @@ import {
 } from "../wallet/walletRuntime";
 import { AsyncActionPrompt } from "./AsyncActionPrompt";
 import { EmptyState } from "./EmptyState";
-import { FingerprintIcon, WalletScopeIcon } from "./icons";
+import { KeyIcon, WalletScopeIcon } from "./icons";
 import { Skeleton } from "./Skeleton";
 
 type DevKeyAction =
@@ -502,7 +502,7 @@ export function DevKeysPanel() {
         <div data-aeon-part="key-head">
           <span data-aeon-part="key-icon" aria-hidden>
             {key.sign ? (
-              <FingerprintIcon size={20} />
+              <KeyIcon size={20} />
             ) : (
               <WalletScopeIcon size={20} />
             )}

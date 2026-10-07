@@ -46,6 +46,8 @@ export type ImportListMeta = {
   /** Addresses listed in full from the 1Sat index for that scan. */
   pagedAddresses: string[]
   nextSeq: number
+  /** When every listed item was last checked unspent on chain (not by the index). */
+  chainCheckedAt?: number
 }
 
 /** `last` is the list position read up to — pass it as `after` for the next page. */
@@ -353,8 +355,9 @@ export async function listedImportOutpoints(sourceId: string): Promise<Set<strin
 
 /**
  * Drop what the source no longer holds: listed items that are neither in
- * `live` nor at an address listed in full (`keepAddresses`), and spent marks
- * for outputs the source stopped naming. Returns the items that left.
+ * `live` nor at an address listed in full (`keepAddresses`). Returns the items
+ * that left. Gone marks stay: an index that lags a spend must never list a
+ * moved or burned item again.
  */
 export async function pruneImportItems(
   sourceId: string,
@@ -376,13 +379,6 @@ export async function pruneImportItems(
     }
     if (rows.length < READ_CHUNK) break
     after = rows[rows.length - 1]!.seq
-  }
-  const goneKeys = await request(db.transaction(GONE).objectStore(GONE).getAllKeys(sourceRange(sourceId)))
-  const stale = goneKeys.filter((key) => !live.has((key as [string, string])[1]))
-  if (stale.length > 0) {
-    const tx = db.transaction(GONE, 'readwrite')
-    for (const key of stale) tx.objectStore(GONE).delete(key)
-    await finished(tx)
   }
   return removed
 }
@@ -409,7 +405,20 @@ export async function replaceAddressItems(
   return { removed, added: await saveImportItems(sourceId, items) }
 }
 
-/** The saved source is gone, or swept: forget its list. */
+/**
+ * Swept: the list is re-read from the source next time. Gone marks stay, so
+ * what the sweep moved cannot come back while an index catches up.
+ */
+export async function clearImportListing(sourceId: string): Promise<void> {
+  const db = await open()
+  const tx = db.transaction([ITEMS, META, GROUPS], 'readwrite')
+  tx.objectStore(ITEMS).delete(sourceRange(sourceId))
+  tx.objectStore(META).delete(sourceId)
+  tx.objectStore(GROUPS).delete(sourceRange(sourceId))
+  await finished(tx)
+}
+
+/** The saved source is removed: forget everything about it. */
 export async function forgetImportItemStore(sourceId: string): Promise<void> {
   const db = await open()
   const tx = db.transaction([ITEMS, GONE, META, GROUPS], 'readwrite')

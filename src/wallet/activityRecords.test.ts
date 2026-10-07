@@ -464,6 +464,34 @@ describe('composeActivityRecords', () => {
     expect(records[0]!.batch?.count).toBe(2)
   })
 
+  it('folds every row of one import run into one record across its transactions', () => {
+    const imported = (name: string, txid: string, vout: number) =>
+      entry({
+        method: 'receive-collectable',
+        txid,
+        note: 'Imported collectable',
+        sendGroupId: 'job:item-import:abc',
+        item: { name, origin: `${OTHER_TXID}_${vout}`, outpoint: `${txid}.${vout}` },
+      })
+    const records = composeActivityRecords([
+      imported('Pixel Foxes #1', TXID, 0),
+      imported('Pixel Foxes #2', OTHER_TXID, 1),
+      imported('Pixel Foxes #3', OTHER_TXID, 2),
+      entry({
+        method: 'receive-collectable',
+        txid: TXID,
+        sendGroupId: 'job:item-import:abc',
+        status: 'failed',
+        failureReason: 'fee coin spent',
+        item: { name: 'Pixel Foxes #4', origin: `${OTHER_TXID}_3`, outpoint: `${TXID}.3` },
+      }),
+    ])
+    expect(records).toHaveLength(2)
+    expect(records[0]!.entries).toHaveLength(3)
+    expect(records[0]!.batch).toEqual({ count: 3, label: 'Pixel Foxes' })
+    expect(records[1]!.entries[0]!.status).toBe('failed')
+  })
+
   it('preserves feed order by first appearance', () => {
     const records = composeActivityRecords([
       entry({ method: 'market-purchase', kind: 'spent', sats: 9_000, txid: TXID, at: 5 }),

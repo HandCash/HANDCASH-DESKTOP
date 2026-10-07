@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { Accordion, StatusBanner } from '@aeon-ui/react'
+import { Accordion, Progress, StatusBanner } from '@aeon-ui/react'
 import {
   importItemBrowserMachine,
   queuedOutpoints,
@@ -420,28 +420,8 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
     if (notice) playWalletSound(notice.tone === 'success' ? 'success' : 'error')
   }, [notice])
 
-  const runDock = run
-    ? {
-        ariaLabel: 'Importing items in the background',
-        tertiary: {
-          label: 'Stop',
-          onClick: () => send({ type: 'STOP' }),
-          disabled: run.stopping || run.waiting.length === 0,
-          icon: <CloseIcon size={18} />,
-          tone: 'danger' as const,
-        },
-        primary: {
-          label: context.queue.paused
-            ? 'Waiting for a spent fee coin to clear…'
-            : `Importing… ${run.done.toLocaleString()} of ${run.total.toLocaleString()} done`,
-          onClick: () => undefined,
-          disabled: true,
-          tone: 'primary' as const,
-          icon: <DownloadIcon size={18} />,
-        },
-      }
-    : null
-
+  // The dock is for choosing. Once confirmed, the run belongs to the page
+  // banner and Activity — never a disabled bar parked at the bottom.
   useWalletActionDock(
     confirming
       ? {
@@ -479,7 +459,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
               title: `Import ${selectedCount.toLocaleString()} items`,
             },
           }
-        : runDock,
+        : null,
   )
 
   const status = checking
@@ -535,6 +515,38 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
               They move together, up to 25 in each transaction. The import keeps going if you leave this page.
             </StatusBanner.Body>
           </StatusBanner.Copy>
+        </StatusBanner.Root>
+      ) : null}
+
+      {run ? (
+        <StatusBanner.Root
+          tone={context.queue.paused ? 'warning' : 'info'}
+          status={context.queue.paused ? 'waiting' : run.stopping ? 'stopping' : 'importing'}
+          data-aeon-part="run"
+        >
+          <StatusBanner.Copy>
+            <StatusBanner.Title>
+              {context.queue.paused
+                ? 'Waiting for a spent fee coin to clear…'
+                : `Importing ${run.done.toLocaleString()} of ${run.total.toLocaleString()}`}
+            </StatusBanner.Title>
+            <Progress.Root className="history-progress" value={run.done} max={Math.max(1, run.total)}>
+              <Progress.Track className="history-progress-track">
+                <Progress.Range className="history-progress-range" />
+              </Progress.Track>
+            </Progress.Root>
+            <StatusBanner.Body>Keeps going if you leave this page — Activity shows it too.</StatusBanner.Body>
+          </StatusBanner.Copy>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={run.stopping || run.waiting.length === 0}
+              onClick={() => send({ type: 'STOP' })}
+            >
+              {run.stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          </div>
         </StatusBanner.Root>
       ) : null}
 
