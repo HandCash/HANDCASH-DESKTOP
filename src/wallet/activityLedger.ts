@@ -9,7 +9,7 @@
  * paints it while the first live read runs (`activityLedgerStore.ts`).
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
-import { itemMigrateTxDescription } from './activityJobIndex'
+import { isItemMigrateTxDescription, itemMigrateTxDescription } from './activityJobIndex'
 import { loadLedgerRows, saveLedgerRows } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
@@ -28,6 +28,9 @@ const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
  * a fallback miner took — or a mined one Arcade never answered for — sat in
  * Collect with no Activity row. Those count once the wallet has propagated
  * them (`chequeWasPropagated`); an app's unbroadcast `noSend` never does.
+ * A migrate this wallet signed carries its own description, and those stay
+ * even when the retry queue has already dropped them: they are the imports
+ * that otherwise vanished on every restart.
  */
 const SETTLED_STATUSES = ['completed', 'unproven', 'sending', 'nosend'] as const
 const HELD_STATUS = 'nosend'
@@ -274,6 +277,9 @@ export function noteCommittedItemLegs(legs: readonly CommittedItemLeg[], at = Da
   if (added === 0) return
   provisionalVersion += 1
   for (const cb of listeners) cb()
+  // These legs are the only copy until the ledger read lands, and that read
+  // waits out the import. Written now, so a restart still shows them.
+  scheduleSave(namespace, ledgerActivitySnapshot())
 }
 
 function clearProvisional(): void {
@@ -338,6 +344,12 @@ const SAVE_DELAY_MS = 3_000
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let saveRows: { namespace: string; rows: readonly ActivityEntry[] } | null = null
 
+function writeSavedRows(next: { namespace: string; rows: readonly ActivityEntry[] }): void {
+  void saveLedgerRows(next.namespace, next.rows).catch((err) => {
+    console.warn('[activity-ledger] saving the last read failed', err instanceof Error ? err.message : err)
+  })
+}
+
 function scheduleSave(namespace: string, rows: readonly ActivityEntry[]): void {
   saveRows = { namespace, rows }
   if (saveTimer) return
@@ -345,18 +357,25 @@ function scheduleSave(namespace: string, rows: readonly ActivityEntry[]): void {
     saveTimer = null
     const next = saveRows
     saveRows = null
-    if (!next) return
-    void saveLedgerRows(next.namespace, next.rows).catch((err) => {
-      console.warn('[activity-ledger] saving the last read failed', err instanceof Error ? err.message : err)
-    })
+    if (next) writeSavedRows(next)
   }, SAVE_DELAY_MS)
+}
+
+/** Write the pending copy now. A restart disposes the runtime before the timer. */
+function flushSave(): void {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = null
+  const next = saveRows
+  saveRows = null
+  if (next) writeSavedRows(next)
 }
 
 export function publishActivityLedger(namespace: string, rows: ActivityEntry[]): void {
   const prev = snapshot?.namespace === namespace ? snapshot : null
   const changed = !prev || prev.restored || !sameRows(prev.rows, rows)
   setSnapshot(namespace, rows, false)
-  if (changed) scheduleSave(namespace, rows)
+  // Legs the read does not hold yet stay on screen and in the saved copy.
+  if (changed) scheduleSave(namespace, ledgerActivitySnapshot())
 }
 
 /**
@@ -534,7 +553,12 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   const all = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
   const propagated = all.some((tx) => tx.status === HELD_STATUS) ? await chequeWasPropagated(runtime) : null
   const txs = propagated
-    ? all.filter((tx) => tx.status !== HELD_STATUS || (!!tx.txid && propagated(tx.txid.trim().toLowerCase())))
+    ? all.filter((tx) => {
+        if (tx.status !== HELD_STATUS) return true
+        if (isItemMigrateTxDescription(tx.description)) return true
+        const txid = tx.txid?.trim().toLowerCase()
+        return !!txid && propagated(txid)
+      })
     : all
   const { outputs, baskets } = read
   return ledgerActivityRows(txs, outputs, baskets).filter(
@@ -617,7 +641,7 @@ function cancelSave(): void {
 export function resetActivityLedgerForRuntime(): void {
   if (timer) clearTimeout(timer)
   timer = null
-  cancelSave()
+  flushSave()
   snapshot = null
   clearProvisional()
   txCache = null

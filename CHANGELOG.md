@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.499] - 2026-10-07
+
+### Fixed
+- **Import rows that already landed stay in Activity across a restart.** Early imports were written into Activity, so they never left. Later ones were only remembered in memory until a history read that takes minutes, and a restart threw that memory away — including a save that was still waiting when the app closed. Each import is written down as it lands, and closing the app finishes that write. A history read that does not yet list them keeps the rows already written. Held import transactions are included in that read from their own description, so ones the retry queue already dropped still come back.
+
 ## [1.3.498] - 2026-10-07
 
 ### Fixed

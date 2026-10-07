@@ -15,9 +15,9 @@ vi.mock('./accountLocalKeys', () => ({ accountKeyScopeFor: () => undefined }))
 const disk = vi.hoisted(() => ({ rows: new Map<string, unknown[]>(), saves: [] as Array<[string, unknown[]]> }))
 vi.mock('./activityLedgerStore', () => ({
   loadLedgerRows: async (ns: string) => disk.rows.get(ns) ?? null,
-  saveLedgerRows: async (ns: string, rows: unknown[]) => { disk.saves.push([ns, [...rows]]) },
+  saveLedgerRows: async (ns: string, rows: unknown[]) => { disk.saves.push([ns, [...rows]]); disk.rows.set(ns, rows) },
 }))
-import { ledgerActivityById, ledgerActivitySnapshot, noteCommittedItemLegs, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests, restoreActivityLedger, subscribeActivityLedger } from './activityLedger'
+import { ledgerActivityById, ledgerActivitySnapshot, noteCommittedItemLegs, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForRuntime, resetActivityLedgerForTests, restoreActivityLedger, subscribeActivityLedger } from './activityLedger'
 const txid = (n: number) => n.toString(16).padStart(64, '0')
 function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.resolve([])) {
   const provider = {
@@ -147,6 +147,7 @@ describe('Activity ledger runtime ownership', () => {
       [6, { transactionId: 6, txid: txid(6), satoshis: -30, isOutgoing: true, created_at: 60, status: 'nosend', description: 'Migrate 25 ordinals from phrase' }],
       [7, { transactionId: 7, txid: txid(7), satoshis: -30, isOutgoing: true, created_at: 70, status: 'nosend', description: 'Migrate 25 ordinals from phrase' }],
       [8, { transactionId: 8, txid: txid(8), satoshis: -5, isOutgoing: true, created_at: 80, status: 'nosend', description: 'App listing' }],
+      [9, { transactionId: 9, txid: txid(9), satoshis: -30, isOutgoing: true, created_at: 90, status: 'nosend', description: 'Migrate 25 ordinals from phrase' }],
     ])
     held.queued.add(txid(6))
     held.landed.add(txid(7))
@@ -160,12 +161,24 @@ describe('Activity ledger runtime ownership', () => {
       done: Promise.resolve(),
     })
     await refreshActivityLedger(owner.runtime)
-    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(6), txid(7)])
+    // 9 is a migrate the retry queue already dropped. An app's held listing stays out.
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(6), txid(7), txid(9)])
 
     // Pinned after the read cached it as `nosend`: the index, not the cache, decides.
     records.get(8)!.status = 'unproven'
     await refreshActivityLedger(owner.runtime)
-    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(6), txid(7), txid(8)])
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(6), txid(7), txid(8), txid(9)])
+  })
+  it('keeps an import’s rows across a restart that happens before the ledger re-reads', async () => {
+    const owner = wallet('owner'); control.current = owner.runtime
+    noteCommittedItemLegs([{ txid: txid(4), vout: 0, name: 'Fox' }], 40)
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(4)])
+    resetActivityLedgerForRuntime()
+    expect(ledgerActivitySnapshot()).toEqual([])
+    expect(disk.saves.map(([ns, rows]) => [ns, (rows as Array<{ txid: string }>).map(r => r.txid)])).toEqual([['owner', [txid(4)]]])
+    control.current = owner.runtime
+    await restoreActivityLedger(owner.runtime)
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(4)])
   })
   it('paints the last read at launch, lets the live read replace it, and saves the live rows', async () => {
     vi.useFakeTimers()
