@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.471] - 2026-10-06
+
+### Fixed
+- Item migrates and token sweeps check, before signing, that the wallet kept every item as input *i* ahead of its own funding inputs. Sats move first-in, first-out, so a funding input ahead of an item would push the inscription into change. Today's wallet toolbox already keeps that order; this guard refuses to sign, and releases the reserved coins, if a future version changes it.
+
 ## [1.3.470] - 2026-10-06
 
 ### Fixed
