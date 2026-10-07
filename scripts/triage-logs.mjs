@@ -32,6 +32,8 @@ import {
   askJev,
   beforeLeftBasket,
   bridgeFacts,
+  errorLines,
+  errorReview,
   parseElectronLog,
   parseSession,
   ringEvents,
@@ -147,10 +149,12 @@ function ringSession(rows, reason) {
     .map((e) => /^App log capture started — v(\d+\.\d+\.\d+)/.exec(e.text)?.[1])
     .filter(Boolean)
     .at(-1)
-  return sessionFacts(
+  const facts = sessionFacts(
     { version: version ?? 'local-ring', platform: process.platform, reason },
     events,
   )
+  Object.defineProperty(facts, 'events', { value: events, enumerable: false })
+  return facts
 }
 
 /**
@@ -1012,15 +1016,23 @@ if (tracePrefix) {
 }
 
 if (flags.has('--state')) {
-  console.log(JSON.stringify(state, null, 2))
-  process.exit(0)
+  // `process.exit` right after a large write truncates a piped stdout at 64 KB.
+  process.stdout.write(`${JSON.stringify({ ...state, errorReview: errorReview(latest, previous) }, null, 2)}\n`, () =>
+    process.exit(0),
+  )
+  await new Promise(() => {})
 }
 
-const { answers, usage } = await askJev(state, jevApiKey())
+const { answers, usage, errors } = await askJev(state, jevApiKey())
 
 if (flags.has('--json')) {
-  console.log(JSON.stringify({ state, answers, usage }, null, 2))
+  console.log(JSON.stringify({ state, answers, errors, usage }, null, 2))
 } else {
   report(state, answers)
-  console.log(`jev-latest · ${usage.input_tokens} in / ${usage.output_tokens} out tokens\n`)
+  const lines = errorLines(errors)
+  if (lines.length) {
+    console.log('\nErrors that matter (Jev, from code-deduplicated families):')
+    for (const line of lines) console.log(`  ${line}`)
+  }
+  console.log(`\njev-latest · ${usage.input_tokens} in / ${usage.output_tokens} out tokens\n`)
 }

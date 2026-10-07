@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.488] - 2026-10-07
+
+### Diagnostics
+- **Triage separates real errors from noise.** Code deduplicates every warning/error family in an upload, keeps one raw line for each, and marks the ones the previous upload did not have. Jev then judges each family "real problem or noise" and picks the root one. The report, the log dashboard card and `npm run triage verdicts` show the root and the families that matter, raw, and fold the rest into one count, for example: `2 of 19 families matter · noise: 17 families, 27 lines`. A root pick that Jev's own per-family answer called noise is not shown. The dashboard no longer lists the per-family answers as judgments, and replaces its repeating-problems list with this.
+- The unlock rescue also logs when it found nothing to follow: `[landing] rescue checked=0 unproven=N`. Before, a missing line could mean either that or that it never ran.
+- `npm run triage <device> -- --state` no longer cuts its JSON off at 64 KB when piped.
+
 ## [1.3.487] - 2026-10-07
 
 ### Diagnostics

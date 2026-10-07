@@ -391,7 +391,10 @@ async function rescueUnfollowedSends(runtime: WalletRuntime, owner?: BoundAccoun
     console.warn('[landing] rescue skipped — local transactions unreadable', err)
     return
   }
-  if (unproven.length === 0) return
+  if (unproven.length === 0) {
+    console.info(`[landing] rescue checked=0 unproven=0 done ${Date.now() - started}ms`)
+    return
+  }
   const { rememberArcadeSubmitContact, txHadArcadeSubmitContact, txIsArcadeRejected } = await import(
     './arcadeSubmitGuard'
   )
@@ -404,7 +407,10 @@ async function rescueUnfollowedSends(runtime: WalletRuntime, owner?: BoundAccoun
           !txIsArcadeRejected(row.txid),
       )
       .slice(0, RESCUE_MAX)
-  if (candidates.length === 0) return
+  if (candidates.length === 0) {
+    console.info(`[landing] rescue checked=0 unproven=${unproven.length} (all followed) done ${Date.now() - started}ms`)
+    return
+  }
   const { fetchArcadeTxFate, arcadeStatusLanded } = await import('./arcadeV2')
   const { txExistsOnChain } = await import('./legacyScan')
   const chain = runtime.instance.chain

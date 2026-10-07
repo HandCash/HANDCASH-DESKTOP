@@ -3659,6 +3659,111 @@ const QUESTIONS = {
   },
 }
 
+/* ---------------------------------------------------------- error review */
+
+/** Families Jev reviews one by one; the rest are counted, never shown. */
+const ERROR_REVIEW_MAX = 20
+const ERROR_SAMPLE_CHARS = 280
+
+function problemFamilies(events) {
+  const families = new Map()
+  const t0 = events[0]?.at ?? 0
+  for (const e of events) {
+    if (e.level !== 'warn' && e.level !== 'error') continue
+    if (FREEZE_LINE_RE.test(e.text)) continue
+    const key = family(e.text)
+    const row = families.get(key)
+    if (row) {
+      row.count += 1
+      row.lastS = Math.round((e.at - t0) / 1000)
+      if (e.level === 'error') row.level = 'error'
+      continue
+    }
+    const s = Math.round((e.at - t0) / 1000)
+    families.set(key, { family: key, level: e.level, count: 1, firstS: s, lastS: s, sample: e.text.slice(0, ERROR_SAMPLE_CHARS) })
+  }
+  return [...families.values()]
+}
+
+/**
+ * Every distinct warning/error family in `latest`, deduplicated by code, for
+ * Jev to sort signal from noise. Errors and families the previous upload did
+ * not have go first; each carries one raw line so the verdict quotes the log,
+ * not a paraphrase. `null` when the raw lines are not at hand.
+ */
+function errorReview(latest, previous) {
+  if (!latest?.events) return null
+  const all = problemFamilies(latest.events)
+  const before = previous?.events ? new Set(problemFamilies(previous.events).map((f) => f.family)) : null
+  for (const f of all) f.newSincePrevious = before ? !before.has(f.family) : null
+  const rank = (f) => (f.level === 'error' ? 0 : 2) + (f.newSincePrevious ? 0 : 1)
+  all.sort((a, b) => rank(a) - rank(b) || b.count - a.count)
+  const candidates = all.slice(0, ERROR_REVIEW_MAX)
+  const rest = all.slice(ERROR_REVIEW_MAX)
+  return {
+    families: all.length,
+    lines: all.reduce((n, f) => n + f.count, 0),
+    candidates,
+    unreviewed: { families: rest.length, lines: rest.reduce((n, f) => n + f.count, 0) },
+  }
+}
+
+const ERROR_ID = (i) => `error_${i}`
+const ERROR_ROOT = 'error_root'
+
+function errorQuestions(review) {
+  if (!review?.candidates.length) return {}
+  const questions = {}
+  review.candidates.forEach((_, i) => {
+    questions[ERROR_ID(i)] = {
+      type: 'noul',
+      instructions:
+        `Is \`errorReview.candidates[${i}]\` a real problem an engineer should act on? Each candidate is one deduplicated warning/error family from a HandCash wallet session: \`sample\` is a raw log line, \`count\` how often the family repeated, \`firstS\`/\`lastS\` seconds into the session, \`newSincePrevious\` whether the previous upload lacked it. A failure that repeats across the session is still failing.`,
+      criteria: {
+        true: 'A defect or failure: an operation that errors and keeps erroring, a crash, a user task that could not complete, funds, tokens or items that may be stuck, missing or wrong, refused or lost data, or a server error (HTTP 4xx/5xx other than rate limiting) the wallet keeps hitting.',
+        false: 'Noise: a slow-operation or performance note, an expected short wait (unmined parents, a deferral, a watchdog that cleared itself), a refusal by design (locked wallet, denied permission, user cancel), a one-off network blip, or the same failure a lower-indexed candidate already states in other words.',
+      },
+    }
+  })
+  const options = {}
+  review.candidates.forEach((f, i) => {
+    options[`c${i}`] = `\`errorReview.candidates[${i}]\`: ${f.family.slice(0, 120)}`
+  })
+  options.none = 'Every candidate is noise; nothing needs fixing.'
+  questions[ERROR_ROOT] = {
+    type: 'choice',
+    instructions:
+      'Which single family in `errorReview.candidates` is the root problem — the one the other real problems follow from, or the one that most needs fixing first?',
+    criteria: options,
+  }
+  return questions
+}
+
+/** Jev's verdicts folded back onto the code-found families: the root, what matters, and how much was noise. */
+function distillErrors(review, answers) {
+  if (!review?.candidates.length) return null
+  const judged = review.candidates.map((f, i) => ({ ...f, p: answers?.[ERROR_ID(i)]?.noul ?? null }))
+  const relevant = judged.filter((f) => f.p != null && f.p >= 0.5).sort((a, b) => b.p - a.p)
+  const noise = judged.filter((f) => f.p == null || f.p < 0.5)
+  const pick = answers?.[ERROR_ROOT]
+  const at = typeof pick?.choice === 'string' && /^c\d+$/.test(pick.choice) ? Number(pick.choice.slice(1)) : null
+  // A root the per-family question called noise is not shown as the root.
+  const root =
+    at != null && judged[at]?.p != null && judged[at].p >= 0.5 ? { ...judged[at], confidence: pick.confidence ?? null } : null
+  return {
+    root,
+    relevant,
+    noise: {
+      families: noise.length + review.unreviewed.families,
+      lines: noise.reduce((n, f) => n + f.count, 0) + review.unreviewed.lines,
+    },
+    families: review.families,
+    lines: review.lines,
+  }
+}
+
+const isErrorQuestion = (key) => key === ERROR_ROOT || /^error_\d+$/.test(key)
+
 /**
  * Jev judges from counts and a few trails. Every open holdings row carrying its
  * whole trail, for both uploads, overflows the model's context; the printed
@@ -3734,8 +3839,15 @@ function modelStateTiers(fullState) {
 }
 
 async function askJev(fullState, apiKey) {
-  const questions = { ...QUESTIONS, ...forensicQuestions(fullState.latest, fullState.previous) }
-  for (const [tier, state] of modelStateTiers(fullState).entries()) {
+  const review = errorReview(fullState.latest, fullState.previous)
+  const questions = {
+    ...QUESTIONS,
+    ...forensicQuestions(fullState.latest, fullState.previous),
+    ...errorQuestions(review),
+  }
+  for (const [tier, tierState] of modelStateTiers(fullState).entries()) {
+    // The candidates are indexed by the questions, so no tier may trim them.
+    const state = review ? { ...tierState, errorReview: { candidates: review.candidates } } : tierState
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const res = await fetch(TYPESAFE_URL, {
         method: 'POST',
@@ -3747,7 +3859,8 @@ async function askJev(fullState, apiKey) {
       })
       if (res.ok) {
         if (tier > 0) console.error(`[triage] model state compacted to tier ${tier} to fit Jev's input`)
-        return { ...(await res.json()), questions, tier }
+        const body = await res.json()
+        return { ...body, questions, tier, errors: distillErrors(review, body.answers) }
       }
       const body = await res.text()
       if (res.status === 400 && body.includes('max_tokens_exceeded')) break
@@ -3761,10 +3874,29 @@ async function askJev(fullState, apiKey) {
   throw new Error('typesafe max_tokens_exceeded even with the smallest model state')
 }
 
+/** The Jev-distilled errors as plain lines: root, what matters (raw), and the noise as one count. */
+function errorLines(errors) {
+  if (!errors) return []
+  const out = []
+  const tag = (f) => `${f.count}× ${f.level}${f.newSincePrevious ? ' new' : ''}`
+  if (errors.root) out.push(`root (${errors.root.confidence ?? '?'}): ${tag(errors.root)} ${errors.root.sample}`)
+  for (const f of errors.relevant) {
+    if (errors.root && f.family === errors.root.family) continue
+    out.push(`${Math.round(f.p * 100)}% ${tag(f)} ${f.sample}`)
+  }
+  out.push(
+    `${errors.relevant.length} of ${errors.families} families matter · noise: ${errors.noise.families} families, ${errors.noise.lines} lines`,
+  )
+  return out
+}
+
 export {
   askJev,
   beforeLeftBasket,
   bridgeFacts,
+  errorLines,
+  errorReview,
+  isErrorQuestion,
   modelStateTiers,
   parseElectronLog,
   parseSession,
