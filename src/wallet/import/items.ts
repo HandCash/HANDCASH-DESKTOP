@@ -2,12 +2,8 @@ import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
 import { buildLegacyInputBeef } from '../legacyBeef'
 import type { Chain } from '../vault'
-import {
-  migrateChosenPhraseItems,
-  peekPhraseItemMigrateCursor,
-  type PhraseItemStopReason,
-  type SingleItemMigrate,
-} from '../phraseSweep'
+import { migrateChosenPhraseItems, type SingleItemMigrate } from '../phraseSweep'
+import type { ItemMigrateStop } from '../itemMigrateRun'
 import { gorillaBase, type FetchLike } from './discovery'
 import {
   fetchHandCashUtxoSet,
@@ -448,7 +444,7 @@ export async function prefetchImportItems(args: { sourceId: string; outpoints: r
   }
 }
 
-export type ImportItemRefusal = 'unlisted' | 'gone' | 'ownKey' | 'pausedBatch'
+export type ImportItemRefusal = 'unlisted' | 'gone' | 'ownKey'
 
 export type ImportItemResult =
   | SingleItemMigrate
@@ -458,18 +454,13 @@ const REFUSAL_MESSAGES: Record<ImportItemRefusal, string> = {
   unlisted: 'This item is no longer in the saved list.',
   gone: 'This item’s address is not in the last scan. Rescan, then try again.',
   ownKey: 'That address is this wallet’s own key — use Refresh instead.',
-  pausedBatch:
-    'A paused sweep is moving items from this address. Finish or forget it before choosing items from it.',
 }
 
 export type ImportItemsResult = {
   /** Every chosen outpoint's answer, in the order given. */
   results: Array<{ outpoint: string; result: ImportItemResult }>
-  /**
-   * Why the rest was not tried: out of BSV for fees (unmoved items answer
-   * `funds`), or the fee coin was spent elsewhere (unmoved items answer `deferred`).
-   */
-  stopped: PhraseItemStopReason | null
+  /** Why the rest was not tried; unmoved items answer `funds` or `deferred`. */
+  stopped: ItemMigrateStop | null
 }
 
 /** A queued chunk outlived the wallet it was queued for. */
@@ -482,10 +473,10 @@ export class ImportWalletChangedError extends Error {
 
 /**
  * Move the chosen saved items into this wallet. Explicit: it runs only from
- * the user's choice. Every chosen item rides the same item-migrate path the
- * sweep uses, signed by the key of the address holding it, so items spread
- * over many addresses — a HandCash export keeps nearly every item at its own —
- * still share transactions, 25 at a time. Running out of BSV stops the rest.
+ * the user's choice, through the import queue. Every chosen item is signed by
+ * the key of the address holding it, so items spread over many addresses — a
+ * HandCash export keeps nearly every item at its own — still share
+ * transactions. Running out of BSV stops the rest.
  *
  * `identityKey` pins the wallet a background queue chose: when another wallet
  * is open by the time this chunk runs, it refuses without moving anything.
@@ -520,7 +511,6 @@ export async function importItems(args: {
 
   const outpoints = [...new Set(args.outpoints)]
   const stored = await readStoredImportItems(source.id, outpoints)
-  const cursorAddress = peekPhraseItemMigrateCursor()?.sourceAddress ?? null
   const deriver = keyDeriverFor(source.secret)
   const keyOf = new Map<string, { keyHex: string } | 'ownKey'>()
   const chosen: Array<{ item: StoredImportItem; holding: AddressHoldings; keyHex: string }> = []
@@ -533,10 +523,6 @@ export async function importItems(args: {
     const holding = source.scan?.holdings.find((h) => h.address === item.address && !h.uncompressed)
     if (!holding) {
       refuse(outpoint, 'gone')
-      continue
-    }
-    if (holding.address === cursorAddress) {
-      refuse(outpoint, 'pausedBatch')
       continue
     }
     let key = keyOf.get(holding.address)

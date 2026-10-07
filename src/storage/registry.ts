@@ -323,6 +323,7 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** Retired: older builds' per-address item resume position. No longer read; kept so wipe clears it. */
   phraseSweepCursor: defineStorage({
     key: 'handcash.brc100.phraseSweepItemCursor.v1',
     owner: 'chain-ingest',

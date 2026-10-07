@@ -13,8 +13,14 @@ import {
   resetWalletProgressForTests,
   startWalletProgress,
 } from '../walletProgress'
-import { listWalletJobs, resetWalletJobsForTests } from '../walletJobs'
-import { enqueueImportItems, importSourceView, resetImportQueueForTests, watchImportSource } from './importQueue'
+import { beginWalletJob, listWalletJobs, resetWalletJobsForTests } from '../walletJobs'
+import {
+  enqueueImportItems,
+  importItemsThroughQueue,
+  importSourceView,
+  resetImportQueueForTests,
+  watchImportSource,
+} from './importQueue'
 import { importItems } from './items'
 
 const op = (n: number) => `${n.toString(16).padStart(64, '0')}_0`
@@ -116,5 +122,60 @@ describe('importQueue', () => {
     // 30 items move as 5, 15, 10.
     await releaseThrough(release, 3)
     await vi.waitFor(() => expect(listWalletJobs('id1')[0]).toMatchObject({ face: 'done', progress: { value: 30, max: 30 } }))
+  })
+})
+
+describe('importItemsThroughQueue', () => {
+  it('moves a sweep’s items on the sweep’s row and leaves ending it to the sweep', async () => {
+    const release = heldChunks()
+    const sweep = beginWalletJob({ kind: 'wallet-sweep', identityKey: 'id1' })
+    const done = importItemsThroughQueue({ sourceId: 's1', outpoints: items(3).map((i) => i.outpoint), job: sweep })
+    expect(vi.mocked(importItems).mock.calls[0]![0]).toMatchObject({ activityGroup: sweep.id })
+    expect(listWalletJobs('id1').map((j) => j.kind)).toEqual(['wallet-sweep'])
+    await releaseThrough(release, 1)
+    await expect(done).resolves.toMatchObject({ moved: 3, failed: 0, report: { tone: 'success' } })
+    expect(listWalletJobs('id1')).toEqual([expect.objectContaining({ kind: 'wallet-sweep', face: 'running' })])
+  })
+
+  it('answers paused with the queue’s verdict when the wallet runs out of fee', async () => {
+    vi.mocked(importItems).mockResolvedValue({
+      results: [
+        { outpoint: op(1), result: { kind: 'moved', txid: 'f'.repeat(64) } },
+        { outpoint: op(2), result: { kind: 'funds', message: 'Add BSV.' } },
+      ],
+      stopped: 'funds',
+    })
+    const sweep = beginWalletJob({ kind: 'wallet-sweep', identityKey: 'id1' })
+    const outcome = await importItemsThroughQueue({ sourceId: 's1', outpoints: [op(1), op(2)], job: sweep })
+    expect(outcome).toMatchObject({ moved: 1, report: { outcome: 'funds' } })
+  })
+
+  it('stops the source’s waiting items when the sweep stops', async () => {
+    const release = heldChunks()
+    let stopping = false
+    const sweep = beginWalletJob({ kind: 'wallet-sweep', identityKey: 'id1' })
+    const done = importItemsThroughQueue({
+      sourceId: 's1',
+      outpoints: items(30).map((i) => i.outpoint),
+      job: sweep,
+      shouldStop: () => stopping,
+    })
+    stopping = true
+    await releaseThrough(release, 1)
+    const outcome = await done
+    expect(outcome.moved).toBe(5)
+    expect(importItems).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves at once with nothing to move', async () => {
+    const sweep = beginWalletJob({ kind: 'wallet-sweep', identityKey: 'id1' })
+    await expect(importItemsThroughQueue({ sourceId: 's1', outpoints: [], job: sweep })).resolves.toEqual({
+      moved: 0,
+      skipped: 0,
+      failed: 0,
+      error: null,
+      report: null,
+    })
+    expect(importItems).not.toHaveBeenCalled()
   })
 })

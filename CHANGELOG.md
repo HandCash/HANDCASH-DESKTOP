@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.492] - 2026-10-07
+
+### Fixed
+- **Recovery item and token moves follow the same broadcast rules as every other send.** Each import transaction is now created with `noSend` and handed to `signedSendLifecycle`. That step seals its inputs, archives the body, posts it to the miners and keeps retrying it. Before, the toolbox's own Monitor broadcast these transactions as well, and a submit that no miner tracked (`untracked`) was taken as a success. A run now continues only after Arcade has accepted the previous transaction and its change can pay the next fee. If the transaction is still propagating, the import pauses briefly and then resumes. A signed transaction is never aborted. Only a signing failure releases the unsigned action. Logs: `[foreign-input] <txid> accepted|propagating submit=<kind> done <N>ms create= sign= pack= post=`.
+- **One runner moves recovered items.** A sweep used to run its own chunk loop next to the import queue, so the two could pick the same tips. A sweep now puts its listed items in the import queue and waits for them. Their progress shows on the sweep's Activity row, and every pause and stop is handled in one place.
+
+### Changed
+- **Item migrate runs are a statechart (`itemMigrateRunMachine`, in Settings → Statecharts).** Each bundle failure is classified once into one of seven kinds: busy, abandoned, funds, spent fee coin, locked, network or rejected. Only a rejected bundle is halved. Every other kind waits, rebuilds once or stops, and the untried items are answered "add BSV" or "paused", never "failed". Stop reasons and their messages come from one table shared by the run, the queue and the sweep.
+- The import queue pauses and retries on a spent fee coin or a still-propagating transaction. Every other stop drops that wallet's waiting items.
+- Scans try their read passes in a fixed order: HandCash UTXO set, then hinted history, then the full walk. Each scan logs `[import] scan path=<pass> of=<order> … done <N>ms`.
+- Removed the per-address resume position from older builds, which nothing still wrote, along with its "Paused collectable import" banner and its Activity row.
+
 ## [1.3.491] - 2026-10-07
 
 ### Fixed

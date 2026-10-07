@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
-import { accountLocalKey } from './accountLocalKeys'
 
 /**
  * Destination change pays the fee for every collectable, so a large collection
@@ -98,7 +97,6 @@ vi.mock('./legacyBeef', () => ({
     for (const op of outpoints) merged.mergeBeef(beefByTxid.get(op.split('.')[0] ?? '')!)
     return { ready: outpoints, beef: merged.toBinary(), failures: [] }
   },
-  withVisibleOnChainBeef: async <T,>(fn: () => Promise<T>) => fn(),
 }))
 vi.mock('./oneSatProvenance', () => ({
   buildInternalizeCustomInstructions: () => '{}',
@@ -126,7 +124,9 @@ describe('migrateChosenPhraseItems stops', () => {
 
   it('records an abandoned bundle that broadcast late, and never rebuilds over its tips', async () => {
     const lateTxid = 'cd'.repeat(32)
-    runSpend.mockImplementationOnce(() => Promise.reject(abandoned(Promise.resolve(lateTxid))))
+    runSpend.mockImplementationOnce(() =>
+      Promise.reject(abandoned(Promise.resolve({ txid: lateTxid, propagation: 'accepted' }))),
+    )
     const { migrateChosenPhraseItems } = await import('./phraseSweep')
     const run = await migrateChosenPhraseItems({ items: chosen })
 
@@ -204,38 +204,5 @@ describe('migrateChosenPhraseItems stops', () => {
 
     expect(run.results.get(TIPS[0]!.outpoint)).toMatchObject({ kind: 'failed', message: expect.stringContaining('reordered') })
     expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-2' })
-  })
-})
-
-describe('pending per-address import cursor', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    stored.clear()
-  })
-
-  it('removes a forgotten cursor and immediately clears Activity subscribers', async () => {
-    stored.set(
-      accountLocalKey('handcash.brc100.phraseSweepItemCursor.v1'),
-      JSON.stringify({
-        sourceAddress: PHRASE_KEY.toAddress(),
-        destIdentityKey: '02'.repeat(33),
-        offset: 465,
-        moved: 465,
-        failed: 0,
-      }),
-    )
-    const {
-      clearPhraseItemMigrateCursor,
-      peekPhraseItemMigrateCursor,
-      subscribePhraseItemMigrateCursor,
-    } = await import('./phraseSweep')
-    const seen: unknown[] = []
-    const unsubscribe = subscribePhraseItemMigrateCursor((value) => seen.push(value))
-
-    clearPhraseItemMigrateCursor()
-
-    expect(peekPhraseItemMigrateCursor()).toBeNull()
-    expect(seen.at(-1)).toBeNull()
-    unsubscribe()
   })
 })

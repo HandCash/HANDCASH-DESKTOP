@@ -1,5 +1,6 @@
 import { assign, enqueueActions, fromPromise, setup, type ActorRefFrom, type SnapshotFrom } from 'xstate'
 import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
+import { itemMigrateStopPauses } from '../wallet/itemMigrateRun'
 
 /**
  * Settings → Import → Browse items, moved off the page: the wallet's one
@@ -12,9 +13,11 @@ import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
  * signs. Chunks run one after another: every chunk spends this wallet's
  * change.
  *
- * - Out of BSV: that wallet's waiting items drop, reported per source.
- * - Fee coin spent elsewhere: the untried items wait `STALE_FUNDING_PAUSE_MS`
- *   and go again, up to `STALE_FUNDING_PAUSES` times, then drop.
+ * - A pausable stop (fee coin spent elsewhere, last transaction still reaching
+ *   the network): the untried items wait `IMPORT_PAUSE_MS` and go again, up
+ *   to `IMPORT_PAUSES` times, then drop.
+ * - Any other stop (out of BSV, busy, locked, …): that wallet's waiting items
+ *   drop, reported per source.
  * - A chunk queued for a wallet that is no longer open refuses without
  *   moving anything; that wallet's items drop.
  * - `STOP` drops a source's waiting items; the chunk in flight finishes.
@@ -28,8 +31,8 @@ export const IMPORT_CHUNK = 100
  * `IMPORT_CHUNK` at a time.
  */
 export const IMPORT_RAMP = [5, 15, 40] as const
-export const STALE_FUNDING_PAUSE_MS = 8_000
-export const STALE_FUNDING_PAUSES = 2
+export const IMPORT_PAUSE_MS = 8_000
+export const IMPORT_PAUSES = 2
 
 export type ImportItemNotice = {
   tone: 'success' | 'warning' | 'danger'
@@ -242,12 +245,12 @@ export const importQueueMachine = setup({
     }),
   },
   delays: {
-    staleFundingPause: STALE_FUNDING_PAUSE_MS,
+    importPause: IMPORT_PAUSE_MS,
   },
   guards: {
     hasQueue: ({ context }) => context.queue.length > 0,
-    staleFunding: ({ context, event }) =>
-      (event as unknown as DoneEvent).output?.stopped === 'stale-funding' && context.pauses < STALE_FUNDING_PAUSES,
+    pausable: ({ context, event }) =>
+      itemMigrateStopPauses((event as unknown as DoneEvent).output?.stopped ?? null) && context.pauses < IMPORT_PAUSES,
     movingStopped: ({ context, event }) =>
       event.type === 'STOP' && context.moving.some((e) => e.sourceId === event.sourceId),
   },
@@ -306,16 +309,15 @@ export const importQueueMachine = setup({
     }),
     /**
      * One chunk's answers: tally them per source and tell the browser. A
-     * missing-funds, still-busy or abandoned-send answer drops every waiting item of that
-     * wallet; a spent fee coin keeps the untried items for one more pass after
-     * a pause.
+     * pausable stop keeps the untried items for another pass after a pause;
+     * every other stop drops every waiting item of that wallet.
      */
     recordChunk: enqueueActions(({ context, event, enqueue }) => {
       const { results, stopped } = (event as unknown as DoneEvent).output
       const chunk = context.moving
       const sourceId = chunk[0]?.sourceId ?? ''
       const identityKey = chunk[0]?.identityKey ?? ''
-      const pausing = stopped === 'stale-funding' && context.pauses < STALE_FUNDING_PAUSES
+      const pausing = itemMigrateStopPauses(stopped) && context.pauses < IMPORT_PAUSES
       const tally = { ...(context.tallies[sourceId] ?? NO_TALLY) }
       const retry: ImportQueueEntry[] = []
       const answered: ImportItemsResult['results'] = []
@@ -333,7 +335,7 @@ export const importQueueMachine = setup({
       }
       let queue = context.queue
       const tallies = { ...context.tallies, [sourceId]: tally }
-      if (stopped === 'funds' || stopped === 'busy' || stopped === 'abandoned' || (stopped === 'stale-funding' && !pausing)) {
+      if (stopped && !pausing) {
         queue = queue.filter((e) => e.identityKey !== identityKey)
         const dropped = new Set(context.queue.filter((e) => e.identityKey === identityKey).map((e) => e.sourceId))
         dropped.delete(sourceId)
@@ -413,7 +415,7 @@ export const importQueueMachine = setup({
           src: 'importMany',
           input: ({ context }) => ({ ports: context.ports, chunk: context.moving }),
           onDone: [
-            { guard: 'staleFunding', target: 'cooling', actions: 'recordChunk' },
+            { guard: 'pausable', target: 'cooling', actions: 'recordChunk' },
             { target: 'deciding', actions: 'recordChunk' },
           ],
           onError: { target: 'deciding', actions: 'recordFailure' },
@@ -429,10 +431,10 @@ export const importQueueMachine = setup({
         STOP: { actions: 'stopSource' },
       },
     },
-    /** The fee coin was spent elsewhere; give the wallet a moment to retire it. */
+    /** A spent fee coin is retiring, or the last transaction is still reaching Arcade. */
     cooling: {
       after: {
-        staleFundingPause: { target: 'deciding', actions: 'requeuePaused' },
+        importPause: { target: 'deciding', actions: 'requeuePaused' },
       },
       on: {
         ENQUEUE: { actions: 'enqueue' },
@@ -451,7 +453,7 @@ export type ImportQueueSnapshot = SnapshotFrom<typeof importQueueMachine>
 export type ImportSourceView = {
   run: ReturnType<typeof sourceRun>
   report: ImportItemNotice | null
-  /** Chunks are waiting out a spent fee coin. */
+  /** Chunks are waiting out a pausable stop. */
   paused: boolean
 }
 

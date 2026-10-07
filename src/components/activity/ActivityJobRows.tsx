@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CollectablesIcon, RefreshIcon } from '../icons'
 import { LoadingSpinner } from '../LoadingSpinner'
 import { openSetting } from '../../wallet/navStore'
-import type { PhraseItemMigrateCursor } from '../../wallet/phraseSweep'
 import { getActiveWallet } from '../../wallet/session'
 import { playWalletSound } from '../../wallet/soundService'
 import {
@@ -103,57 +102,3 @@ export function WalletJobRow({ job }: { job: WalletJob }) {
   )
 }
 
-/** A batch phrase import that stopped part-way, waiting on the user. */
-export function PendingPhraseImportRow({ cursor }: { cursor: PhraseItemMigrateCursor }) {
-  const skipped = Math.max(0, Math.trunc(cursor.skipped ?? 0))
-  const failed = Math.max(0, Math.trunc(cursor.failed))
-  const moved = Math.max(0, Math.trunc(cursor.moved))
-  const detail = [
-    `${moved.toLocaleString()} imported`,
-    `${Math.max(0, Math.trunc(cursor.offset)).toLocaleString()} scanned`,
-    failed > 0 ? `${failed.toLocaleString()} failed` : null,
-    skipped > 0 ? `${skipped.toLocaleString()} skipped` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ')
-  const status = cursor.stopped === 'funds' ? 'Paused — add BSV to continue' : 'Paused — review details'
-
-  return (
-    <li
-      data-aeon-scope="phrase-import"
-      data-aeon-state="paused"
-      data-activity-key={`phrase-import:${cursor.sourceAddress}`}
-      data-activity-pending=""
-    >
-      <button
-        type="button"
-        className="history-row history-row-btn"
-        onClick={() => {
-          playWalletSound('soft')
-          openSetting('import')
-        }}
-        aria-label={`Review paused collectable import, ${detail}`}
-      >
-        <div className="history-icon-wrap">
-          <div className="history-icon">
-            <span className="history-item-thumb-icon" aria-hidden>
-              <CollectablesIcon size={18} />
-            </span>
-          </div>
-          <span className="history-pending-mark" aria-label="Import paused" title="Import paused safely">
-            <LoadingSpinner size="sm" />
-          </span>
-        </div>
-        <div className="history-body">
-          <strong className="history-title">Collectable import paused</strong>
-          <span className="history-when" title={`${status}. ${detail}`}>
-            {status} · {detail}
-          </span>
-        </div>
-        <div className="history-amount-block">
-          <span className="history-amount history-amount-item">Review</span>
-        </div>
-      </button>
-    </li>
-  )
-}

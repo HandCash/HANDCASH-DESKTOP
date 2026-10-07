@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { ListRow, StatusBanner } from '@aeon-ui/react'
+import { ListRow } from '@aeon-ui/react'
 import { legacyImportMachine } from '../../machines/legacyImportMachine'
 import { formatBsv } from '../../wallet/session'
-import {
-  clearPhraseItemMigrateCursor,
-  peekPhraseItemMigrateCursor,
-  subscribePhraseItemMigrateCursor,
-  type PhraseItemMigrateCursor,
-} from '../../wallet/phraseSweep'
 import {
   IMPORT_SOURCE_HINTS,
   IMPORT_SOURCE_KINDS,
@@ -33,8 +27,6 @@ import {
 import { playWalletSound } from '../../wallet/soundService'
 import { toastError, toastSuccess } from '../../wallet/toast'
 import { MIGRATE_HINTS_URL } from '../../wallet/walletConfig'
-import { useAsyncAction } from '../../hooks/useAsyncAction'
-import { AsyncActionPrompt } from '../AsyncActionPrompt'
 import { ImportSecretForm, type SecretFields } from './ImportSecretForm'
 import { ImportSourceView, type SourceFace } from './ImportSourceView'
 import { ImportSourceIcon } from './importSourceIcons'
@@ -81,10 +73,6 @@ export function ImportPanel() {
   const [sources, setSources] = useState<ImportedSource[]>([])
   const sourcesRef = useRef(sources)
   sourcesRef.current = sources
-  const [pending, setPending] = useState<PhraseItemMigrateCursor | null>(() =>
-    peekPhraseItemMigrateCursor(),
-  )
-  const forget = useAsyncAction<'forget'>()
   const { context } = snapshot
   const source = sources.find((s) => s.id === context.sourceId) ?? null
   const stopRequested = () => actor.getSnapshot().context.stopRequested
@@ -99,11 +87,9 @@ export function ImportPanel() {
       })
       .catch((err) => live && send({ type: 'FAIL', error: errorText(err) }))
     const offSources = subscribeImportedSources(setSources)
-    const offCursor = subscribePhraseItemMigrateCursor(setPending)
     return () => {
       live = false
       offSources()
-      offCursor()
     }
   }, [send])
 
@@ -232,18 +218,6 @@ export function ImportPanel() {
     }
   }
 
-  const forgetPending = async () => {
-    const outcome = await forget.run('forget', async () => clearPhraseItemMigrateCursor(), {
-      confirm: {
-        title: 'Forget this paused import?',
-        body: 'Collectables already moved stay in this wallet. Only the saved resume position is removed.',
-        confirmLabel: 'Forget',
-        danger: true,
-      },
-    })
-    if (outcome.ok) toastSuccess('Paused import forgotten', 'Moved collectables were not changed.')
-  }
-
   const face = (['viewing', 'awaitingHints', 'scanning', 'browsing', 'reviewing', 'sweeping', 'confirmingRemove', 'removing'] as const).find(
     (state) => snapshot.matches({ source: state }),
   ) as SourceFace | undefined
@@ -262,29 +236,6 @@ export function ImportPanel() {
             Keep older wallets here — HandCash, Twetch, Yours, any phrase or key. They stay separate
             from this wallet’s identity; sweep compatible assets in when you choose.
           </p>
-          {pending ? (
-            <StatusBanner.Root tone="warning" status="paused-items">
-              <StatusBanner.Copy>
-                <StatusBanner.Title>Paused collectable import</StatusBanner.Title>
-                <StatusBanner.Body>
-                  {Math.max(0, pending.moved).toLocaleString()} moved,{' '}
-                  {Math.max(0, pending.offset).toLocaleString()} checked from{' '}
-                  <span className="mono">{pending.sourceAddress}</span>. Open the wallet it came
-                  from and sweep again to resume.
-                </StatusBanner.Body>
-              </StatusBanner.Copy>
-              <div className="actions" data-aeon-state={forget.stateAttr}>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={forget.busy}
-                  onClick={() => void forgetPending()}
-                >
-                  Forget paused import
-                </button>
-              </div>
-            </StatusBanner.Root>
-          ) : null}
           {sources.length > 0 ? (
             <ul data-aeon-part="sources">
               {sources.map((s) => {
@@ -390,8 +341,6 @@ export function ImportPanel() {
           onPause={() => send({ type: 'PAUSE' })}
         />
       ) : null}
-
-      <AsyncActionPrompt action={forget} />
     </div>
   )
 }

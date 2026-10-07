@@ -37,6 +37,8 @@ export type SignedSendHandle = {
   txid: string
   atomicBeef: number[]
   flow: TransactionFlow
+  /** What the archive and retry queue keep instead of `atomicBeef`; see `registerSignedSend`. */
+  durableBody?: number[]
   /** Immutable signer and storage owner; never replaced by an account switch. */
   runtime?: WalletRuntime
   owner?: BoundAccountKeyScope
@@ -51,6 +53,12 @@ export async function registerSignedSend(args: {
   lifecycleId?: string
   satoshis?: number
   to?: string | null
+  /**
+   * The same signed subject with ancestry a retry can fetch back left out.
+   * The archive is a shared 1MB store; an import's art-bearing sources would
+   * crowd every other cheque out of it. `atomicBeef` is still what posts.
+   */
+  durableBody?: number[]
 }): Promise<SignedSendHandle> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid) || args.atomicBeef.length === 0) {
@@ -103,8 +111,9 @@ export async function registerSignedSend(args: {
     }
     // Persist before any Activity/remittance work. Every key is resolved from
     // the immutable owner, never the mutable foreground account.
+    const durableBody = args.durableBody?.length ? args.durableBody : atomicBeef
     const { archiveSignedCheque } = await import('./signedChequeArchive')
-    if (!archiveSignedCheque(txid, atomicBeef, { flow: args.flow, owner })) {
+    if (!archiveSignedCheque(txid, durableBody, { flow: args.flow, owner })) {
       // Toolbox still owns the signed transaction. Continue to the retry queue
       // (which can carry its own body) and immediate propagation.
       console.error(
@@ -113,7 +122,7 @@ export async function registerSignedSend(args: {
       )
     }
     const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
-    if (!enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow, owner })) {
+    if (!enqueuePendingMinerSubmit(txid, durableBody, { flow: args.flow, owner })) {
       // Immediate propagation still has the in-memory body. Never unseal or
       // rewrite the send as unsigned merely because secondary storage is full.
       console.error(
@@ -140,6 +149,7 @@ export async function registerSignedSend(args: {
       txid,
       atomicBeef,
       flow: args.flow,
+      ...(args.durableBody?.length ? { durableBody: args.durableBody } : {}),
       runtime,
       owner,
       releaseRuntime: retention.release,
@@ -169,6 +179,7 @@ export async function propagateSignedSend(
         flow: handle.flow,
         runtime: handle.runtime,
         owner: handle.owner,
+        ...(handle.durableBody ? { durableBody: handle.durableBody } : {}),
       },
     )
     const foreground =

@@ -26,6 +26,8 @@ import { importItems, prefetchImportItems } from './items'
 
 type Run = {
   job: WalletJobHandle
+  /** The job belongs to a sweep waiting on this run: the sweep reports progress and ends it. */
+  adopted: boolean
   startedAt: number
   /** Every source this run touched, with its largest total and last done count. */
   sources: Map<string, { total: number; done: number }>
@@ -34,10 +36,21 @@ type Run = {
 }
 
 let run: Run | null = null
+/** Sweep jobs waiting on the queue, by wallet; a run that opens for one reports on its row. */
+const adoptable = new Map<string, WalletJobHandle>()
 
 /** The machine starts a chunk before subscribers see the snapshot that started it; whoever arrives first opens the run. */
 function openRun(identityKey: string): Run {
-  run ??= { job: beginWalletJob({ kind: 'item-import', identityKey }), startedAt: Date.now(), sources: new Map(), landed: null }
+  if (!run) {
+    const adopted = adoptable.get(identityKey)
+    run = {
+      job: adopted ?? beginWalletJob({ kind: 'item-import', identityKey }),
+      adopted: Boolean(adopted),
+      startedAt: Date.now(),
+      sources: new Map(),
+      landed: null,
+    }
+  }
   return run
 }
 
@@ -54,7 +67,7 @@ const PORTS: ImportQueuePorts = {
         if (actor) report(actor.getSnapshot())
       },
       onWaiting: (waiting) => {
-        if (waiting) current.job.wait('Waiting for the wallet to finish syncing…')
+        if (waiting && !current.adopted) current.job.wait('Waiting for the wallet to finish syncing…')
         else if (actor) report(actor.getSnapshot())
       },
     })
@@ -126,7 +139,9 @@ function report(snapshot: ImportQueueSnapshot): void {
   const done = Math.min(total, totals.done + landed)
   if (busy) {
     const detail = `${done.toLocaleString()} of ${total.toLocaleString()} imported`
-    if (snapshot.matches('cooling')) current.job.wait('Waiting for a spent fee coin to clear…')
+    if (current.adopted) {
+      // The sweep that owns the row reports on it.
+    } else if (snapshot.matches('cooling')) current.job.wait(COOLING_DETAIL)
     else current.job.progress(done, total > 0 ? total : null, detail)
     mirrorPill(snapshot, done, total)
     return
@@ -134,7 +149,9 @@ function report(snapshot: ImportQueueSnapshot): void {
   run = null
   const verdict = runVerdict(snapshot, current)
   const summary = verdict ? [verdict.title, verdict.body].filter(Boolean).join(' — ') : `${done.toLocaleString()} imported`
-  if (verdict?.tone === 'danger') current.job.fail(summary)
+  if (current.adopted) {
+    // The sweep ends its own row once its other steps finish.
+  } else if (verdict?.tone === 'danger') current.job.fail(summary)
   else if (verdict?.tone === 'warning') current.job.stop(summary)
   else current.job.finish(summary)
   appendAppLog(
@@ -145,6 +162,8 @@ function report(snapshot: ImportQueueSnapshot): void {
   closePill(verdict)
 }
 
+const COOLING_DETAIL = 'Waiting for the last import to clear…'
+
 let pillOpen = false
 
 /** A Refresh may take the shared pill mid-run; the import steps aside and takes it back once that job ends. */
@@ -154,7 +173,7 @@ function mirrorPill(snapshot: ImportQueueSnapshot, done: number, total: number):
   if (total <= 0 || (!ours && bus.status === 'running')) return
   const identityKey = runIdentity(snapshot)
   const message = snapshot.matches('cooling')
-    ? 'Waiting for a spent fee coin to clear…'
+    ? COOLING_DETAIL
     : `${done.toLocaleString()} of ${total.toLocaleString()} imported`
   const job = { current: done, total, message, ...(identityKey ? { identityKey } : {}) }
   if (ours) updateWalletProgress(job)
@@ -183,6 +202,86 @@ export function enqueueImportItems(
   if (items.length === 0) return
   appendAppLog('info', `[import] queued ${items.length} item(s)`)
   queue().send({ type: 'ENQUEUE', sourceId, identityKey, items })
+}
+
+export type QueuedImportOutcome = {
+  moved: number
+  /** Not a collectable after all; stays at the source. */
+  skipped: number
+  failed: number
+  /** The first failure's message. */
+  error: string | null
+  /** The source's verdict once the queue answered every item; null when nothing was queued. */
+  report: ImportItemNotice | null
+}
+
+/**
+ * Queue a source's items and wait until the queue has answered every one. A
+ * sweep moves its items this way, so they take the same path, pauses and
+ * stops as chosen items, and never race a second runner over the same tips.
+ * A run that opens for these items reports on `job`; the caller reports
+ * progress on it and ends it.
+ */
+export function importItemsThroughQueue(args: {
+  sourceId: string
+  outpoints: readonly string[]
+  job: WalletJobHandle
+  onProgress?: (progress: { done: number; total: number; paused: boolean }) => void
+  shouldStop?: () => boolean
+}): Promise<QueuedImportOutcome> {
+  const identityKey = getWalletRuntime()?.instance?.identityKey
+  if (!identityKey) return Promise.reject(new Error('Unlock this wallet first'))
+  const outcome: QueuedImportOutcome = { moved: 0, skipped: 0, failed: 0, error: null, report: null }
+  if (args.outpoints.length === 0) return Promise.resolve(outcome)
+  appendAppLog('info', `[import] sweep queued ${args.outpoints.length} item(s)`)
+  adoptable.set(identityKey, args.job)
+  return new Promise((resolve) => {
+    let started = false
+    let stopSent = false
+    let unwatch: (() => void) | null = null
+    const settle = (report: ImportItemNotice | null) => {
+      unwatch?.()
+      if (adoptable.get(identityKey) === args.job) adoptable.delete(identityKey)
+      // Other sources may keep this run going; they get a row of their own.
+      if (run?.job === args.job) {
+        run.job = beginWalletJob({ kind: 'item-import', identityKey })
+        run.adopted = false
+      }
+      resolve({ ...outcome, report })
+    }
+    unwatch = watchImportSource(
+      args.sourceId,
+      (view) => {
+        if (!view.run) {
+          if (started) settle(view.report)
+          return
+        }
+        started = true
+        args.onProgress?.({ done: view.run.done, total: view.run.total, paused: view.paused })
+        if (!stopSent && args.shouldStop?.() === true) {
+          stopSent = true
+          stopImportItems(args.sourceId)
+        }
+      },
+      (results) => {
+        for (const { result } of results) {
+          if (result.kind === 'moved') outcome.moved += 1
+          else if (result.kind === 'skipped') outcome.skipped += 1
+          else if (result.kind === 'failed' || result.kind === 'unreadable') {
+            outcome.failed += 1
+            outcome.error ??= result.message
+          }
+        }
+      },
+    )
+    queue().send({
+      type: 'ENQUEUE',
+      sourceId: args.sourceId,
+      identityKey,
+      items: args.outpoints.map((outpoint) => ({ outpoint, name: null })),
+    })
+    if (!started) settle(null)
+  })
 }
 
 /** Drop a source's waiting items; the chunk in flight finishes. */
@@ -214,5 +313,6 @@ export function resetImportQueueForTests(): void {
   actor?.stop()
   actor = null
   run = null
+  adoptable.clear()
   pillOpen = false
 }

@@ -10,7 +10,6 @@ vi.mock('./store', () => ({ loadImportedSources: vi.fn(), updateImportedSource: 
 vi.mock('../phraseSweep', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../phraseSweep')>()),
   migrateChosenPhraseItems: vi.fn(),
-  peekPhraseItemMigrateCursor: vi.fn(() => null),
 }))
 vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./handcashUtxoSet')>()),
@@ -18,7 +17,7 @@ vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   readUnspentOnChain: vi.fn(),
 }))
 
-import { migrateChosenPhraseItems, peekPhraseItemMigrateCursor, type SingleItemMigrate } from '../phraseSweep'
+import { migrateChosenPhraseItems, type SingleItemMigrate } from '../phraseSweep'
 import { fetchHandCashUtxoSet, readUnspentOnChain } from './handcashUtxoSet'
 import { emptyHoldings, type AddressHoldings } from './holdings'
 import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem } from './itemStore'
@@ -86,7 +85,6 @@ beforeEach(async () => {
   vi.mocked(updateImportedSource).mockReset()
   vi.mocked(migrateChosenPhraseItems).mockReset()
   vi.mocked(fetchHandCashUtxoSet).mockReset()
-  vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue(null)
   vi.mocked(readUnspentOnChain).mockReset()
   vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
     unspent: new Set(outputs.map((o) => o.outpoint)),
@@ -315,7 +313,7 @@ describe('importItems', () => {
     expect(await listed()).toEqual([op(4)])
   })
 
-  it('refuses an unlisted item, an address outside the scan, and a paused sweep’s address', async () => {
+  it('refuses an unlisted item and an address outside the scan', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 1)])])
     await saveImportItems('s1', [stored(1, '1a'), stored(2, '1z')])
     const first = await importItems({ sourceId: 's1', outpoints: [op(9), op(2)] })
@@ -323,9 +321,6 @@ describe('importItems', () => {
       { kind: 'refused', reason: 'unlisted' },
       { kind: 'refused', reason: 'gone' },
     ])
-    vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue({ sourceAddress: '1a' } as never)
-    const paused = await importItems({ sourceId: 's1', outpoints: [op(1)] })
-    expect(paused.results[0]!.result).toMatchObject({ kind: 'refused', reason: 'pausedBatch' })
     expect(migrateChosenPhraseItems).not.toHaveBeenCalled()
   })
 

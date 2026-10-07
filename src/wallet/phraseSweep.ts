@@ -1,5 +1,4 @@
 import { getActiveWallet } from './session'
-import { storageRegistry } from '../storage/registry'
 
 /**
  * Import another BIP39 phrase into the unlocked wallet.
@@ -7,19 +6,10 @@ import { storageRegistry } from '../storage/registry'
  * 1. Derive BRC-75 + legacy-HD roots; pick the address that holds UTXOs.
  * 2. Sweep funding (satoshis ≥ sweep floor) into this wallet — signed with the
  *    foreign key, change credited to the active identity.
- * 3. Optionally migrate 1-sat ordinals in small batches (resumable). Huge
- *    collections (e.g. 100k+) take a long time — progress is explicit.
+ * 3. Move chosen 1-sat items in shared transactions (`itemMigrateRunMachine`).
  */
-import {
-  Beef,
-  P2PKH,
-  PrivateKey,
-  type BEEF,
-  type CreateActionOutput,
-  type LockingScript,
-} from '@bsv/sdk'
-import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
-import { accountLocalKey } from './accountLocalKeys'
+import { createActor } from 'xstate'
+import { Beef, P2PKH, PrivateKey, type BEEF, type LockingScript } from '@bsv/sdk'
 import {
   keyFromMnemonicHdPath,
   rootKeyFromMnemonicBrc75,
@@ -37,7 +27,7 @@ import {
 } from './legacyScan'
 import { chooseLegacySweepPath } from './legacySweepPath'
 import { runJigVouts } from './legacyAssetScript'
-import { buildLegacyInputBeef, withVisibleOnChainBeef } from './legacyBeef'
+import { buildLegacyInputBeef } from './legacyBeef'
 import { forgetLegacyImported, legacySweepRecord } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import {
@@ -55,23 +45,25 @@ import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
   itemsWithinPostBudget,
-  migratePackage,
   migrateInputBeef,
-  migrateRetryBody,
   migrateTipPostBytes,
-  splitItemMigrateBundle,
 } from './itemMigrateBundle'
+import {
+  ITEM_MIGRATE_STOP_MESSAGES,
+  classifyItemMigrateFault,
+  type ItemMigrateFault,
+  type ItemMigrateStop,
+} from './itemMigrateRun'
+import { itemMigrateRunMachine } from './itemMigrateRunMachine'
+import { postForeignInputAction, type ForeignInputPosted } from './foreignInputAction'
 import { setVisibleTimeout } from './visibleClock'
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend, yieldToForegroundSpends } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
-import { isInsufficientFundsError } from './insufficientFunds'
 import { refreshFromChain } from './chainIngest'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { clearWalletProgress, getWalletProgress } from './walletProgress'
 
-const ITEM_CURSOR_KEY = storageRegistry.phraseSweepCursor.key
 const GP_PAGE = 50
 /** Soft preview cap — full count continues during migrate. */
 const PREVIEW_ITEM_CAP = 5_000
@@ -301,57 +293,6 @@ export type PhraseFundingSweepResult = {
    */
   alreadySwept: number
 }
-
-/**
- * Why a run ended before the collection did.
- *
- * `funds` is not a failure of any particular tip: destination change pays the
- * fee for every migrate, so a large collection can simply exhaust the wallet
- * mid-run. Counting that as a failed item would blame the tip and keep grinding
- * through the remainder, each one failing the same way.
- *
- * `stale-funding` is the same kind of stop: the wallet kept choosing a fee coin
- * the chain shows spent elsewhere. Splitting the bundle cannot help — every
- * smaller one is funded the same way — so the run stops with the tips intact.
- *
- * `busy` is the wallet itself: unlock's recompose or another job held it past
- * every wait. Nothing was signed, and no tip is to blame.
- *
- * `abandoned` is a send the spend region gave up on whose own outcome never
- * arrived. That work may still broadcast, so its tips are not rebuilt and the
- * run stops: a second transaction over the same tips is a double-spend.
- */
-export type PhraseItemStopReason = 'funds' | 'stale-funding' | 'busy' | 'abandoned'
-
-export type PhraseItemMigrateCursor = {
-  sourceAddress: string
-  destIdentityKey: string
-  /** Total rows settled for progress; not a direct offset into mutable `/unspent`. */
-  offset: number
-  moved: number
-  failed: number
-  /** Absent on cursors written before skips were tracked. */
-  skipped?: number
-  /** Absent on cursors written before pause details were tracked. */
-  stopped?: PhraseItemStopReason | null
-  /** Last per-item error, when a fault rather than funding paused the run. */
-  lastError?: string | null
-}
-
-export function phraseImportBelongsToWallet(
-  cursor: PhraseItemMigrateCursor | null,
-  identityKey: string | null | undefined,
-): boolean {
-  if (!cursor || !identityKey) return false
-  return (
-    cursor.destIdentityKey.trim().toLowerCase() ===
-    identityKey.trim().toLowerCase()
-  )
-}
-
-const itemCursorListeners = new Set<
-  (cursor: PhraseItemMigrateCursor | null) => void
->()
 
 function gorillaBase(chain: Chain): string {
   return chain === 'main'
@@ -689,54 +630,6 @@ export async function sweepPhraseFunding(args: {
   })
 }
 
-function readItemCursor(): PhraseItemMigrateCursor | null {
-  try {
-    const raw = durableGetItem(accountLocalKey(ITEM_CURSOR_KEY))
-    if (!raw) return null
-    const p = JSON.parse(raw) as PhraseItemMigrateCursor
-    if (!p?.sourceAddress || typeof p.offset !== 'number') return null
-    return p
-  } catch {
-    return null
-  }
-}
-
-function writeItemCursor(cursor: PhraseItemMigrateCursor | null) {
-  if (!cursor) {
-    durableRemoveItem(accountLocalKey(ITEM_CURSOR_KEY))
-  } else {
-    durableSetItem(accountLocalKey(ITEM_CURSOR_KEY), JSON.stringify(cursor))
-  }
-  for (const listener of itemCursorListeners) listener(cursor)
-}
-
-export function clearPhraseItemMigrateCursor(): void {
-  writeItemCursor(null)
-  const snap = getWalletProgress()
-  if (snap.kind === 'phrase-import') clearWalletProgress()
-}
-
-export function peekPhraseItemMigrateCursor(): PhraseItemMigrateCursor | null {
-  return readItemCursor()
-}
-
-/** Observe durable phrase-import progress without coupling Activity to the importer UI. */
-export function subscribePhraseItemMigrateCursor(
-  listener: (cursor: PhraseItemMigrateCursor | null) => void,
-): () => void {
-  itemCursorListeners.add(listener)
-  listener(readItemCursor())
-  return () => {
-    itemCursorListeners.delete(listener)
-  }
-}
-
-function asBytes(tx: unknown): number[] {
-  if (Array.isArray(tx) && tx.every((n) => typeof n === 'number')) return tx as number[]
-  if (tx instanceof Uint8Array) return Array.from(tx)
-  return []
-}
-
 export type SingleItemMigrate =
   | { kind: 'moved'; txid: string }
   | { kind: 'skipped'; reason: OrdinalMigrateSkipReason; message: string }
@@ -768,19 +661,16 @@ export type ChosenPhraseItem = {
 export type ChosenItemsMigrate = {
   /** Every chosen tip's answer, keyed by the outpoint as given. */
   results: Map<string, SingleItemMigrate>
-  stopped: PhraseItemStopReason | null
+  stopped: ItemMigrateStop | null
   transactions: number
 }
 
 /**
- * Move chosen tips on the same P2PKH item-migrate path as the batch. Each tip
- * names the key that unlocks it, so tips held at different addresses of one
- * source — a HandCash export keeps nearly every item at its own — still share
- * transactions, `MAX_ITEMS_PER_MIGRATE_TX` at a time, split down to singles
- * only when a bundle itself is rejected. It never touches the batch cursor,
- * so the caller refuses while a paused batch is reading the same address —
- * removing a row ahead of that cursor would shift its offset past an unmoved
- * tip.
+ * Move chosen tips on the P2PKH item-migrate path. Each tip names the key that
+ * unlocks it, so tips held at different addresses of one source — a HandCash
+ * export keeps nearly every item at its own — still share transactions,
+ * `MAX_ITEMS_PER_MIGRATE_TX` at a time. `itemMigrateRunMachine` decides when a
+ * rejected bundle is halved and when the run stops.
  */
 export async function migrateChosenPhraseItems(args: {
   items: readonly ChosenPhraseItem[]
@@ -788,7 +678,7 @@ export async function migrateChosenPhraseItems(args: {
   activityGroup?: string | null
   /** Runs once this run's source transactions are read — the moment to start reading the next run's. */
   onSourcesRead?: () => void
-  /** Runs as each transaction broadcasts, with how many tips it moved. */
+  /** Runs as each transaction is signed, with how many tips it moved. */
   onProgress?: (moved: number) => void
   /** True while a bundle queues for the wallet; false once it starts. */
   onWaiting?: (waiting: boolean) => void
@@ -891,13 +781,9 @@ export async function migrateChosenPhraseItems(args: {
     results.set(givenOf.get(failure.outpoint)!, { kind: 'failed', message: failure.reason })
   }
   const unmoved: SingleItemMigrate =
-    outcome.stopped === 'stale-funding'
-      ? { kind: 'deferred', message: STALE_FUNDING_MESSAGE }
-      : outcome.stopped === 'busy'
-        ? { kind: 'deferred', message: WALLET_BUSY_MESSAGE }
-        : outcome.stopped === 'abandoned'
-          ? { kind: 'deferred', message: ABANDONED_MESSAGE }
-          : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
+    outcome.stopped == null || outcome.stopped === 'funds'
+      ? { kind: 'funds', message: ITEM_MIGRATE_STOP_MESSAGES.funds }
+      : { kind: 'deferred', message: ITEM_MIGRATE_STOP_MESSAGES[outcome.stopped] }
   for (const item of pending.slice(outcome.resolved)) {
     results.set(givenOf.get(item.outpoint)!, unmoved)
   }
@@ -909,7 +795,7 @@ export async function migrateChosenPhraseItems(args: {
     `[phrase-sweep] chosen done ${Date.now() - startedAt}ms items=${rows.length} keys=${spenders.size} moved=${outcome.moved.length}` +
       ` tx=${transactions} skipped=${skipped} unreadable=${unreadable} failed=${outcome.failures.length}` +
       (outcome.stopped ? ` stopped=${outcome.stopped}` : '') +
-      (outcome.lastError ? ` lastError=${outcome.lastError}` : ''),
+      (outcome.lastError ? ` lastError=${outcome.lastError.slice(0, 160)}` : ''),
   )
   return { results, stopped: outcome.stopped, transactions }
 }
@@ -931,44 +817,31 @@ type PendingItemMigrate = {
   spendKey: PrivateKey
 }
 
-const STALE_FUNDING_MESSAGE =
-  'The wallet’s fee coin was spent elsewhere and is being cleared. Nothing was sent — try again in a moment.'
-/** Builds of one bundle over fresh funding before the run stops on `stale-funding`. */
-const STALE_FUNDING_RETRIES = 1
-
-const WALLET_BUSY_MESSAGE =
-  'The wallet stayed busy with another job, so nothing was sent. Import again to move the rest.'
-/**
- * Waits for the wallet to come free before the run stops on `busy`. Each one
- * follows a background acquire that already queued for ten minutes.
- */
-const WALLET_BUSY_WAITS = 2
 /** Ceiling on one wait for the spend region (not chain ingest — a spend runs beside it). */
 const WALLET_BUSY_WAIT_MS = 120_000
 /** A bundle queued this long says so instead of looking stuck. */
 const WAITING_SHOWN_AFTER_MS = 3_000
-
-const ABANDONED_MESSAGE =
-  'A send stopped responding and its result is not known yet, so nothing else was built over those items. Import again to move the rest.'
 /** Visible time an abandoned migrate gets to report its own outcome. */
 const ABANDONED_SETTLE_MS = 300_000
 
 type AbandonedMigrate =
-  | { kind: 'posted'; txid: string }
+  | { kind: 'posted'; posted: ForeignInputPosted }
   | { kind: 'failed'; error: unknown }
   | { kind: 'unknown' }
 
-/** Duck-typed so a mocked coordinator cannot hide an abandoned region. */
-function abandonedSpendWork(err: unknown): Promise<unknown> | null {
-  const abandoned = err as { code?: unknown; late?: unknown } | null
-  if (abandoned?.code !== 'SPEND_REGION_ABANDONED') return null
-  return abandoned.late instanceof Promise ? abandoned.late : Promise.resolve(undefined)
+function isPosted(value: unknown): value is ForeignInputPosted {
+  const posted = value as Partial<ForeignInputPosted> | null
+  return (
+    typeof posted?.txid === 'string' &&
+    /^[0-9a-f]{64}$/.test(posted.txid) &&
+    (posted.propagation === 'accepted' || posted.propagation === 'propagating')
+  )
 }
 
 /**
  * The spend region gave up on a migrate, but the work itself cannot be
- * cancelled: it may still sign and broadcast every tip of the bundle. Wait for
- * what it actually did before deciding anything about those tips.
+ * cancelled: it may still sign every tip of the bundle. Wait for what it
+ * actually did before deciding anything about those tips.
  */
 async function settleAbandonedMigrate(late: Promise<unknown>): Promise<AbandonedMigrate> {
   let cancel: (() => void) | undefined
@@ -978,8 +851,7 @@ async function settleAbandonedMigrate(late: Promise<unknown>): Promise<Abandoned
   try {
     return await Promise.race([
       late.then(
-        (txid): AbandonedMigrate =>
-          typeof txid === 'string' && /^[0-9a-f]{64}$/.test(txid) ? { kind: 'posted', txid } : { kind: 'unknown' },
+        (value): AbandonedMigrate => (isPosted(value) ? { kind: 'posted', posted: value } : { kind: 'unknown' }),
         (error: unknown): AbandonedMigrate => ({ kind: 'failed', error }),
       ),
       expired,
@@ -987,20 +859,6 @@ async function settleAbandonedMigrate(late: Promise<unknown>): Promise<Abandoned
   } finally {
     cancel?.()
   }
-}
-
-/**
- * The certainty gate refused over a coin this bundle did not name — the
- * wallet's own fee funding. Duck-typed: `inputCertainty` sits above this module.
- */
-export function refusedOverFunding(err: unknown, group: ReadonlyArray<{ outpoint: string }>): boolean {
-  const refusal = err as { code?: unknown; reason?: unknown; dead?: unknown } | null
-  if (!refusal || refusal.code !== 'INPUTS_UNVERIFIED') return false
-  if (refusal.reason === 'still-dead') return true
-  if (refusal.reason !== 'input-spent' || !Array.isArray(refusal.dead) || refusal.dead.length === 0) return false
-  const key = (outpoint: string) => outpoint.trim().toLowerCase().replace(/[_:]/, '.')
-  const named = new Set(group.map((item) => key(item.outpoint)))
-  return !refusal.dead.some((outpoint) => named.has(key(String(outpoint))))
 }
 
 type ItemMigratePlan =
@@ -1060,21 +918,15 @@ function planOrdinalMigrate(
 
 type UnitOutcome = {
   moved: MigratedItemReceipt[]
-  failed: number
   /** Tips refused alone, after any bundle they rode was split down to them. */
   failures: Array<{ outpoint: string; reason: string }>
-  /** Rows this unit settled, whether moved or failed — the cursor prefix. */
+  /** Leading tips this run settled, moved or failed; the rest were not tried. */
   resolved: number
-  stopped: PhraseItemStopReason | null
+  stopped: ItemMigrateStop | null
   lastError: string | null
 }
 
-/**
- * Send one planned group as a single transaction. A rejected bundle is split by
- * name and retried as smaller bundles down to singles; every attempt is the
- * same P2PKH item-migrate path, never another protocol.
- */
-async function migrateOrdinalUnit(args: {
+type UnitArgs = {
   active: ActiveWallet
   destLockHex: string
   /** Every source of the run; a bundle is handed only the part it spends. */
@@ -1083,26 +935,23 @@ async function migrateOrdinalUnit(args: {
   items: PendingItemMigrate[]
   itemsPerTx: number
   /**
-   * Each transaction's receipts, the moment it broadcasts. Its Activity rows
+   * Each transaction's receipts, the moment it is signed. Its Activity rows
    * must land before the ledger's next read of the wallet's table, or the
    * unannotated migrate shows as a row of its own.
    */
   onMoved: (moved: MigratedItemReceipt[]) => void
   /** True while a bundle queues for the wallet (unlock, another send); false once it starts. */
   onWaiting?: (waiting: boolean) => void
-}): Promise<UnitOutcome> {
-  const out: UnitOutcome = {
-    moved: [],
-    failed: 0,
-    failures: [],
-    resolved: 0,
-    stopped: null,
-    lastError: null,
-  }
+}
+
+/**
+ * Executor for `itemMigrateRunMachine`: sends the bundle the chart asks for
+ * and reports one classified outcome. Every attempt is the same P2PKH
+ * item-migrate path; the chart alone decides whether another one follows.
+ */
+async function migrateOrdinalUnit(args: UnitArgs): Promise<UnitOutcome> {
+  const out: UnitOutcome = { moved: [], failures: [], resolved: 0, stopped: null, lastError: null }
   let pending = args.items.slice()
-  let perTx = args.itemsPerTx
-  let fundingRetries = 0
-  let busyWaits = 0
   const postBytes = new Map<string, number>()
   const postBytesOf = (item: PendingItemMigrate): number => {
     let bytes = postBytes.get(item.outpoint)
@@ -1113,158 +962,125 @@ async function migrateOrdinalUnit(args: {
     return bytes
   }
 
-  while (pending.length > 0) {
-    if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
-    const fit = itemsWithinPostBudget(pending, perTx, postBytesOf)
-    const unit = chooseItemMigrateUnit(pending, fit)
-    if (unit.kind === 'refuse') break
-    const group = unit.kind === 'bundle' ? unit.items : [unit.item]
-    const landed = (txid: string) => {
-      // Outputs keep their order (`randomizeOutputs: false`), so item i is output i.
-      const receipts = group.map((item, vout) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid, sweepVout: vout }))
-      out.moved.push(...receipts)
-      args.onMoved(receipts)
-      out.resolved += group.length
-      pending = pending.slice(group.length)
-      perTx = args.itemsPerTx
-      fundingRetries = 0
-      busyWaits = 0
-    }
-    try {
-      // A payment waits for at most the bundle in flight, never the whole import.
-      const yieldedMs = await yieldToForegroundSpends(undefined, {
-        onWaiting: (waitedMs, holders) =>
-          appendAppLog(
-            'info',
-            `[phrase-sweep] waiting for payments ${Math.round(waitedMs / 1000)}s — ${holders.join(', ').slice(0, 160)}`,
-          ),
-      })
-      if (yieldedMs >= 250) {
-        appendAppLog('info', `[phrase-sweep] yielded to payments done ${yieldedMs}ms`)
-      }
-      const inputBeef = args.sources
-        ? migrateInputBeef(args.sources, new Set(group.map((item) => item.txid)), args.inputBeef)
-        : args.inputBeef
-      let waitingShown = false
-      const waitingTimer = setTimeout(() => {
-        waitingShown = true
-        args.onWaiting?.(true)
-      }, WAITING_SHOWN_AFTER_MS)
-      const regionTaken = () => {
-        clearTimeout(waitingTimer)
-        if (waitingShown) args.onWaiting?.(false)
-        waitingShown = false
-      }
-      const txid = await runExclusiveSpend(
-        async () =>
-          // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
-          // verification rejects that outright ("inputBEEF must be valid Beef when
-          // factoring options.trustSelf"), which failed every item migrate. The
-          // funding sweep already treats visible-on-chain as sufficient for a
-          // P2PKH tip; an ordinal tip is the same claim, same relaxation.
-          withVisibleOnChainBeef(async () =>
-            buildAndPostItemMigrate({
-              active: args.active,
-              destLockHex: args.destLockHex,
-              inputBeef,
-              items: group,
-            }),
-          ),
-        regionTaken,
-        { lane: 'background' },
-      ).finally(regionTaken)
-      landed(txid)
-    } catch (caught) {
-      let err: unknown = caught
-      const late = abandonedSpendWork(caught)
-      if (late) {
-        const settledAt = Date.now()
-        const outcome = await settleAbandonedMigrate(late)
-        appendAppLog(
-          outcome.kind === 'posted' ? 'info' : 'warn',
-          `[phrase-sweep] abandoned migrate of ${group.length} settled ${outcome.kind}` +
-            (outcome.kind === 'posted' ? ` ${outcome.txid.slice(0, 12)}` : '') +
-            ` after ${Date.now() - settledAt}ms`,
-        )
-        if (outcome.kind === 'posted') {
-          landed(outcome.txid)
-          continue
-        }
-        if (outcome.kind === 'unknown') {
-          out.stopped = 'abandoned'
-          out.lastError = ABANDONED_MESSAGE
-          return out
-        }
-        err = outcome.error
-      }
-      const reason = err instanceof Error ? err.message : String(err)
-      // The wallet never let this bundle start: no tip is at fault, and a
-      // smaller bundle would queue behind the same job. Wait, then retry it whole.
-      if (err instanceof Error && err.name === 'WalletCoordinatorAcquireTimeoutError') {
-        if (busyWaits < WALLET_BUSY_WAITS) {
-          busyWaits += 1
-          const held = (err as Error & { coordinatorSummary?: string }).coordinatorSummary ?? 'unknown'
-          appendAppLog(
-            'info',
-            `[phrase-sweep] wallet busy — waiting to send ${group.length} (${busyWaits}/${WALLET_BUSY_WAITS}) held=${held.slice(0, 160)}`,
-          )
-          const { describeWalletCoordinator, waitForSpendRegionFree } = await import('./walletCoordinator')
-          const waitStarted = Date.now()
-          const free = await waitForSpendRegionFree(WALLET_BUSY_WAIT_MS)
-          appendAppLog(
-            'info',
-            `[phrase-sweep] busy wait done ${Date.now() - waitStarted}ms idle=${free}` +
-              (free ? '' : ` held=${describeWalletCoordinator().summary.slice(0, 160)}`),
-          )
-          continue
-        }
-        out.stopped = 'busy'
-        out.lastError = WALLET_BUSY_MESSAGE
-        appendAppLog('warn', `[phrase-sweep] stopped: wallet still busy after ${busyWaits} wait(s)`)
-        return out
-      }
-      if (isInsufficientFundsError(err)) {
-        out.stopped = 'funds'
-        out.lastError = reason
-        return out
-      }
-      if (refusedOverFunding(err, group)) {
-        // The dead fee coin is retired by now; one fresh build usually funds
-        // over live change. A bundle split would only repeat the refusal.
-        if (fundingRetries < STALE_FUNDING_RETRIES) {
-          fundingRetries += 1
-          appendAppLog(
-            'warn',
-            `[phrase-sweep] fee coin spent elsewhere — building ${group.length} again (${fundingRetries}/${STALE_FUNDING_RETRIES})`,
-          )
-          continue
-        }
-        out.stopped = 'stale-funding'
-        out.lastError = STALE_FUNDING_MESSAGE
-        appendAppLog('warn', `[phrase-sweep] stopped: fee coin still spent elsewhere after ${fundingRetries} rebuild(s)`)
-        return out
-      }
-      if (group.length > 1) {
-        // The rejection does not name which tip is at fault, so halve the group
-        // and try again; `pending` is untouched because the group is its prefix.
-        const [left] = splitItemMigrateBundle(group)
-        perTx = Math.max(1, left.length)
+  const chart = createActor(itemMigrateRunMachine).start()
+  chart.send({ type: 'START', items: pending.length, perTx: args.itemsPerTx })
+  try {
+    for (;;) {
+      const snapshot = chart.getSnapshot()
+      if (snapshot.matches('waitingForWallet')) {
+        const { describeWalletCoordinator, waitForSpendRegionFree } = await import('./walletCoordinator')
+        const waitStarted = Date.now()
+        const free = await waitForSpendRegionFree(WALLET_BUSY_WAIT_MS)
         appendAppLog(
           'info',
-          `[phrase-sweep] bundleRejected: ${group.length} tips → retrying ${perTx} (${reason})`,
+          `[phrase-sweep] busy wait done ${Date.now() - waitStarted}ms idle=${free}` +
+            (free ? '' : ` held=${describeWalletCoordinator().summary.slice(0, 160)}`),
         )
+        chart.send({ type: 'WAITED' })
         continue
       }
-      out.failed += 1
-      out.failures.push({ outpoint: group[0]!.outpoint, reason })
-      out.resolved += 1
-      out.lastError = reason
-      console.warn('[phrase-sweep] item migrate failed', group[0]!.outpoint, reason)
-      pending = pending.slice(1)
-      perTx = args.itemsPerTx
+      if (!snapshot.matches('moving')) break
+      if (out.moved.length > 0 || out.failures.length > 0) await yieldToUi()
+      const unit = chooseItemMigrateUnit(pending, itemsWithinPostBudget(pending, snapshot.context.perTx, postBytesOf))
+      if (unit.kind === 'refuse') {
+        console.warn('[phrase-sweep] chart expected a bundle but no tip is pending')
+        break
+      }
+      const group = unit.kind === 'bundle' ? unit.items : [unit.item]
+      const landed = (posted: ForeignInputPosted) => {
+        // Outputs keep their order (`randomizeOutputs: false`), so item i is output i.
+        const receipts = group.map((item, vout) => ({
+          outpoint: item.outpoint,
+          origin: item.origin,
+          sweepTxid: posted.txid,
+          sweepVout: vout,
+        }))
+        out.moved.push(...receipts)
+        args.onMoved(receipts)
+        out.resolved += group.length
+        pending = pending.slice(group.length)
+        chart.send({ type: 'SENT', items: group.length, propagation: posted.propagation })
+      }
+
+      let fault: ItemMigrateFault
+      try {
+        landed(await sendItemBundle(args, group))
+        continue
+      } catch (caught) {
+        fault = classifyItemMigrateFault(caught, group)
+      }
+      if (fault.kind === 'abandoned') {
+        const settledAt = Date.now()
+        const settled = await settleAbandonedMigrate(fault.late)
+        appendAppLog(
+          settled.kind === 'posted' ? 'info' : 'warn',
+          `[phrase-sweep] abandoned migrate of ${group.length} settled ${settled.kind}` +
+            (settled.kind === 'posted' ? ` ${settled.posted.txid.slice(0, 12)}` : '') +
+            ` after ${Date.now() - settledAt}ms`,
+        )
+        if (settled.kind === 'posted') {
+          landed(settled.posted)
+          continue
+        }
+        if (settled.kind === 'failed') fault = classifyItemMigrateFault(settled.error, group)
+      }
+      if (fault.kind === 'busy') {
+        appendAppLog('info', `[phrase-sweep] wallet busy before sending ${group.length} held=${fault.held.slice(0, 160)}`)
+      } else if (fault.kind === 'rejected' && group.length > 1) {
+        appendAppLog('info', `[phrase-sweep] bundleRejected: ${group.length} tips — halving (${fault.message.slice(0, 160)})`)
+      } else if (fault.kind === 'rejected') {
+        out.failures.push({ outpoint: group[0]!.outpoint, reason: fault.message })
+        out.resolved += 1
+        out.lastError = fault.message
+        pending = pending.slice(1)
+        console.warn('[phrase-sweep] item migrate failed', group[0]!.outpoint, fault.message)
+      } else {
+        out.lastError = fault.message
+        appendAppLog('warn', `[phrase-sweep] ${fault.kind} before sending ${group.length}: ${fault.message.slice(0, 160)}`)
+      }
+      chart.send({ type: 'FAULT', fault: fault.kind, items: group.length, message: fault.message })
     }
+  } finally {
+    const settled = chart.getSnapshot().context
+    out.stopped = settled.stopped
+    if (out.stopped) {
+      out.lastError ??= ITEM_MIGRATE_STOP_MESSAGES[out.stopped]
+      appendAppLog('warn', `[phrase-sweep] stopped: ${out.stopped} moved=${settled.moved} failed=${settled.failed} queued=${settled.queued}`)
+    }
+    chart.stop()
   }
   return out
+}
+
+/** One bundle through the spend region, after any payment already waiting. */
+async function sendItemBundle(args: UnitArgs, group: PendingItemMigrate[]): Promise<ForeignInputPosted> {
+  // A payment waits for at most the bundle in flight, never the whole import.
+  const yieldedMs = await yieldToForegroundSpends(undefined, {
+    onWaiting: (waitedMs, holders) =>
+      appendAppLog(
+        'info',
+        `[phrase-sweep] waiting for payments ${Math.round(waitedMs / 1000)}s — ${holders.join(', ').slice(0, 160)}`,
+      ),
+  })
+  if (yieldedMs >= 250) appendAppLog('info', `[phrase-sweep] yielded to payments done ${yieldedMs}ms`)
+  const inputBeef = args.sources
+    ? migrateInputBeef(args.sources, new Set(group.map((item) => item.txid)), args.inputBeef)
+    : args.inputBeef
+  let waitingShown = false
+  const waitingTimer = setTimeout(() => {
+    waitingShown = true
+    args.onWaiting?.(true)
+  }, WAITING_SHOWN_AFTER_MS)
+  const regionTaken = () => {
+    clearTimeout(waitingTimer)
+    if (waitingShown) args.onWaiting?.(false)
+    waitingShown = false
+  }
+  return runExclusiveSpend(
+    () => buildAndPostItemMigrate({ active: args.active, destLockHex: args.destLockHex, inputBeef, items: group }),
+    regionTaken,
+    { lane: 'background' },
+  ).finally(regionTaken)
 }
 
 /** Chain ingest for the end of a migrate run. */
@@ -1276,13 +1092,13 @@ export async function refreshAfterPhraseItemMigrate(): Promise<void> {
   }
 }
 
-/** Build, sign and broadcast one transaction carrying `items` tips. */
+/** Build, sign and hand off one transaction carrying `items` tips. */
 async function buildAndPostItemMigrate(args: {
   active: ActiveWallet
   destLockHex: string
   inputBeef: BEEF
   items: PendingItemMigrate[]
-}): Promise<string> {
+}): Promise<ForeignInputPosted> {
   const { destLockHex, items } = args
   const first = items[0]!
   return postForeignInputAction({
@@ -1300,190 +1116,4 @@ async function buildAndPostItemMigrate(args: {
     labels: ['1sat', 'phrase-migrate'],
     description: itemMigrateTxDescription(items.length, first.outpoint),
   })
-}
-
-/** A source output signed by a foreign key against its real locking script. */
-export type ForeignInput = {
-  outpoint: string
-  txid: string
-  vout: number
-  /** Real value of the source output — the sighash amount must match exactly. */
-  satoshis: number
-  /** Real locking script — the sighash scriptCode must be the whole script. */
-  sourceLock: LockingScript
-  description: string
-  /** Key for this input; defaults to the action's `spendKey`. */
-  spendKey?: PrivateKey
-}
-
-/**
- * One transaction spending foreign-key inputs, funded by this wallet's change.
- *
- * The wallet adds funding and change; each foreign input is signed here with
- * its own `spendKey`, or the action's. A failure before broadcast aborts the
- * action so its reserved change and listed outputs are released.
- */
-export async function postForeignInputAction(args: {
-  active: ActiveWallet
-  spendKey?: PrivateKey
-  inputBeef: BEEF
-  inputs: ForeignInput[]
-  outputs: CreateActionOutput[]
-  labels: string[]
-  description: string
-}): Promise<string> {
-  const { active, inputs } = args
-  if (inputs.some((input) => !(input.spendKey ?? args.spendKey))) {
-    throw new Error('Every foreign input needs a key to sign it')
-  }
-  const startedAt = Date.now()
-  const car = await active.wallet.createAction({
-    inputBEEF: args.inputBeef,
-    inputs: inputs.map((input) => ({
-      outpoint: input.outpoint,
-      unlockingScriptLength: 108,
-      inputDescription: input.description,
-    })),
-    outputs: args.outputs,
-    labels: args.labels,
-    description: args.description,
-    options: {
-      trustSelf: 'known',
-      signAndProcess: false,
-      // Outputs carry per-item provenance or a token's exact amount; order must survive.
-      randomizeOutputs: false,
-    },
-  })
-
-  const reference = car.signableTransaction?.reference
-  try {
-    return await signAndPostForeignInputs(
-      { active, spendKey: args.spendKey, inputBeef: args.inputBeef, inputs, startedAt, createMs: Date.now() - startedAt },
-      car,
-    )
-  } catch (err) {
-    // An unsigned action keeps its reserved inputs and still lists its `1sat`
-    // outputs, so a failed migrate showed up in Collect as real collectables —
-    // complete with the provenance we attached — until background review failed
-    // the transaction and took them away again. Nothing was ever on chain, so
-    // there is no broadcast to race: releasing it here is the only correct end.
-    if (reference) {
-      try {
-        await args.active.wallet.abortAction({ reference })
-      } catch (abortErr) {
-        appendAppLog(
-          'warn',
-          `[phrase-sweep] could not abort failed migrate of ${inputs.length} input(s): ${
-            abortErr instanceof Error ? abortErr.message : String(abortErr)
-          }`,
-        )
-      }
-    }
-    throw err
-  }
-}
-
-async function signAndPostForeignInputs(
-  args: {
-    active: ActiveWallet
-    spendKey?: PrivateKey
-    inputBeef: BEEF
-    inputs: ForeignInput[]
-    startedAt: number
-    createMs: number
-  },
-  car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
-): Promise<string> {
-  const { active, spendKey, inputs: items } = args
-  let sweepTxid = (car.txid ?? '').toLowerCase()
-  let sweepAtomic = asBytes(car.tx)
-  const signStarted = Date.now()
-  if (car.signableTransaction) {
-    const stBeef = Beef.fromBinary(asBytes(car.signableTransaction.tx))
-    const wanted = new Map(items.map((item) => [`${item.txid}.${item.vout}`, item]))
-    let unsignedTx
-    const inputIndexes = new Map<number, ForeignInput>()
-    for (const stbtx of stBeef.txs) {
-      if (stbtx.tx == null) continue
-      for (let i = 0; i < stbtx.tx.inputs.length; i++) {
-        const inp = stbtx.tx.inputs[i]
-        const key = `${String(inp.sourceTXID).toLowerCase()}.${inp.sourceOutputIndex}`
-        const item = wanted.get(key)
-        if (!item) continue
-        unsignedTx = stbtx.tx
-        inputIndexes.set(i, item)
-      }
-      if (unsignedTx != null) break
-    }
-    if (unsignedTx == null || inputIndexes.size !== items.length) {
-      throw new Error('Could not find every ordinal input to sign')
-    }
-    // Sats flow first-in first-out: tip i must be input i for its inscribed sat
-    // to land in output i. A funding input ahead of a tip would carry the
-    // inscription into change, so a reordered layout is never signed.
-    if (!items.every((item, index) => inputIndexes.get(index) === item)) {
-      throw new Error('The wallet reordered the item inputs; refusing to sign')
-    }
-    // Ordinal tips are P2PKH ‖ inscription ‖ Sigma, so the sighash scriptCode
-    // must be the *whole* locking script. SetupClient.getUnlockP2PKH hashes a
-    // bare P2PKH, which is why every inscribed tip failed CHECKSIG with "the
-    // top stack element must be truthy" while plain-P2PKH funding swept fine.
-    for (const [index, item] of inputIndexes) {
-      unsignedTx.inputs[index]!.unlockingScriptTemplate = new P2PKH().unlock(
-        (item.spendKey ?? spendKey)!,
-        'all',
-        false,
-        item.satoshis,
-        item.sourceLock,
-      )
-    }
-    await unsignedTx.sign()
-    const spends: Record<number, { unlockingScript: string }> = {}
-    for (const index of inputIndexes.keys()) {
-      spends[index] = {
-        unlockingScript: unsignedTx.inputs[index]!.unlockingScript!.toHex(),
-      }
-    }
-    const sar = await active.wallet.signAction({
-      reference: car.signableTransaction.reference,
-      spends,
-    })
-    sweepTxid = (sar.txid ?? '').toLowerCase()
-    sweepAtomic = asBytes(sar.tx)
-  }
-  if (!/^[0-9a-f]{64}$/.test(sweepTxid) || sweepAtomic.length === 0) {
-    throw new Error('Migrate produced no broadcastable transaction')
-  }
-
-  const packStarted = Date.now()
-  const packed = new Beef()
-  packed.mergeBeef(args.inputBeef)
-  packed.mergeBeef(sweepAtomic)
-  packed.atomicTxid = undefined
-  const bin = migratePackage(packed, sweepTxid)
-  const durableBody = migrateRetryBody(bin, sweepTxid)
-  const efBytes = items.reduce((sum, item) => sum + migrateTipPostBytes(item.sourceLock.toBinary().length), 0)
-  appendAppLog(
-    'info',
-    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length}` +
-      ` durable=${durableBody.length} ef=${efBytes} in=${args.inputBeef.length}`,
-  )
-  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-  const postStarted = Date.now()
-  const submitted = await submitAtomicBeefToMiners(sweepTxid, bin, { durableBody })
-  const doneAt = Date.now()
-  if (doneAt - args.startedAt >= 250) {
-    appendAppLog(
-      'info',
-      `[phrase-sweep] migrate ${sweepTxid.slice(0, 12)} done ${doneAt - args.startedAt}ms` +
-        ` create=${args.createMs}ms sign=${packStarted - signStarted}ms pack=${postStarted - packStarted}ms` +
-        ` post=${doneAt - postStarted}ms`,
-    )
-  }
-  if (submitted.kind === 'unproven-conflict') {
-    throw new Error(
-      `Broadcast rejected (${submitted.summary.detail ?? 'unproven conflict'})`,
-    )
-  }
-  return sweepTxid
 }

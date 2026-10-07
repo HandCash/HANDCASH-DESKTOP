@@ -8,8 +8,8 @@ import {
   importQueueMachine,
   nextChunk,
   sourceRun,
-  STALE_FUNDING_PAUSE_MS,
-  STALE_FUNDING_PAUSES,
+  IMPORT_PAUSE_MS,
+  IMPORT_PAUSES,
   type ImportQueueEmitted,
   type ImportQueuePorts,
 } from './importQueueMachine'
@@ -95,7 +95,7 @@ describe('importQueueMachine', () => {
     expect(answered.map((a) => a.results.map((r) => r.outpoint))).toEqual([[op(1)]])
     expect(sourceRun(queue.getSnapshot().context, 'a')).toMatchObject({ moving: [op(2), op(3)], done: 1 })
 
-    await vi.advanceTimersByTimeAsync(STALE_FUNDING_PAUSE_MS)
+    await vi.advanceTimersByTimeAsync(IMPORT_PAUSE_MS)
     await vi.waitFor(() => expect(queue.getSnapshot().matches('idle')).toBe(true))
     expect(ports.importMany.mock.calls.map(([c]) => c.outpoints)).toEqual([[op(1), op(2), op(3)], [op(2), op(3)]])
     expect(queue.getSnapshot().context.reports.a).toMatchObject({ title: '3 items imported' })
@@ -109,12 +109,12 @@ describe('importQueueMachine', () => {
     }))
     queue.send({ type: 'ENQUEUE', sourceId: 'a', identityKey: 'id1', items: items(1, 2) })
     queue.send({ type: 'ENQUEUE', sourceId: 'b', identityKey: 'id1', items: items(9, 1) })
-    for (let i = 0; i < STALE_FUNDING_PAUSES; i++) {
+    for (let i = 0; i < IMPORT_PAUSES; i++) {
       await vi.waitFor(() => expect(queue.getSnapshot().matches('cooling')).toBe(true))
-      await vi.advanceTimersByTimeAsync(STALE_FUNDING_PAUSE_MS)
+      await vi.advanceTimersByTimeAsync(IMPORT_PAUSE_MS)
     }
     await vi.waitFor(() => expect(queue.getSnapshot().matches('idle')).toBe(true))
-    expect(ports.importMany).toHaveBeenCalledTimes(STALE_FUNDING_PAUSES + 1)
+    expect(ports.importMany).toHaveBeenCalledTimes(IMPORT_PAUSES + 1)
     expect(queue.getSnapshot().context.reports.a).toMatchObject({ outcome: 'deferred', body: expect.stringMatching(/^0 of 2 imported/) })
     expect(queue.getSnapshot().context.reports.b).toMatchObject({
       outcome: 'deferred',
@@ -133,7 +133,7 @@ describe('importQueueMachine', () => {
     queue.send({ type: 'STOP', sourceId: 'a' })
     expect(queue.getSnapshot().matches('idle')).toBe(true)
     expect(queue.getSnapshot().context.reports.a).toMatchObject({ title: 'Import stopped', body: '0 of 2 imported.' })
-    await vi.advanceTimersByTimeAsync(STALE_FUNDING_PAUSE_MS)
+    await vi.advanceTimersByTimeAsync(IMPORT_PAUSE_MS)
     expect(ports.importMany).toHaveBeenCalledTimes(1)
   })
 

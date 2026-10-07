@@ -136,17 +136,8 @@ import {
 import { subscribeConnectedApps } from "../wallet/permissions";
 import { playWalletSound } from "../wallet/soundService";
 import type { Chain } from "../wallet/vault";
-import {
-  phraseImportBelongsToWallet,
-  peekPhraseItemMigrateCursor,
-  subscribePhraseItemMigrateCursor,
-} from "../wallet/phraseSweep";
 import { walletJobIds } from "../wallet/walletJobs";
-import {
-  PendingPhraseImportRow,
-  useWalletJobs,
-  WalletJobRow,
-} from "./activity/ActivityJobRows";
+import { useWalletJobs, WalletJobRow } from "./activity/ActivityJobRows";
 import { batchCountLabel } from "./activity/batchCountLabel";
 
 import { EmptyState } from "./EmptyState";
@@ -924,19 +915,9 @@ export function ActivityFeed({
   const [verification, setVerification] = useState(() =>
     getVerificationProgress()
   );
-  const [phraseImport, setPhraseImport] = useState(() =>
-    peekPhraseItemMigrateCursor()
-  );
   const listRef = useRef<HTMLUListElement>(null);
   const scrolling = useScrollIdle(listRef);
   useEffect(() => subscribeVerificationProgress(setVerification), []);
-  useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), []);
-  const visiblePhraseImport = phraseImportBelongsToWallet(
-    phraseImport,
-    getActiveWallet()?.identityKey
-  )
-    ? phraseImport
-    : null;
   const jobs = useWalletJobs();
 
   // A job's own row speaks for it until it leaves; then its rows fold into one record.
@@ -1139,7 +1120,7 @@ export function ActivityFeed({
   }, [origins, filters.origin]);
 
   const body =
-    filtered.length === 0 && !visiblePhraseImport && jobs.length === 0 ? (
+    filtered.length === 0 && jobs.length === 0 ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : "Nothing matches"}
@@ -1156,9 +1137,6 @@ export function ActivityFeed({
         {jobs.map((job) => (
           <WalletJobRow key={job.id} job={job} />
         ))}
-        {visiblePhraseImport ? (
-          <PendingPhraseImportRow cursor={visiblePhraseImport} />
-        ) : null}
         {windowed.padStart > 0 ? (
           <li
             className="history-window-pad"

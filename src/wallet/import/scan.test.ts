@@ -31,7 +31,7 @@ import type { KeyDeriver } from './importSource'
 import { createHistoryReader, readItemOwners, type HandCashRecoveryHints, type HintedAddresses } from './recoveryHints'
 import { fetchHandCashUtxoSet, readUnspentOnChain, type HandCashUtxo } from './handcashUtxoSet'
 import { checkUtxoSetItems } from './items'
-import { hintedScan, utxoSetScan } from './scan'
+import { hintedScan, scanPaths, utxoSetScan } from './scan'
 import { P2PKH } from '@bsv/sdk'
 
 const keys = new Map<string, PrivateKey>()
@@ -245,5 +245,21 @@ describe('utxoSetScan', () => {
     vi.mocked(checkUtxoSetItems).mockResolvedValue({ unspent: new Set(), failed: 1, stopped: false })
     chainHolds({})
     expect(await utxoSetScan(deriver, 'main', { sourceId: 's' })).toMatchObject({ complete: false })
+  })
+})
+
+describe('scanPaths', () => {
+  const handcash = { secret: { kind: 'handcash' } } as Parameters<typeof scanPaths>[0]
+  const phrase = { secret: { kind: 'phrase' } } as Parameters<typeof scanPaths>[0]
+
+  it('tries the most precise pass first and always ends on the full walk', () => {
+    expect(scanPaths(handcash, undefined, true)).toEqual(['utxoSet', 'hinted', 'walk'])
+    expect(scanPaths(handcash, undefined, false)).toEqual(['utxoSet', 'walk'])
+    expect(scanPaths(phrase, undefined, true)).toEqual(['hinted', 'walk'])
+    expect(scanPaths(phrase, undefined, false)).toEqual(['walk'])
+  })
+
+  it('walks only when the user chose a gap', () => {
+    expect(scanPaths(handcash, 40, true)).toEqual(['walk'])
   })
 })
