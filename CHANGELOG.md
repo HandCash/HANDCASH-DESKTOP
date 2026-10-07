@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.470] - 2026-10-06
+
+### Fixed
+- **Activity no longer goes blank during a large import.** A running import counts as one row of the feed window, so older history still shows below its progress row and the list scrolls.
+- **Imports no longer push older history out of Activity.** Imported items are no longer written as one stored row each. The wallet's own transaction record shows them, named and folded under the import. When storage is full, import rows are trimmed before any other history.
+- **Collectables fill in as each import transaction lands.** The grid used to wait for a wallet read that the running import blocked. Now all 100 items of a transaction show as soon as that transaction is accepted.
+
+### Changed
+- Each import transaction sends miners only itself and the transactions it spends, not every source transaction of the chunk. Bundles are sized to keep that package small, so every package fits the durable retry outbox that resends it after a restart or a miner outage.
+- While one chunk signs and broadcasts, the next chunk's source transactions are fetched in the background.
+- Log triage reports the size of each migrate package, the background fetch timing, and the size of any package the retry outbox refuses.
+
 ## [1.3.469] - 2026-10-06
 
 ### Changed
