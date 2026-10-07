@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { resolveBridgeCaller } from './bridgeOrigin'
+import { channelMayUseGrant, resolveBridgeCaller } from './bridgeOrigin'
+
+describe('channelMayUseGrant', () => {
+  it('keeps an in-app grant off the loopback socket', () => {
+    expect(channelMayUseGrant('socket', 'in-app')).toBe(false)
+    expect(channelMayUseGrant('in-app', 'in-app')).toBe(true)
+  })
+
+  it('lets socket and legacy grants be used from either channel', () => {
+    expect(channelMayUseGrant('socket', undefined)).toBe(true)
+    expect(channelMayUseGrant('socket', 'socket')).toBe(true)
+    expect(channelMayUseGrant('in-app', 'socket')).toBe(true)
+  })
+})
 
 describe('resolveBridgeCaller', () => {
   it('trusts the browser Origin over a self-declared originator', () => {

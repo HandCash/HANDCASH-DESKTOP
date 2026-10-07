@@ -493,11 +493,69 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
   };
 }
 
+/** The statuses `listActions` reports — the actions `countActions` counts. */
+const LISTED_ACTION_STATUSES = ["completed", "unprocessed", "sending", "unproven", "unsigned", "nosend", "nonfinal"];
+
+type RowProbeStorage = {
+  getAuth?: () => Promise<{ userId?: number }>;
+  runAsStorageProvider?: <T>(fn: (sp: {
+    findOutputBaskets(args: unknown): Promise<Array<{ basketId: number }>>;
+    findOutputs(args: unknown): Promise<unknown[]>;
+    findTransactions(args: unknown): Promise<unknown[]>;
+  }) => Promise<T>) => Promise<T>;
+};
+
+/**
+ * Whether storage holds a spendable default output or a listed action, read
+ * as one indexed row each. The toolbox's `limit: 1` lists count every row
+ * once one exists, deserializing each transaction's raw tx and input BEEF; on
+ * an item wallet that walk ran ~160s inside the recompose region every spend
+ * waits on. Null when storage cannot be reached directly.
+ */
+async function storageHoldsHistory(wallet: ToolboxWallet): Promise<boolean | null> {
+  const storage = (wallet as unknown as { storage?: RowProbeStorage }).storage;
+  if (typeof storage?.runAsStorageProvider !== "function" || typeof storage.getAuth !== "function") return null;
+  try {
+    const { userId } = await storage.getAuth();
+    if (typeof userId !== "number") return null;
+    return await storage.runAsStorageProvider(async (sp) => {
+      const [basket] = await sp.findOutputBaskets({ partial: { userId, name: "default" } });
+      if (basket) {
+        const outputs = await sp.findOutputs({
+          partial: { userId, basketId: basket.basketId, spendable: true },
+          noScript: true,
+          paged: { limit: 1 },
+        });
+        if (outputs.length > 0) return true;
+      }
+      const actions = await sp.findTransactions({
+        partial: { userId },
+        status: LISTED_ACTION_STATUSES,
+        noRawTx: true,
+        paged: { limit: 1 },
+      });
+      return actions.length > 0;
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Same verdict as `inspectLocalToolboxState().looksEmpty`, stopping at the first sign of history. */
 export async function localToolboxStateLooksEmpty(): Promise<boolean> {
   const active = getActiveWallet();
   if (!active) return true;
-  if ((await countOutputs(active.wallet, "default")) > 0) return false;
-  if ((await countActions(active.wallet)) > 0) return false;
-  return (await fetchBalanceSats(active.wallet).catch(() => 0)) <= 0;
+  const started = Date.now();
+  try {
+    const holds = await storageHoldsHistory(active.wallet);
+    if (holds === true) return false;
+    if (holds === null) {
+      if ((await countOutputs(active.wallet, "default")) > 0) return false;
+      if ((await countActions(active.wallet)) > 0) return false;
+    }
+    return (await fetchBalanceSats(active.wallet).catch(() => 0)) <= 0;
+  } finally {
+    const ms = Date.now() - started;
+    if (ms >= 250) console.info(`[layers] empty-check done ${ms}ms`);
+  }
 }

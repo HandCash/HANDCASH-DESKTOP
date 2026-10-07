@@ -356,19 +356,28 @@ function rowCreatedMs(raw: unknown): number {
 /** Outgoing transactions the wallet signed that are not proven yet, oldest first. */
 async function unprovenOutgoingSends(runtime: WalletRuntime): Promise<Array<{ txid: string; at: number }>> {
   const storage = runtime.instance.wallet?.storage as unknown as {
+    getAuth?: () => Promise<{ userId?: number }>
     runAsStorageProvider?: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T>
   }
   if (typeof storage?.runAsStorageProvider !== 'function') return []
-  const rows = await storage.runAsStorageProvider(async (sp) =>
-    (sp as {
+  const userId = typeof storage.getAuth === 'function' ? (await storage.getAuth()).userId : undefined
+  // One status per query so the cursor rides the status index. A status list
+  // with no single status walks the whole store, raw txs and input BEEFs
+  // included, on every unlock.
+  const rows = await storage.runAsStorageProvider(async (sp) => {
+    const find = (sp as {
       findTransactions: (args: unknown) => Promise<Array<{ txid?: string; isOutgoing?: boolean; created_at?: unknown }>>
-    }).findTransactions({
-      partial: { isOutgoing: true },
-      status: RESCUE_STATUSES,
-      noRawTx: true,
-      paged: { limit: 400, offset: 0 },
-    }),
-  )
+    }).findTransactions.bind(sp)
+    const found = []
+    for (const status of RESCUE_STATUSES) {
+      found.push(...(await find({
+        partial: { ...(typeof userId === 'number' ? { userId } : {}), status, isOutgoing: true },
+        noRawTx: true,
+        paged: { limit: 400, offset: 0 },
+      })))
+    }
+    return found
+  })
   const now = Date.now()
   return (rows ?? [])
     .map((row) => ({ txid: normalizeTxid(row.txid ?? '') ?? '', at: rowCreatedMs(row.created_at) }))

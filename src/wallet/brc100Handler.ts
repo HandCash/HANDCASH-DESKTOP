@@ -14,6 +14,7 @@ import type { WalletInterface } from '@bsv/sdk'
 import { brc100HandlerOwner } from '../contracts/brc100Handlers'
 import { bumpBalanceAfterHeal, fetchFastBalanceSats } from './session'
 import {
+  connectedAppChannel,
   filterItemOutputsForOrigin,
   filterTokenOutputsForOrigin,
   gateOriginAccess,
@@ -28,7 +29,13 @@ import {
   requestTokenViewApproval,
 } from './permissions'
 import { normalizeAppHost } from './appIdentity'
-import { bridgeCallerHost, bridgeOriginRefusalDescription, resolveBridgeCaller } from './bridgeOrigin'
+import {
+  bridgeCallerHost,
+  bridgeOriginRefusalDescription,
+  channelMayUseGrant,
+  resolveBridgeCaller,
+  type BridgeChannel,
+} from './bridgeOrigin'
 import { getAutoPaySettings, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
   isBsv21ReceiveArgs,
@@ -285,6 +292,8 @@ type HttpRequestEvent = {
   headers: Record<string, string>
   body: string
   request_id: number
+  /** Set by the Mobile shell for app-tab calls whose origin the WebView vouched for. */
+  channel?: 'in-app'
 }
 
 function methodFromPath(path: string): string {
@@ -820,6 +829,23 @@ async function handleBrc100RequestInner(
     }
   }
   const originator = bridgeCallerHost(caller)
+  const channel: BridgeChannel = event.channel === 'in-app' ? 'in-app' : 'socket'
+  if (
+    originator &&
+    !isPublicMethod(method) &&
+    !channelMayUseGrant(channel, connectedAppChannel(originator) ?? undefined)
+  ) {
+    appendAppLog('warn', `[brc100] refused ${method} from ${originator} on the loopback socket: connected in an app tab`)
+    return {
+      status: 403,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'ORIGIN_BOUND_IN_APP',
+        description:
+          'This app was connected in the HandCash browser. Open it there, or disconnect it in HandCash to connect from another browser.',
+      }),
+    }
+  }
 
   const active = runtime?.instance ?? null
   if (!active) {
@@ -878,7 +904,7 @@ async function handleBrc100RequestInner(
     tokenViewRequest = prepared.tokenViewRequest
   }
 
-  const access = await gateOriginAccess(originator, method)
+  const access = await gateOriginAccess(originator, method, channel)
   if (access === 'unauthenticated') {
     if (method === 'isAuthenticated' || method === 'waitForAuthentication') {
       return { status: 200, body: JSON.stringify({ authenticated: false }) }

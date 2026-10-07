@@ -975,6 +975,9 @@ if (flags.has('--history') && !filePath && bucketArg !== 'desktop-local') {
       from: s.events[0] ? new Date(s.events[0].at).toISOString() : null,
       to: s.events.at(-1) ? new Date(s.events.at(-1).at).toISOString() : null,
       historyReplica: s.historyReplica,
+      migrates: (s.legacyImport?.steps ?? [])
+        .filter((step) => step.step === 'migrateTimed' || step.step === 'migratePackage' || step.step === 'chosenDone')
+        .map(({ visibility, ...step }) => step),
     }
   })
   console.log(JSON.stringify(sessions, null, 2))

@@ -12,8 +12,8 @@
  *   network path is allowed to be that host — never. Loopback and private
  *   network addresses stay open for local development.
  *
- * A local process can still send any header it likes; the bridge cannot tell
- * it from a browser.
+ * On the loopback socket a local process can still send any header it likes;
+ * the bridge cannot tell it from a browser. See {@link BridgeChannel}.
  */
 export type BridgeOriginRefusal =
   | 'opaque-origin'
@@ -82,6 +82,21 @@ export function resolveBridgeCaller(headers: Record<string, string | undefined>)
   const rawOriginator = headers.originator?.trim()
   if (rawOriginator) return callerFromOriginator(rawOriginator)
   return { kind: 'refuse', reason: 'no-originator' }
+}
+
+/**
+ * `in-app`: Mobile app tabs post over a WebView message channel, and the
+ * WebView, not the page, names the frame's origin. Anything else arrived on
+ * the loopback socket, where any app on the device can claim any origin.
+ */
+export type BridgeChannel = 'socket' | 'in-app'
+
+/** A grant made where the origin was vouched for is honored only there. */
+export function channelMayUseGrant(
+  channel: BridgeChannel,
+  grantedVia: BridgeChannel | undefined,
+): boolean {
+  return grantedVia !== 'in-app' || channel === 'in-app'
 }
 
 export function bridgeCallerHost(caller: BridgeCaller): string | undefined {
