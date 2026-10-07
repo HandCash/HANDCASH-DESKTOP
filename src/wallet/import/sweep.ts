@@ -193,6 +193,7 @@ async function runSweep(
     for (let i = 0; i < listed.length && !stop() && !paused; i += IMPORT_CHUNK) {
       report('items', `Moving collectables… ${items.toLocaleString()} of ${listed.length.toLocaleString()}`, items)
       const next = listed.slice(i + IMPORT_CHUNK, i + 2 * IMPORT_CHUNK)
+      let landed = 0
       const chunk = await importItems({
         sourceId: source.id,
         identityKey: active.identityKey,
@@ -202,6 +203,11 @@ async function runSweep(
         ...(next.length > 0
           ? { onSourcesRead: () => void prefetchImportItems({ sourceId: source.id, outpoints: next }) }
           : {}),
+        onProgress: (moved) => {
+          landed += moved
+          const shown = items + landed
+          report('items', `Moving collectables… ${shown.toLocaleString()} of ${listed.length.toLocaleString()}`, shown)
+        },
       })
       for (const { result } of chunk.results) {
         if (result.kind === 'moved') items += 1
@@ -215,6 +221,9 @@ async function runSweep(
         notes.push(paused)
       } else if (chunk.stopped === 'stale-funding') {
         paused = 'A spent fee coin is being cleared from this wallet. Sweep again in a moment — it resumes.'
+        notes.push(paused)
+      } else if (chunk.stopped === 'busy') {
+        paused = 'The wallet stayed busy with another job. Sweep again in a moment — it resumes.'
         notes.push(paused)
       }
     }

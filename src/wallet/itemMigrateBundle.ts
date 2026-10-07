@@ -55,7 +55,8 @@ export function itemsWithinSourceBudget<T>(
       fresh.push(txid)
       added += size
     }
-    if (fit > 0 && bytes + added > budget) break
+    // A tip whose sources are already counted adds nothing to the package.
+    if (fit > 0 && added > 0 && bytes + added > budget) break
     for (const txid of fresh) counted.add(txid)
     bytes += added
     fit += 1

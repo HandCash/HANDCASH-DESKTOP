@@ -18,6 +18,8 @@ vi.mock('./spendGuard', () => ({
   runExclusiveSpend: (fn: () => Promise<unknown>) => fn(),
 }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
+const waitForWalletRegionsIdle = vi.fn(async () => true)
+vi.mock('./walletCoordinator', () => ({ waitForWalletRegionsIdle: () => waitForWalletRegionsIdle() }))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({
   refreshFromChain: (...a: unknown[]) => refreshFromChain(...a),
@@ -120,6 +122,21 @@ describe('migrateChosenPhraseItems stops', () => {
     expect([...run.results.values()].map((r) => r.kind)).toEqual(['funds', 'funds'])
     // One attempt for the shared transaction, then stop — not once per tip.
     expect(createAction).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for a busy wallet and retries the bundle whole, then stops with every tip kept', async () => {
+    const busy = new Error('Wallet is busy (active: recompose). Nothing was sent — try again in a moment.')
+    busy.name = 'WalletCoordinatorAcquireTimeoutError'
+    createAction.mockRejectedValue(busy)
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen })
+
+    expect(run.stopped).toBe('busy')
+    expect(waitForWalletRegionsIdle).toHaveBeenCalled()
+    expect([...run.results.values()].map((r) => r.kind)).toEqual(['deferred', 'deferred'])
+    // Never split: every attempt carried both tips.
+    expect(createAction.mock.calls.length).toBeGreaterThan(1)
+    for (const [args] of createAction.mock.calls) expect((args as { inputs: unknown[] }).inputs).toHaveLength(2)
   })
 
   it('aborts the action when signing fails, so no phantom item is left listed', async () => {

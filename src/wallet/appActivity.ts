@@ -362,6 +362,7 @@ let writeGeneration = 0;
 
 subscribeActivityLedger(() => {
   writeGeneration += 1;
+  foldImportReceiveRows();
   for (const cb of listeners) cb();
 });
 
@@ -2085,6 +2086,34 @@ export async function pruneMissingOnChainActivity(
  *
  * @returns how many rows were settled.
  */
+/**
+ * Receive rows written per tip of an import's own migrate (1.3.470 painted
+ * Collect with arrival announcements on). The run's job record shows those
+ * items, so each folds into it as an imported leg instead of a row of its own.
+ */
+export function foldImportReceiveRows(): number {
+  const entries = readAll();
+  let changed = 0;
+  const next = entries.map((entry) => {
+    if (
+      entry.origin !== WALLET_ACTIVITY_ORIGIN ||
+      entry.kind !== "earned" ||
+      entry.method !== "receive-collectable" ||
+      entry.sendGroupId ||
+      !entry.item
+    ) {
+      return entry;
+    }
+    const job = jobOfTxid(entry.txid);
+    if (!job) return entry;
+    changed += 1;
+    const { status: _pending, ...rest } = entry;
+    return { ...rest, note: IMPORTED_COLLECTABLE_NOTE, sendGroupId: job };
+  });
+  if (changed > 0) writeAll(next);
+  return changed;
+}
+
 export function reconcilePendingActivityWithHeldItems(
   held: Array<{
     outpoint: string;

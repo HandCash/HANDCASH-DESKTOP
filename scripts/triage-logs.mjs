@@ -911,6 +911,7 @@ const WRITE_REFUSED_RE = /^\[activity\] durable write refused/
  */
 function activityFacts(events) {
   const writes = { new: 0, merged: 0, skipped: 0 }
+  const writesBy = new Map()
   const placeholderWrites = new Map()
   let orphanRemovals = 0
   let refusedWrites = 0
@@ -921,6 +922,8 @@ function activityFacts(events) {
     let m = ACTIVITY_WRITE_RE.exec(e.text)
     if (m) {
       writes[m[1]] += 1
+      const by = `${m[1]} ${m[2]}/${m[3]} · ${family(m[6])}`
+      writesBy.set(by, (writesBy.get(by) ?? 0) + 1)
       // A zero-sat, txid-less spend is the "Approving" placeholder.
       if (m[2] === 'spent' && Number(m[4]) <= 0 && m[5] === 'no-txid') {
         const key = `${m[3]} · ${family(m[6])}`
@@ -985,6 +988,7 @@ function activityFacts(events) {
   const isPlaceholder = (r) => r.sats <= 0 && (r.item === 'none' || r.item === 'unknown')
   return {
     writes,
+    writesBy: [...writesBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([write, count]) => ({ write, count })),
     placeholderWrites: [...placeholderWrites.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
@@ -1338,7 +1342,7 @@ const PHRASE_FAIL_RE = /^\[phrase-sweep\] (tip unreadable|item migrate failed)/
  * The tags we watch are the import path's; extend WATCHED_TAGS when triage
  * needs another subsystem's story without reading the log.
  */
-const WATCHED_TAGS = /^(import|phrase-sweep|legacy|items?|collectables?|1sat|tip-ingest|utxo-heal|spv|minerSubmit|minerOutbox|landing|arcade|activity)$/
+const WATCHED_TAGS = /^(import|phrase-sweep|legacy|legacy-scan|recompose|cloud-backup|chain-ingest|coordinator|items?|collectables?|1sat|tip-ingest|utxo-heal|spv|minerSubmit|minerOutbox|landing|arcade|activity)$/
 function shapeOf(text) {
   return text
     .replace(/[0-9a-f]{64}([._]\d+)?/gi, '<txid>')

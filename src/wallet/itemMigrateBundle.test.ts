@@ -114,6 +114,18 @@ function mined(tx: Transaction, height: number): Transaction {
   return tx
 }
 
+describe('itemsWithinSourceBudget over one large shared source', () => {
+  it('bundles every tip of a source larger than the budget, since it is counted once', () => {
+    const tips = Array.from({ length: 31 }, (_, vout) => ({ txid: 'aa'.repeat(32), vout }))
+    expect(itemsWithinSourceBudget(tips, 100, (t) => [{ txid: t.txid, bytes: 550_000 }])).toBe(31)
+  })
+
+  it('still stops before a second large source', () => {
+    const tips = [{ txid: 'aa'.repeat(32) }, { txid: 'aa'.repeat(32) }, { txid: 'bb'.repeat(32) }]
+    expect(itemsWithinSourceBudget(tips, 100, (t) => [{ txid: t.txid, bytes: 550_000 }])).toBe(2)
+  })
+})
+
 describe('migrateSourceCosts', () => {
   it('charges a mined source its body and proof, and an unmined one its parents too', () => {
     const parent = mined(deposit(1), 800_000)

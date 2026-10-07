@@ -66,6 +66,7 @@ describe('importQueue', () => {
       identityKey: 'id1',
       outpoints: [op(1), op(2), op(3)],
       activityGroup: job!.id,
+      onProgress: expect.any(Function),
     })
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 0, total: 3 })
     release()
@@ -92,5 +93,17 @@ describe('importQueue', () => {
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 200, total: 250 })
     release()
     await vi.waitFor(() => expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'done' }))
+  })
+
+  it('moves the bar as each transaction lands, not only when the chunk answers', async () => {
+    const release = heldChunks()
+    enqueueImportItems('s1', items(30))
+    const { onProgress } = vi.mocked(importItems).mock.calls[0]![0]
+    onProgress!(1)
+    onProgress!(1)
+    expect(listWalletJobs('id1')[0]).toMatchObject({ progress: { value: 2, max: 30 } })
+    expect(getWalletProgress()).toMatchObject({ current: 2, total: 30 })
+    release()
+    await vi.waitFor(() => expect(listWalletJobs('id1')[0]).toMatchObject({ face: 'done', progress: { value: 30, max: 30 } }))
   })
 })

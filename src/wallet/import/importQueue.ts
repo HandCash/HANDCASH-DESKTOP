@@ -29,18 +29,32 @@ type Run = {
   startedAt: number
   /** Every source this run touched, with its largest total and last done count. */
   sources: Map<string, { total: number; done: number }>
+  /** Items the chunk in flight has already broadcast, before the chunk answers. */
+  landed: { chunk: string; count: number } | null
 }
 
 let run: Run | null = null
 
 /** The machine starts a chunk before subscribers see the snapshot that started it; whoever arrives first opens the run. */
 function openRun(identityKey: string): Run {
-  run ??= { job: beginWalletJob({ kind: 'item-import', identityKey }), startedAt: Date.now(), sources: new Map() }
+  run ??= { job: beginWalletJob({ kind: 'item-import', identityKey }), startedAt: Date.now(), sources: new Map(), landed: null }
   return run
 }
 
 const PORTS: ImportQueuePorts = {
-  importMany: (chunk) => importItems({ ...chunk, activityGroup: openRun(chunk.identityKey).job.id }),
+  importMany: (chunk) => {
+    const current = openRun(chunk.identityKey)
+    const key = chunk.outpoints.join(',')
+    current.landed = { chunk: key, count: 0 }
+    return importItems({
+      ...chunk,
+      activityGroup: current.job.id,
+      onProgress: (moved) => {
+        if (current.landed?.chunk === key) current.landed.count += moved
+        if (actor) report(actor.getSnapshot())
+      },
+    })
+  },
   prefetch: (chunk) => prefetchImportItems(chunk),
 }
 
@@ -98,7 +112,14 @@ function report(snapshot: ImportQueueSnapshot): void {
   }
   if (!run) return
   const current = run
-  const { total, done } = runTotals(snapshot, current)
+  const totals = runTotals(snapshot, current)
+  const total = totals.total
+  // Once the chunk answers, its items count in `done` and `moving` holds another chunk.
+  const landed =
+    current.landed && current.landed.chunk === snapshot.context.moving.map((e) => e.outpoint).join(',')
+      ? current.landed.count
+      : 0
+  const done = Math.min(total, totals.done + landed)
   if (busy) {
     const detail = `${done.toLocaleString()} of ${total.toLocaleString()} imported`
     if (snapshot.matches('cooling')) current.job.wait('Waiting for a spent fee coin to clear…')

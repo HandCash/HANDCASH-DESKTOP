@@ -1621,14 +1621,15 @@ function seedIngestedItem(args: IngestedItem): Collectable | 'held' | null {
   )
 }
 
-function paintSeeded(painted: readonly Collectable[]): void {
+function paintSeeded(painted: readonly Collectable[], announceArrivals = true): void {
   if (painted.length === 0) return
   setCollectablesCache(
     dedupeByOrigin(
       [...painted, ...cachedCollectables],
       (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
       cachedLiveOneSats?.keys ?? null,
-    )
+    ),
+    { announceArrivals },
   )
 }
 
@@ -1667,7 +1668,8 @@ export function noteIngestedItems(items: readonly IngestedItem[]): number {
   }
   if (seeded === 0) return 0
   if (identityKey) persistSeededItems(identityKey)
-  paintSeeded(painted)
+  // The run's own job row speaks for these; no toast or receive row per tip.
+  paintSeeded(painted, false)
   return painted.length
 }
 
@@ -2464,10 +2466,22 @@ async function walkInscription(
 
 let listInFlight: Promise<Collectable[]> | null = null
 let listMoreInFlight: Promise<Collectable[]> | null = null
-let collectableBasketReadInFlight: {
+type BasketRead = {
   wallet: ActiveWallet['wallet']
   offset: number
   promise: ReturnType<ActiveWallet['wallet']['listOutputs']>
+  /** Region generation when the read began: its page is truth only if no region started since. */
+  generation: number
+  /** A caller gave up on it; its answer still lands, for the relist that follows. */
+  late: boolean
+}
+let collectableBasketReadInFlight: BasketRead | null = null
+/** The answer of a read every caller had given up on, kept for one reuse. */
+let lateBasketPage: {
+  wallet: ActiveWallet['wallet']
+  offset: number
+  generation: number
+  result: Awaited<ReturnType<ActiveWallet['wallet']['listOutputs']>>
 } | null = null
 
 /**
@@ -2506,6 +2520,12 @@ function listCollectableBasketPage(
   if (current && current.wallet === wallet && current.offset === offset) {
     return current.promise
   }
+  const late = lateBasketPage
+  if (late && late.wallet === wallet && late.offset === offset) {
+    lateBasketPage = null
+    if (late.generation === walletRegionsGeneration()) return Promise.resolve(late.result)
+  }
+  const startedAt = Date.now()
   const promise = wallet.listOutputs({
     basket: '1sat',
     limit: LIST_PAGE_SIZE,
@@ -2520,11 +2540,22 @@ function listCollectableBasketPage(
     include: 'locking scripts',
     seekPermission: false,
   })
-  collectableBasketReadInFlight = { wallet, offset, promise }
+  const read: BasketRead = { wallet, offset, promise, generation: walletRegionsGeneration(), late: false }
+  collectableBasketReadInFlight = read
   void promise.then(
-    () => {
+    (result) => {
       if (collectableBasketReadInFlight?.promise === promise) {
         collectableBasketReadInFlight = null
+      }
+      const ms = Date.now() - startedAt
+      if (ms >= 250) {
+        console.info(
+          `[collectables] basket read done ${ms}ms outputs=${result.outputs?.length ?? 0} offset=${offset}${read.late ? ' late' : ''}`,
+        )
+      }
+      if (read.late) {
+        lateBasketPage = { wallet, offset, generation: read.generation, result }
+        relistWhenWalletIdle()
       }
     },
     () => {
@@ -3104,10 +3135,16 @@ async function listCollectablesNow(
     const cached = getCachedCollectables()
     const timedOut =
       err instanceof Error && err.message.includes('listOutputs timed out')
+    // A read behind a busy wallet often answers just past the ceiling.
+    // Abandoning it left the grid on the old cache until something else listed.
+    const inFlight = collectableBasketReadInFlight
+    if (timedOut && inFlight?.wallet === wallet.wallet && inFlight.offset === pageOffset) {
+      inFlight.late = true
+    }
     if (cached.length > 0) {
       console.info(
         `[collectables] listOutputs ${timedOut ? 'timed out' : 'failed'} — keeping ${cached.length} cached item(s)`,
-        timedOut ? undefined : err,
+        ...(timedOut ? [] : [err]),
       )
     } else {
       console.warn('[collectables] listOutputs failed', err)

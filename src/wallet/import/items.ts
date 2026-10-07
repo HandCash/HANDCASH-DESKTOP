@@ -441,6 +441,8 @@ export async function importItems(args: {
   activityGroup?: string | null
   /** Runs once the chunk's source transactions are read. */
   onSourcesRead?: () => void
+  /** Runs as each transaction broadcasts, with how many items it moved. */
+  onProgress?: (moved: number) => void
 }): Promise<ImportItemsResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
@@ -505,6 +507,7 @@ export async function importItems(args: {
           })),
           activityGroup: args.activityGroup ?? null,
           ...(args.onSourcesRead ? { onSourcesRead: args.onSourcesRead } : {}),
+          ...(args.onProgress ? { onProgress: args.onProgress } : {}),
         })
       : null
   const stopped: ImportItemsResult['stopped'] = run?.stopped ?? null

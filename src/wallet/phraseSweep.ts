@@ -310,8 +310,11 @@ export type PhraseFundingSweepResult = {
  * `stale-funding` is the same kind of stop: the wallet kept choosing a fee coin
  * the chain shows spent elsewhere. Splitting the bundle cannot help — every
  * smaller one is funded the same way — so the run stops with the tips intact.
+ *
+ * `busy` is the wallet itself: unlock's recompose or another job held it past
+ * every wait. Nothing was signed, and no tip is to blame.
  */
-export type PhraseItemStopReason = 'funds' | 'stale-funding'
+export type PhraseItemStopReason = 'funds' | 'stale-funding' | 'busy'
 
 export type PhraseItemMigrateCursor = {
   sourceAddress: string
@@ -769,6 +772,8 @@ export async function migrateChosenPhraseItems(args: {
   activityGroup?: string | null
   /** Runs once this run's source transactions are read — the moment to start reading the next run's. */
   onSourcesRead?: () => void
+  /** Runs as each transaction broadcasts, with how many tips it moved. */
+  onProgress?: (moved: number) => void
 }): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -852,6 +857,7 @@ export async function migrateChosenPhraseItems(args: {
       void import('./collectables')
         .then(({ noteIngestedItems }) => noteIngestedItems(tips))
         .catch((err) => console.warn('[phrase-sweep] collectables paint skipped', err))
+      args.onProgress?.(receipts.length)
     },
   })
   for (const receipt of outcome.moved) {
@@ -863,7 +869,9 @@ export async function migrateChosenPhraseItems(args: {
   const unmoved: SingleItemMigrate =
     outcome.stopped === 'stale-funding'
       ? { kind: 'deferred', message: STALE_FUNDING_MESSAGE }
-      : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
+      : outcome.stopped === 'busy'
+        ? { kind: 'deferred', message: WALLET_BUSY_MESSAGE }
+        : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
   for (const item of pending.slice(outcome.resolved)) {
     results.set(givenOf.get(item.outpoint)!, unmoved)
   }
@@ -901,6 +909,13 @@ const STALE_FUNDING_MESSAGE =
   'The wallet’s fee coin was spent elsewhere and is being cleared. Nothing was sent — try again in a moment.'
 /** Builds of one bundle over fresh funding before the run stops on `stale-funding`. */
 const STALE_FUNDING_RETRIES = 1
+
+const WALLET_BUSY_MESSAGE =
+  'The wallet stayed busy with another job, so nothing was sent. Import again to move the rest.'
+/** Waits for the wallet to come free before the run stops on `busy`. */
+const WALLET_BUSY_WAITS = 6
+/** Ceiling on one wait; unlock's recompose and Refresh finish well inside it. */
+const WALLET_BUSY_WAIT_MS = 120_000
 
 /**
  * The certainty gate refused over a coin this bundle did not name — the
@@ -1011,6 +1026,7 @@ async function migrateOrdinalUnit(args: {
   let pending = args.items.slice()
   let perTx = args.itemsPerTx
   let fundingRetries = 0
+  let busyWaits = 0
   const costOf = migrateSourceCosts(args.inputBeef)
 
   while (pending.length > 0) {
@@ -1043,8 +1059,27 @@ async function migrateOrdinalUnit(args: {
       pending = pending.slice(group.length)
       perTx = args.itemsPerTx
       fundingRetries = 0
+      busyWaits = 0
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
+      // The wallet never let this bundle start: no tip is at fault, and a
+      // smaller bundle would queue behind the same job. Wait, then retry it whole.
+      if (err instanceof Error && err.name === 'WalletCoordinatorAcquireTimeoutError') {
+        if (busyWaits < WALLET_BUSY_WAITS) {
+          busyWaits += 1
+          appendAppLog(
+            'info',
+            `[phrase-sweep] wallet busy — waiting to send ${group.length} (${busyWaits}/${WALLET_BUSY_WAITS})`,
+          )
+          const { waitForWalletRegionsIdle } = await import('./walletCoordinator')
+          await waitForWalletRegionsIdle(WALLET_BUSY_WAIT_MS)
+          continue
+        }
+        out.stopped = 'busy'
+        out.lastError = WALLET_BUSY_MESSAGE
+        appendAppLog('warn', `[phrase-sweep] stopped: wallet still busy after ${busyWaits} wait(s)`)
+        return out
+      }
       if (isInsufficientFundsError(err)) {
         out.stopped = 'funds'
         out.lastError = reason
