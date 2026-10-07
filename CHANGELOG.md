@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.465] - 2026-10-06
+
+### Changed
+
+- **Imports and balance heals are one Activity row each.** While a run moves, Activity shows a single row with its icon, a progress bar against the run's total ("12 / 40", or a percentage for a heal) and what it is doing; when the total is not known yet the bar runs as a loading strip. Clicking it opens Import or Wallet health. When the run ends, every item it imported (across all its transactions) folds into one record, e.g. "Imported 40 Pixel Foxes".
+- **The bottom action bar leaves as soon as you confirm an import.** The run's progress, a bar and Stop sit in a banner at the top of Browse items instead of a gray dock.
+- **Import Director has icons** for every source — HandCash, recovery phrase, Twetch, Yours and private key — in both your saved wallets and "Add a wallet".
+- **Sound effects are on by default.** Turning them off in Settings still sticks.
+- Developer keys use a key icon. Asking for a second key for the same profile now explains why: an identity signs with one key at a time, so give another server the existing key's config, or rotate the identity key to issue a new one.
+
+### Fixed
+
+- **Items you imported and then burned or sent no longer come back under Import.** The list forgot what had already left whenever it was swept or rebuilt, and the public index can lag a broadcast by minutes. Gone items are now remembered for good, and listed items are rechecked against the chain after each scan (and every ten minutes) so anything already spent drops off.
+
 ## [1.3.464] - 2026-10-06
 
 ### Changed
