@@ -5,6 +5,7 @@ import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
   itemsWithinPostBudget,
+  migrateInputBeef,
   migratePackage,
   migrateRetryBody,
   migrateTipPostBytes,
@@ -153,6 +154,44 @@ describe('migratePackage', () => {
     expect(sent.atomicTxid).toBe(sweep.id('hex'))
     expect(sent.txs.map((t) => t.txid).sort()).toEqual([spent.id('hex'), sweep.id('hex')].sort())
     expect(sent.isValid()).toBe(true)
+  })
+})
+
+describe('migrateInputBeef', () => {
+  function chunkOf(...txs: Transaction[]): Beef {
+    const chunk = new Beef()
+    for (const tx of txs) chunk.mergeTransaction(tx)
+    return Beef.fromBinary(chunk.toBinary())
+  }
+
+  it('hands a bundle only the sources it spends, with their proofs', () => {
+    const spent = mined(deposit(30), 800_030)
+    const other = mined(deposit(31), 800_031)
+    const chunk = chunkOf(spent, other)
+    const whole = chunk.toBinary()
+
+    const scoped = Beef.fromBinary(migrateInputBeef(chunk, [spent.id('hex')], whole))
+    expect(scoped.txs.map((t) => t.txid)).toEqual([spent.id('hex')])
+    expect(scoped.findBump(spent.id('hex'))?.blockHeight).toBe(800_030)
+    expect(scoped.isValid(false)).toBe(true)
+  })
+
+  it('brings an unmined source the ancestry that proves it, parents first', () => {
+    const parent = mined(deposit(32), 800_032)
+    const pending = deposit(33, parent)
+    const other = mined(deposit(34), 800_034)
+    const chunk = chunkOf(pending, other)
+
+    const scoped = Beef.fromBinary(migrateInputBeef(chunk, [pending.id('hex')], chunk.toBinary()))
+    expect(scoped.txs.map((t) => t.txid)).toEqual([parent.id('hex'), pending.id('hex')])
+    expect(scoped.isValid(false)).toBe(true)
+    expect(scoped.findAtomicTransaction(pending.id('hex'))?.inputs[0]?.sourceTransaction?.id('hex')).toBe(parent.id('hex'))
+  })
+
+  it('sends the whole chunk rather than a package missing a source', () => {
+    const chunk = chunkOf(mined(deposit(35), 800_035))
+    const whole = chunk.toBinary()
+    expect(migrateInputBeef(chunk, ['ab'.repeat(32)], whole)).toBe(whole)
   })
 })
 

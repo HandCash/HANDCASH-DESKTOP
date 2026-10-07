@@ -2386,9 +2386,9 @@ const IMPORT_LINES = [
   ['itemsDone', /^\[import\] items done (\d+)ms chosen=(\d+) moved=(\d+) tx=(\d+) keys=(\d+)((?: refused\.\S+=\d+)*)(?: stopped=(\S+))?/],
   ['chosenDone', /^\[phrase-sweep\] chosen done (\d+)ms items=(\d+) keys=(\d+) moved=(\d+)(?: tx=(\d+))?/],
   ['runDone', /^\[import\] run done (\d+)ms items=(\d+) answered=(\d+) sources=(\d+) outcome=(\S+)/],
-  ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)(?: durable=(\d+))?(?: ef=(\d+))?/],
+  ['migratePackage', /^\[phrase-sweep\] migrate package ([0-9a-f]{12}) inputs=(\d+) bytes=(\d+)(?: durable=(\d+))?(?: ef=(\d+))?(?: in=(\d+))?/],
   ['busyWait', /^\[phrase-sweep\] wallet busy — waiting to send (\d+) \((\d+)\/(\d+)\)/],
-  ['migrateTimed', /^\[phrase-sweep\] migrate ([0-9a-f]{12}) done (\d+)ms create=(\d+)ms sign=(\d+)ms post=(\d+)ms/],
+  ['migrateTimed', /^\[phrase-sweep\] migrate ([0-9a-f]{12}) done (\d+)ms create=(\d+)ms sign=(\d+)ms(?: pack=(\d+)ms)? post=(\d+)ms/],
   ['yieldedToPayments', /^\[phrase-sweep\] yielded to payments done (\d+)ms/],
   ['abandonedSettled', /^\[phrase-sweep\] abandoned migrate of (\d+) settled (posted|failed|unknown)(?: ([0-9a-f]{12}))? after (\d+)ms/],
   ['busyStopped', /^\[phrase-sweep\] stopped: wallet still busy after (\d+) wait/],
@@ -2447,10 +2447,10 @@ function legacyImportFacts(events) {
         : step === 'tipUnreadable' ? { outpoint: m[1], reason: m[2] }
         : step === 'cashSweep' ? { coins: n(1), transactions: n(2), ms: n(3) }
         : step === 'cashBundleRefused' ? { coins: n(1), retrying: n(2) }
-        : step === 'migratePackage' ? { txid: m[1], inputs: n(2), bytes: n(3), ...(m[4] ? { durable: n(4) } : {}), ...(m[5] ? { ef: n(5) } : {}) }
+        : step === 'migratePackage' ? { txid: m[1], inputs: n(2), bytes: n(3), ...(m[4] ? { durable: n(4) } : {}), ...(m[5] ? { ef: n(5) } : {}), ...(m[6] ? { inputBeef: n(6) } : {}) }
         : step === 'busyWait' ? { tips: n(1), wait: n(2), of: n(3) }
         : step === 'busyStopped' ? { waits: n(1) }
-        : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), postMs: n(5) }
+        : step === 'migrateTimed' ? { txid: m[1], ms: n(2), createMs: n(3), signMs: n(4), packMs: n(5), postMs: n(6) }
         : step === 'yieldedToPayments' ? { ms: n(1) }
         : step === 'abandonedSettled' ? { tips: n(1), outcome: m[2], txid: m[3] ?? null, waitMs: n(4) }
         : step === 'prefetch' ? { ms: n(1), items: n(2), unread: n(3) }
@@ -2461,7 +2461,62 @@ function legacyImportFacts(events) {
       break
     }
   }
-  return { counts, steps: steps.slice(-40), background: backgroundCadence(events, steps) }
+  return {
+    counts,
+    steps: steps.slice(-40),
+    background: backgroundCadence(events, steps),
+    migrate: migrateThroughput(steps),
+  }
+}
+
+/**
+ * Where each migrate bundle's time went, from its `migrate package` and
+ * `migrate … done` lines. `pack` is wallet-side BEEF work between signing and
+ * the miner round; builds before 1.3.479 count it inside `sign`.
+ */
+function migrateThroughput(steps) {
+  const timed = steps.filter((s) => s.step === 'migrateTimed')
+  if (timed.length === 0) return null
+  const packages = new Map(steps.filter((s) => s.step === 'migratePackage').map((s) => [s.txid, s]))
+  const totals = { create: 0, sign: 0, pack: 0, post: 0 }
+  const byVisibility = {}
+  let tips = 0
+  let totalMs = 0
+  let slowest = null
+  for (const t of timed) {
+    const pkg = packages.get(t.txid)
+    const inputs = pkg?.inputs ?? 0
+    tips += inputs
+    totalMs += t.ms
+    totals.create += t.createMs ?? 0
+    totals.sign += t.signMs ?? 0
+    totals.pack += t.packMs ?? 0
+    totals.post += t.postMs ?? 0
+    const v = (byVisibility[t.visibility] ??= { bundles: 0, tips: 0, ms: 0 })
+    v.bundles += 1
+    v.tips += inputs
+    v.ms += t.ms
+    if (!slowest || t.ms > slowest.ms) slowest = { txid: t.txid, ms: t.ms, tips: inputs, visibility: t.visibility }
+  }
+  const share = (ms) => (totalMs > 0 ? Math.round((ms / totalMs) * 100) / 100 : 0)
+  const sized = [...packages.values()]
+  const sum = (key) => sized.reduce((acc, p) => acc + (p[key] ?? 0), 0)
+  return {
+    bundles: timed.length,
+    tips,
+    totalMs,
+    tipsPerMinute: totalMs > 0 ? Math.round((tips / (totalMs / 60_000)) * 10) / 10 : 0,
+    phaseShare: { create: share(totals.create), sign: share(totals.sign), pack: share(totals.pack), post: share(totals.post) },
+    byVisibility: Object.fromEntries(
+      Object.entries(byVisibility).map(([k, v]) => [k, { ...v, msPerTip: v.tips > 0 ? Math.round(v.ms / v.tips) : null }]),
+    ),
+    tipsPerBundle: Math.round((tips / timed.length) * 10) / 10,
+    largestPackageBytes: sized.reduce((max, p) => Math.max(max, p.bytes ?? 0), 0),
+    postedEfBytes: sum('ef') || null,
+    packageBytes: sum('bytes'),
+    largestInputBeefBytes: sized.reduce((max, p) => Math.max(max, p.inputBeef ?? 0), 0) || null,
+    slowest,
+  }
 }
 
 const HEARTBEAT_RE = /^\[heartbeat\] up (\d+)s .* · (hidden|visible)$/
@@ -3293,7 +3348,7 @@ const choiceId = (label) => label.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/
  * the workloads whose spans actually overlapped blocked time, so the model
  * chooses among real suspects instead of a fixed taxonomy.
  */
-function forensicQuestions(latest) {
+function forensicQuestions(latest, previous) {
   const owners = {}
   for (const w of latest.workloads) {
     owners[choiceId(w.workload)] =
@@ -3530,6 +3585,31 @@ function forensicQuestions(latest) {
         }
       : {}
 
+  const migrateUpload = latest.legacyImport?.migrate ? 'latest' : previous?.legacyImport?.migrate ? 'previous' : null
+  const migrateQuestions = migrateUpload
+    ? {
+        migrate_bottleneck: {
+          type: 'choice',
+          instructions:
+            `What bounds item-migrate throughput? \`${migrateUpload}.legacyImport.migrate\` is code-computed over every migrate bundle: \`phaseShare\` splits bundle time into \`create\` (Toolbox createAction: argument validation, input BEEF verification, coin selection and record writes in IndexedDB), \`sign\` (our signatures plus Toolbox signAction, whose \`process\` step commits to IndexedDB), \`pack\` (wallet-side BEEF assembly after signing; 0 on builds that fold it into \`sign\`) and \`post\` (local SPV plus the miner round). \`byVisibility\` gives bundles, tips and \`msPerTip\` with the WebView \`visible\`, \`hidden\` or \`mixed\` over the bundle. \`tipsPerBundle\`, \`packageBytes\` (the full local package), \`postedEfBytes\` (what Arcade receives; null on older builds) and \`largestInputBeefBytes\` (the input BEEF handed to createAction; null on older builds) size the work. \`${migrateUpload}.toolboxSteps\` splits Toolbox time by step with medians per visibility (\`create_action.storage_plan\`, \`sign_action.process\`). Which owns the time?`,
+          criteria: {
+            toolbox_storage:
+              '`create` and `sign` dominate and `toolboxSteps` puts the time in `create_action.storage_plan` or `sign_action.process`: IndexedDB work inside the Toolbox. The fix is less data per action (a smaller input BEEF) and fewer actions (more tips per bundle), not a faster network.',
+            background_penalty:
+              '`msPerTip` is several times higher `hidden` or `mixed` than `visible`: the backgrounded WebView ran the same work slower. The fix is keeping the app foreground-prioritised, or less work per step.',
+            miner_post:
+              '`post` dominates and grows with `packageBytes` or `postedEfBytes`: the upload to miners bounds throughput.',
+            wallet_packing:
+              '`pack` (or, on older builds, `sign` well beyond `toolboxSteps` `sign_action`) is a large share: wallet-side BEEF parsing and merging after signing.',
+            per_bundle_overhead:
+              '`tipsPerBundle` is small and per-bundle time is roughly constant regardless of tips: fixed cost per transaction dominates, so larger bundles would help most.',
+            fine: '`msPerTip` while visible is under about 300ms and hidden time is not most of the run.',
+            unclear: 'The phases do not show where migrate time went.',
+          },
+        },
+      }
+    : {}
+
   const nft = latest.nftImport
   const nftQuestions = nft
     ? {
@@ -3612,6 +3692,7 @@ function forensicQuestions(latest) {
     ...tokenCardQuestions,
     ...appFlowQuestions,
     ...nftQuestions,
+    ...migrateQuestions,
     ...notifyQuestions,
     ...bridgeQuestions,
     freeze_owner: {
@@ -3783,7 +3864,7 @@ function modelStateTiers(fullState) {
 }
 
 async function askJev(fullState, apiKey) {
-  const questions = { ...QUESTIONS, ...forensicQuestions(fullState.latest) }
+  const questions = { ...QUESTIONS, ...forensicQuestions(fullState.latest, fullState.previous) }
   for (const [tier, state] of modelStateTiers(fullState).entries()) {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const res = await fetch(TYPESAFE_URL, {
@@ -4460,6 +4541,29 @@ function report(state, answers) {
       console.log(`  ${s.label.padEnd(22)} ${s.runs} run(s), total ${s.totalMs}ms, longest ${s.longestMs}ms`)
     }
     if (answers.nft_import_speedup) choiceBlock('NFT import speed', answers.nft_import_speedup)
+  }
+
+  const migrateFrom = latest.legacyImport?.migrate ? ['latest', latest] : state.previous?.legacyImport?.migrate ? ['previous', state.previous] : null
+  if (migrateFrom) {
+    const [label, session] = migrateFrom
+    const mg = session.legacyImport.migrate
+    const ps = mg.phaseShare
+    console.log(`\nItem migrate (code-counted, ${label} upload v${session.version}):`)
+    console.log(
+      `  ${mg.bundles} bundle(s), ${mg.tips} tip(s), ${mg.tipsPerBundle}/bundle · ${mg.tipsPerMinute} tips/min over ${Math.round(mg.totalMs / 1000)}s`,
+    )
+    console.log(
+      `  time: create ${Math.round(ps.create * 100)}% · sign ${Math.round(ps.sign * 100)}% · pack ${Math.round(ps.pack * 100)}% · post ${Math.round(ps.post * 100)}%`,
+    )
+    for (const [vis, v] of Object.entries(mg.byVisibility)) {
+      console.log(`  ${vis.padEnd(8)} ${v.bundles} bundle(s), ${v.tips} tip(s), ${v.msPerTip ?? '—'}ms/tip`)
+    }
+    console.log(
+      `  package ${Math.round(mg.packageBytes / 1024)}KB total, largest ${Math.round(mg.largestPackageBytes / 1024)}KB` +
+        (mg.postedEfBytes != null ? ` · posted EF ${Math.round(mg.postedEfBytes / 1024)}KB` : '') +
+        (mg.largestInputBeefBytes != null ? ` · largest input BEEF ${Math.round(mg.largestInputBeefBytes / 1024)}KB` : ''),
+    )
+    if (answers.migrate_bottleneck) choiceBlock('Migrate bottleneck', answers.migrate_bottleneck)
   }
 
   const br = latest.bridge

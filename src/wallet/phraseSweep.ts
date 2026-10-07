@@ -56,6 +56,7 @@ import {
   chooseItemMigrateUnit,
   itemsWithinPostBudget,
   migratePackage,
+  migrateInputBeef,
   migrateRetryBody,
   migrateTipPostBytes,
   splitItemMigrateBundle,
@@ -858,6 +859,7 @@ export async function migrateChosenPhraseItems(args: {
     active,
     destLockHex: destLock,
     inputBeef: built.beef,
+    sources: sourceBeef,
     items: pending,
     itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
     onMoved: (receipts) => {
@@ -1067,7 +1069,9 @@ type UnitOutcome = {
 async function migrateOrdinalUnit(args: {
   active: ActiveWallet
   destLockHex: string
+  /** Every source of the run; a bundle is handed only the part it spends. */
   inputBeef: BEEF
+  sources: Beef | null
   items: PendingItemMigrate[]
   itemsPerTx: number
   /**
@@ -1122,6 +1126,9 @@ async function migrateOrdinalUnit(args: {
       if (yieldedMs >= 250) {
         appendAppLog('info', `[phrase-sweep] yielded to payments done ${yieldedMs}ms`)
       }
+      const inputBeef = args.sources
+        ? migrateInputBeef(args.sources, new Set(group.map((item) => item.txid)), args.inputBeef)
+        : args.inputBeef
       const txid = await runExclusiveSpend(
         async () =>
           // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
@@ -1133,7 +1140,7 @@ async function migrateOrdinalUnit(args: {
             buildAndPostItemMigrate({
               active: args.active,
               destLockHex: args.destLockHex,
-              inputBeef: args.inputBeef,
+              inputBeef,
               items: group,
             }),
           ),
@@ -1415,6 +1422,7 @@ async function signAndPostForeignInputs(
     throw new Error('Migrate produced no broadcastable transaction')
   }
 
+  const packStarted = Date.now()
   const packed = new Beef()
   packed.mergeBeef(args.inputBeef)
   packed.mergeBeef(sweepAtomic)
@@ -1424,7 +1432,8 @@ async function signAndPostForeignInputs(
   const efBytes = items.reduce((sum, item) => sum + migrateTipPostBytes(item.sourceLock.toBinary().length), 0)
   appendAppLog(
     'info',
-    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length} durable=${durableBody.length} ef=${efBytes}`,
+    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length}` +
+      ` durable=${durableBody.length} ef=${efBytes} in=${args.inputBeef.length}`,
   )
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
   const postStarted = Date.now()
@@ -1434,7 +1443,8 @@ async function signAndPostForeignInputs(
     appendAppLog(
       'info',
       `[phrase-sweep] migrate ${sweepTxid.slice(0, 12)} done ${doneAt - args.startedAt}ms` +
-        ` create=${args.createMs}ms sign=${postStarted - signStarted}ms post=${doneAt - postStarted}ms`,
+        ` create=${args.createMs}ms sign=${packStarted - signStarted}ms pack=${postStarted - packStarted}ms` +
+        ` post=${doneAt - postStarted}ms`,
     )
   }
   if (submitted.kind === 'unproven-conflict') {

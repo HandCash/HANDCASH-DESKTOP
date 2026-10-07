@@ -1,12 +1,22 @@
 # Changelog
 
+## [1.3.479] - 2026-10-07
+
+### Changed
+- Item migrate bundles hand the wallet only the source transactions they spend. Each chunk's input BEEF holds the sources of up to 100 items (about 10 MB when one item carries large art), and every bundle passed all of it to createAction. The Toolbox then parsed and hashed the whole chunk again in argument validation, storage planning and signable-transaction build, and the wallet did the same once more while packing. A mined source now travels with only its own merkle proof, and an unmined source with the ancestry that proves it. A chunk that cannot be scoped is sent whole, as before.
+- Triage of the last migrate run (v0.1.628, 12 bundles, 217 items): 6% of bundle time was the miner post. Most of it was Toolbox IndexedDB work (`create_action.storage_plan`, `sign_action.process`), and bundles ran about 4× slower per item while the app was not fully visible. Jev names Toolbox storage as the bottleneck.
+
+### Diagnostics
+- `[phrase-sweep] migrate package` logs `in=<N>`, the input BEEF handed to createAction. `[phrase-sweep] migrate … done` splits `pack=<N>ms` (wallet-side BEEF work after signing) out of `sign`.
+- Triage computes migrate throughput (tips per minute, phase shares, per-tip time by visibility, package versus posted EF bytes) and asks Jev for the migrate bottleneck. It reads the previous upload when the latest has no bundles.
+
 ## [1.3.478] - 2026-10-07
 
 ### Changed
 
 - Patch release (every push must ship a new version).
 
-## [1.3.477] - 2026-10-07
+## [1.3.478] - 2026-10-07
 
 ### Changed
 - Item imports pack more items per transaction. The per-transaction budget used to count every parent transaction an item came from, so a mint that created 100 items charged all 100 artworks to move one. Arcade never receives parent transactions: it validates Extended Format, which is the new transaction plus each input's spent amount and locking script. The budget now counts only that. Parent transactions and BRC-150 history stay on the device and travel off-chain in the inbox envelope; nothing is re-inscribed, and migrate outputs are plain 1-sat P2PKH.

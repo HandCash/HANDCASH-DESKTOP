@@ -11,12 +11,12 @@
  * unspendable tip cannot stall the run — and no other protocol path is ever
  * tried for the same item.
  */
-import { Beef } from '@bsv/sdk'
+import { Beef, type BEEF } from '@bsv/sdk'
 
 /**
- * Tips per transaction: one import chunk. Each action already carries the
- * chunk's whole input BEEF, so a larger bundle costs no extra download — only
- * one fee, one signing pass and one broadcast where there used to be four.
+ * Tips per transaction: one import chunk. The chunk's sources are already
+ * fetched, so a larger bundle costs no extra download — only one fee, one
+ * storage pass, one signing pass and one broadcast where there used to be four.
  */
 export const MAX_ITEMS_PER_MIGRATE_TX = 100
 
@@ -69,6 +69,52 @@ export function itemsWithinPostBudget<T>(
     fit += 1
   }
   return Math.max(1, fit)
+}
+
+/**
+ * The input BEEF for one bundle: the sources its tips spend with their proofs,
+ * and for an unmined source the ancestry that proves it. A chunk's BEEF holds
+ * every tip of the chunk; handed whole to each bundle, the Toolbox parsed and
+ * hashed all of it again for every transaction. Mined sources stop the walk —
+ * their proof is the whole SPV claim. A chunk that cannot be scoped is sent
+ * whole rather than refused.
+ */
+export function migrateInputBeef(chunk: Beef, txids: Iterable<string>, whole: BEEF): BEEF {
+  try {
+    const scoped = new Beef()
+    const visiting = new Set<string>()
+    const add = (txid: string): boolean => {
+      if (scoped.findTxid(txid)) return true
+      if (visiting.has(txid)) return true
+      visiting.add(txid)
+      const entry = chunk.findTxid(txid)
+      if (!entry) return false
+      if (entry.isTxidOnly) {
+        scoped.mergeTxidOnly(txid)
+        return true
+      }
+      if (entry.bumpIndex != null) {
+        const bump = chunk.bumps[entry.bumpIndex]
+        if (!bump) return false
+        scoped.mergeBump(bump)
+      } else {
+        for (const input of entry.tx?.inputs ?? []) {
+          const parent = String(input.sourceTXID ?? '').toLowerCase()
+          if (parent && chunk.findTxid(parent) && !add(parent)) return false
+        }
+      }
+      const raw = entry.rawTx
+      if (!raw) return false
+      scoped.mergeRawTx(raw)
+      return true
+    }
+    for (const txid of txids) {
+      if (!add(txid.toLowerCase())) return whole
+    }
+    return scoped.txs.length > 0 ? scoped.toBinary() : whole
+  } catch {
+    return whole
+  }
 }
 
 /**
