@@ -2,6 +2,7 @@
  * Factory-reset local wallet: vault, prefs, IndexedDB UTXOs, in-memory session.
  * Requires password so an unlocked session cannot be wiped casually.
  */
+import { ACTIVITY_LEDGER_DB } from './activityLedgerStore'
 import { unlockVault, unlockVaultWithDevice } from './vault'
 import { clearActiveWallet } from './session'
 import { getWalletRuntime } from './walletRuntime'
@@ -60,7 +61,7 @@ export async function wipeIndexedDatabases(): Promise<string[]> {
   const wiped: string[] = []
   if (typeof indexedDB === 'undefined') return wiped
 
-  const known = ['wallet-toolbox-mainnet', 'wallet-toolbox-testnet']
+  const known = ['wallet-toolbox-mainnet', 'wallet-toolbox-testnet', ACTIVITY_LEDGER_DB]
   for (const name of known) {
     await deleteDatabase(name)
     wiped.push(name)

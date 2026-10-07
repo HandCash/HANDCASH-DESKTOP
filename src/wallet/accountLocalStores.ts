@@ -3,7 +3,11 @@
  * Toolbox IDB is already per-account; these localStorage surfaces were not.
  */
 import { bindAccountLocalKeyScope } from './accountLocalKeys'
-import { resetActivityLedgerForRuntime, scheduleActivityLedgerRefresh } from './activityLedger'
+import {
+  resetActivityLedgerForRuntime,
+  restoreActivityLedger,
+  scheduleActivityLedgerRefresh,
+} from './activityLedger'
 import { appendAppLog } from './appLog'
 import { reconcileBackupWatchdog } from './backupWatchdog'
 import { bindSyncHealthAccount } from './walletHealth'
@@ -29,6 +33,7 @@ function ensureLifecycleRegistered(): void {
     start: (runtime) => {
       const wallet = runtime.instance
       resetActivityLedgerForRuntime()
+      void restoreActivityLedger(runtime)
       scheduleActivityLedgerRefresh()
       applyWalletOutcome({
         type: 'AccountChanged',

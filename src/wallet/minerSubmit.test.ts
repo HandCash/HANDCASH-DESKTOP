@@ -99,6 +99,36 @@ describe('submitAtomicBeefToMiners', () => {
     vi.mocked(spentStatusOfOutpoint).mockReset()
     vi.mocked(txExistsOnChain).mockResolvedValue(false)
     vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unspent')
+    const { resetLandedTxForTests } = await import('./landedTx')
+    resetLandedTxForTests()
+  })
+
+  it('retires an outbox retry the chain already holds and pins it, without re-posting', async () => {
+    beefComplete = false
+    spvVerdict = { kind: 'incomplete', reason: 'parent body missing' }
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValue(true)
+    const { removePendingMinerSubmit } = await import('./pendingMinerOutbox')
+    const { pinBroadcastLocalTx } = await import('./staleOutputRelease')
+    vi.mocked(removePendingMinerSubmit).mockClear()
+    vi.mocked(pinBroadcastLocalTx).mockClear()
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC, { fromOutbox: true })
+    expect(result).toEqual({ kind: 'accepted', ancestryComplete: true, keepPropagating: false })
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(removePendingMinerSubmit).toHaveBeenCalledWith(TXID, undefined)
+    expect(pinBroadcastLocalTx).toHaveBeenCalledWith(TXID, ATOMIC)
+    const { txLanded } = await import('./landedTx')
+    expect(txLanded(TXID)).toBe(true)
+  })
+
+  it('a first round posts without asking the chain', async () => {
+    postBeef.mockResolvedValueOnce([{ status: 'success', txidResults: [{ status: 'success' }] }])
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValue(true)
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(postBeef).toHaveBeenCalledOnce()
   })
 
   it('returns accepted when miners accept', async () => {

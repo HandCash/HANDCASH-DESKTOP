@@ -7,7 +7,17 @@ vi.mock('./walletRuntime', () => ({
 }))
 vi.mock('./walletCoordinator', () => ({ shouldYieldChainIngestToSpend: () => false, spendNeedsStorage: () => false }))
 vi.mock('./ghostTxSuppress', () => ({ isGhostTxSuppressed: () => false }))
-import { ledgerActivityById, ledgerActivitySnapshot, noteCommittedItemLegs, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests, subscribeActivityLedger } from './activityLedger'
+const held = vi.hoisted(() => ({ queued: new Set<string>(), contacted: new Set<string>(), landed: new Set<string>() }))
+vi.mock('./arcadeSubmitGuard', () => ({ txHadArcadeSubmitContact: (t: string) => held.contacted.has(t) }))
+vi.mock('./landedTx', () => ({ txLanded: (t: string) => held.landed.has(t) }))
+vi.mock('./pendingMinerOutbox', () => ({ pendingMinerSubmitTxids: () => held.queued }))
+vi.mock('./accountLocalKeys', () => ({ accountKeyScopeFor: () => undefined }))
+const disk = vi.hoisted(() => ({ rows: new Map<string, unknown[]>(), saves: [] as Array<[string, unknown[]]> }))
+vi.mock('./activityLedgerStore', () => ({
+  loadLedgerRows: async (ns: string) => disk.rows.get(ns) ?? null,
+  saveLedgerRows: async (ns: string, rows: unknown[]) => { disk.saves.push([ns, [...rows]]) },
+}))
+import { ledgerActivityById, ledgerActivitySnapshot, noteCommittedItemLegs, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests, restoreActivityLedger, subscribeActivityLedger } from './activityLedger'
 const txid = (n: number) => n.toString(16).padStart(64, '0')
 function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.resolve([])) {
   const provider = {
@@ -23,7 +33,11 @@ function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.re
   return { runtime, provider }
 }
 describe('Activity ledger runtime ownership', () => {
-  beforeEach(() => { resetActivityLedgerForTests(); control.current = null })
+  beforeEach(() => {
+    resetActivityLedgerForTests(); control.current = null
+    held.queued.clear(); held.contacted.clear(); held.landed.clear()
+    disk.rows.clear(); disk.saves.length = 0
+  })
   it('a previous account read cannot suppress or overwrite the new account refresh', async () => {
     let finish!: (tx: unknown[]) => void
     const old = wallet('old', new Promise(resolve => { finish = resolve }))
@@ -127,6 +141,53 @@ describe('Activity ledger runtime ownership', () => {
     })
     await refreshActivityLedger(owner.runtime)
     expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(4)])
+  })
+  it('shows a held migrate the wallet propagated, never an unbroadcast one, and follows its pin', async () => {
+    const records = new Map<number, Record<string, unknown>>([
+      [6, { transactionId: 6, txid: txid(6), satoshis: -30, isOutgoing: true, created_at: 60, status: 'nosend', description: 'Migrate 25 ordinals from phrase' }],
+      [7, { transactionId: 7, txid: txid(7), satoshis: -30, isOutgoing: true, created_at: 70, status: 'nosend', description: 'Migrate 25 ordinals from phrase' }],
+      [8, { transactionId: 8, txid: txid(8), satoshis: -5, isOutgoing: true, created_at: 80, status: 'nosend', description: 'App listing' }],
+    ])
+    held.queued.add(txid(6))
+    held.landed.add(txid(7))
+    const owner = wallet('owner'); control.current = owner.runtime
+    const provider = owner.provider as typeof owner.provider & { toDbTrx: unknown }
+    provider.toDbTrx = () => ({
+      objectStore: () => ({
+        index: () => ({ getAllKeys: async ([status]: [string]) => [...records.values()].filter(r => r.status === status).map(r => r.transactionId) }),
+        get: async (id: number) => records.get(id),
+      }),
+      done: Promise.resolve(),
+    })
+    await refreshActivityLedger(owner.runtime)
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(6), txid(7)])
+
+    // Pinned after the read cached it as `nosend`: the index, not the cache, decides.
+    records.get(8)!.status = 'unproven'
+    await refreshActivityLedger(owner.runtime)
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(6), txid(7), txid(8)])
+  })
+  it('paints the last read at launch, lets the live read replace it, and saves the live rows', async () => {
+    vi.useFakeTimers()
+    try {
+      const saved = { id: 'ledger:' + txid(1), txid: txid(1), origin: 'handcash', kind: 'earned', method: 'receive', sats: 10, at: 1, note: 'Old' }
+      disk.rows.set('owner', [saved])
+      const owner = wallet('owner', Promise.resolve([{ transactionId: 2, txid: txid(2), satoshis: 20, created_at: 2, status: 'completed' }]))
+      control.current = owner.runtime
+      await restoreActivityLedger(owner.runtime)
+      expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(1)])
+      expect(disk.saves).toEqual([])
+
+      await refreshActivityLedger(owner.runtime)
+      expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(2)])
+      await restoreActivityLedger(owner.runtime)
+      expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(2)])
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(disk.saves.map(([ns, rows]) => [ns, (rows as Array<{ txid: string }>).map(r => r.txid)])).toEqual([['owner', [txid(2)]]])
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('refuses an ambiguous or missing wallet owner', async () => {
     const owner = wallet('owner'); control.current = owner.runtime

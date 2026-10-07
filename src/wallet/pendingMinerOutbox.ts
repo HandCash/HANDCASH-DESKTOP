@@ -338,6 +338,21 @@ export async function flushPendingMinerOutbox(args?: {
   return accepted
 }
 
+/** Txids still queued, read without parsing their bodies. */
+export function pendingMinerSubmitTxids(owner?: BoundAccountKeyScope): Set<string> {
+  try {
+    const parsed = JSON.parse(durableGetItem(storageKey(owner)) || '[]') as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(
+      parsed
+        .map((row) => (typeof row?.txid === 'string' ? row.txid.trim().toLowerCase() : ''))
+        .filter((txid) => /^[0-9a-f]{64}$/.test(txid)),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
 export function pendingMinerOutboxDepth(): number {
   return load().length
 }

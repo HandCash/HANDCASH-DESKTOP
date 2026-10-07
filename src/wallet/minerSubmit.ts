@@ -59,6 +59,7 @@ import {
   type TransactionFlow,
 } from "./transactionTelemetry";
 import { normalizeTxid } from "./txid";
+import { noteTxLanded, txLanded } from "./landedTx";
 import { spendConflictIsProven } from "./spendVerdict";
 
 /**
@@ -423,6 +424,13 @@ async function withArcadeVerdict(
   return merged;
 }
 
+async function chequeOnChain(id: string, chain: ActiveWallet["chain"]): Promise<boolean> {
+  if (txLanded(id)) return true;
+  if (!chain) return false;
+  const { txExistsOnChain } = await import("./legacyScan");
+  return (await txExistsOnChain(id, chain).catch(() => null)) === true;
+}
+
 /**
  * One miner round per subject. Several ingest and outbox paths post the same
  * cheque at once; each one used to assemble ancestry on the storage lock, and
@@ -521,6 +529,19 @@ async function submitAtomicBeefToMinersOnce(
     return outboxDurable
       ? { kind: "queued", reason: "offline" }
       : untrackedMinerResult("offline", telemetry);
+  }
+
+  // A retry has no business re-posting what the chain already holds. Without
+  // this exit a mined cheque whose ancestry could not be refetched in time
+  // stayed held as unverified on every flush: never pinned, so it stayed
+  // `nosend` with its change unfundable and its Activity row hidden.
+  if (opts?.fromOutbox && !detached && (await chequeOnChain(id, active.chain))) {
+    noteTxLanded(id);
+    removePendingMinerSubmit(id, owner);
+    recordStage("provider_accepted", telemetry);
+    console.info(`[minerSubmit] ${id.slice(0, 12)} already on chain — retry retired, pinning`);
+    void pinBroadcastLocalTx(id, atomic).catch(() => undefined);
+    return { kind: "accepted", ancestryComplete: true, keepPropagating: false };
   }
 
   let beefBytes = atomic;

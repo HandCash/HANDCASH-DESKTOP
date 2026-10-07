@@ -17,9 +17,25 @@ let pins: Array<{ txid: string; at: number }> = []
 let fates: Record<string, ArcadeTxFate> = {}
 let inputsOf: Record<string, string[]> = {}
 let spentBy: Record<string, string> = {}
+let txRows: Array<{ txid: string; status: string; isOutgoing: boolean; created_at: number }> = []
+const onChain = new Set<string>()
 
 const runtime = {
-  instance: { chain: 'main', identityKey: '02ab', services: {} },
+  instance: {
+    chain: 'main',
+    identityKey: '02ab',
+    services: {},
+    wallet: {
+      storage: {
+        getAuth: async () => ({ userId: 1 }),
+        runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
+          fn({
+            findTransactions: async ({ partial }: { partial: { status: string } }) =>
+              txRows.filter((row) => row.status === partial.status),
+          }),
+      },
+    },
+  },
   runtimeId: 'r1',
 } as unknown as WalletRuntime
 
@@ -45,13 +61,16 @@ vi.mock('./arcadeV2', () => ({
 }))
 vi.mock('./arcadeSubmitGuard', () => ({
   listArcadeSubmitContacts: () => pins,
+  txHadArcadeSubmitContact: (txid: string) => pins.some((pin) => pin.txid === txid),
+  rememberArcadeSubmitContact: vi.fn(),
   txIsArcadeRejected: (txid: string) => rejected.has(txid),
   noteArcadeRejectedTx: (txid: string) => {
     calls.push(`reject:${txid.slice(0, 4)}`)
     rejected.add(txid)
   },
 }))
-vi.mock('./legacyScan', () => ({ txExistsOnChain: async () => false }))
+vi.mock('./legacyScan', () => ({ txExistsOnChain: async (txid: string) => onChain.has(txid) }))
+vi.mock('./activityLedger', () => ({ scheduleActivityLedgerRefresh: vi.fn() }))
 vi.mock('./signedTxInputs', () => ({
   inputOutpointsForSignedTx: async (txid: string) => inputsOf[txid] ?? [],
 }))
@@ -73,6 +92,10 @@ vi.mock('./staleOutputRelease', () => ({
   promotePinnedNoSendProofRequests: async () => {
     calls.push('promote-nosend')
     return 0
+  },
+  pinBroadcastLocalTx: async (txid: string) => {
+    calls.push(`pin:${txid.slice(0, 4)}`)
+    return true
   },
   failUnsentLocalTx: async (txid: string) => {
     calls.push(`fail:${txid.slice(0, 4)}`)
@@ -128,6 +151,8 @@ describe('arcadeLanding', () => {
       [SLOW]: [`${'e5'.repeat(32)}.0`],
     }
     spentBy = { [DEAD_INPUT]: SPENDER }
+    txRows = []
+    onChain.clear()
     const { resetArcadeLandingForTests } = await import('./arcadeLanding')
     resetArcadeLandingForTests()
   })
@@ -193,6 +218,29 @@ describe('arcadeLanding', () => {
       '2 payments did not reach the chain',
       expect.any(String),
     )
+  })
+
+  it('unlock pins a held cheque the chain already holds and leaves an unbroadcast one held', async () => {
+    const MINED = 'e1'.repeat(32)
+    const HELD = 'f1'.repeat(32)
+    pins = []
+    const at = Date.now() - HOUR
+    txRows = [
+      { txid: MINED, status: 'nosend', isOutgoing: true, created_at: at },
+      { txid: HELD, status: 'nosend', isOutgoing: true, created_at: at },
+    ]
+    onChain.add(MINED)
+    const { scheduleUnlockLandingPass, txLanded } = await import('./arcadeLanding')
+    const { removePendingMinerSubmit } = await import('./pendingMinerOutbox')
+    vi.mocked(removePendingMinerSubmit).mockClear()
+    scheduleUnlockLandingPass(runtime)
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    expect(calls).toEqual(['promote-nosend', `pin:${MINED.slice(0, 4)}`])
+    expect(txLanded(MINED)).toBe(true)
+    expect(txLanded(HELD)).toBe(false)
+    expect(removePendingMinerSubmit).toHaveBeenCalledWith(MINED, undefined)
+    expect(removePendingMinerSubmit).not.toHaveBeenCalledWith(HELD, undefined)
   })
 
   it('a live watch stops at the first node-held status', async () => {

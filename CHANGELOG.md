@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.498] - 2026-10-07
+
+### Fixed
+- **A mined import transaction is no longer stuck as "not sent yet".** Since 1.3.492, import and item-send transactions are stored as held (`nosend`) and leave that state only when Arcade accepts them. When Arcade errored on a large package and another broadcaster took it, nothing released it, even after it was mined. The retry queue kept re-posting it with incomplete ancestry, and the unlock rescue never looked at held rows. Three of the phone's import transactions (5c872303, 10952771, fca756eb) were in block 970086 and still held. A held transaction's change cannot fund the next payment, it gets no proof request, and Activity hid it while Collect showed its items.
+  - A retry now asks whether the chain already has the transaction. If it does, the retry ends and the transaction is released to unconfirmed. Its change becomes spendable and the proof task fetches its merkle proof.
+  - The unlock pass releases every held transaction the chain already has. It decides on chain evidence only. A held transaction the network does not have is never broadcast by this pass.
+- **Activity shows held imports the wallet has broadcast.** The ledger read only completed, unconfirmed and sending transactions. It now also shows held ones that Arcade took, that a node reported, or that the retry queue is still broadcasting. An app's held transaction that was never broadcast stays out. Each row's status comes from the storage index on every read, so a transaction released after it was cached is not judged by its old status.
+
+### Changed
+- **Activity paints past imports at launch.** The wallet's own transaction list is Activity's base layer, and on the phone its first read took 146–220 s behind the storage lock. Until it finished, every import was missing from Activity. The last read is now saved in its own IndexedDB store (newest 10,000 rows, cleared by a wallet wipe) and shown at launch, then the live read replaces it.
+
 ## [1.3.497] - 2026-10-07
 
 ### Changed

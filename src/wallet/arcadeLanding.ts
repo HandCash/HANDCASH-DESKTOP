@@ -372,6 +372,7 @@ const RESCUE_MIN_AGE_MS = 10 * 60_000
 const RESCUE_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 const RESCUE_MAX = 60
 const RESCUE_STATUSES = ['unproven', 'sending', 'unsent']
+const HELD_STATUSES = ['nosend']
 
 function rowCreatedMs(raw: unknown): number {
   const at = raw instanceof Date ? raw.getTime() : typeof raw === 'number' ? raw : Date.parse(String(raw ?? ''))
@@ -379,7 +380,11 @@ function rowCreatedMs(raw: unknown): number {
 }
 
 /** Outgoing transactions the wallet signed that are not proven yet, oldest first. */
-async function unprovenOutgoingSends(runtime: WalletRuntime): Promise<Array<{ txid: string; at: number }>> {
+async function unprovenOutgoingSends(
+  runtime: WalletRuntime,
+  statuses: readonly string[] = RESCUE_STATUSES,
+  minAgeMs = RESCUE_MIN_AGE_MS,
+): Promise<Array<{ txid: string; at: number }>> {
   const storage = runtime.instance.wallet?.storage as unknown as {
     getAuth?: () => Promise<{ userId?: number }>
     runAsStorageProvider?: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T>
@@ -394,7 +399,7 @@ async function unprovenOutgoingSends(runtime: WalletRuntime): Promise<Array<{ tx
       findTransactions: (args: unknown) => Promise<Array<{ txid?: string; isOutgoing?: boolean; created_at?: unknown }>>
     }).findTransactions.bind(sp)
     const found = []
-    for (const status of RESCUE_STATUSES) {
+    for (const status of statuses) {
       found.push(...(await find({
         partial: { ...(typeof userId === 'number' ? { userId } : {}), status, isOutgoing: true },
         noRawTx: true,
@@ -406,8 +411,61 @@ async function unprovenOutgoingSends(runtime: WalletRuntime): Promise<Array<{ tx
   const now = Date.now()
   return (rows ?? [])
     .map((row) => ({ txid: normalizeTxid(row.txid ?? '') ?? '', at: rowCreatedMs(row.created_at) }))
-    .filter((row) => row.txid && now - row.at >= RESCUE_MIN_AGE_MS && now - row.at <= RESCUE_MAX_AGE_MS)
+    .filter((row) => row.txid && now - row.at >= minAgeMs && now - row.at <= RESCUE_MAX_AGE_MS)
     .sort((a, b) => a.at - b.at)
+}
+
+/**
+ * Pin held cheques the chain already holds. Migrates and item sends file as
+ * `nosend` and only Arcade's acceptance pinned them, so one a fallback miner
+ * landed stayed app-held for good: change unfundable, no proof request, no
+ * Activity row while Collect showed its items. Chain evidence is the only
+ * trigger; a held `noSend` the network does not have is never posted here.
+ */
+async function pinLandedHeldCheques(runtime: WalletRuntime, owner?: BoundAccountKeyScope): Promise<void> {
+  if (!(await waitForImportsToSettle(runtime))) return
+  const started = Date.now()
+  let held: Array<{ txid: string; at: number }>
+  try {
+    held = await unprovenOutgoingSends(runtime, HELD_STATUSES, UNLOCK_MIN_AGE_MS)
+  } catch (err) {
+    console.warn('[landing] held cheques skipped — local transactions unreadable', err)
+    return
+  }
+  const { txHadArcadeSubmitContact, txIsArcadeRejected } = await import('./arcadeSubmitGuard')
+  const candidates = held
+    .filter((row) => !txHadArcadeSubmitContact(row.txid) && !txIsArcadeRejected(row.txid))
+    .slice(0, RESCUE_MAX)
+  if (candidates.length === 0) return
+  const { txExistsOnChain } = await import('./legacyScan')
+  const { pinBroadcastLocalTx } = await import('./staleOutputRelease')
+  const { removePendingMinerSubmit } = await import('./pendingMinerOutbox')
+  const chain = runtime.instance.chain
+  let onChain = 0
+  let pinned = 0
+  let asked = 0
+  for (const row of candidates) {
+    if (!runtimeIsCurrent(runtime)) return
+    let landed = txLanded(row.txid)
+    if (!landed) {
+      if (asked > 0) await delay(UNLOCK_GAP_MS)
+      asked += 1
+      landed = (await txExistsOnChain(row.txid, chain).catch(() => null)) === true
+      if (landed) noteTxLanded(row.txid)
+    }
+    if (!landed) continue
+    onChain += 1
+    removePendingMinerSubmit(row.txid, owner)
+    if (!(await waitForSpendRegion()) || !runtimeIsCurrent(runtime)) return
+    if (await pinBroadcastLocalTx(row.txid, (await chequeBody(row.txid, owner)) ?? undefined)) pinned += 1
+  }
+  console.info(
+    `[landing] held cheques checked=${candidates.length} onChain=${onChain} pinned=${pinned} done ${Date.now() - started}ms`,
+  )
+  if (pinned > 0) {
+    const { scheduleActivityLedgerRefresh } = await import('./activityLedger')
+    scheduleActivityLedgerRefresh()
+  }
 }
 
 /**
@@ -574,6 +632,9 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
         'They spent coins that were already spent. Marked not sent; balance corrected.',
       )
     }
+    await pinLandedHeldCheques(runtime, owner).catch((err) => {
+      console.warn('[landing] held cheque pass failed', err)
+    })
     await rescueUnfollowedSends(runtime, owner).catch((err) => {
       console.warn('[landing] rescue failed', err)
     })

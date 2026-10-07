@@ -1217,6 +1217,7 @@ const SPEND_SIGN = `stateDiagram-v2
   spv --> postBeef : package SPV-verified\\nscripts · amounts · proofs vs headers
   spv --> spv : incomplete — held in outbox, retried
   spv --> failed : invalid — never posted, inputs freed
+  spv --> done : outbox retry already on chain\\nretired, pinned nosend → unproven
   note right of certify
     inputCertainty + kernel/inputCertainty. SPV proves a parent exists;
     only a UTXO answer (Teranode /utxos with mempool spenders,
@@ -1238,7 +1239,8 @@ const SPEND_SIGN = `stateDiagram-v2
   note right of landing
     arcadeLanding + kernel/landingFate, never on the reply path.
     Unlock replays every pinned cheque that never landed,
-    after any running import or saved-wallet sweep ends.
+    after any running import or saved-wallet sweep ends,
+    and pins every held nosend cheque the chain already holds.
   end note
   signedNoSend --> sendWithOk : BSV BRC-29 same pattern
   sendWithOk --> done : no failure

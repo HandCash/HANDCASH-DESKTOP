@@ -345,6 +345,14 @@ export const storageRegistry = Object.freeze({
     version: 2,
     retention: 'rebuildable',
   }),
+  /** IndexedDB: the last Activity ledger read per account, painted at launch until the live read lands. */
+  activityLedger: defineStorage({
+    key: 'handcash-brc100-activity-ledger',
+    owner: 'activity',
+    scope: 'wallet',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   listingAuthorizations: defineStorage({
     key: 'handcash.market.listingAuthorizations.v2',
     owner: 'market',
