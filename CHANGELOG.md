@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.477] - 2026-10-07
+
+### Changed
+- Item imports pack more items per transaction. The per-transaction budget used to count every parent transaction an item came from, so a mint that created 100 items charged all 100 artworks to move one. Arcade never receives parent transactions: it validates Extended Format, which is the new transaction plus each input's spent amount and locking script. The budget now counts only that. Parent transactions and BRC-150 history stay on the device and travel off-chain in the inbox envelope; nothing is re-inscribed, and migrate outputs are plain 1-sat P2PKH.
+
+### Diagnostics
+- `[phrase-sweep] migrate package` logs `ef=<N>`, the Extended Format bytes posted to Arcade, beside the full package size. Triage reports it.
+
 ## [1.3.476] - 2026-10-07
 
 ### Fixed
