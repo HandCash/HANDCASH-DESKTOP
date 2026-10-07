@@ -904,7 +904,8 @@ const ITEM_MIGRATE_RUN = `stateDiagram-v2
   done --> [*]
   stopped --> [*]
 
-  moving : one bundle · postForeignInputAction · noSend → registerSignedSend → propagateSignedSend
+  moving : one bundle · signForeignInputAction in the spend region · noSend → registerSignedSend → propagateSignedSend
+  moving : settleForeignInputAction outside it · awaitChainedLegFunding
   note right of moving
     Faults are classified once (classifyItemMigrateFault).
     Only rejected is about the tips; every other fault stops the run.

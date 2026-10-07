@@ -23,6 +23,8 @@ const prepareBroadcastCheque = vi.fn(async (_w: unknown, _id: string, atomic: nu
 const enqueuePendingMinerSubmit = vi.fn(() => true)
 const archiveSignedCheque = vi.fn(() => true)
 const releaseRuntime = vi.fn()
+const pinBroadcastLocalTx = vi.fn(async () => true)
+const arcade = { contact: false, configured: true }
 let runtimeCurrent = true
 const runtime = {
   instance: {
@@ -43,6 +45,7 @@ vi.mock('./session', () => ({
 }))
 
 vi.mock('./walletRuntime', () => ({
+  getWalletRuntime: () => runtime,
   requireWalletRuntime: () => runtime,
   retainWalletRuntime: () => ({ runtime, release: releaseRuntime }),
   runtimeIsCurrent: () => runtimeCurrent,
@@ -53,6 +56,15 @@ vi.mock('./staleOutputRelease', () => ({
     sealSpentInputsOfSignedTx(...args),
   releaseSealedInputsOfUnsentTx: (...args: unknown[]) =>
     releaseSealedInputsOfUnsentTx(...args),
+  pinBroadcastLocalTx: (...args: unknown[]) => pinBroadcastLocalTx(...args),
+}))
+
+vi.mock('./arcadeSubmitGuard', () => ({
+  txHadArcadeSubmitContact: () => arcade.contact,
+}))
+
+vi.mock('./arcadeVerdict', () => ({
+  hasArcadeBroadcaster: () => arcade.configured,
 }))
 
 vi.mock('./dualLayerSend', () => ({
@@ -321,5 +333,46 @@ describe('signedSendLifecycle', () => {
       txid: TXID,
       reason: reject,
     })
+  })
+})
+
+describe('awaitChainedLegFunding', () => {
+  const TXID = 'ab'.repeat(32)
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pinBroadcastLocalTx.mockClear()
+    arcade.contact = false
+    arcade.configured = true
+  })
+
+  it('frees change only once Arcade holds the cheque, as the common flow does', async () => {
+    const { awaitChainedLegFunding } = await import('./signedSendLifecycle')
+    const funded = awaitChainedLegFunding(TXID, [1, 2])
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(pinBroadcastLocalTx).not.toHaveBeenCalled()
+
+    arcade.contact = true
+    await vi.advanceTimersByTimeAsync(300)
+    await expect(funded).resolves.toBe(true)
+    expect(pinBroadcastLocalTx).toHaveBeenCalledWith(TXID, [1, 2])
+    vi.useRealTimers()
+  })
+
+  it('answers false when Arcade never takes it inside the window', async () => {
+    const { awaitChainedLegFunding } = await import('./signedSendLifecycle')
+    const funded = awaitChainedLegFunding(TXID, undefined, 5_000)
+    await vi.advanceTimersByTimeAsync(5_500)
+    await expect(funded).resolves.toBe(false)
+    expect(pinBroadcastLocalTx).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('pins at once when no Arcade broadcaster is configured', async () => {
+    arcade.configured = false
+    const { awaitChainedLegFunding } = await import('./signedSendLifecycle')
+    await expect(awaitChainedLegFunding(TXID)).resolves.toBe(true)
+    expect(pinBroadcastLocalTx).toHaveBeenCalledWith(TXID, undefined)
+    vi.useRealTimers()
   })
 })

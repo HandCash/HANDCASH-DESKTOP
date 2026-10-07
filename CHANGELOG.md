@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.497] - 2026-10-07
+
+### Changed
+- **Import transactions broadcast through the same flow as every payment.** The broadcast itself was already shared (seal, archive, miner outbox, Arcade, landing watch). Around it, the import did three things of its own:
+  - It held the wallet's exclusive spend lock through the whole post and the wait for Arcade, up to 158 s on the phone, so payments and syncs queued behind it. A payment releases the lock once the transaction is signed and registered. Imports now do the same (`signForeignInputAction`), then wait for the result outside the lock (`settleForeignInputAction`).
+  - It judged Arcade's answer to the first post alone. When a fallback broadcaster took the transaction, the import stopped as "propagating" and paused 8 s twice, then dropped the remaining items, although the miner outbox (which retries every 60 s) was still taking it to Arcade. The import now waits on that same outcome: once Arcade holds the transaction, the common flow frees its change and the next transaction is funded from it.
+  - It had its own wait for the change to free up, and the bulk collectable send had a third copy. Both now use one helper, `awaitChainedLegFunding`.
+- **Bulk collectable sends wait for Arcade before funding the next transaction from the last one's change.** They used to free that change as soon as the transaction was signed, before any miner had seen it. They also skip the wait after the last transaction. A transaction the network has not taken yet stops the run, and only the untouched items are reported as not sent. The signed transaction used to be counted among them.
+
 ## [1.3.496] - 2026-10-07
 
 ### Fixed

@@ -55,7 +55,13 @@ import {
   type ItemMigrateStop,
 } from './itemMigrateRun'
 import { itemMigrateRunMachine } from './itemMigrateRunMachine'
-import { postForeignInputAction, type ForeignInputPosted } from './foreignInputAction'
+import {
+  isForeignInputSigned,
+  settleForeignInputAction,
+  signForeignInputAction,
+  type ForeignInputPosted,
+  type ForeignInputSigned,
+} from './foreignInputAction'
 import { setVisibleTimeout } from './visibleClock'
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend, yieldToForegroundSpends } from './spendGuard'
@@ -850,10 +856,12 @@ async function settleAbandonedMigrate(late: Promise<unknown>): Promise<Abandoned
   })
   try {
     return await Promise.race([
-      late.then(
-        (value): AbandonedMigrate => (isPosted(value) ? { kind: 'posted', posted: value } : { kind: 'unknown' }),
-        (error: unknown): AbandonedMigrate => ({ kind: 'failed', error }),
-      ),
+      late
+        .then(async (value): Promise<unknown> => (isForeignInputSigned(value) ? settleForeignInputAction(value) : value))
+        .then(
+          (value): AbandonedMigrate => (isPosted(value) ? { kind: 'posted', posted: value } : { kind: 'unknown' }),
+          (error: unknown): AbandonedMigrate => ({ kind: 'failed', error }),
+        ),
       expired,
     ])
   } finally {
@@ -1076,11 +1084,12 @@ async function sendItemBundle(args: UnitArgs, group: PendingItemMigrate[]): Prom
     if (waitingShown) args.onWaiting?.(false)
     waitingShown = false
   }
-  return runExclusiveSpend(
-    () => buildAndPostItemMigrate({ active: args.active, destLockHex: args.destLockHex, inputBeef, items: group }),
+  const signed = await runExclusiveSpend(
+    () => buildAndSignItemMigrate({ active: args.active, destLockHex: args.destLockHex, inputBeef, items: group }),
     regionTaken,
     { lane: 'background' },
   ).finally(regionTaken)
+  return settleForeignInputAction(signed)
 }
 
 /** Chain ingest for the end of a migrate run. */
@@ -1092,16 +1101,16 @@ export async function refreshAfterPhraseItemMigrate(): Promise<void> {
   }
 }
 
-/** Build, sign and hand off one transaction carrying `items` tips. */
-async function buildAndPostItemMigrate(args: {
+/** Build, sign and register one transaction carrying `items` tips; propagation starts here. */
+async function buildAndSignItemMigrate(args: {
   active: ActiveWallet
   destLockHex: string
   inputBeef: BEEF
   items: PendingItemMigrate[]
-}): Promise<ForeignInputPosted> {
+}): Promise<ForeignInputSigned> {
   const { destLockHex, items } = args
   const first = items[0]!
-  return postForeignInputAction({
+  return signForeignInputAction({
     active: args.active,
     inputBeef: args.inputBeef,
     inputs: items.map((item) => ({ ...item, description: 'migrate ordinal from phrase' })),

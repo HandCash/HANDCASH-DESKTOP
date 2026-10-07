@@ -8,9 +8,14 @@
  * queueing a broadcast of its own, and `signedSendLifecycle` seals, archives,
  * posts and follows it. Before signing completes nothing has left the device,
  * so a failure releases the action; after it, only a proven reject does.
+ *
+ * Like a payment, the spend region covers signing and registration only
+ * (`signForeignInputAction`). A run then settles each cheque outside it
+ * (`settleForeignInputAction`), so a slow post never holds the wallet.
  */
 import { Beef, P2PKH, type BEEF, type CreateActionOutput, type LockingScript, type PrivateKey } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
+import type { MinerSubmitResult } from './minerSubmit'
 import { appendAppLog } from './appLog'
 import { migratePackage, migrateRetryBody, migrateTipPostBytes } from './itemMigrateBundle'
 
@@ -29,7 +34,7 @@ export type ForeignInput = {
 }
 
 /**
- * Where a signed foreign-input cheque stands when this returns.
+ * Where a signed foreign-input cheque stands once it is settled.
  *
  * - `accepted`: Arcade holds it and its change is selectable, so the next
  *   transaction of a run can be funded from it.
@@ -40,11 +45,27 @@ export type ForeignInputPropagation = 'accepted' | 'propagating'
 
 export type ForeignInputPosted = { txid: string; propagation: ForeignInputPropagation }
 
-/** How long a run waits for an accepted cheque's change to become selectable. */
-const CHANGE_PIN_TIMEOUT_MS = 20_000
-const CHANGE_PIN_POLL_MS = 250
+/**
+ * A registered cheque whose common propagation has started. The spend region
+ * ends here, as it does for every payment: posting and waiting for Arcade
+ * hold no wallet lock.
+ */
+export type ForeignInputSigned = {
+  txid: string
+  atomicBeef: number[]
+  /** The common miner submit; rejects only on a proven reject. */
+  submitted: Promise<MinerSubmitResult>
+  startedAt: number
+  /** create / sign / pack / register, for the settle log line. */
+  phases: string
+}
 
-export async function postForeignInputAction(args: {
+export function isForeignInputSigned(value: unknown): value is ForeignInputSigned {
+  const signed = value as Partial<ForeignInputSigned> | null
+  return typeof signed?.txid === 'string' && Array.isArray(signed.atomicBeef) && signed.submitted instanceof Promise
+}
+
+export async function signForeignInputAction(args: {
   active: ActiveWallet
   spendKey?: PrivateKey
   inputBeef: BEEF
@@ -52,7 +73,7 @@ export async function postForeignInputAction(args: {
   outputs: CreateActionOutput[]
   labels: string[]
   description: string
-}): Promise<ForeignInputPosted> {
+}): Promise<ForeignInputSigned> {
   const { active, inputs } = args
   if (inputs.some((input) => !(input.spendKey ?? args.spendKey))) {
     throw new Error('Every foreign input needs a key to sign it')
@@ -117,39 +138,46 @@ export async function postForeignInputAction(args: {
       ` durable=${durableBody.length} ef=${efBytes} in=${args.inputBeef.length}`,
   )
 
-  const [{ registerSignedSend, propagateSignedSend }, { txHadArcadeSubmitContact }, { noteForeignInputs }] =
-    await Promise.all([import('./signedSendLifecycle'), import('./arcadeSubmitGuard'), import('./staleOutputRelease')])
+  const [{ registerSignedSend, propagateSignedSend }, { noteForeignInputs }] = await Promise.all([
+    import('./signedSendLifecycle'),
+    import('./staleOutputRelease'),
+  ])
   noteForeignInputs(inputs.map((input) => `${input.txid}.${input.vout}`))
   const registerStarted = Date.now()
   const handle = await registerSignedSend({ txid, atomicBeef, durableBody, flow: 'legacy_import' })
-  const postStarted = Date.now()
-  // Throws only on a proven reject, after minerSubmit has released the seal.
-  const submitted = await propagateSignedSend(handle)
-  const arcadeHolds = submitted.kind === 'accepted' && txHadArcadeSubmitContact(txid)
-  const submittedAt = Date.now()
-  const propagation: ForeignInputPropagation = arcadeHolds && (await changeSelectable(txid, atomicBeef)) ? 'accepted' : 'propagating'
-  const doneAt = Date.now()
-  appendAppLog(
-    propagation === 'accepted' ? 'info' : 'warn',
-    `[foreign-input] ${txid.slice(0, 12)} ${propagation} submit=${submitted.kind} done ${doneAt - startedAt}ms` +
-      ` create=${createMs}ms sign=${packStarted - signStarted}ms pack=${registerStarted - packStarted}ms` +
-      ` register=${postStarted - registerStarted}ms post=${submittedAt - postStarted}ms pin=${doneAt - submittedAt}ms`,
-  )
-  return { txid, propagation }
+  const submitted = propagateSignedSend(handle)
+  // Settled by the run; a proven reject has already rewritten the cheque.
+  submitted.catch(() => undefined)
+  return {
+    txid,
+    atomicBeef,
+    submitted,
+    startedAt,
+    phases:
+      `create=${createMs}ms sign=${packStarted - signStarted}ms pack=${registerStarted - packStarted}ms` +
+      ` register=${Date.now() - registerStarted}ms`,
+  }
 }
 
 /**
- * Arcade's acceptance pins the cheque in the background; the next transaction
- * of a run is funded by its change, so wait until the pin has promoted it.
+ * Wait, outside the spend region, for what the common flow did with the
+ * cheque. Throws only on a proven reject; `propagating` means Arcade has not
+ * taken it yet and the retry queue still holds it.
  */
-async function changeSelectable(txid: string, atomicBeef: number[]): Promise<boolean> {
-  const { pinBroadcastLocalTx } = await import('./staleOutputRelease')
-  const deadline = Date.now() + CHANGE_PIN_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    if (await pinBroadcastLocalTx(txid, atomicBeef).catch(() => false)) return true
-    await new Promise((resolve) => setTimeout(resolve, CHANGE_PIN_POLL_MS))
-  }
-  return false
+export async function settleForeignInputAction(signed: ForeignInputSigned): Promise<ForeignInputPosted> {
+  const { txid, atomicBeef } = signed
+  const postStarted = Date.now()
+  const result = await signed.submitted
+  const submittedAt = Date.now()
+  const { awaitChainedLegFunding } = await import('./signedSendLifecycle')
+  const propagation: ForeignInputPropagation = (await awaitChainedLegFunding(txid, atomicBeef)) ? 'accepted' : 'propagating'
+  const doneAt = Date.now()
+  appendAppLog(
+    propagation === 'accepted' ? 'info' : 'warn',
+    `[foreign-input] ${txid.slice(0, 12)} ${propagation} submit=${result.kind} done ${doneAt - signed.startedAt}ms` +
+      ` ${signed.phases} post=${submittedAt - postStarted}ms pin=${doneAt - submittedAt}ms`,
+  )
+  return { txid, propagation }
 }
 
 function asBytes(tx: unknown): number[] {

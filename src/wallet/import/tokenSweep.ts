@@ -4,7 +4,7 @@ import type { ActiveWallet } from '../session'
 import { appendAppLog } from '../appLog'
 import { buildLegacyInputBeef } from '../legacyBeef'
 import { parseOrdEnvelope } from '../ordinalOwnership'
-import { postForeignInputAction, type ForeignInput } from '../foreignInputAction'
+import { settleForeignInputAction, signForeignInputAction, type ForeignInput } from '../foreignInputAction'
 import { runExclusiveSpend } from '../spendGuard'
 import { isInsufficientFundsError } from '../insufficientFunds'
 import { buildBsv21TransferLockingScript } from '../token/legacyInscribe'
@@ -246,8 +246,8 @@ export async function sweepTokensFromAddress(args: {
       })
       await yieldToUi()
       try {
-        const { txid, propagation } = await runExclusiveSpend(() =>
-          postForeignInputAction({
+        const signed = await runExclusiveSpend(() =>
+          signForeignInputAction({
             active,
             spendKey,
             inputBeef: built.beef,
@@ -265,6 +265,7 @@ export async function sweepTokensFromAddress(args: {
             description: `Sweep ${token.sym} from imported wallet`.slice(0, 50),
           }),
         )
+        const { txid, propagation } = await settleForeignInputAction(signed)
         result.moved.push({ tokenId: token.id, amount: total, txid })
         appendAppLog(
           'info',

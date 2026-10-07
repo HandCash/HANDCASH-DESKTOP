@@ -1,4 +1,5 @@
 import {
+  getWalletRuntime,
   requireWalletRuntime,
   retainWalletRuntime,
   runtimeIsCurrent,
@@ -31,7 +32,7 @@ import {
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
 import { appendAppLog } from './appLog'
-import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
+import { pinBroadcastLocalTx, sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
 export type SignedSendHandle = {
   lifecycleId: string
@@ -234,6 +235,43 @@ export async function propagateSignedSend(
   } finally {
     handle.releaseRuntime?.()
   }
+}
+
+/**
+ * Long enough for the miner outbox's next round (every 60 s) to reach Arcade
+ * after a fallback broadcaster took the cheque on the first post.
+ */
+const CHAINED_LEG_FUNDING_MS = 75_000
+const CHAINED_LEG_POLL_MS = 250
+
+/**
+ * Wait until a signed cheque's change can fund the next leg of a run.
+ *
+ * That change is app-held (`nosend`) until Arcade holds the cheque. The common
+ * flow then pins it: minerSubmit on the first post, the miner outbox on a
+ * retry, the landing watch when it sees a node. A run waits on that same
+ * outcome rather than a verdict of its own, and pins idempotently in case the
+ * background pin lost a race with a busy read. Without an Arcade broadcaster
+ * configured, any post is all the common flow will ever get.
+ */
+export async function awaitChainedLegFunding(
+  txid: string,
+  atomicBeef?: number[],
+  timeoutMs = CHAINED_LEG_FUNDING_MS,
+): Promise<boolean> {
+  const [{ txHadArcadeSubmitContact }, { hasArcadeBroadcaster }] = await Promise.all([
+    import('./arcadeSubmitGuard'),
+    import('./arcadeVerdict'),
+  ])
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const runtime = getWalletRuntime()
+    if (!runtime) return false
+    const arcadeHolds = txHadArcadeSubmitContact(txid) || !hasArcadeBroadcaster(runtime.instance.services)
+    if (arcadeHolds && (await pinBroadcastLocalTx(txid, atomicBeef).catch(() => false))) return true
+    await new Promise((resolve) => setTimeout(resolve, CHAINED_LEG_POLL_MS))
+  }
+  return false
 }
 
 /** Common optimistic payment rule: signing completes UI; propagation is late. */
