@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.467] - 2026-10-06
+
+### Changed
+
+- **BSV from an imported or legacy address moves in one transaction instead of one per coin.** Sweeping a wallet with many small coins now packs up to 100 into each transaction: one fee, one broadcast, and the balance lands together. If the network refuses a bundle, the wallet splits it in half and retries until the one bad coin is found, so the rest still move and the failure names the exact coin.
+
 ## [1.3.466] - 2026-10-06
 
 ### Fixed
