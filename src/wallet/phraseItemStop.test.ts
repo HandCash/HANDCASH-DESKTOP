@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Beef, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { accountLocalKey } from './accountLocalKeys'
 
 /**
@@ -133,6 +133,21 @@ describe('migrateChosenPhraseItems stops', () => {
 
     expect(run.results.get(TIPS[0]!.outpoint)?.kind).toBe('failed')
     expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-1' })
+  })
+
+  it('never signs a layout with a funding input ahead of a tip', async () => {
+    const reordered = new Transaction()
+    reordered.addInput({ sourceTXID: 'ab'.repeat(32), sourceOutputIndex: 0, unlockingScript: new UnlockingScript() })
+    reordered.addInput({ sourceTXID: TIPS[0]!.txid, sourceOutputIndex: 0, unlockingScript: new UnlockingScript() })
+    reordered.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(PHRASE_KEY.toAddress()) })
+    const beef = new Beef()
+    beef.mergeRawTx(reordered.toBinary())
+    createAction.mockResolvedValue({ signableTransaction: { reference: 'ref-2', tx: beef.toBinary() } })
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen.slice(0, 1) })
+
+    expect(run.results.get(TIPS[0]!.outpoint)).toMatchObject({ kind: 'failed', message: expect.stringContaining('reordered') })
+    expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-2' })
   })
 })
 

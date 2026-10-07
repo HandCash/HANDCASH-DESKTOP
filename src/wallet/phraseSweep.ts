@@ -1236,6 +1236,12 @@ async function signAndPostForeignInputs(
     if (unsignedTx == null || inputIndexes.size !== items.length) {
       throw new Error('Could not find every ordinal input to sign')
     }
+    // Sats flow first-in first-out: tip i must be input i for its inscribed sat
+    // to land in output i. A funding input ahead of a tip would carry the
+    // inscription into change, so a reordered layout is never signed.
+    if (!items.every((item, index) => inputIndexes.get(index) === item)) {
+      throw new Error('The wallet reordered the item inputs; refusing to sign')
+    }
     // Ordinal tips are P2PKH ‖ inscription ‖ Sigma, so the sighash scriptCode
     // must be the *whole* locking script. SetupClient.getUnlockP2PKH hashes a
     // bare P2PKH, which is why every inscribed tip failed CHECKSIG with "the
