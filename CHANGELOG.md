@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.482] - 2026-10-07
+
+### Performance
+- Activity: while the screen was open, the feed rebuilt its whole projection every 5 s and on every activity, app or asset event. It threw away its write-generation cache each time and handed React a new array, so every row re-rendered even when nothing had changed. A tick now reuses the cached snapshot unless an expiry write or a pending row's age moved it, and an unchanged feed no longer re-renders. App and asset changes still rebuild it. Mount also builds the feed once instead of twice.
+
+### Diagnostics
+- The 0.1.632 upload's worst burst (12 freezes, 17.9 s blocked, right after opening Activity during the unlock recompose) had no measured owner. Activity now logs `[activity] feed refresh done <N>ms` and `feed mount done <N>ms`. Recompose's history, chain, balance and relist steps and the post-recompose derived-change pass (journal, recover, echo, full activity-ledger refresh) are named UI phases, so stall lines and triage name the step instead of just `active: recompose`.
+
 ## [1.3.481] - 2026-10-07
 
 ### Fixed
