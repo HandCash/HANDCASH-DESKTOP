@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   decideLanding,
+  decideRescue,
   QUEUED_EVIDENCE_AFTER_MS,
   withArcadeConflict,
   type LandingEvidence,
@@ -14,6 +15,21 @@ const stalled = {
   reason: 'failed to validate transaction',
 }
 const none: LandingEvidence = { onChain: false, spentElsewhere: [], rejectedParents: [] }
+
+describe('decideRescue', () => {
+  it('re-posts only what Arcade never saw and no explorer holds', () => {
+    expect(decideRescue({ kind: 'unknown' }, false).kind).toBe('repost')
+    expect(decideRescue({ kind: 'unknown' }, null).kind).toBe('leave')
+    expect(decideRescue({ kind: 'unknown' }, true).kind).toBe('landed')
+  })
+
+  it('leaves Arcade its own verdicts', () => {
+    expect(decideRescue({ kind: 'landed', status: 'MINED' }, null)).toEqual({ kind: 'landed', reason: 'Arcade MINED' })
+    expect(decideRescue({ kind: 'queued', status: 'RECEIVED' }, null)).toEqual({ kind: 'follow', status: 'RECEIVED' })
+    expect(decideRescue(stalled, false).kind).toBe('leave')
+    expect(decideRescue({ kind: 'rejected', reason: 'bad' }, false).kind).toBe('leave')
+  })
+})
 
 describe('decideLanding', () => {
   it('is landed once a node holds it', () => {

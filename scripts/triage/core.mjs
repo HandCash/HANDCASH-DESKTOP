@@ -2777,6 +2777,13 @@ const MINER_OUTCOMES = [
   ['rejectReleased', /^\[minerSubmit\] hard reject — releasing seal[^0-9a-f]*([0-9a-f]{12})/],
   ['offline', /^\[minerSubmit\] offline — signed cheque queued\s+([0-9a-f]{12})/],
   ['pinDidNotFree', /^\[minerSubmit\] post-Arcade pin did not free change\s+([0-9a-f]{12})/],
+  // A fallback broadcaster settled the round without Arcade's verdict (1.3.486+).
+  // Before that build the outbox dropped these as complete and nothing followed them.
+  ['withoutArcade', /^\[minerSubmit\] ([0-9a-f]{12}) accepted without Arcade — kept queued\b/],
+  ['arcadeAskedDirectly', /^\[minerSubmit\] ([0-9a-f]{12}) Arcade asked directly\b/],
+  ['arcadeRestored', /^\[minerSubmit\] Arcade restored ahead of \S+\s+([0-9a-f]{12})/],
+  ['rescueUnbuilt', /^\[landing\] rescue ([0-9a-f]{12}) could not rebuild its package\b/],
+  ['rescueRefused', /^\[landing\] rescue ([0-9a-f]{12}) re-post refused\b/],
   // Broadcast a transaction local storage never held: its change and spent
   // marks are gone (Toolbox auto action batch dropped the signed `noSend`).
   ['pinNoLocalRow', /^\[stale-output\] pin found no local row for ([0-9a-f]{12})/],
@@ -2807,7 +2814,7 @@ const MINER_LANDED = new Set(['landed', 'rejectOnChain'])
 /** Outcomes that are a post attempt (the body left, or tried to leave, the device). */
 const MINER_ATTEMPTED = new Set([
   'accepted', 'contacted', 'missingInputsIncomplete', 'hardReject', 'transportFailed',
-  'noAck', 'unprovenConflict', 'rejectOnChain', 'rejectReleased',
+  'noAck', 'unprovenConflict', 'rejectOnChain', 'rejectReleased', 'withoutArcade', 'arcadeAskedDirectly',
 ])
 const APP_SIGN_OK_RE = /^\[brc100\] ok\b.*\bmethod=(createAction|signAction|processAction)\b/
 

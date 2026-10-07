@@ -63,3 +63,23 @@ export function configurePostBeefServices(
 ): void {
   preferServiceOrder(collection, POST_BEEF_PREFER)
 }
+
+/**
+ * Put Arcade back in front before a miner round. The toolbox's UntilSuccess
+ * loop moves a provider to the back after one service error and never moves
+ * it forward again, so one failed Arcade post handed every later post of the
+ * session to a fallback first — whose "success" ended the round without
+ * Arcade, without a landing watch, and without the chain. Returns the name
+ * that was leading when it was not Arcade.
+ */
+export function restoreArcadeFirst(
+  collection: MutableCollection | null | undefined,
+): string | null {
+  const services = collection?.services
+  if (!Array.isArray(services) || services.length === 0) return null
+  if (!services.some((s) => s.name === POST_BEEF_PREFER[0])) return null
+  const leading = services[0]!.name
+  if (leading === POST_BEEF_PREFER[0]) return null
+  configurePostBeefServices(collection)
+  return leading
+}

@@ -4,6 +4,7 @@ import {
   POST_BEEF_PREFER,
   configurePostBeefServices,
   preferServiceOrder,
+  restoreArcadeFirst,
 } from './serviceOrder'
 
 describe('preferServiceOrder', () => {
@@ -34,5 +35,13 @@ describe('preferServiceOrder', () => {
     configurePostBeefServices({ services })
     expect(services[0]?.name).toBe('ArcadeBeef')
     expect(services.map((s) => s.name)).toEqual([...POST_BEEF_PREFER])
+  })
+
+  it('puts a demoted Arcade back in front and names who led', () => {
+    const services = [{ name: 'GorillaPoolArcBeef' }, { name: 'Bitails' }, { name: 'ArcadeBeef' }]
+    expect(restoreArcadeFirst({ services })).toBe('GorillaPoolArcBeef')
+    expect(services[0]?.name).toBe('ArcadeBeef')
+    expect(restoreArcadeFirst({ services })).toBeNull()
+    expect(restoreArcadeFirst({ services: [{ name: 'Bitails' }] })).toBeNull()
   })
 })

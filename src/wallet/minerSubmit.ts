@@ -398,6 +398,32 @@ async function resolveMinerConflict(args: {
 }
 
 /**
+ * The round's results with Arcade's own answer in them. A round that settled
+ * on a fallback (Arcade timed out, demoted, or errored) asks Arcade directly
+ * with the same body; see `arcadeVerdict.ts`.
+ */
+async function withArcadeVerdict(
+  services: ActiveWallet["services"],
+  id: string,
+  beefBytes: number[],
+  results: PostBeefServiceResult[],
+): Promise<PostBeefServiceResult[]> {
+  const { arcadeRoundVerdict, askArcadeDirectly, hasArcadeBroadcaster, withArcadeAnswer } =
+    await import("./arcadeVerdict");
+  const verdict = arcadeRoundVerdict(results, hasArcadeBroadcaster(services));
+  if (verdict.kind !== "missing") return results;
+  const started = Date.now();
+  const answer = await askArcadeDirectly(services, id, beefBytes);
+  if (!answer) return results;
+  const merged = withArcadeAnswer(results, answer);
+  console.info(
+    `[minerSubmit] ${id.slice(0, 12)} Arcade asked directly (${verdict.reason}) bytes=${beefBytes.length}: ` +
+      `${summarizePostBeef([answer]).detail} done ${Date.now() - started}ms`
+  );
+  return merged;
+}
+
+/**
  * One miner round per subject. Several ingest and outbox paths post the same
  * cheque at once; each one used to assemble ancestry on the storage lock, and
  * the next signature waited behind all of them. Joiners share the round.
@@ -617,11 +643,27 @@ async function submitAtomicBeefToMinersOnce(
     // The configured service, not the internalize interceptor: this is the
     // wallet's own miner round and must never be answered from the BEEF.
     const { directPostBeef } = await import("./internalizeMinerDeferral");
+    const { restoreArcadeFirst } = await import("./serviceOrder");
+    const demotedBehind = restoreArcadeFirst(
+      (active.services as unknown as { postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void } })
+        .postBeefServices,
+    );
+    if (demotedBehind) {
+      console.info(
+        `[minerSubmit] Arcade restored ahead of ${demotedBehind}`,
+        id.slice(0, 12)
+      );
+    }
     const results = await directPostBeef(active.services)(
       Beef.fromBinary(beefBytes),
       [id],
     );
-    rawResults = results as PostBeefServiceResult[];
+    rawResults = await withArcadeVerdict(
+      active.services,
+      id,
+      beefBytes,
+      results as PostBeefServiceResult[],
+    );
     summary = summarizePostBeef(rawResults);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -685,10 +727,22 @@ async function submitAtomicBeefToMinersOnce(
 
   if (summary.accepted) {
     recordStage("provider_accepted", telemetry);
+    // A fallback's acceptance is not Arcade's: nothing pins the cheque or
+    // follows it to a node, so it stays queued until Arcade holds it.
+    const { hasArcadeBroadcaster } = await import("./arcadeVerdict");
+    const withoutArcade =
+      !!rawResults &&
+      hasArcadeBroadcaster(active.services) &&
+      !postBeefResultsArcadeAccepted(rawResults);
+    if (withoutArcade) {
+      console.warn(
+        `[minerSubmit] ${id.slice(0, 12)} accepted without Arcade — kept queued: ${summary.detail}`.slice(0, 400)
+      );
+    }
     // Arcade 202 is not the chain. Keep posting until merkle proofs close.
     // Local SPV of unconfirmed parent bodies is still a valid cheque — that
     // is how we negate explorer latency.
-    const keepPropagating = !proofsComplete;
+    const keepPropagating = !proofsComplete || withoutArcade;
     if (!keepPropagating) {
       removePendingMinerSubmit(id, owner);
       if (

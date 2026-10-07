@@ -8,10 +8,13 @@ const restoreOnChainLocalTx = vi.fn(async () => true)
 let outboxWritesSucceed = true
 const toastError = vi.fn()
 
+type Broadcaster = { name: string; service: (beef: unknown, txids: string[]) => Promise<unknown> }
+const services: { postBeef: typeof postBeef; postBeefServices?: { services: Broadcaster[] } } = { postBeef }
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
-    services: { postBeef },
+    services,
   }),
 }))
 
@@ -82,6 +85,7 @@ describe('submitAtomicBeefToMiners', () => {
     spvVerdict = { kind: 'verified' }
     vi.mocked((await import('./beefCache')).hydrateInputBeef).mockClear()
     postBeef.mockReset()
+    delete services.postBeefServices
     releaseSealedInputsOfUnsentTx.mockClear()
     onAlreadySpentSend.mockClear()
     restoreOnChainLocalTx.mockClear()
@@ -124,6 +128,52 @@ describe('submitAtomicBeefToMiners', () => {
         expect.objectContaining({ atomic: ATOMIC }),
       ),
     )
+  })
+
+  describe('a round a fallback settled without Arcade', () => {
+    const fallbackOnly = [
+      { name: 'GorillaPoolArcBeef', status: 'success', txidResults: [{ txid: TXID, status: 'success' }] },
+    ]
+    const broadcasters = (arcade: Broadcaster['service']): Broadcaster[] => [
+      { name: 'GorillaPoolArcBeef', service: vi.fn() },
+      { name: 'ArcadeBeef', service: arcade },
+    ]
+
+    it('asks Arcade itself, puts it back in front, and follows its acceptance', async () => {
+      const arcade = vi.fn(async () => ({ status: 'success', txidResults: [{ txid: TXID, status: 'success' }] }))
+      services.postBeefServices = { services: broadcasters(arcade) }
+      postBeef.mockResolvedValueOnce(fallbackOnly)
+      const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+      const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+      expect(services.postBeefServices.services[0]!.name).toBe('ArcadeBeef')
+      expect(arcade).toHaveBeenCalledWith(expect.anything(), [TXID])
+      expect(result).toMatchObject({ kind: 'accepted', keepPropagating: false })
+      await vi.waitFor(() => expect(watchArcadeLanding).toHaveBeenCalledWith(TXID, expect.anything()))
+    })
+
+    it('keeps the cheque queued when Arcade cannot answer', async () => {
+      const arcade = vi.fn(async () => {
+        throw new Error('Failed to fetch')
+      })
+      services.postBeefServices = { services: broadcasters(arcade) }
+      postBeef.mockResolvedValueOnce(fallbackOnly)
+      const { submitAtomicBeefToMiners, minerSubmitKeepOutbox } = await import('./minerSubmit')
+      const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+      expect(result).toMatchObject({ kind: 'accepted', keepPropagating: true })
+      expect(minerSubmitKeepOutbox(result)).toBe(true)
+      expect(watchArcadeLanding).not.toHaveBeenCalled()
+    })
+
+    it('does not ask again when the round already holds Arcade’s acceptance', async () => {
+      const arcade = vi.fn()
+      services.postBeefServices = { services: broadcasters(arcade) }
+      postBeef.mockResolvedValueOnce([
+        { name: 'ArcadeBeef', status: 'success', txidResults: [{ txid: TXID, status: 'success' }] },
+      ])
+      const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+      await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).resolves.toMatchObject({ keepPropagating: false })
+      expect(arcade).not.toHaveBeenCalled()
+    })
   })
 
   it('holds a package it cannot SPV-verify yet, posting nothing and keeping the seal', async () => {

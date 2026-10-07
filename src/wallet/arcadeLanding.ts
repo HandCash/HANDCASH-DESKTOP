@@ -31,6 +31,7 @@ import { noteTxLanded, resetLandedTxForTests, txLanded } from './landedTx'
 import { normalizeTxid } from './txid'
 import {
   decideLanding,
+  decideRescue,
   withArcadeConflict,
   type LandingArcade,
   type LandingEvidence,
@@ -342,6 +343,131 @@ async function chequeBody(
   }
 }
 
+const RESCUE_MIN_AGE_MS = 10 * 60_000
+const RESCUE_MAX_AGE_MS = 7 * 24 * 60 * 60_000
+const RESCUE_MAX = 60
+const RESCUE_STATUSES = ['unproven', 'sending', 'unsent']
+
+function rowCreatedMs(raw: unknown): number {
+  const at = raw instanceof Date ? raw.getTime() : typeof raw === 'number' ? raw : Date.parse(String(raw ?? ''))
+  return Number.isFinite(at) ? at : 0
+}
+
+/** Outgoing transactions the wallet signed that are not proven yet, oldest first. */
+async function unprovenOutgoingSends(runtime: WalletRuntime): Promise<Array<{ txid: string; at: number }>> {
+  const storage = runtime.instance.wallet?.storage as unknown as {
+    runAsStorageProvider?: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T>
+  }
+  if (typeof storage?.runAsStorageProvider !== 'function') return []
+  const rows = await storage.runAsStorageProvider(async (sp) =>
+    (sp as {
+      findTransactions: (args: unknown) => Promise<Array<{ txid?: string; isOutgoing?: boolean; created_at?: unknown }>>
+    }).findTransactions({
+      partial: { isOutgoing: true },
+      status: RESCUE_STATUSES,
+      noRawTx: true,
+      paged: { limit: 400, offset: 0 },
+    }),
+  )
+  const now = Date.now()
+  return (rows ?? [])
+    .map((row) => ({ txid: normalizeTxid(row.txid ?? '') ?? '', at: rowCreatedMs(row.created_at) }))
+    .filter((row) => row.txid && now - row.at >= RESCUE_MIN_AGE_MS && now - row.at <= RESCUE_MAX_AGE_MS)
+    .sort((a, b) => a.at - b.at)
+}
+
+/**
+ * Re-post sends a fallback broadcaster accepted and Arcade never saw. Those
+ * rounds dropped the outbox row as complete and pinned nothing, so neither
+ * the watch nor this pass's pins could ever find them again.
+ */
+async function rescueUnfollowedSends(runtime: WalletRuntime, owner?: BoundAccountKeyScope): Promise<void> {
+  if (!runtimeIsCurrent(runtime)) return
+  const started = Date.now()
+  let unproven: Array<{ txid: string; at: number }>
+  try {
+    unproven = await unprovenOutgoingSends(runtime)
+  } catch (err) {
+    console.warn('[landing] rescue skipped — local transactions unreadable', err)
+    return
+  }
+  if (unproven.length === 0) return
+  const { rememberArcadeSubmitContact, txHadArcadeSubmitContact, txIsArcadeRejected } = await import(
+    './arcadeSubmitGuard'
+  )
+  const candidates = unproven
+    .filter(
+        (row) =>
+          !txLanded(row.txid) &&
+          !watching.has(row.txid) &&
+          !txHadArcadeSubmitContact(row.txid) &&
+          !txIsArcadeRejected(row.txid),
+      )
+      .slice(0, RESCUE_MAX)
+  if (candidates.length === 0) return
+  const { fetchArcadeTxFate, arcadeStatusLanded } = await import('./arcadeV2')
+  const { txExistsOnChain } = await import('./legacyScan')
+  const chain = runtime.instance.chain
+  const tally = { landed: 0, followed: 0, reposted: 0, accepted: 0, unbuilt: 0, left: 0 }
+  for (const [i, row] of candidates.entries()) {
+    if (i > 0) await delay(UNLOCK_GAP_MS)
+    if (!runtimeIsCurrent(runtime)) return
+    const arcade = toLandingArcade(await fetchArcadeTxFate(chain, row.txid), arcadeStatusLanded)
+    const onChain =
+      arcade.kind === 'unknown' ? await txExistsOnChain(row.txid, chain).catch(() => null) : null
+    const step = decideRescue(arcade, onChain)
+    switch (step.kind) {
+      case 'landed':
+        noteTxLanded(row.txid)
+        tally.landed += 1
+        break
+      case 'follow':
+        rememberArcadeSubmitContact(row.txid)
+        watchArcadeLanding(row.txid, { owner, since: row.at })
+        tally.followed += 1
+        break
+      case 'leave':
+        tally.left += 1
+        break
+      case 'repost': {
+        if (!(await waitForSpendRegion()) || !runtimeIsCurrent(runtime)) return
+        let atomic: number[]
+        try {
+          const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+          atomic = await getAtomicBeefBinaryForTxid(runtime.instance, row.txid)
+        } catch (err) {
+          tally.unbuilt += 1
+          console.warn(
+            `[landing] rescue ${row.txid.slice(0, 12)} could not rebuild its package — ${
+              err instanceof Error ? err.message : String(err)
+            }`.slice(0, 300),
+          )
+          break
+        }
+        tally.reposted += 1
+        try {
+          const { submitAtomicBeefToMiners, minerSubmitKeepOutbox } = await import('./minerSubmit')
+          const result = await submitAtomicBeefToMiners(row.txid, atomic, { runtime, owner })
+          if (!minerSubmitKeepOutbox(result) || txHadArcadeSubmitContact(row.txid)) tally.accepted += 1
+        } catch (err) {
+          console.warn(
+            `[landing] rescue ${row.txid.slice(0, 12)} re-post refused — ${
+              err instanceof Error ? err.message : String(err)
+            }`.slice(0, 300),
+          )
+        }
+        break
+      }
+    }
+  }
+  console.info(
+    `[landing] rescue checked=${candidates.length} landed=${tally.landed} followed=${tally.followed} ` +
+      `reposted=${tally.reposted} arcadeAccepted=${tally.accepted} unbuilt=${tally.unbuilt} left=${tally.left} done ${
+        Date.now() - started
+      }ms`,
+  )
+}
+
 /**
  * Once per unlocked account: ask about every pinned cheque that never
  * landed, parents first, and fail the ones the chain proves dead. One
@@ -370,7 +496,6 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
           !watching.has(pin.txid),
       )
       .slice(0, UNLOCK_MAX_PINS)
-    if (pins.length === 0) return
     const owner = accountKeyScopeFor(runtime.instance)
     const tally = { landed: 0, dead: 0, waiting: 0 }
     for (const [i, pin] of pins.entries()) {
@@ -393,11 +518,13 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
         }
       }
     }
-    console.info(
-      `[landing] unlock pass checked=${pins.length} landed=${tally.landed} dead=${tally.dead} waiting=${tally.waiting} done ${
-        Date.now() - started
-      }ms`,
-    )
+    if (pins.length > 0) {
+      console.info(
+        `[landing] unlock pass checked=${pins.length} landed=${tally.landed} dead=${tally.dead} waiting=${tally.waiting} done ${
+          Date.now() - started
+        }ms`,
+      )
+    }
     if (tally.dead > 0 && runtimeIsCurrent(runtime)) {
       const { toastError } = await import('./toast')
       toastError(
@@ -405,6 +532,9 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
         'They spent coins that were already spent. Marked not sent; balance corrected.',
       )
     }
+    await rescueUnfollowedSends(runtime, owner).catch((err) => {
+      console.warn('[landing] rescue failed', err)
+    })
   })().catch((err) => {
     console.warn('[landing] unlock pass failed', err)
   })

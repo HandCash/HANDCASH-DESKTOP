@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.486] - 2026-10-07
+
+### Fixed
+- **Imports and sends that never reached the chain while the balance dropped.** This is a regression since 0.1.626 (100-item bundles and 1–3 MB packages). The broadcaster times out a slow miner. Arcade got at most 8 s (6 s on desktop) for a megabyte package, and once it had failed a round it was moved to the back of the list for the whole session. GorillaPool, Bitails, WhatsOnChain or Taal then reported "success", so the tx was never pinned, the landing watch never started, and the miner outbox dropped the row as finished. Nothing ever followed or re-sent it. On the lab phone, Arcade's acceptance rate across all migrates went from 100% (0.1.618–0.1.622) to 0 of 25 (0.1.634).
+  - Every round now ends with Arcade's own answer. Arcade goes back to the front of the list before each post. If a round settles without Arcade's verdict (not asked, timed out or errored), Arcade is asked directly, with a time limit that grows with the package size (20 s plus 40 ms per KB, at most 3 min).
+  - A success from another broadcaster without Arcade's acceptance keeps the tx in the outbox, so it is retried until Arcade accepts and the landing watch follows it.
+  - Slow miners now get up to 60 s per post instead of 8 s.
+  - **Unlock rescue.** Outgoing transactions still unproven after 10 minutes, nobody watching them and not rejected are checked against Arcade and the chain on unlock. That covers stranded imports from affected builds, up to 60 per unlock, oldest first, within 7 days. Ones on chain are marked landed; ones Arcade has queued are watched; ones neither knows of are rebuilt from local storage and re-posted.
+
+### Diagnostics
+- Triage counts `withoutArcade`, `arcadeAskedDirectly`, `arcadeRestored`, `rescueUnbuilt` and `rescueRefused` per txid, and the unlock rescue logs `[landing] rescue checked= landed= followed= reposted= … done <N>ms`.
+
 ## [1.3.485] - 2026-10-07
 
 ### Fixed
