@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.472] - 2026-10-06
+
+### Fixed
+- Collectable import bundles every tip that shares one large source transaction into a single transaction again, instead of sending one item per transaction.
+- A selected import no longer fails or splits its bundle when the wallet is busy (for example, restoring after unlock). It waits for the wallet to go idle and retries the whole bundle. If the wallet stays busy, the import stops with the named reason `busy` and keeps every tip for the next run.
+- The import progress bar moves as each transaction lands, not only when a whole chunk answers.
+- Import migrates no longer write a "Receiving" row and toast per item. Rows already written are folded into the import record, which also removes the duplicate "Verifying" spinner in Activity.
+- Collectables keeps a basket read that finishes after its timeout and relists once the wallet is idle, so imported items appear in inventory.
+
+### Added
+- `[collectables] basket read done <N>ms` log line; triage reports activity writes by kind and watches recompose, legacy scan, cloud backup, chain ingest and coordinator tags.
+
 ## [1.3.471] - 2026-10-06
 
 ### Fixed
