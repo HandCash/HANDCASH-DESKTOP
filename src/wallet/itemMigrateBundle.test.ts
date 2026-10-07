@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { Beef, MerklePath, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { Beef, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 import { IMPORT_CHUNK } from '../machines/importQueueMachine'
 import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
-  itemsWithinSourceBudget,
+  itemsWithinPostBudget,
   migratePackage,
   migrateRetryBody,
-  migrateSourceCosts,
+  migrateTipPostBytes,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
 
@@ -74,29 +74,53 @@ describe('bundle ceiling', () => {
   })
 })
 
-describe('itemsWithinSourceBudget', () => {
-  const cost = (bytes: Record<string, number>) => (item: string) =>
-    item.split('+').map((txid) => ({ txid, bytes: bytes[txid] ?? 0 }))
+describe('itemsWithinPostBudget', () => {
+  const bytes = (sizes: Record<string, number>) => (item: string) => sizes[item] ?? 0
 
-  it('takes the whole chunk when sources are small', () => {
+  it('takes the whole chunk when tips are plain P2PKH', () => {
     const items = Array.from({ length: 100 }, (_, i) => `t${i}`)
-    expect(itemsWithinSourceBudget(items, 100, () => [{ txid: 'x', bytes: 1 }], 10)).toBe(100)
+    expect(itemsWithinPostBudget(items, 100, () => migrateTipPostBytes(25))).toBe(100)
   })
 
-  it('stops before the tip that would overflow the package', () => {
-    expect(itemsWithinSourceBudget(['a', 'b', 'c'], 100, cost({ a: 40, b: 40, c: 40 }), 100)).toBe(2)
-  })
-
-  it('counts a shared source once', () => {
-    expect(itemsWithinSourceBudget(['a+s', 'b+s', 'c+s'], 100, cost({ a: 10, b: 10, c: 10, s: 60 }), 100)).toBe(3)
+  it('stops before the tip that would overflow the post', () => {
+    expect(itemsWithinPostBudget(['a', 'b', 'c'], 100, bytes({ a: 40, b: 40, c: 40 }), 100)).toBe(2)
   })
 
   it('still moves one oversized tip alone', () => {
-    expect(itemsWithinSourceBudget(['big', 'b'], 100, cost({ big: 1_000, b: 1 }), 100)).toBe(1)
+    expect(itemsWithinPostBudget(['big', 'b'], 100, bytes({ big: 1_000, b: 1 }), 100)).toBe(1)
   })
 
   it('honours a halved bundle size', () => {
-    expect(itemsWithinSourceBudget(['a', 'b', 'c', 'd'], 2, cost({}), 100)).toBe(2)
+    expect(itemsWithinPostBudget(['a', 'b', 'c', 'd'], 2, bytes({}), 100)).toBe(2)
+  })
+})
+
+describe('migrateTipPostBytes', () => {
+  const inscribed = (artBytes: number) =>
+    LockingScript.fromBinary([...new P2PKH().lock(KEY.toAddress()).toBinary(), 0x00, 0x63, 0x4e, ...le32(artBytes), ...new Array(artBytes).fill(7), 0x68])
+
+  function le32(n: number): number[] {
+    return [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]
+  }
+
+  it('bounds what Arcade receives: the spent scripts, never the parents that minted them', async () => {
+    const art = [40_000, 300, 70_000]
+    const mint = new Transaction()
+    for (const size of art) mint.addOutput({ satoshis: 1, lockingScript: inscribed(size) })
+    mint.addOutput({ satoshis: 5_000, lockingScript: inscribed(500_000) })
+    const migrate = new Transaction()
+    art.forEach((_, vout) =>
+      migrate.addInput({ sourceTransaction: mint, sourceOutputIndex: vout, unlockingScriptTemplate: new P2PKH().unlock(KEY) }),
+    )
+    art.forEach(() => migrate.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(KEY.toAddress()) }))
+    await migrate.sign()
+
+    const framing = 4 + 6 + 1 + 1 + 4
+    const ef = migrate.toEF().length - framing
+    const estimate = art.reduce((sum, _, vout) => sum + migrateTipPostBytes(mint.outputs[vout]!.lockingScript.toBinary().length), 0)
+    expect(estimate).toBeGreaterThanOrEqual(ef)
+    expect(estimate - ef).toBeLessThanOrEqual(art.length * 2)
+    expect(estimate).toBeLessThan(mint.toBinary().length)
   })
 })
 
@@ -114,39 +138,6 @@ function mined(tx: Transaction, height: number): Transaction {
   tx.merklePath = new MerklePath(height, [[{ offset: 0, hash: tx.id('hex'), txid: true }]])
   return tx
 }
-
-describe('itemsWithinSourceBudget over one large shared source', () => {
-  it('bundles every tip of a source larger than the budget, since it is counted once', () => {
-    const tips = Array.from({ length: 31 }, (_, vout) => ({ txid: 'aa'.repeat(32), vout }))
-    expect(itemsWithinSourceBudget(tips, 100, (t) => [{ txid: t.txid, bytes: 550_000 }])).toBe(31)
-  })
-
-  it('still stops before a second large source', () => {
-    const tips = [{ txid: 'aa'.repeat(32) }, { txid: 'aa'.repeat(32) }, { txid: 'bb'.repeat(32) }]
-    expect(itemsWithinSourceBudget(tips, 100, (t) => [{ txid: t.txid, bytes: 550_000 }])).toBe(2)
-  })
-})
-
-describe('migrateSourceCosts', () => {
-  it('charges a mined source its body and proof, and an unmined one its parents too', () => {
-    const parent = mined(deposit(1), 800_000)
-    const minedTip = mined(deposit(2), 800_001)
-    const mempoolTip = deposit(3, parent)
-    const beef = new Beef()
-    beef.mergeTransaction(minedTip)
-    beef.mergeTransaction(mempoolTip)
-    const costOf = migrateSourceCosts(beef.toBinary())
-
-    const own = costOf(minedTip.id('hex'))
-    expect(own).toEqual([{ txid: minedTip.id('hex'), bytes: minedTip.toBinary().length + minedTip.merklePath!.toBinary().length }])
-    expect(costOf(mempoolTip.id('hex')).map((c) => c.txid)).toEqual([mempoolTip.id('hex'), parent.id('hex')])
-    expect(costOf(mempoolTip.id('hex'))[1]!.bytes).toBeGreaterThan(parent.toBinary().length)
-  })
-
-  it('charges nothing it cannot read, so an unreadable package never blocks a bundle', () => {
-    expect(migrateSourceCosts([1, 2, 3])('ab'.repeat(32))).toEqual([{ txid: 'ab'.repeat(32), bytes: 0 }])
-  })
-})
 
 describe('migratePackage', () => {
   it('ships the signed transaction with only the sources it spends', () => {

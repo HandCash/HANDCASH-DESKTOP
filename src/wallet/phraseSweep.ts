@@ -54,10 +54,10 @@ import {
 import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
-  itemsWithinSourceBudget,
+  itemsWithinPostBudget,
   migratePackage,
   migrateRetryBody,
-  migrateSourceCosts,
+  migrateTipPostBytes,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
 import { setVisibleTimeout } from './visibleClock'
@@ -1089,11 +1089,19 @@ async function migrateOrdinalUnit(args: {
   let perTx = args.itemsPerTx
   let fundingRetries = 0
   let busyWaits = 0
-  const costOf = migrateSourceCosts(args.inputBeef)
+  const postBytes = new Map<string, number>()
+  const postBytesOf = (item: PendingItemMigrate): number => {
+    let bytes = postBytes.get(item.outpoint)
+    if (bytes == null) {
+      bytes = migrateTipPostBytes(item.sourceLock.toBinary().length)
+      postBytes.set(item.outpoint, bytes)
+    }
+    return bytes
+  }
 
   while (pending.length > 0) {
     if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
-    const fit = itemsWithinSourceBudget(pending, perTx, (item) => costOf(item.txid))
+    const fit = itemsWithinPostBudget(pending, perTx, postBytesOf)
     const unit = chooseItemMigrateUnit(pending, fit)
     if (unit.kind === 'refuse') break
     const group = unit.kind === 'bundle' ? unit.items : [unit.item]
@@ -1413,9 +1421,10 @@ async function signAndPostForeignInputs(
   packed.atomicTxid = undefined
   const bin = migratePackage(packed, sweepTxid)
   const durableBody = migrateRetryBody(bin, sweepTxid)
+  const efBytes = items.reduce((sum, item) => sum + migrateTipPostBytes(item.sourceLock.toBinary().length), 0)
   appendAppLog(
     'info',
-    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length} durable=${durableBody.length}`,
+    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length} durable=${durableBody.length} ef=${efBytes}`,
   )
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
   const postStarted = Date.now()

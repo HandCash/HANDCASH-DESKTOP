@@ -11,7 +11,7 @@
  * unspendable tip cannot stall the run — and no other protocol path is ever
  * tried for the same item.
  */
-import { Beef, type BEEF } from '@bsv/sdk'
+import { Beef } from '@bsv/sdk'
 
 /**
  * Tips per transaction: one import chunk. Each action already carries the
@@ -21,77 +21,54 @@ import { Beef, type BEEF } from '@bsv/sdk'
 export const MAX_ITEMS_PER_MIGRATE_TX = 100
 
 /**
- * Source bytes one migrate posts to miners. The durable retry body is
- * {@link migrateRetryBody}, not this package, so the ceiling is the miner post
- * alone. Items whose parents carry their art fill it in a few dozen tips;
- * plain transfers still bundle a whole chunk.
+ * Bytes one migrate posts to Arcade. Arcade validates Extended Format: the
+ * signed transaction plus, per input, the amount and locking script it spends.
+ * Parent transactions and BRC-150 ancestry stay on the device — they build the
+ * EF and the provenance, never the post — so they are not charged here. Only a
+ * never-moved tip is heavy, because its locking script is its inscription.
  */
-export const MAX_MIGRATE_SOURCE_BYTES = 1024 * 1024
+export const MAX_MIGRATE_POST_BYTES = 1024 * 1024
 
-/** Bytes a tip adds to its package: the source transactions it needs, by txid. */
-export type ItemSourceCost = ReadonlyArray<{ txid: string; bytes: number }>
+/** A P2PKH input with a DER signature and compressed key. */
+const P2PKH_INPUT_BYTES = 148
+/** The tip's 1-sat P2PKH output. */
+const P2PKH_OUTPUT_BYTES = 34
+const EF_SATOSHIS_BYTES = 8
+
+function varIntBytes(n: number): number {
+  if (n < 0xfd) return 1
+  if (n <= 0xffff) return 3
+  if (n <= 0xffffffff) return 5
+  return 9
+}
+
+/** EF bytes one tip adds to the post: its input, its output, and the amount and script it spends. */
+export function migrateTipPostBytes(sourceLockBytes: number): number {
+  return P2PKH_INPUT_BYTES + P2PKH_OUTPUT_BYTES + EF_SATOSHIS_BYTES + varIntBytes(sourceLockBytes) + sourceLockBytes
+}
 
 /**
- * How many tips, in page order, fit one package. Shared sources count once.
- * Never fewer than one: a tip whose own sources exceed the budget still moves,
+ * How many tips, in page order, fit one post. Every input carries its own
+ * spent script, so tips sharing a parent cost the same as tips that do not.
+ * Never fewer than one: a tip whose own script exceeds the budget still moves,
  * alone, rather than being stranded.
  */
-export function itemsWithinSourceBudget<T>(
+export function itemsWithinPostBudget<T>(
   items: readonly T[],
   itemsPerTx: number,
-  costOf: (item: T) => ItemSourceCost,
-  budget = MAX_MIGRATE_SOURCE_BYTES,
+  postBytesOf: (item: T) => number,
+  budget = MAX_MIGRATE_POST_BYTES,
 ): number {
   const cap = Math.max(1, Math.min(Math.floor(itemsPerTx), MAX_ITEMS_PER_MIGRATE_TX, items.length))
-  const counted = new Set<string>()
   let bytes = 0
   let fit = 0
   for (const item of items.slice(0, cap)) {
-    let added = 0
-    const fresh: string[] = []
-    for (const { txid, bytes: size } of costOf(item)) {
-      if (counted.has(txid) || fresh.includes(txid)) continue
-      fresh.push(txid)
-      added += size
-    }
-    // A tip whose sources are already counted adds nothing to the package.
-    if (fit > 0 && added > 0 && bytes + added > budget) break
-    for (const txid of fresh) counted.add(txid)
+    const added = postBytesOf(item)
+    if (fit > 0 && bytes + added > budget) break
     bytes += added
     fit += 1
   }
   return Math.max(1, fit)
-}
-
-/** What each source transaction adds to a migrate package: its body and proof, or its parents'. */
-export function migrateSourceCosts(inputBeef: BEEF): (txid: string) => ItemSourceCost {
-  let beef: Beef | null = null
-  try {
-    beef = Beef.fromBinary(inputBeef)
-  } catch {
-    beef = null
-  }
-  const memo = new Map<string, ItemSourceCost>()
-  const sizeOf = (txid: string): number => {
-    const entry = beef?.findTxid(txid)
-    if (!entry) return 0
-    const proof = entry.bumpIndex != null ? beef!.bumps[entry.bumpIndex]?.toBinary().length ?? 0 : 0
-    return (entry.rawTx?.length ?? 0) + proof
-  }
-  return (txid) => {
-    const known = memo.get(txid)
-    if (known) return known
-    const entry = beef?.findTxid(txid)
-    const cost: Array<{ txid: string; bytes: number }> = [{ txid, bytes: sizeOf(txid) }]
-    if (entry?.tx && entry.bumpIndex == null) {
-      for (const input of entry.tx.inputs) {
-        const parent = String(input.sourceTXID ?? '').toLowerCase()
-        if (parent) cost.push({ txid: parent, bytes: sizeOf(parent) })
-      }
-    }
-    memo.set(txid, cost)
-    return cost
-  }
 }
 
 /**
