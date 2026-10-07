@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { estimateItemMigrateCost, phraseItemUnspentOffset } from './phraseSweep'
+import { estimateItemMigrateCost } from './phraseSweep'
 import { MAX_ITEMS_PER_MIGRATE_TX } from './itemMigrateBundle'
 
 /**
@@ -48,22 +48,5 @@ describe('estimateItemMigrateCost', () => {
     expect(
       estimateItemMigrateCost({ itemCount: 100, itemsPerTx: 25, feeRateSatPerKb: 0 }),
     ).toEqual({ transactions: 4, feeSats: 0 })
-  })
-})
-
-describe('phraseItemUnspentOffset', () => {
-  test('successful moves do not skip the next rows after they leave the unspent list', () => {
-    expect(phraseItemUnspentOffset({ offset: 15, moved: 15 })).toBe(0)
-    expect(phraseItemUnspentOffset({ offset: 50, moved: 50 })).toBe(0)
-  })
-
-  test('failed or skipped rows remain ahead of the next item', () => {
-    // The cursor scanned 50 rows: 40 moved away and 10 remain visible.
-    expect(phraseItemUnspentOffset({ offset: 50, moved: 40 })).toBe(10)
-  })
-
-  test('malformed legacy values fail closed at the start of the list', () => {
-    expect(phraseItemUnspentOffset({ offset: -1, moved: 10 })).toBe(0)
-    expect(phraseItemUnspentOffset({ offset: 10, moved: 20 })).toBe(0)
   })
 })

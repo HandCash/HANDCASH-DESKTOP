@@ -4,9 +4,9 @@ import { accountLocalKey } from './accountLocalKeys'
 
 /**
  * Destination change pays the fee for every collectable, so a large collection
- * can exhaust the wallet part-way through. That must end the run and keep the
- * cursor on the tip it did not reach — blaming the tip and grinding on would
- * report hundreds of identical "failures" and lose the resume point.
+ * can exhaust the wallet part-way through. That must end the run with the
+ * unreached tips answered `funds` — blaming the tip and grinding on would
+ * report hundreds of identical "failures".
  */
 
 const createAction = vi.fn()
@@ -86,10 +86,9 @@ const beefByTxid = new Map(TIPS.map((t) => [t.txid, t.beef]))
 
 vi.mock('./legacyBeef', () => ({
   buildLegacyInputBeef: async (_svc: unknown, outpoints: string[]) => {
-    const txid = (outpoints[0] ?? '').split('.')[0] ?? ''
-    const beef = beefByTxid.get(txid)
-    if (!beef) return { ready: [], beef: [], failures: [{ reason: 'no beef' }] }
-    return { ready: outpoints, beef, failures: [] }
+    const merged = new Beef()
+    for (const op of outpoints) merged.mergeBeef(beefByTxid.get(op.split('.')[0] ?? '')!)
+    return { ready: outpoints, beef: merged.toBinary(), failures: [] }
   },
   withVisibleOnChainBeef: async <T,>(fn: () => Promise<T>) => fn(),
 }))
@@ -97,91 +96,30 @@ vi.mock('./oneSatProvenance', () => ({
   buildInternalizeCustomInstructions: () => '{}',
 }))
 
-const CANDIDATE = {
-  scheme: 'yours-wallet' as const,
-  label: 'Yours wallet',
-  path: "m/44'/236'/0'/1/0",
-  rootKeyHex: '11'.repeat(32),
-  identityKey: '03'.repeat(33),
-  address: PHRASE_KEY.toAddress(),
-}
+const chosen = TIPS.map((t) => ({ outpoint: t.outpoint, keyHex: PHRASE_KEY.toHex() }))
 
-describe('migratePhraseItemsBatch funds stop', () => {
+describe('migrateChosenPhraseItems stops', () => {
   beforeEach(() => {
     vi.resetModules()
     stored.clear()
     createAction.mockReset()
     abortAction.mockReset()
     refreshFromChain.mockReset()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify(
-            TIPS.map((t) => ({
-              txid: t.txid,
-              vout: 0,
-              outpoint: t.outpoint,
-              satoshis: 1,
-              origin: { outpoint: t.outpoint },
-              owner: CANDIDATE.address,
-            })),
-          ),
-          { status: 200 },
-        ),
+  })
+
+  it('stops on insufficient funds after one attempt and answers the rest funds', async () => {
+    createAction.mockRejectedValue(
+      new Error(
+        'Insufficient funds in the available inputs to cover the cost of the required outputs and the transaction fee (539816 more satoshis are needed, for a total of 539816)',
       ),
     )
-  })
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen })
 
-  it('stops on insufficient funds and leaves the cursor on the unreached tip', async () => {
-    const err = new Error(
-      'Insufficient funds in the available inputs to cover the cost of the required outputs and the transaction fee (539816 more satoshis are needed, for a total of 539816)',
-    )
-    createAction.mockRejectedValue(err)
-
-    const { migratePhraseItemsBatch, peekPhraseItemMigrateCursor } = await import(
-      './phraseSweep'
-    )
-    const progress = await migratePhraseItemsBatch({
-      candidate: CANDIDATE,
-      batchSize: 2,
-    })
-
-    expect(progress.stopped).toBe('funds')
-    expect(progress.done).toBe(false)
-    expect(progress.moved).toBe(0)
-    // The tip was never attempted to completion, so it must not be counted as
-    // failed nor skipped over.
-    expect(progress.failed).toBe(0)
-    expect(progress.scanned).toBe(0)
-    expect(peekPhraseItemMigrateCursor()?.offset).toBe(0)
-    // One attempt, then stop — not once per remaining tip.
+    expect(run.stopped).toBe('funds')
+    expect([...run.results.values()].map((r) => r.kind)).toEqual(['funds', 'funds'])
+    // One attempt for the shared transaction, then stop — not once per tip.
     expect(createAction).toHaveBeenCalledTimes(1)
-  })
-
-  it('repairs an old moved cursor against the mutable unspent list', async () => {
-    stored.set(
-      accountLocalKey('handcash.brc100.phraseSweepItemCursor.v1'),
-      JSON.stringify({
-        sourceAddress: CANDIDATE.address,
-        destIdentityKey: '02'.repeat(33),
-        offset: 15,
-        moved: 15,
-        failed: 0,
-        skipped: 0,
-      }),
-    )
-    createAction.mockRejectedValue(new Error('Insufficient funds'))
-
-    const { migratePhraseItemsBatch } = await import('./phraseSweep')
-    await migratePhraseItemsBatch({ candidate: CANDIDATE, batchSize: 1 })
-
-    // The fifteen successful rows have left `/unspent`; offset 15 would skip
-    // the next fifteen untouched collectables.
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining('offset=0'),
-      expect.objectContaining({ headers: { Accept: 'application/json' } }),
-    )
   })
 
   it('aborts the action when signing fails, so no phantom item is left listed', async () => {
@@ -190,23 +128,25 @@ describe('migratePhraseItemsBatch funds stop', () => {
     createAction.mockResolvedValue({
       signableTransaction: { reference: 'ref-1', tx: TIPS[0]!.beef },
     })
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen.slice(0, 1) })
 
-    const { migratePhraseItemsBatch } = await import('./phraseSweep')
-    const progress = await migratePhraseItemsBatch({
-      candidate: CANDIDATE,
-      batchSize: 1,
-    })
-
-    expect(progress.failed).toBe(1)
-    expect(progress.moved).toBe(0)
+    expect(run.results.get(TIPS[0]!.outpoint)?.kind).toBe('failed')
     expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-1' })
+  })
+})
+
+describe('pending per-address import cursor', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    stored.clear()
   })
 
   it('removes a forgotten cursor and immediately clears Activity subscribers', async () => {
     stored.set(
       accountLocalKey('handcash.brc100.phraseSweepItemCursor.v1'),
       JSON.stringify({
-        sourceAddress: CANDIDATE.address,
+        sourceAddress: PHRASE_KEY.toAddress(),
         destIdentityKey: '02'.repeat(33),
         offset: 465,
         moved: 465,

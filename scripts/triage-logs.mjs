@@ -293,6 +293,7 @@ function sessionFacts(header, events) {
   const activity = activityFacts(events)
   const ui = uiFacts(events)
   const nftImport = nftImportFacts(events)
+  const tagCensus = tagCensusFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
   const tokenAttestation = tokenAttestationFacts(events)
   const tokenLedger = tokenLedgerFacts(events)
@@ -396,6 +397,7 @@ function sessionFacts(header, events) {
     // Settings → Import: HandCash hints asked / received, each scan phase with
     // its time and counts, the hinted verdict, and sweeps — in order.
     legacyImport,
+    tagCensus,
     // BRC-29 change derivations: echoes written before a wipe/replace,
     // coins re-imported from them after, locking scripts rebuilt from keys,
     // and whether legacy deposits were proven by their own path or parents.
@@ -1330,6 +1332,39 @@ const PHRASE_FAIL_RE = /^\[phrase-sweep\] (tip unreadable|item migrate failed)/
  * can only come from the `done Nms` spans whose tag is the import itself or
  * the lookups it performs.
  */
+/**
+ * What each wallet subsystem said, by shape: numbers, hex and outpoints become
+ * placeholders, so a run of 300 "migrate 1 tip" lines reads as one shape × 300.
+ * The tags we watch are the import path's; extend WATCHED_TAGS when triage
+ * needs another subsystem's story without reading the log.
+ */
+const WATCHED_TAGS = /^(import|phrase-sweep|legacy|items?|collectables?|1sat|tip-ingest|utxo-heal)$/
+function shapeOf(text) {
+  return text
+    .replace(/[0-9a-f]{64}([._]\d+)?/gi, '<txid>')
+    .replace(/[0-9a-f]{16,}…?/gi, '<hex>')
+    .replace(/\b1[1-9A-HJ-NP-Za-km-z]{25,34}\b/g, '<addr>')
+    .replace(/\d[\d,.]*/g, 'N')
+    .slice(0, 160)
+}
+function tagCensusFacts(events) {
+  const byTag = new Map()
+  for (const e of events) {
+    const tag = TAG_RE.exec(e.text)
+    if (!tag || !WATCHED_TAGS.test(tag[1])) continue
+    const shapes = byTag.get(tag[1]) ?? new Map()
+    const shape = shapeOf(e.text)
+    shapes.set(shape, (shapes.get(shape) ?? 0) + 1)
+    byTag.set(tag[1], shapes)
+  }
+  return Object.fromEntries(
+    [...byTag].map(([tag, shapes]) => [
+      tag,
+      [...shapes].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([shape, count]) => ({ shape, count })),
+    ]),
+  )
+}
+
 function nftImportFacts(events) {
   let importRuns = 0
   let tipsQueued = 0
@@ -2333,6 +2368,11 @@ const IMPORT_LINES = [
   ['settled', /^\[import\] hinted scan settled sats=(\d+) items=(\d+) of sats=(\d+) items=(\d+)/],
   ['refused', /^\[import\] hinted scan refused reason=(\S+)/],
   ['sweep', /^\[import\] sweep done (\d+)ms kind=(\S+) cash=(\d+)sats items=(\d+) tokens=(\d+) failed=(\d+)/],
+  ['batchMoved', /^\[phrase-sweep\] moved (\d+) collectable\(s\) in (\d+) transaction/],
+  ['bundleRejected', /^\[phrase-sweep\] bundleRejected: (\d+) tips → retrying (\d+) \((.*)\)$/],
+  ['itemFailed', /^\[phrase-sweep\] item migrate failed (\S+) (.*)$/],
+  ['abortRefused', /^\[phrase-sweep\] could not abort failed migrate of (\d+) input/],
+  ['tipUnreadable', /^\[phrase-sweep\] tip unreadable (\S+) (.*)$/],
   ['cashSweep', /^\[legacy\] sweep coins=(\d+) tx=(\d+) done (\d+)ms/],
   ['cashBundleRefused', /^\[legacy\] sweep bundle of (\d+) refused — retrying (\d+)/],
   ['itemsSynced', /^\[import\] items synced (\d+) addresses=(\d+) complete=(true|false) stopped=(true|false) done (\d+)ms/],
@@ -2387,6 +2427,11 @@ function legacyImportFacts(events) {
           }
         : step === 'chosenDone' ? { ms: n(1), items: n(2), keys: n(3), moved: n(4) }
         : step === 'runDone' ? { ms: n(1), items: n(2), answered: n(3), sources: n(4), outcome: m[5] }
+        : step === 'batchMoved' ? { moved: n(1), transactions: n(2) }
+        : step === 'bundleRejected' ? { tips: n(1), retrying: n(2), reason: m[3] }
+        : step === 'itemFailed' ? { outpoint: m[1], reason: m[2] }
+        : step === 'abortRefused' ? { inputs: n(1) }
+        : step === 'tipUnreadable' ? { outpoint: m[1], reason: m[2] }
         : step === 'cashSweep' ? { coins: n(1), transactions: n(2), ms: n(3) }
         : step === 'cashBundleRefused' ? { coins: n(1), retrying: n(2) }
         : {}
