@@ -1,3 +1,4 @@
+import { readTrustedBalance } from './balanceSnapshot'
 import { getActiveWallet } from './session'
 
 /**
@@ -385,13 +386,33 @@ async function readConfirmedSpendable(
   // one send and accepted the next: the abandoned read proved the total moments
   // later, so the retry sailed through. With no proven total to stand on, wait
   // the read out rather than blame the wallet for the store being busy.
+  // The lease tells chain ingest and the activity scan to drop the lock.
   if (budgeted == null) {
-    const settled = await settleWithin(flight, CONFIRMED_READ_CEILING_MS)
-    if (settled?.kind === 'ok') return settled.sats
-    logDiag('spend-guard', 'warn', 'confirmed-read-exhausted', {
-      ceilingMs: CONFIRMED_READ_CEILING_MS,
-      reason: settled?.reason ?? 'readSlow',
+    const { leaseSpendPriority } = await import('./walletCoordinator')
+    const priority = leaseSpendPriority('balance-read')
+    try {
+      const settled = await settleWithin(flight, CONFIRMED_READ_CEILING_MS)
+      if (settled?.kind === 'ok') return settled.sats
+      logDiag('spend-guard', 'warn', 'confirmed-read-exhausted', {
+        ceilingMs: CONFIRMED_READ_CEILING_MS,
+        reason: settled?.reason ?? 'readSlow',
+      })
+    } finally {
+      priority.release()
+    }
+  }
+  // The in-memory proven total is empty until a live read lands. After unlock
+  // that read is the one the lock is blocking, so the durable hero figure is
+  // the last real balance. createAction still refuses if the coins are not there.
+  const session = getActiveWallet()
+  const trusted =
+    session?.identityKey != null ? readTrustedBalance(session.identityKey, session.chain) : null
+  if (trusted != null && trusted > 0) {
+    logDiag('spend-guard', 'warn', 'confirmed-from-trusted-balance', {
+      trusted,
+      reason: budgeted?.reason ?? 'readSlow',
     })
+    return trusted
   }
   throw new Error(BALANCE_UNREADABLE)
 }

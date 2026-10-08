@@ -334,6 +334,8 @@ type LedgerReader = {
 const asRows = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 
 const TX_CHUNK = 40
+/** One output page, then the storage lock is released so a send can read a balance. */
+const OUTPUT_PAGE = 200
 
 type TxCache = { namespace: string; userId: number; byId: Map<number, LedgerTx> }
 let txCache: TxCache | null = null
@@ -418,10 +420,58 @@ async function settledTransactions(
   })
 }
 
+type StorageSession = {
+  runAsStorageProvider: (fn: (sp: unknown) => Promise<unknown>) => Promise<unknown>
+}
+
+function sendIsWaiting(): boolean {
+  return spendNeedsStorage() || shouldYieldChainIngestToSpend()
+}
+
+/**
+ * Item outputs, one page per storage session.
+ *
+ * A single `findOutputs` of the whole 1sat basket holds the writer lock for
+ * the entire history. The spend gate then waits out its ceiling and reports
+ * "wallet storage is busy" on a funded wallet. Between pages the lock is free,
+ * and a send that arrives mid-scan keeps the projection already on screen.
+ */
+async function readItemOutputs(
+  storage: StorageSession,
+  runtime: WalletRuntime,
+  userId: number,
+  itemBaskets: LedgerBasket[],
+): Promise<LedgerOutput[] | null> {
+  const outputs: LedgerOutput[] = []
+  for (const basket of itemBaskets) {
+    let offset = 0
+    for (;;) {
+      if (sendIsWaiting()) return null
+      assertCurrent(runtime)
+      const page = asRows<LedgerOutput>(
+        await storage.runAsStorageProvider(async (raw) => {
+          const sp = raw as unknown as LedgerReader
+          return sp.findOutputs({
+            partial: { userId, basketId: basket.basketId },
+            noScript: true,
+            paged: { limit: OUTPUT_PAGE, offset },
+          })
+        }),
+      )
+      outputs.push(...page)
+      if (page.length < OUTPUT_PAGE) break
+      offset += page.length
+      await yieldToUi()
+    }
+  }
+  return outputs
+}
+
 async function readLedger(runtime: WalletRuntime, full: boolean): Promise<ActivityEntry[] | null> {
   const active = runtime.instance
   const storage = active.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
+  if (sendIsWaiting()) return null
   const read = await storage.runAsStorageProvider(async (raw) => {
     const sp = raw as unknown as LedgerReader
     const users = asRows<{ userId: number }>(await sp.findUsers({ partial: { identityKey: active.identityKey } }))
@@ -432,23 +482,25 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
     const userId = users[0]!.userId
     const baskets = asRows<LedgerBasket>(await sp.findOutputBaskets({ partial: { userId } }))
     assertCurrent(runtime)
-    const itemBaskets = baskets.filter((b) => {
-      const name = String(b.name ?? '').toLowerCase()
-      return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
-    })
-    const outputs = await Promise.all(
-      itemBaskets.map((b) =>
-        sp.findOutputs({ partial: { userId, basketId: b.basketId }, noScript: true }),
-      ),
-    )
     const txs = sp.toDbTrx ? null : await settledTransactions(sp, runtime, userId, full)
-    return { sp, userId, txs, outputs: outputs.flatMap((o) => asRows<LedgerOutput>(o)), baskets }
+    return { sp, userId, txs, baskets }
+  }) as {
+    sp: LedgerReader
+    userId: number
+    txs: LedgerTx[] | null
+    baskets: LedgerBasket[]
+  }
+  const itemBaskets = read.baskets.filter((b) => {
+    const name = String(b.name ?? '').toLowerCase()
+    return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
   })
+  const outputs = await readItemOutputs(storage, runtime, read.userId, itemBaskets)
+  if (!outputs) return null
   // Read-only IndexedDB transactions are consistent on their own, so the
   // transaction records are fetched outside the storage lock: a spend waiting
   // for the writer never queues behind the first read of a long history.
   const all = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
-  const { outputs, baskets } = read
+  const { baskets } = read
   const itemTx = new Set<number>()
   const basketName = new Map(baskets.map((b) => [Number(b.basketId), String(b.name ?? '').toLowerCase()]))
   for (const out of outputs) {

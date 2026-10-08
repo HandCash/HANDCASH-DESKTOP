@@ -37,6 +37,8 @@ vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
   fetchBalanceSats: (...args: unknown[]) => mockFetchBalanceSats(...args),
   invalidateBalanceReads: () => {},
+  peekProvenConfirmedSpendable: () => null,
+  lastKnownBalance: () => null,
 }))
 
 vi.mock('./legacyScan', () => ({
@@ -346,6 +348,7 @@ describe('refreshFromChain pre-scan maintenance', () => {
 
     expect(mockSweepChangeScripts).not.toHaveBeenCalled()
     expect(mockRestoreLiveSpendableOutputs).not.toHaveBeenCalled()
+    expect(mockFetchBalanceSats).not.toHaveBeenCalled()
   })
 
   it('aborts mid-maintenance for a queued send without waiting on slow siblings', async () => {

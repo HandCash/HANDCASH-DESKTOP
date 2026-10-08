@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WalletRuntime } from './walletRuntime'
-const control = vi.hoisted(() => ({ current: null as WalletRuntime | null }))
+const control = vi.hoisted(() => ({ current: null as WalletRuntime | null, spend: false }))
 vi.mock('./walletRuntime', () => ({
   getWalletRuntime: () => control.current,
   runtimeIsCurrent: (runtime: WalletRuntime) => runtime === control.current && !runtime.signal.aborted,
 }))
-vi.mock('./walletCoordinator', () => ({ shouldYieldChainIngestToSpend: () => false, spendNeedsStorage: () => false }))
+vi.mock('./walletCoordinator', () => ({
+  shouldYieldChainIngestToSpend: () => control.spend,
+  spendNeedsStorage: () => control.spend,
+}))
 vi.mock('./ghostTxSuppress', () => ({ isGhostTxSuppressed: () => false }))
 import { ledgerActivitySnapshot, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests } from './activityLedger'
 const txid = (n: number) => n.toString(16).padStart(64, '0')
@@ -23,7 +26,7 @@ function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.re
   return { runtime, provider }
 }
 describe('Activity ledger runtime ownership', () => {
-  beforeEach(() => { resetActivityLedgerForTests(); control.current = null })
+  beforeEach(() => { resetActivityLedgerForTests(); control.current = null; control.spend = false })
   it('a previous account read cannot suppress or overwrite the new account refresh', async () => {
     let finish!: (tx: unknown[]) => void
     const old = wallet('old', new Promise(resolve => { finish = resolve }))
@@ -37,6 +40,14 @@ describe('Activity ledger runtime ownership', () => {
     expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(2)])
     expect(next.provider.findTransactions).toHaveBeenCalledOnce()
   })
+  it('leaves the output scan alone while a send is waiting', async () => {
+    const owner = wallet('owner')
+    control.current = owner.runtime
+    control.spend = true
+    await refreshActivityLedger(owner.runtime)
+    expect(owner.provider.findOutputs).not.toHaveBeenCalled()
+    expect(ledgerActivitySnapshot()).toEqual([])
+  })
   it('coalesces reads only for the same runtime and scopes all tables to its user', async () => {
     const owner = wallet('owner'); control.current = owner.runtime
     const first = refreshActivityLedger(owner.runtime)
@@ -45,7 +56,11 @@ describe('Activity ledger runtime ownership', () => {
     expect(owner.provider.findUsers).toHaveBeenCalledWith({ partial: { identityKey: 'owner' } })
     expect(owner.provider.findTransactions).toHaveBeenCalledWith(expect.objectContaining({ partial: { userId: 9 }, noRawTx: true }))
     expect(owner.provider.findOutputBaskets).toHaveBeenCalledWith({ partial: { userId: 9 } })
-    expect(owner.provider.findOutputs).toHaveBeenCalledWith({ partial: { userId: 9, basketId: 3 }, noScript: true })
+    expect(owner.provider.findOutputs).toHaveBeenCalledWith({
+      partial: { userId: 9, basketId: 3 },
+      noScript: true,
+      paged: { limit: 200, offset: 0 },
+    })
   })
   it('publishes corrections to direction even when time, amount and description stay the same', () => {
     const owner = wallet('owner'); control.current = owner.runtime

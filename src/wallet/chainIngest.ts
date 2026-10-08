@@ -28,7 +28,12 @@ import { getWalletRuntime, runtimeIsCurrent } from './walletRuntime'
  * our own unconfirmed change is expected — that coin is `unconfirmed`, not spent.
  */
 import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend, shouldYieldChainIngestToUi } from './walletCoordinator'
-import { fetchBalanceSats, invalidateBalanceReads } from './session'
+import {
+  fetchBalanceSats,
+  invalidateBalanceReads,
+  lastKnownBalance,
+  peekProvenConfirmedSpendable,
+} from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { reconcilePendingSends } from './pendingSend'
 import { playWalletSound } from './soundService'
@@ -345,6 +350,21 @@ export async function refreshFromChainExclusive(
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err
     console.warn('[chain-ingest] tx closure pass skipped', err)
+  }
+
+  // The yield path used to read the balance itself. That is the same lock the
+  // send is waiting on, so "yielding" still produced "wallet storage is busy".
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount: 0,
+      pendingTips: 0,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
+    })
   }
 
   let balanceBefore = 0
@@ -807,20 +827,15 @@ async function finishEarlyForSpend(
   account: { identityKey: string; accountIndex: number },
 ): Promise<ChainIngestRunResult> {
   console.info('[chain-ingest] yielding to send')
-  let balanceSats: number | null = null
-  try {
-    invalidateBalanceReads(active.wallet)
-    balanceSats = await fetchBalanceSats(active.wallet)
-    const cur = getActiveWallet()
-    if (
-      balanceSats != null &&
-      cur &&
-      cur.identityKey === account.identityKey
-    ) {
-      publishDisplayBalanceRefresh(balanceSats, account.identityKey)
-    }
-  } catch {
-    balanceSats = null
+  // Leave the storage lock to the send. A fresh toolbox read here is what the
+  // gate is already failing to get; the last proven or displayed total is enough
+  // to keep the hero number while the send proceeds.
+  const proven = peekProvenConfirmedSpendable(active.wallet)
+  const known = lastKnownBalance()
+  const balanceSats = proven != null && proven > 0 ? proven : known
+  const cur = getActiveWallet()
+  if (balanceSats != null && cur && cur.identityKey === account.identityKey) {
+    publishDisplayBalanceRefresh(balanceSats, account.identityKey)
   }
   setSyncHealth({
     phase: 'ok',

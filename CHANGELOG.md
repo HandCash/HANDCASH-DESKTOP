@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.509] - 2026-10-08
+
+### Fixed
+- **A funded wallet is no longer told storage is busy.** The spend gate waits on a live balance read, and that read was queued behind the activity scan of every item output plus unlock’s own balance read — including the path that is supposed to yield to a send. The scan now releases the lock between pages and stays out while a send is waiting. Yielding no longer takes the lock to re-read the balance. If the live read still cannot land, the last recorded balance is used; signing still refuses if the coins are not actually there.
+
 ## [1.3.508] - 2026-10-08
 
 ### Fixed
