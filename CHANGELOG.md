@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.513] - 2026-10-08
+
+### Fixed
+- **Payments stop reselecting coins a confirmed transaction already spent.** Self-sends on this desktop showed success but never arrived: every payment picked coins from `ef8e794d…`, `fb5bd3f5…`, `6c2278ad…`, `1926acbb…`, which the confirmed 144-input consolidation `d65f31d0…` (block 963488, Aug 23) spent. The parent transactions were in the package; miners answered missing inputs because the coins were gone. Three gaps kept them in the pool:
+  - The spend-conflict checks asked one explorer per input and gave up when any answer was unknown, and they never named the spender. They now ask a Teranode node and WhatsOnChain together, and a named spender that is not this transaction proves the conflict.
+  - After a reject, the wallet probed only inputs whose parent carried a merkle proof. Parents broadcast without a stored proof (local `unproven`, long mined) were skipped, so every dead coin went back to spendable. Every input is probed now. A coin with a named spender stays hidden under it; the rest are released. An Arcade hard reject takes the same path instead of releasing every input.
+  - The unlock dead-coin sweep skipped change whose parent reads `unproven` here. It now skips only parents no node has seen (`sending`, `nosend`, `unsent`, `unsigned`, `unprocessed`, `nonfinal`).
+- **1.3.512's "hold a package without its parent" gate is reverted.** That gate did not come from 1.3.471: posting with incomplete ancestry is back to the 1.3.471 behaviour, and a missing parent can never prove a conflict because no source names a spender for it.
+
+### Changed
+- Triage `spendPrep` timelines carry each payment's tagged lines for two minutes after `requested` (signing, BEEF prep, miner verdicts, Activity writes), so a send that shows success without landing is visible without opening the log.
+
 ## [1.3.512] - 2026-10-08
 
 ### Fixed

@@ -13,6 +13,7 @@ const LIVE = 'a1'.repeat(32)
 const FLAKY = 'f1'.repeat(32)
 const UNMINED = 'c1'.repeat(32)
 const ITEM = 'e1'.repeat(32)
+const UNPROVEN = 'c2'.repeat(32)
 const SPENDER = 'bb'.repeat(32)
 const OLD_SPENDER = 'b2'.repeat(32)
 
@@ -30,12 +31,16 @@ const outputs = [
   { txid: FLAKY, vout: 0, satoshis: 700, change: true, transactionId: 3 },
   { txid: UNMINED, vout: 0, satoshis: 900, change: true, transactionId: 9 },
   { txid: ITEM, vout: 0, satoshis: 1, change: true, transactionId: 4, basket: '1sat' },
+  { txid: UNPROVEN, vout: 2, satoshis: 600, change: true, transactionId: 10 },
 ]
 
 const storage = {
   runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
     fn({
-      findTransactions: async () => [{ transactionId: 9 }],
+      findTransactions: async ({ status }: { status: string[] }) => [
+        ...(status.includes('nosend') ? [{ transactionId: 9 }] : []),
+        ...(status.includes('unproven') ? [{ transactionId: 10 }] : []),
+      ],
       findOutputs: async () => outputs,
     }),
 }
@@ -150,7 +155,7 @@ describe('sweepDeadCoins', () => {
   it('hides only coins with a named confirmed spender, asking in one request', async () => {
     await expect(drained(() => sweepDeadCoins(runtime))).resolves.toEqual({
       ran: true,
-      checked: 3,
+      checked: 4,
       hidden: 1,
       unknown: 1,
     })
@@ -162,7 +167,7 @@ describe('sweepDeadCoins', () => {
     flakyMisses = 1
     await expect(drained(() => sweepDeadCoins(runtime))).resolves.toEqual({
       ran: true,
-      checked: 3,
+      checked: 4,
       hidden: 2,
       unknown: 0,
     })
@@ -196,10 +201,15 @@ describe('sweepDeadCoins', () => {
     expect(adoptConfirmedSpender).toHaveBeenCalledOnce()
   })
 
-  it('never asks about change of an unmined local tx or an asset basket', async () => {
+  it('never asks about change of a never-broadcast local tx or an asset basket', async () => {
     await drained(() => sweepDeadCoins(runtime))
     expect(askedTxids()).not.toContain(UNMINED)
     expect(askedTxids()).not.toContain(ITEM)
+  })
+
+  it('asks about change of a broadcast tx whose proof was never stored', async () => {
+    await drained(() => sweepDeadCoins(runtime))
+    expect(askedTxids()).toContain(UNPROVEN)
   })
 
   it('does not re-ask coins cleared minutes ago', async () => {

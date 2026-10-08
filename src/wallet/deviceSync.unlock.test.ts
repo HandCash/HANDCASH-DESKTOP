@@ -52,6 +52,12 @@ vi.mock('./permissions', () => ({
   hasInboundWalletRequest: () => false,
 }))
 vi.mock('./session', () => ({ getActiveWallet: () => getActiveWallet() }))
+vi.mock('./walletRuntime', () => ({
+  getWalletRuntime: () => {
+    const instance = getActiveWallet()
+    return instance ? { instance } : null
+  },
+}))
 vi.mock('./balanceSnapshot', () => ({
   readTrustedBalance: (identityKey: string, chain: string) => readTrustedBalance(identityKey, chain),
 }))

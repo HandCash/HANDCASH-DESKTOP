@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   combineSpendProbes,
   foreignConfirmedInputSpends,
-  inputsWithPossiblyMinedParent,
   outpointRecentlyCleared,
   parseBulkSpentEntry,
   parseConfirmedForeignSpender,
@@ -246,40 +245,20 @@ describe('combineSpendProbes', () => {
   })
 })
 
-describe('inputsWithPossiblyMinedParent', () => {
+function signedOverProoflessParent(): { txid: string; tx: number[]; input: string } {
   const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
-
-  function txFrom(prevTxids: string[]): Transaction {
-    const tx = new Transaction()
-    for (const sourceTXID of prevTxids) {
-      tx.addInput({ sourceTXID, sourceOutputIndex: 0, unlockingScript: new Script() })
-    }
-    tx.addOutput({ lockingScript: lock, satoshis: 1_000 })
-    return tx
-  }
-
-  it('skips inputs whose parent rides the BEEF unmined, probes the rest', () => {
-    const mined = txFrom(['11'.repeat(32)])
-    mined.merklePath = MerklePath.fromCoinbaseTxidAndHeight(mined.id('hex'), 900_000)
-    const unmined = txFrom(['22'.repeat(32)])
-    const txidOnly = '33'.repeat(32)
-    const absent = '44'.repeat(32)
-    const child = txFrom([mined.id('hex'), unmined.id('hex'), txidOnly, absent])
-
-    const beef = new Beef()
-    beef.mergeTransaction(mined)
-    beef.mergeRawTx(unmined.toBinary())
-    beef.mergeTxidOnly(txidOnly)
-    beef.mergeRawTx(child.toBinary())
-    const atomic = Array.from(beef.toBinaryAtomic(child.id('hex')))
-
-    expect(inputsWithPossiblyMinedParent(atomic, child.id('hex'))).toEqual([
-      `${mined.id('hex')}.0`,
-      `${txidOnly}.0`,
-      `${absent}.0`,
-    ])
-  })
-})
+  const parent = new Transaction()
+  parent.addInput({ sourceTXID: '66'.repeat(32), sourceOutputIndex: 0, unlockingScript: new Script() })
+  parent.addOutput({ lockingScript: lock, satoshis: 1_000 })
+  const signed = new Transaction()
+  signed.addInput({ sourceTXID: parent.id('hex'), sourceOutputIndex: 0, unlockingScript: new Script() })
+  signed.addOutput({ lockingScript: lock, satoshis: 900 })
+  const beef = new Beef()
+  beef.mergeRawTx(parent.toBinary())
+  beef.mergeRawTx(signed.toBinary())
+  const txid = signed.id('hex')
+  return { txid, tx: Array.from(beef.toBinaryAtomic(txid)), input: `${parent.id('hex')}.0` }
+}
 
 function signedOverMinedParent(): { txid: string; tx: number[]; input: string } {
   const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
@@ -307,6 +286,14 @@ describe('retireCreateActionSpentElsewhere', () => {
 
   it('fails the signed tx before hiding its dead inputs, so the fail cannot restore them', async () => {
     const { txid, tx, input } = signedOverMinedParent()
+    vi.stubGlobal('fetch', bulkFetch(spentBy(OTHER)))
+
+    await expect(retireCreateActionSpentElsewhere({ txid, tx }, 'main')).resolves.toBe(true)
+    expect(retireCalls).toEqual([`fail ${txid}`, `hide ${input} by ${OTHER}`])
+  })
+
+  it('retires a coin a confirmed tx spent even when its parent rides without a proof', async () => {
+    const { txid, tx, input } = signedOverProoflessParent()
     vi.stubGlobal('fetch', bulkFetch(spentBy(OTHER)))
 
     await expect(retireCreateActionSpentElsewhere({ txid, tx }, 'main')).resolves.toBe(true)

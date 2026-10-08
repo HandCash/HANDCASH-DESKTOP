@@ -1090,8 +1090,10 @@ const NOSEND_BACKFILL_MAX_PAGES = 40;
  * an in-flight listing or batch is not ours to advance. Stops between pages
  * when a send is waiting — this is maintenance, never a reason to hold a spend.
  */
-export async function promotePinnedNoSendProofRequests(): Promise<number> {
-  const storage = getActiveWallet()?.wallet?.storage;
+export async function promotePinnedNoSendProofRequests(
+  active: ActiveWallet,
+): Promise<number> {
+  const storage = active.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
   const started = Date.now();
   const { txLanded } = await import("./landedTx");

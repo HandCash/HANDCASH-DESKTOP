@@ -414,7 +414,7 @@ async function readConfirmedSpendable(
   // The in-memory proven total is empty until a live read lands. After unlock
   // that read is the one the lock is blocking, so the durable hero figure is
   // the last real balance. createAction still refuses if the coins are not there.
-  const session = getActiveWallet()
+  const session = getWalletRuntime()?.instance
   const trusted =
     session?.identityKey != null ? readTrustedBalance(session.identityKey, session.chain) : null
   if (trusted != null && trusted > 0) {

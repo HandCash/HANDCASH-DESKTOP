@@ -382,8 +382,14 @@ describe('refreshSpendableBalance', () => {
     })
     peekProvenConfirmedSpendable.mockReturnValue(null)
     readTrustedBalance.mockReturnValue(20_000)
-    const { assertSendableBalance } = await import('./spendGuard')
-    await expect(assertSendableBalance(500)).resolves.toBe(20_000)
+    const { installWalletRuntime, resetWalletRuntimeForTests } = await import('./walletRuntime')
+    installWalletRuntime({ identityKey: '02', chain: 'main' } as never)
+    try {
+      const { assertSendableBalance } = await import('./spendGuard')
+      await expect(assertSendableBalance(500)).resolves.toBe(20_000)
+    } finally {
+      resetWalletRuntimeForTests()
+    }
   })
 
   it('uses a proven confirmed cache when live storage is unreadable', async () => {

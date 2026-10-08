@@ -19,7 +19,18 @@ vi.mock('./session', () => ({
 
 vi.mock('./legacyScan', () => ({
   txExistsOnChain: vi.fn(),
-  spentStatusOfOutpoint: vi.fn(),
+}))
+
+const INPUT = '12'.repeat(32) + '.0'
+vi.mock('./signedTxInputs', () => ({
+  inputOutpointsForSignedTx: vi.fn(async () => [INPUT]),
+}))
+
+const inputsSpentElsewhere = vi.fn(
+  async (): Promise<Array<{ outpoint: string; spender: string }>> => [],
+)
+vi.mock('./createActionInputFate', () => ({
+  inputsSpentElsewhere: (...args: unknown[]) => inputsSpentElsewhere(...(args as [])),
 }))
 
 vi.mock('@bsv/sdk', () => ({
@@ -32,9 +43,10 @@ describe('postBeefResult', () => {
     postBeef.mockResolvedValue([
       { status: 'success', txidResults: [{ status: 'success' }] },
     ])
-    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
+    const { txExistsOnChain } = await import('./legacyScan')
     vi.mocked(txExistsOnChain).mockResolvedValue(null)
-    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unknown')
+    inputsSpentElsewhere.mockReset()
+    inputsSpentElsewhere.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -100,14 +112,24 @@ describe('postBeefResult', () => {
     ).toBe(false)
   })
 
-  it('treats doubleSpend as ghost when tx and inputs are still unspent', async () => {
+  it('treats doubleSpend as ghost when no input has a named spender', async () => {
     const txid = 'aa'.repeat(32)
-    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
+    const { txExistsOnChain } = await import('./legacyScan')
     vi.mocked(txExistsOnChain).mockResolvedValue(false)
-    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unspent')
     await expect(
       postBeefConflictIsReal({ txid, chain: 'main' }),
     ).resolves.toBe(false)
+    expect(inputsSpentElsewhere).toHaveBeenCalledWith(txid, [INPUT], 'main')
+  })
+
+  it('treats doubleSpend as real when another tx is named spending an input', async () => {
+    const txid = 'ab'.repeat(32)
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValue(false)
+    inputsSpentElsewhere.mockResolvedValueOnce([{ outpoint: INPUT, spender: 'cd'.repeat(32) }])
+    await expect(
+      postBeefConflictIsReal({ txid, chain: 'main' }),
+    ).resolves.toBe(true)
   })
 
   it('treats doubleSpend as real when tx is on chain', async () => {
@@ -148,9 +170,8 @@ describe('postBeefResult', () => {
         txidResults: [{ status: 'error', doubleSpend: true }],
       },
     ])
-    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
+    const { txExistsOnChain } = await import('./legacyScan')
     vi.mocked(txExistsOnChain).mockResolvedValue(false)
-    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unspent')
     const txid = 'ee'.repeat(32)
     const result = await deliverSignedTxBestEffort({
       txid,

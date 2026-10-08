@@ -1,5 +1,6 @@
 import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
+import { getWalletRuntime } from './walletRuntime'
 
 /**
  * Multi-device **historyReplica** via shared BRC-39 backup URL (+ friends sidecar).
@@ -536,7 +537,7 @@ export type AutoSyncResult = {
  * or a recorded high-water is enough to leave that region without it.
  */
 function localHistoryAlreadyRecorded(): boolean {
-  const active = getActiveWallet()
+  const active = getWalletRuntime()?.instance
   if (!active?.identityKey) return false
   const trusted = readTrustedBalance(active.identityKey, active.chain)
   if ((trusted ?? 0) > 0) return true

@@ -1427,7 +1427,7 @@ describe('pinBroadcastLocalTx', () => {
       ])
       .mockResolvedValue([])
 
-    await expect(promotePinnedNoSendProofRequests()).resolves.toBe(1)
+    await expect(promotePinnedNoSendProofRequests(mockGetActiveWallet())).resolves.toBe(1)
     expect(updateProvenTxReq).toHaveBeenCalledTimes(1)
     expect(updateProvenTxReq).toHaveBeenCalledWith(2, { status: 'unmined', wasBroadcast: true })
   })

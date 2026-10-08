@@ -42,8 +42,20 @@ vi.mock('./arcadeSubmitGuard', async (importOriginal) => {
 
 vi.mock('./legacyScan', () => ({
   txExistsOnChain: vi.fn(async () => false),
-  spentStatusOfOutpoint: vi.fn(async () => 'unspent' as const),
 }))
+
+// Inputs a node or explorer names another tx as spending.
+let namedSpends: Array<{ outpoint: string; spender: string }> = []
+const retired: string[] = []
+vi.mock('./createActionInputFate', () => ({
+  inputsSpentElsewhere: vi.fn(async () => namedSpends),
+  retireCreateActionSpentElsewhere: vi.fn(async ({ txid }: { txid: string }) => {
+    if (namedSpends.length === 0) return false
+    retired.push(txid)
+    return true
+  }),
+}))
+const DEAD_INPUT = { outpoint: `${'b'.repeat(64)}.0`, spender: 'e'.repeat(64) }
 
 // Whether the signed AtomicBEEF can stand alone at a miner. Default complete so
 // existing cases judge the provider answer, not our BEEF.
@@ -90,11 +102,11 @@ describe('submitAtomicBeefToMiners', () => {
     const { __resetArcadeSubmitGuardForTests } = await import('./arcadeSubmitGuard')
     __resetArcadeSubmitGuardForTests()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
-    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
+    const { txExistsOnChain } = await import('./legacyScan')
     vi.mocked(txExistsOnChain).mockReset()
-    vi.mocked(spentStatusOfOutpoint).mockReset()
     vi.mocked(txExistsOnChain).mockResolvedValue(false)
-    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unspent')
+    namedSpends = []
+    retired.length = 0
   })
 
   it('returns accepted when miners accept', async () => {
@@ -294,12 +306,47 @@ describe('submitAtomicBeefToMiners', () => {
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
-  it('does not post a package whose parent transaction is missing', async () => {
-    beefComplete = false
+  it('keeps an input another tx spent hidden instead of releasing it', async () => {
+    namedSpends = [DEAD_INPUT]
+    postBeef.mockResolvedValueOnce([
+      {
+        status: 'error',
+        txidResults: [
+          {
+            status: 'error',
+            doubleSpend: true,
+            notes: [{ what: 'postRawsErrorMissingInputs' }],
+          },
+        ],
+      },
+    ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result).toMatchObject({ kind: 'queued', reason: 'unverified' })
-    expect(postBeef).not.toHaveBeenCalled()
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
+    expect(retired).toEqual([TXID])
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  const arcadeMissingInputs = [
+    {
+      name: 'ArcadeBeef',
+      status: 'error',
+      txidResults: [
+        {
+          status: 'error',
+          doubleSpend: true,
+          notes: [{ what: 'postRawsErrorMissingInputs' }],
+        },
+      ],
+    },
+  ]
+
+  it('blames our BEEF, not the tip, when ancestry is incomplete', async () => {
+    beefComplete = false
+    postBeef.mockResolvedValueOnce(arcadeMissingInputs)
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow(
+      /parent transaction is not on chain yet/i,
+    )
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
@@ -321,14 +368,13 @@ describe('submitAtomicBeefToMiners', () => {
     expect(hydrateInputBeef).not.toHaveBeenCalled()
   })
 
-  it('does not treat a missing parent as a spent input', async () => {
+  it('still reports Already spent on incomplete ancestry when an input is proven spent', async () => {
     beefComplete = false
-    const { spentStatusOfOutpoint } = await import('./legacyScan')
-    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('spent')
+    namedSpends = [DEAD_INPUT]
+    postBeef.mockResolvedValueOnce(arcadeMissingInputs)
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
-    expect(result).toMatchObject({ kind: 'queued', reason: 'unverified' })
-    expect(postBeef).not.toHaveBeenCalled()
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
+    expect(retired).toEqual([TXID])
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 

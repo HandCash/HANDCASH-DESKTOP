@@ -220,11 +220,33 @@ async function rememberGhostTxQuiet(txid: string): Promise<void> {
   }
 }
 
+/**
+ * Free the inputs of a tx miners refused. An input another tx is named as
+ * spending stays hidden under that spender; releasing it handed the dead coin
+ * to the next payment, which miners refused again (Aug 23 `d65f31d0`).
+ */
+async function retireDeadInputsOrRelease(
+  id: string,
+  atomic: number[],
+  chain: ActiveWallet["chain"],
+): Promise<void> {
+  const { retireCreateActionSpentElsewhere } = await import(
+    "./createActionInputFate"
+  );
+  if (await retireCreateActionSpentElsewhere({ txid: id, tx: atomic }, chain)) return;
+  console.warn(
+    "[minerSubmit] releasing seal — no input has a named spender",
+    id.slice(0, 12)
+  );
+  await releaseSealedInputsOfUnsentTx(id, atomic);
+}
+
 async function dropLocalSpendForArcadeReject(
   id: string,
   atomic: number[],
   telemetry: SubmitTelemetry,
   summary: PostBeefSummary,
+  chain: ActiveWallet["chain"],
   owner?: BoundAccountKeyScope,
 ): Promise<never> {
   console.warn(
@@ -240,7 +262,7 @@ async function dropLocalSpendForArcadeReject(
       : "arcade_reject",
   });
   await rememberGhostTxQuiet(id);
-  await releaseSealedInputsOfUnsentTx(id, atomic);
+  await retireDeadInputsOrRelease(id, atomic, chain);
   throw arcadeHardRejectError(summary);
 }
 
@@ -306,7 +328,7 @@ async function applyArcadePostBeef(
       telemetry,
       proofsComplete,
     });
-    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary, owner);
+    await dropLocalSpendForArcadeReject(id, atomic, telemetry, summary, active.chain, owner);
   }
   if (postBeefResultsHitArcade(rawResults)) {
     console.info(
@@ -379,21 +401,12 @@ async function resolveMinerConflict(args: {
     await onAlreadySpentSend({ txid: id, atomic });
     throw new Error(formatPostBeefFailure(summary));
   }
-  // Confirmed foreign spenders must stay hidden. Releasing them back to
-  // spendable is how the next createAction signs the same dead coins and the
-  // minted output disappears before it can be listed.
-  const { retireCreateActionSpentElsewhere } = await import(
-    "./createActionInputFate"
-  );
-  if (await retireCreateActionSpentElsewhere({ txid: id, tx: atomic }, active.chain)) {
-    throw new Error(formatPostBeefFailure(summary));
-  }
   console.warn(
-    "[minerSubmit] hard reject — releasing seal (tx not on chain)",
+    "[minerSubmit] hard reject — tx not on chain",
     id.slice(0, 12),
     summary.detail
   );
-  await releaseSealedInputsOfUnsentTx(id, atomic);
+  await retireDeadInputsOrRelease(id, atomic, active.chain);
   throw new Error(formatPostBeefFailure(summary));
 }
 
@@ -498,7 +511,6 @@ async function submitAtomicBeefToMinersOnce(
   // those parents cannot exist yet; hydrating them from an indexer is futile.
   let ancestryComplete = false;
   let proofsComplete = false;
-  let gap: "none" | "unconfirmed-parents" | "missing-bodies" | undefined;
   try {
     const {
       classifyBeefAncestryGap,
@@ -518,7 +530,7 @@ async function submitAtomicBeefToMinersOnce(
     beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic, {
       inSpend: true,
     });
-    gap = classifyBeefAncestryGap(beefBytes);
+    let gap = classifyBeefAncestryGap(beefBytes);
     applyGap(gap);
     if (beefBytes !== atomic) updatePendingMinerSubmitBody(id, beefBytes, owner);
     if (gap === "unconfirmed-parents") {
@@ -538,6 +550,11 @@ async function submitAtomicBeefToMinersOnce(
         gap = classifyBeefAncestryGap(shaped);
         applyGap(gap);
         updatePendingMinerSubmitBody(id, shaped, owner);
+      } else {
+        console.warn(
+          "[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque",
+          id.slice(0, 12)
+        );
       }
     }
   } catch (err) {
@@ -547,23 +564,6 @@ async function submitAtomicBeefToMinersOnce(
       err
     );
   }
-  // Arcade answers a subject posted without its parent as MissingInputs,
-  // which is the same note as a spent coin. Do not post that package.
-  // The outbox keeps the cheque and retries once the parent body is in it.
-  if (gap === "missing-bodies") {
-    console.warn(
-      "[minerSubmit] held — parent transaction not in the package; not posted",
-      id.slice(0, 12)
-    );
-    recordStage("propagation_queued", {
-      ...telemetry,
-      blockerCode: "beef_ancestry_incomplete",
-    });
-    return outboxDurable
-      ? { kind: "queued", reason: "unverified" }
-      : untrackedMinerResult("unverified", telemetry);
-  }
-
   // Nothing reaches a miner that this device has not SPV-verified: scripts
   // and amounts of every unmined tx, proofs of every mined one.
   const { verifySignedPackage } = await import("./spvPackage");

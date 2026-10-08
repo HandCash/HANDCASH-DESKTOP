@@ -1617,6 +1617,18 @@ const SPEND_PROMOTED_RE =
 const SEND_MARK_RE = /^\[(brc29|p2pkh|collectables|bsv21)\] \+(\d+)ms (.+)$/
 const SEND_STUCK_RE = /^\[payment-progress\] stuck before signing — aborting \S+ (\w+)/
 const SEND_REQUESTED_RE = /^\[tx-trace\] requested traceId=\S+ flow=(\S+)/
+/** Wallet tags a payment passes through between `requested` and landing. */
+const SEND_TRAIL_TAG_RE =
+  /^\[(tx-trace|brc29|p2pkh|collectables|bsv21|bsv-send|spend|spend-guard|signed-send|minerSubmit|landing|arcade[\w-]*|self-send|tip-ingest|peer-deliver|remittance[\w-]*|messagebox[\w-]*|inbox[\w-]*|brc29-[\w-]+|payment-progress|send[\w-]*|internalize[\w-]*|activity[\w-]*)\]/
+const SEND_TRAIL_MAX = 40
+const SEND_TRAIL_WINDOW_MS = 120_000
+
+function trailLine(text) {
+  return text
+    .replace(/\b[0-9a-f]{64}\b/g, (h) => `${h.slice(0, 12)}…`)
+    .replace(/\b0[23][0-9a-f]{64}\b/g, (k) => `${k.slice(0, 10)}…`)
+    .slice(0, 180)
+}
 
 /**
  * Per-payment prep timeline. A send that the watchdog aborts with no phase
@@ -1631,8 +1643,13 @@ function spendPrepFacts(events) {
   let open = null
   for (const e of events) {
     let m
+    for (const s of sends) {
+      if (s.trail.length < SEND_TRAIL_MAX && e.at - s.at <= SEND_TRAIL_WINDOW_MS && SEND_TRAIL_TAG_RE.test(e.text)) {
+        s.trail.push(`+${e.at - s.at}ms ${trailLine(e.text)}`)
+      }
+    }
     if ((m = SEND_REQUESTED_RE.exec(e.text))) {
-      open = { flow: m[1], at: e.at, marks: [], outcome: 'open' }
+      open = { flow: m[1], at: e.at, marks: [], outcome: 'open', trail: [`+0ms ${trailLine(e.text)}`] }
       sends.push(open)
       continue
     }
@@ -1688,6 +1705,7 @@ function spendPrepFacts(events) {
       outcome: s.outcome,
       ...(s.stuckAfterMs != null ? { stuckAfterMs: s.stuckAfterMs } : {}),
       marks: s.marks.map((mk) => `${mk.atMs}ms ${mk.phase}`),
+      trail: s.trail,
     })),
   }
 }
@@ -2863,7 +2881,8 @@ const MINER_OUTCOMES = [
   ['noAck', /^\[minerSubmit\] no miner ack[^0-9a-f]*([0-9a-f]{12})/],
   ['unprovenConflict', /^\[minerSubmit\] unproven (?:missing-inputs|doubleSpend)[^0-9a-f]*([0-9a-f]{12})/],
   ['rejectOnChain', /^\[minerSubmit\] hard reject — tx on chain[^0-9a-f]*([0-9a-f]{12})/],
-  ['rejectReleased', /^\[minerSubmit\] hard reject — releasing seal[^0-9a-f]*([0-9a-f]{12})/],
+  // Before 1.3.513 every hard reject released; since, only one with no named spender.
+  ['rejectReleased', /^\[minerSubmit\] (?:hard reject — releasing seal|releasing seal — no input has a named spender)[^0-9a-f]*([0-9a-f]{12})/],
   ['offline', /^\[minerSubmit\] offline — signed cheque queued\s+([0-9a-f]{12})/],
   ['pinDidNotFree', /^\[minerSubmit\] post-Arcade pin did not free change\s+([0-9a-f]{12})/],
   // A fallback broadcaster settled the round without Arcade's verdict (1.3.486+).

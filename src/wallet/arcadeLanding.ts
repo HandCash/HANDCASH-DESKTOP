@@ -359,7 +359,7 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
     }
     if (!runtimeIsCurrent(runtime)) return
     const { promotePinnedNoSendProofRequests } = await import('./staleOutputRelease')
-    await promotePinnedNoSendProofRequests()
+    await promotePinnedNoSendProofRequests(runtime.instance)
     if (!runtimeIsCurrent(runtime)) return
     const started = Date.now()
     const { listArcadeSubmitContacts, txIsArcadeRejected } = await import('./arcadeSubmitGuard')

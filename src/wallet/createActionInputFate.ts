@@ -5,7 +5,6 @@
  *
  * Before the app is told the mint exists, name those inputs and sign again.
  */
-import { Beef } from '@bsv/sdk'
 import type { Chain } from './vault'
 import { inputOutpointsFromAtomicBeef } from './txOutpoints'
 import { extractTxid } from './txExplorer'
@@ -282,22 +281,26 @@ export function atomicFromCreateResult(result: unknown): number[] | null {
 }
 
 /**
- * Inputs whose parent may be mined. A confirmed spender needs a confirmed
- * parent, so an input whose parent rides this BEEF as a raw tx with no proof
- * cannot have one — back-to-back payments spend exactly that unmined change.
- * A parent the BEEF names by txid only, or omits, is still probed.
+ * Inputs of `txid` a node or explorer names another transaction as spending.
+ * Every input is asked: a parent carried raw without a proof is often mined
+ * all the same (the wallet just never fetched its proof), and skipping those
+ * let coins a confirmed consolidation spent return to the pool after each
+ * reject. Silence on one input does not hide a named spender on another.
  */
-export function inputsWithPossiblyMinedParent(atomic: number[], txid: string): string[] {
-  const inputs = inputOutpointsFromAtomicBeef(atomic, txid)
-  let beef: Beef
-  try {
-    beef = Beef.fromBinary(atomic)
-  } catch {
-    return inputs
-  }
-  return inputs.filter((outpoint) => {
-    const parent = beef.findTxid(outpoint.split('.')[0] ?? '')
-    return !parent || parent.isTxidOnly || parent.hasProof
+export async function inputsSpentElsewhere(
+  txid: string,
+  inputs: string[],
+  chain: Chain,
+): Promise<Array<{ outpoint: string; spender: string }>> {
+  const asked = inputs.filter((outpoint) => !outpointRecentlyCleared(outpoint))
+  if (asked.length === 0) return []
+  const started = Date.now()
+  const probes = await probeOutpointSpends(asked, txid, chain)
+  const ms = Date.now() - started
+  if (ms >= 250) console.info(`[spend] input_fate done ${ms}ms`)
+  return asked.flatMap((outpoint) => {
+    const probe = probes.get(outpoint)
+    return probe?.kind === 'spent' ? [{ outpoint, spender: probe.spender }] : []
   })
 }
 
@@ -308,18 +311,7 @@ export async function foreignConfirmedInputSpends(
   const txid = extractTxid(result)?.toLowerCase()
   const atomic = atomicFromCreateResult(result)
   if (!txid || !atomic?.length) return []
-  const inputs = inputsWithPossiblyMinedParent(atomic, txid).filter(
-    (outpoint) => !outpointRecentlyCleared(outpoint),
-  )
-  if (inputs.length === 0) return []
-  const started = Date.now()
-  const probes = await probeOutpointSpends(inputs, txid, chain)
-  const ms = Date.now() - started
-  if (ms >= 250) console.info(`[spend] input_fate done ${ms}ms`)
-  return inputs.flatMap((outpoint) => {
-    const probe = probes.get(outpoint)
-    return probe?.kind === 'spent' ? [{ outpoint, spender: probe.spender }] : []
-  })
+  return inputsSpentElsewhere(txid, inputOutpointsFromAtomicBeef(atomic, txid), chain)
 }
 
 /**

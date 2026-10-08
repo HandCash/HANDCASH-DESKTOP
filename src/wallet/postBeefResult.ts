@@ -6,7 +6,7 @@ import { getActiveWallet } from './session'
  * Top-level `status: 'error'` is not enough — Bitails marks missing-inputs as
  * error+doubleSpend, while already-in-mempool stays success on the txid row.
  */
-import { spentStatusOfOutpoint, txExistsOnChain } from './legacyScan'
+import { txExistsOnChain } from './legacyScan'
 import type { Chain } from './vault'
 import { inputOutpointsForSignedTx } from './signedTxInputs'
 import { normalizeTxid } from './txid'
@@ -331,10 +331,9 @@ export async function postBeefConflictIsReal(args: {
   const inputs = await inputOutpointsForSignedTx(txid, args.atomic)
   if (inputs.length === 0) return false
 
-  const statuses = await Promise.all(
-    inputs.map((op) => spentStatusOfOutpoint(op, args.chain).catch(() => 'unknown' as const)),
-  )
-  // Any unknown answer → not proven. Prefer a ghost/retry over hiding spendable change.
-  if (statuses.some((s) => s === 'unknown')) return false
-  return statuses.some((s) => s === 'spent')
+  // Proven only by a named spender that is not this tx. Silence stays a
+  // ghost/retry rather than hiding spendable change.
+  const { inputsSpentElsewhere } = await import('./createActionInputFate')
+  const spends = await inputsSpentElsewhere(txid, inputs, args.chain).catch(() => [])
+  return spends.length > 0
 }
