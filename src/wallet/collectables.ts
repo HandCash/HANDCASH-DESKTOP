@@ -1848,6 +1848,51 @@ function repaintedCollectables(): Collectable[] {
 }
 
 /**
+ * Least spacing between the repaints that follow proofs.
+ *
+ * A repaint rebuilds and persists every card — about a second for 1,000 on a
+ * phone. Walks answered from local storage finish back to back, so one repaint
+ * per proof turned verifying an import into a frozen screen.
+ */
+const PROVEN_REPAINT_MS = 1_500
+let provenRepaintAt = 0
+let provenRepaint: {
+  epoch: number
+  timer: ReturnType<typeof setTimeout>
+  after: Array<() => void>
+} | null = null
+
+/**
+ * Repaint for a proof, coalesced with any other proof inside
+ * {@link PROVEN_REPAINT_MS}. The first proof after a quiet spell paints at once;
+ * `after` runs once the card it settles has been repainted.
+ */
+function repaintAfterProof(epoch: number, after?: () => void): void {
+  if (provenRepaint && provenRepaint.epoch !== epoch) flushProvenRepaint()
+  if (provenRepaint) {
+    if (after) provenRepaint.after.push(after)
+    return
+  }
+  const wait = provenRepaintAt + PROVEN_REPAINT_MS - Date.now()
+  provenRepaint = {
+    epoch,
+    timer: setTimeout(flushProvenRepaint, Math.max(0, wait)),
+    after: after ? [after] : [],
+  }
+  if (wait <= 0) flushProvenRepaint()
+}
+
+function flushProvenRepaint(): void {
+  const pending = provenRepaint
+  if (!pending) return
+  provenRepaint = null
+  clearTimeout(pending.timer)
+  provenRepaintAt = Date.now()
+  setCollectablesCache(repaintedCollectables(), { forEpoch: pending.epoch })
+  for (const after of pending.after) after()
+}
+
+/**
  * Local BEEF for paint and lineage while the collectables screen is opening.
  *
  * Chain ingest and this lookup share the renderer's synchronous IndexedDB.
@@ -2031,11 +2076,13 @@ async function resolveUnknownOrigins(): Promise<void> {
 }
 
 /**
- * Lineage walks allowed inside {@link GENESIS_WALK_WINDOW_MS}.
+ * Network lineage walks allowed inside {@link GENESIS_WALK_WINDOW_MS}.
  *
- * A walk costs a fetch per hop, so an inventory of imported ordinals must earn
- * its badges gradually rather than opening the Collect page into a few hundred
- * requests.
+ * A walk that fetches costs a request per hop, so tips with no local history
+ * earn their badges gradually rather than opening the Collect page into a few
+ * hundred requests. A walk answered from this device's storage — an imported
+ * tip, whose migrate transaction and parents are stored — costs no request and
+ * is not counted: at eight per ten minutes a thousand imports took a day.
  */
 const GENESIS_WALK_BUDGET = 8
 /**
@@ -2165,6 +2212,8 @@ async function proveHeldGenesis(
         hops: 0,
       }
       let aborted = false
+      /** The walk left the device for a hop; only those spend the network budget. */
+      let fetched = false
       try {
         outcome = await walkGenesisLineage({
           tipOutpoint: outpoint,
@@ -2177,9 +2226,10 @@ async function proveHeldGenesis(
             await yieldToUi()
             const local = await localBeefForDisplay(wallet, txid)
             if (local) return local
-            // Parents of imported / history-less tips are not in local storage.
+            // Parents of history-less tips are not in local storage.
             // needProof lets WhatsOnChain / indexer fill the hop; siblings then
             // share that cached origin tx instead of walking it again.
+            fetched = true
             return getBeefForTxidCached(wallet, txid, { needProof: true })
           },
           // Abandoning mid-walk costs one retry; finishing it while somebody is
@@ -2246,7 +2296,7 @@ async function proveHeldGenesis(
           // "Verifying…" forever with no chance to look unverified + retry later.
           clearAwaitingVerification(outpoint)
           queued.delete(outpoint)
-          noteGenesisWalk()
+          if (fetched) noteGenesisWalk()
           // Always pin the attempt. Unavailable used to skip this, so the same
           // hop-5 / dead-txid tip was re-walked on every boot and starved the
           // queue (and the UI). shouldAttemptGenesis uses a 1h window for
@@ -2257,7 +2307,7 @@ async function proveHeldGenesis(
       }
       const proof = outcome.proof
       if (epoch !== collectablesAccountEpoch) return
-      noteGenesisWalk()
+      if (fetched) noteGenesisWalk()
       rememberGenesisAttempt(outpoint)
       clearGenesisFailure(outpoint)
       queued.delete(outpoint)
@@ -2296,18 +2346,18 @@ async function proveHeldGenesis(
       await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
       await yieldToUi()
       if (epoch !== collectablesAccountEpoch) return
-      setCollectablesCache(repaintedCollectables(), {
-        forEpoch: epoch,
+      // Toast + drop spinner with the repaint — no idle gap before the checkmark.
+      repaintAfterProof(epoch, () => {
+        if (epoch !== collectablesAccountEpoch) return
+        announceItemVerified(outpoint, 'BRC-150 lineage proven', owner)
+        clearVerificationProgress(outpoint)
       })
-      await yieldToUi()
-      if (epoch !== collectablesAccountEpoch) return
-      // Toast + drop spinner in one beat — no idle gap before the checkmark.
-      announceItemVerified(outpoint, 'BRC-150 lineage proven', owner)
-      clearVerificationProgress(outpoint)
+      if (outpoint === preferred) flushProvenRepaint()
       await yieldToUi()
     }
   } finally {
     provingGenesis = false
+    flushProvenRepaint()
     if (epoch !== collectablesAccountEpoch) return
     clearVerificationProgress()
     // Tips left in the queue were aborted / budget-cut — keep their spinner only
@@ -2591,21 +2641,25 @@ function listCollectableBasketPage(
   const startedAt = Date.now()
   const startedIdle = walletRegionsIdle()
   const generation = walletRegionsGeneration()
-  const promise = listOutputsInSlices((args) => wallet.listOutputs(args), {
-    basket: '1sat',
-    limit: LIST_PAGE_SIZE,
-    // Negative offsets are newest-first. Keep a raw-output cursor because
-    // sent/non-item rows may be filtered after the wallet page returns.
-    offset: -(offset + 1),
-    includeTags: true,
-    // Bare rows only. A script is the whole inscription and the toolbox reads
-    // its transaction per row inside the storage lock (366s for 1,000 cards);
-    // `fillItemScripts` supplies the ones this session has not seen. Never
-    // pull customInstructions for a whole basket either: remittance BEEF
-    // (~400k chars each) crashed phones.
-    includeCustomInstructions: false,
-    seekPermission: false,
-  }).then((read) => {
+  const promise = listOutputsInSlices(
+    (args) => wallet.listOutputs(args),
+    {
+      basket: '1sat',
+      limit: LIST_PAGE_SIZE,
+      // Negative offsets are newest-first. Keep a raw-output cursor because
+      // sent/non-item rows may be filtered after the wallet page returns.
+      offset: -(offset + 1),
+      includeTags: true,
+      // Bare rows only. A script is the whole inscription and the toolbox reads
+      // its transaction per row inside the storage lock (366s for 1,000 cards);
+      // `fillItemScripts` supplies the ones this session has not seen. Never
+      // pull customInstructions for a whole basket either: remittance BEEF
+      // (~400k chars each) crashed phones.
+      includeCustomInstructions: false,
+      seekPermission: false,
+    },
+    offset === 0 ? { onSlice: (rows) => queueSliceArrivals(wallet, rows) } : {},
+  ).then((read) => {
     const ms = Date.now() - startedAt
     if (ms > 250) {
       console.info(
@@ -2636,6 +2690,122 @@ function listCollectableBasketPage(
     },
   )
   return promise
+}
+
+let sliceArrivals: Promise<void> = Promise.resolve()
+
+/** Paint a slice's new rows in order, one slice at a time. */
+function queueSliceArrivals(
+  wallet: ActiveWallet['wallet'],
+  rows: ReadonlyArray<{ outpoint: string; satoshis?: number; tags?: string[]; lockingScript?: unknown }>,
+): void {
+  sliceArrivals = sliceArrivals
+    .then(() => paintSliceArrivals(wallet, rows))
+    .catch((err: unknown) => console.warn('[collectables] slice paint skipped', err))
+}
+
+/**
+ * New outpoints from one newest-first slice, painted before the page answers.
+ * A 1,000-row read under contention runs past its 20s ceiling for minutes, so
+ * cards an import or receive just filed waited on a read that was then
+ * dropped. Only adds, and only rows whose script pays this wallet's address;
+ * anything else waits for the full read and its ownership pass.
+ */
+async function paintSliceArrivals(
+  raw: ActiveWallet['wallet'],
+  listed: ReadonlyArray<{ outpoint: string; satoshis?: number; tags?: string[]; lockingScript?: unknown }>,
+): Promise<void> {
+  const active = getActiveWallet()
+  if (!active || active.wallet !== raw || cachedCollectables.length === 0) return
+  const epoch = collectablesAccountEpoch
+  const painted = new Set(cachedCollectables.map((item) => outpointKey(item.outpoint)))
+  const fresh: ItemOutput[] = listed
+    .filter((o) => !painted.has(outpointKey(o.outpoint)))
+    .map((o) => ({
+      outpoint: o.outpoint,
+      satoshis: o.satoshis ?? 1,
+      tags: o.tags,
+      lockingScript: normalizeLockingScriptHex(o.lockingScript) || undefined,
+    }))
+  if (fresh.length === 0) return
+  const known = new Map<string, string>()
+  for (const o of lastItemOutputs) {
+    if (o.lockingScript) known.set(outpointKey(o.outpoint), o.lockingScript)
+  }
+  const fill = await fillItemScripts(raw, fresh, {
+    known,
+    keyOf: outpointKey,
+    stillCurrent: () => epoch === collectablesAccountEpoch,
+  })
+  if (epoch !== collectablesAccountEpoch) return
+  const ours = fresh.filter(
+    (o) =>
+      !fill.unread.has(o) &&
+      o.lockingScript != null &&
+      scriptPaysAddress(o.lockingScript, active.address) === true &&
+      isListableItem(o),
+  )
+  if (ours.length === 0) return
+  const now = Date.now()
+  for (const o of ours) {
+    const key = outpointKey(o.outpoint)
+    if (!firstSeenAt.has(key)) firstSeenAt.set(key, now)
+  }
+  setCollectablesCache(mergeShortBasketPage(ours, active.chain), { forEpoch: epoch })
+  console.info(`[collectables] painted ${ours.length} new card(s) from a basket slice`)
+}
+
+type HeldRowStorage = {
+  findUserByIdentityKey?: (identityKey: string) => Promise<{ userId: number } | undefined>
+  findOutputBaskets?: (args: {
+    partial: { userId: number; name: string }
+  }) => Promise<Array<{ basketId: number }>>
+  findOutputs?: (args: {
+    partial: { userId: number; txid: string; vout: number }
+    noScript: boolean
+  }) => Promise<Array<{ basketId?: number | null; spendable?: boolean; customInstructions?: string | null }>>
+}
+
+/**
+ * The basket row holding `target`, read through the txid/vout index. The tag
+ * query this replaces (`origin:<tag>` over basket `1sat`) walked every tag map
+ * of a thousands-row basket — 7–15s inside the storage lock per verification,
+ * so eight imported items held an import leg's `createAction` back 72s.
+ */
+async function readHeldItemRow(
+  wallet: ActiveWallet,
+  target: string,
+  tag: string,
+): Promise<{ outpoint: string; customInstructions?: string } | undefined> {
+  const [txid, voutText] = target.split('.')
+  const vout = Number(voutText)
+  const storage = (wallet.wallet as { storage?: { runAsStorageProvider?: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T> } })
+    .storage
+  if (storage?.runAsStorageProvider && txid && Number.isInteger(vout)) {
+    const row = await storage.runAsStorageProvider(async (active) => {
+      const sp = active as HeldRowStorage
+      if (!sp.findUserByIdentityKey || !sp.findOutputBaskets || !sp.findOutputs) return 'unsupported' as const
+      const user = await sp.findUserByIdentityKey(wallet.identityKey)
+      if (!user) return null
+      const [basket] = await sp.findOutputBaskets({ partial: { userId: user.userId, name: '1sat' } })
+      if (!basket) return null
+      const rows = await sp.findOutputs({ partial: { userId: user.userId, txid, vout }, noScript: true })
+      return rows.find((r) => r.spendable && r.basketId === basket.basketId) ?? null
+    })
+    if (row !== 'unsupported') {
+      return row ? { outpoint: target, customInstructions: row.customInstructions ?? undefined } : undefined
+    }
+  }
+  const listed = await wallet.wallet.listOutputs({
+    basket: '1sat',
+    tags: [`origin:${tag}`],
+    tagQueryMode: 'all',
+    limit: 10,
+    includeCustomInstructions: true,
+    seekPermission: false,
+  })
+  const match = (listed.outputs ?? []).find((o) => normalizeOutpoint(o.outpoint) === target)
+  return match ? { outpoint: target, customInstructions: match.customInstructions } : undefined
 }
 
 /**
@@ -2678,19 +2848,8 @@ export async function verifyItemAuthenticity(
   })
 
   try {
-    const listed = await wallet.wallet.listOutputs({
-      basket: '1sat',
-      tags: [`origin:${tag}`],
-      tagQueryMode: 'all',
-      limit: 10,
-      includeCustomInstructions: true,
-      include: 'locking scripts',
-      seekPermission: false,
-    })
+    const match = await readHeldItemRow(wallet, target, tag)
     if (epoch !== collectablesAccountEpoch) return accountChanged()
-    const match = (listed.outputs ?? []).find(
-      (o) => normalizeOutpoint(o.outpoint) === target
-    )
     // P2P internalize validates custody and paints the card before listOutputs
     // necessarily projects its insertion remittance. The supplied Atomic BEEF
     // is already cached, so lineage verification must not wait on that row.
@@ -2788,23 +2947,13 @@ export async function verifyItemAuthenticity(
     if (provenOrigin) {
       await adoptProvenOrigin(target, provenOrigin, wallet.chain)
       if (epoch !== collectablesAccountEpoch) return accountChanged()
-      setCollectablesCache(repaintedCollectables(), {
-        forEpoch: epoch,
-      })
     }
     if (authenticity.proven) {
-      await yieldToUi()
-      if (epoch !== collectablesAccountEpoch) {
-        // Settle the row in its owner store without touching the new wallet's
-        // progress/toast state.
-        announceItemVerified(
-          target,
-          'BRC-150 tip-to-origin proven',
-          owner,
-        )
-        return authenticity
-      }
-      announceItemVerified(target, 'BRC-150 tip-to-origin proven', owner)
+      // A switched account settles the row in its owner store without touching
+      // the new wallet's progress/toast state.
+      repaintAfterProof(epoch, () =>
+        announceItemVerified(target, 'BRC-150 tip-to-origin proven', owner),
+      )
     }
     return authenticity
   } catch (err) {

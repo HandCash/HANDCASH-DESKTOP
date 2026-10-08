@@ -34,7 +34,11 @@ async function letSpendPass(): Promise<number> {
 export async function listOutputsInSlices<A extends ListArgs, O>(
   listOutputs: (args: A) => Promise<ListResult<O>>,
   args: A,
-  opts: { subRows?: number } = {},
+  opts: {
+    subRows?: number
+    /** Each slice's rows as they land, before the whole page answers. */
+    onSlice?: (rows: O[]) => void
+  } = {},
 ): Promise<{ outputs: O[]; totalOutputs?: number; slices: number; yieldedMs: number }> {
   const limit = args.limit ?? 10
   const subRows = Math.max(1, Math.min(opts.subRows ?? BASKET_SUB_READ_ROWS, limit))
@@ -56,7 +60,9 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
     })
     slices++
     const rows = page.outputs ?? []
-    outputs.push(...rows.slice(0, want))
+    const taken = rows.slice(0, want)
+    outputs.push(...taken)
+    if (taken.length > 0) opts.onSlice?.(taken)
     if (rows.length < want) break
     totalOutputs = page.totalOutputs
   }

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.531] - 2026-10-08
+
+### Fixed
+- **Verifying an item no longer holds up an import.** Every per-item BRC-150 check looked up its basket row with an `origin:` tag query, which walks the tag map of every row in basket `1sat`. On 0.1.674 each check held the storage lock for 7–15s. Eight in a row made an import leg's `createAction` wait 71.8s, so a ten-item import took 114s. The row is now read by its outpoint through the toolbox's txid/vout index. Storage that cannot do that still uses the tag query.
+- **Imported items verify back to back.** Background lineage walks were capped at 8 per 10 minutes so that unproven items could not flood an indexer with requests. The cap also applied to imported items, whose migrate transaction and parents are already stored on the device, so a thousand imports took about a day to verify. Only walks that fetch from the network now count against the cap.
+- **Verifying many items no longer freezes the grid.** Every proof rebuilt and persisted the whole card list, which takes about a second for 1,000 cards on a phone. Now that local walks finish back to back, proofs share one repaint at most every 1.5s. The first proof after a quiet spell, and the item open in details, still paint at once.
+- **Cards for older items show while Collect is still reading.** Under contention, the full 1,000-row basket read ran 65–405s and timed out at 20s, so tips already on chain never reached the grid. Each 100-row slice now paints its new cards as soon as it is read. This only adds cards whose script pays this wallet's address; everything else waits for the full read.
+- **"Arriving" counts only tips that are actually new.** The status pill showed "185 arriving" for items the wallet already held in basket `1sat`. Collection-less tips are re-checked for misfiled tokens and only a few are checked per pass, so a held tip counted as arriving until a pass got round to it. Tips already in the basket are no longer counted, and tips the wallet does not hold yet are checked first.
+
 ## [1.3.530] - 2026-10-08
 
 ### Fixed

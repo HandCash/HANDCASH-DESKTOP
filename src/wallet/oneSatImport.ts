@@ -1327,7 +1327,15 @@ export async function classifyLegacyUtxos(
   let resolveBudget = MAX_UNKNOWN_RESOLVES_PER_PASS
   let probeBudget = MAX_TRANSFER_PROBES_PER_PASS
 
-  for (const u of candidates) {
+  // A collection-less tip already in basket `1sat` is re-probed only to catch a
+  // misfiled token. A tip the wallet does not hold yet is what someone is
+  // waiting on, so it gets the per-pass budget first.
+  const walkOrder = [
+    ...candidates.filter((u) => !latchedCollectables.has(outpointKey(u.outpoint))),
+    ...candidates.filter((u) => latchedCollectables.has(outpointKey(u.outpoint))),
+  ]
+
+  for (const u of walkOrder) {
     // The scan result is already logged. This walk is the next thing on the
     // thread, and it used to run to the end — every one-sat, no await — which
     // is the freeze that starts the moment the scan line is printed.
@@ -1511,8 +1519,14 @@ export async function classifyLegacyUtxos(
       } else {
         heldOneSats.push(u)
         // Only a tip that just landed is "arriving". Dust the indexer never
-        // names stays held without lighting the pill on every backoff expiry.
-        if (!opts.fundingOnly && heldTipArriving(`${u.txid}.${u.vout}`)) {
+        // names stays held without lighting the pill on every backoff expiry,
+        // and a tip already in basket `1sat` has arrived — imported tips showed
+        // as "185 arriving" until the per-pass budget happened to reach them.
+        if (
+          !opts.fundingOnly &&
+          !latchedCollectables.has(liveKey) &&
+          heldTipArriving(`${u.txid}.${u.vout}`)
+        ) {
           pendingTips.push(u)
         }
       }

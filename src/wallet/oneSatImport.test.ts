@@ -114,6 +114,31 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('never reports a tip already in basket 1sat as arriving, and probes new tips first', async () => {
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    durableRemoveItem('handcash.inscriptionHeldSeen.v1')
+    resetInscriptionCacheForTests()
+
+    const baseline = utxo(`${'4'.repeat(64)}.0`, 1)
+    await classifyLegacyUtxos([baseline], 'main')
+    fetchMock.mockClear()
+
+    const imported = Array.from({ length: MAX_UNKNOWN_RESOLVES_PER_PASS + 3 }, (_, i) =>
+      utxo(`${String(i).padStart(64, '6')}.0`, 1),
+    )
+    const landed = utxo(`${'5'.repeat(64)}.0`, 1)
+    const result = await classifyLegacyUtxos([baseline, ...imported, landed], 'main', [], {
+      knownCollectableOutpoints: imported.map((u) => u.outpoint),
+    })
+
+    expect(result.pendingTips.map((u) => u.outpoint)).toEqual([landed.outpoint])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toContain(landed.outpoint)
+    const firstProbe = String((fetchMock.mock.calls[0] as unknown[] | undefined)?.[0] ?? '')
+    expect(firstProbe).toContain('5'.repeat(64))
+    vi.unstubAllGlobals()
+  })
+
   it('holds a 404 tip then backs off on the next poll', async () => {
     const TXID_D = 'd'.repeat(64)
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
