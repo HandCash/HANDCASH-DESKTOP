@@ -1,10 +1,20 @@
 # Changelog
 
-## [1.3.502] - 2026-10-08
+## [1.3.503] - 2026-10-08
 
 ### Changed
+- **Changelog for 1.3.502.** That tag's notes were the automatic stub. The safety restore itself is unchanged: creator names, background signing, unlock history push, empty-wallet check, custody-journal ETag, and connect origin checks. Item sending stays on the 1.3.471 path.
 
-- Patch release (every push must ship a new version).
+## [1.3.502] - 2026-10-08
+
+### Fixed
+- **Safety fixes from yesterday are back; the send and import rework stays out.** Item sending stays on the 1.3.471 path. Restored, each as it shipped:
+  - Imported tips keep the creator the index named, and Collect backfills an origin no cached hit names (1.3.473).
+  - A backgrounded Android WebView keeps signing. Hidden work yields through a message channel instead of the throttled scheduler, and a send is only treated as stuck after visible time, not pocket time (1.3.475).
+  - Unlock no longer re-queues its own history upload forever, and the empty-wallet check no longer walks item baskets. An unchanged wallet's funding pass runs as ordinary refresh, so a payment is not fenced behind it (1.3.483).
+  - Custody journal backup sends the strong ETag back on If-Match, so a compressed GET no longer 412s the upload forever (1.3.485).
+  - Connect refuses an opaque, plaintext-public or anonymous origin, and never titles a look-alike host "HandCash". A grant made in a Mobile app tab cannot be used from the loopback socket (1.3.490, 1.3.491).
+  - Unlock's empty check reads one indexed row instead of deserializing every transaction (1.3.491).
 
 ## [1.3.501] - 2026-10-08
 
