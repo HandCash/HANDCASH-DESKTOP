@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.530] - 2026-10-08
+
+### Fixed
+- **Imported items show in Collect as soon as they move.** On 0.1.673 a nine-item and a five-item import both landed on chain, but neither appeared in inventory. Each Collect basket read had started before its import leg committed, and nothing read the basket again afterwards. Each import leg now paints its tips at their new outputs the moment it broadcasts, the same way received items are painted. It then asks for one basket read once the wallet is idle. A request that arrives while a follow-up read is already in flight queues another read after it.
+- **A Collect read that times out still delivers its answer.** Collect stops waiting after 20s and keeps its cached list, but the toolbox read carries on. On that phone one finished 55s later and its rows were discarded. When the late read began with the wallet idle and nothing has touched the wallet since, a follow-up read now uses its answer instead of walking the basket again.
+- **Item imports no longer ship every item's parents in every transaction.** One input package was built for the whole import and merged into each leg, so every leg carried every other item's mint transaction. A five-item sweep went over the miner queue's 2MB durable ceiling (`[minerOutbox] refusing durable body … invalid-shape`) and had no durable copy while in flight. Each leg now carries only its own tips' parents and the BUMPs they end on. A bundle is also cut short before those parents pass 1.4MB, so each leg can be queued and archived durably.
+- **An import holds send priority from the start.** Priority used to be taken at the first leg, after parents had downloaded for 7s. A toolbox review that began in that gap held the storage lock for 32s ahead of the import's `createAction`. Priority now covers the whole run, so monitor tasks defer and chain ingest yields from the first parent fetch. New `[phrase-sweep] parents done Nms` and `leg done Nms` lines time each phase.
+
 ## [1.3.529] - 2026-10-08
 
 ### Fixed

@@ -17,6 +17,7 @@ import {
   type BEEF,
   type CreateActionOutput,
   type LockingScript,
+  type Transaction,
 } from '@bsv/sdk'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
@@ -58,6 +59,8 @@ import {
 } from './itemMigrateBundle'
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
+import { leaseSpendPriority } from './walletCoordinator'
+import { beefSubset, prefixWithinBeefBudget } from './beefSubset'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { isInsufficientFundsError } from './insufficientFunds'
@@ -760,11 +763,35 @@ export type ChosenItemsMigrate = {
  * removing a row ahead of that cursor would shift its offset past an unmoved
  * tip.
  */
-export async function migrateChosenPhraseItems(args: {
+export async function migrateChosenPhraseItems(args: ChosenItemsArgs): Promise<ChosenItemsMigrate> {
+  if (args.items.length === 0) return { results: new Map(), stopped: null, transactions: 0 }
+  // Held from the parent fetch to the last leg, so background passes defer and
+  // chain ingest yields for the whole run. Leased only at the first leg, a
+  // review that began while parents downloaded held the lock 32s ahead of it.
+  const priority = leaseSpendPriority('phrase-import')
+  const heartbeat = setInterval(() => priority.touch(), 30_000)
+  try {
+    return await migrateChosenUnderPriority(args)
+  } finally {
+    clearInterval(heartbeat)
+    priority.release()
+  }
+}
+
+type ChosenItemsArgs = {
   items: readonly ChosenPhraseItem[]
   /** Wallet job id: every Activity row of the run folds into one record. */
   activityGroup?: string | null
-}): Promise<ChosenItemsMigrate> {
+}
+
+/**
+ * Leg ceiling on the foreign parents one item transaction carries. The durable
+ * miner queue refuses an Atomic BEEF over 2MB; the margin covers this wallet's
+ * own funding ancestry and the signed transaction itself.
+ */
+const LEG_INPUT_BEEF_BUDGET = 1_400_000
+
+async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
   assertOnlineForPayment()
@@ -797,12 +824,18 @@ export async function migrateChosenPhraseItems(args: {
       ...(item.name ? { name: item.name } : {}),
     }
   })
+  const parentsAt = Date.now()
   const built = await buildLegacyInputBeef(
     active.services,
     rows.map((row) => row.outpoint),
     { concurrency: 8 },
   )
   const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
+  appendAppLog(
+    'info',
+    `[phrase-sweep] parents done ${Date.now() - parentsAt}ms items=${rows.length} bytes=${built.beef.length}` +
+      ` failed=${built.failures.length}`,
+  )
 
   const pending: PendingItemMigrate[] = []
   let skipped = 0
@@ -825,19 +858,21 @@ export async function migrateChosenPhraseItems(args: {
   }
 
   const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
-  const outcome = await migrateOrdinalUnit({
-    active,
-    destLockHex: destLock,
-    inputBeef: built.beef,
-    items: pending,
-    itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
-    onMoved: (receipts) =>
-      recordMigratedItemActivity(
-        receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null })),
-        active.chain,
-        { groupId: args.activityGroup },
-      ),
-  })
+  const outcome =
+    pending.length > 0 && sourceBeef
+      ? await migrateOrdinalUnit({
+          active,
+          destLockHex: destLock,
+          sourceBeef,
+          items: pending,
+          itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
+          onMoved: (receipts) => {
+            const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
+            recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
+            paintMigratedItems(named, active)
+          },
+        })
+      : emptyUnitOutcome()
   for (const receipt of outcome.moved) {
     results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })
   }
@@ -966,15 +1001,46 @@ type UnitOutcome = {
   lastError: string | null
 }
 
+function emptyUnitOutcome(): UnitOutcome {
+  return { moved: [], failed: 0, failures: [], resolved: 0, stopped: null, lastError: null }
+}
+
+/**
+ * Paint each moved tip in Collect the moment its leg broadcasts. A basket read
+ * that began before the leg committed cannot list it, and an import otherwise
+ * left the grid waiting for some unrelated later read.
+ */
+function paintMigratedItems(receipts: ReadonlyArray<MigratedItemReceipt>, active: ActiveWallet): void {
+  const held = receipts.filter((item) => item.sweepVout !== undefined)
+  if (held.length === 0) return
+  void import('./collectables')
+    .then(({ noteIngestedItem, requestCollectablesRelist }) => {
+      for (const item of held) {
+        noteIngestedItem({
+          outpoint: `${item.sweepTxid}.${item.sweepVout}`,
+          chain: active.chain,
+          origin: item.origin,
+          name: item.name ?? null,
+          identityKey: active.identityKey,
+        })
+      }
+      requestCollectablesRelist()
+    })
+    .catch((err: unknown) => {
+      appendAppLog('warn', `[phrase-sweep] collect paint skipped: ${err instanceof Error ? err.message : String(err)}`)
+    })
+}
+
 /**
  * Send one planned group as a single transaction. A rejected bundle is split by
  * name and retried as smaller bundles down to singles; every attempt is the
- * same P2PKH item-migrate path, never another protocol.
+ * same P2PKH item-migrate path, never another protocol. A leg carries only its
+ * own tips' parents, and is cut short before those pass the durable queue's cap.
  */
 async function migrateOrdinalUnit(args: {
   active: ActiveWallet
   destLockHex: string
-  inputBeef: BEEF
+  sourceBeef: Beef
   items: PendingItemMigrate[]
   itemsPerTx: number
   /**
@@ -998,11 +1064,18 @@ async function migrateOrdinalUnit(args: {
 
   while (pending.length > 0) {
     if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
-    const unit = chooseItemMigrateUnit(pending, perTx)
+    const fits = prefixWithinBeefBudget(
+      args.sourceBeef,
+      pending.slice(0, perTx).map((item) => item.txid),
+      LEG_INPUT_BEEF_BUDGET,
+    )
+    const unit = chooseItemMigrateUnit(pending, Math.min(perTx, fits))
     if (unit.kind === 'refuse') break
     const group = unit.kind === 'bundle' ? unit.items : [unit.item]
+    const legStartedAt = Date.now()
+    const inputBeef = beefSubset(args.sourceBeef, group.map((item) => item.txid)).toBinary()
     try {
-      const txid = await runExclusiveSpend(async () =>
+      const posted = await runExclusiveSpend(async () =>
         // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
         // verification rejects that outright ("inputBEEF must be valid Beef when
         // factoring options.trustSelf"), which failed every item migrate. The
@@ -1012,12 +1085,23 @@ async function migrateOrdinalUnit(args: {
           buildAndPostItemMigrate({
             active: args.active,
             destLockHex: args.destLockHex,
-            inputBeef: args.inputBeef,
+            inputBeef,
             items: group,
           }),
         ),
       )
-      const receipts = group.map((item) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid }))
+      const txid = posted.txid
+      appendAppLog(
+        'info',
+        `[phrase-sweep] leg done ${Date.now() - legStartedAt}ms items=${group.length} parentBytes=${inputBeef.length}` +
+          ` tx=${txid.slice(0, 12)}`,
+      )
+      const receipts = group.map((item, i) => ({
+        outpoint: item.outpoint,
+        origin: item.origin,
+        sweepTxid: txid,
+        ...(posted.vouts[i] !== undefined ? { sweepVout: posted.vouts[i] } : {}),
+      }))
       out.moved.push(...receipts)
       args.onMoved(receipts)
       out.resolved += group.length
@@ -1079,16 +1163,20 @@ export async function refreshAfterPhraseItemMigrate(): Promise<void> {
   }
 }
 
-/** Build, sign and broadcast one transaction carrying `items` tips. */
+/**
+ * Build, sign and broadcast one transaction carrying `items` tips. `vouts[i]` is
+ * the output now holding `items[i]`, read from the signed transaction rather
+ * than assumed from output order.
+ */
 async function buildAndPostItemMigrate(args: {
   active: ActiveWallet
   destLockHex: string
   inputBeef: BEEF
   items: PendingItemMigrate[]
-}): Promise<string> {
+}): Promise<{ txid: string; vouts: number[] }> {
   const { destLockHex, items } = args
   const first = items[0]!
-  return postForeignInputAction({
+  const posted = await postForeignInputs({
     active: args.active,
     inputBeef: args.inputBeef,
     inputs: items.map((item) => ({ ...item, description: 'migrate ordinal from phrase' })),
@@ -1103,6 +1191,22 @@ async function buildAndPostItemMigrate(args: {
     labels: ['1sat', 'phrase-migrate'],
     description: itemMigrateTxDescription(items.length, first.outpoint),
   })
+  return { txid: posted.txid, vouts: itemOutputVouts(posted.tx, destLockHex, items.length) }
+}
+
+/**
+ * Outputs paying `destLockHex` one sat, in order. Outputs are not randomized,
+ * and wallet change never pays the receive address, so the n-th match holds the
+ * n-th tip. Any other count means the shape is not what was asked for: no vouts.
+ */
+export function itemOutputVouts(tx: Transaction | null, destLockHex: string, count: number): number[] {
+  if (!tx) return []
+  const want = destLockHex.toLowerCase()
+  const vouts: number[] = []
+  tx.outputs.forEach((output, vout) => {
+    if (output.satoshis === 1 && output.lockingScript.toHex().toLowerCase() === want) vouts.push(vout)
+  })
+  return vouts.length === count ? vouts : []
 }
 
 /** A source output signed by a foreign key against its real locking script. */
@@ -1126,7 +1230,11 @@ export type ForeignInput = {
  * its own `spendKey`, or the action's. A failure before broadcast aborts the
  * action so its reserved change and listed outputs are released.
  */
-export async function postForeignInputAction(args: {
+export async function postForeignInputAction(args: ForeignInputActionArgs): Promise<string> {
+  return (await postForeignInputs(args)).txid
+}
+
+type ForeignInputActionArgs = {
   active: ActiveWallet
   spendKey?: PrivateKey
   inputBeef: BEEF
@@ -1134,7 +1242,12 @@ export async function postForeignInputAction(args: {
   outputs: CreateActionOutput[]
   labels: string[]
   description: string
-}): Promise<string> {
+}
+
+/** {@link postForeignInputAction}, also handing back the signed transaction. */
+async function postForeignInputs(
+  args: ForeignInputActionArgs,
+): Promise<{ txid: string; tx: Transaction | null }> {
   const { active, inputs } = args
   if (inputs.some((input) => !(input.spendKey ?? args.spendKey))) {
     throw new Error('Every foreign input needs a key to sign it')
@@ -1193,7 +1306,7 @@ async function signAndPostForeignInputs(
     inputs: ForeignInput[]
   },
   car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
-): Promise<string> {
+): Promise<{ txid: string; tx: Transaction | null }> {
   const { active, spendKey, inputs: items } = args
   let sweepTxid = (car.txid ?? '').toLowerCase()
   let sweepAtomic = asBytes(car.tx)
@@ -1260,5 +1373,5 @@ async function signAndPostForeignInputs(
       `Broadcast rejected (${submitted.summary.detail ?? 'unproven conflict'})`,
     )
   }
-  return sweepTxid
+  return { txid: sweepTxid, tx: packed.findTxid(sweepTxid)?.tx ?? null }
 }

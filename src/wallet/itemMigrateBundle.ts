@@ -13,9 +13,11 @@
  */
 
 /**
- * Tips per transaction: one import chunk. Each action already carries the
- * chunk's whole input BEEF, so a larger bundle costs no extra download — only
- * one fee, one signing pass and one broadcast where there used to be four.
+ * Tips per transaction: one import chunk. The parents are downloaded once per
+ * chunk, so a larger bundle costs no extra download — only one fee, one signing
+ * pass and one broadcast where there used to be four. The migrate run cuts a
+ * bundle shorter when its tips' parents would push the leg past the durable
+ * miner queue's cap.
  */
 export const MAX_ITEMS_PER_MIGRATE_TX = 100
 

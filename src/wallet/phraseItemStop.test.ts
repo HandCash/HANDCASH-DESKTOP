@@ -17,6 +17,9 @@ const stored = new Map<string, string>()
 vi.mock('./spendGuard', () => ({
   runExclusiveSpend: (fn: () => Promise<unknown>) => fn(),
 }))
+vi.mock('./walletCoordinator', () => ({
+  leaseSpendPriority: () => ({ touch: () => undefined, release: () => undefined }),
+}))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({
@@ -166,5 +169,20 @@ describe('pending per-address import cursor', () => {
     expect(peekPhraseItemMigrateCursor()).toBeNull()
     expect(seen.at(-1)).toBeNull()
     unsubscribe()
+  })
+})
+
+describe('itemOutputVouts', () => {
+  it('reads each tip’s new output from the signed transaction, skipping change', async () => {
+    const { itemOutputVouts } = await import('./phraseSweep')
+    const dest = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    const change = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    const signed = new Transaction()
+    signed.addOutput({ lockingScript: change, satoshis: 4_000 })
+    signed.addOutput({ lockingScript: dest, satoshis: 1 })
+    signed.addOutput({ lockingScript: dest, satoshis: 1 })
+    expect(itemOutputVouts(signed, dest.toHex(), 2)).toEqual([1, 2])
+    expect(itemOutputVouts(signed, dest.toHex(), 3)).toEqual([])
+    expect(itemOutputVouts(null, dest.toHex(), 2)).toEqual([])
   })
 })

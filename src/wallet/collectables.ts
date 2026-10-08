@@ -2526,6 +2526,22 @@ let collectableBasketReadInFlight: {
 } | null = null
 
 /**
+ * The answer of a read its caller stopped waiting for. Kept only while no
+ * region has begun since the read did, so the relist that follows a timeout
+ * paints it instead of walking the basket again for another minute.
+ */
+let lateBasketRead: {
+  wallet: ActiveWallet['wallet']
+  offset: number
+  generation: number
+  promise: ReturnType<ActiveWallet['wallet']['listOutputs']>
+  settledAt: number
+} | null = null
+const LATE_READ_REUSE_MS = 120_000
+/** Raw reads whose caller hit {@link LIST_TIMEOUT_MS} while they still ran. */
+const abandonedBasketReads = new WeakSet<Promise<unknown>>()
+
+/**
  * Ceiling on one basket read.
  *
  * `listOutputs` has no timeout of its own, and callers share the in-flight
@@ -2561,7 +2577,20 @@ function listCollectableBasketPage(
   if (current && current.wallet === wallet && current.offset === offset) {
     return current.promise
   }
+  const late = lateBasketRead
+  lateBasketRead = null
+  if (
+    late &&
+    late.wallet === wallet &&
+    late.offset === offset &&
+    Date.now() - late.settledAt < LATE_READ_REUSE_MS &&
+    walletRegionsIdleSince(late.generation)
+  ) {
+    return late.promise
+  }
   const startedAt = Date.now()
+  const startedIdle = walletRegionsIdle()
+  const generation = walletRegionsGeneration()
   const promise = listOutputsInSlices((args) => wallet.listOutputs(args), {
     basket: '1sat',
     limit: LIST_PAGE_SIZE,
@@ -2595,6 +2624,9 @@ function listCollectableBasketPage(
     () => {
       if (collectableBasketReadInFlight?.promise === promise) {
         collectableBasketReadInFlight = null
+      }
+      if (startedIdle && abandonedBasketReads.has(promise)) {
+        lateBasketRead = { wallet, offset, generation, promise, settledAt: Date.now() }
       }
     },
     () => {
@@ -2858,6 +2890,8 @@ export function getCollectablesLastListedAt(): number {
 /** Longest the wallet may stay busy before a deferred read gives up waiting. */
 const RELIST_IDLE_WAIT_MS = 60_000
 let relistWhenIdle: Promise<void> | null = null
+/** A relist was asked for while one was already reading — its answer predates the ask. */
+let relistAgain = false
 
 const emptyItemRead = createEmptyReadGate(() => {
   void listCollectables().catch((err) => console.warn('[collectables] empty-read confirm skipped', err))
@@ -2871,22 +2905,38 @@ const emptyItemRead = createEmptyReadGate(() => {
  * deferred caller in the window shares the one follow-up.
  */
 function relistWhenWalletIdle(): void {
-  if (relistWhenIdle) return
+  if (relistWhenIdle) {
+    relistAgain = true
+    return
+  }
   const epoch = collectablesAccountEpoch
   relistWhenIdle = (async () => {
     try {
-      // Called from inside a read, `listCollectables` would join that read.
-      await listInFlight?.catch(() => {})
-      if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
-      if (epoch !== collectablesAccountEpoch) return
-      console.info('[collectables] wallet idle — running the deferred listOutputs')
-      await listCollectables()
+      do {
+        relistAgain = false
+        // Called from inside a read, `listCollectables` would join that read.
+        await listInFlight?.catch(() => {})
+        if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
+        if (epoch !== collectablesAccountEpoch) return
+        console.info('[collectables] wallet idle — running the deferred listOutputs')
+        await listCollectables()
+      } while (relistAgain && epoch === collectablesAccountEpoch)
     } catch (err) {
       console.warn('[collectables] deferred relist skipped', err)
     } finally {
       relistWhenIdle = null
+      relistAgain = false
     }
   })()
+}
+
+/**
+ * The basket gained rows a read in flight began before (an import leg just
+ * committed). Read again once the wallet is idle; a pending follow-up that has
+ * already started reading runs once more.
+ */
+export function requestCollectablesRelist(): void {
+  relistWhenWalletIdle()
 }
 
 /**
@@ -3058,16 +3108,18 @@ async function listCollectablesNow(
   let listedPage: ItemOutput[] = []
   const readGeneration = walletRegionsGeneration()
 
+  const raw = listCollectableBasketPage(wallet.wallet, pageOffset)
+  let readTimer: ReturnType<typeof setTimeout> | undefined
   try {
     const result = await Promise.race([
-      listCollectableBasketPage(wallet.wallet, pageOffset),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('listOutputs timed out')),
-          LIST_TIMEOUT_MS
-        )
-      ),
-    ])
+      raw,
+      new Promise<never>((_, reject) => {
+        readTimer = setTimeout(() => {
+          abandonedBasketReads.add(raw)
+          reject(new Error('listOutputs timed out'))
+        }, LIST_TIMEOUT_MS)
+      }),
+    ]).finally(() => clearTimeout(readTimer))
     const rows: ItemOutput[] = (result.outputs ?? []).map((o) => {
       const lockingScript = normalizeLockingScriptHex(
         (o as { lockingScript?: unknown }).lockingScript
@@ -3216,6 +3268,9 @@ async function listCollectablesNow(
     } else {
       console.warn('[collectables] listOutputs failed', err)
     }
+    // The read keeps running inside the toolbox. Paint its answer when it
+    // lands; dropped here, Collect stayed on the old list until some later read.
+    if (timedOut && !append) void raw.then(() => relistWhenWalletIdle(), () => {})
     return cached
   }
 

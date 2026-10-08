@@ -33,6 +33,9 @@ vi.mock('./legacyReceiptActivity', () => ({
 vi.mock('./spendGuard', () => ({
   runExclusiveSpend: (fn: () => Promise<unknown>) => fn(),
 }))
+vi.mock('./walletCoordinator', () => ({
+  leaseSpendPriority: () => ({ touch: () => undefined, release: () => undefined }),
+}))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({ refreshFromChain: vi.fn() }))
