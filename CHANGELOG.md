@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.512] - 2026-10-08
+
+### Fixed
+- **A payment is not posted to Arcade without its parent transaction.** On this desktop the money send signed in about 3 seconds, then Arcade, Bitails, WhatsOnChain and GorillaPool all answered missing inputs and the wallet released the seal as a double-spend. The package posted was the new transaction alone: while the send held storage priority its own parent lookup was skipped, and a package that still lacked the parent was posted anyway. The send now reads those parent bodies from the wallet, and a package that still does not contain them is held and retried instead of posted. Missing inputs from a parent we never sent is no longer treated as a spent coin.
+
 ## [1.3.511] - 2026-10-08
 
 ### Fixed

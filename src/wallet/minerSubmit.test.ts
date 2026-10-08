@@ -294,27 +294,12 @@ describe('submitAtomicBeefToMiners', () => {
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
-  const arcadeMissingInputs = [
-    {
-      name: 'ArcadeBeef',
-      status: 'error',
-      txidResults: [
-        {
-          status: 'error',
-          doubleSpend: true,
-          notes: [{ what: 'postRawsErrorMissingInputs' }],
-        },
-      ],
-    },
-  ]
-
-  it('blames our BEEF, not the tip, when ancestry is incomplete', async () => {
+  it('does not post a package whose parent transaction is missing', async () => {
     beefComplete = false
-    postBeef.mockResolvedValueOnce(arcadeMissingInputs)
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow(
-      /parent transaction is not on chain yet/i,
-    )
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result).toMatchObject({ kind: 'queued', reason: 'unverified' })
+    expect(postBeef).not.toHaveBeenCalled()
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
@@ -336,13 +321,15 @@ describe('submitAtomicBeefToMiners', () => {
     expect(hydrateInputBeef).not.toHaveBeenCalled()
   })
 
-  it('still reports Already spent on incomplete ancestry when an input is proven spent', async () => {
+  it('does not treat a missing parent as a spent input', async () => {
     beefComplete = false
     const { spentStatusOfOutpoint } = await import('./legacyScan')
     vi.mocked(spentStatusOfOutpoint).mockResolvedValue('spent')
-    postBeef.mockResolvedValueOnce(arcadeMissingInputs)
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result).toMatchObject({ kind: 'queued', reason: 'unverified' })
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
   it('does not hard-reject an Arcade service that only errored', async () => {

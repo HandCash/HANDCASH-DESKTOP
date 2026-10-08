@@ -498,6 +498,7 @@ async function submitAtomicBeefToMinersOnce(
   // those parents cannot exist yet; hydrating them from an indexer is futile.
   let ancestryComplete = false;
   let proofsComplete = false;
+  let gap: "none" | "unconfirmed-parents" | "missing-bodies" | undefined;
   try {
     const {
       classifyBeefAncestryGap,
@@ -514,8 +515,10 @@ async function submitAtomicBeefToMinersOnce(
       ancestryComplete = maySelectAsInput(proof);
       proofsComplete = next === "none";
     };
-    beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic);
-    let gap = classifyBeefAncestryGap(beefBytes);
+    beefBytes = await mergeLocalUnconfirmedAncestry(active, atomic, {
+      inSpend: true,
+    });
+    gap = classifyBeefAncestryGap(beefBytes);
     applyGap(gap);
     if (beefBytes !== atomic) updatePendingMinerSubmitBody(id, beefBytes, owner);
     if (gap === "unconfirmed-parents") {
@@ -535,11 +538,6 @@ async function submitAtomicBeefToMinersOnce(
         gap = classifyBeefAncestryGap(shaped);
         applyGap(gap);
         updatePendingMinerSubmitBody(id, shaped, owner);
-      } else {
-        console.warn(
-          "[minerSubmit] posting with incomplete ancestry — MissingInputs will not undo the cheque",
-          id.slice(0, 12)
-        );
       }
     }
   } catch (err) {
@@ -548,6 +546,22 @@ async function submitAtomicBeefToMinersOnce(
       id.slice(0, 12),
       err
     );
+  }
+  // Arcade answers a subject posted without its parent as MissingInputs,
+  // which is the same note as a spent coin. Do not post that package.
+  // The outbox keeps the cheque and retries once the parent body is in it.
+  if (gap === "missing-bodies") {
+    console.warn(
+      "[minerSubmit] held — parent transaction not in the package; not posted",
+      id.slice(0, 12)
+    );
+    recordStage("propagation_queued", {
+      ...telemetry,
+      blockerCode: "beef_ancestry_incomplete",
+    });
+    return outboxDurable
+      ? { kind: "queued", reason: "unverified" }
+      : untrackedMinerResult("unverified", telemetry);
   }
 
   // Nothing reaches a miner that this device has not SPV-verified: scripts

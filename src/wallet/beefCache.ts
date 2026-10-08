@@ -408,7 +408,9 @@ export async function getLocalBeefForTxid(
   // answered by, a full lookup's miss.
   if (opts?.toolbox === false) return resolveLocalBeef(wallet, key, opts)
   const until = localMissUntil.get(key)
-  if (until != null && Date.now() < until) return null
+  // A background miss must not hide a parent from the spend that is about to
+  // post it. The spend's own lookup reads storage even inside that window.
+  if (until != null && Date.now() < until && opts?.inSpend !== true) return null
   const pending = localInflight.get(key)
   if (pending) return pending
   const run = resolveLocalBeef(wallet, key, opts).finally(() => {
@@ -1089,6 +1091,7 @@ export async function prepareBroadcastCheque(
   wallet: ActiveWallet | null | undefined,
   txid: string,
   atomic: number[],
+  opts?: { inSpend?: boolean },
 ): Promise<PreparedBroadcastCheque> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id) || atomic.length === 0) {
@@ -1103,7 +1106,7 @@ export async function prepareBroadcastCheque(
   }
   const merged =
     wallet && subjectPresent
-      ? await mergeLocalUnconfirmedAncestry(wallet, atomic)
+      ? await mergeLocalUnconfirmedAncestry(wallet, atomic, opts)
       : atomic
   if (wallet && subjectPresent && merged !== atomic) {
     try {
@@ -1138,6 +1141,7 @@ export async function prepareBroadcastCheque(
 export async function mergeLocalUnconfirmedAncestry(
   wallet: ActiveWallet,
   atomic: number[],
+  opts?: { inSpend?: boolean },
 ): Promise<number[]> {
   if (!atomic.length) return atomic
   try {
@@ -1150,7 +1154,11 @@ export async function mergeLocalUnconfirmedAncestry(
       if (need.length === 0) break
       let added = false
       for (const txid of need) {
-        const local = await getLocalBeefForTxid(wallet, txid)
+        const local = await getLocalBeefForTxid(
+          wallet,
+          txid,
+          opts?.inSpend ? { inSpend: true } : undefined,
+        )
         const node = local?.findTxid(txid)
         if (!node?.tx || node.isTxidOnly) continue
         work.mergeBeef(local!.toBinary())
