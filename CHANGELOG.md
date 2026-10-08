@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.526] - 2026-10-08
+
+### Fixed
+- **Money sends no longer sit in "preparing" until the watchdog gives up.** On 0.1.670 both BRC-29 sends got the spend region within 5s and then never reached their first step. The send asked the spend guard for a "light" change promote before building the transaction. That promote walks every pending local-change transaction, with several storage holds each, queued behind toolbox monitor tasks that held the lock for up to 29s at a time. It outlived the 90s watchdog while 3.2M sat sat confirmed for a 53k sat send. An item send queued behind it waited too. BRC-29 and external BSV sends now take the on-demand path that 1.3.209 introduced for exactly this: they spend coins the wallet already holds, and change is promoted only when confirmed coins fall short. A test keeps both sends from forcing a region-entry promote again.
+
 ## [1.3.525] - 2026-10-08
 
 ### Changed

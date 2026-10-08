@@ -713,8 +713,10 @@ export async function sendBrc29ToIdentityKey(opts: {
         clearPaymentProgress()
       }
     },
+    // On-demand: `prepareSpendHeal` promotes only when confirmed coins fall
+    // short. A region-entry promote walks every pending local-change tx behind
+    // toolbox monitor holds and outlived the 90s watchdog on a funded wallet.
     () => setPaymentProgress('preparing', 'Preparing payment'),
-    { promote: 'light' },
     )
   } catch (err) {
     recordTransactionStage('hard_rejected', {
