@@ -604,11 +604,11 @@ export async function refreshFromChainExclusive(
           invalidateLiveOneSatOutpoints()
         }
         // Soft deadline: Collect already browsable under Catching-up. Shed the
-        // heal/list/verify fan-out until the next explicit Refresh so IDB +
+        // list/verify fan-out until the next explicit Refresh so IDB +
         // indexer work does not keep the renderer hot after the pill soft-clears.
         if (softDeadlineHit) {
           console.info(
-            '[chain-ingest] soft deadline — shedding collectables heal/list until Refresh',
+            '[chain-ingest] soft deadline — shedding collectables list until Refresh',
           )
           void import('./collectables').then(
             ({ setCollectableVerifyWalkDeferred }) => {
@@ -616,7 +616,7 @@ export async function refreshFromChainExclusive(
             },
           )
         } else {
-          // Defer BRC-150 verify walk while fungibles heal + collectables list run.
+          // Defer BRC-150 verify walk while the fungibles and collectables lists run.
           void import('./collectables')
             .then(({ setCollectableVerifyWalkDeferred }) => {
               setCollectableVerifyWalkDeferred(true)
@@ -624,20 +624,6 @@ export async function refreshFromChainExclusive(
             .then(() =>
               inUiPhase('fungibles-list', () =>
                 import('./token/list').then(({ listFungibles }) => listFungibles(active)),
-              ),
-            )
-            .then(() =>
-              inUiPhase('heal-misfiled-items', () =>
-                import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>
-                  healMisfiledCollectables(active),
-                ),
-              ),
-            )
-            .then(() =>
-              inUiPhase('heal-misfiled-bsv21', () =>
-                import('./healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
-                  healMisfiledBsv21(active),
-                ),
               ),
             )
             .then(() => inUiPhase('collectables-list', () => listCollectables(active)))

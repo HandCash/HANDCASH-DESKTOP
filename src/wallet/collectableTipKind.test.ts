@@ -84,6 +84,18 @@ describe('classifyTipKind', () => {
     expect(isCovenantLockedScript(INSCRIBED)).toBe(false)
   })
 
+  it('ignores a P2PKH template off a byte boundary', () => {
+    expect(hasSpendableP2pkhBranch(`0${P2PKH_HEX}0`)).toBe(false)
+    expect(hasSpendableP2pkhBranch(`00${P2PKH_HEX}`)).toBe(true)
+  })
+
+  it('reads an image-sized inscription in linear time', () => {
+    const image = `${ORD_PREFIX}${'4c'.repeat(1_000_000)}${P2PKH_HEX}`
+    const started = performance.now()
+    for (let i = 0; i < 5; i++) expect(hasSpendableP2pkhBranch(image)).toBe(true)
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
   it('labels long non-P2PKH as covenantLocked', () => {
     expect(classifyTipKind(COVENANT).kind).toBe('covenantLocked')
     expect(isCovenantLockedScript(COVENANT)).toBe(true)

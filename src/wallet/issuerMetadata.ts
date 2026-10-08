@@ -3,6 +3,8 @@ import { OP, PublicKey, Script, Utils } from '@bsv/sdk'
 // Standard Bitcom MAP tape. The issuer fields are optional HandCash metadata,
 // not a new token protocol. Sigma signs these bytes together with the asset script.
 const MAP = '1PuQa7K62MiKCtssSLKy1kh56WWU7MtUR5'
+/** `issuer` as a 6-byte push; digits only, so case never matters. */
+const ISSUER_PUSH_HEX = '06697373756572'
 /** SDK 2.x folds a data-bearing OP_RETURN; protocol parsers need its push tape. */
 export function expandedProtocolScript(scriptHex: string): Script {
   const script = Script.fromHex(scriptHex)
@@ -60,6 +62,9 @@ export function issuerMetadataFromScript(scriptHex?: string): {
   bapId?: string
 } {
   if (!scriptHex || scriptHex.length > 2_000_000) return {}
+  // Every card asks, and an item's script is its whole image: skip the parse
+  // unless the tape's `issuer` push is in the bytes at all.
+  if (!scriptHex.includes(ISSUER_PUSH_HEX)) return {}
   try {
     const chunks = expandedProtocolScript(scriptHex).chunks
     const text = (i: number) =>

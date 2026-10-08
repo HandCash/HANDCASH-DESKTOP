@@ -1416,11 +1416,6 @@ async function listFungiblesNow(
   if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
   if (fungibleProjectionChanged(repaired, beforeRepair)) {
     setFungiblesCache(repaired, { forEpoch: epoch, forRun: run })
-    if (repaired.length > beforeRepair.length) {
-      void import('../healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
-        healMisfiledBsv21(wallet),
-      )
-    }
   }
 
   const { walletRegionsGeneration, walletRegionsIdle, walletRegionsIdleSince } = await import(

@@ -142,10 +142,32 @@ function wrapRunner(storage: LockedStorage, runner: Runner): void {
   }
 }
 
+/**
+ * `listOutputs(basket=1sat scripts limit=1000)` instead of a bare method
+ * name: which basket and how much per row is what makes one read cost 98s
+ * and the next 9ms. Special-operation baskets are 64-hex; eight chars name them.
+ */
+export function listCallLabel(name: string, vargs: unknown): string {
+  if (!vargs || typeof vargs !== 'object') return name
+  const v = vargs as Record<string, unknown>
+  const parts: string[] = []
+  if (typeof v.basket === 'string') parts.push(`basket=${v.basket.length === 64 ? v.basket.slice(0, 8) : v.basket}`)
+  const tags = Array.isArray(v.tags) ? v.tags : Array.isArray(v.labels) ? v.labels : []
+  if (tags.length) parts.push(`tags=${tags.length}`)
+  if (v.includeLockingScripts === true) parts.push('scripts')
+  if (v.includeTransactions === true) parts.push('beef')
+  if (v.includeCustomInstructions === true) parts.push('remittance')
+  if (typeof v.limit === 'number') parts.push(`limit=${v.limit}`)
+  if (typeof v.offset === 'number' && v.offset !== 0) parts.push(`offset=${v.offset}`)
+  return parts.length ? `${name}(${parts.join(' ')})` : name
+}
+
+const LIST_METHODS = new Set(['listOutputs', 'listActions'])
+
 function wrapMethod(storage: LockedStorage, name: string, original: (...a: unknown[]) => unknown): void {
   storage[name] = function traceMethod(this: unknown, ...args: unknown[]) {
     const prev = callingMethod
-    callingMethod = name
+    callingMethod = LIST_METHODS.has(name) ? listCallLabel(name, args[0]) : name
     try {
       return original.apply(this, args)
     } finally {

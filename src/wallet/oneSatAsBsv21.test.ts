@@ -1,12 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { encodeBsv21Binary, tokenIdToWire } from './token'
 import {
-  __resetHealMisfiledBsv21ForTests,
   classifyOneSatAsBsv21,
-  healMisfiledBsv21,
   isBsv21OneSatLock,
   isNonCollectableOneSatLock,
-} from './healMisfiledBsv21'
+} from './oneSatAsBsv21'
 
 const P2PKH = '76a914' + '11'.repeat(20) + '88ac'
 const IMAGE_ENV =
@@ -47,61 +45,6 @@ function transferEnv(): string {
   return '0063036f726451' + mimeLen + mimeHex + '00' + bodyPush + '68'
 }
 
-describe('healMisfiledBsv21', () => {
-  afterEach(() => __resetHealMisfiledBsv21ForTests())
-
-  function walletWith(rows: Array<{ outpoint: string; lockingScript: string; tags?: string[] }>, identityKey = '02aa') {
-    const listOutputs = vi.fn(async (args: { basket: string; include?: string }) => ({
-      outputs:
-        args.basket === '1sat'
-          ? rows.map((r) => ({
-              outpoint: r.outpoint,
-              satoshis: 1,
-              ...(args.include ? { lockingScript: r.lockingScript, tags: r.tags ?? [] } : {}),
-            }))
-          : [],
-    }))
-    return { listOutputs, active: { identityKey, wallet: { listOutputs } } as never }
-  }
-
-  it('parses each item script once, then skips the script read for judged tips', async () => {
-    const rows = [
-      { outpoint: `${'aa'.repeat(32)}.0`, lockingScript: IMAGE_ENV + P2PKH },
-      { outpoint: `${'bb'.repeat(32)}.0`, lockingScript: P2PKH },
-    ]
-    const { listOutputs, active } = walletWith(rows)
-
-    expect((await healMisfiledBsv21(active)).skipped).toBe(2)
-    const scriptReads = () => listOutputs.mock.calls.filter(([a]) => a.include).length
-    expect(scriptReads()).toBe(1)
-
-    expect((await healMisfiledBsv21(active)).skipped).toBe(2)
-    expect(scriptReads()).toBe(1)
-  })
-
-  it('judges again for another identity and for a new tip', async () => {
-    const rows = [{ outpoint: `${'aa'.repeat(32)}.0`, lockingScript: P2PKH }]
-    const first = walletWith(rows)
-    await healMisfiledBsv21(first.active)
-
-    const other = walletWith(rows, '02bb')
-    await healMisfiledBsv21(other.active)
-    expect(other.listOutputs.mock.calls.some(([a]) => a.include)).toBe(true)
-
-    rows.push({ outpoint: `${'cc'.repeat(32)}.1`, lockingScript: P2PKH })
-    const again = walletWith(rows, '02bb')
-    await healMisfiledBsv21(again.active)
-    expect(again.listOutputs.mock.calls.some(([a]) => a.include)).toBe(true)
-  })
-
-  it('leaves accepted MNEE in Collect although its envelope is a BSV-21 transfer', async () => {
-    const rows = [{ outpoint: `${'dd'.repeat(32)}.0`, lockingScript: transferEnv() + P2PKH, tags: ['ordinal', 'mnee'] }]
-    const { active } = walletWith(rows)
-    const result = await healMisfiledBsv21(active)
-    expect(result.skipped).toBe(1)
-    expect(result.moved).toBe(0)
-  })
-})
 
 describe('classifyOneSatAsBsv21', () => {
   it('moves a valid BSV-21 envelope out of the NFT basket', () => {
@@ -175,7 +118,7 @@ describe('classifyOneSatAsBsv21', () => {
     ).toBe('skip')
   })
 
-  it('does not move 1sat-ft (other healer)', () => {
+  it('does not classify 1sat-ft as BSV-21', () => {
     expect(
       classifyOneSatAsBsv21({
         satoshis: 1,

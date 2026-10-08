@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.522] - 2026-10-08
+
+### Fixed
+- **Sends stop queuing behind a 98s basket read after unlock.** On 0.1.666 both REF sends and an item send timed out with "nothing was broadcast". A `listOutputs` held the one Toolbox storage lock for 98s just after unlock, with 10 operations waiting. The misfiled-asset healers ran on every Refresh. One listed basket `1sat` with locking scripts, and an item's locking script is its whole image, so that read loaded every inscription in the wallet inside the lock. Its "already judged" memory did not survive a restart, so it repeated after every launch. Both healers are removed. The one-sat token classifier moved to `oneSatAsBsv21.ts`, where item paint and import still use it.
+- **A proven item no longer freezes Desktop.** Each BRC-150 proof, art or origin repaints every card, and each card scanned its whole inscription twice: once allocating a 50-character slice per byte to look for the P2PKH branch, and once fully parsing the script to look for an issuer tape. One Desktop session froze for 53s in a single frame. The P2PKH scan is now a native search, about 10× faster per MB of script. The issuer parse runs only when the `issuer` push is in the bytes. Both results are kept per outpoint, so a repaint reads no script at all.
+
+### Added
+- **Storage-lock lines name the read.** A manager list call logs as `listOutputs(basket=1sat scripts limit=1000)` instead of `listOutputs`. Triage gives each stuck hold its start time and the lines before it, timestamps every wait, and gives the worst long frame the lines that led into it.
+
 ## [1.3.521] - 2026-10-08
 
 ### Fixed

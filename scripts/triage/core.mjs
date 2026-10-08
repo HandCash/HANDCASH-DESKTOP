@@ -2995,7 +2995,17 @@ function longFrameFacts(events) {
       if (s[4]) row.invokers[s[4]] = (row.invokers[s[4]] ?? 0) + 1
       byScript.set(key, row)
     }
-    if (!worst || ms > worst.ms) worst = { ms, line: e.text.slice(0, 400) }
+    if (!worst || ms > worst.ms) worst = { ms, line: e.text.slice(0, 400), at: e.at }
+  }
+  // The frame logs when it ends; what was started just before it began is
+  // what the frame was busy with.
+  if (worst) {
+    const startMs = worst.at - worst.ms
+    worst.linesBefore = events
+      .filter((e) => e.at <= startMs + 250 && e.at >= startMs - 20_000 && !LOAF_RE.test(e.text))
+      .slice(-12)
+      .map((e) => `${new Date(e.at).toISOString().slice(11, 19)} ${e.text.slice(0, 220)}`)
+    worst.at = new Date(startMs).toISOString()
   }
   return {
     frames,
@@ -3011,9 +3021,11 @@ function longFrameFacts(events) {
   }
 }
 
-const LOCK_HELD_RE = /^\[storage-lock\] (\S+) held (\d+)ms — (\d+) waiting/
-const LOCK_WAIT_RE = /^\[storage-lock\] (\S+) waited (\d+)ms behind (.+)$/
-const LOCK_STUCK_RE = /^\[storage-lock\] (\S+) still held (\d+)ms — (\d+) waiting/
+// Labels may carry call arguments: `listOutputs(basket=1sat scripts limit=1000)`.
+const LOCK_LABEL = '(\\S+(?:\\([^)]*\\))?)'
+const LOCK_HELD_RE = new RegExp(`^\\[storage-lock\\] ${LOCK_LABEL} held (\\d+)ms — (\\d+) waiting`)
+const LOCK_WAIT_RE = new RegExp(`^\\[storage-lock\\] ${LOCK_LABEL} waited (\\d+)ms behind (.+)$`)
+const LOCK_STUCK_RE = new RegExp(`^\\[storage-lock\\] ${LOCK_LABEL} still held (\\d+)ms — (\\d+) waiting`)
 
 /**
  * Who held the one Toolbox storage lock, and who waited behind them. Every
@@ -3036,16 +3048,43 @@ function storageLockFacts(events) {
     }
     m = LOCK_WAIT_RE.exec(e.text)
     if (m) {
-      waits.push({ op: m[1], ms: Number(m[2]), behind: m[3].slice(0, 200) })
+      waits.push({
+        op: m[1],
+        ms: Number(m[2]),
+        behind: m[3].slice(0, 200),
+        at: new Date(e.at).toISOString().slice(11, 19),
+      })
       continue
     }
     m = LOCK_STUCK_RE.exec(e.text)
     if (m) {
-      const s = (stuck[m[1]] ??= { reports: 0, longestMs: 0, mostWaiting: 0 })
+      const s = (stuck[m[1]] ??= { reports: 0, longestMs: 0, mostWaiting: 0, instances: [] })
       s.reports += 1
       s.longestMs = Math.max(s.longestMs, Number(m[2]))
       s.mostWaiting = Math.max(s.mostWaiting, Number(m[3]))
+      const startedAt = e.at - Number(m[2])
+      const same = s.instances.find((i) => Math.abs(i.startMs - startedAt) < 5_000)
+      if (same) {
+        same.heldMs = Math.max(same.heldMs, Number(m[2]))
+        same.reports += 1
+      } else s.instances.push({ startMs: startedAt, heldMs: Number(m[2]), reports: 1 })
     }
+  }
+  // The hold's own label is only the manager method; the lines just before it
+  // began name the caller and what it asked for.
+  for (const s of Object.values(stuck)) {
+    s.instances = s.instances
+      .sort((a, b) => a.startMs - b.startMs)
+      .slice(-4)
+      .map(({ startMs, heldMs, reports }) => ({
+        startedAt: new Date(startMs).toISOString(),
+        heldMs,
+        reports,
+        linesBefore: events
+          .filter((e) => e.at <= startMs + 250 && e.at >= startMs - 30_000)
+          .slice(-10)
+          .map((e) => `${new Date(e.at).toISOString().slice(11, 19)} ${e.text.slice(0, 200)}`),
+      }))
   }
   return {
     holds,

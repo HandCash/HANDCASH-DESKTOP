@@ -29,8 +29,7 @@ import type { ActiveWallet } from './session'
  * Pure vocabulary (ids, script parsing) lives in `mneeTip.ts`.
  *
  * Accepted MNEE is filed in basket `1sat` (Collect), tagged `mnee`, until the
- * wallet has a cosigned send path; Tokens and the misfiled-token heal leave
- * tagged rows alone.
+ * wallet has a cosigned send path; Tokens leaves tagged rows alone.
  */
 
 const MNEE_API = 'https://proxy-api.mnee.net'

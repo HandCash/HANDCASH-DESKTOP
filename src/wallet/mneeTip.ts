@@ -4,8 +4,8 @@ import { ordEnvelopeHex } from './ordScriptPush'
 import { normalizeTokenId } from './token/types'
 
 /**
- * MNEE vocabulary with no network or wallet dependencies, so Collect, the
- * misfiled-token heal and the import scan can recognise MNEE without loading
+ * MNEE vocabulary with no network or wallet dependencies, so Collect and the
+ * import scan can recognise MNEE without loading
  * the cosigner client (`mnee.ts`).
  *
  * Every MNEE output is `ord envelope ‖ OWNER P2PKH CHECKSIGVERIFY ‖ <approver>

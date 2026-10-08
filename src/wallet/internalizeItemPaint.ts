@@ -44,7 +44,7 @@ import {
   isBsv21OneSatLock,
   isNonCollectableOneSatLock,
   type OneSatAsBsv21,
-} from './healMisfiledBsv21'
+} from './oneSatAsBsv21'
 
 /**
  * Carry the wire format only when the locking script proved it. Remittance-only

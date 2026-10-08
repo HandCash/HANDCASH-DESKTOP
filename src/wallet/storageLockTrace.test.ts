@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   callerModule,
+  listCallLabel,
   resetStorageLockTraceForTests,
   traceStorageLocks,
   withStorageLockLabel,
@@ -176,5 +177,24 @@ describe('caller module from a stack', () => {
   it('gives up on a stack it cannot read', () => {
     expect(callerModule(undefined)).toBeNull()
     expect(callerModule('Error')).toBeNull()
+  })
+})
+
+describe('list call label', () => {
+  it('names the basket and per-row cost a read asked for', () => {
+    expect(
+      listCallLabel('listOutputs', {
+        basket: '1sat',
+        tags: [],
+        includeLockingScripts: true,
+        includeCustomInstructions: false,
+        limit: 1000,
+        offset: 0,
+      }),
+    ).toBe('listOutputs(basket=1sat scripts limit=1000)')
+    expect(
+      listCallLabel('listOutputs', { basket: '893b7646de0e1c9f741bd6e9169b76a8847ae34adef7bef1e6a285371206d2e8', tags: ['x'] }),
+    ).toBe('listOutputs(basket=893b7646 tags=1)')
+    expect(listCallLabel('listActions', undefined)).toBe('listActions')
   })
 })

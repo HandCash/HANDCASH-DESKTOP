@@ -27,7 +27,8 @@ export type SendPath =
 export type ProvenTier = 'brc150' | 'unproven'
 
 /** Bare or embedded P2PKH locking branch: `OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG`. */
-const P2PKH_BRANCH = /76a914[0-9a-f]{40}88ac/i
+const P2PKH_PREFIX = '76a914'
+const P2PKH_SUFFIX = '88ac'
 
 /**
  * Sign a spendable item tip against its complete locking script.
@@ -123,9 +124,10 @@ export function hasSpendableP2pkhBranch(scriptHex: string): boolean {
     return false
   }
   // P2PKH branch is exactly 25 bytes → 50 hex chars. Inscription content must
-  // not spoof a match off a byte boundary.
-  for (let i = 0; i + 50 <= script.length; i += 2) {
-    if (P2PKH_BRANCH.test(script.slice(i, i + 50))) return true
+  // not spoof a match off a byte boundary. An item's script is its whole image;
+  // a slice per offset cost seconds per card, so only template starts are read.
+  for (let i = script.indexOf(P2PKH_PREFIX); i >= 0 && i + 50 <= script.length; i = script.indexOf(P2PKH_PREFIX, i + 1)) {
+    if (i % 2 === 0 && script.startsWith(P2PKH_SUFFIX, i + 46)) return true
   }
   return false
 }

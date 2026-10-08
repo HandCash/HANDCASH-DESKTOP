@@ -1112,6 +1112,34 @@ function parseCustom(raw: string | undefined): ParsedCustom {
   return parsed
 }
 
+type ScriptFacts = {
+  length: number
+  covenantLocked: boolean
+  issuer: ReturnType<typeof issuerMetadataFromScript>
+}
+
+/**
+ * An outpoint's locking script never changes, and an item's script is its
+ * whole image. Every repaint (art, origin or a proof landing) rebuilds every
+ * card, so read each script once and keep what the card needs from it.
+ */
+const scriptFactsByOutpoint = new Map<string, ScriptFacts>()
+const SCRIPT_FACTS_MAX = 8192
+
+function scriptFactsFor(outpoint: string, lockingScript: string | undefined): ScriptFacts {
+  const length = lockingScript?.length ?? 0
+  const held = scriptFactsByOutpoint.get(outpoint)
+  if (held && held.length === length) return held
+  const facts: ScriptFacts = {
+    length,
+    covenantLocked: isCovenantLockedScript(lockingScript),
+    issuer: issuerMetadataFromScript(lockingScript),
+  }
+  if (scriptFactsByOutpoint.size >= SCRIPT_FACTS_MAX) scriptFactsByOutpoint.clear()
+  scriptFactsByOutpoint.set(outpoint, facts)
+  return facts
+}
+
 function toCollectable(
   o: {
     outpoint: string
@@ -1170,8 +1198,9 @@ function toCollectable(
   })
   // Origin BEEF keeps issuer metadata portable after the ownership tip moves.
   // This is attribution only; ancestry and issuer-signature verdicts stay separate.
+  const scriptFacts = scriptFactsFor(normalizeOutpoint(o.outpoint), o.lockingScript)
   const fromOrigin = retainedIssuerMetadata(origin)
-  const issuerMetadata = fromOrigin?.issuer ? fromOrigin : issuerMetadataFromScript(o.lockingScript)
+  const issuerMetadata = fromOrigin?.issuer ? fromOrigin : scriptFacts.issuer
   const boundOrigin = normalizeOutpoint(origin) === normalizeOutpoint(o.outpoint)
     ? !o.lockingScript || retainedScriptIs(origin, o.lockingScript)
     : proven && !!verdict?.origin && normalizeOutpoint(verdict.origin) === normalizeOutpoint(origin)
@@ -1210,7 +1239,7 @@ function toCollectable(
     extras: resolved?.extras ?? [],
     proven,
     authenticity,
-    covenantLocked: isCovenantLockedScript(o.lockingScript),
+    covenantLocked: scriptFacts.covenantLocked,
   }
 }
 
