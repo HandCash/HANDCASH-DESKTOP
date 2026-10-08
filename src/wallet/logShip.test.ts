@@ -183,4 +183,30 @@ describe('logShip', () => {
     expect(body).toContain('electron main')
     expect(body).toContain('BRC-100 bridge online')
   })
+
+  it('ships each ring line once when the shell answers readLogs with the same ring', async () => {
+    store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-phone')
+    stubBrowserGlobals()
+    const log = await import('./appLog')
+    vi.stubGlobal('window', {
+      addEventListener: () => {},
+      handcash: {
+        readLogs: async () => {
+          const text = log.formatAppLogs()
+          return { ok: true, text, bytes: text.length, truncated: false }
+        },
+      },
+    })
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+    log.installAppLogCapture()
+    log.appendAppLog('warn', '[stall] main thread blocked 4076ms · layers idle')
+    const ship = await import('./logShip')
+
+    await ship.shipAppLogs()
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
+    const body = String(init.body)
+    expect(body.match(/\[stall\] main thread blocked 4076ms/g)).toHaveLength(1)
+    expect(body).not.toContain('electron main')
+  })
 })

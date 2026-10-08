@@ -54,6 +54,9 @@ export default defineConfig({
     ],
     exclude: [...(aeonUiOptimizeDeps().exclude ?? []), '@bsv/verifast'],
   },
+  // `[loaf]` freeze lines name the function that held the main thread; mangled
+  // identifiers would make every name meaningless in uploaded logs.
+  esbuild: { minifyIdentifiers: false },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

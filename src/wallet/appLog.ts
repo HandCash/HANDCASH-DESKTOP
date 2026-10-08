@@ -281,8 +281,84 @@ function startStallWatch(): void {
 const LONGTASK_MIN_MS = 800
 let lastLongTaskAt = 0
 
+/** The `long-animation-frame` script entry fields this log reads. */
+export type LongFrameScript = {
+  duration?: number
+  invoker?: string
+  invokerType?: string
+  sourceURL?: string
+  sourceFunctionName?: string
+  sourceCharPosition?: number
+  forcedStyleAndLayoutDuration?: number
+}
+
+export type LongFrameEntry = {
+  duration: number
+  blockingDuration?: number
+  scripts?: readonly LongFrameScript[]
+}
+
+const LOAF_SCRIPTS_SHOWN = 3
+
+/** `…/assets/collectables-AbC123.js?v=1` → `collectables`. */
+function scriptFile(url: string | undefined): string {
+  const tail = (url ?? '').split(/[?#]/)[0]!.split('/').pop() ?? ''
+  return tail.replace(/-[\w-]{6,12}(?=\.[cm]?js$)/, '').replace(/\.(?:[cm]?js|tsx?)$/, '') || 'inline'
+}
+
+/**
+ * One long animation frame as a log line naming the scripts that ran in it.
+ *
+ * `[stall]` can only say which wallet phases were in flight, and a phase that
+ * is merely awaiting gets blamed for a freeze it is not causing. The frame's
+ * script entries name the function, file and invoker that actually held the
+ * thread: `[loaf] 4076ms blocking 3910ms — 3200ms renderRows@RecentActivity:5120 via Promise.then`.
+ */
+export function describeLongFrame(entry: LongFrameEntry, context = ''): string {
+  const scripts = [...(entry.scripts ?? [])]
+    .filter((s) => (s.duration ?? 0) > 0)
+    .sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0))
+  const scriptMs = scripts.reduce((sum, s) => sum + (s.duration ?? 0), 0)
+  const layoutMs = scripts.reduce((sum, s) => sum + (s.forcedStyleAndLayoutDuration ?? 0), 0)
+  const shown = scripts.slice(0, LOAF_SCRIPTS_SHOWN).map((s) => {
+    const fn = s.sourceFunctionName?.trim() || 'anonymous'
+    const at = Number.isFinite(s.sourceCharPosition) && (s.sourceCharPosition ?? -1) >= 0 ? `:${s.sourceCharPosition}` : ''
+    const via = s.invoker?.trim() ? ` via ${s.invoker.trim().slice(0, 80)}` : ''
+    return `${Math.round(s.duration ?? 0)}ms ${fn}@${scriptFile(s.sourceURL)}${at}${via}`
+  })
+  const blocking = entry.blockingDuration != null ? ` blocking ${Math.round(entry.blockingDuration)}ms` : ''
+  const rest = scripts.length > LOAF_SCRIPTS_SHOWN ? ` · +${scripts.length - LOAF_SCRIPTS_SHOWN} more` : ''
+  const nonScript = Math.max(0, Math.round(entry.duration - scriptMs))
+  const body = shown.length
+    ? `${shown.join(' · ')}${rest} · non-script ${nonScript}ms${layoutMs >= 50 ? ` · forced layout ${Math.round(layoutMs)}ms` : ''}`
+    : `no script attributed · non-script ${nonScript}ms`
+  return `[loaf] ${Math.round(entry.duration)}ms${blocking} — ${body}${context}`
+}
+
+/**
+ * Long Animation Frames name the script behind a freeze; plain `longtask`
+ * entries only ever say `self`. Returns false where the runtime lacks it.
+ */
+function startLongFrameWatch(): boolean {
+  if (typeof PerformanceObserver === 'undefined') return false
+  if (!PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')) return false
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as unknown as LongFrameEntry[]) {
+        if (entry.duration < LONGTASK_MIN_MS) continue
+        appendAppLog('warn', describeLongFrame(entry, describeStallContext()))
+      }
+    })
+    observer.observe({ type: 'long-animation-frame', buffered: false })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function startLongTaskWatch(): void {
   if (typeof PerformanceObserver === 'undefined') return
+  if (startLongFrameWatch()) return
   try {
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {

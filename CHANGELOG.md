@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.518] - 2026-10-08
+
+### Fixed
+- **Android log uploads no longer carry every line twice.** The Mobile shell answers `readLogs` with the same renderer ring the uploader had just written, so each upload appended a second copy under "electron main (tail)". Triage then counted every freeze twice: the latest phone upload read as 60 stalls and 198.6s blocked inside a 157s window. Its real figures are 32 stalls and 105s. The uploader now drops shell lines the ring already holds. Triage also ignores a repeated timestamp plus line, so older uploads count correctly.
+
+### Added
+- **Freeze lines name the code that held the main thread.** `[stall]` only lists the wallet phases in flight, and a phase that is just awaiting a lock was blamed for CPU it never used. Where the runtime supports Long Animation Frames (Android WebView and Electron), every frame over 800ms now logs `[loaf] <N>ms blocking <N>ms — <ms> <function>@<file> via <invoker> · …`. The line shows the top three scripts, the non-script time (layout, rendering, GC) and any forced layout. Production bundles keep their identifiers so those function names are real.
+- Triage reports `longFrames`: blocking time summed by function@file, plus unattributed and non-script time. When it is present, Jev's freeze-owner choice is drawn from those measured functions before in-flight workloads.
+
 ## [1.3.517] - 2026-10-08
 
 ### Fixed

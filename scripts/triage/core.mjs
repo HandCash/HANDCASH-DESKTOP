@@ -65,10 +65,18 @@ function parseSession(text) {
     header.platform = versionLine[2]
   }
 
+  // Mobile builds before 1.3.518 shipped the ring twice (once as the renderer
+  // tail, once as the "electron main" tail). A repeated timestamp + line is
+  // that copy, never a second event, and counting it doubled every freeze.
   const events = []
+  const seen = new Set()
   for (const raw of text.split('\n')) {
     const m = LINE.exec(raw.trim())
-    if (m) events.push({ at: Date.parse(m[1]), level: m[2], text: m[3] })
+    if (!m) continue
+    const key = `${m[1]}\u0000${m[3]}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    events.push({ at: Date.parse(m[1]), level: m[2], text: m[3] })
   }
   const facts = sessionFacts(header, events)
   Object.defineProperty(facts, 'events', { value: events, enumerable: false })
@@ -206,6 +214,7 @@ function sessionFacts(header, events) {
   const incomingFinality = incomingFinalityFacts(events)
   const incomingReceives = incomingReceiveFacts(events)
   const storageLock = storageLockFacts(events)
+  const longFrames = longFrameFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const listingOutcomes = listingOutcomeFacts(events)
@@ -313,6 +322,10 @@ function sessionFacts(header, events) {
     // held`). A stuck entry is a hold that never released: every send behind
     // it times out with nothing broadcast.
     storageLock,
+    // The scripts that actually held the main thread in long animation frames.
+    // This outranks `freezes.byActiveLayer` and `workloads`, which only say
+    // what was in flight: a phase awaiting a lock is never the freeze owner.
+    longFrames,
     // Signed transactions and what miners said: per-txid outcome chain, how
     // many ever reached Arcade, and which never left the device.
     broadcast,
@@ -2856,6 +2869,58 @@ function derivationFacts(events) {
   return facts
 }
 
+const LOAF_RE = /^\[loaf\] (\d+)ms(?: blocking (\d+)ms)? — (.+)$/
+const LOAF_SCRIPT_RE = /^(\d+)ms (\S+)@([^\s:]+)(?::\d+)?(?: via (.+))?$/
+
+/**
+ * What actually ran during each long animation frame (`[loaf]`, 1.3.518+).
+ * `[stall]` names the wallet phases in flight; this names the function and
+ * file on the main thread. Scripts are summed by function@file across frames.
+ */
+function longFrameFacts(events) {
+  const byScript = new Map()
+  let frames = 0
+  let frameMs = 0
+  let unattributedFrames = 0
+  let nonScriptMs = 0
+  let worst = null
+  for (const e of events) {
+    const m = LOAF_RE.exec(e.text)
+    if (!m) continue
+    frames += 1
+    const ms = Number(m[1])
+    frameMs += ms
+    const parts = m[3].split(' · ')
+    if (/^no script attributed/.test(parts[0])) unattributedFrames += 1
+    for (const part of parts) {
+      const ns = /^non-script (\d+)ms$/.exec(part)
+      if (ns) nonScriptMs += Number(ns[1])
+      const s = LOAF_SCRIPT_RE.exec(part)
+      if (!s) continue
+      const key = `${s[2]}@${s[3]}`
+      const row = byScript.get(key) ?? { script: key, frames: 0, totalMs: 0, worstMs: 0, invokers: {} }
+      row.frames += 1
+      row.totalMs += Number(s[1])
+      row.worstMs = Math.max(row.worstMs, Number(s[1]))
+      if (s[4]) row.invokers[s[4]] = (row.invokers[s[4]] ?? 0) + 1
+      byScript.set(key, row)
+    }
+    if (!worst || ms > worst.ms) worst = { ms, line: e.text.slice(0, 400) }
+  }
+  return {
+    frames,
+    frameMs,
+    unattributedFrames,
+    // Rendering, layout, GC or native work — time inside frames no script owns.
+    nonScriptMs,
+    worst,
+    scripts: [...byScript.values()]
+      .sort((a, b) => b.totalMs - a.totalMs)
+      .slice(0, 12)
+      .map((row) => ({ ...row, shareOfFrameTime: frameMs ? Number((row.totalMs / frameMs).toFixed(2)) : 0 })),
+  }
+}
+
 const LOCK_HELD_RE = /^\[storage-lock\] (\S+) held (\d+)ms — (\d+) waiting/
 const LOCK_WAIT_RE = /^\[storage-lock\] (\S+) waited (\d+)ms behind (.+)$/
 const LOCK_STUCK_RE = /^\[storage-lock\] (\S+) still held (\d+)ms — (\d+) waiting/
@@ -3432,6 +3497,10 @@ const choiceId = (label) => label.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/
  */
 function forensicQuestions(latest, previous) {
   const owners = {}
+  for (const s of latest.longFrames?.scripts?.slice(0, 6) ?? []) {
+    owners[choiceId(`script ${s.script}`)] =
+      `The function \`${s.script}\` itself — the \`latest.longFrames.scripts\` row "${s.script}" is measured main-thread time inside long animation frames, so it outranks any workload that was merely in flight.`
+  }
   for (const w of latest.workloads) {
     owners[choiceId(w.workload)] =
       `The \`${w.workload}\` work — see the \`latest.workloads\` row with workload "${w.workload}" for how much blocked time fell inside its runs.`
@@ -3780,7 +3849,7 @@ function forensicQuestions(latest, previous) {
     freeze_owner: {
       type: 'choice',
       instructions:
-        'Which single piece of work most plausibly owns the blocked time in `latest`? Weigh `latest.workloads[].shareOfBlockedTime` (blocked time that fell inside that workload’s runs), `latest.precedingLines` (the last line logged before each freeze began — later lines were only queued behind it), and `latest.bursts[].overlappingWorkloads`. Overlapping shares can each be large; prefer the one that recurs across bursts.',
+        'Which single piece of work most plausibly owns the blocked time in `latest`? When `latest.longFrames.scripts` is non-empty it is a direct measurement of the functions that ran during the long frames: pick its largest `totalMs` row unless `latest.longFrames.nonScriptMs` dominates `frameMs`. Otherwise weigh `latest.workloads[].shareOfBlockedTime` (blocked time that fell inside that workload’s runs), `latest.precedingLines` (the last line logged before each freeze began — later lines were only queued behind it), and `latest.bursts[].overlappingWorkloads`. Overlapping shares can each be large; prefer the one that recurs across bursts.',
       criteria: owners,
     },
     storage_pressure_contributes: {

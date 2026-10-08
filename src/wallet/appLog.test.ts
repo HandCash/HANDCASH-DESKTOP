@@ -77,3 +77,41 @@ describe('appLog crash recovery', () => {
     expect(log.getPreviousSessionLogs()).toEqual([])
   })
 })
+
+describe('long animation frame attribution', () => {
+  it('names the scripts that held the thread, longest first', async () => {
+    const { describeLongFrame } = await import('./appLog')
+    const line = describeLongFrame(
+      {
+        duration: 4076,
+        blockingDuration: 3910,
+        scripts: [
+          { duration: 400, invoker: 'TimerHandler:setTimeout', sourceURL: 'https://localhost/assets/index-DX7vznZ3.js', sourceFunctionName: 'tick', sourceCharPosition: 10 },
+          { duration: 3200, invoker: 'IDBRequest.onsuccess', sourceURL: 'https://localhost/assets/collectables-AbC123de.js?x=1', sourceFunctionName: 'mergeRows', sourceCharPosition: 5120, forcedStyleAndLayoutDuration: 120 },
+        ],
+      },
+      ' · active: chainIngest',
+    )
+    expect(line).toBe(
+      '[loaf] 4076ms blocking 3910ms — 3200ms mergeRows@collectables:5120 via IDBRequest.onsuccess · 400ms tick@index:10 via TimerHandler:setTimeout · non-script 476ms · forced layout 120ms · active: chainIngest',
+    )
+  })
+
+  it('says so when no script is attributed — rendering or native work held the frame', async () => {
+    const { describeLongFrame } = await import('./appLog')
+    expect(describeLongFrame({ duration: 1200, scripts: [] })).toBe(
+      '[loaf] 1200ms — no script attributed · non-script 1200ms',
+    )
+  })
+
+  it('keeps dev source names and counts what it does not show', async () => {
+    const { describeLongFrame } = await import('./appLog')
+    const scripts = [1, 2, 3, 4, 5].map((n) => ({
+      duration: n * 100,
+      sourceURL: `http://localhost:5173/src/wallet/w${n}.ts?t=9`,
+    }))
+    expect(describeLongFrame({ duration: 1600, scripts })).toBe(
+      '[loaf] 1600ms — 500ms anonymous@w5 · 400ms anonymous@w4 · 300ms anonymous@w3 · +2 more · non-script 100ms',
+    )
+  })
+})

@@ -32,6 +32,20 @@ function platformTag(): string {
 }
 
 /**
+ * Lines of the shell's log the renderer ring does not already hold. The Mobile
+ * shell answers `readLogs` with this same ring, which shipped every line twice
+ * and doubled every freeze triage counted.
+ */
+export function shellOnlyLines(shellText: string, rendererText: string): string {
+  const held = new Set(rendererText.split('\n').map((line) => line.trim()).filter(Boolean))
+  return shellText
+    .split('\n')
+    .filter((line) => !held.has(line.trim()))
+    .join('\n')
+    .trim()
+}
+
+/**
  * Prefer the renderer ring (wallet / collectables / BRC paths). Electron main
  * logs alone drown those lines in bridge HTTP noise and made Desktop support
  * uploads useless for NFT verify bugs.
@@ -41,9 +55,19 @@ async function platformTail(): Promise<string> {
   let main = ''
   try {
     const result = await window.handcash?.readLogs?.({ maxBytes: 96_000 })
-    if (result?.ok && result.text.trim()) main = result.text.trim()
+    if (result?.ok && result.text.trim()) main = shellOnlyLines(result.text, renderer)
   } catch {
     // Renderer-only is fine on Mobile / when IPC is unavailable.
+  }
+  // Mobile's `readLogs` returns this same ring; shipping it again doubled every
+  // freeze and every count triage made from an Android upload.
+  if (main && renderer) {
+    const seen = new Set(renderer.split('\n'))
+    main = main
+      .split('\n')
+      .filter((line) => !seen.has(line))
+      .join('\n')
+      .trim()
   }
   if (renderer && main) {
     return `${renderer}\n\n—— electron main (tail) ——\n${main}`
