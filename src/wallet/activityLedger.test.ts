@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { ledgerActivityRows } from './activityLedger'
+import { describe, expect, it, vi } from 'vitest'
+
+const budget = vi.hoisted(() => ({ expired: false, yields: 0 }))
+vi.mock('./yieldToUi', () => ({
+  uiBudgetExpired: () => budget.expired,
+  yieldToUi: async () => {
+    budget.yields += 1
+  },
+}))
+
+import { ledgerActivityRows, ledgerActivityRowsSliced } from './activityLedger'
 
 const tx = (n: number) => n.toString(16).padStart(64, '0')
 const baskets = [
@@ -113,5 +122,29 @@ describe('ledgerActivityRows', () => {
       expect.objectContaining({ method: 'send', sats: 30, note: 'Token transfer' }),
     ])
     expect(rows[0]!.item).toBeUndefined()
+  })
+})
+
+describe('ledgerActivityRowsSliced', () => {
+  it('projects a large history with turns for the UI and the same rows', async () => {
+    const txs = Array.from({ length: 3_000 }, (_, i) => ({
+      transactionId: i + 1,
+      txid: tx(i + 1),
+      satoshis: i % 2 ? -(i + 10) : i + 10,
+      isOutgoing: i % 2 === 1,
+      created_at: 1_000 + i,
+    }))
+    const outputs = Array.from({ length: 2_000 }, (_, i) => ({
+      transactionId: (i % 3_000) + 1,
+      basketId: 2,
+      vout: 1,
+      customInstructions: JSON.stringify({ origin: `${tx(i + 1)}_0`, name: `Cat ${i}` }),
+    }))
+    budget.expired = true
+    budget.yields = 0
+    const sliced = await ledgerActivityRowsSliced(txs, outputs, baskets)
+    budget.expired = false
+    expect(sliced).toEqual(ledgerActivityRows(txs, outputs, baskets))
+    expect(budget.yields).toBeGreaterThan(10)
   })
 })

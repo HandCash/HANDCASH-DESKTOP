@@ -26,6 +26,7 @@
  */
 import { Transaction } from '@bsv/sdk'
 import { mapPool } from './asyncPool'
+import { withStorageLockLabel } from './storageLockTrace'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 import type { Chain } from './vault'
 import { loadTxParents, resetTxParentsStoreForTests, saveTxParents } from './txParentsStore'
@@ -682,12 +683,12 @@ export async function failOrphanedLocalTxs(
     const readStartedAt = Date.now()
     // Read-only IndexedDB transactions are consistent on their own, so the
     // IndexedDB provider is read outside the storage lock a send waits on.
-    const first = await storage.runAsStorageProvider(
+    const first = await withStorageLockLabel('txClosure(read)', () => storage.runAsStorageProvider!(
       async (activeSp): Promise<{ indexed: IndexedClosureStorage } | { read: ClosureRead | null }> => {
         const sp = activeSp as ClosureStorage
         return isIndexed(sp) ? { indexed: sp } : { read: await readPagedRows(sp, seedTxids) }
       },
-    )
+    ))
     const read = 'indexed' in first ? await readIndexedRows(first.indexed, seedTxids) : first.read
     if (!read) return none
     if (!(await resolveParents(read, shouldYieldChainIngestToSpend))) {
@@ -710,7 +711,7 @@ export async function failOrphanedLocalTxs(
         `[tx-closure] chain check done ${askMs}ms — ${asked.reachable.length} descendant(s), read ${askStartedAt - readStartedAt}ms`,
       )
     }
-    const outcome = await storage.runAsStorageProvider(async (activeSp): Promise<ClosureOutcome> => {
+    const outcome = await withStorageLockLabel('txClosure(apply)', () => storage.runAsStorageProvider!(async (activeSp): Promise<ClosureOutcome> => {
       const sp = activeSp as ClosureStorage
       const state = await readClosureState(sp, seedTxids)
       if (!state) return none
@@ -722,7 +723,7 @@ export async function failOrphanedLocalTxs(
         return none
       }
       return applyClosure(sp, state, chain)
-    })
+    }))
     if (outcome.failed.length > 0) {
       const { releaseTipsOfFailedSends } = await import('./sentItemGuard')
       await releaseTipsOfFailedSends(outcome.failed)

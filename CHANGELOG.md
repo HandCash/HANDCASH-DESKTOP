@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.533] - 2026-10-08
+
+### Fixed
+- **A payment is done once it is sealed and broadcast.** On 0.1.676 a payment to this wallet was accepted by Arcade 36s after Send. It then kept the spend lock for another 39s while it credited itself: a 10.5s balance read, a 6.3s internalize and a 10.1s balance read. The import's next transaction waited 58s behind it. A BRC-29 send now releases the spend lock and returns as soon as it is sealed and propagating. Inbox delivery and the self credit run afterwards and update the balance when they land. An external-address send also reads its new balance after releasing the lock. Nothing waits for a webhook or confirmation; acceptance is final.
+- **Every transaction no longer holds storage for seconds after signing.** The custody journal records each new transaction's outputs while the storage lock is held. To label them, it read every basket and every output tag in the wallet; for a transaction with more than 20 outputs it also read the whole tag-map table. With thousands of items, each `createAction` then held the lock for 1.3–2.9s. A send queued 4.7s behind those holds, and an import leg 15s. The journal now looks up only the baskets and tags of the transaction's own outputs, by index. Slow captures log `[custody-journal] tx … done Nms`. The held-item read, the orphaned-transaction check, the activity ledger and the balance view now label their storage holds instead of showing as `runAsStorageProvider@index`.
+- **No freeze when the full Activity history is re-read.** After a recompose, Activity rebuilds its rows from every transaction and every item output in one go. On 0.1.676 that froze the phone for 2.6s with nothing else running. The rebuild now hands the UI a turn whenever it has held the main thread for its budget, and logs `[activity-ledger] project … done Nms` when it runs long.
+- **An import drops tips that are already gone instead of halving down to them.** On 0.1.676 the pre-signing input check found 24 import tips already spent by another transaction, and it named each one. The import still read that as an unknown bad tip and retried 24 → 12 → 6 → 3 → 2 → 1. Each retry held storage for up to 21s, and the last tip was then reported as a failure. The tips the check names are now answered "already moved" and leave the saved list, and the rest of the batch rebuilds at full size. Halving is kept for rejections that do not say which tip is at fault.
+- **Transaction traces stay on their own transaction.** A send's trace was stamped on every transaction propagated while it was open. On 0.1.676, import legs were logged as `flow=brc29` with that payment's trace id. A trace now owns only the txid its flow signs; other transactions get a trace of their own. A payment to this wallet now records `completed` when its credit lands.
+
 ## [1.3.532] - 2026-10-08
 
 ### Fixed

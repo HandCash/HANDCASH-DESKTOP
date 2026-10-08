@@ -76,6 +76,7 @@ import {
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
+import { withStorageLockLabel } from './storageLockTrace'
 import { leaseSpendPriority } from './walletCoordinator'
 import { stampBrc164Id } from './itemAccess'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
@@ -2813,7 +2814,7 @@ async function readHeldItemRow(
   const storage = (wallet.wallet as { storage?: { runAsStorageProvider?: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T> } })
     .storage
   if (storage?.runAsStorageProvider && txid && Number.isInteger(vout)) {
-    const row = await storage.runAsStorageProvider(async (active) => {
+    const row = await withStorageLockLabel('heldItemRow', () => storage.runAsStorageProvider!(async (active) => {
       const sp = active as HeldRowStorage
       if (!sp.findUserByIdentityKey || !sp.findOutputBaskets || !sp.findOutputs) return 'unsupported' as const
       const user = await sp.findUserByIdentityKey(wallet.identityKey)
@@ -2822,7 +2823,7 @@ async function readHeldItemRow(
       if (!basket) return null
       const rows = await sp.findOutputs({ partial: { userId: user.userId, txid, vout }, noScript: true })
       return rows.find((r) => r.spendable && r.basketId === basket.basketId) ?? null
-    })
+    }))
     if (row !== 'unsupported') {
       return row ? { outpoint: target, customInstructions: row.customInstructions ?? undefined } : undefined
     }

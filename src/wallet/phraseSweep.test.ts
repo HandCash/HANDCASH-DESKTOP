@@ -40,4 +40,14 @@ describe('phraseSweep refusedOverFunding', () => {
     expect(refusedOverFunding(refusal('input-spent'), [{ outpoint: tip }])).toBe(false)
     expect(refusedOverFunding(new Error('Insufficient funds'), [{ outpoint: tip }])).toBe(false)
   })
+
+  it('names exactly the bundle tips the certainty gate saw spent', async () => {
+    const { deadTipsOf } = await import('./phraseSweep')
+    const other = `${'c'.repeat(64)}.0`
+    const group = [{ outpoint: tip }, { outpoint: other }]
+    expect([...deadTipsOf(refusal('input-spent', [`${'A'.repeat(64)}_1`]), group)]).toEqual([tip])
+    expect(deadTipsOf(refusal('input-spent', [`${'b'.repeat(64)}.0`]), group).size).toBe(0)
+    expect(deadTipsOf(refusal('still-dead', [tip]), group).size).toBe(0)
+    expect(deadTipsOf(new Error('Insufficient funds'), group).size).toBe(0)
+  })
 })

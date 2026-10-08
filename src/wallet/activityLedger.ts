@@ -11,9 +11,10 @@
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { loadLedgerRows, saveLedgerRows } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
+import { withStorageLockLabel } from './storageLockTrace'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
-import { yieldToUi } from './yieldToUi'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
 /**
@@ -89,6 +90,41 @@ export function ledgerActivityRows(
   outputs: LedgerOutput[],
   baskets: LedgerBasket[],
 ): ActivityEntry[] {
+  const steps = ledgerRowSteps(txs, outputs, baskets)
+  for (;;) {
+    const step = steps.next()
+    if (step.done) return step.value
+  }
+}
+
+/**
+ * {@link ledgerActivityRows} with a turn for the UI whenever the budget runs
+ * out. A full read projects the whole history; in one task that froze the
+ * phone for 2.6s after the last transaction chunk landed.
+ */
+export async function ledgerActivityRowsSliced(
+  txs: LedgerTx[],
+  outputs: LedgerOutput[],
+  baskets: LedgerBasket[],
+): Promise<ActivityEntry[]> {
+  const steps = ledgerRowSteps(txs, outputs, baskets)
+  for (;;) {
+    const step = steps.next()
+    if (step.done) return step.value
+    if (uiBudgetExpired()) await yieldToUi()
+  }
+}
+
+/** Rows between budget checks; a check is a clock read, the rows are cheaper. */
+const ROW_STEP = 256
+
+function* ledgerRowSteps(
+  txs: LedgerTx[],
+  outputs: LedgerOutput[],
+  baskets: LedgerBasket[],
+): Generator<void, ActivityEntry[], void> {
+  let sinceStep = 0
+  const step = () => (sinceStep += 1) % ROW_STEP === 0
   const basketName = new Map(
     baskets.map((b) => [Number(b.basketId), String(b.name ?? '').toLowerCase()]),
   )
@@ -97,6 +133,7 @@ export function ledgerActivityRows(
     const id = Number(tx.transactionId)
     const txid = tx.txid?.trim().toLowerCase()
     if (id > 0 && txid) txidById.set(id, txid)
+    if (step()) yield
   }
   const itemsOf = new Map<number, { moves: ItemMove[]; token: boolean }>()
   const note = (txId: number, basket: string, move: ItemMove | null) => {
@@ -106,6 +143,7 @@ export function ledgerActivityRows(
     itemsOf.set(txId, slot)
   }
   for (const out of outputs) {
+    if (step()) yield
     const basket = basketName.get(Number(out.basketId))
     if (basket !== COLLECTABLE_BASKET && basket !== TOKEN_BASKET) continue
     const creator = Number(out.transactionId)
@@ -119,6 +157,7 @@ export function ledgerActivityRows(
 
   const rows: ActivityEntry[] = []
   for (const tx of txs) {
+    if (step()) yield
     const txid = tx.txid?.trim().toLowerCase()
     if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue
     const at = timeOf(tx.created_at)
@@ -451,14 +490,14 @@ async function readItemOutputs(
       if (sendIsWaiting()) return null
       assertCurrent(runtime)
       const page = asRows<LedgerOutput>(
-        await storage.runAsStorageProvider(async (raw) => {
+        await withStorageLockLabel('activityLedger(items)', () => storage.runAsStorageProvider(async (raw) => {
           const sp = raw as unknown as LedgerReader
           return sp.findOutputs({
             partial: { userId, basketId: basket.basketId },
             noScript: true,
             paged: { limit: OUTPUT_PAGE, offset },
           })
-        }),
+        })),
       )
       outputs.push(...page)
       if (page.length < OUTPUT_PAGE) break
@@ -474,7 +513,7 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   const storage = active.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
   if (sendIsWaiting()) return null
-  const read = await storage.runAsStorageProvider(async (raw) => {
+  const read = await withStorageLockLabel('activityLedger(head)', () => storage.runAsStorageProvider(async (raw) => {
     const sp = raw as unknown as LedgerReader
     const users = asRows<{ userId: number }>(await sp.findUsers({ partial: { identityKey: active.identityKey } }))
     if (users.length !== 1 || !Number.isSafeInteger(users[0]?.userId) || users[0]!.userId <= 0) {
@@ -486,7 +525,7 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
     assertCurrent(runtime)
     const txs = sp.toDbTrx ? null : await settledTransactions(sp, runtime, userId, full)
     return { sp, userId, txs, baskets }
-  }) as {
+  })) as {
     sp: LedgerReader
     userId: number
     txs: LedgerTx[] | null
@@ -517,9 +556,17 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
     if (tx.status !== HELD_STATUS) return true
     return itemTx.has(Number(tx.transactionId))
   })
-  return ledgerActivityRows(txs, outputs, baskets).filter(
+  if (uiBudgetExpired()) await yieldToUi()
+  assertCurrent(runtime)
+  const projectStarted = Date.now()
+  const rows = (await ledgerActivityRowsSliced(txs, outputs, baskets)).filter(
     (row) => !isGhostTxSuppressed(row.txid!),
   )
+  const projectMs = Date.now() - projectStarted
+  if (projectMs >= 250) {
+    console.info(`[activity-ledger] project ${txs.length} tx ${outputs.length} out done ${projectMs}ms`)
+  }
+  return rows
 }
 
 const MIN_REFRESH_GAP_MS = 10_000

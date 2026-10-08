@@ -82,6 +82,10 @@ type ActiveTrace = {
   flow: TransactionFlow
   startedAt: number
   stageAt: number
+  /** The one transaction this trace signs; set by its flow or its first signing-phase stage. */
+  txid?: string
+  /** Reached broadcasting — before that, no txid-bearing stage can be its own. */
+  signing?: boolean
 }
 
 type DurationHistory = Record<string, number[]>
@@ -195,6 +199,29 @@ export function activeTransactionTrace(): ActiveTrace | null {
   return activeTrace ? { ...activeTrace } : null
 }
 
+function traceTxid(txid: string | undefined): string | undefined {
+  return /^[0-9a-f]{64}$/i.test(txid || '') ? txid!.toLowerCase() : undefined
+}
+
+/** Pin the active trace to the transaction its flow just signed. */
+export function bindTransactionTrace(txid: string): void {
+  const id = traceTxid(txid)
+  if (!activeTrace || !id) return
+  activeTrace.txid = id
+  activeTrace.signing = true
+}
+
+/**
+ * There is one ambient trace, but propagation of other transactions (an import
+ * leg, an outbox retry) copies it while it is open. A stage belongs to the
+ * trace only for the trace's own txid.
+ */
+function ownsTxid(trace: ActiveTrace, txid: string | undefined): boolean {
+  if (!txid) return true
+  if (trace.txid) return trace.txid === txid
+  return trace.signing === true
+}
+
 export function recordTransactionStage(
   stage: TransactionStage,
   fields: {
@@ -210,13 +237,23 @@ export function recordTransactionStage(
   } = {},
 ): void {
   const now = Date.now()
-  const trace =
+  const txid = traceTxid(fields.txid)
+  const candidate =
     activeTrace && (!fields.traceId || fields.traceId === activeTrace.traceId)
       ? activeTrace
       : null
-  const flow = fields.flow ?? trace?.flow ?? 'payment'
-  const traceId = fields.traceId ?? trace?.traceId ?? id('trace')
-  const requestId = fields.requestId ?? trace?.requestId ?? id('request')
+  const trace = candidate && ownsTxid(candidate, txid) ? candidate : null
+  if (trace && txid && !trace.txid) trace.txid = txid
+  const borrowed = candidate && !trace && txid ? { from: candidate, txid } : null
+  const flow = borrowed
+    ? (fields.flow !== borrowed.from.flow ? fields.flow : undefined) ?? 'payment'
+    : fields.flow ?? trace?.flow ?? 'payment'
+  const traceId = borrowed
+    ? `trace-tx-${borrowed.txid.slice(0, 12)}`
+    : fields.traceId ?? trace?.traceId ?? id('trace')
+  const requestId = borrowed
+    ? `request-tx-${borrowed.txid.slice(0, 12)}`
+    : fields.requestId ?? trace?.requestId ?? id('request')
   const durationMs = trace ? Math.max(0, now - trace.stageAt) : undefined
   const elapsedMs = trace ? Math.max(0, now - trace.startedAt) : 0
   const outcome =
@@ -242,9 +279,7 @@ export function recordTransactionStage(
     provider: fields.provider?.slice(0, 60),
     blockerCode: fields.blockerCode?.slice(0, 80),
     retryCount: fields.retryCount,
-    txidPrefix: /^[0-9a-f]{64}$/i.test(fields.txid || '')
-      ? fields.txid!.slice(0, 12).toLowerCase()
-      : undefined,
+    txidPrefix: txid?.slice(0, 12),
     platform: platformTag(),
     appVersion: APP_VERSION,
   })
@@ -264,6 +299,7 @@ export function recordPaymentProgressStage(
 ): void {
   if (!activeTrace) beginTransactionTrace(flow)
   else activeTrace.flow = flow
+  if (stage === 'broadcasting' || stage === 'finishing') activeTrace!.signing = true
   const mapped: TransactionStage =
     stage === 'broadcasting'
       ? 'provider_attempt'

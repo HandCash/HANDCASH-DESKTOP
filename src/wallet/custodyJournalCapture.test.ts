@@ -98,6 +98,38 @@ describe('custody journal capture', () => {
     expect(unspentCustodyOutputs(owner).map((o) => o.op)).toEqual([`${txid}.0`])
   })
 
+  it('captures a 30-output action with keyed reads, never a whole tag or basket table', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      outputId: 100 + i,
+      transactionId: 7,
+      basketId: 2,
+      vout: i,
+      satoshis: 1,
+      spendable: true,
+      customInstructions: `{"origin":"o_${i}","name":"Cat"}`,
+    }))
+    const sp = provider(many)
+    sp.findOutputTagMaps.mockImplementation(async (args: { partial: { outputId?: number } }) =>
+      args.partial.outputId === 100 ? [{ outputId: 100, outputTagId: 5 }] : [],
+    )
+    const wallet = walletOver(sp)
+    const { installCustodyJournal } = await import('./custodyJournalCapture')
+    const { custodyEntries } = await import('./custodyJournal')
+    installCustodyJournal(wallet as never, owner)
+
+    await wallet.createAction({ description: 'x' } as never)
+
+    const unkeyed = (mock: { mock: { calls: unknown[][] } }) =>
+      mock.mock.calls.filter((c) => Object.keys((c[0] as { partial: object }).partial).length === 0)
+    expect(unkeyed(sp.findOutputTags)).toEqual([])
+    expect(unkeyed(sp.findOutputTagMaps)).toEqual([])
+    expect(unkeyed(sp.findOutputBaskets)).toEqual([])
+    expect(sp.findOutputBaskets).toHaveBeenCalledWith({ partial: { basketId: 2 } })
+    expect(sp.findOutputTags).toHaveBeenCalledWith({ partial: { outputTagId: 5 } })
+    expect(custodyEntries(owner)).toHaveLength(30)
+    expect(custodyEntries(owner)[0]).toMatchObject({ r: { basket: '1sat', tags: ['origin:x'] } })
+  })
+
   it('never fails the action when the journal cannot read the toolbox', async () => {
     const sp = provider(rows)
     sp.findTransactions.mockRejectedValue(new Error('idb closed'))

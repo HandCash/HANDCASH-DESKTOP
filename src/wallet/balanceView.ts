@@ -19,6 +19,7 @@ import { getActiveWallet } from './session'
 
 import { hasLockingScript, type ChangeRow } from './changeScriptFate'
 import { outpointFromOutput } from './txOutpoints'
+import { withStorageLockLabel } from './storageLockTrace'
 import { getUtxoLock, isUtxoBlockedFromRestore } from './utxoLockManager'
 import { isQuarantined } from './utxoLifecycle'
 import {
@@ -193,7 +194,9 @@ export async function unconfirmedChangeSats(opts?: {
 
   try {
     for (let page = 0; page < MAX_PAGES; page += 1) {
-      const done = await storage.runAsStorageProvider((sp) => scanPage(sp as ScanStorage, page))
+      const done = await withStorageLockLabel('balanceView(change)', () =>
+        storage.runAsStorageProvider((sp) => scanPage(sp as ScanStorage, page)),
+      )
       if (done) break
     }
     return extra

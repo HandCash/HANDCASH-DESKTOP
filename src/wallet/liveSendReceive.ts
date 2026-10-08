@@ -268,10 +268,11 @@ export async function runLiveSendReceive(opts?: {
         }),
       )
       const sendMs = nowMs() - sendStarted
+      const settled = await sent.settled
       liveLog(
         originMs,
         log,
-        `${label} txid=${sent.txid} peerDelivered=${String(sent.peerDelivered)} self=${String(sent.selfReceived)} send=${sendMs}ms`,
+        `${label} txid=${sent.txid} peerDelivered=${String(settled.peerDelivered)} self=${String(settled.selfReceived)} send=${sendMs}ms`,
       )
 
       setActiveWallet(payee)

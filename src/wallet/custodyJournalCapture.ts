@@ -15,6 +15,7 @@ import {
   buildInternalizeCustomInstructions,
   INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX,
 } from './oneSatProvenance'
+import { withStorageLockLabel } from './storageLockTrace'
 import { extractTxid } from './txExplorer'
 
 type ToolboxRow = {
@@ -49,31 +50,57 @@ function rowsOf(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? (value as Record<string, unknown>[]) : []
 }
 
-/** Basket names and live tags, read once per capture. */
-async function labelsFor(sp: Provider, outputIds: Set<number>) {
+/**
+ * `tx`: keyed reads for one transaction's outputs, baskets and tags. It runs
+ * inside every createAction while the storage lock is held, and a wallet with
+ * thousands of items has thousands of `origin:` tags — reading the tag tables
+ * whole made each capture a multi-second hold. `all`: the sweep reads every
+ * row anyway, so one pass over each table is cheaper.
+ */
+type LabelScope = 'tx' | 'all'
+
+async function basketNames(sp: Provider, rows: ToolboxRow[], scope: LabelScope) {
   const baskets = new Map<number, string>()
-  for (const b of rowsOf(await sp.findOutputBaskets?.({ partial: {} }))) {
+  const ids = [...new Set(rows.map((r) => r.basketId).filter((id): id is number => typeof id === 'number'))]
+  const found =
+    scope === 'all'
+      ? rowsOf(await sp.findOutputBaskets?.({ partial: {} }))
+      : (await Promise.all(ids.map(async (basketId) => rowsOf(await sp.findOutputBaskets?.({ partial: { basketId } }))))).flat()
+  for (const b of found) {
     if (b.isDeleted !== true && typeof b.basketId === 'number' && typeof b.name === 'string') {
       baskets.set(b.basketId, b.name)
     }
   }
+  return baskets
+}
+
+async function labelsFor(sp: Provider, rows: ToolboxRow[], outputIds: Set<number>, scope: LabelScope) {
+  const baskets = await basketNames(sp, rows, scope)
   const tags = new Map<number, string[]>()
   if (outputIds.size === 0 || !sp.findOutputTagMaps || !sp.findOutputTags) return { baskets, tags }
-  const names = new Map<number, string>()
-  for (const t of rowsOf(await sp.findOutputTags({ partial: {} }))) {
-    if (t.isDeleted !== true && typeof t.outputTagId === 'number' && typeof t.tag === 'string') {
-      names.set(t.outputTagId, t.tag)
-    }
-  }
-  // One transaction's handful of outputs: ask per output, not the whole table.
   const maps =
-    outputIds.size <= 20
+    scope === 'tx'
       ? (
           await Promise.all(
             [...outputIds].map(async (outputId) => rowsOf(await sp.findOutputTagMaps!({ partial: { outputId } }))),
           )
         ).flat()
       : rowsOf(await sp.findOutputTagMaps({ partial: {} }))
+  const tagIds = [...new Set(maps.map((m) => Number(m.outputTagId)).filter(Number.isFinite))]
+  const tagRows =
+    scope === 'tx'
+      ? (
+          await Promise.all(
+            tagIds.map(async (outputTagId) => rowsOf(await sp.findOutputTags!({ partial: { outputTagId } }))),
+          )
+        ).flat()
+      : rowsOf(await sp.findOutputTags({ partial: {} }))
+  const names = new Map<number, string>()
+  for (const t of tagRows) {
+    if (t.isDeleted !== true && typeof t.outputTagId === 'number' && typeof t.tag === 'string') {
+      names.set(t.outputTagId, t.tag)
+    }
+  }
   for (const m of maps) {
     const outputId = Number(m.outputId)
     const tag = names.get(Number(m.outputTagId))
@@ -141,9 +168,10 @@ async function entriesFromRows(
   sp: Provider,
   rows: ToolboxRow[],
   txidOf: (row: ToolboxRow) => string | undefined,
+  scope: LabelScope,
 ): Promise<CustodyEntry[]> {
   const ids = new Set(rows.map((r) => Number(r.outputId)).filter(Number.isFinite))
-  const { baskets, tags } = await labelsFor(sp, ids)
+  const { baskets, tags } = await labelsFor(sp, rows, ids, scope)
   const entries: CustodyEntry[] = []
   for (const row of rows) {
     const txid = txidOf(row)
@@ -159,11 +187,17 @@ async function entriesFromRows(
   return entries
 }
 
-async function withProvider<T>(wallet: StorageHost, fn: (sp: Provider) => Promise<T>): Promise<T | null> {
+async function withProvider<T>(
+  wallet: StorageHost,
+  label: string,
+  fn: (sp: Provider) => Promise<T>,
+): Promise<T | null> {
   const run = wallet.storage?.runAsStorageProvider
   if (typeof run !== 'function') return null
-  return run.call<unknown, [(sp: unknown) => Promise<T>], Promise<T>>(wallet.storage, async (sp) =>
-    fn(sp as Provider),
+  return withStorageLockLabel(label, () =>
+    run.call<unknown, [(sp: unknown) => Promise<T>], Promise<T>>(wallet.storage, async (sp) =>
+      fn(sp as Provider),
+    ),
   )
 }
 
@@ -175,7 +209,8 @@ export async function journalToolboxTx(
 ): Promise<number> {
   const txid = rawTxid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return 0
-  const entries = await withProvider(wallet, async (sp) => {
+  const startedAt = Date.now()
+  const entries = await withProvider(wallet, 'custodyJournal(tx)', async (sp) => {
     if (!sp.findOutputs || !sp.findTransactions) return []
     const tx = rowsOf(
       await sp.findTransactions({ partial: { txid }, noRawTx: true, paged: { limit: 1, offset: 0 } }),
@@ -185,8 +220,12 @@ export async function journalToolboxTx(
     const rows = rowsOf(
       await sp.findOutputs({ partial: { transactionId }, noScript: true, paged: { limit: PAGE, offset: 0 } }),
     ) as ToolboxRow[]
-    return entriesFromRows(sp, rows, () => txid)
+    return entriesFromRows(sp, rows, () => txid, 'tx')
   })
+  const ms = Date.now() - startedAt
+  if (ms > 250) {
+    console.info(`[custody-journal] tx ${txid.slice(0, 12)} outputs=${entries?.length ?? 0} done ${ms}ms`)
+  }
   return entries?.length ? appendCustody(owner, entries).added : 0
 }
 
@@ -196,7 +235,7 @@ export async function journalAllToolboxOutputs(
   owner: BoundAccountKeyScope,
 ): Promise<{ added: number; rows: number }> {
   const startedAt = Date.now()
-  const result = await withProvider(wallet, async (sp) => {
+  const result = await withProvider(wallet, 'custodyJournal(sweep)', async (sp) => {
     if (!sp.findOutputs) return { entries: [] as CustodyEntry[], rows: 0 }
     const rows: ToolboxRow[] = []
     for (const spendable of [true, false]) {
@@ -224,6 +263,7 @@ export async function journalAllToolboxOutputs(
       sp,
       rows,
       (row) => row.txid?.toLowerCase() ?? txids.get(Number(row.transactionId)),
+      'all',
     )
     return { entries, rows: rows.length }
   })

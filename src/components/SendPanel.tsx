@@ -415,7 +415,7 @@ export function SendPanel({
             friendLabel,
           })
           balanceSats = next.balanceSats
-          selfReceived = Boolean(next.selfReceived)
+          selfReceived = next.selfReceive
         } else {
           const next = await sendSatsToAddress({ to, satoshis, friendLabel })
           balanceSats = next.balanceSats
@@ -424,7 +424,7 @@ export function SendPanel({
         toastSuccess(
           'Sent',
           selfReceived
-            ? `${amountLabel} credited back to this wallet.`
+            ? `${amountLabel} on the way back to this wallet.`
             : `${amountLabel} on the way to ${label}.`,
         )
         onSent(balanceSats)

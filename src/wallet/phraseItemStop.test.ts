@@ -155,6 +155,33 @@ describe('migrateChosenPhraseItems stops', () => {
     expect(createAction).toHaveBeenCalledTimes(1)
   })
 
+  it('drops tips the input check found spent elsewhere and rebuilds the rest whole, never halving', async () => {
+    const four = Array.from({ length: 4 }, (_, i) => makeTip(20_000 + i))
+    for (const tip of four) beefByTxid.set(tip.txid, tip.beef)
+    const dead = four[1]!
+    const inputCounts: number[] = []
+    createAction.mockImplementation(async (args: { inputs?: unknown[] }) => {
+      inputCounts.push(args.inputs?.length ?? 0)
+      if (inputCounts.length === 1) {
+        throw Object.assign(new Error('inputs spent elsewhere'), {
+          code: 'INPUTS_UNVERIFIED',
+          reason: 'input-spent',
+          dead: [dead.outpoint.replace('_', '.')],
+        })
+      }
+      throw new Error('Insufficient funds in the available inputs (1000 more satoshis are needed)')
+    })
+
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({
+      items: four.map((t) => ({ outpoint: t.outpoint, keyHex: PHRASE_KEY.toHex() })),
+    })
+
+    expect(inputCounts).toEqual([4, 3])
+    expect(run.results.get(dead.outpoint)).toMatchObject({ kind: 'skipped', reason: 'spentElsewhere' })
+    for (const tip of four.filter((t) => t !== dead)) expect(run.results.get(tip.outpoint)?.kind).toBe('funds')
+  })
+
   it('aborts the action when signing fails, so no phantom item is left listed', async () => {
     // An unsigned action still lists its `1sat` output until background review
     // fails it — that is the collectable that appeared and then vanished.

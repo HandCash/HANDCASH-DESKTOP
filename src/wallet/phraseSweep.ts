@@ -940,11 +940,17 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
     outcome.moved.push(...unit.moved)
     outcome.failed += unit.failed
     outcome.failures.push(...unit.failures)
+    outcome.spentElsewhere.push(...unit.spentElsewhere)
     outcome.resolved += unit.resolved
     if (unit.lastError) outcome.lastError = unit.lastError
     if (unit.stopped) {
       outcome.stopped = unit.stopped
-      untried.push(...pending.slice(unit.resolved).map((item) => item.outpoint))
+      const settled = new Set([
+        ...unit.moved.map((item) => item.outpoint),
+        ...unit.failures.map((item) => item.outpoint),
+        ...unit.spentElsewhere,
+      ])
+      untried.push(...pending.filter((item) => !settled.has(item.outpoint)).map((item) => item.outpoint))
     }
   }
   for (const receipt of outcome.moved) {
@@ -952,6 +958,14 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
   }
   for (const failure of outcome.failures) {
     results.set(givenOf.get(failure.outpoint)!, { kind: 'failed', message: failure.reason })
+  }
+  for (const outpoint of outcome.spentElsewhere) {
+    skipped += 1
+    results.set(givenOf.get(outpoint)!, {
+      kind: 'skipped',
+      reason: 'spentElsewhere',
+      message: describeOrdinalMigrateSkip('spentElsewhere'),
+    })
   }
   const unmoved: SingleItemMigrate =
     outcome.stopped === 'stale-funding'
@@ -1007,6 +1021,22 @@ export function refusedOverFunding(err: unknown, group: ReadonlyArray<{ outpoint
   const key = (outpoint: string) => outpoint.trim().toLowerCase().replace(/[_:]/, '.')
   const named = new Set(group.map((item) => key(item.outpoint)))
   return !refusal.dead.some((outpoint) => named.has(key(String(outpoint))))
+}
+
+/**
+ * Tips of this bundle the certainty gate found spent by another transaction.
+ * Splitting cannot revive them, and every half that kept one was refused the
+ * same way: 24 → 12 → 6 → 3 → 2 → 1 over ten minutes for one dead outpoint run.
+ */
+export function deadTipsOf(err: unknown, group: ReadonlyArray<{ outpoint: string }>): Set<string> {
+  const refusal = err as { code?: unknown; reason?: unknown; dead?: unknown } | null
+  const dead = new Set<string>()
+  if (!refusal || refusal.code !== 'INPUTS_UNVERIFIED' || refusal.reason !== 'input-spent') return dead
+  if (!Array.isArray(refusal.dead)) return dead
+  const key = (outpoint: string) => outpoint.trim().toLowerCase().replace(/[_:]/, '.')
+  const named = new Set(refusal.dead.map((outpoint) => key(String(outpoint))))
+  for (const item of group) if (named.has(key(item.outpoint))) dead.add(item.outpoint)
+  return dead
 }
 
 type ItemMigratePlan =
@@ -1069,14 +1099,16 @@ type UnitOutcome = {
   failed: number
   /** Tips refused alone, after any bundle they rode was split down to them. */
   failures: Array<{ outpoint: string; reason: string }>
-  /** Rows this unit settled, whether moved or failed — the cursor prefix. */
+  /** Tips the input check found spent by another transaction; never signed. */
+  spentElsewhere: string[]
+  /** Rows this unit settled, whether moved, failed or spent elsewhere. */
   resolved: number
   stopped: PhraseItemStopReason | null
   lastError: string | null
 }
 
 function emptyUnitOutcome(): UnitOutcome {
-  return { moved: [], failed: 0, failures: [], resolved: 0, stopped: null, lastError: null }
+  return { moved: [], failed: 0, failures: [], spentElsewhere: [], resolved: 0, stopped: null, lastError: null }
 }
 
 /**
@@ -1124,14 +1156,7 @@ async function migrateOrdinalUnit(args: {
    */
   onMoved: (moved: MigratedItemReceipt[]) => void
 }): Promise<UnitOutcome> {
-  const out: UnitOutcome = {
-    moved: [],
-    failed: 0,
-    failures: [],
-    resolved: 0,
-    stopped: null,
-    lastError: null,
-  }
+  const out = emptyUnitOutcome()
   let pending = args.items.slice()
   let perTx = args.itemsPerTx
   let fundingRetries = 0
@@ -1188,6 +1213,17 @@ async function migrateOrdinalUnit(args: {
         out.stopped = 'funds'
         out.lastError = reason
         return out
+      }
+      const dead = deadTipsOf(err, group)
+      if (dead.size > 0) {
+        appendAppLog(
+          'warn',
+          `[phrase-sweep] ${dead.size} of ${group.length} tip(s) already spent elsewhere — dropped, building the rest at ${perTx}`,
+        )
+        out.spentElsewhere.push(...dead)
+        out.resolved += dead.size
+        pending = pending.filter((item) => !dead.has(item.outpoint))
+        continue
       }
       if (refusedOverFunding(err, group)) {
         // The dead fee coin is retired by now; one fresh build usually funds

@@ -114,8 +114,16 @@ vi.mock('./pendingBrc29Outbox', () => ({
   flushPendingBrc29Outbox: async () => 0,
 }))
 
+const spendRegion = { inside: false }
 vi.mock('./spendGuard', () => ({
-  runExclusiveSpend: <T>(fn: () => Promise<T>) => fn(),
+  runExclusiveSpend: async <T>(fn: () => Promise<T>) => {
+    spendRegion.inside = true
+    try {
+      return await fn()
+    } finally {
+      spendRegion.inside = false
+    }
+  },
   prepareSpendHeal: (sats?: number) => prepareSpendHeal(sats),
   assertSendableBalance: async () => 100_000,
   refreshSpendableBalance: async () => 100_000,
@@ -256,6 +264,7 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(instructions.derivationSuffix).toBe(result.remittance.derivationSuffix)
     expect(instructions.payee).toBe(PAYEE)
     expect(internalizeAction).not.toHaveBeenCalled()
+    const settled = await result.settled
     expect(notifyPeerBrc29Payment).toHaveBeenCalledWith(
       expect.objectContaining({
         recipientIdentityKey: PAYEE,
@@ -264,8 +273,8 @@ describe('sendBrc29ToIdentityKey', () => {
       }),
     )
     await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
-    expect(result.selfReceived).toBe(false)
-    expect(result.peerDelivered).toBe(true)
+    expect(result.selfReceive).toBe(false)
+    expect(settled.peerDelivered).toBe(true)
   })
 
   it('resolves a same-origin handle and completes its BRC-29 payment', async () => {
@@ -293,6 +302,7 @@ describe('sendBrc29ToIdentityKey', () => {
       friendLabel: resolved.display,
     })
 
+    const settled = await result.settled
     expect(fetchMock).toHaveBeenCalledWith(
       '/.well-known/metanet-handles/resolve?handle=alice',
       expect.objectContaining({ method: 'GET' }),
@@ -304,7 +314,7 @@ describe('sendBrc29ToIdentityKey', () => {
         txid: result.txid,
       }),
     )
-    expect(result.peerDelivered).toBe(true)
+    expect(settled.peerDelivered).toBe(true)
   })
 
   it('succeeds after sign when the network reports ghost doubleSpend', async () => {
@@ -322,6 +332,7 @@ describe('sendBrc29ToIdentityKey', () => {
       satoshis: 1_000,
     })
     expect(result.txid).toMatch(/^[0-9a-f]{64}$/)
+    await result.settled
     expect(notifyPeerBrc29Payment).toHaveBeenCalled()
   })
 
@@ -335,7 +346,7 @@ describe('sendBrc29ToIdentityKey', () => {
       payeeIdentityKey: PAYEE,
       satoshis: 1_000,
     })
-    expect(result.peerDelivered).toBe(true)
+    expect((await result.settled).peerDelivered).toBe(true)
     expect(notifyPeerBrc29Payment).toHaveBeenCalled()
   })
 
@@ -349,7 +360,7 @@ describe('sendBrc29ToIdentityKey', () => {
       payeeIdentityKey: PAYEE,
       satoshis: 1_000,
     })
-    expect(result.peerDelivered).toBe(false)
+    expect((await result.settled).peerDelivered).toBe(false)
     expect(result.txid).toBe('b'.repeat(64))
     expect(createAction).toHaveBeenCalledTimes(1)
     expect(abortAction).not.toHaveBeenCalled()
@@ -363,7 +374,55 @@ describe('sendBrc29ToIdentityKey', () => {
       satoshis: 1_000,
     })
 
-    expect(result.selfReceived).toBe(true)
+    expect(result.selfReceive).toBe(true)
+    expect((await result.settled).selfReceived).toBe(true)
+    expect(notifyPeerBrc29Payment).toHaveBeenCalled()
+  })
+
+  it('resolves once sealed and credits a self payment outside the spend region', async () => {
+    walletState.identityKey = PAYEE
+    let finishCredit: () => void = () => {}
+    const regionAtCredit: boolean[] = []
+    internalizeAction.mockImplementationOnce(() => {
+      regionAtCredit.push(spendRegion.inside)
+      return new Promise((resolve) => {
+        finishCredit = () => resolve({ accepted: true })
+      })
+    })
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000 })
+
+    expect(result.txid).toBe('b'.repeat(64))
+    await vi.waitFor(() => expect(regionAtCredit).toEqual([false]))
+    finishCredit()
+    expect((await result.settled).selfReceived).toBe(true)
+  })
+
+  it('settles a peer payment outside the spend region', async () => {
+    const regionAtNotify: boolean[] = []
+    notifyPeerBrc29Payment.mockImplementationOnce(async () => {
+      regionAtNotify.push(spendRegion.inside)
+      return { delivered: 'cloud', beefInBox: true }
+    })
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000 })
+    expect((await result.settled).peerDelivered).toBe(true)
+    expect(regionAtNotify).toEqual([false])
+  })
+
+  it('never rejects settlement when the inbox throws', async () => {
+    notifyPeerBrc29Payment.mockRejectedValueOnce(new Error('box down'))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000 })
+    await expect(result.settled).resolves.toMatchObject({ peerDelivered: false })
+  })
+
+  it('keeps the self-pay notify', async () => {
+    walletState.identityKey = PAYEE
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000 })
+    await result.settled
     expect(notifyPeerBrc29Payment).toHaveBeenCalled()
     expect(internalizeAction).toHaveBeenCalledWith(
       expect.objectContaining({

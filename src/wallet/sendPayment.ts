@@ -81,8 +81,9 @@ export async function sendSatsToAddress(opts: {
     friendLabel: opts.friendLabel ?? null,
   })
 
+  let sent: { txid: string; wallet: NonNullable<ReturnType<typeof getActiveWallet>>['wallet'] }
   try {
-    return await runExclusiveSpend(
+    sent = await runExclusiveSpend(
       async () => {
         const chart = createActor(bsvSendMachine).start()
         try {
@@ -240,11 +241,7 @@ export async function sendSatsToAddress(opts: {
                 pendingId: pending.id,
               })
 
-              const balanceSats = Math.max(
-                0,
-                (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
-              )
-              return { txid, balanceSats }
+              return { txid, wallet: active.wallet }
             } else if (realTxid) {
               // createAction broadcast without confirm postBeef — still mark mempool-seen.
               transitionTx(dualId, 'SEEN_IN_MEMPOOL')
@@ -278,11 +275,7 @@ export async function sendSatsToAddress(opts: {
             setPaymentProgress('finishing')
             scheduleHistoryBackupPush('send')
 
-            const balanceSats = Math.max(
-              0,
-              (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
-            )
-            return { txid, balanceSats }
+            return { txid, wallet: active.wallet }
           } catch (err) {
             clearPendingSend(pending.id)
             failDualLayerSend(
@@ -361,4 +354,8 @@ export async function sendSatsToAddress(opts: {
     if (blocked) throw new Error(blocked)
     throw err
   }
+  // Sealed and propagating is sent; the balance read waits on the storage lock
+  // and must not hold the spend region for the next payment.
+  const balanceSats = Math.max(0, (await fetchBalanceSats(sent.wallet).catch(() => 0)) || 0)
+  return { txid: sent.txid, balanceSats }
 }

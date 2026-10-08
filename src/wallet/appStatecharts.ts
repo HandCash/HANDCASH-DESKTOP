@@ -509,6 +509,10 @@ const BRC29_SEND = `stateDiagram-v2
     Inbox is notify + outbox retry.
     No noSend / no second tx.
   end note
+  note right of chooseSettle
+    Spend region ends at BROADCASTED (sealed + propagating).
+    Settle runs outside it; the send resolves without it.
+  end note
   preparing --> failed : FAIL
   broadcasting --> failed : FAIL
 `
@@ -1493,7 +1497,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'brc29Send',
     label: 'BRC-29 send',
-    caption: 'brc29SendMachine — noSend → peerDeliver | selfReceive',
+    caption: 'brc29SendMachine — broadcast in the spend region → peerDeliver | selfReceive after it',
     source: BRC29_SEND,
   },
   {
