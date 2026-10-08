@@ -14,7 +14,6 @@ import type { WalletInterface } from '@bsv/sdk'
 import { brc100HandlerOwner } from '../contracts/brc100Handlers'
 import { bumpBalanceAfterHeal, fetchFastBalanceSats } from './session'
 import {
-  connectedAppChannel,
   filterItemOutputsForOrigin,
   filterTokenOutputsForOrigin,
   gateOriginAccess,
@@ -29,13 +28,6 @@ import {
   requestTokenViewApproval,
 } from './permissions'
 import { normalizeAppHost } from './appIdentity'
-import {
-  bridgeCallerHost,
-  bridgeOriginRefusalDescription,
-  channelMayUseGrant,
-  resolveBridgeCaller,
-  type BridgeChannel,
-} from './bridgeOrigin'
 import { getAutoPaySettings, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
   isBsv21ReceiveArgs,
@@ -292,8 +284,27 @@ type HttpRequestEvent = {
   headers: Record<string, string>
   body: string
   request_id: number
-  /** Set by the Mobile shell for app-tab calls whose origin the WebView vouched for. */
-  channel?: 'in-app'
+}
+
+function parseOrigin(headers: Record<string, string>): string | undefined {
+  const rawOrigin = headers.origin
+  const rawOriginator = headers.originator
+  if (rawOrigin) {
+    try {
+      return new URL(rawOrigin).host
+    } catch {
+      return undefined
+    }
+  }
+  if (rawOriginator) {
+    try {
+      const candidate = rawOriginator.includes('://') ? rawOriginator : `http://${rawOriginator}`
+      return new URL(candidate).host
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }
 
 function methodFromPath(path: string): string {
@@ -596,7 +607,7 @@ export async function handleBrc100Request(
 ): Promise<{ status: number; body: string }> {
   const releaseInbound = noteInboundWalletRequest()
   const method = methodFromPath(event.path)
-  const originator = bridgeCallerHost(resolveBridgeCaller(event.headers))
+  const originator = parseOrigin(event.headers)
   const quiet = isQuietBrc100Success(method)
   const t0 = Date.now()
   let args: unknown
@@ -815,38 +826,6 @@ async function handleBrc100RequestInner(
     }
   }
 
-  const caller = resolveBridgeCaller(event.headers)
-  if (caller.kind === 'refuse' && !isPublicMethod(method)) {
-    appendAppLog('warn', `[brc100] refused ${method}: ${caller.reason}`)
-    return {
-      status: 403,
-      body: JSON.stringify({
-        status: 'error',
-        code: 'ORIGIN_REFUSED',
-        reason: caller.reason,
-        description: bridgeOriginRefusalDescription(caller.reason),
-      }),
-    }
-  }
-  const originator = bridgeCallerHost(caller)
-  const channel: BridgeChannel = event.channel === 'in-app' ? 'in-app' : 'socket'
-  if (
-    originator &&
-    !isPublicMethod(method) &&
-    !channelMayUseGrant(channel, connectedAppChannel(originator) ?? undefined)
-  ) {
-    appendAppLog('warn', `[brc100] refused ${method} from ${originator} on the loopback socket: connected in an app tab`)
-    return {
-      status: 403,
-      body: JSON.stringify({
-        status: 'error',
-        code: 'ORIGIN_BOUND_IN_APP',
-        description:
-          'This app was connected in the HandCash browser. Open it there, or disconnect it in HandCash to connect from another browser.',
-      }),
-    }
-  }
-
   const active = runtime?.instance ?? null
   if (!active) {
     requestUnlockForBridge()
@@ -871,6 +850,7 @@ async function handleBrc100RequestInner(
     }
   }
 
+  const originator = parseOrigin(event.headers)
   if (
     method !== 'listOutputs' &&
     containsRetiredFungibleRequest(args)
@@ -904,7 +884,7 @@ async function handleBrc100RequestInner(
     tokenViewRequest = prepared.tokenViewRequest
   }
 
-  const access = await gateOriginAccess(originator, method, channel)
+  const access = await gateOriginAccess(originator, method)
   if (access === 'unauthenticated') {
     if (method === 'isAuthenticated' || method === 'waitForAuthentication') {
       return { status: 200, body: JSON.stringify({ authenticated: false }) }

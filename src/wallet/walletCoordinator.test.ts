@@ -17,13 +17,11 @@ import {
   shouldYieldChainIngestToSpend,
   getSpendPriorityDepth,
   describeSpendPriorityHolds,
-  describeForegroundSpendPriorityHolds,
   SpendRegionAbandonedError,
   SPEND_REGION_ABANDONED,
   rebindWalletCoordinatorForRuntime,
   waitForChainIngestIdle,
   waitForForegroundSpendIdle,
-  waitForSpendRegionFree,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -370,28 +368,6 @@ describe('walletCoordinator runtime', () => {
     )
   })
 
-  it('hands the abandoned work to the caller, which may still broadcast', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    let postLate!: (txid: string) => void
-    const abort = new AbortController()
-
-    const hung = runExclusiveSpend(
-      () =>
-        new Promise<string>((resolve) => {
-          postLate = resolve
-        }),
-      undefined,
-      { abandonSignal: abort.signal },
-    )
-    await Promise.resolve()
-    abort.abort('Send timed out')
-    const err = (await hung.catch((e: unknown) => e)) as SpendRegionAbandonedError
-    expect(err).toBeInstanceOf(SpendRegionAbandonedError)
-
-    postLate('ab'.repeat(32))
-    await expect(err.late).resolves.toBe('ab'.repeat(32))
-  })
-
   it('tracks explicit requestSpendPriority independently of the FIFO', () => {
     expect(shouldYieldChainIngestToSpend()).toBe(false)
     requestSpendPriority()
@@ -409,22 +385,6 @@ describe('walletCoordinator runtime', () => {
     releaseA()
 
     expect(describeSpendPriorityHolds().map((h) => h.split(' ')[0])).toEqual(['b'])
-  })
-
-  it('keeps background holds out of the foreground list while ingest still yields to both', async () => {
-    let finish: (() => void) | undefined
-    const bundle = runExclusiveSpend(() => new Promise<void>((resolve) => { finish = resolve }), undefined, {
-      lane: 'background',
-    })
-    expect(shouldYieldChainIngestToSpend()).toBe(true)
-    expect(describeForegroundSpendPriorityHolds()).toEqual([])
-    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
-    const releasePrompt = requestSpendPriority('permission-prompt')
-    expect(describeForegroundSpendPriorityHolds().map((h) => h.split(' ')[0])).toEqual(['permission-prompt'])
-    releasePrompt()
-    finish!()
-    await bundle
-    expect(shouldYieldChainIngestToSpend()).toBe(false)
   })
 
   it('expires a leaked hold instead of disabling item ingest forever', () => {
@@ -582,46 +542,5 @@ describe('walletCoordinator runtime', () => {
     releaseChain()
     await chain
     expect(order).toEqual(['chain-start', 'spend', 'chain-end'])
-  })
-
-  it('reports the spend region free while chain ingest still runs, and busy under recompose', async () => {
-    let releaseChain!: () => void
-    const chain = runChainIngest(() => new Promise<void>((resolve) => (releaseChain = resolve)))
-    await vi.waitFor(() => expect(getWalletCoordinatorSnapshot().chainIngest).not.toBe('idle'))
-    await expect(waitForSpendRegionFree(50)).resolves.toBe(true)
-    releaseChain()
-    await chain
-
-    let releaseRecompose!: () => void
-    const recompose = runRecompose(() => new Promise<void>((resolve) => (releaseRecompose = resolve)))
-    await vi.waitFor(() => expect(getWalletCoordinatorSnapshot().recompose).not.toBe('idle'))
-    await expect(waitForSpendRegionFree(50)).resolves.toBe(false)
-    const freed = waitForSpendRegionFree(5_000)
-    releaseRecompose()
-    await recompose
-    await expect(freed).resolves.toBe(true)
-  })
-
-  it('keeps a background spend queued past the foreground acquire limit', async () => {
-    vi.useFakeTimers()
-    try {
-      let releaseRecompose!: () => void
-      const recompose = runRecompose(() => new Promise<void>((resolve) => (releaseRecompose = resolve)))
-      await vi.advanceTimersByTimeAsync(0)
-      let outcome: string | null = null
-      const bundle = runExclusiveSpend(async () => 'moved', undefined, { lane: 'background' }).then(
-        (v) => (outcome = v),
-        (err: unknown) => (outcome = err instanceof Error ? err.name : 'error'),
-      )
-      await vi.advanceTimersByTimeAsync(120_000)
-      expect(outcome).toBeNull()
-      releaseRecompose()
-      await recompose
-      await vi.advanceTimersByTimeAsync(1_000)
-      await bundle
-      expect(outcome).toBe('moved')
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })

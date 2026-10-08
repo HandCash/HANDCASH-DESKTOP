@@ -1,5 +1,4 @@
 import {
-  getWalletRuntime,
   requireWalletRuntime,
   retainWalletRuntime,
   runtimeIsCurrent,
@@ -31,16 +30,13 @@ import {
   noteDualLayerSigned,
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
-import { appendAppLog } from './appLog'
-import { pinBroadcastLocalTx, sealSpentInputsOfSignedTx } from './staleOutputRelease'
+import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
 export type SignedSendHandle = {
   lifecycleId: string
   txid: string
   atomicBeef: number[]
   flow: TransactionFlow
-  /** What the archive and retry queue keep instead of `atomicBeef`; see `registerSignedSend`. */
-  durableBody?: number[]
   /** Immutable signer and storage owner; never replaced by an account switch. */
   runtime?: WalletRuntime
   owner?: BoundAccountKeyScope
@@ -55,12 +51,6 @@ export async function registerSignedSend(args: {
   lifecycleId?: string
   satoshis?: number
   to?: string | null
-  /**
-   * The same signed subject with ancestry a retry can fetch back left out.
-   * The archive is a shared 1MB store; an import's art-bearing sources would
-   * crowd every other cheque out of it. `atomicBeef` is still what posts.
-   */
-  durableBody?: number[]
 }): Promise<SignedSendHandle> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid) || args.atomicBeef.length === 0) {
@@ -73,7 +63,6 @@ export async function registerSignedSend(args: {
   const retention = retainWalletRuntime(runtime)
   const owner = accountKeyScopeFor(runtime.instance)
   try {
-    const startedAt = Date.now()
     let atomicBeef = args.atomicBeef
     try {
       const { prepareBroadcastCheque } = await import('./beefCache')
@@ -93,7 +82,6 @@ export async function registerSignedSend(args: {
       )
     }
 
-    const sealStarted = Date.now()
     // Seal first. A lifecycle must never advertise a signed cheque while its
     // inputs remain selectable by a second send. Use the captured Toolbox even
     // if the user selected another account while BEEF hydration was running.
@@ -113,12 +101,10 @@ export async function registerSignedSend(args: {
         error,
       )
     }
-    const archiveStarted = Date.now()
     // Persist before any Activity/remittance work. Every key is resolved from
     // the immutable owner, never the mutable foreground account.
-    const durableBody = args.durableBody?.length ? args.durableBody : atomicBeef
     const { archiveSignedCheque } = await import('./signedChequeArchive')
-    if (!archiveSignedCheque(txid, durableBody, { flow: args.flow, owner })) {
+    if (!archiveSignedCheque(txid, atomicBeef, { flow: args.flow, owner })) {
       // Toolbox still owns the signed transaction. Continue to the retry queue
       // (which can carry its own body) and immediate propagation.
       console.error(
@@ -127,20 +113,12 @@ export async function registerSignedSend(args: {
       )
     }
     const { enqueuePendingMinerSubmit } = await import('./pendingMinerOutbox')
-    if (!enqueuePendingMinerSubmit(txid, durableBody, { flow: args.flow, owner })) {
+    if (!enqueuePendingMinerSubmit(txid, atomicBeef, { flow: args.flow, owner })) {
       // Immediate propagation still has the in-memory body. Never unseal or
       // rewrite the send as unsigned merely because secondary storage is full.
       console.error(
         '[signed-send] durable retry unavailable; propagating signed cheque now',
         txid.slice(0, 12),
-      )
-    }
-    const registeredAt = Date.now()
-    if (registeredAt - startedAt > 250) {
-      appendAppLog(
-        'info',
-        `[signed-send] register ${txid.slice(0, 12)} done ${registeredAt - startedAt}ms` +
-          ` prepare=${sealStarted - startedAt}ms seal=${archiveStarted - sealStarted}ms archive=${registeredAt - archiveStarted}ms`,
       )
     }
 
@@ -162,7 +140,6 @@ export async function registerSignedSend(args: {
       txid,
       atomicBeef,
       flow: args.flow,
-      ...(args.durableBody?.length ? { durableBody: args.durableBody } : {}),
       runtime,
       owner,
       releaseRuntime: retention.release,
@@ -192,7 +169,6 @@ export async function propagateSignedSend(
         flow: handle.flow,
         runtime: handle.runtime,
         owner: handle.owner,
-        ...(handle.durableBody ? { durableBody: handle.durableBody } : {}),
       },
     )
     const foreground =
@@ -235,43 +211,6 @@ export async function propagateSignedSend(
   } finally {
     handle.releaseRuntime?.()
   }
-}
-
-/**
- * Long enough for the miner outbox's next round (every 60 s) to reach Arcade
- * after a fallback broadcaster took the cheque on the first post.
- */
-const CHAINED_LEG_FUNDING_MS = 75_000
-const CHAINED_LEG_POLL_MS = 250
-
-/**
- * Wait until a signed cheque's change can fund the next leg of a run.
- *
- * That change is app-held (`nosend`) until Arcade holds the cheque. The common
- * flow then pins it: minerSubmit on the first post, the miner outbox on a
- * retry, the landing watch when it sees a node. A run waits on that same
- * outcome rather than a verdict of its own, and pins idempotently in case the
- * background pin lost a race with a busy read. Without an Arcade broadcaster
- * configured, any post is all the common flow will ever get.
- */
-export async function awaitChainedLegFunding(
-  txid: string,
-  atomicBeef?: number[],
-  timeoutMs = CHAINED_LEG_FUNDING_MS,
-): Promise<boolean> {
-  const [{ txHadArcadeSubmitContact }, { hasArcadeBroadcaster }] = await Promise.all([
-    import('./arcadeSubmitGuard'),
-    import('./arcadeVerdict'),
-  ])
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const runtime = getWalletRuntime()
-    if (!runtime) return false
-    const arcadeHolds = txHadArcadeSubmitContact(txid) || !hasArcadeBroadcaster(runtime.instance.services)
-    if (arcadeHolds && (await pinBroadcastLocalTx(txid, atomicBeef).catch(() => false))) return true
-    await new Promise((resolve) => setTimeout(resolve, CHAINED_LEG_POLL_MS))
-  }
-  return false
 }
 
 /** Common optimistic payment rule: signing completes UI; propagation is late. */

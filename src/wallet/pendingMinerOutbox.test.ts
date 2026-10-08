@@ -286,28 +286,4 @@ describe('pending miner outbox', () => {
     // An unknown txid must not silently create a row.
     expect(updatePendingMinerSubmitBody('cd'.repeat(32), mergedAtomic)).toBe(false)
   })
-
-  it('keeps a thin retry body when the merged one is too large for the shared archive', async () => {
-    const { enqueuePendingMinerSubmit, updatePendingMinerSubmitBody } = await import('./pendingMinerOutbox')
-    const parent = new Transaction()
-    parent.addOutput({ satoshis: 10_000, lockingScript: LockingScript.fromHex('6a' + '00'.repeat(300_000)) })
-    const tip = new Transaction()
-    tip.addInput({ sourceTXID: parent.id('hex'), sourceOutputIndex: 0, unlockingScript: LockingScript.fromHex('51') })
-    tip.addOutput({ satoshis: 9_900, lockingScript: LockingScript.fromHex('51') })
-    const txid = tip.id('hex')
-    const thin = new Beef()
-    thin.mergeTxidOnly(parent.id('hex'))
-    thin.mergeTransaction(tip)
-    const thinAtomic = thin.toBinaryAtomic(txid)
-    expect(enqueuePendingMinerSubmit(txid, thinAtomic)).toBe(true)
-
-    const merged = new Beef()
-    merged.mergeRawTx(parent.toBinary())
-    merged.mergeTransaction(tip)
-    expect(updatePendingMinerSubmitBody(txid, merged.toBinaryAtomic(txid))).toBe(true)
-
-    const archive = JSON.parse(store.get(ARCHIVE_KEY) || '[]') as Array<{ txid: string; atomicB64: string }>
-    const archived = archive.find((row) => row.txid === txid)!
-    expect(Array.from(Buffer.from(archived.atomicB64, 'base64'))).toEqual(thinAtomic)
-  })
 })

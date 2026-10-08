@@ -30,18 +30,6 @@ describe('appDisplayName', () => {
     expect(appDisplayName('http://127.0.0.1:5173')).toBe('Local app')
     expect(appDisplayName(undefined)).toBe('Unknown app')
   })
-
-  it('never titles a host HandCash does not own as HandCash', () => {
-    expect(appDisplayName('https://handcash.vercel.app')).toBe('handcash.vercel.app')
-    expect(appDisplayName('https://handcash-market.pages.dev')).toBe('handcash-market.pages.dev')
-    expect(appDisplayName('https://hand-cash.co')).toBe('hand-cash.co')
-    expect(appDisplayName('https://www.h4ndca5h.app')).toBe('www.h4ndca5h.app')
-    expect(appDisplayName('https://login.handcash.io.evil.example')).toBe('Evil')
-  })
-
-  it('shows IDN hosts as their punycode', () => {
-    expect(appDisplayName('https://xn--hndcash-2fg.io')).toBe('xn--hndcash-2fg.io')
-  })
 })
 
 describe('appFaviconCandidates', () => {

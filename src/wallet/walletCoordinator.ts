@@ -7,7 +7,6 @@ import { createActor, type Actor } from 'xstate'
 import { setStallContextProvider } from './appLog'
 import { describeUiPhase } from './uiPhase'
 import { createSerialQueue } from './serialQueue'
-import { setVisibleTimeout } from './visibleClock'
 import {
   canBeginChainIngest,
   canBeginHistoryReplica,
@@ -49,8 +48,6 @@ let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinato
 type SpendPriorityHold = {
   id: number
   reason: string
-  /** Background bulk work (an import's migrate) — other background lanes do not wait on it. */
-  lane: 'foreground' | 'background'
   /** When the work started — what the stall report should quote. */
   since: number
   /** Last proof of life. Expiry is measured from here, not from `since`. */
@@ -60,12 +57,6 @@ type SpendPriorityHold = {
 const SPEND_PRIORITY_MAX_MS = 90_000
 /** Fail fast when a send cannot acquire the spend region — UI watchdog is 90s. */
 const SPEND_ACQUIRE_MAX_MS = 45_000
-/**
- * Nobody watches a background bundle acquire. It keeps its place in the queue
- * behind an unlock recompose (minutes on a large wallet) instead of timing out
- * and starting over at the back.
- */
-const BACKGROUND_SPEND_ACQUIRE_MAX_MS = 10 * 60_000
 /** Proof-of-life cadence for a hold whose work is still running. */
 const SPEND_PRIORITY_TOUCH_MS = 30_000
 
@@ -140,17 +131,13 @@ export type SpendPriorityLease = {
  * that may run long should `touch()` while working; everyone else can use
  * `requestSpendPriority`.
  */
-export function leaseSpendPriority(
-  reason = 'spend',
-  lane: SpendPriorityHold['lane'] = 'foreground',
-): SpendPriorityLease {
+export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
   dropExpiredSpendPriority()
   regionGeneration += 1
   const now = Date.now()
   const hold: SpendPriorityHold = {
     id: nextSpendPriorityId++,
     reason,
-    lane,
     since: now,
     at: now,
   }
@@ -226,15 +213,6 @@ export function describeSpendPriorityHolds(): string[] {
   return spendPriorityHolds.map(
     (h) => `${h.reason} (${Math.round((now - h.since) / 1000)}s)`,
   )
-}
-
-/** Holds a person or an app is waiting on — what background lanes step aside for. */
-export function describeForegroundSpendPriorityHolds(): string[] {
-  dropExpiredSpendPriority()
-  const now = Date.now()
-  return spendPriorityHolds
-    .filter((h) => h.lane === 'foreground')
-    .map((h) => `${h.reason} (${Math.round((now - h.since) / 1000)}s)`)
 }
 
 export type WalletCoordinatorLiveStatus = WalletCoordinatorSnapshot & {
@@ -504,24 +482,13 @@ async function acquireChainIngest(nested: boolean): Promise<() => void> {
   )
 }
 
-async function acquireSpend(lane: SpendPriorityHold['lane']): Promise<() => void> {
+async function acquireSpend(): Promise<() => void> {
   return acquire(
     { type: 'SPEND_BEGIN' },
     { type: 'SPEND_END' },
     (ctx) => canBeginSpend(ctx),
-    { maxWaitMs: lane === 'background' ? BACKGROUND_SPEND_ACQUIRE_MAX_MS : SPEND_ACQUIRE_MAX_MS },
+    { maxWaitMs: SPEND_ACQUIRE_MAX_MS },
   )
-}
-
-/**
- * Nothing that excludes a spend is running: no recompose, history replica or
- * other spend. Chain ingest does not count — a spend runs beside it.
- * Resolves `true` once free, `false` on timeout.
- */
-export async function waitForSpendRegionFree(maxWaitMs: number): Promise<boolean> {
-  const free = () => canBeginSpend(context())
-  await waitFor(actor, free, maxWaitMs)
-  return free()
 }
 
 async function acquireHistoryReplica(): Promise<() => void> {
@@ -599,15 +566,7 @@ export type SpendAbandonCause = 'aborted' | 'ceiling'
 export class SpendRegionAbandonedError extends Error {
   readonly code = 'SPEND_REGION_ABANDONED' as const
 
-  /**
-   * @param late The abandoned work itself. It cannot be cancelled and may still
-   *   sign and broadcast, so a caller that would otherwise rebuild over the same
-   *   inputs must wait for this instead.
-   */
-  constructor(
-    readonly abandonCause: SpendAbandonCause,
-    readonly late: Promise<unknown> = Promise.resolve(undefined),
-  ) {
+  constructor(readonly abandonCause: SpendAbandonCause) {
     super('The send stopped responding. Nothing further was broadcast — try again.')
     this.name = 'SpendRegionAbandonedError'
   }
@@ -619,9 +578,7 @@ export const SPEND_REGION_ABANDONED = 'SPEND_REGION_ABANDONED'
 /**
  * Run the spend body, but never let it own the region forever. The work cannot
  * be cancelled — it is left to settle on its own and only logged — so the
- * region is freed on the caller's abort or after {@link SPEND_REGION_MAX_MS} of
- * visible time. A hidden WebView runs the same work on a starved timer budget;
- * counting that as unresponsive abandoned live migrates mid-signature.
+ * region is freed on the caller's abort or at {@link SPEND_REGION_MAX_MS}.
  */
 function runSpendBody<T>(
   fn: () => Promise<T>,
@@ -631,7 +588,7 @@ function runSpendBody<T>(
   const signal = opts?.abandonSignal
   const startedAt = Date.now()
   const work = fn()
-  let cancelCeiling: (() => void) | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
   let abandoned = false
 
@@ -644,9 +601,9 @@ function runSpendBody<T>(
           (Date.now() - startedAt) / 1000,
         )}s — freeing the queue for the next payment`,
       )
-      reject(new SpendRegionAbandonedError(cause, work))
+      reject(new SpendRegionAbandonedError(cause))
     }
-    cancelCeiling = setVisibleTimeout(() => giveUp('ceiling'), ceilingMs)
+    timer = setTimeout(() => giveUp('ceiling'), ceilingMs)
     if (!signal) return
     if (signal.aborted) {
       giveUp('aborted')
@@ -657,7 +614,7 @@ function runSpendBody<T>(
   })
 
   const cleanup = () => {
-    cancelCeiling?.()
+    if (timer) clearTimeout(timer)
     if (signal && onAbort) signal.removeEventListener('abort', onAbort)
   }
 
@@ -685,13 +642,12 @@ function runSpendBody<T>(
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number; lane?: SpendPriorityHold['lane'] },
+  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
 ): Promise<T> {
   const epoch = coordinatorEpoch
   const queue = spendQueue
   // Before the region waits — so a running refresh can yield ordinal work now.
-  const lane = opts?.lane ?? 'foreground'
-  const priority = leaseSpendPriority(lane === 'background' ? 'runExclusiveSpend:background' : 'runExclusiveSpend', lane)
+  const priority = leaseSpendPriority('runExclusiveSpend')
   // A mint or a legacy sweep can outlive the expiry while doing real work. The
   // heartbeat is what separates that from a leaked hold.
   const heartbeat = setInterval(() => priority.touch(), SPEND_PRIORITY_TOUCH_MS)
@@ -702,7 +658,7 @@ export function runExclusiveSpend<T>(
   return queue(async () => {
     try {
       assertCoordinatorEpoch(epoch)
-      const releaseSpend = await acquireSpend(lane)
+      const releaseSpend = await acquireSpend()
       // Region acquired — drop "Waiting to send…".
       onSpendRegion?.()
       try {

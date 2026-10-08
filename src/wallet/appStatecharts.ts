@@ -866,52 +866,21 @@ const IMPORT_QUEUE = `stateDiagram-v2
   deciding --> moving : queue not empty
   deciding --> idle : queue empty
   moving --> moving : ENQUEUE (appended, deduped per source) / STOP (drops waiting)
-  moving --> cooling : chunk answered · stale-funding / propagating (pauses left)
+  moving --> cooling : chunk answered · spent fee coin (pauses left)
   moving --> deciding : chunk answered / error
   cooling --> deciding : after 8s (untried items first)
   cooling --> deciding : STOP (paused source)
 
-  moving : next chunk of one source + wallet (25, then 100) → importItems · itemMigrateRun across source keys · one tx of up to 100 tips · prefetch next chunk's source txs
-  cooling : a spent fee coin retires, or the last tx reaches Arcade, before the retry
+  moving : next 100 of one source + wallet → importItems · one migrate call across source keys · 25 tips per tx · same P2PKH item migrate (BRC-150 remittance) · prefetch next chunk's source txs
+  cooling : the wallet retires the spent coin before the retry
   note right of moving
     Lives for the unlocked session, not the page.
-    The only item runner: a sweep queues its listed items here and awaits them.
-    Any other stop (funds, busy, abandoned, network, locked) drops the wallet's waiting items.
-    Pausable stops retry the untried items after 8s (2 pauses max).
+    Missing funds drop the wallet's waiting items.
+    A spent fee coin retries the same bundle once, then pauses (2 pauses max).
     A wallet change drops that wallet's items.
+    Refused while a paused sweep reads the same address.
     One run (idle → idle) is one walletJob: one Activity row with a bar.
-    A sweep's run reports on the sweep's row; the sweep ends it.
     Progress also mirrors walletProgress (item-import) → status pill.
-  end note
-`
-
-const ITEM_MIGRATE_RUN = `stateDiagram-v2
-  direction TB
-  [*] --> idle
-  idle --> checking : START (items, perTx)
-  checking --> moving : tips queued
-  checking --> done : none left
-  moving --> checking : SENT · Arcade accepted, change pinned
-  moving --> stopped : SENT · propagating, more queued (propagating)
-  moving --> waitingForWallet : FAULT busy (2 waits)
-  waitingForWallet --> moving : WAITED
-  moving --> rebuilding : FAULT stale-funding (1 rebuild)
-  rebuilding --> moving
-  moving --> checking : FAULT dead-tips · spent tips leave (skipped), rest sent whole
-  moving --> splitting : FAULT rejected · 2+ tips (halve)
-  splitting --> moving
-  moving --> checking : FAULT rejected · 1 tip (failed)
-  moving --> stopped : FAULT funds / abandoned / network / locked / busy / stale-funding (spent)
-  done --> [*]
-  stopped --> [*]
-
-  moving : one bundle · signForeignInputAction in the spend region · noSend → registerSignedSend → propagateSignedSend
-  moving : settleForeignInputAction outside it · awaitChainedLegFunding
-  note right of moving
-    Faults are classified once (classifyItemMigrateFault).
-    Only rejected is about the tips; every other fault stops the run.
-    Signing failure aborts the unsigned action; a signed tx never aborts.
-    Untried tips answer funds or deferred, never failed.
   end note
 `
 
@@ -1218,7 +1187,6 @@ const SPEND_SIGN = `stateDiagram-v2
   spv --> postBeef : package SPV-verified\\nscripts · amounts · proofs vs headers
   spv --> spv : incomplete — held in outbox, retried
   spv --> failed : invalid — never posted, inputs freed
-  spv --> done : outbox retry already on chain\\nretired, pinned nosend → unproven
   note right of certify
     inputCertainty + kernel/inputCertainty. SPV proves a parent exists;
     only a UTXO answer (Teranode /utxos with mempool spenders,
@@ -1239,9 +1207,7 @@ const SPEND_SIGN = `stateDiagram-v2
   end note
   note right of landing
     arcadeLanding + kernel/landingFate, never on the reply path.
-    Unlock replays every pinned cheque that never landed,
-    after any running import or saved-wallet sweep ends,
-    and pins every held nosend cheque the chain already holds.
+    Unlock replays every pinned cheque that never landed.
   end note
   signedNoSend --> sendWithOk : BSV BRC-29 same pattern
   sendWithOk --> done : no failure
@@ -1609,14 +1575,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'importQueue',
     label: 'Import queue',
-    caption: 'importQueueMachine — the one item runner · 25 first, then 100 per call (one tx) · survives leaving the page',
+    caption: 'importQueueMachine — background item import · 100 per call · 25 tips per tx · survives leaving the page',
     source: IMPORT_QUEUE,
-  },
-  {
-    id: 'itemMigrateRun',
-    label: 'Item migrate run',
-    caption: 'itemMigrateRunMachine — one call’s bundles · each through signedSendLifecycle · split only a rejected bundle',
-    source: ITEM_MIGRATE_RUN,
   },
   {
     id: 'walletJob',

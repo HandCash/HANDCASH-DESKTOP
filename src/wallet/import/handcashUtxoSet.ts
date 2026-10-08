@@ -36,8 +36,6 @@ export const UTXO_SET_PROBE_PATHS = ['m/2/0', 'm/1/0', 'm/0/0', 'm/3/0', 'm/4/0'
 const PAGE = 5_000
 const MAX_PAGES = 40
 const OUTPOINT_CHUNK = 100
-/** An index that refused this many chunks in a row is down; the rest stays unchecked for the next sweep. */
-const OUTPOINT_FAILED_CHUNKS_IN_ROW = 3
 const REQUEST_TIMEOUT_MS = 45_000
 
 export type HandCashUtxo = {
@@ -446,20 +444,13 @@ export async function readUnspentOutpoints(args: {
   const fetchImpl = args.fetchImpl ?? fetch
   const unspent = new Set<string>()
   let failed = 0
-  let failedInRow = 0
   let stopped = false
   for (let i = 0; i < args.outpoints.length; i += OUTPOINT_CHUNK) {
     if (args.shouldStop?.()) {
       stopped = true
       break
     }
-    if (failedInRow >= OUTPOINT_FAILED_CHUNKS_IN_ROW) {
-      failed += args.outpoints.length - i
-      appendAppLog('warn', `[import] outpoint check gave up after ${failedInRow} failed chunks; ${args.outpoints.length - i} left unchecked`)
-      break
-    }
     const chunk = args.outpoints.slice(i, i + OUTPOINT_CHUNK)
-    const chunkAt = Date.now()
     let rows: unknown = null
     for (let attempt = 0; attempt < 2 && rows == null; attempt += 1) {
       try {
@@ -476,10 +467,7 @@ export async function readUnspentOutpoints(args: {
     }
     if (!Array.isArray(rows)) {
       failed += chunk.length
-      failedInRow += 1
-      appendAppLog('warn', `[import] outpoint chunk failed ${i}+${chunk.length} after ${Date.now() - chunkAt}ms`)
     } else {
-      failedInRow = 0
       const asked = new Set(chunk)
       const found: Array<{ outpoint: string; facts: ImportItemFacts }> = []
       const spent: string[] = []

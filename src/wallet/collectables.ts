@@ -201,9 +201,7 @@ import {
   getResolvedInscription,
   getResolvedInscriptionByOrigin,
   isThinResolution,
-  originsWithoutHit,
   PENDING_RETRY_MS,
-  rememberIndexedOrigins,
   rememberResolvedInscription,
   rememberUnresolved,
   rememberUpgradeAttempt,
@@ -1556,40 +1554,7 @@ export type IngestedItem = {
   app?: string | null
   collectionId?: string | null
   content?: string | null
-  mimeType?: string | null
-  /** The index's Sigma signer on the origin; null when it reports none. Attribution only. */
-  signer?: string | null
   identityKey?: string
-}
-
-/**
- * What the index said about each tip's origin when it was chosen, filed under
- * the origin. A moved tip keeps its origin locally, so the list never walks
- * it, and the index does not know the move until it is mined.
- */
-function rememberIngestedOrigins(items: readonly IngestedItem[]): void {
-  const indexed = new Map<string, ResolvedInscription>()
-  for (const item of items) {
-    const origin = item.origin?.trim()
-    if (!origin || (item.signer === undefined && !item.mimeType?.trim() && !item.app?.trim())) continue
-    const name = item.name?.trim()
-    const app = item.app?.trim()
-    const collectionId = item.collectionId?.trim()
-    const content = item.content?.trim()
-    const mimeType = item.mimeType?.trim()
-    indexed.set(origin, {
-      origin,
-      ...(name ? { name } : {}),
-      ...(app ? { app } : {}),
-      ...(collectionId ? { collectionId } : {}),
-      ...(content ? { content } : {}),
-      ...(mimeType ? { mimeType } : {}),
-      ...(item.signer !== undefined ? { signer: item.signer } : {}),
-      traits: [],
-      extras: [],
-    })
-  }
-  if (indexed.size > 0) rememberIndexedOrigins(indexed)
 }
 
 /** Seed one tip; the painted card, `'held'` when the grid already shows it, or null. */
@@ -1656,15 +1621,14 @@ function seedIngestedItem(args: IngestedItem): Collectable | 'held' | null {
   )
 }
 
-function paintSeeded(painted: readonly Collectable[], announceArrivals = true): void {
+function paintSeeded(painted: readonly Collectable[]): void {
   if (painted.length === 0) return
   setCollectablesCache(
     dedupeByOrigin(
       [...painted, ...cachedCollectables],
       (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
       cachedLiveOneSats?.keys ?? null,
-    ),
-    { announceArrivals },
+    )
   )
 }
 
@@ -1693,7 +1657,6 @@ export function noteIngestedItems(items: readonly IngestedItem[]): number {
   if (items.length === 0) return 0
   const identityKey = getActiveWallet()?.identityKey
   if (identityKey) hydrateSeededItems(identityKey)
-  rememberIngestedOrigins(items)
   const painted: Collectable[] = []
   let seeded = 0
   for (const item of items) {
@@ -1704,8 +1667,7 @@ export function noteIngestedItems(items: readonly IngestedItem[]): number {
   }
   if (seeded === 0) return 0
   if (identityKey) persistSeededItems(identityKey)
-  // The run's own job row speaks for these; no toast or receive row per tip.
-  paintSeeded(painted, false)
+  paintSeeded(painted)
   return painted.length
 }
 
@@ -1892,19 +1854,15 @@ async function hydrateLocalItemArt(
 async function backfillItemSigners(items: readonly Collectable[], chain: Chain): Promise<void> {
   const epoch = collectablesAccountEpoch
   const keys = new Set<string>()
-  const unsigned: Array<{ outpoint: string; origin: string }> = []
   for (const item of items) {
     if (item.signer) continue
-    const outpoint = normalizeOutpoint(item.outpoint)
-    keys.add(outpoint)
+    keys.add(normalizeOutpoint(item.outpoint))
     keys.add(item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1'))
-    unsigned.push({ outpoint, origin: item.origin })
   }
   if (keys.size === 0) return
   const updated = await backfillOriginSigners({
     chain,
     outpoints: [...keys],
-    origins: originsWithoutHit(unsigned),
     shouldStop: () => epoch !== collectablesAccountEpoch,
   })
   if (updated === 0 || epoch !== collectablesAccountEpoch) return
@@ -2506,22 +2464,10 @@ async function walkInscription(
 
 let listInFlight: Promise<Collectable[]> | null = null
 let listMoreInFlight: Promise<Collectable[]> | null = null
-type BasketRead = {
+let collectableBasketReadInFlight: {
   wallet: ActiveWallet['wallet']
   offset: number
   promise: ReturnType<ActiveWallet['wallet']['listOutputs']>
-  /** Region generation when the read began: its page is truth only if no region started since. */
-  generation: number
-  /** A caller gave up on it; its answer still lands, for the relist that follows. */
-  late: boolean
-}
-let collectableBasketReadInFlight: BasketRead | null = null
-/** The answer of a read every caller had given up on, kept for one reuse. */
-let lateBasketPage: {
-  wallet: ActiveWallet['wallet']
-  offset: number
-  generation: number
-  result: Awaited<ReturnType<ActiveWallet['wallet']['listOutputs']>>
 } | null = null
 
 /**
@@ -2560,12 +2506,6 @@ function listCollectableBasketPage(
   if (current && current.wallet === wallet && current.offset === offset) {
     return current.promise
   }
-  const late = lateBasketPage
-  if (late && late.wallet === wallet && late.offset === offset) {
-    lateBasketPage = null
-    if (late.generation === walletRegionsGeneration()) return Promise.resolve(late.result)
-  }
-  const startedAt = Date.now()
   const promise = wallet.listOutputs({
     basket: '1sat',
     limit: LIST_PAGE_SIZE,
@@ -2580,22 +2520,11 @@ function listCollectableBasketPage(
     include: 'locking scripts',
     seekPermission: false,
   })
-  const read: BasketRead = { wallet, offset, promise, generation: walletRegionsGeneration(), late: false }
-  collectableBasketReadInFlight = read
+  collectableBasketReadInFlight = { wallet, offset, promise }
   void promise.then(
-    (result) => {
+    () => {
       if (collectableBasketReadInFlight?.promise === promise) {
         collectableBasketReadInFlight = null
-      }
-      const ms = Date.now() - startedAt
-      if (ms >= 250) {
-        console.info(
-          `[collectables] basket read done ${ms}ms outputs=${result.outputs?.length ?? 0} offset=${offset}${read.late ? ' late' : ''}`,
-        )
-      }
-      if (read.late) {
-        lateBasketPage = { wallet, offset, generation: read.generation, result }
-        relistWhenWalletIdle()
       }
     },
     () => {
@@ -2970,13 +2899,7 @@ function reportItemHoldings(args: {
   })
 }
 
-/**
- * Short/empty basket page: keep painted cards, put newly listed outpoints in
- * front. The basket reads newest-first and the startup cache keeps only the
- * first `DURABLE_LIST_LIMIT` cards, so arrivals appended behind a full cache
- * were cut from it — every import vanished on restart until a minutes-long
- * basket read listed it again.
- */
+/** Short/empty basket page: keep painted cards, append newly listed outpoints. */
 function mergeShortBasketPage(
   page: ItemOutput[],
   chain: Chain,
@@ -2999,20 +2922,19 @@ function mergeShortBasketPage(
     if (retired.has(outpointKey(held.outpoint))) continue
     byOp.set(normalizeOutpoint(held.outpoint), held)
   }
-  const arrivals = new Map<string, Collectable>()
   for (const item of incoming) {
     const key = normalizeOutpoint(item.outpoint)
     if (isItemSent(key)) continue
     const prev = byOp.get(key)
     if (!prev) {
-      if (!collectableIsFungible(item)) arrivals.set(key, item)
+      if (!collectableIsFungible(item)) byOp.set(key, item)
       continue
     }
     if (collectableIsFungible(item) && !collectableIsFungible(prev)) continue
     if (!collectableIsFungible(item)) byOp.set(key, item)
   }
   return dedupeByOrigin(
-    [...arrivals.values(), ...byOp.values()],
+    [...byOp.values()],
     (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
     cachedLiveOneSats?.keys ?? null,
   )
@@ -3182,16 +3104,10 @@ async function listCollectablesNow(
     const cached = getCachedCollectables()
     const timedOut =
       err instanceof Error && err.message.includes('listOutputs timed out')
-    // A read behind a busy wallet often answers just past the ceiling.
-    // Abandoning it left the grid on the old cache until something else listed.
-    const inFlight = collectableBasketReadInFlight
-    if (timedOut && inFlight?.wallet === wallet.wallet && inFlight.offset === pageOffset) {
-      inFlight.late = true
-    }
     if (cached.length > 0) {
       console.info(
         `[collectables] listOutputs ${timedOut ? 'timed out' : 'failed'} — keeping ${cached.length} cached item(s)`,
-        ...(timedOut ? [] : [err]),
+        timedOut ? undefined : err,
       )
     } else {
       console.warn('[collectables] listOutputs failed', err)
@@ -3214,8 +3130,8 @@ async function listCollectablesNow(
   // own handle: the spent tip leaves, the replacement is not listed yet, and
   // Collect comes back one card short until a later scan.
   outputs = [
-    ...pendingSeededItems(outputs, seenNow, wallet.identityKey),
     ...outputs,
+    ...pendingSeededItems(outputs, seenNow, wallet.identityKey),
   ]
 
   // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:

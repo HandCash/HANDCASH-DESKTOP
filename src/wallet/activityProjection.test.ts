@@ -284,26 +284,4 @@ describe('Activity over the wallet ledger', () => {
     expect(kept.filter((id) => id.startsWith('imported-'))).toEqual([])
     expect(kept).toEqual(expect.arrayContaining(['plain-0', 'plain-1', 'plain-2']))
   })
-
-  it('folds receive rows written per tip of an import migrate into its job', () => {
-    const job = 'job:item-import:painted'
-    noteJobTxids(job, [tx(40)])
-    mergeActivityEntries([
-      row({
-        id: 'receiving-fox',
-        txid: tx(40),
-        kind: 'earned',
-        method: 'receive-collectable',
-        note: 'Receiving Fox',
-        status: 'pending',
-        item: { name: 'Fox', origin: `${tx(40)}_0`, outpoint: `${tx(40)}.0` },
-      }),
-      row({ id: 'gift', txid: tx(41), kind: 'earned', method: 'receive-collectable', note: 'Received Owl', item: { name: 'Owl', origin: `${tx(41)}_0`, outpoint: `${tx(41)}.0` } }),
-    ])
-    publishActivityLedger('ns', [ledgerCoin(1)])
-
-    expect(getActivityById('receiving-fox')).toMatchObject({ sendGroupId: job, note: IMPORTED_COLLECTABLE_NOTE })
-    expect(getActivityById('receiving-fox')?.status).not.toBe('pending')
-    expect(getActivityById('gift')).not.toHaveProperty('sendGroupId')
-  })
 })

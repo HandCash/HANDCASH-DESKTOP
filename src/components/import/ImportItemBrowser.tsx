@@ -527,7 +527,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
           <StatusBanner.Copy>
             <StatusBanner.Title>
               {context.queue.paused
-                ? 'Waiting for the last import to clear…'
+                ? 'Waiting for a spent fee coin to clear…'
                 : `Importing ${run.done.toLocaleString()} of ${run.total.toLocaleString()}`}
             </StatusBanner.Title>
             <Progress.Root className="history-progress" value={run.done} max={Math.max(1, run.total)}>

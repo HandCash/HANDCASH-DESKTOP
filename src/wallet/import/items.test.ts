@@ -10,6 +10,7 @@ vi.mock('./store', () => ({ loadImportedSources: vi.fn(), updateImportedSource: 
 vi.mock('../phraseSweep', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../phraseSweep')>()),
   migrateChosenPhraseItems: vi.fn(),
+  peekPhraseItemMigrateCursor: vi.fn(() => null),
 }))
 vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./handcashUtxoSet')>()),
@@ -17,14 +18,13 @@ vi.mock('./handcashUtxoSet', async (importOriginal) => ({
   readUnspentOnChain: vi.fn(),
 }))
 
-import { migrateChosenPhraseItems, type SingleItemMigrate } from '../phraseSweep'
+import { migrateChosenPhraseItems, peekPhraseItemMigrateCursor, type SingleItemMigrate } from '../phraseSweep'
 import { fetchHandCashUtxoSet, readUnspentOnChain } from './handcashUtxoSet'
 import { emptyHoldings, type AddressHoldings } from './holdings'
 import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem } from './itemStore'
 import {
   importItems,
   ImportWalletChangedError,
-  noteScanItemRead,
   readImportItems,
   readImportShelves,
   syncImportItems,
@@ -85,6 +85,7 @@ beforeEach(async () => {
   vi.mocked(updateImportedSource).mockReset()
   vi.mocked(migrateChosenPhraseItems).mockReset()
   vi.mocked(fetchHandCashUtxoSet).mockReset()
+  vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue(null)
   vi.mocked(readUnspentOnChain).mockReset()
   vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
     unspent: new Set(outputs.map((o) => o.outpoint)),
@@ -217,32 +218,6 @@ describe('syncImportItems', () => {
     expect(await listed()).toEqual([op(1), op(3)])
   })
 
-  it('reuses the set the scan just read instead of fetching and checking it again', async () => {
-    const s = source([holding('1a', 1)], 'handcash-utxo-set')
-    vi.mocked(loadImportedSources).mockResolvedValue([s])
-    noteScanItemRead('s1', {
-      scanAt: s.scan!.at,
-      verified: {
-        addresses: [],
-        cashOutputs: new Map(),
-        itemOutpoints: new Map([['1a', [op(1)]]]),
-        readAddresses: new Set(),
-        mneeAddresses: new Set(),
-        rejected: 0,
-      },
-      read: { unspent: new Set([op(1)]), failed: 0, stopped: false },
-    })
-    const fetchImpl = vi.fn(async () => new Response('[]'))
-    expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toMatchObject({ complete: true })
-    expect(fetchHandCashUtxoSet).not.toHaveBeenCalled()
-    expect(fetchImpl).not.toHaveBeenCalled()
-
-    // Used once: the next sync of the same scan reads the set itself.
-    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'refused', reason: 'unavailable', detail: '503' })
-    await syncImportItems({ sourceId: 's1', fetchImpl })
-    expect(fetchHandCashUtxoSet).toHaveBeenCalledOnce()
-  })
-
   it('refuses an unscanned source', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([{ ...source([]), scan: null }])
     await expect(syncImportItems({ sourceId: 's1' })).rejects.toThrow('Scan this wallet first')
@@ -267,14 +242,7 @@ const MOVED: SingleItemMigrate = { kind: 'moved', txid: 'f'.repeat(64) }
 describe('importItems', () => {
   it('moves every key’s chosen items in one call, counts them out of the scan, and drops them from the list', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 3), holding('1b', 2)])])
-    const signed: StoredImportItem = {
-      ...stored(2, '1b'),
-      media: op(9),
-      app: 'Ageless Republic',
-      collectionId: op(8),
-      signer: '1LyNg9fwKcrAtifqBaCkuwRa5UmyV4MYv5',
-    }
-    await saveImportItems('s1', [stored(1, '1a'), signed, stored(3, '1a'), stored(4, '1a'), stored(5, '1b')])
+    await saveImportItems('s1', [stored(1, '1a'), stored(2, '1b'), stored(3, '1a'), stored(4, '1a'), stored(5, '1b')])
     migrateAnswers(() => MOVED)
 
     const run = await importItems({ sourceId: 's1', outpoints: [op(1), op(2), op(3), op(5)] })
@@ -289,31 +257,18 @@ describe('importItems', () => {
     expect(calls).toHaveLength(1)
     const keyHex = calls[0]!.items[0]!.keyHex
     expect(keyHex).toMatch(/^[0-9a-f]{64}$/)
-    const plain = { app: null, collectionId: null, content: null, mimeType: 'image/png', signer: null }
     expect(calls[0]!.items).toEqual([
-      { outpoint: op(1), keyHex, origin: op(1), name: 'Item 1', indexed: plain },
-      {
-        outpoint: op(2),
-        keyHex,
-        origin: op(2),
-        name: 'Item 2',
-        indexed: {
-          app: 'Ageless Republic',
-          collectionId: op(8),
-          content: op(9),
-          mimeType: 'image/png',
-          signer: '1LyNg9fwKcrAtifqBaCkuwRa5UmyV4MYv5',
-        },
-      },
-      { outpoint: op(3), keyHex, origin: op(3), name: 'Item 3', indexed: plain },
-      { outpoint: op(5), keyHex, origin: op(5), name: 'Item 5', indexed: plain },
+      { outpoint: op(1), keyHex, origin: op(1), name: 'Item 1' },
+      { outpoint: op(2), keyHex, origin: op(2), name: 'Item 2' },
+      { outpoint: op(3), keyHex, origin: op(3), name: 'Item 3' },
+      { outpoint: op(5), keyHex, origin: op(5), name: 'Item 5' },
     ])
     expect(updateImportedSource).toHaveBeenCalledTimes(1)
     expect(vi.mocked(updateImportedSource).mock.calls[0]![1].scan?.holdings.map((h) => h.itemCount)).toEqual([1, 0])
     expect(await listed()).toEqual([op(4)])
   })
 
-  it('refuses an unlisted item and an address outside the scan', async () => {
+  it('refuses an unlisted item, an address outside the scan, and a paused sweep’s address', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 1)])])
     await saveImportItems('s1', [stored(1, '1a'), stored(2, '1z')])
     const first = await importItems({ sourceId: 's1', outpoints: [op(9), op(2)] })
@@ -321,6 +276,9 @@ describe('importItems', () => {
       { kind: 'refused', reason: 'unlisted' },
       { kind: 'refused', reason: 'gone' },
     ])
+    vi.mocked(peekPhraseItemMigrateCursor).mockReturnValue({ sourceAddress: '1a' } as never)
+    const paused = await importItems({ sourceId: 's1', outpoints: [op(1)] })
+    expect(paused.results[0]!.result).toMatchObject({ kind: 'refused', reason: 'pausedBatch' })
     expect(migrateChosenPhraseItems).not.toHaveBeenCalled()
   })
 

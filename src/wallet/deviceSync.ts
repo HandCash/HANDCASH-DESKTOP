@@ -36,7 +36,7 @@ import {
 } from './historyBackupPrefs'
 
 import { sessionBackupCredential } from './sessionBackupAuth'
-import { inspectLocalToolboxState, localToolboxStateLooksEmpty } from './layers'
+import { localToolboxStateLooksEmpty } from './layers'
 import {
   allowEmptyLocalHistoryPull,
   decideEmptyHistoryOverwrite,
@@ -455,7 +455,6 @@ async function flushHistoryBackupPush(
         reason,
         allowEmptyPull: false,
         priority,
-        deferred: true,
       })
       return
     }
@@ -510,11 +509,6 @@ export type AutoPushOpts = {
    * Only the auto-push sets it, and only after its deferral budget is spent.
    */
   priority?: HistoryReplicaPriority
-  /**
-   * The debounced push itself. Unlock/create/restore hand their upload to it;
-   * without this it would hand it on again, forever, and never upload.
-   */
-  deferred?: boolean
 }
 
 export type AutoSyncResult = {
@@ -620,25 +614,13 @@ export async function autoPushHistoryBackupIfConfigured(
     return result
   }
 
-  // Unlock/create/restore: never encrypt+upload on the hot path — Argon2 on a
-  // ~26MB BRC-38 freezes the renderer so permission prompts never answer
-  // (WALLET_BRIDGE_TIMEOUT). Nor read the baskets for the overwrite gate here:
-  // the upload re-gates on its own read, and this runs inside the recompose
-  // region every payment waits on.
-  if (!opts.deferred && (reason === 'unlock' || reason === 'create' || reason === 'restore')) {
-    appendAppLog('info', `[cloud-backup] defer push after ${reason} — keep UI free for permissions`)
-    scheduleHistoryBackupPush(reason)
-    return result
-  }
-
   let attemptOpen = false
   try {
     appendAppLog('info', `[cloud-backup] auto-sync starting (${reason})`)
     await Promise.race([
       (async () => {
-        let remote: Awaited<ReturnType<typeof fetchRemoteBrc39Meta>> = null
         if (!allowEmptyPull || remoteBytes == null) {
-          remote = await fetchRemoteBrc39Meta()
+          const remote = await fetchRemoteBrc39Meta()
           remoteExists = Boolean(remote?.exists)
           remoteBytes = remote?.bytes ?? null
         }
@@ -656,19 +638,20 @@ export async function autoPushHistoryBackupIfConfigured(
           return
         }
 
-        // Opening the wallet changes nothing. The catch-up push after it only
-        // uploads when the remote copy is behind; every real change schedules
-        // its own push under its own reason.
-        if (opts.deferred && (reason === 'unlock' || reason === 'create') && remote?.exists) {
-          const local = await inspectLocalToolboxState()
-          if (local.spendableSats === remote.spendableSats && local.actionCount === remote.actionCount) {
-            appendAppLog(
-              'info',
-              `[cloud-backup] skip push (${reason}) — remote already current (spendable=${local.spendableSats} actions=${local.actionCount})`,
-            )
-            historyDirty = false
-            return
-          }
+        // Unlock/create/restore: never encrypt+upload on the hot path — Argon2
+        // on a ~26MB BRC-38 freezes the renderer so permission prompts never
+        // answer (WALLET_BRIDGE_TIMEOUT). Mark dirty and push after the UI is free.
+        if (
+          reason === 'unlock' ||
+          reason === 'create' ||
+          reason === 'restore'
+        ) {
+          appendAppLog(
+            'info',
+            `[cloud-backup] defer push after ${reason} — keep UI free for permissions`,
+          )
+          scheduleHistoryBackupPush(reason)
+          return
         }
 
         // Marked durably before the export: if the app dies inside Argon2id,

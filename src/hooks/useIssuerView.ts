@@ -45,50 +45,14 @@ export function tokenIssuerAsset(token: {
   }
 }
 
-/** Mined heights land without a generation bump; a shared resolver is rebuilt at least this often. */
-const SHARED_RESOLVER_MAX_AGE_MS = 30_000
-
-let shared: {
-  runtime: ReturnType<typeof getWalletRuntime>
-  generation: string
-  builtAt: number
-  resolve: IssuerIdentityResolver
-  trust: IssuerTrust
-} | null = null
-
-/**
- * One resolver pair for every row of a render pass. Each pair memoises package
- * reads and the look-alike index; building one per row re-parses the identity
- * index once per collectable.
- */
-function sharedResolvers() {
-  const runtime = getWalletRuntime()
-  const generation = `${publicIdentitiesGeneration()}:${issuerIdentitiesGeneration()}:${verifiedIssuersGeneration()}`
-  const now = Date.now()
-  if (
-    !shared ||
-    shared.runtime !== runtime ||
-    shared.generation !== generation ||
-    now - shared.builtAt > SHARED_RESOLVER_MAX_AGE_MS
-  )
-    shared = {
-      runtime,
-      generation,
-      builtAt: now,
-      resolve: issuerAttributionResolver(runtime),
-      trust: issuerTrustResolver(runtime),
-    }
-  return shared
-}
-
 /** Resolver bound to the current runtime, for one render pass. */
 export function currentIssuerResolver(): IssuerIdentityResolver {
-  return sharedResolvers().resolve
+  return issuerAttributionResolver(getWalletRuntime())
 }
 
 /** HandCash listing and look-alike names, for one render pass. */
 export function currentIssuerTrust(): IssuerTrust {
-  return sharedResolvers().trust
+  return issuerTrustResolver(getWalletRuntime())
 }
 
 /** Generation that changes whenever an identity, a stored package or the verified list does. */

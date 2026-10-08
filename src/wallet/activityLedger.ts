@@ -5,42 +5,20 @@
  * and it rides the BRC-39 replica. Stored Activity rows are annotations on top
  * of it — app origin, item identity, pending/failed sends, events — so a row
  * the store shed or never had still shows from here. Never from an indexer,
- * never with an invented time. The last read is kept on disk only so a launch
- * paints it while the first live read runs (`activityLedgerStore.ts`).
+ * never with an invented time, never persisted.
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
-import { isItemMigrateTxDescription, itemMigrateTxDescription } from './activityJobIndex'
-import { loadLedgerRows, saveLedgerRows } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
-import { yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
-/**
- * Transactions that are the wallet's history. `sending` is signed and handed to
- * broadcast: a delayed-broadcast `signAction` files there and only the Monitor's
- * own resend moves it on, even after Arcade accepted our post. Leaving it out
- * dropped every just-imported migrate from Activity on restart.
- *
- * `nosend` is a signed cheque the wallet still holds. Every migrate and item
- * send files there and leaves only when Arcade's acceptance pins it, so a leg
- * a fallback miner took — or a mined one Arcade never answered for — sat in
- * Collect with no Activity row. Those count once the wallet has propagated
- * them (`chequeWasPropagated`); an app's unbroadcast `noSend` never does.
- * A migrate this wallet signed carries its own description, and those stay
- * even when the retry queue has already dropped them: they are the imports
- * that otherwise vanished on every restart.
- */
-const SETTLED_STATUSES = ['completed', 'unproven', 'sending', 'nosend'] as const
-const HELD_STATUS = 'nosend'
+const SETTLED_STATUSES = ['completed', 'unproven'] as const
 const COLLECTABLE_BASKET = '1sat'
 const TOKEN_BASKET = 'bsv21'
 
 export type LedgerTx = {
   transactionId?: number
-  /** The status index the id was found under on this read. */
-  status?: string
   txid?: string | null
   satoshis?: number
   description?: string
@@ -183,109 +161,24 @@ type Snapshot = {
   rows: readonly ActivityEntry[]
   byId: ReadonlyMap<string, ActivityEntry>
   timeByTxid: ReadonlyMap<string, number>
-  /** Painted from the last session's read; no live read has landed yet. */
-  restored: boolean
 }
 
 const EMPTY: readonly ActivityEntry[] = Object.freeze([])
 let snapshot: Snapshot | null = null
 const listeners = new Set<() => void>()
 
-/**
- * Legs a running import just committed, shaped exactly as the next read will
- * file them. The read yields to every spend, so for a whole import it never
- * ran and Activity stood still while the count climbed. Memory only; each leg
- * leaves when a read holds its row.
- */
-const MAX_PROVISIONAL = 5_000
-let provisional: { namespace: string; byId: Map<string, ActivityEntry> } | null = null
-let merged: { base: readonly ActivityEntry[]; version: number; rows: readonly ActivityEntry[] } | null = null
-let provisionalVersion = 0
-
 function currentSnapshot(): Snapshot | null {
   const namespace = getWalletRuntime()?.storageNamespace
   return namespace && snapshot?.namespace === namespace ? snapshot : null
 }
 
-function currentProvisional(): Map<string, ActivityEntry> | null {
-  const namespace = getWalletRuntime()?.storageNamespace
-  return namespace && provisional?.namespace === namespace && provisional.byId.size > 0 ? provisional.byId : null
-}
-
 /** Ledger rows for the unlocked account; empty until the first read lands. */
 export function ledgerActivitySnapshot(): readonly ActivityEntry[] {
-  const base = currentSnapshot()?.rows ?? EMPTY
-  const pending = currentProvisional()
-  if (!pending) return base
-  if (merged?.base === base && merged.version === provisionalVersion) return merged.rows
-  const rows = Object.freeze([...base, ...pending.values()].sort((a, b) => a.at - b.at))
-  merged = { base, version: provisionalVersion, rows }
-  return rows
+  return currentSnapshot()?.rows ?? EMPTY
 }
 
 export function ledgerActivityById(id: string): ActivityEntry | null {
-  return currentSnapshot()?.byId.get(id) ?? currentProvisional()?.get(id) ?? null
-}
-
-export type CommittedItemLeg = { txid: string; vout: number; origin?: string | null; name?: string | null }
-
-/** Show a migrate's legs now; the ledger read replaces them with its own. */
-export function noteCommittedItemLegs(legs: readonly CommittedItemLeg[], at = Date.now()): void {
-  const namespace = getWalletRuntime()?.storageNamespace
-  if (!namespace || legs.length === 0) return
-  if (provisional?.namespace !== namespace) provisional = { namespace, byId: new Map() }
-  const known = currentSnapshot()?.byId
-  const byTx = new Map<string, CommittedItemLeg[]>()
-  for (const leg of legs) {
-    const txid = leg.txid.trim().toLowerCase()
-    if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isSafeInteger(leg.vout) || leg.vout < 0) continue
-    const list = byTx.get(txid) ?? []
-    list.push(leg)
-    byTx.set(txid, list)
-  }
-  let added = 0
-  for (const [txid, list] of byTx) {
-    const first = list.reduce((low, leg) => (leg.vout < low.vout ? leg : low))
-    const note = itemMigrateTxDescription(list.length, `${txid}.${first.vout}`)
-    for (const leg of list) {
-      const outpoint = `${txid}.${leg.vout}`
-      const id = `ledger:${txid}:${outpoint}`
-      if (known?.has(id) || provisional.byId.has(id)) continue
-      const origin = leg.origin?.trim().toLowerCase().replace('.', '_')
-      provisional.byId.set(id, {
-        id,
-        origin: WALLET_ORIGIN,
-        kind: 'earned',
-        sats: 1,
-        at,
-        method: 'receive-collectable',
-        note,
-        txid,
-        item: {
-          name: leg.name?.trim().slice(0, 80) || 'Collectable',
-          origin: origin && /^[0-9a-f]{64}_\d+$/.test(origin) ? origin : `${txid}_${leg.vout}`,
-          outpoint,
-        },
-      })
-      added += 1
-    }
-  }
-  for (const id of provisional.byId.keys()) {
-    if (provisional.byId.size <= MAX_PROVISIONAL) break
-    provisional.byId.delete(id)
-  }
-  if (added === 0) return
-  provisionalVersion += 1
-  for (const cb of listeners) cb()
-  // These legs are the only copy until the ledger read lands, and that read
-  // waits out the import. Written now, so a restart still shows them.
-  scheduleSave(namespace, ledgerActivitySnapshot())
-}
-
-function clearProvisional(): void {
-  provisional = null
-  merged = null
-  provisionalVersion += 1
+  return currentSnapshot()?.byId.get(id) ?? null
 }
 
 /** When the ledger says this transaction happened, if it holds it. */
@@ -313,18 +206,9 @@ function sameRows(a: readonly ActivityEntry[], b: readonly ActivityEntry[]): boo
   return true
 }
 
-function setSnapshot(namespace: string, rows: ActivityEntry[], restored: boolean): void {
-  let settled = 0
-  if (provisional?.namespace === namespace) {
-    for (const row of rows) if (provisional.byId.delete(row.id)) settled += 1
-    if (settled > 0) provisionalVersion += 1
-  }
-  const prev = snapshot?.namespace === namespace ? snapshot : null
-  if (prev && sameRows(prev.rows, rows)) {
-    if (!restored) prev.restored = false
-    if (settled > 0) for (const cb of listeners) cb()
-    return
-  }
+export function publishActivityLedger(namespace: string, rows: ActivityEntry[]): void {
+  const prev = snapshot?.namespace === namespace ? snapshot.rows : null
+  if (prev && sameRows(prev, rows)) return
   const timeByTxid = new Map<string, number>()
   for (const row of rows) {
     const known = timeByTxid.get(row.txid!)
@@ -335,67 +219,8 @@ function setSnapshot(namespace: string, rows: ActivityEntry[], restored: boolean
     rows: Object.freeze(rows),
     byId: new Map(rows.map((row) => [row.id, row])),
     timeByTxid,
-    restored,
   }
   for (const cb of listeners) cb()
-}
-
-const SAVE_DELAY_MS = 3_000
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-let saveRows: { namespace: string; rows: readonly ActivityEntry[] } | null = null
-
-function writeSavedRows(next: { namespace: string; rows: readonly ActivityEntry[] }): void {
-  void saveLedgerRows(next.namespace, next.rows).catch((err) => {
-    console.warn('[activity-ledger] saving the last read failed', err instanceof Error ? err.message : err)
-  })
-}
-
-function scheduleSave(namespace: string, rows: readonly ActivityEntry[]): void {
-  saveRows = { namespace, rows }
-  if (saveTimer) return
-  saveTimer = setTimeout(() => {
-    saveTimer = null
-    const next = saveRows
-    saveRows = null
-    if (next) writeSavedRows(next)
-  }, SAVE_DELAY_MS)
-}
-
-/** Write the pending copy now. A restart disposes the runtime before the timer. */
-function flushSave(): void {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = null
-  const next = saveRows
-  saveRows = null
-  if (next) writeSavedRows(next)
-}
-
-export function publishActivityLedger(namespace: string, rows: ActivityEntry[]): void {
-  const prev = snapshot?.namespace === namespace ? snapshot : null
-  const changed = !prev || prev.restored || !sameRows(prev.rows, rows)
-  setSnapshot(namespace, rows, false)
-  // Legs the read does not hold yet stay on screen and in the saved copy.
-  if (changed) scheduleSave(namespace, ledgerActivitySnapshot())
-}
-
-/**
- * Paint the last session's read for this account until the first live read
- * lands. A live read that already landed is never replaced.
- */
-export async function restoreActivityLedger(runtime: WalletRuntime | null = getWalletRuntime()): Promise<void> {
-  if (!runtime || !runtimeIsCurrent(runtime)) return
-  const namespace = runtime.storageNamespace
-  const started = Date.now()
-  let rows: ActivityEntry[] | null
-  try {
-    rows = await loadLedgerRows(namespace)
-  } catch (err) {
-    console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
-    return
-  }
-  if (!rows || !runtimeIsCurrent(runtime) || currentSnapshot()) return
-  setSnapshot(namespace, rows.filter((row) => !isGhostTxSuppressed(row.txid!)), true)
-  console.info(`[activity-ledger] restored ${rows.length} row(s) from the last read done ${Date.now() - started}ms`)
 }
 
 type IdbTransaction = {
@@ -433,7 +258,6 @@ function ledgerTxOf(value: unknown): LedgerTx | null {
   if (!Number.isSafeInteger(transactionId) || transactionId <= 0) return null
   return {
     transactionId,
-    ...(typeof r.status === 'string' ? { status: r.status } : {}),
     txid: typeof r.txid === 'string' ? r.txid : null,
     satoshis: typeof r.satoshis === 'number' ? r.satoshis : undefined,
     description: typeof r.description === 'string' ? r.description : undefined,
@@ -475,18 +299,12 @@ async function settledTransactions(
   const lists = await Promise.all(SETTLED_STATUSES.map((status) => index.getAllKeys([status, userId])))
   await keys.done
   assertCurrent(runtime)
-  // A cached record keeps the status it was read with; a pinned cheque moves
-  // `nosend` → `unproven` without leaving the set, so the index is the truth.
-  const statusById = new Map<number, string>()
-  SETTLED_STATUSES.forEach((status, i) => {
-    for (const key of lists[i] ?? []) statusById.set(Number(key), status)
-  })
-  const settled = new Set(statusById.keys())
+  const settled = new Set(lists.flat().map(Number))
   for (const id of cache.byId.keys()) if (!settled.has(id)) cache.byId.delete(id)
   const missing = [...settled].filter((id) => !cache.byId.has(id))
   for (let i = 0; i < missing.length; i += TX_CHUNK) {
     if (i > 0) {
-      await yieldToUi()
+      await new Promise((resolve) => setTimeout(resolve, 0))
       assertCurrent(runtime)
     }
     const trx = toDbTrx(['transactions'], 'readonly')
@@ -499,26 +317,7 @@ async function settledTransactions(
     }
   }
   assertCurrent(runtime)
-  return [...cache.byId.values()].map((tx) => {
-    const status = statusById.get(tx.transactionId!)
-    return status && status !== tx.status ? { ...tx, status } : tx
-  })
-}
-
-/**
- * Whether the wallet has handed this held cheque to the network: Arcade took
- * it, a node reported it, or the miner outbox is still propagating it.
- */
-async function chequeWasPropagated(runtime: WalletRuntime): Promise<(txid: string) => boolean> {
-  const [{ txHadArcadeSubmitContact }, { txLanded }, { pendingMinerSubmitTxids }, { accountKeyScopeFor }] =
-    await Promise.all([
-      import('./arcadeSubmitGuard'),
-      import('./landedTx'),
-      import('./pendingMinerOutbox'),
-      import('./accountLocalKeys'),
-    ])
-  const queued = pendingMinerSubmitTxids(accountKeyScopeFor(runtime.instance))
-  return (txid) => queued.has(txid) || txHadArcadeSubmitContact(txid) || txLanded(txid)
+  return [...cache.byId.values()]
 }
 
 async function readLedger(runtime: WalletRuntime, full: boolean): Promise<ActivityEntry[] | null> {
@@ -550,16 +349,7 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   // Read-only IndexedDB transactions are consistent on their own, so the
   // transaction records are fetched outside the storage lock: a spend waiting
   // for the writer never queues behind the first read of a long history.
-  const all = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
-  const propagated = all.some((tx) => tx.status === HELD_STATUS) ? await chequeWasPropagated(runtime) : null
-  const txs = propagated
-    ? all.filter((tx) => {
-        if (tx.status !== HELD_STATUS) return true
-        if (isItemMigrateTxDescription(tx.description)) return true
-        const txid = tx.txid?.trim().toLowerCase()
-        return !!txid && propagated(txid)
-      })
-    : all
+  const txs = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
   const { outputs, baskets } = read
   return ledgerActivityRows(txs, outputs, baskets).filter(
     (row) => !isGhostTxSuppressed(row.txid!),
@@ -632,18 +422,10 @@ export function scheduleActivityLedgerRefresh(): void {
   }, wait)
 }
 
-function cancelSave(): void {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = null
-  saveRows = null
-}
-
 export function resetActivityLedgerForRuntime(): void {
   if (timer) clearTimeout(timer)
   timer = null
-  flushSave()
   snapshot = null
-  clearProvisional()
   txCache = null
   lastRefreshAt = 0
   logged = false
@@ -654,10 +436,8 @@ export function resetActivityLedgerForRuntime(): void {
 export function resetActivityLedgerForTests(): void {
   if (timer) clearTimeout(timer)
   timer = null
-  cancelSave()
   inFlights.clear()
   snapshot = null
-  clearProvisional()
   txCache = null
   lastRefreshAt = 0
   logged = false

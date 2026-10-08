@@ -6,9 +6,7 @@ const mocks = vi.hoisted(() => ({
   inspectState: vi.fn(),
   noteHighWater: vi.fn(),
   refresh: vi.fn(),
-  refreshShared: vi.fn(),
   relist: vi.fn(),
-  inRegion: false,
 }))
 
 vi.mock('./collectables', () => ({
@@ -16,20 +14,12 @@ vi.mock('./collectables', () => ({
 }))
 
 vi.mock('./chainIngest', () => ({
-  refreshFromChain: mocks.refreshShared,
   refreshFromChainExclusive: mocks.refresh,
 }))
 
 vi.mock('./walletCoordinator', () => ({
   isRecomposeCoordinatorActive: () => false,
-  runRecompose: async <T>(fn: () => Promise<T>) => {
-    mocks.inRegion = true
-    try {
-      return await fn()
-    } finally {
-      mocks.inRegion = false
-    }
-  },
+  runRecompose: <T>(fn: () => Promise<T>) => fn(),
   shouldYieldChainIngestToSpend: () => false,
 }))
 
@@ -58,17 +48,9 @@ vi.mock('./historyBackupPrefs', () => ({
   noteSpendableHighWater: mocks.noteHighWater,
 }))
 
-const FUNDING_PASS = {
-  forceReview: false,
-  announceReceive: false,
-  audit: false,
-  fundingOnly: true,
-}
-
 describe('recomposeWallet', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.inRegion = false
     mocks.hasBackupUrl.mockReturnValue(false)
     mocks.refresh.mockResolvedValue({
       balanceSats: 0,
@@ -76,7 +58,6 @@ describe('recomposeWallet', () => {
       importedItems: 0,
       scannedTxids: [],
     })
-    mocks.refreshShared.mockResolvedValue(0)
     mocks.autoPush.mockResolvedValue({
       pulled: false,
       skipReason: null,
@@ -89,44 +70,13 @@ describe('recomposeWallet', () => {
 
     await recomposeWallet({ reason: 'unlock' })
 
-    expect(mocks.refreshShared).toHaveBeenCalledWith(FUNDING_PASS)
-    expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(mocks.refresh).toHaveBeenCalledWith({
+      forceReview: false,
+      announceReceive: false,
+      audit: false,
+      fundingOnly: true,
+    })
     expect(mocks.relist).not.toHaveBeenCalled()
-  })
-
-  it('runs an unchanged wallet’s funding pass outside the recompose region', async () => {
-    let fencedDuringChain: boolean | null = null
-    mocks.refreshShared.mockImplementation(async () => {
-      fencedDuringChain = mocks.inRegion
-      return 0
-    })
-    const { recomposeWallet } = await import('./recompose')
-
-    await recomposeWallet({ reason: 'unlock' })
-
-    expect(fencedDuringChain).toBe(false)
-  })
-
-  it('keeps chain and relist fenced after cloud history replaced local state', async () => {
-    mocks.hasBackupUrl.mockReturnValue(true)
-    mocks.autoPush.mockResolvedValue({ pulled: true, skipReason: null, pullError: null })
-    let fencedDuringChain: boolean | null = null
-    let fencedDuringRelist: boolean | null = null
-    mocks.refresh.mockImplementation(async () => {
-      fencedDuringChain = mocks.inRegion
-      return { balanceSats: 0, importedFunding: 0, importedItems: 0, scannedTxids: [] }
-    })
-    mocks.relist.mockImplementation(async () => {
-      fencedDuringRelist = mocks.inRegion
-    })
-    const { recomposeWallet } = await import('./recompose')
-
-    await recomposeWallet({ password: 'test-password', reason: 'unlock' })
-
-    expect(mocks.refresh).toHaveBeenCalledWith(FUNDING_PASS)
-    expect(mocks.refreshShared).not.toHaveBeenCalled()
-    expect(fencedDuringChain).toBe(true)
-    expect(fencedDuringRelist).toBe(true)
   })
 
   it('re-lists collectables after a caller already replaced local state', async () => {
@@ -152,7 +102,12 @@ describe('recomposeWallet', () => {
   })
 
   it('updates the balance high-water without rescanning Toolbox state', async () => {
-    mocks.refreshShared.mockResolvedValue(9000)
+    mocks.refresh.mockResolvedValue({
+      balanceSats: 9000,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    })
     const { recomposeWallet } = await import('./recompose')
 
     await recomposeWallet({ reason: 'unlock' })

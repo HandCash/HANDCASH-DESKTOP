@@ -2,8 +2,11 @@ import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
 import { beginWalletJob, type WalletJobHandle } from '../walletJobs'
+import { IMPORT_CHUNK } from '../../machines/importQueueMachine'
 import { MAX_ITEMS_PER_MIGRATE_TX } from '../itemMigrateBundle'
 import {
+  clearPhraseItemMigrateCursor,
+  peekPhraseItemMigrateCursor,
   refreshAfterPhraseItemMigrate,
   scanAddressAny,
   sweepPhraseFunding,
@@ -18,10 +21,8 @@ import {
   type HoldingsTotals,
 } from './holdings'
 import { keyDeriverFor } from './importSource'
-import { listedImportOutpoints, readImportListMeta } from './itemStore'
-import { importItemsThroughQueue } from './importQueue'
-import { clearImportItems, syncImportItems } from './items'
-import { watchImportStage } from './stageWatch'
+import { listedImportOutpoints } from './itemStore'
+import { clearImportItems, importItems, prefetchImportItems, syncImportItems } from './items'
 import { sweepTokensFromAddress } from './tokenSweep'
 import { loadImportedSources, updateImportedSource, type ImportedSource, type SweepSummary } from './store'
 
@@ -31,8 +32,8 @@ import { loadImportedSources, updateImportedSource, type ImportedSource, type Sw
  * Never automatic: it runs from the user's confirm on a preview. Cash, 1-sat
  * collectables and valid BSV-21 tokens move into this wallet; everything else
  * stays at the source and is reported with its reason. Each asset class uses
- * the path this wallet already trusts for it — legacy cash sweep, the import
- * queue (BRC-150 remittance, bundled across addresses from the saved list),
+ * the path this wallet already trusts for it — legacy cash sweep, the item
+ * migrate (BRC-150 remittance, bundled across addresses from the saved list),
  * and the token sweep.
  * The whole sweep is one wallet job: one Activity row with a bar, and its item
  * rows fold into one record.
@@ -42,12 +43,6 @@ import { loadImportedSources, updateImportedSource, type ImportedSource, type Sw
 export const IMPORT_ITEMS_PER_TX = MAX_ITEMS_PER_MIGRATE_TX
 /** Address reads in flight while the cash step lists coins. */
 const CASH_SCAN_CONCURRENCY = 4
-/**
- * A sweep moves from the saved list when this scan's sync is younger than
- * this. Moves made here already leave the list; the list is the index's view
- * and each move re-decides its item from the source transaction anyway.
- */
-const IMPORT_LIST_FRESH_MS = 30 * 60_000
 
 export type SweepPlan = {
   cash: AddressHoldings[]
@@ -72,41 +67,11 @@ export type SweepProgress = {
   message: string
 }
 
-type SweepCaller = Pick<Parameters<typeof sweepImportedSource>[0], 'onProgress' | 'shouldStop'>
-
-/**
- * One sweep per source. A second confirm — the panel reopened mid-sweep —
- * joins the run in flight; two runs would sign the same tips twice.
- */
-const sweeps = new Map<string, { promise: Promise<SweepSummary>; callers: Set<SweepCaller>; last: SweepProgress | null }>()
-
-export function sweepImportedSource(args: {
+export async function sweepImportedSource(args: {
   sourceId: string
   onProgress?: (progress: SweepProgress) => void
   shouldStop?: () => boolean
 }): Promise<SweepSummary> {
-  const caller: SweepCaller = { onProgress: args.onProgress, shouldStop: args.shouldStop }
-  const running = sweeps.get(args.sourceId)
-  if (running) {
-    appendAppLog('info', `[import] sweep joined the run in flight callers=${running.callers.size + 1}`)
-    running.callers.add(caller)
-    if (running.last) caller.onProgress?.(running.last)
-    return running.promise.finally(() => running.callers.delete(caller))
-  }
-  const flight = { promise: null as unknown as Promise<SweepSummary>, callers: new Set([caller]), last: null as SweepProgress | null }
-  flight.promise = startSweep({
-    sourceId: args.sourceId,
-    onProgress: (progress) => {
-      flight.last = progress
-      for (const c of flight.callers) c.onProgress?.(progress)
-    },
-    shouldStop: () => [...flight.callers].some((c) => c.shouldStop?.() === true),
-  }).finally(() => sweeps.delete(args.sourceId))
-  sweeps.set(args.sourceId, flight)
-  return flight.promise
-}
-
-async function startSweep(args: Parameters<typeof sweepImportedSource>[0]): Promise<SweepSummary> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
   const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
@@ -127,32 +92,8 @@ async function startSweep(args: Parameters<typeof sweepImportedSource>[0]): Prom
     )
     return summary
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    appendAppLog('warn', `[import] sweep failed after ${Date.now() - startedAt}ms: ${message.slice(0, 160)}`)
-    job.fail(message)
+    job.fail(err instanceof Error ? err.message : String(err))
     throw err
-  }
-}
-
-/**
- * Addresses read with no coins leave the cash plan, so the next sweep does not
- * re-read every address an earlier one already emptied. Unread addresses keep
- * their counts.
- */
-async function forgetEmptyCash(sourceId: string, empty: ReadonlySet<string>): Promise<void> {
-  try {
-    const scan = (await loadImportedSources()).find((s) => s.id === sourceId)?.scan
-    if (!scan) return
-    await updateImportedSource(sourceId, {
-      scan: {
-        ...scan,
-        holdings: scan.holdings.map((h) =>
-          empty.has(h.address) && h.cashCount > 0 ? { ...h, cashCount: 0, cashSats: 0 } : h,
-        ),
-      },
-    })
-  } catch (err) {
-    appendAppLog('warn', `[import] empty cash addresses not saved: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -207,7 +148,6 @@ async function runSweep(
   if (cashFrom.length > 0 && !stop()) {
     const scannedAt = Date.now()
     const sources: PhraseFundingSource[] = []
-    const empty = new Set<string>()
     let read = 0
     let next = 0
     const reader = async () => {
@@ -217,70 +157,66 @@ async function runSweep(
         try {
           const scan = await scanAddressAny(candidate.address, active.chain)
           if (scan.utxos.length > 0) sources.push({ candidate, utxos: scan.utxos })
-          else empty.add(candidate.address)
         } catch {
           notes.push(`${candidate.label} could not be read. Sweep again to move its BSV.`)
         }
         read += 1
       }
     }
-    await watchImportStage('cash scan', () =>
-      Promise.all(Array.from({ length: Math.min(CASH_SCAN_CONCURRENCY, cashFrom.length) }, reader)),
-    )
+    await Promise.all(Array.from({ length: Math.min(CASH_SCAN_CONCURRENCY, cashFrom.length) }, reader))
     appendAppLog('info', `[import] cash scan addresses=${cashFrom.length} holding=${sources.length} done ${Date.now() - scannedAt}ms`)
-    if (empty.size > 0) await forgetEmptyCash(source.id, empty)
     if (sources.length > 0 && !stop()) {
       report('cash', `Moving BSV from ${sources.length} address(es)…`)
-      const result = await watchImportStage('cash sweep', () => sweepPhraseFunding({ sources }))
+      const result = await sweepPhraseFunding({ sources })
       cashSats += result.fundingSatsMoved
       failed += result.failed
       notes.push(...result.errors.slice(0, 2))
     }
   }
 
-  // Items ride the import queue Browse items uses: each carries the key of the
-  // address holding it, so a HandCash export — one item per address — still
-  // shares transactions, and one runner owns every item move.
+  // Items ride the cross-address migrate Browse items uses: each carries the key
+  // of the address holding it, so a HandCash export — one item per address —
+  // still shares transactions — a whole chunk per transaction — instead of one
+  // per address.
   if (plan.items.length > 0 && !stop()) {
-    const meta = await readImportListMeta(source.id)
-    const listAgeMs = meta.scanAt === source.scan?.at && meta.syncedAt != null ? Date.now() - meta.syncedAt : null
-    if (listAgeMs != null && listAgeMs < IMPORT_LIST_FRESH_MS) {
-      appendAppLog('info', `[import] sweep reuses the list synced ${Math.round(listAgeMs / 1000)}s ago complete=${meta.complete}`)
-      if (!meta.complete) notes.push('Some addresses could not be read. Sweep again to move what they hold.')
-    } else {
-      report('items', 'Listing collectables…')
-      const listing = await watchImportStage('listing items', () =>
-        syncImportItems({ sourceId: source.id, shouldStop: stop, onStep: (message) => report('items', message) }),
-      )
-      if (!listing.complete && !stop()) {
-        notes.push('Some addresses could not be read. Sweep again to move what they hold.')
-      }
+    const ownedHere = new Set(plan.items.map((h) => h.address))
+    const cursor = peekPhraseItemMigrateCursor()
+    // An older build's paused per-address run on this source: the list below covers it.
+    if (cursor && ownedHere.has(cursor.sourceAddress)) clearPhraseItemMigrateCursor()
+    report('items', 'Listing collectables…')
+    const listing = await syncImportItems({ sourceId: source.id, shouldStop: stop })
+    if (!listing.complete && !stop()) {
+      notes.push('Some addresses could not be read. Sweep again to move what they hold.')
     }
-    const listed = stop() ? [] : [...(await listedImportOutpoints(source.id))]
+    const listed = [...(await listedImportOutpoints(source.id))]
     itemTotal = listed.length || null
-    report('items', `Moving collectables… 0 of ${listed.length.toLocaleString()}`)
-    const moved = await watchImportStage('moving items', () =>
-      importItemsThroughQueue({
+    for (let i = 0; i < listed.length && !stop() && !paused; i += IMPORT_CHUNK) {
+      report('items', `Moving collectables… ${items.toLocaleString()} of ${listed.length.toLocaleString()}`, items)
+      const next = listed.slice(i + IMPORT_CHUNK, i + 2 * IMPORT_CHUNK)
+      const chunk = await importItems({
         sourceId: source.id,
-        outpoints: listed,
-        job,
-        shouldStop: stop,
-        onProgress: ({ done, total, paused: cooling }) =>
-          report(
-            'items',
-            cooling ? 'Waiting for the last import to clear…' : `Moving collectables… ${done.toLocaleString()} of ${total.toLocaleString()}`,
-            done,
-          ),
-      }),
-    )
-    items += moved.moved
-    failed += moved.failed
-    if (moved.skipped > 0) held = addHeld(held, 'notCollectable', moved.skipped)
-    if (moved.error) notes.push(moved.error)
-    const verdict = moved.report
-    if (verdict && (verdict.outcome === 'funds' || verdict.outcome === 'deferred')) {
-      paused = verdict.body
-      notes.push(paused)
+        identityKey: active.identityKey,
+        outpoints: listed.slice(i, i + IMPORT_CHUNK),
+        activityGroup: job.id,
+        // Read the next chunk's sources while this one signs and posts.
+        ...(next.length > 0
+          ? { onSourcesRead: () => void prefetchImportItems({ sourceId: source.id, outpoints: next }) }
+          : {}),
+      })
+      for (const { result } of chunk.results) {
+        if (result.kind === 'moved') items += 1
+        else if (result.kind === 'skipped') held = addHeld(held, 'notCollectable', 1)
+        else if (result.kind === 'failed' || result.kind === 'unreadable') failed += 1
+      }
+      const lastError = chunk.results.find((r) => r.result.kind === 'failed')?.result
+      if (lastError && 'message' in lastError) notes.push(lastError.message)
+      if (chunk.stopped === 'funds') {
+        paused = 'This wallet ran low on BSV for item fees. Add funds and sweep again — it resumes.'
+        notes.push(paused)
+      } else if (chunk.stopped === 'stale-funding') {
+        paused = 'A spent fee coin is being cleared from this wallet. Sweep again in a moment — it resumes.'
+        notes.push(paused)
+      }
     }
     report('items', `Moved ${items.toLocaleString()} collectable(s)`, items)
   }
@@ -290,14 +226,12 @@ async function runSweep(
     const candidate = candidateFor(h)
     if (!candidate) continue
     report('tokens', `Moving tokens from ${h.label}…`, items)
-    const result = await watchImportStage('token sweep', () =>
-      sweepTokensFromAddress({
-        active,
-        spendKey: deriver.privateKeyAt(h.path),
-        address: h.address,
-        tokens: h.tokens.filter((t) => t.standard === 'bsv21' && t.id),
-      }),
-    )
+    const result = await sweepTokensFromAddress({
+      active,
+      spendKey: deriver.privateKeyAt(h.path),
+      address: h.address,
+      tokens: h.tokens.filter((t) => t.standard === 'bsv21' && t.id),
+    })
     for (const moved of result.moved) {
       const sym = h.tokens.find((t) => t.id === moved.tokenId)?.sym ?? 'token'
       tokens.push({ tokenId: moved.tokenId, sym, amount: moved.amount })
@@ -310,15 +244,12 @@ async function runSweep(
     if (result.stopped === 'funds') {
       paused = 'This wallet ran low on BSV for token fees. Add funds and sweep again.'
       notes.push(paused)
-    } else if (result.stopped === 'propagating') {
-      paused = 'The last token transfer is still reaching the network. Sweep again in a moment to move the rest.'
-      notes.push(paused)
     }
   }
 
   if (cashSats > 0 || items > 0 || tokens.length > 0) {
     report('refresh', 'Checking the chain…', items)
-    await watchImportStage('refresh after sweep', () => refreshAfterPhraseItemMigrate())
+    await refreshAfterPhraseItemMigrate()
   }
   if (stop()) {
     paused ??= 'Paused — sweep again to continue.'
@@ -334,8 +265,7 @@ async function runSweep(
     failed,
     notes: [...new Set(notes)].slice(0, 8),
   }
-  // A paused sweep resumes from this list; only a finished one re-reads next time.
-  if (!paused) await clearImportItems(source.id)
+  await clearImportItems(source.id)
   await updateImportedSource(source.id, { lastSweep: summary })
   return { summary, paused }
 }

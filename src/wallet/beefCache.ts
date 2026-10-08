@@ -432,10 +432,7 @@ async function resolveLocalBeef(
     const archived = signedChequeAtomic(key)
     if (archived?.length) {
       const beef = Beef.fromBinary(archived)
-      // A retry body names mined ancestry by txid; storage holds it whole.
-      if (beef.findTxid(key)?.tx && !beef.txs.some((btx) => btx.isTxidOnly)) {
-        return finish(beef, 'cheque-archive')
-      }
+      if (beef.findTxid(key)?.tx) return finish(beef, 'cheque-archive')
     }
   } catch {
     /* archive is optional for inbound lookups */

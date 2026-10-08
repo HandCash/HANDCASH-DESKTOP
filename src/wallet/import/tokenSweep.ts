@@ -2,9 +2,9 @@ import { Beef, P2PKH, type PrivateKey } from '@bsv/sdk'
 import type { Chain } from '../vault'
 import type { ActiveWallet } from '../session'
 import { appendAppLog } from '../appLog'
-import { buildLegacyInputBeef } from '../legacyBeef'
+import { buildLegacyInputBeef, withVisibleOnChainBeef } from '../legacyBeef'
 import { parseOrdEnvelope } from '../ordinalOwnership'
-import { settleForeignInputAction, signForeignInputAction, type ForeignInput } from '../foreignInputAction'
+import { postForeignInputAction, type ForeignInput } from '../phraseSweep'
 import { runExclusiveSpend } from '../spendGuard'
 import { isInsufficientFundsError } from '../insufficientFunds'
 import { buildBsv21TransferLockingScript } from '../token/legacyInscribe'
@@ -130,8 +130,7 @@ export type TokenSweepResult = {
   moved: Array<{ tokenId: string; amount: string; txid: string }>
   held: HeldTally
   failed: number
-  /** `propagating`: the last transfer is signed but its change cannot fund the next one yet. */
-  stopped: 'funds' | 'propagating' | null
+  stopped: 'funds' | null
   errors: string[]
 }
 
@@ -246,35 +245,32 @@ export async function sweepTokensFromAddress(args: {
       })
       await yieldToUi()
       try {
-        const signed = await runExclusiveSpend(() =>
-          signForeignInputAction({
-            active,
-            spendKey,
-            inputBeef: built.beef,
-            inputs: group.map((tip) => tip.input),
-            // No basket: chain ingest imports it from this wallet's address
-            // into `bsv21` with the same lineage checks as any received token.
-            outputs: [
-              {
-                lockingScript,
-                satoshis: 1,
-                outputDescription: `Imported ${token.sym}`.slice(0, 50),
-              },
-            ],
-            labels: ['bsv21', 'legacy-import'],
-            description: `Sweep ${token.sym} from imported wallet`.slice(0, 50),
-          }),
+        const txid = await runExclusiveSpend(() =>
+          withVisibleOnChainBeef(() =>
+            postForeignInputAction({
+              active,
+              spendKey,
+              inputBeef: built.beef,
+              inputs: group.map((tip) => tip.input),
+              // No basket: chain ingest imports it from this wallet's address
+              // into `bsv21` with the same lineage checks as any received token.
+              outputs: [
+                {
+                  lockingScript,
+                  satoshis: 1,
+                  outputDescription: `Imported ${token.sym}`.slice(0, 50),
+                },
+              ],
+              labels: ['bsv21', 'legacy-import'],
+              description: `Sweep ${token.sym} from imported wallet`.slice(0, 50),
+            }),
+          ),
         )
-        const { txid, propagation } = await settleForeignInputAction(signed)
         result.moved.push({ tokenId: token.id, amount: total, txid })
         appendAppLog(
           'info',
-          `[import] token sweep ${token.id} amt=${total} inputs=${group.length} txid=${txid} ${propagation}`,
+          `[import] token sweep ${token.id} amt=${total} inputs=${group.length} txid=${txid}`,
         )
-        if (propagation === 'propagating') {
-          result.stopped = 'propagating'
-          return result
-        }
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
         if (isInsufficientFundsError(err)) {

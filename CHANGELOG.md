@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.501] - 2026-10-08
+
+### Changed
+- **Wallet code restored to the 1.3.471 checkpoint (yesterday 07:59).** Item sending broke during yesterday's run of changes. Everything under `src/` is exactly as released in 1.3.471; the 1.3.472–1.3.500 changes are listed below and come back one at a time, each on its own. Support tooling outside the app (`scripts/triage`, Cursor rules) is kept. No stored data is touched: the toolbox transactions table, the Activity store, the import saved list, the job index and job records keep their keys and formats; the 1.3.498 ledger-snapshot store is simply not read.
+
 ## [1.3.500] - 2026-10-07
 
 ### Fixed

@@ -21,11 +21,28 @@ import {
 import { collectableSendRunMachine } from './collectableSendRunMachine'
 import { collectableSendBatchRefusal } from './collectableBatch'
 import { splitItemMigrateBundle } from './itemMigrateBundle'
-import { awaitChainedLegFunding } from './signedSendLifecycle'
+import { pinBroadcastLocalTx } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
 
-const LEG_UNFUNDED =
-  'The last transaction is signed but the network has not taken it yet, so its change cannot pay for the next. The remaining collectables were left untouched.'
+const LEG_PIN_TIMEOUT_MS = 20_000
+
+/**
+ * A leg returns once its signed cheque and background miner submit exist. The
+ * next leg is normally funded by that cheque's change, so wait until Arcade has
+ * pinned it and local state has promoted the change. A single eager pin raced
+ * the background submit, returned false, and made a 25-item run stop after its
+ * first five items for "insufficient funds".
+ */
+async function awaitLegPin(txid: string): Promise<void> {
+  const deadline = Date.now() + LEG_PIN_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    if (await pinBroadcastLocalTx(txid).catch(() => false)) return
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(
+    `The first transaction is signed but its change is not ready after ${LEG_PIN_TIMEOUT_MS / 1000}s. The remaining collectables were left untouched.`,
+  )
+}
 
 export type SendCollectablesRunArgs = SendCollectablesArgs & {
   onProgress?: (progress: {
@@ -97,25 +114,17 @@ export async function sendCollectablesRun(
         failureActivity: failedSendAttemptActivity(leg.length),
       })
       result.sent.push({ txid, outpoints: leg })
+      // Every leg after the first is funded by the previous leg's change, and a
+      // `peerDeliver` leg parks that change in an app-held `nosend` row. Pin it
+      // before signing the next leg or the run starves on its own money.
+      await awaitLegPin(txid)
       chart.send({ type: 'LEG_SENT', items: leg.length })
       console.info(
-        `[collectables] send run leg signed — ${leg.length} items by ${txid.slice(
+        `[collectables] send run leg accepted — ${leg.length} items by ${txid.slice(
           0,
           12,
         )} (${chart.getSnapshot().context.sentItems}/${plan.itemCount})`,
       )
-      // The next leg is funded by this one's change, which stays app-held
-      // (`nosend`) until Arcade takes the cheque. Wait for the common flow to
-      // free it, or the run starves on its own money. The last leg funds nothing.
-      if (queue.length > 0 && !(await awaitChainedLegFunding(txid))) {
-        const remaining = queue.flat()
-        queue.length = 0
-        result.lastError = LEG_UNFUNDED
-        result.failed.push({ outpoints: remaining, reason: LEG_UNFUNDED })
-        chart.send({ type: 'RUN_FAULT', reason: LEG_UNFUNDED, remainingItems: remaining.length })
-        console.warn(`[collectables] send run stopped — ${txid.slice(0, 12)} not taken by the network yet`)
-        break
-      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       result.lastError = reason

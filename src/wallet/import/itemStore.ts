@@ -48,8 +48,6 @@ export type ImportListMeta = {
   nextSeq: number
   /** When every listed item was last checked unspent on chain (not by the index). */
   chainCheckedAt?: number
-  /** When a sync of `scanAt` last ran to its end without being stopped. */
-  syncedAt?: number
 }
 
 /** `last` is the list position read up to — pass it as `after` for the next page. */
@@ -81,10 +79,6 @@ function open(): Promise<IDBDatabase> {
       const db = req.result
       db.onversionchange = () => {
         db.close()
-        opening = null
-      }
-      // The WebView closes connections it reclaims (storage pressure, a frozen renderer).
-      db.onclose = () => {
         opening = null
       }
       resolve(db)

@@ -84,7 +84,6 @@ import {
   activityBatchName,
   ACTIVITY_COMPOSE_WINDOW,
   previewActivityRecords,
-  unfoldLiveJobLegs,
   type ActivityBatch,
   type ActivityRecord,
 } from "../wallet/activityRecords";
@@ -137,9 +136,17 @@ import {
 import { subscribeConnectedApps } from "../wallet/permissions";
 import { playWalletSound } from "../wallet/soundService";
 import type { Chain } from "../wallet/vault";
+import {
+  phraseImportBelongsToWallet,
+  peekPhraseItemMigrateCursor,
+  subscribePhraseItemMigrateCursor,
+} from "../wallet/phraseSweep";
 import { walletJobIds } from "../wallet/walletJobs";
-import { useWalletJobs, WalletJobRow } from "./activity/ActivityJobRows";
-import { batchCountLabel } from "./activity/batchCountLabel";
+import {
+  PendingPhraseImportRow,
+  useWalletJobs,
+  WalletJobRow,
+} from "./activity/ActivityJobRows";
 
 import { EmptyState } from "./EmptyState";
 import { AppAvatar } from "./AppAvatar";
@@ -321,7 +328,6 @@ export function HistoryIconCluster({
   const showStack = Boolean(
     stacked && batch && batch.count > 1 && assets.length > 0
   );
-  const batchLabel = showStack ? batchCountLabel(batch!.count) : "";
 
   return (
     <div className="history-icon-wrap">
@@ -415,12 +421,9 @@ export function HistoryIconCluster({
       {showStack ? (
         <span
           className="history-batch-count"
-          data-aeon-part="batch-count"
-          data-aeon-state={batchLabel.length > 3 ? "long" : "short"}
           aria-label={`${batch!.count} collectables`}
-          title={`${batch!.count.toLocaleString()} collectables`}
         >
-          {batchLabel}
+          {batch!.count}
         </span>
       ) : null}
       <HistoryAppBadge entry={entry} />
@@ -733,31 +736,25 @@ function useActivityFeed(limit: number) {
     []
   );
   useEffect(() => {
-    // Expiry writes bump the activity generation, so a tick that changed
-    // nothing reads the cached snapshot and React keeps the same arrays.
-    // Only app and asset changes move the projection without a write.
-    const refresh = (projectionMoved = false) => {
-      const startedAt = performance.now();
+    const refresh = () => {
       archiveOversizedBulkSendDebris()
       expireStaleInboundPending();
       expireStaleOutboundPending();
-      if (projectionMoved) invalidateActivityFeed(limit);
+      invalidateActivityFeed(limit);
       const snapshot = readActivityFeed(limit);
       setEntries(snapshot.entries);
       setOrigins(snapshot.origins);
-      const ms = Math.round(performance.now() - startedAt);
-      if (ms >= 250) console.info(`[activity] feed refresh done ${ms}ms rows=${snapshot.entries.length}`);
     };
     refresh();
-    const unsubActivity = subscribeAppActivity(() => refresh());
-    const unsubApps = subscribeConnectedApps(() => refresh(true));
+    const unsubActivity = subscribeAppActivity(refresh);
+    const unsubApps = subscribeConnectedApps(refresh);
     let assetTimer = 0;
     const refreshAfterAssetPaint = () => {
       // Authenticity, icon, and encoding upgrades can arrive in short bursts.
       // The feed only needs their settled projection; rebuilding it for every
       // intermediate cache paint used to interrupt foreground input.
       window.clearTimeout(assetTimer);
-      assetTimer = window.setTimeout(() => refresh(true), 280);
+      assetTimer = window.setTimeout(refresh, 280);
     };
     const unsubItems = subscribeCollectables(refreshAfterAssetPaint);
     const unsubTokens = subscribeFungibles(refreshAfterAssetPaint);
@@ -765,11 +762,7 @@ function useActivityFeed(limit: number) {
     // stale-row expiry correctly yield. Without a later tick there may be no
     // event after the spend releases, so an old approval placeholder can stay
     // painted forever beside the successful transaction row.
-    // A pending row's read-time projection ages with the clock; nothing else does.
-    const staleTimer = window.setInterval(
-      () => refresh(feedCache.get(limit)?.entries.some((entry) => entry.status === "pending") ?? false),
-      5_000,
-    );
+    const staleTimer = window.setInterval(refresh, 5_000);
     return () => {
       window.clearTimeout(assetTimer);
       window.clearInterval(staleTimer);
@@ -900,31 +893,38 @@ export function ActivityFeed({
   onViewAll,
 }: FeedProps) {
   const headRef = useRef<HTMLDivElement | null>(null);
-  const mountStartedAt = useRef(performance.now());
   const { entries, live, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
-  useEffect(() => {
-    const ms = Math.round(performance.now() - mountStartedAt.current);
-    if (ms >= 250) console.info(`[activity] feed mount done ${ms}ms rows=${entries.length}`);
-    // Mount only: later renders are measured by the feed refresh.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const [filters, setFilters] = useState<PaymentFilters>(
     DEFAULT_PAYMENT_FILTERS
   );
   const [verification, setVerification] = useState(() =>
     getVerificationProgress()
   );
+  const [phraseImport, setPhraseImport] = useState(() =>
+    peekPhraseItemMigrateCursor()
+  );
   const listRef = useRef<HTMLUListElement>(null);
   const scrolling = useScrollIdle(listRef);
   useEffect(() => subscribeVerificationProgress(setVerification), []);
+  useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), []);
+  const visiblePhraseImport = phraseImportBelongsToWallet(
+    phraseImport,
+    getActiveWallet()?.identityKey
+  )
+    ? phraseImport
+    : null;
   const jobs = useWalletJobs();
 
-  // A job's row carries the bar while its transactions show beneath it; once it leaves they fold into one record.
+  // A job's own row speaks for it until it leaves; then its rows fold into one record.
   const filtered = useMemo(() => {
-    const legs = unfoldLiveJobLegs(entries, walletJobIds(jobs));
-    return showFilters ? filterPaymentActivity(legs, filters) : legs;
+    const jobIds = walletJobIds(jobs);
+    const settled =
+      jobIds.size > 0
+        ? entries.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
+        : entries;
+    return showFilters ? filterPaymentActivity(settled, filters) : settled;
   }, [entries, jobs, filters, showFilters]);
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
@@ -1117,7 +1117,7 @@ export function ActivityFeed({
   }, [origins, filters.origin]);
 
   const body =
-    filtered.length === 0 && jobs.length === 0 ? (
+    filtered.length === 0 && !visiblePhraseImport && jobs.length === 0 ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : "Nothing matches"}
@@ -1134,6 +1134,9 @@ export function ActivityFeed({
         {jobs.map((job) => (
           <WalletJobRow key={job.id} job={job} />
         ))}
+        {visiblePhraseImport ? (
+          <PendingPhraseImportRow cursor={visiblePhraseImport} />
+        ) : null}
         {windowed.padStart > 0 ? (
           <li
             className="history-window-pad"

@@ -5,7 +5,6 @@ import {
   previewActivityRecords,
   composeActivityRecords,
   batchSiblingsForEntry,
-  unfoldLiveJobLegs,
 } from './activityRecords'
 import type { ActivityEntry } from './appActivity'
 
@@ -535,25 +534,5 @@ describe('composeActivityRecords', () => {
       label: 'Pixel Foxes',
     })
     expect(ACTIVITY_COMPOSE_WINDOW).toBeGreaterThan(15)
-  })
-})
-
-describe('unfoldLiveJobLegs', () => {
-  const JOB = 'job:item-import:abc'
-  const legs = [
-    collectable('Fox #1', 0, { sendGroupId: JOB, at: 1 }),
-    collectable('Fox #2', 1, { sendGroupId: JOB, at: 1 }),
-    collectable('Fox #3', 0, { sendGroupId: JOB, at: 2, txid: OTHER_TXID, item: { name: 'Fox #3', origin: `${TXID}_9`, outpoint: `${OTHER_TXID}.0` } }),
-  ]
-
-  it('shows each transaction of a running job as it lands', () => {
-    const records = composeActivityRecords(unfoldLiveJobLegs(legs, new Set([JOB])))
-    expect(records).toHaveLength(2)
-    expect(records.map((record) => record.entries.length).sort()).toEqual([1, 2])
-  })
-
-  it('folds the legs into one record once the job leaves', () => {
-    expect(unfoldLiveJobLegs(legs, new Set())).toBe(legs)
-    expect(composeActivityRecords(legs)).toHaveLength(1)
   })
 })

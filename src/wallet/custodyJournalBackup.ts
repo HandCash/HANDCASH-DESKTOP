@@ -17,7 +17,6 @@ import {
   onCustodyJournalGrew,
 } from './custodyJournal'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
-import { ifMatchEtag } from './httpEtag'
 import { signedIdentityFetch } from './identityRequestAuth'
 import type { ActiveWallet } from './session'
 import { getWalletRuntime } from './walletRuntime'
@@ -136,7 +135,7 @@ async function pull(active: ActiveWallet, owner: BoundAccountKeyScope, url: stri
   })
   if (got.status === 404) return { remote: { etag: null, root: null }, pulled: 0 }
   if (!got.ok) throw new Error(`pull ${got.status}`)
-  const etag = ifMatchEtag(got.headers.get('ETag'))
+  const etag = got.headers.get('ETag')
   const sealed = (await got.json().catch(() => null)) as SealedJournal | null
   const root = typeof sealed?.root === 'string' ? sealed.root : null
   if (root && root === custodyJournalRoot(owner)) return { remote: { etag, root }, pulled: 0 }

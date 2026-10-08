@@ -59,7 +59,6 @@ import {
   type TransactionFlow,
 } from "./transactionTelemetry";
 import { normalizeTxid } from "./txid";
-import { noteTxLanded, txLanded } from "./landedTx";
 import { spendConflictIsProven } from "./spendVerdict";
 
 /**
@@ -399,39 +398,6 @@ async function resolveMinerConflict(args: {
 }
 
 /**
- * The round's results with Arcade's own answer in them. A round that settled
- * on a fallback (Arcade timed out, demoted, or errored) asks Arcade directly
- * with the same body; see `arcadeVerdict.ts`.
- */
-async function withArcadeVerdict(
-  services: ActiveWallet["services"],
-  id: string,
-  beefBytes: number[],
-  results: PostBeefServiceResult[],
-): Promise<PostBeefServiceResult[]> {
-  const { arcadeRoundVerdict, askArcadeDirectly, hasArcadeBroadcaster, withArcadeAnswer } =
-    await import("./arcadeVerdict");
-  const verdict = arcadeRoundVerdict(results, hasArcadeBroadcaster(services));
-  if (verdict.kind !== "missing") return results;
-  const started = Date.now();
-  const answer = await askArcadeDirectly(services, id, beefBytes);
-  if (!answer) return results;
-  const merged = withArcadeAnswer(results, answer);
-  console.info(
-    `[minerSubmit] ${id.slice(0, 12)} Arcade asked directly (${verdict.reason}) bytes=${beefBytes.length}: ` +
-      `${summarizePostBeef([answer]).detail} done ${Date.now() - started}ms`
-  );
-  return merged;
-}
-
-async function chequeOnChain(id: string, chain: ActiveWallet["chain"]): Promise<boolean> {
-  if (txLanded(id)) return true;
-  if (!chain) return false;
-  const { txExistsOnChain } = await import("./legacyScan");
-  return (await txExistsOnChain(id, chain).catch(() => null)) === true;
-}
-
-/**
  * One miner round per subject. Several ingest and outbox paths post the same
  * cheque at once; each one used to assemble ancestry on the storage lock, and
  * the next signature waited behind all of them. Joiners share the round.
@@ -457,11 +423,6 @@ export function submitAtomicBeefToMiners(
     retryCount?: number
     runtime?: WalletRuntime
     owner?: BoundAccountKeyScope
-    /**
-     * What the outbox keeps instead of `atomic`: the same signed subject with
-     * ancestry a retry can fetch back left out. `atomic` is still what posts.
-     */
-    durableBody?: number[]
   },
 ): Promise<MinerSubmitResult> {
   const id = normalizeTxid(txid)
@@ -486,7 +447,6 @@ async function submitAtomicBeefToMinersOnce(
     retryCount?: number;
     runtime?: WalletRuntime;
     owner?: BoundAccountKeyScope;
-    durableBody?: number[];
   }
 ): Promise<MinerSubmitResult> {
   const id = normalizeTxid(txid);
@@ -514,7 +474,7 @@ async function submitAtomicBeefToMinersOnce(
   };
   const outboxDurable =
     opts?.fromOutbox === true ||
-    enqueuePendingMinerSubmit(id, opts?.durableBody ?? atomic, { flow: opts?.flow, owner });
+    enqueuePendingMinerSubmit(id, atomic, { flow: opts?.flow, owner });
   recordStage("provider_attempt", telemetry);
   const active = opts?.runtime?.instance ?? getActiveWallet();
   if (!active?.services?.postBeef) {
@@ -529,19 +489,6 @@ async function submitAtomicBeefToMinersOnce(
     return outboxDurable
       ? { kind: "queued", reason: "offline" }
       : untrackedMinerResult("offline", telemetry);
-  }
-
-  // A retry has no business re-posting what the chain already holds. Without
-  // this exit a mined cheque whose ancestry could not be refetched in time
-  // stayed held as unverified on every flush: never pinned, so it stayed
-  // `nosend` with its change unfundable and its Activity row hidden.
-  if (opts?.fromOutbox && !detached && (await chequeOnChain(id, active.chain))) {
-    noteTxLanded(id);
-    removePendingMinerSubmit(id, owner);
-    recordStage("provider_accepted", telemetry);
-    console.info(`[minerSubmit] ${id.slice(0, 12)} already on chain — retry retired, pinning`);
-    void pinBroadcastLocalTx(id, atomic).catch(() => undefined);
-    return { kind: "accepted", ancestryComplete: true, keepPropagating: false };
   }
 
   let beefBytes = atomic;
@@ -664,27 +611,11 @@ async function submitAtomicBeefToMinersOnce(
     // The configured service, not the internalize interceptor: this is the
     // wallet's own miner round and must never be answered from the BEEF.
     const { directPostBeef } = await import("./internalizeMinerDeferral");
-    const { restoreArcadeFirst } = await import("./serviceOrder");
-    const demotedBehind = restoreArcadeFirst(
-      (active.services as unknown as { postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void } })
-        .postBeefServices,
-    );
-    if (demotedBehind) {
-      console.info(
-        `[minerSubmit] Arcade restored ahead of ${demotedBehind}`,
-        id.slice(0, 12)
-      );
-    }
     const results = await directPostBeef(active.services)(
       Beef.fromBinary(beefBytes),
       [id],
     );
-    rawResults = await withArcadeVerdict(
-      active.services,
-      id,
-      beefBytes,
-      results as PostBeefServiceResult[],
-    );
+    rawResults = results as PostBeefServiceResult[];
     summary = summarizePostBeef(rawResults);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -748,22 +679,10 @@ async function submitAtomicBeefToMinersOnce(
 
   if (summary.accepted) {
     recordStage("provider_accepted", telemetry);
-    // A fallback's acceptance is not Arcade's: nothing pins the cheque or
-    // follows it to a node, so it stays queued until Arcade holds it.
-    const { hasArcadeBroadcaster } = await import("./arcadeVerdict");
-    const withoutArcade =
-      !!rawResults &&
-      hasArcadeBroadcaster(active.services) &&
-      !postBeefResultsArcadeAccepted(rawResults);
-    if (withoutArcade) {
-      console.warn(
-        `[minerSubmit] ${id.slice(0, 12)} accepted without Arcade — kept queued: ${summary.detail}`.slice(0, 400)
-      );
-    }
     // Arcade 202 is not the chain. Keep posting until merkle proofs close.
     // Local SPV of unconfirmed parent bodies is still a valid cheque — that
     // is how we negate explorer latency.
-    const keepPropagating = !proofsComplete || withoutArcade;
+    const keepPropagating = !proofsComplete;
     if (!keepPropagating) {
       removePendingMinerSubmit(id, owner);
       if (

@@ -110,13 +110,9 @@ export async function verifyVerifiedIssuerList(
 }
 
 function adopt(stored: Stored, persist: boolean): void {
-  const unchanged =
-    current?.list.updatedAt === stored.list.updatedAt && current.list.signature === stored.list.signature
   current = stored
-  if (persist) durableSetItem(STORAGE_KEY, JSON.stringify(stored))
-  // Every issuer row re-renders on a generation bump; a refetched identical list moves nothing.
-  if (unchanged) return
   byBapId = new Map(stored.list.entries.map((entry) => [entry.bapId, entry]))
+  if (persist) durableSetItem(STORAGE_KEY, JSON.stringify(stored))
   generation++
   for (const listener of listeners) listener()
 }

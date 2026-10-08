@@ -14,7 +14,7 @@ import { fetchHandCashUtxoSet, readUnspentOnChain, verifyUtxoSet } from './handc
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import { readMneeBalances } from '../mnee'
 import { MNEE_DECIMALS, MNEE_SYMBOL, MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
-import { checkUtxoSetItems, knownAddresses, noteScanItemRead } from './items'
+import { checkUtxoSetItems, knownAddresses } from './items'
 import {
   createHistoryReader,
   hintedLookups,
@@ -46,10 +46,9 @@ type ScanArgs = {
  * Walk a saved source's key set, then read what each used address holds.
  * Read-only: nothing is signed or broadcast. The result is saved on the source.
  *
- * Passes run in `scanPaths` order. A HandCash export reads its account's UTXO
- * set; with recovery hints from the migrate page it is walked against its own
- * history, which stands only when the chain shows everything HandCash reports;
- * otherwise the full network walk runs.
+ * A HandCash source with recovery hints from the migrate page is first walked
+ * against the outputs of its own history. That pass stands only when the chain
+ * shows everything HandCash reports; otherwise the full network walk runs.
  */
 export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource> {
   const active = getWalletRuntime()?.instance
@@ -58,53 +57,25 @@ export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource
   const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
   if (!source) throw new Error('That saved wallet is gone')
 
-  const startedAt = Date.now()
   const deriver = keyDeriverFor(source.secret)
   const hints = args.gap == null ? recoveryHintsFor(source) : null
   const cache = new Map<string, AddressHoldings>()
-  const paths = scanPaths(source, args.gap, hints != null)
-  let scan: SourceScan | null = null
-  let path: ScanPath = 'walk'
-  for (path of paths) {
-    if (path === 'utxoSet') scan = await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
-    else if (path === 'hinted') scan = hints ? await hintedScan(deriver, active.chain, hints, args, cache) : null
-    else {
-      scan = await walkScan(
-        deriver,
-        active.chain,
-        args,
-        { history: wocHistoryLookup(active.chain), items: gorillaItemsLookup(active.chain) },
-        undefined,
-        cache,
-      )
-    }
-    if (scan) break
-  }
-  if (!scan) throw new Error('The scan found no way to read this wallet')
-  appendAppLog(
-    'info',
-    `[import] scan path=${path} of=${paths.join('>')} complete=${scan.complete} holdings=${scan.holdings.length} done ${Date.now() - startedAt}ms`,
-  )
+  const scan =
+    (args.gap == null && source.secret.kind === 'handcash'
+      ? await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
+      : null) ??
+    (hints ? await hintedScan(deriver, active.chain, hints, args, cache) : null) ??
+    (await walkScan(
+      deriver,
+      active.chain,
+      args,
+      { history: wocHistoryLookup(active.chain), items: gorillaItemsLookup(active.chain) },
+      undefined,
+      cache,
+    ))
   const saved = await updateImportedSource(source.id, { scan })
   if (!saved) throw new Error('That saved wallet was removed during the scan')
   return saved
-}
-
-/** A read-only scan pass. Each may refuse; the next, less precise one then runs. */
-export type ScanPath = 'utxoSet' | 'hinted' | 'walk'
-
-/**
- * The passes a scan tries, most precise first. A chosen gap always walks;
- * the HandCash account UTXO set only exists for a HandCash export; the hinted
- * pass needs migrate-page hints. The full walk always ends the list. Pure.
- */
-export function scanPaths(source: Pick<ImportedSource, 'secret'>, gap: number | undefined, hasHints: boolean): ScanPath[] {
-  if (gap != null) return ['walk']
-  const paths: ScanPath[] = []
-  if (source.secret.kind === 'handcash') paths.push('utxoSet')
-  if (hasHints) paths.push('hinted')
-  paths.push('walk')
-  return paths
 }
 
 async function walkScan(
@@ -204,10 +175,8 @@ export async function utxoSetScan(
   })
   await addMneeHoldings(holdings, verified.mneeAddresses)
   const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
-  const at = Date.now()
-  noteScanItemRead(args.sourceId, { scanAt: at, verified, read: items })
   return {
-    at,
+    at: Date.now(),
     complete: !stopped && items.failed === 0,
     checked: verified.addresses.length,
     addresses: verified.addresses,

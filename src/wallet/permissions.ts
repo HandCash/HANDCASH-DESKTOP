@@ -4,7 +4,6 @@ import {
   appDisplayName,
   normalizeAppHost,
 } from './appIdentity'
-import type { BridgeChannel } from './bridgeOrigin'
 import { brc100Contract } from '../contracts/brc100'
 import { storageRegistry } from '../storage/registry'
 import { canAutoProcessPayment, clearAutoPaySettings, reserveAutoPayPayment, type AutoPayReservation } from './autoPay'
@@ -67,8 +66,6 @@ export type ConnectedApp = {
   tokenAccess?: TokenAccess
   /** Granted with Connect Authorize — automatic plain-BSV internalizeAction. */
   acceptIncomingFunds?: boolean
-  /** `in-app`: connected in a Mobile app tab, so the loopback socket may not use it. */
-  connectedVia?: 'in-app'
 }
 
 export type PendingPermission = {
@@ -152,7 +149,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
         .filter((a) => a && typeof a.origin === 'string')
         .map((a) => ({
           origin: normalizeAppHost(a.origin),
-          name: appDisplayName(a.origin),
+          name: typeof a.name === 'string' && a.name ? a.name : appDisplayName(a.origin),
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
@@ -162,7 +159,6 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
               : a.acceptIncomingFunds === false
                 ? false
                 : undefined,
-          ...(a.connectedVia === 'in-app' ? { connectedVia: 'in-app' as const } : {}),
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -423,21 +419,12 @@ function ensureConnectedApp(origin: string | undefined): {
   return { idx: 0, apps: [row, ...found.apps], key: found.key }
 }
 
-/** The channel a connected app's grants are bound to; null when not connected. */
-export function connectedAppChannel(origin: string | undefined): BridgeChannel | null {
-  const { idx, apps } = findConnectedApp(origin)
-  if (idx < 0) return null
-  return apps[idx]!.connectedVia === 'in-app' ? 'in-app' : 'socket'
-}
-
-export function allowOrigin(origin: string | undefined, channel: BridgeChannel = 'socket'): void {
+export function allowOrigin(origin: string | undefined): void {
   const { idx, apps, key } = findConnectedApp(origin)
   const prior = idx >= 0 ? apps[idx] : undefined
   const existing = idx >= 0 ? apps.filter((_, i) => i !== idx) : apps
-  const connectedVia = prior ? prior.connectedVia : channel === 'in-app' ? 'in-app' : undefined
   writeConnected([
     {
-      ...(connectedVia ? { connectedVia } : {}),
       origin: prior?.origin ?? key,
       name: prior?.name ?? appDisplayName(key),
       connectedAt: prior?.connectedAt ?? Date.now(),
@@ -1702,7 +1689,6 @@ export function filterTokenOutputsForOrigin(
 export async function gateOriginAccess(
   origin: string | undefined,
   method: string,
-  channel: BridgeChannel = 'socket',
 ): Promise<'allow' | 'deny' | 'unauthenticated'> {
   if (isPublicMethod(method)) return 'allow'
 
@@ -1714,7 +1700,7 @@ export async function gateOriginAccess(
 
   const decision = await requestOriginPermission(origin, method)
   if (decision === 'allow') {
-    allowOrigin(origin, channel)
+    allowOrigin(origin)
     return 'allow'
   }
   return isConnectMethod(method) ? 'unauthenticated' : 'deny'

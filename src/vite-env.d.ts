@@ -39,7 +39,6 @@ type HttpRequestEvent = {
   headers: Record<string, string>
   body: string
   request_id: number
-  channel?: 'in-app'
 }
 
 type HttpResponseEvent = {

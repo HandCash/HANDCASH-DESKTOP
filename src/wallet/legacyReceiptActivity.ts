@@ -14,7 +14,7 @@ import {
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 import { noteJobTxids } from './activityJobIndex'
-import { noteCommittedItemLegs, scheduleActivityLedgerRefresh } from './activityLedger'
+import { scheduleActivityLedgerRefresh } from './activityLedger'
 import { contentUrlForOrigin } from './oneSatImport'
 import type { LegacyFundingReceipt } from './legacyScan'
 import type { Chain } from './vault'
@@ -57,8 +57,7 @@ export type MigratedItemReceipt = {
  *
  * A `groupId` (a wallet job's id) folds the whole run into one record. Its
  * legs are the wallet ledger's own: each migrate output carries the origin and
- * name it was filed with, and the job index names the run; until the ledger
- * re-reads, the same legs show from memory. Writing a stored
+ * name it was filed with, and the job index names the run. Writing a stored
  * row per item as well re-encoded the whole Activity store a hundred times per
  * transaction and, at thousands of items, pushed every older record out of it.
  */
@@ -70,11 +69,6 @@ export function recordMigratedItemActivity(
   const groupId = opts?.groupId?.trim()
   if (groupId) {
     noteJobTxids(groupId, items.map((item) => item.sweepTxid))
-    noteCommittedItemLegs(
-      items.flatMap((item) =>
-        item.sweepVout == null ? [] : [{ txid: item.sweepTxid, vout: item.sweepVout, origin: item.origin, name: item.name }],
-      ),
-    )
     scheduleActivityLedgerRefresh()
     return
   }

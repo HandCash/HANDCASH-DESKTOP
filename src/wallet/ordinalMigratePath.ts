@@ -37,8 +37,6 @@ export type OrdinalMigrateSkipReason =
   | 'runJig'
   /** Carries the phrase key's P2PKH inside a larger contract (Sigil, STAS, …). */
   | 'covenant'
-  /** Already spent on chain — usually by an earlier migrate of this wallet the list never saw land. */
-  | 'spent'
 
 export type OrdinalMigratePath =
   | { path: 'migrate'; satoshis: number }
@@ -132,7 +130,5 @@ export function describeOrdinalMigrateSkip(reason: OrdinalMigrateSkipReason): st
       return 'a RUN jig — only a RUN transaction can move it'
     case 'covenant':
       return 'held in a contract (Sigil, STAS or similar) this wallet cannot move'
-    case 'spent':
-      return 'already moved — this output is spent on chain'
   }
 }

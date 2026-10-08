@@ -67,29 +67,6 @@ export function withArcadeConflict(
   return { ...evidence, spentElsewhere: [...evidence.spentElsewhere, arcade.conflict] }
 }
 
-/**
- * What unlock does with a local outgoing transaction nothing is following:
- * one a fallback broadcaster accepted, so Arcade never pinned it. Only a
- * transaction Arcade has never seen and no explorer holds is re-posted;
- * Arcade's own verdicts keep their existing paths.
- */
-export type RescueStep =
-  | { kind: 'landed'; reason: string }
-  /** Arcade has it queued: pin it and watch it land. */
-  | { kind: 'follow'; status: string }
-  | { kind: 'repost'; reason: string }
-  | { kind: 'leave'; reason: string }
-
-export function decideRescue(arcade: LandingArcade, onChain: boolean | null): RescueStep {
-  if (arcade.kind === 'landed') return { kind: 'landed', reason: `Arcade ${arcade.status}` }
-  if (onChain === true) return { kind: 'landed', reason: 'on chain' }
-  if (arcade.kind === 'queued') return { kind: 'follow', status: arcade.status }
-  if (arcade.kind === 'rejected') return { kind: 'leave', reason: `Arcade rejected: ${arcade.reason}` }
-  if (arcade.kind === 'stalled') return { kind: 'leave', reason: `Arcade ${arcade.status}` }
-  if (onChain === false) return { kind: 'repost', reason: 'Arcade never saw it and no explorer holds it' }
-  return { kind: 'leave', reason: 'no explorer answered' }
-}
-
 export function decideLanding(facts: {
   arcade: LandingArcade
   elapsedMs: number

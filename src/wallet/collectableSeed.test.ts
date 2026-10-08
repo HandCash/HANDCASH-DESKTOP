@@ -97,30 +97,6 @@ describe('locally seeded collectables', () => {
     expect(after.map((c) => c.outpoint)).toEqual(expect.arrayContaining(tips.map((t) => t.outpoint)))
   })
 
-  it('paints an imported tip under the creator the index named when it was chosen', async () => {
-    const { noteIngestedItems, getCachedCollectables } = await import('./collectables')
-    const origin = `${'a7'.repeat(32)}_0`
-    const tip = `${'c'.repeat(64)}.0`
-    noteIngestedItems([
-      {
-        outpoint: tip,
-        chain: 'main',
-        origin,
-        name: 'Axe',
-        app: 'Ageless Republic',
-        mimeType: 'image/webp',
-        signer: '1LyNg9fwKcrAtifqBaCkuwRa5UmyV4MYv5',
-      },
-    ])
-    expect(getCachedCollectables().find((c) => c.outpoint === tip)).toMatchObject({
-      name: 'Axe',
-      app: 'Ageless Republic',
-      signer: '1LyNg9fwKcrAtifqBaCkuwRa5UmyV4MYv5',
-      proven: false,
-    })
-    expect(getCachedCollectables().find((c) => c.outpoint === tip)?.signerVerified).toBeUndefined()
-  })
-
   it('survives a basket read that does not list it yet', async () => {
     const { noteIngestedItem, listCollectables } = await import(
       './collectables'

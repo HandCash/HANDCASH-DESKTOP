@@ -5909,29 +5909,22 @@ button.payment-details-item-thumb-btn:hover {
   content: none;
 }
 
-/*
- * Only free corner: app badge and action badge own the bottom, verify the top
- * right. A circle for one digit; longer counts grow rightward into a pill that
- * stops 2px short of the top-right mark's slot.
- */
+/* Only free corner: app badge and action badge own the bottom, verify the top right. */
 .history-batch-count {
   position: absolute;
   left: calc(-1 * var(--hc-mark-outset, 4px));
   top: calc(-1 * var(--hc-mark-outset, 4px));
   z-index: 8;
   box-sizing: border-box;
-  width: auto;
+  width: var(--hc-mark-size, 16px);
   min-width: var(--hc-mark-size, 16px);
-  max-width: calc(100% + 2 * var(--hc-mark-outset, 4px) - var(--hc-mark-size, 16px) - 2px);
   height: var(--hc-mark-size, 16px);
-  padding: 0 2px;
+  padding: 0;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  white-space: nowrap;
   transform: none;
   border: 2px solid hsl(var(--background));
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--hc-accent);
   color: #0a120e;
   font-size: 0.62rem;
@@ -5943,12 +5936,6 @@ button.payment-details-item-thumb-btn:hover {
 
 html[data-aeon-mode='light'] .history-batch-count {
   color: #fff;
-}
-
-/* Four characters ("1.2k", "999k") tighten to stay inside the cap. */
-.history-batch-count[data-aeon-state='long'] {
-  font-size: 0.56rem;
-  letter-spacing: -0.04em;
 }
 
 .history-amount-block {

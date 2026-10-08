@@ -323,7 +323,6 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
-  /** Retired: older builds' per-address item resume position. No longer read; kept so wipe clears it. */
   phraseSweepCursor: defineStorage({
     key: 'handcash.brc100.phraseSweepItemCursor.v1',
     owner: 'chain-ingest',
@@ -343,14 +342,6 @@ export const storageRegistry = Object.freeze({
     owner: 'legacy-import',
     scope: 'device',
     version: 2,
-    retention: 'rebuildable',
-  }),
-  /** IndexedDB: the last Activity ledger read per account, painted at launch until the live read lands. */
-  activityLedger: defineStorage({
-    key: 'handcash-brc100-activity-ledger',
-    owner: 'activity',
-    scope: 'wallet',
-    version: 1,
     retention: 'rebuildable',
   }),
   listingAuthorizations: defineStorage({

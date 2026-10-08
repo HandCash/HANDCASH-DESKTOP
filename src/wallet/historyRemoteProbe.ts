@@ -1,5 +1,4 @@
 import { appendAppLog } from './appLog'
-import { ifMatchEtag } from './httpEtag'
 import { signedIdentityFetch } from './identityRequestAuth'
 
 /**
@@ -116,7 +115,7 @@ async function headOnce(rootKeyHex: string, url: string, accept: string, now: nu
   const length = res.headers.get('Content-Length')
   return {
     kind: 'present',
-    etag: ifMatchEtag(res.headers.get('ETag')),
+    etag: res.headers.get('ETag'),
     exportedAt: Number.isFinite(exported) && exported > 0 ? exported : null,
     bytes: length ? Number(length) : null,
     spendableSats: optionalInt(res, 'X-HandCash-Spendable-Sats'),

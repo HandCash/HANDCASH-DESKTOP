@@ -31,8 +31,6 @@ import {
 
 const KEY_BASE = storageRegistry.pendingMinerOutbox.key
 const MAX_ATOMIC_BYTES = 2 * 1024 * 1024
-/** Largest merged body that replaces a queued one; above it the queued body stays. */
-const MAX_REPLACE_BYTES = 256 * 1024
 
 export type PendingMinerSubmit = {
   txid: string
@@ -229,10 +227,6 @@ export function updatePendingMinerSubmitBody(
   const rows = load(owner)
   const row = rows.find((r) => r.txid === id)
   if (!row) return false
-  // Merged ancestry is local unconfirmed bodies and fetched proofs — the next
-  // retry rebuilds both. Persisting a large one only crowds the shared archive
-  // until it refuses, and a refused body lands inline in this queue.
-  if (atomic.length > MAX_REPLACE_BYTES && pendingAtomic(row, owner)) return true
   if (
     archiveSignedCheque(id, atomic, {
       flow: row.flow,
@@ -336,21 +330,6 @@ export async function flushPendingMinerOutbox(args?: {
     console.error('[minerOutbox] flush checkpoint refused; previous queue remains durable')
   }
   return accepted
-}
-
-/** Txids still queued, read without parsing their bodies. */
-export function pendingMinerSubmitTxids(owner?: BoundAccountKeyScope): Set<string> {
-  try {
-    const parsed = JSON.parse(durableGetItem(storageKey(owner)) || '[]') as unknown
-    if (!Array.isArray(parsed)) return new Set()
-    return new Set(
-      parsed
-        .map((row) => (typeof row?.txid === 'string' ? row.txid.trim().toLowerCase() : ''))
-        .filter((txid) => /^[0-9a-f]{64}$/.test(txid)),
-    )
-  } catch {
-    return new Set()
-  }
 }
 
 export function pendingMinerOutboxDepth(): number {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
+import { accountLocalKey } from './accountLocalKeys'
 
 /**
  * Destination change pays the fee for every collectable, so a large collection
@@ -13,18 +14,10 @@ const abortAction = vi.fn()
 const refreshFromChain = vi.fn()
 const stored = new Map<string, string>()
 
-const runSpend = vi.fn((fn: () => Promise<unknown>) => fn())
 vi.mock('./spendGuard', () => ({
-  runExclusiveSpend: (fn: () => Promise<unknown>) => runSpend(fn),
-  yieldToForegroundSpends: async () => 0,
+  runExclusiveSpend: (fn: () => Promise<unknown>) => fn(),
 }))
-vi.mock('./collectables', () => ({ noteIngestedItems: vi.fn() }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
-const waitForSpendRegionFree = vi.fn(async () => true)
-vi.mock('./walletCoordinator', () => ({
-  waitForSpendRegionFree: () => waitForSpendRegionFree(),
-  describeWalletCoordinator: () => ({ summary: 'active: recompose' }),
-}))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({
   refreshFromChain: (...a: unknown[]) => refreshFromChain(...a),
@@ -97,6 +90,7 @@ vi.mock('./legacyBeef', () => ({
     for (const op of outpoints) merged.mergeBeef(beefByTxid.get(op.split('.')[0] ?? '')!)
     return { ready: outpoints, beef: merged.toBinary(), failures: [] }
   },
+  withVisibleOnChainBeef: async <T,>(fn: () => Promise<T>) => fn(),
 }))
 vi.mock('./oneSatProvenance', () => ({
   buildInternalizeCustomInstructions: () => '{}',
@@ -111,41 +105,6 @@ describe('migrateChosenPhraseItems stops', () => {
     createAction.mockReset()
     abortAction.mockReset()
     refreshFromChain.mockReset()
-    runSpend.mockReset()
-    runSpend.mockImplementation((fn) => fn())
-  })
-
-  /** The region gave up on the send; `late` is the work, still running. */
-  const abandoned = (late: Promise<unknown>) =>
-    Object.assign(new Error('The send stopped responding. Nothing further was broadcast — try again.'), {
-      code: 'SPEND_REGION_ABANDONED',
-      late,
-    })
-
-  it('records an abandoned bundle that broadcast late, and never rebuilds over its tips', async () => {
-    const lateTxid = 'cd'.repeat(32)
-    runSpend.mockImplementationOnce(() =>
-      Promise.reject(abandoned(Promise.resolve({ txid: lateTxid, propagation: 'accepted' }))),
-    )
-    const { migrateChosenPhraseItems } = await import('./phraseSweep')
-    const run = await migrateChosenPhraseItems({ items: chosen })
-
-    expect(run.stopped).toBeNull()
-    expect([...run.results.values()]).toEqual([
-      { kind: 'moved', txid: lateTxid },
-      { kind: 'moved', txid: lateTxid },
-    ])
-    expect(runSpend).toHaveBeenCalledTimes(1)
-  })
-
-  it('stops with every tip kept when an abandoned bundle never reports back', async () => {
-    runSpend.mockImplementationOnce(() => Promise.reject(abandoned(Promise.resolve(undefined))))
-    const { migrateChosenPhraseItems } = await import('./phraseSweep')
-    const run = await migrateChosenPhraseItems({ items: chosen })
-
-    expect(run.stopped).toBe('abandoned')
-    expect([...run.results.values()].map((r) => r.kind)).toEqual(['deferred', 'deferred'])
-    expect(runSpend).toHaveBeenCalledTimes(1)
   })
 
   it('stops on insufficient funds after one attempt and answers the rest funds', async () => {
@@ -161,43 +120,6 @@ describe('migrateChosenPhraseItems stops', () => {
     expect([...run.results.values()].map((r) => r.kind)).toEqual(['funds', 'funds'])
     // One attempt for the shared transaction, then stop — not once per tip.
     expect(createAction).toHaveBeenCalledTimes(1)
-  })
-
-  it('waits for a busy wallet and retries the bundle whole, then stops with every tip kept', async () => {
-    const busy = new Error('Wallet is busy (active: recompose). Nothing was sent — try again in a moment.')
-    busy.name = 'WalletCoordinatorAcquireTimeoutError'
-    createAction.mockRejectedValue(busy)
-    const { migrateChosenPhraseItems } = await import('./phraseSweep')
-    const run = await migrateChosenPhraseItems({ items: chosen })
-
-    expect(run.stopped).toBe('busy')
-    expect(waitForSpendRegionFree).toHaveBeenCalled()
-    expect([...run.results.values()].map((r) => r.kind)).toEqual(['deferred', 'deferred'])
-    // Never split: every attempt carried both tips.
-    expect(createAction.mock.calls.length).toBeGreaterThan(1)
-    for (const [args] of createAction.mock.calls) expect((args as { inputs: unknown[] }).inputs).toHaveLength(2)
-  })
-
-  it('leaves out tips the chain already shows spent and sends the rest whole, no halving', async () => {
-    // An earlier migrate of this wallet moved TIPS[0] but the list never saw it
-    // land. The certainty gate names it; the run must drop it as `spent`, not
-    // halve down to it and fail it, which kept every later sweep at zero.
-    const refusal = Object.assign(new Error('A coin this action spends was already spent. Nothing was sent.'), {
-      code: 'INPUTS_UNVERIFIED',
-      reason: 'input-spent',
-      dead: [`${TIPS[0]!.txid}.0`],
-    })
-    createAction
-      .mockRejectedValueOnce(refusal)
-      .mockRejectedValueOnce(new Error('Insufficient funds in the available inputs to cover the cost (1 more satoshis are needed, for a total of 1)'))
-    const { migrateChosenPhraseItems } = await import('./phraseSweep')
-    const run = await migrateChosenPhraseItems({ items: chosen })
-
-    expect(run.results.get(TIPS[0]!.outpoint)).toMatchObject({ kind: 'skipped', reason: 'spent' })
-    expect(run.results.get(TIPS[1]!.outpoint)?.kind).toBe('funds')
-    expect(createAction).toHaveBeenCalledTimes(2)
-    expect((createAction.mock.calls[0]![0] as { inputs: unknown[] }).inputs).toHaveLength(2)
-    expect((createAction.mock.calls[1]![0] as { inputs: unknown[] }).inputs).toHaveLength(1)
   })
 
   it('aborts the action when signing fails, so no phantom item is left listed', async () => {
@@ -226,5 +148,38 @@ describe('migrateChosenPhraseItems stops', () => {
 
     expect(run.results.get(TIPS[0]!.outpoint)).toMatchObject({ kind: 'failed', message: expect.stringContaining('reordered') })
     expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-2' })
+  })
+})
+
+describe('pending per-address import cursor', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    stored.clear()
+  })
+
+  it('removes a forgotten cursor and immediately clears Activity subscribers', async () => {
+    stored.set(
+      accountLocalKey('handcash.brc100.phraseSweepItemCursor.v1'),
+      JSON.stringify({
+        sourceAddress: PHRASE_KEY.toAddress(),
+        destIdentityKey: '02'.repeat(33),
+        offset: 465,
+        moved: 465,
+        failed: 0,
+      }),
+    )
+    const {
+      clearPhraseItemMigrateCursor,
+      peekPhraseItemMigrateCursor,
+      subscribePhraseItemMigrateCursor,
+    } = await import('./phraseSweep')
+    const seen: unknown[] = []
+    const unsubscribe = subscribePhraseItemMigrateCursor((value) => seen.push(value))
+
+    clearPhraseItemMigrateCursor()
+
+    expect(peekPhraseItemMigrateCursor()).toBeNull()
+    expect(seen.at(-1)).toBeNull()
+    unsubscribe()
   })
 })

@@ -10,7 +10,6 @@ import { storageRegistry } from '../storage/registry'
  * Announced receives are durable: unlock must not re-toast "Item received /
  * Authenticity verified" for foxes that were proven days ago.
  */
-import { jobOfTxid } from './activityJobIndex'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   accountLocalKey,
@@ -149,13 +148,6 @@ export function announceItemsReceived(
     const key = normalize(op)
     const txid = key.split('.')[0] ?? ''
     const proven = isItemProven(op) || verifiedThisSession.has(key)
-
-    // An import's own migrate: its job record already shows the item, and a
-    // receive row per tip is what split one import into hundreds of rows.
-    if (jobOfTxid(txid)) {
-      noteItemReceived(op, owner)
-      continue
-    }
 
     // Activity is the durable custody projection, not notification state.
     // Ensure the receive row exists, even when a prior toast consumed the

@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { Beef, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { Beef, MerklePath, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 import { IMPORT_CHUNK } from '../machines/importQueueMachine'
 import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
-  itemsWithinPostBudget,
-  migrateInputBeef,
+  itemsWithinSourceBudget,
   migratePackage,
-  migrateRetryBody,
-  migrateTipPostBytes,
+  migrateSourceCosts,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
 
@@ -75,53 +73,29 @@ describe('bundle ceiling', () => {
   })
 })
 
-describe('itemsWithinPostBudget', () => {
-  const bytes = (sizes: Record<string, number>) => (item: string) => sizes[item] ?? 0
+describe('itemsWithinSourceBudget', () => {
+  const cost = (bytes: Record<string, number>) => (item: string) =>
+    item.split('+').map((txid) => ({ txid, bytes: bytes[txid] ?? 0 }))
 
-  it('takes the whole chunk when tips are plain P2PKH', () => {
-    const items = Array.from({ length: MAX_ITEMS_PER_MIGRATE_TX }, (_, i) => `t${i}`)
-    expect(itemsWithinPostBudget(items, MAX_ITEMS_PER_MIGRATE_TX, () => migrateTipPostBytes(25))).toBe(MAX_ITEMS_PER_MIGRATE_TX)
+  it('takes the whole chunk when sources are small', () => {
+    const items = Array.from({ length: 100 }, (_, i) => `t${i}`)
+    expect(itemsWithinSourceBudget(items, 100, () => [{ txid: 'x', bytes: 1 }], 10)).toBe(100)
   })
 
-  it('stops before the tip that would overflow the post', () => {
-    expect(itemsWithinPostBudget(['a', 'b', 'c'], 100, bytes({ a: 40, b: 40, c: 40 }), 100)).toBe(2)
+  it('stops before the tip that would overflow the package', () => {
+    expect(itemsWithinSourceBudget(['a', 'b', 'c'], 100, cost({ a: 40, b: 40, c: 40 }), 100)).toBe(2)
+  })
+
+  it('counts a shared source once', () => {
+    expect(itemsWithinSourceBudget(['a+s', 'b+s', 'c+s'], 100, cost({ a: 10, b: 10, c: 10, s: 60 }), 100)).toBe(3)
   })
 
   it('still moves one oversized tip alone', () => {
-    expect(itemsWithinPostBudget(['big', 'b'], 100, bytes({ big: 1_000, b: 1 }), 100)).toBe(1)
+    expect(itemsWithinSourceBudget(['big', 'b'], 100, cost({ big: 1_000, b: 1 }), 100)).toBe(1)
   })
 
   it('honours a halved bundle size', () => {
-    expect(itemsWithinPostBudget(['a', 'b', 'c', 'd'], 2, bytes({}), 100)).toBe(2)
-  })
-})
-
-describe('migrateTipPostBytes', () => {
-  const inscribed = (artBytes: number) =>
-    LockingScript.fromBinary([...new P2PKH().lock(KEY.toAddress()).toBinary(), 0x00, 0x63, 0x4e, ...le32(artBytes), ...new Array(artBytes).fill(7), 0x68])
-
-  function le32(n: number): number[] {
-    return [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]
-  }
-
-  it('bounds what Arcade receives: the spent scripts, never the parents that minted them', async () => {
-    const art = [40_000, 300, 70_000]
-    const mint = new Transaction()
-    for (const size of art) mint.addOutput({ satoshis: 1, lockingScript: inscribed(size) })
-    mint.addOutput({ satoshis: 5_000, lockingScript: inscribed(500_000) })
-    const migrate = new Transaction()
-    art.forEach((_, vout) =>
-      migrate.addInput({ sourceTransaction: mint, sourceOutputIndex: vout, unlockingScriptTemplate: new P2PKH().unlock(KEY) }),
-    )
-    art.forEach(() => migrate.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(KEY.toAddress()) }))
-    await migrate.sign()
-
-    const framing = 4 + 6 + 1 + 1 + 4
-    const ef = migrate.toEF().length - framing
-    const estimate = art.reduce((sum, _, vout) => sum + migrateTipPostBytes(mint.outputs[vout]!.lockingScript.toBinary().length), 0)
-    expect(estimate).toBeGreaterThanOrEqual(ef)
-    expect(estimate - ef).toBeLessThanOrEqual(art.length * 2)
-    expect(estimate).toBeLessThan(mint.toBinary().length)
+    expect(itemsWithinSourceBudget(['a', 'b', 'c', 'd'], 2, cost({}), 100)).toBe(2)
   })
 })
 
@@ -140,6 +114,27 @@ function mined(tx: Transaction, height: number): Transaction {
   return tx
 }
 
+describe('migrateSourceCosts', () => {
+  it('charges a mined source its body and proof, and an unmined one its parents too', () => {
+    const parent = mined(deposit(1), 800_000)
+    const minedTip = mined(deposit(2), 800_001)
+    const mempoolTip = deposit(3, parent)
+    const beef = new Beef()
+    beef.mergeTransaction(minedTip)
+    beef.mergeTransaction(mempoolTip)
+    const costOf = migrateSourceCosts(beef.toBinary())
+
+    const own = costOf(minedTip.id('hex'))
+    expect(own).toEqual([{ txid: minedTip.id('hex'), bytes: minedTip.toBinary().length + minedTip.merklePath!.toBinary().length }])
+    expect(costOf(mempoolTip.id('hex')).map((c) => c.txid)).toEqual([mempoolTip.id('hex'), parent.id('hex')])
+    expect(costOf(mempoolTip.id('hex'))[1]!.bytes).toBeGreaterThan(parent.toBinary().length)
+  })
+
+  it('charges nothing it cannot read, so an unreadable package never blocks a bundle', () => {
+    expect(migrateSourceCosts([1, 2, 3])('ab'.repeat(32))).toEqual([{ txid: 'ab'.repeat(32), bytes: 0 }])
+  })
+})
+
 describe('migratePackage', () => {
   it('ships the signed transaction with only the sources it spends', () => {
     const spent = mined(deposit(10), 800_010)
@@ -154,71 +149,5 @@ describe('migratePackage', () => {
     expect(sent.atomicTxid).toBe(sweep.id('hex'))
     expect(sent.txs.map((t) => t.txid).sort()).toEqual([spent.id('hex'), sweep.id('hex')].sort())
     expect(sent.isValid()).toBe(true)
-  })
-})
-
-describe('migrateInputBeef', () => {
-  function chunkOf(...txs: Transaction[]): Beef {
-    const chunk = new Beef()
-    for (const tx of txs) chunk.mergeTransaction(tx)
-    return Beef.fromBinary(chunk.toBinary())
-  }
-
-  it('hands a bundle only the sources it spends, with their proofs', () => {
-    const spent = mined(deposit(30), 800_030)
-    const other = mined(deposit(31), 800_031)
-    const chunk = chunkOf(spent, other)
-    const whole = chunk.toBinary()
-
-    const scoped = Beef.fromBinary(migrateInputBeef(chunk, [spent.id('hex')], whole))
-    expect(scoped.txs.map((t) => t.txid)).toEqual([spent.id('hex')])
-    expect(scoped.findBump(spent.id('hex'))?.blockHeight).toBe(800_030)
-    expect(scoped.isValid(false)).toBe(true)
-  })
-
-  it('brings an unmined source the ancestry that proves it, parents first', () => {
-    const parent = mined(deposit(32), 800_032)
-    const pending = deposit(33, parent)
-    const other = mined(deposit(34), 800_034)
-    const chunk = chunkOf(pending, other)
-
-    const scoped = Beef.fromBinary(migrateInputBeef(chunk, [pending.id('hex')], chunk.toBinary()))
-    expect(scoped.txs.map((t) => t.txid)).toEqual([parent.id('hex'), pending.id('hex')])
-    expect(scoped.isValid(false)).toBe(true)
-    expect(scoped.findAtomicTransaction(pending.id('hex'))?.inputs[0]?.sourceTransaction?.id('hex')).toBe(parent.id('hex'))
-  })
-
-  it('sends the whole chunk rather than a package missing a source', () => {
-    const chunk = chunkOf(mined(deposit(35), 800_035))
-    const whole = chunk.toBinary()
-    expect(migrateInputBeef(chunk, ['ab'.repeat(32)], whole)).toBe(whole)
-  })
-})
-
-describe('migrateRetryBody', () => {
-  it('keeps the signed transaction and unmined ancestry whole, and names mined sources by txid', () => {
-    const art = mined(deposit(20), 800_020)
-    art.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(KEY.toAddress()) })
-    const minedSource = mined(deposit(21), 800_021)
-    const pending = deposit(22, minedSource)
-    const sweep = deposit(23, pending)
-    sweep.addInput({ sourceTransaction: art, sourceOutputIndex: 0, unlockingScript: new P2PKH().lock(KEY.toAddress()) })
-    const packed = new Beef()
-    for (const tx of [art, minedSource, pending, sweep]) packed.mergeTransaction(tx)
-    const sent = migratePackage(packed, sweep.id('hex'))
-
-    const body = migrateRetryBody(sent, sweep.id('hex'))
-    expect(body.length).toBeLessThan(sent.length)
-    const kept = Beef.fromBinary(body)
-    expect(kept.atomicTxid).toBe(sweep.id('hex'))
-    expect(kept.findTxid(sweep.id('hex'))?.tx?.id('hex')).toBe(sweep.id('hex'))
-    expect(kept.findTxid(pending.id('hex'))?.tx?.id('hex')).toBe(pending.id('hex'))
-    expect(kept.findTxid(art.id('hex'))?.isTxidOnly).toBe(true)
-    expect(kept.findTxid(minedSource.id('hex'))?.isTxidOnly).toBe(true)
-    expect(kept.bumps).toHaveLength(0)
-  })
-
-  it('returns the package itself when it cannot be read', () => {
-    expect(migrateRetryBody([1, 2, 3], 'ab'.repeat(32))).toEqual([1, 2, 3])
   })
 })

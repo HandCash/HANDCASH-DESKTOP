@@ -241,10 +241,8 @@ function installPostBeefPreferFast(services: Services): void {
     if (typeof s.postBeefUntilSuccessSoftTimeoutMs === 'number') {
       s.postBeefUntilSuccessSoftTimeoutMs = isPhoneShell() ? 4_000 : 3_000
     }
-    // The toolbox adds 50ms per KB to the base. Capped at 6–8s, a 1–3MB import
-    // package timed Arcade out mid-upload and the round settled on a fallback.
     if (typeof s.postBeefUntilSuccessSoftTimeoutMaxMs === 'number') {
-      s.postBeefUntilSuccessSoftTimeoutMaxMs = 60_000
+      s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 8_000 : 6_000
     }
   } catch (err) {
     console.warn('[postBeef] could not configure Arcade broadcasters', err)

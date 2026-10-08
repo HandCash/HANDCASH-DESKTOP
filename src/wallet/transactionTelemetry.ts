@@ -39,8 +39,6 @@ export type TransactionFlow =
   | 'brc100_action'
   | 'identity_publish'
   | 'payment'
-  /** Items and tokens moved from a saved legacy source into this wallet. */
-  | 'legacy_import'
 
 export type TransactionStage =
   | 'requested'
