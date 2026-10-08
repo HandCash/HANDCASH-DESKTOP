@@ -57,7 +57,10 @@ describe('custody journal backup', () => {
   it('seals so only this identity can open it', async () => {
     const { backup } = await device()
     const sealed = await backup.sealCustodyJournal(active.rootKeyHex, identityKey, 'r', [out(1)])
-    expect(JSON.stringify(sealed)).not.toContain('p1')
+    // Base64 ciphertext may contain any short token by chance; the plaintext
+    // fields cannot survive sealing.
+    expect(JSON.stringify(sealed)).not.toContain('wallet payment')
+    expect(JSON.stringify(sealed)).not.toContain(txid(1))
     expect(await backup.openCustodyJournal(active.rootKeyHex, identityKey, sealed)).toEqual([out(1)])
     const other = PrivateKey.fromRandom()
     await expect(
