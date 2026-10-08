@@ -81,6 +81,8 @@ import { getActiveWallet } from './session'
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
  *   reciprocal recovery is refused so compromise of one device does not expose both wallets.
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.
+ *   Spends wait out the history decision; the funding pass after an unchanged
+ *   localState is ordinary chainIngest, and only a replaced one stays fenced.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
  *   Each change lock is derived from a random BRC-29 prefix/suffix that the
@@ -429,19 +431,16 @@ export const HISTORY_EMPTY_GUARD_MODULE = "historyEmptyGuard.ts" as const;
 export type LocalToolboxState = {
   spendableSats: number;
   defaultOutputCount: number;
-  oneSatOutputCount: number;
-  /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
-  bsv21OutputCount: number;
   actionCount: number;
   /** True only when there is nothing worth restoring/pushing as history. */
   looksEmpty: boolean;
 };
 
-async function countOutputs(basket: string): Promise<number> {
-  const active = getActiveWallet();
-  if (!active) return 0;
+type ToolboxWallet = NonNullable<ReturnType<typeof getActiveWallet>>["wallet"];
+
+async function countOutputs(wallet: ToolboxWallet, basket: string): Promise<number> {
   try {
-    const result = await active.wallet.listOutputs({ basket, limit: 1 });
+    const result = await wallet.listOutputs({ basket, limit: 1 });
     if (Number.isFinite(result.totalOutputs))
       return Math.max(0, Math.trunc(result.totalOutputs));
     return result.outputs?.length ?? 0;
@@ -450,11 +449,9 @@ async function countOutputs(basket: string): Promise<number> {
   }
 }
 
-async function countActions(): Promise<number> {
-  const active = getActiveWallet();
-  if (!active) return 0;
+async function countActions(wallet: ToolboxWallet): Promise<number> {
   try {
-    const result = await active.wallet.listActions({ labels: [], limit: 1 });
+    const result = await wallet.listActions({ labels: [], limit: 1 });
     const total = (result as { totalActions?: number }).totalActions;
     if (Number.isFinite(total)) return Math.max(0, Math.trunc(total!));
     return (result as { actions?: unknown[] }).actions?.length ?? 0;
@@ -470,43 +467,95 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     return {
       spendableSats: 0,
       defaultOutputCount: 0,
-      oneSatOutputCount: 0,
-      bsv21OutputCount: 0,
       actionCount: 0,
       looksEmpty: true,
     };
   }
 
-  const [
-    spendableSats,
-    defaultOutputCount,
-    oneSatOutputCount,
-    bsv21OutputCount,
-    actionCount,
-  ] = await Promise.all([
-    fetchBalanceSats(active.wallet).catch(() => 0),
-    countOutputs("default"),
-    countOutputs("1sat"),
-    countOutputs("bsv21"),
-    countActions(),
-  ]);
-
   // Item/token outputs from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must
-  // not block empty-local recovery of spendable balance + TX history.
+  // not block empty-local recovery of spendable balance + TX history, so
+  // baskets `1sat` / `bsv21` are never read here (thousands of fat rows).
+  const [spendableSats, defaultOutputCount, actionCount] = await Promise.all([
+    fetchBalanceSats(active.wallet).catch(() => 0),
+    countOutputs(active.wallet, "default"),
+    countActions(active.wallet),
+  ]);
+
   const looksEmpty =
     spendableSats <= 0 && defaultOutputCount <= 0 && actionCount <= 0;
 
   return {
     spendableSats,
     defaultOutputCount,
-    oneSatOutputCount,
-    bsv21OutputCount,
     actionCount,
     looksEmpty,
   };
 }
 
+/** The statuses `listActions` reports — the actions `countActions` counts. */
+const LISTED_ACTION_STATUSES = ["completed", "unprocessed", "sending", "unproven", "unsigned", "nosend", "nonfinal"];
+
+type RowProbeStorage = {
+  getAuth?: () => Promise<{ userId?: number }>;
+  runAsStorageProvider?: <T>(fn: (sp: {
+    findOutputBaskets(args: unknown): Promise<Array<{ basketId: number }>>;
+    findOutputs(args: unknown): Promise<unknown[]>;
+    findTransactions(args: unknown): Promise<unknown[]>;
+  }) => Promise<T>) => Promise<T>;
+};
+
+/**
+ * Whether storage holds a spendable default output or a listed action, read
+ * as one indexed row each. The toolbox's `limit: 1` lists count every row
+ * once one exists, deserializing each transaction's raw tx and input BEEF; on
+ * an item wallet that walk ran ~160s inside the recompose region every spend
+ * waits on. Null when storage cannot be reached directly.
+ */
+async function storageHoldsHistory(wallet: ToolboxWallet): Promise<boolean | null> {
+  const storage = (wallet as unknown as { storage?: RowProbeStorage }).storage;
+  if (typeof storage?.runAsStorageProvider !== "function" || typeof storage.getAuth !== "function") return null;
+  try {
+    const { userId } = await storage.getAuth();
+    if (typeof userId !== "number") return null;
+    return await storage.runAsStorageProvider(async (sp) => {
+      const [basket] = await sp.findOutputBaskets({ partial: { userId, name: "default" } });
+      if (basket) {
+        const outputs = await sp.findOutputs({
+          partial: { userId, basketId: basket.basketId, spendable: true },
+          noScript: true,
+          paged: { limit: 1 },
+        });
+        if (outputs.length > 0) return true;
+      }
+      const actions = await sp.findTransactions({
+        partial: { userId },
+        status: LISTED_ACTION_STATUSES,
+        noRawTx: true,
+        paged: { limit: 1 },
+      });
+      return actions.length > 0;
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Same verdict as `inspectLocalToolboxState().looksEmpty`, stopping at the first sign of history. */
 export async function localToolboxStateLooksEmpty(): Promise<boolean> {
-  return (await inspectLocalToolboxState()).looksEmpty;
+  const active = getActiveWallet();
+  if (!active) return true;
+  const started = Date.now();
+  try {
+    const holds = await storageHoldsHistory(active.wallet);
+    if (holds === true) return false;
+    if (holds === null) {
+      if ((await countOutputs(active.wallet, "default")) > 0) return false;
+      if ((await countActions(active.wallet)) > 0) return false;
+    }
+    return (await fetchBalanceSats(active.wallet).catch(() => 0)) <= 0;
+  } finally {
+    const ms = Date.now() - started;
+    if (ms >= 250) console.info(`[layers] empty-check done ${ms}ms`);
+  }
 }

@@ -26,7 +26,8 @@ vi.mock('./identityRequestAuth', () => ({
     }
     host.gets += 1
     if (host.body == null) return new Response('{}', { status: 404 })
-    return new Response(host.body, { status: 200, headers: { ETag: `"${host.etag}"` } })
+    // The edge weakens the ETag of a compressed GET.
+    return new Response(host.body, { status: 200, headers: { ETag: `W/"${host.etag}"` } })
   },
 }))
 vi.mock('./historyBackupPrefs', () => ({ resolveHistoryBackupBaseUrl: () => 'https://box.test' }))

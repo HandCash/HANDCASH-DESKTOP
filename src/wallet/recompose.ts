@@ -17,7 +17,7 @@ import { getActiveWallet } from './session'
  * History failure does not skip chain; chain failure does not roll back history.
  */
 import { relistCollectablesAfterLocalStateReplace } from './collectables'
-import { refreshFromChainExclusive } from './chainIngest'
+import { refreshFromChain, refreshFromChainExclusive } from './chainIngest'
 import {
   isRecomposeCoordinatorActive,
   runRecompose,
@@ -35,6 +35,7 @@ import {
   type WalletRuntime,
   type WalletRuntimeId,
 } from './walletRuntime'
+import { inUiPhase } from './uiPhase'
 import { yieldToUi } from './yieldToUi'
 
 export type RecomposeHistoryMode = 'auto' | 'skip' | 'forceCloud'
@@ -97,7 +98,7 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
     return inFlight.promise
   }
 
-  const promise = runRecompose(() => runRecomposeBody(opts, runtime))
+  const promise = runRecomposeBody(opts, runtime)
     .then(
       (result) =>
         disposedMidFlight(result.historyError) || disposedMidFlight(result.chainError)
@@ -148,14 +149,74 @@ async function rerunOnReplacement(
   return recomposeWallet(opts)
 }
 
+type HistoryStep = Pick<RecomposeResult, 'history' | 'historyError'> & { localStateWasReplaced: boolean }
+type ChainStep = Pick<RecomposeResult, 'spendableSats' | 'chainError'>
+
+const NO_CHAIN: ChainStep = { spendableSats: null, chainError: null }
+
 async function runRecomposeBody(
   opts: RecomposeOpts,
   runtime: WalletRuntime | null,
 ): Promise<RecomposeResult> {
   if (runtime) assertRuntimeCurrent(runtime)
   const reason = opts.reason ?? 'recompose'
-  const historyMode = opts.history ?? 'auto'
   const runChain = opts.chain !== false
+
+  // The recompose region excludes every spend. A replaced localState stays
+  // fenced until chain has reconciled it and Collect has relisted it. An
+  // unchanged one is fenced only for the history decision: its funding pass
+  // is ordinary chain ingest, which a spend runs beside — on a large wallet
+  // that pass takes minutes, and a waiting payment or import must not.
+  const fenced = await runRecompose(async () => {
+    const step = await recomposeHistory(opts, runtime, reason)
+    if (!step.localStateWasReplaced) return { step, chain: null }
+    const chain = runChain ? await recomposeChain(runtime, reason, 'fenced') : NO_CHAIN
+    await yieldToUi()
+    if (runtime) assertRuntimeCurrent(runtime)
+    await inUiPhase('recompose-relist', () => relistCollectablesAfterLocalStateReplace())
+    return { step, chain }
+  })
+  const { history, historyError } = fenced.step
+  const { spendableSats, chainError } =
+    fenced.chain ?? (runChain ? await recomposeChain(runtime, reason, 'shared') : NO_CHAIN)
+
+  try {
+    const { appendAppLog } = await import('./appLog')
+    appendAppLog(
+      'info',
+      `[recompose] ${reason}: history=${history} sats=${spendableSats ?? 'n/a'}`,
+    )
+  } catch {
+    /* ignore */
+  }
+
+  if (spendableSats != null && spendableSats > 0) {
+    try {
+      // Do not inspect all Toolbox baskets/actions again on unlock. The
+      // balance is already known, and backup push/restore refreshes the exact
+      // action count. Retaining the persisted action baseline keeps the
+      // thin-history guard fail-closed without redundant IndexedDB reads.
+      const {
+        getHistoryBackupPrefs,
+        noteSpendableHighWater,
+      } = await import('./historyBackupPrefs')
+      const priorActions = getHistoryBackupPrefs().highWaterActionCount ?? 0
+      noteSpendableHighWater(spendableSats, priorActions)
+    } catch {
+      /* high-water best-effort */
+    }
+  }
+
+  if (runtime) scheduleDerivedChangePass(runtime)
+  return { history, historyError, spendableSats, chainError }
+}
+
+async function recomposeHistory(
+  opts: RecomposeOpts,
+  runtime: WalletRuntime | null,
+  reason: string,
+): Promise<HistoryStep> {
+  const historyMode = opts.history ?? 'auto'
   const password = opts.password ?? sessionBackupCredential()
   if (password) setSessionBackupPassword(password)
 
@@ -185,9 +246,11 @@ async function runRecomposeBody(
     } else {
       try {
         // allowEmptyPull derived inside autoPush from reason via historyEmptyGuard.
-        const sync = await autoPushHistoryBackupIfConfigured(password, {
-          reason: historyMode === 'forceCloud' ? 'recompose' : reason,
-        })
+        const sync = await inUiPhase('recompose-history', () =>
+          autoPushHistoryBackupIfConfigured(password, {
+            reason: historyMode === 'forceCloud' ? 'recompose' : reason,
+          }),
+        )
         if (runtime) assertRuntimeCurrent(runtime)
         localStateWasReplaced = sync.pulled
         if (sync.pulled || !sync.skipReason) {
@@ -233,77 +296,45 @@ async function runRecomposeBody(
   }
 
   await yieldToUi()
+  return { history, historyError, localStateWasReplaced }
+}
 
-  let spendableSats: number | null = null
-  let chainError: string | null = null
-  if (runChain) {
-    try {
-      // Recompose is the unlock / restore critical path. Recover spendable
-      // legacy funding here, but leave ordinal discovery and AtomicBEEF
-      // internalization to the first background chain pass (or Refresh).
-      // Large item wallets otherwise hold the coordinator while several fat
-      // BEEFs synchronously parse on the renderer thread.
-      // When a permission prompt is already waiting, funding-only still runs
-      // so Pay has coins, but ingest aborts early via shouldYield checks.
-      spendableSats = (await refreshFromChainExclusive({
-        forceReview: false,
-        announceReceive: false,
-        audit: false,
-        fundingOnly: true,
-      })).balanceSats
-      if (runtime) assertRuntimeCurrent(runtime)
-      if (spendableSats == null) {
-        const active = getActiveWallet()
-        spendableSats = active ? await fetchBalanceSats(active.wallet) : 0
-      }
-    } catch (err) {
-      chainError = err instanceof Error ? err.message : String(err)
-      try {
-        const { appendAppLog } = await import('./appLog')
-        appendAppLog('warn', `[recompose] chain failed (${reason}): ${chainError}`)
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  await yieldToUi()
-
-  if (localStateWasReplaced) {
-    if (runtime) assertRuntimeCurrent(runtime)
-    await relistCollectablesAfterLocalStateReplace()
-  }
-
+/**
+ * Recover spendable legacy funding, leaving ordinal discovery and AtomicBEEF
+ * internalization to the first background chain pass (or Refresh): large item
+ * wallets would otherwise parse several fat BEEFs on the renderer here. When a
+ * permission prompt is already waiting the pass still runs so Pay has coins,
+ * but ingest aborts early via its shouldYield checks.
+ *
+ * `fenced` runs inside the recompose region; `shared` takes the chain ingest
+ * region like any Refresh.
+ */
+async function recomposeChain(
+  runtime: WalletRuntime | null,
+  reason: string,
+  region: 'fenced' | 'shared',
+): Promise<ChainStep> {
+  const pass = { forceReview: false, announceReceive: false, audit: false, fundingOnly: true }
   try {
-    const { appendAppLog } = await import('./appLog')
-    appendAppLog(
-      'info',
-      `[recompose] ${reason}: history=${history} sats=${spendableSats ?? 'n/a'}`,
+    let spendableSats = await inUiPhase('recompose-chain', async () =>
+      region === 'fenced' ? (await refreshFromChainExclusive(pass)).balanceSats : refreshFromChain(pass),
     )
-  } catch {
-    /* ignore */
-  }
-
-  if (spendableSats != null && spendableSats > 0) {
-    try {
-      // Do not inspect all Toolbox baskets/actions again while recompose still
-      // owns the coordinator. The balance is already known, and backup
-      // push/restore refreshes the exact action count. Retaining the persisted
-      // action baseline keeps the thin-history guard fail-closed without five
-      // redundant IndexedDB reads on every unlock.
-      const {
-        getHistoryBackupPrefs,
-        noteSpendableHighWater,
-      } = await import('./historyBackupPrefs')
-      const priorActions = getHistoryBackupPrefs().highWaterActionCount ?? 0
-      noteSpendableHighWater(spendableSats, priorActions)
-    } catch {
-      /* high-water best-effort */
+    if (runtime) assertRuntimeCurrent(runtime)
+    if (spendableSats == null) {
+      const active = getActiveWallet()
+      spendableSats = active ? await inUiPhase('recompose-balance', () => fetchBalanceSats(active.wallet)) : 0
     }
+    return { spendableSats, chainError: null }
+  } catch (err) {
+    const chainError = err instanceof Error ? err.message : String(err)
+    try {
+      const { appendAppLog } = await import('./appLog')
+      appendAppLog('warn', `[recompose] chain failed (${reason}): ${chainError}`)
+    } catch {
+      /* ignore */
+    }
+    return { spendableSats: null, chainError }
   }
-
-  if (runtime) scheduleDerivedChangePass(runtime)
-  return { history, historyError, spendableSats, chainError }
 }
 
 const DERIVED_PASS_YIELD_MS = 2_000
@@ -325,21 +356,21 @@ function scheduleDerivedChangePass(runtime: WalletRuntime): void {
       }
       if (!runtimeIsCurrent(runtime)) return
       const { syncCustodyJournal } = await import('./custodyJournalBackup')
-      await syncCustodyJournal(runtime.instance, 'recompose')
+      await inUiPhase('derived-journal', () => syncCustodyJournal(runtime.instance, 'recompose'))
       if (!runtimeIsCurrent(runtime)) return
       const { echoAllDerivedOutputs, recoverEchoedChange } = await import(
         './reimportDerivedChange'
       )
-      const recovered = await recoverEchoedChange(runtime.instance)
+      const recovered = await inUiPhase('derived-recover', () => recoverEchoedChange(runtime.instance))
       if (!runtimeIsCurrent(runtime)) return
-      await echoAllDerivedOutputs(runtime.instance)
+      await inUiPhase('derived-echo', () => echoAllDerivedOutputs(runtime.instance))
       if (recovered.imported > 0) {
         const { bumpBalanceAfterHeal } = await import('./session')
         bumpBalanceAfterHeal()
       }
       if (!runtimeIsCurrent(runtime)) return
       const { refreshActivityLedger } = await import('./activityLedger')
-      await refreshActivityLedger(runtime, { full: true })
+      await inUiPhase('activity-ledger-full', () => refreshActivityLedger(runtime, { full: true }))
     })().catch((err) => {
       console.warn('[derived-change] post-recompose pass failed', err)
     })

@@ -8,6 +8,13 @@
  * `requestIdleCallback`: during ingest the main thread stays busy, so ric
  * waited out its full timeout on every call and made Electron feel slower
  * than Android WebViews that lacked ric.
+ *
+ * A hidden page has no input to prioritise, and `scheduler.yield()` continuations
+ * are throttleable: Chromium bills them to the background page's ~1% CPU budget,
+ * so a few seconds of signing in a backgrounded Android WebView bought minutes
+ * of starvation (lab hc-a580a: 30s heartbeats 470s apart, one migrate signing
+ * for 452s). Posted messages are not budget-throttled, so hidden work hops
+ * through MessageChannel and keeps its foreground pace.
  */
 
 /** Longest the wallet may hold the main thread before the UI must get a turn. */
@@ -25,7 +32,8 @@ function markResumed(): void {
 export function yieldToUi(): Promise<void> {
   const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } })
     .scheduler
-  if (typeof sched?.yield === 'function') {
+  const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  if (!hidden && typeof sched?.yield === 'function') {
     return sched.yield().then(markResumed)
   }
   return new Promise<void>((resolve) => {

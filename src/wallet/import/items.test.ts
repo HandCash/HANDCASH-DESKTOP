@@ -242,7 +242,14 @@ const MOVED: SingleItemMigrate = { kind: 'moved', txid: 'f'.repeat(64) }
 describe('importItems', () => {
   it('moves every key’s chosen items in one call, counts them out of the scan, and drops them from the list', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 3), holding('1b', 2)])])
-    await saveImportItems('s1', [stored(1, '1a'), stored(2, '1b'), stored(3, '1a'), stored(4, '1a'), stored(5, '1b')])
+    const signed: StoredImportItem = {
+      ...stored(2, '1b'),
+      media: op(9),
+      app: 'Ageless Republic',
+      collectionId: op(8),
+      signer: '1LyNg9fwKcrAtifqBaCkuwRa5UmyV4MYv5',
+    }
+    await saveImportItems('s1', [stored(1, '1a'), signed, stored(3, '1a'), stored(4, '1a'), stored(5, '1b')])
     migrateAnswers(() => MOVED)
 
     const run = await importItems({ sourceId: 's1', outpoints: [op(1), op(2), op(3), op(5)] })
@@ -257,11 +264,24 @@ describe('importItems', () => {
     expect(calls).toHaveLength(1)
     const keyHex = calls[0]!.items[0]!.keyHex
     expect(keyHex).toMatch(/^[0-9a-f]{64}$/)
+    const plain = { app: null, collectionId: null, content: null, mimeType: 'image/png', signer: null }
     expect(calls[0]!.items).toEqual([
-      { outpoint: op(1), keyHex, origin: op(1), name: 'Item 1' },
-      { outpoint: op(2), keyHex, origin: op(2), name: 'Item 2' },
-      { outpoint: op(3), keyHex, origin: op(3), name: 'Item 3' },
-      { outpoint: op(5), keyHex, origin: op(5), name: 'Item 5' },
+      { outpoint: op(1), keyHex, origin: op(1), name: 'Item 1', indexed: plain },
+      {
+        outpoint: op(2),
+        keyHex,
+        origin: op(2),
+        name: 'Item 2',
+        indexed: {
+          app: 'Ageless Republic',
+          collectionId: op(8),
+          content: op(9),
+          mimeType: 'image/png',
+          signer: '1LyNg9fwKcrAtifqBaCkuwRa5UmyV4MYv5',
+        },
+      },
+      { outpoint: op(3), keyHex, origin: op(3), name: 'Item 3', indexed: plain },
+      { outpoint: op(5), keyHex, origin: op(5), name: 'Item 5', indexed: plain },
     ])
     expect(updateImportedSource).toHaveBeenCalledTimes(1)
     expect(vi.mocked(updateImportedSource).mock.calls[0]![1].scan?.holdings.map((h) => h.itemCount)).toEqual([1, 0])

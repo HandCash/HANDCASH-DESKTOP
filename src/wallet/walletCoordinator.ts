@@ -7,6 +7,7 @@ import { createActor, type Actor } from 'xstate'
 import { setStallContextProvider } from './appLog'
 import { describeUiPhase } from './uiPhase'
 import { createSerialQueue } from './serialQueue'
+import { setVisibleTimeout } from './visibleClock'
 import {
   canBeginChainIngest,
   canBeginHistoryReplica,
@@ -566,7 +567,15 @@ export type SpendAbandonCause = 'aborted' | 'ceiling'
 export class SpendRegionAbandonedError extends Error {
   readonly code = 'SPEND_REGION_ABANDONED' as const
 
-  constructor(readonly abandonCause: SpendAbandonCause) {
+  /**
+   * @param late The abandoned work itself. It cannot be cancelled and may still
+   *   sign and broadcast, so a caller that would otherwise rebuild over the same
+   *   inputs must wait for this instead.
+   */
+  constructor(
+    readonly abandonCause: SpendAbandonCause,
+    readonly late: Promise<unknown> = Promise.resolve(undefined),
+  ) {
     super('The send stopped responding. Nothing further was broadcast — try again.')
     this.name = 'SpendRegionAbandonedError'
   }
@@ -578,7 +587,9 @@ export const SPEND_REGION_ABANDONED = 'SPEND_REGION_ABANDONED'
 /**
  * Run the spend body, but never let it own the region forever. The work cannot
  * be cancelled — it is left to settle on its own and only logged — so the
- * region is freed on the caller's abort or at {@link SPEND_REGION_MAX_MS}.
+ * region is freed on the caller's abort or after {@link SPEND_REGION_MAX_MS} of
+ * visible time. A hidden WebView runs the same work on a starved timer budget;
+ * counting that as unresponsive abandoned live migrates mid-signature.
  */
 function runSpendBody<T>(
   fn: () => Promise<T>,
@@ -588,7 +599,7 @@ function runSpendBody<T>(
   const signal = opts?.abandonSignal
   const startedAt = Date.now()
   const work = fn()
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let cancelCeiling: (() => void) | undefined
   let onAbort: (() => void) | undefined
   let abandoned = false
 
@@ -601,9 +612,9 @@ function runSpendBody<T>(
           (Date.now() - startedAt) / 1000,
         )}s — freeing the queue for the next payment`,
       )
-      reject(new SpendRegionAbandonedError(cause))
+      reject(new SpendRegionAbandonedError(cause, work))
     }
-    timer = setTimeout(() => giveUp('ceiling'), ceilingMs)
+    cancelCeiling = setVisibleTimeout(() => giveUp('ceiling'), ceilingMs)
     if (!signal) return
     if (signal.aborted) {
       giveUp('aborted')
@@ -614,7 +625,7 @@ function runSpendBody<T>(
   })
 
   const cleanup = () => {
-    if (timer) clearTimeout(timer)
+    cancelCeiling?.()
     if (signal && onAbort) signal.removeEventListener('abort', onAbort)
   }
 

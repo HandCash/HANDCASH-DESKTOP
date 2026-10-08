@@ -78,6 +78,59 @@ describe('backfillOriginSigners', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
+  it('resolves an origin no hit names whole, so a tip moved in by an import shelves under its creator', async () => {
+    const cache = await import('./inscriptionCache')
+    const { backfillOriginSigners } = await import('./originSigners')
+    const tip = `${'c'.repeat(64)}.0`
+    const items = [{ outpoint: tip, origin: ORIGIN.replace('_', '.') }]
+    expect(cache.originsWithoutHit(items)).toEqual([ORIGIN])
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual([ORIGIN])
+      return new Response(
+        JSON.stringify([
+          {
+            outpoint: ORIGIN,
+            origin: {
+              outpoint: ORIGIN,
+              data: {
+                map: { app: 'Ageless Republic', name: 'Axe', subType: 'collectionItem' },
+                insc: { file: { type: 'image/webp' } },
+                sigma: [{ algorithm: 'BSM', address: SIGNER, valid: true }],
+              },
+            },
+          },
+        ]),
+      )
+    })
+
+    expect(
+      await backfillOriginSigners({ chain: 'main', outpoints: [tip], origins: cache.originsWithoutHit(items), fetchImpl }),
+    ).toBe(1)
+    expect(cache.getResolvedInscriptionByOrigin(ORIGIN)).toMatchObject({
+      origin: ORIGIN,
+      name: 'Axe',
+      app: 'Ageless Republic',
+      mimeType: 'image/webp',
+      signer: SIGNER,
+    })
+    expect(cache.originsWithoutHit(items)).toEqual([])
+  })
+
+  it('never replaces a held origin hit, only fills the signer it was never asked for', async () => {
+    const cache = await import('./inscriptionCache')
+    cache.rememberResolvedInscription(ORIGIN, resolved(ORIGIN, { name: 'Held', traits: [{ name: 'Class', value: 'ALL' }] }))
+    cache.rememberResolvedInscription(OTHER, resolved(OTHER, { signer: null }))
+    const changed = cache.rememberIndexedOrigins(
+      new Map([
+        [ORIGIN, resolved(ORIGIN, { name: 'Index', signer: SIGNER })],
+        [OTHER, resolved(OTHER, { name: 'Index', signer: SIGNER })],
+      ]),
+    )
+    expect(changed).toBe(1)
+    expect(cache.getResolvedInscription(ORIGIN)).toMatchObject({ name: 'Held', signer: SIGNER, traits: [{ name: 'Class', value: 'ALL' }] })
+    expect(cache.getResolvedInscription(OTHER)).toMatchObject({ name: 'Dragon', signer: null })
+  })
+
   it('leaves hits unasked-for when the index fails, and does not ask again this session', async () => {
     const cache = await import('./inscriptionCache')
     const { backfillOriginSigners } = await import('./originSigners')

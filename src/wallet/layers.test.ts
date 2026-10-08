@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const listOutputs = vi.fn()
 const listActions = vi.fn()
 const balance = vi.fn()
+let storage: unknown
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
-    wallet: { listOutputs, listActions, balance },
+    wallet: { listOutputs, listActions, balance, storage },
   }),
   fetchBalanceSats: async () => {
     const sats = await balance()
@@ -20,6 +21,59 @@ describe('localToolboxStateLooksEmpty', () => {
     listOutputs.mockReset()
     listActions.mockReset()
     balance.mockReset()
+    storage = undefined
+  })
+
+  function indexedStorage(rows: { change: number; actions: number }) {
+    const calls: Array<[string, unknown]> = []
+    storage = {
+      getAuth: async () => ({ userId: 7 }),
+      runAsStorageProvider: async <T,>(fn: (sp: unknown) => Promise<T>) =>
+        fn({
+          findOutputBaskets: async (args: unknown) => {
+            calls.push(['baskets', args])
+            return [{ basketId: 3 }]
+          },
+          findOutputs: async (args: unknown) => {
+            calls.push(['outputs', args])
+            return rows.change > 0 ? [{}] : []
+          },
+          findTransactions: async (args: unknown) => {
+            calls.push(['transactions', args])
+            return rows.actions > 0 ? [{}] : []
+          },
+        }),
+    }
+    return calls
+  }
+
+  it('reads one indexed row per question instead of counting through the toolbox', async () => {
+    const calls = indexedStorage({ change: 0, actions: 4000 })
+    const { localToolboxStateLooksEmpty } = await import('./layers')
+    expect(await localToolboxStateLooksEmpty()).toBe(false)
+    expect(listOutputs).not.toHaveBeenCalled()
+    expect(listActions).not.toHaveBeenCalled()
+    expect(balance).not.toHaveBeenCalled()
+    expect(calls).toEqual([
+      ['baskets', { partial: { userId: 7, name: 'default' } }],
+      ['outputs', { partial: { userId: 7, basketId: 3, spendable: true }, noScript: true, paged: { limit: 1 } }],
+      ['transactions', expect.objectContaining({ partial: { userId: 7 }, noRawTx: true, paged: { limit: 1 } })],
+    ])
+  })
+
+  it('stops at a spendable change output', async () => {
+    const calls = indexedStorage({ change: 1, actions: 0 })
+    const { localToolboxStateLooksEmpty } = await import('./layers')
+    expect(await localToolboxStateLooksEmpty()).toBe(false)
+    expect(calls.map(([kind]) => kind)).toEqual(['baskets', 'outputs'])
+  })
+
+  it('falls back to balance when storage holds no history', async () => {
+    indexedStorage({ change: 0, actions: 0 })
+    balance.mockResolvedValue(0)
+    const { localToolboxStateLooksEmpty } = await import('./layers')
+    expect(await localToolboxStateLooksEmpty()).toBe(true)
+    expect(listOutputs).not.toHaveBeenCalled()
   })
 
   it('is empty when balance, outs, and actions are all zero', async () => {
@@ -46,11 +100,21 @@ describe('localToolboxStateLooksEmpty', () => {
       return { totalOutputs: 0, outputs: [] }
     })
     listActions.mockResolvedValue({ totalActions: 0, actions: [] })
-    const { inspectLocalToolboxState } = await import('./layers')
+    const { inspectLocalToolboxState, localToolboxStateLooksEmpty } = await import('./layers')
     const state = await inspectLocalToolboxState()
-    expect(state.oneSatOutputCount).toBe(36)
-    expect(state.bsv21OutputCount).toBe(3)
     expect(state.looksEmpty).toBe(true)
+    expect(await localToolboxStateLooksEmpty()).toBe(true)
+    const baskets = listOutputs.mock.calls.map(([args]) => (args as { basket?: string }).basket)
+    expect(baskets).not.toContain('1sat')
+    expect(baskets).not.toContain('bsv21')
+  })
+
+  it('stops at the first change output without reading actions or balance', async () => {
+    listOutputs.mockResolvedValue({ totalOutputs: 4, outputs: [{}] })
+    const { localToolboxStateLooksEmpty } = await import('./layers')
+    expect(await localToolboxStateLooksEmpty()).toBe(false)
+    expect(listActions).not.toHaveBeenCalled()
+    expect(balance).not.toHaveBeenCalled()
   })
 
   it('is not empty when default basket outs remain', async () => {

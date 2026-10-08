@@ -25,6 +25,7 @@ import {
   verifyLineageInBeef,
 } from './oneSatProvenance'
 import { hasOrdEnvelope } from './ordinalOwnership'
+import { yieldToUi } from './yieldToUi'
 
 /** Hops walked before we give up. Deep enough for a decade of transfers. */
 export const MAX_GENESIS_HOPS = 64
@@ -192,7 +193,7 @@ export async function walkGenesisLineage(
     if (args.shouldStop?.()) return { kind: 'aborted', hops }
     // Let the UI paint between hops — phone main thread otherwise freezes for
     // the whole walk (tens of seconds on deep Pixel Foxes lineages).
-    if (hops > 0) await new Promise<void>((r) => setTimeout(r, 0))
+    if (hops > 0) await yieldToUi()
     const match = POINT.exec(point)
     if (!match) {
       return { kind: 'invalid', reason: 'parent is not an outpoint', hops }
@@ -296,7 +297,7 @@ export async function walkGenesisLineage(
   // inscriptions in one transaction takes tens of seconds. Give the UI a frame
   // and one last chance to claim the thread before committing to it.
   if (args.shouldStop?.()) return { kind: 'aborted', hops }
-  await new Promise<void>((r) => setTimeout(r, 0))
+  await yieldToUi()
 
   // Re-derive the path from the hydrated BEEF and verify it with the shared
   // verifier, so the proof never rests on the order this walk happened to take.

@@ -170,22 +170,45 @@ function titleCaseLabel(label: string): string {
     .join(' ')
 }
 
-/** Turn a host into a readable app name: market.handcash.io → Market */
+const HANDCASH_NAMED_HOSTS = new Set([
+  'handcash.io',
+  'www.handcash.io',
+  'market.handcash.io',
+  'preprod-market.handcash.io',
+  'market-v2.handcash.io',
+])
+
+/** handcash.vercel.app, hand-cash.co and h4ndca5h.app all fold to "handcash". */
+function claimsHandCashName(name: string): boolean {
+  return name
+    .toLowerCase()
+    .replace(/4/g, 'a')
+    .replace(/5/g, 's')
+    .replace(/[^a-z]/g, '')
+    .includes('handcash')
+}
+
+/**
+ * Turn a host into a readable app name: example.com → Example. A name that
+ * reads as HandCash on a host HandCash does not own, or one from an IDN host,
+ * shows the bare host instead: the prompt title is what the user trusts.
+ */
 export function appDisplayName(origin: string | undefined): string {
   const host = normalizeAppHost(origin)
   if (host === 'unknown-app') return 'Unknown app'
   if (host === 'localhost' || host.startsWith('127.0.0.1')) return 'Local app'
 
   const base = host.split(':')[0] ?? host
-  if (base === 'handcash.io' || base === 'www.handcash.io') return 'HandCash'
-  if (
-    base === 'market.handcash.io' ||
-    base === 'preprod-market.handcash.io' ||
-    base === 'market-v2.handcash.io'
-  ) {
-    return 'HandCash'
-  }
+  if (HANDCASH_NAMED_HOSTS.has(base)) return 'HandCash'
 
+  const name = derivedAppName(base, host)
+  if (claimsHandCashName(name) || base.split('.').some((label) => label.startsWith('xn--'))) {
+    return base
+  }
+  return name
+}
+
+function derivedAppName(base: string, host: string): string {
   const hosted = APP_SUBDOMAIN_SUFFIXES.find((suffix) => base.endsWith(`.${suffix}`))
   if (hosted) {
     const own = base.slice(0, -(hosted.length + 1)).split('.')[0]

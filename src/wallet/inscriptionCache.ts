@@ -296,6 +296,40 @@ export function rememberResolvedInscription(
   persist(map)
 }
 
+/**
+ * The index's view of origins, keyed `txid_vout`, in one write. A held hit is
+ * never replaced — it only gains a signer it was never asked for.
+ */
+export function rememberIndexedOrigins(entries: ReadonlyMap<string, ResolvedInscription>): number {
+  const map = load()
+  let changed = 0
+  for (const [origin, resolved] of entries) {
+    const key = normalizeOriginLookupKey(origin)
+    if (isPlaceholderResolution(key, resolved)) continue
+    const held = map.get(key)
+    if (!held) map.set(key, { ...resolved, origin: key })
+    else if (held.signer === undefined && resolved.signer !== undefined) map.set(key, { ...held, signer: resolved.signer })
+    else continue
+    changed += 1
+  }
+  if (changed > 0) {
+    trimHits(map)
+    persist(map)
+  }
+  return changed
+}
+
+/** Origins of these tips that no cached hit names, under either the tip or the origin. */
+export function originsWithoutHit(items: ReadonlyArray<{ outpoint: string; origin: string }>): string[] {
+  const out = new Set<string>()
+  for (const { outpoint, origin } of items) {
+    const key = normalizeOriginLookupKey(origin)
+    if (getResolvedInscription(outpoint) || getResolvedInscription(key)) continue
+    out.add(key)
+  }
+  return [...out]
+}
+
 /** Hits the index was never asked for a signer about (cached before signers were kept). */
 export function resolvedWithoutSigner(outpoints: readonly string[]): Array<{ outpoint: string; origin: string }> {
   const map = load()
