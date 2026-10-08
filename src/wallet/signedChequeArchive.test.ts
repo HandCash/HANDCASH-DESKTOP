@@ -4,12 +4,17 @@ import { storageRegistry } from '../storage/registry'
 import { bindAccountLocalKeyScope } from './accountLocalKeys'
 
 const store = new Map<string, string>()
-const ARCHIVE_KEY = storageRegistry.signedChequeArchive.key
+const INDEX_KEY = storageRegistry.signedChequeIndex.key
+const BODY_PREFIX = storageRegistry.signedChequeBodyPrefix.key
+const LEGACY_KEY = storageRegistry.signedChequeArchive.key
 const MINER_KEY = storageRegistry.pendingMinerOutbox.key
 
-function signedTx(satoshis: number): Transaction {
+function signedTx(satoshis: number, payloadBytes = 0): Transaction {
   const tx = new Transaction()
-  tx.addOutput({ satoshis, lockingScript: LockingScript.fromHex('51') })
+  tx.addOutput({
+    satoshis,
+    lockingScript: LockingScript.fromHex(payloadBytes ? `6a${'ab'.repeat(payloadBytes)}` : '51'),
+  })
   return tx
 }
 
@@ -19,26 +24,37 @@ function atomicBeefFor(tx: Transaction): number[] {
   return beef.toBinaryAtomic(tx.id('hex'))
 }
 
-/** Origin-storage quota, the way a phone imposes it: refuse oversized writes. */
+/** Per-value cap, the way a store refuses an oversized write. */
 let storeByteCap = Number.POSITIVE_INFINITY
-/** Serialize + write attempts, which is what the stall was made of. */
-let writeAttempts = 0
+let shell = true
+/** Keys whose writes the store refuses. */
+const refuseKeys = new Set<string>()
 
 vi.mock('./durableStorage', () => ({
-  durableGetItem: (key: string) => store.get(key) ?? null,
+  durableGetItem: (key: string) => store.get(key) || null,
   durableSetItem: (key: string, value: string) => {
-    writeAttempts += 1
     if (value.length > storeByteCap) return false
+    if ([...refuseKeys].some((prefix) => key.startsWith(prefix))) return false
     store.set(key, value)
     return true
   },
+  durableRemoveItem: (key: string) => {
+    store.delete(key)
+  },
+  durableStoreIsShell: () => shell,
 }))
+
+function bodyKeys(): string[] {
+  return [...store.keys()].filter((key) => key.startsWith(BODY_PREFIX))
+}
 
 describe('signedChequeArchive', () => {
   beforeEach(() => {
     store.clear()
+    refuseKeys.clear()
     storeByteCap = Number.POSITIVE_INFINITY
-    writeAttempts = 0
+    shell = true
+    bindAccountLocalKeyScope({ accountIndex: 0, identityKey: 'identity-main', chain: 'main' })
   })
 
   it('keeps the signed Atomic BEEF after the miner outbox would drop it', async () => {
@@ -51,6 +67,31 @@ describe('signedChequeArchive', () => {
     expect(archiveSignedCheque(txid, atomic, { flow: 'payment' })).toBe(true)
     expect(listSignedChequeTxids()).toEqual([txid])
     expect(signedChequeAtomic(txid)).toEqual(atomic)
+    expect(bodyKeys()).toHaveLength(1)
+  })
+
+  // 0.1.671: a nine-item import sweep's Atomic BEEF (~850KB) was over the old
+  // 1MB single-value cap once base64'd, so it was refused however much was evicted.
+  it('stores a sweep cheque larger than the whole old archive', async () => {
+    const { archiveSignedCheque, signedChequeAtomic } = await import('./signedChequeArchive')
+    for (const sats of [1, 2, 3]) {
+      const tx = signedTx(sats, 200_000)
+      expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(true)
+    }
+    const sweep = signedTx(9, 850_000)
+    const atomic = atomicBeefFor(sweep)
+    expect(archiveSignedCheque(sweep.id('hex'), atomic, { flow: 'payment' })).toBe(true)
+    expect(signedChequeAtomic(sweep.id('hex'))).toEqual(atomic)
+    expect(bodyKeys()).toHaveLength(4)
+  })
+
+  it('refuses a body over the outbox ceiling with a named reason', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { archiveSignedCheque } = await import('./signedChequeArchive')
+    const tx = signedTx(1, 2 * 1024 * 1024 + 1)
+    expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(false)
+    expect(String(error.mock.calls[0]?.[0])).toMatch(/over 2MB/)
+    error.mockRestore()
   })
 
   it('replaces a thinner archived body with a hydrated one', async () => {
@@ -69,35 +110,37 @@ describe('signedChequeArchive', () => {
     expect(archiveSignedCheque(txid, thin)).toBe(true)
     expect(archiveSignedCheque(txid, thick)).toBe(true)
     expect(signedChequeAtomic(txid)?.length).toBe(thick.length)
+    expect(archiveSignedCheque(txid, thin)).toBe(true)
+    expect(signedChequeAtomic(txid)?.length).toBe(thick.length)
   })
 
-  it('absorbs leftover miner-outbox bodies on first read', async () => {
-    const tx = signedTx(20_000)
-    const txid = tx.id('hex')
-    const atomic = atomicBeefFor(tx)
+  it('moves the v1 archive and inline outbox bodies into per-cheque keys on first read', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const v1 = signedTx(10)
+    const inline = signedTx(20_000)
+    const [v1Id, inlineId] = [v1.id('hex'), inline.id('hex')]
+    const scoped = (base: string) => `${base}:wallet:main:0:identity-main`
     store.set(
-      MINER_KEY,
+      scoped(LEGACY_KEY),
       JSON.stringify([
-        {
-          txid,
-          atomic,
-          createdAt: Date.now(),
-          attempts: 0,
-          nextAttemptAt: Date.now(),
-          flow: 'payment',
-        },
+        { txid: v1Id, atomicB64: Utils.toBase64(atomicBeefFor(v1)), createdAt: 1, flow: 'payment' },
+      ]),
+    )
+    store.set(
+      scoped(MINER_KEY),
+      JSON.stringify([
+        { txid: inlineId, atomic: atomicBeefFor(inline), createdAt: 2, attempts: 0, nextAttemptAt: 2, flow: 'item_transfer' },
       ]),
     )
 
     const { listSignedCheques } = await import('./signedChequeArchive')
     const rows = listSignedCheques()
-    expect(rows).toEqual([
-      expect.objectContaining({ txid, flow: 'payment', atomic }),
-    ])
-    const saved = JSON.parse(store.get(ARCHIVE_KEY) || '[]') as Array<{
-      atomicB64: string
-    }>
-    expect(Utils.toArray(saved[0]!.atomicB64, 'base64')).toEqual(atomic)
+    expect(rows.map((row) => row.txid)).toEqual([v1Id, inlineId])
+    expect(rows[1]).toEqual(expect.objectContaining({ flow: 'item_transfer', atomic: atomicBeefFor(inline) }))
+    expect(bodyKeys()).toHaveLength(2)
+    expect(store.has(scoped(INDEX_KEY))).toBe(true)
+    expect(store.has(scoped(LEGACY_KEY))).toBe(false)
+    info.mockRestore()
   })
 
   it('writes to the captured derivation scope even after the global scope moves', async () => {
@@ -126,7 +169,7 @@ describe('signedChequeArchive', () => {
     expect(listSignedChequeTxids()).toEqual([txid])
   })
 
-  it('keeps each account archive cached while lookups alternate between them', async () => {
+  it('decodes each stored body once while lookups alternate between accounts', async () => {
     const { archiveSignedCheque, signedChequeAtomic } = await import('./signedChequeArchive')
     const a = { accountIndex: 0, identityKey: 'identity-a', chain: 'main' as const }
     const b = { accountIndex: 1, identityKey: 'identity-b', chain: 'main' as const }
@@ -135,17 +178,13 @@ describe('signedChequeArchive', () => {
     archiveSignedCheque(txA.id('hex'), atomicBeefFor(txA), { owner: a })
     archiveSignedCheque(txB.id('hex'), atomicBeefFor(txB), { owner: b })
 
-    const parse = vi.spyOn(JSON, 'parse')
     const fromBinary = vi.spyOn(Beef, 'fromBinary')
     for (let i = 0; i < 3; i++) {
       expect(signedChequeAtomic(txA.id('hex'), a)).toEqual(atomicBeefFor(txA))
       expect(signedChequeAtomic(txB.id('hex'), b)).toEqual(atomicBeefFor(txB))
       expect(signedChequeAtomic(txA.id('hex'), b)).toBeNull()
     }
-    const archiveParses = parse.mock.calls.filter(([raw]) => String(raw).includes('atomicB64'))
-    expect(archiveParses.length).toBeLessThanOrEqual(2)
     expect(fromBinary.mock.calls.length).toBeLessThanOrEqual(2)
-    parse.mockRestore()
     fromBinary.mockRestore()
 
     const lookedUp = signedChequeAtomic(txA.id('hex'), a)!
@@ -153,68 +192,47 @@ describe('signedChequeArchive', () => {
     expect(signedChequeAtomic(txA.id('hex'), a)).toEqual(atomicBeefFor(txA))
   })
 
-  // A full archive refused every write, and because a refused archive fails
-  // the send closed, the wallet stopped signing anything at all.
-  it('evicts the oldest cheques rather than refuse a write to a full store', async () => {
-    bindAccountLocalKeyScope({
-      accountIndex: 0,
-      identityKey: 'identity-quota',
-      chain: 'main',
-    })
-    const { archiveSignedCheque, listSignedChequeTxids } = await import(
-      './signedChequeArchive'
-    )
-    const cheques = [11, 22, 33].map((sats) => {
-      const tx = signedTx(sats)
+  it('evicts the oldest cheques past the origin budget, never one the outbox needs', async () => {
+    shell = false
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { archiveSignedCheque, listSignedChequeTxids } = await import('./signedChequeArchive')
+    const cheques = [1, 2, 3, 4].map((sats) => {
+      const tx = signedTx(sats, 300_000)
       return { txid: tx.id('hex'), atomic: atomicBeefFor(tx) }
     })
-
-    expect(archiveSignedCheque(cheques[0]!.txid, cheques[0]!.atomic)).toBe(true)
-    expect(archiveSignedCheque(cheques[1]!.txid, cheques[1]!.atomic)).toBe(true)
-    // Room for two rows, not three.
-    storeByteCap = (store.get(listArchiveKey()) ?? '').length
-
-    expect(archiveSignedCheque(cheques[2]!.txid, cheques[2]!.atomic)).toBe(true)
-    expect(listSignedChequeTxids()).toEqual([cheques[1]!.txid, cheques[2]!.txid])
-  })
-
-  // Shedding one cheque per pass meant a full store cost one megabyte-scale
-  // `JSON.stringify` per archived row before it gave up — several seconds of
-  // blocked main thread inside a send an app was waiting on, twice per send.
-  it('gives up on a full store in a handful of passes, not one per cheque', async () => {
-    bindAccountLocalKeyScope({
-      accountIndex: 0,
-      identityKey: 'identity-full',
-      chain: 'main',
-    })
-    const { archiveSignedCheque } = await import('./signedChequeArchive')
-    for (let index = 0; index < 120; index++) {
-      const tx = signedTx(1_000 + index)
-      expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(true)
+    store.set(
+      `${MINER_KEY}:wallet:main:0:identity-main`,
+      JSON.stringify([{ txid: cheques[0]!.txid, bodyInArchive: true }]),
+    )
+    for (const cheque of cheques) {
+      expect(archiveSignedCheque(cheque.txid, cheque.atomic)).toBe(true)
     }
-
-    storeByteCap = 0
-    writeAttempts = 0
-    const tx = signedTx(99_999)
-    expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(false)
-    // Halving 121 rows bottoms out in ~8 passes; one-at-a-time took 120.
-    expect(writeAttempts).toBeLessThanOrEqual(12)
+    // 400KB of base64 each against a 1MB budget: two fit beside the protected first.
+    expect(listSignedChequeTxids()).toEqual([cheques[0]!.txid, cheques[3]!.txid])
+    expect(bodyKeys()).toHaveLength(2)
+    warn.mockRestore()
   })
 
-  it('refuses only when the newest cheque alone cannot be stored', async () => {
-    bindAccountLocalKeyScope({
-      accountIndex: 0,
-      identityKey: 'identity-tiny',
-      chain: 'main',
-    })
-    const { archiveSignedCheque } = await import('./signedChequeArchive')
+  it('refuses only when the store rejects the cheque itself', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { archiveSignedCheque, listSignedChequeTxids } = await import('./signedChequeArchive')
     const tx = signedTx(99)
-    storeByteCap = 8
-
+    refuseKeys.add(BODY_PREFIX)
     expect(archiveSignedCheque(tx.id('hex'), atomicBeefFor(tx))).toBe(false)
+    expect(listSignedChequeTxids()).toEqual([])
+    error.mockRestore()
+  })
+
+  it('leaves no orphaned body when the index write is refused', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { archiveSignedCheque, listSignedChequeTxids } = await import('./signedChequeArchive')
+    const first = signedTx(5)
+    expect(archiveSignedCheque(first.id('hex'), atomicBeefFor(first))).toBe(true)
+    const second = signedTx(6)
+    refuseKeys.add(INDEX_KEY)
+    expect(archiveSignedCheque(second.id('hex'), atomicBeefFor(second))).toBe(false)
+    expect(bodyKeys()).toHaveLength(1)
+    expect(listSignedChequeTxids()).toEqual([first.id('hex')])
+    error.mockRestore()
   })
 })
-
-function listArchiveKey(): string {
-  return [...store.keys()].find((key) => key.startsWith(ARCHIVE_KEY)) ?? ARCHIVE_KEY
-}

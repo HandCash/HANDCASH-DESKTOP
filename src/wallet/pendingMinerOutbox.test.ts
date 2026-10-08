@@ -5,7 +5,7 @@ const store = new Map<string, string>()
 let writesSucceed = true
 let maxWriteBytes = Number.POSITIVE_INFINITY
 const KEY = 'handcash.wallet.pendingMinerOutbox.v1'
-const ARCHIVE_KEY = 'handcash.wallet.signedChequeArchive.v1'
+const ARCHIVE_BODY_PREFIX = 'handcash.wallet.signedChequeArchive.v2.tx.'
 
 function signedTx(satoshis: number): Transaction {
   const tx = new Transaction()
@@ -27,6 +27,10 @@ vi.mock('./durableStorage', () => ({
     store.set(key, value)
     return true
   },
+  durableRemoveItem: (key: string) => {
+    store.delete(key)
+  },
+  durableStoreIsShell: () => true,
 }))
 
 const recordTransactionStage = vi.fn()
@@ -83,7 +87,7 @@ describe('pending miner outbox', () => {
     }>
     expect(rows[0]?.atomic).toBeUndefined()
     expect(rows[0]?.bodyInArchive).toBe(true)
-    expect(store.get(ARCHIVE_KEY)).toContain(txid)
+    expect(store.has(ARCHIVE_BODY_PREFIX + txid)).toBe(true)
     expect(rows[0]?.traceId).toBe('trace-test')
     expect(rows[0]?.flow).toBe('token_transfer')
     expect(recordTransactionStage).toHaveBeenCalledWith(
@@ -271,15 +275,11 @@ describe('pending miner outbox', () => {
     ) as Array<{ atomic?: number[]; bodyInArchive?: boolean }>
     expect(rows[0]?.bodyInArchive).toBe(true)
     expect(rows[0]?.atomic).toBeUndefined()
-    const archive = JSON.parse(store.get(ARCHIVE_KEY) || '[]') as Array<{
-      txid: string
-      atomicB64: string
-    }>
-    const archived = archive.find((row) => row.txid === txid)
+    const archived = store.get(ARCHIVE_BODY_PREFIX + txid)
     expect(archived).toBeTruthy()
     expect(
       Beef.fromBinary(
-        Array.from(Buffer.from(archived!.atomicB64, 'base64')),
+        Array.from(Buffer.from(archived!, 'base64')),
       ).findTxid(parent.id('hex'))?.isTxidOnly,
     ).toBeFalsy()
 

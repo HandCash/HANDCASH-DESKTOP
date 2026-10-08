@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.528] - 2026-10-08
+
+### Fixed
+- **Large sends and imports keep their signed-transaction backup.** On 0.1.671 a nine-item import sweep logged `[signed-cheque] durable write refused` twice. The archive that keeps every signed transaction until it is proven was one JSON value capped at 1MB. That sweep's Atomic BEEF carries the items' inscription parents (about 850KB, 1.1MB as base64), so it could never fit, however many old cheques were evicted. The miner queue then kept the body inline as a number array, which grew its key to 3MB. Each cheque now has its own durable key, with a small index beside it. A cheque is refused only when it is over the queue's 2MB ceiling or the store rejects that write. The budget (8MB with a shell file store, 1MB where WebView storage is the store) evicts the oldest first, never a cheque the miner queue still references, and never refuses for space. On first launch the v1 archive and any bodies the queue holds inline move into the new layout, so the next send compacts the queue. A send now writes one cheque and a small index instead of rewriting the whole archive. Both shells already commit keys under this prefix to disk before reporting success.
+
 ## [1.3.527] - 2026-10-08
 
 ### Fixed

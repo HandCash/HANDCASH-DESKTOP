@@ -118,6 +118,20 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  // Same `signedChequeArchive` prefix: both shells commit these to disk before
+  // reporting success (`requiresCommittedWrite`, `DurableStorePlugin.COMMITTED`).
+  signedChequeIndex: defineStorage({
+    key: 'handcash.wallet.signedChequeArchive.v2.index',
+    owner: 'transactions',
+    scope: 'wallet',
+    version: 2,
+  }),
+  signedChequeBodyPrefix: defineStorage({
+    key: 'handcash.wallet.signedChequeArchive.v2.tx.',
+    owner: 'transactions',
+    scope: 'wallet',
+    version: 2,
+  }),
   pendingBrc29Outbox: defineStorage({
     key: 'handcash.brc29.pendingOutbox.v1',
     owner: 'propagation',

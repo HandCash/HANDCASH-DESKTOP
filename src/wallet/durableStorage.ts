@@ -538,6 +538,14 @@ export function durableRemoveItem(key: string): void {
   cache.set(key, null)
 }
 
+/**
+ * Whether a host file store holds wallet state. When false, WebView origin
+ * storage is the store and its few-megabyte quota is shared by every key.
+ */
+export function durableStoreIsShell(): boolean {
+  return durableStoreOwner() === 'shell'
+}
+
 /** Drop cached reads when something outside this renderer may have written. */
 export function durableForgetCached(key?: string): void {
   if (key == null) {
