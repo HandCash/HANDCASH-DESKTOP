@@ -4888,7 +4888,11 @@ export async function sendCollectables(
     batchActivityWrites(() => {
       for (const send of pending) {
         clearPendingSend(send.id)
-        if (args.failureActivity === 'discard') {
+        // A bundle that will be split and retried leaves no row. A send the
+        // wallet never started — it was busy — is the only record of the
+        // attempt, and discarding it is how the row vanishes on the next look.
+        const neverStarted = /wallet is busy|stopped responding/i.test(message)
+        if (args.failureActivity === 'discard' && !neverStarted) {
           clearOutboundSendPending(send.id)
         } else {
           failOutboundSendPending({ pendingId: send.id, reason: message })

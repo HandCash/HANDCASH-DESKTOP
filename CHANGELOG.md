@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.504] - 2026-10-08
+
+### Fixed
+- **A normal item send no longer dies while unlock checks history, and the attempt stays in Activity.** On 0.1.650 a send of 2 collectables waited 45s behind `recompose-history`, then stopped with "Wallet is busy" and 0 transactions. Unlock was fetching the remote history backup before it knew the wallet already had history, and that fetch holds the region every send waits on. A wallet that already has history now defers the backup without that fetch. The two pending "Sending…" rows were then deleted because a multi-item failure is treated as an intermediate attempt; a send the wallet never started is kept as a failed row.
+
 ## [1.3.503] - 2026-10-08
 
 ### Changed

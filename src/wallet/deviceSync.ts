@@ -569,14 +569,18 @@ export async function autoPushHistoryBackupIfConfigured(
   const { appendAppLog } = await import('./appLog')
 
   // Recovery pull first — never gated by the push crash-loop watchdog.
+  // Ask whether this device is empty before any network call. The call sits
+  // inside the recompose region, which excludes every send; a full wallet was
+  // waiting out a remote history check (45s on the phone) and the item send
+  // gave up with nothing signed.
   let remoteExists = false
   let remoteBytes: number | null = null
   if (allowEmptyPull) {
     try {
-      const remote = await fetchRemoteBrc39Meta()
+      const emptyLocal = await localToolboxStateLooksEmpty()
+      const remote = emptyLocal ? await fetchRemoteBrc39Meta() : null
       remoteExists = Boolean(remote?.exists)
       remoteBytes = remote?.bytes ?? null
-      const emptyLocal = await localToolboxStateLooksEmpty()
       if (remoteExists && emptyLocal) {
         appendAppLog(
           'info',

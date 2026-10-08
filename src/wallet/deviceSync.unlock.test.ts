@@ -74,6 +74,8 @@ describe('unlock history push', () => {
     expect(localToolboxStateLooksEmpty).toHaveBeenCalledOnce()
     expect(inspectLocalToolboxState).not.toHaveBeenCalled()
     expect(uploadBrc39Backup).not.toHaveBeenCalled()
+    const { fetchRemoteBrc39Meta } = await import('./historyBackup')
+    expect(fetchRemoteBrc39Meta).not.toHaveBeenCalled()
   })
 
   it('the deferred push uploads when the remote copy is behind', async () => {
