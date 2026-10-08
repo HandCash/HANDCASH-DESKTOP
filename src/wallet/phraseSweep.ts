@@ -54,9 +54,6 @@ import {
 import {
   MAX_ITEMS_PER_MIGRATE_TX,
   chooseItemMigrateUnit,
-  itemsWithinSourceBudget,
-  migratePackage,
-  migrateSourceCosts,
   splitItemMigrateBundle,
 } from './itemMigrateBundle'
 import { yieldToUi } from './yieldToUi'
@@ -744,15 +741,6 @@ export type ChosenPhraseItem = {
   keyHex: string
   origin?: string
   name?: string
-  /** The index's view of the origin when chosen; display only, the move re-decides the tip. */
-  indexed?: {
-    app: string | null
-    collectionId: string | null
-    /** Outpoint holding the art, when it is not the origin. */
-    content: string | null
-    mimeType: string | null
-    signer: string | null
-  }
 }
 
 export type ChosenItemsMigrate = {
@@ -776,8 +764,6 @@ export async function migrateChosenPhraseItems(args: {
   items: readonly ChosenPhraseItem[]
   /** Wallet job id: every Activity row of the run folds into one record. */
   activityGroup?: string | null
-  /** Runs once this run's source transactions are read — the moment to start reading the next run's. */
-  onSourcesRead?: () => void
 }): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -816,7 +802,6 @@ export async function migrateChosenPhraseItems(args: {
     rows.map((row) => row.outpoint),
     { concurrency: 8 },
   )
-  args.onSourcesRead?.()
   const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
 
   const pending: PendingItemMigrate[] = []
@@ -840,32 +825,18 @@ export async function migrateChosenPhraseItems(args: {
   }
 
   const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
-  const indexedOf = new Map(
-    args.items.map((item) => [item.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1'), item.indexed]),
-  )
   const outcome = await migrateOrdinalUnit({
     active,
     destLockHex: destLock,
     inputBeef: built.beef,
     items: pending,
     itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
-    onMoved: (receipts) => {
-      const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
-      recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
-      // Collect cannot re-read the basket while the import holds the wallet;
-      // these tips are known exactly, so they show as each transaction lands.
-      const tips = named.map((item) => ({
-        outpoint: `${item.sweepTxid}.${item.sweepVout}`,
-        chain: active.chain,
-        origin: item.origin.replace(/\.(\d+)$/, '_$1'),
-        name: item.name,
-        ...indexedOf.get(item.outpoint),
-        identityKey: active.identityKey,
-      }))
-      void import('./collectables')
-        .then(({ noteIngestedItems }) => noteIngestedItems(tips))
-        .catch((err) => console.warn('[phrase-sweep] collectables paint skipped', err))
-    },
+    onMoved: (receipts) =>
+      recordMigratedItemActivity(
+        receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null })),
+        active.chain,
+        { groupId: args.activityGroup },
+      ),
   })
   for (const receipt of outcome.moved) {
     results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })
@@ -1024,12 +995,10 @@ async function migrateOrdinalUnit(args: {
   let pending = args.items.slice()
   let perTx = args.itemsPerTx
   let fundingRetries = 0
-  const costOf = migrateSourceCosts(args.inputBeef)
 
   while (pending.length > 0) {
     if (out.moved.length > 0 || out.failed > 0) await yieldToUi()
-    const fit = itemsWithinSourceBudget(pending, perTx, (item) => costOf(item.txid))
-    const unit = chooseItemMigrateUnit(pending, fit)
+    const unit = chooseItemMigrateUnit(pending, perTx)
     if (unit.kind === 'refuse') break
     const group = unit.kind === 'bundle' ? unit.items : [unit.item]
     try {
@@ -1048,8 +1017,7 @@ async function migrateOrdinalUnit(args: {
           }),
         ),
       )
-      // Outputs keep their order (`randomizeOutputs: false`), so item i is output i.
-      const receipts = group.map((item, vout) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid, sweepVout: vout }))
+      const receipts = group.map((item) => ({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid }))
       out.moved.push(...receipts)
       args.onMoved(receipts)
       out.resolved += group.length
@@ -1249,12 +1217,6 @@ async function signAndPostForeignInputs(
     if (unsignedTx == null || inputIndexes.size !== items.length) {
       throw new Error('Could not find every ordinal input to sign')
     }
-    // Sats flow first-in first-out: tip i must be input i for its inscribed sat
-    // to land in output i. A funding input ahead of a tip would carry the
-    // inscription into change, so a reordered layout is never signed.
-    if (!items.every((item, index) => inputIndexes.get(index) === item)) {
-      throw new Error('The wallet reordered the item inputs; refusing to sign')
-    }
     // Ordinal tips are P2PKH ‖ inscription ‖ Sigma, so the sighash scriptCode
     // must be the *whole* locking script. SetupClient.getUnlockP2PKH hashes a
     // bare P2PKH, which is why every inscribed tip failed CHECKSIG with "the
@@ -1290,11 +1252,7 @@ async function signAndPostForeignInputs(
   packed.mergeBeef(args.inputBeef)
   packed.mergeBeef(sweepAtomic)
   packed.atomicTxid = undefined
-  const bin = migratePackage(packed, sweepTxid)
-  appendAppLog(
-    'info',
-    `[phrase-sweep] migrate package ${sweepTxid.slice(0, 12)} inputs=${items.length} bytes=${bin.length}`,
-  )
+  const bin = packed.toBinaryAtomic(sweepTxid)
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
   const submitted = await submitAtomicBeefToMiners(sweepTxid, bin)
   if (submitted.kind === 'unproven-conflict') {

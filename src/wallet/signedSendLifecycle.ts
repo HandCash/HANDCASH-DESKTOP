@@ -70,7 +70,6 @@ export async function registerSignedSend(args: {
         runtime.instance,
         txid,
         args.atomicBeef,
-        { inSpend: true },
       )
       atomicBeef = prepared.atomic
     } catch (error) {

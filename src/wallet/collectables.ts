@@ -26,7 +26,6 @@ import {
   PrivateKey,
   type SignableTransaction,
   type Transaction,
-  Utils,
 } from '@bsv/sdk'
 import { type ActiveWallet } from './session'
 import {
@@ -204,7 +203,6 @@ import {
   isThinResolution,
   originsWithoutHit,
   PENDING_RETRY_MS,
-  rememberIndexedOrigins,
   rememberResolvedInscription,
   rememberUnresolved,
   rememberUpgradeAttempt,
@@ -1549,7 +1547,7 @@ function pendingSeededItems(
  * A tip that turns out not to be ours is dropped by the ownership pass; nothing
  * is guessed at here.
  */
-export type IngestedItem = {
+export function noteIngestedItem(args: {
   outpoint: string
   chain: Chain
   origin?: string | null
@@ -1557,47 +1555,11 @@ export type IngestedItem = {
   app?: string | null
   collectionId?: string | null
   content?: string | null
-  mimeType?: string | null
-  /** The index's Sigma signer on the origin; null when it reports none. Attribution only. */
-  signer?: string | null
   identityKey?: string
-}
-
-/**
- * What the index said about each tip's origin when it was chosen, filed under
- * the origin. A moved tip keeps its origin locally, so the list never walks
- * it, and the index does not know the move until it is mined.
- */
-function rememberIngestedOrigins(items: readonly IngestedItem[]): void {
-  const indexed = new Map<string, ResolvedInscription>()
-  for (const item of items) {
-    const origin = item.origin?.trim()
-    if (!origin || (item.signer === undefined && !item.mimeType?.trim() && !item.app?.trim())) continue
-    const name = item.name?.trim()
-    const app = item.app?.trim()
-    const collectionId = item.collectionId?.trim()
-    const content = item.content?.trim()
-    const mimeType = item.mimeType?.trim()
-    indexed.set(origin, {
-      origin,
-      ...(name ? { name } : {}),
-      ...(app ? { app } : {}),
-      ...(collectionId ? { collectionId } : {}),
-      ...(content ? { content } : {}),
-      ...(mimeType ? { mimeType } : {}),
-      ...(item.signer !== undefined ? { signer: item.signer } : {}),
-      traits: [],
-      extras: [],
-    })
-  }
-  if (indexed.size > 0) rememberIndexedOrigins(indexed)
-}
-
-/** Seed one tip; the painted card, `'held'` when the grid already shows it, or null. */
-function seedIngestedItem(args: IngestedItem): Collectable | 'held' | null {
-  if (args.identityKey && getActiveWallet()?.identityKey !== args.identityKey) return null
+}): void {
+  if (args.identityKey && getActiveWallet()?.identityKey !== args.identityKey) return
   const target = normalizeOutpoint(args.outpoint)
-  if (!target || isItemSent(target)) return null
+  if (!target || isItemSent(target)) return
   const key = outpointKey(target)
   const origin = args.origin?.trim()
   const name = args.name?.trim()
@@ -1629,14 +1591,23 @@ function seedIngestedItem(args: IngestedItem): Collectable | 'held' | null {
         }
       : {}),
   }
+  const identityKey = getActiveWallet()?.identityKey
+  if (identityKey) hydrateSeededItems(identityKey)
   // Judged against the scan that ran before this tip existed, it would look
   // missing — record when we first held it so ownership grace applies.
   if (!firstSeenAt.has(key)) firstSeenAt.set(key, Date.now())
   seededItems.set(key, output)
-  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return 'held'
+  if (identityKey) persistSeededItems(identityKey)
+  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
+  // do not wait for the user to open the item. Also re-prefer when the tip was
+  // already on the list so an Activity row for a known item still leads.
+  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) {
+    requestCollectableVerification(target)
+    return
+  }
   // A send to our own handle leaves the outgoing tip on the list until the next
   // ownership pass; without this the same collectable shows twice until then.
-  return mergeCollectablePaint(
+  const seeded = mergeCollectablePaint(
     toCollectable(
       output,
       args.chain,
@@ -1655,57 +1626,16 @@ function seedIngestedItem(args: IngestedItem): Collectable | 'held' | null {
     ),
     args.chain,
   )
-}
-
-function paintSeeded(painted: readonly Collectable[]): void {
-  if (painted.length === 0) return
   setCollectablesCache(
     dedupeByOrigin(
-      [...painted, ...cachedCollectables],
+      [seeded, ...cachedCollectables],
       (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
       cachedLiveOneSats?.keys ?? null,
     )
   )
-}
-
-export function noteIngestedItem(args: IngestedItem): void {
-  const identityKey = getActiveWallet()?.identityKey
-  if (identityKey) hydrateSeededItems(identityKey)
-  const seeded = seedIngestedItem(args)
-  if (!seeded) return
-  if (identityKey) persistSeededItems(identityKey)
-  if (seeded !== 'held') paintSeeded([seeded])
   // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
-  // do not wait for the user to open the item. Also re-prefer when the tip was
-  // already on the list so an Activity row for a known item still leads.
-  requestCollectableVerification(normalizeOutpoint(args.outpoint)!)
-}
-
-/**
- * Paint a whole transaction's tips at once — an import migrate moves a hundred.
- *
- * One seed write and one grid update for the lot, where a loop of
- * {@link noteIngestedItem} re-saved the seeds and re-sorted the grid per tip.
- * Bulk tips keep their place in the verification queue rather than each one
- * jumping it: a thousand jumps is no priority at all.
- */
-export function noteIngestedItems(items: readonly IngestedItem[]): number {
-  if (items.length === 0) return 0
-  const identityKey = getActiveWallet()?.identityKey
-  if (identityKey) hydrateSeededItems(identityKey)
-  rememberIngestedOrigins(items)
-  const painted: Collectable[] = []
-  let seeded = 0
-  for (const item of items) {
-    const card = seedIngestedItem(item)
-    if (!card) continue
-    seeded += 1
-    if (card !== 'held') painted.push(card)
-  }
-  if (seeded === 0) return 0
-  if (identityKey) persistSeededItems(identityKey)
-  paintSeeded(painted)
-  return painted.length
+  // do not wait for the user to open the item.
+  requestCollectableVerification(target)
 }
 
 function lockingScriptIsFungible(hex?: string): boolean {
@@ -3537,106 +3467,6 @@ function assertOrdinalIsDeviceLocked(
   }
 }
 
-type HeldTipRow = NonNullable<
-  Awaited<ReturnType<ActiveWallet['wallet']['listOutputs']>>['outputs']
->[number]
-
-type HeldTipStorage = {
-  findUserByIdentityKey?: (key: string) => Promise<{ userId: number } | undefined>
-  findOutputBaskets?: (args: unknown) => Promise<Array<{ basketId?: number; name?: string }>>
-  findOutputs?: (args: unknown) => Promise<
-    Array<{
-      vout?: number
-      satoshis?: number
-      spendable?: boolean
-      basketId?: number
-      lockingScript?: number[]
-      customInstructions?: string
-    }>
-  >
-}
-
-const HELD_TIP_READ_MS = 20_000
-
-/**
- * The selected tips' own rows, by outpoint.
- *
- * The send used to `listOutputs` the whole `1sat` basket with
- * customInstructions to find a handful of tips. That pulls every held item's
- * remittance BEEF (hundreds of KB each) through IndexedDB; on a migrated
- * phone the read ran past its ceiling and every item send ended as "Send
- * timed out" before createAction (hc-a580a 0.1.655). One outpoint is one
- * indexed row. `null` when this storage cannot answer, so the caller may fall
- * back to the basket read.
- */
-async function readHeldTipRows(
-  wallet: ActiveWallet,
-  outpoints: string[],
-): Promise<Map<string, HeldTipRow> | null> {
-  const storage = wallet.wallet.storage
-  if (typeof storage?.runAsStorageProvider !== 'function') return null
-  const startedAt = Date.now()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    const rows = await Promise.race([
-      storage.runAsStorageProvider(async (raw) => {
-        const sp = raw as unknown as HeldTipStorage
-        if (
-          typeof sp.findUserByIdentityKey !== 'function' ||
-          typeof sp.findOutputBaskets !== 'function' ||
-          typeof sp.findOutputs !== 'function'
-        ) {
-          return null
-        }
-        const user = await sp.findUserByIdentityKey(wallet.identityKey)
-        if (!user) return null
-        const baskets = await sp.findOutputBaskets({ partial: { userId: user.userId } })
-        const itemBaskets = new Set(
-          baskets
-            .filter((b) => String(b.name ?? '').toLowerCase() === '1sat')
-            .map((b) => b.basketId),
-        )
-        const held = new Map<string, HeldTipRow>()
-        for (const outpoint of outpoints) {
-          const key = normalizeOutpoint(outpoint)
-          const [txid, voutRaw] = key.split('.')
-          const vout = Number(voutRaw)
-          if (!txid || !Number.isInteger(vout)) continue
-          const found = await sp.findOutputs({
-            partial: { userId: user.userId, txid, vout },
-          })
-          const row = found.find(
-            (r) => r.spendable === true && r.basketId != null && itemBaskets.has(r.basketId),
-          )
-          if (!row) continue
-          held.set(key, {
-            outpoint: key,
-            satoshis: row.satoshis ?? 1,
-            spendable: true,
-            tags: [],
-            ...(row.lockingScript?.length
-              ? { lockingScript: Utils.toHex(row.lockingScript) }
-              : {}),
-            ...(row.customInstructions ? { customInstructions: row.customInstructions } : {}),
-          } as HeldTipRow)
-        }
-        return held
-      }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('held tips read timed out')),
-          HELD_TIP_READ_MS,
-        )
-      }),
-    ])
-    const ms = Date.now() - startedAt
-    if (ms >= 250) console.info(`[collectables] held tips read done ${ms}ms — ${outpoints.length} tip(s)`)
-    return rows
-  } finally {
-    if (timer != null) clearTimeout(timer)
-  }
-}
-
 /**
  * BEEF covering every outpoint this send spends.
  *
@@ -4171,22 +4001,17 @@ export async function sendCollectable(args: {
                   tags: [],
                 } as HeldOutput
               } else {
-                const direct = await readHeldTipRows(wallet, [outpoint])
-                if (direct) {
-                  match = direct.get(normalizeOutpoint(outpoint))
-                } else {
-                  const wide = await listOutputsWithTimeout(wallet.wallet, {
-                    basket: '1sat',
-                    limit: 200,
-                    includeTags: true,
-                    includeCustomInstructions: true,
-                    include: 'locking scripts',
-                    seekPermission: false,
-                  })
-                  match = (wide.outputs ?? []).find(
-                    (o) => normalizeOutpoint(o.outpoint) === outpoint
-                  )
-                }
+                const wide = await listOutputsWithTimeout(wallet.wallet, {
+                  basket: '1sat',
+                  limit: 200,
+                  includeTags: true,
+                  includeCustomInstructions: true,
+                  include: 'locking scripts',
+                  seekPermission: false,
+                })
+                match = (wide.outputs ?? []).find(
+                  (o) => normalizeOutpoint(o.outpoint) === outpoint
+                )
               }
             }
           }
@@ -4994,11 +4819,7 @@ export async function sendCollectables(
     batchActivityWrites(() => {
       for (const send of pending) {
         clearPendingSend(send.id)
-        // A bundle that will be split and retried leaves no row. A send the
-        // wallet never started — it was busy — is the only record of the
-        // attempt, and discarding it is how the row vanishes on the next look.
-        const neverStarted = /wallet is busy|stopped responding/i.test(message)
-        if (args.failureActivity === 'discard' && !neverStarted) {
+        if (args.failureActivity === 'discard') {
           clearOutboundSendPending(send.id)
         } else {
           failOutboundSendPending({ pendingId: send.id, reason: message })
@@ -5039,20 +4860,20 @@ export async function sendCollectables(
               ReturnType<ActiveWallet['wallet']['listOutputs']>
             >['outputs']
           >[number]
-          const heldByOutpoint: Map<string, HeldOutput> =
-            (await readHeldTipRows(wallet, outpoints)) ??
-            new Map(
-              (
-                await listOutputsWithTimeout(wallet.wallet, {
-                  basket: '1sat',
-                  limit: 1000,
-                  includeTags: true,
-                  includeCustomInstructions: true,
-                  include: 'locking scripts',
-                  seekPermission: false,
-                })
-              ).outputs?.map((output) => [normalizeOutpoint(output.outpoint), output]) ?? [],
-            )
+          const held = await listOutputsWithTimeout(wallet.wallet, {
+            basket: '1sat',
+            limit: 1000,
+            includeTags: true,
+            includeCustomInstructions: true,
+            include: 'locking scripts',
+            seekPermission: false,
+          })
+          const heldByOutpoint = new Map(
+            (held.outputs ?? []).map((output) => [
+              normalizeOutpoint(output.outpoint),
+              output,
+            ]),
+          )
           const inputBEEF = await buildInputBeefForSpends(wallet, outpoints)
           const live = await awaitLiveOutpoints(wallet)
 

@@ -77,7 +77,6 @@ const {
   restoreAssetOutpoint,
   chooseUtxoEvidenceAction,
   pinBroadcastLocalTx,
-  promotePinnedNoSendProofRequests,
   healAppHeldChange,
   __resetReclaimSealCursorsForTests,
 } = await import('./staleOutputRelease')
@@ -1273,73 +1272,6 @@ describe('promotePendingLocalChangeOutputs', () => {
     expect(updateTransactionStatus).not.toHaveBeenCalled()
     expect(updateOutput).not.toHaveBeenCalled()
   })
-
-  it('lists live txs newest first with one descending scan per status group', async () => {
-    findTransactions.mockResolvedValue([])
-    await promotePendingLocalChangeOutputs()
-    const scans = findTransactions.mock.calls.map(([args]) => args as {
-      status?: string[]
-      orderDescending?: boolean
-    })
-    expect(scans).toHaveLength(2)
-    expect(scans.every((s) => s.orderDescending === true)).toBe(true)
-    expect(scans[0].status).toEqual(expect.arrayContaining(['unproven', 'unmined', 'sending']))
-    expect(scans[1].status).toEqual(['nosend', 'unsent'])
-  })
-
-  it('a send-entry promote stops between txs once its budget is spent, newest first', async () => {
-    vi.useFakeTimers()
-    try {
-      const newest = '5a'.repeat(32)
-      const older = '5b'.repeat(32)
-      findTransactions.mockImplementation(async (args: {
-        status?: string[]
-        partial?: { txid?: string }
-      }) => {
-        if (args.partial?.txid) return [{ transactionId: 1, txid: args.partial.txid, status: 'unproven' }]
-        return args.status?.includes('unproven')
-          ? [
-              { txid: newest, status: 'unproven' },
-              { txid: older, status: 'unproven' },
-            ]
-          : []
-      })
-      findOutputs.mockImplementation(async (args: { partial?: { txid?: string } }) => {
-        // Each storage read costs more than the whole budget.
-        vi.advanceTimersByTime(5_000)
-        const txid = args.partial?.txid
-        return txid
-          ? [
-              {
-                outputId: txid === newest ? 51 : 52,
-                txid,
-                vout: 1,
-                change: true,
-                satoshis: 900,
-                lockingScript: [0x76, 0xa9],
-                spendable: false,
-              },
-            ]
-          : []
-      })
-      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
-
-      await expect(
-        promotePendingLocalChangeOutputs({ forSpendChain: true, budgetMs: 4_000 }),
-      ).resolves.toBe(1)
-      expect(updateOutput).toHaveBeenCalledWith(51, expect.objectContaining({ spendable: true }))
-      expect(updateOutput).not.toHaveBeenCalledWith(52, expect.anything())
-      expect(info.mock.calls.some(([line]) => /promote stopped at 1\/2 live tx/.test(String(line)))).toBe(true)
-
-      // The tx the budget skipped is not memoized: the next pass takes it.
-      updateOutput.mockClear()
-      await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      expect(updateOutput).toHaveBeenCalledWith(52, expect.objectContaining({ spendable: true }))
-      info.mockRestore()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
 })
 
 describe('pinBroadcastLocalTx', () => {
@@ -1348,8 +1280,6 @@ describe('pinBroadcastLocalTx', () => {
   const updateOutput = vi.fn()
   const updateTransactionStatus = vi.fn()
   const updateTransaction = vi.fn()
-  const findProvenTxReqs = vi.fn()
-  const updateProvenTxReq = vi.fn()
 
   beforeEach(() => {
     findTransactions.mockReset()
@@ -1358,9 +1288,6 @@ describe('pinBroadcastLocalTx', () => {
     updateOutput.mockReset()
     updateTransactionStatus.mockReset()
     updateTransaction.mockReset()
-    findProvenTxReqs.mockReset()
-    findProvenTxReqs.mockResolvedValue([])
-    updateProvenTxReq.mockReset()
     overlayStore.clear()
     __resetArcadeSubmitGuardForTests()
     __resetUtxoLocksForTests()
@@ -1377,8 +1304,6 @@ describe('pinBroadcastLocalTx', () => {
               findTransactions: typeof findTransactions
               updateTransactionStatus: typeof updateTransactionStatus
               updateTransaction: typeof updateTransaction
-              findProvenTxReqs: typeof findProvenTxReqs
-              updateProvenTxReq: typeof updateProvenTxReq
               getProvenOrRawTx: () => Promise<undefined>
             }) => Promise<unknown>,
           ) =>
@@ -1388,48 +1313,11 @@ describe('pinBroadcastLocalTx', () => {
               findTransactions,
               updateTransactionStatus,
               updateTransaction,
-              findProvenTxReqs,
-              updateProvenTxReq,
               getProvenOrRawTx: async () => undefined,
             }),
         },
       },
     })
-  })
-
-  it('hands the pinned nosend proof request to the per-block proof task', async () => {
-    const txid = '3d'.repeat(32)
-    findTransactions.mockResolvedValue([{ transactionId: 4, txid, status: 'nosend' }])
-    findProvenTxReqs.mockResolvedValue([{ provenTxReqId: 9, txid, status: 'nosend' }])
-
-    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
-    expect(findProvenTxReqs).toHaveBeenCalledWith(expect.objectContaining({ partial: { txid } }))
-    expect(updateProvenTxReq).toHaveBeenCalledWith(9, { status: 'unmined', wasBroadcast: true })
-  })
-
-  it('leaves a proof request the Toolbox already advanced', async () => {
-    const txid = '3e'.repeat(32)
-    findTransactions.mockResolvedValue([{ transactionId: 4, txid, status: 'nosend' }])
-    findProvenTxReqs.mockResolvedValue([{ provenTxReqId: 9, txid, status: 'completed' }])
-
-    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
-    expect(updateProvenTxReq).not.toHaveBeenCalled()
-  })
-
-  it('backfills only nosend requests the network accepted, a page at a time', async () => {
-    const accepted = '4a'.repeat(32)
-    const inFlight = '4b'.repeat(32)
-    rememberArcadeSubmitContact(accepted)
-    findProvenTxReqs
-      .mockResolvedValueOnce([
-        { provenTxReqId: 1, txid: inFlight, status: 'nosend' },
-        { provenTxReqId: 2, txid: accepted, status: 'nosend' },
-      ])
-      .mockResolvedValue([])
-
-    await expect(promotePinnedNoSendProofRequests(mockGetActiveWallet())).resolves.toBe(1)
-    expect(updateProvenTxReq).toHaveBeenCalledTimes(1)
-    expect(updateProvenTxReq).toHaveBeenCalledWith(2, { status: 'unmined', wasBroadcast: true })
   })
 
   it('hands an app-held nosend row to the network side and frees its change', async () => {

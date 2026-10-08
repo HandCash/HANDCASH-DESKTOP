@@ -19,41 +19,64 @@ vi.mock('./walletRuntime', async (importOriginal) => ({
 
 import { exportAllActivity, listActivityFeed } from './appActivity'
 import {
-  consumeActivityLedgerPrime,
+  paintSavedActivityLedger,
   preloadActivityLedger,
-  publishActivityLedger,
   resetActivityLedgerForTests,
 } from './activityLedger'
-import { saveLedgerRows } from './activityLedgerStore'
+import * as ledgerStore from './activityLedgerStore'
+import type { WalletRuntime } from './walletRuntime'
 
 const tx = 'ab'.repeat(32)
+const runtime = { storageNamespace: 'ns', instance: {} } as unknown as WalletRuntime
+const row = {
+  id: `ledger:${tx}:${tx}.0`,
+  origin: 'handcash',
+  kind: 'spent' as const,
+  method: 'send-collectable',
+  sats: 1,
+  at: 10,
+  txid: tx,
+  note: 'Sent collectable',
+  item: { name: 'Fox', origin: `${tx}_0`, outpoint: `${tx}.0` },
+}
 
 describe('Activity projection at launch', () => {
   beforeEach(() => {
     store.clear()
     resetActivityLedgerForTests()
+    vi.restoreAllMocks()
   })
 
-  it('paints the saved transaction history without a second copy in the activity store', async () => {
-    const row = {
-      id: `ledger:${tx}:${tx}.0`,
-      origin: 'handcash',
-      kind: 'spent' as const,
-      method: 'send-collectable',
-      sats: 1,
-      at: 10,
-      txid: tx,
-      note: 'Sent collectable',
-      item: { name: 'Fox', origin: `${tx}_0`, outpoint: `${tx}.0` },
-    }
-    await saveLedgerRows('ns', [row])
+  it('paints the preloaded history in the same turn, without a second copy or a write-back', async () => {
+    await ledgerStore.saveLedgerRows('ns', [row])
     await preloadActivityLedger('ns')
-    const primed = consumeActivityLedgerPrime('ns')
-    expect(primed?.map((entry) => entry.id)).toEqual([row.id])
-    expect(consumeActivityLedgerPrime('ns')).toBeNull()
+    const load = vi.spyOn(ledgerStore, 'loadLedgerRows')
+    const save = vi.spyOn(ledgerStore, 'saveLedgerRows')
+    vi.useFakeTimers()
+    try {
+      paintSavedActivityLedger(runtime)
+      expect(listActivityFeed(10).map((entry) => entry.id)).toEqual([row.id])
+      expect(exportAllActivity()).toEqual([])
+      await vi.advanceTimersByTimeAsync(10_000)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(load).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+  })
 
-    publishActivityLedger('ns', primed!)
-    expect(exportAllActivity()).toEqual([])
-    expect(listActivityFeed(10).map((entry) => entry.id)).toEqual([row.id])
+  it('does not read storage again after an empty preload', async () => {
+    await preloadActivityLedger('fresh')
+    const load = vi.spyOn(ledgerStore, 'loadLedgerRows')
+    paintSavedActivityLedger({ ...runtime, storageNamespace: 'fresh' } as WalletRuntime)
+    await Promise.resolve()
+    expect(load).not.toHaveBeenCalled()
+    expect(listActivityFeed(10)).toEqual([])
+  })
+
+  it('reads the saved history when unlock did not preload it', async () => {
+    await ledgerStore.saveLedgerRows('ns', [row])
+    paintSavedActivityLedger(runtime)
+    await vi.waitFor(() => expect(listActivityFeed(10).map((entry) => entry.id)).toEqual([row.id]))
   })
 })

@@ -42,7 +42,6 @@ describe('classifySendRunFailure', () => {
   it('stops once on wallet-wide faults', () => {
     for (const reason of [
       'Wallet locked',
-      'Wallet is busy (active: recompose · spend waiting: send-collectables (45s))',
       'Not enough spendable BSV',
       'insufficient funds for fee',
       'Invalid recipient address or identity key',

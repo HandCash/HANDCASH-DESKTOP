@@ -218,6 +218,10 @@ function sameRows(a: readonly ActivityEntry[], b: readonly ActivityEntry[]): boo
 }
 
 export function publishActivityLedger(namespace: string, rows: ActivityEntry[]): void {
+  installSnapshot(namespace, rows, { persist: true })
+}
+
+function installSnapshot(namespace: string, rows: ActivityEntry[], opts: { persist: boolean }): void {
   const prev = snapshot?.namespace === namespace ? snapshot.rows : null
   if (prev && sameRows(prev, rows)) return
   const timeByTxid = new Map<string, number>()
@@ -231,7 +235,7 @@ export function publishActivityLedger(namespace: string, rows: ActivityEntry[]):
     byId: new Map(rows.map((row) => [row.id, row])),
     timeByTxid,
   }
-  scheduleSave(namespace, snapshot.rows)
+  if (opts.persist) scheduleSave(namespace, snapshot.rows)
   for (const cb of listeners) cb()
 }
 
@@ -273,45 +277,43 @@ if (typeof document !== 'undefined') {
 
 let primed: { namespace: string; rows: ActivityEntry[] } | null = null
 
+async function readSavedRows(namespace: string): Promise<ActivityEntry[]> {
+  try {
+    const rows = await loadLedgerRows(namespace)
+    return (rows ?? []).filter((row) => !isGhostTxSuppressed(row.txid!))
+  } catch (err) {
+    console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
+    return []
+  }
+}
+
 /**
- * Read the saved projection before the runtime is published. Unlock awaits
- * this, then the account start publishes it in the same turn the feed first
- * reads — a fresh launch otherwise paints the annotation log alone and the
- * transaction history arrives a frame later.
+ * Read the saved projection before the runtime is published, so the account
+ * start can paint it in the same turn the feed first reads. Without it a fresh
+ * launch paints the annotation log alone and the history arrives a frame later.
  */
 export async function preloadActivityLedger(namespace: string): Promise<void> {
-  let rows: ActivityEntry[] | null = null
-  try {
-    rows = await loadLedgerRows(namespace)
-  } catch (err) {
-    console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
-  }
-  const kept = (rows ?? []).filter((row) => !isGhostTxSuppressed(row.txid!))
-  primed = kept.length > 0 ? { namespace, rows: kept } : null
+  primed = { namespace, rows: await readSavedRows(namespace) }
 }
 
-/** Rows preloaded for this namespace, once. Empty when nothing was saved. */
-export function consumeActivityLedgerPrime(namespace: string): ActivityEntry[] | null {
-  if (primed?.namespace !== namespace) return null
-  const rows = primed.rows
-  primed = null
-  return rows
-}
-
-/** Paint the last session's read until the live one lands. A live read is never replaced. */
-export async function restoreActivityLedger(runtime: WalletRuntime | null = getWalletRuntime()): Promise<void> {
-  if (!runtime || !runtimeIsCurrent(runtime)) return
+/**
+ * Paint the last session's read until the live one lands. Synchronous when
+ * unlock preloaded this namespace — even an empty preload is not read twice.
+ * A live read is never replaced, and a restored read is not written back.
+ */
+export function paintSavedActivityLedger(runtime: WalletRuntime): void {
   const namespace = runtime.storageNamespace
-  let rows: ActivityEntry[] | null
-  try {
-    rows = await loadLedgerRows(namespace)
-  } catch (err) {
-    console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
+  const preloaded = primed?.namespace === namespace ? primed.rows : null
+  primed = null
+  if (preloaded) {
+    if (preloaded.length > 0) installSnapshot(namespace, preloaded, { persist: false })
     return
   }
-  if (!rows || !runtimeIsCurrent(runtime) || currentSnapshot()) return
-  publishActivityLedger(namespace, rows.filter((row) => !isGhostTxSuppressed(row.txid!)))
-  console.info(`[activity-ledger] restored ${rows.length} row(s) from the last read`)
+  void readSavedRows(namespace).then((rows) => {
+    if (rows.length === 0 || !runtimeIsCurrent(runtime) || currentSnapshot()) return
+    installSnapshot(namespace, rows, { persist: false })
+    console.info(`[activity-ledger] restored ${rows.length} row(s) from the last read`)
+  })
 }
 
 type IdbTransaction = {
@@ -602,6 +604,9 @@ export function resetActivityLedgerForRuntime(): void {
 export function resetActivityLedgerForTests(): void {
   if (timer) clearTimeout(timer)
   timer = null
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = null
+  saveRows = null
   inFlights.clear()
   primed = null
   snapshot = null

@@ -53,7 +53,6 @@ export type SendRunFailureDecision =
 const WALLET_FAILURES = [
   'wallet locked',
   'wallet is locked',
-  'wallet is busy',
   'no wallet',
   'not enough',
   'insufficient',

@@ -323,9 +323,8 @@ async function askChain(
   }
   let yielded = false
   await mapPool(ask, CHAIN_ASK_CONCURRENCY, async (txid) => {
-    // Forty-eight hours ago this ran inside the unlock region, so a send
-    // could not start until it finished. The funding pass is now shared, and
-    // a send that waits out these lookups times out with nothing broadcast.
+    // A waiting send outranks closure: these lookups hold no lock, but a
+    // send that waits them out times out with nothing broadcast.
     if (yielded || shouldYieldChainIngestToSpend()) {
       yielded = true
       chain.set(txid, 'unknown')

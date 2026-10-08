@@ -4,10 +4,8 @@
  */
 import { bindAccountLocalKeyScope } from './accountLocalKeys'
 import {
-  consumeActivityLedgerPrime,
-  publishActivityLedger,
+  paintSavedActivityLedger,
   resetActivityLedgerForRuntime,
-  restoreActivityLedger,
   scheduleActivityLedgerRefresh,
 } from './activityLedger'
 import { appendAppLog } from './appLog'
@@ -35,9 +33,7 @@ function ensureLifecycleRegistered(): void {
     start: (runtime) => {
       const wallet = runtime.instance
       resetActivityLedgerForRuntime()
-      const primed = consumeActivityLedgerPrime(runtime.storageNamespace)
-      if (primed) publishActivityLedger(runtime.storageNamespace, primed)
-      else void restoreActivityLedger(runtime)
+      paintSavedActivityLedger(runtime)
       scheduleActivityLedgerRefresh()
       applyWalletOutcome({
         type: 'AccountChanged',

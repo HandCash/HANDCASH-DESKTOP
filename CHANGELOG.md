@@ -1,6 +1,17 @@
 # Changelog
 
-## [1.3.513] - 2026-10-08
+## [1.3.514] - 2026-10-08
+
+### Changed
+- **Transaction handling is back to 1.3.469.** Miner submit, BEEF preparation, the signed-send lifecycle, the spend-conflict and Arcade guards, input fate after a reject, seal release and proof-request promote, the spend balance gate, the dead-coin sweep, Arcade landing, the miner outbox, the item send run and its held-tip reads, import migrate packaging, phrase sweep and item import are byte-identical to 1.3.469. Every transaction-path change from 1.3.470 to 1.3.513 is withdrawn, including 1.3.513's dead-coin reselection fix.
+- Kept from 1.3.470–1.3.513, none of which touches how a transaction is built, posted or retired:
+  - Connect security: bridge origin checks, app identity and permission prompts.
+  - Background signing: the spend ceiling counts visible time only, and work yields to the UI.
+  - Unlock and history: recompose, the BRC-39 unlock check, and an empty-wallet check that stops at the first stored row.
+  - The custody journal backup with ETag, and creator names backfilled from the indexer for items without one.
+  - Activity: the history projection painted at launch, item names on ledger rows, held item sends listed, an import counted as one record, and the batch-count pill.
+  - Sync never blocks sending: chain ingest and the local-tx closure step aside for a waiting send without reading the balance lock.
+- The saved Activity history is read once per unlock and painted in the same turn. Painting it no longer writes the same rows back three seconds later, and an empty save is not read a second time.
 
 ### Fixed
 - **Payments stop reselecting coins a confirmed transaction already spent.** Self-sends on this desktop showed success but never arrived: every payment picked coins from `ef8e794d…`, `fb5bd3f5…`, `6c2278ad…`, `1926acbb…`, which the confirmed 144-input consolidation `d65f31d0…` (block 963488, Aug 23) spent. The parent transactions were in the package; miners answered missing inputs because the coins were gone. Three gaps kept them in the pool:

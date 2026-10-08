@@ -157,25 +157,13 @@ function startSweep(
 }
 
 /**
- * Local statuses of a funding tx no node has seen. Its change cannot have a
- * spender anywhere, so it is never asked about. `unproven` is not one of
- * them: it means broadcast without a stored proof, and is often long mined
- * (Aug 23 consolidation `d65f31d0` spent coins whose parents read unproven
- * here, and every payment picked them again).
+ * Spendable managed change whose funding tx may be mined. Change of a live
+ * local tx cannot have a confirmed spender, so it is never asked about.
  */
-const NEVER_BROADCAST_TX_STATUSES = [
-  'sending',
-  'nosend',
-  'unsent',
-  'unsigned',
-  'unprocessed',
-  'nonfinal',
-] as const
-
-/** Spendable managed change whose funding tx may have reached a node. */
 async function probeableChange(active: ActiveWallet): Promise<string[] | null> {
   const storage = active.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
+  const { LIVE_LOCAL_TX_STATUSES } = await import('./localTxClosure')
   return storage.runAsStorageProvider(async (activeSp) => {
     const sp = activeSp as {
       findOutputs?: (args: unknown) => Promise<OutputRow[] | undefined>
@@ -189,7 +177,7 @@ async function probeableChange(active: ActiveWallet): Promise<string[] | null> {
       const batch =
         (await sp.findTransactions({
           partial: {},
-          status: [...NEVER_BROADCAST_TX_STATUSES],
+          status: [...LIVE_LOCAL_TX_STATUSES],
           noRawTx: true,
           paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
         })) ?? []

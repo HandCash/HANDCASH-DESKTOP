@@ -449,48 +449,6 @@ describe('beefCache', () => {
     expect(getProvenOrRawTx).toHaveBeenCalledTimes(1)
   })
 
-  it('a spend reads its own input body from the toolbox while it holds priority', async () => {
-    const { buildMergedInputBeef, getLocalBeefForTxid } = await import('./beefCache')
-    const { leaseSpendPriority } = await import('./walletCoordinator')
-    const tx = new Transaction()
-    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-    const txid = tx.id('hex')
-    const getBeefForTransaction = vi.fn(async () => {
-      const beef = new Beef()
-      beef.mergeRawTx(tx.toBinary())
-      return beef
-    })
-    const getBeefForTxid = vi.fn(async () => {
-      throw new Error('indexer BEEF timed out after 8000ms')
-    })
-    const wallet = {
-      chain: 'main',
-      wallet: {
-        storage: {
-          isActiveStorageProvider: () => true,
-          runAsStorageProvider: async (fn: (s: unknown) => Promise<unknown>) =>
-            fn({ getBeefForTransaction }),
-        },
-      },
-      services: { getBeefForTxid },
-    } as unknown as ActiveWallet
-    const lease = leaseSpendPriority('send-collectables')
-    try {
-      // A background lookup stays out of the lock and does not record a miss.
-      expect(await getLocalBeefForTxid(wallet, txid)).toBeNull()
-      expect(getBeefForTransaction).not.toHaveBeenCalled()
-      // The send's own input BEEF comes from storage, not the indexer.
-      const merged = await buildMergedInputBeef(wallet, [`${txid}.0`], (op) => op, {
-        hydrate: false,
-      })
-      expect(Beef.fromBinary(merged).findTxid(txid)?.tx).toBeTruthy()
-      expect(getBeefForTransaction).toHaveBeenCalledTimes(1)
-      expect(getBeefForTxid).not.toHaveBeenCalled()
-    } finally {
-      lease.release()
-    }
-  })
-
   it('merges a locally held unconfirmed parent body into the child BEEF', async () => {
     const {
       classifyBeefAncestryGap,

@@ -28,14 +28,6 @@ vi.mock('./legacyScan', () => ({
   spentStatusOfOutpoint: vi.fn(async () => 'unspent' as const),
 }))
 
-const inputsSpentElsewhere = vi.fn(
-  async (): Promise<Array<{ outpoint: string; spender: string }>> => [],
-)
-
-vi.mock('./createActionInputFate', () => ({
-  inputsSpentElsewhere: (...args: unknown[]) => inputsSpentElsewhere(...(args as [])),
-}))
-
 vi.mock('./session', () => ({
   getActiveWallet: () => null,
 }))
@@ -213,10 +205,9 @@ describe('arcadeSubmitGuard', () => {
     )
   })
 
-  it('treats an input another tx is named as spending as proven conflict', async () => {
-    inputsSpentElsewhere.mockResolvedValueOnce([
-      { outpoint: 'bb'.repeat(32) + '.0', spender: 'ee'.repeat(32) },
-    ])
+  it('treats spent inputs as proven conflict', async () => {
+    const { spentStatusOfOutpoint } = await import('./legacyScan')
+    vi.mocked(spentStatusOfOutpoint).mockResolvedValueOnce('spent')
     rememberArcadeSubmitContact(TX)
     await expect(
       signedTxSpendConflictIsProven({
@@ -225,14 +216,6 @@ describe('arcadeSubmitGuard', () => {
         chain: 'main',
       }),
     ).resolves.toBe(true)
-    expect(inputsSpentElsewhere).toHaveBeenCalledWith(TX, ['bb'.repeat(32) + '.0'], 'main')
-  })
-
-  it('does not prove a conflict when no spender is named', async () => {
-    inputsSpentElsewhere.mockResolvedValueOnce([])
-    await expect(
-      signedTxSpendConflictIsProven({ txid: TX, atomic: [1, 2, 3], chain: 'main' }),
-    ).resolves.toBe(false)
   })
 })
 

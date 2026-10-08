@@ -439,8 +439,6 @@ export async function importItems(args: {
   identityKey?: string
   /** Wallet job id the moved items' Activity rows fold under. */
   activityGroup?: string | null
-  /** Runs once the chunk's source transactions are read. */
-  onSourcesRead?: () => void
 }): Promise<ImportItemsResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
@@ -502,16 +500,8 @@ export async function importItems(args: {
             keyHex,
             ...(item.origin ? { origin: item.origin } : {}),
             ...(item.name ? { name: item.name } : {}),
-            indexed: {
-              app: item.app,
-              collectionId: item.collectionId,
-              content: item.media && item.media !== item.origin ? item.media : null,
-              mimeType: item.mimeType,
-              signer: item.signer,
-            },
           })),
           activityGroup: args.activityGroup ?? null,
-          ...(args.onSourcesRead ? { onSourcesRead: args.onSourcesRead } : {}),
         })
       : null
   const stopped: ImportItemsResult['stopped'] = run?.stopped ?? null

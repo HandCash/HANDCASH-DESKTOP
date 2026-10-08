@@ -160,9 +160,11 @@ export async function signedTxSpendConflictIsProven(args: {
   const inputs = await inputOutpointsForSignedTx(txid, args.atomic)
   if (inputs.length === 0) return false
 
-  const { inputsSpentElsewhere } = await import('./createActionInputFate')
-  const spends = await inputsSpentElsewhere(txid, inputs, args.chain).catch(() => [])
-  return spends.length > 0
+  const statuses = await Promise.all(
+    inputs.map((op) => spentStatusOfOutpoint(op, args.chain).catch(() => 'unknown' as const)),
+  )
+  if (statuses.some((s) => s === 'unknown')) return false
+  return statuses.some((s) => s === 'spent')
 }
 
 /**

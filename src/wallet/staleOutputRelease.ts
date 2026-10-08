@@ -1038,104 +1038,6 @@ async function sealThenKeepSignedTx(
   // Seal skips promotion when it could not read the inputs; this second pass is
   // idempotent and is the only one that runs in that case.
   await keepChangeOfSignedTx(id, undefined, true, signedBody);
-  await releaseNoSendProofRequest(id);
-}
-
-type ProofRequestRow = { provenTxReqId?: number; txid?: string; status?: string };
-type ProofRequestStorage = {
-  findProvenTxReqs?: (args: unknown) => Promise<ProofRequestRow[] | undefined>;
-  updateProvenTxReq?: (id: number, update: Record<string, unknown>) => Promise<unknown>;
-};
-
-/**
- * The Toolbox's `retireNoSendWithoutProof`, for a send the network took.
- *
- * `TaskCheckForProofs` reads `unmined` / `unknown` / `sending` / `callback` /
- * `unconfirmed` requests every block and never `nosend`; only
- * `TaskCheckNoSends` does, hourly to weekly by age. A pinned `nosend` row
- * stays unproven for days, and createAction's `mergeAllocatedChangeBeefs`
- * recurses through every unproven ancestor's stored input BEEF, so each later
- * spend re-walks every migrate behind its change.
- */
-async function promoteNoSendRequest(sp: ProofRequestStorage, txid: string): Promise<boolean> {
-  if (typeof sp.findProvenTxReqs !== "function" || typeof sp.updateProvenTxReq !== "function") return false;
-  const rows = await sp.findProvenTxReqs({ partial: { txid }, paged: { limit: 1, offset: 0 } });
-  const req = rows?.[0];
-  if (req?.status !== "nosend" || typeof req.provenTxReqId !== "number") return false;
-  await sp.updateProvenTxReq(req.provenTxReqId, { status: "unmined", wasBroadcast: true });
-  return true;
-}
-
-async function releaseNoSendProofRequest(id: string): Promise<void> {
-  const storage = getActiveWallet()?.wallet?.storage;
-  if (!storage?.runAsStorageProvider) return;
-  try {
-    const promoted = await storage.runAsStorageProvider((sp) =>
-      promoteNoSendRequest(sp as unknown as ProofRequestStorage, id),
-    );
-    if (promoted) console.info(`[stale-output] proof request ${id.slice(0, 12)} nosend → unmined`);
-  } catch (err) {
-    console.warn("[stale-output] proof request handoff skipped", id.slice(0, 12), err);
-  }
-}
-
-/** Each request row carries its raw tx and input BEEF (up to ~3MB for a migrate). */
-const NOSEND_BACKFILL_PAGE = 10;
-const NOSEND_BACKFILL_MAX_PAGES = 40;
-
-/**
- * Hand every network-accepted `nosend` proof request to the per-block proof
- * task once per unlock. Rows pinned before the handoff existed are otherwise
- * left to `TaskCheckNoSends`. Requests nothing has accepted stay `nosend`:
- * an in-flight listing or batch is not ours to advance. Stops between pages
- * when a send is waiting — this is maintenance, never a reason to hold a spend.
- */
-export async function promotePinnedNoSendProofRequests(
-  active: ActiveWallet,
-): Promise<number> {
-  const storage = active.wallet?.storage;
-  if (!storage?.runAsStorageProvider) return 0;
-  const started = Date.now();
-  const { txLanded } = await import("./landedTx");
-  const { shouldYieldChainIngestToSpend } = await import("./walletCoordinator");
-  let promoted = 0;
-  let offset = 0;
-  try {
-    for (let page = 0; page < NOSEND_BACKFILL_MAX_PAGES; page += 1) {
-      if (shouldYieldChainIngestToSpend()) break;
-      const step = await storage.runAsStorageProvider(async (activeSp) => {
-        const sp = activeSp as unknown as ProofRequestStorage;
-        if (typeof sp.findProvenTxReqs !== "function" || typeof sp.updateProvenTxReq !== "function") {
-          return { read: 0, moved: 0 };
-        }
-        const rows =
-          (await sp.findProvenTxReqs({
-            partial: { status: "nosend" },
-            paged: { limit: NOSEND_BACKFILL_PAGE, offset },
-          })) ?? [];
-        let moved = 0;
-        for (const row of rows) {
-          const txid = normalizedTxidOrNull(row.txid ?? "");
-          if (!txid || typeof row.provenTxReqId !== "number" || row.status !== "nosend") continue;
-          if (!txHadArcadeSubmitContact(txid) && !txLanded(txid)) continue;
-          await sp.updateProvenTxReq(row.provenTxReqId, { status: "unmined", wasBroadcast: true });
-          moved += 1;
-        }
-        return { read: rows.length, moved };
-      });
-      promoted += step.moved;
-      // Promoted rows leave the status index; the rest are skipped next page.
-      offset += step.read - step.moved;
-      if (step.read < NOSEND_BACKFILL_PAGE) break;
-      await yieldToUi();
-    }
-  } catch (err) {
-    console.warn("[stale-output] proof request backfill stopped", err);
-  }
-  if (promoted > 0) {
-    console.info(`[stale-output] proof requests nosend → unmined count=${promoted} done ${Date.now() - started}ms`);
-  }
-  return promoted;
 }
 
 type LocalTxRowRef = { transactionId: number; status: string };
@@ -2717,59 +2619,44 @@ const PENDING_CHANGE_TX_STATUSES = [
  *  to a crash between `postBeef` and `pinBroadcastLocalTx` heals here instead of
  *  stranding the funding output.
  */
-/** Live txs listed per send: the newest {@link PENDING_SCAN_PAGES} pages of 25. */
-const PENDING_SCAN_PAGE = 25;
-const PENDING_SCAN_PAGES = 5;
-
-/**
- * Newest first. A migrated wallet holds hundreds of `unproven` imports; the
- * send that just happened is the one whose change still needs promoting, and
- * an ascending page cap never reached it. One cursor walk per status group
- * instead of one per status.
- */
 export async function listPendingLocalChangeTxids(): Promise<string[]> {
   const active = getActiveWallet();
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return [];
 
   const txids = new Set<string>();
-  const ordered: string[] = [];
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as LocalStorage;
       const findTransactions = sp.findTransactions;
       if (typeof findTransactions !== "function") return;
-      const scan = async (
-        statuses: readonly string[],
-        accept: (txid: string) => boolean,
-      ) => {
-        for (let page = 0; page < PENDING_SCAN_PAGES; page += 1) {
+      const scan = async (status: string, accept: (txid: string) => boolean) => {
+        for (let page = 0; page < 5; page += 1) {
           const rows = await findTransactions.call(sp, {
             partial: {},
-            status: [...statuses],
+            status: [status],
             noRawTx: true,
-            orderDescending: true,
-            paged: { limit: PENDING_SCAN_PAGE, offset: page * PENDING_SCAN_PAGE },
+            paged: { limit: 25, offset: page * 25 },
           });
           if (!rows?.length) break;
           for (const row of rows) {
             const txid = String(row.txid ?? "")
               .trim()
               .toLowerCase();
-            if (!/^[0-9a-f]{64}$/.test(txid) || txids.has(txid) || !accept(txid)) continue;
-            txids.add(txid);
-            ordered.push(txid);
+            if (/^[0-9a-f]{64}$/.test(txid) && accept(txid)) txids.add(txid);
           }
-          if (rows.length < PENDING_SCAN_PAGE) break;
+          if (rows.length < 25) break;
         }
       };
-      await scan(PENDING_CHANGE_TX_STATUSES, () => true);
-      await scan(APP_HELD_TX_STATUSES, txHadArcadeSubmitContact);
+      for (const status of PENDING_CHANGE_TX_STATUSES) await scan(status, () => true);
+      for (const status of APP_HELD_TX_STATUSES) {
+        await scan(status, txHadArcadeSubmitContact);
+      }
     });
   } catch (err) {
     console.warn("[stale-output] pending tx scan skipped", err);
   }
-  return ordered;
+  return [...txids];
 }
 
 /**
@@ -2834,13 +2721,6 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   forSpendChain?: boolean;
   /** Retained for caller compatibility; promotion is now always local-only. */
   localOnly?: boolean;
-  /**
-   * Stop walking live txs once this much time has passed. Checked only
-   * *between* txs — a tx is always sealed and kept whole or not at all, so a
-   * send can never reselect an input this walk half-hid. The txs left over are
-   * the oldest; the next pass (or the background heal) takes them.
-   */
-  budgetMs?: number;
 }): Promise<number> {
   const forSpendChain = opts?.forSpendChain === true;
   if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0;
@@ -2848,7 +2728,6 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
 
-  const startedAt = Date.now();
   const done = promotedSetFor(active?.identityKey ?? "");
   const all = await listPendingLocalChangeTxids();
   // A txid that left the live set is settled; stop tracking it so the memo
@@ -2861,20 +2740,8 @@ export async function promotePendingLocalChangeOutputs(opts?: {
 
   let promoted = 0;
   let sealedTotal = 0;
-  let walked = 0;
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break;
-    if (
-      walked > 0 &&
-      opts?.budgetMs != null &&
-      Date.now() - startedAt >= opts.budgetMs
-    ) {
-      console.info(
-        `[stale-output] promote stopped at ${walked}/${txids.size} live tx(s) after ${Date.now() - startedAt}ms — remainder next pass`,
-      );
-      break;
-    }
-    walked += 1;
     // Pending change is local signed state. Explorer absence cannot fail it;
     // competing-spend reconciliation runs separately and proof-first.
     // Same order as utxoHealFromHistory: seal spent inputs FIRST, then keep
