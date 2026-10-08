@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.527] - 2026-10-08
+
+### Fixed
+- **Toolbox maintenance steps aside for sends and imports.** On 0.1.671 an item send signed at +13s but did not broadcast until +56s. A toolbox monitor `ReviewStatus` task held the storage lock for 30.6s in between, and a BRC-29 send waited behind it. An item import's sweep the same session queued 7s behind `NewHeader`, `NoSendExpiry` and `SendWaiting`. The spend guard pauses the monitor, but the toolbox runs every due task of a cycle back to back and only reads the pause between cycles. Each scheduled task now checks first: while a send, an import sweep or a token sweep holds or wants the wallet, the task is skipped and stays due, then runs on the first cycle after.
+
+### Changed
+- **Lock traces name the real holder.** A storage call made while a monitor task was in flight was labelled with that task's name, so a send's own post-sign writes appeared as `monitor:ReviewStatus`. The monitor label now needs the monitor's own frames in the call's stack.
+
 ## [1.3.526] - 2026-10-08
 
 ### Fixed

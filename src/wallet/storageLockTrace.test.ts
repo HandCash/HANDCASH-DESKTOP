@@ -142,6 +142,30 @@ describe('storage lock trace', () => {
     expect(info.mock.calls.map((c: unknown[]) => String(c[0]))).toContain('[monitor] CheckForProofs done 1100ms')
   })
 
+  it('does not lend a running Monitor task name to a call made outside it', async () => {
+    const m = new FakeManager()
+    let release!: () => void
+    const monitor = {
+      async runScheduledTask(_task: { name: string }) {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      },
+    }
+    traceStorageLocks(m, monitor)
+    const task = monitor.runScheduledTask({ name: 'ReviewStatus' })
+    const outside = (async function itemSendPostSign() {
+      await m.runAsStorageProvider(async () => sleep(1_200))
+    })()
+    await vi.advanceTimersByTimeAsync(1_200)
+    await outside
+    release()
+    await task
+    const held = lines(info).find((l) => l.includes('held 1200ms'))
+    expect(held).toBeDefined()
+    expect(held).not.toContain('monitor:')
+  })
+
   it('stays silent for quick work and installs once', async () => {
     const m = new FakeManager()
     traceStorageLocks(m)

@@ -70,12 +70,22 @@ export function callerModule(stack: string | undefined, depth = 2): string | nul
   return file ?? null
 }
 
+/** Frames of a monitor task's own chain; V8 keeps them across awaits as `async` frames. */
+const MONITOR_FRAME_RE = /\b(?:traceTask|gateTask|runScheduledTask)\b/
+const MONITOR_STACK_FRAMES = 60
+
 function takeLabel(runner: Runner): string {
   let label = callingMethod ?? nextLockLabel
   nextLockLabel = null
   if (label) return label
-  if (monitorTask) return `monitor:${monitorTask}`
-  const caller = callerModule(new Error().stack)
+  // `monitorTask` stays set while a task awaits, so a send's own call made in
+  // that window would otherwise wear the monitor's name.
+  const frameLimit = Error.stackTraceLimit
+  if (monitorTask) Error.stackTraceLimit = MONITOR_STACK_FRAMES
+  const stack = new Error().stack
+  Error.stackTraceLimit = frameLimit
+  if (monitorTask && MONITOR_FRAME_RE.test(stack ?? '')) return `monitor:${monitorTask}`
+  const caller = callerModule(stack)
   label = caller ? `${runner}@${caller}` : runner
   // A production build folds most modules into `index`; the running wallet
   // step is the only name left for the holder.
