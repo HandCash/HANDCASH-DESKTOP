@@ -42,6 +42,13 @@ type WatchdogState = {
   blockedUntil: number | null
   /** App version that recorded the current streak. */
   failedOnVersion: string | null
+  /**
+   * Last export refused as over the document budget. Unlike a crash streak an
+   * upgrade does not clear it: the document is what it is until history
+   * shrinks, and each refused export blocked the UI for seconds to learn that.
+   */
+  oversizeBytes: number | null
+  oversizeAt: number | null
 }
 
 const EMPTY: WatchdogState = {
@@ -50,7 +57,12 @@ const EMPTY: WatchdogState = {
   lastSuccessAt: null,
   blockedUntil: null,
   failedOnVersion: null,
+  oversizeBytes: null,
+  oversizeAt: null,
 }
+
+/** Automatic backups skip an over-budget document for this long. */
+const OVERSIZE_HOLD_MS = 24 * 60 * 60_000
 
 function read(): WatchdogState {
   try {
@@ -66,6 +78,8 @@ function read(): WatchdogState {
       blockedUntil: typeof parsed.blockedUntil === 'number' ? parsed.blockedUntil : null,
       failedOnVersion:
         typeof parsed.failedOnVersion === 'string' ? parsed.failedOnVersion : null,
+      oversizeBytes: typeof parsed.oversizeBytes === 'number' ? parsed.oversizeBytes : null,
+      oversizeAt: typeof parsed.oversizeAt === 'number' ? parsed.oversizeAt : null,
     }
   } catch {
     return { ...EMPTY }
@@ -101,9 +115,9 @@ export function reconcileBackupWatchdog(now = Date.now()): string | null {
     (state.consecutiveFailures > 0 || state.blockedUntil != null)
   ) {
     write({
+      ...state,
       openedAt: null,
       consecutiveFailures: 0,
-      lastSuccessAt: state.lastSuccessAt,
       blockedUntil: null,
       failedOnVersion: null,
     })
@@ -115,9 +129,9 @@ export function reconcileBackupWatchdog(now = Date.now()): string | null {
   const failures = state.consecutiveFailures + 1
   const wait = backoffFor(failures)
   write({
+    ...state,
     openedAt: null,
     consecutiveFailures: failures,
-    lastSuccessAt: state.lastSuccessAt,
     blockedUntil: now + wait,
     failedOnVersion: APP_VERSION,
   })
@@ -134,7 +148,24 @@ export function backupBlockedReason(now = Date.now()): string | null {
     const mins = Math.max(1, Math.round((state.blockedUntil - now) / 60_000))
     return `backing off after ${state.consecutiveFailures} failed attempt(s) — ${mins}m left`
   }
+  if (state.oversizeAt != null && now - state.oversizeAt < OVERSIZE_HOLD_MS) {
+    const hours = Math.max(1, Math.round((state.oversizeAt + OVERSIZE_HOLD_MS - now) / 3_600_000))
+    const mb = ((state.oversizeBytes ?? 0) / (1024 * 1024)).toFixed(1)
+    return `last export was ${mb}MB, over the history backup budget — next automatic try in ${hours}h`
+  }
   return null
+}
+
+/** The export was refused for size; automatic backups hold off. */
+export function noteBackupOversize(bytes: number, now = Date.now()): void {
+  write({ ...read(), oversizeBytes: bytes, oversizeAt: now })
+}
+
+/** An export fit the budget again. */
+export function clearBackupOversize(): void {
+  const state = read()
+  if (state.oversizeAt == null) return
+  write({ ...state, oversizeBytes: null, oversizeAt: null })
 }
 
 /** Mark an attempt open. Must be durable before the expensive work begins. */
@@ -152,14 +183,16 @@ export function closeBackupAttempt(ok: boolean, now = Date.now()): void {
       lastSuccessAt: now,
       blockedUntil: null,
       failedOnVersion: null,
+      oversizeBytes: null,
+      oversizeAt: null,
     })
     return
   }
   const failures = state.consecutiveFailures + 1
   write({
+    ...state,
     openedAt: null,
     consecutiveFailures: failures,
-    lastSuccessAt: state.lastSuccessAt,
     blockedUntil: now + backoffFor(failures),
     failedOnVersion: APP_VERSION,
   })
@@ -174,6 +207,8 @@ export function clearBackupBackoff(): void {
     consecutiveFailures: 0,
     blockedUntil: null,
     failedOnVersion: null,
+    oversizeBytes: null,
+    oversizeAt: null,
   })
 }
 

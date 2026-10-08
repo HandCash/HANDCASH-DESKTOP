@@ -38,6 +38,29 @@ describe('backupWatchdog', () => {
     expect(wd.reconcileBackupWatchdog(T0)).toBeNull()
   })
 
+  it('holds automatic backups for a day after an over-budget export, across upgrades', async () => {
+    const wd = await load()
+    wd.noteBackupOversize(70 * 1024 * 1024, T0)
+    wd.closeBackupAttempt(false, T0)
+    expect(wd.backupBlockedReason(T0 + 60_000)).toMatch(/backing off/)
+
+    appVersion = '1.0.1'
+    expect(wd.reconcileBackupWatchdog(T0 + 60_000)).toMatch(/cleared/)
+    expect(wd.backupBlockedReason(T0 + 60_000)).toMatch(/70\.0MB, over the history backup budget/)
+    expect(wd.backupBlockedReason(T0 + 25 * 60 * 60_000)).toBeNull()
+  })
+
+  it('a document that fits again, or a manual retry, lifts the size hold', async () => {
+    const wd = await load()
+    wd.noteBackupOversize(70 * 1024 * 1024, T0)
+    wd.clearBackupOversize()
+    expect(wd.backupBlockedReason(T0)).toBeNull()
+
+    wd.noteBackupOversize(70 * 1024 * 1024, T0)
+    wd.clearBackupBackoff()
+    expect(wd.backupBlockedReason(T0)).toBeNull()
+  })
+
   it('blocks while an attempt is open', async () => {
     const wd = await load()
     wd.openBackupAttempt(T0)

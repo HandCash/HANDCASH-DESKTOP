@@ -247,23 +247,37 @@ function assetKeys(entry: ActivityEntry): string[] {
  * per group. Distinct items share no key, so a real batch still counts in full.
  */
 function distinctAssetGroups(items: readonly ActivityEntry[]): number {
-  const groups: Set<string>[] = []
-  for (const entry of items) {
-    const keys = assetKeys(entry)
-    if (keys.length === 0) {
-      groups.push(new Set())
-      continue
+  // Union-find over legs: an import batch has thousands of members, and
+  // comparing each against every group so far was most of a feed rebuild.
+  const parent: number[] = []
+  const root = (leg: number): number => {
+    while (parent[leg] !== leg) {
+      parent[leg] = parent[parent[leg]!]!
+      leg = parent[leg]!
     }
-    const merged = new Set(keys)
-    for (let i = groups.length - 1; i >= 0; i -= 1) {
-      if (keys.some((key) => groups[i]!.has(key))) {
-        for (const key of groups[i]!) merged.add(key)
-        groups.splice(i, 1)
+    return leg
+  }
+  const ownerOf = new Map<string, number>()
+  let groups = 0
+  for (const entry of items) {
+    const leg = parent.length
+    parent.push(leg)
+    groups += 1
+    for (const key of assetKeys(entry)) {
+      const owner = ownerOf.get(key)
+      if (owner === undefined) {
+        ownerOf.set(key, leg)
+        continue
+      }
+      const a = root(owner)
+      const b = root(leg)
+      if (a !== b) {
+        parent[a] = b
+        groups -= 1
       }
     }
-    groups.push(merged)
   }
-  return groups.length
+  return groups
 }
 
 function chooseActivityBatch(

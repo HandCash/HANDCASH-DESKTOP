@@ -42,6 +42,32 @@ function collectable(
 }
 
 describe('composeActivityRecords', () => {
+  it('counts a key chain as one collectable and a large import quickly', () => {
+    // Legs b and c each share a key with a; all three are one fox.
+    const a = collectable('Fox #1', 1)
+    const b = entry({
+      method: 'receive-collectable',
+      txid: TXID,
+      item: { name: 'Fox #1', origin: `${OTHER_TXID}_1` },
+    })
+    const c = entry({
+      method: 'receive-collectable',
+      txid: TXID,
+      item: { name: 'Fox #1', outpoint: `${TXID}.1` },
+    })
+    const d = collectable('Fox #2', 2)
+    expect(composeActivityRecords([a, b, c, d])[0]!.batch).toEqual({
+      count: 2,
+      label: 'Foxes',
+    })
+
+    const legs = Array.from({ length: 3_000 }, (_, i) => collectable(`Fox #${i}`, i))
+    const started = performance.now()
+    const [record] = composeActivityRecords(legs)
+    expect(performance.now() - started).toBeLessThan(250)
+    expect(record!.batch?.count).toBe(3_000)
+  })
+
   it('never hands a feed two records under one key', () => {
     // Same spent txid written by an app origin and by the wallet: two records
     // by origin, one subject key. React must still see distinct keys.

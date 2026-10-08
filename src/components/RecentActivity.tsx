@@ -186,6 +186,27 @@ function invalidateActivityFeed(limit?: number): void {
   else feedCache.delete(limit);
 }
 
+function sameRows<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * The previous array while its members are unchanged. The feed composes
+ * thousands of import legs; a fresh array of the same rows re-ran that
+ * composition on every live-action phase and every 5s tick.
+ */
+function useStableRows<A extends readonly unknown[]>(rows: A): A {
+  const ref = useRef(rows);
+  if (!sameRows(ref.current, rows)) ref.current = rows;
+  return ref.current;
+}
+
+/** A batch tooltip names this many members, then counts the rest. */
+const BATCH_TITLE_NAMES = 12;
+
 function formatWhen(at: number): string {
   const diff = Math.max(0, Date.now() - at);
   const minutes = Math.floor(diff / 60_000);
@@ -495,14 +516,10 @@ function HistoryRow({
       ? { ...named, item: { ...named.item, name: batchName } }
       : named
   );
-  // Every member by name, for the row the feed deliberately does not spell out.
+  // Members by name, for the row the feed deliberately does not spell out.
+  // Bounded: an import batch has thousands of members and this runs per paint.
   const batchNames = batchName
-    ? [entry, ...assets]
-        .map((asset) =>
-          asset.item ? viewActivityItem(asset.item).name?.trim() : ""
-        )
-        .filter((name): name is string => Boolean(name))
-        .join(", ")
+    ? batchTitleNames([entry, ...assets])
     : null;
   // A pending spend the wallet cannot price yet has no transaction built. The
   // state slot says which phase it is in; the amount slot only admits it does
@@ -628,6 +645,22 @@ function HistoryRow({
   );
 }
 
+function batchTitleNames(members: readonly ActivityEntry[]): string {
+  const names: string[] = [];
+  let named = 0;
+  for (const member of members) {
+    if (!member.item) continue;
+    named += 1;
+    if (names.length >= BATCH_TITLE_NAMES) continue;
+    const name = viewActivityItem(member.item).name?.trim();
+    if (name) names.push(name);
+  }
+  const rest = named - names.length;
+  return rest > 0 && names.length > 0
+    ? `${names.join(", ")} and ${rest.toLocaleString()} more`
+    : names.join(", ");
+}
+
 /**
  * Related app mark, opposite the transaction action badge. The wallet's own
  * actions carry the public profile it acts as, when it has one.
@@ -733,6 +766,9 @@ function useActivityFeed(limit: number) {
   const [live, setLive] = useState<readonly LiveAction[]>(() =>
     listLiveActions()
   );
+  // Rows read item, app and tx caches at paint. When those move but the rows
+  // did not, repaint the rows without recomposing the feed.
+  const [, setRepaint] = useState(0);
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), []);
   useEffect(() => subscribeDisplayCurrency(setCurrency), []);
@@ -741,35 +777,52 @@ function useActivityFeed(limit: number) {
     []
   );
   useEffect(() => {
-    const refresh = () => {
+    const refresh = (repaint: boolean) => {
       archiveOversizedBulkSendDebris()
       expireStaleInboundPending();
       expireStaleOutboundPending();
       invalidateActivityFeed(limit);
       const snapshot = readActivityFeed(limit);
-      setEntries(snapshot.entries);
-      setOrigins(snapshot.origins);
+      setEntries((prev) => (sameRows(prev, snapshot.entries) ? prev : snapshot.entries));
+      setOrigins((prev) =>
+        prev.length === snapshot.origins.length &&
+        prev.every((o, i) => o.id === snapshot.origins[i]!.id && o.label === snapshot.origins[i]!.label)
+          ? prev
+          : snapshot.origins
+      );
+      if (repaint) setRepaint((n) => n + 1);
     };
-    refresh();
-    const unsubActivity = subscribeAppActivity(refresh);
-    const unsubApps = subscribeConnectedApps(refresh);
+    refresh(false);
+    // Recompose writes rows back to back; one feed rebuild per burst.
+    let writeTimer = 0;
+    const refreshAfterWrites = () => {
+      if (writeTimer) return;
+      writeTimer = window.setTimeout(() => {
+        writeTimer = 0;
+        refresh(false);
+      }, 120);
+    };
+    const unsubActivity = subscribeAppActivity(refreshAfterWrites);
+    const unsubApps = subscribeConnectedApps(() => refresh(true));
     let assetTimer = 0;
     const refreshAfterAssetPaint = () => {
       // Authenticity, icon, and encoding upgrades can arrive in short bursts.
       // The feed only needs their settled projection; rebuilding it for every
       // intermediate cache paint used to interrupt foreground input.
       window.clearTimeout(assetTimer);
-      assetTimer = window.setTimeout(refresh, 280);
+      assetTimer = window.setTimeout(() => refresh(true), 280);
     };
     const unsubItems = subscribeCollectables(refreshAfterAssetPaint);
     const unsubTokens = subscribeFungibles(refreshAfterAssetPaint);
     // Activity writes usually happen while spend priority is held, which makes
     // stale-row expiry correctly yield. Without a later tick there may be no
     // event after the spend releases, so an old approval placeholder can stay
-    // painted forever beside the successful transaction row.
-    const staleTimer = window.setInterval(refresh, 5_000);
+    // painted forever beside the successful transaction row. The tick also
+    // ages "N minutes ago" and picks up tx-store confirmation labels.
+    const staleTimer = window.setInterval(() => refresh(true), 5_000);
     return () => {
       window.clearTimeout(assetTimer);
+      window.clearTimeout(writeTimer);
       window.clearInterval(staleTimer);
       unsubActivity();
       unsubApps();
@@ -778,9 +831,8 @@ function useActivityFeed(limit: number) {
     };
   }, [limit]);
 
-  const merged = useMemo(
-    () => mergeLiveActions(entries, live),
-    [entries, live]
+  const merged = useStableRows(
+    useMemo(() => mergeLiveActions(entries, live), [entries, live])
   );
 
   return { entries: merged, live, usdPerBsv, currency, origins };
@@ -864,15 +916,32 @@ function useStickNewestToTop(
 
 function useContinuousRecordKeys(records: readonly ActivityRecord[]): string[] {
   const prevRef = useRef<{ stable: string; entry: ActivityEntry }[]>([]);
+  return useMemo(() => continueRecordKeys(records, prevRef), [records]);
+}
+
+function continueRecordKeys(
+  records: readonly ActivityRecord[],
+  prevRef: { current: { stable: string; entry: ActivityEntry }[] }
+): string[] {
   const taken = new Set<string>();
   const next: { stable: string; entry: ActivityEntry }[] = [];
   const keys: string[] = [];
+  // Most subjects are the same row as last pass; only a settling row needs
+  // the continuity scan.
+  const byId = new Map<string, { stable: string; entry: ActivityEntry }>();
+  for (const row of prevRef.current) {
+    if (!byId.has(row.entry.id)) byId.set(row.entry.id, row);
+  }
   for (const record of records) {
-    const found = prevRef.current.find(
-      (row) =>
-        !taken.has(row.stable) &&
-        activityEntryContinues(row.entry, record.subject)
-    );
+    const same = byId.get(record.subject.id);
+    const found =
+      same && !taken.has(same.stable)
+        ? same
+        : prevRef.current.find(
+            (row) =>
+              !taken.has(row.stable) &&
+              activityEntryContinues(row.entry, record.subject)
+          );
     let stable = found?.stable ?? record.key;
     if (taken.has(stable)) stable = record.key;
     // A continued key may already be held by an earlier row this pass. Two
@@ -923,14 +992,17 @@ export function ActivityFeed({
   const jobs = useWalletJobs();
 
   // A job's own row speaks for it until it leaves; then its rows fold into one record.
+  // Keyed on which jobs exist, not on their progress: a running import ticks
+  // its job many times a second and must not recompose the feed each time.
+  const jobIdKey = [...walletJobIds(jobs)].join("\0");
   const filtered = useMemo(() => {
-    const jobIds = walletJobIds(jobs);
+    const jobIds = new Set(jobIdKey ? jobIdKey.split("\0") : []);
     const settled =
       jobIds.size > 0
         ? entries.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
         : entries;
     return showFilters ? filterPaymentActivity(settled, filters) : settled;
-  }, [entries, jobs, filters, showFilters]);
+  }, [entries, jobIdKey, filters, showFilters]);
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
   const records = useMemo(

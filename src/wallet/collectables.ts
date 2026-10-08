@@ -574,9 +574,10 @@ function setCollectablesCache(
   const prev = new Set(
     cachedCollectables.map((i) => normalizeOutpoint(i.outpoint))
   )
-  for (const op of [...skipArrivalToast]) {
-    if (items.some((i) => normalizeOutpoint(i.outpoint) === op)) {
-      skipArrivalToast.delete(op)
+  if (skipArrivalToast.size > 0) {
+    const incoming = new Set(items.map((i) => normalizeOutpoint(i.outpoint)))
+    for (const op of [...skipArrivalToast]) {
+      if (incoming.has(op)) skipArrivalToast.delete(op)
     }
   }
   // Drop quarantined fungible rows. Unnamed / tip-as-origin NFTs still paint;
@@ -783,8 +784,44 @@ export function getCachedCollectables(): Collectable[] {
 
 /** One held tip from the painted inventory cache — no basket read. */
 export function getCachedCollectable(outpoint: string): Collectable | null {
-  const target = normalizeOutpoint(outpoint)
-  return cachedCollectables.find((i) => i.outpoint === target) ?? null
+  return heldIndex().byRawOutpoint.get(normalizeOutpoint(outpoint)) ?? null
+}
+
+type HeldIndex = {
+  list: Collectable[]
+  /** First card per stored outpoint string. */
+  byRawOutpoint: Map<string, Collectable>
+  /** First card per dotted outpoint. */
+  byOutpoint: Map<string, Collectable>
+  /** Every card per origin key, in list order. */
+  byOrigin: Map<string, Collectable[]>
+}
+
+let heldIndexCache: HeldIndex | null = null
+
+/**
+ * Lookups into the painted inventory. `buildItems` asks twice per card, so a
+ * scan per ask made every repaint quadratic — about 1.6s per BRC-150 proof on
+ * a 1,500-item wallet. Keyed by the cache array's identity: it is replaced,
+ * never mutated.
+ */
+function heldIndex(): HeldIndex {
+  const list = cachedCollectables
+  if (heldIndexCache?.list === list) return heldIndexCache
+  const byRawOutpoint = new Map<string, Collectable>()
+  const byOutpoint = new Map<string, Collectable>()
+  const byOrigin = new Map<string, Collectable[]>()
+  for (const item of list) {
+    if (!byRawOutpoint.has(item.outpoint)) byRawOutpoint.set(item.outpoint, item)
+    const op = normalizeOutpoint(item.outpoint)
+    if (!byOutpoint.has(op)) byOutpoint.set(op, item)
+    const origin = originKey(item.origin)
+    const same = byOrigin.get(origin)
+    if (same) same.push(item)
+    else byOrigin.set(origin, [item])
+  }
+  heldIndexCache = { list, byRawOutpoint, byOutpoint, byOrigin }
+  return heldIndexCache
 }
 
 export function getCollectablePageStatus(): {
@@ -964,13 +1001,11 @@ function mediaOriginForCollectable(args: {
 }
 
 function heldByOrigin(origin: string): Collectable | undefined {
-  const key = originKey(origin)
-  return cachedCollectables.find(
+  return heldIndex().byOrigin.get(originKey(origin))?.find(
     (item) =>
-      originKey(item.origin) === key &&
-      (item.collectionId?.trim() ||
-        item.imageUrl?.trim() ||
-        (item.name && item.name !== shortOrigin(item.origin))),
+      item.collectionId?.trim() ||
+      item.imageUrl?.trim() ||
+      (item.name && item.name !== shortOrigin(item.origin)),
   )
 }
 
@@ -1031,15 +1066,27 @@ function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
   }
 }
 
-function parseCustom(raw: string | undefined): {
+type ParsedCustom = Readonly<{
   origin?: string
   name?: string
   app?: string
   collectionId?: string
   content?: string
   provenance?: unknown
-} {
+}>
+
+/**
+ * Every repaint parses every card's remittance, provenance included. The raw
+ * strings come from the same basket rows each time, so parse each once.
+ */
+const parsedCustom = new Map<string, ParsedCustom>()
+const PARSED_CUSTOM_MAX = 4096
+
+function parseCustom(raw: string | undefined): ParsedCustom {
   if (!raw) return {}
+  const hit = parsedCustom.get(raw)
+  if (hit) return hit
+  let parsed: ParsedCustom
   try {
     const o = JSON.parse(raw) as Record<string, unknown>
     const content =
@@ -1048,7 +1095,7 @@ function parseCustom(raw: string | undefined): {
         : typeof o.media === 'string'
         ? o.media
         : undefined
-    return {
+    parsed = {
       origin: typeof o.origin === 'string' ? o.origin : undefined,
       name: typeof o.name === 'string' ? o.name : undefined,
       app: typeof o.app === 'string' ? o.app : undefined,
@@ -1058,8 +1105,11 @@ function parseCustom(raw: string | undefined): {
       provenance: o.provenance,
     }
   } catch {
-    return {}
+    parsed = {}
   }
+  if (parsedCustom.size >= PARSED_CUSTOM_MAX) parsedCustom.clear()
+  parsedCustom.set(raw, parsed)
+  return parsed
 }
 
 function toCollectable(
@@ -1710,10 +1760,7 @@ function needsIndexerResolve(o: ItemOutput): boolean {
 }
 
 function heldNamedCollectable(outpoint: string): Collectable | undefined {
-  const key = normalizeOutpoint(outpoint)
-  const held = cachedCollectables.find(
-    (c) => normalizeOutpoint(c.outpoint) === key,
-  )
+  const held = heldIndex().byOutpoint.get(normalizeOutpoint(outpoint))
   if (held && !collectableIsFungible(held)) return held
   return undefined
 }
@@ -1752,6 +1799,7 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
  * dropped held cards until the next read put them back.
  */
 function repaintedCollectables(): Collectable[] {
+  const startedAt = performance.now()
   const byOp = new Map(lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]))
   for (const seed of seededItems.values()) {
     const key = outpointKey(seed.outpoint)
@@ -1760,7 +1808,12 @@ function repaintedCollectables(): Collectable[] {
   const painted = new Map(
     buildItems([...byOp.values()], lastItemChain).map((c) => [outpointKey(c.outpoint), c]),
   )
-  return cachedCollectables.map((c) => painted.get(outpointKey(c.outpoint)) ?? c)
+  const repainted = cachedCollectables.map((c) => painted.get(outpointKey(c.outpoint)) ?? c)
+  const ms = Math.round(performance.now() - startedAt)
+  if (ms >= 250) {
+    console.info(`[collectables] repaint done ${ms}ms — ${repainted.length} card(s)`)
+  }
+  return repainted
 }
 
 /**

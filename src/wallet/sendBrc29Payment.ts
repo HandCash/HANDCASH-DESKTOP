@@ -1,4 +1,5 @@
 import { getActiveWallet } from './session'
+import { pinnedActiveWallet } from './pinnedWallet'
 
 /**
  * BRC-29 peer payments (HandCash ↔ HandCash) — Babbage / wallet-toolbox shape.
@@ -23,7 +24,7 @@ import {
   noteOutboundSendPending,
   failOutboundSendPending,
 } from './appActivity'
-import { atomicBeefForSubject, getBeefForTxidCached } from './beefCache'
+import { atomicBeefForSubject, getBeefForTxidCached, getLocalBeefForTxid } from './beefCache'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { parseProvenanceV2, type ProvenanceV2 } from './oneSatProvenance'
 import {
@@ -217,6 +218,28 @@ const brc29InternalizeInflight = new Map<string, Promise<InternalizeBrc29Result>
 
 /** A hint this old has had its first chase; worth a double-spend probe before the next. */
 const CONFLICT_PROBE_AFTER_MS = 60_000
+
+/**
+ * AtomicBEEF for an inbound txid from the session and durable caches only.
+ * The toolbox scan is synchronous IndexedDB on the phone's UI thread and
+ * this runs on every inbox poll.
+ */
+async function localAtomicBeefForHint(txid: string): Promise<number[] | undefined> {
+  const active = pinnedActiveWallet()
+  if (!active) return undefined
+  const beef = await getLocalBeefForTxid(active, txid, { toolbox: false }).catch(() => null)
+  return beef ? atomicBeefForSubject(beef.toBinary(), txid) : undefined
+}
+
+const hintPathSeen = new Map<string, string>()
+
+/** Each hint logs where it waits, once per change — skips used to be silent. */
+function noteHintPath(txid: string, path: string): void {
+  const id = txid.trim().toLowerCase()
+  if (hintPathSeen.get(id) === path) return
+  hintPathSeen.set(id, path)
+  console.info(`[tip-ingest] hint ${id.slice(0, 12)} ${path}`)
+}
 
 /**
  * A retired hint becomes actionable again when a real AtomicBEEF arrives.
@@ -1435,12 +1458,29 @@ export async function ingestPaymentsFromTipHints(
         './kernel/inboundHintFate'
       )
       const now = Date.now()
+      // An envelope without its package can still be a dead one: the body
+      // this device cached on an earlier delivery answers the same question.
+      const local =
+        now - firstSeenAt >= CONFLICT_PROBE_AFTER_MS
+          ? await localAtomicBeefForHint(hint.txid)
+          : undefined
+      if (local) {
+        const activeForProbe = pinnedActiveWallet()
+        const conflict = activeForProbe
+          ? await packageConflictFor(hint.txid, local, activeForProbe.chain)
+          : null
+        if (conflict) {
+          await retireDoubleSpent(hint.txid, conflict)
+          return { importedTxid: null, balanceSats: null }
+        }
+      }
       const lastFailAt = inboundHintLastFailAt(hint.txid)
       if (
         lastFailAt != null &&
         now - firstSeenAt >= UNRESOLVABLE_GRACE_MS
       ) {
-        await markGhostIfMissing(hint.txid, false, firstSeenAt, !hint.item)
+        noteHintPath(hint.txid, `bodyless ghost-check local=${local ? 'yes' : 'no'}`)
+        await markGhostIfMissing(hint.txid, false, firstSeenAt, !hint.item, [], local)
         return { importedTxid: null, balanceSats: null }
       }
       if (
@@ -1450,6 +1490,7 @@ export async function ingestPaymentsFromTipHints(
           now,
         })
       ) {
+        noteHintPath(hint.txid, `bodyless deferred local=${local ? 'yes' : 'no'}`)
         return { importedTxid: null, balanceSats: null }
       }
     }

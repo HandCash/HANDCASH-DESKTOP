@@ -1,7 +1,7 @@
 import { getActiveWallet } from './session'
 
 import type { ActivityItem } from './appActivity'
-import { getCachedCollectables } from './collectables'
+import { getCachedCollectables, type Collectable } from './collectables'
 import { getCachedFungibles, getTokenIconDataUrl } from './token'
 import {
   getResolvedInscription,
@@ -15,6 +15,51 @@ import { getProvenVerdict } from './provenCache'
 
 const asOutpoint = (v: string) => v.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 const asOrigin = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+
+type HeldIndex = {
+  list: readonly Collectable[]
+  byOutpoint: Map<string, number>
+  byOrigin: Map<string, number>
+}
+
+let heldIndex: HeldIndex | null = null
+
+/**
+ * First held tip matching either key, in list order. Activity rows ask this
+ * once per row and once per batch member on every paint; a scan of a
+ * 1,500-item inventory per ask was most of the phone's Activity commit time.
+ * The cache array is replaced on every change, so identity is the version.
+ */
+function heldCollectable(
+  outpoint: string | null,
+  originKey: string | null,
+): Collectable | undefined {
+  const list = getCachedCollectables()
+  if (heldIndex?.list !== list) {
+    const byOutpoint = new Map<string, number>()
+    const byOrigin = new Map<string, number>()
+    list.forEach((c, i) => {
+      if (c.outpoint) {
+        const key = asOutpoint(c.outpoint)
+        if (!byOutpoint.has(key)) byOutpoint.set(key, i)
+      }
+      if (c.origin) {
+        const key = asOrigin(c.origin)
+        if (!byOrigin.has(key)) byOrigin.set(key, i)
+      }
+    })
+    heldIndex = { list, byOutpoint, byOrigin }
+  }
+  const atOutpoint = outpoint ? heldIndex.byOutpoint.get(outpoint) : undefined
+  const atOrigin = originKey ? heldIndex.byOrigin.get(originKey) : undefined
+  const at =
+    atOutpoint === undefined
+      ? atOrigin
+      : atOrigin === undefined
+        ? atOutpoint
+        : Math.min(atOutpoint, atOrigin)
+  return at === undefined ? undefined : list[at]
+}
 
 function isGenericCollectableName(name: string | undefined): boolean {
   return !name?.trim() || /^collectable$/i.test(name.trim())
@@ -74,11 +119,7 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
 
   // A tip still held has already been through the list's repair pass.
   // After a market list the held tip moves, so also match the 1sat origin.
-  const held = getCachedCollectables().find(
-    (c) =>
-      (outpoint && asOutpoint(c.outpoint) === outpoint) ||
-      (originKey && asOrigin(c.origin) === originKey),
-  )
+  const held = heldCollectable(outpoint, originKey)
   if (held) {
     const chain = getActiveWallet()?.chain ?? 'main'
     const mediaOrigin = held.content ?? held.origin

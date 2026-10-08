@@ -12,6 +12,7 @@
  * wallet. See `layers.ts` (historyReplica).
  */
 import { appendAppLog } from './appLog'
+import { clearBackupOversize, noteBackupOversize } from './backupWatchdog'
 
 /**
  * Kept well under the observed ~1.7GB worker ceiling: the multiplier above is
@@ -104,10 +105,14 @@ export function formatBrc38TableSizes(sizes: Brc38TableSize[]): string {
  */
 export function assertHistoryDocumentEncryptable(json: string): void {
   const bytes = new TextEncoder().encode(json).byteLength
-  if (bytes < HISTORY_DOCUMENT_WARN_BYTES) return
+  if (bytes < HISTORY_DOCUMENT_WARN_BYTES) {
+    clearBackupOversize()
+    return
+  }
 
   const breakdown = formatBrc38TableSizes(summarizeBrc38TableSizes(json))
   if (bytes <= HISTORY_DOCUMENT_BUDGET_BYTES) {
+    clearBackupOversize()
     appendAppLog(
       'warn',
       `[cloud-backup] BRC-38 document ${mib(bytes)} approaching the ${mib(
@@ -121,5 +126,6 @@ export function assertHistoryDocumentEncryptable(json: string): void {
     'error',
     `[cloud-backup] refusing to encrypt ${mib(bytes)} BRC-38 document — ${breakdown}`,
   )
+  noteBackupOversize(bytes)
   throw new HistoryDocumentTooLargeError(bytes)
 }

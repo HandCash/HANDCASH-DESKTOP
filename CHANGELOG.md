@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.521] - 2026-10-08
+
+### Fixed
+- **Activity stops freezing the phone.** The 0.1.665 upload put nearly all React time in the Activity feed: 27 slow commits totalling 19s, the worst at 938ms, plus a burst of 34 commits in 8.9s. Three things made each commit expensive on a wallet with about 1,500 imported items:
+  - Every row's item lookup scanned the whole inventory, and the import batch row did that once per member to build its tooltip, about 2.25 million string normalizations per commit. Lookups are now indexed, and the tooltip names 12 members and counts the rest.
+  - Counting a batch's distinct collectables compared each leg against every group so far. It now uses union-find, which brings composing 1,700 entries down from 45ms to 11ms on Desktop.
+  - The feed rebuilt everything on every live-action phase, every import progress tick and every 5s refresh, even when no row had changed. Row arrays now stay identical while their members do, job progress no longer rebuilds the feed, bursts of activity writes rebuild it once, and record keys are matched by id before the continuity scan.
+- **A BRC-150 proof no longer freezes Desktop for ~1.6s.** Each proven item repainted the whole collectables list, and the repaint looked every card up in the inventory with a linear scan, twice. Nine proofs in a row froze the app for 14.4s. Inventory lookups are now indexed, item remittance JSON is parsed once per row instead of on every repaint, and a repaint over 250ms logs `[collectables] repaint done`.
+- **An over-budget history backup is no longer rebuilt after every launch.** The automatic backup exported the whole wallet database, an 8.6s freeze in one database callback, only to refuse the document for being over the 64MB budget. An app upgrade cleared that failure, so it repeated soon after every launch. A size refusal now holds automatic backups for 24 hours across upgrades. A document that fits, or "Back up now", lifts the hold.
+- **Body-less payment hints get the double-spend probe too.** An inbox envelope that arrives without its package used to skip the probe. It now checks the package this device cached on an earlier delivery, so a dead receive like `68f708e4` retires whichever way its envelope comes back. Each hint also logs where it waits (`[tip-ingest] hint <txid> bodyless deferred|ghost-check`), where it used to return silently. Triage shows `lastProbe`, `hintPath` and `retired` per incoming receive.
+
 ## [1.3.520] - 2026-10-08
 
 ### Fixed

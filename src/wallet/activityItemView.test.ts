@@ -139,4 +139,33 @@ describe('viewActivityItem', () => {
       imageUrl: `https://content.test/${WRONG_ORIGIN}`,
     })
   })
+
+  it('takes the first held tip in list order, by outpoint or origin', () => {
+    held.mockReturnValue([
+      { outpoint: `${'11'.repeat(32)}.0`, origin: WRONG_ORIGIN.toUpperCase(), name: 'by origin' },
+      { outpoint: OUTPOINT.replace('.0', '_0'), origin: TRUE_ORIGIN, name: 'by outpoint' },
+    ])
+    expect(viewActivityItem(frozen).name).toBe('by origin')
+
+    held.mockReturnValue([
+      { outpoint: OUTPOINT, origin: TRUE_ORIGIN, name: 'by outpoint' },
+      { outpoint: `${'11'.repeat(32)}.0`, origin: WRONG_ORIGIN, name: 'by origin' },
+    ])
+    expect(viewActivityItem(frozen).name).toBe('by outpoint')
+  })
+
+  it('sees a replaced inventory and stays fast on a large one', () => {
+    const many = Array.from({ length: 3_000 }, (_, i) => ({
+      outpoint: `${i.toString(16).padStart(64, '0')}.0`,
+      origin: `${i.toString(16).padStart(64, '0')}_0`,
+      name: `item ${i}`,
+    }))
+    held.mockReturnValue(many)
+    const started = performance.now()
+    for (const c of many) viewActivityItem({ name: 'x', outpoint: c.outpoint })
+    expect(performance.now() - started).toBeLessThan(250)
+
+    held.mockReturnValue([{ ...many[7]!, name: 'renamed' }])
+    expect(viewActivityItem({ name: 'x', outpoint: many[7]!.outpoint }).name).toBe('renamed')
+  })
 })

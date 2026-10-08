@@ -107,6 +107,8 @@ export function isLocalUnconfirmedTxid(txid: string): boolean {
 
 /** Key the pending write belongs to, or `null` when the store is clean. */
 let dirtyKey: string | null = null
+/** Bumped on every in-place map write; derived indexes key on it. */
+let writeVersion = 0
 let flushQueued = false
 
 /**
@@ -118,6 +120,7 @@ let flushQueued = false
  * bytes before any `await` in the caller resumes, so durability is unchanged.
  */
 function persist(): void {
+  writeVersion += 1
   dirtyKey = storageKey()
   if (flushQueued) return
   flushQueued = true
@@ -139,6 +142,7 @@ export function flushTxStore(): void {
   while (rows.length > MAX_ENTRIES) {
     const drop = rows.pop()
     if (drop) map.delete(drop.id)
+    writeVersion += 1
   }
   durableSetItem(key, JSON.stringify(rows))
   for (const listener of listeners) listener(rows)
@@ -156,13 +160,24 @@ export function getTxRecord(id: string): TxRecord | null {
   return load().get(id) ?? null
 }
 
+/**
+ * First record per txid, in map order. Activity asks once per painted row and
+ * most rows have no record, so the index is rebuilt per write, not per ask.
+ */
+let txidIndex: { map: Map<string, TxRecord>; version: number; byTxid: Map<string, TxRecord> } | null = null
+
 export function getTxByTxid(txid: string): TxRecord | null {
   const needle = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(needle)) return null
-  for (const rec of load().values()) {
-    if (rec.txid === needle) return rec
+  const map = load()
+  if (txidIndex?.map !== map || txidIndex.version !== writeVersion) {
+    const byTxid = new Map<string, TxRecord>()
+    for (const rec of map.values()) {
+      if (rec.txid && !byTxid.has(rec.txid)) byTxid.set(rec.txid, rec)
+    }
+    txidIndex = { map, version: writeVersion, byTxid }
   }
-  return null
+  return txidIndex.byTxid.get(needle) ?? null
 }
 
 export function subscribeTxStore(listener: Listener): () => void {

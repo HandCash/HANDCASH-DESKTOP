@@ -3057,6 +3057,10 @@ function storageLockFacts(events) {
 
 const RECEIVE_WRITE_RE = /^\[activity\] (new|merged) earned\/\S+ (\d+) sat ([0-9a-f]{12})/
 const INGEST_MARK_RE = /^\[brc29-ingest ([0-9a-f]{12})…\] \+(\d+)ms (.+)$/
+const CONFLICT_PROBE_RE =
+  /^\[tip-ingest\] conflict-probe done (\d+)ms ([0-9a-f]{12})(?: asked=(\d+) spent=(\d+) unspent=(\d+) unknown=(\d+) conflict=(\S+))?/
+const HINT_PATH_RE = /^\[tip-ingest\] hint ([0-9a-f]{12}) (.+)$/
+const HINT_RETIRED_RE = /^\[tip-ingest\] tip ([0-9a-f]{12})… retired — (.+)$/
 const RECEIVE_TRAIL_MAX = 24
 
 /**
@@ -3070,7 +3074,21 @@ function incomingReceiveFacts(events) {
   const entry = (id) => {
     let x = byTxid.get(id)
     if (!x) {
-      x = { txid: id, writes: { new: 0, merged: 0 }, ingestAttempts: 0, ingestDone: 0, longestIngestMs: 0, lastIngestPhase: null, tags: {}, trail: [] }
+      x = {
+        txid: id,
+        writes: { new: 0, merged: 0 },
+        ingestAttempts: 0,
+        ingestDone: 0,
+        longestIngestMs: 0,
+        lastIngestPhase: null,
+        // Double-spend probe, last answer: coins asked, and who spent them.
+        lastProbe: null,
+        // Where the inbox hint last waited (bodyless deferred, ghost-check…).
+        hintPath: null,
+        retired: null,
+        tags: {},
+        trail: [],
+      }
       byTxid.set(id, x)
     }
     return x
@@ -3097,6 +3115,23 @@ function incomingReceiveFacts(events) {
         x.longestIngestMs = Math.max(x.longestIngestMs, Number(ingest[2]))
         x.lastIngestPhase = ingest[3].slice(0, 160)
       }
+      const probe = CONFLICT_PROBE_RE.exec(e.text)
+      if (probe && probe[2] === id) {
+        x.lastProbe = probe[3] == null
+          ? { ms: Number(probe[1]) }
+          : {
+              ms: Number(probe[1]),
+              asked: Number(probe[3]),
+              spent: Number(probe[4]),
+              unspent: Number(probe[5]),
+              unknown: Number(probe[6]),
+              conflict: probe[7] === 'none' ? null : probe[7],
+            }
+      }
+      const path = HINT_PATH_RE.exec(e.text)
+      if (path && path[1] === id) x.hintPath = path[2].slice(0, 120)
+      const retired = HINT_RETIRED_RE.exec(e.text)
+      if (retired && retired[1] === id) x.retired = retired[2].slice(0, 160)
       if (!RECEIVE_WRITE_RE.test(e.text)) {
         x.trail.push(`${new Date(e.at).toISOString().slice(11, 19)} ${e.text.slice(0, 220)}`)
         if (x.trail.length > RECEIVE_TRAIL_MAX) x.trail.shift()
