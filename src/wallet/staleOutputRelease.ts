@@ -2715,44 +2715,59 @@ const PENDING_CHANGE_TX_STATUSES = [
  *  to a crash between `postBeef` and `pinBroadcastLocalTx` heals here instead of
  *  stranding the funding output.
  */
+/** Live txs listed per send: the newest {@link PENDING_SCAN_PAGES} pages of 25. */
+const PENDING_SCAN_PAGE = 25;
+const PENDING_SCAN_PAGES = 5;
+
+/**
+ * Newest first. A migrated wallet holds hundreds of `unproven` imports; the
+ * send that just happened is the one whose change still needs promoting, and
+ * an ascending page cap never reached it. One cursor walk per status group
+ * instead of one per status.
+ */
 export async function listPendingLocalChangeTxids(): Promise<string[]> {
   const active = getActiveWallet();
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return [];
 
   const txids = new Set<string>();
+  const ordered: string[] = [];
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as LocalStorage;
       const findTransactions = sp.findTransactions;
       if (typeof findTransactions !== "function") return;
-      const scan = async (status: string, accept: (txid: string) => boolean) => {
-        for (let page = 0; page < 5; page += 1) {
+      const scan = async (
+        statuses: readonly string[],
+        accept: (txid: string) => boolean,
+      ) => {
+        for (let page = 0; page < PENDING_SCAN_PAGES; page += 1) {
           const rows = await findTransactions.call(sp, {
             partial: {},
-            status: [status],
+            status: [...statuses],
             noRawTx: true,
-            paged: { limit: 25, offset: page * 25 },
+            orderDescending: true,
+            paged: { limit: PENDING_SCAN_PAGE, offset: page * PENDING_SCAN_PAGE },
           });
           if (!rows?.length) break;
           for (const row of rows) {
             const txid = String(row.txid ?? "")
               .trim()
               .toLowerCase();
-            if (/^[0-9a-f]{64}$/.test(txid) && accept(txid)) txids.add(txid);
+            if (!/^[0-9a-f]{64}$/.test(txid) || txids.has(txid) || !accept(txid)) continue;
+            txids.add(txid);
+            ordered.push(txid);
           }
-          if (rows.length < 25) break;
+          if (rows.length < PENDING_SCAN_PAGE) break;
         }
       };
-      for (const status of PENDING_CHANGE_TX_STATUSES) await scan(status, () => true);
-      for (const status of APP_HELD_TX_STATUSES) {
-        await scan(status, txHadArcadeSubmitContact);
-      }
+      await scan(PENDING_CHANGE_TX_STATUSES, () => true);
+      await scan(APP_HELD_TX_STATUSES, txHadArcadeSubmitContact);
     });
   } catch (err) {
     console.warn("[stale-output] pending tx scan skipped", err);
   }
-  return [...txids];
+  return ordered;
 }
 
 /**
@@ -2817,6 +2832,13 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   forSpendChain?: boolean;
   /** Retained for caller compatibility; promotion is now always local-only. */
   localOnly?: boolean;
+  /**
+   * Stop walking live txs once this much time has passed. Checked only
+   * *between* txs — a tx is always sealed and kept whole or not at all, so a
+   * send can never reselect an input this walk half-hid. The txs left over are
+   * the oldest; the next pass (or the background heal) takes them.
+   */
+  budgetMs?: number;
 }): Promise<number> {
   const forSpendChain = opts?.forSpendChain === true;
   if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0;
@@ -2824,6 +2846,7 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   const storage = active?.wallet?.storage;
   if (!storage?.runAsStorageProvider) return 0;
 
+  const startedAt = Date.now();
   const done = promotedSetFor(active?.identityKey ?? "");
   const all = await listPendingLocalChangeTxids();
   // A txid that left the live set is settled; stop tracking it so the memo
@@ -2836,8 +2859,20 @@ export async function promotePendingLocalChangeOutputs(opts?: {
 
   let promoted = 0;
   let sealedTotal = 0;
+  let walked = 0;
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break;
+    if (
+      walked > 0 &&
+      opts?.budgetMs != null &&
+      Date.now() - startedAt >= opts.budgetMs
+    ) {
+      console.info(
+        `[stale-output] promote stopped at ${walked}/${txids.size} live tx(s) after ${Date.now() - startedAt}ms — remainder next pass`,
+      );
+      break;
+    }
+    walked += 1;
     // Pending change is local signed state. Explorer absence cannot fail it;
     // competing-spend reconciliation runs separately and proof-first.
     // Same order as utxoHealFromHistory: seal spent inputs FIRST, then keep

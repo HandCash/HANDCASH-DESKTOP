@@ -175,6 +175,7 @@ describe('refreshSpendableBalance', () => {
     expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({
       forSpendChain: true,
       localOnly: true,
+      budgetMs: 4_000,
     })
     expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
@@ -324,6 +325,7 @@ describe('refreshSpendableBalance', () => {
     expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({
       forSpendChain: true,
       localOnly: true,
+      budgetMs: 4_000,
     })
   })
 

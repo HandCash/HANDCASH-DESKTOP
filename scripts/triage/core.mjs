@@ -191,6 +191,7 @@ function sessionFacts(header, events) {
   const tokenLedger = tokenLedgerFacts(events)
   const appFlow = appFlowFacts(events)
   const toolboxSteps = toolboxStepFacts(events)
+  const spendPrep = spendPrepFacts(events)
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
   const receiptReplays = receiptReplayFacts(events)
@@ -266,6 +267,11 @@ function sessionFacts(header, events) {
     // Wallet Toolbox steps inside createAction / signAction that ran past
     // 250ms (`[toolbox] <step> done <N>ms`), per step and page visibility.
     toolboxSteps,
+    // What each payment did between entering the exclusive spend region and
+    // createAction: the region-entry change promote (`[spend-guard] promote
+    // <mode> done`), the flow's own `+<N>ms <phase>` marks, and the sends the
+    // watchdog aborted before any mark was reached (stuck in the promote).
+    spendPrep,
     // Mobile activity notifications: posted / skipped (with reason) / failed,
     // and hidden-WebView bridge value actions that raised none within 5s.
     notifications,
@@ -1601,6 +1607,89 @@ function toolboxStepFacts(events) {
       }
     })
     .sort((a, b) => b.totalMs - a.totalMs)
+}
+
+const SPEND_PROMOTE_RE = /^\[spend-guard\] promote (full|light) done (\d+)ms$/
+const SPEND_PROMOTE_STOPPED_RE =
+  /^\[stale-output\] promote stopped at (\d+)\/(\d+) live tx\(s\) after (\d+)ms/
+const SPEND_PROMOTED_RE =
+  /^\[stale-output\] promoted (\d+) pending local change output\(s\), sealed (\d+) input\(s\) from (\d+) live tx\(s\)/
+const SEND_MARK_RE = /^\[(brc29|p2pkh|collectables|bsv21)\] \+(\d+)ms (.+)$/
+const SEND_STUCK_RE = /^\[payment-progress\] stuck before signing — aborting \S+ (\w+)/
+const SEND_REQUESTED_RE = /^\[tx-trace\] requested traceId=\S+ flow=(\S+)/
+
+/**
+ * Per-payment prep timeline. A send that the watchdog aborts with no phase
+ * mark after `requested` never left the region-entry promote: nothing of the
+ * flow's own code ran, so the owner is the change-promotion walk.
+ */
+function spendPrepFacts(events) {
+  const promotes = []
+  const stopped = []
+  const promoted = []
+  const sends = []
+  let open = null
+  for (const e of events) {
+    let m
+    if ((m = SEND_REQUESTED_RE.exec(e.text))) {
+      open = { flow: m[1], at: e.at, marks: [], outcome: 'open' }
+      sends.push(open)
+      continue
+    }
+    if ((m = SPEND_PROMOTE_RE.exec(e.text))) {
+      promotes.push({ mode: m[1], ms: Number(m[2]) })
+      if (open) open.marks.push({ phase: `promote ${m[1]}`, atMs: e.at - open.at, ms: Number(m[2]) })
+      continue
+    }
+    if ((m = SPEND_PROMOTE_STOPPED_RE.exec(e.text))) {
+      stopped.push({ walked: Number(m[1]), live: Number(m[2]), ms: Number(m[3]) })
+      continue
+    }
+    if ((m = SPEND_PROMOTED_RE.exec(e.text))) {
+      promoted.push({ promoted: Number(m[1]), sealed: Number(m[2]), liveTxs: Number(m[3]) })
+      continue
+    }
+    if ((m = SEND_MARK_RE.exec(e.text))) {
+      if (open) open.marks.push({ phase: m[3].slice(0, 60), atMs: e.at - open.at, ms: Number(m[2]) })
+      if (open && /^createAction /.test(m[3])) open.outcome = 'signed'
+      continue
+    }
+    if ((m = SEND_STUCK_RE.exec(e.text)) && open) {
+      open.outcome = open.marks.length === 0 ? 'stuck-in-promote' : `stuck-after:${open.marks.at(-1).phase}`
+      open.stuckAfterMs = e.at - open.at
+      open = null
+    }
+  }
+  const abortedInPromote = sends.filter((s) => s.outcome === 'stuck-in-promote').length
+  return {
+    sends: sends.length,
+    signed: sends.filter((s) => s.outcome === 'signed').length,
+    abortedInPromote,
+    abortedAfterPhase: Object.fromEntries(
+      sends
+        .filter((s) => s.outcome.startsWith('stuck-after:'))
+        .map((s) => [s.outcome.slice('stuck-after:'.length), 1])
+        .reduce((acc, [k, v]) => acc.set(k, (acc.get(k) ?? 0) + v), new Map()),
+    ),
+    promotes: {
+      runs: promotes.length,
+      worstMs: promotes.reduce((a, p) => Math.max(a, p.ms), 0),
+      byMode: Object.fromEntries(
+        ['full', 'light'].map((mode) => [
+          mode,
+          promotes.filter((p) => p.mode === mode).map((p) => p.ms),
+        ]),
+      ),
+      stoppedAtBudget: stopped,
+      promoted,
+    },
+    timelines: sends.slice(-6).map((s) => ({
+      flow: s.flow,
+      outcome: s.outcome,
+      ...(s.stuckAfterMs != null ? { stuckAfterMs: s.stuckAfterMs } : {}),
+      marks: s.marks.map((mk) => `${mk.atMs}ms ${mk.phase}`),
+    })),
+  }
 }
 
 const NOTIFY_POSTED_RE = /^\[mobile-notifications\] posted channel=(\S+)/

@@ -71,6 +71,15 @@ export function abortLiveExclusiveSpend(reason = 'Send timed out'): boolean {
 }
 
 export type SpendPromoteMode = 'full' | 'light'
+
+/**
+ * How long the region-entry promote may walk live txs before the send goes on.
+ * Each tx costs ~1.5s of storage; a migrated wallet lists hundreds of
+ * `unproven` imports, and walking them all held "Preparing payment" past the
+ * 90s watchdog with no phase of the send itself ever reached (0.1.656). The
+ * walk is newest first, so the change that matters is inside the budget.
+ */
+const SPEND_ENTRY_PROMOTE_BUDGET_MS = 4_000
 export type SpendPreparation = SpendPromoteMode | 'on-demand' | false
 
 /**
@@ -150,6 +159,7 @@ async function promoteSpendableChangeBody(
       restored = await promotePendingLocalChangeOutputs({
         forSpendChain: true,
         localOnly: true,
+        budgetMs: SPEND_ENTRY_PROMOTE_BUDGET_MS,
       })
     } else {
       await reclaimSealedInputsNeverSpent({ forSpendChain: true })

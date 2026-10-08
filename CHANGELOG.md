@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.511] - 2026-10-08
+
+### Fixed
+- **"Preparing payment" no longer walks every imported transaction.** On 0.1.656 both money sends sat in Preparing for 92s and were aborted before any step of the send ran. Entering the send first promotes change from live local transactions, one storage walk (~1.5s) each, and it listed them oldest first with a cap of 125 — on a migrated wallet that is hundreds of `unproven` imports, and the send that just happened was past the cap. The list is now newest first in one descending scan per status group, and the send-entry walk stops between transactions after 4s; what it leaves is the oldest, which the next pass or the background heal takes. 1Sat tips were never in this pool — the pool was the import transactions themselves.
+- **Activity batch count is back to a pill that grows and abbreviates.** The 1.3.471 restore dropped it: the top-left count on a batched Activity icon is a 16px circle for one digit and widens into a pill short of the top-right mark for longer counts; 1,000 and up read as `1.2k` / `12k`, rounded down.
+
+### Changed
+- Triage reports `spendPrep`: per payment, the region-entry promote and the flow's own phase marks, and which sends the watchdog aborted before the first mark.
+
 ## [1.3.510] - 2026-10-08
 
 ### Fixed
