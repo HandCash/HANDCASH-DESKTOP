@@ -26,6 +26,7 @@
  */
 import { Transaction } from '@bsv/sdk'
 import { mapPool } from './asyncPool'
+import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 import type { Chain } from './vault'
 
 /** Statuses a local transaction can hold while the chain has not decided it. */
@@ -308,7 +309,7 @@ const CHAIN_ASK_CONCURRENCY = 4
 async function askChain(
   txids: readonly string[],
   txExistsOnChain?: (txid: string) => Promise<boolean | null>,
-): Promise<Map<string, ChainAnswer>> {
+): Promise<{ chain: Map<string, ChainAnswer>; yielded: boolean }> {
   const chain = new Map<string, ChainAnswer>()
   const now = Date.now()
   const ask: string[] = []
@@ -318,19 +319,29 @@ async function askChain(
   }
   if (!txExistsOnChain) {
     for (const txid of ask) chain.set(txid, 'unknown')
-    return chain
+    return { chain, yielded: false }
   }
+  let yielded = false
   await mapPool(ask, CHAIN_ASK_CONCURRENCY, async (txid) => {
+    // Forty-eight hours ago this ran inside the unlock region, so a send
+    // could not start until it finished. The funding pass is now shared, and
+    // a send that waits out these lookups times out with nothing broadcast.
+    if (yielded || shouldYieldChainIngestToSpend()) {
+      yielded = true
+      chain.set(txid, 'unknown')
+      return
+    }
     let answer: boolean | null = null
     try {
       answer = await txExistsOnChain(txid)
     } catch {
       answer = null
     }
+    if (shouldYieldChainIngestToSpend()) yielded = true
     if (answer === true) presentAt.set(txid, Date.now())
     chain.set(txid, answer === true ? 'present' : 'unknown')
   })
-  return chain
+  return { chain, yielded }
 }
 
 /** Plan from storage state plus chain answers and write it. Storage only. */
@@ -400,7 +411,9 @@ export async function failLocalTxClosure(
 ): Promise<ClosureOutcome> {
   const state = await readClosureState(sp, opts.seedTxids ?? [])
   if (!state) return { failed: [], keptOnChain: [] }
-  return applyClosure(sp, state, await askChain(state.reachable, opts.txExistsOnChain))
+  const asked = await askChain(state.reachable, opts.txExistsOnChain)
+  if (asked.yielded) return { failed: [], keptOnChain: [] }
+  return applyClosure(sp, state, asked.chain)
 }
 
 type ClosureWallet = {
@@ -430,6 +443,7 @@ export async function failOrphanedLocalTxs(
   const none: ClosureOutcome = { failed: [], keptOnChain: [] }
   const storage = active?.wallet?.storage
   if (!active || !storage?.runAsStorageProvider) return none
+  if (shouldYieldChainIngestToSpend()) return none
   const { txExistsOnChain } = await import('./legacyScan')
   try {
     const readStartedAt = Date.now()
@@ -437,9 +451,15 @@ export async function failOrphanedLocalTxs(
       readClosureState(activeSp as ClosureStorage, seedTxids),
     )
     if (!asked) return none
+    if (shouldYieldChainIngestToSpend()) return none
     const askStartedAt = Date.now()
-    const chain = await askChain(asked.reachable, (txid) => txExistsOnChain(txid, active.chain))
+    const chainAsk = await askChain(asked.reachable, (txid) => txExistsOnChain(txid, active.chain))
     const askMs = Date.now() - askStartedAt
+    if (chainAsk.yielded) {
+      console.info('[tx-closure] deferred — a send is waiting')
+      return none
+    }
+    const chain = chainAsk.chain
     if (askMs >= 250) {
       console.info(
         `[tx-closure] chain check done ${askMs}ms — ${asked.reachable.length} descendant(s), read ${askStartedAt - readStartedAt}ms`,

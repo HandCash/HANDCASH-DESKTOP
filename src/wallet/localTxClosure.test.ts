@@ -330,6 +330,28 @@ describe('failOrphanedLocalTxs', () => {
     }
   }
 
+  it('does not ask the chain or fail descendants when a send is waiting', async () => {
+    const coord = await import('./walletCoordinator')
+    const yieldToSpend = vi.spyOn(coord, 'shouldYieldChainIngestToSpend').mockReturnValue(false)
+    const { sp, rows } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([A]) },
+      ],
+      [],
+    )
+    const { active, held } = sessionWallet(sp)
+    chainLookups.answer = async () => {
+      yieldToSpend.mockReturnValue(true)
+      return null
+    }
+    const outcome = await failOrphanedLocalTxs(active)
+    expect(outcome.failed).toEqual([])
+    expect(rows[1]?.status).toBe('unproven')
+    expect(held.sessions).toBe(1)
+    yieldToSpend.mockRestore()
+  })
+
   it('asks the chain with the storage lock released', async () => {
     const { sp, rows } = fakeStorage(
       [

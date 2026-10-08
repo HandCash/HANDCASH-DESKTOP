@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.508] - 2026-10-08
+
+### Fixed
+- **An item send is no longer starved by unlock’s chain check.** The broadcast path is the same as 48 hours ago. What changed is that unlock’s funding pass now runs beside a send, and its first step still walks every live local transaction and asks the network about each one while holding the storage lock. On 0.1.653 a send of 2 collectables timed out in that wait and nothing was broadcast. That check now stops as soon as a send is waiting and leaves the lock and the network to the send.
+
 ## [1.3.507] - 2026-10-08
 
 ### Fixed
