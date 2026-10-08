@@ -7,6 +7,7 @@ import { installArcadeV2Services } from './arcadeV2'
 import { installInternalizeMinerDeferral } from './internalizeMinerDeferral'
 import { walletCryptoBackend } from './cryptoBackend'
 import { traceSlowToolboxSteps } from './toolboxTelemetry'
+import { traceStorageLocks } from './storageLockTrace'
 import { persistNoSendActions } from './toolboxActionBatch'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
@@ -409,6 +410,7 @@ async function buildWallet(args: WalletBootArgs, databaseName: string): Promise<
     scriptVerifier: walletCryptoBackend(args.chain),
   })
   traceSlowToolboxSteps(setup.wallet)
+  traceStorageLocks((setup.wallet as { storage?: unknown }).storage, setup.monitor)
   persistNoSendActions(setup.wallet)
 
   installFallbackChainTracker(setup.services as Services, args.chain)

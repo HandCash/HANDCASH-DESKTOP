@@ -204,6 +204,8 @@ function sessionFacts(header, events) {
   const legacyImport = legacyImportFacts(events)
   const derivations = derivationFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
+  const incomingReceives = incomingReceiveFacts(events)
+  const storageLock = storageLockFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const listingOutcomes = listingOutcomeFacts(events)
@@ -304,6 +306,13 @@ function sessionFacts(header, events) {
     // Incoming packages refused before crediting because an unmined tx in
     // them is not final (BRC-67 step 4), or its lock time met no chain height.
     incomingFinality,
+    // Receives whose Activity row was written more than once, with every line
+    // naming the txid — what keeps a receive on "Verifying".
+    incomingReceives,
+    // Toolbox storage-lock holders (`[storage-lock] <op> held|waited|still
+    // held`). A stuck entry is a hold that never released: every send behind
+    // it times out with nothing broadcast.
+    storageLock,
     // Signed transactions and what miners said: per-txid outcome chain, how
     // many ever reached Arcade, and which never left the device.
     broadcast,
@@ -2845,6 +2854,101 @@ function derivationFacts(events) {
     : null
   delete facts.legacyProof.ms
   return facts
+}
+
+const LOCK_HELD_RE = /^\[storage-lock\] (\S+) held (\d+)ms — (\d+) waiting/
+const LOCK_WAIT_RE = /^\[storage-lock\] (\S+) waited (\d+)ms behind (.+)$/
+const LOCK_STUCK_RE = /^\[storage-lock\] (\S+) still held (\d+)ms — (\d+) waiting/
+
+/**
+ * Who held the one Toolbox storage lock, and who waited behind them. Every
+ * send, receive and closure pass queues on it, so a send that timed out with
+ * nothing broadcast is explained here, not by its own trail.
+ */
+function storageLockFacts(events) {
+  const holds = {}
+  const waits = []
+  const stuck = {}
+  for (const e of events) {
+    let m = LOCK_HELD_RE.exec(e.text)
+    if (m) {
+      const h = (holds[m[1]] ??= { count: 0, totalMs: 0, worstMs: 0, mostWaiting: 0 })
+      h.count += 1
+      h.totalMs += Number(m[2])
+      h.worstMs = Math.max(h.worstMs, Number(m[2]))
+      h.mostWaiting = Math.max(h.mostWaiting, Number(m[3]))
+      continue
+    }
+    m = LOCK_WAIT_RE.exec(e.text)
+    if (m) {
+      waits.push({ op: m[1], ms: Number(m[2]), behind: m[3].slice(0, 200) })
+      continue
+    }
+    m = LOCK_STUCK_RE.exec(e.text)
+    if (m) {
+      const s = (stuck[m[1]] ??= { reports: 0, longestMs: 0, mostWaiting: 0 })
+      s.reports += 1
+      s.longestMs = Math.max(s.longestMs, Number(m[2]))
+      s.mostWaiting = Math.max(s.mostWaiting, Number(m[3]))
+    }
+  }
+  return {
+    holds,
+    longestWaits: waits.sort((a, b) => b.ms - a.ms).slice(0, 8),
+    // A hold reported here never released while the session was recorded.
+    stuck,
+  }
+}
+
+const RECEIVE_WRITE_RE = /^\[activity\] (new|merged) earned\/\S+ (\d+) sat ([0-9a-f]{12})/
+const INGEST_MARK_RE = /^\[brc29-ingest ([0-9a-f]{12})…\] \+(\d+)ms (.+)$/
+const RECEIVE_TRAIL_MAX = 24
+
+/**
+ * Incoming transactions whose Activity row is written more than once: how many
+ * times, how many BRC-29 ingest attempts ran and finished, and every other
+ * line that names the txid — so a receive stuck on "Verifying" names the code
+ * that keeps touching it.
+ */
+function incomingReceiveFacts(events) {
+  const byTxid = new Map()
+  const entry = (id) => {
+    let x = byTxid.get(id)
+    if (!x) {
+      x = { txid: id, writes: { new: 0, merged: 0 }, ingestAttempts: 0, ingestDone: 0, longestIngestMs: 0, lastIngestPhase: null, tags: {}, trail: [] }
+      byTxid.set(id, x)
+    }
+    return x
+  }
+  for (const e of events) {
+    const w = RECEIVE_WRITE_RE.exec(e.text)
+    if (w) entry(w[3]).writes[w[1]] += 1
+  }
+  const watched = [...byTxid.values()].filter((x) => x.writes.new + x.writes.merged >= 2)
+  if (watched.length === 0) return []
+  const ids = new Set(watched.map((x) => x.txid))
+  const idRe = /[0-9a-f]{12,64}/g
+  for (const e of events) {
+    const hits = new Set((e.text.match(idRe) ?? []).map((h) => h.slice(0, 12)).filter((h) => ids.has(h)))
+    if (hits.size === 0) continue
+    const ingest = INGEST_MARK_RE.exec(e.text)
+    const tag = /^\[([\w-]+)/.exec(e.text)?.[1] ?? 'untagged'
+    for (const id of hits) {
+      const x = byTxid.get(id)
+      x.tags[tag] = (x.tags[tag] ?? 0) + 1
+      if (ingest && ingest[1] === id) {
+        if (/^beef/.test(ingest[3])) x.ingestAttempts += 1
+        if (ingest[3] === 'done') x.ingestDone += 1
+        x.longestIngestMs = Math.max(x.longestIngestMs, Number(ingest[2]))
+        x.lastIngestPhase = ingest[3].slice(0, 160)
+      }
+      if (!RECEIVE_WRITE_RE.test(e.text)) {
+        x.trail.push(`${new Date(e.at).toISOString().slice(11, 19)} ${e.text.slice(0, 220)}`)
+        if (x.trail.length > RECEIVE_TRAIL_MAX) x.trail.shift()
+      }
+    }
+  }
+  return watched
 }
 
 const INCOMING_REFUSED_RE =

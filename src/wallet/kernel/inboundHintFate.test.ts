@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   BODYLESS_HINT_RETRY_MS,
+  DOUBLE_SPENT_HINT_STATUS,
   UNRESOLVABLE_GRACE_MS,
   decideInboundHintFate,
   isTerminalInboundHintStatus,
@@ -168,6 +169,38 @@ describe('a package that spends a transaction nobody has', () => {
     expect(
       decideInboundHintFate(deadParent({ firstSeenAt: NOW - UNRESOLVABLE_GRACE_MS + 1 })).kind,
     ).toBe('retry')
+  })
+})
+
+describe('a package whose coin another transaction already spent', () => {
+  const conflict = { outpoint: `${'ef'.repeat(32)}.3`, spender: 'd65f31d0'.padEnd(64, '0') }
+  const live = (over: Partial<InboundHintFacts> = {}) =>
+    unbroadcast({
+      hasDeliverableBeef: true,
+      bodyLookup: 'unknown',
+      onChain: null,
+      firstSeenAt: NOW - 5_000,
+      conflict,
+      ...over,
+    })
+
+  it('retires at once, with no grace window, though we hold an SPV-valid body', () => {
+    const fate = decideInboundHintFate(live())
+    expect(fate.kind).toBe('unresolvable')
+    expect(fate.kind === 'unresolvable' && fate.reason).toContain('double-spent')
+    expect(fate.kind === 'unresolvable' && fate.reason).toContain('d65f31d0')
+  })
+
+  it('is worth deciding without an explorer round-trip', () => {
+    expect(mayBeUnresolvable(live())).toBe(true)
+  })
+
+  it('still lets an Arcade hard-reject speak first', () => {
+    expect(decideInboundHintFate(live({ isArcadeGhost: true })).kind).toBe('arcadeGhost')
+  })
+
+  it('pins a terminal status', () => {
+    expect(isTerminalInboundHintStatus(DOUBLE_SPENT_HINT_STATUS)).toBe(true)
   })
 })
 

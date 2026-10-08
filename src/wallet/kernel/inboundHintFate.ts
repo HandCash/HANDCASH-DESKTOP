@@ -42,6 +42,13 @@ export type InboundHintFacts = {
    * (hc-a580a, 438497125f03 → 6aa054b3, 2026-09-29).
    */
   missingAncestor?: MissingAncestorFacts | null
+  /**
+   * A coin the package spends — the subject's or an unmined ancestor's — that a
+   * node or explorer names as spent by a transaction outside the package. The
+   * package is SPV-valid and can still never confirm: miners hold it as an
+   * orphan or refuse it. (hc-a580a, 9a14852a / 68f708e4 → d65f31d0, 2026-10-08.)
+   */
+  conflict?: PackageConflictFacts | null
   /** When the hint first arrived. */
   firstSeenAt: number
   now: number
@@ -51,6 +58,11 @@ export type MissingAncestorFacts = {
   txid: string
   bodyLookup: 'hit' | 'miss' | 'unknown'
   onChain: boolean | null
+}
+
+export type PackageConflictFacts = {
+  outpoint: string
+  spender: string
 }
 
 /**
@@ -82,6 +94,7 @@ function ageMs(facts: Pick<InboundHintFacts, 'firstSeenAt' | 'now'>): number {
  */
 export function mayBeUnresolvable(facts: Omit<InboundHintFacts, 'onChain'>): boolean {
   if (facts.isArcadeGhost) return false
+  if (facts.conflict) return true
   // A package missing a parent is worth probing once it is old enough, even
   // though we hold its body — the body alone cannot be internalized.
   if (facts.missingAncestor) return ageMs(facts) >= UNRESOLVABLE_GRACE_MS
@@ -93,6 +106,15 @@ export function mayBeUnresolvable(facts: Omit<InboundHintFacts, 'onChain'>): boo
 
 export function decideInboundHintFate(facts: InboundHintFacts): InboundHintFate {
   if (facts.isArcadeGhost) return { kind: 'arcadeGhost' }
+
+  // A named spender is positive evidence, not silence: no grace window and no
+  // later envelope can bring the coin back.
+  if (facts.conflict) {
+    return {
+      kind: 'unresolvable',
+      reason: `double-spent — ${facts.conflict.outpoint} was spent by ${facts.conflict.spender.slice(0, 12)}…`,
+    }
+  }
 
   if (ageMs(facts) < UNRESOLVABLE_GRACE_MS) return { kind: 'retry' }
 
@@ -142,6 +164,8 @@ export const UNDELIVERABLE_HINT_STATUS =
   'Unavailable — sender did not deliver spend proof'
 export const DEAD_ANCESTOR_HINT_STATUS =
   'Unavailable — spends a transaction the network never saw'
+export const DOUBLE_SPENT_HINT_STATUS =
+  "Unavailable — double-spent: the sender's coins were spent elsewhere"
 
 /**
  * Skip another heavy ingest while the hint is still inside the retirement

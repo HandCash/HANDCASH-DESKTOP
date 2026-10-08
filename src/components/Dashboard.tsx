@@ -94,6 +94,11 @@ function paymentHintTxid(raw: string | { txid?: string } | null | undefined): st
   return /^[0-9a-f]{64}$/.test(id) ? id : ''
 }
 
+/** Retired hints are settled: no address-scan chase can credit them. */
+function withoutRetired(txids: string[], retired: readonly string[]): string[] {
+  return retired.length ? txids.filter((id) => !retired.includes(paymentHintTxid(id))) : txids
+}
+
 async function ackIngestedPaymentHints(
   hints: Array<{ txid: string; messageId?: string }>,
   spv: { importedTxids: string[]; ghostTxids: string[] },
@@ -413,7 +418,7 @@ export function Dashboard({
               scheduleNext()
               return
             }
-            await chasePaymentIngest(chaseable)
+            await chasePaymentIngest(withoutRetired(chaseable, spv.ghostTxids))
             scheduleNext()
           } catch (err) {
             console.warn(
@@ -439,6 +444,7 @@ export function Dashboard({
      * (ordinals + audit) is not needed to credit a payment.
      */
     const chasePaymentIngest = async (paymentTxids: string[]) => {
+      if (paymentTxids.length === 0) return
       const { fetchBalanceSats } = await import('../wallet/session')
       let before = 0
       try {
@@ -613,6 +619,7 @@ export function Dashboard({
       if (chaseable.length === 0) return
       const chaseHints = hints.filter((h) => chaseable.includes(paymentHintTxid(h)))
       void (async () => {
+        let stillChasing = chaseable
         try {
           const { ingestPaymentsFromTipHints } = await import(
             '../wallet/sendBrc29Payment'
@@ -627,10 +634,11 @@ export function Dashboard({
             scheduleNext()
             return
           }
+          stillChasing = withoutRetired(chaseable, spv.ghostTxids)
         } catch {
           /* fall through */
         }
-        await chasePaymentIngest(chaseable)
+        await chasePaymentIngest(stillChasing)
         scheduleNext()
       })().finally(() => releaseChase(chaseable, true))
     }

@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.517] - 2026-10-08
+
+### Fixed
+- **A double-spent incoming payment no longer sits on "Verifying…" forever.** The phone's two receives `9a14852a` (5,435 sats) and `68f708e4` (5,488 sats) are Desktop sends whose coins the mined consolidation `d65f31d0` had already spent. Each package is SPV-valid, because SPV only checks a package against itself and the headers, so miners held both in the orphan pool and the phone re-chased them on every inbox poll. Before re-chasing a hint, and after any failed ingest, the wallet now asks a Teranode node and WhatsOnChain about every coin the package spends: the subject's inputs and those of every unmined ancestor. When a transaction outside the package has spent one of them:
+  - the hint retires at once as "Unavailable — double-spent: the sender's coins were spent elsewhere" and its inbox message is ACKed;
+  - its Verifying… row is dropped;
+  - if an earlier ingest took it, it is failed in storage, so no send is ever built on its coins.
+  A spender inside the package is the package itself, not a conflict. Across the last 25 packages Desktop signed, the probe found 22 dead (all absent from the chain) and none of the 3 that landed.
+- A hint retired as dead no longer triggers a by-txid ingest plus three funding-only chain refreshes after its chase.
+
+### Added
+- **Storage-lock tracing.** Every toolbox storage call queues on one lock, and until now only the waiter ever logged. The wallet now logs:
+  - `[storage-lock] <op> held <N>ms` for any hold over 1s;
+  - `[storage-lock] <op> waited <N>ms behind <holders>` for any wait over 2s;
+  - `[storage-lock] <op> still held <N>ms` every 30s while a hold never ends;
+  - `[monitor] <task> done <N>ms` for slow toolbox Monitor tasks.
+  Operations are named by manager method, by Monitor task, or by calling module. Triage reports them as `storageLock`.
+- An incoming BRC-29 import logs `balance-before` once its first balance read returns, so a stall on the lock before import starts is visible.
+- Triage reports `incomingReceives`: receives whose Activity row is written repeatedly, with every line that names the txid.
+
 ## [1.3.516] - 2026-10-08
 
 ### Fixed

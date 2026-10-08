@@ -13,6 +13,7 @@ import { getActiveWallet } from './session'
 import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
+  clearInboundReceivePending,
   hasActivityTxid,
   hasSettledActivityTxid,
   getActivityWriteGeneration,
@@ -33,7 +34,9 @@ import {
 import {
   isTerminalInboundHintStatus,
   type MissingAncestorFacts,
+  type PackageConflictFacts,
 } from './kernel/inboundHintFate'
+import { knownPackageConflict, packageConflictFor } from './inboundPackageConflict'
 import {
   clearInboundHintIngestFail,
   inboundHintLastFailAt,
@@ -211,6 +214,9 @@ export type InternalizeBrc29Result = {
 }
 
 const brc29InternalizeInflight = new Map<string, Promise<InternalizeBrc29Result>>()
+
+/** A hint this old has had its first chase; worth a double-spend probe before the next. */
+const CONFLICT_PROBE_AFTER_MS = 60_000
 
 /**
  * A retired hint becomes actionable again when a real AtomicBEEF arrives.
@@ -805,6 +811,7 @@ async function internalizeBrc29PaymentOnce(opts: {
   })
 
   const balanceBefore = await fetchBalanceSats(active.wallet).catch(() => null)
+  markIngest('balance-before')
 
   try {
     // An inline envelope is re-framed for this subject before internalize, which
@@ -1178,7 +1185,8 @@ export async function ingestPaymentsFromTipHints(
     // four dead inbound tips came back on every open.
     // A URL pointer is not a body. Retired legacy cards often redeliver the
     // same dead URL forever; only an actual package proves new evidence.
-    if (h.tx && h.tx.length > 0) {
+    // A package already shown double-spent is the same dead package again.
+    if (h.tx && h.tx.length > 0 && !knownPackageConflict(h.txid)) {
       forgetGhostTx(h.txid)
       reviveRetiredInboundHint(h.txid)
       clearInboundHintIngestFail(h.txid)
@@ -1251,12 +1259,44 @@ export async function ingestPaymentsFromTipHints(
     rememberGhostTx(id)
     if (!ghostTxids.includes(id)) ghostTxids.push(id)
   }
+  /**
+   * The package can never confirm. Retire the card like any unresolvable hint,
+   * drop its Verifying… row, and fail it in storage if an earlier ingest took
+   * it, so coins built on it are never offered to a send.
+   */
+  const retireDoubleSpent = async (
+    txid: string,
+    conflict: PackageConflictFacts,
+  ): Promise<void> => {
+    const { decideInboundHintFate, DOUBLE_SPENT_HINT_STATUS } = await import(
+      './kernel/inboundHintFate'
+    )
+    const fate = decideInboundHintFate({
+      isArcadeGhost: false,
+      hasDeliverableBeef: true,
+      bodyLookup: 'unknown',
+      rawBodyCanRecover: false,
+      onChain: null,
+      conflict,
+      firstSeenAt: 0,
+      now: Date.now(),
+    })
+    console.warn(
+      `[tip-ingest] tip ${txid.slice(0, 12)}… retired — ${fate.kind === 'unresolvable' ? fate.reason : 'double-spent'}`,
+    )
+    markInboundPaymentStatus(txid, DOUBLE_SPENT_HINT_STATUS)
+    retireUnresolvable(txid)
+    clearInboundReceivePending(txid)
+    const { failUnsentLocalTx } = await import('./staleOutputRelease')
+    await failUnsentLocalTx(txid, { force: true }).catch(() => false)
+  }
   const markGhostIfMissing = async (
     txid: string,
     hadLocalBeef: boolean,
     firstSeenAt: number | undefined,
     rawBodyCanRecover: boolean,
     missingParents: readonly string[] = [],
+    atomic?: number[],
   ): Promise<void> => {
     // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
     // not ACK-away the tip. Validity is Arcade: hard reject → rememberGhostTx
@@ -1266,6 +1306,14 @@ export async function ingestPaymentsFromTipHints(
         `[tip-ingest] tip ${txid.slice(0, 12)}… discarded — Arcade hard-reject`,
       )
       return
+    }
+    const activeForProbe = getActiveWallet()
+    if (atomic?.length && activeForProbe) {
+      const conflict = await packageConflictFor(txid, atomic, activeForProbe.chain)
+      if (conflict) {
+        await retireDoubleSpent(txid, conflict)
+        return
+      }
     }
     const {
       decideInboundHintFate,
@@ -1417,6 +1465,19 @@ export async function ingestPaymentsFromTipHints(
       return { importedTxid, balanceSats }
     }
 
+    // A hint still here after its first chase may be a dead package. Ask before
+    // ingest: internalize waits on the one storage lock every send also needs.
+    if (hint.tx?.length && Date.now() - firstSeenAt >= CONFLICT_PROBE_AFTER_MS) {
+      const activeForProbe = getActiveWallet()
+      const conflict = activeForProbe
+        ? await packageConflictFor(hint.txid, hint.tx, activeForProbe.chain)
+        : null
+      if (conflict) {
+        await retireDoubleSpent(hint.txid, conflict)
+        return { importedTxid, balanceSats }
+      }
+    }
+
     if (hint.item) {
       let atomic = hint.tx
       if ((!atomic || !atomic.length) && hint.beefUrl) {
@@ -1502,6 +1563,7 @@ export async function ingestPaymentsFromTipHints(
           hint.firstSeenAt,
           false,
           missingParents,
+          atomic,
         )
         if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
@@ -1543,7 +1605,7 @@ export async function ingestPaymentsFromTipHints(
         }
       }
       if (!accepted) {
-        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt, true)
+        await markGhostIfMissing(hint.txid, hadLocalBeef, hint.firstSeenAt, true, [], atomic)
         if (!hadLocalBeef) noteInboundHintIngestFail(hint.txid)
       }
       return { importedTxid, balanceSats }
