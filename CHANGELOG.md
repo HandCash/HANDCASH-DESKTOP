@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.506] - 2026-10-08
+
+### Fixed
+- **A fresh launch shows the transaction history immediately.** Activity is a projection of the wallet's own transactions. That projection was opened after the first paint, so the list started from the annotation log and the sends appeared only once the history read finished. Unlock now opens the saved projection before the wallet is shown.
+
 ## [1.3.505] - 2026-10-08
 
 ### Fixed

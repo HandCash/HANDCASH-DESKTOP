@@ -28,6 +28,7 @@ import {
   disposeWalletRuntime,
   getWalletRuntime,
   installWalletRuntime,
+  walletStorageNamespace,
   runtimeIsCurrent,
   type WalletRuntime,
   type WalletRuntimeId,
@@ -509,6 +510,8 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   // Bind the namespace and compose feature lifecycle before publishing. The
   // runtime start hook then rebinds every feature as one atomic account switch.
   prepareAccountLocalStores(wallet)
+  const { preloadActivityLedger } = await import('./activityLedger')
+  await preloadActivityLedger(walletStorageNamespace(wallet))
   const runtime = installWalletRuntime(wallet)
   // Cold start begins with the last balance actually read for this identity,
   // never another wallet's figure and never a fabricated address balance.

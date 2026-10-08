@@ -5,8 +5,8 @@
  * and it rides the BRC-39 replica. Stored Activity rows are annotations on top
  * of it — app origin, item identity, pending/failed sends, events — so a row
  * the store shed or never had still shows from here. Never from an indexer,
- * never with an invented time. The last read is kept so a launch can paint it,
- * and item sends from that read are copied into the Activity store itself.
+ * never with an invented time. The last read is kept so a launch paints that
+ * projection before a live read.
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { loadLedgerRows, saveLedgerRows } from './activityLedgerStore'
@@ -264,6 +264,40 @@ function flushSave(): void {
   }
 }
 
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSave()
+  })
+  window.addEventListener('pagehide', () => flushSave())
+}
+
+let primed: { namespace: string; rows: ActivityEntry[] } | null = null
+
+/**
+ * Read the saved projection before the runtime is published. Unlock awaits
+ * this, then the account start publishes it in the same turn the feed first
+ * reads — a fresh launch otherwise paints the annotation log alone and the
+ * transaction history arrives a frame later.
+ */
+export async function preloadActivityLedger(namespace: string): Promise<void> {
+  let rows: ActivityEntry[] | null = null
+  try {
+    rows = await loadLedgerRows(namespace)
+  } catch (err) {
+    console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
+  }
+  const kept = (rows ?? []).filter((row) => !isGhostTxSuppressed(row.txid!))
+  primed = kept.length > 0 ? { namespace, rows: kept } : null
+}
+
+/** Rows preloaded for this namespace, once. Empty when nothing was saved. */
+export function consumeActivityLedgerPrime(namespace: string): ActivityEntry[] | null {
+  if (primed?.namespace !== namespace) return null
+  const rows = primed.rows
+  primed = null
+  return rows
+}
+
 /** Paint the last session's read until the live one lands. A live read is never replaced. */
 export async function restoreActivityLedger(runtime: WalletRuntime | null = getWalletRuntime()): Promise<void> {
   if (!runtime || !runtimeIsCurrent(runtime)) return
@@ -516,6 +550,7 @@ export function resetActivityLedgerForTests(): void {
   if (timer) clearTimeout(timer)
   timer = null
   inFlights.clear()
+  primed = null
   snapshot = null
   txCache = null
   lastRefreshAt = 0
