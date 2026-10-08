@@ -337,6 +337,13 @@ export const storageRegistry = Object.freeze({
     version: 1,
   }),
   /** IndexedDB: each saved source's item list, shelved by issuer — the index's view, keyed by source id. */
+  activityLedger: defineStorage({
+    key: 'handcash-brc100-activity-ledger',
+    owner: 'activity',
+    scope: 'wallet',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   importItems: defineStorage({
     key: 'handcash.import-items',
     owner: 'legacy-import',

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.505] - 2026-10-08
+
+### Fixed
+- **Item sends show in Activity again, in the same store as the rest of history.** Sends signed since 1.3.492 are held until Arcade accepts them. The restored wallet only read completed and unproven transactions, so those sends were not in the live history at all, and the copy that used to paint them at launch was no longer opened. Held item transactions are read again. The last read is painted at launch, and each item send from it is written into the Activity store, which is what old history already uses, so the next launch has them before any toolbox read.
+
 ## [1.3.504] - 2026-10-08
 
 ### Fixed

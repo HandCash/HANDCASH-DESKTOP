@@ -5,21 +5,31 @@
  * and it rides the BRC-39 replica. Stored Activity rows are annotations on top
  * of it — app origin, item identity, pending/failed sends, events — so a row
  * the store shed or never had still shows from here. Never from an indexer,
- * never with an invented time, never persisted.
+ * never with an invented time. The last read is kept so a launch can paint it,
+ * and item sends from that read are copied into the Activity store itself.
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { loadLedgerRows, saveLedgerRows } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 import { yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
-const SETTLED_STATUSES = ['completed', 'unproven'] as const
+/**
+ * `sending` is signed and handed to broadcast. `nosend` is a signed cheque
+ * still held: item sends since 1.3.492 stay there until Arcade pins them, so
+ * a read of only completed and unproven drops them from Activity entirely.
+ */
+const SETTLED_STATUSES = ['completed', 'unproven', 'sending', 'nosend'] as const
+const HELD_STATUS = 'nosend'
 const COLLECTABLE_BASKET = '1sat'
 const TOKEN_BASKET = 'bsv21'
 
 export type LedgerTx = {
   transactionId?: number
+  /** Status index this id was listed under on this read. */
+  status?: string
   txid?: string | null
   satoshis?: number
   description?: string
@@ -221,7 +231,53 @@ export function publishActivityLedger(namespace: string, rows: ActivityEntry[]):
     byId: new Map(rows.map((row) => [row.id, row])),
     timeByTxid,
   }
+  scheduleSave(namespace, snapshot.rows)
   for (const cb of listeners) cb()
+}
+
+const SAVE_DELAY_MS = 3_000
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saveRows: { namespace: string; rows: readonly ActivityEntry[] } | null = null
+
+function scheduleSave(namespace: string, rows: readonly ActivityEntry[]): void {
+  saveRows = { namespace, rows }
+  if (saveTimer) return
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    const next = saveRows
+    saveRows = null
+    if (next) {
+      void saveLedgerRows(next.namespace, next.rows).catch((err) => {
+        console.warn('[activity-ledger] saving the last read failed', err instanceof Error ? err.message : err)
+      })
+    }
+  }, SAVE_DELAY_MS)
+}
+
+function flushSave(): void {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = null
+  const next = saveRows
+  saveRows = null
+  if (next) {
+    void saveLedgerRows(next.namespace, next.rows).catch(() => undefined)
+  }
+}
+
+/** Paint the last session's read until the live one lands. A live read is never replaced. */
+export async function restoreActivityLedger(runtime: WalletRuntime | null = getWalletRuntime()): Promise<void> {
+  if (!runtime || !runtimeIsCurrent(runtime)) return
+  const namespace = runtime.storageNamespace
+  let rows: ActivityEntry[] | null
+  try {
+    rows = await loadLedgerRows(namespace)
+  } catch (err) {
+    console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
+    return
+  }
+  if (!rows || !runtimeIsCurrent(runtime) || currentSnapshot()) return
+  publishActivityLedger(namespace, rows.filter((row) => !isGhostTxSuppressed(row.txid!)))
+  console.info(`[activity-ledger] restored ${rows.length} row(s) from the last read`)
 }
 
 type IdbTransaction = {
@@ -300,7 +356,11 @@ async function settledTransactions(
   const lists = await Promise.all(SETTLED_STATUSES.map((status) => index.getAllKeys([status, userId])))
   await keys.done
   assertCurrent(runtime)
-  const settled = new Set(lists.flat().map(Number))
+  const statusById = new Map<number, string>()
+  SETTLED_STATUSES.forEach((status, i) => {
+    for (const key of lists[i] ?? []) statusById.set(Number(key), status)
+  })
+  const settled = new Set(statusById.keys())
   for (const id of cache.byId.keys()) if (!settled.has(id)) cache.byId.delete(id)
   const missing = [...settled].filter((id) => !cache.byId.has(id))
   for (let i = 0; i < missing.length; i += TX_CHUNK) {
@@ -318,7 +378,10 @@ async function settledTransactions(
     }
   }
   assertCurrent(runtime)
-  return [...cache.byId.values()]
+  return [...cache.byId.values()].map((tx) => {
+    const status = statusById.get(tx.transactionId!)
+    return status && status !== tx.status ? { ...tx, status } : tx
+  })
 }
 
 async function readLedger(runtime: WalletRuntime, full: boolean): Promise<ActivityEntry[] | null> {
@@ -350,8 +413,22 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   // Read-only IndexedDB transactions are consistent on their own, so the
   // transaction records are fetched outside the storage lock: a spend waiting
   // for the writer never queues behind the first read of a long history.
-  const txs = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
+  const all = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
   const { outputs, baskets } = read
+  const itemTx = new Set<number>()
+  const basketName = new Map(baskets.map((b) => [Number(b.basketId), String(b.name ?? '').toLowerCase()]))
+  for (const out of outputs) {
+    const name = basketName.get(Number(out.basketId))
+    if (name !== COLLECTABLE_BASKET && name !== TOKEN_BASKET) continue
+    const creator = Number(out.transactionId)
+    const spender = Number(out.spentBy)
+    if (creator > 0) itemTx.add(creator)
+    if (spender > 0) itemTx.add(spender)
+  }
+  const txs = all.filter((tx) => {
+    if (tx.status !== HELD_STATUS) return true
+    return itemTx.has(Number(tx.transactionId))
+  })
   return ledgerActivityRows(txs, outputs, baskets).filter(
     (row) => !isGhostTxSuppressed(row.txid!),
   )
@@ -424,6 +501,7 @@ export function scheduleActivityLedgerRefresh(): void {
 }
 
 export function resetActivityLedgerForRuntime(): void {
+  flushSave()
   if (timer) clearTimeout(timer)
   timer = null
   snapshot = null

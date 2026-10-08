@@ -360,8 +360,22 @@ function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
 /** Bumps on every write — activity feed caches must not serve a pre-write snapshot. */
 let writeGeneration = 0;
 
+/**
+ * Item sends the ledger knows and the Activity store does not. They used to
+ * exist only in the toolbox read, so a restart that had not finished that read
+ * showed none of them. One copy here is the same store old history already uses.
+ */
+function fileLedgerItemSends(): void {
+  const sends = ledgerActivitySnapshot().filter(
+    (row) => row.method === "send-collectable" && row.kind === "spent" && row.txid,
+  );
+  if (sends.length === 0) return;
+  mergeActivityEntries(sends);
+}
+
 subscribeActivityLedger(() => {
   writeGeneration += 1;
+  fileLedgerItemSends();
   for (const cb of listeners) cb();
 });
 
@@ -2975,6 +2989,7 @@ export function mergeActivityEntries(incoming: ActivityEntry[]): number {
     if (txKind) byTxKind.set(txKind, entry);
     added += 1;
   }
+  if (added === 0) return 0;
   writeAll([...byId.values()].sort((a, b) => a.at - b.at));
   return added;
 }
