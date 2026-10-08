@@ -18,6 +18,9 @@ import { getActiveWallet } from './session'
  */
 
 import { hasLockingScript, type ChangeRow } from './changeScriptFate'
+import { outpointFromOutput } from './txOutpoints'
+import { getUtxoLock, isUtxoBlockedFromRestore } from './utxoLockManager'
+import { isQuarantined } from './utxoLifecycle'
 import {
   txLivenessFromStatus,
   type TxLiveness,
@@ -153,7 +156,7 @@ export async function unconfirmedChangeSats(opts?: {
       }
 
       for (let page = 0; page < MAX_PAGES; page += 1) {
-        let batch: Array<OwnedCashRow & { transactionId?: number }> = []
+        let batch: Array<OwnedCashRow & { transactionId?: number; txid?: string; vout?: number }> = []
         try {
           batch = ((await sp.findOutputs({
             partial: { spendable: false, change: true },
@@ -169,6 +172,14 @@ export async function unconfirmedChangeSats(opts?: {
 
         for (const row of batch) {
           if (row.change !== true) continue
+          // A coin the overlay holds is spent (named spender), quarantined or
+          // reserved by an in-flight send. Crediting it kept change the chain
+          // had spent elsewhere in the hero balance and made the send gate say
+          // "confirming" to a wallet that was simply short (hc-ad7afb, d65f31d0).
+          const outpoint = outpointFromOutput(row)
+          if (outpoint == null || isUtxoBlockedFromRestore(outpoint)) continue
+          const lock = getUtxoLock(outpoint)
+          if (lock && isQuarantined(lock)) continue
           const fate = classifyOwnedCash(
             row,
             await livenessOf(positiveId(row.transactionId)),

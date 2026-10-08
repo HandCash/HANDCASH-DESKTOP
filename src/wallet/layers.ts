@@ -206,8 +206,13 @@ import { getActiveWallet } from './session'
  *   named spender, or quarantine until that spender can be inserted — never
  *   invent a competing spend by editing the UTXO set directly. Reservations
  *   expire; quarantine is not thawed on a timer.
- *   Refresh never asks the indexer `isUtxo` to resurrect coins — only change of
- *   a live local tx is restored, and inputs of those txs are re-hidden.
+ *   Refresh never resurrects a coin on silence or on a single indexer answer.
+ *   Change of a live local tx is restored, and inputs of those txs are
+ *   re-hidden. A settled coin storage holds unspendable with no local spender
+ *   (`writtenOffCoinReconcile`) is restored only when the bulk node/explorer
+ *   probe names no spender and `outpointProvenUnspent` affirms it; when the
+ *   chain names a spender this wallet never stored, it is hidden under that
+ *   spender, so `balanceView` stops crediting it as confirming change.
  *   Never treat HTTP 200 / postBeef accept as mined. Activity never drops a signed send
  *   until every one of its inputs is spent on chain — clearing history is not a
  *   cancel, and it keeps that tx's change.

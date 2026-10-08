@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.519] - 2026-10-08
+
+### Fixed
+- **Send no longer refuses a funded wallet with "Your balance includes change from a recent payment".** On this desktop the $0.03 balance was about 4,339 selectable sats plus 143,311 sats of "confirming" change. That change is gone: the confirmed consolidation `d65f31d0` (Aug 23) spent all 45 of those coins, but their creating transactions are still stored as `unproven`, so the balance kept crediting them. A send of 7,621 sats was told to wait for change that will never confirm. The confirming credit now skips any coin the lock overlay holds as spent, quarantined or reserved, and any change row with no outpoint.
+- **Coins written off while still unspent come back.** 180 confirmed coins worth 1,149,812 sats are unspent on chain but stored as unspendable. An old bulk release wrote them off. The change restore only ever reads the first 200 unspendable rows, and on this wallet years of spent rows fill that page, so it never reached them. Refresh now reconciles every unspendable default-basket coin with no local spender:
+  - a coin from a confirmed transaction is restored only when the node and explorer bulk probe names no spender and `outpointProvenUnspent` affirms it unspent;
+  - a coin the chain shows spent by a transaction this wallet never stored is hidden under that named spender;
+  - silence, a local spender, change of a live send and script-less rows are left alone.
+  It logs `[written-off] reconcile done <N>ms — …`, and triage reports it as `writtenOff`.
+
 ## [1.3.518] - 2026-10-08
 
 ### Fixed

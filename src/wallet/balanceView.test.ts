@@ -34,6 +34,7 @@ describe('txLivenessFromStatus', () => {
 })
 
 const sampleScript = '76a914000000000000000000000000000000000000000088ac'
+const LIVE_TXID = 'ab'.repeat(32)
 
 describe('classifyOwnedCash', () => {
   it('counts remaining spendable coins', () => {
@@ -200,7 +201,7 @@ describe('unconfirmedChangeSats', () => {
         change: true,
         spendable: false,
         transactionId: 9,
-        lockingScript: sampleScript,
+        lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
       },
     ])
     findTransactions.mockResolvedValue([{ status: 'unproven' }])
@@ -219,7 +220,7 @@ describe('unconfirmedChangeSats', () => {
         change: true,
         spendable: false,
         transactionId: 9,
-        lockingScript: sampleScript,
+        lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
       },
     ])
     findTransactions.mockResolvedValue([{ status: 'completed' }])
@@ -248,7 +249,7 @@ describe('unconfirmedChangeSats', () => {
               spendable: false,
               transactionId: 1,
               spentBy: 11,
-              lockingScript: sampleScript,
+              lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
             },
             {
               satoshis: 2_000,
@@ -256,7 +257,7 @@ describe('unconfirmedChangeSats', () => {
               spendable: false,
               transactionId: 2,
               spentBy: 12,
-              lockingScript: sampleScript,
+              lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
             },
             {
               satoshis: 3_000,
@@ -264,7 +265,7 @@ describe('unconfirmedChangeSats', () => {
               spendable: false,
               transactionId: 3,
               spentBy: 13,
-              lockingScript: sampleScript,
+              lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
             },
           ],
     )
@@ -290,14 +291,14 @@ describe('unconfirmedChangeSats', () => {
               change: true,
               spendable: false,
               transactionId: 4,
-              lockingScript: sampleScript,
+              lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
             },
             {
               satoshis: 2_000,
               change: true,
               spendable: false,
               transactionId: 4,
-              lockingScript: sampleScript,
+              lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
             },
           ],
     )
@@ -311,7 +312,7 @@ describe('unconfirmedChangeSats', () => {
     findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
       args.paged.offset > 0
         ? []
-        : [{ satoshis: 9_000, change: true, spendable: false, transactionId: 5, lockingScript: sampleScript }],
+        : [{ satoshis: 9_000, change: true, spendable: false, transactionId: 5, lockingScript: sampleScript, txid: LIVE_TXID, vout: 0 }],
     )
     findTransactions.mockRejectedValue(new Error('idb closed'))
 
@@ -327,14 +328,14 @@ describe('unconfirmedChangeSats', () => {
             change: true,
             spendable: false,
             transactionId: 1,
-            lockingScript: sampleScript,
+            lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
           },
           {
             satoshis: 5_000,
             change: true,
             spendable: false,
             transactionId: 2,
-            lockingScript: sampleScript,
+            lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
           },
         ]
       }
@@ -344,7 +345,7 @@ describe('unconfirmedChangeSats', () => {
           change: true,
           spendable: false,
           transactionId: 3,
-          lockingScript: sampleScript,
+          lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
         },
       ]
     })
@@ -354,5 +355,33 @@ describe('unconfirmedChangeSats', () => {
     // First row already covers the shortfall — never ask for page 1 or tx 2/3.
     expect(findOutputs).toHaveBeenCalledTimes(1)
     expect(findTransactions).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not credit change the chain showed spent by a named outside transaction', async () => {
+    const { hideUtxo } = await import('./utxoLockManager')
+    const spentTxid = 'cd'.repeat(32)
+    hideUtxo(`${spentTxid}.1`, { spentBy: 'd65f'.repeat(16), diagnostic: 'spent-by:d65fd65fd65f' })
+    findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
+      args.paged.offset > 0
+        ? []
+        : [
+            { satoshis: 133_712, change: true, spendable: false, transactionId: 7, lockingScript: sampleScript, txid: spentTxid, vout: 1 },
+            { satoshis: 4_219, change: true, spendable: false, transactionId: 8, lockingScript: sampleScript, txid: LIVE_TXID, vout: 0 },
+          ],
+    )
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(4_219)
+  })
+
+  it('does not credit a change row with no outpoint', async () => {
+    findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
+      args.paged.offset > 0
+        ? []
+        : [{ satoshis: 9_599, change: true, spendable: false, transactionId: 13, lockingScript: sampleScript, vout: 0 }],
+    )
+    findTransactions.mockResolvedValue([{ status: 'unfail' }])
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
   })
 })

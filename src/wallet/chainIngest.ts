@@ -1013,6 +1013,11 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
               `[chain-ingest] restored ${restored} change output(s) previously marked unspendable`,
             )
           }
+          throwIfYieldToSpend()
+          await inUiPhase('reconcile-written-off', async () => {
+            const { reconcileWrittenOffCoins } = await import('./writtenOffCoinReconcile')
+            await reconcileWrittenOffCoins({ shouldStop: shouldYieldChainIngestToSpend })
+          })
           for (let pass = 0; pass < 3; pass += 1) {
             throwIfYieldToSpend()
             const reclaimed = await inUiPhase(

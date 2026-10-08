@@ -215,6 +215,7 @@ function sessionFacts(header, events) {
   const incomingReceives = incomingReceiveFacts(events)
   const storageLock = storageLockFacts(events)
   const longFrames = longFrameFacts(events)
+  const writtenOff = writtenOffFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const listingOutcomes = listingOutcomeFacts(events)
@@ -326,6 +327,9 @@ function sessionFacts(header, events) {
     // This outranks `freezes.byActiveLayer` and `workloads`, which only say
     // what was in flight: a phase awaiting a lock is never the freeze owner.
     longFrames,
+    // Coins written off while unspent (restored) and change spent outside the
+    // wallet (hidden, so it stops showing as "confirming").
+    writtenOff,
     // Signed transactions and what miners said: per-txid outcome chain, how
     // many ever reached Arcade, and which never left the device.
     broadcast,
@@ -2867,6 +2871,44 @@ function derivationFacts(events) {
     : null
   delete facts.legacyProof.ms
   return facts
+}
+
+const WRITTEN_OFF_RE =
+  /^\[written-off\] reconcile done (\d+)ms — candidates=(\d+) restored=(\d+) sats=(\d+) hidden=(\d+) hiddenSats=(\d+) spenders=(\d+) silent=(\d+) unproven=(\d+)/
+
+/**
+ * Refresh-time reconcile of coins storage holds unspendable with no local
+ * spender: written-off coins proven unspent and restored, and change the chain
+ * shows spent outside the wallet hidden so the balance stops crediting it.
+ */
+function writtenOffFacts(events) {
+  const runs = []
+  for (const e of events) {
+    const m = WRITTEN_OFF_RE.exec(e.text)
+    if (!m) continue
+    const n = m.slice(1).map(Number)
+    runs.push({
+      at: new Date(e.at).toISOString(),
+      ms: n[0],
+      candidates: n[1],
+      restored: n[2],
+      restoredSats: n[3],
+      hidden: n[4],
+      hiddenSats: n[5],
+      spenders: n[6],
+      silent: n[7],
+      unproven: n[8],
+    })
+  }
+  const sum = (k) => runs.reduce((s, r) => s + r[k], 0)
+  return {
+    runs: runs.length,
+    restored: sum('restored'),
+    restoredSats: sum('restoredSats'),
+    hidden: sum('hidden'),
+    hiddenSats: sum('hiddenSats'),
+    last: runs.at(-1) ?? null,
+  }
 }
 
 const LOAF_RE = /^\[loaf\] (\d+)ms(?: blocking (\d+)ms)? — (.+)$/
