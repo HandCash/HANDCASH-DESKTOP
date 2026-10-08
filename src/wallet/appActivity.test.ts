@@ -706,6 +706,15 @@ describe("inbound receive activity", () => {
     });
   });
 
+  it("does not rewrite the store when an inbox replay changes nothing", () => {
+    noteInboundReceivePending({ txid: TX, sats: 9 });
+    const writes = vi.spyOn(store, "set");
+    for (let i = 0; i < 5; i += 1) noteInboundReceivePending({ txid: TX, sats: 9 });
+    expect(writes).not.toHaveBeenCalled();
+    writes.mockRestore();
+    expect(isPendingActivity(listRecentActivity(10).find((e) => e.txid === TX)!)).toBe(true);
+  });
+
   it("does not take a settled receive back to verifying", () => {
     noteInboundReceiveComplete({ txid: TX, sats: 9 });
     noteInboundReceivePending({ txid: TX, sats: 9 });

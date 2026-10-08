@@ -1149,7 +1149,12 @@ export function upsertAppActivity(args: {
       ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
       ...(from || prev.from ? { from: prev.from ?? from } : {}),
     };
-    if (settledReceive && sameActivityRow(prev, entries[idx]!)) return;
+    // Inbox replays and ingest retries re-announce the same row every few
+    // seconds; each write re-serializes the whole store.
+    if (sameActivityRow(prev, entries[idx]!)) {
+      announceSettledSpend(prev, owner);
+      return;
+    }
     // A merge keeps the matched row's `at`, so it stays where it was in the
     // feed rather than appearing as something that just happened.
     logActivityWrite(

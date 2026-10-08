@@ -28,6 +28,7 @@ import { Transaction } from '@bsv/sdk'
 import { mapPool } from './asyncPool'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 import type { Chain } from './vault'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
 /** Statuses a local transaction can hold while the chain has not decided it. */
 export const LIVE_LOCAL_TX_STATUSES = [
@@ -158,11 +159,61 @@ export function planFailureClosure(args: {
   }
 }
 
+const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'))
+const EF_MARKER = [0, 0, 0, 0, 0, 0xef]
+
+/**
+ * The parents of a plain serialized transaction, read off the input outpoints
+ * without building script objects. Null when the bytes are not exactly one
+ * plain transaction — the caller then parses fully.
+ */
+function scanInputTxids(raw: ArrayLike<number>): string[] | null {
+  let at = 4
+  const varInt = (): number | null => {
+    if (at >= raw.length) return null
+    const first = raw[at++]!
+    if (first < 0xfd) return first
+    const width = first === 0xfd ? 2 : first === 0xfe ? 4 : 8
+    if (at + width > raw.length) return null
+    let value = 0
+    for (let i = width - 1; i >= 0; i -= 1) value = value * 256 + raw[at + i]!
+    at += width
+    return Number.isSafeInteger(value) ? value : null
+  }
+  if (EF_MARKER.every((byte, i) => raw[4 + i] === byte)) return null
+  const inputs = varInt()
+  if (inputs == null) return null
+  const ids = new Set<string>()
+  for (let n = 0; n < inputs; n += 1) {
+    if (at + 36 > raw.length) return null
+    let id = ''
+    for (let i = 31; i >= 0; i -= 1) id += HEX[raw[at + i]!]
+    ids.add(id)
+    at += 36
+    const script = varInt()
+    if (script == null || at + script + 4 > raw.length) return null
+    at += script + 4
+  }
+  const outputs = varInt()
+  if (outputs == null) return null
+  for (let n = 0; n < outputs; n += 1) {
+    at += 8
+    const script = varInt()
+    if (script == null || at + script > raw.length) return null
+    at += script
+  }
+  return at + 4 === raw.length ? [...ids] : null
+}
+
 /** Txids a raw transaction spends from; empty when the bytes cannot be read. */
 export function inputTxidsOfRawTx(rawTx: ArrayLike<number> | undefined | null): string[] {
-  if (!rawTx || rawTx.length === 0) return []
+  if (!rawTx || rawTx.length < 10) return []
+  const scanned = scanInputTxids(rawTx)
+  if (scanned) return scanned
   try {
-    const tx = Transaction.fromBinary(Array.from(rawTx))
+    const bytes = Array.from(rawTx)
+    const extended = EF_MARKER.every((byte, i) => bytes[4 + i] === byte)
+    const tx = extended ? Transaction.fromEF(bytes) : Transaction.fromBinary(bytes)
     const ids = new Set<string>()
     for (const input of tx.inputs) {
       const id = input.sourceTXID ?? input.sourceTransaction?.id('hex')
@@ -273,31 +324,115 @@ type ClosureState = {
   reachable: string[]
 }
 
-/** Storage reads only: failed txs, live txs and the descendants between them. */
-async function readClosureState(
+/**
+ * Parents of every live transaction seen this session. A txid commits to its
+ * bytes, so the answer never changes: after the first pass a closure check
+ * reads rows without raw bytes and parses only transactions it has not met.
+ */
+const inputsByTxid = new Map<string, readonly string[]>()
+
+/** Below this many unseen transactions, raw bytes are fetched row by row instead of paging every live one. */
+const RAW_BY_ROW_MAX = 40
+
+type ClosureRead = {
+  failed: Set<string>
+  /** Live rows without raw bytes, keyed by normalized txid. */
+  live: Map<string, StorageTxRow>
+  /** Raw bytes of live transactions whose parents are not known yet. */
+  unparsed: Array<{ txid: string; rawTx: ArrayLike<number> }>
+}
+
+const txidOf = (row: StorageTxRow): string | null => {
+  const id = normalize(String(row.txid ?? ''))
+  return /^[0-9a-f]{64}$/.test(id) ? id : null
+}
+
+async function readRawTxs(
+  sp: ClosureStorage,
+  rows: readonly StorageTxRow[],
+): Promise<ClosureRead['unparsed']> {
+  const wanted = new Set(rows.map(txidOf).filter((id): id is string => id != null))
+  const found: ClosureRead['unparsed'] = []
+  const keep = (row: StorageTxRow) => {
+    const txid = txidOf(row)
+    if (txid && wanted.delete(txid) && row.rawTx && row.rawTx.length > 0) found.push({ txid, rawTx: row.rawTx })
+  }
+  if (rows.length > RAW_BY_ROW_MAX || typeof sp.findTransactions !== 'function') {
+    for (const row of await pageTransactions(sp, LIVE_LOCAL_TX_STATUSES, false)) keep(row)
+    return found
+  }
+  for (const row of rows) {
+    const transactionId = Number(row.transactionId)
+    if (!Number.isSafeInteger(transactionId) || transactionId <= 0) continue
+    const batch =
+      (await sp.findTransactions({
+        partial: { transactionId },
+        noRawTx: false,
+        paged: { limit: 1, offset: 0 },
+      })) ?? []
+    const hit = batch.find((candidate) => Number(candidate.transactionId) === transactionId)
+    if (hit) keep(hit)
+  }
+  return found
+}
+
+/** Storage reads only: failed txs, live txs, and raw bytes for live txs not parsed before. */
+async function readClosureRows(
   sp: ClosureStorage,
   seedTxids: readonly string[],
-): Promise<ClosureState | null> {
-  const failedRows = await pageTransactions(sp, ['failed'], true)
+): Promise<ClosureRead | null> {
   const failed = new Set<string>()
-  for (const row of failedRows) {
-    const id = normalize(String(row.txid ?? ''))
-    if (/^[0-9a-f]{64}$/.test(id)) failed.add(id)
+  for (const row of await pageTransactions(sp, ['failed'], true)) {
+    const id = txidOf(row)
+    if (id) failed.add(id)
   }
   for (const seed of seedTxids) failed.add(normalize(seed))
   if (failed.size === 0) return null
 
-  const liveRows = await pageTransactions(sp, LIVE_LOCAL_TX_STATUSES, false)
-  const byTxid = new Map<string, StorageTxRow>()
-  const links: LocalTxLink[] = []
-  for (const row of liveRows) {
-    const id = normalize(String(row.txid ?? ''))
-    if (!/^[0-9a-f]{64}$/.test(id)) continue
-    byTxid.set(id, row)
-    links.push({ txid: id, inputTxids: inputTxidsOfRawTx(row.rawTx) })
+  const live = new Map<string, StorageTxRow>()
+  for (const row of await pageTransactions(sp, LIVE_LOCAL_TX_STATUSES, true)) {
+    const id = txidOf(row)
+    if (id) live.set(id, row)
   }
-  const reachable = orphanedDescendants(failed, links)
-  return reachable.length > 0 ? { failed, links, byTxid, reachable } : null
+  const unseen = [...live].filter(([txid]) => !inputsByTxid.has(txid)).map(([, row]) => row)
+  return { failed, live, unparsed: unseen.length > 0 ? await readRawTxs(sp, unseen) : [] }
+}
+
+/**
+ * Parse what the read left unparsed, giving the UI a turn whenever the budget
+ * runs out. False when `stop` asked to abandon the pass.
+ */
+async function parseUnparsed(read: ClosureRead, stop: () => boolean = () => false): Promise<boolean> {
+  const started = Date.now()
+  for (const { txid, rawTx } of read.unparsed) {
+    if (uiBudgetExpired()) {
+      await yieldToUi()
+      if (stop()) return false
+    }
+    inputsByTxid.set(txid, inputTxidsOfRawTx(rawTx))
+  }
+  const ms = Date.now() - started
+  if (ms >= 250) console.info(`[tx-closure] parse done ${ms}ms — ${read.unparsed.length} transaction(s)`)
+  read.unparsed = []
+  return true
+}
+
+function closureState(read: ClosureRead): ClosureState | null {
+  const links: LocalTxLink[] = []
+  for (const txid of read.live.keys()) links.push({ txid, inputTxids: inputsByTxid.get(txid) ?? [] })
+  const reachable = orphanedDescendants(read.failed, links)
+  return reachable.length > 0 ? { failed: read.failed, links, byTxid: read.live, reachable } : null
+}
+
+/** Storage reads and in-session parsing: the closure as storage holds it now. */
+async function readClosureState(
+  sp: ClosureStorage,
+  seedTxids: readonly string[],
+): Promise<ClosureState | null> {
+  const read = await readClosureRows(sp, seedTxids)
+  if (!read) return null
+  await parseUnparsed(read)
+  return closureState(read)
 }
 
 /** A transaction an explorer returned stays on chain; asked once per window. */
@@ -446,9 +581,15 @@ export async function failOrphanedLocalTxs(
   const { txExistsOnChain } = await import('./legacyScan')
   try {
     const readStartedAt = Date.now()
-    const asked = await storage.runAsStorageProvider((activeSp) =>
-      readClosureState(activeSp as ClosureStorage, seedTxids),
+    const read = await storage.runAsStorageProvider((activeSp) =>
+      readClosureRows(activeSp as ClosureStorage, seedTxids),
     )
+    if (!read) return none
+    if (!(await parseUnparsed(read, shouldYieldChainIngestToSpend))) {
+      console.info('[tx-closure] deferred — a send is waiting')
+      return none
+    }
+    const asked = closureState(read)
     if (!asked) return none
     if (shouldYieldChainIngestToSpend()) return none
     const askStartedAt = Date.now()
@@ -491,6 +632,7 @@ export async function failOrphanedLocalTxs(
 /** Test-only. */
 export function __resetTxClosureMemoForTests(): void {
   presentAt.clear()
+  inputsByTxid.clear()
 }
 
 function normalize(txid: string): string {

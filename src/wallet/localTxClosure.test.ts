@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { LockingScript, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 import {
   __resetTxClosureMemoForTests,
   failLocalTxClosure,
@@ -107,6 +107,35 @@ describe('inputTxidsOfRawTx', () => {
     expect(inputTxidsOfRawTx(undefined)).toEqual([])
     expect(inputTxidsOfRawTx([])).toEqual([])
     expect(inputTxidsOfRawTx([1, 2, 3])).toEqual([])
+    expect(inputTxidsOfRawTx(rawTxSpending([A]).slice(0, -1))).toEqual([])
+  })
+
+  it('reads the same parents as a full parse, with long scripts and many inputs', () => {
+    const key = PrivateKey.fromRandom()
+    const tx = new Transaction()
+    const parents = Array.from({ length: 300 }, (_, i) => i.toString(16).padStart(64, '0'))
+    for (const parent of parents) {
+      tx.addInput({ sourceTXID: parent, sourceOutputIndex: 7, unlockingScript: new P2PKH().lock(key.toAddress()) })
+    }
+    const fat = new P2PKH().lock(key.toAddress()).toHex() + '6a' + '4d' + 'e803' + 'ab'.repeat(1000)
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(fat) })
+    const raw = tx.toBinary()
+    const full = Transaction.fromBinary(raw).inputs.map((input) => input.sourceTXID)
+    expect(inputTxidsOfRawTx(raw)).toEqual(full)
+  })
+
+  it('falls back to a full parse for extended-format bytes', () => {
+    const key = PrivateKey.fromRandom()
+    const parent = new Transaction()
+    parent.addOutput({ satoshis: 5, lockingScript: new P2PKH().lock(key.toAddress()) })
+    const child = new Transaction()
+    child.addInput({
+      sourceTransaction: parent,
+      sourceOutputIndex: 0,
+      unlockingScript: new P2PKH().lock(key.toAddress()),
+    })
+    child.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(key.toAddress()) })
+    expect(inputTxidsOfRawTx(child.toEF())).toEqual([parent.id('hex')])
   })
 })
 
@@ -391,6 +420,26 @@ describe('failOrphanedLocalTxs', () => {
     const second = await failOrphanedLocalTxs(active)
     expect(asked).toEqual([B])
     expect(second.keptOnChain).toEqual([B])
+  })
+
+  it('reads raw bytes once per transaction, not on every pass', async () => {
+    const { sp } = fakeStorage(
+      [
+        { transactionId: 1, txid: A, status: 'failed' },
+        { transactionId: 2, txid: B, status: 'unproven', rawTx: rawTxSpending([E]) },
+        { transactionId: 3, txid: C, status: 'unproven', rawTx: rawTxSpending([D]) },
+      ],
+      [],
+    )
+    const { active } = sessionWallet(sp)
+    const rawReads = () =>
+      vi.mocked(sp.findTransactions!).mock.calls.filter(([args]) => args.noRawTx === false).length
+    await failOrphanedLocalTxs(active)
+    const first = rawReads()
+    expect(first).toBeGreaterThan(0)
+    await failOrphanedLocalTxs(active)
+    await failOrphanedLocalTxs(active)
+    expect(rawReads()).toBe(first)
   })
 
   it('leaves a closure that grew during the chain check for the next pass', async () => {

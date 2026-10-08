@@ -1,6 +1,13 @@
 # Changelog
 
-## [1.3.514] - 2026-10-08
+## [1.3.515] - 2026-10-08
+
+### Fixed
+- **Sends no longer wait out the unlock transaction check, and the phone stops freezing behind it.** On 0.1.660, 59 of 66 freezes (163s of 179s blocked) and a 3-item send that timed out with nothing broadcast all sat inside the unlock pass's check for live transactions built on failed ones. Every pass read every live local transaction with its raw bytes (up to 5,000 rows, mostly migrate imports) and fully parsed each one on the main thread, while holding the storage lock the send was waiting for. Then it did all of it a second time before applying. Its decisions are unchanged, but now:
+  - A transaction's parents are read once per session and remembered; later passes read rows without raw bytes and parse only transactions not seen before.
+  - The first pass parses outside the storage lock, gives the UI a turn whenever its time slice runs out, and stops when a send is waiting.
+  - Parents are read straight off the input outpoints instead of building every script; extended-format bytes, which the old parse could not read, now parse too.
+- **A replayed receive no longer rewrites the whole Activity store.** The same two incoming payments were merged 55 times in three minutes, once per inbox replay, each merge re-serializing all 869 rows. A merge that changes nothing is no longer written; this used to apply only to receives that had already settled.
 
 ### Changed
 - **Transaction handling is back to 1.3.469.** Miner submit, BEEF preparation, the signed-send lifecycle, the spend-conflict and Arcade guards, input fate after a reject, seal release and proof-request promote, the spend balance gate, the dead-coin sweep, Arcade landing, the miner outbox, the item send run and its held-tip reads, import migrate packaging, phrase sweep and item import are byte-identical to 1.3.469. Every transaction-path change from 1.3.470 to 1.3.513 is withdrawn, including 1.3.513's dead-coin reselection fix.
