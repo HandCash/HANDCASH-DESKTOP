@@ -12,6 +12,8 @@ const local = { spendableSats: 900, defaultOutputCount: 3, actionCount: 40, look
 const uploadBrc39Backup = vi.fn(async () => ({ url: 'u', exportedAt: 2, spendableSats: 0, actionCount: 0 }))
 const inspectLocalToolboxState = vi.fn(async () => local)
 const localToolboxStateLooksEmpty = vi.fn(async () => false)
+const getActiveWallet = vi.fn((): { identityKey: string; chain: 'main' } | null => null)
+const readTrustedBalance = vi.fn((): number | null => null)
 
 vi.mock('./historyBackup', () => ({
   createBrc39BackupBytes: vi.fn(),
@@ -49,7 +51,10 @@ vi.mock('./permissions', () => ({
   hasPendingPermissionPrompt: () => false,
   hasInboundWalletRequest: () => false,
 }))
-vi.mock('./session', () => ({ getActiveWallet: () => null }))
+vi.mock('./session', () => ({ getActiveWallet: () => getActiveWallet() }))
+vi.mock('./balanceSnapshot', () => ({
+  readTrustedBalance: (identityKey: string, chain: string) => readTrustedBalance(identityKey, chain),
+}))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 
 describe('unlock history push', () => {
@@ -58,6 +63,10 @@ describe('unlock history push', () => {
     uploadBrc39Backup.mockClear()
     inspectLocalToolboxState.mockClear()
     localToolboxStateLooksEmpty.mockClear()
+    getActiveWallet.mockReset()
+    getActiveWallet.mockReturnValue(null)
+    readTrustedBalance.mockReset()
+    readTrustedBalance.mockReturnValue(null)
     remote.actionCount = 40
     const { rebindDeviceSyncForAccount } = await import('./deviceSync')
     rebindDeviceSyncForAccount()
@@ -74,6 +83,17 @@ describe('unlock history push', () => {
     expect(localToolboxStateLooksEmpty).toHaveBeenCalledOnce()
     expect(inspectLocalToolboxState).not.toHaveBeenCalled()
     expect(uploadBrc39Backup).not.toHaveBeenCalled()
+    const { fetchRemoteBrc39Meta } = await import('./historyBackup')
+    expect(fetchRemoteBrc39Meta).not.toHaveBeenCalled()
+  })
+
+  it('leaves the unlock region without an empty probe when a balance is already recorded', async () => {
+    getActiveWallet.mockReturnValue({ identityKey: 'id', chain: 'main' })
+    readTrustedBalance.mockReturnValue(5_000)
+    const { autoPushHistoryBackupIfConfigured } = await import('./deviceSync')
+    const result = await autoPushHistoryBackupIfConfigured('pw', { reason: 'unlock' })
+    expect(result.skipReason).toBe('known-local-history')
+    expect(localToolboxStateLooksEmpty).not.toHaveBeenCalled()
     const { fetchRemoteBrc39Meta } = await import('./historyBackup')
     expect(fetchRemoteBrc39Meta).not.toHaveBeenCalled()
   })

@@ -525,12 +525,13 @@ export function scheduleActivityLedgerRefresh(): void {
   const gap = Math.min(MAX_FAILURE_GAP_MS, MIN_REFRESH_GAP_MS * 2 ** failures)
   const wait = Math.max(SETTLE_MS, lastRefreshAt + gap - Date.now())
   timer = setTimeout(function fire() {
-    if (shouldYieldChainIngestToSpend() || spendNeedsStorage()) {
-      timer = setTimeout(fire, SPEND_YIELD_MS)
-      return
-    }
-    timer = null
-    void refreshActivityLedger()
+    timer = setTimeout(fire, SPEND_YIELD_MS)
+    void import('./recompose').then(({ isRecomposeInFlight }) => {
+      if (shouldYieldChainIngestToSpend() || spendNeedsStorage() || isRecomposeInFlight()) return
+      if (timer) clearTimeout(timer)
+      timer = null
+      void refreshActivityLedger()
+    })
   }, wait)
 }
 

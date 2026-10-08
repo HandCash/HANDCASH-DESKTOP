@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.507] - 2026-10-08
+
+### Fixed
+- **A send no longer dies while unlock is still deciding about history.** On 0.1.652 a send of 19 collectables waited 46s in `recompose-history` and was dropped with nothing signed. That step was still reading the toolbox to ask whether the wallet was empty, and the activity re-read was scanning every item output on the same storage lock, so the UI stayed frozen and the send gave up. A wallet that already has a balance leaves that step immediately. The activity re-read waits until unlock has finished.
+
 ## [1.3.506] - 2026-10-08
 
 ### Fixed

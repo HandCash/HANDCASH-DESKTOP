@@ -36,6 +36,7 @@ import {
 } from './historyBackupPrefs'
 
 import { sessionBackupCredential } from './sessionBackupAuth'
+import { readTrustedBalance } from './balanceSnapshot'
 import { inspectLocalToolboxState, localToolboxStateLooksEmpty } from './layers'
 import {
   allowEmptyLocalHistoryPull,
@@ -530,6 +531,20 @@ export type AutoSyncResult = {
 }
 
 /**
+ * Sync record that this device already holds history. The empty probe is an
+ * IndexedDB read and it runs inside the recompose region; a trusted balance
+ * or a recorded high-water is enough to leave that region without it.
+ */
+function localHistoryAlreadyRecorded(): boolean {
+  const active = getActiveWallet()
+  if (!active?.identityKey) return false
+  const trusted = readTrustedBalance(active.identityKey, active.chain)
+  if ((trusted ?? 0) > 0) return true
+  const prefs = getHistoryBackupPrefs()
+  return (prefs.highWaterSpendableSats ?? 0) > 0 || (prefs.highWaterActionCount ?? 0) > 0
+}
+
+/**
  * Best-effort historyReplica sync after create/unlock/restore (and debounced
  * post-spend push). Empty-local × remote edge case is isolated in
  * `historyEmptyGuard.ts` — auto paths never PUT an empty localState over a
@@ -567,6 +582,24 @@ export async function autoPushHistoryBackupIfConfigured(
   }
 
   const { appendAppLog } = await import('./appLog')
+
+  // A wallet that already has history must not sit inside the recompose
+  // region for an IndexedDB empty probe. That region excludes every send;
+  // on 0.1.652 the probe was still in it 46s later and a signed 19-item
+  // send was dropped with nothing broadcast.
+  if (
+    !opts.deferred &&
+    (reason === 'unlock' || reason === 'create') &&
+    localHistoryAlreadyRecorded()
+  ) {
+    appendAppLog(
+      'info',
+      `[cloud-backup] defer push after ${reason} — local history already on this device`,
+    )
+    scheduleHistoryBackupPush(reason)
+    result.skipReason = 'known-local-history'
+    return result
+  }
 
   // Recovery pull first — never gated by the push crash-loop watchdog.
   // Ask whether this device is empty before any network call. The call sits
