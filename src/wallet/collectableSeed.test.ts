@@ -84,6 +84,20 @@ describe('locally seeded collectables', () => {
     expect(getCachedCollectables().map((c) => c.outpoint)).toContain(TIP)
   })
 
+  it('paints every tip of one transaction with a single grid write', async () => {
+    const { noteIngestedItems, getCachedCollectables, subscribeCollectables } = await import('./collectables')
+    let writes = -1 // the listener is called once on subscribe
+    const stop = subscribeCollectables(() => {
+      writes++
+    })
+    const tips = Array.from({ length: 21 }, (_, vout) => `${'e7'.repeat(32)}.${vout}`)
+    noteIngestedItems(tips.map((outpoint, i) => ({ outpoint, chain: 'main' as const, name: `Item ${i}` })))
+    stop()
+
+    expect(writes).toBe(1)
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual(expect.arrayContaining(tips))
+  })
+
   it('survives a basket read that does not list it yet', async () => {
     const { noteIngestedItem, listCollectables } = await import(
       './collectables'

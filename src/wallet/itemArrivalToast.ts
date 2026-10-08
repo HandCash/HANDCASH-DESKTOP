@@ -24,6 +24,7 @@ import {
   noteAwaitingVerification,
 } from './verificationProgress'
 import {
+  batchActivityWrites,
   hasSettledActivityItemOutpoint,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
@@ -144,34 +145,38 @@ export function announceItemsReceived(
 ): boolean {
   const canPresent = ownerIsCurrent(owner)
   const fresh: string[] = []
-  for (const op of outpoints) {
-    const key = normalize(op)
-    const txid = key.split('.')[0] ?? ''
-    const proven = isItemProven(op) || verifiedThisSession.has(key)
+  // One store write for the whole arrival: each row write re-serializes every
+  // Activity row, and a 21-item import leg wrote it 21 times in a row.
+  batchActivityWrites(() => {
+    for (const op of outpoints) {
+      const key = normalize(op)
+      const txid = key.split('.')[0] ?? ''
+      const proven = isItemProven(op) || verifiedThisSession.has(key)
 
-    // Activity is the durable custody projection, not notification state.
-    // Ensure the receive row exists, even when a prior toast consumed the
-    // durable dedupe key or this wallet's send finished in the background. A
-    // settled row is left alone: re-merging rewrote its note to "Receiving
-    // Collectable" every time a tip re-entered the inventory cache.
-    if (!hasSettledActivityItemOutpoint(key, owner)) {
+      // Activity is the durable custody projection, not notification state.
+      // Ensure the receive row exists, even when a prior toast consumed the
+      // durable dedupe key or this wallet's send finished in the background. A
+      // settled row is left alone: re-merging rewrote its note to "Receiving
+      // Collectable" every time a tip re-entered the inventory cache.
+      if (!hasSettledActivityItemOutpoint(key, owner)) {
+        if (proven) {
+          noteInboundReceiveComplete({ txid, item: true, outpoint: key }, owner)
+        } else {
+          noteInboundReceivePending({ txid, item: true, outpoint: key }, owner)
+        }
+      }
+
+      // Foreground spinner/toast state belongs only to the selected wallet.
+      if (!canPresent || !noteItemReceived(op, owner)) continue
+      fresh.push(key)
       if (proven) {
-        noteInboundReceiveComplete({ txid, item: true, outpoint: key }, owner)
+        note(verifiedThisSession, op)
+        clearAwaitingVerification(key)
       } else {
-        noteInboundReceivePending({ txid, item: true, outpoint: key }, owner)
+        noteAwaitingVerification(key)
       }
     }
-
-    // Foreground spinner/toast state belongs only to the selected wallet.
-    if (!canPresent || !noteItemReceived(op, owner)) continue
-    fresh.push(key)
-    if (proven) {
-      note(verifiedThisSession, op)
-      clearAwaitingVerification(key)
-    } else {
-      noteAwaitingVerification(key)
-    }
-  }
+  })
   if (fresh.length === 0) return false
   const allProven = fresh.every(
     (op) => isItemProven(op) || verifiedThisSession.has(op),

@@ -865,7 +865,7 @@ const IMPORT_QUEUE = `stateDiagram-v2
   idle --> deciding : ENQUEUE
   deciding --> moving : queue not empty
   deciding --> idle : queue empty
-  moving --> moving : ENQUEUE (appended, deduped per source) / STOP (drops waiting)
+  moving --> moving : ENQUEUE (appended, deduped per source) / STOP (drops waiting) / LANDED (a tx of the chunk broadcast · bar counts its items)
   moving --> cooling : chunk answered · spent fee coin (pauses left)
   moving --> deciding : chunk answered / error
   cooling --> deciding : after 8s (untried items first)

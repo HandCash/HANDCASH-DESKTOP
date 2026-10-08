@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.532] - 2026-10-08
+
+### Fixed
+- **The import bar moves as each transaction lands.** The bar counted an item as done only once its whole 100-item chunk returned. On 0.1.675, 21 of 79 items moved and the bar did not change. Each import transaction now reports its items the moment it broadcasts, through a new `LANDED` event on the import queue chart, so the bar, the status pill and the Activity row count them straight away.
+- **No freeze when an import finishes downloading parents.** The import built one package with every item's source transactions, serialized it and parsed it straight back, then hashed every inscription in two synchronous calls. With 79 items that froze the phone for 5.5s, and 4.7s earlier in the same phase. Each source transaction is now built and decoded on its own, with a yield between, and legs are assembled from an index over those packages. Items load in chunks of 24, and a chunk's legs sign while the next chunk downloads, so the first transaction no longer waits 40s for every parent.
+- **Moving many items at once no longer stalls Collect or Activity.** A 21-item leg painted its cards one at a time, and each paint rebuilt and persisted the whole grid. Each newly arrived card also wrote its own Activity row, and every row write re-serialized all 890 rows. Together these blocked the screen for 3.7s. A transaction's cards now paint in one grid write, and an arrival writes Activity once.
+
 ## [1.3.531] - 2026-10-08
 
 ### Fixed

@@ -40,7 +40,8 @@ function openRun(identityKey: string): Run {
 }
 
 const PORTS: ImportQueuePorts = {
-  importMany: (chunk) => importItems({ ...chunk, activityGroup: openRun(chunk.identityKey).job.id }),
+  importMany: ({ onLanded, ...chunk }) =>
+    importItems({ ...chunk, onLanded, activityGroup: openRun(chunk.identityKey).job.id }),
   prefetch: (chunk) => prefetchImportItems(chunk),
 }
 

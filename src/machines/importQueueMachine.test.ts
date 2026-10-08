@@ -69,6 +69,30 @@ describe('importQueueMachine', () => {
     expect(sourceRun(queue.getSnapshot().context, 'b')).toBeNull()
   })
 
+  it('counts a chunk’s items as done as each of its transactions broadcasts', async () => {
+    let land!: (outpoints: string[]) => void
+    let answer!: (result: ImportItemsResult) => void
+    const { queue } = start(({ onLanded }) => {
+      land = onLanded
+      return new Promise<ImportItemsResult>((resolve) => (answer = resolve))
+    })
+    queue.send({ type: 'ENQUEUE', sourceId: 'a', identityKey: 'id1', items: items(1, 79) })
+    await vi.waitFor(() => expect(land).toBeTypeOf('function'))
+    expect(sourceRun(queue.getSnapshot().context, 'a')).toMatchObject({ total: 79, done: 0 })
+
+    const firstLeg = items(1, 21).map((item) => item.outpoint)
+    land(firstLeg)
+    land([...firstLeg, op(9_999)])
+    const run = sourceRun(queue.getSnapshot().context, 'a')!
+    expect(run).toMatchObject({ total: 79, done: 21 })
+    expect(run.moving).toHaveLength(58)
+
+    answer({ results: items(1, 79).map(({ outpoint }) => ({ outpoint, result: MOVED })), stopped: null })
+    const idle = await waitFor(queue, (s) => s.matches('idle'))
+    expect(idle.context.landed).toEqual([])
+    expect(idle.context.reports.a).toMatchObject({ title: '79 items imported' })
+  })
+
   it('waits out a spent fee coin, then retries only the untried items', async () => {
     vi.useFakeTimers()
     let calls = 0
@@ -80,7 +104,7 @@ describe('importQueueMachine', () => {
           stopped: 'stale-funding',
         }
       }
-      return moved({ sourceId: 'a', identityKey: 'id1', outpoints })
+      return moved({ sourceId: 'a', identityKey: 'id1', outpoints, onLanded: () => undefined })
     })
     queue.send({ type: 'ENQUEUE', sourceId: 'a', identityKey: 'id1', items: items(1, 3) })
     await vi.waitFor(() => expect(queue.getSnapshot().matches('cooling')).toBe(true))

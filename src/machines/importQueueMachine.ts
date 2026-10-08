@@ -43,7 +43,13 @@ export type ImportTally = {
 export type ImportQueueEntry = { sourceId: string; identityKey: string; outpoint: string }
 
 export type ImportQueuePorts = {
-  importMany: (chunk: { sourceId: string; identityKey: string; outpoints: string[] }) => Promise<ImportItemsResult>
+  importMany: (chunk: {
+    sourceId: string
+    identityKey: string
+    outpoints: string[]
+    /** Items a transaction of this chunk just moved, while the rest still sign. */
+    onLanded: (outpoints: string[]) => void
+  }) => Promise<ImportItemsResult>
   /** Warm the source transactions of the chunk after this one. Never throws. */
   prefetch: (chunk: { sourceId: string; outpoints: string[] }) => Promise<void>
 }
@@ -54,6 +60,12 @@ export type ImportQueueContext = {
   queue: ImportQueueEntry[]
   /** The chunk in flight, or waiting out a spent fee coin. */
   moving: ImportQueueEntry[]
+  /**
+   * Outpoints of `moving` whose transaction already broadcast. A chunk answers
+   * only once its last transaction does, so without this the bar sat still
+   * while a 79-item chunk moved 21 items.
+   */
+  landed: string[]
   /** Each running source's answers so far. */
   tallies: Record<string, ImportTally>
   /** Each finished source's outcome, until dismissed or run again. */
@@ -72,6 +84,7 @@ export type ImportQueueEvent =
     }
   | { type: 'STOP'; sourceId: string }
   | { type: 'DISMISS'; sourceId: string }
+  | { type: 'LANDED'; outpoints: string[] }
 
 /** One chunk's answers, for whichever browser is showing that source. */
 export type ImportQueueEmitted = {
@@ -156,12 +169,15 @@ export function nextChunk(queue: readonly ImportQueueEntry[]): ImportQueueEntry[
 
 /** A source's run as a browser shows it. Pure. */
 export function sourceRun(
-  context: Pick<ImportQueueContext, 'queue' | 'moving' | 'tallies' | 'stopping'>,
+  context: Pick<ImportQueueContext, 'queue' | 'moving' | 'tallies' | 'stopping'> & Partial<Pick<ImportQueueContext, 'landed'>>,
   sourceId: string,
 ): { moving: string[]; waiting: string[]; total: number; done: number; stopping: boolean } | null {
   const tally = context.tallies[sourceId]
   if (!tally) return null
-  const moving = context.moving.filter((e) => e.sourceId === sourceId).map((e) => e.outpoint)
+  const landed = new Set(context.landed ?? [])
+  const moving = context.moving
+    .filter((e) => e.sourceId === sourceId && !landed.has(e.outpoint))
+    .map((e) => e.outpoint)
   const waiting = context.queue.filter((e) => e.sourceId === sourceId).map((e) => e.outpoint)
   return {
     moving,
@@ -201,11 +217,16 @@ export const importQueueMachine = setup({
   },
   actors: {
     importMany: fromPromise(
-      ({ input }: { input: { ports: ImportQueuePorts; chunk: ImportQueueEntry[] } }) =>
+      ({
+        input,
+      }: {
+        input: { ports: ImportQueuePorts; chunk: ImportQueueEntry[]; onLanded: (outpoints: string[]) => void }
+      }) =>
         input.ports.importMany({
           sourceId: input.chunk[0]!.sourceId,
           identityKey: input.chunk[0]!.identityKey,
           outpoints: input.chunk.map((e) => e.outpoint),
+          onLanded: input.onLanded,
         }),
     ),
     prefetch: fromPromise(async ({ input }: { input: { ports: ImportQueuePorts; chunk: ImportQueueEntry[] } }) => {
@@ -253,7 +274,14 @@ export const importQueueMachine = setup({
     takeChunk: assign(({ context }) => {
       const chunk = nextChunk(context.queue)
       const taken = new Set(chunk)
-      return { moving: chunk, queue: context.queue.filter((e) => !taken.has(e)) }
+      return { moving: chunk, landed: [], queue: context.queue.filter((e) => !taken.has(e)) }
+    }),
+    noteLanded: assign(({ context, event }) => {
+      if (event.type !== 'LANDED') return {}
+      const known = new Set(context.landed)
+      const inFlight = new Set(context.moving.map((e) => e.outpoint))
+      const fresh = event.outpoints.filter((outpoint) => inFlight.has(outpoint) && !known.has(outpoint))
+      return fresh.length > 0 ? { landed: [...context.landed, ...fresh] } : {}
     }),
     /** A stop drops the source's waiting items now; the chunk in flight finishes. */
     stopSource: assign(({ context, event }) => {
@@ -269,7 +297,7 @@ export const importQueueMachine = setup({
     dropPausedSource: assign(({ context, event }) => {
       if (event.type !== 'STOP') return {}
       const moving = context.moving.filter((e) => e.sourceId !== event.sourceId)
-      return { moving, ...settled(context, context.queue, moving, context.tallies) }
+      return { moving, landed: [], ...settled(context, context.queue, moving, context.tallies) }
     }),
     dismiss: assign(({ context, event }) => {
       if (event.type !== 'DISMISS') return {}
@@ -318,6 +346,7 @@ export const importQueueMachine = setup({
       enqueue.assign({
         queue,
         moving: retry,
+        landed: [],
         names,
         pauses: pausing ? context.pauses + 1 : 0,
         ...settled({ ...context, names }, queue, retry, tallies),
@@ -345,9 +374,9 @@ export const importQueueMachine = setup({
         const tally = tallies[id] ?? NO_TALLY
         tallies[id] = { ...tally, failure, last: failure }
       }
-      return { queue, moving: [], pauses: 0, ...settled(context, queue, [], tallies) }
+      return { queue, moving: [], landed: [], pauses: 0, ...settled(context, queue, [], tallies) }
     }),
-    requeuePaused: assign(({ context }) => ({ queue: [...context.moving, ...context.queue], moving: [] })),
+    requeuePaused: assign(({ context }) => ({ queue: [...context.moving, ...context.queue], moving: [], landed: [] })),
   },
 }).createMachine({
   id: 'importQueue',
@@ -356,6 +385,7 @@ export const importQueueMachine = setup({
     ports: input.ports,
     queue: [],
     moving: [],
+    landed: [],
     tallies: {},
     reports: {},
     names: {},
@@ -382,7 +412,11 @@ export const importQueueMachine = setup({
         {
           id: 'importMany',
           src: 'importMany',
-          input: ({ context }) => ({ ports: context.ports, chunk: context.moving }),
+          input: ({ context, self }) => ({
+            ports: context.ports,
+            chunk: context.moving,
+            onLanded: (outpoints: string[]) => self.send({ type: 'LANDED', outpoints }),
+          }),
           onDone: [
             { guard: 'staleFunding', target: 'cooling', actions: 'recordChunk' },
             { target: 'deciding', actions: 'recordChunk' },
@@ -398,6 +432,7 @@ export const importQueueMachine = setup({
       on: {
         ENQUEUE: { actions: 'enqueue' },
         STOP: { actions: 'stopSource' },
+        LANDED: { actions: 'noteLanded' },
       },
     },
     /** The fee coin was spent elsewhere; give the wallet a moment to retire it. */

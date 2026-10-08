@@ -194,7 +194,12 @@ describe('importItemBrowserMachine', () => {
     expect(actor.getSnapshot().context.queue.run?.moving).toEqual([op(2)])
     const done = await settledReport(actor)
     expect(importMany).toHaveBeenCalledTimes(1)
-    expect(importMany).toHaveBeenCalledWith({ sourceId: 's1', identityKey: 'id1', outpoints: [op(2)] })
+    expect(importMany).toHaveBeenCalledWith({
+      sourceId: 's1',
+      identityKey: 'id1',
+      outpoints: [op(2)],
+      onLanded: expect.any(Function),
+    })
     expect(done.context.items.map((i) => i.outpoint)).toEqual([op(1)])
     expect(done.context.queue.report).toMatchObject({ tone: 'success', outcome: 'moved', title: 'Item 2 imported' })
   })

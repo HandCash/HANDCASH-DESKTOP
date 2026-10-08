@@ -60,7 +60,7 @@ import {
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { leaseSpendPriority } from './walletCoordinator'
-import { beefSubset, prefixWithinBeefBudget } from './beefSubset'
+import { BeefShelf, beefSubset, prefixWithinBeefBudget } from './beefSubset'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { isInsufficientFundsError } from './insufficientFunds'
@@ -782,6 +782,8 @@ type ChosenItemsArgs = {
   items: readonly ChosenPhraseItem[]
   /** Wallet job id: every Activity row of the run folds into one record. */
   activityGroup?: string | null
+  /** The given outpoints of each transaction's items, the moment it broadcasts. */
+  onLanded?: (outpoints: string[]) => void
 }
 
 /**
@@ -790,6 +792,61 @@ type ChosenItemsArgs = {
  * own funding ancestry and the signed transaction itself.
  */
 const LEG_INPUT_BEEF_BUDGET = 1_400_000
+
+/**
+ * Items whose parents load together. The first leg waits for one chunk, not
+ * the whole import: 79 items' parents took 40s before anything signed.
+ */
+const PARENT_CHUNK_ITEMS = 24
+/** Source transactions fetched at once, as the single-call build used. */
+const PARENT_LANES = 8
+
+type ItemParents = {
+  shelf: BeefShelf
+  /** Why an outpoint's source could not be read, by outpoint. */
+  failures: Map<string, string>
+  bytes: number
+  ms: number
+}
+
+/**
+ * Each source transaction's BEEF, built and decoded on its own with a yield
+ * between. One package for all 79 items serialized and then re-parsed every
+ * inscription in two synchronous calls — the 5.5s freeze at the end of the
+ * parents phase. Shared parents still download once: `legacyBeef` caches
+ * transactions across calls. Never rejects; a failure is that item's answer.
+ */
+async function loadItemParents(services: ActiveWallet['services'], outpoints: readonly string[]): Promise<ItemParents> {
+  const startedAt = Date.now()
+  const shelf = new BeefShelf()
+  const failures = new Map<string, string>()
+  let bytes = 0
+  const byTxid = new Map<string, string[]>()
+  for (const outpoint of outpoints) {
+    const txid = outpoint.split('.')[0] ?? ''
+    byTxid.set(txid, [...(byTxid.get(txid) ?? []), outpoint])
+  }
+  const groups = [...byTxid.values()]
+  let cursor = 0
+  const lane = async () => {
+    while (cursor < groups.length) {
+      const group = groups[cursor++]!
+      try {
+        const built = await buildLegacyInputBeef(services, group)
+        for (const failure of built.failures) failures.set(failure.outpoint, failure.reason)
+        if (built.beef.length === 0) continue
+        await yieldToUi()
+        shelf.add(Beef.fromBinary(built.beef))
+        bytes += built.beef.length
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        for (const outpoint of group) failures.set(outpoint, reason)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(PARENT_LANES, groups.length) }, () => lane()))
+  return { shelf, failures, bytes, ms: Date.now() - startedAt }
+}
 
 async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<ChosenItemsMigrate> {
   const active = getActiveWallet()
@@ -824,55 +881,72 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
       ...(item.name ? { name: item.name } : {}),
     }
   })
-  const parentsAt = Date.now()
-  const built = await buildLegacyInputBeef(
-    active.services,
-    rows.map((row) => row.outpoint),
-    { concurrency: 8 },
-  )
-  const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
-  appendAppLog(
-    'info',
-    `[phrase-sweep] parents done ${Date.now() - parentsAt}ms items=${rows.length} bytes=${built.beef.length}` +
-      ` failed=${built.failures.length}`,
-  )
-
-  const pending: PendingItemMigrate[] = []
+  const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
+  const outcome = emptyUnitOutcome()
+  const untried: string[] = []
   let skipped = 0
   let unreadable = 0
-  for (const row of rows) {
-    const given = givenOf.get(row.outpoint)!
-    const plan = planOrdinalMigrate(sourceBeef, row, row.spender)
-    if (plan.kind === 'skip') {
-      skipped += 1
-      results.set(given, { kind: 'skipped', reason: plan.reason, message: describeOrdinalMigrateSkip(plan.reason) })
-    } else if (plan.kind === 'unreadable') {
-      unreadable += 1
-      results.set(given, {
-        kind: 'unreadable',
-        message: built.failures.find((f) => f.outpoint === row.outpoint)?.reason ?? 'source output could not be read',
-      })
-    } else {
-      pending.push(plan.item)
+  const chunks: Array<typeof rows> = []
+  for (let i = 0; i < rows.length; i += PARENT_CHUNK_ITEMS) chunks.push(rows.slice(i, i + PARENT_CHUNK_ITEMS))
+  // The next chunk's parents download while this chunk's legs sign.
+  let nextParents: Promise<ItemParents> | null = loadItemParents(active.services, chunks[0]!.map((row) => row.outpoint))
+  for (let c = 0; c < chunks.length; c++) {
+    const chunk = chunks[c]!
+    if (outcome.stopped) {
+      untried.push(...chunk.map((row) => row.outpoint))
+      continue
+    }
+    const parents = await nextParents!
+    nextParents = c + 1 < chunks.length ? loadItemParents(active.services, chunks[c + 1]!.map((row) => row.outpoint)) : null
+    appendAppLog(
+      'info',
+      `[phrase-sweep] parents done ${parents.ms}ms items=${chunk.length} bytes=${parents.bytes} failed=${parents.failures.size}` +
+        (chunks.length > 1 ? ` chunk=${c + 1}/${chunks.length}` : ''),
+    )
+
+    const pending: PendingItemMigrate[] = []
+    for (const row of chunk) {
+      const given = givenOf.get(row.outpoint)!
+      const plan = planOrdinalMigrate(parents.shelf, row, row.spender)
+      if (plan.kind === 'skip') {
+        skipped += 1
+        results.set(given, { kind: 'skipped', reason: plan.reason, message: describeOrdinalMigrateSkip(plan.reason) })
+      } else if (plan.kind === 'unreadable') {
+        unreadable += 1
+        results.set(given, {
+          kind: 'unreadable',
+          message: parents.failures.get(row.outpoint) ?? 'source output could not be read',
+        })
+      } else {
+        pending.push(plan.item)
+      }
+    }
+    if (pending.length === 0) continue
+    await yieldToUi()
+
+    const unit = await migrateOrdinalUnit({
+      active,
+      destLockHex: destLock,
+      sourceBeef: parents.shelf,
+      items: pending,
+      itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
+      onMoved: (receipts) => {
+        const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
+        recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
+        paintMigratedItems(named, active)
+        args.onLanded?.(receipts.map((item) => givenOf.get(item.outpoint) ?? item.outpoint))
+      },
+    })
+    outcome.moved.push(...unit.moved)
+    outcome.failed += unit.failed
+    outcome.failures.push(...unit.failures)
+    outcome.resolved += unit.resolved
+    if (unit.lastError) outcome.lastError = unit.lastError
+    if (unit.stopped) {
+      outcome.stopped = unit.stopped
+      untried.push(...pending.slice(unit.resolved).map((item) => item.outpoint))
     }
   }
-
-  const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
-  const outcome =
-    pending.length > 0 && sourceBeef
-      ? await migrateOrdinalUnit({
-          active,
-          destLockHex: destLock,
-          sourceBeef,
-          items: pending,
-          itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
-          onMoved: (receipts) => {
-            const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
-            recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
-            paintMigratedItems(named, active)
-          },
-        })
-      : emptyUnitOutcome()
   for (const receipt of outcome.moved) {
     results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })
   }
@@ -883,8 +957,8 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
     outcome.stopped === 'stale-funding'
       ? { kind: 'deferred', message: STALE_FUNDING_MESSAGE }
       : { kind: 'funds', message: 'Not enough spendable BSV in this wallet for the item fee.' }
-  for (const item of pending.slice(outcome.resolved)) {
-    results.set(givenOf.get(item.outpoint)!, unmoved)
+  for (const outpoint of untried) {
+    results.set(givenOf.get(outpoint)!, unmoved)
   }
 
   const transactions = new Set(outcome.moved.map((m) => m.sweepTxid)).size
@@ -946,7 +1020,7 @@ type ItemMigratePlan =
  * 1-sat tips fails closed.
  */
 function planOrdinalMigrate(
-  sourceBeef: Beef | null,
+  sourceBeef: Pick<Beef, 'findTxid'> | null,
   row: { outpoint: string; origin?: string; name?: string },
   spender: ItemSpender,
 ): ItemMigratePlan {
@@ -1014,16 +1088,16 @@ function paintMigratedItems(receipts: ReadonlyArray<MigratedItemReceipt>, active
   const held = receipts.filter((item) => item.sweepVout !== undefined)
   if (held.length === 0) return
   void import('./collectables')
-    .then(({ noteIngestedItem, requestCollectablesRelist }) => {
-      for (const item of held) {
-        noteIngestedItem({
+    .then(({ noteIngestedItems, requestCollectablesRelist }) => {
+      noteIngestedItems(
+        held.map((item) => ({
           outpoint: `${item.sweepTxid}.${item.sweepVout}`,
           chain: active.chain,
           origin: item.origin,
           name: item.name ?? null,
           identityKey: active.identityKey,
-        })
-      }
+        })),
+      )
       requestCollectablesRelist()
     })
     .catch((err: unknown) => {
@@ -1040,7 +1114,7 @@ function paintMigratedItems(receipts: ReadonlyArray<MigratedItemReceipt>, active
 async function migrateOrdinalUnit(args: {
   active: ActiveWallet
   destLockHex: string
-  sourceBeef: Beef
+  sourceBeef: Beef | BeefShelf
   items: PendingItemMigrate[]
   itemsPerTx: number
   /**

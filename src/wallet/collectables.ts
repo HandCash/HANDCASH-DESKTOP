@@ -1635,7 +1635,7 @@ function pendingSeededItems(
  * A tip that turns out not to be ours is dropped by the ownership pass; nothing
  * is guessed at here.
  */
-export function noteIngestedItem(args: {
+export type IngestedItem = {
   outpoint: string
   chain: Chain
   origin?: string | null
@@ -1644,10 +1644,59 @@ export function noteIngestedItem(args: {
   collectionId?: string | null
   content?: string | null
   identityKey?: string
-}): void {
-  if (args.identityKey && getActiveWallet()?.identityKey !== args.identityKey) return
+}
+
+export function noteIngestedItem(args: IngestedItem): void {
+  noteIngestedItems([args])
+}
+
+/**
+ * {@link noteIngestedItem} for every tip of one transaction, with one cache
+ * write. Each write rebuilds and persists the whole grid, so an import leg of
+ * 21 items painted one at a time froze the screen for two seconds.
+ */
+export function noteIngestedItems(items: readonly IngestedItem[]): void {
+  const identityKey = getActiveWallet()?.identityKey
+  if (identityKey) hydrateSeededItems(identityKey)
+  const painted = new Set(cachedCollectables.map((c) => outpointKey(c.outpoint)))
+  const fresh: Collectable[] = []
+  const verify: string[] = []
+  for (const args of items) {
+    const seeded = seedIngestedItem(args, identityKey)
+    if (!seeded) continue
+    verify.push(seeded.target)
+    const key = outpointKey(seeded.target)
+    if (painted.has(key)) continue
+    painted.add(key)
+    fresh.unshift(seeded.paint())
+  }
+  if (verify.length === 0) return
+  if (identityKey) persistSeededItems(identityKey)
+  // A send to our own handle leaves the outgoing tip on the list until the next
+  // ownership pass; without the dedupe the same collectable shows twice until then.
+  if (fresh.length > 0) {
+    setCollectablesCache(
+      dedupeByOrigin(
+        [...fresh, ...cachedCollectables],
+        (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+        cachedLiveOneSats?.keys ?? null,
+      ),
+    )
+  }
+  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
+  // do not wait for the user to open the item. Also re-prefer when the tip was
+  // already on the list so an Activity row for a known item still leads.
+  for (const target of verify) requestCollectableVerification(target)
+}
+
+/** Record one ingested tip as a seed; `paint` builds its card for the grid. */
+function seedIngestedItem(
+  args: IngestedItem,
+  identityKey: string | undefined,
+): { target: string; paint: () => Collectable } | null {
+  if (args.identityKey && identityKey !== args.identityKey) return null
   const target = normalizeOutpoint(args.outpoint)
-  if (!target || isItemSent(target)) return
+  if (!target || isItemSent(target)) return null
   const key = outpointKey(target)
   const origin = args.origin?.trim()
   const name = args.name?.trim()
@@ -1679,51 +1728,33 @@ export function noteIngestedItem(args: {
         }
       : {}),
   }
-  const identityKey = getActiveWallet()?.identityKey
-  if (identityKey) hydrateSeededItems(identityKey)
   // Judged against the scan that ran before this tip existed, it would look
   // missing — record when we first held it so ownership grace applies.
   if (!firstSeenAt.has(key)) firstSeenAt.set(key, Date.now())
   seededItems.set(key, output)
-  if (identityKey) persistSeededItems(identityKey)
-  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
-  // do not wait for the user to open the item. Also re-prefer when the tip was
-  // already on the list so an Activity row for a known item still leads.
-  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) {
-    requestCollectableVerification(target)
-    return
+  return {
+    target,
+    paint: () =>
+      mergeCollectablePaint(
+        toCollectable(
+          output,
+          args.chain,
+          priorByOrigin ??
+            (origin || name || app || collectionId
+              ? {
+                  origin: origin ?? target.replace(/\.(\d+)$/, '_$1'),
+                  ...(name ? { name } : {}),
+                  ...(app ? { app } : {}),
+                  ...(collectionId ? { collectionId } : {}),
+                  ...(content ? { content } : {}),
+                  traits: [],
+                  extras: [],
+                }
+              : null),
+        ),
+        args.chain,
+      ),
   }
-  // A send to our own handle leaves the outgoing tip on the list until the next
-  // ownership pass; without this the same collectable shows twice until then.
-  const seeded = mergeCollectablePaint(
-    toCollectable(
-      output,
-      args.chain,
-      priorByOrigin ??
-        (origin || name || app || collectionId
-          ? {
-              origin: origin ?? target.replace(/\.(\d+)$/, '_$1'),
-              ...(name ? { name } : {}),
-              ...(app ? { app } : {}),
-              ...(collectionId ? { collectionId } : {}),
-              ...(content ? { content } : {}),
-              traits: [],
-              extras: [],
-            }
-          : null),
-    ),
-    args.chain,
-  )
-  setCollectablesCache(
-    dedupeByOrigin(
-      [seeded, ...cachedCollectables],
-      (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
-      cachedLiveOneSats?.keys ?? null,
-    )
-  )
-  // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
-  // do not wait for the user to open the item.
-  requestCollectableVerification(target)
 }
 
 function lockingScriptIsFungible(hex?: string): boolean {

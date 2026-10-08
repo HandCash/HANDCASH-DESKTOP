@@ -439,6 +439,8 @@ export async function importItems(args: {
   identityKey?: string
   /** Wallet job id the moved items' Activity rows fold under. */
   activityGroup?: string | null
+  /** Chosen outpoints a transaction just moved, before the rest of the call answers. */
+  onLanded?: (outpoints: string[]) => void
 }): Promise<ImportItemsResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
@@ -502,6 +504,7 @@ export async function importItems(args: {
             ...(item.name ? { name: item.name } : {}),
           })),
           activityGroup: args.activityGroup ?? null,
+          ...(args.onLanded ? { onLanded: args.onLanded } : {}),
         })
       : null
   const stopped: ImportItemsResult['stopped'] = run?.stopped ?? null

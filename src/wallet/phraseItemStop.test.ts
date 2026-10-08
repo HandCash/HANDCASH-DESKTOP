@@ -86,9 +86,14 @@ function makeTip(nonce: number) {
 const TIPS = [makeTip(1000), makeTip(2000)]
 
 const beefByTxid = new Map(TIPS.map((t) => [t.txid, t.beef]))
+const parentCalls: string[][] = []
+/** Txids whose parents hold back until the test lets them go. */
+const heldParents = new Map<string, Promise<void>>()
 
 vi.mock('./legacyBeef', () => ({
   buildLegacyInputBeef: async (_svc: unknown, outpoints: string[]) => {
+    parentCalls.push(outpoints)
+    for (const op of outpoints) await heldParents.get(op.split('.')[0] ?? '')
     const merged = new Beef()
     for (const op of outpoints) merged.mergeBeef(beefByTxid.get(op.split('.')[0] ?? '')!)
     return { ready: outpoints, beef: merged.toBinary(), failures: [] }
@@ -108,6 +113,31 @@ describe('migrateChosenPhraseItems stops', () => {
     createAction.mockReset()
     abortAction.mockReset()
     refreshFromChain.mockReset()
+    parentCalls.length = 0
+    heldParents.clear()
+  })
+
+  it('signs the first chunk while the next chunk’s parents still download, one source tx per decode', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => makeTip(10_000 + i))
+    for (const tip of many) beefByTxid.set(tip.txid, tip.beef)
+    let releaseSecondChunk!: () => void
+    const secondChunk = new Promise<void>((resolve) => (releaseSecondChunk = resolve))
+    for (const tip of many.slice(24)) heldParents.set(tip.txid, secondChunk)
+    createAction.mockImplementation(async () => {
+      releaseSecondChunk()
+      throw new Error('Insufficient funds in the available inputs (1000 more satoshis are needed)')
+    })
+
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({
+      items: many.map((t) => ({ outpoint: t.outpoint, keyHex: PHRASE_KEY.toHex() })),
+    })
+
+    expect(createAction).toHaveBeenCalledTimes(1)
+    expect(run.stopped).toBe('funds')
+    expect([...run.results.values()].every((r) => r.kind === 'funds')).toBe(true)
+    expect(run.results.size).toBe(30)
+    expect(parentCalls.every((outpoints) => outpoints.length === 1)).toBe(true)
   })
 
   it('stops on insufficient funds after one attempt and answers the rest funds', async () => {

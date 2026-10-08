@@ -107,6 +107,30 @@ describe('itemArrivalToast', () => {
     expect(settled?.status).toBeUndefined()
   })
 
+  it('writes the Activity store once for a whole arrival', async () => {
+    const { isItemProven } = await import('./provenCache')
+    vi.mocked(isItemProven).mockReturnValue(false)
+    const { announceItemsReceived } = await import('./itemArrivalToast')
+    const { listRecentActivity } = await import('./appActivity')
+    const key = accountLocalKey('handcash.brc100.appActivity')
+    const tips = Array.from({ length: 21 }, (_, i) => `${(i + 16).toString(16).repeat(32)}.0`)
+    let writes = 0
+    const set = store.set.bind(store)
+    store.set = (k: string, v: string) => {
+      if (k === key) writes++
+      return set(k, v)
+    }
+    try {
+      announceItemsReceived(tips)
+    } finally {
+      store.set = set
+    }
+
+    expect(writes).toBe(1)
+    const rows = listRecentActivity(50)
+    for (const tip of tips) expect(rows.some((r) => r.item?.outpoint === tip)).toBe(true)
+  })
+
   it('leaves a settled receive row alone when the tip is announced or verified again', async () => {
     const { isItemProven } = await import('./provenCache')
     vi.mocked(isItemProven).mockReturnValue(false)

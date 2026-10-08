@@ -66,8 +66,13 @@ describe('importQueue', () => {
       identityKey: 'id1',
       outpoints: [op(1), op(2), op(3)],
       activityGroup: job!.id,
+      onLanded: expect.any(Function),
     })
     expect(getWalletProgress()).toMatchObject({ kind: 'item-import', status: 'running', current: 0, total: 3 })
+    // The chunk's first transaction broadcasts while the rest still sign.
+    vi.mocked(importItems).mock.calls[0]![0].onLanded!([op(1), op(2)])
+    expect(getWalletProgress()).toMatchObject({ status: 'running', current: 2, total: 3, message: '2 of 3 imported' })
+    expect(listWalletJobs('id1')[0]).toMatchObject({ progress: { value: 2, max: 3 } })
     release()
     await vi.waitFor(() => expect(getWalletProgress().status).toBe('done'))
     expect(listWalletJobs('id1')).toEqual([expect.objectContaining({ id: job!.id, face: 'done', progress: { value: 3, max: 3 } })])

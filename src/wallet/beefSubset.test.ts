@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Beef, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
-import { beefSubset, prefixWithinBeefBudget } from './beefSubset'
+import { BeefShelf, beefSubset, prefixWithinBeefBudget } from './beefSubset'
 
 const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
 
@@ -50,6 +50,29 @@ describe('beefSubset', () => {
     expect(leg.findTxid(g2.id('hex'))).toBeUndefined()
     expect(leg.bumps).toHaveLength(1)
     expect(leg.isValid(false)).toBe(true)
+  })
+
+  it('assembles the same leg from per-item packages on a shelf', () => {
+    const { beef, g1, g2, mintA, mintB, mintC } = fixture()
+    const perItem = [
+      [g1, mintA],
+      [g2, mintB],
+      [g1, mintC],
+    ].map(([parent, mint]) => {
+      const one = new Beef()
+      one.mergeRawTx(parent!.toBinary(), one.mergeBump(proven(parent!, parent === g1 ? 100 : 101)))
+      one.mergeRawTx(mint!.toBinary())
+      return one
+    })
+    const shelf = new BeefShelf()
+    for (const one of perItem) shelf.add(one)
+    const ids = [mintA.id('hex'), mintC.id('hex')]
+
+    const fromShelf = beefSubset(shelf, ids)
+    expect(fromShelf.toBinary()).toEqual(beefSubset(beef, ids).toBinary())
+    expect(fromShelf.isValid(false)).toBe(true)
+    expect(prefixWithinBeefBudget(shelf, ids, 10_000_000)).toBe(2)
+    expect(shelf.findTxid(mintB.id('hex'))).toBeDefined()
   })
 
   it('carries far fewer bytes than the whole import package', () => {
