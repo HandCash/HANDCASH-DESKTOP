@@ -1,10 +1,19 @@
 # Changelog
 
+## [1.3.524] - 2026-10-08
+
+### Fixed
+- **A send right after unlock no longer waits out the startup reads.** On 0.1.668 the 6-minute hold was gone, but a BSV send started 20s after unlock sat in "Checking…" and then "preparing". The Collect basket read (bare rows, 1,000 with tags) held the one storage lock for 16s, and the balance view's unconfirmed-change scan held it for another 11s in a single session. The Collect read now runs as 100-row slices and waits between slices while a send needs the wallet. The unconfirmed-change scan opens one storage session per page, so a queued `createAction` gets in between pages. Its liveness lookups are still shared across pages.
+
 ## [1.3.523] - 2026-10-08
 
-### Changed
+### Fixed
+- **Item and BSV sends no longer wait behind a 6-minute Collect read.** On 0.1.667, a two-item send timed out at 22s with "nothing was broadcast", and the BSV send's balance check ran out its 8s ceiling. Both were queued behind the Collect basket read: `listOutputs(basket=1sat scripts limit=1000)` held the one storage lock for 366s with the app in the foreground. Its comment said locking scripts are small, but an item's script is its whole inscription. The Toolbox stores outputs without scripts, so every row loaded its full transaction inside the lock. The read now lists bare rows. Scripts this session has already seen carry forward, and only new rows are read, one transaction per lock hold. Filling stops the moment a send asks for priority, and a new row it has not read yet waits for the next pass so it cannot show as a receive.
+- **Sending several items no longer reads the whole basket first.** The multi-item send read every item's script and BRC-150 remittance (28s on a phone) inside its own timeout. Cards on screen already carry origin and metadata, and the tip script comes from the input BEEF, so that read is skipped when every selected item is on screen. Otherwise it reads bare rows.
+- **Collect checks per card are cheaper.** Token, B:// and retired-fungible detection is kept per outpoint with the other script facts. The retired-fungible check stops at the first byte unless the inscription body opens a JSON object. Multi-item self-sends record the BRC-150 verdict before the arrival, so the arrival no longer starts a lineage walk.
 
-- Patch release (every push must ship a new version).
+### Added
+- **Triage shows what held the lock during a send.** Each send timeline carries its start time and the storage-lock lines inside its window. Each visit to a send screen lists the warnings and errors that followed it, plus the lock lines.
 
 ## [1.3.522] - 2026-10-08
 

@@ -211,23 +211,24 @@ describe('locally seeded collectables', () => {
     const oldestTxid = 'b2'.repeat(32)
     const newest = `${newestTxid}.0`
     const oldest = `${oldestTxid}.0`
-    const listOutputs = vi.fn(async (args: { offset?: number }) => ({
+    const rows = [
+      ...Array.from({ length: 1_000 }, () => ({
+        outpoint: newest,
+        satoshis: 1,
+        tags: ['ordinal', `origin:${newest}`],
+      })),
+      { outpoint: oldest, satoshis: 1, tags: ['ordinal', `origin:${oldest}`] },
+    ]
+    const listOutputs = vi.fn(async (args: { offset?: number; limit?: number }) => {
+      const skip = -(args.offset ?? -1) - 1
+      const outputs = rows.slice(skip, skip + (args.limit ?? 10))
       // Toolbox counts on a full page, then reports only the final partial
       // page's length instead of offset + length.
-      totalOutputs: args.offset === -1 ? 1_001 : 1,
-      outputs:
-        args.offset === -1
-          ? Array.from({ length: 1_000 }, () => ({
-              outpoint: newest,
-              satoshis: 1,
-              tags: ['ordinal', `origin:${newest}`],
-            }))
-          : [{
-              outpoint: oldest,
-              satoshis: 1,
-              tags: ['ordinal', `origin:${oldest}`],
-            }],
-    }))
+      return {
+        totalOutputs: outputs.length === args.limit ? rows.length : outputs.length,
+        outputs,
+      }
+    })
     const wallet = {
       address: '1HandCashTestAddressAAAAAAAAAAAAAA',
       identityKey: '02'.repeat(33),
@@ -252,7 +253,10 @@ describe('locally seeded collectables', () => {
     expect(new Set(all.map((item) => item.outpoint))).toEqual(
       new Set([newest, oldest]),
     )
-    expect(listOutputs.mock.calls.map(([args]) => args.offset)).toEqual([-1, -1_001])
+    expect(listOutputs.mock.calls.slice(0, 11).map(([args]) => args.offset)).toEqual([
+      ...Array.from({ length: 10 }, (_, i) => -(i * 100 + 1)),
+      -1_001,
+    ])
     expect(getCollectablePageStatus().totalOutputs).toBe(1_001)
     expect(getCollectablePageStatus().hasMore).toBe(false)
   })

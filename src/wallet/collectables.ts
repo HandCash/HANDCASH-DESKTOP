@@ -169,6 +169,7 @@ import {
 } from './sentItemGuard'
 import { signTipInputs } from './signTipInputs'
 import { fillItemScripts } from './itemScriptFill'
+import { listOutputsInSlices } from './basketSubReads'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 import {
   clearGenesisFailure,
@@ -2560,7 +2561,8 @@ function listCollectableBasketPage(
   if (current && current.wallet === wallet && current.offset === offset) {
     return current.promise
   }
-  const promise = wallet.listOutputs({
+  const startedAt = Date.now()
+  const promise = listOutputsInSlices((args) => wallet.listOutputs(args), {
     basket: '1sat',
     limit: LIST_PAGE_SIZE,
     // Negative offsets are newest-first. Keep a raw-output cursor because
@@ -2574,6 +2576,19 @@ function listCollectableBasketPage(
     // (~400k chars each) crashed phones.
     includeCustomInstructions: false,
     seekPermission: false,
+  }).then((read) => {
+    const ms = Date.now() - startedAt
+    if (ms > 250) {
+      console.info(
+        `[collectables] basket read done ${ms}ms — ${read.outputs.length} row(s) in ${read.slices} slice(s)${
+          read.yieldedMs > 0 ? `, ${read.yieldedMs}ms yielded to a send` : ''
+        }`,
+      )
+    }
+    return {
+      outputs: read.outputs,
+      totalOutputs: read.totalOutputs ?? offset + read.outputs.length,
+    }
   })
   collectableBasketReadInFlight = { wallet, offset, promise }
   void promise.then(

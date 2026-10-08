@@ -102,10 +102,11 @@ function positiveId(value: unknown): number | null {
  * Change of live local txs that toolbox `balance()` does not yet count
  * (`spendable: false`). Inputs of those txs are excluded via `spentLive`.
  *
- * Runs in **one** storage session for the whole scan. A page of outputs plus
- * every tx-liveness lookup used to each open their own session — on a phone
- * carrying hundreds of unspendable rows that was the bulk of the 6s wait
- * before `createAction`.
+ * One storage session per page. A session per lookup was the bulk of a 6s
+ * wait before `createAction`; one session for the whole scan held the FIFO
+ * lock 11s after unlock with a send queued behind it. Per page, a queued
+ * `createAction` takes its turn between pages. Liveness answers are kept
+ * across pages.
  *
  * `needAtLeast` stops early once enough credit is found (send gate only needs
  * to know the payment is covered, not the full hero total).
@@ -121,79 +122,81 @@ export async function unconfirmedChangeSats(opts?: {
       ? Math.floor(opts.needAtLeast)
       : 0
 
+  type ScanStorage = {
+    findOutputs?: (args: unknown) => Promise<unknown[] | undefined>
+    findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
+  }
+  type ScanRow = OwnedCashRow & { transactionId?: number; txid?: string; vout?: number }
+  const txCache = new Map<number, TxLiveness>()
+  let extra = 0
+
+  const livenessOf = async (sp: ScanStorage, txId: number | null): Promise<TxLiveness> => {
+    if (txId == null) return 'none'
+    const cached = txCache.get(txId)
+    if (cached != null) return cached
+    if (typeof sp.findTransactions !== 'function') {
+      txCache.set(txId, 'none')
+      return 'none'
+    }
+    try {
+      const rows = await sp.findTransactions({
+        partial: { transactionId: txId },
+        noRawTx: true,
+        paged: { limit: 1, offset: 0 },
+      })
+      const live = txLivenessFromStatus(rows?.[0]?.status)
+      txCache.set(txId, live)
+      return live
+    } catch {
+      txCache.set(txId, 'none')
+      return 'none'
+    }
+  }
+
+  /** Credits one page; `true` when the scan is finished. */
+  const scanPage = async (sp: ScanStorage, page: number): Promise<boolean> => {
+    if (typeof sp.findOutputs !== 'function') return true
+    let batch: ScanRow[] = []
+    try {
+      batch = ((await sp.findOutputs({
+        partial: { spendable: false, change: true },
+        paged: { limit: PAGE, offset: page * PAGE },
+      })) ?? []) as ScanRow[]
+    } catch {
+      batch = ((await sp.findOutputs({
+        partial: { spendable: false },
+        paged: { limit: PAGE, offset: page * PAGE },
+      })) ?? []) as ScanRow[]
+    }
+    for (const row of batch) {
+      if (row.change !== true) continue
+      // A coin the overlay holds is spent (named spender), quarantined or
+      // reserved by an in-flight send. Crediting it kept change the chain
+      // had spent elsewhere in the hero balance and made the send gate say
+      // "confirming" to a wallet that was simply short (hc-ad7afb, d65f31d0).
+      const outpoint = outpointFromOutput(row)
+      if (outpoint == null || isUtxoBlockedFromRestore(outpoint)) continue
+      const lock = getUtxoLock(outpoint)
+      if (lock && isQuarantined(lock)) continue
+      const fate = classifyOwnedCash(
+        row,
+        await livenessOf(sp, positiveId(row.transactionId)),
+        await livenessOf(sp, positiveId(row.spentBy)),
+      )
+      if (fate.kind === 'count' && fate.as === 'unconfirmedChange') {
+        extra += fate.satoshis
+        if (needAtLeast > 0 && extra >= needAtLeast) return true
+      }
+    }
+    return batch.length < PAGE
+  }
+
   try {
-    return await storage.runAsStorageProvider(async (activeSp) => {
-      const sp = activeSp as {
-        findOutputs?: (args: unknown) => Promise<unknown[] | undefined>
-        findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
-      }
-      if (typeof sp.findOutputs !== 'function') return 0
-
-      let extra = 0
-      const txCache = new Map<number, TxLiveness>()
-
-      const livenessOf = async (txId: number | null): Promise<TxLiveness> => {
-        if (txId == null) return 'none'
-        const cached = txCache.get(txId)
-        if (cached != null) return cached
-        if (typeof sp.findTransactions !== 'function') {
-          txCache.set(txId, 'none')
-          return 'none'
-        }
-        try {
-          const rows = await sp.findTransactions({
-            partial: { transactionId: txId },
-            noRawTx: true,
-            paged: { limit: 1, offset: 0 },
-          })
-          const live = txLivenessFromStatus(rows?.[0]?.status)
-          txCache.set(txId, live)
-          return live
-        } catch {
-          txCache.set(txId, 'none')
-          return 'none'
-        }
-      }
-
-      for (let page = 0; page < MAX_PAGES; page += 1) {
-        let batch: Array<OwnedCashRow & { transactionId?: number; txid?: string; vout?: number }> = []
-        try {
-          batch = ((await sp.findOutputs({
-            partial: { spendable: false, change: true },
-            paged: { limit: PAGE, offset: page * PAGE },
-          })) ?? []) as typeof batch
-        } catch {
-          batch = ((await sp.findOutputs({
-            partial: { spendable: false },
-            paged: { limit: PAGE, offset: page * PAGE },
-          })) ?? []) as typeof batch
-        }
-        if (!batch.length) break
-
-        for (const row of batch) {
-          if (row.change !== true) continue
-          // A coin the overlay holds is spent (named spender), quarantined or
-          // reserved by an in-flight send. Crediting it kept change the chain
-          // had spent elsewhere in the hero balance and made the send gate say
-          // "confirming" to a wallet that was simply short (hc-ad7afb, d65f31d0).
-          const outpoint = outpointFromOutput(row)
-          if (outpoint == null || isUtxoBlockedFromRestore(outpoint)) continue
-          const lock = getUtxoLock(outpoint)
-          if (lock && isQuarantined(lock)) continue
-          const fate = classifyOwnedCash(
-            row,
-            await livenessOf(positiveId(row.transactionId)),
-            await livenessOf(positiveId(row.spentBy)),
-          )
-          if (fate.kind === 'count' && fate.as === 'unconfirmedChange') {
-            extra += fate.satoshis
-            if (needAtLeast > 0 && extra >= needAtLeast) return extra
-          }
-        }
-        if (batch.length < PAGE) break
-      }
-      return extra
-    })
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const done = await storage.runAsStorageProvider((sp) => scanPage(sp as ScanStorage, page))
+      if (done) break
+    }
+    return extra
   } catch (err) {
     console.warn('[balance-view] unconfirmed change credit skipped', err)
     return 0
