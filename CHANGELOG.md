@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.529] - 2026-10-08
+
+### Fixed
+- **Re-release of 1.3.528.** The `v1.3.528` tag was cut from the 1.3.527 commit, so its installers would have shipped without the signed-transaction archive fix. Those builds were cancelled. This release carries the 1.3.528 changes below.
+
 ## [1.3.528] - 2026-10-08
 
 ### Fixed
