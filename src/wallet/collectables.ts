@@ -168,6 +168,7 @@ import {
   type SentItemSettle,
 } from './sentItemGuard'
 import { signTipInputs } from './signTipInputs'
+import { fillItemScripts } from './itemScriptFill'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 import {
   clearGenesisFailure,
@@ -1116,6 +1117,8 @@ type ScriptFacts = {
   length: number
   covenantLocked: boolean
   issuer: ReturnType<typeof issuerMetadataFromScript>
+  /** A BRC-162 token, B:// file or retired fungible lock — never a card. */
+  notAnItem: boolean
 }
 
 /**
@@ -1134,6 +1137,11 @@ function scriptFactsFor(outpoint: string, lockingScript: string | undefined): Sc
     length,
     covenantLocked: isCovenantLockedScript(lockingScript),
     issuer: issuerMetadataFromScript(lockingScript),
+    notAnItem:
+      !!lockingScript &&
+      (isBsv21BinaryScript(lockingScript) ||
+        !!decodeBProtocol(lockingScript) ||
+        looksLikeRetiredFungibleTip({ lockingScriptHex: lockingScript })),
   }
   if (scriptFactsByOutpoint.size >= SCRIPT_FACTS_MAX) scriptFactsByOutpoint.clear()
   scriptFactsByOutpoint.set(outpoint, facts)
@@ -1755,17 +1763,10 @@ function isListableItem(o: ItemOutput): boolean {
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
   if (isBsv21Mime(resolved?.mimeType)) return false
   if (o.tags?.includes('bsv21')) return false
-  if (o.lockingScript && isBsv21BinaryScript(o.lockingScript)) return false
-  if (o.lockingScript && decodeBProtocol(o.lockingScript)) return false
+  if (scriptFactsFor(normalizeOutpoint(o.outpoint), o.lockingScript).notAnItem) return false
   // Quarantine outputs from the retired fungible experiment.
   if (isRetiredFungibleMime(resolved?.mimeType)) return false
-  if (
-    looksLikeRetiredFungibleTip({
-      tags: o.tags,
-      customInstructions: o.customInstructions,
-      lockingScriptHex: o.lockingScript,
-    })
-  ) {
+  if (looksLikeRetiredFungibleTip({ tags: o.tags, customInstructions: o.customInstructions })) {
     return false
   }
   // NFT transfers are bare P2PKH at the live tip (inscription lives at origin).
@@ -2566,11 +2567,12 @@ function listCollectableBasketPage(
     // sent/non-item rows may be filtered after the wallet page returns.
     offset: -(offset + 1),
     includeTags: true,
-    // Locking scripts are small and let us spare covenant tips from
-    // address-scan ghosting. Never pull customInstructions for a whole
-    // basket: remittance BEEF (~400k chars each) crashed phones.
+    // Bare rows only. A script is the whole inscription and the toolbox reads
+    // its transaction per row inside the storage lock (366s for 1,000 cards);
+    // `fillItemScripts` supplies the ones this session has not seen. Never
+    // pull customInstructions for a whole basket either: remittance BEEF
+    // (~400k chars each) crashed phones.
     includeCustomInstructions: false,
-    include: 'locking scripts',
     seekPermission: false,
   })
   collectableBasketReadInFlight = { wallet, offset, promise }
@@ -2858,6 +2860,8 @@ function relistWhenWalletIdle(): void {
   const epoch = collectablesAccountEpoch
   relistWhenIdle = (async () => {
     try {
+      // Called from inside a read, `listCollectables` would join that read.
+      await listInFlight?.catch(() => {})
       if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
       if (epoch !== collectablesAccountEpoch) return
       console.info('[collectables] wallet idle — running the deferred listOutputs')
@@ -3049,7 +3053,7 @@ async function listCollectablesNow(
         )
       ),
     ])
-    const page = (result.outputs ?? []).map((o) => {
+    const rows: ItemOutput[] = (result.outputs ?? []).map((o) => {
       const lockingScript = normalizeLockingScriptHex(
         (o as { lockingScript?: unknown }).lockingScript
       )
@@ -3063,6 +3067,38 @@ async function listCollectablesNow(
     // Account switched while this listOutputs was in flight — discard.
     if (epoch !== collectablesAccountEpoch) {
       return getCachedCollectables()
+    }
+    const known = new Map<string, string>()
+    for (const o of lastItemOutputs) {
+      if (o.lockingScript) known.set(outpointKey(o.outpoint), o.lockingScript)
+    }
+    for (const item of cachedCollectables) {
+      if (item.lockingScript) known.set(outpointKey(item.outpoint), item.lockingScript)
+    }
+    const fill = await fillItemScripts(wallet.wallet, rows, {
+      known,
+      keyOf: outpointKey,
+      stillCurrent: () => epoch === collectablesAccountEpoch,
+    })
+    if (epoch !== collectablesAccountEpoch) {
+      return getCachedCollectables()
+    }
+    if (fill.ms > 250 || fill.stoppedFor) {
+      console.info(
+        `[collectables] scripts filled ${fill.filled}, ${fill.missing} left${
+          fill.stoppedFor ? ` (stopped: ${fill.stoppedFor})` : ''
+        } done ${fill.ms}ms`,
+      )
+    }
+    // A row the fill stopped before cannot say whose lock it is yet. One
+    // already on screen stays as it was; a new one waits for the relist, or an
+    // outbound tip createAction filed here would toast as a receive.
+    const painted = new Set(cachedCollectables.map((item) => outpointKey(item.outpoint)))
+    const page = rows.filter(
+      (o) => !fill.unread.has(o) || painted.has(outpointKey(o.outpoint)),
+    )
+    if (fill.stoppedFor === 'send' || (fill.stoppedFor === 'budget' && fill.filled > 0)) {
+      relistWhenWalletIdle()
     }
     if (!append) lastListedAt = Date.now()
     listedPage = page
@@ -3877,9 +3913,7 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
       await wallet.wallet.listOutputs({
         basket: '1sat',
         limit: 1000,
-        includeTags: true,
-        includeCustomInstructions: true,
-        include: 'locking scripts',
+        includeCustomInstructions: false,
         seekPermission: false,
       })
     ).outputs?.find((o) => normalizeOutpoint(o.outpoint) === outpoint)
@@ -4942,18 +4976,23 @@ export async function sendCollectables(
               ReturnType<ActiveWallet['wallet']['listOutputs']>
             >['outputs']
           >[number]
-          const held = await listOutputsWithTimeout(wallet.wallet, {
-            basket: '1sat',
-            limit: 1000,
-            includeTags: true,
-            includeCustomInstructions: true,
-            include: 'locking scripts',
-            seekPermission: false,
-          })
+          // A selected card already names its origin and metadata, and the tip
+          // script comes from the input BEEF. Scripts plus remittance for the
+          // whole basket was a 28s read inside this send's own timeout.
+          const painted = new Set(cachedCollectables.map((item) => item.outpoint))
+          const held = outpoints.every((outpoint) => painted.has(outpoint))
+            ? { outputs: [] }
+            : await listOutputsWithTimeout(wallet.wallet, {
+                basket: '1sat',
+                limit: 1000,
+                includeTags: true,
+                includeCustomInstructions: false,
+                seekPermission: false,
+              })
           const heldByOutpoint = new Map(
             (held.outputs ?? []).map((output) => [
               normalizeOutpoint(output.outpoint),
-              output,
+              output as HeldOutput,
             ]),
           )
           const inputBEEF = await buildInputBeefForSpends(wallet, outpoints)
@@ -5299,12 +5338,7 @@ export async function sendCollectables(
               const item = prepared[index]!
               const newTip = newTips[index]!
               skipArrivalToast.add(normalizeOutpoint(newTip))
-              noteIngestedItem({
-                outpoint: newTip,
-                chain: wallet.chain,
-                origin: item.origin,
-                name: item.name,
-              })
+              // Verdict first: an arrival with no verdict starts a lineage walk.
               if (item.provenance) {
                 rememberProvenVerdict(newTip, {
                   tier: 'brc150',
@@ -5312,6 +5346,12 @@ export async function sendCollectables(
                   verifiedAt: Date.now(),
                 })
               }
+              noteIngestedItem({
+                outpoint: newTip,
+                chain: wallet.chain,
+                origin: item.origin,
+                name: item.name,
+              })
             }
             announceItemsReceived(newTips)
           }

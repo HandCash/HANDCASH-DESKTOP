@@ -363,6 +363,9 @@ function sessionFacts(header, events) {
     // Each token card split by tip kind beside its Activity net.
     tokenLedger,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
+    // Every visit to a send screen with the warnings and errors that followed:
+    // what the user saw on the way to review when nothing was signed.
+    sendScreens: sendScreenFacts(events, navs),
     repeatingProblems: repeats
       .sort((a, b) => b.count - a.count)
       .slice(0, 14)
@@ -1652,12 +1655,42 @@ const SEND_TRAIL_TAG_RE =
   /^\[(tx-trace|brc29|p2pkh|collectables|bsv21|bsv-send|spend|spend-guard|signed-send|minerSubmit|landing|arcade[\w-]*|self-send|tip-ingest|peer-deliver|remittance[\w-]*|messagebox[\w-]*|inbox[\w-]*|brc29-[\w-]+|payment-progress|send[\w-]*|internalize[\w-]*|activity[\w-]*)\]/
 const SEND_TRAIL_MAX = 40
 const SEND_TRAIL_WINDOW_MS = 120_000
+const SEND_LOCK_LINE_RE = /^\[storage-lock\] /
+const SEND_LOCK_LINES_MAX = 24
 
 function trailLine(text) {
   return text
     .replace(/\b[0-9a-f]{64}\b/g, (h) => `${h.slice(0, 12)}…`)
     .replace(/\b0[23][0-9a-f]{64}\b/g, (k) => `${k.slice(0, 10)}…`)
     .slice(0, 180)
+}
+
+const SEND_SCREEN_RE = /send/
+const SEND_SCREEN_WINDOW_MS = 45_000
+const SEND_SCREEN_NOISE_RE = /^\[(storage-lock|render|heartbeat|lifecycle|storage\] slow)/
+
+function sendScreenFacts(events, navs) {
+  return navs
+    .filter((n) => SEND_SCREEN_RE.test(n.to))
+    .slice(-6)
+    .map((n) => ({
+      screen: n.to,
+      at: new Date(n.at).toISOString(),
+      problems: events
+        .filter(
+          (e) =>
+            e.at >= n.at &&
+            e.at - n.at <= SEND_SCREEN_WINDOW_MS &&
+            (e.level === 'warn' || e.level === 'error') &&
+            !SEND_SCREEN_NOISE_RE.test(e.text),
+        )
+        .slice(0, 16)
+        .map((e) => `+${e.at - n.at}ms ${e.level} ${trailLine(e.text)}`),
+      lockDuring: events
+        .filter((e) => e.at >= n.at && e.at - n.at <= SEND_SCREEN_WINDOW_MS && SEND_LOCK_LINE_RE.test(e.text))
+        .slice(0, 12)
+        .map((e) => `+${e.at - n.at}ms ${trailLine(e.text)}`),
+    }))
 }
 
 /**
@@ -1674,12 +1707,16 @@ function spendPrepFacts(events) {
   for (const e of events) {
     let m
     for (const s of sends) {
-      if (s.trail.length < SEND_TRAIL_MAX && e.at - s.at <= SEND_TRAIL_WINDOW_MS && SEND_TRAIL_TAG_RE.test(e.text)) {
+      if (e.at - s.at > SEND_TRAIL_WINDOW_MS) continue
+      if (s.trail.length < SEND_TRAIL_MAX && SEND_TRAIL_TAG_RE.test(e.text)) {
         s.trail.push(`+${e.at - s.at}ms ${trailLine(e.text)}`)
+      }
+      if (s.lock.length < SEND_LOCK_LINES_MAX && SEND_LOCK_LINE_RE.test(e.text)) {
+        s.lock.push(`+${e.at - s.at}ms ${trailLine(e.text)}`)
       }
     }
     if ((m = SEND_REQUESTED_RE.exec(e.text))) {
-      open = { flow: m[1], at: e.at, marks: [], outcome: 'open', trail: [`+0ms ${trailLine(e.text)}`] }
+      open = { flow: m[1], at: e.at, marks: [], outcome: 'open', trail: [`+0ms ${trailLine(e.text)}`], lock: [] }
       sends.push(open)
       continue
     }
@@ -1732,10 +1769,12 @@ function spendPrepFacts(events) {
     },
     timelines: sends.slice(-6).map((s) => ({
       flow: s.flow,
+      startedAt: new Date(s.at).toISOString(),
       outcome: s.outcome,
       ...(s.stuckAfterMs != null ? { stuckAfterMs: s.stuckAfterMs } : {}),
       marks: s.marks.map((mk) => `${mk.atMs}ms ${mk.phase}`),
       trail: s.trail,
+      ...(s.lock.length ? { lockDuring: s.lock } : {}),
     })),
   }
 }

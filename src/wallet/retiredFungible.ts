@@ -12,6 +12,16 @@ const RETIRED_MIME = 'application/1sat-ft+json'
 const OUTPOINT_RE = /^[0-9a-f]{64}_\d+$/i
 const decoder = new TextDecoder()
 
+function opensJsonObject(body: ArrayLike<number> | undefined): boolean {
+  if (!body?.length) return false
+  for (let i = 0; i < Math.min(body.length, 16); i++) {
+    const b = body[i]!
+    if (b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d) continue
+    return b === 0x7b
+  }
+  return false
+}
+
 function asRecord(raw: unknown): Record<string, unknown> | null {
   let value = raw
   if (typeof value === 'string') {
@@ -100,7 +110,8 @@ export function looksLikeRetiredFungibleTip(args: {
   if (!args.lockingScriptHex) return false
   const envelope = parseOrdEnvelope(args.lockingScriptHex)
   if (isRetiredFungibleMime(envelope?.contentType)) return true
-  if (!envelope?.body?.length) return false
+  // Most bodies are images; only a JSON object can name the protocol.
+  if (!envelope || !opensJsonObject(envelope.body)) return false
   try {
     const body = asRecord(JSON.parse(decoder.decode(envelope.body)))
     return String(body?.p ?? '').trim().toLowerCase() === RETIRED_PROTOCOL
