@@ -28,6 +28,11 @@ export type GetBeefOpts = {
    * Token icons, Collect paint, change-script heal, and Refresh omit this.
    */
   needProof?: boolean
+  /**
+   * The lookup is the spend's own: it may read toolbox storage while the
+   * spend holds priority. Background chases stay out of that lock.
+   */
+  forSpend?: boolean
 }
 
 function callerWantsNetwork(opts?: GetBeefOpts): boolean {
@@ -386,6 +391,8 @@ export type LocalBeefOptions = {
    * scan is not a miss — the tx may still be in the toolbox.
    */
   toolbox?: boolean
+  /** This lookup belongs to the spend that holds priority. */
+  inSpend?: boolean
 }
 
 /** Session cache + durable created BEEF + toolbox storage. No network. */
@@ -441,7 +448,12 @@ async function resolveLocalBeef(
   if (durable) return finish(durable, 'durable-created')
   if (opts?.toolbox === false) return finish(null, 'miss')
   const storageStarted = Date.now()
-  const local = await getBeefFromLocalStorage(wallet, key)
+  const local = await getBeefFromLocalStorage(wallet, key, opts?.inSpend === true)
+  if (local === 'skipped') {
+    // Not consulted, so not a miss: the body may be sitting in the toolbox.
+    reportLocalLookup(key, startedAt, 'toolbox-skipped')
+    return null
+  }
   if (local) return finish(local, 'toolbox-storage')
   // A timeout is not absence. The read was still running because the thread
   // was busy; caching it as a miss would hide a local unconfirmed tx.
@@ -544,7 +556,8 @@ async function readToolboxRawTx(
 async function getBeefFromLocalStorage(
   wallet: ActiveWallet,
   txid: string,
-): Promise<Beef | null> {
+  inSpend: boolean,
+): Promise<Beef | null | 'skipped'> {
   try {
     const storageApi = wallet.wallet.storage
     if (!storageApi?.isActiveStorageProvider?.()) return null
@@ -553,11 +566,15 @@ async function getBeefFromLocalStorage(
     // finishes. A timeout does not release that lock, so a background miner
     // chase queued behind it keeps the next createAction from signing.
     // Skip the walk while a send needs the lock; the chase still posts.
+    // The send's own input lookups are the exception: this wallet signed or
+    // imported those bodies, and refusing to read them here sent every item
+    // send to an indexer that timed out on them (hc-a580a 0.1.655).
     const { spendNeedsStorage } = await import('./walletCoordinator')
-    if (spendNeedsStorage()) return null
+    const yieldToSpend = () => !inSpend && spendNeedsStorage()
+    if (yieldToSpend()) return 'skipped'
     return await withTimeout(
       storageApi.runAsStorageProvider(async (storage) => {
-        if (spendNeedsStorage()) return null
+        if (yieldToSpend()) return 'skipped' as const
         const beef = await storage.getBeefForTransaction(txid, {
           ignoreServices: true,
         })
@@ -770,7 +787,11 @@ export async function getBeefForTxidCached(
   opts?: GetBeefOpts,
 ): Promise<Beef> {
   const key = keyOf(txid)
-  const localHeld = await getLocalBeefForTxid(wallet, key)
+  const localHeld = await getLocalBeefForTxid(
+    wallet,
+    key,
+    opts?.forSpend ? { inSpend: true } : undefined,
+  )
   if (localHeld) {
     const incomplete = incompleteProofTxids(localHeld).length > 0
     // Paint / heal / icons accept a body. Signing upgrades an incomplete proof.
@@ -1516,8 +1537,10 @@ export async function buildMergedInputBeef(
     ),
   ]
 
+  // Every caller is a spend building its own input BEEF.
   const fetchOpts: GetBeefOpts = {
     needProof: opts?.needProof ?? true,
+    forSpend: true,
     ...(opts?.allowUnprovenRawTx ? { allowUnprovenRawTx: true } : {}),
   }
 

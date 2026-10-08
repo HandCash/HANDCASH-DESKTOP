@@ -70,6 +70,10 @@ vi.mock('./walletCoordinator', () => ({ shouldYieldChainIngestToSpend: () => fal
 vi.mock('./pendingMinerOutbox', () => ({ removePendingMinerSubmit: vi.fn() }))
 vi.mock('./ghostTxSuppress', () => ({ rememberGhostTx: vi.fn() }))
 vi.mock('./staleOutputRelease', () => ({
+  promotePinnedNoSendProofRequests: async () => {
+    calls.push('promote-nosend')
+    return 0
+  },
   failUnsentLocalTx: async (txid: string) => {
     calls.push(`fail:${txid.slice(0, 4)}`)
     return true
@@ -138,6 +142,7 @@ describe('arcadeLanding', () => {
     await vi.advanceTimersByTimeAsync(30_000)
 
     expect(calls).toEqual([
+      'promote-nosend',
       `reject:${DEAD.slice(0, 4)}`,
       `fail:${DEAD.slice(0, 4)}`,
       `hide:${DEAD_INPUT}@${SPENDER.slice(0, 4)}`,

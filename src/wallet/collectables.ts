@@ -26,6 +26,7 @@ import {
   PrivateKey,
   type SignableTransaction,
   type Transaction,
+  Utils,
 } from '@bsv/sdk'
 import { type ActiveWallet } from './session'
 import {
@@ -3536,6 +3537,106 @@ function assertOrdinalIsDeviceLocked(
   }
 }
 
+type HeldTipRow = NonNullable<
+  Awaited<ReturnType<ActiveWallet['wallet']['listOutputs']>>['outputs']
+>[number]
+
+type HeldTipStorage = {
+  findUserByIdentityKey?: (key: string) => Promise<{ userId: number } | undefined>
+  findOutputBaskets?: (args: unknown) => Promise<Array<{ basketId?: number; name?: string }>>
+  findOutputs?: (args: unknown) => Promise<
+    Array<{
+      vout?: number
+      satoshis?: number
+      spendable?: boolean
+      basketId?: number
+      lockingScript?: number[]
+      customInstructions?: string
+    }>
+  >
+}
+
+const HELD_TIP_READ_MS = 20_000
+
+/**
+ * The selected tips' own rows, by outpoint.
+ *
+ * The send used to `listOutputs` the whole `1sat` basket with
+ * customInstructions to find a handful of tips. That pulls every held item's
+ * remittance BEEF (hundreds of KB each) through IndexedDB; on a migrated
+ * phone the read ran past its ceiling and every item send ended as "Send
+ * timed out" before createAction (hc-a580a 0.1.655). One outpoint is one
+ * indexed row. `null` when this storage cannot answer, so the caller may fall
+ * back to the basket read.
+ */
+async function readHeldTipRows(
+  wallet: ActiveWallet,
+  outpoints: string[],
+): Promise<Map<string, HeldTipRow> | null> {
+  const storage = wallet.wallet.storage
+  if (typeof storage?.runAsStorageProvider !== 'function') return null
+  const startedAt = Date.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const rows = await Promise.race([
+      storage.runAsStorageProvider(async (raw) => {
+        const sp = raw as unknown as HeldTipStorage
+        if (
+          typeof sp.findUserByIdentityKey !== 'function' ||
+          typeof sp.findOutputBaskets !== 'function' ||
+          typeof sp.findOutputs !== 'function'
+        ) {
+          return null
+        }
+        const user = await sp.findUserByIdentityKey(wallet.identityKey)
+        if (!user) return null
+        const baskets = await sp.findOutputBaskets({ partial: { userId: user.userId } })
+        const itemBaskets = new Set(
+          baskets
+            .filter((b) => String(b.name ?? '').toLowerCase() === '1sat')
+            .map((b) => b.basketId),
+        )
+        const held = new Map<string, HeldTipRow>()
+        for (const outpoint of outpoints) {
+          const key = normalizeOutpoint(outpoint)
+          const [txid, voutRaw] = key.split('.')
+          const vout = Number(voutRaw)
+          if (!txid || !Number.isInteger(vout)) continue
+          const found = await sp.findOutputs({
+            partial: { userId: user.userId, txid, vout },
+          })
+          const row = found.find(
+            (r) => r.spendable === true && r.basketId != null && itemBaskets.has(r.basketId),
+          )
+          if (!row) continue
+          held.set(key, {
+            outpoint: key,
+            satoshis: row.satoshis ?? 1,
+            spendable: true,
+            tags: [],
+            ...(row.lockingScript?.length
+              ? { lockingScript: Utils.toHex(row.lockingScript) }
+              : {}),
+            ...(row.customInstructions ? { customInstructions: row.customInstructions } : {}),
+          } as HeldTipRow)
+        }
+        return held
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('held tips read timed out')),
+          HELD_TIP_READ_MS,
+        )
+      }),
+    ])
+    const ms = Date.now() - startedAt
+    if (ms >= 250) console.info(`[collectables] held tips read done ${ms}ms — ${outpoints.length} tip(s)`)
+    return rows
+  } finally {
+    if (timer != null) clearTimeout(timer)
+  }
+}
+
 /**
  * BEEF covering every outpoint this send spends.
  *
@@ -4070,17 +4171,22 @@ export async function sendCollectable(args: {
                   tags: [],
                 } as HeldOutput
               } else {
-                const wide = await listOutputsWithTimeout(wallet.wallet, {
-                  basket: '1sat',
-                  limit: 200,
-                  includeTags: true,
-                  includeCustomInstructions: true,
-                  include: 'locking scripts',
-                  seekPermission: false,
-                })
-                match = (wide.outputs ?? []).find(
-                  (o) => normalizeOutpoint(o.outpoint) === outpoint
-                )
+                const direct = await readHeldTipRows(wallet, [outpoint])
+                if (direct) {
+                  match = direct.get(normalizeOutpoint(outpoint))
+                } else {
+                  const wide = await listOutputsWithTimeout(wallet.wallet, {
+                    basket: '1sat',
+                    limit: 200,
+                    includeTags: true,
+                    includeCustomInstructions: true,
+                    include: 'locking scripts',
+                    seekPermission: false,
+                  })
+                  match = (wide.outputs ?? []).find(
+                    (o) => normalizeOutpoint(o.outpoint) === outpoint
+                  )
+                }
               }
             }
           }
@@ -4933,20 +5039,20 @@ export async function sendCollectables(
               ReturnType<ActiveWallet['wallet']['listOutputs']>
             >['outputs']
           >[number]
-          const held = await listOutputsWithTimeout(wallet.wallet, {
-            basket: '1sat',
-            limit: 1000,
-            includeTags: true,
-            includeCustomInstructions: true,
-            include: 'locking scripts',
-            seekPermission: false,
-          })
-          const heldByOutpoint = new Map(
-            (held.outputs ?? []).map((output) => [
-              normalizeOutpoint(output.outpoint),
-              output,
-            ]),
-          )
+          const heldByOutpoint: Map<string, HeldOutput> =
+            (await readHeldTipRows(wallet, outpoints)) ??
+            new Map(
+              (
+                await listOutputsWithTimeout(wallet.wallet, {
+                  basket: '1sat',
+                  limit: 1000,
+                  includeTags: true,
+                  includeCustomInstructions: true,
+                  include: 'locking scripts',
+                  seekPermission: false,
+                })
+              ).outputs?.map((output) => [normalizeOutpoint(output.outpoint), output]) ?? [],
+            )
           const inputBEEF = await buildInputBeefForSpends(wallet, outpoints)
           const live = await awaitLiveOutpoints(wallet)
 

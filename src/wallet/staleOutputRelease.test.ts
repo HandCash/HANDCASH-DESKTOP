@@ -77,6 +77,7 @@ const {
   restoreAssetOutpoint,
   chooseUtxoEvidenceAction,
   pinBroadcastLocalTx,
+  promotePinnedNoSendProofRequests,
   healAppHeldChange,
   __resetReclaimSealCursorsForTests,
 } = await import('./staleOutputRelease')
@@ -1280,6 +1281,8 @@ describe('pinBroadcastLocalTx', () => {
   const updateOutput = vi.fn()
   const updateTransactionStatus = vi.fn()
   const updateTransaction = vi.fn()
+  const findProvenTxReqs = vi.fn()
+  const updateProvenTxReq = vi.fn()
 
   beforeEach(() => {
     findTransactions.mockReset()
@@ -1288,6 +1291,9 @@ describe('pinBroadcastLocalTx', () => {
     updateOutput.mockReset()
     updateTransactionStatus.mockReset()
     updateTransaction.mockReset()
+    findProvenTxReqs.mockReset()
+    findProvenTxReqs.mockResolvedValue([])
+    updateProvenTxReq.mockReset()
     overlayStore.clear()
     __resetArcadeSubmitGuardForTests()
     __resetUtxoLocksForTests()
@@ -1304,6 +1310,8 @@ describe('pinBroadcastLocalTx', () => {
               findTransactions: typeof findTransactions
               updateTransactionStatus: typeof updateTransactionStatus
               updateTransaction: typeof updateTransaction
+              findProvenTxReqs: typeof findProvenTxReqs
+              updateProvenTxReq: typeof updateProvenTxReq
               getProvenOrRawTx: () => Promise<undefined>
             }) => Promise<unknown>,
           ) =>
@@ -1313,11 +1321,48 @@ describe('pinBroadcastLocalTx', () => {
               findTransactions,
               updateTransactionStatus,
               updateTransaction,
+              findProvenTxReqs,
+              updateProvenTxReq,
               getProvenOrRawTx: async () => undefined,
             }),
         },
       },
     })
+  })
+
+  it('hands the pinned nosend proof request to the per-block proof task', async () => {
+    const txid = '3d'.repeat(32)
+    findTransactions.mockResolvedValue([{ transactionId: 4, txid, status: 'nosend' }])
+    findProvenTxReqs.mockResolvedValue([{ provenTxReqId: 9, txid, status: 'nosend' }])
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
+    expect(findProvenTxReqs).toHaveBeenCalledWith(expect.objectContaining({ partial: { txid } }))
+    expect(updateProvenTxReq).toHaveBeenCalledWith(9, { status: 'unmined', wasBroadcast: true })
+  })
+
+  it('leaves a proof request the Toolbox already advanced', async () => {
+    const txid = '3e'.repeat(32)
+    findTransactions.mockResolvedValue([{ transactionId: 4, txid, status: 'nosend' }])
+    findProvenTxReqs.mockResolvedValue([{ provenTxReqId: 9, txid, status: 'completed' }])
+
+    await expect(pinBroadcastLocalTx(txid)).resolves.toBe(true)
+    expect(updateProvenTxReq).not.toHaveBeenCalled()
+  })
+
+  it('backfills only nosend requests the network accepted, a page at a time', async () => {
+    const accepted = '4a'.repeat(32)
+    const inFlight = '4b'.repeat(32)
+    rememberArcadeSubmitContact(accepted)
+    findProvenTxReqs
+      .mockResolvedValueOnce([
+        { provenTxReqId: 1, txid: inFlight, status: 'nosend' },
+        { provenTxReqId: 2, txid: accepted, status: 'nosend' },
+      ])
+      .mockResolvedValue([])
+
+    await expect(promotePinnedNoSendProofRequests()).resolves.toBe(1)
+    expect(updateProvenTxReq).toHaveBeenCalledTimes(1)
+    expect(updateProvenTxReq).toHaveBeenCalledWith(2, { status: 'unmined', wasBroadcast: true })
   })
 
   it('hands an app-held nosend row to the network side and frees its change', async () => {

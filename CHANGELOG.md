@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.510] - 2026-10-08
+
+### Fixed
+- **An item send reads only the tips it is sending.** On 0.1.655 a send of 2 collectables got past the balance gate and still ended as "Send timed out" with nothing signed. To find those two rows it listed the whole `1sat` basket with each item's remittance attached — hundreds of imported items, hundreds of KB each — and that read did not finish. The send now reads each selected outpoint as one row.
+- **A send may read its own input transaction from the wallet.** While a send holds priority, every transaction-body lookup stayed out of wallet storage so background work could not block signing. That rule also applied to the send itself, so an imported item's body went to an indexer instead, which timed out on it, and the miss was remembered for five minutes. The send's own lookups read storage; background lookups still stay out, and a skipped read is no longer recorded as a miss.
+- **Imported transactions get their merkle proofs again.** Transactions the wallet held as `nosend` and later pinned kept a `nosend` proof request, which the per-block proof task never reads. Every later spend then re-walked each unproven import's stored ancestry while planning. A pinned send's request moves to `unmined`, and unlock moves the ones left over from earlier builds, ten at a time, only for transactions Arcade accepted or that landed, and steps aside when a send is waiting.
+
 ## [1.3.509] - 2026-10-08
 
 ### Fixed
