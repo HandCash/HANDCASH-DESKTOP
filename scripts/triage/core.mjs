@@ -215,6 +215,7 @@ function sessionFacts(header, events) {
   const incomingReceives = incomingReceiveFacts(events)
   const storageLock = storageLockFacts(events)
   const longFrames = longFrameFacts(events)
+  const renders = renderFacts(events)
   const writtenOff = writtenOffFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
@@ -327,6 +328,9 @@ function sessionFacts(header, events) {
     // This outranks `freezes.byActiveLayer` and `workloads`, which only say
     // what was in flight: a phase awaiting a lock is never the freeze owner.
     longFrames,
+    // Which React surface the work loop was rendering: slow commits and
+    // commit storms per `RenderProbe` id. Probes nest; the innermost wins.
+    renders,
     // Coins written off while unspent (restored) and change spent outside the
     // wallet (hidden, so it stops showing as "confirming").
     writtenOff,
@@ -2911,6 +2915,50 @@ function writtenOffFacts(events) {
   }
 }
 
+const RENDER_SLOW_RE = /^\[render\] (\S+) (mount|update|nested-update) (\d+)ms base (\d+)ms/
+const RENDER_STORM_RE = /^\[render\] (\S+) storm (\d+) commits (\d+)ms in (\d+)s worst (\d+)ms/
+
+/**
+ * React commit time by surface (`RenderProbe`, 1.3.520+). `longFrames` shows
+ * React's work loop holding the thread; this names what it was rendering.
+ * Probes nest (`dashboard` ⊃ `nav` ⊃ `activity`): the innermost surface with
+ * the time is the owner.
+ */
+function renderFacts(events) {
+  const surfaces = new Map()
+  const row = (id) => {
+    let r = surfaces.get(id)
+    if (!r) {
+      r = { surface: id, slowCommits: 0, slowMs: 0, worstMs: 0, mounts: 0, storms: 0, stormCommits: 0, stormMs: 0 }
+      surfaces.set(id, r)
+    }
+    return r
+  }
+  for (const e of events) {
+    let m = RENDER_SLOW_RE.exec(e.text)
+    if (m) {
+      const r = row(m[1])
+      const ms = Number(m[3])
+      r.slowCommits += 1
+      r.slowMs += ms
+      r.worstMs = Math.max(r.worstMs, ms)
+      if (m[2] === 'mount') r.mounts += 1
+      continue
+    }
+    m = RENDER_STORM_RE.exec(e.text)
+    if (m) {
+      const r = row(m[1])
+      r.storms += 1
+      r.stormCommits += Number(m[2])
+      r.stormMs += Number(m[3])
+      r.worstMs = Math.max(r.worstMs, Number(m[5]))
+    }
+  }
+  return [...surfaces.values()]
+    .sort((a, b) => b.slowMs + b.stormMs - (a.slowMs + a.stormMs))
+    .slice(0, 12)
+}
+
 const LOAF_RE = /^\[loaf\] (\d+)ms(?: blocking (\d+)ms)? — (.+)$/
 const LOAF_SCRIPT_RE = /^(\d+)ms (\S+)@([^\s:]+)(?::\d+)?(?: via (.+))?$/
 
@@ -3542,6 +3590,10 @@ function forensicQuestions(latest, previous) {
   for (const s of latest.longFrames?.scripts?.slice(0, 6) ?? []) {
     owners[choiceId(`script ${s.script}`)] =
       `The function \`${s.script}\` itself — the \`latest.longFrames.scripts\` row "${s.script}" is measured main-thread time inside long animation frames, so it outranks any workload that was merely in flight.`
+  }
+  for (const r of latest.renders?.slice(0, 5) ?? []) {
+    owners[choiceId(`render ${r.surface}`)] =
+      `React rendering the \`${r.surface}\` surface — the \`latest.renders\` row "${r.surface}" is measured commit time. Prefer it over its parents (dashboard ⊃ nav/side ⊃ panels) when the child carries the time, and over \`performWorkUntilDeadline\` in \`latest.longFrames\`, which only says React was rendering.`
   }
   for (const w of latest.workloads) {
     owners[choiceId(w.workload)] =

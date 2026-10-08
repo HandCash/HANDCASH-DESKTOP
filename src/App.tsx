@@ -19,6 +19,7 @@ import {
 } from './wallet/permissions'
 import { AuthScreen } from './components/AuthScreen'
 import { Dashboard } from './components/Dashboard'
+import { RenderProbe } from './components/RenderProbe'
 import { BrandLogo } from './components/BrandLogo'
 import { WalletStatusPill, sessionFromMachine } from './components/WalletStatusPill'
 import { LockIcon, ScanQrIcon } from './components/icons'
@@ -437,6 +438,7 @@ export function App() {
           )}
 
           {(snapshot.matches('ready') || snapshot.matches('sending')) && snapshot.context.profile && (
+            <RenderProbe id="dashboard">
             <Dashboard
               key={snapshot.context.profile.identityKey}
               profile={snapshot.context.profile}
@@ -452,6 +454,7 @@ export function App() {
                 send({ type: 'ACCOUNT_SWITCHED', profile, balanceSats })
               }
             />
+            </RenderProbe>
           )}
         </main>
 

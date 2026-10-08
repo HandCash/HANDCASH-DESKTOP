@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.520] - 2026-10-08
+
+### Fixed
+- **The phone's two double-spent receives retire instead of staying on screen.** `9a14852a` and `68f708e4` ran the double-spend probe on 0.1.664 but never retired. The probe ran with its 1.5s spend-path budget, and from the Android WebView Teranode and WhatsOnChain answer slower than that, so every coin came back unknown. That silence was cached as "no conflict" for 10 minutes. The inbound probe now waits up to 10s, re-asks within a minute whenever any coin went unanswered, and logs its tally: `asked= spent= unspent= unknown= conflict=`.
+
+### Added
+- **Freeze lines name the React surface that rendered.** The first `[loaf]` upload from the phone put 82% of blocked time (116s of 140s) in `performWorkUntilDeadline`, React's own work loop, which says "rendering" and nothing about what. `RenderProbe` now wraps the dashboard, the nav, the side column, recent activity, the activity, collectables, friends and settings sections, and each stage panel (`stage:<type>`). Each surface logs `[render] <surface> <phase> <N>ms` for any commit of 100ms or more, and `[render] <surface> storm <n> commits` when it commits 40 times or spends 500ms in 10s. Production builds use `react-dom/profiling` so these timings exist outside dev. Triage reports them as `renders`, and Jev's freeze-owner choice includes them.
+
 ## [1.3.519] - 2026-10-08
 
 ### Fixed

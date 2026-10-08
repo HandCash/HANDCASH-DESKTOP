@@ -4,6 +4,7 @@ import {
   findPackageConflict,
   knownPackageConflict,
   packageConflictFor,
+  probePackage,
   resetPackageConflictsForTests,
   unminedPackageInputs,
 } from './inboundPackageConflict'
@@ -81,5 +82,41 @@ describe('inbound package double-spend probe', () => {
       vi.unstubAllGlobals()
     }
     expect(knownPackageConflict(child.id('hex'))).toBeNull()
+  })
+
+  it('gives slow providers the off-send-path budget and tallies every answer', async () => {
+    const { atomic, parent, child } = deadPayment()
+    const probe = probeFrom({
+      [`${parent.id('hex')}.0`]: { kind: 'unspent' },
+      [`${FUNDING}.3`]: { kind: 'spent', spender: CONSOLIDATION },
+    })
+    const result = await probePackage(atomic, child.id('hex'), 'main', probe)
+    expect(result).toEqual({
+      conflict: { outpoint: `${FUNDING}.3`, spender: CONSOLIDATION },
+      asked: 2,
+      spent: 1,
+      unspent: 1,
+      unknown: 0,
+    })
+    expect(probe.mock.calls[0]?.[3]).toBe(10_000)
+  })
+
+  it('re-asks within a minute when providers went silent instead of caching a clean answer', async () => {
+    resetPackageConflictsForTests()
+    const { atomic, child } = deadPayment()
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      const t0 = 1_000_000
+      await packageConflictFor(child.id('hex'), atomic, 'main', t0)
+      await packageConflictFor(child.id('hex'), atomic, 'main', t0 + 30_000)
+      await packageConflictFor(child.id('hex'), atomic, 'main', t0 + 61_000)
+      const probes = info.mock.calls.filter((c) => String(c[0]).startsWith('[tip-ingest] conflict-probe done'))
+      expect(probes).toHaveLength(2)
+      expect(String(probes[0]![0])).toMatch(/asked=2 spent=0 unspent=0 unknown=2 conflict=none/)
+    } finally {
+      info.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 })

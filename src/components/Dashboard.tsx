@@ -49,6 +49,7 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { WalletNav } from './WalletNav'
 import { DashboardSideColumn } from './DashboardSideColumn'
+import { RenderProbe } from './RenderProbe'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
 
@@ -765,16 +766,20 @@ export function Dashboard({
           </div>
         </div>
 
-        <WalletNav
-          profile={profile}
-          apps={connectedApps}
-          onSent={onSent}
-          onFail={onFail}
-          onRevoke={onRevoke}
-        />
+        <RenderProbe id="nav">
+          <WalletNav
+            profile={profile}
+            apps={connectedApps}
+            onSent={onSent}
+            onFail={onFail}
+            onRevoke={onRevoke}
+          />
+        </RenderProbe>
       </div>
 
-      <DashboardSideColumn profile={profile} />
+      <RenderProbe id="side">
+        <DashboardSideColumn profile={profile} />
+      </RenderProbe>
     </section>
   )
 }

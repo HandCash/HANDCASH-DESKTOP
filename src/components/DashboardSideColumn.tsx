@@ -19,6 +19,7 @@ import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { PermissionItemPreview } from './PermissionItemPreview'
 import { LoadingSpinner } from './LoadingSpinner'
+import { RenderProbe } from './RenderProbe'
 import {
   getPaymentProgress,
   subscribePaymentProgress,
@@ -168,7 +169,9 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
       ) : (
         <>
           {sideScanOpen ? <ScanPanel placement="side" /> : <WhatIsBsvPanel />}
-          <RecentActivityPanel chain={profile.chain} />
+          <RenderProbe id="recent-activity">
+            <RecentActivityPanel chain={profile.chain} />
+          </RenderProbe>
         </>
       )}
     </aside>

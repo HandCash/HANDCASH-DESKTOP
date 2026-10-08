@@ -18,8 +18,16 @@ import type { PackageConflictFacts } from './kernel/inboundHintFate'
 
 /** One Teranode request and a few WhatsOnChain batches. */
 const MAX_PROBED_INPUTS = 60
-/** A clean answer is re-asked after this long; a conflict is final. */
+/**
+ * Off the send path, so it can wait for slow providers. The probe's 1.5s
+ * spend-path default answered `unknown` for every coin from the phone WebView,
+ * and the two dead receives were read as clean (hc-a580a, 0.1.664).
+ */
+const PROBE_TIMEOUT_MS = 10_000
+/** Every coin answered and none conflicts: re-asked after this long. A conflict is final. */
 const CLEAN_RECHECK_MS = 10 * 60_000
+/** Some coins went unanswered: that is not a clean result, ask again soon. */
+const PARTIAL_RECHECK_MS = 60_000
 
 type PackageInputs = { outpoints: string[]; members: Set<string> }
 
@@ -55,25 +63,52 @@ export function unminedPackageInputs(atomic: number[], subject: string): Package
 
 type Probe = typeof probeOutpointSpends
 
+export type PackageProbe = {
+  conflict: PackageConflictFacts | null
+  asked: number
+  spent: number
+  unspent: number
+  unknown: number
+}
+
+export async function probePackage(
+  atomic: number[],
+  subject: string,
+  chain: Chain,
+  probe: Probe = probeOutpointSpends,
+): Promise<PackageProbe> {
+  const tally: PackageProbe = { conflict: null, asked: 0, spent: 0, unspent: 0, unknown: 0 }
+  const inputs = unminedPackageInputs(atomic, subject)
+  if (!inputs || inputs.outpoints.length === 0) return tally
+  tally.asked = inputs.outpoints.length
+  const answers = await probe(inputs.outpoints, subject.trim().toLowerCase(), chain, PROBE_TIMEOUT_MS)
+  for (const outpoint of inputs.outpoints) {
+    const answer = answers.get(outpoint)
+    if (answer?.kind === 'unspent') tally.unspent += 1
+    if (answer?.kind !== 'spent') {
+      if (answer?.kind !== 'unspent') tally.unknown += 1
+      continue
+    }
+    tally.spent += 1
+    if (inputs.members.has(answer.spender)) continue
+    tally.conflict ??= { outpoint, spender: answer.spender }
+  }
+  return tally
+}
+
 export async function findPackageConflict(
   atomic: number[],
   subject: string,
   chain: Chain,
   probe: Probe = probeOutpointSpends,
 ): Promise<PackageConflictFacts | null> {
-  const inputs = unminedPackageInputs(atomic, subject)
-  if (!inputs || inputs.outpoints.length === 0) return null
-  const answers = await probe(inputs.outpoints, subject.trim().toLowerCase(), chain)
-  for (const outpoint of inputs.outpoints) {
-    const answer = answers.get(outpoint)
-    if (answer?.kind !== 'spent') continue
-    if (inputs.members.has(answer.spender)) continue
-    return { outpoint, spender: answer.spender }
-  }
-  return null
+  return (await probePackage(atomic, subject, chain, probe)).conflict
 }
 
-const verdicts = new Map<string, { at: number; conflict: PackageConflictFacts | null }>()
+const verdicts = new Map<
+  string,
+  { at: number; conflict: PackageConflictFacts | null; recheckMs: number }
+>()
 
 /** A conflict already established for `txid` this session, if any. */
 export function knownPackageConflict(txid: string): PackageConflictFacts | null {
@@ -90,13 +125,21 @@ export async function packageConflictFor(
   const id = txid.trim().toLowerCase()
   const prior = verdicts.get(id)
   if (prior?.conflict) return prior.conflict
-  if (prior && now - prior.at < CLEAN_RECHECK_MS) return null
+  if (prior && now - prior.at < prior.recheckMs) return null
   const started = Date.now()
-  const conflict = await findPackageConflict(atomic, id, chain).catch(() => null)
+  const result = await probePackage(atomic, id, chain).catch(
+    (): PackageProbe => ({ conflict: null, asked: 0, spent: 0, unspent: 0, unknown: 1 }),
+  )
   const ms = Date.now() - started
-  if (ms >= 250) console.info(`[tip-ingest] conflict-probe done ${ms}ms ${id.slice(0, 12)}`)
-  verdicts.set(id, { at: now, conflict })
-  return conflict
+  console.info(
+    `[tip-ingest] conflict-probe done ${ms}ms ${id.slice(0, 12)} asked=${result.asked} spent=${result.spent} unspent=${result.unspent} unknown=${result.unknown} conflict=${result.conflict ? result.conflict.spender.slice(0, 12) : 'none'}`,
+  )
+  verdicts.set(id, {
+    at: now,
+    conflict: result.conflict,
+    recheckMs: result.unknown > 0 ? PARTIAL_RECHECK_MS : CLEAN_RECHECK_MS,
+  })
+  return result.conflict
 }
 
 export function resetPackageConflictsForTests(): void {

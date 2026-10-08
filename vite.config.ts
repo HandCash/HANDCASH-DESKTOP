@@ -35,6 +35,9 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'vendor/aeon-ui-engine/packages/tree/src/index.ts'),
       },
       { find: '@', replacement: path.resolve(__dirname, 'src') },
+      // `<Profiler onRender>` is a no-op in the plain production build; the
+      // profiling build keeps it so `[render]` lines name the slow surface.
+      { find: /^react-dom\/client$/, replacement: 'react-dom/profiling' },
       {
         find: /^events$/,
         replacement: path.resolve(__dirname, 'node_modules/events/events.js'),

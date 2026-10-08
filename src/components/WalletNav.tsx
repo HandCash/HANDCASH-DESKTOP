@@ -56,6 +56,7 @@ import { SendCollectablePanel } from './SendCollectablePanel'
 import { SendFungiblePanel } from './SendFungiblePanel'
 import { BurnAssetPanel } from './BurnAssetPanel'
 import { TransactionsPanel } from './RecentActivity'
+import { RenderProbe } from './RenderProbe'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { AppLaunchPanel } from './AppLaunchPanel'
@@ -602,6 +603,7 @@ export const WalletNav = memo(function WalletNav({
             <div className="wallet-nav-panel nav-child-stage">
               <NavBreadcrumb crumbs={crumbs} />
               <div className="nav-child-body">
+              <RenderProbe id={`stage:${stageChild.type}`}>
               {stageChild.type === 'app' && (() => {
                 const app = apps.find((a) => a.origin === stageChild.origin)
                 if (!app) return <p className="connected-empty-line">App not found</p>
@@ -733,6 +735,7 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'setting' && stageChild.settingId === 'statecharts' && (
                 <StatechartsPanel />
               )}
+              </RenderProbe>
               </div>
             </div>
           ) : null}
@@ -750,7 +753,9 @@ export const WalletNav = memo(function WalletNav({
                     onDeny={onPermissionDeny}
                   />
                 ) : (
-                  <TransactionsPanel chain={profile.chain} />
+                  <RenderProbe id="activity">
+                    <TransactionsPanel chain={profile.chain} />
+                  </RenderProbe>
                 )}
               </div>
             )}
@@ -770,14 +775,18 @@ export const WalletNav = memo(function WalletNav({
                 soon as the optimistic tab selects it so labels/chrome stay sync.
                 Remount paints the last durable list (collectables.ts). */}
             {activeSection === 'collectables' && !mobileInlinePermission && (
-              <MemoInventoryPanel />
+              <RenderProbe id="collectables">
+                <MemoInventoryPanel />
+              </RenderProbe>
             )}
             {mountedLight.has('friends') && (
               <div
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'friends' || mobileInlinePermission}
               >
-                <FriendsPanel chain={profile.chain} />
+                <RenderProbe id="friends">
+                  <FriendsPanel chain={profile.chain} />
+                </RenderProbe>
               </div>
             )}
             {mountedLight.has('identity') && (
@@ -793,7 +802,9 @@ export const WalletNav = memo(function WalletNav({
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'settings' || mobileInlinePermission}
               >
-                <SettingsPanel />
+                <RenderProbe id="settings">
+                  <SettingsPanel />
+                </RenderProbe>
               </div>
             )}
           </div>
