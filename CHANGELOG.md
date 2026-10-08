@@ -1,6 +1,14 @@
 # Changelog
 
-## [1.3.515] - 2026-10-08
+## [1.3.516] - 2026-10-08
+
+### Fixed
+- **A send no longer hangs behind the unlock transaction check until it times out.** 1.3.515 asked the toolbox for rows without raw bytes, but IndexedDB clones a record whole: every transaction record still arrived with its raw transaction and input BEEF, and the toolbox only dropped them afterwards. On 0.1.661 the phone spent over 190s inside that check (worst freeze 18s), and a 3-item send waited behind it for 20s and timed out with nothing broadcast. The cost grows with every imported item, which is why it appeared after the 1,500-item import. On IndexedDB the check now:
+  - reads statuses and txids from index keys alone, without loading a single record;
+  - keeps the txids each transaction spends from on disk, keyed by its own txid (a txid commits to its bytes, so an entry never goes stale), so a launch reads no transaction record it has seen before;
+  - fetches a record only for a transaction it has never seen, eight per read, with a UI turn between, and stops when a send is waiting;
+  - does all of that outside the storage lock; only the final re-read and the writes hold it.
+  The decisions are unchanged.
 
 ### Fixed
 - **Sends no longer wait out the unlock transaction check, and the phone stops freezing behind it.** On 0.1.660, 59 of 66 freezes (163s of 179s blocked) and a 3-item send that timed out with nothing broadcast all sat inside the unlock pass's check for live transactions built on failed ones. Every pass read every live local transaction with its raw bytes (up to 5,000 rows, mostly migrate imports) and fully parsed each one on the main thread, while holding the storage lock the send was waiting for. Then it did all of it a second time before applying. Its decisions are unchanged, but now:

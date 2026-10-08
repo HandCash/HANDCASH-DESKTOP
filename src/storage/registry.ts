@@ -344,6 +344,14 @@ export const storageRegistry = Object.freeze({
     version: 1,
     retention: 'rebuildable',
   }),
+  /** IndexedDB: the txids each transaction spends from, keyed by its own txid. Chain fact; rebuilt from raw bytes. */
+  txParents: defineStorage({
+    key: 'handcash-brc100-tx-parents',
+    owner: 'custody',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   importItems: defineStorage({
     key: 'handcash.import-items',
     owner: 'legacy-import',
