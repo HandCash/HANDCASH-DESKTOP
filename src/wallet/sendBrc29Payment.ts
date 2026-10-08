@@ -332,6 +332,7 @@ export async function sendBrc29ToIdentityKey(opts: {
         const mark = (phase: string) => {
           console.info(`[brc29] +${Date.now() - sendStarted}ms ${phase}`)
         }
+        mark('in region')
         // BRC-29 key derivation reads only the root key + counterparty — never
         // the UTXO set or action-batch reservations — so start it now and let it
         // overlap the nosend + balance prep instead of paying both serially.

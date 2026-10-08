@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.525] - 2026-10-08
+
+### Changed
+- **A send stuck in "preparing" now names what it is waiting on.** On 0.1.669 a BRC-29 send sat in "preparing" and the upload could not say why: no phase mark had fired yet, and the 9.8s storage hold beside it was labelled only `runAsStorageProvider@index`. While a send waits for the spend region, the coordinator now logs which layers are active and who holds them every 5s. Once in, it logs how long the wait took. The BRC-29 send marks the moment it enters its region. A storage hold whose caller was folded into the main bundle now carries the wallet step that was running, e.g. `runAsStorageProvider@index(in recompose-chain)`. Triage puts these lines, plus whatever else ran in the first 30s, on the send's timeline.
+
 ## [1.3.524] - 2026-10-08
 
 ### Fixed

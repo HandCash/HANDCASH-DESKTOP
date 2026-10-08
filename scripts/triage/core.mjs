@@ -1652,11 +1652,14 @@ const SEND_STUCK_RE = /^\[payment-progress\] stuck before signing — aborting \
 const SEND_REQUESTED_RE = /^\[tx-trace\] requested traceId=\S+ flow=(\S+)/
 /** Wallet tags a payment passes through between `requested` and landing. */
 const SEND_TRAIL_TAG_RE =
-  /^\[(tx-trace|brc29|p2pkh|collectables|bsv21|bsv-send|spend|spend-guard|signed-send|minerSubmit|landing|arcade[\w-]*|self-send|tip-ingest|peer-deliver|remittance[\w-]*|messagebox[\w-]*|inbox[\w-]*|brc29-[\w-]+|payment-progress|send[\w-]*|internalize[\w-]*|activity[\w-]*)\]/
+  /^\[(tx-trace|coordinator|brc29|p2pkh|collectables|bsv21|bsv-send|spend|spend-guard|signed-send|minerSubmit|landing|arcade[\w-]*|self-send|tip-ingest|peer-deliver|remittance[\w-]*|messagebox[\w-]*|inbox[\w-]*|brc29-[\w-]+|payment-progress|send[\w-]*|internalize[\w-]*|activity[\w-]*)\]/
 const SEND_TRAIL_MAX = 40
 const SEND_TRAIL_WINDOW_MS = 120_000
 const SEND_LOCK_LINE_RE = /^\[storage-lock\] /
 const SEND_LOCK_LINES_MAX = 24
+const SEND_CONTEXT_WINDOW_MS = 30_000
+const SEND_CONTEXT_MAX = 40
+const SEND_CONTEXT_NOISE_RE = /^\[(render|heartbeat)\] /
 
 function trailLine(text) {
   return text
@@ -1713,10 +1716,25 @@ function spendPrepFacts(events) {
       }
       if (s.lock.length < SEND_LOCK_LINES_MAX && SEND_LOCK_LINE_RE.test(e.text)) {
         s.lock.push(`+${e.at - s.at}ms ${trailLine(e.text)}`)
+      } else if (
+        e.at - s.at <= SEND_CONTEXT_WINDOW_MS &&
+        s.context.length < SEND_CONTEXT_MAX &&
+        !SEND_TRAIL_TAG_RE.test(e.text) &&
+        !SEND_CONTEXT_NOISE_RE.test(e.text)
+      ) {
+        s.context.push(`+${e.at - s.at}ms ${trailLine(e.text)}`)
       }
     }
     if ((m = SEND_REQUESTED_RE.exec(e.text))) {
-      open = { flow: m[1], at: e.at, marks: [], outcome: 'open', trail: [`+0ms ${trailLine(e.text)}`], lock: [] }
+      open = {
+        flow: m[1],
+        at: e.at,
+        marks: [],
+        outcome: 'open',
+        trail: [`+0ms ${trailLine(e.text)}`],
+        lock: [],
+        context: [],
+      }
       sends.push(open)
       continue
     }
@@ -1775,6 +1793,8 @@ function spendPrepFacts(events) {
       marks: s.marks.map((mk) => `${mk.atMs}ms ${mk.phase}`),
       trail: s.trail,
       ...(s.lock.length ? { lockDuring: s.lock } : {}),
+      // Everything else in the first 30s: what ran beside a send with no marks.
+      ...(s.marks.length === 0 && s.context.length ? { besideFirst30s: s.context } : {}),
     })),
   }
 }

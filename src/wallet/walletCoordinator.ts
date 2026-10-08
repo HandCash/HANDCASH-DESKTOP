@@ -60,6 +60,7 @@ const SPEND_PRIORITY_MAX_MS = 90_000
 const SPEND_ACQUIRE_MAX_MS = 45_000
 /** Proof-of-life cadence for a hold whose work is still running. */
 const SPEND_PRIORITY_TOUCH_MS = 30_000
+const SPEND_WAIT_REPORT_MS = 5_000
 
 let spendPriorityHolds: SpendPriorityHold[] = []
 let nextSpendPriorityId = 1
@@ -662,14 +663,25 @@ export function runExclusiveSpend<T>(
   // A mint or a legacy sweep can outlive the expiry while doing real work. The
   // heartbeat is what separates that from a leaked hold.
   const heartbeat = setInterval(() => priority.touch(), SPEND_PRIORITY_TOUCH_MS)
+  const queuedAt = Date.now()
+  // A send that never reaches its region leaves no phase mark; name what it waits on.
+  const waitReport = setInterval(() => {
+    console.info(
+      `[coordinator] spend still waiting ${Date.now() - queuedAt}ms — ${describeWalletCoordinator().summary}`,
+    )
+  }, SPEND_WAIT_REPORT_MS)
   const releasePriority = () => {
     clearInterval(heartbeat)
+    clearInterval(waitReport)
     priority.release()
   }
   return queue(async () => {
     try {
       assertCoordinatorEpoch(epoch)
       const releaseSpend = await acquireSpend()
+      clearInterval(waitReport)
+      const waitedMs = Date.now() - queuedAt
+      if (waitedMs >= 250) console.info(`[coordinator] spend region acquired after ${waitedMs}ms`)
       // Region acquired — drop "Waiting to send…".
       onSpendRegion?.()
       try {

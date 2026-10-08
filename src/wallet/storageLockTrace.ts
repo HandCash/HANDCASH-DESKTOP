@@ -13,6 +13,8 @@
  *   lock from a timer the app does not drive
  */
 
+import { describeUiPhase } from './uiPhase'
+
 const HOLD_LOG_MS = 1_000
 const WAIT_LOG_MS = 2_000
 const STUCK_FIRST_MS = 10_000
@@ -75,7 +77,10 @@ function takeLabel(runner: Runner): string {
   if (monitorTask) return `monitor:${monitorTask}`
   const caller = callerModule(new Error().stack)
   label = caller ? `${runner}@${caller}` : runner
-  return label
+  // A production build folds most modules into `index`; the running wallet
+  // step is the only name left for the holder.
+  const phase = caller === 'index' || !caller ? describeUiPhase() : ''
+  return phase ? `${label}(in ${phase})` : label
 }
 
 function holdersSince(queuedAt: number): string {
