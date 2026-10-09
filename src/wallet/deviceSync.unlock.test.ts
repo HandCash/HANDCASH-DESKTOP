@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const remote = { exists: true, exportedAt: 1, bytes: 50_000, spendableSats: 900, actionCount: 40 }
 const local = { spendableSats: 900, defaultOutputCount: 3, actionCount: 40, looksEmpty: false }
 
-const uploadBrc39Backup = vi.fn(async () => ({ url: 'u', exportedAt: 2, spendableSats: 0, actionCount: 0 }))
+type UploadOpts = { onExportStart?: () => void }
+const uploaded = { url: 'u', exportedAt: 2, spendableSats: 0, actionCount: 0 }
+const uploadBrc39Backup = vi.fn(async (_password?: string, _opts?: UploadOpts) => uploaded)
 const inspectLocalToolboxState = vi.fn(async () => local)
 const localToolboxStateLooksEmpty = vi.fn(async () => false)
 const getActiveWallet = vi.fn((): { identityKey: string; chain: 'main' } | null => null)
@@ -21,7 +23,7 @@ vi.mock('./historyBackup', () => ({
   replaceLocalHistoryFromCloud: vi.fn(),
   fetchRemoteBrc39Meta: vi.fn(async () => remote),
   HistoryThinOverwriteError: class extends Error {},
-  uploadBrc39Backup: () => uploadBrc39Backup(),
+  uploadBrc39Backup: (password: string, opts: UploadOpts) => uploadBrc39Backup(password, opts),
 }))
 vi.mock('./layers', () => ({
   inspectLocalToolboxState: () => inspectLocalToolboxState(),
@@ -123,5 +125,52 @@ describe('unlock history push', () => {
     // And it does not hand itself on again.
     await vi.advanceTimersByTimeAsync(5 * 60_000)
     expect(inspectLocalToolboxState).toHaveBeenCalledOnce()
+  })
+})
+
+describe('auto-sync time limit', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    uploadBrc39Backup.mockReset()
+    const watchdog = await import('./backupWatchdog')
+    vi.mocked(watchdog.openBackupAttempt).mockClear()
+    vi.mocked(watchdog.closeBackupAttempt).mockClear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('does not count time queued behind storage, nor mark a crash before the export starts', async () => {
+    const { openBackupAttempt, closeBackupAttempt } = await import('./backupWatchdog')
+    uploadBrc39Backup.mockImplementation(async (_password, opts) => {
+      await new Promise((resolve) => setTimeout(resolve, 10 * 60_000))
+      expect(openBackupAttempt).not.toHaveBeenCalled()
+      opts?.onExportStart?.()
+      return uploaded
+    })
+    const { autoPushHistoryBackupIfConfigured } = await import('./deviceSync')
+
+    const sync = autoPushHistoryBackupIfConfigured('pw', { reason: 'internalizeAction' })
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+    expect((await sync).pullError).not.toBe('auto-sync timed out')
+    expect(openBackupAttempt).toHaveBeenCalledOnce()
+    expect(closeBackupAttempt).toHaveBeenCalledWith(true)
+  })
+
+  it('times out an export that started and never finished', async () => {
+    const { closeBackupAttempt } = await import('./backupWatchdog')
+    uploadBrc39Backup.mockImplementation(async (_password, opts) => {
+      opts?.onExportStart?.()
+      return new Promise<never>(() => undefined)
+    })
+    const { AUTO_SYNC_WORK_MS, autoPushHistoryBackupIfConfigured } = await import('./deviceSync')
+
+    const sync = autoPushHistoryBackupIfConfigured('pw', { reason: 'internalizeAction' })
+    await vi.advanceTimersByTimeAsync(AUTO_SYNC_WORK_MS)
+
+    expect((await sync).pullError).toBe('auto-sync timed out')
+    expect(closeBackupAttempt).toHaveBeenCalledWith(false)
   })
 })

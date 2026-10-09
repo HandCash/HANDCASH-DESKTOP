@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.536] - 2026-10-08
+
+### Fixed
+- **History backups upload again.** Settings said the history backup was uploaded two days ago, and it was. Every automatic backup since then failed with "auto-sync timed out", and none reached the export. Each one queued for the storage lock behind the import, the monitor or the Activity rebuild, while a 3-minute wall-clock timer ran. With the screen off, the lock holder was frozen too, and the timer fired when the phone woke. Each timeout then counted as a crashed backup, so the following attempts were skipped while the phone backed off. The 3-minute limit and the crash marker now start once the export holds storage. Waiting in line is not a failure, and an app killed while waiting no longer looks like a crash on the next launch. Each upload logs `[cloud-backup] export done Nms waited=Nms`, `encrypt done Nms` and `put done Nms`.
+
 ## [1.3.535] - 2026-10-08
 
 ### Fixed

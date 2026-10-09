@@ -140,9 +140,13 @@ function parseOptionalIntHeader(res: Response, name: string): number | null {
   return Math.trunc(n)
 }
 
-/** Live BRC-38 JSON under the caller's historyReplica session (or none). */
-async function exportLiveBrc38Json(): Promise<string> {
+/**
+ * Live BRC-38 JSON under the caller's historyReplica session (or none).
+ * `onStart` runs once the storage lock is held: everything before it is queueing.
+ */
+async function exportLiveBrc38Json(onStart?: () => void): Promise<string> {
   return withActiveStorageProvider(async (storage, identityKey) => {
+    onStart?.()
     try {
       await purgeRetiredProofRequests(storage as unknown as ProofRequestStore)
     } catch (err) {
@@ -286,7 +290,13 @@ export async function importBrc39FromFile(
  */
 export async function uploadBrc39Backup(
   password: string,
-  opts: CreateBrc39Opts = {},
+  opts: CreateBrc39Opts & {
+    /**
+     * The export holds storage and starts work. Time spent before this is
+     * waiting behind other storage work, not a stuck or crashing backup.
+     */
+    onExportStart?: () => void
+  } = {},
 ): Promise<{
   url: string
   exportedAt: number
@@ -300,8 +310,11 @@ export async function uploadBrc39Backup(
   const prefs = getHistoryBackupPrefs()
   const url = historyBackupObjectUrl(active.identityKey, prefs)
 
+  const inspectAt = Date.now()
   const local = await inspectLocalToolboxState()
   const remote = await fetchRemoteBrc39Meta()
+  const inspectMs = Date.now() - inspectAt
+  if (inspectMs > 250) appendAppLog('info', `[cloud-backup] inspect done ${inspectMs}ms`)
   if (remote == null && opts.force !== true) {
     const msg = 'refuse history upload while remote BRC-39 metadata is unavailable'
     appendAppLog('warn', `[cloud-backup] skip upload — ${msg}`)
@@ -328,13 +341,28 @@ export async function uploadBrc39Backup(
     throw new HistoryThinOverwriteError(msg)
   }
 
-  const json = await runHistoryReplica(() => exportLiveBrc38Json(), opts.priority)
+  const queuedAt = Date.now()
+  let exportAt = queuedAt
+  const json = await runHistoryReplica(
+    () =>
+      exportLiveBrc38Json(() => {
+        exportAt = Date.now()
+        opts.onExportStart?.()
+      }),
+    opts.priority,
+  )
+  const encryptAt = Date.now()
+  appendAppLog(
+    'info',
+    `[cloud-backup] export done ${encryptAt - exportAt}ms waited=${exportAt - queuedAt}ms chars=${json.length}`,
+  )
   const bytes = asArrayBufferBytes(await encryptLiveDocument(active.rootKeyHex, json))
   await archiveBrc39Locally({
     identityKey: active.identityKey,
     bytes,
     exportedAt: Date.now(),
   })
+  appendAppLog('info', `[cloud-backup] encrypt done ${Date.now() - encryptAt}ms bytes=${bytes.byteLength}`)
 
   const exportedAt = Date.now()
   appendAppLog(
@@ -369,7 +397,7 @@ export async function uploadBrc39Backup(
   releaseHistoryHost(url)
   setHistoryBackupPrefs({ lastUploadedAt: exportedAt, lastError: null })
   setSpendableHighWaterFromPush(local.spendableSats, local.actionCount)
-  appendAppLog('info', '[cloud-backup] upload ok (root-key)')
+  appendAppLog('info', `[cloud-backup] upload ok (root-key) put done ${Date.now() - exportedAt}ms`)
   void refreshCloudBackupHealth()
   return {
     url,

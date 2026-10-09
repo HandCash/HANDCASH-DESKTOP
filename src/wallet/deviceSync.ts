@@ -503,6 +503,9 @@ async function flushHistoryBackupPush(
   await pushInFlight
 }
 
+/** Export + encrypt + upload, counted from the moment the export holds storage. */
+export const AUTO_SYNC_WORK_MS = 180_000
+
 export type AutoPushOpts = {
   reason?: string
   /** On unlock: recover empty local from remote before pushing. */
@@ -670,6 +673,22 @@ export async function autoPushHistoryBackupIfConfigured(
   }
 
   let attemptOpen = false
+  let workTimer: ReturnType<typeof setTimeout> | null = null
+  let timeOut: (err: Error) => void = () => undefined
+  const workTimeout = new Promise<never>((_, reject) => {
+    timeOut = reject
+  })
+  // Queueing behind storage is not a failed backup. On 0.1.677 every attempt
+  // waited out a wall-clock timer behind the import or a frozen background
+  // hold, never reached the export, and was then backed off as a crash, so
+  // nothing uploaded for two days. The crash marker and the limit start
+  // together, once the export holds storage.
+  const exportStarted = () => {
+    if (attemptOpen) return
+    openBackupAttempt()
+    attemptOpen = true
+    workTimer = setTimeout(() => timeOut(new Error('auto-sync timed out')), AUTO_SYNC_WORK_MS)
+  }
   try {
     appendAppLog('info', `[cloud-backup] auto-sync starting (${reason})`)
     await Promise.race([
@@ -709,14 +728,13 @@ export async function autoPushHistoryBackupIfConfigured(
           }
         }
 
-        // Marked durably before the export: if the app dies inside Argon2id,
-        // the next launch sees an unclosed attempt and backs off instead of
-        // repeating the crash.
-        openBackupAttempt()
-        attemptOpen = true
+        // Marked durably as the export starts: if the app dies inside the
+        // export or Argon2id, the next launch sees an unclosed attempt and
+        // backs off instead of repeating the crash.
         await uploadBrc39Backup(password, {
           passwordAlreadyVerified: true,
           priority: opts.priority,
+          onExportStart: exportStarted,
         })
         closeBackupAttempt(true)
         attemptOpen = false
@@ -724,9 +742,7 @@ export async function autoPushHistoryBackupIfConfigured(
         await uploadActivityBackup().catch(() => undefined)
         historyDirty = false
       })(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('auto-sync timed out')), 180_000),
-      ),
+      workTimeout,
     ])
     appendAppLog('info', `[cloud-backup] auto-sync ok (${reason})`)
   } catch (err) {
@@ -756,6 +772,8 @@ export async function autoPushHistoryBackupIfConfigured(
       /* ignore */
     }
     if (!result.pullError) result.pullError = msg
+  } finally {
+    if (workTimer) clearTimeout(workTimer)
   }
   return result
 }
