@@ -65,6 +65,15 @@ export function planSweep(source: Pick<ImportedSource, 'scan'>): SweepPlan {
 export type SweepProgress = {
   phase: 'cash' | 'items' | 'tokens' | 'refresh'
   message: string
+  /** Items moved so far, counted as each transaction broadcasts. */
+  done: number
+  /** Items listed for this sweep; null outside the item step or before the list is read. */
+  total: number | null
+  /**
+   * The chunk in flight when the sweep spans more than one: 11 items of
+   * 2,630 do not move a bar, 11 of a 100-item batch do.
+   */
+  batch: { done: number; total: number } | null
 }
 
 export async function sweepImportedSource(args: {
@@ -107,9 +116,15 @@ async function runSweep(
   const deriver = keyDeriverFor(source.secret)
   /** Known once the saved list is read; the bar runs indeterminate until then. */
   let itemTotal: number | null = null
-  const report = (phase: SweepProgress['phase'], message: string, itemsDone = 0) => {
-    args.onProgress?.({ phase, message })
-    job.progress(itemsDone, phase === 'items' ? itemTotal : null, message)
+  const report = (
+    phase: SweepProgress['phase'],
+    message: string,
+    itemsDone = 0,
+    batch: SweepProgress['batch'] = null,
+  ) => {
+    const total = phase === 'items' ? itemTotal : null
+    args.onProgress?.({ phase, message, done: itemsDone, total, batch })
+    job.progress(itemsDone, total, message)
   }
   const stop = () => args.shouldStop?.() === true
   const notes: string[] = []
@@ -191,12 +206,30 @@ async function runSweep(
     const listed = [...(await listedImportOutpoints(source.id))]
     itemTotal = listed.length || null
     for (let i = 0; i < listed.length && !stop() && !paused; i += IMPORT_CHUNK) {
-      report('items', `Moving collectables… ${items.toLocaleString()} of ${listed.length.toLocaleString()}`, items)
+      const outpoints = listed.slice(i, i + IMPORT_CHUNK)
+      const inChunk = new Set(outpoints)
+      const landed = new Set<string>()
+      const reportMoving = () => {
+        const done = items + landed.size
+        const batch = listed.length > IMPORT_CHUNK ? { done: landed.size, total: outpoints.length } : null
+        const of = `${done.toLocaleString()} of ${listed.length.toLocaleString()}`
+        report(
+          'items',
+          batch ? `Moving collectables… ${of} · batch ${batch.done} of ${batch.total}` : `Moving collectables… ${of}`,
+          done,
+          batch,
+        )
+      }
+      reportMoving()
       const chunk = await importItems({
         sourceId: source.id,
         identityKey: active.identityKey,
-        outpoints: listed.slice(i, i + IMPORT_CHUNK),
+        outpoints,
         activityGroup: job.id,
+        onLanded: (moved) => {
+          for (const outpoint of moved) if (inChunk.has(outpoint)) landed.add(outpoint)
+          reportMoving()
+        },
       })
       for (const { result } of chunk.results) {
         if (result.kind === 'moved') items += 1

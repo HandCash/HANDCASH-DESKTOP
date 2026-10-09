@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.535] - 2026-10-08
+
+### Fixed
+- **Import all shows progress.** 1.3.534 fixed the bar in Browse items, but Import all runs the saved-wallet sweep, which has its own bar. That bar was always indeterminate, so it never filled. Its count also only moved when a whole 100-item chunk returned, and on 0.1.677 one chunk took about 10 minutes. The sweep now counts items as each transaction broadcasts. When it spans more than one batch, the bar fills with the batch in flight and the text reads "Moving collectables… 25 of 2,630 · batch 25 of 100". The Activity row carries the same count.
+
 ## [1.3.534] - 2026-10-08
 
 ### Fixed

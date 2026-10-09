@@ -29,6 +29,7 @@ import {
   takeImportIntent,
   type ImportedSource,
   type ScanProgress,
+  type SweepProgress,
 } from '../../wallet/import'
 import { playWalletSound } from '../../wallet/soundService'
 import { toastError, toastSuccess } from '../../wallet/toast'
@@ -58,8 +59,17 @@ type IntentRoute = 'route' | 'absorb' | 'hints' | null
  * explicit, compatible-only sweep. Every face is `legacyImportMachine`.
  */
 
+function of(done: number, total: number): number | null {
+  return total > 0 ? Math.round((done / total) * 100) : null
+}
+
+/** The batch in flight fills the bar on a long sweep; null runs it indeterminate. */
+function sweepPercent(p: SweepProgress): number | null {
+  if (p.batch) return of(p.batch.done, p.batch.total)
+  return p.total != null ? of(p.done, p.total) : null
+}
+
 function scanProgressMessage(p: ScanProgress): { message: string; percent: number | null } {
-  const of = (done: number, total: number) => (total > 0 ? Math.round((done / total) * 100) : null)
   switch (p.phase) {
     case 'utxoSet':
       return { message: `Fetching your coins from HandCash · ${p.fetched.toLocaleString()}`, percent: null }
@@ -204,7 +214,7 @@ export function ImportPanel() {
       const summary = await sweepImportedSource({
         sourceId: source.id,
         shouldStop: stopRequested,
-        onProgress: (p) => send({ type: 'PROGRESS', message: p.message, percent: null }),
+        onProgress: (p) => send({ type: 'PROGRESS', message: p.message, percent: sweepPercent(p) }),
       })
       send({ type: 'SWEPT' })
       playWalletSound('success')
