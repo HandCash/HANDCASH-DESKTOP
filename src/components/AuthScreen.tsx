@@ -12,7 +12,7 @@ import {
   type Chain,
   type UnlockedVault,
 } from '../wallet/vault'
-import { resolveActiveRootKeyHex, ensureVaultAccounts } from '../wallet/vaultAccounts'
+import { resolveActiveRootKeyHex } from '../wallet/vaultAccounts'
 import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import {
   bootWallet,
@@ -285,16 +285,13 @@ export function AuthScreen({
 
 
   const bootFromUnlocked = async (unlocked: UnlockedVault) => {
-    const masterRootKeyHex = unlocked.rootKeyHex
-    const masterIdentityKey = unlocked.record.identityKey
-    ensureVaultAccounts(masterRootKeyHex, masterIdentityKey)
-    const resolved = resolveActiveRootKeyHex(masterRootKeyHex, masterIdentityKey)
+    const resolved = resolveActiveRootKeyHex(unlocked.master)
     return bootWallet({
       rootKeyHex: resolved.rootKeyHex,
       handle: unlocked.record.handle,
       chain: unlocked.record.chain,
       mnemonic: unlocked.mnemonic,
-      masterRootKeyHex,
+      vaultMaster: unlocked.master,
       accountIndex: resolved.accountIndex,
     })
   }
@@ -326,8 +323,8 @@ export function AuthScreen({
     clearUnlockNudge()
     const profile: WalletProfile = {
       handle: unlocked.record.handle,
-      identityKey: unlocked.record.identityKey,
-      address: unlocked.record.address,
+      identityKey: active.identityKey,
+      address: active.address,
       chain: unlocked.record.chain,
     }
     // Linear onboarding: backup (create) or history (restore), then protect.
@@ -337,7 +334,7 @@ export function AuthScreen({
         balanceSats,
         wrapPassword: password ?? '',
         mnemonic: unlocked.mnemonic,
-        rootKeyHex: unlocked.rootKeyHex,
+        rootKeyHex: unlocked.master.keyHex,
         step: unlocked.mnemonic ? 'keys-backup' : 'protect',
         kind,
       })
@@ -359,7 +356,7 @@ export function AuthScreen({
         balanceSats,
         wrapPassword: password ?? '',
         mnemonic: unlocked.mnemonic,
-        rootKeyHex: unlocked.rootKeyHex,
+        rootKeyHex: unlocked.master.keyHex,
         step: 'history',
         kind,
       })
@@ -600,7 +597,7 @@ export function AuthScreen({
 
   const lede =
     formMode === 'phrase'
-      ? 'Enter your BRC-75 recovery phrase. Same phrase = same identity on Desktop or Mobile.'
+      ? 'Enter your recovery phrase, 12 or 24 words. Same phrase = same identity on Desktop or Mobile.'
       : formMode === 'shares'
           ? 'Paste every BRC-140 key slice you have, one per line. HandCash finds two from the same set.'
           : formMode === 'key'
@@ -796,7 +793,7 @@ export function AuthScreen({
               <textarea
                 id="mnemonic"
                 rows={3}
-                placeholder="twelve words separated by spaces"
+                placeholder="12 or 24 words separated by spaces"
                 value={mnemonicInput}
                 onChange={(e) => setMnemonicInput(e.target.value)}
                 autoComplete="off"

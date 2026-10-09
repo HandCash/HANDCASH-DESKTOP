@@ -40,7 +40,7 @@ export function DeviceHandoffPanel() {
         </button>
       </div>
 
-      <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-78']}>
+      <SettingsFeatureAbout tags={['BRC-157', 'BRC-75', 'BRC-140', 'BRC-78']}>
         Each encrypted copy goes one way. It does not share identity, balance, history, or
         day-to-day spending access.
       </SettingsFeatureAbout>

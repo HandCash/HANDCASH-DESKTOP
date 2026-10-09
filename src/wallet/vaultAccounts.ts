@@ -1,16 +1,24 @@
 /**
  * Vault sub-accounts (BRC-208) — named account roots under one vault master.
  *
- * Account 0 is the vault master root (existing wallets; no migration).
- * Account n>=1 is KeyDeriver(master).derivePrivateKey([2, "account"], `account-${n}`, "self").
+ * Account 0 is the primary. How account n derives from the master is the
+ * master's derivation (`vaultMaster.ts`): BRC-157 profile `m/0'/n'` for vaults
+ * created now, the BRC-42 `self` child `[2, "account"]`/`account-n` of a root
+ * that is itself account 0 for older vaults (no migration).
  * Each account is a full BRC-100 wallet root (own UTXOs, BAP, balances).
- * One mnemonic / unlock recovers every account.
+ * One backup / unlock recovers every account.
  */
-import { KeyDeriver, PrivateKey } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import {
+  VAULT_ACCOUNT_PROTOCOL,
+  accountIdentityKey,
+  accountRootKeyHex,
+  vaultIdentityKey,
+  type VaultMaster,
+} from './vaultMaster'
 
-export const VAULT_ACCOUNT_PROTOCOL: [2, 'account'] = [2, 'account']
+export { VAULT_ACCOUNT_PROTOCOL, accountKeyId } from './vaultMaster'
 
 export type ReservedKeyRefusal = 'account-protocol' | 'self-linkage'
 
@@ -54,7 +62,7 @@ export function reservedKeyRefusal(
 }
 
 export type VaultAccount = {
-  /** Stable index. 0 = primary (vault master). */
+  /** Stable index. 0 is the primary account. */
   index: number
   name: string
   identityKey: string
@@ -62,11 +70,11 @@ export type VaultAccount = {
 
 export type VaultAccountStore = {
   version: 1
-  /** Vault master identity key (account 0). */
+  /** The vault's identity: account 0's identity key. */
   masterIdentityKey: string
   activeIndex: number
   accounts: VaultAccount[]
-  /** Discovery from the vault root has run to completion on this device. */
+  /** Discovery from the vault master has run to completion on this device. */
   discovered?: boolean
 }
 
@@ -76,26 +84,13 @@ function storageKey(masterIdentityKey: string): string {
   return `${STORAGE_PREFIX}${masterIdentityKey}`
 }
 
-export function accountKeyId(index: number): string {
-  return `account-${index}`
+/** Derive the private key hex for account `index` under the vault master. */
+export function rootKeyHexForAccount(master: VaultMaster, index: number): string {
+  return accountRootKeyHex(master, index)
 }
 
-/** Derive the private key hex for account `index` under vault master. */
-export function rootKeyHexForAccount(masterRootKeyHex: string, index: number): string {
-  if (index < 0 || !Number.isInteger(index)) {
-    throw new Error(`invalid account index: ${index}`)
-  }
-  if (index === 0) return masterRootKeyHex
-  const deriver = new KeyDeriver(PrivateKey.fromHex(masterRootKeyHex))
-  return deriver
-    .derivePrivateKey(VAULT_ACCOUNT_PROTOCOL, accountKeyId(index), 'self')
-    .toHex()
-}
-
-export function identityKeyForAccount(masterRootKeyHex: string, index: number): string {
-  return PrivateKey.fromHex(rootKeyHexForAccount(masterRootKeyHex, index))
-    .toPublicKey()
-    .toString()
+export function identityKeyForAccount(master: VaultMaster, index: number): string {
+  return accountIdentityKey(master, index)
 }
 
 export function originalToolboxDatabaseName(args: {
@@ -132,29 +127,50 @@ function defaultPrimary(masterIdentityKey: string): VaultAccount {
   return { index: 0, name: 'Primary', identityKey: masterIdentityKey }
 }
 
-export function readVaultAccounts(masterIdentityKey: string): VaultAccountStore {
-  const empty: VaultAccountStore = {
+function readStoredAccounts(masterIdentityKey: string): VaultAccountStore | null {
+  try {
+    const raw = localStorage.getItem(storageKey(masterIdentityKey))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as VaultAccountStore
+    if (parsed?.version !== 1 || !Array.isArray(parsed.accounts)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/** The store for a vault created on this device: it has nothing to discover. */
+export function initCreatedVaultAccounts(master: VaultMaster): VaultAccountStore {
+  const masterIdentityKey = vaultIdentityKey(master)
+  const store: VaultAccountStore = {
     version: 1,
     masterIdentityKey,
     activeIndex: 0,
     accounts: [defaultPrimary(masterIdentityKey)],
+    discovered: true,
   }
-  try {
-    const raw = localStorage.getItem(storageKey(masterIdentityKey))
-    if (!raw) return empty
-    const parsed = JSON.parse(raw) as VaultAccountStore
-    if (parsed?.version !== 1 || !Array.isArray(parsed.accounts)) return empty
-    if (!parsed.accounts.some((a) => a.index === 0)) {
-      parsed.accounts = [defaultPrimary(masterIdentityKey), ...parsed.accounts]
+  writeVaultAccounts(store)
+  return store
+}
+
+export function readVaultAccounts(masterIdentityKey: string): VaultAccountStore {
+  const parsed = readStoredAccounts(masterIdentityKey)
+  if (!parsed) {
+    return {
+      version: 1,
+      masterIdentityKey,
+      activeIndex: 0,
+      accounts: [defaultPrimary(masterIdentityKey)],
     }
-    parsed.masterIdentityKey = masterIdentityKey
-    if (!parsed.accounts.some((a) => a.index === parsed.activeIndex)) {
-      parsed.activeIndex = 0
-    }
-    return parsed
-  } catch {
-    return empty
   }
+  if (!parsed.accounts.some((a) => a.index === 0)) {
+    parsed.accounts = [defaultPrimary(masterIdentityKey), ...parsed.accounts]
+  }
+  parsed.masterIdentityKey = masterIdentityKey
+  if (!parsed.accounts.some((a) => a.index === parsed.activeIndex)) {
+    parsed.activeIndex = 0
+  }
+  return parsed
 }
 
 const listeners = new Set<() => void>()
@@ -175,22 +191,12 @@ export function writeVaultAccounts(store: VaultAccountStore): void {
   for (const listener of listeners) listener()
 }
 
-/** Ensure store exists and primary identity matches the unlocked vault. */
-export function ensureVaultAccounts(
-  masterRootKeyHex: string,
-  masterIdentityKey: string,
-): VaultAccountStore {
+/** Ensure the store exists and every listed identity matches the unlocked vault. */
+export function ensureVaultAccounts(master: VaultMaster): VaultAccountStore {
+  const masterIdentityKey = vaultIdentityKey(master)
   const store = readVaultAccounts(masterIdentityKey)
-  const primary = store.accounts.find((a) => a.index === 0)
-  if (primary) primary.identityKey = masterIdentityKey
-  // Refresh derived identityKeys (deterministic) in case protocol stayed fixed.
   for (const acct of store.accounts) {
-    if (acct.index === 0) continue
-    try {
-      acct.identityKey = identityKeyForAccount(masterRootKeyHex, acct.index)
-    } catch {
-      // leave stored
-    }
+    acct.identityKey = acct.index === 0 ? masterIdentityKey : identityKeyForAccount(master, acct.index)
   }
   writeVaultAccounts(store)
   return store
@@ -202,14 +208,10 @@ export function nextAccountIndex(store: VaultAccountStore): number {
   return max + 1
 }
 
-export function createVaultAccount(args: {
-  masterRootKeyHex: string
-  masterIdentityKey: string
-  name: string
-}): VaultAccountStore {
-  const store = ensureVaultAccounts(args.masterRootKeyHex, args.masterIdentityKey)
+export function createVaultAccount(args: { master: VaultMaster; name: string }): VaultAccountStore {
+  const store = ensureVaultAccounts(args.master)
   const index = nextAccountIndex(store)
-  const identityKey = identityKeyForAccount(args.masterRootKeyHex, index)
+  const identityKey = identityKeyForAccount(args.master, index)
   store.accounts.push({
     index,
     name: args.name.trim() || `Account ${index}`,
@@ -245,14 +247,13 @@ export function setActiveVaultAccountIndex(
 }
 
 export function resolveActiveRootKeyHex(
-  masterRootKeyHex: string,
-  masterIdentityKey: string,
+  master: VaultMaster,
 ): { rootKeyHex: string; accountIndex: number; account: VaultAccount } {
-  const store = ensureVaultAccounts(masterRootKeyHex, masterIdentityKey)
+  const store = ensureVaultAccounts(master)
   const account =
     store.accounts.find((a) => a.index === store.activeIndex) ?? store.accounts[0]!
   return {
-    rootKeyHex: rootKeyHexForAccount(masterRootKeyHex, account.index),
+    rootKeyHex: rootKeyHexForAccount(master, account.index),
     accountIndex: account.index,
     account,
   }

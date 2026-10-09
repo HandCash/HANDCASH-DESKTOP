@@ -12,6 +12,8 @@ import { getWalletRuntime } from './walletRuntime'
  *
  * Lifecycle: create-once | restore | unlock | rewrap factors.
  * Never mint a second root while toolbox UTXOs or an existing vault identity exist.
+ * The vault secret is the master every account derives from (BRC-208). New
+ * vaults hold BRC-157 entropy (24 words); older ones a root that is account 0.
  */
 import { Hash, HD, Mnemonic, PrivateKey } from '@bsv/sdk'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
@@ -22,10 +24,20 @@ import {
   deviceAuthUnlock,
 } from './deviceAuth.js'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { initCreatedVaultAccounts } from './vaultAccounts'
+import {
+  accountRootKeyHex,
+  brc157VaultMaster,
+  brc157VaultMasterFromKey,
+  brc42VaultMaster,
+  parseVaultMaster,
+  type AccountDerivation,
+  type VaultMaster,
+} from './vaultMaster'
 import { validatePassword } from './passwordPolicy.js'
 
-/** BRC-75 (default) or pre-BRC-75 HD master from BIP39 seed. */
-export type MnemonicScheme = 'brc-75' | 'legacy-hd'
+/** BRC-157 entropy (new vaults), BRC-75, or the pre-BRC-75 HD master of a BIP39 seed. */
+export type MnemonicScheme = 'brc-157' | 'brc-75' | 'legacy-hd'
 
 const VAULT_KEY = 'handcash.brc100.vault.v1'
 const VAULT_BACKUP_KEY = 'handcash.brc100.vault.backup.v1'
@@ -64,6 +76,8 @@ export type VaultRecord = {
   salt?: string
   /** Present on v2+ wallets created/restored with BIP39. */
   hasMnemonic?: boolean
+  /** How accounts derive from the vault secret; absent on older vaults (`brc-42`). */
+  derivation?: AccountDerivation
   /** v3 multi-factor wraps of the DEK. */
   wraps?: VaultWraps
 }
@@ -74,7 +88,7 @@ export type VaultUnlockFactors = {
 }
 
 export type UnlockedVault = {
-  rootKeyHex: string
+  master: VaultMaster
   mnemonic: string | null
   record: VaultRecord
 }
@@ -99,9 +113,26 @@ type ToolboxUserRow = {
   identityKey?: string
 }
 
+/** `rootKeyHex` is the vault master's key; a BRC-157 entropy key when `derivation` says so. */
 type VaultSecretV2 = {
   rootKeyHex: string
-  mnemonic: string
+  mnemonic: string | null
+  derivation?: 'brc-157'
+  entropyLength?: number
+}
+
+function serializeVaultSecret(master: VaultMaster, mnemonic: string | null): string {
+  if (master.derivation === 'brc-157') {
+    return JSON.stringify({
+      rootKeyHex: master.keyHex,
+      mnemonic,
+      derivation: 'brc-157',
+      entropyLength: master.entropyLength,
+    } satisfies VaultSecretV2)
+  }
+  return mnemonic
+    ? JSON.stringify({ rootKeyHex: master.keyHex, mnemonic } satisfies VaultSecretV2)
+    : master.keyHex
 }
 
 function b64(bytes: ArrayBuffer | Uint8Array): string {
@@ -234,11 +265,14 @@ function persistVault(
 }
 
 type MnemonicDerived = {
+  master: VaultMaster
+  /** Account 0's root key, identity and address. */
   rootKeyHex: string
   identityKey: string
   address: string
   mnemonic: string
   scheme: MnemonicScheme
+  label: string
 }
 
 function normalizeMnemonic(mnemonic: string): Mnemonic {
@@ -247,24 +281,37 @@ function normalizeMnemonic(mnemonic: string): Mnemonic {
   return m
 }
 
+function derivedFromMaster(master: VaultMaster, mnemonic: string, scheme: MnemonicScheme): MnemonicDerived {
+  const primary = PrivateKey.fromHex(accountRootKeyHex(master, 0))
+  return {
+    master,
+    rootKeyHex: primary.toHex(),
+    identityKey: primary.toPublicKey().toString(),
+    address: primary.toAddress(),
+    mnemonic,
+    scheme,
+    label: scheme,
+  }
+}
+
 function derivedFromPrivateKey(
   key: PrivateKey,
   mnemonic: string,
   scheme: MnemonicScheme,
 ): MnemonicDerived {
-  return {
-    rootKeyHex: key.toHex(),
-    identityKey: key.toPublicKey().toString(),
-    address: key.toAddress(),
-    mnemonic,
-    scheme,
-  }
+  return derivedFromMaster(brc42VaultMaster(key.toHex()), mnemonic, scheme)
 }
 
 /**
- * BRC-75 — BIP39 mnemonic → seed → SHA-256(seed) as the master private key.
- * New wallets use 128-bit entropy (12 words).
+ * BRC-157 — the phrase encodes entropy; accounts are BIP-32 profiles
+ * `m/0'/n'` of its seed (empty passphrase). New wallets use 32 bytes (24 words).
  */
+export function rootKeyFromMnemonicBrc157(mnemonic: string): MnemonicDerived {
+  const m = normalizeMnemonic(mnemonic)
+  return derivedFromMaster(brc157VaultMaster(m.toEntropy()), m.toString(), 'brc-157')
+}
+
+/** BRC-75 — BIP39 mnemonic → seed → SHA-256(seed) as the master private key. */
 export function rootKeyFromMnemonicBrc75(mnemonic: string, passphrase = ''): MnemonicDerived {
   const m = normalizeMnemonic(mnemonic)
   const seed = m.toSeed(passphrase)
@@ -301,31 +348,52 @@ export function keyFromMnemonicHdPath(
   return derivedFromPrivateKey(node.privKey, m.toString(), 'legacy-hd')
 }
 
-/** Default derivation for new wallets / backups (BRC-75). */
-export function rootKeyFromMnemonic(mnemonic: string, passphrase = ''): MnemonicDerived {
-  return rootKeyFromMnemonicBrc75(mnemonic, passphrase)
-}
-
 /**
- * Pick BRC-75 unless local toolbox / vault already belongs to the legacy HD key.
+ * Which reading of a phrase this device restores: a reading the local vault or
+ * toolbox already holds, else the one with something to recover (see
+ * `vaultMasterChoice.ts`). With nothing anywhere, 24 words without a
+ * passphrase are BRC-157 (what HandCash creates); shorter phrases are BRC-75.
  */
 async function resolveMnemonicDerivation(
   mnemonic: string,
   passphrase: string,
+  chain: Chain,
 ): Promise<MnemonicDerived> {
   const brc75 = rootKeyFromMnemonicBrc75(mnemonic, passphrase)
   const legacy = rootKeyFromMnemonicLegacyHd(mnemonic, passphrase)
-  if (brc75.identityKey === legacy.identityKey) return brc75
+  const brc157 = passphrase ? null : rootKeyFromMnemonicBrc157(mnemonic)
+  const candidates = [brc157, brc75, legacy].filter((c): c is MnemonicDerived => c !== null)
 
   const meta = readVaultMeta()
-  if (meta?.identityKey === legacy.identityKey) return legacy
-  if (meta?.identityKey === brc75.identityKey) return brc75
-
   const toolboxKeys = await listToolboxIdentityKeys()
-  if (toolboxKeys.includes(legacy.identityKey) && !toolboxKeys.includes(brc75.identityKey)) {
-    return legacy
-  }
-  return brc75
+  const local = candidates.find(
+    (c) => meta?.identityKey === c.identityKey || toolboxKeys.includes(c.identityKey),
+  )
+  if (local) return local
+
+  const preferred = brc157 && brc75.mnemonic.split(' ').length === 24 ? brc157 : brc75
+  const { chooseRestoredMaster, probeVaultMasterUse } = await import('./vaultMasterChoice')
+  return chooseRestoredMaster({ candidates, preferred, probe: probeVaultMasterUse(chain) })
+}
+
+/**
+ * Which reading of a reconstructed key (emergency key or BRC-140 slices): a
+ * BRC-157 entropy key or a BRC-42 root. Same evidence order as phrases; with
+ * nothing anywhere it is BRC-157, the reading of every key HandCash issues now.
+ */
+async function resolveKeyDerivation(keyHex: string, chain: Chain): Promise<{ master: VaultMaster; label: string }> {
+  const brc157 = { master: brc157VaultMasterFromKey(keyHex), label: 'brc-157' }
+  const brc42 = { master: brc42VaultMaster(keyHex), label: 'brc-42' }
+  const candidates = [brc157, brc42]
+  const meta = readVaultMeta()
+  const toolboxKeys = await listToolboxIdentityKeys()
+  const local = candidates.find((c) => {
+    const id = PrivateKey.fromHex(accountRootKeyHex(c.master, 0)).toPublicKey().toString()
+    return meta?.identityKey === id || toolboxKeys.includes(id)
+  })
+  if (local) return local
+  const { chooseRestoredMaster, probeVaultMasterUse } = await import('./vaultMasterChoice')
+  return chooseRestoredMaster({ candidates, preferred: brc157, probe: probeVaultMasterUse(chain) })
 }
 
 async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
@@ -454,6 +522,7 @@ async function buildV3Record(args: {
   address: string
   secret: string
   hasMnemonic: boolean
+  derivation: AccountDerivation
   password?: string
   useDevice?: boolean
 }): Promise<VaultRecord> {
@@ -493,6 +562,7 @@ async function buildV3Record(args: {
     ciphertext: enc.ciphertext,
     iv: enc.iv,
     hasMnemonic: args.hasMnemonic,
+    ...(args.derivation === 'brc-157' ? { derivation: 'brc-157' as const } : {}),
     wraps,
   }
 }
@@ -528,7 +598,7 @@ async function unlockWithDek(
 ): Promise<UnlockedVault> {
   if (record.version !== 3) throw new Error('Corrupt wallet vault')
   const plain = await decryptSecretWithDek(dek, record.ciphertext, record.iv)
-  const { rootKeyHex, mnemonic } = parseUnlockedSecret(plain)
+  const { master, mnemonic } = parseUnlockedSecret(plain)
   const mismatch = await getVaultToolboxMismatch(record.identityKey)
   if (mismatch?.orphanedFundsLikely) {
     appendAudit({
@@ -542,22 +612,24 @@ async function unlockWithDek(
       'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase, BRC-140 shares, or emergency key if you have them.',
     )
   }
-  return { rootKeyHex, mnemonic, record }
+  return { master, mnemonic, record }
 }
 
-function parseUnlockedSecret(plain: string): { rootKeyHex: string; mnemonic: string | null } {
+function parseUnlockedSecret(plain: string): { master: VaultMaster; mnemonic: string | null } {
   const trimmed = plain.trim()
   if (trimmed.startsWith('{')) {
     const parsed = JSON.parse(trimmed) as VaultSecretV2
     if (typeof parsed.rootKeyHex !== 'string') throw new Error('Corrupt wallet vault')
-    PrivateKey.fromHex(parsed.rootKeyHex)
     return {
-      rootKeyHex: parsed.rootKeyHex,
+      master: parseVaultMaster({
+        keyHex: parsed.rootKeyHex,
+        derivation: parsed.derivation,
+        entropyLength: parsed.entropyLength,
+      }),
       mnemonic: typeof parsed.mnemonic === 'string' ? parsed.mnemonic : null,
     }
   }
-  PrivateKey.fromHex(trimmed)
-  return { rootKeyHex: trimmed, mnemonic: null }
+  return { master: brc42VaultMaster(trimmed), mnemonic: null }
 }
 
 export function hasVault(): boolean {
@@ -742,23 +814,24 @@ export async function createVault(args: {
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
 
-  // BRC-75 examples use 128-bit entropy → 12-word BIP39 phrase.
-  const generated = Mnemonic.fromRandom(128)
-  const mnemonic = generated.toString()
-  const derived = rootKeyFromMnemonicBrc75(mnemonic)
-  const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic }
+  // BRC-157: 32 bytes of entropy in [1, n−1] (a random key), 24 words.
+  const entropy = PrivateKey.fromRandom().toArray('be', 32)
+  const mnemonic = Mnemonic.fromEntropy(entropy).toString()
+  const derived = rootKeyFromMnemonicBrc157(mnemonic)
   const record = await buildV3Record({
     chain: args.chain,
     handle,
     identityKey: derived.identityKey,
     address: derived.address,
-    secret: JSON.stringify(secret),
+    secret: serializeVaultSecret(derived.master, mnemonic),
     hasMnemonic: true,
+    derivation: derived.master.derivation,
     password: args.password,
     useDevice: args.useDevice,
   })
   persistVault(record, 'create')
-  return { rootKeyHex: derived.rootKeyHex, mnemonic, record }
+  initCreatedVaultAccounts(derived.master)
+  return { master: derived.master, mnemonic, record }
 }
 
 export async function restoreVaultFromMnemonic(args: {
@@ -769,7 +842,7 @@ export async function restoreVaultFromMnemonic(args: {
   handle?: string
   passphrase?: string
 }): Promise<UnlockedVault> {
-  const derived = await resolveMnemonicDerivation(args.mnemonic, args.passphrase ?? '')
+  const derived = await resolveMnemonicDerivation(args.mnemonic, args.passphrase ?? '', args.chain)
 
   let allowIdentityReplace = false
   if (hasVault()) {
@@ -792,23 +865,23 @@ export async function restoreVaultFromMnemonic(args: {
   }
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
-  const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic }
   const record = await buildV3Record({
     chain: args.chain,
     handle,
     identityKey: derived.identityKey,
     address: derived.address,
-    secret: JSON.stringify(secret),
+    secret: serializeVaultSecret(derived.master, derived.mnemonic),
     hasMnemonic: true,
+    derivation: derived.master.derivation,
     password: args.password,
     useDevice: args.useDevice,
   })
   persistVault(record, 'restore', { allowIdentityReplace })
-  return { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic, record }
+  return { master: derived.master, mnemonic: derived.mnemonic, record }
 }
 
 /**
- * Restore from a BRC-140 reconstructed root key (no mnemonic).
+ * Restore from an emergency key or BRC-140 reconstructed key (no mnemonic).
  * Same custody guards as mnemonic restore.
  */
 export async function restoreVaultFromRootKey(args: {
@@ -818,10 +891,10 @@ export async function restoreVaultFromRootKey(args: {
   chain: Chain
   handle?: string
 }): Promise<UnlockedVault> {
-  const key = PrivateKey.fromHex(args.rootKeyHex.trim())
-  const rootKeyHex = key.toHex()
-  const identityKey = key.toPublicKey().toString()
-  const address = key.toAddress()
+  const { master } = await resolveKeyDerivation(args.rootKeyHex, args.chain)
+  const primary = PrivateKey.fromHex(accountRootKeyHex(master, 0))
+  const identityKey = primary.toPublicKey().toString()
+  const address = primary.toAddress()
 
   let allowIdentityReplace = false
   if (hasVault()) {
@@ -848,13 +921,14 @@ export async function restoreVaultFromRootKey(args: {
     handle,
     identityKey,
     address,
-    secret: rootKeyHex,
+    secret: serializeVaultSecret(master, null),
     hasMnemonic: false,
+    derivation: master.derivation,
     password: args.password,
     useDevice: args.useDevice,
   })
   persistVault(record, 'restore', { allowIdentityReplace })
-  return { rootKeyHex, mnemonic: null, record }
+  return { master, mnemonic: null, record }
 }
 
 export async function unlockVault(password: string): Promise<UnlockedVault> {
@@ -871,7 +945,7 @@ export async function unlockVault(password: string): Promise<UnlockedVault> {
 
     const plain = await decryptSecretLegacy(password, record)
     const migrated = await migrateLegacyToV3(password, record, plain)
-    const { rootKeyHex, mnemonic } = parseUnlockedSecret(plain)
+    const { master, mnemonic } = parseUnlockedSecret(plain)
     const mismatch = await getVaultToolboxMismatch(migrated.identityKey)
     if (mismatch?.orphanedFundsLikely) {
       appendAudit({
@@ -885,7 +959,7 @@ export async function unlockVault(password: string): Promise<UnlockedVault> {
         'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase, BRC-140 shares, or emergency key if you have them.',
       )
     }
-    return { rootKeyHex, mnemonic, record: migrated }
+    return { master, mnemonic, record: migrated }
   } catch (err) {
     if (err instanceof Error && err.message.includes('does not match the funded')) throw err
     if (err instanceof Error && err.message.includes('no HandCash password')) throw err
@@ -932,17 +1006,16 @@ export async function revealMnemonic(_password?: string | null): Promise<string>
 }
 
 /**
- * Reveal the vault master root key from the unlocked session — never gated on
- * HandCash password. Always the master: sub-accounts (BRC-208) derive from it,
- * so a backup of an account's own key would restore that account as a new,
- * unrelated master and strand every other account.
+ * Reveal the vault master's key from the unlocked session — never gated on
+ * HandCash password. Always the master (BRC-157 entropy key or BRC-42 root):
+ * sub-accounts (BRC-208) derive from it, so a backup of an account's own key
+ * would restore that account as a new, unrelated vault and strand the rest.
  */
 export async function revealRootKeyHex(_password?: string | null): Promise<string> {
   const active = getWalletRuntime()?.instance ?? null
-  const master = active?.masterRootKeyHex ?? active?.rootKeyHex
-  if (master) return master
+  if (active) return active.vaultMaster.keyHex
   const unlocked = await unlockVaultWithDevice('Reveal emergency key')
-  return unlocked.rootKeyHex
+  return unlocked.master.keyHex
 }
 
 export async function changeVaultPassword(
@@ -956,12 +1029,7 @@ export async function changeVaultPassword(
   }
 
   const unlocked = await unlockVault(currentPassword)
-  const secret = unlocked.mnemonic
-    ? JSON.stringify({
-        rootKeyHex: unlocked.rootKeyHex,
-        mnemonic: unlocked.mnemonic,
-      } satisfies VaultSecretV2)
-    : unlocked.rootKeyHex
+  const secret = serializeVaultSecret(unlocked.master, unlocked.mnemonic)
 
   // Prefer re-wrapping the existing DEK when already on v3.
   let dek: Uint8Array
@@ -1041,12 +1109,7 @@ export async function enableDeviceUnlock(password: string): Promise<void> {
     dek = await unwrapDekWithPassword(password, record.wraps.password)
   } else {
     // Should already be migrated by unlockVault — belt and suspenders.
-    const secret = unlocked.mnemonic
-      ? JSON.stringify({
-          rootKeyHex: unlocked.rootKeyHex,
-          mnemonic: unlocked.mnemonic,
-        } satisfies VaultSecretV2)
-      : unlocked.rootKeyHex
+    const secret = serializeVaultSecret(unlocked.master, unlocked.mnemonic)
     record = await migrateLegacyToV3(password, record, secret)
     dek = await unwrapDekWithPassword(password, record.wraps!.password!)
   }

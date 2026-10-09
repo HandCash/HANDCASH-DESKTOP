@@ -556,7 +556,7 @@ export async function replaceLocalHistoryFromCloud(
 ): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
-  const { rootKeyHex, handle, chain, identityKey, accountIndex, masterRootKeyHex, mnemonic } = active
+  const { rootKeyHex, handle, chain, identityKey, accountIndex, vaultMaster, mnemonic } = active
   progress?.onStage?.('download')
   const url = historyBackupObjectUrl(identityKey, getHistoryBackupPrefs())
   const response = await signedIdentityFetch(rootKeyHex, 'history', url)
@@ -595,12 +595,12 @@ export async function replaceLocalHistoryFromCloud(
     active.monitor?.stopTasks?.()
     progress?.onStage?.('reboot')
     try {
-      const next = await bootWallet({ rootKeyHex, handle, chain, accountIndex, masterRootKeyHex, mnemonic })
+      const next = await bootWallet({ rootKeyHex, handle, chain, accountIndex, vaultMaster, mnemonic })
       if (next.identityKey !== identityKey) throw new Error('Replacement wallet identity mismatch')
       await recoverEchoedChange(next)
     } catch (error) {
       selectToolboxDatabase(account, original)
-      await bootWallet({ rootKeyHex, handle, chain, accountIndex, masterRootKeyHex, mnemonic })
+      await bootWallet({ rootKeyHex, handle, chain, accountIndex, vaultMaster, mnemonic })
       throw error
     }
   })

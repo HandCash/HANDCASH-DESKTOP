@@ -10,23 +10,25 @@ import {
   toolboxDatabaseName,
   VAULT_ACCOUNT_PROTOCOL,
 } from './vaultAccounts'
+import { brc42VaultMaster } from './vaultMaster'
 
 const MASTER =
   '0000000000000000000000000000000000000000000000000000000000000001'
+const ROOT = brc42VaultMaster(MASTER)
 
 describe('vaultAccounts (BRC-208)', () => {
-  it('keeps account 0 as the master root', () => {
-    expect(rootKeyHexForAccount(MASTER, 0)).toBe(MASTER)
+  it('keeps account 0 as the root of a BRC-42 vault', () => {
+    expect(rootKeyHexForAccount(ROOT, 0)).toBe(MASTER)
   })
 
   it('derives distinct deterministic roots for n >= 1', () => {
-    const a1 = rootKeyHexForAccount(MASTER, 1)
-    const a2 = rootKeyHexForAccount(MASTER, 2)
+    const a1 = rootKeyHexForAccount(ROOT, 1)
+    const a2 = rootKeyHexForAccount(ROOT, 2)
     expect(a1).not.toBe(MASTER)
     expect(a2).not.toBe(a1)
-    expect(rootKeyHexForAccount(MASTER, 1)).toBe(a1)
-    expect(identityKeyForAccount(MASTER, 1)).not.toBe(
-      identityKeyForAccount(MASTER, 0),
+    expect(rootKeyHexForAccount(ROOT, 1)).toBe(a1)
+    expect(identityKeyForAccount(ROOT, 1)).not.toBe(
+      identityKeyForAccount(ROOT, 0),
     )
   })
 
@@ -42,10 +44,10 @@ describe('vaultAccounts (BRC-208)', () => {
       keyID: 'account-1',
       counterparty: 'self',
     })
-    expect(publicKey).toBe(identityKeyForAccount(MASTER, 1))
+    expect(publicKey).toBe(identityKeyForAccount(ROOT, 1))
 
     const refuse = (args: unknown, method = 'getPublicKey') =>
-      reservedKeyRefusal(method, args, identityKeyForAccount(MASTER, 0))
+      reservedKeyRefusal(method, args, identityKeyForAccount(ROOT, 0))
     expect(refuse({ protocolID: [2, 'account'], keyID: 'account-1' })).toBe('account-protocol')
     expect(refuse({ protocolID: [2, ' ACCOUNT '] })).toBe('account-protocol')
     expect(refuse({ protocolID: [0, 'account'] })).toBe('account-protocol')
@@ -58,7 +60,7 @@ describe('vaultAccounts (BRC-208)', () => {
     const root = PrivateKey.fromHex(MASTER)
     const deriver = new KeyDeriver(root)
     const n = new BigNumber('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 16)
-    const self = identityKeyForAccount(MASTER, 0)
+    const self = identityKeyForAccount(ROOT, 0)
     const exported: Array<[[0 | 1 | 2, string], string]> = [
       [[2, 'handcash server wallet'], '1'],
       [[1, 'sigma'], 'identity-1'],
@@ -77,20 +79,20 @@ describe('vaultAccounts (BRC-208)', () => {
     expect(
       reservedKeyRefusal(
         'revealSpecificKeyLinkage',
-        { protocolID: [2, 'handcash server wallet'], keyID: '1', counterparty: identityKeyForAccount(MASTER, 1), verifier: '02ab' },
+        { protocolID: [2, 'handcash server wallet'], keyID: '1', counterparty: identityKeyForAccount(ROOT, 1), verifier: '02ab' },
         self,
       ),
     ).toBeNull()
   })
 
   it('refuses to reveal the shared secret that yields every account offset', () => {
-    const self = identityKeyForAccount(MASTER, 0)
+    const self = identityKeyForAccount(ROOT, 0)
     const reveal = (counterparty: string) =>
       reservedKeyRefusal('revealCounterpartyKeyLinkage', { counterparty, verifier: '02ab' }, self)
     expect(reveal(self)).toBe('self-linkage')
     expect(reveal(self.toUpperCase())).toBe('self-linkage')
     expect(reveal('self')).toBe('self-linkage')
-    expect(reveal(identityKeyForAccount(MASTER, 1))).toBeNull()
+    expect(reveal(identityKeyForAccount(ROOT, 1))).toBeNull()
     expect(
       reservedKeyRefusal('encrypt', { counterparty: self, protocolID: [1, 'chat'] }, self),
     ).toBeNull()

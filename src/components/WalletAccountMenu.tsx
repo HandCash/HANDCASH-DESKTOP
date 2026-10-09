@@ -1,7 +1,6 @@
 import { getActiveWallet } from '../wallet/session'
 
 import { stateToAttr } from '@aeon-ui/core'
-import { PrivateKey } from '@bsv/sdk'
 import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
@@ -18,9 +17,11 @@ import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
+import { vaultIdentityKey } from '../wallet/vaultMaster'
 import {
   createVaultAccount,
   ensureVaultAccounts,
+  nextAccountIndex,
   readVaultAccounts,
   subscribeVaultAccounts,
   type VaultAccount,
@@ -43,8 +44,8 @@ const accountMenuMachine = walletAccountMenuMachine.provide({
 })
 
 function masterIdentityKeyFromActive(): string | null {
-  const root = getActiveWallet()?.masterRootKeyHex
-  return root ? PrivateKey.fromHex(root).toPublicKey().toString() : null
+  const master = getActiveWallet()?.vaultMaster
+  return master ? vaultIdentityKey(master) : null
 }
 
 function messageOf(error: unknown): string {
@@ -73,9 +74,7 @@ export function WalletAccountMenu({
   const refreshList = () => {
     const active = getActiveWallet()
     const masterIk = masterIdentityKeyFromActive() ?? profile.identityKey
-    if (active?.masterRootKeyHex) {
-      ensureVaultAccounts(active.masterRootKeyHex, masterIk)
-    }
+    if (active) ensureVaultAccounts(active.vaultMaster)
     const store = readVaultAccounts(masterIk)
     setAccounts(
       store.accounts.map((account) => {
@@ -127,7 +126,7 @@ export function WalletAccountMenu({
 
   const runSwitch = async (index: number, then: 'stay' | 'profile' = 'stay') => {
     const active = getActiveWallet()
-    if (!active?.masterRootKeyHex) {
+    if (!active) {
       toastError('Accounts', 'Unlock the vault before switching wallets.')
       return
     }
@@ -142,12 +141,8 @@ export function WalletAccountMenu({
       send({ type: 'CHOOSE', accountIndex: index })
     }
     try {
-      const masterIk = PrivateKey.fromHex(active.masterRootKeyHex)
-        .toPublicKey()
-        .toString()
       const next = await switchVaultAccount({
-        masterRootKeyHex: active.masterRootKeyHex,
-        masterIdentityKey: masterIk,
+        vaultMaster: active.vaultMaster,
         handle: active.handle,
         chain: active.chain,
         mnemonic: active.mnemonic,
@@ -191,20 +186,16 @@ export function WalletAccountMenu({
 
   const runCreate = async () => {
     const active = getActiveWallet()
-    if (!active?.masterRootKeyHex) {
+    if (!active) {
       toastError('Accounts', 'Unlock the vault before creating a wallet.')
       return
     }
     send({ type: 'CREATE' })
     try {
-      const masterIk = PrivateKey.fromHex(active.masterRootKeyHex)
-        .toPublicKey()
-        .toString()
-      const before = readVaultAccounts(masterIk)
+      const before = readVaultAccounts(vaultIdentityKey(active.vaultMaster))
       const store = createVaultAccount({
-        masterRootKeyHex: active.masterRootKeyHex,
-        masterIdentityKey: masterIk,
-        name: `Wallet ${before.accounts.length}`,
+        master: active.vaultMaster,
+        name: `Wallet ${nextAccountIndex(before)}`,
       })
       const created = store.accounts.at(-1)
       if (!created) throw new Error('The new wallet was not saved')

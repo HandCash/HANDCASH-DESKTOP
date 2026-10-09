@@ -56,6 +56,7 @@ import {
 } from './identityCardShare'
 import { IDENTITY_CARD_REQUEST, identityCardFromWire, parseIdentityCard } from './identityCard'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
+import { brc42VaultMaster } from './vaultMaster'
 
 const me = PrivateKey.fromHex('0c'.padStart(64, '0'))
 const friendKey = PrivateKey.fromHex('0d'.padStart(64, '0')).toPublicKey().toString().toLowerCase()
@@ -98,7 +99,7 @@ beforeEach(() => {
     instance: {
       identityKey: me.toPublicKey().toString(),
       rootKeyHex: meHex,
-      masterRootKeyHex: master.toHex().padStart(64, '0'),
+      vaultMaster: brc42VaultMaster(master.toHex()),
       chain: 'main',
       accountIndex: 0,
     },

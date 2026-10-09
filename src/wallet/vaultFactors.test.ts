@@ -35,11 +35,23 @@ vi.mock('./deviceAuth.js', () => ({
   },
 }))
 
+const local = new Map<string, string>()
+
 describe('vault multi-factor unlock', () => {
   beforeEach(() => {
     durable.clear()
+    local.clear()
     deviceStore.secret = null
     vi.resetModules()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => local.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        local.set(k, v)
+      },
+      removeItem: (k: string) => {
+        local.delete(k)
+      },
+    })
   })
 
   it('creates with device-only and unlocks without a password', async () => {
@@ -51,7 +63,8 @@ describe('vault multi-factor unlock', () => {
     await expect(vault.unlockVault('anything-long-enough')).rejects.toThrow(/no HandCash password/i)
 
     const unlocked = await vault.unlockVaultWithDevice()
-    expect(unlocked.rootKeyHex).toBe(created.rootKeyHex)
+    expect(unlocked.master).toEqual(created.master)
+    expect(await vault.revealRootKeyHex()).toBe(created.master.keyHex)
   })
 
   it('supports password + device and can drop the password', async () => {
@@ -71,7 +84,7 @@ describe('vault multi-factor unlock', () => {
     expect(vault.readVaultUnlockFactors()).toEqual({ password: false, device: true })
 
     const unlocked = await vault.unlockVaultWithDevice()
-    expect(unlocked.rootKeyHex).toBe(created.rootKeyHex)
+    expect(unlocked.master).toEqual(created.master)
   })
 
   it('migrates legacy password vaults to v3 on unlock', async () => {
@@ -82,6 +95,23 @@ describe('vault multi-factor unlock', () => {
     expect(created.record.version).toBe(3)
     expect(vault.readVaultUnlockFactors()).toEqual({ password: true, device: false })
     const unlocked = await vault.unlockVault('CorrectHorse1')
-    expect(unlocked.rootKeyHex).toBe(created.rootKeyHex)
+    expect(unlocked.master).toEqual(created.master)
+  })
+
+  it('creates a BRC-157 vault and keeps its derivation through a password change', async () => {
+    const vault = await import('./vault.js')
+    const { accountIdentityKey, brc157Mnemonic } = await import('./vaultMaster.js')
+    const created = await vault.createVault({ chain: 'main', password: 'CorrectHorse1' })
+    expect(created.master.derivation).toBe('brc-157')
+    expect(created.mnemonic?.split(' ')).toHaveLength(24)
+    expect(created.record.derivation).toBe('brc-157')
+    expect(created.record.identityKey).toBe(accountIdentityKey(created.master, 0))
+    if (created.master.derivation !== 'brc-157') throw new Error('unreachable')
+    expect(brc157Mnemonic(created.master).toString()).toBe(created.mnemonic)
+
+    await vault.changeVaultPassword('CorrectHorse1', 'BatteryStaple2')
+    const unlocked = await vault.unlockVault('BatteryStaple2')
+    expect(unlocked.master).toEqual(created.master)
+    expect(unlocked.mnemonic).toBe(created.mnemonic)
   })
 })

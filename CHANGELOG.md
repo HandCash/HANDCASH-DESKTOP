@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.546] - 2026-10-09
+
+### Changed
+- **New wallets are BRC-157 vaults, and each account is a BRC-157 profile.** The backup is now 24 words of BRC-157 entropy, and the wallet's own key never signs anything. Account 0 is profile `m/0'/0'`, and each new wallet in the account menu is the next profile, `m/0'/1'`, `m/0'/2'` and so on. These are hardened keys: one account's key, together with anything the wallet reveals, gives nothing about the vault or any other account. Under the old scheme, account roots were BRC-42 children of a root that was itself a live wallet, and only bridge refusals kept them apart. Any wallet that implements BRC-157 derives the same accounts from the same 24 words.
+- **Existing wallets do not move.** A vault created before this release keeps its root as account 0 and its BRC-42 accounts (`[2, "account"]`, `account-n`). Each vault records its derivation, and a password change, a device unlock change or a sealed recovery copy carries it.
+- **Restore works out which wallet a backup belongs to.** The same words can be a BRC-157 phrase, a BRC-75 phrase or a pre-BRC-75 HD phrase. A key from slices or an emergency key can be BRC-157 entropy or a root. Restore first opens any reading this device already holds. Otherwise it checks account 0 of each reading for a history backup, waiting mail, coins at its address and a bound `$handle`, and opens the reading that has any. With nothing anywhere, 24 words open as BRC-157 and shorter phrases as BRC-75. If a host cannot answer, restore stops and asks you to try again rather than guess, because a wrong guess would show an empty wallet in place of the real one. Logs `[vault] derivation choice done Nms: <reading> (<each reading>=used|unused|unknown)`.
+- Sealed recovery copies for paired devices are now sealed with account 0's key, never with the vault entropy. Opening a copy checks that its key derives the identity it claims.
+- The emergency key and BRC-140 slices are the vault master: the entropy key for a new vault, the root for an older one. BRC-208 ([PR #250](https://github.com/bsv-blockchain/BRCs/pull/250)) now specifies both derivations and how a restore chooses between them.
+
 ## [1.3.545] - 2026-10-09
 
 ### Security

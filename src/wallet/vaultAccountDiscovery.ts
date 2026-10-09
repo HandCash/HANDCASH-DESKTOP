@@ -1,5 +1,5 @@
 /**
- * Find vault sub-accounts from the vault root alone (BRC-208 recovery).
+ * Find vault sub-accounts from the vault master alone (BRC-208 recovery).
  *
  * The account list is device storage, so a restored vault starts with only
  * the primary. Indices are allocated in order and never reused, so probing
@@ -15,6 +15,7 @@ import {
   rootKeyHexForAccount,
   writeVaultAccounts,
 } from './vaultAccounts'
+import type { VaultMaster } from './vaultMaster'
 
 export type AccountUse = 'used' | 'unused' | 'unknown'
 
@@ -35,14 +36,14 @@ export const DISCOVERY_GAP = 5
 const MAX_INDEX = 1000
 
 export async function discoverVaultAccounts(args: {
-  masterRootKeyHex: string
-  masterIdentityKey: string
+  master: VaultMaster
   probe: AccountProbe
   gap?: number
 }): Promise<DiscoveryResult> {
-  const { masterRootKeyHex, masterIdentityKey, probe } = args
+  const { master, probe } = args
   const gap = args.gap ?? DISCOVERY_GAP
-  const initial = ensureVaultAccounts(masterRootKeyHex, masterIdentityKey)
+  const initial = ensureVaultAccounts(master)
+  const masterIdentityKey = initial.masterIdentityKey
   if (initial.discovered) return { kind: 'skipped' }
 
   const started = Date.now()
@@ -52,8 +53,8 @@ export async function discoverVaultAccounts(args: {
   let index = start
   let interruptedAt: number | null = null
   while (misses < gap && index <= MAX_INDEX) {
-    const rootKeyHex = rootKeyHexForAccount(masterRootKeyHex, index)
-    const use = await probe({ index, identityKey: identityKeyForAccount(masterRootKeyHex, index), rootKeyHex })
+    const rootKeyHex = rootKeyHexForAccount(master, index)
+    const use = await probe({ index, identityKey: identityKeyForAccount(master, index), rootKeyHex })
     if (use === 'unknown') {
       interruptedAt = index
       break
@@ -72,7 +73,7 @@ export async function discoverVaultAccounts(args: {
   const found: number[] = []
   for (let n = start; n <= lastUsed; n++) {
     if (store.accounts.some((a) => a.index === n)) continue
-    store.accounts.push({ index: n, name: `Wallet ${n}`, identityKey: identityKeyForAccount(masterRootKeyHex, n) })
+    store.accounts.push({ index: n, name: `Wallet ${n}`, identityKey: identityKeyForAccount(master, n) })
     found.push(n)
   }
   store.accounts.sort((a, b) => a.index - b.index)

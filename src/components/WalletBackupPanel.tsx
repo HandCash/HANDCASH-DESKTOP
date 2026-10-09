@@ -401,7 +401,7 @@ export function WalletBackupPanel() {
 
       <AsyncActionPrompt action={backup} />
 
-      <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
+      <SettingsFeatureAbout tags={['BRC-140', 'BRC-157', 'BRC-75']}>
         Any two slices from the same set restore the wallet. Showing slices again shows the same
         set; only Replace slice set makes a new one. Use Share to put them in separate accounts or
         apps; no HandCash server is involved.

@@ -15,7 +15,7 @@ export function AboutHandCashPanel() {
       <div className="about-handcash-body">
         <p>
           Use it to hold BSV, pay friends and apps, manage collectables, and keep recovery under
-          your control — split keys, a twelve-word phrase, and encrypted history backups.
+          your control — split keys, a recovery phrase, and encrypted history backups.
         </p>
         <p>
           HandCash does not hold your seed or spend for you. If you lose this device without a

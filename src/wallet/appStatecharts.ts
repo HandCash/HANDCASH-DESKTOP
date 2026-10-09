@@ -1085,7 +1085,7 @@ const WALLET_IO = `flowchart TB
   end
 
   subgraph Renderer["Renderer — custody after unlock"]
-    KEYS["rootKeyHex + toolbox wallet"]
+    KEYS["vault master (BRC-157 / root)\\n→ account rootKeyHex + toolbox wallet"]
     COORD["walletCoordinator\\n4 exclusive regions"]
     SPEND["Spend machines\\nBSV / item / BRC-100"]
     INGEST["chainIngest\\nscan → import"]
@@ -1603,7 +1603,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'backupPhrase',
     label: 'Keys',
-    caption: 'backupKeys — BRC-140 / BRC-75 reveal',
+    caption: 'backupKeys — BRC-140 / BRC-157 / BRC-75 reveal',
     source: BACKUP_PHRASE,
   },
   {

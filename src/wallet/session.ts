@@ -12,6 +12,7 @@ import { traceStorageLocks } from './storageLockTrace'
 import { persistNoSendActions } from './toolboxActionBatch'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
+import { brc42VaultMaster, forgetVaultMasterCache, vaultIdentityKey, type VaultMaster } from './vaultMaster'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
@@ -62,9 +63,9 @@ export type ActiveWallet = {
   address: string
   handle: string
   chain: Chain
-  /** Vault master root (BRC-75). Same as rootKeyHex when accountIndex is 0. */
-  masterRootKeyHex: string
-  /** BRC-208 account index. 0 = primary / vault master. */
+  /** The vault master every account derives from (BRC-208). */
+  vaultMaster: VaultMaster
+  /** BRC-208 account index. 0 = primary. */
   accountIndex: number
 }
 
@@ -314,6 +315,7 @@ export function clearActiveWallet(): void {
   disposeWalletRuntime('locked')
   clearWarmWallets()
   active = null
+  forgetVaultMasterCache()
   clearSessionBackupPassword()
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
     bindWalletProgressAccount(null)
@@ -376,8 +378,8 @@ type WalletBootArgs = {
   chain: Chain
   /** Present when the vault was unlocked/created with a BIP39 phrase. */
   mnemonic?: string | null
-  /** Vault master root. Defaults to rootKeyHex (primary account). */
-  masterRootKeyHex?: string
+  /** The vault master. Defaults to rootKeyHex as a BRC-42 root (a lone key). */
+  vaultMaster?: VaultMaster
   /** BRC-208 account index. Defaults to 0 (primary). */
   accountIndex?: number
 }
@@ -399,7 +401,7 @@ async function walletUnitFor(args: WalletBootArgs): Promise<WarmWalletUnit> {
  */
 async function buildWallet(args: WalletBootArgs, databaseName: string): Promise<ActiveWallet> {
   const accountIndex = args.accountIndex ?? 0
-  const masterRootKeyHex = args.masterRootKeyHex ?? args.rootKeyHex
+  const vaultMaster = args.vaultMaster ?? brc42VaultMaster(args.rootKeyHex)
   const root = PrivateKey.fromHex(args.rootKeyHex)
   const identityKey = root.toPublicKey().toString()
   const address = root.toAddress()
@@ -471,7 +473,7 @@ async function buildWallet(args: WalletBootArgs, databaseName: string): Promise<
     address,
     handle: args.handle,
     chain: args.chain,
-    masterRootKeyHex,
+    vaultMaster,
     accountIndex,
   }
 }
@@ -562,15 +564,14 @@ async function prewarmQuietWindow(generation: number): Promise<boolean> {
  */
 function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): void {
   if (import.meta.env?.MODE === 'test' || typeof window === 'undefined') return
-  const masterRootKeyHex = selected.masterRootKeyHex
-  if (!masterRootKeyHex) return
+  const vaultMaster = selected.vaultMaster
   const generation = warmPoolGeneration()
   const run = async () => {
     const { readVaultAccounts, rootKeyHexForAccount } = await import('./vaultAccounts')
-    const masterIdentityKey = PrivateKey.fromHex(masterRootKeyHex).toPublicKey().toString()
+    const masterIdentityKey = vaultIdentityKey(vaultMaster)
     try {
       const { discoverVaultAccounts, probeAccountUse } = await import('./vaultAccountDiscovery')
-      await discoverVaultAccounts({ masterRootKeyHex, masterIdentityKey, probe: probeAccountUse })
+      await discoverVaultAccounts({ master: vaultMaster, probe: probeAccountUse })
     } catch (error) {
       console.warn('[vault-accounts] discovery failed', error instanceof Error ? error.message : String(error))
     }
@@ -579,8 +580,8 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
       if (account.index === selected.accountIndex) continue
       const accountArgs: WalletBootArgs = {
         ...args,
-        rootKeyHex: rootKeyHexForAccount(masterRootKeyHex, account.index),
-        masterRootKeyHex,
+        rootKeyHex: rootKeyHexForAccount(vaultMaster, account.index),
+        vaultMaster,
         accountIndex: account.index,
       }
       const unit = await walletUnitFor(accountArgs)
@@ -1112,8 +1113,7 @@ export const ACCOUNT_SWITCH_INGEST_DRAIN_MS = 8_000
  * Inventory / Apps / Friends / Sync status do not spill across subwallets.
  */
 export async function switchVaultAccount(args: {
-  masterRootKeyHex: string
-  masterIdentityKey: string
+  vaultMaster: VaultMaster
   handle: string
   chain: Chain
   mnemonic?: string | null
@@ -1128,11 +1128,11 @@ export async function switchVaultAccount(args: {
     setActiveVaultAccountIndex,
   } = await import('./vaultAccounts')
   const bootArgs: WalletBootArgs = {
-    rootKeyHex: rootKeyHexForAccount(args.masterRootKeyHex, args.accountIndex),
+    rootKeyHex: rootKeyHexForAccount(args.vaultMaster, args.accountIndex),
     handle: args.handle,
     chain: args.chain,
     mnemonic: args.mnemonic,
-    masterRootKeyHex: args.masterRootKeyHex,
+    vaultMaster: args.vaultMaster,
     accountIndex: args.accountIndex,
   }
   // The target unit opens while the outgoing account winds down: building
@@ -1146,7 +1146,7 @@ export async function switchVaultAccount(args: {
   // still owns those foreground projections. Its signed miner submission is
   // retained separately and continues in the background after this fence.
   await waitForForegroundSpendIdle()
-  setActiveVaultAccountIndex(args.masterIdentityKey, args.accountIndex)
+  setActiveVaultAccountIndex(vaultIdentityKey(args.vaultMaster), args.accountIndex)
   logDiag('vault-account', 'info', 'switch', {
     from: active?.accountIndex ?? null,
     to: args.accountIndex,

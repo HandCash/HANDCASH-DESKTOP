@@ -6,7 +6,10 @@ import { getActiveWallet } from './session'
  * Do not treat these as one “sync”. Refresh, Backup, and Restore are different layers.
  *
  * ```
- * custody        vault keys (BRC-75 / BRC-140) — durable, origin-independent
+ * custody        vault keys (BRC-157 / BRC-75 / BRC-140) — durable, origin-independent
+ *                one vault master derives every account (BRC-208): BRC-157
+ *                entropy (profiles m/0'/n', master never signs) for new
+ *                vaults, a root that is also account 0 for older ones
  * localState     toolbox IndexedDB — managed change, baskets, remittance / customInstructions
  * chainIngest    network → localState (spendable review + legacy P2PKH + 1sat import)
  * historyReplica BRC-39 blob — replica of localState for recovery / multi-device
@@ -266,7 +269,7 @@ export type WalletLayer =
 
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
-  custody: ["vault.ts", "sessionBackupAuth.ts", "devKeys.ts"],
+  custody: ["vault.ts", "vaultMaster.ts", "vaultMasterChoice.ts", "vaultAccounts.ts", "vaultAccountDiscovery.ts", "sessionBackupAuth.ts", "devKeys.ts"],
   localState: [
     "session.ts",
     "walletPool.ts",

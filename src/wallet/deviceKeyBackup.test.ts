@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
+import {
+  accountRootKeyHex,
+  brc157VaultMaster,
+  brc42VaultMaster,
+  type VaultMaster,
+} from './vaultMaster'
 
 const store = new Map<string, string>()
 
@@ -25,21 +31,21 @@ vi.mock('./session', () => ({
   getActiveWallet: () => getActiveWallet(),
 }))
 
-function asAlice() {
+const ABANDON =
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+
+function asAlice(master: VaultMaster = brc42VaultMaster(alice.toHex()), mnemonic = ABANDON) {
+  const primary = PrivateKey.fromHex(accountRootKeyHex(master, 0))
   store.set('handcash.brc100.deviceId.v1', 'alice-device')
   getActiveWallet.mockReturnValue({
-    rootKeyHex: alice.toHex(),
-    identityKey: alice.toPublicKey().toString(),
-    address: alice.toAddress(),
+    rootKeyHex: primary.toHex(),
+    identityKey: primary.toPublicKey().toString(),
+    address: primary.toAddress(),
+    vaultMaster: master,
   })
   unlockVault.mockImplementation(async (password: string) => {
     if (password !== 'password12') throw new Error('Incorrect password')
-    return {
-      rootKeyHex: alice.toHex(),
-      mnemonic:
-        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
-      record: { identityKey: alice.toPublicKey().toString() },
-    }
+    return { master, mnemonic, record: { identityKey: primary.toPublicKey().toString() } }
   })
 }
 
@@ -49,11 +55,12 @@ function asBob() {
     rootKeyHex: bob.toHex(),
     identityKey: bob.toPublicKey().toString(),
     address: bob.toAddress(),
+    vaultMaster: brc42VaultMaster(bob.toHex()),
   })
   unlockVault.mockImplementation(async (password: string) => {
     if (password !== 'password12') throw new Error('Incorrect password')
     return {
-      rootKeyHex: bob.toHex(),
+      master: brc42VaultMaster(bob.toHex()),
       mnemonic: null,
       record: { identityKey: bob.toPublicKey().toString() },
     }
@@ -158,5 +165,26 @@ describe('deviceKeyBackup', () => {
         peerDeviceId: 'alice-device',
       }),
     ).rejects.toThrow(/reciprocal device backups are refused/i)
+  })
+
+  it('seals a BRC-157 vault with its primary account and carries the derivation', async () => {
+    const entropy = PrivateKey.fromRandom().toArray('be', 32)
+    const master = brc157VaultMaster(entropy)
+    const primary = PrivateKey.fromHex(accountRootKeyHex(master, 0))
+    asAlice(master, 'brc-157 words')
+    const { createSealedBackupForPeer, importSealedDeviceKeyBackup, openStoredDeviceKeyBackup } =
+      await import('./deviceKeyBackup')
+    const pkg = await createSealedBackupForPeer({
+      password: 'password12',
+      peerIdentityKey: bob.toPublicKey().toString(),
+      peerDeviceId: 'bob-device',
+    })
+    expect(pkg.fromIdentityKey).toBe(primary.toPublicKey().toString())
+
+    asBob()
+    importSealedDeviceKeyBackup(JSON.stringify(pkg))
+    const opened = await openStoredDeviceKeyBackup({ peerDeviceId: 'alice-device', password: 'password12' })
+    expect(opened.rootKeyHex).toBe(master.keyHex)
+    expect(opened.identityKey).toBe(primary.toPublicKey().toString())
   })
 })

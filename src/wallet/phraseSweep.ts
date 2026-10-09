@@ -124,6 +124,7 @@ export function estimateItemMigrateCost(args: {
 }
 
 export type PhraseScheme =
+  | 'brc-157'
   | 'brc-75'
   | 'legacy-hd'
   | 'centi-receive'
@@ -178,6 +179,7 @@ export type PhraseSweepPreview = {
 
 /** Known foreign-wallet derivation branches (Yours / RelayX / Twetch). */
 const HD_BRANCHES: Array<{ scheme: PhraseScheme; label: string; path: string }> = [
+  { scheme: 'brc-157', label: 'BRC-157 profile 0 (HandCash)', path: "m/0'/0'" },
   { scheme: 'yours-ord', label: 'Yours ordinals', path: "m/44'/236'/1'/0/0" },
   { scheme: 'yours-wallet', label: 'Yours wallet', path: "m/44'/236'/0'/1/0" },
   { scheme: 'yours-sweep', label: 'Yours imported', path: "m/44'/236'/0'/0/0" },

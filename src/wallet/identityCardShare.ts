@@ -23,6 +23,7 @@ import { presentedIdentityMaterial, presentedIdentityOfAccount } from './publicI
 import type { IssuerIdentity } from './issuerIdentity'
 import type { Chain } from './vault'
 import { findVaultAccountByIdentityKey } from './vaultAccounts'
+import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 /**
@@ -51,11 +52,11 @@ function currentRuntime(): WalletRuntime | null {
   return runtime && runtimeIsCurrent(runtime) ? runtime : null
 }
 
-let masterIdentity: { rootKeyHex: string; identityKey: string } | null = null
+let masterIdentity: { master: VaultMaster; identityKey: string } | null = null
 
-function masterIdentityKeyOf(rootKeyHex: string): string {
-  if (masterIdentity?.rootKeyHex !== rootKeyHex) {
-    masterIdentity = { rootKeyHex, identityKey: PrivateKey.fromHex(rootKeyHex).toPublicKey().toString() }
+function masterIdentityKeyOf(master: VaultMaster): string {
+  if (masterIdentity?.master !== master) {
+    masterIdentity = { master, identityKey: vaultIdentityKey(master) }
   }
   return masterIdentity.identityKey
 }
@@ -63,9 +64,9 @@ function masterIdentityKeyOf(rootKeyHex: string): string {
 /** Another account of this wallet's vault, derived from the same master. */
 function siblingAccount(runtime: WalletRuntime, peer: string) {
   const active = runtime.instance
-  if (!active.masterRootKeyHex || peer === active.identityKey.toLowerCase()) return null
+  if (peer === active.identityKey.toLowerCase()) return null
   try {
-    return findVaultAccountByIdentityKey(masterIdentityKeyOf(active.masterRootKeyHex), peer)
+    return findVaultAccountByIdentityKey(masterIdentityKeyOf(active.vaultMaster), peer)
   } catch {
     return null
   }

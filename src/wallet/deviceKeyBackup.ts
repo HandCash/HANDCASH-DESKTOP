@@ -11,6 +11,13 @@ import { getActiveWallet } from './session'
  * offers both.
  */
 import { EncryptedMessage, PrivateKey, PublicKey, Utils } from '@bsv/sdk'
+import {
+  accountRootKeyHex,
+  parseVaultMaster,
+  sameVaultMaster,
+  vaultIdentityKey,
+  type VaultMaster,
+} from './vaultMaster'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { getOpenUnlockSecret, isNoDeviceLock } from './deviceLockPrefs'
 import {
@@ -68,12 +75,16 @@ export type DeviceBackupRoleStatus = {
     | 'reciprocal'
 }
 
+/** `rootKeyHex` is the vault master's key; a BRC-157 entropy key when `derivation` says so. */
 type CustodySecret = {
   v: 1
   rootKeyHex: string
   mnemonic: string | null
+  /** Account 0's identity and address. */
   identityKey: string
   address: string
+  derivation?: 'brc-157'
+  entropyLength?: number
 }
 
 type StoreMap = Record<string, DeviceKeyBackupPackage>
@@ -245,18 +256,21 @@ export function deviceBackupNeedsPassword(): boolean {
   return !readVaultUnlockFactors().device
 }
 
-/** The active wallet's master key and its identity — sub-accounts derive from it. */
+/**
+ * The active wallet's vault master and its primary account, whose key seals
+ * and opens copies (a BRC-157 entropy key never signs or encrypts).
+ */
 function masterOfActive(unlocked: UnlockedVault) {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
-  const master = active.masterRootKeyHex ?? active.rootKeyHex
-  if (unlocked.rootKeyHex !== master) {
+  if (!sameVaultMaster(unlocked.master, active.vaultMaster)) {
     throw new Error('Session does not match vault — unlock again')
   }
-  const key = PrivateKey.fromHex(master)
+  const key = PrivateKey.fromHex(accountRootKeyHex(active.vaultMaster, 0))
   return {
     active,
-    rootKeyHex: master,
+    vaultMaster: active.vaultMaster,
+    rootKeyHex: key.toHex(),
     identityKey: key.toPublicKey().toString(),
     address: key.toAddress(),
   }
@@ -370,10 +384,13 @@ export async function createSealedBackupForPeer(args: {
 
   const secret: CustodySecret = {
     v: 1,
-    rootKeyHex: master.rootKeyHex,
+    rootKeyHex: master.vaultMaster.keyHex,
     mnemonic: unlocked.mnemonic,
     identityKey: master.identityKey,
     address: master.address,
+    ...(master.vaultMaster.derivation === 'brc-157'
+      ? { derivation: 'brc-157' as const, entropyLength: master.vaultMaster.entropyLength }
+      : {}),
   }
   const sender = PrivateKey.fromHex(master.rootKeyHex)
   const recipient = PublicKey.fromString(peerIk)
@@ -477,6 +494,19 @@ export async function openStoredDeviceKeyBackup(args: {
   }
   if (secret.identityKey.toLowerCase() !== pkg.fromIdentityKey.toLowerCase()) {
     throw new Error('Sealed spare identity does not match package')
+  }
+  let opened: VaultMaster
+  try {
+    opened = parseVaultMaster({
+      keyHex: secret.rootKeyHex,
+      derivation: secret.derivation,
+      entropyLength: secret.entropyLength,
+    })
+  } catch {
+    throw new Error('Sealed spare payload is unsupported')
+  }
+  if (vaultIdentityKey(opened).toLowerCase() !== secret.identityKey.toLowerCase()) {
+    throw new Error('Sealed spare key does not match its identity')
   }
 
   return {
