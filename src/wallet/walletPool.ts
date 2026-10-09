@@ -1,5 +1,5 @@
 /**
- * Warm vault-account wallets (BRC-146).
+ * Warm vault-account wallets (BRC-208).
  *
  * Every booted account is a self-contained unit: its own Toolbox IndexedDB,
  * services and monitor. Units share no mutable state — account-local durable

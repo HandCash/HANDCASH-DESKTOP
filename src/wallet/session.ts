@@ -64,7 +64,7 @@ export type ActiveWallet = {
   chain: Chain
   /** Vault master root (BRC-75). Same as rootKeyHex when accountIndex is 0. */
   masterRootKeyHex: string
-  /** BRC-146 account index. 0 = primary / vault master. */
+  /** BRC-208 account index. 0 = primary / vault master. */
   accountIndex: number
 }
 
@@ -378,7 +378,7 @@ type WalletBootArgs = {
   mnemonic?: string | null
   /** Vault master root. Defaults to rootKeyHex (primary account). */
   masterRootKeyHex?: string
-  /** BRC-146 account index. Defaults to 0 (primary). */
+  /** BRC-208 account index. Defaults to 0 (primary). */
   accountIndex?: number
 }
 

@@ -1,5 +1,5 @@
 /**
- * Vault sub-accounts (BRC-146) — named account roots under one vault master.
+ * Vault sub-accounts (BRC-208) — named account roots under one vault master.
  *
  * Account 0 is the vault master root (existing wallets; no migration).
  * Account n>=1 is KeyDeriver(master).derivePrivateKey([2, "account"], `account-${n}`, "self").
@@ -11,6 +11,42 @@ import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 export const VAULT_ACCOUNT_PROTOCOL: [2, 'account'] = [2, 'account']
+
+export type VaultAccountRefusal = 'account-protocol' | 'self-linkage'
+
+/**
+ * Why an application request must not reach the wallet, or null.
+ *
+ * `account-protocol`: a key or signature under the account protocol is another
+ * account's root. Reserved at every security level, as BRC-44 reserves
+ * `admin`; names are matched as BRC-43 normalises them (lowercase, trimmed).
+ *
+ * `self-linkage`: the wallet's shared secret with itself yields the offset of
+ * every account root, and one offset plus one exported account key is the
+ * master.
+ */
+export function vaultAccountRefusal(
+  method: string,
+  args: unknown,
+  identityKey: string | undefined,
+): VaultAccountRefusal | null {
+  if (!args || typeof args !== 'object') return null
+  const { protocolID, counterparty } = args as { protocolID?: unknown; counterparty?: unknown }
+  if (
+    Array.isArray(protocolID) &&
+    typeof protocolID[1] === 'string' &&
+    protocolID[1].toLowerCase().trim() === VAULT_ACCOUNT_PROTOCOL[1]
+  ) {
+    return 'account-protocol'
+  }
+  if (method === 'revealCounterpartyKeyLinkage' && typeof counterparty === 'string') {
+    const peer = counterparty.trim().toLowerCase()
+    if (peer === 'self' || (!!identityKey && peer === identityKey.trim().toLowerCase())) {
+      return 'self-linkage'
+    }
+  }
+  return null
+}
 
 export type VaultAccount = {
   /** Stable index. 0 = primary (vault master). */

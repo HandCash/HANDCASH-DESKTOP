@@ -165,7 +165,7 @@ function walletIdentityChip(
   }
 }
 
-/** Vault master can host multiple account wallets (BRC-146). */
+/** Vault master can host multiple account wallets (BRC-208). */
 export function Dashboard({
   profile,
   balanceSats,

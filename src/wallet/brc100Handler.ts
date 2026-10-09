@@ -133,6 +133,7 @@ import {
 } from './actionLifecycle'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
+import { vaultAccountRefusal } from './vaultAccounts'
 import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
 import {
   paintAfterCreateActionBsv21Mint,
@@ -379,13 +380,26 @@ async function dispatchAppActionFundedFromHeldChange(
   }
 }
 
-async function dispatchWalletMethod(
+export async function dispatchWalletMethod(
   wallet: WalletInterface,
   method: string,
   args: unknown,
   originator?: string,
 ): Promise<unknown> {
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
+
+  const refusal = vaultAccountRefusal(method, args, getWalletRuntime()?.instance?.identityKey)
+  if (refusal) {
+    appendAppLog(
+      'warn',
+      `[brc100] refused ${method} from ${normalizeOrigin(originator) || 'unknown origin'}: ${refusal}`,
+    )
+    throw new Error(
+      refusal === 'account-protocol'
+        ? 'Protocol "account" is reserved for the wallet (BRC-208)'
+        : 'The wallet does not reveal linkage with itself (BRC-208)',
+    )
+  }
 
   switch (method) {
     case 'createAdminIdentityProof': {

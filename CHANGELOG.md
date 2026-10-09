@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.543] - 2026-10-09
+
+### Security
+- **Apps can no longer reach a sub-account's keys.** Sub-account roots are keys the wallet derives from the primary root under the protocol `[2, "account"]`. The BRC-100 bridge did not reserve that protocol. An app approved on the primary account could ask for a signature by `account-1` over a transaction sighash, which is enough to spend account 1, or read every account's identity key and link them to one vault. The bridge now refuses any request that names the `account` protocol, at every security level, with no prompt. It also refuses `revealCounterpartyKeyLinkage` with the wallet itself: that secret yields every account's offset, and one offset plus one exported account key is the primary root. Refusals log `[brc100] refused <method> from <origin>: account-protocol | self-linkage`.
+- The sub-account scheme is now BRC-208 ([BRC PR #250](https://github.com/bsv-blockchain/BRCs/pull/250)), renumbered from the draft BRC-146.
+
 ## [1.3.542] - 2026-10-09
 
 ### Fixed

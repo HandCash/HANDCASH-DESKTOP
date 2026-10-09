@@ -19,7 +19,7 @@ export type SyncHealth = {
   updatedAt: number
   /** Vault account this status belongs to (null before unlock / after lock). */
   identityKey: string | null
-  /** BRC-146 account index for the stamped identity. */
+  /** BRC-208 account index for the stamped identity. */
   accountIndex: number | null
 }
 

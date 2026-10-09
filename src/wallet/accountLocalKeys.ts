@@ -1,5 +1,5 @@
 /**
- * Durable UI store keys for vault sub-accounts (BRC-146).
+ * Durable UI store keys for vault sub-accounts (BRC-208).
  *
  * Account 0 keeps historical unscoped keys so existing wallets stay put.
  * Account n≥1 uses `:${identityKey}` so friends / activity / apps / inventory

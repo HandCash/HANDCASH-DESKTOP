@@ -1,7 +1,9 @@
+import { PrivateKey, ProtoWallet } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   accountKeyId,
   identityKeyForAccount,
+  vaultAccountRefusal,
   rootKeyHexForAccount,
   findVaultAccountByIdentityKey,
   writeVaultAccounts,
@@ -12,7 +14,7 @@ import {
 const MASTER =
   '0000000000000000000000000000000000000000000000000000000000000001'
 
-describe('vaultAccounts (BRC-146)', () => {
+describe('vaultAccounts (BRC-208)', () => {
   it('keeps account 0 as the master root', () => {
     expect(rootKeyHexForAccount(MASTER, 0)).toBe(MASTER)
   })
@@ -31,6 +33,38 @@ describe('vaultAccounts (BRC-146)', () => {
   it('uses stable protocol and key ids', () => {
     expect(VAULT_ACCOUNT_PROTOCOL).toEqual([2, 'account'])
     expect(accountKeyId(3)).toBe('account-3')
+  })
+
+  it('reserves the protocol whose keys are account roots', async () => {
+    const appVisible = new ProtoWallet(PrivateKey.fromHex(MASTER))
+    const { publicKey } = await appVisible.getPublicKey({
+      protocolID: [2, 'account'],
+      keyID: 'account-1',
+      counterparty: 'self',
+    })
+    expect(publicKey).toBe(identityKeyForAccount(MASTER, 1))
+
+    const refuse = (args: unknown, method = 'getPublicKey') =>
+      vaultAccountRefusal(method, args, identityKeyForAccount(MASTER, 0))
+    expect(refuse({ protocolID: [2, 'account'], keyID: 'account-1' })).toBe('account-protocol')
+    expect(refuse({ protocolID: [2, ' ACCOUNT '] })).toBe('account-protocol')
+    expect(refuse({ protocolID: [0, 'account'] })).toBe('account-protocol')
+    expect(refuse({ protocolID: [2, 'accounts'] })).toBeNull()
+    expect(refuse({ identityKey: true })).toBeNull()
+    expect(refuse(null)).toBeNull()
+  })
+
+  it('refuses to reveal the shared secret that yields every account offset', () => {
+    const self = identityKeyForAccount(MASTER, 0)
+    const reveal = (counterparty: string) =>
+      vaultAccountRefusal('revealCounterpartyKeyLinkage', { counterparty, verifier: '02ab' }, self)
+    expect(reveal(self)).toBe('self-linkage')
+    expect(reveal(self.toUpperCase())).toBe('self-linkage')
+    expect(reveal('self')).toBe('self-linkage')
+    expect(reveal(identityKeyForAccount(MASTER, 1))).toBeNull()
+    expect(
+      vaultAccountRefusal('encrypt', { counterparty: self, protocolID: [1, 'chat'] }, self),
+    ).toBeNull()
   })
 
   it('keeps primary toolbox DB name historical', () => {

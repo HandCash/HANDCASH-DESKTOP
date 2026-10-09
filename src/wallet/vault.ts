@@ -933,7 +933,7 @@ export async function revealMnemonic(_password?: string | null): Promise<string>
 
 /**
  * Reveal the vault master root key from the unlocked session — never gated on
- * HandCash password. Always the master: sub-accounts (BRC-146) derive from it,
+ * HandCash password. Always the master: sub-accounts (BRC-208) derive from it,
  * so a backup of an account's own key would restore that account as a new,
  * unrelated master and strand every other account.
  */
