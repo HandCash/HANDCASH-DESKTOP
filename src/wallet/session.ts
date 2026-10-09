@@ -316,6 +316,7 @@ export function clearActiveWallet(): void {
   clearWarmWallets()
   active = null
   forgetVaultMasterCache()
+  void import('./vaultAccountHolding').then(({ stopHoldingWatch }) => stopHoldingWatch())
   clearSessionBackupPassword()
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
     bindWalletProgressAccount(null)
@@ -567,7 +568,7 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
   const vaultMaster = selected.vaultMaster
   const generation = warmPoolGeneration()
   const run = async () => {
-    const { readVaultAccounts, rootKeyHexForAccount } = await import('./vaultAccounts')
+    const { isHeldHere, readVaultAccounts, rootKeyHexForAccount } = await import('./vaultAccounts')
     const masterIdentityKey = vaultIdentityKey(vaultMaster)
     try {
       const { discoverVaultAccounts, probeAccountUse } = await import('./vaultAccountDiscovery')
@@ -575,9 +576,21 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
     } catch (error) {
       console.warn('[vault-accounts] discovery failed', error instanceof Error ? error.message : String(error))
     }
+    try {
+      const { checkVaultAccountHoldings, watchActiveAccountHolding } = await import('./vaultAccountHolding')
+      if (warmPoolGeneration() !== generation) return
+      await checkVaultAccountHoldings(vaultMaster)
+      watchActiveAccountHolding(vaultMaster, () =>
+        active && active.vaultMaster === vaultMaster ? active.accountIndex : null,
+      )
+    } catch (error) {
+      console.warn('[account-holding] check failed', error instanceof Error ? error.message : String(error))
+    }
     for (const account of readVaultAccounts(masterIdentityKey).accounts) {
       if (warmPoolGeneration() !== generation) return
       if (account.index === selected.accountIndex) continue
+      // Another install's account is never opened here, not even to warm it.
+      if (!isHeldHere(account)) continue
       const accountArgs: WalletBootArgs = {
         ...args,
         rootKeyHex: rootKeyHexForAccount(vaultMaster, account.index),
@@ -1124,9 +1137,16 @@ export async function switchVaultAccount(args: {
     './walletCoordinator'
   )
   const {
+    ACCOUNT_HELD_ELSEWHERE,
+    isHeldHere,
+    readVaultAccounts,
     rootKeyHexForAccount,
     setActiveVaultAccountIndex,
   } = await import('./vaultAccounts')
+  const listed = readVaultAccounts(vaultIdentityKey(args.vaultMaster)).accounts.find(
+    (a) => a.index === args.accountIndex,
+  )
+  if (listed && !isHeldHere(listed)) throw new Error(ACCOUNT_HELD_ELSEWHERE)
   const bootArgs: WalletBootArgs = {
     rootKeyHex: rootKeyHexForAccount(args.vaultMaster, args.accountIndex),
     handle: args.handle,

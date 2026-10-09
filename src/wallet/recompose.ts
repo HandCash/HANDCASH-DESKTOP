@@ -3,8 +3,9 @@ import { getActiveWallet } from './session'
 /**
  * Device recompose tool — **isolated** from Dashboard Refresh / spend paths.
  *
- * Only call from unlock/create, History restore/import, Pair Sync, and the
- * first open of an empty vault account (`refreshAfterAccountSwitch`).
+ * Only call from unlock/create, History restore/import, Pair Sync, the first
+ * open of an empty vault account, and an account moving onto this device
+ * (`refreshAfterAccountSwitch`).
  * Never import this from `chainIngest` / spend paths.
  *
  * Empty-local × remote-BRC-39 clobber edge case is delegated to
@@ -27,6 +28,7 @@ import {
 import {
   autoPushHistoryBackupIfConfigured,
   hasDeviceLinkBackupUrl,
+  mergeArrivedAccountHistory,
 } from './deviceSync'
 import { sessionBackupCredential, setSessionBackupPassword } from './sessionBackupAuth'
 import { fetchBalanceSats} from './session'
@@ -39,7 +41,7 @@ import {
 import { inUiPhase } from './uiPhase'
 import { yieldToUi } from './yieldToUi'
 
-export type RecomposeHistoryMode = 'auto' | 'skip' | 'forceCloud'
+export type RecomposeHistoryMode = 'auto' | 'skip' | 'forceCloud' | 'mergeArrived'
 
 export type RecomposeOpts = {
   /** Unlock password; falls back to session cache. */
@@ -49,6 +51,8 @@ export type RecomposeOpts = {
    * auto — empty-local pull + guarded push (historyEmptyGuard)
    * skip — history already applied this turn (file/URL restore, pair sync)
    * forceCloud — same as auto (Settings recompose); still refuses empty overwrite
+   * mergeArrived — the account just moved here: merge its remote BRC-39 even
+   *   when local is not empty, and never defer that for a waiting spend
    */
   history?: RecomposeHistoryMode
   /** Default true — always reconcile against the chain after history. */
@@ -118,12 +122,17 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
 }
 
 /**
- * After switching vault accounts. An account opening empty on this device (a
- * restored vault, an account found by discovery) has its history only in its
- * own backup, so it recomposes as an unlock would. Any other account
- * refreshes from the chain.
+ * After switching vault accounts. An account that just moved onto this device
+ * merges the history its previous holder flushed. An account opening empty on
+ * this device (a restored vault, an account found by discovery) has its
+ * history only in its own backup, so it recomposes as an unlock would. Any
+ * other account refreshes from the chain.
  */
-export async function refreshAfterAccountSwitch(): Promise<void> {
+export async function refreshAfterAccountSwitch(opts: { arrived?: boolean } = {}): Promise<void> {
+  if (opts.arrived) {
+    await recomposeWallet({ reason: 'account-arrived', history: 'mergeArrived' })
+    return
+  }
   const { localToolboxStateLooksEmpty } = await import('./layers')
   if (await localToolboxStateLooksEmpty()) {
     await recomposeWallet({ reason: 'account-switch' })
@@ -246,7 +255,21 @@ async function recomposeHistory(
   // Yield once so a queued permission prompt can render before Argon2 / IDB work.
   await yieldToUi()
 
-  if (historyMode !== 'skip' && password != null && hasDeviceLinkBackupUrl()) {
+  if (historyMode === 'mergeArrived') {
+    // Spends wait on this one: until it lands, local coins may already be
+    // spent by the device the account came from.
+    const sync = await inUiPhase('recompose-history', () => mergeArrivedAccountHistory(password))
+    if (runtime) assertRuntimeCurrent(runtime)
+    localStateWasReplaced = sync.pulled
+    if (sync.pulled) history = 'synced'
+    else if (sync.pullError) {
+      history = 'failed'
+      historyError = sync.pullError
+    } else {
+      history = 'skipped'
+      historyError = sync.skipReason
+    }
+  } else if (historyMode !== 'skip' && password != null && hasDeviceLinkBackupUrl()) {
     if (shouldYieldChainIngestToSpend()) {
       history = 'skipped'
       historyError = 'deferred-for-spend'

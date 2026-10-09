@@ -19,6 +19,7 @@ import {
   peekProvenConfirmedSpendable,
 } from './session'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
+import { activeAccountSpendRefusal } from './vaultAccountHolding'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 import {
   assertRuntimeCurrent,
@@ -222,6 +223,9 @@ export function runExclusiveSpend<T>(
   if (!runtime && import.meta.env?.MODE !== 'test') {
     throw new Error('WALLET_LOCKED')
   }
+  // One install per account: an account another device holds never signs here.
+  const heldElsewhere = activeAccountSpendRefusal(runtime?.instance ?? null)
+  if (heldElsewhere) throw new Error(heldElsewhere)
   // Spending known local UTXOs is the wallet's primary path. Maintenance is
   // demand-driven: only a real local-balance shortage may promote chained
   // change. Callers doing explicit-input work (items/burns) use `false`; repair

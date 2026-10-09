@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.547] - 2026-10-09
+
+### Added
+- **Two devices can share one backup by holding different wallets.** Every wallet in the account menu now belongs to exactly one install. Wallets another device holds show as `On another device · Move here`, and HandCash never opens, preloads or signs for them. The spend guard reads holding from this device alone, so payments still make no network call. The per-payment lease removed in 1.3.376 cost about 1.7s a payment.
+  - **Move to another device** (wallet menu) refuses new spends, waits for any in flight, and backs up the wallet's history and custody journal. It then marks the wallet released and switches away. If the backup or the release fails, the wallet stays here.
+  - **Move here** on the other device takes a released wallet at once. HandCash merges that wallet's history backup before anything can spend, so a device that held it before never spends from its old copy or uploads that copy over the newer one. A wallet another device still holds asks first: take it only if that device is lost. The other device stops spending it at its next check: unlock, switch, or within five minutes.
+  - **Restore asks about your other device.** *Replace old device* (the default) takes every wallet. *Keep both* finds the wallets your other device uses (discovery must finish) and reserves a new one for this device.
+  - **New wallets reserve their number.** Before using an index, HandCash writes a create-only record for it. Two devices that each add a wallet at the same time can no longer get the same key. With the backup host unreachable, Add wallet refuses rather than guess.
+  - When another device takes the open wallet, this device switches to a wallet it holds, or reserves a new one.
+  - Who holds a wallet is a small record next to its BRC-39 backup on the history host, signed by that wallet's key, with a sequence number that only grows. A host can delay a change but cannot forge or undo one. Specified as draft BRC-249 (`docs/bsva/brcs/wallet/0249.md`). Logs `[account-holding] check done Nms`, `claim aN … done Nms`, `took aN seq=N`, `released aN seq=N`, and `[cloud-backup] arrived-account merge done Nms`.
+  - Existing installs publish the wallets they hold at their first check. If two installs of one backup both upgrade, the first to publish keeps each wallet and the other gives it up.
+
 ## [1.3.546] - 2026-10-09
 
 ### Changed

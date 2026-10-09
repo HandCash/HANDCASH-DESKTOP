@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   autoPush: vi.fn(),
   hasBackupUrl: vi.fn(),
   inspectState: vi.fn(),
+  mergeArrived: vi.fn(),
   noteHighWater: vi.fn(),
   refresh: vi.fn(),
   refreshShared: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock('./walletCoordinator', () => ({
 vi.mock('./deviceSync', () => ({
   autoPushHistoryBackupIfConfigured: mocks.autoPush,
   hasDeviceLinkBackupUrl: mocks.hasBackupUrl,
+  mergeArrivedAccountHistory: mocks.mergeArrived,
 }))
 
 vi.mock('./sessionBackupAuth', () => ({
@@ -149,6 +151,35 @@ describe('recomposeWallet', () => {
     await recomposeWallet({ password: 'test-password', chain: false })
 
     expect(mocks.relist).toHaveBeenCalledOnce()
+  })
+
+  it('merges an arriving account’s history inside the fence, even with local state and no password', async () => {
+    let fencedDuringMerge: boolean | null = null
+    mocks.mergeArrived.mockImplementation(async () => {
+      fencedDuringMerge = mocks.inRegion
+      return { pulled: true, skipReason: null, pullError: null }
+    })
+    const { refreshAfterAccountSwitch } = await import('./recompose')
+
+    await refreshAfterAccountSwitch({ arrived: true })
+
+    expect(mocks.mergeArrived).toHaveBeenCalledWith(null)
+    expect(fencedDuringMerge).toBe(true)
+    expect(mocks.autoPush).not.toHaveBeenCalled()
+    expect(mocks.refresh).toHaveBeenCalledWith(FUNDING_PASS)
+    expect(mocks.relist).toHaveBeenCalledOnce()
+  })
+
+  it('reports a failed arrival merge and still reconciles from the chain', async () => {
+    mocks.mergeArrived.mockResolvedValue({ pulled: false, skipReason: null, pullError: 'Download failed (500)' })
+    const { recomposeWallet } = await import('./recompose')
+
+    const result = await recomposeWallet({ reason: 'account-arrived', history: 'mergeArrived' })
+
+    expect(result.history).toBe('failed')
+    expect(result.historyError).toBe('Download failed (500)')
+    expect(mocks.refreshShared).toHaveBeenCalledWith(FUNDING_PASS)
+    expect(mocks.relist).not.toHaveBeenCalled()
   })
 
   it('updates the balance high-water without rescanning Toolbox state', async () => {

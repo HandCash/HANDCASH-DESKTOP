@@ -34,6 +34,17 @@ import { getActiveWallet } from './session'
  *   unselected unit's monitor keeps proving its own transactions. Only the
  *   selected unit binds the ambient account scope; anything that outlives a
  *   switch resolves keys from its captured owner (`accountLocalKeyFor`).
+ * - **Account holding** → one install per vault account (`accountHolding.ts`,
+ *   `vaultAccountHolding.ts`). Devices sharing a vault hold different
+ *   accounts; an account held elsewhere is listed but never opened, warmed
+ *   or signed with. The spend guard reads holding from local storage only.
+ *   Other installs learn it from a signed `holder.json` beside the account's
+ *   BRC-39 blob, which changes only on create (create-only, so two devices
+ *   never reserve one index), Move here / Take over, and Move to another
+ *   device (history flushed first). Checked on unlock, on switch, and every
+ *   five minutes for the active account. An account that arrives merges its
+ *   BRC-39 backup before it spends. Not a spend lease: nothing on the spend
+ *   path waits on the network. Draft BRC-249 (`docs/bsva/brcs/wallet/0249.md`).
  * - **Backup scope** → policy is vault-wide (`vaultLocalKeys.ts`): the key
  *   backup, the BRC-39 host and the "history backed up" confirmation do not
  *   change between sub-accounts. State is per account, because each account
@@ -269,7 +280,7 @@ export type WalletLayer =
 
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
-  custody: ["vault.ts", "vaultMaster.ts", "vaultMasterChoice.ts", "vaultAccounts.ts", "vaultAccountDiscovery.ts", "sessionBackupAuth.ts", "devKeys.ts"],
+  custody: ["vault.ts", "vaultMaster.ts", "vaultMasterChoice.ts", "vaultAccounts.ts", "vaultAccountDiscovery.ts", "accountHolding.ts", "accountHolderRecord.ts", "vaultAccountHolding.ts", "sessionBackupAuth.ts", "devKeys.ts"],
   localState: [
     "session.ts",
     "walletPool.ts",

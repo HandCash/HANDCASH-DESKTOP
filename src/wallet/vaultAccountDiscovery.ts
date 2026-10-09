@@ -4,10 +4,13 @@
  * The account list is device storage, so a restored vault starts with only
  * the primary. Indices are allocated in order and never reused, so probing
  * index after index until a run of unused ones finds every account that
- * left a trace: a history backup, or mail waiting for its identity key.
+ * left a trace: a history backup, a holder record, or mail waiting for its
+ * identity key. A found account is held elsewhere unless this install is
+ * taking the vault over (`accountHolding.ts`).
  */
 import { appendAppLog } from './appLog'
 import {
+  discoveredAccountHolding,
   ensureVaultAccounts,
   identityKeyForAccount,
   nextAccountIndex,
@@ -73,7 +76,12 @@ export async function discoverVaultAccounts(args: {
   const found: number[] = []
   for (let n = start; n <= lastUsed; n++) {
     if (store.accounts.some((a) => a.index === n)) continue
-    store.accounts.push({ index: n, name: `Wallet ${n}`, identityKey: identityKeyForAccount(master, n) })
+    store.accounts.push({
+      index: n,
+      name: `Wallet ${n}`,
+      identityKey: identityKeyForAccount(master, n),
+      holding: discoveredAccountHolding(store),
+    })
     found.push(n)
   }
   store.accounts.sort((a, b) => a.index - b.index)
@@ -93,8 +101,8 @@ export async function discoverVaultAccounts(args: {
 }
 
 /**
- * Used when the history backup host holds a backup for the account, or its
- * messagebox holds mail. Unknown when neither can answer.
+ * Used when the history backup host holds a backup or a holder record for the
+ * account, or its messagebox holds mail. Unknown when a source cannot answer.
  */
 export const probeAccountUse: AccountProbe = async ({ identityKey, rootKeyHex }) => {
   const { historyBackupObjectUrl } = await import('./historyBackupPrefs')
@@ -111,9 +119,12 @@ export const probeAccountUse: AccountProbe = async ({ identityKey, rootKeyHex })
     backup = head.kind === 'present' ? 'used' : head.kind === 'absent' ? 'unused' : 'unknown'
   }
   if (backup === 'used') return 'used'
+  const { readHolderRecord } = await import('./accountHolderRecord')
+  const holder = await readHolderRecord({ identityKey, rootKeyHex })
+  if (holder.kind === 'record') return 'used'
   const { messageboxHasMail } = await import('./messageTransport')
   const mail = await messageboxHasMail(rootKeyHex)
   if (mail === true) return 'used'
-  if (mail === null || backup === 'unknown') return 'unknown'
+  if (mail === null || backup === 'unknown' || holder.kind === 'unreachable') return 'unknown'
   return 'unused'
 }

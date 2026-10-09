@@ -778,6 +778,41 @@ export async function autoPushHistoryBackupIfConfigured(
   return result
 }
 
+/**
+ * A vault account just moved onto this device. The install that released it
+ * flushed its history first, so the remote copy is newer than anything held
+ * here: merge it before this device spends or pushes. A device that held the
+ * account before still has its old local state, which the empty-local pull
+ * never replaces and a later push would write over the newer copy.
+ */
+export async function mergeArrivedAccountHistory(
+  password: string | null,
+): Promise<AutoSyncResult> {
+  const result: AutoSyncResult = { pulled: false, pullError: null, skipReason: null }
+  if (!hasDeviceLinkBackupUrl()) {
+    result.skipReason = 'no backup url'
+    return result
+  }
+  const { appendAppLog } = await import('./appLog')
+  const started = Date.now()
+  try {
+    const remote = await fetchRemoteBrc39Meta()
+    if (!remote?.exists) {
+      result.skipReason = 'no remote backup'
+      return result
+    }
+    await downloadAndRestoreBrc39Backup(password)
+    result.pulled = true
+    await downloadAndMergeFriendsBackup().catch(() => 0)
+    await downloadAndMergeActivityBackup().catch(() => 0)
+    appendAppLog('info', `[cloud-backup] arrived-account merge done ${Date.now() - started}ms`)
+  } catch (err) {
+    result.pullError = err instanceof Error ? err.message : String(err)
+    appendAppLog('warn', `[cloud-backup] arrived-account merge failed: ${result.pullError}`)
+  }
+  return result
+}
+
 export function deviceLinkObjectHint(identityKey: string): string | null {
   try {
     return historyBackupObjectUrl(identityKey)

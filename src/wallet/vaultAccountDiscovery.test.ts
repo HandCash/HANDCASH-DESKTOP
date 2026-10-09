@@ -4,6 +4,7 @@ const signals = vi.hoisted(() => ({
   backupUrl: 'https://backup.example/v1/wallets/k/wallet.brc39' as string | null,
   head: 'absent' as 'absent' | 'present' | 'refused' | 'unavailable',
   mail: false as boolean | null,
+  holder: 'absent' as 'absent' | 'record' | 'unsupported' | 'unreachable',
 }))
 
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
@@ -15,6 +16,10 @@ vi.mock('./historyBackupPrefs', () => ({
 }))
 vi.mock('./historyRemoteProbe', () => ({
   probeRemoteBrc39: async () => ({ kind: signals.head }),
+}))
+vi.mock('./accountHolderRecord', () => ({
+  readHolderRecord: async () =>
+    signals.holder === 'unreachable' ? { kind: 'unreachable', reason: 'down' } : { kind: signals.holder },
 }))
 vi.mock('./messageTransport', () => ({
   messageboxHasMail: async () => signals.mail,
@@ -31,6 +36,7 @@ import {
   identityKeyForAccount,
   readVaultAccounts,
   subscribeVaultAccounts,
+  writeVaultAccounts,
 } from './vaultAccounts'
 import { brc157VaultMaster, brc42VaultMaster, type VaultMaster } from './vaultMaster'
 
@@ -76,7 +82,19 @@ describe('discoverVaultAccounts (BRC-208 recovery from the vault root alone)', (
     expect(probed).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     const store = readVaultAccounts(MASTER_IK)
     expect(store.discovered).toBe(true)
-    expect(store.accounts[5]).toEqual({ index: 5, name: 'Wallet 5', identityKey: identityKeyForAccount(MASTER, 5) })
+    expect(store.accounts[5]).toEqual({
+      index: 5,
+      name: 'Wallet 5',
+      identityKey: identityKeyForAccount(MASTER, 5),
+      holding: { kind: 'elsewhere', seq: 0, deviceId: null },
+    })
+  })
+
+  it('a replacing install lists what it finds as its own, to claim at the holder check', async () => {
+    writeVaultAccounts({ ...readVaultAccounts(MASTER_IK), takeover: true })
+    const { probe } = remote([1])
+    await discoverVaultAccounts({ master: MASTER, probe })
+    expect(readVaultAccounts(MASTER_IK).accounts[1]!.holding).toEqual({ kind: 'here', seq: 0 })
   })
 
   it('stops after five unused indices in a row', async () => {
@@ -155,12 +173,14 @@ describe('discoverVaultAccounts (BRC-208 recovery from the vault root alone)', (
 describe('probeAccountUse', () => {
   const account = { index: 1, identityKey: identityKeyForAccount(MASTER, 1), rootKeyHex: MASTER.keyHex }
   const cases: Array<[string, typeof signals, AccountUse]> = [
-    ['a history backup', { backupUrl: 'u', head: 'present', mail: null }, 'used'],
-    ['mail waiting', { backupUrl: 'u', head: 'absent', mail: true }, 'used'],
-    ['neither', { backupUrl: 'u', head: 'absent', mail: false }, 'unused'],
-    ['no backup host configured and no mail', { backupUrl: null, head: 'absent', mail: false }, 'unused'],
-    ['an unreachable backup host', { backupUrl: 'u', head: 'unavailable', mail: false }, 'unknown'],
-    ['an unreachable messagebox', { backupUrl: 'u', head: 'absent', mail: null }, 'unknown'],
+    ['a history backup', { backupUrl: 'u', head: 'present', mail: null, holder: 'unreachable' }, 'used'],
+    ['a holder record', { backupUrl: 'u', head: 'absent', mail: null, holder: 'record' }, 'used'],
+    ['mail waiting', { backupUrl: 'u', head: 'absent', mail: true, holder: 'absent' }, 'used'],
+    ['none of them', { backupUrl: 'u', head: 'absent', mail: false, holder: 'absent' }, 'unused'],
+    ['no backup host configured and no mail', { backupUrl: null, head: 'absent', mail: false, holder: 'unsupported' }, 'unused'],
+    ['an unreachable backup host', { backupUrl: 'u', head: 'unavailable', mail: false, holder: 'absent' }, 'unknown'],
+    ['an unreachable holder record', { backupUrl: 'u', head: 'absent', mail: false, holder: 'unreachable' }, 'unknown'],
+    ['an unreachable messagebox', { backupUrl: 'u', head: 'absent', mail: null, holder: 'absent' }, 'unknown'],
   ]
   it.each(cases)('%s', async (_name, given, expected) => {
     Object.assign(signals, given)

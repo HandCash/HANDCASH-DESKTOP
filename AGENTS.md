@@ -27,6 +27,7 @@
 - **History backup** = historyReplica. That is how remittance / managed change leaves the device.
 - **Recompose** = `recomposeWallet` (history then chain). Unlock / History restore / Pair Sync only — never Dashboard Refresh.
 - No same-key device parity: one install per identity. There is no cross-device spend lease and Refresh never pulls BRC-39; the History backup URL is backup + empty-local recovery only.
+- Devices share a vault by **holding different accounts** (BRC-208): `accountHolding.ts` / `vaultAccountHolding.ts`. An account held elsewhere is never opened, warmed or signed with; the spend guard reads holding locally. A signed `holder.json` beside each account's BRC-39 blob changes only on create (create-only), Move here / Take over, and Move to another device (history flushed first). Never put a network round trip on the spend path to enforce it.
 - Empty-local × remote overwrite is isolated in `historyEmptyGuard.ts` (auto paths refuse; manual Upload may force).
 - Prefer `refreshFromChain` from `chainIngest.ts` — single entry for network → localState.
 - Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.

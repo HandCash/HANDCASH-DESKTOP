@@ -29,9 +29,22 @@ never links identities.
 
 ## Same phrase on two installs
 
-1. Phrase/shares → same identity → **one BSV pot** on both.
-2. Not supported as a live setup: there is no same-key parity (no spend lease, no history pull). Two installs spending one pot can pick the same coins; use one install per identity and restore on the other only to move.
-3. The row reads `Same wallet · no copy needed`; sealed recovery is skipped.
+One phrase is one vault, and every wallet in the wallet menu is a separate account with its own
+identity (BRC-208). Two installs share the vault by **holding different wallets**:
+
+1. On B: Restore → Phrase → **Keep both**. B checks which wallets A already uses, reserves the
+   next one for itself and opens it. A's wallets show on B as `On another device · Move here`.
+2. Move a wallet from A to B: on A open that wallet, wallet menu → **Move … to another device**.
+   A backs up its history, marks it released and switches away. On B tap the wallet → it moves
+   without a prompt and restores its history.
+3. A lost device: on the survivor tap the wallet → **Take over**. The lost device, if it ever
+   comes back, stops spending that wallet when it next connects.
+4. **Replace old device** at restore takes every wallet; the old install gives them all up at
+   its next check (unlock, switch, or within five minutes).
+5. Holding is local: a wallet another install holds is refused before signing, with no network
+   call on the spend path. Two installs never open one wallet at the same time; a live
+   same-wallet setup (spend lease, history pull) is still not supported.
+6. The device row reads `Same wallet · no copy needed`; sealed recovery is skipped.
 
 ## Boundaries
 

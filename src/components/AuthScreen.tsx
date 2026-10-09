@@ -12,7 +12,11 @@ import {
   type Chain,
   type UnlockedVault,
 } from '../wallet/vault'
-import { resolveActiveRootKeyHex } from '../wallet/vaultAccounts'
+import {
+  markVaultTakeover,
+  prepareAddedDevice,
+  resolveBootAccount,
+} from '../wallet/vaultAccountHolding'
 import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import {
   bootWallet,
@@ -82,6 +86,22 @@ const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'key', label: 'Key' },
 ]
 
+/** What a restore does to the install that held this vault before (`accountHolding.ts`). */
+type RestoreRole = 'replace' | 'keep'
+
+const RESTORE_ROLES: { id: RestoreRole; label: string; hint: string }[] = [
+  {
+    id: 'replace',
+    label: 'Replace old device',
+    hint: 'This device takes over every wallet. Your old device stops spending them when it next connects.',
+  },
+  {
+    id: 'keep',
+    label: 'Keep both',
+    hint: 'Your other device keeps its wallets and this one gets a new wallet. Move a wallet between them from the wallet menu.',
+  },
+]
+
 function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
   return mode === 'phrase' || mode === 'shares' || mode === 'key'
 }
@@ -121,6 +141,7 @@ export function AuthScreen({
   const [mnemonicInput, setMnemonicInput] = useState('')
   const [sharesInput, setSharesInput] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
+  const [restoreRole, setRestoreRole] = useState<RestoreRole>('replace')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
@@ -285,7 +306,7 @@ export function AuthScreen({
 
 
   const bootFromUnlocked = async (unlocked: UnlockedVault) => {
-    const resolved = resolveActiveRootKeyHex(unlocked.master)
+    const resolved = await resolveBootAccount(unlocked.master)
     return bootWallet({
       rootKeyHex: resolved.rootKeyHex,
       handle: unlocked.record.handle,
@@ -301,6 +322,15 @@ export function AuthScreen({
     password: string | null,
     kind: 'create' | 'restore',
   ) => {
+    if (kind === 'restore' && restoreRole === 'keep') {
+      setPreparing({
+        title: 'Almost ready',
+        lede: 'Finding the wallets your other device holds…',
+      })
+      await prepareAddedDevice({ master: unlocked.master })
+    } else if (kind === 'restore') {
+      markVaultTakeover(unlocked.master)
+    }
     setPreparing({
       title: 'Almost ready',
       lede: 'Opening your wallet on this device.',
@@ -864,6 +894,27 @@ export function AuthScreen({
               spellCheck={false}
               autoFocus
             />
+          </div>
+        ) : null}
+
+        {isRestoreMethod(formMode) ? (
+          <div className="field" data-aeon-part="restore-role">
+            <div className="auth-mode-switch" role="radiogroup" aria-label="Your other device">
+              {RESTORE_ROLES.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={restoreRole === r.id}
+                  className="auth-mode-tab"
+                  data-aeon-state={restoreRole === r.id ? 'selected' : 'idle'}
+                  onClick={() => setRestoreRole(r.id)}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <p className="field-hint">{RESTORE_ROLES.find((r) => r.id === restoreRole)?.hint}</p>
           </div>
         ) : null}
 

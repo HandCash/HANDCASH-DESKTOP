@@ -7,8 +7,16 @@
  * that is itself account 0 for older vaults (no migration).
  * Each account is a full BRC-100 wallet root (own UTXOs, BAP, balances).
  * One backup / unlock recovers every account.
+ *
+ * Each account is held by one install (`accountHolding.ts`). Devices sharing a
+ * vault hold different accounts; this install opens only the ones it holds.
  */
 import { storageRegistry } from '../storage/registry'
+import {
+  UNKNOWN_ELSEWHERE,
+  UNPUBLISHED_HERE,
+  type AccountHolding,
+} from './accountHolding'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   VAULT_ACCOUNT_PROTOCOL,
@@ -66,6 +74,8 @@ export type VaultAccount = {
   index: number
   name: string
   identityKey: string
+  /** Absent on stores written before holding existed: held here, unpublished. */
+  holding?: AccountHolding
 }
 
 export type VaultAccountStore = {
@@ -76,6 +86,23 @@ export type VaultAccountStore = {
   accounts: VaultAccount[]
   /** Discovery from the vault master has run to completion on this device. */
   discovered?: boolean
+  /**
+   * This install replaced the vault's previous one (a restore that did not
+   * keep the other device): it claims every account it finds until a holder
+   * check has reached them all.
+   */
+  takeover?: boolean
+}
+
+export const ACCOUNT_HELD_ELSEWHERE =
+  'This wallet is held by another device. Move it here from the wallet menu first.'
+
+export function holdingOf(account: VaultAccount): AccountHolding {
+  return account.holding ?? UNPUBLISHED_HERE
+}
+
+export function isHeldHere(account: VaultAccount): boolean {
+  return holdingOf(account).kind === 'here'
 }
 
 const STORAGE_PREFIX = 'handcash.vault-accounts.v1:'
@@ -208,17 +235,46 @@ export function nextAccountIndex(store: VaultAccountStore): number {
   return max + 1
 }
 
-export function createVaultAccount(args: { master: VaultMaster; name: string }): VaultAccountStore {
+/** Add account `index`, held here. Allocation across devices is `claimVaultAccount`. */
+export function createVaultAccount(args: {
+  master: VaultMaster
+  name: string
+  index?: number
+  holding?: AccountHolding
+}): VaultAccountStore {
   const store = ensureVaultAccounts(args.master)
-  const index = nextAccountIndex(store)
-  const identityKey = identityKeyForAccount(args.master, index)
+  const index = args.index ?? nextAccountIndex(store)
+  if (store.accounts.some((a) => a.index === index)) {
+    throw new Error(`account index already listed: ${index}`)
+  }
   store.accounts.push({
     index,
     name: args.name.trim() || `Account ${index}`,
-    identityKey,
+    identityKey: identityKeyForAccount(args.master, index),
+    holding: args.holding ?? UNPUBLISHED_HERE,
   })
+  store.accounts.sort((a, b) => a.index - b.index)
   writeVaultAccounts(store)
   return store
+}
+
+/** Record how this install holds account `index`. */
+export function setAccountHolding(
+  masterIdentityKey: string,
+  index: number,
+  holding: AccountHolding,
+): VaultAccountStore {
+  const store = readVaultAccounts(masterIdentityKey)
+  const account = store.accounts.find((a) => a.index === index)
+  if (!account) throw new Error(`unknown account index: ${index}`)
+  account.holding = holding
+  writeVaultAccounts(store)
+  return store
+}
+
+/** Listed accounts discovered from the vault master but not created here. */
+export function discoveredAccountHolding(store: VaultAccountStore): AccountHolding {
+  return store.takeover ? UNPUBLISHED_HERE : UNKNOWN_ELSEWHERE
 }
 
 export function renameVaultAccount(args: {
@@ -238,20 +294,22 @@ export function setActiveVaultAccountIndex(
   index: number,
 ): VaultAccountStore {
   const store = readVaultAccounts(masterIdentityKey)
-  if (!store.accounts.some((a) => a.index === index)) {
-    throw new Error(`unknown account index: ${index}`)
-  }
+  const account = store.accounts.find((a) => a.index === index)
+  if (!account) throw new Error(`unknown account index: ${index}`)
+  if (!isHeldHere(account)) throw new Error(ACCOUNT_HELD_ELSEWHERE)
   store.activeIndex = index
   writeVaultAccounts(store)
   return store
 }
 
+/** The active account if held here, else the first held one; null when none is. */
 export function resolveActiveRootKeyHex(
   master: VaultMaster,
-): { rootKeyHex: string; accountIndex: number; account: VaultAccount } {
+): { rootKeyHex: string; accountIndex: number; account: VaultAccount } | null {
   const store = ensureVaultAccounts(master)
-  const account =
-    store.accounts.find((a) => a.index === store.activeIndex) ?? store.accounts[0]!
+  const held = store.accounts.filter(isHeldHere)
+  const account = held.find((a) => a.index === store.activeIndex) ?? held[0]
+  if (!account) return null
   return {
     rootKeyHex: rootKeyHexForAccount(master, account.index),
     accountIndex: account.index,

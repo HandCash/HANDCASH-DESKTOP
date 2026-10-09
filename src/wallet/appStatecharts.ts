@@ -37,6 +37,7 @@ const MASTER = `stateDiagram-v2
   appSession --> marketSellerSettlement : market sell
   appSession --> chainIngestChart : Refresh
   appSession --> messageboxChart : chat relay
+  appSession --> accountHolding : unlock / switch / wallet menu
 
   walletNav --> friendsFlow : Friends
   walletNav --> collectablesFlow : Collectables
@@ -58,6 +59,7 @@ const MASTER = `stateDiagram-v2
 
   appSession : Session host
   unlockForm : Unlock form
+  accountHolding : Account holding · one install per account
   walletNav : Nav sections
   sendPayment : Send payment
   receiveFlow : Receive
@@ -138,12 +140,43 @@ const UNLOCK = `stateDiagram-v2
   note right of idle
     Modes: unlock | create | restore(phrase|shares|key)
     (AuthScreen formMode)
+    Restore role: replace (claim every account)
+    | keep both (discover, then reserve a new account)
   end note
 
   idle : Idle
   submitting : Submitting
   success : Success
   failure : Failure
+`
+
+const ACCOUNT_HOLDING = `stateDiagram-v2
+  direction LR
+  [*] --> here : created here\ncreate-only holder record
+  [*] --> elsewhere : discovered\n(not taking over)
+  [*] --> here : discovered while taking over\n(restore: replace)
+
+  here --> here : check — record names this install\nor absent → publish
+  here --> elsewhere : check — newer record\nnames another install
+  here --> releasing : Move to another device
+  releasing --> elsewhere : history flushed +\nrecord released (seq+1)
+  releasing --> here : flush or announce failed\n(refused)
+  elsewhere --> here : Move here —\nrecord released (seq+1)
+  elsewhere --> confirmTakeover : Move here —\nanother install holds it
+  confirmTakeover --> here : Take over (seq+1)
+  confirmTakeover --> elsewhere : Cancel
+
+  here : Held here · opens + spends
+  elsewhere : Held elsewhere · listed, never opened or warmed
+  releasing : Releasing · spends refused
+  confirmTakeover : Confirm take-over
+
+  note right of here
+    Spend guard reads local holding only — no network on the spend path.
+    holder.json beside wallet.brc39, signed by the account root; seq only grows.
+    Checked on unlock, on switch, and every 5 min for the active account.
+    New accounts reserve their index create-only, so two devices never share a key.
+  end note
 `
 
 const WALLET_NAV = `stateDiagram-v2
@@ -1377,6 +1410,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Unlock',
     caption: 'unlockForm — password create / unlock / restore',
     source: UNLOCK,
+  },
+  {
+    id: 'accountHolding',
+    label: 'Account holding',
+    caption: 'One install per vault account — check, reserve, move between devices (accountHolding.ts)',
+    source: ACCOUNT_HOLDING,
   },
   {
     id: 'walletNav',
