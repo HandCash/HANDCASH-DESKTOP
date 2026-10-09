@@ -405,6 +405,23 @@ export async function ingestLegacyAddressUtxos(
     return emptyIngest(scan)
   }
 
+  // Before the classify walk: a held item whose row was only hidden is not an
+  // unknown tip, and must not spend the walk's per-pass identification budget.
+  if (!fundingOnly && basketListed?.fullyListed && !shouldYieldChainIngestToSpend()) {
+    const { reconcileWrittenOffItems } = await import('./writtenOffItemReconcile')
+    const reconciled = await reconcileWrittenOffItems({
+      active,
+      tips: scan.utxos,
+      basketSpendable: basketListed.keys,
+      shouldStop: shouldYieldChainIngestToSpend,
+    }).catch((err: unknown) => {
+      console.warn('[item-reconcile] skipped', err)
+      return null
+    })
+    guard()
+    for (const op of reconciled?.restoredOutpoints ?? []) basketListed.keys.add(outpointKey(op))
+  }
+
   // A send / app request may have arrived while the scan ran. Still sweep funding
   // — that is what moves the displayed balance. Skip ordinal import only.
   let skipCollectableImport = fundingOnly

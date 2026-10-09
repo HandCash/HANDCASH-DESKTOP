@@ -2696,8 +2696,8 @@ function listCollectableBasketPage(
     if (ms > 250) {
       console.info(
         `[collectables] basket read done ${ms}ms — ${read.outputs.length} row(s) in ${read.slices} slice(s)${
-          read.yieldedMs > 0 ? `, ${read.yieldedMs}ms yielded to a send` : ''
-        }`,
+          read.totalOutputs != null ? ` of ${read.totalOutputs} in the basket` : ''
+        }${read.yieldedMs > 0 ? `, ${read.yieldedMs}ms yielded to a send` : ''}`,
       )
     }
     return {

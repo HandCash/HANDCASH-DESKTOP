@@ -24,14 +24,14 @@ type TokenTxoRow = {
   spend?: unknown
 }
 
-/** Rows per request — same page size the phrase-sweep item count uses. */
-const PAGE_LIMIT = 100
+/** Rows per request — the largest page the index serves. */
+const PAGE_LIMIT = 1_000
 /**
- * Ceiling on pages per pass. A wallet holding more tips than this still heals:
- * the unseen rows are picked up once the imported ones stop being returned as
- * unspent.
+ * Ceiling on pages per pass. Imported tips stay unspent at the address, so a
+ * capped read never reaches the rows past it: the ceiling must sit above any
+ * real inventory (hc-a580a: 2,823 tips, 1,000 read, the rest never listed).
  */
-const MAX_PAGES = 10
+const MAX_PAGES = 50
 const REQUEST_TIMEOUT_MS = 8_000
 /** Don't pay the timeout again on every poll after the indexer just failed. */
 const HOST_COOLDOWN_MS = 45_000
@@ -117,23 +117,31 @@ async function scanAddressTxos(
   }
 
   const byOutpoint = new Map<string, LegacyUtxo>()
+  const started = Date.now()
+  let pages = 0
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
       const rows = await fetchTxoPage(address, chain, page * PAGE_LIMIT, {
         bsv20: opts.bsv20,
       })
+      pages += 1
       for (const row of rows) {
         const utxo = toLegacyUtxo(row)
         if (utxo) byOutpoint.set(utxo.outpoint, utxo)
       }
       if (rows.length < PAGE_LIMIT) break
       if (page === MAX_PAGES - 1) {
-        console.info(
-          `[${opts.logTag}] stopped at ${MAX_PAGES * PAGE_LIMIT} tip(s) — remainder next pass`,
+        console.warn(
+          `[${opts.logTag}] stopped at ${MAX_PAGES * PAGE_LIMIT} tip(s) — the rest stay unlisted`,
         )
       }
     }
     opts.setCooldown(0)
+    if (pages > 1) {
+      console.info(
+        `[${opts.logTag}] ordinal index ${pages} pages done ${Date.now() - started}ms — ${byOutpoint.size} tip(s)`,
+      )
+    }
   } catch (err) {
     opts.setCooldown(Date.now() + HOST_COOLDOWN_MS)
     console.warn(`[${opts.logTag}] ordinal index lookup failed`, err)

@@ -33,7 +33,6 @@ import {
   publishedIdentityForIssuer,
   recordPublishedIdentity,
 } from './publicIdentities'
-import { approveWalletPayment } from './permissions'
 import type { ActiveWallet } from './session'
 import { runExclusiveSpend } from './spendGuard'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
@@ -452,23 +451,15 @@ export async function planIdentityPublish(
  * rotation, a new image or a wallet switch since review refuses rather than
  * signing records the user never saw, and each transaction's fee is held to
  * its approved ceiling before it is signed.
+ *
+ * `IdentityPublishReview` is the approval. A second wallet prompt here opened
+ * beneath that review's backdrop on phones and the publish never resumed.
  */
-const PUBLISH_TITLE: Record<IdentityPublishPlan['kind'], string> = {
-  publish: 'Publish identity',
-  update: 'Update identity',
-  rotate: 'Rotate identity key',
-}
-
 export async function publishIdentityPlan(
   runtime: WalletRuntime,
   request: IdentityPublishRequest,
   approved: IdentityPublishPlan,
 ): Promise<IssuerIdentity> {
-  await approveWalletPayment({
-    title: PUBLISH_TITLE[approved.kind],
-    summary: approved.name,
-    amountSats: approved.feeSats,
-  })
   const started = Date.now()
   return runExclusiveSpend(async () => {
     const prepared = await prepare(runtime, request)

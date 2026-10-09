@@ -54,6 +54,24 @@ describe('scanAddressTokenTxos', () => {
     expect(url).toContain('bsv20=true')
   })
 
+  it('pages past the first thousand tips until the index answers short', async () => {
+    const page = (offset: number, n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        tokenRow({ txid: (offset + i + 1).toString(16).padStart(64, '0'), vout: 0 }),
+      )
+    const fetchMock = vi.fn(async (url: string) => {
+      const offset = Number(new URL(url).searchParams.get('offset'))
+      return new Response(JSON.stringify(page(offset, offset < 2_000 ? 1_000 : 823)), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const utxos = await scanAddressOrdinalTxos(ADDRESS, 'main')
+
+    expect(utxos).toHaveLength(2_823)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('limit=1000')
+  })
+
   it('returns the tip the address providers cannot see', async () => {
     vi.stubGlobal(
       'fetch',

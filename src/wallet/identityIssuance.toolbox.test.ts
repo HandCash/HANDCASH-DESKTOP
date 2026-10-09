@@ -404,17 +404,13 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(paid).toBeLessThanOrEqual(plan.feeSats)
   })
 
-  it('asks for payment approval and signs nothing when it is declined', async () => {
+  it('takes the reviewed plan as the approval and opens no second wallet prompt', async () => {
     const h = await fundedWallet()
     const request = profileRequest(h.active.identityKey)
     const plan = await planIdentityPublish(h.runtime, request)
-    vi.mocked(approveWalletPayment).mockRejectedValueOnce(new Error('declined'))
-    await expect(publishIdentityPlan(h.runtime, request, plan)).rejects.toThrow('declined')
-    expect(approveWalletPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Publish identity', amountSats: plan.feeSats }),
-    )
-    expect(registerSignedSend).not.toHaveBeenCalled()
-    expect(await spendable(h)).toBe(FUNDING)
+    await publishIdentityPlan(h.runtime, request, plan)
+    expect(approveWalletPayment).not.toHaveBeenCalled()
+    expect(registerSignedSend).toHaveBeenCalled()
   })
 
   it('refuses a plan that moved since review before staging anything', async () => {

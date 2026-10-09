@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.539] - 2026-10-09
+
+### Fixed
+- **Publishing an identity no longer hangs on phones.** Since 1.3.415 the publish asked for approval twice. The identity review was the first approval, and pressing "Sign and publish" then opened a second wallet payment prompt. On a phone that prompt opens inline on the Activity tab, so the wallet switched tabs, but the review dialog stayed on top showing "Signing…" and its backdrop covered the prompt. Nothing could be approved, the spend lock waited 90 seconds, and the only way out was to force-close the app. The review is now the only approval. The publish still rebuilds the plan under the spend lock, refuses anything that changed since review, and holds each fee to its approved ceiling.
+- **Collect reaches every item past the first 1,000.** The ordinal index read 10 pages of 100 tips. Imported items stay unspent at the address, so tips past that ceiling were never read. This address holds 2,823. The index is now read 1,000 tips per page, up to 50 pages. A read of more than one page logs `[<tag>] ordinal index N pages done Nms — N tip(s)`.
+- **Items hidden by a failed import leg come back on Refresh.** An item whose row was marked unspendable stayed hidden, even though the tip still sat unspent at the address. This happened when its import transaction was marked failed locally, or was swept into the failure of an earlier leg whose change funded it. Custody recovery re-imports only outputs with no row at all, and the coin reconcile reads only basket `default`, so neither reached it. Refresh now finds these rows and decides each one:
+  - On-chain creator: the row is restored.
+  - Creator failed locally but on chain: the creator is revived.
+  - Creator still app-held: it is pinned as broadcast, since the scan shows its output at the address.
+  - Item sent, abandoned, spent locally or held by the lock overlay: it stays hidden.
+
+  Storage is read and written one page per session and stops for a waiting send. Each pass logs `[item-reconcile] done Nms — absent= rows= noRow= restored= revived= pinned= kept …`.
+- `[collectables] basket read done` now also logs the basket total, so a gap between the address and Collect shows up in the next upload.
+
 ## [1.3.538] - 2026-10-08
 
 ### Fixed
