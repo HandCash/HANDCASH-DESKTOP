@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Beef, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
+import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { accountLocalKey } from './accountLocalKeys'
 
 /**
@@ -34,6 +34,20 @@ vi.mock('./legacyScan', () => ({
   importLegacyUtxos: vi.fn(),
   scanAddressViaBitails: vi.fn(),
   scanAddressViaWhatsOnChain: vi.fn(),
+  txExistsOnChain: async () => false,
+}))
+/** `txid.vout` → the local transaction this wallet sealed it under. */
+const seals = new Map<string, string>()
+const cheques = new Map<string, number[]>()
+const minerSubmit = vi.fn()
+vi.mock('./utxoLockManager', () => ({
+  sealedSpenderOf: (outpoint: string) => seals.get(outpoint.replace('_', '.')) ?? null,
+}))
+vi.mock('./signedChequeArchive', () => ({
+  signedChequeAtomic: (txid: string) => cheques.get(txid) ?? null,
+}))
+vi.mock('./minerSubmit', () => ({
+  submitAtomicBeefToMiners: (...a: unknown[]) => minerSubmit(...a),
 }))
 vi.mock('./legacyStuckSweep', () => ({ retryableStuckSweeps: vi.fn() }))
 vi.mock('./legacyImportGuard', () => ({
@@ -115,6 +129,57 @@ describe('migrateChosenPhraseItems stops', () => {
     refreshFromChain.mockReset()
     parentCalls.length = 0
     heldParents.clear()
+    seals.clear()
+    cheques.clear()
+    minerSubmit.mockReset()
+  })
+
+  it('cashes an earlier unlanded leg that sealed tips instead of building over them', async () => {
+    const three = Array.from({ length: 3 }, (_, i) => makeTip(30_000 + i))
+    for (const tip of three) beefByTxid.set(tip.txid, tip.beef)
+    const dest = new P2PKH().lock('1PjUSNqWWKFwG9vCnpnoMRDnkr1m89h9NU')
+    const earlier = new Transaction()
+    for (const tip of three.slice(0, 2)) {
+      earlier.addInput({ sourceTXID: tip.txid, sourceOutputIndex: 0, unlockingScript: UnlockingScript.fromHex('') })
+      earlier.addOutput({ lockingScript: dest, satoshis: 1 })
+    }
+    const earlierTxid = earlier.id('hex')
+    const body = new Beef()
+    body.mergeRawTx(earlier.toBinary())
+    cheques.set(earlierTxid, body.toBinaryAtomic(earlierTxid))
+    for (const tip of three.slice(0, 2)) seals.set(`${tip.txid}.0`, earlierTxid)
+    minerSubmit.mockResolvedValue({ kind: 'accepted', ancestryComplete: true, keepPropagating: false })
+    const inputCounts: number[] = []
+    createAction.mockImplementation(async (args: { inputs?: unknown[] }) => {
+      inputCounts.push(args.inputs?.length ?? 0)
+      throw new Error('Insufficient funds in the available inputs (1000 more satoshis are needed)')
+    })
+    const landed: string[] = []
+
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({
+      items: three.map((t) => ({ outpoint: t.outpoint, keyHex: PHRASE_KEY.toHex() })),
+      onLanded: (outpoints) => landed.push(...outpoints),
+    })
+
+    expect(minerSubmit).toHaveBeenCalledWith(earlierTxid, expect.any(Array), { flow: 'item_transfer' })
+    expect(inputCounts).toEqual([1])
+    expect(run.results.get(three[0]!.outpoint)).toEqual({ kind: 'moved', txid: earlierTxid })
+    expect(run.results.get(three[1]!.outpoint)).toEqual({ kind: 'moved', txid: earlierTxid })
+    expect(run.results.get(three[2]!.outpoint)?.kind).toBe('funds')
+    expect(landed).toEqual([three[0]!.outpoint, three[1]!.outpoint])
+  })
+
+  it('leaves tips sealed by an undecided leg for the next run, without building over them', async () => {
+    const tip = makeTip(40_000)
+    beefByTxid.set(tip.txid, tip.beef)
+    seals.set(`${tip.txid}.0`, 'e'.repeat(64))
+
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: [{ outpoint: tip.outpoint, keyHex: PHRASE_KEY.toHex() }] })
+
+    expect(createAction).not.toHaveBeenCalled()
+    expect(run.results.get(tip.outpoint)?.kind).toBe('deferred')
   })
 
   it('signs the first chunk while the next chunk’s parents still download, one source tx per decode', async () => {

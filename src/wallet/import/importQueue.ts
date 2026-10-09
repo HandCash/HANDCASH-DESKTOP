@@ -1,6 +1,7 @@
 import { createActor } from 'xstate'
 import {
   importQueueMachine,
+  inFlightBatch,
   sourceRun,
   sourceView,
   watchSource,
@@ -90,6 +91,14 @@ function runVerdict(snapshot: ImportQueueSnapshot, current: Run): ImportItemNoti
   return reports.find((r) => r.tone === 'danger') ?? reports.find((r) => r.tone === 'warning') ?? reports[0] ?? null
 }
 
+/** "12 of 2,630 imported · batch 12 of 100" — the batch only while a run spans more than one. */
+function runDetail(snapshot: ImportQueueSnapshot, done: number, total: number): string {
+  const overall = `${done.toLocaleString()} of ${total.toLocaleString()} imported`
+  const batch = inFlightBatch(snapshot.context)
+  if (!batch || batch.total >= total) return overall
+  return `${overall} · batch ${batch.done.toLocaleString()} of ${batch.total.toLocaleString()}`
+}
+
 function report(snapshot: ImportQueueSnapshot): void {
   const busy = !snapshot.matches('idle')
   if (busy && !run) {
@@ -101,7 +110,7 @@ function report(snapshot: ImportQueueSnapshot): void {
   const current = run
   const { total, done } = runTotals(snapshot, current)
   if (busy) {
-    const detail = `${done.toLocaleString()} of ${total.toLocaleString()} imported`
+    const detail = runDetail(snapshot, done, total)
     if (snapshot.matches('cooling')) current.job.wait('Waiting for a spent fee coin to clear…')
     else current.job.progress(done, total > 0 ? total : null, detail)
     mirrorPill(snapshot, done, total)
@@ -129,9 +138,7 @@ function mirrorPill(snapshot: ImportQueueSnapshot, done: number, total: number):
   const ours = bus.kind === 'item-import' && bus.status === 'running'
   if (total <= 0 || (!ours && bus.status === 'running')) return
   const identityKey = runIdentity(snapshot)
-  const message = snapshot.matches('cooling')
-    ? 'Waiting for a spent fee coin to clear…'
-    : `${done.toLocaleString()} of ${total.toLocaleString()} imported`
+  const message = snapshot.matches('cooling') ? 'Waiting for a spent fee coin to clear…' : runDetail(snapshot, done, total)
   const job = { current: done, total, message, ...(identityKey ? { identityKey } : {}) }
   if (ours) updateWalletProgress(job)
   else startWalletProgress({ kind: 'item-import', phase: 'importing-items', ...job })

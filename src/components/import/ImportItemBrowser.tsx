@@ -396,6 +396,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
   const confirming = snapshot.matches({ move: 'confirming' })
   const locked = confirming
   const run = context.queue.run
+  const batchBar = run?.batch && run.batch.total < run.total ? run.batch : null
   const { moving, waiting } = useMemo(() => queuedOutpoints(context.queue), [context.queue])
   const reading = snapshot.matches({ page: 'reading' })
   const searching = context.query.trim() !== ''
@@ -530,12 +531,22 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
                 ? 'Waiting for a spent fee coin to clear…'
                 : `Importing ${run.done.toLocaleString()} of ${run.total.toLocaleString()}`}
             </StatusBanner.Title>
-            <Progress.Root className="history-progress" value={run.done} max={Math.max(1, run.total)}>
+            <Progress.Root
+              className="history-progress"
+              value={batchBar ? batchBar.done : run.done}
+              max={Math.max(1, batchBar ? batchBar.total : run.total)}
+              aria-label={batchBar ? 'This batch' : 'Import progress'}
+            >
               <Progress.Track className="history-progress-track">
                 <Progress.Range className="history-progress-range" />
               </Progress.Track>
             </Progress.Root>
-            <StatusBanner.Body>Keeps going if you leave this page — Activity shows it too.</StatusBanner.Body>
+            <StatusBanner.Body>
+              {batchBar
+                ? `This batch: ${batchBar.done.toLocaleString()} of ${batchBar.total.toLocaleString()}. `
+                : ''}
+              Keeps going if you leave this page — Activity shows it too.
+            </StatusBanner.Body>
           </StatusBanner.Copy>
           <div className="actions">
             <button

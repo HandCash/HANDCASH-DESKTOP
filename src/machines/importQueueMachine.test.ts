@@ -4,6 +4,7 @@ import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
 import {
   IMPORT_CHUNK,
   importQueueMachine,
+  inFlightBatch,
   nextChunk,
   sourceRun,
   STALE_FUNDING_PAUSE_MS,
@@ -84,13 +85,30 @@ describe('importQueueMachine', () => {
     land(firstLeg)
     land([...firstLeg, op(9_999)])
     const run = sourceRun(queue.getSnapshot().context, 'a')!
-    expect(run).toMatchObject({ total: 79, done: 21 })
+    expect(run).toMatchObject({ total: 79, done: 21, batch: { done: 21, total: 79 } })
     expect(run.moving).toHaveLength(58)
 
     answer({ results: items(1, 79).map(({ outpoint }) => ({ outpoint, result: MOVED })), stopped: null })
     const idle = await waitFor(queue, (s) => s.matches('idle'))
     expect(idle.context.landed).toEqual([])
     expect(idle.context.reports.a).toMatchObject({ title: '79 items imported' })
+  })
+
+  it('reports the chunk in flight as its own batch of a long run', async () => {
+    let land!: (outpoints: string[]) => void
+    const { queue } = start(({ onLanded }) => {
+      land = onLanded
+      return new Promise<ImportItemsResult>(() => undefined)
+    })
+    queue.send({ type: 'ENQUEUE', sourceId: 'a', identityKey: 'id1', items: items(1, 2_630) })
+    await vi.waitFor(() => expect(land).toBeTypeOf('function'))
+    land(items(1, 11).map((item) => item.outpoint))
+    expect(sourceRun(queue.getSnapshot().context, 'a')).toMatchObject({
+      total: 2_630,
+      done: 11,
+      batch: { done: 11, total: IMPORT_CHUNK },
+    })
+    expect(inFlightBatch(queue.getSnapshot().context, 'b')).toBeNull()
   })
 
   it('waits out a spent fee coin, then retries only the untried items', async () => {

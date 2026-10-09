@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.534] - 2026-10-08
+
+### Fixed
+- **An import pushes its own earlier transaction instead of building over it.** On 0.1.677, Import All of about 2,630 items kept refusing whole batches. The input check found tips held by an earlier import transaction from this wallet (`1aabd570412d…`). That transaction was signed and recorded on the device but never reached a miner: WhatsOnChain and GorillaPool both show its tips unspent. Each refusal cost about 85s. 1.3.533 then answered those tips "already moved", which was wrong, and the next indexer scan listed them again. Before building, and again whenever the check names tips, the import now looks up the transaction holding each tip. If it is on chain, the tips are answered as moved. If its signed body is on the device, it is resubmitted, and on acceptance its tips are recorded as moved with their exact output. If a miner rejects it and its seal is released, the tips go back into the batch. Anything still undecided stays queued with "Waiting on an earlier import transaction to reach the network." The import does not sign over it. Each holding transaction logs `[phrase-sweep] sealer <txid> <fate>` and the pass logs `[phrase-sweep] sealed tips done Nms`.
+- **The import bar shows the batch in flight.** Eleven items of a 2,630-item run fill 0.4% of the bar, which looks like nothing. When a run spans more than one 100-item batch, the bar now tracks the batch in flight, so each transaction that lands moves it by up to a quarter. The title keeps the overall count. The Activity row and the status pill read "11 of 2,630 imported · batch 11 of 100".
+
 ## [1.3.533] - 2026-10-08
 
 ### Fixed

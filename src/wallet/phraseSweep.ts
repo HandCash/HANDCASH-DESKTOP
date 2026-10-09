@@ -61,6 +61,8 @@ import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { leaseSpendPriority } from './walletCoordinator'
 import { BeefShelf, beefSubset, prefixWithinBeefBudget } from './beefSubset'
+import { settleSealedTips, type SealedTipsResult, type SealerPorts } from './import/sealedTips'
+import { withStorageLockLabel } from './storageLockTrace'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { isInsufficientFundsError } from './insufficientFunds'
@@ -882,6 +884,7 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
     }
   })
   const nameOf = new Map(rows.map((row) => [row.outpoint, row.name ?? null]))
+  const { sealedSpenderOf } = await import('./utxoLockManager')
   const outcome = emptyUnitOutcome()
   const untried: string[] = []
   let skipped = 0
@@ -924,23 +927,46 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
     if (pending.length === 0) continue
     await yieldToUi()
 
+    const onMoved = (receipts: MigratedItemReceipt[]) => {
+      const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
+      recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
+      paintMigratedItems(named, active)
+      args.onLanded?.(receipts.map((item) => givenOf.get(item.outpoint) ?? item.outpoint))
+    }
+    const sealers = sealerPorts(active, parents.shelf, sealedSpenderOf)
+    // A tip sealed under an earlier leg is refused by the input check on every
+    // build. Cash or clear those legs first rather than paying a refusal each.
+    let build = pending
+    if (pending.some((item) => sealedSpenderOf(item.outpoint))) {
+      const settledAt = Date.now()
+      const settled = await settleSealedTips(pending, destLock, sealers)
+      logSealers(settled, settledAt)
+      const receipts = sealedReceipts(settled)
+      if (receipts.length > 0) {
+        outcome.moved.push(...receipts)
+        onMoved(receipts)
+      }
+      outcome.spentElsewhere.push(...settled.gone.map((item) => item.outpoint))
+      outcome.held.push(...settled.held.map((item) => item.outpoint))
+      const buildable = new Set([...settled.free, ...settled.released])
+      build = pending.filter((item) => buildable.has(item))
+      if (build.length === 0) continue
+    }
+
     const unit = await migrateOrdinalUnit({
       active,
       destLockHex: destLock,
       sourceBeef: parents.shelf,
-      items: pending,
+      items: build,
       itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
-      onMoved: (receipts) => {
-        const named = receipts.map((item) => ({ ...item, name: nameOf.get(item.outpoint) ?? null }))
-        recordMigratedItemActivity(named, active.chain, { groupId: args.activityGroup })
-        paintMigratedItems(named, active)
-        args.onLanded?.(receipts.map((item) => givenOf.get(item.outpoint) ?? item.outpoint))
-      },
+      onMoved,
+      sealers,
     })
     outcome.moved.push(...unit.moved)
     outcome.failed += unit.failed
     outcome.failures.push(...unit.failures)
     outcome.spentElsewhere.push(...unit.spentElsewhere)
+    outcome.held.push(...unit.held)
     outcome.resolved += unit.resolved
     if (unit.lastError) outcome.lastError = unit.lastError
     if (unit.stopped) {
@@ -949,8 +975,9 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
         ...unit.moved.map((item) => item.outpoint),
         ...unit.failures.map((item) => item.outpoint),
         ...unit.spentElsewhere,
+        ...unit.held,
       ])
-      untried.push(...pending.filter((item) => !settled.has(item.outpoint)).map((item) => item.outpoint))
+      untried.push(...build.filter((item) => !settled.has(item.outpoint)).map((item) => item.outpoint))
     }
   }
   for (const receipt of outcome.moved) {
@@ -958,6 +985,9 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
   }
   for (const failure of outcome.failures) {
     results.set(givenOf.get(failure.outpoint)!, { kind: 'failed', message: failure.reason })
+  }
+  for (const outpoint of outcome.held) {
+    results.set(givenOf.get(outpoint)!, { kind: 'deferred', message: HELD_BY_SEALER_MESSAGE })
   }
   for (const outpoint of outcome.spentElsewhere) {
     skipped += 1
@@ -981,6 +1011,7 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
     outcome.failures.length > 0 || unreadable > 0 || outcome.stopped ? 'warn' : 'info',
     `[phrase-sweep] chosen done ${Date.now() - startedAt}ms items=${rows.length} keys=${spenders.size} moved=${outcome.moved.length}` +
       ` tx=${transactions} skipped=${skipped} unreadable=${unreadable} failed=${outcome.failures.length}` +
+      (outcome.held.length > 0 ? ` held=${outcome.held.length}` : '') +
       (outcome.stopped ? ` stopped=${outcome.stopped}` : '') +
       (outcome.lastError ? ` lastError=${outcome.lastError}` : ''),
   )
@@ -1101,6 +1132,8 @@ type UnitOutcome = {
   failures: Array<{ outpoint: string; reason: string }>
   /** Tips the input check found spent by another transaction; never signed. */
   spentElsewhere: string[]
+  /** Tips sealed under an earlier leg that is neither landed nor rejected yet. */
+  held: string[]
   /** Rows this unit settled, whether moved, failed or spent elsewhere. */
   resolved: number
   stopped: PhraseItemStopReason | null
@@ -1108,7 +1141,65 @@ type UnitOutcome = {
 }
 
 function emptyUnitOutcome(): UnitOutcome {
-  return { moved: [], failed: 0, failures: [], spentElsewhere: [], resolved: 0, stopped: null, lastError: null }
+  return { moved: [], failed: 0, failures: [], spentElsewhere: [], held: [], resolved: 0, stopped: null, lastError: null }
+}
+
+const HELD_BY_SEALER_MESSAGE = 'Waiting on an earlier import transaction to reach the network.'
+
+/** How the import cashes a leg this wallet signed earlier, from this run's parents. */
+function sealerPorts(
+  active: ActiveWallet,
+  parents: Beef | BeefShelf,
+  sealedSpenderOf: SealerPorts['sealedSpenderOf'],
+): SealerPorts {
+  return {
+    sealedSpenderOf,
+    txExistsOnChain: async (txid) => (await import('./legacyScan')).txExistsOnChain(txid, active.chain),
+    signedBody: async (txid, tipTxids) => {
+      const { signedChequeAtomic } = await import('./signedChequeArchive')
+      const archived = signedChequeAtomic(txid)
+      if (archived?.length) return archived
+      const storage = active.wallet.storage
+      if (!storage?.runAsStorageProvider) return null
+      const raw = await withStorageLockLabel('sealedTips(raw)', () =>
+        storage.runAsStorageProvider!(
+          async (sp: { getProvenOrRawTx?: (txid: string) => Promise<{ rawTx?: number[] } | undefined> }) =>
+            sp.getProvenOrRawTx?.(txid),
+        ),
+      )
+      if (!raw?.rawTx?.length) return null
+      const beef = beefSubset(parents, tipTxids)
+      beef.mergeRawTx(raw.rawTx)
+      return beef.toBinaryAtomic(txid)
+    },
+    submit: async (txid, atomic) =>
+      (await import('./minerSubmit')).submitAtomicBeefToMiners(txid, atomic, { flow: 'item_transfer' }),
+  }
+}
+
+function sealedReceipts(
+  settled: SealedTipsResult<PendingItemMigrate>,
+): MigratedItemReceipt[] {
+  return settled.moved.map(({ item, txid, vout }) => ({
+    outpoint: item.outpoint,
+    origin: item.origin,
+    sweepTxid: txid,
+    ...(vout !== undefined ? { sweepVout: vout } : {}),
+  }))
+}
+
+function logSealers(settled: SealedTipsResult<PendingItemMigrate>, startedAt: number): void {
+  for (const [txid, fate] of settled.sealers) {
+    appendAppLog(
+      fate.kind === 'held' ? 'warn' : 'info',
+      `[phrase-sweep] sealer ${txid} ${fate.kind}${fate.kind === 'held' ? ` (${fate.reason})` : ''}`,
+    )
+  }
+  appendAppLog(
+    'info',
+    `[phrase-sweep] sealed tips done ${Date.now() - startedAt}ms sealers=${settled.sealers.size} moved=${settled.moved.length}` +
+      ` gone=${settled.gone.length} released=${settled.released.length} held=${settled.held.length}`,
+  )
 }
 
 /**
@@ -1155,6 +1246,7 @@ async function migrateOrdinalUnit(args: {
    * unannotated migrate shows as a row of its own.
    */
   onMoved: (moved: MigratedItemReceipt[]) => void
+  sealers: SealerPorts
 }): Promise<UnitOutcome> {
   const out = emptyUnitOutcome()
   let pending = args.items.slice()
@@ -1216,13 +1308,31 @@ async function migrateOrdinalUnit(args: {
       }
       const dead = deadTipsOf(err, group)
       if (dead.size > 0) {
+        // The refusal sealed each dead tip under its spender. A spender that is
+        // an earlier leg of this wallet is cashed, not counted as a loss.
+        const settledAt = Date.now()
+        const settled = await settleSealedTips(
+          group.filter((item) => dead.has(item.outpoint)),
+          args.destLockHex,
+          args.sealers,
+        )
+        logSealers(settled, settledAt)
+        const receipts = sealedReceipts(settled)
+        if (receipts.length > 0) {
+          out.moved.push(...receipts)
+          args.onMoved(receipts)
+        }
+        const gone = [...settled.gone, ...settled.free].map((item) => item.outpoint)
+        out.spentElsewhere.push(...gone)
+        out.held.push(...settled.held.map((item) => item.outpoint))
+        const answered = new Set([...receipts.map((r) => r.outpoint), ...gone, ...settled.held.map((item) => item.outpoint)])
+        out.resolved += answered.size
+        pending = pending.filter((item) => !answered.has(item.outpoint))
         appendAppLog(
           'warn',
-          `[phrase-sweep] ${dead.size} of ${group.length} tip(s) already spent elsewhere — dropped, building the rest at ${perTx}`,
+          `[phrase-sweep] ${dead.size} of ${group.length} tip(s) spent elsewhere — moved=${receipts.length} gone=${gone.length}` +
+            ` held=${settled.held.length} rebuilding=${settled.released.length}; building the rest at ${perTx}`,
         )
-        out.spentElsewhere.push(...dead)
-        out.resolved += dead.size
-        pending = pending.filter((item) => !dead.has(item.outpoint))
         continue
       }
       if (refusedOverFunding(err, group)) {
