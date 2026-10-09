@@ -137,12 +137,23 @@ function protocols(pushes: number[][]): number[][][] {
 const text = (field: number[] | null | undefined, max = 256): string | null =>
   field && field.length <= max ? Utils.toUTF8(field) : null
 
+/**
+ * The 65-byte compact signature: raw, as 1Sat wallets write it, or its base64
+ * text, as the AIP specification and earlier BAP libraries do.
+ */
+function compactSignature(field: number[]): number[] | null {
+  if (field.length === 65) return field
+  if (field.length !== 88) return null
+  const decoded = Utils.toArray(Utils.toUTF8(field), 'base64')
+  return decoded.length === 65 ? decoded : null
+}
+
 /** AIP over every preceding field: the address whose key signed `OP_RETURN ‖ fields ‖ |`. */
 function aipSigner(signed: number[][], aip: number[][]): string | null {
   if (aip.length !== 4 || text(aip[0]) !== AIP_BITCOM_ADDRESS || text(aip[1]) !== AIP_ALGORITHM) return null
   const address = text(aip[2])
-  const compact = aip[3]!
-  if (!address || compact.length !== 65) return null
+  const compact = compactSignature(aip[3]!)
+  if (!address || !compact) return null
   const message = [OP.OP_RETURN, ...signed.flat(), PIPE]
   const hash = new BigNumber(BSM.magicHash(message))
   const recovery = (compact[0]! - 27) & 3

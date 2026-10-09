@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.542] - 2026-10-09
+
+### Fixed
+- **BAP identities signed by earlier tools now verify.** The AIP signature on a BAP `ID` or `ALIAS` record was read only as 65 raw bytes, the form 1Sat wallets write. The AIP specification and earlier BAP libraries write its base64 text, so their records were dropped as unsigned and those issuers showed no name. Both forms are now read; records are still written raw. This matches the BRC-248 draft revision.
+
 ## [1.3.541] - 2026-10-09
 
 ### Fixed

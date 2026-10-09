@@ -70,6 +70,17 @@ describe('BAP records', () => {
     expect(legacy).toBe(bapIdScript({ bapId, address: bapKey(master, 1).toAddress(), signer: root }))
   })
 
+  it('reads an AIP signature carried as base64 text', () => {
+    const bapId = bapIdFor(master)
+    const root = bapKey(master, 0)
+    const address = bapKey(master, 1).toAddress()
+    const raw = bapIdScript({ bapId, address, signer: root })
+    expect(raw.slice(-132, -130)).toBe('41')
+    const signature = Utils.toArray(raw.slice(-130), 'hex')
+    const asText = raw.slice(0, -132) + '4c58' + Utils.toHex(Utils.toArray(Utils.toBase64(signature), 'utf8'))
+    expect(parseBapRecord(asText)).toEqual({ kind: 'id', bapId, address, signer: root.toAddress() })
+  })
+
   it('refuses a record whose signature does not cover its fields', () => {
     const bapId = bapIdFor(master)
     const genuine = bapIdScript({ bapId, address: bapKey(master, 1).toAddress(), signer: bapKey(master, 0) })
