@@ -16,7 +16,7 @@ vi.mock('./walletRuntime', async (importOriginal) => ({
   runtimeIsCurrent: () => true,
 }))
 
-import { publishActivityLedger, resetActivityLedgerForTests } from './activityLedger'
+import { ledgerActivitySnapshot, publishActivityLedger, resetActivityLedgerForTests } from './activityLedger'
 import { itemMigrateTxDescription, jobOfTxid, noteJobTxids, resetActivityJobIndexForTests } from './activityJobIndex'
 import { composeActivityRecords } from './activityRecords'
 import {
@@ -255,6 +255,39 @@ describe('Activity over the wallet ledger', () => {
     )
     expect(exportAllActivity()).toEqual([])
     expect(jobOfTxid(tx(5))).toBe(job)
+  })
+
+  it('shows a grouped migrate from the moment it lands, before any read reaches it', () => {
+    const job = 'job:wallet-sweep:run'
+    publishActivityLedger('ns', [ledgerCoin(1)], 0)
+    recordMigratedItemActivity(
+      Array.from({ length: 24 }, (_, i) => ({ outpoint: `${tx(700 + i)}.0`, origin: `${tx(700 + i)}_0`, sweepTxid: tx(5), sweepVout: i, name: `Fox #${i}` })),
+      'main',
+      { groupId: job },
+    )
+    const legs = listActivityFeed(10).filter((e) => e.sendGroupId === job)
+    expect(legs).toHaveLength(24)
+    expect(legs[0]).toMatchObject({ note: IMPORTED_COLLECTABLE_NOTE, txid: tx(5), kind: 'earned' })
+    expect(legs.map((e) => e.item?.outpoint)).toContain(`${tx(5)}.23`)
+    expect(legs.find((e) => e.item?.outpoint === `${tx(5)}.0`)?.item).toMatchObject({ name: 'Fox #0', origin: `${tx(700)}_0` })
+  })
+
+  it('a read that began after a landed migrate settles it: its own rows replace it, or it goes', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    const job = 'job:wallet-sweep:settle'
+    const leg = (n: number) => ({ outpoint: `${tx(800 + n)}.0`, origin: `${tx(800 + n)}_0`, sweepTxid: tx(6 + n), sweepVout: 0 })
+    publishActivityLedger('ns', [ledgerCoin(1)], 0)
+    recordMigratedItemActivity([leg(0), leg(1)], 'main', { groupId: job })
+    const ids = () => ledgerActivitySnapshot().map((row) => row.id)
+
+    publishActivityLedger('ns', [ledgerCoin(1)], 9_000)
+    expect(ids()).toEqual(expect.arrayContaining([`ledger:${tx(6)}:${tx(6)}.0`, `ledger:${tx(7)}:${tx(7)}.0`]))
+
+    const landed = { ...ledgerItem(6, `${tx(6)}.0`, 'earned'), at: 9_500 }
+    publishActivityLedger('ns', [ledgerCoin(1), landed], 11_000)
+    expect(ids()).toEqual([`ledger:${tx(1)}`, `ledger:${tx(6)}:${tx(6)}.0`])
+    expect(ledgerActivitySnapshot().find((row) => row.txid === tx(6))?.at).toBe(9_500)
   })
 
   it('sheds imported legs the ledger folds under their job before any older history', () => {

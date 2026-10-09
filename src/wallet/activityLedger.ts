@@ -9,7 +9,7 @@
  * projection before a live read.
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
-import { loadLedgerRows, saveLedgerRows } from './activityLedgerStore'
+import { loadLedgerSnapshot, saveLedgerRows, type SavedLedger, type SavedLedgerTxs } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { withStorageLockLabel } from './storageLockTrace'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
@@ -256,8 +256,70 @@ function sameRows(a: readonly ActivityEntry[], b: readonly ActivityEntry[]): boo
   return true
 }
 
-export function publishActivityLedger(namespace: string, rows: ActivityEntry[]): void {
-  installSnapshot(namespace, rows, { persist: true })
+/**
+ * Rows for this wallet's own transactions that broadcast after the last read
+ * began. An import leg is in the feed and in the saved copy the moment it
+ * lands, not only once a live read — minutes behind the storage lock on a
+ * phone — reaches it; without this a restart mid-import showed none of it.
+ * The first read that began after a row was noted settles it: the read's own
+ * row replaces it, or the transaction is not settled and the row goes.
+ */
+type Provisional = { namespace: string; notedAt: number; rows: ActivityEntry[] }
+const provisional = new Map<string, Provisional>()
+
+/**
+ * `rows` with every provisional row of `namespace` it does not hold. A live
+ * read (`readStartedAt`) retires the ones it holds or that were noted before
+ * it began.
+ */
+function withProvisional(
+  namespace: string,
+  rows: readonly ActivityEntry[],
+  readStartedAt: number | null,
+): ActivityEntry[] {
+  if (provisional.size === 0) return rows as ActivityEntry[]
+  const held = new Set(rows.map((row) => row.txid))
+  const extra: ActivityEntry[] = []
+  for (const [txid, entry] of provisional) {
+    if (entry.namespace !== namespace) continue
+    const settled = held.has(txid) || (readStartedAt != null && entry.notedAt < readStartedAt)
+    if (settled && readStartedAt != null) provisional.delete(txid)
+    if (settled || isGhostTxSuppressed(txid)) continue
+    extra.push(...entry.rows)
+  }
+  if (extra.length === 0) return rows as ActivityEntry[]
+  return [...rows, ...extra].sort((a, b) => a.at - b.at)
+}
+
+/**
+ * Ledger rows for a transaction this wallet just broadcast, in the shape a
+ * read will produce for it (`ledger:<txid>:<outpoint>`), so the read replaces
+ * them row for row.
+ */
+export function noteOwnLedgerRows(rows: readonly ActivityEntry[]): void {
+  const namespace = getWalletRuntime()?.storageNamespace
+  if (!namespace) return
+  const notedAt = Date.now()
+  for (const row of rows) {
+    const txid = row.txid?.trim().toLowerCase()
+    if (!txid || !/^[0-9a-f]{64}$/.test(txid) || !row.id.startsWith(`ledger:${txid}`)) continue
+    const entry = provisional.get(txid)
+    const kept = entry?.namespace === namespace ? entry.rows.filter((r) => r.id !== row.id) : []
+    provisional.set(txid, { namespace, notedAt, rows: [...kept, { ...row, txid }] })
+  }
+  const current = currentSnapshot()
+  // Before the restored copy paints there is nothing to merge into; the
+  // restore, or the first read, picks these up.
+  if (!current) return
+  installSnapshot(namespace, withProvisional(namespace, current.rows, null), { persist: true })
+}
+
+export function publishActivityLedger(
+  namespace: string,
+  rows: ActivityEntry[],
+  readStartedAt: number | null = null,
+): void {
+  installSnapshot(namespace, withProvisional(namespace, rows, readStartedAt), { persist: true })
 }
 
 function installSnapshot(namespace: string, rows: ActivityEntry[], opts: { persist: boolean }): void {
@@ -290,7 +352,7 @@ function scheduleSave(namespace: string, rows: readonly ActivityEntry[]): void {
     const next = saveRows
     saveRows = null
     if (next) {
-      void saveLedgerRows(next.namespace, next.rows).catch((err) => {
+      void saveLedgerRows(next.namespace, next.rows, txsToSave(next.namespace)).catch((err) => {
         console.warn('[activity-ledger] saving the last read failed', err instanceof Error ? err.message : err)
       })
     }
@@ -303,8 +365,14 @@ function flushSave(): void {
   const next = saveRows
   saveRows = null
   if (next) {
-    void saveLedgerRows(next.namespace, next.rows).catch(() => undefined)
+    void saveLedgerRows(next.namespace, next.rows, txsToSave(next.namespace)).catch(() => undefined)
   }
+}
+
+/** This session's transaction cache, or undefined to keep what is saved. */
+function txsToSave(namespace: string): SavedLedgerTxs | undefined {
+  if (txCache?.namespace !== namespace) return undefined
+  return { userId: txCache.userId, txs: [...txCache.byId.values()] }
 }
 
 if (typeof document !== 'undefined') {
@@ -314,15 +382,17 @@ if (typeof document !== 'undefined') {
   window.addEventListener('pagehide', () => flushSave())
 }
 
-let primed: { namespace: string; rows: ActivityEntry[] } | null = null
+let primed: { namespace: string; saved: SavedLedger } | null = null
+/** Transactions the last session read, until this session's first read seeds its cache from them. */
+let savedTxs: { namespace: string; saved: SavedLedgerTxs } | null = null
 
-async function readSavedRows(namespace: string): Promise<ActivityEntry[]> {
+async function readSaved(namespace: string): Promise<SavedLedger> {
   try {
-    const rows = await loadLedgerRows(namespace)
-    return (rows ?? []).filter((row) => !isGhostTxSuppressed(row.txid!))
+    const saved = await loadLedgerSnapshot(namespace)
+    return { rows: (saved.rows ?? []).filter((row) => !isGhostTxSuppressed(row.txid!)), txs: saved.txs }
   } catch (err) {
     console.warn('[activity-ledger] last read unavailable', err instanceof Error ? err.message : err)
-    return []
+    return { rows: [], txs: null }
   }
 }
 
@@ -332,7 +402,17 @@ async function readSavedRows(namespace: string): Promise<ActivityEntry[]> {
  * launch paints the annotation log alone and the history arrives a frame later.
  */
 export async function preloadActivityLedger(namespace: string): Promise<void> {
-  primed = { namespace, rows: await readSavedRows(namespace) }
+  primed = { namespace, saved: await readSaved(namespace) }
+}
+
+function paintRestored(namespace: string, saved: SavedLedger): void {
+  if (saved.txs && txCache?.namespace !== namespace) savedTxs = { namespace, saved: saved.txs }
+  const rows = saved.rows ?? []
+  const shown = withProvisional(namespace, rows, null)
+  if (shown.length === 0) return
+  // Only rows this session added are worth writing back.
+  installSnapshot(namespace, shown, { persist: shown.length !== rows.length })
+  if (rows.length > 0) console.info(`[activity-ledger] restored ${rows.length} row(s) from the last read`)
 }
 
 /**
@@ -342,19 +422,15 @@ export async function preloadActivityLedger(namespace: string): Promise<void> {
  */
 export function paintSavedActivityLedger(runtime: WalletRuntime): void {
   const namespace = runtime.storageNamespace
-  const preloaded = primed?.namespace === namespace ? primed.rows : null
+  const preloaded = primed?.namespace === namespace ? primed.saved : null
   primed = null
   if (preloaded) {
-    if (preloaded.length > 0) {
-      installSnapshot(namespace, preloaded, { persist: false })
-      console.info(`[activity-ledger] restored ${preloaded.length} row(s) from the last read`)
-    }
+    paintRestored(namespace, preloaded)
     return
   }
-  void readSavedRows(namespace).then((rows) => {
-    if (rows.length === 0 || !runtimeIsCurrent(runtime) || currentSnapshot()) return
-    installSnapshot(namespace, rows, { persist: false })
-    console.info(`[activity-ledger] restored ${rows.length} row(s) from the last read`)
+  void readSaved(namespace).then((saved) => {
+    if (!runtimeIsCurrent(runtime) || currentSnapshot()) return
+    paintRestored(namespace, saved)
   })
 }
 
@@ -411,8 +487,9 @@ function ledgerTxOf(value: unknown): LedgerTx | null {
  * history copied on the UI thread. Ids come from the `status_userId` index
  * without their values; only new ids are fetched, in small transactions with a
  * frame between them. A settled record's ledger fields do not change, so ids
- * that left the settled set are dropped and the rest are kept. `full` rereads
- * everything, for a recompose that may have rewritten the store.
+ * that left the settled set are dropped and the rest are kept — across
+ * launches too, from the saved copy. `full` rereads everything, for a
+ * recompose that rewrote the store.
  */
 async function settledTransactions(
   sp: LedgerReader,
@@ -427,8 +504,12 @@ async function settledTransactions(
     )
   }
   const namespace = runtime.storageNamespace
+  const started = Date.now()
   if (full || !txCache || txCache.namespace !== namespace || txCache.userId !== userId) {
-    txCache = { namespace, userId, byId: new Map() }
+    const seed =
+      !full && savedTxs?.namespace === namespace && savedTxs.saved.userId === userId ? savedTxs.saved.txs : []
+    txCache = { namespace, userId, byId: new Map(seed.map((tx) => [tx.transactionId!, tx])) }
+    savedTxs = null
   }
   const cache = txCache
   const keys = toDbTrx(['transactions'], 'readonly')
@@ -458,6 +539,10 @@ async function settledTransactions(
     }
   }
   assertCurrent(runtime)
+  const ms = Date.now() - started
+  if (ms >= 250) {
+    console.info(`[activity-ledger] transactions ${missing.length} new of ${settled.size} done ${ms}ms`)
+  }
   return [...cache.byId.values()].map((tx) => {
     const status = statusById.get(tx.transactionId!)
     return status && status !== tx.status ? { ...tx, status } : tx
@@ -527,6 +612,24 @@ async function readItemOutputs(
   return outputs
 }
 
+/**
+ * A cached transaction whose txid is not the one its outputs name: the store
+ * was rewritten under the same ids by a path that did not ask for a full read.
+ */
+function cachedTxidsDisagree(txs: readonly LedgerTx[], outputs: readonly LedgerOutput[]): boolean {
+  const txidById = new Map<number, string>()
+  for (const tx of txs) {
+    const txid = tx.txid?.trim().toLowerCase()
+    if (txid) txidById.set(Number(tx.transactionId), txid)
+  }
+  for (const out of outputs) {
+    const expected = txidById.get(Number(out.transactionId))
+    const txid = out.txid?.trim().toLowerCase()
+    if (expected && txid && txid !== expected) return true
+  }
+  return false
+}
+
 async function readLedger(runtime: WalletRuntime, full: boolean): Promise<ActivityEntry[] | null> {
   const active = runtime.instance
   const storage = active.wallet?.storage
@@ -554,11 +657,18 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
     const name = String(b.name ?? '').toLowerCase()
     return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
   })
+  const itemsStarted = Date.now()
   const outputs = await readItemOutputs(storage, runtime, read.userId, itemBaskets)
+  const itemsMs = Date.now() - itemsStarted
+  if (itemsMs >= 250) console.info(`[activity-ledger] item outputs ${outputs.length} done ${itemsMs}ms`)
   // Read-only IndexedDB transactions are consistent on their own, so the
   // transaction records are fetched outside the storage lock: a spend waiting
   // for the writer never queues behind the first read of a long history.
-  const all = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
+  let all = read.txs ?? (await settledTransactions(read.sp, runtime, read.userId, full))
+  if (!read.txs && !full && cachedTxidsDisagree(all, outputs)) {
+    console.warn('[activity-ledger] saved transactions disagree with storage — rereading every record')
+    all = await settledTransactions(read.sp, runtime, read.userId, true)
+  }
   const { baskets } = read
   const itemTx = new Set<number>()
   const basketName = new Map(baskets.map((b) => [Number(b.basketId), String(b.name ?? '').toLowerCase()]))
@@ -617,14 +727,17 @@ export function refreshActivityLedger(
       const rows = await readLedger(runtime, opts.full === true)
       if (!rows || !runtimeIsCurrent(runtime)) return
       failures = 0
-      publishActivityLedger(runtime.storageNamespace, rows)
+      publishActivityLedger(runtime.storageNamespace, rows, started)
       const ms = Date.now() - started
       if (!logged || ms >= 250) {
         logged = true
         console.info(`[activity-ledger] ${rows.length} row(s) from wallet history done ${ms}ms`)
       }
     } catch (err) {
-      if (!runtimeIsCurrent(runtime)) return
+      if (!runtimeIsCurrent(runtime)) {
+        console.info(`[activity-ledger] read abandoned after ${Date.now() - started}ms — the wallet runtime changed`)
+        return
+      }
       failures += 1
       console.warn('[activity-ledger] read failed', err instanceof Error ? err.message : err)
       scheduleActivityLedgerRefresh()
@@ -687,6 +800,8 @@ export function resetActivityLedgerForTests(): void {
   saveRows = null
   inFlights.clear()
   primed = null
+  savedTxs = null
+  provisional.clear()
   snapshot = null
   txCache = null
   lastRefreshAt = 0

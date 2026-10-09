@@ -217,6 +217,7 @@ function sessionFacts(header, events) {
   const longFrames = longFrameFacts(events)
   const renders = renderFacts(events)
   const writtenOff = writtenOffFacts(events)
+  const activityLedger = activityLedgerFacts(events)
   const broadcast = broadcastFacts(events)
   const listingPhases = listingPhaseFacts(events)
   const listingOutcomes = listingOutcomeFacts(events)
@@ -334,6 +335,9 @@ function sessionFacts(header, events) {
     // Coins written off while unspent (restored) and change spent outside the
     // wallet (hidden, so it stops showing as "confirming").
     writtenOff,
+    // Activity's base layer: launch copy vs live reads, read failures, and
+    // what took transactions out of it (ghost marks, failed closures).
+    activityLedger,
     // Signed transactions and what miners said: per-txid outcome chain, how
     // many ever reached Arcade, and which never left the device.
     broadcast,
@@ -2938,6 +2942,98 @@ function derivationFacts(events) {
 
 const WRITTEN_OFF_RE =
   /^\[written-off\] reconcile done (\d+)ms — candidates=(\d+) restored=(\d+) sats=(\d+) hidden=(\d+) hiddenSats=(\d+) spenders=(\d+) silent=(\d+) unproven=(\d+)/
+
+const LEDGER_RESTORED_RE = /^\[activity-ledger\] restored (\d+) row\(s\) from the last read/
+const LEDGER_READ_RE = /^\[activity-ledger\] (\d+) row\(s\) from wallet history done (\d+)ms/
+const LEDGER_FAILED_RE = /^\[activity-ledger\] (read failed|saving the last read failed|last read unavailable)\s*(.*)/
+const LEDGER_GHOSTS_RE = /^\[activity-ledger\] ghost-suppressed (\d+) row\(s\) over (\d+) tx\(s\)(?: — (.*))?/
+const CLOSURE_FAILED_RE = /^\[tx-closure\] failed (\d+) live descendant\(s\) of failed local tx\(s\): (.*)/
+const ARCADE_DROP_RE = /^\[minerSubmit\] Arcade hard-reject — dropping local spend ([0-9a-f]{12})\s*(.*)/
+const ITEM_RECONCILE_RE = /^\[item-reconcile\] done (\d+)ms — (.*)/
+const LEDGER_LINE_RE = /^\[activity-ledger\] (.*)/
+const LEDGER_PHASE_RE = /^\[ui-phase\] activity-ledger-full done (\d+)ms/
+
+/**
+ * What Activity's base layer (the wallet's transaction table) showed: the
+ * copy painted at launch, each live read, and what took transactions out of
+ * it — a ghost mark (Arcade hard-reject) hides a txid from every read, and a
+ * failed closure takes a leg and its outputs out of the settled set.
+ * A live read far below the restored copy is history leaving Activity.
+ */
+function activityLedgerFacts(events) {
+  const t0 = events[0]?.at ?? 0
+  const s = (e) => Math.round((e.at - t0) / 1000)
+  const restored = []
+  const reads = []
+  const failures = new Map()
+  const ghosts = []
+  const closures = []
+  const arcadeDrops = []
+  const itemReconcile = []
+  const fullPhases = []
+  const lineFamilies = new Map()
+  for (const e of events) {
+    const line = LEDGER_LINE_RE.exec(e.text)
+    if (line) {
+      const fam = line[1].replace(/[0-9a-f]{12,64}/g, '<id>').replace(/\d[\d.,]*(ms|s)?/g, 'N').slice(0, 120)
+      const row = lineFamilies.get(fam) ?? { line: fam, count: 0, firstS: s(e), lastS: s(e) }
+      row.count += 1
+      row.lastS = s(e)
+      lineFamilies.set(fam, row)
+    }
+    let m = LEDGER_PHASE_RE.exec(e.text)
+    if (m) {
+      fullPhases.push({ s: s(e), ms: Number(m[1]) })
+      continue
+    }
+    m = LEDGER_RESTORED_RE.exec(e.text)
+    if (m) {
+      restored.push({ s: s(e), rows: Number(m[1]) })
+      continue
+    }
+    if ((m = LEDGER_READ_RE.exec(e.text))) {
+      reads.push({ s: s(e), rows: Number(m[1]), ms: Number(m[2]) })
+      continue
+    }
+    if ((m = LEDGER_FAILED_RE.exec(e.text))) {
+      const key = `${m[1]} ${m[2].replace(/\d[\d.,]*(ms|s)?/g, 'N').slice(0, 140)}`.trim()
+      failures.set(key, (failures.get(key) ?? 0) + 1)
+      continue
+    }
+    if ((m = LEDGER_GHOSTS_RE.exec(e.text))) {
+      ghosts.push({ s: s(e), rows: Number(m[1]), txs: Number(m[2]), txids: m[3] ?? '' })
+      continue
+    }
+    if ((m = CLOSURE_FAILED_RE.exec(e.text))) {
+      closures.push({ s: s(e), failed: Number(m[1]), txids: m[2].slice(0, 300) })
+      continue
+    }
+    if ((m = ARCADE_DROP_RE.exec(e.text))) {
+      arcadeDrops.push({ s: s(e), txid: m[1], detail: m[2].slice(0, 160) })
+      continue
+    }
+    if ((m = ITEM_RECONCILE_RE.exec(e.text))) {
+      itemReconcile.push({ s: s(e), ms: Number(m[1]), detail: m[2].slice(0, 240) })
+    }
+  }
+  const lastRestored = restored.at(-1)?.rows ?? null
+  const lastRead = reads.at(-1)?.rows ?? null
+  return {
+    restored,
+    reads,
+    // Rows the newest live read lost against the copy painted at launch.
+    shrankBy: lastRestored != null && lastRead != null ? Math.max(0, lastRestored - lastRead) : null,
+    failures: [...failures].map(([reason, count]) => ({ reason, count })),
+    ghosts,
+    closures,
+    closureFailedTotal: closures.reduce((a, c) => a + c.failed, 0),
+    arcadeDrops,
+    itemReconcile,
+    // Post-recompose full reads that finished (`[ui-phase] activity-ledger-full done`).
+    fullPhases,
+    lines: [...lineFamilies.values()],
+  }
+}
 
 /**
  * Refresh-time reconcile of coins storage holds unspendable with no local

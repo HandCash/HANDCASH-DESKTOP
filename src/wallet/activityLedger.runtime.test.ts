@@ -10,7 +10,22 @@ vi.mock('./walletCoordinator', () => ({
   spendNeedsStorage: () => control.spend,
 }))
 vi.mock('./ghostTxSuppress', () => ({ isGhostTxSuppressed: () => false }))
-import { ledgerActivitySnapshot, publishActivityLedger, refreshActivityLedger, resetActivityLedgerForTests } from './activityLedger'
+const saved = vi.hoisted(() => new Map<string, { rows: unknown[] | null; txs: unknown }>())
+vi.mock('./activityLedgerStore', () => ({
+  loadLedgerSnapshot: async (namespace: string) => saved.get(namespace) ?? { rows: null, txs: null },
+  saveLedgerRows: async (namespace: string, rows: unknown[], txs?: unknown) => {
+    saved.set(namespace, { rows: [...rows], txs: txs === undefined ? saved.get(namespace)?.txs ?? null : txs })
+  },
+}))
+import {
+  ledgerActivitySnapshot,
+  paintSavedActivityLedger,
+  preloadActivityLedger,
+  publishActivityLedger,
+  refreshActivityLedger,
+  resetActivityLedgerForRuntime,
+  resetActivityLedgerForTests,
+} from './activityLedger'
 const txid = (n: number) => n.toString(16).padStart(64, '0')
 function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.resolve([])) {
   const provider = {
@@ -26,7 +41,7 @@ function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.re
   return { runtime, provider }
 }
 describe('Activity ledger runtime ownership', () => {
-  beforeEach(() => { resetActivityLedgerForTests(); control.current = null; control.spend = false })
+  beforeEach(() => { resetActivityLedgerForTests(); saved.clear(); control.current = null; control.spend = false })
   it('a previous account read cannot suppress or overwrite the new account refresh', async () => {
     let finish!: (tx: unknown[]) => void
     const old = wallet('old', new Promise(resolve => { finish = resolve }))
@@ -128,6 +143,47 @@ describe('Activity ledger runtime ownership', () => {
     gets.length = 0
     await refreshActivityLedger(owner.runtime, { full: true })
     expect(gets.sort()).toEqual([1, 3])
+  })
+  it('a launch reads only the transactions the last session had not, and rereads all when they disagree with storage', async () => {
+    const records = new Map<number, Record<string, unknown>>([
+      [1, { transactionId: 1, txid: txid(1), satoshis: 100, created_at: 10, status: 'completed', inputBEEF: [9, 9, 9] }],
+      [2, { transactionId: 2, txid: txid(2), satoshis: -40, isOutgoing: true, created_at: 20, status: 'unproven' }],
+    ])
+    const gets: number[] = []
+    const owner = wallet('owner'); control.current = owner.runtime
+    const provider = owner.provider as typeof owner.provider & { toDbTrx: unknown }
+    provider.toDbTrx = () => ({
+      objectStore: () => ({
+        index: () => ({ getAllKeys: async ([status]: [string]) =>
+          [...records.values()].filter(r => r.status === status).map(r => r.transactionId) }),
+        get: async (id: number) => { gets.push(id); return records.get(id) },
+      }),
+      done: Promise.resolve(),
+    })
+    await refreshActivityLedger(owner.runtime)
+    expect(gets.sort()).toEqual([1, 2])
+    resetActivityLedgerForRuntime()
+    expect(saved.get('owner')?.txs).toMatchObject({ userId: 9 })
+
+    resetActivityLedgerForTests()
+    await preloadActivityLedger('owner')
+    paintSavedActivityLedger(owner.runtime)
+    records.set(3, { transactionId: 3, txid: txid(3), satoshis: 7, created_at: 30, status: 'completed' })
+    gets.length = 0
+    await refreshActivityLedger(owner.runtime)
+    expect(gets).toEqual([3])
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(1), txid(2), txid(3)])
+    resetActivityLedgerForRuntime()
+
+    resetActivityLedgerForTests()
+    await preloadActivityLedger('owner')
+    paintSavedActivityLedger(owner.runtime)
+    records.set(1, { ...records.get(1)!, txid: txid(8) })
+    owner.provider.findOutputs.mockResolvedValueOnce([{ transactionId: 1, txid: txid(8), basketId: 3, vout: 0 }] as never)
+    gets.length = 0
+    await refreshActivityLedger(owner.runtime)
+    expect(gets.sort()).toEqual([1, 2, 3])
+    expect(ledgerActivitySnapshot().map(row => row.txid)).toContain(txid(8))
   })
   it('refuses an ambiguous or missing wallet owner', async () => {
     const owner = wallet('owner'); control.current = owner.runtime

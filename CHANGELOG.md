@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.540] - 2026-10-09
+
+### Fixed
+- **Import all Activity survives a restart.** Since 1.3.537, import legs write no row per card, so their Activity comes only from the wallet history ledger. A launch paints the ledger's saved copy, then a live read replaces it. On this phone no live read had finished since 01:10 UTC, so every launch painted the same 2,959 saved rows. Last night's Import all legs landed after that read and were never in the copy. Before a restart they showed only through the import job's in-memory row. Selection imports from before 1.3.537 still had stored per-card rows, so they survived.
+  - **Legs are saved as they land.** Each Import all leg now writes its rows into the saved ledger copy at once, folded under the import job. A restart paints them even if no live read has finished. A read that began after the leg landed replaces those rows with its own, or drops them if the transaction is not in storage.
+  - **The read is incremental again.** Every unlock reread every transaction record whole (`full`). On a wallet with thousands of import transactions, that held the storage lock for over 20 minutes, and once the renderer crashed. The ledger now saves the transactions it has read, and a launch reads only the ones it has not seen. A full reread happens only when History restore or Pair Sync replaced local storage, or when the saved transactions disagree with the item outputs in storage.
+  - Slow reads now log `[activity-ledger] transactions N new of M done Nms` and `[activity-ledger] item outputs N done Nms`. A read the runtime outlived logs `read abandoned after Nms`. Triage reports these as `activityLedger` facts, including launches that only restored the saved copy.
+
 ## [1.3.539] - 2026-10-09
 
 ### Fixed

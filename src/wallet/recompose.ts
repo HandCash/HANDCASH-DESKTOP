@@ -207,7 +207,7 @@ async function runRecomposeBody(
     }
   }
 
-  if (runtime) scheduleDerivedChangePass(runtime)
+  if (runtime) scheduleDerivedChangePass(runtime, fenced.step.localStateWasReplaced)
   return { history, historyError, spendableSats, chainError }
 }
 
@@ -345,8 +345,12 @@ const DERIVED_PASS_YIELD_MS = 2_000
  * recipe this store holds. A wipe or an older snapshot deletes the only other
  * copy of those random prefixes/suffixes, and change without them is
  * unspendable forever.
+ *
+ * Activity rereads every transaction record only when localState was
+ * replaced. Each record is cloned whole, and on an unlock that changed nothing
+ * that reread ran for minutes and never landed before the app was put away.
  */
-function scheduleDerivedChangePass(runtime: WalletRuntime): void {
+function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced: boolean): void {
   setTimeout(() => {
     void (async () => {
       const { runtimeIsCurrent } = await import('./walletRuntime')
@@ -370,7 +374,9 @@ function scheduleDerivedChangePass(runtime: WalletRuntime): void {
       }
       if (!runtimeIsCurrent(runtime)) return
       const { refreshActivityLedger } = await import('./activityLedger')
-      await inUiPhase('activity-ledger-full', () => refreshActivityLedger(runtime, { full: true }))
+      await inUiPhase(localStateWasReplaced ? 'activity-ledger-full' : 'activity-ledger', () =>
+        refreshActivityLedger(runtime, { full: localStateWasReplaced }),
+      )
     })().catch((err) => {
       console.warn('[derived-change] post-recompose pass failed', err)
     })
