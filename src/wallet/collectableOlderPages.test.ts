@@ -107,4 +107,23 @@ describe('Collect reads every page of a basket that fits', () => {
     }, { timeout: 20_000 })
     expect(getCollectablePageStatus().hasMore).toBe(false)
   }, 30_000)
+
+  it('puts items a newest-first read finds at the front, where a restart keeps them', async () => {
+    const { listCollectables, getCachedCollectables, noteIngestedItems } = await import('./collectables')
+    basket = basket.slice(0, 1_000)
+    await listCollectables(active)
+    const painted = Array.from({ length: 24 }, (_, i) => row(10_000 + i))
+    noteIngestedItems(painted.map((p) => ({ outpoint: p.outpoint, chain: 'main' as const, origin: `${p.outpoint.slice(0, 64)}_0` })))
+
+    // A leg settled through the earlier transaction holding its tips has no
+    // output index to paint, so its items first appear in a basket read.
+    const unpainted = Array.from({ length: 24 }, (_, i) => row(20_000 + i))
+    basket = [...unpainted, ...painted, ...basket]
+    // Let the first read leave flight, or this call joins it.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await listCollectables(active)
+
+    const front = new Set(getCachedCollectables().slice(0, 48).map((c) => c.outpoint))
+    for (const item of [...unpainted, ...painted]) expect(front.has(item.outpoint)).toBe(true)
+  }, 30_000)
 })

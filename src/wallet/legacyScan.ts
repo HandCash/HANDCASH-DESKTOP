@@ -360,29 +360,76 @@ export async function spentStatusOfOutpoint(
   }
 }
 
-/** Scan a legacy P2PKH address for UTXOs via Bitails (SPV-forward primary). */
+/** Rows per explorer page; Bitails and WhatsOnChain both answer at most this many. */
+const SCAN_PAGE_ROWS = 1_000
+/** 50,000 outputs. An address past it is reconciled from the basket, not a scan. */
+const MAX_SCAN_PAGES = 50
+
+function logScanPages(source: string, pages: number, rows: number, startedAt: number): void {
+  if (pages > 1) {
+    console.info(`[legacy-scan] ${source} ${pages} pages done ${Date.now() - startedAt}ms — ${rows} UTXO(s)`)
+  }
+}
+
+/**
+ * Scan a legacy P2PKH address for UTXOs via Bitails (SPV-forward primary).
+ *
+ * Bitails answers 1,000 rows, oldest first. One page hid every output past the
+ * first thousand: an import of thousands of items paid this address, and its
+ * newest items were missing from every scan that Refresh and Collect trust.
+ */
 export async function scanAddressViaBitails(
   address: string,
   chain: Chain,
 ): Promise<LegacyScanResult> {
   const base = bitailsBase(chain)
   if (!base) throw new Error(`Bitails has no endpoint for chain ${chain}`)
-  const url = `${base}/address/${encodeURIComponent(address)}/unspent`
-  const res = await fetchWithDeadline(url)
-  if (!res.ok) {
-    throw new Error(`Bitails ${res.status}: ${await res.text()}`)
+  const startedAt = Date.now()
+  const rows: BitailsUnspent[] = []
+  let pages = 0
+  while (pages < MAX_SCAN_PAGES) {
+    const url = `${base}/address/${encodeURIComponent(address)}/unspent?from=${rows.length}&limit=${SCAN_PAGE_ROWS}`
+    const res = await fetchWithDeadline(url)
+    if (!res.ok) {
+      throw new Error(`Bitails ${res.status}: ${await res.text()}`)
+    }
+    const page = ((await res.json()) as { unspent?: BitailsUnspent[] }).unspent ?? []
+    rows.push(...page)
+    pages += 1
+    if (page.length < SCAN_PAGE_ROWS) break
   }
-  const body = (await res.json()) as { unspent?: BitailsUnspent[] }
-  const rows = body.unspent ?? []
-  const utxos: LegacyUtxo[] = rows.map((r) => ({
+  logScanPages('bitails', pages, rows.length, startedAt)
+  const utxos: LegacyUtxo[] = uniqueByOutpoint(rows.map((r) => ({
     outpoint: `${r.txid}.${r.vout}`,
     txid: r.txid,
     vout: r.vout,
     satoshis: r.satoshis,
     height: r.blockheight,
-  }))
+  })))
   const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
   return { address, chain, sats, utxos, source: 'bitails' }
+}
+
+/**
+ * A single-page answer that fills its cap is the first page of a longer set.
+ * Callers treat a scan as the address's whole set, so it must lose the race
+ * to a host that pages instead of standing in for one.
+ */
+function refuseCappedPage(source: string, rows: number): void {
+  if (rows >= SCAN_PAGE_ROWS) {
+    throw new Error(`${source} answered ${rows} UTXO(s) in one page — the set is longer`)
+  }
+}
+
+/** A row that moved between pages while they were read appears twice. */
+function uniqueByOutpoint(utxos: LegacyUtxo[]): LegacyUtxo[] {
+  const seen = new Set<string>()
+  return utxos.filter((u) => {
+    const key = u.outpoint.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /** Scan a legacy P2PKH address for UTXOs via WhatsOnChain REST. */
@@ -398,8 +445,9 @@ async function scanAddressViaWocRest(
   if (!res.ok) {
     throw new Error(`${source} ${res.status}: ${await res.text()}`)
   }
-  const rows = (await res.json()) as WocUnspent[]
-  const utxos: LegacyUtxo[] = (rows ?? []).map((r) => ({
+  const rows = ((await res.json()) as WocUnspent[] | null) ?? []
+  refuseCappedPage(source, rows.length)
+  const utxos: LegacyUtxo[] = rows.map((r) => ({
     outpoint: `${r.tx_hash}.${r.tx_pos}`,
     txid: r.tx_hash,
     vout: r.tx_pos,
@@ -410,24 +458,45 @@ async function scanAddressViaWocRest(
   return { address, chain, sats, utxos, source }
 }
 
+/**
+ * WhatsOnChain's bare `/unspent` stops near a thousand rows, so confirmed
+ * outputs are read page by page and the mempool's are read beside them.
+ */
 export async function scanAddressViaWhatsOnChain(
   address: string,
   chain: Chain,
 ): Promise<LegacyScanResult> {
-  const url = `${wocBase(chain)}/address/${encodeURIComponent(address)}/unspent`
-  const res = await fetchWhatsOnChainPaced(url)
-  if (!res) throw new Error('WhatsOnChain unavailable: rate budget exhausted')
-  if (!res.ok) {
-    throw new Error(`WhatsOnChain ${res.status}: ${await res.text()}`)
+  const base = `${wocBase(chain)}/address/${encodeURIComponent(address)}`
+  const read = async (url: string): Promise<unknown> => {
+    const res = await fetchWhatsOnChainPaced(url)
+    if (!res) throw new Error('WhatsOnChain unavailable: rate budget exhausted')
+    if (!res.ok) {
+      throw new Error(`WhatsOnChain ${res.status}: ${await res.text()}`)
+    }
+    return res.json()
   }
-  const rows = (await res.json()) as WocUnspent[]
-  const utxos: LegacyUtxo[] = (rows ?? []).map((r) => ({
+  const startedAt = Date.now()
+  const rows: WocUnspent[] = []
+  let token: string | null = null
+  let pages = 0
+  do {
+    const page = (await read(
+      `${base}/confirmed/unspent?limit=${SCAN_PAGE_ROWS}${token ? `&token=${encodeURIComponent(token)}` : ''}`,
+    )) as { result?: WocUnspent[]; nextPageToken?: string | null }
+    rows.push(...(page.result ?? []))
+    token = page.nextPageToken?.trim() || null
+    pages += 1
+  } while (token && pages < MAX_SCAN_PAGES)
+  const mempool = (await read(`${base}/unconfirmed/unspent`)) as { result?: WocUnspent[] }
+  rows.push(...(mempool.result ?? []))
+  logScanPages('whatsonchain', pages + 1, rows.length, startedAt)
+  const utxos: LegacyUtxo[] = uniqueByOutpoint(rows.map((r) => ({
     outpoint: `${r.tx_hash}.${r.tx_pos}`,
     txid: r.tx_hash,
     vout: r.tx_pos,
     satoshis: r.value,
     height: r.height,
-  }))
+  })))
   const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
   return { address, chain, sats, utxos, source: 'whatsonchain' }
 }
@@ -485,6 +554,7 @@ export async function scanAddressViaServices(
       satoshis: d.satoshis ?? 0,
       height: d.height,
     }))
+  refuseCappedPage('services', utxos.length)
   const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
   return { address, chain, sats, utxos, source: 'services' }
 }

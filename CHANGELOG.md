@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.538] - 2026-10-08
+
+### Fixed
+- **Items from Import all survive a restart.** The wallet address holds 2,821 item outputs, and the last Import all paid outputs 2,594 to 2,821 of them. The address scan read only the first 1,000 rows from each explorer, oldest first, so every scan Refresh and Collect rely on missed exactly the items that import brought in. That covered Bitails, the WhatsOnChain fallback and HandCash Chain on BRC-CLOUD. Bitails and HandCash Chain now page with `from`/`limit`. WhatsOnChain now follows its page token for confirmed outputs and adds the mempool outputs beside them. A host that can only answer one page refuses an answer that fills it, instead of beating a full scan in the race. Scans over one page log `[legacy-scan] <host> N pages done Nms — N UTXO(s)`.
+- **New items go to the front of Collect.** When a refresh found basket items the grid had not painted, it added them after every card it already held. A restart keeps only the first 1,000 cards, so a large import's items fell off the end. Items from a newest-first read now go to the front; only an older page goes to the back.
+- **Why Import all differed from selecting items.** Selecting items paints each card from its transaction's exact output. Import all also resumes tips held by an earlier import transaction from this wallet. When that transaction is already on chain, its tips have no output to paint from, so they reach Collect only through Refresh and the address scan, which stopped at 1,000 rows.
+
 ## [1.3.537] - 2026-10-08
 
 ### Fixed

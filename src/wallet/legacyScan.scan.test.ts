@@ -26,8 +26,12 @@ const wallet = () =>
 const bitailsBody = (sats: number) =>
   JSON.stringify({ unspent: [{ txid: TXID, vout: 0, satoshis: sats, blockheight: 1 }] })
 
-const wocBody = (sats: number) =>
-  JSON.stringify([{ tx_hash: TXID, tx_pos: 1, value: sats, height: 2 }])
+/** WhatsOnChain's paged confirmed set, with an empty mempool beside it. */
+const wocResponse = (url: string, rows: unknown[]) =>
+  new Response(JSON.stringify({ result: url.includes('/unconfirmed/') ? [] : rows }), { status: 200 })
+
+const wocBody = (url: string, sats: number) =>
+  wocResponse(url, [{ tx_hash: TXID, tx_pos: 1, value: sats, height: 2 }])
 
 const isBitails = (url: unknown) => String(url).includes('bitails')
 const isBanana = (url: unknown) => String(url).includes('bananablocks')
@@ -79,7 +83,7 @@ describe('scanLegacyAddress', () => {
       cloudSilent(async (url: string) => {
         if (isBitails(url)) throw new Error('bitails down')
         if (isBanana(url)) throw new Error('banana should not be preferred')
-        return new Response(wocBody(300), { status: 200 })
+        return wocBody(url, 300)
       }),
     )
 
@@ -101,14 +105,15 @@ describe('scanLegacyAddress', () => {
           return new Response(bitailsBody(999), { status: 200 })
         }
         if (isBanana(url)) throw new Error('banana should not be the hedge')
-        return new Response(wocBody(300), { status: 200 })
+        return wocBody(url, 300)
       }),
     )
 
     vi.useFakeTimers()
     try {
       const pending = scanLegacyAddress(wallet())
-      await vi.advanceTimersByTimeAsync(1_300)
+      // The hedge at 1.2s, then its mempool read one WhatsOnChain slot later.
+      await vi.advanceTimersByTimeAsync(2_000)
       const scan = await pending
       expect(scan.source).toBe('whatsonchain')
       expect(scan.sats).toBe(300)
@@ -147,7 +152,7 @@ describe('scanLegacyAddress', () => {
   it('skips a host inside its cooldown window instead of paying the timeout again', async () => {
     const fetchMock = cloudSilent(async (url: string) => {
       if (isBitails(url)) throw new Error('bitails down')
-      return new Response(wocBody(300), { status: 200 })
+      return wocBody(url, 300)
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -174,10 +179,7 @@ describe('scanLegacyAddress', () => {
           throw new Error('explorer down')
         }
         if (!isWoc(url)) throw new Error(`unexpected host ${url}`)
-        return new Response(
-          JSON.stringify([{ tx_hash: TXID, tx_pos: 2, value: 0, height: 2 }]),
-          { status: 200 },
-        )
+        return wocResponse(url, [{ tx_hash: TXID, tx_pos: 2, value: 0, height: 2 }])
       }),
     )
 

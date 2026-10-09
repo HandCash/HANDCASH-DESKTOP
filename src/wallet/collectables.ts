@@ -3249,11 +3249,19 @@ function reportItemHoldings(args: {
   })
 }
 
-/** Short/empty basket page: keep painted cards, append newly listed outpoints. */
+/**
+ * Short/empty basket page: keep painted cards, add newly listed outpoints.
+ *
+ * The grid is newest first and a restart keeps only its first
+ * {@link DURABLE_LIST_LIMIT} cards. New rows from a newest-first read go to
+ * the front: appended, an import's items sat below a thousand older cards and
+ * the next launch dropped them. Only an older page belongs at the back.
+ */
 function mergeShortBasketPage(
   page: ItemOutput[],
   chain: Chain,
   retired: ReadonlySet<string> = new Set(),
+  place: 'newest' | 'older' = 'newest',
 ): Collectable[] {
   const incoming: Collectable[] = []
   for (const o of page) {
@@ -3272,19 +3280,22 @@ function mergeShortBasketPage(
     if (retired.has(outpointKey(held.outpoint))) continue
     byOp.set(normalizeOutpoint(held.outpoint), held)
   }
+  const added = new Map<string, Collectable>()
   for (const item of incoming) {
     const key = normalizeOutpoint(item.outpoint)
     if (isItemSent(key)) continue
     const prev = byOp.get(key)
     if (!prev) {
-      if (!collectableIsFungible(item)) byOp.set(key, item)
+      if (!collectableIsFungible(item)) added.set(key, item)
       continue
     }
     if (collectableIsFungible(item) && !collectableIsFungible(prev)) continue
     if (!collectableIsFungible(item)) byOp.set(key, item)
   }
+  const held = [...byOp.values()]
+  const fresh = [...added.values()]
   return dedupeByOrigin(
-    [...byOp.values()],
+    place === 'newest' ? [...fresh, ...held] : [...held, ...fresh],
     (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
     cachedLiveOneSats?.keys ?? null,
   )
@@ -3660,7 +3671,7 @@ async function listCollectablesNow(
   // An older page adds cards. Restored and painted cards whose page is not
   // loaded yet are not in `lastItemOutputs` and must not leave with it.
   const deduped = append
-    ? mergeShortBasketPage(outputs, wallet.chain, neverOurs)
+    ? mergeShortBasketPage(outputs, wallet.chain, neverOurs, 'older')
     : buildItems(outputs, wallet.chain)
   if (readComplete) {
     const shown = new Set(deduped.map((c) => outpointKey(c.outpoint)))
