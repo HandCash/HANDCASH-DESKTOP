@@ -1,9 +1,9 @@
-import { PrivateKey, ProtoWallet } from '@bsv/sdk'
+import { BigNumber, KeyDeriver, PrivateKey, ProtoWallet } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   accountKeyId,
   identityKeyForAccount,
-  vaultAccountRefusal,
+  reservedKeyRefusal,
   rootKeyHexForAccount,
   findVaultAccountByIdentityKey,
   writeVaultAccounts,
@@ -45,7 +45,7 @@ describe('vaultAccounts (BRC-208)', () => {
     expect(publicKey).toBe(identityKeyForAccount(MASTER, 1))
 
     const refuse = (args: unknown, method = 'getPublicKey') =>
-      vaultAccountRefusal(method, args, identityKeyForAccount(MASTER, 0))
+      reservedKeyRefusal(method, args, identityKeyForAccount(MASTER, 0))
     expect(refuse({ protocolID: [2, 'account'], keyID: 'account-1' })).toBe('account-protocol')
     expect(refuse({ protocolID: [2, ' ACCOUNT '] })).toBe('account-protocol')
     expect(refuse({ protocolID: [0, 'account'] })).toBe('account-protocol')
@@ -54,16 +54,45 @@ describe('vaultAccounts (BRC-208)', () => {
     expect(refuse(null)).toBeNull()
   })
 
+  it('refuses specific linkage with itself: offset plus an exported child is the root', () => {
+    const root = PrivateKey.fromHex(MASTER)
+    const deriver = new KeyDeriver(root)
+    const n = new BigNumber('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 16)
+    const self = identityKeyForAccount(MASTER, 0)
+    const exported: Array<[[0 | 1 | 2, string], string]> = [
+      [[2, 'handcash server wallet'], '1'],
+      [[1, 'sigma'], 'identity-1'],
+    ]
+    for (const [protocolID, keyID] of exported) {
+      const child = deriver.derivePrivateKey(protocolID, keyID, 'self')
+      const offset = new BigNumber(deriver.revealSpecificSecret('self', protocolID, keyID))
+      expect(child.sub(offset).umod(n).toHex(32)).toBe(MASTER)
+
+      for (const counterparty of ['self', self]) {
+        expect(
+          reservedKeyRefusal('revealSpecificKeyLinkage', { protocolID, keyID, counterparty, verifier: '02ab' }, self),
+        ).toBe('self-linkage')
+      }
+    }
+    expect(
+      reservedKeyRefusal(
+        'revealSpecificKeyLinkage',
+        { protocolID: [2, 'handcash server wallet'], keyID: '1', counterparty: identityKeyForAccount(MASTER, 1), verifier: '02ab' },
+        self,
+      ),
+    ).toBeNull()
+  })
+
   it('refuses to reveal the shared secret that yields every account offset', () => {
     const self = identityKeyForAccount(MASTER, 0)
     const reveal = (counterparty: string) =>
-      vaultAccountRefusal('revealCounterpartyKeyLinkage', { counterparty, verifier: '02ab' }, self)
+      reservedKeyRefusal('revealCounterpartyKeyLinkage', { counterparty, verifier: '02ab' }, self)
     expect(reveal(self)).toBe('self-linkage')
     expect(reveal(self.toUpperCase())).toBe('self-linkage')
     expect(reveal('self')).toBe('self-linkage')
     expect(reveal(identityKeyForAccount(MASTER, 1))).toBeNull()
     expect(
-      vaultAccountRefusal('encrypt', { counterparty: self, protocolID: [1, 'chat'] }, self),
+      reservedKeyRefusal('encrypt', { counterparty: self, protocolID: [1, 'chat'] }, self),
     ).toBeNull()
   })
 

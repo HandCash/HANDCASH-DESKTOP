@@ -74,6 +74,24 @@ describe('BRC-100 dispatch refuses the vault account protocol (BRC-208)', () => 
     expect(call).not.toHaveBeenCalled()
   })
 
+  it('never reveals the offset of an exported developer key', async () => {
+    const { wallet, call } = fakeWallet()
+    await expect(
+      dispatchWalletMethod(
+        wallet,
+        'revealSpecificKeyLinkage',
+        {
+          protocolID: [2, 'handcash server wallet'],
+          keyID: '1',
+          counterparty: 'self',
+          verifier: '02'.padEnd(66, '1'),
+        },
+        'example.com',
+      ),
+    ).rejects.toThrow(/linkage with itself/)
+    expect(call).not.toHaveBeenCalled()
+  })
+
   it('still serves other protocols', async () => {
     const { wallet, call } = fakeWallet()
     await dispatchWalletMethod(

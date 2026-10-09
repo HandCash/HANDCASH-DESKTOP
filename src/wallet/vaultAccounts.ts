@@ -12,7 +12,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 
 export const VAULT_ACCOUNT_PROTOCOL: [2, 'account'] = [2, 'account']
 
-export type VaultAccountRefusal = 'account-protocol' | 'self-linkage'
+export type ReservedKeyRefusal = 'account-protocol' | 'self-linkage'
 
 /**
  * Why an application request must not reach the wallet, or null.
@@ -21,15 +21,17 @@ export type VaultAccountRefusal = 'account-protocol' | 'self-linkage'
  * account's root. Reserved at every security level, as BRC-44 reserves
  * `admin`; names are matched as BRC-43 normalises them (lowercase, trimmed).
  *
- * `self-linkage`: the wallet's shared secret with itself yields the offset of
- * every account root, and one offset plus one exported account key is the
- * master.
+ * `self-linkage`: linkage with the wallet itself is the BRC-42 offset of its
+ * `self` children (counterparty linkage yields all of them, specific linkage
+ * one). Those children are additive, so an offset plus the child key is the
+ * root, and the wallet hands such children out: account roots, developer keys,
+ * BAP signing keys. Rotating a child away does not change its offset.
  */
-export function vaultAccountRefusal(
+export function reservedKeyRefusal(
   method: string,
   args: unknown,
   identityKey: string | undefined,
-): VaultAccountRefusal | null {
+): ReservedKeyRefusal | null {
   if (!args || typeof args !== 'object') return null
   const { protocolID, counterparty } = args as { protocolID?: unknown; counterparty?: unknown }
   if (
@@ -39,7 +41,10 @@ export function vaultAccountRefusal(
   ) {
     return 'account-protocol'
   }
-  if (method === 'revealCounterpartyKeyLinkage' && typeof counterparty === 'string') {
+  if (
+    (method === 'revealCounterpartyKeyLinkage' || method === 'revealSpecificKeyLinkage') &&
+    typeof counterparty === 'string'
+  ) {
     const peer = counterparty.trim().toLowerCase()
     if (peer === 'self' || (!!identityKey && peer === identityKey.trim().toLowerCase())) {
       return 'self-linkage'

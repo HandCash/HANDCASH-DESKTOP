@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.545] - 2026-10-09
+
+### Security
+- **A developer key can no longer be turned into the account's root key.** Developer keys (server wallet keys and BAP signing keys) are BRC-42 `self` children of the account root: each is the root plus an offset. An app could ask for `revealSpecificKeyLinkage` of that key with counterparty `self`, which returns exactly that offset, encrypted to a key the app chose. A developer holding the server key and running a connected app could subtract the offset and recover the account root. On the primary account that root is the vault root, which exposes every sub-account too. The bridge now refuses `revealSpecificKeyLinkage` with the wallet itself, under any protocol, as 1.3.543 already did for `revealCounterpartyKeyLinkage`. Rotating a key on Identity does not change its offset, so this refusal is unconditional. Logs `[brc100] refused revealSpecificKeyLinkage from <origin>: self-linkage`.
+
 ## [1.3.544] - 2026-10-09
 
 ### Fixed

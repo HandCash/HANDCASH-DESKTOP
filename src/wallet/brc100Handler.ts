@@ -133,7 +133,7 @@ import {
 } from './actionLifecycle'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
-import { vaultAccountRefusal } from './vaultAccounts'
+import { reservedKeyRefusal } from './vaultAccounts'
 import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
 import {
   paintAfterCreateActionBsv21Mint,
@@ -388,7 +388,7 @@ export async function dispatchWalletMethod(
 ): Promise<unknown> {
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
 
-  const refusal = vaultAccountRefusal(method, args, getWalletRuntime()?.instance?.identityKey)
+  const refusal = reservedKeyRefusal(method, args, getWalletRuntime()?.instance?.identityKey)
   if (refusal) {
     appendAppLog(
       'warn',
