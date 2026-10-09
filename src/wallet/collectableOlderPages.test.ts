@@ -1,6 +1,11 @@
 import { P2PKH, PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Background page loads outlive the last test; a log after teardown fails the run.
+for (const level of ['log', 'info', 'warn', 'debug'] as const) {
+  vi.spyOn(console, level).mockImplementation(() => {})
+}
+
 const store = new Map<string, string>()
 
 vi.mock('./durableStorage', () => ({
