@@ -9,6 +9,7 @@
  * projection before a live read.
  */
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { itemMigrateTxDescription, jobOfTxid } from './activityJobIndex'
 import { loadLedgerSnapshot, saveLedgerRows, type SavedLedger, type SavedLedgerTxs } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { withStorageLockLabel } from './storageLockTrace'
@@ -45,11 +46,12 @@ export type LedgerOutput = {
   vout?: number
   txid?: string | null
   customInstructions?: string | null
+  created_at?: Date | string | number
 }
 
 export type LedgerBasket = { basketId?: number; name?: string }
 
-function timeOf(value: LedgerTx['created_at']): number | null {
+function timeOf(value: LedgerTx['created_at'] | LedgerOutput['created_at']): number | null {
   if (value == null) return null
   const ms = value instanceof Date ? value.getTime() : new Date(value).getTime()
   return Number.isFinite(ms) && ms > 0 ? ms : null
@@ -113,6 +115,57 @@ export async function ledgerActivityRowsSliced(
     if (step.done) return step.value
     if (uiBudgetExpired()) await yieldToUi()
   }
+}
+
+/**
+ * Item arrivals of import legs, told from their outputs alone.
+ *
+ * A leg's transaction record carries the parents of every item it moved —
+ * a megabyte or more — and IndexedDB clones it whole, so a history of import
+ * legs takes minutes to read on a phone. Its item outputs are small, and the
+ * job index names the run that wrote the leg, which is everything the feed
+ * shows for it. Only legs `known` does not hold are told here.
+ */
+export function importLegRowsFromOutputs(
+  outputs: readonly LedgerOutput[],
+  baskets: readonly LedgerBasket[],
+  known: ReadonlySet<string>,
+): ActivityEntry[] {
+  const collectable = new Set(
+    baskets.filter((b) => String(b.name ?? '').toLowerCase() === COLLECTABLE_BASKET).map((b) => Number(b.basketId)),
+  )
+  const legs = new Map<string, { at: number; moves: ItemMove[] }>()
+  for (const out of outputs) {
+    if (!collectable.has(Number(out.basketId))) continue
+    const txid = out.txid?.trim().toLowerCase()
+    if (!txid || !/^[0-9a-f]{64}$/.test(txid) || known.has(txid)) continue
+    if (!Number.isSafeInteger(out.vout) || out.vout! < 0) continue
+    const at = timeOf(out.created_at)
+    if (at == null || !jobOfTxid(txid)) continue
+    const leg = legs.get(txid) ?? { at, moves: [] }
+    leg.at = Math.min(leg.at, at)
+    leg.moves.push({ outpoint: `${txid}.${out.vout}`, role: 'created', ...filedIdentity(out.customInstructions) })
+    legs.set(txid, leg)
+  }
+  const rows: ActivityEntry[] = []
+  for (const [txid, { at, moves }] of legs) {
+    moves.sort((a, b) => Number(a.outpoint.split('.')[1]) - Number(b.outpoint.split('.')[1]))
+    const note = itemMigrateTxDescription(moves.length, moves[0]!.outpoint)
+    for (const { outpoint, origin, name } of moves) {
+      rows.push({
+        id: `ledger:${txid}:${outpoint}`,
+        origin: WALLET_ORIGIN,
+        kind: 'earned',
+        sats: 1,
+        at,
+        method: 'receive-collectable',
+        note,
+        txid,
+        item: { name: name ?? 'Collectable', origin: origin ?? outpoint.replace(/\.(\d+)$/, '_$1'), outpoint },
+      })
+    }
+  }
+  return rows
 }
 
 /** Rows between budget checks; a check is a clock read, the rows are cheaper. */
@@ -453,7 +506,8 @@ type LedgerReader = {
 
 const asRows = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 
-const TX_CHUNK = 40
+/** An import leg's record is a megabyte or more; forty of them at once is a renderer's memory. */
+const TX_CHUNK = 8
 /** One output page, then the storage lock is released so a send can read a balance. */
 const OUTPUT_PAGE = 200
 
@@ -630,6 +684,24 @@ function cachedTxidsDisagree(txs: readonly LedgerTx[], outputs: readonly LedgerO
   return false
 }
 
+/**
+ * Import legs the shown rows lack, painted (and saved) before the transaction
+ * records are read. The read that follows replaces them with its own rows.
+ */
+function publishImportLegs(
+  namespace: string,
+  outputs: readonly LedgerOutput[],
+  baskets: readonly LedgerBasket[],
+): void {
+  const shown = snapshot?.namespace === namespace ? snapshot.rows : EMPTY
+  const known = new Set<string>()
+  for (const row of shown) if (row.txid) known.add(row.txid.toLowerCase())
+  const legs = importLegRowsFromOutputs(outputs, baskets, known)
+  if (legs.length === 0) return
+  console.info(`[activity-ledger] ${legs.length} import leg row(s) from item outputs`)
+  publishActivityLedger(namespace, [...shown, ...legs].sort((a, b) => a.at - b.at))
+}
+
 async function readLedger(runtime: WalletRuntime, full: boolean): Promise<ActivityEntry[] | null> {
   const active = runtime.instance
   const storage = active.wallet?.storage
@@ -661,6 +733,8 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   const outputs = await readItemOutputs(storage, runtime, read.userId, itemBaskets)
   const itemsMs = Date.now() - itemsStarted
   if (itemsMs >= 250) console.info(`[activity-ledger] item outputs ${outputs.length} done ${itemsMs}ms`)
+  assertCurrent(runtime)
+  publishImportLegs(runtime.storageNamespace, outputs, read.baskets)
   // Read-only IndexedDB transactions are consistent on their own, so the
   // transaction records are fetched outside the storage lock: a spend waiting
   // for the writer never queues behind the first read of a long history.

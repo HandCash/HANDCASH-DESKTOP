@@ -10,6 +10,11 @@ vi.mock('./walletCoordinator', () => ({
   spendNeedsStorage: () => control.spend,
 }))
 vi.mock('./ghostTxSuppress', () => ({ isGhostTxSuppressed: () => false }))
+const jobs = vi.hoisted(() => new Map<string, string>())
+vi.mock('./activityJobIndex', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./activityJobIndex')>()),
+  jobOfTxid: (txid: string | undefined) => (txid ? jobs.get(txid) ?? null : null),
+}))
 const saved = vi.hoisted(() => new Map<string, { rows: unknown[] | null; txs: unknown }>())
 vi.mock('./activityLedgerStore', () => ({
   loadLedgerSnapshot: async (namespace: string) => saved.get(namespace) ?? { rows: null, txs: null },
@@ -41,7 +46,47 @@ function wallet(namespace: string, transactions: Promise<unknown[]> = Promise.re
   return { runtime, provider }
 }
 describe('Activity ledger runtime ownership', () => {
-  beforeEach(() => { resetActivityLedgerForTests(); saved.clear(); control.current = null; control.spend = false })
+  beforeEach(() => { resetActivityLedgerForTests(); saved.clear(); jobs.clear(); control.current = null; control.spend = false })
+  it('paints and saves import legs from their item outputs before the transaction records are read', async () => {
+    const leg = txid(0xa1)
+    jobs.set(leg, 'job:wallet-sweep:night')
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const owner = wallet('owner')
+    const provider = owner.provider as typeof owner.provider & { toDbTrx: unknown }
+    provider.toDbTrx = () => ({
+      objectStore: () => ({
+        index: () => ({ getAllKeys: async ([status]: [string]) => (status === 'completed' ? [7] : []) }),
+        get: async () => {
+          await gate
+          return { transactionId: 7, txid: leg, satoshis: 0, created_at: 1_900, description: 'Migrate 2 ordinals from phrase' }
+        },
+      }),
+      done: Promise.resolve(),
+    })
+    control.current = owner.runtime
+    publishActivityLedger('owner', [{ id: 'ledger:' + txid(1), txid: txid(1), origin: 'handcash', kind: 'earned', method: 'receive', sats: 5, at: 1, note: 'Received coins' }])
+    owner.provider.findOutputs.mockResolvedValueOnce([
+      { transactionId: 7, txid: leg, vout: 1, basketId: 3, created_at: 2_000, customInstructions: '{"name":"Fox #2"}' },
+      { transactionId: 7, txid: leg, vout: 0, basketId: 3, created_at: 2_000 },
+      { transactionId: 8, txid: txid(0xb2), vout: 0, basketId: 3, created_at: 3_000 },
+    ] as never)
+    const read = refreshActivityLedger(owner.runtime)
+    await vi.waitFor(() => expect(ledgerActivitySnapshot()).toHaveLength(3))
+    expect(ledgerActivitySnapshot().slice(1)).toEqual([
+      expect.objectContaining({ id: `ledger:${leg}:${leg}.0`, note: 'Migrate 2 ordinals from phrase', at: 2_000, kind: 'earned' }),
+      expect.objectContaining({ id: `ledger:${leg}:${leg}.1`, item: expect.objectContaining({ name: 'Fox #2' }) }),
+    ])
+    resetActivityLedgerForRuntime()
+    expect(saved.get('owner')?.rows).toHaveLength(3)
+
+    release()
+    await read
+    expect(ledgerActivitySnapshot().map(row => [row.id, row.at]).sort()).toEqual([
+      [`ledger:${leg}:${leg}.0`, 1_900],
+      [`ledger:${leg}:${leg}.1`, 1_900],
+    ])
+  })
   it('a previous account read cannot suppress or overwrite the new account refresh', async () => {
     let finish!: (tx: unknown[]) => void
     const old = wallet('old', new Promise(resolve => { finish = resolve }))

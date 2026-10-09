@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.541] - 2026-10-09
+
+### Fixed
+- **Import all Activity comes back without waiting on the full history read.** On 1.3.540 the phone still showed only the restored copy: no read reached the transaction records in the six minutes the app was open. Two reasons, both specific to an imported wallet:
+  - **Weight.** Each import leg's transaction record carries the parent transactions of the items it moved: 0.85 to 1.4 MB per leg in these logs, against a few KB for a normal transfer. IndexedDB clones every record whole, so reading the history copied over 100 MB on the phone's UI thread, 40 records at a time.
+  - **Order.** The read ran after the change echo (235 s over 5,626 outputs) and the custody journal sweep (223 s). It had not started when the app was put away.
+
+  Import legs are now told from their item outputs, which are small. The durable job index already names the run that wrote each leg. Those rows paint and save as soon as the item outputs are read, before any transaction record is read. The full read then replaces them row for row. The read now starts at unlock, beside the change passes, and an incremental read follows them. Whole records are read 8 at a time. Logs `[activity-ledger] N import leg row(s) from item outputs`.
+
 ## [1.3.540] - 2026-10-09
 
 ### Fixed

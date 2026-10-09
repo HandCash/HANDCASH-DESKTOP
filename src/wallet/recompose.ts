@@ -349,6 +349,9 @@ const DERIVED_PASS_YIELD_MS = 2_000
  * Activity rereads every transaction record only when localState was
  * replaced. Each record is cloned whole, and on an unlock that changed nothing
  * that reread ran for minutes and never landed before the app was put away.
+ * The read starts beside these passes, not after them: the change echo and
+ * journal sweep take minutes on an item wallet, and Activity stayed at the
+ * restored copy that whole time. A second, incremental read follows them.
  */
 function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced: boolean): void {
   setTimeout(() => {
@@ -359,6 +362,10 @@ function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced
         await new Promise((resolve) => setTimeout(resolve, DERIVED_PASS_YIELD_MS))
       }
       if (!runtimeIsCurrent(runtime)) return
+      const { refreshActivityLedger } = await import('./activityLedger')
+      const ledgerRead = inUiPhase(localStateWasReplaced ? 'activity-ledger-full' : 'activity-ledger', () =>
+        refreshActivityLedger(runtime, { full: localStateWasReplaced }),
+      )
       const { syncCustodyJournal } = await import('./custodyJournalBackup')
       await inUiPhase('derived-journal', () => syncCustodyJournal(runtime.instance, 'recompose'))
       if (!runtimeIsCurrent(runtime)) return
@@ -372,11 +379,9 @@ function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced
         const { bumpBalanceAfterHeal } = await import('./session')
         bumpBalanceAfterHeal()
       }
+      await ledgerRead
       if (!runtimeIsCurrent(runtime)) return
-      const { refreshActivityLedger } = await import('./activityLedger')
-      await inUiPhase(localStateWasReplaced ? 'activity-ledger-full' : 'activity-ledger', () =>
-        refreshActivityLedger(runtime, { full: localStateWasReplaced }),
-      )
+      await inUiPhase('activity-ledger', () => refreshActivityLedger(runtime))
     })().catch((err) => {
       console.warn('[derived-change] post-recompose pass failed', err)
     })
