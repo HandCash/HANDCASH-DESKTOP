@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.537] - 2026-10-08
+
+### Fixed
+- **Collect shows every imported item.** Collect listed only the newest 1,000 basket rows, and a restart kept only the 1,000 saved cards. When the grid already held more cards than one page (the restored list plus the cards each import leg paints), a refresh never recorded the basket total. "Load older items" then never appeared, so items opened from Activity were missing from the grid. Every refresh now records the total. Baskets up to 10,000 rows load their older pages in the background once the wallet is idle, and a page landing beside a refresh is merged rather than reset. Each page logs `[collectables] older page done Nms — N of M row(s)`.
+- **Importing no longer erases older Activity.** Every imported card wrote its own "Receiving Collectable" row, 24 per transaction. The Activity store holds 1,000 rows, so older records were shed to make room. The wallet history ledger is meant to show shed records, but its read gave up whenever a send was waiting, and during an import one always is. The ledger stayed at its last read for the whole run, so shed records left the feed. Import legs now write no row per card: the import job's record covers them, and it shows no "Items received" toast. Rows earlier builds wrote for import legs are removed from the store. The ledger read now lets a waiting send go first for up to 30 seconds per page, then reads anyway. A read waits at most one minute to start. The restored copy logs `[activity-ledger] restored N row(s) from the last read` at launch.
+
 ## [1.3.536] - 2026-10-08
 
 ### Fixed

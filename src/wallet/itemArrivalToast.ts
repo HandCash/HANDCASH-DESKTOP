@@ -29,6 +29,7 @@ import {
   noteInboundReceiveComplete,
   noteInboundReceivePending,
 } from './appActivity'
+import { jobOfTxid } from './activityJobIndex'
 
 const ANNOUNCED_MAX = 500
 const DURABLE_RECEIVE_KEY = storageRegistry.itemReceiveAnnounced.key
@@ -151,6 +152,11 @@ export function announceItemsReceived(
     for (const op of outpoints) {
       const key = normalize(op)
       const txid = key.split('.')[0] ?? ''
+      // A wallet job's own transaction (an import leg) is told by the job's
+      // folded record. A row per card pushed every older record out of the
+      // Activity store, and a toast per leg said "received" for our own move.
+      // Left unannounced, its authenticity settles without a toast either.
+      if (jobOfTxid(txid)) continue
       const proven = isItemProven(op) || verifiedThisSession.has(key)
 
       // Activity is the durable custody projection, not notification state.
@@ -209,7 +215,10 @@ export function announceItemVerified(
   // Inventory authenticity is settled — Activity must not stay on Verifying…
   // A row already settled keeps its note and item name.
   const txid = key.split('.')[0] ?? ''
-  const settleRow = /^[0-9a-f]{64}$/i.test(txid) && !hasSettledActivityItemOutpoint(key, owner)
+  const settleRow =
+    /^[0-9a-f]{64}$/i.test(txid) &&
+    !jobOfTxid(txid) &&
+    !hasSettledActivityItemOutpoint(key, owner)
   if (!ownerIsCurrent(owner)) {
     if (settleRow) {
       noteInboundReceiveComplete(

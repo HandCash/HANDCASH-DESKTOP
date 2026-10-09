@@ -131,6 +131,49 @@ describe('itemArrivalToast', () => {
     for (const tip of tips) expect(rows.some((r) => r.item?.outpoint === tip)).toBe(true)
   })
 
+  it("leaves an import job's own legs to the job: no row per card, no toast", async () => {
+    const { isItemProven } = await import('./provenCache')
+    vi.mocked(isItemProven).mockReturnValue(false)
+    const { announceItemsReceived, announceItemVerified } = await import('./itemArrivalToast')
+    const { listRecentActivity, upsertAppActivity, WALLET_ACTIVITY_ORIGIN } = await import('./appActivity')
+    const { noteJobTxids } = await import('./activityJobIndex')
+    const leg = '7'.repeat(64)
+    const older = 'c'.repeat(64)
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 1, method: 'receive-collectable',
+      note: 'Received Fox', txid: older, status: 'complete', item: { name: 'Fox', origin: `${older}_0`, outpoint: `${older}.0` },
+    })
+    noteJobTxids('job:item-import:1', [leg])
+    const tips = Array.from({ length: 24 }, (_, i) => `${leg}.${i}`)
+
+    announceItemsReceived(tips)
+    for (const tip of tips) announceItemVerified(tip, 'BRC-150 lineage proven')
+
+    expect(toastSuccess).not.toHaveBeenCalled()
+    const rows = listRecentActivity(50)
+    expect(rows.some((r) => r.txid === leg)).toBe(false)
+    expect(rows.some((r) => r.txid === older)).toBe(true)
+  })
+
+  it('drops the per-card rows an import leg already wrote outside its job', async () => {
+    const { listRecentActivity, upsertAppActivity, WALLET_ACTIVITY_ORIGIN } = await import('./appActivity')
+    const { noteJobTxids } = await import('./activityJobIndex')
+    const leg = '8'.repeat(64)
+    for (let i = 0; i < 3; i++) {
+      upsertAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 1, method: 'receive-collectable',
+        note: 'Receiving Collectable', txid: leg, status: 'pending', item: { name: 'Collectable', origin: `${leg}_${i}`, outpoint: `${leg}.${i}` },
+      })
+    }
+    expect(listRecentActivity(50).filter((r) => r.txid === leg)).toHaveLength(3)
+
+    noteJobTxids('job:item-import:2', [leg])
+    upsertAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 5, method: 'receive', note: 'Received coins', txid: '9'.repeat(64), status: 'complete' })
+
+    expect(listRecentActivity(50).some((r) => r.txid === leg)).toBe(false)
+    expect(store.get(accountLocalKey('handcash.brc100.appActivity'))).not.toContain(leg)
+  })
+
   it('leaves a settled receive row alone when the tip is announced or verified again', async () => {
     const { isItemProven } = await import('./provenCache')
     vi.mocked(isItemProven).mockReturnValue(false)

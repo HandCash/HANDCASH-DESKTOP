@@ -40,13 +40,37 @@ describe('Activity ledger runtime ownership', () => {
     expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(2)])
     expect(next.provider.findTransactions).toHaveBeenCalledOnce()
   })
-  it('leaves the output scan alone while a send is waiting', async () => {
-    const owner = wallet('owner')
-    control.current = owner.runtime
-    control.spend = true
-    await refreshActivityLedger(owner.runtime)
-    expect(owner.provider.findOutputs).not.toHaveBeenCalled()
-    expect(ledgerActivitySnapshot()).toEqual([])
+  it('lets a waiting send go first, then reads', async () => {
+    vi.useFakeTimers()
+    try {
+      const owner = wallet('owner', Promise.resolve([{ transactionId: 1, txid: txid(1), satoshis: 5, created_at: 10 }]))
+      control.current = owner.runtime
+      control.spend = true
+      const read = refreshActivityLedger(owner.runtime)
+      await vi.advanceTimersByTimeAsync(4_000)
+      expect(owner.provider.findUsers).not.toHaveBeenCalled()
+      control.spend = false
+      await vi.advanceTimersByTimeAsync(2_000)
+      await read
+      expect(owner.provider.findOutputs).toHaveBeenCalled()
+      expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(1)])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('a send that never stops waiting cannot keep the ledger at its last read', async () => {
+    vi.useFakeTimers()
+    try {
+      const owner = wallet('owner', Promise.resolve([{ transactionId: 1, txid: txid(1), satoshis: 5, created_at: 10 }]))
+      control.current = owner.runtime
+      control.spend = true
+      const read = refreshActivityLedger(owner.runtime)
+      await vi.advanceTimersByTimeAsync(70_000)
+      await read
+      expect(ledgerActivitySnapshot().map(row => row.txid)).toEqual([txid(1)])
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('coalesces reads only for the same runtime and scopes all tables to its user', async () => {
     const owner = wallet('owner'); control.current = owner.runtime

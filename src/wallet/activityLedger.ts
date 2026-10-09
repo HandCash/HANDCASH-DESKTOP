@@ -345,7 +345,10 @@ export function paintSavedActivityLedger(runtime: WalletRuntime): void {
   const preloaded = primed?.namespace === namespace ? primed.rows : null
   primed = null
   if (preloaded) {
-    if (preloaded.length > 0) installSnapshot(namespace, preloaded, { persist: false })
+    if (preloaded.length > 0) {
+      installSnapshot(namespace, preloaded, { persist: false })
+      console.info(`[activity-ledger] restored ${preloaded.length} row(s) from the last read`)
+    }
     return
   }
   void readSavedRows(namespace).then((rows) => {
@@ -469,26 +472,42 @@ function sendIsWaiting(): boolean {
   return spendNeedsStorage() || shouldYieldChainIngestToSpend()
 }
 
+/** Longest one storage session waits out sends before it reads anyway. */
+const SEND_WAIT_MS = 30_000
+
+/**
+ * Let a waiting send take the lock first, for a while. An import keeps a send
+ * waiting for hours, and abandoning the read whenever one waited left the
+ * ledger at its last read for the whole run — every record shed from the
+ * Activity store meanwhile was gone from the feed. One page is one short lock.
+ */
+async function yieldToWaitingSends(runtime: WalletRuntime): Promise<void> {
+  const until = Date.now() + SEND_WAIT_MS
+  while (sendIsWaiting() && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, SPEND_YIELD_MS))
+    assertCurrent(runtime)
+  }
+}
+
 /**
  * Item outputs, one page per storage session.
  *
  * A single `findOutputs` of the whole 1sat basket holds the writer lock for
  * the entire history. The spend gate then waits out its ceiling and reports
  * "wallet storage is busy" on a funded wallet. Between pages the lock is free,
- * and a send that arrives mid-scan keeps the projection already on screen.
+ * and a send that arrives mid-scan goes first.
  */
 async function readItemOutputs(
   storage: StorageSession,
   runtime: WalletRuntime,
   userId: number,
   itemBaskets: LedgerBasket[],
-): Promise<LedgerOutput[] | null> {
+): Promise<LedgerOutput[]> {
   const outputs: LedgerOutput[] = []
   for (const basket of itemBaskets) {
     let offset = 0
     for (;;) {
-      if (sendIsWaiting()) return null
-      assertCurrent(runtime)
+      await yieldToWaitingSends(runtime)
       const page = asRows<LedgerOutput>(
         await withStorageLockLabel('activityLedger(items)', () => storage.runAsStorageProvider(async (raw) => {
           const sp = raw as unknown as LedgerReader
@@ -512,7 +531,7 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   const active = runtime.instance
   const storage = active.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
-  if (sendIsWaiting()) return null
+  await yieldToWaitingSends(runtime)
   const read = await withStorageLockLabel('activityLedger(head)', () => storage.runAsStorageProvider(async (raw) => {
     const sp = raw as unknown as LedgerReader
     const users = asRows<{ userId: number }>(await sp.findUsers({ partial: { identityKey: active.identityKey } }))
@@ -536,7 +555,6 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
     return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
   })
   const outputs = await readItemOutputs(storage, runtime, read.userId, itemBaskets)
-  if (!outputs) return null
   // Read-only IndexedDB transactions are consistent on their own, so the
   // transaction records are fetched outside the storage lock: a spend waiting
   // for the writer never queues behind the first read of a long history.
@@ -618,7 +636,14 @@ export function refreshActivityLedger(
   return flight
 }
 
-/** Re-read after Activity changes settle; never competes with a spend. */
+/** Longest a scheduled read stands aside for sends before it starts anyway. */
+const MAX_SEND_DEFER_MS = 60_000
+let deferredSince = 0
+
+/**
+ * Re-read after Activity changes settle. Sends go first, but not forever: an
+ * import keeps one waiting for hours, and the read pages around them.
+ */
 export function scheduleActivityLedgerRefresh(): void {
   if (timer || !getWalletRuntime()) return
   // A read that keeps failing (no owner row, storage closed) backs off instead
@@ -628,7 +653,12 @@ export function scheduleActivityLedgerRefresh(): void {
   timer = setTimeout(function fire() {
     timer = setTimeout(fire, SPEND_YIELD_MS)
     void import('./recompose').then(({ isRecomposeInFlight }) => {
-      if (shouldYieldChainIngestToSpend() || spendNeedsStorage() || isRecomposeInFlight()) return
+      if (isRecomposeInFlight()) return
+      if (sendIsWaiting()) {
+        deferredSince ||= Date.now()
+        if (Date.now() - deferredSince < MAX_SEND_DEFER_MS) return
+      }
+      deferredSince = 0
       if (timer) clearTimeout(timer)
       timer = null
       void refreshActivityLedger()
@@ -643,6 +673,7 @@ export function resetActivityLedgerForRuntime(): void {
   snapshot = null
   txCache = null
   lastRefreshAt = 0
+  deferredSince = 0
   logged = false
   failures = 0
   for (const cb of listeners) cb()
@@ -659,6 +690,7 @@ export function resetActivityLedgerForTests(): void {
   snapshot = null
   txCache = null
   lastRefreshAt = 0
+  deferredSince = 0
   logged = false
   failures = 0
 }

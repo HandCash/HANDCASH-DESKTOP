@@ -20,6 +20,12 @@ const TXID = /^[0-9a-f]{64}$/
 type Index = Map<string, string>
 
 let cache: { key: string; index: Index } | null = null
+let generation = 0
+
+/** Changes whenever the index may answer {@link jobOfTxid} differently. */
+export function jobIndexGeneration(): number {
+  return generation
+}
 
 function storageKey(): string | null {
   try {
@@ -46,6 +52,7 @@ function load(): Index {
     // A corrupt index costs the fold of trimmed rows, nothing else.
   }
   cache = { key, index }
+  generation += 1
   return index
 }
 
@@ -73,6 +80,7 @@ export function noteJobTxids(jobId: string, txids: readonly string[]): void {
     changed = true
   }
   if (!changed) return
+  generation += 1
   for (const txid of index.keys()) {
     if (index.size <= MAX_TXIDS) break
     index.delete(txid)
@@ -99,4 +107,5 @@ export function isItemMigrateTxDescription(text: string | undefined): boolean {
 
 export function resetActivityJobIndexForTests(): void {
   cache = null
+  generation += 1
 }

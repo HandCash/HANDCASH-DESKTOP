@@ -21,7 +21,11 @@ import {
   scheduleActivityLedgerRefresh,
   subscribeActivityLedger,
 } from "./activityLedger";
-import { isItemMigrateTxDescription, jobOfTxid } from "./activityJobIndex";
+import {
+  isItemMigrateTxDescription,
+  jobIndexGeneration,
+  jobOfTxid,
+} from "./activityJobIndex";
 import { JOB_GROUP_PREFIX } from "../machines/walletJobMachine";
 
 const STORAGE_KEY_BASE = storageRegistry.activity.key;
@@ -199,6 +203,8 @@ const DAY_MS = 24 * 60 * 60_000;
  */
 let parsedRaw: string | null = null;
 let parsedEntries: ActivityEntry[] = [];
+/** The job index a parse filtered against; a newly filed job leg reparses. */
+let parsedJobGeneration = -1;
 
 /**
  * Ledger written inside {@link batchActivityWrites}, not yet durable. Every
@@ -231,7 +237,9 @@ function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
   try {
     const raw = durableGetItem(activityStorageKey(owner));
     if (!raw) return [];
-    if (raw === parsedRaw) return parsedEntries;
+    if (raw === parsedRaw && parsedJobGeneration === jobIndexGeneration()) {
+      return parsedEntries;
+    }
     const decoded = JSON.parse(raw) as unknown;
     // v0 was a bare array. Preserve it forever as an explicit migration input;
     // all new writes use the registry-owned versioned envelope.
@@ -291,13 +299,30 @@ function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
           ...(archivedAt ? { archivedAt } : { archivedAt: undefined }),
           ...(from ? { from } : { from: undefined }),
         };
-      });
+      })
+      .filter((row) => !isLooseImportArrival(row));
     parsedRaw = raw;
+    parsedJobGeneration = jobIndexGeneration();
     parsedEntries = entries;
     return entries;
   } catch {
     return [];
   }
+}
+
+/**
+ * A per-card arrival row written for an import leg outside its job. The job's
+ * folded record and the ledger tell that transaction; at thousands of items
+ * these rows pushed every older record out of the store, and the ones written
+ * as Verifying… never settled.
+ */
+function isLooseImportArrival(row: ActivityEntry): boolean {
+  return (
+    row.kind === "earned" &&
+    !row.sendGroupId &&
+    activityRowIsItem(row) &&
+    jobOfTxid(row.txid) != null
+  );
 }
 
 function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {

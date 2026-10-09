@@ -3135,6 +3135,7 @@ export function listCollectables(
     .catch(() => {})
     .then(() => {
       if (listInFlight === run) listInFlight = null
+      loadOlderPagesWhenIdle()
     })
   return run
 }
@@ -3159,6 +3160,52 @@ export function loadMoreCollectables(
       if (listMoreInFlight === run) listMoreInFlight = null
     })
   return run
+}
+
+/**
+ * Baskets up to this size are read to the end in the background. Above it the
+ * older pages stay behind "Load older items", so an 800k-output wallet never
+ * pulls its whole basket into renderer memory.
+ */
+const AUTO_PAGE_MAX_OUTPUTS = 10_000
+let olderPagesInFlight: Promise<void> | null = null
+
+/**
+ * Read the older basket pages once the wallet is idle. Collect listed only the
+ * newest page, and a restart kept only the durable list, so items imported
+ * before the newest thousand opened from Activity but were missing from the grid.
+ */
+function loadOlderPagesWhenIdle(): void {
+  if (olderPagesInFlight) return
+  const epoch = collectablesAccountEpoch
+  const morePages = () =>
+    epoch === collectablesAccountEpoch &&
+    listedOutputCursor < listedOutputTotal &&
+    listedOutputTotal <= AUTO_PAGE_MAX_OUTPUTS
+  if (!morePages()) return
+  olderPagesInFlight = (async () => {
+    try {
+      while (morePages()) {
+        if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
+        await listInFlight?.catch(() => {})
+        if (!morePages()) return
+        const before = listedOutputCursor
+        const startedAt = Date.now()
+        await loadMoreCollectables()
+        if (epoch !== collectablesAccountEpoch || listedOutputCursor <= before) return
+        const ms = Date.now() - startedAt
+        if (ms > 250) {
+          console.info(
+            `[collectables] older page done ${ms}ms — ${listedOutputCursor} of ${listedOutputTotal} row(s), ${cachedCollectables.length} card(s)`,
+          )
+        }
+      }
+    } catch (err) {
+      console.warn('[collectables] older pages skipped', err)
+    } finally {
+      olderPagesInFlight = null
+    }
+  })()
 }
 
 
@@ -3350,12 +3397,19 @@ async function listCollectablesNow(
     }
     if (!append) lastListedAt = Date.now()
     listedPage = page
+    const pageLength = result.outputs?.length ?? 0
+    listedOutputTotal = inferCollectableOutputTotal({
+      offset: pageOffset,
+      pageLength,
+      pageLimit: LIST_PAGE_SIZE,
+      reportedTotal: result.totalOutputs,
+    })
     readComplete =
       !append &&
       walletRegionsIdleSince(readGeneration) &&
       isCompleteBasketPage({
         offset: pageOffset,
-        pageLength: result.outputs?.length ?? 0,
+        pageLength,
         pageLimit: LIST_PAGE_SIZE,
       })
     if (readComplete && !authoritativeAfterReplace) {
@@ -3381,6 +3435,11 @@ async function listCollectablesNow(
       !authoritativeAfterReplace &&
       page.length < cachedCollectables.length
     ) {
+      // The cache holds older pages too; they stay loaded.
+      listedOutputCursor = Math.min(
+        listedOutputTotal,
+        Math.max(listedOutputCursor, pageLength),
+      )
       const now = Date.now()
       const seeded = pendingSeededItems(page, now, wallet.identityKey)
       // A complete page smaller than the cache is the basket telling the truth:
@@ -3418,15 +3477,12 @@ async function listCollectablesNow(
       if (!walletRegionsIdleSince(readGeneration)) relistWhenWalletIdle()
       return getCachedCollectables()
     }
-    listedOutputTotal = inferCollectableOutputTotal({
-      offset: pageOffset,
-      pageLength: result.outputs?.length ?? 0,
-      pageLimit: LIST_PAGE_SIZE,
-      reportedTotal: result.totalOutputs,
-    })
+    // An older page landing beside this read merges back into the grid.
     listedOutputCursor = Math.min(
       listedOutputTotal,
-      pageOffset + (result.outputs?.length ?? 0)
+      !append && listMoreInFlight
+        ? Math.max(listedOutputCursor, pageLength)
+        : pageOffset + pageLength,
     )
     if (append) {
       const byOutpoint = new Map<string, ItemOutput>()
@@ -3601,7 +3657,11 @@ async function listCollectablesNow(
     relistWhenWalletIdle()
     return getCachedCollectables()
   }
-  const deduped = buildItems(outputs, wallet.chain)
+  // An older page adds cards. Restored and painted cards whose page is not
+  // loaded yet are not in `lastItemOutputs` and must not leave with it.
+  const deduped = append
+    ? mergeShortBasketPage(outputs, wallet.chain, neverOurs)
+    : buildItems(outputs, wallet.chain)
   if (readComplete) {
     const shown = new Set(deduped.map((c) => outpointKey(c.outpoint)))
     reportItemHoldings({
