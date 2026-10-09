@@ -1244,6 +1244,32 @@ function scheduleMarketRecovery(): void {
     })
 }
 
+/**
+ * Whether an identity has mail waiting, without reading, decoding or
+ * acknowledging any of it. Null when the box cannot say.
+ */
+export async function messageboxHasMail(
+  rootKeyHex: string,
+  messagebox?: string | null,
+): Promise<boolean | null> {
+  const box = normalizeMessageboxBase(messagebox)
+  try {
+    const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/listMessages`, {
+      method: 'POST',
+      headers: signedMessageboxHeaders(rootKeyHex, 'listMessages', {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      }, box),
+      body: JSON.stringify({ messageBox: 'inbox' }),
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { messages?: unknown }
+    return Array.isArray(data.messages) && data.messages.length > 0
+  } catch {
+    return null
+  }
+}
+
 export async function pollInboundTipHints(args: {
   rootKeyHex: string
   peerIdForSender?: (senderIdentityKey: string) => string | null

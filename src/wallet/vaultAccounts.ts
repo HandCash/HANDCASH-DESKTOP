@@ -61,6 +61,8 @@ export type VaultAccountStore = {
   masterIdentityKey: string
   activeIndex: number
   accounts: VaultAccount[]
+  /** Discovery from the vault root has run to completion on this device. */
+  discovered?: boolean
 }
 
 const STORAGE_PREFIX = 'handcash.vault-accounts.v1:'
@@ -150,8 +152,22 @@ export function readVaultAccounts(masterIdentityKey: string): VaultAccountStore 
   }
 }
 
+const listeners = new Set<() => void>()
+
+/** Called after the stored account list changes. */
+export function subscribeVaultAccounts(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
 export function writeVaultAccounts(store: VaultAccountStore): void {
-  localStorage.setItem(storageKey(store.masterIdentityKey), JSON.stringify(store))
+  const key = storageKey(store.masterIdentityKey)
+  const next = JSON.stringify(store)
+  if (localStorage.getItem(key) === next) return
+  localStorage.setItem(key, next)
+  for (const listener of listeners) listener()
 }
 
 /** Ensure store exists and primary identity matches the unlocked vault. */

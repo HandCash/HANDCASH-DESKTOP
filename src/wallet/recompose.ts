@@ -3,7 +3,8 @@ import { getActiveWallet } from './session'
 /**
  * Device recompose tool — **isolated** from Dashboard Refresh / spend paths.
  *
- * Only call from unlock/create, History restore/import, and Pair Sync.
+ * Only call from unlock/create, History restore/import, Pair Sync, and the
+ * first open of an empty vault account (`refreshAfterAccountSwitch`).
  * Never import this from `chainIngest` / spend paths.
  *
  * Empty-local × remote-BRC-39 clobber edge case is delegated to
@@ -114,6 +115,21 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
     })
   inFlight = { runtimeId, promise }
   return promise
+}
+
+/**
+ * After switching vault accounts. An account opening empty on this device (a
+ * restored vault, an account found by discovery) has its history only in its
+ * own backup, so it recomposes as an unlock would. Any other account
+ * refreshes from the chain.
+ */
+export async function refreshAfterAccountSwitch(): Promise<void> {
+  const { localToolboxStateLooksEmpty } = await import('./layers')
+  if (await localToolboxStateLooksEmpty()) {
+    await recomposeWallet({ reason: 'account-switch' })
+    return
+  }
+  await refreshFromChain({ announceReceive: false })
 }
 
 function disposedMidFlight(message: string | null | undefined): boolean {

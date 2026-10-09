@@ -7,13 +7,13 @@ import { useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
 import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
-import { refreshFromChain } from '../wallet/chainIngest'
 import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
 import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { setNavSection } from '../wallet/navStore'
 import { accountProfile, subscribePublicIdentities, type AccountProfile } from '../wallet/publicIdentities'
+import { refreshAfterAccountSwitch } from '../wallet/recompose'
 import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
@@ -22,6 +22,7 @@ import {
   createVaultAccount,
   ensureVaultAccounts,
   readVaultAccounts,
+  subscribeVaultAccounts,
   type VaultAccount,
 } from '../wallet/vaultAccounts'
 import { ProfileAvatar } from './ProfileAvatar'
@@ -96,10 +97,12 @@ export function WalletAccountMenu({
     const offPublic = subscribePublicIdentities(refreshList)
     const offIssuers = subscribeIssuerIdentities(refreshList)
     const offHandle = subscribeClaimedCloudHandle(refreshList)
+    const offAccounts = subscribeVaultAccounts(refreshList)
     return () => {
       offPublic()
       offIssuers()
       offHandle()
+      offAccounts()
     }
   }, [profile.identityKey, profile.chain])
 
@@ -177,8 +180,8 @@ export function WalletAccountMenu({
       onAccountSwitched(nextProfile, balanceSats)
       playWalletSound('soft')
       send({ type: 'SWITCHED' })
-      void refreshFromChain({ announceReceive: false }).catch((error) => {
-        console.warn('[vault-account] post-switch chain ingest failed', messageOf(error))
+      void refreshAfterAccountSwitch().catch((error) => {
+        console.warn('[vault-account] post-switch refresh failed', messageOf(error))
       })
     } catch (error) {
       toastError('Switch wallet', messageOf(error))

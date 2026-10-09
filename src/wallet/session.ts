@@ -554,8 +554,9 @@ async function prewarmQuietWindow(generation: number): Promise<boolean> {
 }
 
 /**
- * Open the vault's other accounts in the background, one at a time, so the
- * first switch to each is as fast as every later one. Each waits for a quiet
+ * Find accounts this device has not listed yet (a restored vault lists only
+ * the primary), then open the vault's other accounts in the background, one
+ * at a time, so the first switch to each is as fast as every later one. Each waits for a quiet
  * foreground (`prewarmQuietWindow`). Prewarmed units start no monitor until
  * they are selected.
  */
@@ -567,6 +568,12 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
   const run = async () => {
     const { readVaultAccounts, rootKeyHexForAccount } = await import('./vaultAccounts')
     const masterIdentityKey = PrivateKey.fromHex(masterRootKeyHex).toPublicKey().toString()
+    try {
+      const { discoverVaultAccounts, probeAccountUse } = await import('./vaultAccountDiscovery')
+      await discoverVaultAccounts({ masterRootKeyHex, masterIdentityKey, probe: probeAccountUse })
+    } catch (error) {
+      console.warn('[vault-accounts] discovery failed', error instanceof Error ? error.message : String(error))
+    }
     for (const account of readVaultAccounts(masterIdentityKey).accounts) {
       if (warmPoolGeneration() !== generation) return
       if (account.index === selected.accountIndex) continue

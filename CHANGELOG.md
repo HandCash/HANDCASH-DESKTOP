@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.544] - 2026-10-09
+
+### Fixed
+- **Restoring the primary key brings back every sub-account.** Sub-account keys always came from the primary key, but the list of accounts lived only on the device. A vault restored on a new device showed only Primary, and each sub-account came back only if you pressed New wallet once per account. Its history then stayed empty unless you ran History restore by hand.
+  - **Discovery.** After unlock, the wallet derives account 1, 2, 3, … from the primary key. It asks the history backup host and the messagebox about each one, signing as that account. Any account with a backup or waiting mail is listed again, together with the unused indices below it, because accounts are numbered in order. Discovery stops after five unused indices in a row and runs once per device. If a host cannot answer, the accounts found so far are kept and discovery resumes from that index at the next unlock. Logs `[vault-accounts] discovery done Nms: found a1,a2`.
+  - **First open.** Switching into an account whose local state is empty now recomposes it like an unlock: history from its own backup, then the chain. Accounts with local state still refresh from the chain only.
+  - BRC-208 now requires this: the root key alone must recover every account.
+
 ## [1.3.543] - 2026-10-09
 
 ### Security

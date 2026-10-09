@@ -81,6 +81,8 @@ import { getActiveWallet } from './session'
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
  *   reciprocal recovery is refused so compromise of one device does not expose both wallets.
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.
+ *   Also the first open of a vault account whose localState is empty: its
+ *   history lives only in that account's own backup (BRC-208 discovery).
  *   Spends wait out the history decision; the funding pass after an unchanged
  *   localState is ordinary chainIngest, and only a replaced one stays fenced.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
