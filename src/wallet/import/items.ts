@@ -479,7 +479,7 @@ export async function prefetchImportItems(args: { sourceId: string; outpoints: r
   try {
     const stored = await readStoredImportItems(args.sourceId, [...new Set(args.outpoints)])
     const outpoints = [...stored.keys()].map((outpoint) => outpoint.toLowerCase().replace(/_(\d+)$/, '.$1'))
-    const built = await buildLegacyInputBeef(active.services, outpoints, { concurrency: 8 })
+    const built = await buildLegacyInputBeef(active.services, outpoints, { concurrency: 8, priority: 'ahead' })
     const ms = Date.now() - startedAt
     if (ms >= 250) {
       appendAppLog('info', `[import] prefetch done ${ms}ms items=${outpoints.length} unread=${built.failures.length}`)

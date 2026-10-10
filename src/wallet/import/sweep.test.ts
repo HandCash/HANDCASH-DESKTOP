@@ -66,7 +66,7 @@ describe('sweepImportedSource progress', () => {
     importItems.mockReset()
   })
 
-  it('counts items as each transaction lands, and reports the batch in flight', async () => {
+  it('counts items as each transaction lands, against the whole sweep', async () => {
     importItems.mockImplementation(
       async ({ outpoints, onLanded }: { outpoints: string[]; onLanded: (o: string[]) => void }) => {
         onLanded([...outpoints.slice(0, 25), op(9_999)])
@@ -80,12 +80,12 @@ describe('sweepImportedSource progress', () => {
 
     expect(summary.items).toBe(150)
     const moving = progress.filter((p) => p.message.startsWith('Moving collectables'))
-    expect(moving.map(({ done, total, batch }) => ({ done, total, batch }))).toEqual([
-      { done: 0, total: 150, batch: { done: 0, total: 100 } },
-      { done: 25, total: 150, batch: { done: 25, total: 100 } },
-      { done: 100, total: 150, batch: { done: 0, total: 50 } },
-      { done: 125, total: 150, batch: { done: 25, total: 50 } },
+    expect(moving.map(({ done, total }) => ({ done, total }))).toEqual([
+      { done: 0, total: 150 },
+      { done: 25, total: 150 },
+      { done: 100, total: 150 },
+      { done: 125, total: 150 },
     ])
-    expect(moving[1]!.message).toBe('Moving collectables… 25 of 150 · batch 25 of 100')
+    expect(moving[1]!.message).toBe('Moving collectables… 25 of 150')
   })
 })

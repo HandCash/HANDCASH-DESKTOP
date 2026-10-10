@@ -103,14 +103,28 @@ const beefByTxid = new Map(TIPS.map((t) => [t.txid, t.beef]))
 const parentCalls: string[][] = []
 /** Txids whose parents hold back until the test lets them go. */
 const heldParents = new Map<string, Promise<void>>()
+/** Txids whose parents fail to read this many more times. */
+const unreadableReads = new Map<string, number>()
 
 vi.mock('./legacyBeef', () => ({
   buildLegacyInputBeef: async (_svc: unknown, outpoints: string[]) => {
     parentCalls.push(outpoints)
     for (const op of outpoints) await heldParents.get(op.split('.')[0] ?? '')
     const merged = new Beef()
-    for (const op of outpoints) merged.mergeBeef(beefByTxid.get(op.split('.')[0] ?? '')!)
-    return { ready: outpoints, beef: merged.toBinary(), failures: [] }
+    const ready: string[] = []
+    const failures: Array<{ outpoint: string; reason: string }> = []
+    for (const op of outpoints) {
+      const txid = op.split('.')[0] ?? ''
+      const left = unreadableReads.get(txid) ?? 0
+      if (left > 0) {
+        unreadableReads.set(txid, left - 1)
+        failures.push({ outpoint: op, reason: `no provider answered for the proof of ${txid.slice(0, 12)}` })
+        continue
+      }
+      merged.mergeBeef(beefByTxid.get(txid)!)
+      ready.push(op)
+    }
+    return { ready, beef: ready.length > 0 ? merged.toBinary() : [], failures }
   },
   withVisibleOnChainBeef: async <T,>(fn: () => Promise<T>) => fn(),
 }))
@@ -129,6 +143,7 @@ describe('migrateChosenPhraseItems stops', () => {
     refreshFromChain.mockReset()
     parentCalls.length = 0
     heldParents.clear()
+    unreadableReads.clear()
     seals.clear()
     cheques.clear()
     minerSubmit.mockReset()
@@ -203,6 +218,39 @@ describe('migrateChosenPhraseItems stops', () => {
     expect([...run.results.values()].every((r) => r.kind === 'funds')).toBe(true)
     expect(run.results.size).toBe(30)
     expect(parentCalls.every((outpoints) => outpoints.length === 1)).toBe(true)
+  })
+
+  it('reads an unreadable item once more after the run’s other chunks, then answers it for good', async () => {
+    const flaky = makeTip(50_000)
+    const gone = makeTip(50_001)
+    for (const tip of [flaky, gone]) beefByTxid.set(tip.txid, tip.beef)
+    unreadableReads.set(flaky.txid, 1)
+    unreadableReads.set(gone.txid, 2)
+    const inputCounts: number[] = []
+    createAction.mockImplementation(async (args: { inputs?: unknown[] }) => {
+      inputCounts.push(args.inputs?.length ?? 0)
+      throw new Error('Insufficient funds in the available inputs (1000 more satoshis are needed)')
+    })
+
+    vi.useFakeTimers()
+    try {
+      const { migrateChosenPhraseItems } = await import('./phraseSweep')
+      const running = migrateChosenPhraseItems({
+        items: [flaky, gone].map((t) => ({ outpoint: t.outpoint, keyHex: PHRASE_KEY.toHex() })),
+      })
+      await vi.advanceTimersByTimeAsync(11_000)
+      const run = await running
+
+      expect(parentCalls.flat().filter((op) => op.startsWith(flaky.txid))).toHaveLength(2)
+      expect(inputCounts).toEqual([1])
+      expect(run.results.get(flaky.outpoint)?.kind).toBe('funds')
+      expect(run.results.get(gone.outpoint)).toMatchObject({
+        kind: 'unreadable',
+        message: expect.stringMatching(/no provider answered/),
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('stops on insufficient funds after one attempt and answers the rest funds', async () => {

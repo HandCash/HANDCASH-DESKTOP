@@ -798,12 +798,19 @@ type ChosenItemsArgs = {
 const LEG_INPUT_BEEF_BUDGET = 1_400_000
 
 /**
- * Items whose parents load together. The first leg waits for one chunk, not
- * the whole import: 79 items' parents took 40s before anything signed.
+ * Items whose parents load together: one leg. The first leg waits for one
+ * chunk, not the whole import: 79 items' parents took 40s before anything signed.
  */
-const PARENT_CHUNK_ITEMS = 24
+const PARENT_CHUNK_ITEMS = MAX_ITEMS_PER_MIGRATE_TX
 /** Source transactions fetched at once, as the single-call build used. */
 const PARENT_LANES = 8
+/**
+ * Before a run's unreadable items get their one more read. Providers that
+ * rate-limited a busy run answer again once it has paused.
+ */
+const UNREADABLE_RETRY_PAUSE_MS = 10_000
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 type ItemParents = {
   shelf: BeefShelf
@@ -893,6 +900,11 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
   let unreadable = 0
   const chunks: Array<typeof rows> = []
   for (let i = 0; i < rows.length; i += PARENT_CHUNK_ITEMS) chunks.push(rows.slice(i, i + PARENT_CHUNK_ITEMS))
+  // Items whose source could not be read get one more read after every other
+  // chunk, as a last chunk of their own. Their second answer is final.
+  const unreadableOnce: typeof rows = []
+  const firstUnreadable = new Map<string, string>()
+  let retriedUnreadable = false
   // The next chunk's parents download while this chunk's legs sign.
   let nextParents: Promise<ItemParents> | null = loadItemParents(active.services, chunks[0]!.map((row) => row.outpoint))
   for (let c = 0; c < chunks.length; c++) {
@@ -901,7 +913,7 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
       untried.push(...chunk.map((row) => row.outpoint))
       continue
     }
-    const parents = await nextParents!
+    const parents = await (nextParents ?? loadItemParents(active.services, chunk.map((row) => row.outpoint)))
     nextParents = c + 1 < chunks.length ? loadItemParents(active.services, chunks[c + 1]!.map((row) => row.outpoint)) : null
     appendAppLog(
       'info',
@@ -916,6 +928,9 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
       if (plan.kind === 'skip') {
         skipped += 1
         results.set(given, { kind: 'skipped', reason: plan.reason, message: describeOrdinalMigrateSkip(plan.reason) })
+      } else if (plan.kind === 'unreadable' && !retriedUnreadable) {
+        unreadableOnce.push(row)
+        firstUnreadable.set(row.outpoint, parents.failures.get(row.outpoint) ?? 'source output could not be read')
       } else if (plan.kind === 'unreadable') {
         unreadable += 1
         results.set(given, {
@@ -925,6 +940,14 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
       } else {
         pending.push(plan.item)
       }
+    }
+    if (c === chunks.length - 1 && unreadableOnce.length > 0 && !retriedUnreadable) {
+      retriedUnreadable = true
+      chunks.push(unreadableOnce.splice(0))
+      appendAppLog('info', `[phrase-sweep] rereading ${chunks.at(-1)!.length} unreadable item(s) after ${UNREADABLE_RETRY_PAUSE_MS}ms`)
+      nextParents = sleep(UNREADABLE_RETRY_PAUSE_MS).then(() =>
+        loadItemParents(active.services, chunks.at(-1)!.map((row) => row.outpoint)),
+      )
     }
     if (pending.length === 0) continue
     await yieldToUi()
@@ -981,6 +1004,11 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
       ])
       untried.push(...build.filter((item) => !settled.has(item.outpoint)).map((item) => item.outpoint))
     }
+  }
+  // A run that stopped before the reread still answers each with its first reason.
+  for (const row of unreadableOnce) {
+    unreadable += 1
+    results.set(givenOf.get(row.outpoint)!, { kind: 'unreadable', message: firstUnreadable.get(row.outpoint)! })
   }
   for (const receipt of outcome.moved) {
     results.set(givenOf.get(receipt.outpoint)!, { kind: 'moved', txid: receipt.sweepTxid })

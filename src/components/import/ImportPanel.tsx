@@ -63,9 +63,8 @@ function of(done: number, total: number): number | null {
   return total > 0 ? Math.round((done / total) * 100) : null
 }
 
-/** The batch in flight fills the bar on a long sweep; null runs it indeterminate. */
+/** The whole sweep fills the bar; null runs it indeterminate. */
 function sweepPercent(p: SweepProgress): number | null {
-  if (p.batch) return of(p.batch.done, p.batch.total)
   return p.total != null ? of(p.done, p.total) : null
 }
 

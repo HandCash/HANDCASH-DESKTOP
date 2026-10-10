@@ -64,7 +64,8 @@ describe('splitItemMigrateBundle', () => {
 })
 
 describe('bundle ceiling', () => {
-  it('moves a whole import chunk in one transaction', () => {
-    expect(MAX_ITEMS_PER_MIGRATE_TX).toBe(IMPORT_CHUNK)
+  it('splits an import chunk across several legs, so one slow read holds back a few items', () => {
+    expect(MAX_ITEMS_PER_MIGRATE_TX).toBeLessThanOrEqual(25)
+    expect(IMPORT_CHUNK / MAX_ITEMS_PER_MIGRATE_TX).toBeGreaterThanOrEqual(4)
   })
 })

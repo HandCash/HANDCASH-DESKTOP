@@ -42,7 +42,11 @@ function buildChain(length: number, sats = 10_000): Transaction[] {
   return txs.reverse()
 }
 
-type Node = { tx: Transaction; proof?: MerklePath; missing?: boolean }
+/** `refusals`: proof lookups every provider refuses (a 429) before one answers. */
+type Node = { tx: Transaction; proof?: MerklePath; missing?: boolean; refusals?: number }
+
+/** What the toolbox returns when WhatsOnChain itself has no proof. */
+const WOC_NOT_FOUND = { notes: [{ name: 'WoCTsc', what: 'getMerklePathNotFound' }] }
 
 function makeServices(nodes: Node[]): {
   services: Services
@@ -61,7 +65,12 @@ function makeServices(nodes: Node[]): {
     },
     getMerklePath: async (txid: string) => {
       proofCalls.push(txid)
-      return { merklePath: byTxid.get(txid)?.proof }
+      const node = byTxid.get(txid)
+      if (node?.refusals) {
+        node.refusals -= 1
+        return { notes: [{ name: 'WoCTsc', what: 'getMerklePathRetry' }] }
+      }
+      return node?.proof ? { merklePath: node.proof } : WOC_NOT_FOUND
     },
   } as unknown as Services
   return { services, rawTxCalls, proofCalls }
@@ -69,7 +78,7 @@ function makeServices(nodes: Node[]): {
 
 describe('buildLegacyInputBeef', () => {
   beforeEach(() => {
-    resetLegacyBeefCache()
+    resetLegacyBeefCache({ retryDelaysMs: [0, 0] })
   })
 
   it('keeps a broken deposit from discarding the healthy ones', async () => {
@@ -143,6 +152,54 @@ describe('buildLegacyInputBeef', () => {
     expect(built.ready).toEqual([])
     expect(built.failures[0].reason).toMatch(/waiting for a block/)
     expect(rawTxCalls).toEqual([chain[0].id('hex'), chain[1].id('hex')])
+  })
+
+  it('asks again when every provider refused, so a mined deposit is never called unmined', async () => {
+    const [tx] = buildChain(1, 30_000)
+    const { services, proofCalls } = makeServices([{ tx, proof: provenAt(tx, 852_201), refusals: 2 }])
+
+    const built = await buildLegacyInputBeef(services, [`${tx.id('hex')}.0`])
+
+    expect(built.failures).toEqual([])
+    expect(built.ready).toEqual([`${tx.id('hex')}.0`])
+    expect(proofCalls).toHaveLength(3)
+  })
+
+  it('says the providers did not answer, not that a block is coming, when every retry is refused', async () => {
+    const [tip, parent] = buildChain(2, 40_000)
+    const { services } = makeServices([
+      { tx: tip, refusals: 3 },
+      { tx: parent, proof: provenAt(parent, 852_202) },
+    ])
+
+    const built = await buildLegacyInputBeef(services, [`${tip.id('hex')}.0`])
+
+    expect(built.ready).toEqual([])
+    expect(built.failures[0]!.reason).toMatch(/no provider answered/)
+    expect(built.failures[0]!.reason).not.toMatch(/waiting for a block/)
+  })
+
+  it('reads for a transaction being signed before reads warming a later chunk', async () => {
+    const ahead = Array.from({ length: 6 }, (_, i) => buildChain(1, 50_000 + i)[0]!)
+    const now = buildChain(1, 60_000)[0]!
+    const { services } = makeServices([...ahead, now].map((tx, i) => ({ tx, proof: provenAt(tx, 800_200 + i) })))
+    const started: string[] = []
+    const getRawTx = services.getRawTx.bind(services)
+    services.getRawTx = (async (txid: string) => {
+      started.push(txid)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return getRawTx(txid)
+    }) as Services['getRawTx']
+
+    const warming = buildLegacyInputBeef(services, ahead.map((tx) => `${tx.id('hex')}.0`), {
+      concurrency: 6,
+      priority: 'ahead',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const signing = buildLegacyInputBeef(services, [`${now.id('hex')}.0`])
+    await Promise.all([warming, signing])
+
+    expect(started.indexOf(now.id('hex'))).toBeLessThan(started.indexOf(ahead[5]!.id('hex')))
   })
 
   it('does not bypass BEEF verification for a visible transaction body', async () => {

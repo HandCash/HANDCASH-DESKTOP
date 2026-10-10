@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.549] - 2026-10-10
+
+### Fixed
+- **Moving imported items no longer drops items when WhatsOnChain is busy.** A large import reads each item's source transaction and its proof. When WhatsOnChain refused a proof lookup for making too many requests, the move reported that item as "unmined; waiting for a block" and left it behind as not imported. A refused lookup is now retried after a pause, and reads slow down while providers keep refusing. The move only says "unmined" when every provider answered and none had a proof. If no provider answers, the reason says so. Items still unreadable at the end of a run get one more read 10 seconds later, before they are reported.
+- **The current move's reads go first.** The read-ahead for the next 100 items used to queue behind and alongside the current leg's reads. Now it only runs when the current leg has nothing waiting.
+- **Each move transaction carries at most 24 items again**, close to the 25 that worked before 1.3.469. A leg signs as soon as its own items are read, so one slow proof holds back 24 items, not 100. The fee estimate counts the same transactions the move builds.
+- **Import progress shows the whole run.** "Batch 19 of 100" was the 100-item chunk in flight, not batches. The count, the bar and Activity now show items imported out of the whole run.
+
 ## [1.3.548] - 2026-10-10
 
 ### Fixed

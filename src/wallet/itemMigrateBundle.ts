@@ -13,13 +13,13 @@
  */
 
 /**
- * Tips per transaction: one import chunk. The parents are downloaded once per
- * chunk, so a larger bundle costs no extra download — only one fee, one signing
- * pass and one broadcast where there used to be four. The migrate run cuts a
- * bundle shorter when its tips' parents would push the leg past the durable
- * miner queue's cap.
+ * Tips per transaction, and the tips whose parents load together. A leg signs
+ * once its own parents are read, so one slow proof holds back 24 items, not a
+ * whole 100-item import chunk; 100-tip legs stalled imports that 25-tip legs
+ * finished. The migrate run cuts a bundle shorter when its tips' parents would
+ * push the leg past the durable miner queue's cap.
  */
-export const MAX_ITEMS_PER_MIGRATE_TX = 100
+export const MAX_ITEMS_PER_MIGRATE_TX = 24
 
 export type ItemMigrateUnit<T> =
   /** One transaction carrying several tips. */

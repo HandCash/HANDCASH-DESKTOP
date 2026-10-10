@@ -69,11 +69,6 @@ export type SweepProgress = {
   done: number
   /** Items listed for this sweep; null outside the item step or before the list is read. */
   total: number | null
-  /**
-   * The chunk in flight when the sweep spans more than one: 11 items of
-   * 2,630 do not move a bar, 11 of a 100-item batch do.
-   */
-  batch: { done: number; total: number } | null
 }
 
 export async function sweepImportedSource(args: {
@@ -116,14 +111,9 @@ async function runSweep(
   const deriver = keyDeriverFor(source.secret)
   /** Known once the saved list is read; the bar runs indeterminate until then. */
   let itemTotal: number | null = null
-  const report = (
-    phase: SweepProgress['phase'],
-    message: string,
-    itemsDone = 0,
-    batch: SweepProgress['batch'] = null,
-  ) => {
+  const report = (phase: SweepProgress['phase'], message: string, itemsDone = 0) => {
     const total = phase === 'items' ? itemTotal : null
-    args.onProgress?.({ phase, message, done: itemsDone, total, batch })
+    args.onProgress?.({ phase, message, done: itemsDone, total })
     job.progress(itemsDone, total, message)
   }
   const stop = () => args.shouldStop?.() === true
@@ -211,14 +201,7 @@ async function runSweep(
       const landed = new Set<string>()
       const reportMoving = () => {
         const done = items + landed.size
-        const batch = listed.length > IMPORT_CHUNK ? { done: landed.size, total: outpoints.length } : null
-        const of = `${done.toLocaleString()} of ${listed.length.toLocaleString()}`
-        report(
-          'items',
-          batch ? `Moving collectables… ${of} · batch ${batch.done} of ${batch.total}` : `Moving collectables… ${of}`,
-          done,
-          batch,
-        )
+        report('items', `Moving collectables… ${done.toLocaleString()} of ${listed.length.toLocaleString()}`, done)
       }
       reportMoving()
       const chunk = await importItems({

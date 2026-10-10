@@ -7,7 +7,7 @@ import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
  *
  * The browser only enqueues. Leaving it, opening another source, or choosing
  * more while a chunk moves all leave the queue running. It hands the wallet
- * `IMPORT_CHUNK` items of one source at a time, packed 25 to a transaction,
+ * `IMPORT_CHUNK` items of one source at a time, packed 24 to a transaction,
  * and reads the next chunk's source transactions while the current one
  * signs. Chunks run one after another: every chunk spends this wallet's
  * change.
@@ -167,26 +167,15 @@ export function nextChunk(queue: readonly ImportQueueEntry[]): ImportQueueEntry[
   return chunk
 }
 
-/** The chunk in flight: how many of it have broadcast. Null between chunks. */
-export type ImportBatch = { done: number; total: number }
-
-/** The chunk in flight across every source. Pure. */
-export function inFlightBatch(context: Pick<ImportQueueContext, 'moving' | 'landed'>, sourceId?: string): ImportBatch | null {
-  const chunk = sourceId ? context.moving.filter((e) => e.sourceId === sourceId) : context.moving
-  if (chunk.length === 0) return null
-  const landed = new Set(context.landed)
-  return { done: chunk.filter((e) => landed.has(e.outpoint)).length, total: chunk.length }
-}
-
 /**
- * A source's run as a browser shows it. Pure. `batch` is the chunk in flight:
- * one landed transaction of a 2,000-item run barely moves the run's bar, but
- * moves the batch's by a quarter.
+ * A source's run as a browser shows it. Pure. Progress is the whole run's:
+ * the hundred-item chunk it moves through is the queue's business, and a bar
+ * reading "19 of 100" on a 3,576-item run told the user nothing.
  */
 export function sourceRun(
   context: Pick<ImportQueueContext, 'queue' | 'moving' | 'tallies' | 'stopping'> & Partial<Pick<ImportQueueContext, 'landed'>>,
   sourceId: string,
-): { moving: string[]; waiting: string[]; total: number; done: number; batch: ImportBatch | null; stopping: boolean } | null {
+): { moving: string[]; waiting: string[]; total: number; done: number; stopping: boolean } | null {
   const tally = context.tallies[sourceId]
   if (!tally) return null
   const landed = new Set(context.landed ?? [])
@@ -199,7 +188,6 @@ export function sourceRun(
     waiting,
     total: tally.total,
     done: Math.max(0, tally.total - moving.length - waiting.length),
-    batch: inFlightBatch({ moving: context.moving, landed: context.landed ?? [] }, sourceId),
     stopping: context.stopping.includes(sourceId),
   }
 }
