@@ -6,8 +6,7 @@ vi.mock('./walletRuntime', () => ({
   runtimeIsCurrent: (runtime: WalletRuntime) => runtime === control.current && !runtime.signal.aborted,
 }))
 vi.mock('./walletCoordinator', () => ({
-  shouldYieldChainIngestToSpend: () => control.spend,
-  spendNeedsStorage: () => control.spend,
+  foregroundSpendWaiting: () => control.spend,
 }))
 vi.mock('./ghostTxSuppress', () => ({ isGhostTxSuppressed: () => false }))
 const jobs = vi.hoisted(() => new Map<string, string>())

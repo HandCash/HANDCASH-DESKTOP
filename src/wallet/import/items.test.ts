@@ -23,6 +23,7 @@ import { fetchHandCashUtxoSet, readUnspentOnChain } from './handcashUtxoSet'
 import { emptyHoldings, type AddressHoldings } from './holdings'
 import { __resetImportItemStoreForTests, saveImportItems, type StoredImportItem } from './itemStore'
 import {
+  decideItemOutpoint,
   importItems,
   ImportWalletChangedError,
   readImportItems,
@@ -30,6 +31,7 @@ import {
   syncImportItems,
   type ImportItemChange,
 } from './items'
+import { NO_FACTS } from './importItem'
 import { loadImportedSources, updateImportedSource, type ImportedSource } from './store'
 
 const op = (n: number) => `${n.toString(16).padStart(64, '0')}_0`
@@ -74,6 +76,28 @@ function addressIndex(rows: Record<string, unknown[]>) {
 }
 
 const unspentRow = (n: number, extra: Record<string, unknown> = {}) => ({ outpoint: op(n), satoshis: 1, spend: '', ...extra })
+
+/** A HandCash export read from its own UTXO set: one items address, one-sat rows by number. */
+function handcashSource() {
+  const s = source([], 'handcash-utxo-set')
+  const key = PrivateKey.fromRandom()
+  const address = key.toAddress()
+  const lock = `76a914${key.toPublicKey().toHash('hex') as string}88ac`
+  s.scan!.addresses = [{ path: 'm/9/4', address, label: 'HandCash items', wallets: 'HandCash' }]
+  s.scan!.holdings = [holding(address, 0)]
+  const utxo = (n: number) => ({
+    txid: op(n).slice(0, 64),
+    vout: 0,
+    satoshis: 1,
+    script: lock,
+    address,
+    path: 'm/9/4',
+    type: 'standard',
+    status: 'available',
+    height: 1,
+  })
+  return { s, utxo }
+}
 
 async function listed(): Promise<string[]> {
   return (await readImportItems({ sourceId: 's1', after: null, limit: 100 })).items.map((i) => i.outpoint)
@@ -195,6 +219,79 @@ describe('syncImportItems', () => {
     expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toEqual({ complete: false, total: 2 })
   })
 
+  it('lists every output the chain shows unspent, named or not, and asks the index only about those', async () => {
+    const { s, utxo } = handcashSource()
+    vi.mocked(loadImportedSources).mockResolvedValue([s])
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [1, 2, 3, 4].map(utxo) })
+    // op(4) is spent on chain; the index knows only op(1), and calls op(3) spent where the chain does not.
+    vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
+      unspent: new Set(outputs.map((o) => o.outpoint).filter((o) => o !== op(4))),
+      unknown: new Set(),
+      stopped: false,
+    }))
+    const asked: string[][] = []
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const outpoints = JSON.parse(String(init?.body)) as string[]
+      asked.push(outpoints)
+      return new Response(
+        JSON.stringify([
+          { outpoint: op(1), spend: '', origin: { outpoint: op(1), data: { map: { app: 'zoo', name: 'Fox' } } } },
+          { outpoint: op(3), spend: 'f'.repeat(64) },
+        ]),
+      )
+    })
+    expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toEqual({ complete: true, total: 3 })
+    expect(asked).toEqual([[op(1), op(2), op(3)]])
+    const items = (await readImportItems({ sourceId: 's1', after: null, limit: 100 })).items
+    expect(items.map((i) => [i.outpoint, i.name])).toEqual([
+      [op(1), 'Fox'],
+      [op(2), null],
+      [op(3), null],
+    ])
+
+    // Decided outputs are never asked again — op(4) stays gone, the unnamed stay listed.
+    asked.length = 0
+    expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toEqual({ complete: true, total: 3 })
+    expect(asked).toEqual([])
+  })
+
+  it('leaves an output neither the chain nor the index can place unchecked, and asks again next time', async () => {
+    const { s, utxo } = handcashSource()
+    vi.mocked(loadImportedSources).mockResolvedValue([s])
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [1, 2, 3].map(utxo) })
+    vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
+      unspent: new Set(),
+      unknown: new Set(outputs.map((o) => o.outpoint)),
+      stopped: false,
+    }))
+    // The index: op(1) unspent, op(2) spent, op(3) unknown to it.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { outpoint: op(1), spend: '' },
+            { outpoint: op(2), spend: 'f'.repeat(64) },
+          ]),
+        ),
+    )
+    expect(await syncImportItems({ sourceId: 's1', fetchImpl })).toEqual({ complete: false, total: 1 })
+    expect(await listed()).toEqual([op(1)])
+
+    vi.mocked(readUnspentOnChain).mockImplementation(async ({ outputs }) => ({
+      unspent: new Set(outputs.map((o) => o.outpoint)),
+      unknown: new Set(),
+      stopped: false,
+    }))
+    const asked: string[][] = []
+    const again = vi.fn(async (_url: string, init?: RequestInit) => {
+      asked.push(JSON.parse(String(init?.body)) as string[])
+      return new Response('[]')
+    })
+    expect(await syncImportItems({ sourceId: 's1', fetchImpl: again })).toEqual({ complete: true, total: 2 })
+    expect(asked).toEqual([[op(3)]])
+    expect(await listed()).toEqual([op(1), op(3)])
+  })
+
   it('drops listed items the chain shows spent, and never lists them again while the index lags', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([source([holding('1a', 3)])])
     // The index still names op(2) unspent: its spend was an Arcade broadcast it has not seen.
@@ -221,6 +318,27 @@ describe('syncImportItems', () => {
   it('refuses an unscanned source', async () => {
     vi.mocked(loadImportedSources).mockResolvedValue([{ ...source([]), scan: null }])
     await expect(syncImportItems({ sourceId: 's1' })).rejects.toThrow('Scan this wallet first')
+  })
+})
+
+describe('decideItemOutpoint', () => {
+  const facts = { ...NO_FACTS, name: 'Fox' }
+  const row = (spent: boolean) => ({ kind: 'row' as const, spent, facts })
+  const silent = { kind: 'silent' as const }
+  const failed = { kind: 'failed' as const }
+
+  it('takes the chain’s word on spends and the index’s only for names', () => {
+    expect(decideItemOutpoint('spent', row(false))).toEqual({ kind: 'gone' })
+    expect(decideItemOutpoint('unspent', row(true))).toEqual({ kind: 'list', facts })
+    expect(decideItemOutpoint('unspent', silent)).toEqual({ kind: 'list', facts: NO_FACTS })
+    expect(decideItemOutpoint('unspent', failed)).toEqual({ kind: 'list', facts: NO_FACTS })
+  })
+
+  it('lets the index decide only what the chain could not place', () => {
+    expect(decideItemOutpoint('unknown', row(false))).toEqual({ kind: 'list', facts })
+    expect(decideItemOutpoint('unknown', row(true))).toEqual({ kind: 'gone' })
+    expect(decideItemOutpoint('unknown', silent)).toEqual({ kind: 'unchecked' })
+    expect(decideItemOutpoint('unknown', failed)).toEqual({ kind: 'unchecked' })
   })
 })
 

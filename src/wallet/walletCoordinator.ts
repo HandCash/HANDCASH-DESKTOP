@@ -53,6 +53,11 @@ type SpendPriorityHold = {
   since: number
   /** Last proof of life. Expiry is measured from here, not from `since`. */
   at: number
+  /**
+   * A long job the user is not watching (an import run). Chain ingest and
+   * backup still yield to it; read-only projections do not wait it out.
+   */
+  background: boolean
 }
 
 const SPEND_PRIORITY_MAX_MS = 90_000
@@ -133,7 +138,10 @@ export type SpendPriorityLease = {
  * that may run long should `touch()` while working; everyone else can use
  * `requestSpendPriority`.
  */
-export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
+export function leaseSpendPriority(
+  reason = 'spend',
+  opts: { background?: boolean } = {},
+): SpendPriorityLease {
   dropExpiredSpendPriority()
   regionGeneration += 1
   const now = Date.now()
@@ -142,6 +150,7 @@ export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
     reason,
     since: now,
     at: now,
+    background: opts.background === true,
   }
   spendPriorityHolds.push(hold)
   emitCoordinator()
@@ -178,6 +187,15 @@ export function releaseSpendPriority(): void {
 export function shouldYieldChainIngestToSpend(): boolean {
   dropExpiredSpendPriority()
   return spendPriorityHolds.length > 0
+}
+
+/**
+ * True while a send the user started is queued or running. An import run
+ * holds priority for hours; a paged read that waited on it never finished.
+ */
+export function foregroundSpendWaiting(): boolean {
+  dropExpiredSpendPriority()
+  return spendPriorityHolds.some((hold) => !hold.background)
 }
 
 const UI_SCROLL_YIELD_MS = 450
@@ -654,12 +672,12 @@ function runSpendBody<T>(
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number },
+  opts?: { abandonSignal?: AbortSignal; ceilingMs?: number; background?: boolean },
 ): Promise<T> {
   const epoch = coordinatorEpoch
   const queue = spendQueue
   // Before the region waits — so a running refresh can yield ordinal work now.
-  const priority = leaseSpendPriority('runExclusiveSpend')
+  const priority = leaseSpendPriority('runExclusiveSpend', { background: opts?.background === true })
   // A mint or a legacy sweep can outlive the expiry while doing real work. The
   // heartbeat is what separates that from a leaked hold.
   const heartbeat = setInterval(() => priority.touch(), SPEND_PRIORITY_TOUCH_MS)

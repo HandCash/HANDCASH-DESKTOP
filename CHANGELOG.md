@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.548] - 2026-10-10
+
+### Fixed
+- **HandCash import lists every item you still own, not only the ones the 1Sat index knows.** Import asked GorillaPool whether each one-sat output in your HandCash account was unspent, and dropped every output it had never indexed. One import lost 1,385 items this way, and running it again lost the same ones. The chain now decides whether each output is spent (a Teranode node, then WhatsOnChain), and the index only adds names. An output the chain shows unspent is listed whether or not the index has heard of it, and the move re-checks it from its own transaction. An output neither can place stays unchecked and is asked again on the next sync, never dropped. Logs `[import] utxo set item-spends done Nms` and `[import] utxo set items done Nms … spent=N unnamed=N chainUnknown=N indexSilent=N indexFailed=N`.
+- **Activity no longer stalls while an import runs.** The import holds spend priority for its whole run, and Activity and the background recompose waited on it as if it were a payment. An import's hold is now background: Activity and recompose wait only for your own sends, and chain ingest still yields to the import.
+- HandCash rows the keys cannot verify now log why: `rejected.path|address|script=N(<paths>)` on `[import] utxo set verified`.
+- Triage reads the new import fields, reads the step duration again after `mnee=` joined the line, and no longer reports Activity shrinking when the read after a wallet switch belongs to another wallet.
+
 ## [1.3.547] - 2026-10-09
 
 ### Added

@@ -217,7 +217,7 @@ async function reviewAfterAbandonedSpend(): Promise<void> {
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { promote?: SpendPreparation },
+  opts?: { promote?: SpendPreparation; background?: boolean },
 ): Promise<T> {
   const runtime = getWalletRuntime()
   if (!runtime && import.meta.env?.MODE !== 'test') {
@@ -272,7 +272,7 @@ export function runExclusiveSpend<T>(
     onSpendRegion,
     // The watchdog's abort is what frees the region: without it a toolbox call
     // that never settles keeps every later payment queued behind this one.
-    { abandonSignal: abort.signal },
+    { abandonSignal: abort.signal, background: opts?.background },
   )
     .catch((err: unknown) => {
       // Its reserved batch may outlive the region — heal before the next select.

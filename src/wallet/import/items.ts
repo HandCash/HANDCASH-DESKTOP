@@ -9,10 +9,23 @@ import {
   type SingleItemMigrate,
 } from '../phraseSweep'
 import { gorillaBase, type FetchLike } from './discovery'
-import { fetchHandCashUtxoSet, readUnspentOnChain, readUnspentOutpoints, verifyUtxoSet } from './handcashUtxoSet'
+import {
+  fetchHandCashUtxoSet,
+  readIndexedOutpoints,
+  readUnspentOnChain,
+  verifyUtxoSet,
+  type IndexAnswer,
+} from './handcashUtxoSet'
 import type { AddressHoldings } from './holdings'
 import { keyDeriverFor } from './importSource'
-import { importItemFacts, withImportItemArt, type ImportItem, type ImportItemGroup } from './importItem'
+import {
+  importItemFacts,
+  NO_FACTS,
+  withImportItemArt,
+  type ImportItem,
+  type ImportItemFacts,
+  type ImportItemGroup,
+} from './importItem'
 import {
   clearImportListing,
   countImportItems,
@@ -292,11 +305,35 @@ export async function syncImportItems(args: {
   return { complete, total }
 }
 
+/** Whether the chain shows an output spent, by outpoint. */
+export type ChainSpend = 'unspent' | 'spent' | 'unknown'
+
+/** What a sync does with a one-sat output HandCash names and the list has never decided. */
+export type ItemOutpointFate =
+  | { kind: 'list'; facts: ImportItemFacts }
+  | { kind: 'gone' }
+  /** Neither the chain nor the index could place it: asked again next sync. */
+  | { kind: 'unchecked' }
+
+/**
+ * The chain decides; the index only names. An output the chain shows unspent
+ * is listed whether or not the index ever indexed it — the move re-decides it
+ * from its source transaction, and the index missing an item is no reason to
+ * leave it behind. The index decides only what the chain could not place.
+ */
+export function decideItemOutpoint(chain: ChainSpend, index: IndexAnswer): ItemOutpointFate {
+  if (chain === 'spent') return { kind: 'gone' }
+  if (chain === 'unspent') return { kind: 'list', facts: index.kind === 'row' ? index.facts : NO_FACTS }
+  if (index.kind !== 'row') return { kind: 'unchecked' }
+  return index.spent ? { kind: 'gone' } : { kind: 'list', facts: index.facts }
+}
+
 /**
  * HandCash's one-sat outputs against the saved list: outputs it no longer
  * names leave (unless their address is listed in full), and only outputs
- * never checked go to the 1Sat index. Returns which of `itemOutpoints` are
- * listed items now.
+ * never decided are checked — on chain by outpoint, then named by the 1Sat
+ * index (`decideItemOutpoint`). Returns which of `itemOutpoints` are listed
+ * items now; `failed` counts outputs left unchecked.
  */
 export async function checkUtxoSetItems(args: {
   sourceId: string
@@ -308,6 +345,7 @@ export async function checkUtxoSetItems(args: {
   shouldStop?: () => boolean
   fetchImpl?: FetchLike
 }): Promise<{ unspent: Set<string>; failed: number; stopped: boolean }> {
+  const startedAt = Date.now()
   const addressOf = new Map<string, string>()
   for (const [address, outpoints] of args.itemOutpoints) {
     for (const outpoint of outpoints) addressOf.set(outpoint, address)
@@ -316,24 +354,84 @@ export async function checkUtxoSetItems(args: {
   const gone = await pruneImportItems(args.sourceId, live, args.keepAddresses)
   if (gone.length > 0) args.onChange?.({ added: 0, gone })
   const decided = await decidedImportOutpoints(args.sourceId)
-  const read = await readUnspentOutpoints({
-    chain: args.chain,
-    outpoints: [...live].filter((outpoint) => !decided.has(outpoint)),
-    shouldStop: args.shouldStop,
-    ...(args.onProgress ? { onProgress: args.onProgress } : {}),
+  const undecided = [...live].flatMap((listed) => {
+    if (decided.has(listed)) return []
+    const m = OUTPOINT.exec(listed.toLowerCase())
+    return m ? [{ listed, outpoint: `${m[1]}_${m[2]}`, txid: m[1]!, vout: Number(m[2]) }] : []
+  })
+  const optional = {
+    ...(args.shouldStop ? { shouldStop: args.shouldStop } : {}),
     ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
-    onChecked: async ({ spent, found }) => {
-      await markImportOutpointsGone(args.sourceId, spent)
-      const added = await saveImportItems(
-        args.sourceId,
-        found.map(({ outpoint, facts }) => ({ outpoint, address: addressOf.get(outpoint)!, ...facts })),
-      )
+  }
+  const listedNow = async (): Promise<Set<string>> => {
+    const listed = await listedImportOutpoints(args.sourceId)
+    return new Set([...live].filter((outpoint) => listed.has(outpoint)))
+  }
+  if (undecided.length === 0) return { unspent: await listedNow(), failed: 0, stopped: false }
+
+  const total = undecided.length * 2
+  let shown = 0
+  const progress = (done: number) => {
+    shown = Math.min(total, Math.max(shown, done))
+    args.onProgress?.(shown, total)
+  }
+  const spends = await readUnspentOnChain({
+    chain: args.chain,
+    outputs: undecided,
+    label: 'item-spends',
+    ...optional,
+    onProgress: progress,
+  })
+  const spendOf = new Map<string, ChainSpend>()
+  for (const { listed, outpoint } of undecided) {
+    spendOf.set(
+      listed,
+      spends.unspent.has(outpoint) ? 'unspent' : spends.unknown.has(outpoint) ? 'unknown' : 'spent',
+    )
+  }
+  const spentOnChain = undecided.filter(({ listed }) => spendOf.get(listed) === 'spent').map(({ listed }) => listed)
+  await markImportOutpointsGone(args.sourceId, spentOnChain)
+  if (spends.stopped) return { unspent: await listedNow(), failed: 0, stopped: true }
+
+  const toName = undecided.filter(({ listed }) => spendOf.get(listed) !== 'spent').map(({ listed }) => listed)
+  let listedCount = 0
+  let unnamed = 0
+  let goneByIndex = 0
+  let unchecked = 0
+  const named = await readIndexedOutpoints({
+    chain: args.chain,
+    outpoints: toName,
+    ...optional,
+    onProgress: (done, of) => progress(undecided.length + Math.round((done / Math.max(of, 1)) * undecided.length)),
+    onChunk: async (answers) => {
+      const list: StoredImportItem[] = []
+      const goneNow: string[] = []
+      for (const [outpoint, answer] of answers) {
+        const fate = decideItemOutpoint(spendOf.get(outpoint) ?? 'unknown', answer)
+        if (fate.kind === 'list') {
+          list.push({ outpoint, address: addressOf.get(outpoint)!, ...fate.facts })
+          if (answer.kind !== 'row') unnamed += 1
+        } else if (fate.kind === 'gone') {
+          goneNow.push(outpoint)
+        } else {
+          unchecked += 1
+        }
+      }
+      goneByIndex += goneNow.length
+      await markImportOutpointsGone(args.sourceId, goneNow)
+      const added = await saveImportItems(args.sourceId, list)
+      listedCount += added.length
       if (added.length > 0) args.onChange?.({ added: added.length, gone: [] })
     },
   })
-  const listed = await listedImportOutpoints(args.sourceId)
-  const unspent = new Set([...live].filter((outpoint) => listed.has(outpoint)))
-  return { unspent, failed: read.failed, stopped: read.stopped }
+  unchecked += toName.length - named.rows - named.silent - named.failed
+  appendAppLog(
+    unchecked > 0 || unnamed > 0 ? 'warn' : 'info',
+    `[import] utxo set items done ${Date.now() - startedAt}ms outpoints=${undecided.length} unspent=${listedCount} failed=${unchecked}` +
+      ` spent=${spentOnChain.length + goneByIndex} unnamed=${unnamed} chainUnknown=${spends.unknown.size}` +
+      ` indexSilent=${named.silent} indexFailed=${named.failed} stopped=${named.stopped}`,
+  )
+  return { unspent: await listedNow(), failed: unchecked, stopped: named.stopped }
 }
 
 /** One address's 1-sat outputs from the 1Sat index, every page. */

@@ -32,6 +32,7 @@ vi.mock('./walletCoordinator', () => ({
     }
   },
   shouldYieldChainIngestToSpend: () => false,
+  foregroundSpendWaiting: () => false,
 }))
 
 vi.mock('./deviceSync', () => ({

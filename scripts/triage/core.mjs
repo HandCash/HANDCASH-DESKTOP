@@ -2389,9 +2389,10 @@ const IMPORT_LINES = [
   ['mismatch', /^\[import\] HandCash history is for \$(\S+), these keys prove \$(\S+)/],
   ['utxoSet', /^\[import\] utxo set done (\d+)ms utxos=(\d+) pages=(\d+)/],
   ['utxoSetRefused', /^\[import\] utxo set refused reason=(\S+)(?: detail=(.*?))?(?: after (\d+)ms| rows=(\d+)|$)/],
-  ['utxoSetVerified', /^\[import\] utxo set verified addresses=(\d+) cash=(\d+) itemAddresses=(\d+)(?: read=(\d+))? rejected=(\d+)(?: derived=(\d+))?(?: done (\d+)ms)?/],
+  ['utxoSetVerified', /^\[import\] utxo set verified addresses=(\d+) cash=(\d+) itemAddresses=(\d+)(?: read=(\d+))? rejected=(\d+)(?: derived=(\d+))?(?: mnee=(\d+))?(?: done (\d+)ms)?((?: rejected\.\S+=\d+\([^)]*\))*)/],
   ['utxoSetCash', /^\[import\] utxo set cash done (\d+)ms outputs=(\d+) unspent=(\d+) unknown=(\d+) viaExplorer=(\d+)/],
-  ['utxoSetItems', /^\[import\] utxo set items done (\d+)ms outpoints=(\d+) unspent=(\d+) failed=(\d+)/],
+  ['utxoSetItemSpends', /^\[import\] utxo set item-spends done (\d+)ms outputs=(\d+) unspent=(\d+) unknown=(\d+) viaExplorer=(\d+)/],
+  ['utxoSetItems', /^\[import\] utxo set items done (\d+)ms outpoints=(\d+) unspent=(\d+) failed=(\d+)(?: spent=(\d+) unnamed=(\d+) chainUnknown=(\d+) indexSilent=(\d+) indexFailed=(\d+) stopped=(true|false))?/],
   ['itemOwners', /^\[import\] item owners done (\d+)ms origins=(\d+) located=(\d+) unspent=(\d+) owners=(\d+)(?: missing=(\d+))? failed=(\d+)/],
   ['history', /^\[import\] hinted history done (\d+)ms txs=(\d+) unknown=(\d+) failed=(\d+) addresses=(\d+)(?: upTo=(\d+)\/(\d+))?/],
   ['window', /^\[import\] hinted window txs=(\d+)\/(\d+) mayHold=(\d+) used=(\d+) verdict=(\S+)/],
@@ -2461,9 +2462,17 @@ function legacyImportFacts(events) {
       const detail =
         step === 'utxoSet' ? { ms: n(1), utxos: n(2), pages: n(3) }
         : step === 'utxoSetRefused' ? { reason: m[1], detail: m[2] ?? null, ms: n(3) }
-        : step === 'utxoSetVerified' ? { addresses: n(1), cashAddresses: n(2), itemAddresses: n(3), readAddresses: n(4), rejected: n(5), derived: n(6), ms: n(7) }
-        : step === 'utxoSetCash' ? { ms: n(1), outputs: n(2), unspent: n(3), unknown: n(4), viaExplorer: n(5) }
-        : step === 'utxoSetItems' ? { ms: n(1), outpoints: n(2), unspent: n(3), failed: n(4) }
+        : step === 'utxoSetVerified' ? {
+            addresses: n(1), cashAddresses: n(2), itemAddresses: n(3), readAddresses: n(4), rejected: n(5), derived: n(6), mneeAddresses: n(7), ms: n(8),
+            rejectedBy: Object.fromEntries(
+              [...(m[9] ?? '').matchAll(/rejected\.(\S+?)=(\d+)\(([^)]*)\)/g)].map((r) => [r[1], { count: Number(r[2]), paths: r[3] ? r[3].split(',') : [] }]),
+            ),
+          }
+        : step === 'utxoSetCash' || step === 'utxoSetItemSpends' ? { ms: n(1), outputs: n(2), unspent: n(3), unknown: n(4), viaExplorer: n(5) }
+        : step === 'utxoSetItems' ? {
+            ms: n(1), outpoints: n(2), listed: n(3), unchecked: n(4),
+            ...(m[5] != null ? { spent: n(5), unnamed: n(6), chainUnknown: n(7), indexSilent: n(8), indexFailed: n(9), stopped: m[10] === 'true' } : {}),
+          }
         : step === 'hints' ? { txids: n(1), complete: m[2] === 'true', sats: n(3), items: n(4), origins: n(5) }
         : step === 'itemOwners' ? { ms: n(1), origins: n(2), located: n(3), unspent: n(4), owners: n(5), missing: n(6), failed: n(7) }
         : step === 'window' ? { txsRead: n(1), txsTotal: n(2), mayHold: n(3), used: n(4), verdict: m[5] }
@@ -2988,11 +2997,11 @@ function activityLedgerFacts(events) {
     }
     m = LEDGER_RESTORED_RE.exec(e.text)
     if (m) {
-      restored.push({ s: s(e), rows: Number(m[1]) })
+      restored.push({ s: s(e), rows: Number(m[1]), account: accountAt(e) })
       continue
     }
     if ((m = LEDGER_READ_RE.exec(e.text))) {
-      reads.push({ s: s(e), rows: Number(m[1]), ms: Number(m[2]) })
+      reads.push({ s: s(e), rows: Number(m[1]), ms: Number(m[2]), account: accountAt(e) })
       continue
     }
     if ((m = LEDGER_FAILED_RE.exec(e.text))) {
@@ -3016,12 +3025,23 @@ function activityLedgerFacts(events) {
       itemReconcile.push({ s: s(e), ms: Number(m[1]), detail: m[2].slice(0, 240) })
     }
   }
-  const lastRestored = restored.at(-1)?.rows ?? null
-  const lastRead = reads.at(-1)?.rows ?? null
+  const newestRead = reads.at(-1)
+  const lastRead = newestRead?.rows ?? null
+  const lastRestored = newestRead
+    ? (restored.filter((r) => r.account === newestRead.account).at(-1)?.rows ?? null)
+    : null
   return {
+  // Each sub-account has its own ledger: a read after a switch is a different
+  // account's history, never a shrink of the copy painted before it.
+  const switchStarts = []
+  for (const e of events) {
+    const sw = SWITCH_DONE_RE.exec(e.text)
+    if (sw) switchStarts.push({ at: e.at - Number(sw[1]), account: Number(sw[3]) })
+  }
+  const accountAt = (e) => switchStarts.filter((sw) => sw.at <= e.at).at(-1)?.account ?? null
     restored,
     reads,
-    // Rows the newest live read lost against the copy painted at launch.
+    // Rows the newest live read lost against the same account's painted copy.
     shrankBy: lastRestored != null && lastRead != null ? Math.max(0, lastRestored - lastRead) : null,
     failures: [...failures].map(([reason, count]) => ({ reason, count })),
     ghosts,

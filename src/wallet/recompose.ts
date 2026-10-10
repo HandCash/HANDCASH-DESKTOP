@@ -21,6 +21,7 @@ import { getActiveWallet } from './session'
 import { relistCollectablesAfterLocalStateReplace } from './collectables'
 import { refreshFromChain, refreshFromChainExclusive } from './chainIngest'
 import {
+  foregroundSpendWaiting,
   isRecomposeCoordinatorActive,
   runRecompose,
   shouldYieldChainIngestToSpend,
@@ -390,21 +391,27 @@ const DERIVED_PASS_YIELD_MS = 2_000
  * that reread ran for minutes and never landed before the app was put away.
  * The read starts beside these passes, not after them: the change echo and
  * journal sweep take minutes on an item wallet, and Activity stayed at the
- * restored copy that whole time. A second, incremental read follows them.
+ * restored copy that whole time. It waits only for a send the user started;
+ * an import run holds priority for hours and the passes wait that out, the
+ * read does not. A second, incremental read follows them.
  */
 function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced: boolean): void {
   setTimeout(() => {
     void (async () => {
       const { runtimeIsCurrent } = await import('./walletRuntime')
-      while (shouldYieldChainIngestToSpend() || isRecomposeInFlight()) {
-        if (!runtimeIsCurrent(runtime)) return
-        await new Promise((resolve) => setTimeout(resolve, DERIVED_PASS_YIELD_MS))
+      const waitOut = async (busy: () => boolean): Promise<boolean> => {
+        while (busy() || isRecomposeInFlight()) {
+          if (!runtimeIsCurrent(runtime)) return false
+          await new Promise((resolve) => setTimeout(resolve, DERIVED_PASS_YIELD_MS))
+        }
+        return runtimeIsCurrent(runtime)
       }
-      if (!runtimeIsCurrent(runtime)) return
+      if (!(await waitOut(foregroundSpendWaiting))) return
       const { refreshActivityLedger } = await import('./activityLedger')
       const ledgerRead = inUiPhase(localStateWasReplaced ? 'activity-ledger-full' : 'activity-ledger', () =>
         refreshActivityLedger(runtime, { full: localStateWasReplaced }),
       )
+      if (!(await waitOut(shouldYieldChainIngestToSpend))) return
       const { syncCustodyJournal } = await import('./custodyJournalBackup')
       await inUiPhase('derived-journal', () => syncCustodyJournal(runtime.instance, 'recompose'))
       if (!runtimeIsCurrent(runtime)) return

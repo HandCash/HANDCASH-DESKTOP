@@ -772,7 +772,7 @@ export async function migrateChosenPhraseItems(args: ChosenItemsArgs): Promise<C
   // Held from the parent fetch to the last leg, so background passes defer and
   // chain ingest yields for the whole run. Leased only at the first leg, a
   // review that began while parents downloaded held the lock 32s ahead of it.
-  const priority = leaseSpendPriority('phrase-import')
+  const priority = leaseSpendPriority('phrase-import', { background: true })
   const heartbeat = setInterval(() => priority.touch(), 30_000)
   try {
     return await migrateChosenUnderPriority(args)
@@ -1268,20 +1268,23 @@ async function migrateOrdinalUnit(args: {
     const legStartedAt = Date.now()
     const inputBeef = beefSubset(args.sourceBeef, group.map((item) => item.txid)).toBinary()
     try {
-      const posted = await runExclusiveSpend(async () =>
-        // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
-        // verification rejects that outright ("inputBEEF must be valid Beef when
-        // factoring options.trustSelf"), which failed every item migrate. The
-        // funding sweep already treats visible-on-chain as sufficient for a
-        // P2PKH tip; an ordinal tip is the same claim, same relaxation.
-        withVisibleOnChainBeef(async () =>
-          buildAndPostItemMigrate({
-            active: args.active,
-            destLockHex: args.destLockHex,
-            inputBeef,
-            items: group,
-          }),
-        ),
+      const posted = await runExclusiveSpend(
+        async () =>
+          // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
+          // verification rejects that outright ("inputBEEF must be valid Beef when
+          // factoring options.trustSelf"), which failed every item migrate. The
+          // funding sweep already treats visible-on-chain as sufficient for a
+          // P2PKH tip; an ordinal tip is the same claim, same relaxation.
+          withVisibleOnChainBeef(async () =>
+            buildAndPostItemMigrate({
+              active: args.active,
+              destLockHex: args.destLockHex,
+              inputBeef,
+              items: group,
+            }),
+          ),
+        undefined,
+        { background: true },
       )
       const txid = posted.txid
       appendAppLog(

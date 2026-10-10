@@ -116,7 +116,7 @@ async function walkScan(
  *
  * Rows count only when the keys derive their path to their address. Cash and
  * token addresses are read live; one-sat items are counted by outpoint where
- * the 1Sat index shows them unspent.
+ * the chain shows them unspent (the 1Sat index only names them).
  */
 export async function utxoSetScan(
   deriver: KeyDeriver,

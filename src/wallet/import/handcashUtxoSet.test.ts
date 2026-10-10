@@ -4,13 +4,15 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn(), setStallContextProvider: vi.fn() }))
 vi.mock('../yieldToUi', () => ({ yieldToUi: async () => undefined, uiBudgetExpired: () => false }))
 
+import { appendAppLog } from '../appLog'
 import type { KeyDeriver } from './importSource'
 import { resetDiscoveryPacingForTests } from './discovery'
 import {
   UTXO_SET_PROBE_PATHS,
   fetchHandCashUtxoSet,
+  readIndexedOutpoints,
   readUnspentOnChain,
-  readUnspentOutpoints,
+  type IndexAnswer,
   type CashOutput,
   utxoSetPreimage,
   utxoSetSealingKey,
@@ -173,6 +175,9 @@ describe('verifyUtxoSet', () => {
     expect(verified.itemOutpoints.get(at('m/9/7'))).toEqual([`${utxo(2).txid}_0`, `${utxo(3).txid}_0`])
     expect([...verified.readAddresses]).toEqual([at('m/7/0'), at('m/9/8')])
     expect(verified.rejected).toBe(3)
+    const line = String(vi.mocked(appendAppLog).mock.calls.at(-1)?.[1])
+    expect(line).toContain("rejected=3 ")
+    expect(line).toMatch(/ rejected\.address=1\(m\/1\/2\) rejected\.script=1\(m\/1\/2\) rejected\.path=1\(m\/44'\/0'\/0'\/0\/0\)$/)
   })
 
   it('reuses the last scan’s addresses instead of deriving, and still rejects a row naming another address', async () => {
@@ -273,10 +278,14 @@ describe('readUnspentOnChain', () => {
   })
 })
 
-describe('readUnspentOutpoints', () => {
+describe('readIndexedOutpoints', () => {
   const outpoints = Array.from({ length: 150 }, (_, i) => `${(i + 1).toString(16).padStart(64, '0')}_0`)
+  const collect = () => {
+    const chunks: Array<Map<string, IndexAnswer>> = []
+    return { chunks, onChunk: (answers: ReadonlyMap<string, IndexAnswer>) => void chunks.push(new Map(answers)) }
+  }
 
-  it('counts only outpoints the index shows unspent, a hundred per request', async () => {
+  it('answers every outpoint a hundred per request: a row, or silent when the index never indexed it', async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       expect(url).toBe('https://ordinals.gorillapool.io/api/txos/outpoints?script=false')
       const asked = JSON.parse(String(init?.body)) as string[]
@@ -284,14 +293,17 @@ describe('readUnspentOutpoints', () => {
         JSON.stringify(asked.slice(1).map((outpoint, i) => ({ outpoint, spend: i % 2 ? 'f'.repeat(64) : '' }))),
       )
     })
-    const read = await readUnspentOutpoints({ chain: 'main', outpoints, fetchImpl })
+    const { chunks, onChunk } = collect()
+    const read = await readIndexedOutpoints({ chain: 'main', outpoints, fetchImpl, onChunk })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
-    expect(read.unspent.size).toBe(50 + 25)
-    expect(read.unspent.has(outpoints[0])).toBe(false)
-    expect(read).toMatchObject({ failed: 0, stopped: false })
+    expect(chunks.map((c) => c.size)).toEqual([100, 50])
+    expect(chunks[0]!.get(outpoints[0])).toEqual({ kind: 'silent' })
+    expect(chunks[0]!.get(outpoints[1])).toMatchObject({ kind: 'row', spent: false })
+    expect(chunks[0]!.get(outpoints[2])).toMatchObject({ kind: 'row', spent: true })
+    expect(read).toEqual({ rows: 148, silent: 2, failed: 0, stopped: false })
   })
 
-  it('hands each chunk over with the spent outpoints and the facts of unspent items', async () => {
+  it('hands each chunk over with the facts the index names', async () => {
     const origin = `${'a'.repeat(64)}_0`
     const signer = '1BHLmsoMt4J4oyKbpPu2PoBDiP8C5h2sQx'
     const fetchImpl = vi.fn(async () =>
@@ -314,46 +326,38 @@ describe('readUnspentOutpoints', () => {
         ]),
       ),
     )
-    const chunks: Array<{ spent: string[]; found: Array<{ outpoint: string; facts: unknown }> }> = []
-    const read = await readUnspentOutpoints({
-      chain: 'main',
-      outpoints: outpoints.slice(0, 4),
-      fetchImpl,
-      onChecked: (chunk) => {
-        chunks.push(chunk)
-      },
-    })
-    expect(read.unspent).toEqual(new Set([outpoints[0], outpoints[1]]))
-    expect(chunks).toEqual([
-      {
-        spent: [outpoints[2]],
-        found: [
-          {
-            outpoint: outpoints[0],
-            facts: {
-              origin,
-              media: origin,
-              name: 'VANITAS #3',
-              mimeType: 'image/png',
-              app: 'vanitas',
-              collectionId: 'c1',
-              signer,
-            },
+    const { chunks, onChunk } = collect()
+    await readIndexedOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 4), fetchImpl, onChunk })
+    const none = { origin: null, media: null, name: null, mimeType: null, app: null, collectionId: null, signer: null }
+    expect([...chunks[0]!]).toEqual([
+      [
+        outpoints[0],
+        {
+          kind: 'row',
+          spent: false,
+          facts: {
+            origin,
+            media: origin,
+            name: 'VANITAS #3',
+            mimeType: 'image/png',
+            app: 'vanitas',
+            collectionId: 'c1',
+            signer,
           },
-          {
-            outpoint: outpoints[1],
-            facts: { origin: null, media: null, name: null, mimeType: null, app: null, collectionId: null, signer: null },
-          },
-        ],
-      },
+        },
+      ],
+      [outpoints[1], { kind: 'row', spent: false, facts: none }],
+      [outpoints[2], { kind: 'row', spent: true, facts: none }],
+      [outpoints[3], { kind: 'silent' }],
     ])
   })
 
-  it('retries a chunk once, then counts it as failed', async () => {
+  it('retries a chunk once, then answers each of its outpoints failed', async () => {
     const fetchImpl = vi.fn(async () => new Response('busy', { status: 503 }))
-    const read = await readUnspentOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 10), fetchImpl })
+    const { chunks, onChunk } = collect()
+    const read = await readIndexedOutpoints({ chain: 'main', outpoints: outpoints.slice(0, 10), fetchImpl, onChunk })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
-    expect(read).toMatchObject({ failed: 10 })
-    expect(read.unspent.size).toBe(0)
+    expect(read).toEqual({ rows: 0, silent: 0, failed: 10, stopped: false })
+    expect([...chunks[0]!.values()].every((a) => a.kind === 'failed')).toBe(true)
   })
 })

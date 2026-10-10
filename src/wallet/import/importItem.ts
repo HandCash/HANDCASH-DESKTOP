@@ -31,7 +31,8 @@ export type ImportItem = {
 
 export type ImportItemFacts = Omit<ImportItem, 'outpoint' | 'address' | 'imageUrl'>
 
-const NO_FACTS: ImportItemFacts = {
+/** An item the index does not name: listed by outpoint, decided at the move. */
+export const NO_FACTS: ImportItemFacts = {
   origin: null,
   media: null,
   name: null,

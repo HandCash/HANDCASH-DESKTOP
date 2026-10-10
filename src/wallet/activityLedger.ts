@@ -13,7 +13,7 @@ import { itemMigrateTxDescription, jobOfTxid } from './activityJobIndex'
 import { loadLedgerSnapshot, saveLedgerRows, type SavedLedger, type SavedLedgerTxs } from './activityLedgerStore'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { withStorageLockLabel } from './storageLockTrace'
-import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
+import { foregroundSpendWaiting } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
@@ -607,19 +607,19 @@ type StorageSession = {
   runAsStorageProvider: (fn: (sp: unknown) => Promise<unknown>) => Promise<unknown>
 }
 
+/**
+ * A send the user started. An import run is not one: it holds priority for
+ * hours, and pages that waited it out (30s each over thousands of item rows)
+ * left Activity at the last launch's copy for the whole run.
+ */
 function sendIsWaiting(): boolean {
-  return spendNeedsStorage() || shouldYieldChainIngestToSpend()
+  return foregroundSpendWaiting()
 }
 
 /** Longest one storage session waits out sends before it reads anyway. */
 const SEND_WAIT_MS = 30_000
 
-/**
- * Let a waiting send take the lock first, for a while. An import keeps a send
- * waiting for hours, and abandoning the read whenever one waited left the
- * ledger at its last read for the whole run — every record shed from the
- * Activity store meanwhile was gone from the feed. One page is one short lock.
- */
+/** Let a waiting send take the lock first, for a while. One page is one short lock. */
 async function yieldToWaitingSends(runtime: WalletRuntime): Promise<void> {
   const until = Date.now() + SEND_WAIT_MS
   while (sendIsWaiting() && Date.now() < until) {
@@ -827,10 +827,7 @@ export function refreshActivityLedger(
 const MAX_SEND_DEFER_MS = 60_000
 let deferredSince = 0
 
-/**
- * Re-read after Activity changes settle. Sends go first, but not forever: an
- * import keeps one waiting for hours, and the read pages around them.
- */
+/** Re-read after Activity changes settle. A user's send goes first, but not forever. */
 export function scheduleActivityLedgerRefresh(): void {
   if (timer || !getWalletRuntime()) return
   // A read that keeps failing (no owner row, storage closed) backs off instead

@@ -239,6 +239,12 @@ export type VerifiedUtxoSet = {
   rejected: number
 }
 
+/** Why a row HandCash named was not taken as ours. */
+type UtxoSetRejection = 'path' | 'address' | 'script'
+
+/** At most this many rejected paths are named in the log, per reason. */
+const REJECTED_PATH_SAMPLES = 3
+
 const HANDCASH_PATH = /^m\/(\d)\/(\d{1,9})$/
 
 function p2pkhLockFor(address: string): string | null {
@@ -275,6 +281,14 @@ export async function verifyUtxoSet(
   const mneeAddresses = new Set<string>()
   const seen = new Set<string>()
   let rejected = 0
+  const rejectedBy = new Map<UtxoSetRejection, { count: number; paths: Set<string> }>()
+  const reject = (reason: UtxoSetRejection, path: string) => {
+    rejected += 1
+    const tally = rejectedBy.get(reason) ?? { count: 0, paths: new Set<string>() }
+    tally.count += 1
+    if (tally.paths.size < REJECTED_PATH_SAMPLES) tally.paths.add(path)
+    rejectedBy.set(reason, tally)
+  }
   for (const utxo of utxos) {
     const outpoint = `${utxo.txid}_${utxo.vout}`
     if (seen.has(outpoint)) continue
@@ -295,8 +309,12 @@ export async function verifyUtxoSet(
       }
       derived.set(utxo.path, key)
     }
-    if (!m || !key || key.address !== utxo.address) {
-      rejected += 1
+    if (!m || !key) {
+      reject('path', utxo.path)
+      continue
+    }
+    if (key.address !== utxo.address) {
+      reject('address', utxo.path)
       continue
     }
     // Cosigned (MNEE) outputs carry the same owner hash under CHECKSIGVERIFY +
@@ -305,7 +323,7 @@ export async function verifyUtxoSet(
     const cosignedOwner = plain ? null : cosignedOwnerHash(utxo.script)
     const mnee = cosignedOwner != null && `76a914${cosignedOwner}88ac` === key.lock
     if (!plain && !mnee) {
-      rejected += 1
+      reject('script', utxo.path)
       continue
     }
     if (!addresses.has(key.address)) {
@@ -331,9 +349,12 @@ export async function verifyUtxoSet(
       cashOutputs.set(key.address, list)
     }
   }
+  const rejectedNote = [...rejectedBy]
+    .map(([reason, { count, paths }]) => ` rejected.${reason}=${count}(${[...paths].join(',')})`)
+    .join('')
   appendAppLog(
-    'info',
-    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} mnee=${mneeAddresses.size} done ${Date.now() - startedAt}ms`,
+    rejected > 0 ? 'warn' : 'info',
+    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} mnee=${mneeAddresses.size} done ${Date.now() - startedAt}ms${rejectedNote}`,
   )
   return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, mneeAddresses, rejected }
 }
@@ -350,7 +371,7 @@ export async function readUnspentOnChain(args: {
   chain: Chain
   outputs: ReadonlyArray<Pick<CashOutput, 'outpoint' | 'txid' | 'vout'>>
   /** Log tag: `[import] utxo set <label> done`. */
-  label?: 'cash' | 'listed'
+  label?: 'cash' | 'listed' | 'item-spends'
   fetchImpl?: FetchLike
   onProgress?: (done: number, total: number) => void
   shouldStop?: () => boolean
@@ -417,32 +438,33 @@ export async function readUnspentOnChain(args: {
 }
 
 /**
- * Which of these outpoints the 1Sat index shows unspent, a hundred per
- * request. One the index does not know is left out — never counted.
+ * What the 1Sat index says of one outpoint: its row (whether it saw a spend,
+ * and the names on the origin), no row at all, or no answer.
  */
-export async function readUnspentOutpoints(args: {
+export type IndexAnswer =
+  | { kind: 'row'; spent: boolean; facts: ImportItemFacts }
+  /** The index answered and holds no row: an output it never indexed. */
+  | { kind: 'silent' }
+  /** The request failed twice. */
+  | { kind: 'failed' }
+
+/**
+ * The 1Sat index's answer for each outpoint, a hundred per request, in the
+ * order asked. Each chunk is handed over and awaited before the next, so a
+ * stopped read keeps what it decided. Names only: the index misses outputs
+ * and lags spends, so whether an output is spent is the chain's to say.
+ */
+export async function readIndexedOutpoints(args: {
   chain: Chain
   outpoints: readonly string[]
   fetchImpl?: FetchLike
   onProgress?: (done: number, total: number) => void
-  /**
-   * Each chunk as it lands, awaited before the next: the outpoints the index
-   * shows spent and the unspent ones with their facts. An outpoint the index
-   * returned no row for is in neither and stays unchecked.
-   */
-  onChecked?: (chunk: {
-    spent: string[]
-    found: Array<{ outpoint: string; facts: ImportItemFacts }>
-  }) => void | Promise<void>
+  onChunk: (answers: ReadonlyMap<string, IndexAnswer>) => void | Promise<void>
   shouldStop?: () => boolean
-}): Promise<{
-  unspent: Set<string>
-  failed: number
-  stopped: boolean
-}> {
-  const startedAt = Date.now()
+}): Promise<{ rows: number; silent: number; failed: number; stopped: boolean }> {
   const fetchImpl = args.fetchImpl ?? fetch
-  const unspent = new Set<string>()
+  let rowCount = 0
+  let silent = 0
   let failed = 0
   let stopped = false
   for (let i = 0; i < args.outpoints.length; i += OUTPOINT_CHUNK) {
@@ -465,32 +487,25 @@ export async function readUnspentOutpoints(args: {
         /* one retry, then the chunk counts as failed */
       }
     }
-    if (!Array.isArray(rows)) {
-      failed += chunk.length
-    } else {
+    const answers = new Map<string, IndexAnswer>()
+    if (Array.isArray(rows)) {
       const asked = new Set(chunk)
-      const found: Array<{ outpoint: string; facts: ImportItemFacts }> = []
-      const spent: string[] = []
+      const byOutpoint = new Map<string, IndexAnswer>()
       for (const row of rows) {
         const { outpoint, spend } = (row ?? {}) as { outpoint?: unknown; spend?: unknown }
-        if (typeof outpoint !== 'string' || !asked.has(outpoint)) continue
-        asked.delete(outpoint)
-        if (spend) {
-          spent.push(outpoint)
-          continue
-        }
-        const rowFacts = importItemFacts(row, outpoint)
-        unspent.add(outpoint)
-        found.push({ outpoint, facts: rowFacts })
+        if (typeof outpoint !== 'string' || !asked.has(outpoint) || byOutpoint.has(outpoint)) continue
+        byOutpoint.set(outpoint, { kind: 'row', spent: Boolean(spend), facts: importItemFacts(row, outpoint) })
       }
-      if (found.length > 0 || spent.length > 0) await args.onChecked?.({ spent, found })
+      rowCount += byOutpoint.size
+      silent += chunk.length - byOutpoint.size
+      for (const outpoint of chunk) answers.set(outpoint, byOutpoint.get(outpoint) ?? { kind: 'silent' })
+    } else {
+      for (const outpoint of chunk) answers.set(outpoint, { kind: 'failed' })
+      failed += chunk.length
     }
+    await args.onChunk(answers)
     args.onProgress?.(Math.min(i + OUTPOINT_CHUNK, args.outpoints.length), args.outpoints.length)
     await yieldToUi()
   }
-  appendAppLog(
-    'info',
-    `[import] utxo set items done ${Date.now() - startedAt}ms outpoints=${args.outpoints.length} unspent=${unspent.size} failed=${failed}`,
-  )
-  return { unspent, failed, stopped }
+  return { rows: rowCount, silent, failed, stopped }
 }
