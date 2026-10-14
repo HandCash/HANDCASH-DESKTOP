@@ -65,6 +65,7 @@ export function HistoryBackupPanel() {
   const busy = action.busy
   const [exportTick, setExportTick] = useState(0)
   const [localSnaps, setLocalSnaps] = useState<LocalBrc39ArchiveMeta[]>([])
+  const [cloudDetail, setCloudDetail] = useState<string | null>(null)
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
   const resolvedUrl = resolveHistoryBackupBaseUrl(prefs)
   const effectiveUrl = resolvedUrl || displayHistoryBackupBaseUrl(prefs)
@@ -93,6 +94,7 @@ export function HistoryBackupPanel() {
     await action.run('check', async () => {
       ensureSuggestedHistoryBackupUrl()
       const health = await refreshCloudBackupHealth()
+      setCloudDetail(health.message)
       setPrefs(getHistoryBackupPrefs())
       if (health.phase === 'ok') toastSuccess(health.label, health.message ?? undefined)
       else if (health.phase === 'pending')
@@ -293,6 +295,11 @@ export function HistoryBackupPanel() {
           </span>
         ) : null}
       </div>
+      {cloudDetail ? (
+        <p className="settings-row-desc" role="status">
+          {cloudDetail}
+        </p>
+      ) : null}
 
       {!historyUnlocked ? (
         <ConfirmPasswordGate
@@ -333,7 +340,7 @@ export function HistoryBackupPanel() {
               disabled={busy || !effectiveUrl}
               onClick={() => void runUpload()}
             >
-              {action.running('upload') || action.running('overwrite') ? 'Uploading…' : 'Upload to URL'}
+              {action.running('upload') || action.running('overwrite') ? 'Backing up…' : 'Back up now'}
             </button>
             <button
               type="button"

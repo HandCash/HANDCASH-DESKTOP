@@ -251,7 +251,7 @@ describe('sendBrc29ToIdentityKey', () => {
       '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   })
 
-  it('broadcasts BRC-29 then delivers remittance to the payee', async () => {
+  it('signs BRC-29 locally, queues propagation, then delivers remittance', async () => {
     const { sendBrc29ToIdentityKey, BRC29_PROTOCOL_ID } = await import(
       './sendBrc29Payment'
     )
@@ -278,9 +278,9 @@ describe('sendBrc29ToIdentityKey', () => {
 
     expect(createAction).toHaveBeenCalledTimes(1)
     const args = createAction.mock.calls[0]?.[0] as CreateActionArgs | undefined
-    expect(args?.options?.noSend).toBeUndefined()
+    expect(args?.options?.noSend).toBe(true)
     expect(args?.options?.signAndProcess).toBe(true)
-    expect(args?.options?.acceptDelayedBroadcast).toBe(true)
+    expect(args?.options?.acceptDelayedBroadcast).toBeUndefined()
     expect(args?.options?.randomizeOutputs).toBe(false)
     expect(args?.labels).toEqual(expect.arrayContaining(['brc29', 'handcash-send']))
     const instructions = JSON.parse(args?.outputs?.[0]?.customInstructions || '{}')

@@ -19,6 +19,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
+import { GoogleRecoveryPanel } from './GoogleRecoveryPanel'
 
 type Props = {
   mnemonic: string
@@ -26,7 +27,7 @@ type Props = {
   onDone: () => void
 }
 
-type Kind = 'phrase' | 'split'
+type Kind = 'google' | 'phrase' | 'split'
 
 function downloadShare(filename: string, contents: string) {
   const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' })
@@ -43,11 +44,13 @@ function downloadShare(filename: string, contents: string) {
  * result — never gated on a HandCash password.
  */
 export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
-  const [kind, setKind] = useState<Kind>('phrase')
+  const [kind, setKind] = useState<Kind>('google')
   const [shareSet, setShareSet] = useState<Brc140IssuedSet | null>(null)
   const [, setTick] = useState(0)
 
-  const canConfirm = canConfirmKeysBackup(kind === 'phrase' ? 'phrase' : 'split')
+  const canConfirm =
+    kind !== 'google' &&
+    canConfirmKeysBackup(kind === 'phrase' ? 'phrase' : 'split')
   const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
 
   const showSlices = async (rotate: boolean) => {
@@ -119,11 +122,21 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
     <div className="wallet-setup-config" data-aeon-scope="create-keys-backup">
       <h2>Save your recovery backup</h2>
       <p className="auth-lede">
-        Recommended now. Write your recovery phrase or save two key slices. You can use the wallet
-        first — Settings will keep reminding you until this is done.
+        Recommended now: connect Google and email one recovery share to yourself. An offline
+        phrase or two manually stored slices remain available.
       </p>
 
       <div className="actions" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className={kind === 'google' ? 'btn btn-primary' : 'btn btn-ghost'}
+          onClick={() => {
+            setKind('google')
+            setShareSet(null)
+          }}
+        >
+          Google + email
+        </button>
         <button
           type="button"
           className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
@@ -144,6 +157,8 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
           Key slices
         </button>
       </div>
+
+      {kind === 'google' ? <GoogleRecoveryPanel onReady={onDone} /> : null}
 
       {kind === 'phrase' ? (
         <div className="split-backup-shares">
@@ -195,7 +210,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         </div>
       ) : null}
 
-      <div className="actions" style={{ marginTop: 16 }}>
+      {kind !== 'google' ? <div className="actions" style={{ marginTop: 16 }}>
         <button type="button" className="btn btn-primary" disabled={!canConfirm} onClick={confirm}>
           I’ve saved my backup — continue
         </button>
@@ -211,7 +226,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         >
           I’ll do this later
         </button>
-      </div>
+      </div> : null}
       <p className="auth-lede" style={{ marginTop: 8 }}>
         Later is fine. Don’t skip forever — this is the only way back if the device is wiped.
       </p>

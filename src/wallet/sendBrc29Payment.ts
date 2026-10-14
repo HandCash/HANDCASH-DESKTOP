@@ -441,9 +441,9 @@ export async function sendBrc29ToIdentityKey(opts: {
               },
             ],
             options: {
+              noSend: true,
               randomizeOutputs: false,
               signAndProcess: true,
-              acceptDelayedBroadcast: true,
               trustSelf: 'known' as const,
             },
           }
@@ -527,7 +527,7 @@ export async function sendBrc29ToIdentityKey(opts: {
               atomicBeef,
             })
           }
-          chart.send({ type: 'BROADCASTED', txid })
+          chart.send({ type: 'SIGNED', txid })
           completePendingSend(pending.id, txid)
           noteOutboundSendComplete({
             pendingId: pending.id,
@@ -540,7 +540,7 @@ export async function sendBrc29ToIdentityKey(opts: {
           setPaymentProgress('finishing')
           scheduleHistoryBackupPush('send')
           startSignedSendPropagation(signedSend, { pendingId: pending.id })
-          mark('broadcast queued')
+          mark('signed and propagation queued')
           handedOff = true
           return { active, chart, settlePath, payee, txid, satoshis, remittance, atomicBeef }
         } catch (err) {

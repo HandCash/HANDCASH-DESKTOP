@@ -435,6 +435,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       status: entry.status,
       txid: entry.txid,
       chainProof: rec?.chainProof,
+      arcStatus: rec?.arcStatus,
       minedHeight: rec?.minedHeight,
     }) ?? (spent ? 'Signed' : 'Signed')
   // Identity as the wallet knows it now, not as the row froze it on arrival.

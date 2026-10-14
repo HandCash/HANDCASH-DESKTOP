@@ -46,19 +46,19 @@ describe('activityRowState', () => {
 
   it('reads the transaction, not the wallet, once the action has a txid', () => {
     const txid = 'cd'.repeat(32)
-    // Sent and recorded: the row is done, whatever the wallet still files.
+    // Recorded is not the same as sent: without a provider fact it stays Signed.
     expect(
       activityRowState({
         entry: entry({ status: 'complete', txid, pendingId: 'send-1' }),
         live: live({ face: 'broadcasting', txid }),
       })
-    ).toBe('settled')
+    ).toBe('signed')
     expect(
       activityRowState({
         entry: entry({ status: 'complete', txid, pendingId: 'send-1' }),
         live: live({ face: 'settling', txid }),
       })
-    ).toBe('settled')
+    ).toBe('signed')
     // Signed but the row still pending: assumed. Broadcasting is not the standing.
     expect(
       activityRowState({
@@ -91,19 +91,18 @@ describe('activityRowState', () => {
         live: null,
         chainProof: 'unconfirmed',
       })
-    ).toBe('unconfirmed')
+    ).toBe('sent')
     expect(
       activityRowState({
         entry: entry({ status: 'complete', txid: 'ab'.repeat(32) }),
         live: null,
         chainProof: 'headerProven',
       })
-    ).toBe('confirmed')
+    ).toBe('settled')
     expect(activityRowState({ entry: entry({ status: 'complete' }), live: null })).toBe('settled')
     expect(activityRowStateLabel('settled')).toBeNull()
-    expect(activityRowStateLabel('confirmed', { minedHeight: 100, tipHeight: 102 })).toBe(
-      'Confirmed · 3 blocks'
-    )
+    expect(activityRowStateLabel('sent')).toBe('Sent')
+    expect(activityRowStateLabel('seen')).toBe('Seen on network')
   })
 
   it('lets the durable verdict win over a retiring live action', () => {
@@ -112,7 +111,7 @@ describe('activityRowState', () => {
         entry: entry({ status: 'complete', txid: 'ab'.repeat(32) }),
         live: live({ face: 'settled', txid: 'ab'.repeat(32) }),
       })
-    ).toBe('settled')
+    ).toBe('signed')
     expect(
       activityRowState({ entry: entry({ status: 'failed' }), live: live({ face: 'signing' }) })
     ).toBe('signing')

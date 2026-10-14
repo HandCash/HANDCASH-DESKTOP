@@ -77,7 +77,7 @@ export type TxRecord = {
 const TX_FORWARD: Readonly<Record<TxStatus, ReadonlySet<TxStatus>>> = {
   DRAFT: new Set(['VALIDATING', 'FAILED_REJECTED']),
   VALIDATING: new Set(['BROADCASTING', 'SEEN_IN_MEMPOOL', 'FAILED_REJECTED']),
-  BROADCASTING: new Set(['SEEN_IN_MEMPOOL', 'FAILED_REJECTED']),
+  BROADCASTING: new Set(['SEEN_IN_MEMPOOL', 'MINED', 'FAILED_REJECTED']),
   SEEN_IN_MEMPOOL: new Set(['MINED', 'FAILED_REJECTED', 'REORG_ORPHANED']),
   MINED: new Set(['REORG_ORPHANED']),
   FAILED_REJECTED: new Set([]),
@@ -147,7 +147,7 @@ export function humanTxStatus(status: TxStatus): string {
     case 'VALIDATING':
       return 'Validating'
     case 'BROADCASTING':
-      return 'Broadcasting'
+      return 'Signed'
     case 'SEEN_IN_MEMPOOL':
       return 'In mempool'
     case 'MINED':

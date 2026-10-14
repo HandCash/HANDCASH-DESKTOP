@@ -16,17 +16,17 @@ describe('settlementCopy', () => {
     ).toBe('Signed')
   })
 
-  it('names a signed body Unconfirmed until headers cover it', () => {
+  it('names an accepted signed body Sent until headers cover it', () => {
     expect(
       classifyActivitySettlement({
         status: 'pending',
         hasTxid: true,
         chainProof: 'unconfirmed',
       }),
-    ).toBe('unconfirmed')
+    ).toBe('sent')
     expect(
-      formatSettlementLabel({ phrase: 'unconfirmed', confirmations: null }),
-    ).toBe('Unconfirmed')
+      formatSettlementLabel({ phrase: 'sent', confirmations: null }),
+    ).toBe('Sent')
   })
 
   it('names header-proven inclusion Confirmed and can show depth', () => {
@@ -54,10 +54,10 @@ describe('settlementCopy', () => {
     expect(confirmationsFromHeights(null, 199)).toBeNull()
   })
 
-  it('only replaces the in-flight Activity slot for pending or header-proven rows', () => {
+  it('shows honest signed/sent progress and returns confirmed rows to their timestamp', () => {
     expect(
       inFlightSettlementLabel({ status: 'complete', txid: 'ab'.repeat(32) }),
-    ).toBeNull()
+    ).toBe('Signed')
     expect(
       inFlightSettlementLabel({ status: 'pending', txid: undefined }),
     ).toBe('Signed')
@@ -73,7 +73,14 @@ describe('settlementCopy', () => {
         txid: 'ab'.repeat(32),
         chainProof: 'unconfirmed',
       }),
-    ).toBe('Unconfirmed')
+    ).toBe('Sent')
+    expect(
+      inFlightSettlementLabel({
+        status: 'complete',
+        txid: 'ab'.repeat(32),
+        chainProof: 'headerProven',
+      }),
+    ).toBeNull()
     expect(inFlightSettlementLabel({ status: 'failed', txid: 'ab'.repeat(32) })).toBe(
       null,
     )

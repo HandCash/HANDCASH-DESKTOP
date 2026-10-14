@@ -7,6 +7,7 @@ import {
   readVaultUnlockFactors,
   restoreVaultFromMnemonic,
   restoreVaultFromRootKey,
+  restoreVaultFromMaster,
   unlockVault,
   unlockVaultWithDevice,
   type Chain,
@@ -64,6 +65,13 @@ import { FingerprintIcon } from './icons'
 import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { OnboardProtectPanel } from './OnboardProtectPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
+import { GoogleLoginPanel, type GoogleRecoveredVault } from './GoogleLoginPanel'
+import { setEmailRecoveryEnrollment } from '../wallet/brc250/store'
+import {
+  writeVaultAccounts,
+  type VaultAccountStore,
+} from '../wallet/vaultAccounts'
+import { markManagedKeysBackupConfirmed } from '../wallet/backupStatus'
 
 type Props = {
   mode: 'onboarding' | 'locked'
@@ -78,7 +86,7 @@ type Props = {
 
 /** Custody restore paths the vault can bootstrap from. */
 type RestoreMethod = 'phrase' | 'shares' | 'key'
-type FormMode = 'create' | 'unlock' | RestoreMethod
+type FormMode = 'create' | 'unlock' | 'google' | RestoreMethod
 
 const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
@@ -321,8 +329,9 @@ export function AuthScreen({
     unlocked: UnlockedVault,
     password: string | null,
     kind: 'create' | 'restore',
+    restoreDisposition: RestoreRole = restoreRole,
   ) => {
-    if (kind === 'restore' && restoreRole === 'keep') {
+    if (kind === 'restore' && restoreDisposition === 'keep') {
       setPreparing({
         title: 'Almost ready',
         lede: 'Finding the wallets your other device holds…',
@@ -668,6 +677,40 @@ export function AuthScreen({
     })
   }
 
+  const restoreGoogleVault = async (recovered: GoogleRecoveredVault) => {
+    try {
+      setPreparing({
+        title: 'Restoring your vault',
+        lede: 'Installing the approved vault and its recovery settings.',
+      })
+      const unlocked = await restoreVaultFromMaster({
+        master: recovered.master,
+        chain,
+      })
+      setEmailRecoveryEnrollment(recovered.enrollment)
+      markManagedKeysBackupConfirmed()
+      const accounts = recovered.accounts as VaultAccountStore | undefined
+      if (
+        accounts?.version === 1 &&
+        typeof accounts.masterIdentityKey === 'string' &&
+        Array.isArray(accounts.accounts)
+      ) {
+        writeVaultAccounts(accounts)
+      }
+      await finishCreated(
+        unlocked,
+        null,
+        'restore',
+        recovered.recoveryKind === 'approved-device' ? 'keep' : 'replace',
+      )
+    } catch (restoreError) {
+      const message =
+        restoreError instanceof Error ? restoreError.message : String(restoreError)
+      setPreparing(null)
+      onFail(message)
+    }
+  }
+
   if (pendingOnboard?.step === 'history') {
     return (
       <section
@@ -722,6 +765,19 @@ export function AuthScreen({
           onDone={(sessionPassword) => {
             enterFromOnboard(pendingOnboard, sessionPassword)
           }}
+        />
+      </section>
+    )
+  }
+
+  if (formMode === 'google' && !preparing) {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="google">
+        <GoogleLoginPanel
+          onRecovered={(recovered) => void restoreGoogleVault(recovered)}
+          onCancel={() =>
+            setFormMode(mode === 'locked' && !recoveryOnly ? 'unlock' : 'phrase')
+          }
         />
       </section>
     )
@@ -795,6 +851,16 @@ export function AuthScreen({
             >
               Restore
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={false}
+              className="auth-mode-tab"
+              data-aeon-state="idle"
+              onClick={() => setFormMode('google')}
+            >
+              Google
+            </button>
           </div>
         ) : null}
 
@@ -813,6 +879,16 @@ export function AuthScreen({
                 {m.label}
               </button>
             ))}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={false}
+              className="auth-mode-tab"
+              data-aeon-state="idle"
+              onClick={() => setFormMode('google')}
+            >
+              Google
+            </button>
           </div>
         ) : null}
 
@@ -1001,7 +1077,11 @@ export function AuthScreen({
 
         {mode === 'onboarding' && !recoveryOnly && formMode === 'create' ? (
           <p className="auth-alt">
-            Already have a backup?{' '}
+            Already have a wallet?{' '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('google')}>
+              Continue with Google
+            </button>
+            {' · '}
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('phrase')}>
               Restore
             </button>

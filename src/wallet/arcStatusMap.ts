@@ -36,10 +36,11 @@ export function parseArcStatus(raw: string | null | undefined): ArcStatus | null
 
 /**
  * Derive ArcStatus from a postBeef summary after dispatch.
- * Accepted → SEEN_ON_NETWORK (optimistic mempool); never MINED from postBeef alone.
+ * Provider acceptance means sent/announced, not observed by another node.
+ * Never claim SEEN_ON_NETWORK or MINED from the submission response alone.
  */
 export function arcStatusFromPostBeef(summary: PostBeefSummary): ArcStatus {
-  if (summary.accepted) return 'SEEN_ON_NETWORK'
+  if (summary.accepted) return 'ANNOUNCED_TO_NETWORK'
   if (summary.doubleSpend || summary.missingInputs) return 'DOUBLE_SPEND_ATTEMPTED'
   return 'REJECTED'
 }

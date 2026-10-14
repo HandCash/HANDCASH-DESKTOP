@@ -11,7 +11,7 @@ const PEER =
 const TXID = 'a'.repeat(64)
 
 describe('brc29SendMachine', () => {
-  it('broadcasts before inbox notify', () => {
+  it('registers the signed cheque before inbox notify', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -20,9 +20,9 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
     })
     actor.send({ type: 'READY' })
-    expect(actor.getSnapshot().matches('broadcasting')).toBe(true)
+    expect(actor.getSnapshot().matches('signing')).toBe(true)
     expect(mustBrc29DeliverToPeer(actor.getSnapshot())).toBe(false)
-    actor.send({ type: 'BROADCASTED', txid: TXID })
+    actor.send({ type: 'SIGNED', txid: TXID })
     expect(actor.getSnapshot().matches('peerNotify')).toBe(true)
     expect(mustBrc29DeliverToPeer(actor.getSnapshot())).toBe(true)
   })
@@ -36,12 +36,12 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
     })
     actor.send({ type: 'READY' })
-    actor.send({ type: 'BROADCASTED', txid: TXID })
+    actor.send({ type: 'SIGNED', txid: TXID })
     actor.send({ type: 'BOX_UNREACHABLE' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 
-  it('BEEF_IN_BOX after broadcast → done', () => {
+  it('BEEF_IN_BOX after signing → done', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -50,12 +50,12 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
     })
     actor.send({ type: 'READY' })
-    actor.send({ type: 'BROADCASTED', txid: TXID })
+    actor.send({ type: 'SIGNED', txid: TXID })
     actor.send({ type: 'BEEF_IN_BOX' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 
-  it('selfReceive settles locally after broadcast', () => {
+  it('selfReceive settles locally after signing', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -64,7 +64,7 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'selfReceive' },
     })
     actor.send({ type: 'READY' })
-    actor.send({ type: 'BROADCASTED', txid: TXID })
+    actor.send({ type: 'SIGNED', txid: TXID })
     expect(actor.getSnapshot().matches('selfReceive')).toBe(true)
     expect(mustBrc29SelfReceive(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'SETTLED' })

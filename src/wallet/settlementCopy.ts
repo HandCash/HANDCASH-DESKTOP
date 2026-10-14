@@ -7,10 +7,13 @@
  *
  *   Signed       — local cheque (Atomic BEEF). Assumed the moment it is signed.
  *                  Miner acceptance is a background chase, not this phrase.
- *   Unconfirmed  — a chain proof says the body is out and not yet header-final
- *   Confirmed    — BUMP vs this device's headers; optional block depth
+ *   Sent         — a provider accepted/announced the signed body
+ *   Seen         — another network observer reported it
+ *   Confirmed    — BUMP vs this device's headers; the UI returns to its timestamp
  */
-export type SettlementPhrase = 'signed' | 'unconfirmed' | 'confirmed'
+import type { ArcStatus } from './txLifecycle'
+
+export type SettlementPhrase = 'signed' | 'sent' | 'seen' | 'confirmed'
 
 export type SettlementCopy = {
   phrase: SettlementPhrase
@@ -39,16 +42,23 @@ export function classifyActivitySettlement(args: {
   status?: 'pending' | 'complete' | 'failed'
   hasTxid: boolean
   chainProof?: 'unconfirmed' | 'headerProven' | null
+  arcStatus?: ArcStatus | null
 }): SettlementPhrase {
   if (args.chainProof === 'headerProven') return 'confirmed'
-  if (args.chainProof === 'unconfirmed') return 'unconfirmed'
+  if (args.arcStatus === 'SEEN_ON_NETWORK') return 'seen'
+  if (
+    args.arcStatus === 'STORED' ||
+    args.arcStatus === 'ANNOUNCED_TO_NETWORK' ||
+    args.chainProof === 'unconfirmed'
+  ) return 'sent'
   // A txid is the assumption. It does not mean a miner has accepted it.
   return 'signed'
 }
 
 export function formatSettlementLabel(copy: SettlementCopy): string {
   if (copy.phrase === 'signed') return 'Signed'
-  if (copy.phrase === 'unconfirmed') return 'Unconfirmed'
+  if (copy.phrase === 'sent') return 'Sent'
+  if (copy.phrase === 'seen') return 'Seen on network'
   const n = copy.confirmations
   if (n == null || n <= 0) return 'Confirmed'
   if (n === 1) return 'Confirmed · 1 block'
@@ -63,17 +73,20 @@ export function inFlightSettlementLabel(args: {
   status?: 'pending' | 'complete' | 'failed'
   txid?: string
   chainProof?: 'unconfirmed' | 'headerProven' | null
+  arcStatus?: ArcStatus | null
   minedHeight?: number | null
   tipHeight?: number | null
 }): string | null {
   if (args.status === 'failed') return null
-  if (args.status !== 'pending' && args.chainProof !== 'headerProven') {
-    return null
-  }
+  if (!args.txid?.trim()) return args.status === 'pending' ? 'Signed' : null
+  // A verified mined row returns to its ordinary date/time: that timestamp is
+  // the compact confirmation affordance the activity feed already understands.
+  if (args.chainProof === 'headerProven') return null
   const phrase = classifyActivitySettlement({
     status: args.status,
     hasTxid: Boolean(args.txid?.trim()),
     chainProof: args.chainProof,
+    arcStatus: args.arcStatus,
   })
   return formatSettlementLabel({
     phrase,

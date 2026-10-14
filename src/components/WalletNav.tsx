@@ -76,6 +76,7 @@ import { WalletBackupPanel } from './WalletBackupPanel'
 import { DeviceHandoffPanel } from './DeviceHandoffPanel'
 import { ImportPanel } from './import/ImportPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
+import { GoogleRecoveryPanel } from './GoogleRecoveryPanel'
 import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { DevKeysPanel } from './DevKeysPanel'
@@ -717,6 +718,9 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
+              )}
+              {stageChild.type === 'setting' && stageChild.settingId === 'google-recovery' && (
+                <GoogleRecoveryPanel />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'logs' && <LogViewerPanel />}
               {stageChild.type === 'setting' && stageChild.settingId === 'wallet-health' && (

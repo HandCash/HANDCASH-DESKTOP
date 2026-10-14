@@ -135,6 +135,13 @@ export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boole
   return true
 }
 
+/** A managed 2-of-3 recovery has independently verified both remote shares. */
+export function markManagedKeysBackupConfirmed(): void {
+  durableSetItem(vaultKey(KEYS_KEY), '1')
+  durableRemoveItem(vaultKey(BACKUP_LATER_KEY))
+  notify()
+}
+
 export function noteHistoryBackupExport(): void {
   historyExported = true
   notify()

@@ -3,6 +3,7 @@ import {
   Beef,
   LockingScript,
   MerklePath,
+  P2PKH,
   PrivateKey,
   Transaction,
   UnlockingScript,
@@ -21,6 +22,11 @@ import {
 } from './token'
 import { p2pkhScriptHex } from './ordinalOwnership'
 import { clearAppActivity, listRecentActivity } from './appActivity'
+import {
+  resetTokenLineageForTests,
+  tokenTipBound,
+} from './token/lineage'
+import { BSV21_BASKET } from './token/types'
 
 const TXID = 'a'.repeat(64)
 const ADDR = '1HandCashTestAddress'
@@ -236,6 +242,61 @@ describe('paintAfterCreateActionIssuance', () => {
 const ORD_ENVELOPE = '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
 
 describe('paintAfterCreateActionBsv21Mint', () => {
+  it('files a self-minted tip from signed BEEF so its amount is not checking', async () => {
+    clearFungiblesCache()
+    resetTokenLineageForTests()
+    const key = PrivateKey.fromRandom()
+    const deploy = new Transaction()
+    deploy.addOutput({
+      satoshis: 1,
+      lockingScript: encodeBsv21Binary({
+        amount: 1000n,
+        payload: { sym: 'SELF', dec: 0 },
+        rest: new P2PKH().lock(key.toAddress()),
+      }),
+    })
+    const tokenId = `${deploy.id('hex')}_0`
+    const mint = new Transaction()
+    mint.addInput({
+      sourceTransaction: deploy,
+      sourceOutputIndex: 0,
+      unlockingScriptTemplate: new P2PKH().unlock(key),
+    })
+    const lock = encodeBsv21Binary({
+      tokenId,
+      amount: 1000n,
+      rest: new P2PKH().lock(key.toAddress()),
+    })
+    mint.addOutput({ satoshis: 1, lockingScript: lock })
+    await mint.sign()
+    const beef = new Beef()
+    beef.mergeRawTx(deploy.toBinary())
+    beef.mergeRawTx(mint.toBinary())
+    const txid = mint.id('hex')
+
+    expect(
+      paintAfterCreateActionBsv21Mint(
+        { address: key.toAddress(), chain: 'main' } as never,
+        'https://mint.example',
+        {
+          outputs: [
+            {
+              satoshis: 1,
+              basket: BSV21_BASKET,
+              lockingScript: lock.toHex(),
+              tags: ['bsv21', 'op:mint', `bsv21:${tokenId}`, 'amt:1000'],
+            },
+          ],
+        },
+        { txid, tx: beef.toBinaryAtomic(txid) },
+      ),
+    ).toBe(1)
+    expect(tokenTipBound(`${txid}.0`, tokenId)).toBe(true)
+
+    clearFungiblesCache()
+    resetTokenLineageForTests()
+  })
+
   it('paints Mint Studio BRC-162 deploy as proven and sendable immediately', () => {
     clearFungiblesCache()
     const address = PrivateKey.fromRandom().toAddress()

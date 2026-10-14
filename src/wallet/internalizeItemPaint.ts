@@ -39,6 +39,7 @@ import { rememberResolvedInscription } from './inscriptionCache'
 import { rememberItemArtFromScript, getItemArtDataUrl } from './localItemArt'
 import { proveHeldOutputFromBeef } from './oneSatProvenance'
 import { clearAwaitingVerification } from './verificationProgress'
+import { recordProvenTokenTips } from './token/lineage'
 import {
   classifyOneSatAsBsv21,
   isBsv21OneSatLock,
@@ -594,6 +595,7 @@ export function paintAfterCreateActionBsv21Mint(
   void originator
   const txid = extractTxid(result) ?? extractTxid(args)
   if (!txid) return 0
+  const signedBeef = beefFromCreateAction(result, args)
   const scripts = lockingScriptsFromCreateAction(txid, args, result)
   let painted = 0
   for (const out of scripts) {
@@ -628,6 +630,12 @@ export function paintAfterCreateActionBsv21Mint(
         : {}),
       ...bsv21EncodingOf(classified),
     })
+    // A self-mint already returned its complete signed lineage. File that proof
+    // before painting so the amount is spendable immediately instead of
+    // waiting for an indexer-backed lineage heal.
+    if (signedBeef) {
+      recordProvenTokenTips(signedBeef, [outpoint], classified.tokenId)
+    }
     rememberFungibleToken(token)
     void hydrateCachedTokenIcons(active, [token]).catch(() => {})
     painted += 1

@@ -27,11 +27,25 @@ export type CloudBackupHealth = {
   label: string
   message: string | null
   checkedAt: number
+  localActionCount?: number | null
+  remoteActionCount?: number | null
 }
 
 type Listener = (h: CloudBackupHealth) => void
 
 const listeners = new Set<Listener>()
+
+export type BackupCatchup = 'unknown' | 'behind' | 'current' | 'remote-newer'
+
+export function backupCatchupState(
+  localActionCount: number | null,
+  remoteActionCount: number | null,
+): BackupCatchup {
+  if (localActionCount == null || remoteActionCount == null) return 'unknown'
+  if (remoteActionCount < localActionCount) return 'behind'
+  if (remoteActionCount === localActionCount) return 'current'
+  return 'remote-newer'
+}
 
 let health: CloudBackupHealth = {
   phase: 'off',
@@ -168,15 +182,50 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
       })
     }
     setHistoryBackupPrefs({ lastError: null })
+    let localActionCount: number | null = null
+    if (head.kind === 'present' && head.actionCount != null) {
+      try {
+        const { inspectLocalToolboxState } = await import('./layers')
+        localActionCount = (await inspectLocalToolboxState()).actionCount
+        const catchup = backupCatchupState(localActionCount, head.actionCount)
+        if (catchup === 'behind') {
+          appendAppLog(
+            'warn',
+            `[cloud-backup] remote behind local actions (${head.actionCount}/${localActionCount}) — scheduling catch-up`,
+          )
+          const { scheduleHistoryBackupPush } = await import('./deviceSync')
+          scheduleHistoryBackupPush('health-stale')
+        } else if (catchup === 'current') {
+          // A matching remote proves there is nothing left to retry. A crash
+          // marker from an older export must not keep this account stale.
+          const { clearBackupBackoff } = await import('./backupWatchdog')
+          clearBackupBackoff()
+        }
+      } catch {
+        /* health remains useful when the local toolbox is busy */
+      }
+    }
     // Do not invent lastUploadedAt from a HEAD probe — that blocks empty-local
     // recovery pull and lies that this device already pushed.
     appendAppLog('info', '[cloud-backup] remote BRC-39 present')
     return setHealth({
       phase: 'ok',
-      label: 'Cloud synced',
-      message: prefs.lastUploadedAt
-        ? 'Remote history backup is present'
-        : 'Remote history present — unlock sync will merge if this device is empty',
+      label:
+        localActionCount != null &&
+        head.actionCount != null &&
+        localActionCount > head.actionCount
+          ? 'Backup catching up'
+          : 'Cloud synced',
+      message:
+        localActionCount != null && head.actionCount != null
+          ? head.actionCount < localActionCount
+            ? `Cloud has ${head.actionCount} of ${localActionCount} actions — upload scheduled`
+            : `Cloud has all ${localActionCount} actions`
+          : prefs.lastUploadedAt
+            ? 'Remote history backup is present'
+            : 'Remote history present — unlock sync will merge if this device is empty',
+      localActionCount,
+      remoteActionCount: head.actionCount,
     })
   } catch (err) {
     const msg = `Remote backup check failed: ${err instanceof Error ? err.message : String(err)}`

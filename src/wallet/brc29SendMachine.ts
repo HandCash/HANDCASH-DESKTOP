@@ -1,9 +1,9 @@
 /**
  * BRC-29 peer-pay phases — Babbage / wallet-toolbox shape.
  *
- * `createAction` broadcasts immediately (no `noSend`). Remittance then goes to
- * the payee inbox. Inbox failure does not create a second tx; remittance retries
- * from the local outbox.
+ * `createAction` signs a noSend cheque. Local SPV registration seals its inputs,
+ * then miner propagation and remittance delivery continue independently.
+ * Neither a slow miner nor an inbox miss creates a second transaction.
  */
 import { assign, setup, type SnapshotFrom } from 'xstate'
 import type { Brc29SettlePath } from './brc29SettlePath'
@@ -19,7 +19,7 @@ export type Brc29SendContext = {
 export type Brc29SendEvent =
   | { type: 'START'; payee: string; satoshis: number; settlePath: Brc29SettlePath }
   | { type: 'READY' }
-  | { type: 'BROADCASTED'; txid: string }
+  | { type: 'SIGNED'; txid: string }
   | { type: 'BEEF_IN_BOX' }
   | { type: 'REMIT_IN_BOX' }
   | { type: 'DIRECT' }
@@ -46,7 +46,7 @@ export const brc29SendMachine = setup({
         : {},
     ),
     setTxid: assign(({ event }) =>
-      event.type === 'BROADCASTED' ? { txid: event.txid, error: null } : {},
+      event.type === 'SIGNED' ? { txid: event.txid, error: null } : {},
     ),
     setError: assign(({ event }) =>
       event.type === 'FAIL' ? { error: event.error } : {},
@@ -79,13 +79,13 @@ export const brc29SendMachine = setup({
     },
     preparing: {
       on: {
-        READY: 'broadcasting',
+        READY: 'signing',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
-    broadcasting: {
+    signing: {
       on: {
-        BROADCASTED: { target: 'chooseSettle', actions: 'setTxid' },
+        SIGNED: { target: 'chooseSettle', actions: 'setTxid' },
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
@@ -99,7 +99,7 @@ export const brc29SendMachine = setup({
         },
       ],
     },
-    /** Remittance to peer inbox — send already broadcast. */
+    /** Remittance carries the same signed BEEF; miner submission is parallel. */
     peerNotify: {
       on: {
         BEEF_IN_BOX: 'done',

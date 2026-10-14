@@ -16306,6 +16306,15 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   font-size: var(--hc-text-sm);
 }
 
+[data-aeon-scope='google-login'] [data-aeon-part='comparison-code'],
+[data-aeon-scope='google-device-approval'] [data-aeon-part='comparison-code'] {
+  margin: var(--hc-space-4) 0;
+  font: 700 clamp(2rem, 8vw, 3.5rem) / 1 var(--hc-font-mono);
+  letter-spacing: 0.14em;
+  text-align: center;
+  color: var(--hc-text);
+}
+
 @media (max-width: 520px) {
   [data-aeon-scope='dev-keys'] [data-aeon-part='head'] {
     grid-template-columns: 1fr;

@@ -179,7 +179,7 @@ describe("arcStatusMap", () => {
     );
   });
 
-  it("maps postBeef accept to SEEN_ON_NETWORK never MINED", () => {
+  it("maps postBeef accept to ANNOUNCED, never pretends another node saw it", () => {
     expect(
       arcStatusFromPostBeef({
         accepted: true,
@@ -189,7 +189,7 @@ describe("arcStatusMap", () => {
         detail: "ok",
         competingTxs: [],
       })
-    ).toBe("SEEN_ON_NETWORK");
+    ).toBe("ANNOUNCED_TO_NETWORK");
     expect(
       arcStatusFromPostBeef({
         accepted: true,
@@ -199,7 +199,7 @@ describe("arcStatusMap", () => {
         detail: "Arcade accepted; lagging provider said missing inputs",
         competingTxs: [],
       })
-    ).toBe("SEEN_ON_NETWORK");
+    ).toBe("ANNOUNCED_TO_NETWORK");
   });
 
   it("double-spend policy hides inputs, does not unlock them", () => {
@@ -227,8 +227,8 @@ describe("utxoLockManager + dualLayerSend", () => {
     expect(token).toMatchObject({
       txid,
       satoshis: 1,
-      status: "SEEN_IN_MEMPOOL",
-      chainProof: "unconfirmed",
+      status: "BROADCASTING",
+      chainProof: null,
     });
     expect(isLocalUnconfirmedTxid(txid)).toBe(true);
     expect(beginSignedTxLifecycle({ txid, satoshis: 1 }).id).toBe(token.id);
@@ -286,7 +286,8 @@ describe("utxoLockManager + dualLayerSend", () => {
       detail: "ok",
       competingTxs: [],
     });
-    expect(getTxRecord(id)?.status).toBe("SEEN_IN_MEMPOOL");
+    expect(getTxRecord(id)?.status).toBe("BROADCASTING");
+    expect(getTxRecord(id)?.arcStatus).toBe("ANNOUNCED_TO_NETWORK");
 
     markTxMined(id, 900_000);
     confirmSpentLocks(id, txid);

@@ -55,6 +55,11 @@ type SettingItem = {
 
 const SECURITY_ITEMS: SettingItem[] = [
   {
+    id: 'google-recovery',
+    label: 'Google recovery',
+    description: 'Recommended · email share + device approval',
+  },
+  {
     id: 'backup',
     label: 'Recovery backup',
     description: 'Phrase or key slices — Settings nags until done',
@@ -122,6 +127,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'labs') return 'Labs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
+  if (id === 'google-recovery') return 'Google recovery'
   if (id === 'change-password') return 'Unlock'
   const item = SECURITY_ITEMS.find((entry) => entry.id === id)
   if (item) return item.label

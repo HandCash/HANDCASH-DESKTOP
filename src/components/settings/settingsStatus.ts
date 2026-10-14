@@ -12,6 +12,7 @@ import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
 import { listDeviceWallets } from '../../wallet/deviceWallets'
 import { getDeviceBackupRoleStatus } from '../../wallet/deviceKeyBackup'
 import type { SettingId } from '../../wallet/navStore'
+import { getEmailRecoveryEnrollment } from '../../wallet/brc250/store'
 
 export type SettingRowStatus = {
   text: string
@@ -104,6 +105,12 @@ export function deviceHandoffStatus(): SettingRowStatus {
 
 export function statusForSetting(id: SettingId): SettingRowStatus | null {
   switch (id) {
+    case 'google-recovery': {
+      const enrollment = getEmailRecoveryEnrollment()
+      return enrollment?.mailboxConfirmed
+        ? { text: enrollment.email, tone: 'ok' }
+        : { text: 'Not set up', tone: 'warn' }
+    }
     case 'backup':
       return keysStatus()
     case 'history-backup':

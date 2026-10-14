@@ -26,6 +26,7 @@ import { LockIcon, ScanQrIcon } from './components/icons'
 import { openScanFlow } from './wallet/navStore'
 import { playWalletSound } from './wallet/soundService'
 import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
+import { GoogleDeviceApprovalPrompt } from './components/GoogleDeviceApprovalPrompt'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { ScreenshotToast } from './components/ScreenshotToast'
@@ -459,6 +460,7 @@ export function App() {
         </main>
 
         <AppToastHost />
+        {walletUnlocked ? <GoogleDeviceApprovalPrompt /> : null}
         <UpdatePrompt />
         <ScreenshotToast />
 

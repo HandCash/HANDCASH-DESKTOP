@@ -318,6 +318,9 @@ export function clearActiveWallet(): void {
   forgetVaultMasterCache()
   void import('./vaultAccountHolding').then(({ stopHoldingWatch }) => stopHoldingWatch())
   void import('./accountMove').then(({ stopHoldingService }) => stopHoldingService())
+  void import('./brc250/deviceService').then(({ stopBrc250DeviceService }) =>
+    stopBrc250DeviceService(true),
+  )
   clearSessionBackupPassword()
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
     bindWalletProgressAccount(null)
@@ -529,6 +532,9 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   startMonitorOnce(wallet)
   // A newly selected account was not served before now: its first spend checks it.
   void import('./accountMove').then(({ startHoldingService }) => startHoldingService())
+  void import('./brc250/deviceService').then(({ startBrc250DeviceService }) =>
+    startBrc250DeviceService(),
+  )
   // Sync pill + chain-ingest status rebind inside the runtime lifecycle
   // (`accountLocalStores`), in the same tick as every other account store.
   return wallet

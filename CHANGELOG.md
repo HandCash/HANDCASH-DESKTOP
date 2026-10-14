@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.552] - 2026-10-14
+
+### Added
+- **Google can recover a wallet.** Setup recommends the seed backup and registering Google. On a new device, Continue with Google asks a device you already have to approve an eight-digit comparison. If no device answers, the wallet restores after seven days from the host share and the share sent to that Google account. An existing wallet registers Google from Settings. Draft BRC-250.
+
+### Fixed
+- **A BRC-29 payment finishes when it is signed.** The screen leaves broadcasting once the signed transaction is sealed locally. Miner submission continues on its own. A later proven rejection marks the payment failed. Activity shows signed, sent, seen on the network, and confirmed; a confirmed row shows its timestamp.
+- **A token minted to yourself is spendable immediately.** The signed package proves its lineage, so the amount is not left on "+N checking".
+- **A stale history backup repairs itself.** Settings shows the exact local and remote action counts.
+
 ## [1.3.551] - 2026-10-14
 
 ### Changed

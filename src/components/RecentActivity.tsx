@@ -591,6 +591,7 @@ function HistoryRow({
     entry,
     live,
     chainProof: rec?.chainProof,
+    arcStatus: rec?.arcStatus,
   });
   const stateLabel = activityRowStateLabel(rowState, {
     minedHeight: rec?.minedHeight,

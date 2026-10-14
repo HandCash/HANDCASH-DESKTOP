@@ -54,7 +54,7 @@ describe('signed asset BUMP finality', () => {
     })
 
     await expect(tryFinalizeDualLayerTx(item.id)).resolves.toMatchObject({
-      status: 'SEEN_IN_MEMPOOL',
+      status: 'BROADCASTING',
       diagnostic: 'BUMP_UNVERIFIED',
     })
   })

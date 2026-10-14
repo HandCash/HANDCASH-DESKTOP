@@ -3,7 +3,7 @@
  * runs, or where its transaction stands once it is over.
  *
  *   approving · preparing · signing · broadcasting · settling   (live action)
- *   signed · unconfirmed · confirmed · settled · failed         (durable row)
+ *   signed · sent · seen · settled · failed                     (durable row)
  *
  * The join between a live action and its durable row is exact — the row's
  * `pendingId` is the action's id, or they share a txid. No matching by time,
@@ -22,12 +22,13 @@ import type { LiveAction } from '../../wallet/actionLifecycle'
 import { appDisplayName } from '../../wallet/appIdentity'
 import { WALLET_ACTIVITY_ORIGIN, type ActivityEntry } from '../../wallet/appActivity'
 import { confirmationsFromHeights, formatSettlementLabel } from '../../wallet/settlementCopy'
+import type { ArcStatus } from '../../wallet/txLifecycle'
 
 export type ActivityRowState =
   | ActionStage
   | 'signed'
-  | 'unconfirmed'
-  | 'confirmed'
+  | 'sent'
+  | 'seen'
   | 'settled'
   | 'failed'
 
@@ -66,8 +67,9 @@ export function activityRowState(args: {
   entry: ActivityEntry
   live: LiveAction | null
   chainProof?: 'unconfirmed' | 'headerProven' | null
+  arcStatus?: ArcStatus | null
 }): ActivityRowState {
-  const { entry, live, chainProof } = args
+  const { entry, live, chainProof, arcStatus } = args
   // A live phase is only the work before a signature. A txid means the send is
   // assumed: Broadcasting is not a pending state, and miner acceptance does not
   // hold the row. Chain proof is what moves Signed to Unconfirmed or Confirmed.
@@ -75,9 +77,14 @@ export function activityRowState(args: {
   if (live && isStage(live.face) && !live.txid) return live.face
   if (entry.status === 'failed') return 'failed'
   if (live?.face === 'failed' && entry.status !== 'complete') return 'failed'
-  if (chainProof === 'headerProven') return 'confirmed'
-  if (chainProof === 'unconfirmed') return 'unconfirmed'
-  if (entry.status === 'pending') return 'signed'
+  if (chainProof === 'headerProven') return 'settled'
+  if (arcStatus === 'SEEN_ON_NETWORK') return 'seen'
+  if (
+    arcStatus === 'STORED' ||
+    arcStatus === 'ANNOUNCED_TO_NETWORK' ||
+    chainProof === 'unconfirmed'
+  ) return 'sent'
+  if (entry.txid || entry.status === 'pending') return 'signed'
   return 'settled'
 }
 

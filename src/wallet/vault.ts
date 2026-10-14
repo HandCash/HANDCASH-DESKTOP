@@ -931,6 +931,39 @@ export async function restoreVaultFromRootKey(args: {
   return { master, mnemonic: null, record }
 }
 
+/** Restore an exact BRC-208 master transferred by an approved BRC-250 device. */
+export async function restoreVaultFromMaster(args: {
+  master: VaultMaster
+  password?: string
+  useDevice?: boolean
+  chain: Chain
+  handle?: string
+}): Promise<UnlockedVault> {
+  const master = parseVaultMaster(args.master)
+  const primary = PrivateKey.fromHex(accountRootKeyHex(master, 0))
+  const identityKey = primary.toPublicKey().toString()
+  const address = primary.toAddress()
+
+  if (hasVault()) {
+    throw new Error('A wallet already exists on this device. Unlock or wipe it first.')
+  }
+  await assertSafeToRestoreVault(identityKey)
+  const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
+  const record = await buildV3Record({
+    chain: args.chain,
+    handle,
+    identityKey,
+    address,
+    secret: serializeVaultSecret(master, null),
+    hasMnemonic: false,
+    derivation: master.derivation,
+    password: args.password,
+    useDevice: args.useDevice,
+  })
+  persistVault(record, 'restore')
+  return { master, mnemonic: null, record }
+}
+
 export async function unlockVault(password: string): Promise<UnlockedVault> {
   const raw = readVaultRaw()
   if (!raw) throw new Error('No wallet found')

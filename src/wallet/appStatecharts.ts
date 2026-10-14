@@ -570,26 +570,27 @@ const BRC29_SEND = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> preparing : START with Brc29SettlePath
-  preparing --> broadcasting : READY
-  broadcasting --> chooseSettle : BROADCASTED createAction
+  preparing --> signing : READY
+  signing --> chooseSettle : SIGNED + SPV registered
   chooseSettle --> peerNotify : peerDeliver
   chooseSettle --> selfReceive : selfReceive
   peerNotify --> done : BEEF_IN_BOX / REMIT_IN_BOX / DIRECT / BOX_UNREACHABLE
   selfReceive --> done : SETTLED
-  note right of broadcasting
-    Toolbox createAction broadcasts now.
+  note right of signing
+    Toolbox createAction signs noSend locally.
     Payment output records notice pending; delivery marks it.
     Sealed: notice journaled before propagation, replicated in seconds.
+    Miner submit starts in the background; a later hard reject marks failed.
     Inbox is notify + outbox retry; recovery re-queues pending.
     Retry backs off to hourly, never gives up; stalled shows in details.
-    No noSend / no second tx.
+    No abort / no second tx.
   end note
   note right of chooseSettle
-    Spend region ends at BROADCASTED (sealed + propagating).
+    Spend region ends at SIGNED (sealed + propagating).
     Settle runs outside it; the send resolves without it.
   end note
   preparing --> failed : FAIL
-  broadcasting --> failed : FAIL
+  signing --> failed : FAIL
 `
 
 const MARKET_LISTING = `stateDiagram-v2
@@ -1098,6 +1099,29 @@ const BACKUP_PHRASE = `stateDiagram-v2
   revealing : Revealing
   revealed : Revealed
   copied : Copied
+`
+
+const EMAIL_RECOVERY = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> enrolling : ENROLL
+  enrolling --> ready : Google verified + mailbox share confirmed
+  idle --> login : LOGIN
+  ready --> login : LOGIN
+  login --> complete : approved vault or delayed 2-share restore
+  enrolling --> failed : FAIL
+  login --> failed : FAIL
+  failed --> enrolling : ENROLL
+  failed --> login : LOGIN
+  note right of enrolling
+    openingBrowser → waitingForGoogle → mailingShare
+    → confirmingMailbox → depositingHostShare
+  end note
+  note right of login
+    openingBrowser → waitingForGoogle
+    → waitingForChallenge → comparing → restoring
+    or delayedRecovery → awaitingMailbox → restoring
+  end note
 `
 
 const WIPE = `stateDiagram-v2
@@ -1721,6 +1745,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Keys',
     caption: 'backupKeys — BRC-140 / BRC-157 / BRC-75 reveal',
     source: BACKUP_PHRASE,
+  },
+  {
+    id: 'emailRecovery',
+    label: 'Google recovery',
+    caption:
+      'emailRecoveryMachine — Google proof · mailbox share confirmation · device approval · delayed recovery',
+    source: EMAIL_RECOVERY,
   },
   {
     id: 'wipeWallet',

@@ -85,7 +85,7 @@ function coerceRecord(row: unknown): TxRecord | null {
         ? r.chainProof
         : status === 'MINED'
           ? 'headerProven'
-          : status === 'SEEN_IN_MEMPOOL' || status === 'BROADCASTING'
+        : status === 'SEEN_IN_MEMPOOL'
             ? 'unconfirmed'
             : null,
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),

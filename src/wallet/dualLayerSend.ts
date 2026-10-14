@@ -108,21 +108,22 @@ export function beginSignedTxLifecycle(args: {
     to: args.to,
   })
   transitionTx(draft.id, 'VALIDATING')
-  // The signed body is already an unconfirmed cheque. Broadcast is how we
-  // cash it; it is not a prerequisite for accounting the spend.
+  // The body is signed and locally SPV-checked, but has not yet been accepted
+  // by a provider or observed on the network.
   return (
-    transitionTx(draft.id, 'SEEN_IN_MEMPOOL', {
+    transitionTx(draft.id, 'BROADCASTING', {
       txid: args.txid.trim().toLowerCase(),
-      chainProof: 'unconfirmed',
+      chainProof: null,
     }) ?? getTxRecord(draft.id)!
   )
 }
 
 /** The common signed-cheque boundary for preflighted payment lifecycles. */
 export function noteDualLayerSigned(id: string, txid: string): TxRecord | null {
-  const withTxid = noteDualLayerTxid(id, txid)
-  if (!withTxid) return null
-  return transitionTx(id, 'SEEN_IN_MEMPOOL', { chainProof: 'unconfirmed' })
+  return transitionTx(id, 'BROADCASTING', {
+    txid: txid.toLowerCase(),
+    chainProof: null,
+  })
 }
 
 /** Advance from postBeef summary — mempool accept or hard reject + lock rollback. */
@@ -170,10 +171,6 @@ export async function tryFinalizeDualLayerTx(id: string): Promise<TxRecord | nul
     return rec
   }
 
-  // Ensure we are at least in mempool before mining.
-  if (rec.status === 'BROADCASTING') {
-    transitionTx(id, 'SEEN_IN_MEMPOOL')
-  }
   if (rec.status === 'REORG_ORPHANED') {
     transitionTx(id, 'SEEN_IN_MEMPOOL')
   }
@@ -185,8 +182,8 @@ export async function tryFinalizeDualLayerTx(id: string): Promise<TxRecord | nul
     return mined
   }
   if (proof.reason === 'invalid') {
-    // Proof present but fails header check — do not mine; leave mempool with diagnostic.
-    return transitionTx(id, 'SEEN_IN_MEMPOOL', {
+    // A bad proof establishes neither network observation nor finality.
+    return transitionTx(id, rec.status, {
       diagnostic: 'BUMP_UNVERIFIED',
       diagnosticDetail: proof.detail ?? 'invalid merkle proof',
     })
