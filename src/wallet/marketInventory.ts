@@ -1,5 +1,6 @@
 import type { WalletInterface } from '@bsv/sdk'
 import { bsv21Tags } from './token'
+import { isTokenFilingBasket } from './token/filing'
 import { getCachedCollectables, listOutputsWithTimeout } from './collectables'
 import type { ActiveWallet } from './session'
 import type { Collectable } from './collectables'
@@ -72,7 +73,7 @@ export function cachedMarketListOutputs(basket: unknown): { outputs: unknown[]; 
   if (typeof basket !== 'string') return null
   const t = basket.trim()
   if (t === '1sat' || t === 'p 1sat all') return cachedItemBasketOutputs()
-  if (t === 'bsv21' || t === 'p bsv21 all') return cachedTokenBasketOutputs()
+  if (isTokenFilingBasket(t) || t === 'p bsv21 all' || t === 'p p2pft all') return cachedTokenBasketOutputs()
   return null
 }
 

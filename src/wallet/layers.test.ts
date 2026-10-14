@@ -107,6 +107,7 @@ describe('localToolboxStateLooksEmpty', () => {
     const baskets = listOutputs.mock.calls.map(([args]) => (args as { basket?: string }).basket)
     expect(baskets).not.toContain('1sat')
     expect(baskets).not.toContain('bsv21')
+    expect(baskets).not.toContain('p2pft')
   })
 
   it('stops at the first change output without reading actions or balance', async () => {

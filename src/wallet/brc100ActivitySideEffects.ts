@@ -16,6 +16,7 @@ import {
   rememberTokenIcon,
 } from './token'
 import { parseOrdEnvelope } from './ordinalOwnership'
+import { filingTokenId, isTokenFilingBasket } from './token/filing'
 
 /**
  * Cache image-inscription outputs we just authored (BSV-21 ticker icons).
@@ -135,7 +136,7 @@ export function recordIdentityMintActivity(
       tags?: string[]
       customInstructions?: string
     }
-    if ((out.basket ?? '').trim().toLowerCase() !== 'bsv21') continue
+    if (!isTokenFilingBasket(out.basket)) continue
     let op = ''
     let tokenId: string | null = null
     let amt: string | null = hints.amt
@@ -146,9 +147,8 @@ export function recordIdentityMintActivity(
       const t = tag.trim()
       const lower = t.toLowerCase()
       if (lower.startsWith('op:')) op = t.slice(3).trim().toLowerCase()
-      if (lower.startsWith('bsv21:')) {
-        tokenId = normalizeTokenId(t.slice('bsv21:'.length))
-      }
+      const filed = filingTokenId(t)
+      if (filed) tokenId = normalizeTokenId(filed)
       if (lower.startsWith('amt:')) amt = t.slice(4).trim() || amt
       if (lower.startsWith('sym:')) tipSym = t.slice(4).trim() || tipSym
       if (lower.startsWith('dec:')) {
@@ -260,7 +260,7 @@ export function recordBsv21TransferSends(
       tags?: string[]
       customInstructions?: string
     }
-    if ((out.basket ?? '').trim().toLowerCase() !== 'bsv21') continue
+    if (!isTokenFilingBasket(out.basket)) continue
     let op = ''
     let tokenId: string | null = null
     let amt: string | null = null
@@ -271,9 +271,8 @@ export function recordBsv21TransferSends(
       const t = tag.trim()
       const lower = t.toLowerCase()
       if (lower.startsWith('op:')) op = t.slice(3).trim().toLowerCase()
-      if (lower.startsWith('bsv21:')) {
-        tokenId = normalizeTokenId(t.slice('bsv21:'.length))
-      }
+      const filed = filingTokenId(t)
+      if (filed) tokenId = normalizeTokenId(filed)
       if (lower.startsWith('id:')) tokenId = normalizeTokenId(t.slice(3))
       if (lower.startsWith('amt:')) amt = t.slice(4).trim() || amt
       if (lower.startsWith('sym:')) tipSym = t.slice(4).trim() || tipSym

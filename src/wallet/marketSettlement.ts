@@ -1738,11 +1738,14 @@ export async function handleInboundMarketSettlementWire(args: {
     chart.send({ type: 'PROCEEDS_INTERNALIZED' })
     if (!progress.itemRetired) {
       const retireErrors: string[] = []
+      if (listing.assetType === 'bsv21') {
+        const { relinquishTokenFiling } = await import('./token/filingStore')
+        await relinquishTokenFiling(active.wallet, listing.outpoint.replace('_', '.'))
+      }
       for (const spend of [
-        {
-          basket: listing.assetType === 'bsv21' ? 'bsv21' : '1sat',
-          output: listing.outpoint.replace('_', '.'),
-        },
+        ...(listing.assetType === 'bsv21'
+          ? []
+          : [{ basket: '1sat', output: listing.outpoint.replace('_', '.') }]),
         { basket: 'market-offers', output: listing.offerOutpoint.replace('_', '.') },
       ]) {
         try {

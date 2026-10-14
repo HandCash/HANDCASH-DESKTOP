@@ -1037,10 +1037,8 @@ export async function sendBsv21Tokens(args: {
       if (!payeeIsSelf) {
         for (const op of payeeOutpoints) {
           try {
-            await wallet.wallet.relinquishOutput({
-              basket: BSV21_BASKET,
-              output: wireOutpoint(op),
-            } as never)
+            const { relinquishTokenFiling } = await import('./filingStore')
+            await relinquishTokenFiling(wallet.wallet, wireOutpoint(op))
           } catch {
             /* createAction may already have dropped it */
           }

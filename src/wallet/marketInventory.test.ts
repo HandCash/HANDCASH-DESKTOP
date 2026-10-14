@@ -198,7 +198,7 @@ describe('market inventory listOutputs fast path', () => {
     const wallet = { listOutputs: vi.fn() }
     const result = await listMarketBasketOutputs(wallet as never, { basket: 'bsv21' })
     expect(result.outputs).toHaveLength(1)
-    expect((result.outputs?.[0] as { tags?: string[] }).tags).toContain('bsv21')
+    expect((result.outputs?.[0] as { tags?: string[] }).tags).toContain('p2pft')
   })
 })
 

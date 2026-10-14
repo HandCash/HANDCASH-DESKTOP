@@ -49,7 +49,11 @@ describe('listOutputs view gate never waits on the toolbox', () => {
     })
 
     const decision = requestTokenViewApproval(ORIGIN, { basket: 'bsv21' })
-    expect(listOutputs).toHaveBeenCalledTimes(1)
+    expect(listOutputs).toHaveBeenCalledTimes(2)
+    expect(listOutputs.mock.calls.map((call) => (call[0] as { basket?: string }).basket).sort()).toEqual([
+      'bsv21',
+      'p2pft',
+    ])
     // Before the fix this promise never resolved; the app saw no prompt and no reply.
     await vi.advanceTimersByTimeAsync(6_100)
     expect(prompt).not.toBeNull()

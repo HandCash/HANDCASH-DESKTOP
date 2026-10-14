@@ -1127,6 +1127,10 @@ async function handleBrc100RequestInner(
       )
     }, 8_000)
     if (isTokenViewBasket(basket)) {
+      if (active) {
+        const { moveLegacyTokenFiling } = await import('./token/filingStore')
+        await moveLegacyTokenFiling(active)
+      }
       const viewDecision = await requestTokenViewApproval(originator, args, tokenViewRequest).finally(
         () => clearTimeout(slowGate),
       )

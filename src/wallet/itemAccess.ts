@@ -11,13 +11,21 @@
 
 import { normalizeAppHost } from './appIdentity'
 import { decodeBsv21Binary, isBsv21BinaryScript } from './token'
+import {
+  LEGACY_TOKEN_BASKET,
+  P2PFT_BASKET,
+  isFilingTag,
+  isTokenFilingBasket,
+  isTokenPermissionScheme,
+  tokenIdFromFilingTags,
+} from './token/filing'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
 
 /** Storage basket that holds collectables — not spendable under normal pay. */
 export const ITEM_STORAGE_BASKET = '1sat'
 
-/** Storage basket for BSV-21 fungibles — Collect tokens, not Pay currency. */
-export const FUNGIBLE_STORAGE_BASKET = 'bsv21'
+/** Storage basket for new P2P-FT outputs. Legacy rows still live under `bsv21`. */
+export const FUNGIBLE_STORAGE_BASKET = P2PFT_BASKET
 
 /** BRC-99 permission scheme ID for 1Sat collectables. */
 export const ITEM_SCHEME = '1sat'
@@ -25,11 +33,12 @@ export const ITEM_SCHEME = '1sat'
 /** Baskets that hold collectables / tokens — not spendable under normal pay.
  * Recursive inscription content (HTML/JS that references other inscriptions)
  * still lives on 1-sat tips in basket `1sat` — same remittance + BRC-39 path.
- * BSV-21 tips live in `bsv21`. They are not Pay / balanceView.
+ * P2P-FT tips live in `p2pft` (legacy `bsv21` until moved). They are not Pay / balanceView.
  */
-export const ITEM_BASKETS = new Set([
+export const ITEM_BASKETS = new Set<string>([
   ITEM_STORAGE_BASKET,
   FUNGIBLE_STORAGE_BASKET,
+  LEGACY_TOKEN_BASKET,
 ])
 
 /** BRC-99 permission scheme ID for BSV-21 tokens. */
@@ -171,7 +180,7 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
   const parsed = parsePBasket(raw)
   if (!parsed) return true
   const scheme = parsed.scheme.toLowerCase()
-  return scheme !== ITEM_SCHEME && scheme !== TOKEN_SCHEME
+  return scheme !== ITEM_SCHEME && !isTokenPermissionScheme(scheme)
 }
 
 /**
@@ -186,20 +195,20 @@ export function isItemBasket(basket: unknown): boolean {
   return !!p && p.scheme.toLowerCase() === ITEM_SCHEME
 }
 
-/** Token view basket: plain `bsv21` or BRC-99 `p bsv21 <scope>`. */
+/** Token view basket: `p2pft`, legacy `bsv21`, or `p bsv21` / `p p2pft`. */
 export function isTokenViewBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
   const t = basket.trim()
-  if (t.toLowerCase() === FUNGIBLE_STORAGE_BASKET) return true
+  if (isTokenFilingBasket(t)) return true
   const p = parsePBasket(t)
-  return !!p && p.scheme.toLowerCase() === TOKEN_SCHEME
+  return !!p && isTokenPermissionScheme(p.scheme)
 }
 
 /** True when an app asked for bare storage inventory instead of a P-scope. */
 export function isBareStorageInventoryBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
   const t = basket.trim().toLowerCase()
-  return t === ITEM_STORAGE_BASKET || t === FUNGIBLE_STORAGE_BASKET
+  return t === ITEM_STORAGE_BASKET || isTokenFilingBasket(t)
 }
 
 /**
@@ -244,12 +253,15 @@ export function parseTokenViewRequest(args: unknown): TokenViewRequest {
     ? body.tags.filter((t): t is string => typeof t === 'string')
     : []
   const p = parsePBasket(body.basket)
-  if (p && p.scheme.toLowerCase() === TOKEN_SCHEME) {
+  if (p && isTokenPermissionScheme(p.scheme)) {
     const rest = p.rest.toLowerCase()
     const scope: TokenViewScope = rest === 'id' ? 'id' : 'all'
     return {
       scope,
-      ids: scope === 'id' ? [...new Set([...tagValues(tags, ['id:']), ...tagValues(tags, ['bsv21:'])])] : [],
+      ids:
+        scope === 'id'
+          ? [...new Set([...tagValues(tags, ['id:', 'p2pft:', 'bsv21:'])])]
+          : [],
       wantsAll: scope !== 'id',
     }
   }
@@ -340,7 +352,7 @@ export function prepareItemBasketArgs(args: unknown): {
         error: {
           code: 'USE_PBSV21_SCOPE',
           description:
-            'Use BRC-99 basket "p bsv21 all|id" (filter values in tags). Storage basket "bsv21" is wallet-internal.',
+            'Use BRC-99 basket "p bsv21 all|id" or "p p2pft all|id" (filter values in tags). Storage baskets "p2pft" and "bsv21" are wallet-internal.',
         },
       }
     }
@@ -351,7 +363,7 @@ export function prepareItemBasketArgs(args: unknown): {
         args,
         error: {
           code: 'INVALID_PBSV21_SCOPE',
-          description: 'Use exactly "p bsv21 all|id"; filter values belong in tags.',
+          description: 'Use exactly "p bsv21 all|id" or "p p2pft all|id"; filter values belong in tags.',
         },
       }
     }
@@ -361,7 +373,8 @@ export function prepareItemBasketArgs(args: unknown): {
         args,
         error: {
           code: 'MISSING_PBSV21_SCOPE_TAG',
-          description: 'Basket "p bsv21 id" requires at least one "id:<tokenId>" or "bsv21:<tokenId>" tag.',
+          description:
+            'Basket "p bsv21 id" requires at least one "id:<tokenId>", "p2pft:<tokenId>" or "bsv21:<tokenId>" tag.',
         },
       }
     }
@@ -402,7 +415,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only schemes "1sat" and "bsv21" are implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21" and "p2pft" are implemented.`
     }
     return null
   }
@@ -416,7 +429,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only schemes "1sat" and "bsv21" are implemented.`
+        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21" and "p2pft" are implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err
@@ -427,10 +440,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
 
 /** True when the basket is the BSV-21 fungible storage basket. */
 export function isBsv21Basket(value: unknown): boolean {
-  return (
-    typeof value === 'string' &&
-    value.trim().toLowerCase() === FUNGIBLE_STORAGE_BASKET
-  )
+  return isTokenFilingBasket(value)
 }
 
 /**
@@ -450,7 +460,7 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
   if (
     labels.some(
       (l) =>
-        /^bsv21$/i.test(l) ||
+        isTokenFilingBasket(l) ||
         /handcash-send-token|fungible/i.test(l),
     )
   ) {
@@ -465,7 +475,7 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
     const tags = Array.isArray(out.tags)
       ? out.tags.filter((t): t is string => typeof t === 'string')
       : []
-    if (tags.some((t) => /^bsv21$/i.test(t) || /^bsv21:/i.test(t))) {
+    if (tags.some((t) => isFilingTag(t))) {
       return true
     }
     if (
@@ -496,7 +506,7 @@ export function isBsv21ReceiveArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
-  if (labels.some((l) => /^bsv21$/i.test(l) || /fungible/i.test(l))) {
+  if (labels.some((l) => isTokenFilingBasket(l) || /fungible/i.test(l))) {
     return true
   }
   const outputs = Array.isArray(body.outputs) ? body.outputs : []
@@ -839,8 +849,9 @@ function tokenIdFromOutput(
 ): string | undefined {
   const tagList = tags ?? []
   for (const t of tagList) {
-    if (t.toLowerCase().startsWith('bsv21:') && t.length > 6) {
-      const id = normalizeOutpointId(t.slice(6))
+    const filed = tokenIdFromFilingTags([t])
+    if (filed) {
+      const id = normalizeOutpointId(filed)
       if (id) return id
     }
     if (t.toLowerCase().startsWith('id:') && t.length > 3) {
@@ -1067,7 +1078,7 @@ export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: stri
         // ignore
       }
     }
-    const tagged = tags.includes('bsv21') || tags.some((t) => t.toLowerCase().startsWith('bsv21:'))
+    const tagged = tags.some((t) => isFilingTag(t))
     const lockLooks = isBsv21BinaryScript(lockingScriptHexOf(o.lockingScript))
     if (proto !== 'bsv-20' && proto !== 'bsv21' && !tagged && !lockLooks) continue
     const outpoint = typeof (o as { outpoint?: unknown }).outpoint === 'string'

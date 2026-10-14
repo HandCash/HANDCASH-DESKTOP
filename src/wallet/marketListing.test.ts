@@ -329,8 +329,8 @@ describe('market 162 listing remittance', () => {
       amt: classified.amt,
       extraTags: ['market-held'],
     })
-    expect(remit.basket).toBe('bsv21')
-    expect(remit.tags).toContain(`bsv21:${tokenId}`)
+    expect(remit.basket).toBe('p2pft')
+    expect(remit.tags).toContain(`p2pft:${tokenId}`)
     expect(remit.tags).toContain('amt:60')
     expect(remit.tags).toContain('market-held')
     const ci = JSON.parse(remit.customInstructions) as {
@@ -551,7 +551,7 @@ describe('162 market list createAction lock', () => {
     const decoded = decodeBsv21Binary(held.lockingScript)
     expect(decoded).toMatchObject({ role: 'value', tokenId: minted.tokenId, amount: 60n })
     expect(held.lockingScript.startsWith('76a914')).toBe(false)
-    expect(held.basket).toBe('bsv21')
+    expect(held.basket).toBe('p2pft')
     const ci = JSON.parse(held.customInstructions ?? '{}') as {
       p: string
       id: string

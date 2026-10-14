@@ -4,11 +4,10 @@ import { tokenIssuerAttested } from './lineage'
 import { getActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 
-/** List BRC-162 value tips from basket `bsv21` (BRC-163). */
+/** List BRC-162 value tips from the P2P-FT filing (`p2pft`, and `bsv21` until moved). */
 import { type ActiveWallet } from '../session'
 import {
   aggregateFungibles,
-  BSV21_BASKET,
   cosignFromRemittance,
   detectCosignFromLockingScript,
   issuerFromRemittance,
@@ -32,6 +31,7 @@ import {
 import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
+import { readTokenFiling } from './filingStore'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
 
@@ -560,9 +560,14 @@ export async function listBsv21BinaryTips(
   opts: { includeCustomInstructions?: boolean } = {},
 ): Promise<Bsv21Utxo[]> {
   const readStartedAt = Date.now()
-  const listed = await listBasketTips(wallet, BSV21_BASKET, {
-    includeCustomInstructions: opts.includeCustomInstructions,
-  })
+  const listed = await readTokenFiling(
+    wallet,
+    (basket) =>
+      listBasketTips(wallet, basket, {
+        includeCustomInstructions: opts.includeCustomInstructions,
+      }),
+    (row) => row.outpoint,
+  )
   reportPhase('basket-read', readStartedAt, `${listed.length} row(s)`)
   const rows = await withTokenScripts(wallet, listed)
   return decodeHeldRows(wallet, rows, (row) => decodeListedBsv21Tip(row, wallet.identityKey))
@@ -605,7 +610,7 @@ async function readWholeBasket(wallet: ActiveWallet, basket: string): Promise<Li
 }
 
 /**
- * Every fungible tip the wallet holds in basket `bsv21`, both encodings —
+ * Every fungible tip the wallet holds, both encodings and both filings —
  * the source the token list projects. Throws when the basket cannot answer
  * in full.
  */
@@ -614,7 +619,10 @@ export async function listHeldFungibleTips(
   opts: { continuing?: ReadonlySet<string> } = {},
 ): Promise<Bsv21Utxo[]> {
   const readStartedAt = Date.now()
-  const rows = await withTokenScripts(wallet, await readWholeBasket(wallet, BSV21_BASKET))
+  const rows = await withTokenScripts(
+    wallet,
+    await readTokenFiling(wallet, (basket) => readWholeBasket(wallet, basket), (row) => row.outpoint),
+  )
   reportPhase('basket-read', readStartedAt, `${rows.length} row(s)`)
   const continuing = opts.continuing ?? new Set<string>()
   return decodeHeldRows(

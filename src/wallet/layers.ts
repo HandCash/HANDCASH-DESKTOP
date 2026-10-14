@@ -16,7 +16,7 @@ import { getActiveWallet } from './session'
  *              + write-once on-device archive under userData/brc39-archive (never overwritten)
  * balanceView    what UI shows: owned cash = spendable managed change
  *                + unconfirmed change of live local sends (never payment outs,
- *                never 1sat / bsv21). See `balanceView.ts`.
+ *                never 1sat / p2pft / bsv21). See `balanceView.ts`.
  *                Activity is the same kind of view: stored annotations over
  *                the localState transaction table (`activityLedger.ts`).
  * health         chain ingest health ⊕ history replica health ⊕ bridge
@@ -91,7 +91,7 @@ import { getActiveWallet } from './session'
  *   sheds rows the table still shows first; wallet logic reads stored rows
  *   only (`listRecentActivity`), display reads the view (`listActivityFeed`).
  * - **Holdings** → the token and item lists are projections of baskets
- *   `bsv21` / `1sat`, read only while every coordinator region is idle and
+ *   `p2pft` / `bsv21` / `1sat`, read only while every coordinator region is idle and
  *   only when the read is the whole basket. Each disagreement with the chain
  *   — a listed output that left the basket, a basket row the address scan
  *   omits — is filed durably in `holdingsReconcile.ts` and settled by one
@@ -300,8 +300,8 @@ import { getActiveWallet } from './session'
  *   `maxPossibleSatoshis` output (same primitive as `Wallet.sweepTo`, aimed at
  *   self). It runs in the exclusive spend region so it never races a send, yields
  *   when a spend is waiting, and only ever selects change — assets (`1sat`,
- *   `bsv21`) live in their own baskets and are never touched.
- * - **Tokens (fungible)** → BRC-162 binary in basket `bsv21` (BRC-163 remittance).
+ *   `p2pft` / `bsv21`) live in their own baskets and are never touched.
+ * - **Tokens (fungible)** → BRC-162 binary filed under `p2pft` (legacy `bsv21` moves once; BRC-163 remittance).
  *   Balance = Σ `amt` per tip. Transfers spend 162 inputs and create payee (+ change)
  *   162 outputs with conserved amount; subject BEEF via BRC-176. See `token/`.
  *   The envelope carries the token-parent bodies back to the deploy as
@@ -551,7 +551,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
   // Item/token outputs from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must
   // not block empty-local recovery of spendable balance + TX history, so
-  // baskets `1sat` / `bsv21` are never read here (thousands of fat rows).
+  // baskets `1sat` / `p2pft` / `bsv21` are never read here (thousands of fat rows).
   const [spendableSats, defaultOutputCount, actionCount] = await Promise.all([
     fetchBalanceSats(active.wallet).catch(() => 0),
     countOutputs(active.wallet, "default"),

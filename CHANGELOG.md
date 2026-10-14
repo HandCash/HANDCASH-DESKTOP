@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.551] - 2026-10-14
+
+### Changed
+- **P2P-FT outputs are filed under `p2pft`.** New sends, mints and imports use basket `p2pft` and tags `p2pft:<tokenId>`. Outputs already filed under `bsv21` stay visible and move once into `p2pft`, and a token is never counted under both names. Existing `p bsv21` app grants still work, and `p p2pft` is accepted too. Collectables stay in `1sat`.
+
 ## [1.3.550] - 2026-10-14
 
 ### Added

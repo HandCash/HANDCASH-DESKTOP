@@ -1577,10 +1577,8 @@ async function dropSpentListingTip(
     /* already gone from basket */
   }
   try {
-    await active.wallet.relinquishOutput({
-      basket: 'bsv21',
-      output: tipOutpoint.replace('_', '.'),
-    })
+    const { relinquishTokenFiling } = await import('./token/filingStore')
+    await relinquishTokenFiling(active.wallet, tipOutpoint.replace('_', '.'))
   } catch {
     /* not a 162 tip */
   }

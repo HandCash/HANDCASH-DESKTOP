@@ -1756,16 +1756,24 @@ export async function listFungibleTips(
       .filter(Boolean),
   )
   if (wanted.size === 0) return []
-  const listed = await active.wallet.listOutputs({
-    basket: BSV21_BASKET,
-    limit: 1000,
-    includeCustomInstructions: true,
-    includeTags: true,
-    include: 'locking scripts',
-    seekPermission: false,
-  })
+  const { readTokenFiling } = await import('./filingStore')
+  const rows = await readTokenFiling(
+    active,
+    async (basket) => {
+      const listed = await active.wallet.listOutputs({
+        basket,
+        limit: 1000,
+        includeCustomInstructions: true,
+        includeTags: true,
+        include: 'locking scripts',
+        seekPermission: false,
+      })
+      return listed.outputs ?? []
+    },
+    (row) => (row as { outpoint?: string }).outpoint,
+  )
   const tips: Bsv21Utxo[] = []
-  for (const row of listed.outputs ?? []) {
+  for (const row of rows) {
     const outpoint = (row as { outpoint?: string }).outpoint
     if (outpoint && isItemSent(outpoint)) continue
     const tip = parseListedOutput(

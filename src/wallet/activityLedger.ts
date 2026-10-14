@@ -15,6 +15,7 @@ import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { withStorageLockLabel } from './storageLockTrace'
 import { foregroundSpendWaiting } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
+import { isTokenFilingBasket } from './token/filing'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
@@ -26,7 +27,6 @@ const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
 const SETTLED_STATUSES = ['completed', 'unproven', 'sending', 'nosend'] as const
 const HELD_STATUS = 'nosend'
 const COLLECTABLE_BASKET = '1sat'
-const TOKEN_BASKET = 'bsv21'
 
 export type LedgerTx = {
   transactionId?: number
@@ -191,14 +191,14 @@ function* ledgerRowSteps(
   const itemsOf = new Map<number, { moves: ItemMove[]; token: boolean }>()
   const note = (txId: number, basket: string, move: ItemMove | null) => {
     const slot = itemsOf.get(txId) ?? { moves: [], token: false }
-    if (basket === TOKEN_BASKET) slot.token = true
+    if (isTokenFilingBasket(basket)) slot.token = true
     else if (move) slot.moves.push(move)
     itemsOf.set(txId, slot)
   }
   for (const out of outputs) {
     if (step()) yield
     const basket = basketName.get(Number(out.basketId))
-    if (basket !== COLLECTABLE_BASKET && basket !== TOKEN_BASKET) continue
+    if (!basket || (basket !== COLLECTABLE_BASKET && !isTokenFilingBasket(basket))) continue
     const creator = Number(out.transactionId)
     const txid = out.txid?.trim().toLowerCase() || txidById.get(creator)
     const outpoint = txid && /^[0-9a-f]{64}$/.test(txid) && Number.isSafeInteger(out.vout) && out.vout! >= 0 ? `${txid}.${out.vout}` : null
@@ -727,7 +727,7 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   }
   const itemBaskets = read.baskets.filter((b) => {
     const name = String(b.name ?? '').toLowerCase()
-    return name === COLLECTABLE_BASKET || name === TOKEN_BASKET
+    return name === COLLECTABLE_BASKET || isTokenFilingBasket(name)
   })
   const itemsStarted = Date.now()
   const outputs = await readItemOutputs(storage, runtime, read.userId, itemBaskets)
@@ -748,7 +748,7 @@ async function readLedger(runtime: WalletRuntime, full: boolean): Promise<Activi
   const basketName = new Map(baskets.map((b) => [Number(b.basketId), String(b.name ?? '').toLowerCase()]))
   for (const out of outputs) {
     const name = basketName.get(Number(out.basketId))
-    if (name !== COLLECTABLE_BASKET && name !== TOKEN_BASKET) continue
+    if (name !== COLLECTABLE_BASKET && !isTokenFilingBasket(name)) continue
     const creator = Number(out.transactionId)
     const spender = Number(out.spentBy)
     if (creator > 0) itemTx.add(creator)

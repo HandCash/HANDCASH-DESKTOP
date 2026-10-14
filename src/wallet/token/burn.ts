@@ -511,10 +511,8 @@ export async function burnBsv21Tokens(args: {
       relinquish: async (signedTxid) => {
         for (const op of spendOutpoints) {
           try {
-            await active.wallet.relinquishOutput({
-              basket: BSV21_BASKET,
-              output: op,
-            } as never)
+            const { relinquishTokenFiling } = await import('./filingStore')
+            await relinquishTokenFiling(active.wallet, op)
           } catch {
             /* createAction normally retired it */
           }

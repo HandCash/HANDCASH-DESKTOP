@@ -2,6 +2,7 @@
 // throws AbortError once that runtime is disposed, so no repair that spans an
 // account switch can write into the next account's toolbox (see pinnedWallet).
 import { pinnedActiveWallet as getActiveWallet } from './pinnedWallet'
+import { isTokenFilingBasket } from './token/filing'
 
 /**
  * Writing off spendable outputs — the only path allowed to do it.
@@ -393,7 +394,7 @@ export async function reconcileKnownUtxosByEvidence(opts?: {
           if (outputId == null) continue;
           const basket = String(row.basket ?? "").toLowerCase();
           let healed: number[] | null = null;
-          if (basket !== "1sat" && basket !== "bsv21") {
+          if (basket !== "1sat" && !isTokenFilingBasket(basket)) {
             healed = await healLockingScript(sp, row, txCache, {
               fromChain: false,
             });
@@ -2122,7 +2123,7 @@ export async function reclaimOutputsSealedByDeadTxs(opts?: {
           const spentBy = positiveId(raw.spentBy);
           if (outputId == null || spentBy == null) continue;
           const basket = String(raw.basket ?? "").toLowerCase();
-          if (basket === "1sat" || basket === "bsv21") continue;
+          if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
           const satoshis = Math.max(0, Math.trunc(Number(raw.satoshis) || 0));
           if (satoshis <= 0) continue;
 
@@ -2369,7 +2370,7 @@ export async function keepChangeOfSignedTx(
         if (outputId == null || !outpoint) continue;
         if (positiveId(row.spentBy) != null) continue;
         const basket = String(row.basket ?? "").toLowerCase();
-        if (basket === "1sat" || basket === "bsv21") continue;
+        if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
         const sats = Math.max(0, Math.trunc(Number(row.satoshis) || 0));
         // Change after createAction *and* plain BSV received via internalize —
         // apps must chain either without waiting for confirmation.
@@ -2508,7 +2509,7 @@ async function findDetachedChangeRows(
         seen.add(outputId);
         if (row.change !== true || positiveId(row.spentBy) != null) continue;
         const basket = String(row.basket ?? "").toLowerCase();
-        if (basket === "1sat" || basket === "bsv21") continue;
+        if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
         const vout = Number(row.vout ?? row.outputIndex);
         if (!Number.isInteger(vout) || vout < 0) continue;
         const out = tx.outputs[vout];
@@ -2581,7 +2582,7 @@ export async function spendableChangeSatsOfSignedTx(
         if (row.spendable !== true) continue;
         if (positiveId(row.spentBy) != null) continue;
         const basket = String(row.basket ?? "").toLowerCase();
-        if (basket === "1sat" || basket === "bsv21") continue;
+        if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
         if (!hasLockingScript(row)) continue;
         sats += Math.max(0, Math.trunc(Number(row.satoshis) || 0));
       }
@@ -3319,7 +3320,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
         const outputId = positiveId(output.outputId);
         if (outputId == null) continue;
         const basket = String(output.basket ?? "").toLowerCase();
-        if (basket === "1sat" || basket === "bsv21") continue;
+        if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
         const overlayKey = outpointFromOutput(output);
         const overlay = overlayKey ? getUtxoLock(overlayKey) : null;
         if (overlay && isQuarantined(overlay)) {

@@ -10,6 +10,7 @@ import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction, Utils, Hash, O
 import { Algorithm, Sigma as SigmaParser } from 'sigma-protocol'
 import Sigma from '@1sat/templates/sigma'
 import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../beefCache'
+import { isFilingTag, isTokenFilingBasket, P2PFT_BASKET } from './filing'
 import { normalizeTokenId } from './types'
 import { bsv21DeployIconRef, planBsv21MintWire, type Bsv21DeployIconRef } from './mintWire'
 import type { Bsv21IconImage } from './decode162'
@@ -245,23 +246,20 @@ function bsv21OpFromOutput(out: CreateActionOutput): string | null {
 
 /** True when an output is a BSV-21 deploy+mint tip (basket + op). */
 export function isBsv21DeployMintOutput(out: CreateActionOutput): boolean {
-  const basket = (out.basket ?? '').trim().toLowerCase()
-  if (basket !== 'bsv21') return false
+  if (!isTokenFilingBasket(out.basket)) return false
   return bsv21OpFromOutput(out) === 'deploy+mint'
 }
 
 /** Genesis or mint tips HandCash backs with identity (CI/tag issuer ± Sigma). */
 export function isBsv21IdentityIssuanceOutput(out: CreateActionOutput): boolean {
-  const basket = (out.basket ?? '').trim().toLowerCase()
-  if (basket !== 'bsv21') return false
+  if (!isTokenFilingBasket(out.basket)) return false
   const op = bsv21OpFromOutput(out)
   return op === 'deploy+mint' || op === 'deploy+auth' || op === 'mint'
 }
 
 /** Deploy tips that receive Sigma (genesis only). */
 export function isBsv21SigmaDeployOutput(out: CreateActionOutput): boolean {
-  const basket = (out.basket ?? '').trim().toLowerCase()
-  if (basket !== 'bsv21') return false
+  if (!isTokenFilingBasket(out.basket)) return false
   const op = bsv21OpFromOutput(out)
   return op === 'deploy+mint' || op === 'deploy+auth'
 }
@@ -444,13 +442,21 @@ export async function findPriorBsv21Icon(
   const wantIssuer = normalizeIssuerPubKey(issuer)
   if (!wantSym || !wantIssuer) return null
   try {
-    const listed = await active.wallet.listOutputs({
-      basket: 'bsv21',
-      limit: 100,
-      includeCustomInstructions: true,
-      includeTags: true,
-    })
-    for (const o of listed.outputs ?? []) {
+    const { readTokenFiling } = await import('./filingStore')
+    const listed = await readTokenFiling(
+      active,
+      async (basket) => {
+        const page = await active.wallet.listOutputs({
+          basket,
+          limit: 100,
+          includeCustomInstructions: true,
+          includeTags: true,
+        })
+        return page.outputs ?? []
+      },
+      (row) => row.outpoint,
+    )
+    for (const o of listed) {
       const tipIssuer = issuerFromRemittance({
         customInstructions: o.customInstructions,
         tags: o.tags,
@@ -614,8 +620,8 @@ export async function enrichCreateActionForBsv21Issuer(
       throw new Error('Select the original issuer identity before minting more tokens.')
     // An unsigned issuance names no issuer, so an app's `issuer:` tag would be an unbacked claim.
     const tags = [...(out.tags ?? []).filter(tag => !tag.trim().toLowerCase().startsWith('issuer:'))]
-    if (!tags.some((t) => t === 'bsv21' || t.startsWith('bsv21:'))) {
-      tags.unshift('bsv21')
+    if (!tags.some((t) => isFilingTag(t))) {
+      tags.unshift(P2PFT_BASKET)
     }
     if (issuer) tags.push(`issuer:${issuer}`)
     nextOutputs[i] = {

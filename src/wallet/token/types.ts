@@ -1,8 +1,8 @@
 /**
  * BSV-21 fungible tokens (inscription MIME `application/bsv-20`).
  *
- * On-chain JSON: BRC-161 (draft). Basket / remittance: BRC-163 (draft),
- * basket `bsv21` — Collect only, never Pay / BSV balance.
+ * On-chain JSON: BRC-161. Remittance fields: BRC-163.
+ * New outputs are filed under `p2pft` — Collect only, never Pay / BSV balance.
  *
  * Trust model: holders verify *their* tips (local history / remittance).
  * Issuers are trusted for mint policy — global supply-cap proofs are not
@@ -10,6 +10,14 @@
  * — never silent plain-spend fallthrough. Wire `"p":"bsv-20"` is historical;
  * token id is deploy outpoint (`txid_vout`).
  */
+
+import {
+  LEGACY_TOKEN_BASKET,
+  P2PFT_BASKET,
+  filingTags,
+  isTokenFilingBasket,
+  tokenIdFromFilingTags,
+} from './filing'
 
 import {
   normalizeCosignPubKey,
@@ -35,7 +43,10 @@ export {
   shortIssuerLabel,
 } from './issuer'
 
-export const BSV21_BASKET = 'bsv21' as const
+export { LEGACY_TOKEN_BASKET, P2PFT_BASKET, isTokenFilingBasket }
+
+/** Filing name for new outputs. Legacy rows still answer under `bsv21` until moved. */
+export const BSV21_BASKET = P2PFT_BASKET
 export const BSV21_MIME = 'application/bsv-20' as const
 export const BSV21_PROTOCOL = 'bsv-20' as const
 
@@ -564,8 +575,9 @@ export function shortTokenLabel(tokenId: string): string {
 }
 
 /**
- * Output tags for basket `bsv21`.
- * Token id uses `bsv21:<tokenId>` — not `id:` (reserved for per-output identity).
+ * Output tags for a new filing.
+ * Token id uses `p2pft:<tokenId>` — not `id:` (reserved for per-output identity).
+ * Readers still accept `bsv21:<tokenId>`.
  */
 export function bsv21Tags(args: {
   tokenId: string
@@ -581,8 +593,7 @@ export function bsv21Tags(args: {
   const tokenId = normalizeTokenId(args.tokenId) ?? args.tokenId
   const icon = args.icon ? normalizeTokenId(args.icon) ?? args.icon.trim() : ''
   return [
-    'bsv21',
-    `bsv21:${tokenId}`,
+    ...filingTags(tokenId),
     `amt:${args.amt}`,
     ...(args.op ? [`op:${args.op}`] : []),
     ...(args.sym ? [`sym:${args.sym.slice(0, 32).toLowerCase()}`] : []),
@@ -592,16 +603,14 @@ export function bsv21Tags(args: {
   ]
 }
 
-/** Token id from tags: prefer `bsv21:<id>`; accept legacy `id:` from early imports. */
+/** Token id from tags: `p2pft:<id>` or `bsv21:<id>`, then legacy `id:` from early imports. */
 export function tokenIdFromBsv21Tags(tags: string[] | undefined): string | null {
-  if (!tags?.length) return null
-  for (const tag of tags) {
-    if (tag === 'bsv21') continue
-    if (tag.startsWith('bsv21:')) {
-      const id = normalizeTokenId(tag.slice('bsv21:'.length))
-      if (id) return id
-    }
+  const filed = tokenIdFromFilingTags(tags)
+  if (filed) {
+    const id = normalizeTokenId(filed)
+    if (id) return id
   }
+  if (!tags?.length) return null
   // Legacy HandCash imports only — do not write `id:` for new tips.
   for (const tag of tags) {
     if (tag.startsWith('id:')) {

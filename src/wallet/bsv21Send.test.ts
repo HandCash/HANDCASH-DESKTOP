@@ -67,7 +67,7 @@ describe('bsv21Send conservation', () => {
     expect(outputs.map((o) => o.role)).toEqual(['payee', 'change'])
     expect(outputs.every((o) => o.satoshis === 1)).toBe(true)
     expect(outputs[0]!.basket).toBeUndefined()
-    expect(outputs[1]!.basket).toBe('bsv21')
+    expect(outputs[1]!.basket).toBe('p2pft')
 
     for (const out of outputs) {
       expect(hasOrdEnvelope(out.lockingScript)).toBe(false)
@@ -90,8 +90,8 @@ describe('bsv21Send conservation', () => {
       expect(ci.id).not.toContain('.')
       expect(ci.amt).toMatch(/^\d+$/)
       expect(ci.op).toBe('transfer')
-      expect(out.tags).toContain('bsv21')
-      expect(out.tags).toContain(`bsv21:${tokenId}`)
+      expect(out.tags).toContain('p2pft')
+      expect(out.tags).toContain(`p2pft:${tokenId}`)
       expect(out.tags).toContain(`amt:${out.amt}`)
     }
     expect(outputs[0]!.amt).toBe('60')
@@ -131,8 +131,8 @@ describe('bsv21Send conservation', () => {
     })
     expect(outputs).toHaveLength(1)
     expect(outputs[0]!.role).toBe('payee')
-    expect(outputs[0]!.basket).toBe('bsv21')
-    expect(outputs[0]!.tags).toContain(`bsv21:${tokenId}`)
+    expect(outputs[0]!.basket).toBe('p2pft')
+    expect(outputs[0]!.tags).toContain(`p2pft:${tokenId}`)
   })
 
   it('refuses over-send', () => {
@@ -420,8 +420,8 @@ describe('bsv21Send remittance', () => {
     expect(ci.id).toBe(tokenId)
     expect(ci.amt).toBe('60')
     expect(ci.dec).toBe('2')
-    expect(remit.basket).toBe('bsv21')
-    expect(remit.tags).toContain(`bsv21:${tokenId}`)
+    expect(remit.basket).toBe('p2pft')
+    expect(remit.tags).toContain(`p2pft:${tokenId}`)
     expect(remit.tags).toContain('amt:60')
   })
 

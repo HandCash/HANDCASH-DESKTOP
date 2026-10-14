@@ -7,6 +7,7 @@ import {
 } from './issuerAttribution'
 import { holdIssuerIdentities } from './issuerIdentities'
 import { issuerFromRemittance } from './token/issuer'
+import { isFilingTag } from './token/filing'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 
@@ -1795,7 +1796,7 @@ function isListableItem(o: ItemOutput): boolean {
   // BSV-21 fungibles belong under Collect → Tokens (basket bsv21), not NFT cards.
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
   if (isBsv21Mime(resolved?.mimeType)) return false
-  if (o.tags?.includes('bsv21')) return false
+  if (o.tags?.some((tag) => isFilingTag(tag))) return false
   if (scriptFactsFor(normalizeOutpoint(o.outpoint), o.lockingScript).notAnItem) return false
   // Quarantine outputs from the retired fungible experiment.
   if (isRetiredFungibleMime(resolved?.mimeType)) return false

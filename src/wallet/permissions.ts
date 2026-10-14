@@ -1,4 +1,5 @@
 import { getActiveWallet } from './session'
+import { TOKEN_FILING_BASKETS } from './token/filing'
 
 import {
   appDisplayName,
@@ -1452,7 +1453,9 @@ async function thirdPartyTokenViewRequest(
   if (!request.wantsAll && request.scope === 'id' && request.ids.length > 0) {
     return { request, tickers: request.ids }
   }
-  const outputs = await listHeldOutputs('bsv21')
+  const outputs = (
+    await Promise.all(TOKEN_FILING_BASKETS.map((basket) => listHeldOutputs(basket)))
+  ).flat()
   const tokens = grantableTokensFromOutputs(outputs)
   return {
     request: {

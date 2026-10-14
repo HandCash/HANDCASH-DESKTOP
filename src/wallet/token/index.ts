@@ -1,5 +1,5 @@
 /**
- * BRC-162 + BRC-163 fungible tokens (basket `bsv21`).
+ * BRC-162 fungible tokens, filed under `p2pft`.
  *
  * Single public surface for Collect → Tokens, market, settle, and BRC-100 issuer.
  * Regular BSV payments and 1sat collectables stay outside this module.

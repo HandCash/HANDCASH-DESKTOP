@@ -17,6 +17,7 @@ import {
   looksLikeRetiredFungibleTip,
 } from './retiredFungible'
 import { parseOrdEnvelope } from './ordinalOwnership'
+import { isFilingTag } from './token/filing'
 
 /**
  * `encoding` names how the holding was proven by the locking script: `binary`
@@ -158,9 +159,7 @@ export function classifyOneSatAsBsv21(
     (payload ? tokenIdForPayload(payload, args.outpoint ?? '') : null) ??
     tokenIdFromBsv21Tags(args.tags)
   const amt = payload?.amt ?? tagValue(args.tags, 'amt:')
-  const hasBsv21Tag = (args.tags ?? []).some(
-    (t) => t === 'bsv21' || t.toLowerCase().startsWith('bsv21:'),
-  )
+  const hasBsv21Tag = (args.tags ?? []).some((t) => isFilingTag(t))
 
   if (payload && tokenId) {
     return {
