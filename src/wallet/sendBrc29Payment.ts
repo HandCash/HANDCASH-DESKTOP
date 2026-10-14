@@ -78,6 +78,7 @@ import {
   mustBrc29SelfReceive,
 } from './brc29SendMachine'
 import { enqueuePendingBrc29Remit } from './pendingBrc29Outbox'
+import { markPaymentNoticeDelivered, paymentOutputInstructions } from './paymentNotice'
 import { accountKeyScopeFor, pinAccountKeyScope } from './accountLocalKeys'
 import {
   getMessageWriteGeneration,
@@ -429,10 +430,13 @@ export async function sendBrc29ToIdentityKey(opts: {
                 lockingScript,
                 satoshis,
                 outputDescription: 'BRC-29 payment',
-                customInstructions: JSON.stringify({
+                customInstructions: paymentOutputInstructions({
                   derivationPrefix,
                   derivationSuffix,
                   payee,
+                  ...(settlePath.settle === 'peerDeliver'
+                    ? { notice: 'pending' as const, ...(opts.chatRef ? { chatRef: true as const } : {}) }
+                    : {}),
                 }),
               },
             ],
@@ -510,6 +514,19 @@ export async function sendBrc29ToIdentityKey(opts: {
             to: payee,
           })
           mark('inputs sealed')
+          if (settlePath.settle === 'peerDeliver') {
+            const { journalOwedNotice } = await import('./noticeJournal')
+            journalOwedNotice(accountKeyScopeFor(active), {
+              txid,
+              vout: remittance.outputIndex ?? 0,
+              satoshis,
+              payee: settlePath.recipientIdentityKey,
+              derivationPrefix: remittance.derivationPrefix,
+              derivationSuffix: remittance.derivationSuffix,
+              chatRef: opts.chatRef,
+              atomicBeef,
+            })
+          }
           chart.send({ type: 'BROADCASTED', txid })
           completePendingSend(pending.id, txid)
           noteOutboundSendComplete({
@@ -722,11 +739,22 @@ async function settleBrc29Send(
         remittance,
         messagebox: friend?.messagebox,
         amountLabel: opts.friendLabel ?? undefined,
+        chatRef: opts.chatRef,
       }, accountKeyScopeFor(active))
     try {
       const delivered = await notifyPayee(settlePath.recipientIdentityKey)
       outcome.peerDelivered =
         delivered.delivered === 'cloud' || delivered.delivered === 'direct'
+      if (outcome.peerDelivered) {
+        const { journalNoticeDone } = await import('./noticeJournal')
+        journalNoticeDone(accountKeyScopeFor(active), txid, remittance.outputIndex ?? 0)
+        await markPaymentNoticeDelivered(active, txid, remittance.outputIndex ?? 0).catch((err) => {
+          console.warn(
+            `[brc29] notice ${txid.slice(0, 12)}… delivered but not marked — a recovery may re-send it`,
+            err instanceof Error ? err.message : String(err),
+          )
+        })
+      }
       recordTransactionStage(
         outcome.peerDelivered ? 'peer_delivered' : 'peer_delivery_queued',
         {

@@ -9,6 +9,7 @@ import {
   formatFungibleAmount,
   getFungible,
   listFungibles,
+  spendableFungibleAmt,
   subscribeFungibles,
   tokenMarketPriceHistory,
 } from '../wallet/token'
@@ -164,7 +165,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
     )
   }
 
-  const amount = formatFungibleAmount(token.amt, token.dec)
+  const spendableUnits = spendableFungibleAmt(token)
+  const amount = formatFungibleAmount(spendableUnits, token.dec)
+  const checking = token.checkingAmt ? formatFungibleAmount(token.checkingAmt, token.dec) : null
   const displayCurrency = getDisplayCurrency()
   const usdPerBsv = getCachedUsdPerBsv()
   const marketListing = token.marketListing
@@ -175,21 +178,24 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const isUnknown = encoding.kind === 'unknown'
   const sendBlocked = !isBinary || token.spendKind !== 'plain'
   const canCombine = isBinary && !sendBlocked && token.utxoCount >= 2
+  const formatName = token.layout === 'draft-tagged' ? 'P2P-FT (old format)' : 'P2P-FT'
   const supplyLabel = isBinary
     ? token.binarySupply === 'locked'
       ? token.maxSupply != null
-        ? `BSV-21 · max supply ${token.maxSupply}`
-        : 'BSV-21 · supply locked'
-      : 'BSV-21 · no supply cap'
+        ? `${formatName} · max supply ${token.maxSupply}`
+        : `${formatName} · supply locked`
+      : `${formatName} · no supply cap`
     : null
-  const issuerBap = issuerView?.bap ? issuerView : null
+  const issuerProfile = issuerView?.profile ? issuerView : null
+  const profileIdRow =
+    issuerProfile?.profile && issuerProfile.profile.id !== issuerProfile.identityKey ? issuerProfile.profile : null
   // Legacy BSV-21 tips are read-only except Burn (cleanup path).
   const burnBlocked =
     isUnknown || (isBinary && token.spendKind !== 'plain')
   const spendLabel = isUnknown
-    ? 'BSV-21 encoding unverified'
+    ? 'Token format unverified'
     : isLegacy
-      ? 'Legacy BSV-21 — burn only'
+      ? 'BSV-21 JSON (legacy) — burn only'
     : token.spendKind === 'plain'
       ? 'Wallet controlled'
       : token.spendKind === 'cosigned'
@@ -343,6 +349,14 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             <IssuerIdentityMark view={issuerView} className="detail-issuer-mark" />
           ) : null}
           <strong className="fungible-details-balance">{amount}</strong>
+          {checking ? (
+            <span
+              data-aeon-part="checking"
+              title="Received tokens not yet traced back to their deploy. They join the balance once the check passes."
+            >
+              +{checking} checking
+            </span>
+          ) : null}
           {marketListing ? (
             <span
               className="fungible-details-list-price"
@@ -407,15 +421,17 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             value={token.tokenId}
             copyLabel={isBinary ? 'origin' : 'token ID'}
           />
-          <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
+          <MetaRow label="Raw units" value={spendableUnits} copyLabel="raw token units" />
           <MetaRow
             label="Protocol"
             value={
               isBinary
-                ? 'BSV-21 (BRC-162)'
+                ? token.layout === 'draft-tagged'
+                  ? 'P2P-FT, old format (BRC-162 draft before #273)'
+                  : 'P2P-FT (BRC-162)'
                 : isLegacy
-                  ? 'Legacy BSV-21 (burn only)'
-                  : 'BSV-21'
+                  ? 'BSV-21 JSON (legacy, burn only)'
+                  : 'Unverified format'
             }
           />
           <MetaRow label="Basket" value={'bsv21'} />
@@ -435,8 +451,8 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             <MetaRow
               label="Issuer"
               value={
-                issuerBap?.bap?.state === 'verified'
-                  ? `${issuerBap.label} · ${token.issuer}`
+                issuerProfile?.profile?.state === 'verified'
+                  ? `${issuerProfile.label} · ${token.issuer}`
                   : token.issuerHandle
                     ? `${token.issuerHandle} · ${token.issuer}`
                     : token.issuer
@@ -444,15 +460,15 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               copyLabel="issuer wallet key"
             />
           ) : null}
-          {issuerBap?.bap ? (
+          {profileIdRow ? (
             <MetaRow
-              label={issuerBap.bap.state === 'verified' ? 'Profile ID' : 'Profile ID (unconfirmed)'}
-              value={issuerBap.bap.id}
+              label={profileIdRow.state === 'verified' ? 'Profile ID' : 'Profile ID (unconfirmed)'}
+              value={profileIdRow.id}
               copyLabel="profile ID"
             />
           ) : null}
-          {issuerBap?.bap ? (
-            <MetaRow label="Verification" value={issuerTrustNote(issuerBap) ?? ''} />
+          {issuerProfile ? (
+            <MetaRow label="Verification" value={issuerTrustNote(issuerProfile) ?? ''} />
           ) : null}
           {isLegacy ? (
             <MetaRow

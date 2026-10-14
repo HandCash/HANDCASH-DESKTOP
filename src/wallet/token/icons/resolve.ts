@@ -16,7 +16,8 @@ import { decodeBProtocol } from '../../bProtocol'
 import { imageMimeFor } from '../../inscriptionImage'
 import { base64ToBytes } from '../../base64Binary'
 import { getItemArtDataUrl, getItemArtRecord } from '../../localItemArt'
-import { getTokenIconDataUrl, rememberTokenIcon } from '../icons/cache'
+import { getTokenIconDataUrl, getTokenIconRecord, rememberTokenIcon } from '../icons/cache'
+import { decodeBsv21Binary, type Bsv21IconImage } from '../decode162'
 
 function splitOutpoint(outpoint: string): { txid: string; vout: number } | null {
   const id = normalizeTokenId(outpoint) ?? outpoint.trim().toLowerCase().replace('.', '_')
@@ -45,24 +46,55 @@ function scriptHexOf(out: { lockingScript?: unknown } | undefined): string | und
   return undefined
 }
 
-function rememberImage(outpoint: string, scriptHex: string | undefined): string | undefined {
+/** An image carried by one output: a BRC-162 embedded icon, an `ord` body or a B file. */
+export function iconImageFromScript(scriptHex: string | undefined): Bsv21IconImage | null {
+  if (!scriptHex) return null
+  const embedded = decodeBsv21Binary(scriptHex)?.payload?.iconImage
+  if (embedded) {
+    const mime = imageMimeFor(embedded.mediaType, embedded.bytes)
+    if (mime) return { mediaType: mime, bytes: embedded.bytes }
+  }
   const env = parseOrdEnvelope(scriptHex)
   if (env?.body?.length) {
     const mime = imageMimeFor(env.contentType, env.body)
-    if (mime) {
-      rememberTokenIcon(outpoint, env.body, mime)
-      return getTokenIconDataUrl(outpoint)
-    }
+    if (mime) return { mediaType: mime, bytes: env.body }
   }
   const b = decodeBProtocol(scriptHex)
   if (b?.data?.length) {
     const mime = imageMimeFor(b.mediaType, b.data)
-    if (mime) {
-      rememberTokenIcon(outpoint, b.data, mime)
-      return getTokenIconDataUrl(outpoint)
+    if (mime) return { mediaType: mime, bytes: b.data }
+  }
+  return null
+}
+
+function rememberImage(outpoint: string, scriptHex: string | undefined): string | undefined {
+  const image = iconImageFromScript(scriptHex)
+  if (!image) return undefined
+  rememberTokenIcon(outpoint, image.bytes, image.mediaType)
+  return getTokenIconDataUrl(outpoint)
+}
+
+/** Icon bytes for an outpoint, from the caches or the transaction body by txid. */
+export async function resolveTokenIconImage(
+  outpoint: string,
+  wallet?: ActiveWallet | null,
+): Promise<Bsv21IconImage | null> {
+  if (!(await resolveTokenIconDataUrl(outpoint, wallet))) return null
+  const rec = getTokenIconRecord(outpoint)
+  if (rec) {
+    try {
+      return { mediaType: rec.mime, bytes: base64ToBytes(rec.b64) }
+    } catch {
+      return null
     }
   }
-  return undefined
+  const art = getItemArtRecord(outpoint)
+  if (!art) return null
+  try {
+    return { mediaType: art.mime, bytes: base64ToBytes(art.b64) }
+  } catch {
+    return null
+  }
 }
 
 export function cacheTokenIconFromBeef(
@@ -149,9 +181,10 @@ export async function resolveTokenIconDataUrl(
 }
 
 /**
- * BSV-21 face. Prefer the named icon outpoint (4-byte same-tx or 36-byte
- * pointer). Fall back to a B-protocol sibling on the deploy tx. Bodies come
- * from {@link tokenTxBody}; never Gorilla /content/.
+ * BSV-21 face. Prefer the named icon outpoint: the deploy itself for an
+ * embedded BRC-162 image, else a draft 4-byte same-tx or 36-byte pointer.
+ * Fall back to a B-protocol sibling on the deploy tx. Bodies come from
+ * {@link tokenTxBody}; never Gorilla /content/.
  */
 export async function resolveBsv21IconDataUrl(args: {
   icon?: string

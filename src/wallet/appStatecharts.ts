@@ -37,7 +37,8 @@ const MASTER = `stateDiagram-v2
   appSession --> marketSellerSettlement : market sell
   appSession --> chainIngestChart : Refresh
   appSession --> messageboxChart : chat relay
-  appSession --> accountHolding : unlock / switch / wallet menu
+  appSession --> accountHolding : unlock / switch / gap / holding channel
+  accountHolding --> accountMove : open an account held elsewhere
 
   walletNav --> friendsFlow : Friends
   walletNav --> collectablesFlow : Collectables
@@ -60,6 +61,7 @@ const MASTER = `stateDiagram-v2
   appSession : Session host
   unlockForm : Unlock form
   accountHolding : Account holding · one install per account
+  accountMove : Account move · automatic
   walletNav : Nav sections
   sendPayment : Send payment
   receiveFlow : Receive
@@ -157,25 +159,62 @@ const ACCOUNT_HOLDING = `stateDiagram-v2
   [*] --> here : discovered while taking over\n(restore: replace)
 
   here --> here : check — record names this install\nor absent → publish
-  here --> elsewhere : check — newer record\nnames another install
-  here --> releasing : Move to another device
-  releasing --> elsewhere : history flushed +\nrecord released (seq+1)
-  releasing --> here : flush or announce failed\n(refused)
-  elsewhere --> here : Move here —\nrecord released (seq+1)
-  elsewhere --> confirmTakeover : Move here —\nanother install holds it
-  confirmTakeover --> here : Take over (seq+1)
-  confirmTakeover --> elsewhere : Cancel
+  here --> handingOver : check — newer record\nnames another install
+  handingOver --> elsewhere : monitor stopped · notices of unsent tx tombstoned ·\nunsent tx voided · delta since last upload sealed to box
+  here --> releasing : release-request over the vault link\nor box account-holding (seq = local, < 10 min)\n→ accept the same way back, no prompt
+  releasing --> elsewhere : open: history flushed, record released (seq+1)\nnot open: record released, then handover
+  releasing --> here : flush or announce failed\n(mover forces after 2 min)
+  elsewhere --> moving : open it (wallet menu)
+  moving --> here : accountMoveMachine taken\n(released, or forced after 10 s silence)
+  moving --> elsewhere : failed (named reason)
 
   here : Held here · opens + spends
   elsewhere : Held elsewhere · listed, never opened or warmed
   releasing : Releasing · spends refused
-  confirmTakeover : Confirm take-over
+  handingOver : Handing over · never uploads or broadcasts
+  moving : Moving here · see accountMove
 
   note right of here
-    Spend guard reads local holding only — no network on the spend path.
+    Spend guard reads local holding while fresh. Fresh = checked, then the
+    holding channel served every 5 s with no break over 15 s. After a gap
+    (start, suspend, throttled timer, reconnect, switch) the first spend
+    reads holder.json once; host unreachable keeps local holding.
     holder.json beside wallet.brc39, signed by the account root; seq only grows.
-    Checked on unlock, on switch, and every 5 min for the active account.
     New accounts reserve their index create-only, so two devices never share a key.
+  end note
+`
+
+const ACCOUNT_MOVE = `stateDiagram-v2
+  direction LR
+  [*] --> reading
+  reading --> taking : released / ours
+  reading --> dialing : held by another install
+  reading --> requestingBox : unannounced in use\n(no device to dial)
+  reading --> failed : host unreachable / unsupported
+  dialing --> requestingDirect : vault link to the holding device open
+  dialing --> requestingBox : no link within 8 s
+  requestingDirect --> awaitingAccept : release-request acked\ndevice to device
+  requestingDirect --> requestingBox : frame not acked
+  requestingBox --> awaitingAccept : release-request posted to box
+  requestingBox --> failed : box unreachable\n(never force unasked)
+  awaitingAccept --> awaitingRelease : release-accept (our nonce)\nover the link or the box
+  awaitingAccept --> taking : record released
+  awaitingAccept --> forcing : 10 s answer window
+  awaitingAccept --> reading : record overtaken (≤ 2 restarts)
+  awaitingRelease --> taking : record released
+  awaitingRelease --> forcing : 2 min release window
+  awaitingRelease --> reading : record overtaken (≤ 2 restarts)
+  forcing --> taken : held seq+1 over the ETag
+  taking --> taken : held seq+1 over the ETag
+  taking --> reading : another install won (≤ 2 restarts)
+  forcing --> failed : take unavailable
+  taking --> failed : take unavailable / kept changing
+  taken --> [*]
+  failed --> [*]
+
+  note right of taken
+    Caller opens the account with arrived: the history backup
+    merges before anything spends. Own requests are acknowledged.
   end note
 `
 
@@ -539,7 +578,10 @@ const BRC29_SEND = `stateDiagram-v2
   selfReceive --> done : SETTLED
   note right of broadcasting
     Toolbox createAction broadcasts now.
-    Inbox is notify + outbox retry.
+    Payment output records notice pending; delivery marks it.
+    Sealed: notice journaled before propagation, replicated in seconds.
+    Inbox is notify + outbox retry; recovery re-queues pending.
+    Retry backs off to hourly, never gives up; stalled shows in details.
     No noSend / no second tx.
   end note
   note right of chooseSettle
@@ -704,6 +746,10 @@ const ACTIVITY = `stateDiagram-v2
     Clear a signed send only
     when every input is spent
   end note
+  note right of feed
+    Owed BRC-29 notice: row reads
+    Notifying recipient… | needs attention (stalled)
+  end note
 `
 
 const IDENTITY = `stateDiagram-v2
@@ -723,31 +769,44 @@ const PUBLIC_IDENTITIES = `stateDiagram-v2
   [*] --> browsing
   browsing --> composing : COMPOSE
   browsing --> importing : IMPORT_KEY
-  composing --> composing : FIELD / IMAGE
+  composing --> composing : FIELD / IMAGE / CLEAR_IMAGE
   composing --> browsing : CLOSE
   importing --> browsing : CLOSE
-  composing --> quoting : REVIEW [draft ready]
+  composing --> saving : SAVE [named]
+  saving --> browsing : profile certificate signed
+  saving --> composing : save refused
+  browsing --> quoting : PUBLISH_BAP
   browsing --> quoting : ROTATE
+  browsing --> quoting : LINK
   quoting --> reviewing : plan quoted
-  quoting --> refused : quote refused
+  quoting --> refused : quote refused / already-linked
   reviewing --> publishing : APPROVE
-  publishing --> browsing : records signed
+  publishing --> browsing : records and link signed
   publishing --> refused : plan-changed / fee-over-plan / staged-mismatch
-  quoting --> composing : CANCEL [profile]
-  reviewing --> composing : CANCEL [profile]
-  refused --> composing : DISMISS [profile]
-  quoting --> browsing : CANCEL [rotate]
-  reviewing --> browsing : CANCEL [rotate]
-  refused --> browsing : DISMISS [rotate]
+  quoting --> browsing : CANCEL
+  reviewing --> browsing : CANCEL
+  refused --> browsing : DISMISS
+  note right of saving
+    The identity key's own profile (BRC-248 section 2):
+    a self-signed BRC-52 certificate, name, bio and
+    optional photo, newest issuedAt wins. Kept on this
+    device and the encrypted backup; rides the identity
+    card and item deliveries. No transaction, no fee.
+  end note
   note right of reviewing
     Plan: every record tx, output bytes, fee estimate
     and ceiling, signing key, digest over the scripts.
+    A profile not yet linked to the identity key adds
+    the BRC-248 link tx (identity key + BAP key sign
+    over a noSend anchor; both queued together).
     publishing rebuilds it under the spend lock, stages
     each tx unsigned, refuses a moved digest or a fee
     over its ceiling, then signs. Draft is frozen.
   end note
   note right of composing
     Draft holds the public image, name and bio only.
+    Publish to BAP mirrors the saved profile as the
+    optional BAP record; it is never the label source.
     asyncAction owns image encode, key import, removal.
   end note
 `
@@ -1195,6 +1254,16 @@ const COORDINATOR = `stateDiagram-v2
 
   spend --> nestedIngest : nested heal\\nCHAIN_INGEST_BEGIN nested
   nestedIngest --> spend : CHAIN_INGEST_END
+
+  note right of recompose
+    Replaced localState: payment reconcile
+    starts here (notice journal, owed notices,
+    Activity relist; a journaled payment the history
+    lacks is resumed — inputs sealed, same txid).
+    The next foreground spend waits for it, at most
+    20 s; background never. Its notice waits for
+    the miner verdict; a proven reject settles it.
+  end note
 `
 
 /** Signing + settle — one Bitcoin lifecycle; asset paths only route metadata. */
@@ -1341,8 +1410,10 @@ const MESSAGEBOX_CHART = `flowchart TB
 
   subgraph Today["HandCash today"]
     HARD["resolved messagebox URL\\nBRC-CLOUD fallback"] --> SEND2["sendMessage\\nBRC-169 envelope + BRC-78 content"]
-    SEND2 --> IPV6["live IPv6 session\\ndraft BRC-246 when both reachable"]
-    IPV6 --> LOCAL2["messageStore friend thread"]
+    HARD --> SIGNAL["box session-upgrade\\nsigned offer / answer"]
+    SIGNAL --> RTC["WebRTC data channel\\ndraft BRC-246"]
+    RTC -->|ack within 1s| LOCAL2["messageStore friend thread"]
+    RTC -.->|no ack| SEND2
     SEND2 --> FILES["optional chat attachments only\\nPOST /files → R2"]
     HARD --> POLL["listMessages by recipient key\\nX-BRC33-* / X-BRC103-* on BRC-CLOUD"]
     POLL --> LOCAL2
@@ -1416,6 +1487,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Account holding',
     caption: 'One install per vault account — check, reserve, move between devices (accountHolding.ts)',
     source: ACCOUNT_HOLDING,
+  },
+  {
+    id: 'accountMove',
+    label: 'Account move',
+    caption: 'accountMoveMachine — ask the holder, take on release, force after its silence (draft BRC-249)',
+    source: ACCOUNT_MOVE,
   },
   {
     id: 'walletNav',
@@ -1594,7 +1671,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'publicIdentities',
     label: 'Public identities',
-    caption: 'BAP issuer identities: quoted, approved publish and key rotation; signers and encrypted backup',
+    caption: 'Identity keys and their own signed profiles (name, photo; no fee); optional BAP mirror: quoted, approved publish, link and key rotation; signers and encrypted backup',
     source: PUBLIC_IDENTITIES,
   },
   {

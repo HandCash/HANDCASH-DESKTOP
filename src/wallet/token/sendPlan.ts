@@ -6,7 +6,9 @@
  * ord leftover and not a bare 1sat. Remittance is basket `bsv21` with
  * underscore token id and decimal amt. Subject outputs carry a 176 BEEF.
  *
- * Emits only BRC-162 locks, never legacy inscription formats.
+ * Emits only BRC-162 binary locks, never legacy inscription formats. New
+ * tokens use the current layout; a token held in the draft-tagged layout keeps
+ * moving in it (BRC-251 §Compatibility).
  *
  * BRC delta (draft, not posted): 163 remittance MUST carry `icon` when the
  * deploy named one. 176 BEEF MUST include the icon's B-protocol tx (same-tx
@@ -24,6 +26,7 @@ import {
   decodeBsv21Binary,
   encodeBsv21Binary,
   parseDisplayOutpoint,
+  type Bsv21BinaryLayout,
 } from './decode162'
 import { prove, type Bsv21ProofResult } from './prove176'
 import { stampBrc164Id } from '../itemAccess'
@@ -45,10 +48,17 @@ export type Bsv21SendTip = {
   tags?: string[]
   customInstructions?: string
   icon?: string
+  /**
+   * False when no walk has bound this tip to the deploy yet. Such a tip is
+   * spent only after every bound tip; the pre-sign walk decides it either way.
+   */
+  bound?: boolean
 }
 
 export type Bsv21SendPlan = {
   tokenId: string
+  /** Every selected input's layout; the outputs are written in it. */
+  layout: Bsv21BinaryLayout
   selected: Bsv21SendTip[]
   selectedSum: bigint
   payeeAmt: bigint
@@ -218,17 +228,42 @@ export function planBsv21Send(args: {
 
   const usable = args.tips
     .filter((t) => normalizeTokenId(t.tokenId) === tokenId && t.amt > 0n)
-    .sort((a, b) => (b.amt > a.amt ? 1 : b.amt < a.amt ? -1 : 0))
+    .sort(
+      (a, b) =>
+        Number(a.bound === false) - Number(b.bound === false) ||
+        (b.amt > a.amt ? 1 : b.amt < a.amt ? -1 : 0),
+    )
+
+  // One layout per spend: outputs in the current layout spending draft-tagged
+  // inputs (or the reverse) are burned under the rules of the other.
+  const byLayout = new Map<Bsv21BinaryLayout, { tips: Bsv21SendTip[]; sum: bigint }>()
+  for (const tip of usable) {
+    const layout = bsv21TipLayout(tip)
+    const group = byLayout.get(layout) ?? { tips: [], sum: 0n }
+    group.tips.push(tip)
+    group.sum += tip.amt
+    byLayout.set(layout, group)
+  }
+  const total = usable.reduce((sum, t) => sum + t.amt, 0n)
+  const layout = (['brc162', 'draft-tagged'] as const).find(
+    (l) => (byLayout.get(l)?.sum ?? 0n) >= args.amount,
+  )
+  if (!layout) {
+    if (total >= args.amount) {
+      const most = [...byLayout.values()].reduce((max, g) => (g.sum > max ? g.sum : max), 0n)
+      throw new Error(
+        `These tokens are split across two token formats that cannot be spent together; send at most ${most} units at once`,
+      )
+    }
+    throw new Error(`Need ${args.amount} units; only ${total} available`)
+  }
 
   const selected: Bsv21SendTip[] = []
   let selectedSum = 0n
-  for (const tip of usable) {
+  for (const tip of byLayout.get(layout)!.tips) {
     if (selectedSum >= args.amount) break
     selected.push(tip)
     selectedSum += tip.amt
-  }
-  if (selectedSum < args.amount) {
-    throw new Error(`Need ${args.amount} units; only ${selectedSum} available`)
   }
   const changeAmt = selectedSum - args.amount
   assertBsv21AmtConservation(
@@ -237,6 +272,7 @@ export function planBsv21Send(args: {
   )
   return {
     tokenId,
+    layout,
     selected,
     selectedSum,
     payeeAmt: args.amount,
@@ -244,11 +280,34 @@ export function planBsv21Send(args: {
   }
 }
 
-/** 162 value lock: BSV21 prefix + P2PKH rest. satoshis stay 1. */
+/** Layout a held tip is written in; a tip without its script is read as current. */
+export function bsv21TipLayout(tip: Pick<Bsv21SendTip, 'lockingScript'>): Bsv21BinaryLayout {
+  return (tip.lockingScript ? decodeBsv21Binary(tip.lockingScript)?.layout : undefined) ?? 'brc162'
+}
+
+/**
+ * The one layout a set of spent tips shares. Mixed layouts fail closed:
+ * no output layout keeps both halves valid.
+ */
+export function bsv21SpendLayout(
+  tips: ReadonlyArray<Pick<Bsv21SendTip, 'lockingScript'>>,
+): Bsv21BinaryLayout {
+  const layouts = new Set(tips.map(bsv21TipLayout))
+  if (layouts.size > 1) {
+    throw new Error('Token inputs mix two token formats and cannot be spent together')
+  }
+  return [...layouts][0] ?? 'brc162'
+}
+
+/**
+ * Value lock: token prefix + P2PKH rest, satoshis stay 1. `layout` is the
+ * layout of the inputs being spent (current for every token deployed now).
+ */
 export function buildBsv21ValueLock(args: {
   tokenId: string
   amount: bigint
   address: string
+  layout: Bsv21BinaryLayout
 }): string {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -256,6 +315,7 @@ export function buildBsv21ValueLock(args: {
     throw new Error('BSV-21 send refuses amount 0 (authority)')
   }
   const hex = encodeBsv21Binary({
+    layout: args.layout,
     tokenId,
     amount: args.amount,
     rest: p2pkhScriptHex(args.address),
@@ -264,7 +324,12 @@ export function buildBsv21ValueLock(args: {
     .toLowerCase()
   assertNoRetiredProtocolLock(hex)
   const decoded = decodeBsv21Binary(hex)
-  if (!decoded || decoded.role !== 'value' || decoded.tokenId !== tokenId) {
+  if (
+    !decoded ||
+    decoded.role !== 'value' ||
+    decoded.tokenId !== tokenId ||
+    decoded.layout !== args.layout
+  ) {
     throw new Error('BSV-21 send produced a non-value lock')
   }
   if (decoded.amount !== args.amount) {
@@ -320,6 +385,8 @@ export function buildBsv21SendOutputs(args: {
   changeAmt: bigint
   payeeAddress: string
   changeAddress: string
+  /** Layout of the spent inputs ({@link Bsv21SendPlan.layout}). */
+  layout: Bsv21BinaryLayout
   sym?: string
   dec?: number
   issuer?: string
@@ -356,6 +423,7 @@ export function buildBsv21SendOutputs(args: {
         tokenId,
         amount: args.payeeAmt,
         address: args.payeeAddress,
+        layout: args.layout,
       }),
       satoshis: 1,
       ...payeeRemitFields,
@@ -379,6 +447,7 @@ export function buildBsv21SendOutputs(args: {
         tokenId,
         amount: args.changeAmt,
         address: args.changeAddress,
+        layout: args.layout,
       }),
       satoshis: 1,
       ...changeRemit,

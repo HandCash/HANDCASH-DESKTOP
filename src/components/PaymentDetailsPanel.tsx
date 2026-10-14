@@ -87,6 +87,9 @@ import {
   createCancelMarketListingAdvert,
   getMarketListingAuthorization,
 } from '../wallet/marketListing'
+import { useBrc29NoticeDelivery } from '../hooks/useBrc29NoticeDelivery'
+import { retryBrc29NoticeNow } from '../wallet/pendingBrc29Outbox'
+import { getWalletRuntime } from '../wallet/walletRuntime'
 
 type Props = {
   entryId: string
@@ -310,6 +313,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   // its failure reason; the chart replaces four booleans OR-ed into `disabled`.
   const action = useActivityAction()
   const { reset: resetAction } = action
+  const notice = useBrc29NoticeDelivery(entry?.kind === 'spent' ? entry.txid : undefined)
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -463,12 +467,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       ? minted
         ? shownItem?.name
           ? `Minted · ${shownItem.name}`
-          : 'Minted BSV-21'
+          : 'Minted token'
         : spent
         ? shownItem?.name
           ? `Sent · ${shownItem.name}`
-          : 'Sent BSV-21'
-        : shownItem?.app || shownItem?.name || 'BSV-21 token'
+          : 'Sent token'
+        : shownItem?.app || shownItem?.name || 'Token'
       : minted
       ? shownItem?.name
         ? `Minted · ${shownItem.name}`
@@ -580,6 +584,20 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     if (!outcome.ok && outcome.error !== null) {
       toastError('Clear failed', outcome.error)
     }
+  }
+
+  const noticeTo = recipientLabel ?? 'The recipient'
+  const notifyNow = async () => {
+    const txid = entry.txid
+    if (!txid) return
+    const outcome = await action.run('notify', async () => {
+      const runtime = getWalletRuntime()
+      if (!runtime) throw new Error('Unlock the wallet to notify them.')
+      if (!(await retryBrc29NoticeNow(runtime, txid))) {
+        throw new Error("Their message box didn't take it. HandCash keeps trying.")
+      }
+    })
+    if (outcome.ok) toastSuccess('Recipient notified', `${noticeTo} can now find the payment.`)
   }
 
   return (
@@ -812,7 +830,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               ? 'Checking confirmation and whether the funds are still spendable…'
               : attemptFate.message}
           </p>
-          {action.error ? (
+          {action.error && action.action !== 'notify' ? (
             <p className="form-error">{action.error}</p>
           ) : null}
           <div
@@ -877,6 +895,51 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   : 'Unlock coins from unfinished sends'}
               </button>
             ) : null}
+          </div>
+        </section>
+      ) : null}
+      {notice ? (
+        <section
+          className="payment-attempt-actions"
+          aria-live="polite"
+          data-aeon-part="payee-notice"
+          data-aeon-state={notice.stalled ? 'stalled' : 'retrying'}
+        >
+          <strong>
+            {notice.stalled
+              ? `${noticeTo} still hasn't been notified`
+              : `${noticeTo} hasn't been notified yet`}
+          </strong>
+          <p>
+            The payment is sent, but their wallet finds it only once the notice
+            reaches their message box. HandCash keeps retrying
+            {notice.stalled ? ' every hour' : ''} and never sends the money twice.
+          </p>
+          {notice.lastTriedAt && notice.lastError ? (
+            <p data-aeon-part="payee-notice-last">
+              Last try{' '}
+              {new Date(notice.lastTriedAt).toLocaleTimeString(undefined, {
+                timeStyle: 'short',
+              })}
+              : {notice.lastError}
+            </p>
+          ) : null}
+          {action.error && action.action === 'notify' ? (
+            <p className="form-error">{action.error}</p>
+          ) : null}
+          <div
+            className="payment-attempt-buttons"
+            data-aeon-part="payee-notice-actions"
+            data-aeon-state={action.stateAttr}
+          >
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={action.busy}
+              onClick={() => void notifyNow()}
+            >
+              {action.running('notify') ? 'Notifying…' : 'Notify now'}
+            </button>
           </div>
         </section>
       ) : null}

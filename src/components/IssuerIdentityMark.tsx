@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import type { IssuerBap, IssuerView } from '../wallet/collectableGroups'
+import type { IssuerProfileMark, IssuerView } from '../wallet/collectableGroups'
 import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
-import { bapFingerprint } from '../wallet/issuerTrust'
-import { BapIdenticon } from './BapIdenticon'
+import { profileFingerprint } from '../wallet/issuerTrust'
+import { ProfileIdenticon } from './ProfileIdenticon'
 import { DeferredImage } from './DeferredImage'
 import { VerifiedIcon, WarningIcon } from './icons'
 
@@ -15,39 +15,42 @@ export type IssuerViewState =
   | 'key'
   | 'claim'
 
-type IssuerTrustSubject = { bap?: IssuerBap; issuerAttested?: boolean }
+type IssuerTrustSubject = { profile?: IssuerProfileMark; issuerAttested?: boolean }
 
 export function issuerViewState(view: IssuerTrustSubject): IssuerViewState {
-  const bap = view.bap
-  if (bap?.state === 'verified') {
-    if (bap.listed) return 'listed'
-    if (bap.caution?.kind === 'imitates-listed') return 'imitation'
-    if (bap.caution?.kind === 'shared-name') return 'shared-name'
+  const mark = view.profile
+  if (mark?.state === 'verified') {
+    if (mark.listed) return 'listed'
+    if (mark.caution?.kind === 'imitates-listed') return 'imitation'
+    if (mark.caution?.kind === 'shared-name') return 'shared-name'
     return 'verified'
   }
-  return bap?.state ?? (view.issuerAttested ? 'key' : 'claim')
+  return mark?.state ?? (view.issuerAttested ? 'key' : 'claim')
 }
 
-/** One sentence on how far this issuer can be trusted; null when there is no BAP identity. */
-export function issuerTrustNote(view: Pick<IssuerView, 'bap' | 'label'>): string | null {
-  const bap = view.bap
-  if (!bap) return null
-  if (bap.state === 'unconfirmed')
+/** One sentence on how far this issuer can be trusted; null when no profile labels it. */
+export function issuerTrustNote(view: Pick<IssuerView, 'profile' | 'label'>): string | null {
+  const mark = view.profile
+  if (!mark) return null
+  if (mark.state === 'unconfirmed')
     return 'No identity package on this device proves this signer speaks for the profile ID, so its name and image stay hidden.'
-  if (bap.listed)
-    return bap.listed.name === view.label
+  if (mark.listed)
+    return mark.listed.name === view.label
       ? 'Verified by HandCash.'
-      : `Verified by HandCash as “${bap.listed.name}”.`
-  if (bap.caution?.kind === 'imitates-listed')
-    return `Not verified. Its name reads like “${bap.caution.listed.name}”, which HandCash verified under a different profile ID.`
-  if (bap.caution?.kind === 'shared-name')
-    return `Not verified. ${bap.caution.others === 1 ? 'Another identity' : `${bap.caution.others} other identities`} on this device use the same name; compare the profile ID.`
-  return 'Its identity package proves the signer. Not on HandCash’s verified list; compare the profile ID.'
+      : `Verified by HandCash as “${mark.listed.name}”.`
+  if (mark.caution?.kind === 'imitates-listed')
+    return `Not verified. Its name reads like “${mark.caution.listed.name}”, which HandCash verified under a different profile ID.`
+  if (mark.caution?.kind === 'shared-name')
+    return `Not verified. ${mark.caution.others === 1 ? 'Another identity' : `${mark.caution.others} other identities`} on this device use the same name; compare the profile ID.`
+  return mark.profile?.source === 'identity-key'
+    ? 'Signed by its own identity key. Not on HandCash’s verified list; compare the profile ID.'
+    : 'Its identity package proves the signer. Not on HandCash’s verified list; compare the profile ID.'
 }
 
 export function issuerViewTitle(view: IssuerView): string {
-  if (view.bap) {
-    const head = view.bap.state === 'verified' ? `${view.label} · Profile ID ${view.bap.id}` : `Profile ID ${view.bap.id}`
+  if (view.profile) {
+    const head =
+      view.profile.state === 'verified' ? `${view.label} · Profile ID ${view.profile.id}` : `Profile ID ${view.profile.id}`
     return `${head} · ${issuerTrustNote(view)}`
   }
   return view.issuerAttested
@@ -80,13 +83,13 @@ export function IssuerTrustBadge({ view }: { view: IssuerTrustSubject }) {
 }
 
 /**
- * The identity pill: the identity's image (or BAP identicon), its name, the
- * HandCash checkmark and the short BAP ID — the part a look-alike cannot copy.
+ * The identity pill: the profile's image (or identicon), its name, the
+ * HandCash checkmark and the short profile ID — the part a look-alike cannot copy.
  */
 export function IssuerIdentityMark({ view, className }: { view: IssuerView; className?: string }) {
-  const image = view.bap?.identity?.image
+  const image = view.profile?.profile?.image
   const src = useMemo(() => (image ? issuerIdentityImageDataUrl(image) : null), [image])
-  const bapId = view.bap?.id
+  const id = view.profile?.id
   return (
     <span
       className={className ? `identity-pill ${className}` : 'identity-pill'}
@@ -105,18 +108,18 @@ export function IssuerIdentityMark({ view, className }: { view: IssuerView; clas
             skeletonWidth={16}
             skeletonHeight={16}
             skeletonRadius="50%"
-            fallback={bapId ? <BapIdenticon bapId={bapId} size={10} /> : null}
+            fallback={id ? <ProfileIdenticon id={id} size={10} /> : null}
           />
         </span>
-      ) : bapId ? (
+      ) : id ? (
         <span className="identity-pill-lead">
-          <BapIdenticon bapId={bapId} size={10} />
+          <ProfileIdenticon id={id} size={10} />
         </span>
       ) : null}
       <span className="identity-pill-label">{view.label}</span>
       <IssuerTrustBadge view={view} />
-      {bapId && view.bap?.state === 'verified' ? (
-        <span className="identity-pill-id mono">{bapFingerprint(bapId).short}</span>
+      {id && view.profile?.state === 'verified' ? (
+        <span className="identity-pill-id mono">{profileFingerprint(id).short}</span>
       ) : null}
     </span>
   )

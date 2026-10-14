@@ -1,4 +1,4 @@
-import { PrivateKey } from '@bsv/sdk'
+import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -10,8 +10,8 @@ import {
   isIdentityCardControl,
   rememberIdentityCard,
   signIdentityCard,
-  type IdentityCard,
   type IdentityCardOutcome,
+  type IdentityCardV2,
 } from './identityCard'
 import {
   MESSAGEBOX_INNER_MAX,
@@ -19,8 +19,8 @@ import {
   deliveryReachedPeer,
   type OutboundEnvelope,
 } from './messageTransport'
-import { presentedIdentityMaterial, presentedIdentityOfAccount } from './publicIdentities'
-import type { IssuerIdentity } from './issuerIdentity'
+import { presentedIdentityMaterial, presentedProfileOfAccount } from './publicIdentities'
+import type { IssuerProfile } from './issuerIdentity'
 import type { Chain } from './vault'
 import { findVaultAccountByIdentityKey } from './vaultAccounts'
 import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
@@ -36,11 +36,13 @@ import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './wallet
  * delivery it follows.
  */
 
-type OwnCard = { owner: string; version: string; card: IdentityCard; fits: boolean }
+type OwnCard = { owner: string; version: string; card: IdentityCardV2; fits: boolean }
 
 const REQUEST_INTERVAL_MS = 10 * 60 * 1000
 const MAX_SENT = 1024
 const SLOW_MS = 250
+/** Card fields around the package: keys, time, two signatures, wire prefix. */
+const CARD_OVERHEAD = 1_024
 
 let own: OwnCard | null = null
 const lastRequested = new Map<string, number>()
@@ -80,16 +82,16 @@ function knownPeer(runtime: WalletRuntime, peer: string): Pick<Friend, 'identity
 }
 
 /**
- * The identity a sibling account presents, read on this device without a
- * card: it is this wallet's own published identity.
+ * The profile a sibling account presents, read on this device without a
+ * card: it is one of this vault's own identities.
  */
-export function siblingAccountIdentity(chain: Chain, identityKey: string | null | undefined): IssuerIdentity | null {
+export function siblingAccountProfile(chain: Chain, identityKey: string | null | undefined): IssuerProfile | null {
   const runtime = currentRuntime()
   const peer = identityKey?.trim().toLowerCase()
   if (!runtime || !peer) return null
   const sibling = siblingAccount(runtime, peer)
   if (!sibling) return null
-  return presentedIdentityOfAccount({ identityKey: sibling.identityKey, accountIndex: sibling.index, chain })
+  return presentedProfileOfAccount({ identityKey: sibling.identityKey, accountIndex: sibling.index, chain })
 }
 
 function sentKey(runtime: WalletRuntime): string {
@@ -123,17 +125,15 @@ function recordSent(runtime: WalletRuntime, peer: string, version: string): void
 
 /** This wallet's card as it stands now, signed once per version. */
 async function ownCard(runtime: WalletRuntime): Promise<OwnCard | null> {
-  const material = presentedIdentityMaterial(runtime)
+  const material = presentedIdentityMaterial(runtime, { packageBudget: MESSAGEBOX_INNER_MAX - CARD_OVERHEAD })
   if (!material) return null
   const owner = runtime.instance.identityKey.toLowerCase()
   const version =
     material.kind === 'presented'
       ? [
-          material.identity.bapId,
+          material.identityKey,
           material.issuedAt,
-          material.identity.alias.txid,
-          material.signingKey.toPublicKey().toString(),
-          material.pkg.beefB64.length,
+          Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify(material.pkg), 'utf8'))).slice(0, 16),
         ].join(':')
       : `none:${material.issuedAt}`
   if (own?.owner === owner && own.version === version) return own
@@ -151,7 +151,7 @@ async function ownCard(runtime: WalletRuntime): Promise<OwnCard | null> {
 /** Our current card as a file a person can hand over any way they like. */
 export async function exportIdentityCard(runtime: WalletRuntime): Promise<string> {
   const card = await ownCard(runtime)
-  if (!card || card.card.bapId === null) throw new Error('Publish an identity first.')
+  if (!card || !card.card.presents) throw new Error('Add a profile first.')
   return JSON.stringify(card.card, null, 2)
 }
 
@@ -173,9 +173,9 @@ async function sendCard(
     const prior = readSent(runtime)[peer]
     if (prior === card.version && !opts.force) return false
     // A withdrawal only matters to someone who saw a card.
-    if (card.card.bapId === null && (!prior || prior.startsWith('none:'))) return false
+    if (!card.card.presents && (!prior || prior.startsWith('none:'))) return false
     const sent = await deliverOutbound(envelope(runtime, peer, to.messagebox, identityCardWire(card.card)))
-    const kind = card.card.bapId ? 'card' : 'withdrawal'
+    const kind = card.card.presents ? 'card' : 'withdrawal'
     if (!deliveryReachedPeer(sent.delivered)) {
       console.warn(`[identity-card] ${kind} to ${peer.slice(0, 12)} not delivered (${sent.delivered})`)
       return false
@@ -293,7 +293,7 @@ export async function ingestIdentityCardBody(senderKey: string, inner: string): 
   }
   console.info(
     outcome.kind === 'presented'
-      ? `[identity-card] kept card from ${peer.slice(0, 12)}: ${outcome.identity.bapId}`
+      ? `[identity-card] kept card from ${peer.slice(0, 12)}: ${outcome.profile.source} ${outcome.profile.id.slice(0, 12)}`
       : `[identity-card] kept withdrawal from ${peer.slice(0, 12)}`,
   )
   if (friend) await sendCard(runtime, friend, { force: false }).catch(() => false)

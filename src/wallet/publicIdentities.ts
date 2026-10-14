@@ -5,16 +5,35 @@ import { bapIdFor, bapKey } from './bapRecords'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { retainedMinedHeight } from './issuerAttribution'
 import {
+  identityKeyPackage,
+  parseProfileCertificate,
+  signIdentityProfile,
+  verifyIdentityProfile,
+  type IdentityKeyPackage,
+  type IdentityProfileRecord,
+  type PackageImage,
+} from './identityProfile'
+import {
+  identityProfileFor,
+  identityProfileRecord,
+  rememberIdentityProfile,
+  storedIdentityProfiles,
+} from './identityProfiles'
+import {
   currentIssuerSigningKey,
   type IssuerAttribution,
   type IssuerIdentity,
+  type IssuerIdentityFields,
   type IssuerIdentityImage,
   type IssuerIdentityPackage,
+  type IssuerProfile,
 } from './issuerIdentity'
 import {
-  issuerAttribution,
+  bapStampVerdict,
+  identityKeyProfile,
   issuerIdentityFor,
   issuerIdentityPackage,
+  linkedIdentityKey,
   rememberIssuerIdentityPackage,
   storedIssuerIdentities,
 } from './issuerIdentities'
@@ -26,10 +45,11 @@ import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 /**
  * Issuer identities this wallet controls. Each is a master key: the wallet's
- * own root, or an imported key sealed to this wallet. Its BAP keys derive from
- * that master exactly as 1Sat / Yours wallets derive them, so the same master
- * has the same BAP ID everywhere. The identity itself (key chain, profile,
- * image) is on chain and kept in `issuerIdentities`; this record holds custody.
+ * own root, or an imported key sealed to this wallet. The identity key's name
+ * and image are its own signed profile (BRC-248 §2), kept pinned in
+ * `identityProfiles`. A BAP identity an earlier release published from the
+ * same master is a fallback label; its BAP keys derive exactly as 1Sat / Yours
+ * wallets derive them. This record holds custody.
  */
 export type ManagedPublicIdentity = {
   /** Master public key. */
@@ -37,23 +57,24 @@ export type ManagedPublicIdentity = {
   signer: 'wallet' | 'imported'
   /** BRC-78 ciphertext sealed to this wallet account. Never public export. */
   sealedKey?: string
-  /** BAP ID, once this wallet has published the identity. */
+  /** BAP ID, once this wallet has published a BAP identity from this master. */
   published?: string
 }
 export type PublicIdentityRow = Omit<ManagedPublicIdentity, 'sealedKey'> & {
   bapId: string
+  /** What peers see for this key: its own profile, else its published BAP profile. */
+  profile: IssuerProfile | null
+  /** The BAP identity this master published, for its key-chain maintenance. */
   identity: IssuerIdentity | null
 }
-/** Signing material for new issuance under the selected identity. */
+/** Signing material for new issuance under the selected identity (BRC-247). */
 export type IssuanceSigner = {
-  /** Master key of the selected identity, as the approval showed it. */
-  selected: string
-  /** Current BAP signing key: Sigma signer and `issuer` on the asset. */
+  /** The selected identity key: the Sigma BRC-77 signer and `issuer` on the asset. */
   identityKey: string
   rootKeyHex: string
-  bapId: string
+  /** Its published BAP identity, for the keys that stamped under earlier drafts; BAP keys never stamp. */
   identity: IssuerIdentity | null
-  /** Earlier signing keys and the master, which may have issued this identity's tokens. */
+  /** BAP keys of this identity that stamped its tokens under earlier drafts of BRC-247. */
   priorKeys: string[]
 }
 type Store = {
@@ -62,6 +83,8 @@ type Store = {
   chain: 'main' | 'test'
   selected: string
   identities: ManagedPublicIdentity[]
+  /** The user chose to issue new assets without a BRC-247 stamp. */
+  unsigned?: true
   /** Master key whose published identity this wallet presents to peers. */
   presented?: string
   /** When `presented` last changed; the identity card's statement time. */
@@ -184,15 +207,17 @@ function validateStore(raw: unknown, active: StoreScope): Store {
   if (store.presentedAt !== undefined && !presentedAt) throw new Error('Invalid presented identity time.')
   if (
     store.presented !== undefined &&
-    (!presentedAt || !identities.some((row) => row.identityKey === store.presented && row.published))
+    (!presentedAt ||
+      (store.presented !== store.owner && !identities.some((row) => row.identityKey === store.presented)))
   )
-    throw new Error('Presented identity is not published by this wallet.')
+    throw new Error('Presented identity is not controlled by this wallet.')
   return {
     version: 2,
     owner: store.owner,
     chain: store.chain,
     selected: store.selected,
     identities,
+    ...(store.unsigned === true ? { unsigned: true as const } : {}),
     ...(store.presented !== undefined ? { presented: store.presented } : {}),
     ...(presentedAt ? { presentedAt } : {}),
   }
@@ -287,6 +312,14 @@ function rowsOf(store: Store): ManagedPublicIdentity[] {
     ? store.identities
     : [{ identityKey: store.owner, signer: 'wallet' as const }, ...store.identities]
 }
+/**
+ * The label for a key this wallet controls: its own signed profile, else the
+ * BAP identity it published. Null when it has neither, or only a revoked one.
+ */
+function ownProfile(chain: ActiveWallet['chain'], row: ManagedPublicIdentity): IssuerProfile | null {
+  return identityKeyProfile(chain, row.identityKey, row.published ? issuerIdentityFor(chain, row.published) : null)
+}
+
 export function listPublicIdentities(runtime: WalletRuntime | null): PublicIdentityRow[] {
   const active = activeOrThrow(runtime)
   const store = read(active)
@@ -295,30 +328,28 @@ export function listPublicIdentities(runtime: WalletRuntime | null): PublicIdent
     return {
       ...row,
       bapId: bapIdOf(active, store.owner, record),
+      profile: ownProfile(active.chain, record),
       identity: row.published ? issuerIdentityFor(active.chain, row.published) : null,
     }
   })
 }
-export type AccountProfile = { bapId: string; name: string; image?: IssuerIdentityImage }
+export type AccountProfile = { id: string; name: string; image?: IssuerIdentityImage }
 
 /**
  * The profile a vault account shows in the wallet switcher: the identity it
- * presents, else its own key's published identity. Reads any account's store
- * without unlocking it; null when nothing verified is published.
+ * presents. Reads any account's store without unlocking it; null when it
+ * presents none.
  */
 export function accountProfile(account: StoreScope): AccountProfile | null {
-  const identity = presentedIdentityOfAccount(account)
-  return identity
-    ? { bapId: identity.bapId, name: identity.name, ...(identity.image ? { image: identity.image } : {}) }
-    : null
+  const profile = presentedProfileOfAccount(account)
+  return profile ? { id: profile.id, name: profile.name, ...(profile.image ? { image: profile.image } : {}) } : null
 }
 
-/** The verified identity a vault account presents, read from its own store without unlocking it. */
-export function presentedIdentityOfAccount(account: StoreScope): IssuerIdentity | null {
+/** The profile a vault account presents, read from its own store without unlocking it. */
+export function presentedProfileOfAccount(account: StoreScope): IssuerProfile | null {
   try {
     const row = presentedRow(read(account), account.chain)
-    const identity = row?.published ? issuerIdentityFor(account.chain, row.published) : null
-    return identity && !identity.revoked ? identity : null
+    return row ? ownProfile(account.chain, row) : null
   } catch {
     return null
   }
@@ -326,6 +357,14 @@ export function presentedIdentityOfAccount(account: StoreScope): IssuerIdentity 
 
 export function selectedPublicIdentityKey(runtime: WalletRuntime | null): string {
   return read(activeOrThrow(runtime)).selected
+}
+/** Whether new assets carry a BRC-247 stamp by the selected identity key (the default). */
+export function signsIssuance(runtime: WalletRuntime | null): boolean {
+  return read(activeOrThrow(runtime)).unsigned !== true
+}
+export function setSignsIssuance(runtime: WalletRuntime, signs: boolean) {
+  const { unsigned: _unsigned, ...store } = read(activeOrThrow(runtime))
+  write(runtime, signs ? store : { ...store, unsigned: true })
 }
 export function importIssuerPrivateKey(runtime: WalletRuntime, value: string): string {
   const active = activeOrThrow(runtime)
@@ -389,6 +428,37 @@ export function recordPublishedIdentity(
   autoPresent(runtime)
   return identity
 }
+
+/**
+ * Sign and keep `identityKey`'s own profile (BRC-248 §2): its master
+ * certifies the name, bio and image about itself. Nothing touches the chain.
+ * The new profile is strictly later than the one it replaces, so every peer
+ * that sees both keeps this one.
+ */
+export async function saveIdentityProfile(
+  runtime: WalletRuntime,
+  identityKey: string,
+  fields: IssuerIdentityFields,
+  image: IssuerIdentityImage | null,
+): Promise<IssuerProfile> {
+  const active = activeOrThrow(runtime)
+  const store = read(active)
+  const row = rowFor(store, identityKey)
+  const prior = identityProfileFor(active.chain, row.identityKey)
+  const floor = prior ? Date.parse(prior.issuedAt) + 1 : 0
+  const signed = await signIdentityProfile({
+    master: masterOf(active, store.owner, row),
+    fields,
+    image,
+    issuedAt: new Date(Math.max(Date.now(), floor)).toISOString(),
+  })
+  if (!runtimeIsCurrent(runtime)) throw new Error('Wallet changed; retry on the selected account.')
+  if (!rememberIdentityProfile(active.chain, signed, { pin: true }))
+    throw new Error('Could not save the profile. No changes were committed.')
+  autoPresent(runtime)
+  announce()
+  return ownProfile(active.chain, row)!
+}
 export function selectPublicIdentity(runtime: WalletRuntime, identityKey: string) {
   const active = activeOrThrow(runtime)
   const store = read(active)
@@ -416,12 +486,13 @@ function nextPresentedAt(previous: string | undefined): string {
   return new Date(Math.max(Date.now(), floor)).toISOString()
 }
 /**
- * Every published identity is shared; there is no opt-out. Which one: the one
- * chosen with `presentPublicIdentity`, else the wallet's own, else an imported
- * one. A revoked identity is never shared.
+ * Every identity with a profile is shared; there is no opt-out. Which one: the
+ * one chosen with `presentPublicIdentity`, else the wallet's own, else an
+ * imported one. A key whose only profile is a revoked BAP identity is never
+ * shared.
  */
 function presentedRow(store: Store, chain: ActiveWallet['chain']): ManagedPublicIdentity | null {
-  const live = (row: ManagedPublicIdentity) => !!row.published && !issuerIdentityFor(chain, row.published)?.revoked
+  const live = (row: ManagedPublicIdentity) => !!ownProfile(chain, row)
   const rows = rowsOf(store)
   return (
     rows.find((row) => row.identityKey === store.presented && live(row)) ??
@@ -447,42 +518,94 @@ export function presentedPublicIdentityKey(runtime: WalletRuntime | null): strin
   const active = activeOrThrow(runtime)
   return presentedRow(read(active), active.chain)?.identityKey ?? null
 }
-/** Choose which published identity contacts see. */
+/** Choose which identity contacts see. */
 export function presentPublicIdentity(runtime: WalletRuntime, identityKey: string) {
-  const store = read(activeOrThrow(runtime))
+  const active = activeOrThrow(runtime)
+  const store = read(active)
   const key = normalizeIssuerIdentityKey(identityKey)
-  if (!rowsOf(store).some((row) => row.identityKey === key && row.published))
-    throw new Error('Publish this identity before presenting it.')
+  const row = rowsOf(store).find((entry) => entry.identityKey === key)
+  if (!row || !ownProfile(active.chain, row)) throw new Error('Add a profile to this identity before presenting it.')
   if (store.presented === key) return
   write(runtime, { ...store, presented: key!, presentedAt: nextPresentedAt(store.presentedAt) })
 }
+
+/**
+ * The package peers receive for a key this wallet controls: its own profile,
+ * plus its live BAP identity when both fit `budget`.
+ */
+function ownIdentityPackage(
+  chain: ActiveWallet['chain'],
+  row: ManagedPublicIdentity,
+  budget?: number,
+): IdentityKeyPackage | null {
+  const bap = row.published ? issuerIdentityFor(chain, row.published) : null
+  const bapPkg = bap && !bap.revoked ? issuerIdentityPackage(chain, bap.bapId) : null
+  return identityKeyPackage(
+    row.identityKey,
+    {
+      profile: identityProfileRecord(chain, row.identityKey),
+      bap: bapPkg ? { bapId: bapPkg.bapId, beefB64: bapPkg.beefB64 } : null,
+    },
+    budget,
+  )
+}
+
 export type PresentedIdentityMaterial =
   | {
       kind: 'presented'
       issuedAt: string
-      pkg: IssuerIdentityPackage
-      identity: IssuerIdentity
+      /** The presented identity key; its master countersigns when it is not the wallet key. */
+      identityKey: string
+      pkg: IdentityKeyPackage
+      profile: IssuerProfile
       signingKey: PrivateKey
     }
   | { kind: 'withdrawn'; issuedAt: string }
-/** What this wallet's identity card says now; null before it ever presented one. */
-export function presentedIdentityMaterial(runtime: WalletRuntime): PresentedIdentityMaterial | null {
+/**
+ * What this wallet's identity card says now; null before it ever presented
+ * one. The package stays within `packageBudget` serialized bytes.
+ */
+export function presentedIdentityMaterial(
+  runtime: WalletRuntime,
+  opts?: { packageBudget?: number },
+): PresentedIdentityMaterial | null {
   autoPresent(runtime)
   const active = activeOrThrow(runtime)
   const store = read(active)
   if (!store.presentedAt) return null
   if (!store.presented) return { kind: 'withdrawn', issuedAt: store.presentedAt }
   const row = rowFor(store, store.presented)
-  const pkg = row.published ? issuerIdentityPackage(active.chain, row.published) : null
-  const identity = row.published ? issuerIdentityFor(active.chain, row.published) : null
-  if (!pkg || !identity || identity.revoked) return null
+  const profile = ownProfile(active.chain, row)
+  const pkg = ownIdentityPackage(active.chain, row, opts?.packageBudget)
+  if (!profile || !pkg) return null
   return {
     kind: 'presented',
     issuedAt: store.presentedAt,
+    identityKey: row.identityKey,
     pkg,
-    identity,
-    signingKey: currentIssuerSigningKey(masterOf(active, store.owner, row), identity),
+    profile,
+    signingKey: masterOf(active, store.owner, row),
   }
+}
+
+export type PresentedBapMaterial =
+  | { kind: 'ready'; identity: IssuerIdentity; signingKey: PrivateKey }
+  | { kind: 'none' }
+  | { kind: 'revoked'; identity: IssuerIdentity }
+/**
+ * The BAP identity behind the presented key and its current BAP signing key,
+ * for servers that sign as that BAP identity.
+ */
+export function presentedBapMaterial(runtime: WalletRuntime): PresentedBapMaterial {
+  autoPresent(runtime)
+  const active = activeOrThrow(runtime)
+  const store = read(active)
+  if (!store.presented) return { kind: 'none' }
+  const row = rowFor(store, store.presented)
+  const identity = row.published ? issuerIdentityFor(active.chain, row.published) : null
+  if (!identity) return { kind: 'none' }
+  if (identity.revoked) return { kind: 'revoked', identity }
+  return { kind: 'ready', identity, signingKey: currentIssuerSigningKey(masterOf(active, store.owner, row), identity) }
 }
 /**
  * `identity-<seq>` of the presented identity, current or retired, so a key
@@ -502,26 +625,54 @@ export function presentedIdentityKeyAt(
   if (row.published !== bapId) return null
   return bapKey(masterOf(active, store.owner, row), seq)
 }
-/** Sealed keys plus the identity packages they publish. */
+/** Sealed keys plus the profiles and BAP packages they publish. */
 export function exportPublicIdentityBackup(runtime: WalletRuntime): string {
   const active = activeOrThrow(runtime)
   const store = read(active)
   const packages: Record<string, IssuerIdentityPackage> = {}
+  const profiles: Record<string, IdentityProfileRecord> = {}
   for (const row of rowsOf(store)) {
     const pkg = row.published ? issuerIdentityPackage(active.chain, row.published) : null
     if (pkg) packages[pkg.bapId] = pkg
+    const profile = identityProfileRecord(active.chain, row.identityKey)
+    if (profile) profiles[row.identityKey] = profile
   }
-  return JSON.stringify({ kind: BACKUP_KIND, ...store, packages }, null, 2)
+  return JSON.stringify({ kind: BACKUP_KIND, ...store, packages, profiles }, null, 2)
 }
-export function restorePublicIdentityBackup(runtime: WalletRuntime, raw: unknown) {
+
+/** Profiles in a backup that verify for a key the restored store controls. */
+async function restoreProfiles(
+  chain: ActiveWallet['chain'],
+  controlled: ReadonlySet<string>,
+  raw: unknown,
+): Promise<void> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+  for (const [identityKey, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!controlled.has(identityKey)) continue
+    const record = entry as { certificate?: unknown; image?: PackageImage }
+    const certificate = parseProfileCertificate(record?.certificate)
+    const verified = certificate
+      ? await verifyIdentityProfile(identityKey, certificate, record.image ? [record.image] : [])
+      : null
+    if (verified) rememberIdentityProfile(chain, verified, { pin: true })
+  }
+}
+
+export async function restorePublicIdentityBackup(runtime: WalletRuntime, raw: unknown): Promise<void> {
   const active = activeOrThrow(runtime)
-  const backup = raw as { kind?: unknown; packages?: unknown }
+  const backup = raw as { kind?: unknown; packages?: unknown; profiles?: unknown }
   if (backup?.kind !== BACKUP_KIND) throw new Error('Not a public identity backup.')
   const restored = validateStore(raw, active)
   const packages =
     backup.packages && typeof backup.packages === 'object' && !Array.isArray(backup.packages)
       ? (backup.packages as Record<string, unknown>)
       : {}
+  await restoreProfiles(
+    active.chain,
+    new Set([restored.owner, ...restored.identities.map((row) => row.identityKey)]),
+    backup.profiles,
+  )
+  if (!runtimeIsCurrent(runtime)) throw new Error('Wallet changed; retry on the selected account.')
   const existing = read(active)
   // Keep identities absent from this backup; never delete a newly imported key.
   const byKey = new Map(existing.identities.map((row) => [row.identityKey, row]))
@@ -558,10 +709,44 @@ export function publishedIdentityForIssuer(
   }
 }
 /**
- * Attribution shown for an asset: the BAP ID its signed tape names, judged
- * against the stored package at the asset's height; otherwise, for an asset
- * signed directly by a master key this wallet holds, that key's identity.
- * Null when the asset names no identity or the store is unreadable.
+ * `identityKeyProfile`, where keys this wallet controls count their published
+ * BAP identity as linked, since this wallet holds both keys.
+ */
+function profileForKey(
+  chain: ActiveWallet['chain'],
+  identityKey: string,
+  ownBapId: string | undefined,
+  stampBap?: IssuerIdentity,
+): IssuerProfile | null {
+  return identityKeyProfile(
+    chain,
+    identityKey,
+    stampBap ?? (ownBapId ? issuerIdentityFor(chain, ownBapId) : undefined),
+  )
+}
+
+/** The label a key shows, for this wallet's own keys and any peer whose profile it holds. */
+export function issuerProfileForKey(runtime: WalletRuntime | null, identityKey: string): IssuerProfile | null {
+  if (!runtime || !runtimeIsCurrent(runtime)) return null
+  const active = runtime.instance
+  const key = normalizeIssuerIdentityKey(identityKey)
+  if (!key) return null
+  try {
+    const own = rowsOf(read(active)).find((row) => row.identityKey === key)
+    return own ? ownProfile(active.chain, own) : profileForKey(active.chain, key, undefined)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Attribution shown for an asset (BRC-247, BRC-248). A stamp by an identity
+ * key is labelled by that key's own signed profile, else its linked BAP
+ * profile. A stamp from an earlier draft names a BAP ID and is signed by a BAP
+ * key: it is judged against the stored package at the asset's height, then
+ * belongs to the identity key that BAP identity links and takes that key's
+ * label. This wallet's own identities count as linked: it holds both keys.
+ * Null when nothing labels the asset or the store is unreadable.
  */
 export function displayIssuerAttribution(
   runtime: WalletRuntime | null,
@@ -579,22 +764,32 @@ export function issuerAttributionResolver(
 ): (asset: { issuer: string; bapId?: string; origin?: string }) => IssuerAttribution | null {
   if (!runtime || !runtimeIsCurrent(runtime)) return () => null
   const active = runtime.instance
-  let published: Map<string, string> | undefined
+  let own: { byKey: Map<string, string>; byBap: Map<string, string> } | undefined
+  const ownRows = () => {
+    if (own) return own
+    const rows = rowsOf(read(active)).flatMap((row) => (row.published ? [[row.identityKey, row.published] as const] : []))
+    own = { byKey: new Map(rows), byBap: new Map(rows.map(([key, bapId]) => [bapId, key])) }
+    return own
+  }
   const memo = new Map<string, IssuerAttribution | null>()
   const judge = (asset: { issuer: string; bapId?: string; origin?: string }): IssuerAttribution | null => {
-    if (asset.bapId)
-      return issuerAttribution(active.chain, {
+    const issuer = normalizeIssuerIdentityKey(asset.issuer)
+    if (!issuer) return null
+    if (asset.bapId) {
+      const verdict = bapStampVerdict(active.chain, {
         bapId: asset.bapId,
-        signer: asset.issuer,
+        signer: issuer,
         minedHeight: asset.origin ? retainedMinedHeight(asset.origin) : undefined,
       })
-    published ??= new Map(
-      rowsOf(read(active)).flatMap((row) => (row.published ? [[row.identityKey, row.published] as const] : [])),
-    )
-    const issuer = normalizeIssuerIdentityKey(asset.issuer)
-    const bapId = issuer ? published.get(issuer) : undefined
-    const identity = bapId ? issuerIdentityFor(active.chain, bapId) : null
-    return identity ? { kind: 'verified', identity } : null
+      if (verdict?.kind !== 'verified') return verdict
+      const identityKey = ownRows().byBap.get(verdict.identity.bapId) ?? linkedIdentityKey(verdict.identity)
+      const profile = identityKey ? profileForKey(active.chain, identityKey, undefined, verdict.identity) : null
+      return identityKey && profile
+        ? { kind: 'verified', identityKey, profile }
+        : { kind: 'unconfirmed', bapId: verdict.identity.bapId, reason: 'not-linked' }
+    }
+    const profile = profileForKey(active.chain, issuer, ownRows().byKey.get(issuer))
+    return profile ? { kind: 'verified', identityKey: issuer, profile } : null
   }
   return (asset) => {
     const key = asset.bapId ? `${asset.issuer}|${asset.bapId}|${asset.origin ?? ''}` : asset.issuer
@@ -618,7 +813,17 @@ export function issuerTrustResolver(runtime: WalletRuntime | null): IssuerTrust 
     storedIdentities: () => {
       if (!runtime || !runtimeIsCurrent(runtime)) return []
       try {
-        return storedIssuerIdentities(runtime.instance.chain)
+        const chain = runtime.instance.chain
+        const profiles = storedIdentityProfiles(chain)
+        const keyed = new Set(profiles.map((p) => p.identityKey))
+        // A BAP identity linked to a key with its own profile labels nothing on its own.
+        const bap = storedIssuerIdentities(chain).filter(
+          (i) => !i.links.some((link) => keyed.has(link.identityKey)),
+        )
+        return [
+          ...profiles.map((p) => ({ id: p.identityKey, name: p.name })),
+          ...bap.map((i) => ({ id: i.bapId, name: i.name })),
+        ]
       } catch {
         return []
       }
@@ -626,12 +831,12 @@ export function issuerTrustResolver(runtime: WalletRuntime | null): IssuerTrust 
   })
 }
 
-export function displayIssuerIdentity(
+export function displayIssuerProfile(
   runtime: WalletRuntime | null,
   asset: { issuer: string; bapId?: string; origin?: string },
-): IssuerIdentity | null {
+): IssuerProfile | null {
   const attribution = displayIssuerAttribution(runtime, asset)
-  return attribution?.kind === 'verified' ? attribution.identity : null
+  return attribution?.kind === 'verified' ? attribution.profile : null
 }
 export function issuanceSigner(runtime: WalletRuntime, expectedKey?: string): IssuanceSigner {
   const active = activeOrThrow(runtime)
@@ -640,27 +845,11 @@ export function issuanceSigner(runtime: WalletRuntime, expectedKey?: string): Is
     throw new Error('Issuer identity changed after approval; approve again.')
   const row = rowFor(store, store.selected)
   const master = masterOf(active, store.owner, row)
-  const bapId = bapIdOf(active, store.owner, row)
   const identity = publishedIdentityForIssuer(runtime, store.selected)
-  if (!identity || identity.revoked)
-    return {
-      selected: store.selected,
-      identityKey: store.selected,
-      rootKeyHex: master.toHex().padStart(64, '0'),
-      bapId,
-      identity: null,
-      priorKeys: [],
-    }
-  const signing = currentIssuerSigningKey(master, identity)
   return {
-    selected: store.selected,
-    identityKey: signing.toPublicKey().toString(),
-    rootKeyHex: signing.toHex().padStart(64, '0'),
-    bapId,
-    identity,
-    priorKeys: [
-      store.selected,
-      ...identity.keys.slice(0, -1).map((key) => bapKey(master, key.seq).toPublicKey().toString()),
-    ],
+    identityKey: store.selected,
+    rootKeyHex: master.toHex().padStart(64, '0'),
+    identity: identity && !identity.revoked ? identity : null,
+    priorKeys: identity ? identity.keys.map((key) => bapKey(master, key.seq).toPublicKey().toString()) : [],
   }
 }

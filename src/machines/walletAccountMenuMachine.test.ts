@@ -39,50 +39,34 @@ describe('wallet account menu', () => {
     expect(openProfile).not.toHaveBeenCalled()
   })
 
-  it('moving an account here: a released one switches at once, a held one asks first', () => {
+  it('moving an account here never asks: it reports each phase, then switches to it', () => {
     const { actor } = start()
-    actor.send({ type: 'TAKE', accountIndex: 3 })
-    expect(actor.getSnapshot().value).toBe('taking')
-    actor.send({ type: 'HELD_ELSEWHERE' })
-    expect(actor.getSnapshot().value).toBe('confirmTakeover')
-    actor.send({ type: 'CANCEL' })
-    expect(actor.getSnapshot().value).toBe('open')
-    expect(actor.getSnapshot().context.targetAccountIndex).toBeNull()
-
-    actor.send({ type: 'TAKE', accountIndex: 3 })
-    actor.send({ type: 'HELD_ELSEWHERE' })
-    actor.send({ type: 'CONFIRM' })
-    expect(actor.getSnapshot().value).toBe('taking')
-    expect(actor.getSnapshot().context.force).toBe(true)
-    actor.send({ type: 'TAKEN' })
+    actor.send({ type: 'MOVE', accountIndex: 3 })
+    expect(actor.getSnapshot().value).toBe('moving')
+    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: 3, movePhase: 'reading' })
+    actor.send({ type: 'MOVE_PHASE', phase: 'awaitingAccept' })
+    expect(actor.getSnapshot().context.movePhase).toBe('awaitingAccept')
+    actor.send({ type: 'MOVE_PHASE', phase: 'forcing' })
+    actor.send({ type: 'MOVED' })
     expect(actor.getSnapshot().value).toBe('switching')
-    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: 3, force: false })
+    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: 3, movePhase: null })
     actor.send({ type: 'SWITCHED' })
     expect(actor.getSnapshot().value).toBe('closed')
   })
 
-  it('releasing the active account confirms, then leaves for a held account or a new one', () => {
+  it('a failed move returns to the open menu with its reason and no target', () => {
     const { actor } = start()
-    actor.send({ type: 'RELEASE' })
-    expect(actor.getSnapshot().value).toBe('confirmRelease')
-    actor.send({ type: 'CONFIRM' })
-    expect(actor.getSnapshot().value).toBe('releasing')
-    actor.send({ type: 'RELEASED', nextAccountIndex: 1 })
-    expect(actor.getSnapshot().value).toBe('switching')
-    expect(actor.getSnapshot().context.targetAccountIndex).toBe(1)
+    actor.send({ type: 'MOVE', accountIndex: 3 })
+    actor.send({ type: 'FAIL', error: 'offline' })
+    expect(actor.getSnapshot().value).toBe('open')
+    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: null, movePhase: null, error: 'offline' })
+  })
 
-    const second = start().actor
-    second.send({ type: 'RELEASE' })
-    second.send({ type: 'CONFIRM' })
-    second.send({ type: 'RELEASED', nextAccountIndex: null })
-    expect(second.getSnapshot().value).toBe('creating')
-
-    const failed = start().actor
-    failed.send({ type: 'RELEASE' })
-    failed.send({ type: 'CONFIRM' })
-    failed.send({ type: 'FAIL', error: 'offline' })
-    expect(failed.getSnapshot().value).toBe('open')
-    expect(failed.getSnapshot().context.error).toBe('offline')
+  it('has no manual release or take-over step', () => {
+    const { actor } = start()
+    for (const type of ['RELEASE', 'TAKE', 'CONFIRM', 'HELD_ELSEWHERE'] as const) {
+      expect(actor.getSnapshot().can({ type } as never)).toBe(false)
+    }
   })
 
   it('a displaced account is left from an idle menu, never mid-switch', () => {

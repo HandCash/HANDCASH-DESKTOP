@@ -40,7 +40,7 @@ import {
 } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { approveWalletPayment } from './permissions'
-import { presentedIdentityKeyAt, presentedIdentityMaterial } from './publicIdentities'
+import { presentedBapMaterial, presentedIdentityKeyAt } from './publicIdentities'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import type { ActiveWallet } from './session'
 import { serverWalletRecoverMachine } from './serverWalletRecoverMachine'
@@ -365,10 +365,12 @@ export type DevSignEligibility =
   | { kind: 'refused'; reason: DevKeyRefusal; message: string }
 
 function signEligibility(runtime: WalletRuntime, keys: DevKeyRecord[]): DevSignEligibility {
-  const material = presentedIdentityMaterial(runtime)
-  if (!material) return { kind: 'refused', reason: 'not-published', message: 'Publish an identity to sign.' }
-  if (material.kind === 'withdrawn') {
-    return { kind: 'refused', reason: 'revoked', message: 'This account no longer shares an identity.' }
+  const material = presentedBapMaterial(runtime)
+  if (material.kind === 'none') {
+    return { kind: 'refused', reason: 'not-published', message: 'Publish the shared profile to BAP to sign.' }
+  }
+  if (material.kind === 'revoked') {
+    return { kind: 'refused', reason: 'revoked', message: 'The shared profile’s BAP identity is revoked.' }
   }
   const current = material.identity.keys.at(-1)
   if (!current || current.seq < 1) {
@@ -393,9 +395,8 @@ export function devSignEligibility(runtime: WalletRuntime): DevSignEligibility {
 }
 
 function signOf(runtime: WalletRuntime, material: Extract<DevKeyMaterial, { kind: 'bap' }>) {
-  const presented = presentedIdentityMaterial(runtime)
-  const identity =
-    presented?.kind === 'presented' && presented.identity.bapId === material.bapId ? presented.identity : null
+  const presented = presentedBapMaterial(runtime)
+  const identity = presented.kind !== 'none' && presented.identity.bapId === material.bapId ? presented.identity : null
   const active = !!identity && !identity.revoked && identity.keys.at(-1)?.seq === material.seq
   return {
     bapId: material.bapId,

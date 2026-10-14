@@ -14,14 +14,17 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
-import { bapAliasScript, bapIdScript } from './bapRecords'
-import { bapIdentityFixture, beefOf, recordTx, rotationTx } from './issuerIdentity.fixture'
+import { bapAliasScript, bapIdScript, bapKey, BAP_REVOKED_ADDRESS } from './bapRecords'
+import { identityLinkScript, identityLinkScriptMaxBytes, parseIdentityLink } from './identityLink'
+import { bapIdentityFixture, beefOf, linkTx, recordTx, rotationTx } from './issuerIdentity.fixture'
 import {
+  bapStampVerdict,
   holdIssuerIdentities,
-  issuerAttribution,
   issuerIdentityFor,
   issuerIdentityForSigner,
   issuerIdentityPackage,
+  linkedIdentityKey,
+  linkedIssuerIdentity,
   rememberConfirmedIssuerIdentityPackage,
   rememberIssuerIdentityPackage,
   resetIssuerIdentitiesForTests,
@@ -32,6 +35,7 @@ import {
   issuerIdentityImage,
   issuerIdentityPackageBeef,
   issuerProfile,
+  verifyIssuerIdentityPackage,
 } from './issuerIdentity'
 import { MAX_ENVELOPE_IDENTITIES, rememberDeliveredIdentities } from './issuerIdentityDelivery'
 import { appendIssuerMetadata, issuerMetadataFromScript } from './issuerMetadata'
@@ -49,12 +53,16 @@ beforeEach(() => {
 })
 
 describe('item reference', () => {
-  it('writes and reads the BAP ID; legacy self-asserted profiles are ignored', () => {
+  it('writes only the identity key, still reads an earlier draft\'s BAP ID, and ignores self-asserted profiles', () => {
     const lock = '76a914' + '00'.repeat(20) + '88ac'
     const issuer = pub(PrivateKey.fromRandom())
     const { bapId } = bapIdentityFixture({})
-    expect(issuerMetadataFromScript(appendIssuerMetadata(lock, issuer, bapId))).toEqual({ issuer, bapId })
-    expect(() => appendIssuerMetadata(lock, issuer, 'not-a-bap-id')).toThrow(/BAP ID/)
+    expect(issuerMetadataFromScript(appendIssuerMetadata(lock, issuer))).toEqual({ issuer })
+    const earlier = new Script()
+    earlier.writeOpCode(0x6a)
+    for (const field of ['1PuQa7K62MiKCtssSLKy1kh56WWU7MtUR5', 'SET', 'issuer', issuer, 'bapId', bapId])
+      earlier.writeBin(Utils.toArray(field, 'utf8'))
+    expect(issuerMetadataFromScript(lock + earlier.toHex())).toEqual({ issuer, bapId })
     const legacy = new Script()
     legacy.writeOpCode(0x6a)
     for (const field of ['1PuQa7K62MiKCtssSLKy1kh56WWU7MtUR5', 'SET', 'issuer', issuer, 'issuerProfile', '{"displayName":"x"}'])
@@ -102,19 +110,19 @@ describe('store once', () => {
   it('tells an unconfirmed stamp apart from one the package refuses', () => {
     const f = bapIdentityFixture({ aliasHeight: 900_010 })
     const stranger = pub(PrivateKey.fromRandom())
-    expect(issuerAttribution('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight: 900_015 })).toEqual({
+    expect(bapStampVerdict('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight: 900_015 })).toEqual({
       kind: 'unconfirmed',
       bapId: f.bapId,
       reason: 'no-package',
     })
-    expect(issuerAttribution('main', { bapId: 'not-a-bap-id', signer: stranger })).toBeNull()
+    expect(bapStampVerdict('main', { bapId: 'not-a-bap-id', signer: stranger })).toBeNull()
     const { tx } = rotationTx(f, 1, { name: 'Studio II', minedHeight: 900_020 })
     rememberIssuerIdentityPackage('main', buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(tx)])!)
-    const old = (minedHeight?: number) => issuerAttribution('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight })
+    const old = (minedHeight?: number) => bapStampVerdict('main', { bapId: f.bapId, signer: pub(f.signer), minedHeight })
     expect(old(900_015)).toMatchObject({ kind: 'verified', identity: { name: 'Studio II' } })
     expect(old(900_030)).toEqual({ kind: 'refused', bapId: f.bapId, reason: 'retired-key' })
     expect(old()).toEqual({ kind: 'unconfirmed', bapId: f.bapId, reason: 'height-unknown' })
-    expect(issuerAttribution('main', { bapId: f.bapId, signer: stranger, minedHeight: 900_015 })).toEqual({
+    expect(bapStampVerdict('main', { bapId: f.bapId, signer: stranger, minedHeight: 900_015 })).toEqual({
       kind: 'unconfirmed',
       bapId: f.bapId,
       reason: 'unknown-key',
@@ -227,5 +235,147 @@ describe('peer packages', () => {
     const packages = Array.from({ length: MAX_ENVELOPE_IDENTITIES + 1 }, (_, i) => bapIdentityFixture({ name: `V${i}` }).pkg)
     expect(await rememberDeliveredIdentities('main', [{ v: 2 }, ...packages], null)).toBe(MAX_ENVELOPE_IDENTITIES - 1)
     expect(await rememberDeliveredIdentities('main', 'nope', null)).toBe(0)
+  })
+
+  it('keeps a v2 package only when its BAP profile links the identity key it names', async () => {
+    const f = bapIdentityFixture({ name: 'Linked', linked: true })
+    const v2 = (identityKey: string) => ({ v: 2, identityKey, bap: { bapId: f.pkg.bapId, beefB64: f.pkg.beefB64 } })
+    expect(await rememberDeliveredIdentities('main', [v2(pub(PrivateKey.fromRandom()))], null)).toBe(0)
+    expect(issuerIdentityPackage('main', f.bapId)).toBeNull()
+    expect(await rememberDeliveredIdentities('main', [v2(pub(f.master))], null)).toBe(1)
+    expect(linkedIssuerIdentity('main', pub(f.master))?.name).toBe('Linked')
+  })
+})
+
+describe('identity links', () => {
+  it('verifies both signatures over the input the record names, and nothing else', () => {
+    const f = bapIdentityFixture({})
+    const tx = linkTx(f, f.master)
+    expect(parseIdentityLink(tx, 0)).toEqual({
+      kind: 'link',
+      identityKey: pub(f.master),
+      bapId: f.bapId,
+      bapSigner: f.signer.toAddress(),
+    })
+    const elsewhere = linkTx(f, f.master)
+    tx.inputs[0]!.sourceTXID = elsewhere.inputs[0]!.sourceTXID ?? elsewhere.inputs[0]!.sourceTransaction!.id('hex')
+    tx.inputs[0]!.sourceTransaction = undefined
+    expect(parseIdentityLink(tx, 0)).toBeNull()
+  })
+
+  it('never quotes a link script smaller than one it signs', () => {
+    for (let i = 0; i < 16; i++) {
+      const f = bapIdentityFixture({})
+      const identityKey = pub(f.master)
+      const script = identityLinkScript({
+        kind: 'link',
+        identityKey,
+        bapId: f.bapId,
+        signers: [
+          { kind: 'identity', key: f.master },
+          { kind: 'bap', key: f.signer },
+        ],
+        anchor: { txid: 'ab'.repeat(32), vout: i },
+      })
+      expect(script.length / 2).toBeLessThanOrEqual(identityLinkScriptMaxBytes(identityKey, f.bapId, f.signer.toAddress()))
+    }
+  })
+
+  it('refuses a link one party signed alone, or signed for another identity key', () => {
+    const f = bapIdentityFixture({})
+    const anchor = { txid: 'ab'.repeat(32), vout: 0 }
+    const identityKey = pub(f.master)
+    expect(() =>
+      identityLinkScript({ kind: 'link', identityKey, bapId: f.bapId, signers: [{ kind: 'bap', key: f.signer }], anchor }),
+    ).toThrow(/identity key then a BAP key/)
+    expect(() =>
+      identityLinkScript({
+        kind: 'link',
+        identityKey,
+        bapId: f.bapId,
+        signers: [
+          { kind: 'identity', key: PrivateKey.fromRandom() },
+          { kind: 'bap', key: f.signer },
+        ],
+        anchor,
+      }),
+    ).toThrow(/another identity key/)
+  })
+
+  it('labels the identity key a package links, and only that key', () => {
+    const f = bapIdentityFixture({ name: 'Studio', linked: true, aliasHeight: 900_010, linkHeight: 900_011 })
+    rememberIssuerIdentityPackage('main', f.pkg)
+    expect(issuerIdentityFor('main', f.bapId)?.links).toEqual([
+      { identityKey: pub(f.master), txid: f.linkTx!.id('hex'), minedHeight: 900_011 },
+    ])
+    expect(linkedIssuerIdentity('main', pub(f.master))?.name).toBe('Studio')
+    expect(linkedIssuerIdentity('main', pub(PrivateKey.fromRandom()))).toBeNull()
+    expect(linkedIdentityKey(issuerIdentityFor('main', f.bapId)!)).toBe(pub(f.master))
+  })
+
+  it('ignores a link by a key outside the chain or one retired before the link was mined', () => {
+    const f = bapIdentityFixture({ aliasHeight: 900_010 })
+    const rotation = rotationTx(f, 1, { minedHeight: 900_020 })
+    const stranger = linkTx(f, f.master, { bapSeq: 7, minedHeight: 900_021 })
+    const retired = linkTx(f, f.master, { bapSeq: 1, minedHeight: 900_030 })
+    const pkg = buildIssuerIdentityPackage(f.bapId, [...f.beefs, beefOf(rotation.tx), beefOf(stranger), beefOf(retired)])!
+    expect(verifyIssuerIdentityPackage(pkg)?.links).toEqual([])
+    const before = linkTx(f, f.master, { bapSeq: 1, minedHeight: 900_015 })
+    const kept = buildIssuerIdentityPackage(f.bapId, [...f.beefs, beefOf(rotation.tx), beefOf(before)])!
+    expect(verifyIssuerIdentityPackage(kept)?.links.map((link) => link.txid)).toEqual([before.id('hex')])
+  })
+
+  it('an unlink by either party ends links mined at or before it; an older unlink does not', () => {
+    const f = bapIdentityFixture({ aliasHeight: 900_010, linked: true, linkHeight: 900_020 })
+    const byIdentity = linkTx(f, f.master, {
+      kind: 'unlink',
+      signers: [{ kind: 'identity', key: f.master }],
+      minedHeight: 900_030,
+    })
+    const byBap = linkTx(f, f.master, { kind: 'unlink', signers: [{ kind: 'bap', key: f.signer }], minedHeight: 900_040 })
+    const older = linkTx(f, f.master, { kind: 'unlink', signers: [{ kind: 'bap', key: f.signer }], minedHeight: 900_015 })
+    const links = (...txs: ReturnType<typeof linkTx>[]) =>
+      verifyIssuerIdentityPackage(buildIssuerIdentityPackage(f.bapId, [...f.beefs, ...txs.map((tx) => beefOf(tx))])!)?.links
+    expect(links(byIdentity)).toEqual([])
+    expect(links(byBap)).toEqual([])
+    expect(links(older)).toHaveLength(1)
+    const pkg = buildIssuerIdentityPackage(f.bapId, [...f.beefs, beefOf(byIdentity)])!
+    const relinked = buildIssuerIdentityPackage(f.bapId, [
+      issuerIdentityPackageBeef(pkg),
+      beefOf(linkTx(f, f.master, { minedHeight: 900_050 })),
+    ])!
+    expect(verifyIssuerIdentityPackage(relinked)?.links.map((link) => link.minedHeight)).toEqual([900_050])
+  })
+
+  it('a revocation ends every link', () => {
+    const f = bapIdentityFixture({ aliasHeight: 900_010, linked: true, linkHeight: 900_020 })
+    const revoke = recordTx([bapIdScript({ bapId: f.bapId, address: BAP_REVOKED_ADDRESS, signer: bapKey(f.master, 0) })], 900_030)
+    const identity = verifyIssuerIdentityPackage(buildIssuerIdentityPackage(f.bapId, [...f.beefs, beefOf(revoke)])!)
+    expect(identity?.revoked).toBeDefined()
+    expect(identity?.links).toEqual([])
+  })
+
+  it('the latest mined link wins across profiles; a tie names none; an unmined link stands in only alone', () => {
+    const identity = PrivateKey.fromRandom()
+    const older = bapIdentityFixture({ name: 'Older', identity, linkHeight: 900_010 })
+    const newer = bapIdentityFixture({ name: 'Newer', identity, linkHeight: 900_020 })
+    rememberIssuerIdentityPackage('main', older.pkg)
+    rememberIssuerIdentityPackage('main', newer.pkg)
+    expect(linkedIssuerIdentity('main', pub(identity))?.name).toBe('Newer')
+    rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: 'Pending', identity }).pkg)
+    expect(linkedIssuerIdentity('main', pub(identity))?.name).toBe('Newer')
+    rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: 'Tied', identity, linkHeight: 900_020 }).pkg)
+    expect(linkedIssuerIdentity('main', pub(identity))).toBeNull()
+    const alone = PrivateKey.fromRandom()
+    rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: 'Unmined', identity: alone }).pkg)
+    expect(linkedIssuerIdentity('main', pub(alone))?.name).toBe('Unmined')
+  })
+
+  it('a list naming an identity key holds the profile that links it', () => {
+    const f = bapIdentityFixture({ name: 'Issuer', linked: true })
+    rememberIssuerIdentityPackage('main', f.pkg)
+    holdIssuerIdentities('main', 'items:account-0', [pub(f.master)])
+    for (let i = 0; i < 12; i++) rememberIssuerIdentityPackage('main', bapIdentityFixture({ name: `Peer ${i}` }).pkg)
+    expect(issuerIdentityPackage('main', f.bapId)).not.toBeNull()
   })
 })

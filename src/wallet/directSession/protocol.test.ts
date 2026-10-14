@@ -1,87 +1,101 @@
 import { PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import {
-  decodeSessionOffer,
-  encodeSessionOffer,
-  isGlobalUnicastIpv6,
-  isImmediateConnectFailure,
-  sessionConnector,
-  signSessionHello,
-  signSessionOffer,
-  signSessionWelcome,
-  verifySessionHello,
+  SESSION_OFFER_TTL_MS,
+  acceptableSessionSdp,
+  decodeSessionSignal,
+  encodeSessionSignal,
+  isLegacySessionOffer,
+  keepsOwnOfferOnGlare,
+  signSessionSignal,
+  verifySessionAnswer,
   verifySessionOffer,
-  verifySessionWelcome,
-  weDial,
 } from './protocol'
+import { fakeSdp } from './fakeRtc.fixture'
 
-const HOST = '2001:db8:1::10'
+const FP_A = Array.from({ length: 32 }, () => 'AA').join(':')
+const FP_B = Array.from({ length: 32 }, () => 'BB').join(':')
 
 function pair() {
-  const dialer = PrivateKey.fromRandom()
-  const listener = PrivateKey.fromRandom()
-  const dialerKey = dialer.toPublicKey().toString().toLowerCase()
-  const listenerKey = listener.toPublicKey().toString().toLowerCase()
-  const lower = sessionConnector(dialerKey, listenerKey)
-  const dialerIsLower = lower === dialerKey
-  return {
-    dialer,
-    listener,
-    dialerKey,
-    listenerKey,
-    connector: dialerIsLower ? dialer : listener,
-    acceptor: dialerIsLower ? listener : dialer,
-    connectorKey: dialerIsLower ? dialerKey : listenerKey,
-    acceptorKey: dialerIsLower ? listenerKey : dialerKey,
-  }
+  const a = PrivateKey.fromRandom()
+  const b = PrivateKey.fromRandom()
+  return { a, b, aKey: a.toPublicKey().toString(), bKey: b.toPublicKey().toString() }
 }
 
-describe('session upgrade protocol', () => {
-  it('accepts global unicast and rejects link-local, ULA, and loopback', () => {
-    expect(isGlobalUnicastIpv6('2001:db8::1')).toBe(true)
-    expect(isGlobalUnicastIpv6('fe80::1')).toBe(false)
-    expect(isGlobalUnicastIpv6('fd00::1')).toBe(false)
-    expect(isGlobalUnicastIpv6('::1')).toBe(false)
+describe('BRC-246 v2 signalling', () => {
+  it('verifies an offer only for its named recipient, before expiry', () => {
+    const { a, b, aKey, bKey } = pair()
+    const now = 1_000_000
+    const offer = signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: bKey, toDevice: '', sdp: fakeSdp(FP_A), now })
+    expect(verifySessionOffer(offer, { identityKey: bKey, device: 'phone', now })).toBe(true)
+    expect(verifySessionOffer(offer, { identityKey: aKey, device: 'phone', now })).toBe(false)
+    expect(verifySessionOffer(offer, { identityKey: bKey, device: 'phone', now: now + SESSION_OFFER_TTL_MS + 6_000 })).toBe(false)
+    expect(b).toBeTruthy()
   })
 
-  it('the lower identity key is the only dialer', () => {
-    const { connectorKey, acceptorKey } = pair()
-    expect(weDial(connectorKey, acceptorKey)).toBe(true)
-    expect(weDial(acceptorKey, connectorKey)).toBe(false)
+  it('binds the whole description: an altered fingerprint breaks the signature', () => {
+    const { a, bKey } = pair()
+    const offer = signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: bKey, toDevice: '', sdp: fakeSdp(FP_A) })
+    const swapped = { ...offer, sdp: fakeSdp(FP_B) }
+    expect(verifySessionOffer(swapped, { identityKey: bKey, device: 'phone' })).toBe(false)
   })
 
-  it('binds an offer to one counterparty and rejects a replay to someone else', () => {
-    const { connector, acceptorKey, connectorKey } = pair()
-    const offer = signSessionOffer({
-      rootKeyHex: connector.toHex(),
-      counterparty: acceptorKey,
-      host: HOST,
-      port: 3342,
+  it('refuses descriptions with media, a second fingerprint, or no data channel', () => {
+    expect(acceptableSessionSdp(fakeSdp(FP_A))).toBe(true)
+    expect(acceptableSessionSdp(fakeSdp(FP_A, ['m=audio 9 UDP/TLS/RTP/SAVPF 111']))).toBe(false)
+    expect(acceptableSessionSdp(fakeSdp(FP_A, [`a=fingerprint:sha-256 ${FP_B}`]))).toBe(false)
+    expect(acceptableSessionSdp(fakeSdp(FP_A).replace('sha-256', 'sha-1'))).toBe(false)
+    expect(acceptableSessionSdp(fakeSdp(FP_A).replace('webrtc-datachannel', 'other'))).toBe(false)
+  })
+
+  it('addresses installs of one identity by device and never itself', () => {
+    const { a, aKey } = pair()
+    expect(() => signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: aKey, toDevice: '', sdp: fakeSdp(FP_A) })).toThrow(/another install/)
+    expect(() => signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: aKey, toDevice: 'mac', sdp: fakeSdp(FP_A) })).toThrow(/another install/)
+    const offer = signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: aKey, toDevice: 'phone', sdp: fakeSdp(FP_A) })
+    expect(verifySessionOffer(offer, { identityKey: aKey, device: 'phone' })).toBe(true)
+    expect(verifySessionOffer(offer, { identityKey: aKey, device: 'mac' })).toBe(false)
+    expect(verifySessionOffer(offer, { identityKey: aKey, device: 'tablet' })).toBe(false)
+  })
+
+  it('binds an answer to its offer nonce, devices and expiry', () => {
+    const { a, b, aKey, bKey } = pair()
+    const offer = signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: bKey, toDevice: '', sdp: fakeSdp(FP_A) })
+    const answer = signSessionSignal({
+      rootKeyHex: b.toHex(), t: 'answer', fromDevice: 'phone', to: aKey, toDevice: 'mac',
+      offerNonce: offer.nonce, sdp: fakeSdp(FP_B), expiresAt: offer.expiresAt,
     })
-    expect(verifySessionOffer(offer, { localIdentity: acceptorKey })).toBe(true)
-    expect(verifySessionOffer(offer, { localIdentity: connectorKey })).toBe(false)
-    expect(decodeSessionOffer(encodeSessionOffer(offer))?.host).toBe(HOST)
-  })
-
-  it('completes a mutual handshake and rejects a welcome for a different hello', () => {
-    const { connector, acceptor, connectorKey, acceptorKey } = pair()
-    const offer = signSessionOffer({
-      rootKeyHex: acceptor.toHex(),
-      counterparty: connectorKey,
-      host: HOST,
-      port: 9,
+    expect(verifySessionAnswer(answer, { offer })).toBe(true)
+    const other = signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: bKey, toDevice: '', sdp: fakeSdp(FP_A) })
+    expect(verifySessionAnswer(answer, { offer: other })).toBe(false)
+    const wrongDevice = signSessionSignal({
+      rootKeyHex: b.toHex(), t: 'answer', fromDevice: 'phone', to: aKey, toDevice: 'laptop',
+      offerNonce: offer.nonce, sdp: fakeSdp(FP_B), expiresAt: offer.expiresAt,
     })
-    const hello = signSessionHello({ rootKeyHex: connector.toHex(), offer })
-    expect(verifySessionHello(hello, { localIdentity: acceptorKey })).toBe(true)
-    const welcome = signSessionWelcome({ rootKeyHex: acceptor.toHex(), hello })
-    expect(verifySessionWelcome(welcome, { hello })).toBe(true)
-    const other = signSessionHello({ rootKeyHex: connector.toHex(), offer })
-    expect(verifySessionWelcome(welcome, { hello: other })).toBe(false)
+    expect(verifySessionAnswer(wrongDevice, { offer })).toBe(false)
+    const impostor = signSessionSignal({
+      rootKeyHex: PrivateKey.fromRandom().toHex(), t: 'answer', fromDevice: 'phone', to: aKey, toDevice: 'mac',
+      offerNonce: offer.nonce, sdp: fakeSdp(FP_B), expiresAt: offer.expiresAt,
+    })
+    expect(verifySessionAnswer(impostor, { offer })).toBe(false)
   })
 
-  it('treats refusal and unreachable as immediate, not a timeout', () => {
-    expect(isImmediateConnectFailure('ECONNREFUSED')).toBe(true)
-    expect(isImmediateConnectFailure('ENETUNREACH')).toBe(true)
-    expect(isImmediateConnectFailure('ETIMEDOUT')).toBe(false)
+  it('round-trips through the wire form and rejects malformed bodies', () => {
+    const { a, bKey } = pair()
+    const offer = signSessionSignal({ rootKeyHex: a.toHex(), t: 'offer', fromDevice: 'mac', to: bKey, toDevice: '', sdp: fakeSdp(FP_A) })
+    expect(decodeSessionSignal(encodeSessionSignal(offer))).toEqual(offer)
+    expect(decodeSessionSignal('{"v":1}')).toBeNull()
+    expect(decodeSessionSignal(encodeSessionSignal({ ...offer, fromDevice: 'bad device' }))).toBeNull()
+    expect(decodeSessionSignal('not json')).toBeNull()
+  })
+
+  it('resolves glare by identity then device, and recognises v1 offers', () => {
+    const low = { identityKey: '02' + '00'.repeat(32), device: 'z' }
+    const high = { identityKey: '03' + '00'.repeat(32), device: 'a' }
+    expect(keepsOwnOfferOnGlare(low, high)).toBe(true)
+    expect(keepsOwnOfferOnGlare(high, low)).toBe(false)
+    expect(keepsOwnOfferOnGlare({ ...low, device: 'a' }, low)).toBe(true)
+    expect(isLegacySessionOffer('handcash-session-offer:{"v":1}')).toBe(true)
+    expect(isLegacySessionOffer('hello')).toBe(false)
   })
 })

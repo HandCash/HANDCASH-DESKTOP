@@ -11,7 +11,7 @@ function tipTx(seed: string, amount: bigint): Transaction {
   tx.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(ADDR) })
   tx.addOutput({
     satoshis: 1,
-    lockingScript: LockingScript.fromHex(buildBsv21ValueLock({ tokenId: TOKEN, amount, address: ADDR })),
+    lockingScript: LockingScript.fromHex(buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN, amount, address: ADDR })),
   })
   return tx
 }

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { bapFingerprint, identityNameSkeleton, issuerTrustFrom, type VerifiedIssuer } from './issuerTrust'
+import { profileFingerprint, identityNameSkeleton, issuerTrustFrom, type VerifiedIssuer } from './issuerTrust'
 
 const HANDCASH: VerifiedIssuer = { bapId: 'BapHandCashListed1111', name: 'HandCash' }
 
-function trust(stored: Array<{ bapId: string; name: string }> = [], listed: VerifiedIssuer[] = [HANDCASH]) {
+function trust(stored: Array<{ id: string; name: string }> = [], listed: VerifiedIssuer[] = [HANDCASH]) {
   return issuerTrustFrom({
     listed: (bapId) => listed.find((e) => e.bapId === bapId) ?? null,
     listedEntries: listed,
@@ -41,10 +41,10 @@ describe('issuerTrustFrom', () => {
 
   it('counts other stored identities that read the same', () => {
     const t = trust([
-      { bapId: 'BapA', name: 'Gallery' },
-      { bapId: 'BapB', name: 'GALLERY' },
-      { bapId: 'BapC', name: 'Ga11ery' },
-      { bapId: 'BapD', name: 'Studio' },
+      { id: 'BapA', name: 'Gallery' },
+      { id: 'BapB', name: 'GALLERY' },
+      { id: 'BapC', name: 'Ga11ery' },
+      { id: 'BapD', name: 'Studio' },
     ])
     expect(t.caution('BapA', 'Gallery')).toEqual({ kind: 'shared-name', others: 2 })
     expect(t.caution('BapD', 'Studio')).toBeNull()
@@ -52,22 +52,22 @@ describe('issuerTrustFrom', () => {
 
   it('prefers the listed imitation over a shared name', () => {
     const t = trust([
-      { bapId: 'BapX', name: 'HandCash' },
-      { bapId: 'BapY', name: 'handcash' },
+      { id: 'BapX', name: 'HandCash' },
+      { id: 'BapY', name: 'handcash' },
     ])
     expect(t.caution('BapX', 'HandCash')?.kind).toBe('imitates-listed')
   })
 
   it('has nothing to say about a blank name', () => {
-    expect(trust([{ bapId: 'BapA', name: '' }, { bapId: 'BapB', name: '' }]).caution('BapA', '...')).toBeNull()
+    expect(trust([{ id: 'BapA', name: '' }, { id: 'BapB', name: '' }]).caution('BapA', '...')).toBeNull()
   })
 })
 
-describe('bapFingerprint', () => {
+describe('profileFingerprint', () => {
   it('is deterministic, mirrored and shortens long IDs', () => {
     const id = '1AbCdEfGhJkLmNpQrStUvW'
-    const a = bapFingerprint(id)
-    expect(bapFingerprint(id)).toEqual(a)
+    const a = profileFingerprint(id)
+    expect(profileFingerprint(id)).toEqual(a)
     expect(a.short).toBe('1AbCdE…tUvW')
     expect(a.cells).toHaveLength(25)
     expect(a.hue).toBeGreaterThanOrEqual(0)
@@ -77,13 +77,13 @@ describe('bapFingerprint', () => {
   })
 
   it('draws different identicons for IDs that share their short form', () => {
-    const a = bapFingerprint('1AbCdEaaaaaaaaaaaatUvW')
-    const b = bapFingerprint('1AbCdEbbbbbbbbbbbbtUvW')
+    const a = profileFingerprint('1AbCdEaaaaaaaaaaaatUvW')
+    const b = profileFingerprint('1AbCdEbbbbbbbbbbbbtUvW')
     expect(a.short).toBe(b.short)
     expect({ hue: a.hue, cells: a.cells }).not.toEqual({ hue: b.hue, cells: b.cells })
   })
 
   it('keeps short IDs whole', () => {
-    expect(bapFingerprint('ShortId').short).toBe('ShortId')
+    expect(profileFingerprint('ShortId').short).toBe('ShortId')
   })
 })

@@ -156,15 +156,15 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
             {peer?.kind === 'presented' ? (
               <>
                 <PeerIdentityLine peer={peer} />
-                {peer.identity.description ? (
-                  <p className="friend-identity-bio">{peer.identity.description}</p>
+                {peer.profile.description ? (
+                  <p className="friend-identity-bio">{peer.profile.description}</p>
                 ) : null}
               </>
             ) : peer ? (
-              <p className="friend-identity-bio">Their identity package is no longer on this device. Ask again to see it.</p>
+              <p className="friend-identity-bio">Their profile is no longer on this device. Ask again to see it.</p>
             ) : (
               <p className="friend-identity-bio">
-                Not shared with you. A contact can send a signed BAP identity card from their wallet.
+                Not shared with you. A contact can send a signed identity card from their wallet.
               </p>
             )}
             {card.error ? (

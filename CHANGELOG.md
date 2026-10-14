@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.3.550] - 2026-10-14
+
+### Added
+- **Moving a wallet between your devices is automatic.** Choosing a wallet marked "On another device" loads it. There is no prompt and no Move button. HandCash asks the device holding it directly, over a device-to-device link: a WebRTC data channel between installs of the same vault, set up through messagebox box `vault-link` (draft BRC-246 v2). That device releases the wallet without asking. The request goes through messagebox box `account-holding` only when no link opens within 8 seconds or a frame is not acknowledged. If the holder does not answer within 10 seconds, it is treated as offline and this device takes the wallet. A request that cannot be sent fails the move; it never takes the wallet. Every unlocked install serves the link and the wallets it holds every 5 seconds.
+- **A device that loses a wallet hands over its unsynced changes.** It stops spending and exports what changed since its last backup, leaving out transactions it never broadcast. It cancels those transactions and settles their payee notices, then sends the rest, sealed, to the new holder. The new holder merges before acknowledging. The old device never uploads its older backup over the newer one.
+- **Holding is re-checked after every gap.** After a start, lock, switch, reconnect or a pause over 15 seconds, the first spend reads the wallet's holder record once. If the host is unreachable, the wallet keeps its local holding and pays.
+- **Profiles belong to the identity key, not to BAP.** Each key has its own signed profile: a name, an optional bio and an optional photo. Saving it is free and creates no transaction. The account menu, identity cards, chat, Collect, item and token details, app approvals and the `displayName` apps receive all use it. A linked BAP profile is used only for a key with no profile of its own. Publishing, linking and rotating a BAP identity moved into the row menu.
+  - Identity cards are now version 2. Older builds refuse them; version 1 cards are still accepted.
+  - Item and token deliveries carry the profile. The encrypted identity backup includes profiles.
+- `npm run brc:map`: Jev maps every wallet feature to its BRC and lists the features that need one (`docs/brc-coverage.md`).
+
+### Changed
+- **Tokens are P2P-FT, the current BRC-162 format.** A new deploy is `OP_0 <amount> OP_2DROP <DAG-CBOR {sym, icon}> OP_DROP <P2PKH>` at output 0, with the icon embedded as `[mediaType, bytes]` (up to 96 KB). A deploy at any other output is refused. Specified as draft BRC-251 ([PR #320](https://github.com/bsv-blockchain/BRCs/pull/320)).
+  - Tokens held in the earlier draft format (tagged "BSV21") still show, send, burn and list, and stay in that format. A single send never mixes the two formats. They show as "P2P-FT (old format)"; JSON tokens show as "BSV-21 JSON (legacy)".
+  - A token whose deploy requires processing HandCash does not support (`req`) gets no balance, cannot be sent and is refused on receive.
+- **Token balances count only verified outputs.** Outputs whose lineage walk has not finished show as "+N checking" and are sent last.
+- **Every token input on a lineage walk is script-validated**, mined or not. A merkle path inside a BEEF no longer stands in for the check. Logs `[fungible-settle] <id> proof done Nms — beef NB lineage NB walked N tx scripts N`.
+- **Signed mints no longer need a published BAP profile.** The identity key signs and attributes issuance (BRC-247, BRC-248).
+- Direct sessions use the WebView's WebRTC in both shells. The Electron direct-session server and the Android native plugin are removed.
+
+### Fixed
+- **A lost or broken device can no longer strand a payment you sent.** The recipient needs your notice to find a BRC-29 payment.
+  - The notice is now recorded with the payment (`notice: pending → delivered`), so it travels with the history backup and with handovers.
+  - It is also written to a small sealed notice journal that syncs within seconds of signing, so a device lost before the 45-second backup still leaves it recoverable.
+  - After unlock, restore, Pair Sync or a handover merge, owed notices are sent again. Delivered ones are skipped, including ones another device delivered.
+- **The payment notice queue never drops a notice.** It used to give up after 20 attempts and keep only 50 rows. Retries now back off to once an hour. Activity shows "Notifying recipient…", or "Recipient not notified — needs attention" once delivery stalls.
+- **After a restore, Send waits for recovery** (at most 20 seconds). A payment the journal has but the restored history lost resumes as the same transaction, and its coins are locked before the next send. Its notice goes out only after the miner accepts it. A rejected payment is cancelled and its notice settled.
+- **Payees see one card per payment.** An unacknowledged payment message used to add a card on every poll.
+- **The item and token notice queue follows the same rules.** It never drops a row, backs off to once an hour and runs one retry per account.
+- **A wallet holding a single coin can do a signed mint.** The anchor's change was unspendable by the mint.
+- Device links: two devices offering at once no longer replace a working channel, and a repeated offer is answered once.
+- Triage reads token proofs, resumed and held payments, notices settled at handover and stalled item notices.
+
 ## [1.3.549] - 2026-10-10
 
 ### Fixed

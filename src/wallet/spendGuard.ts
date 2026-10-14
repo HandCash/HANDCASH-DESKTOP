@@ -19,6 +19,7 @@ import {
   peekProvenConfirmedSpendable,
 } from './session'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
+import { ensureHoldingFresh } from './accountMove'
 import { activeAccountSpendRefusal } from './vaultAccountHolding'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 import {
@@ -246,6 +247,18 @@ export function runExclusiveSpend<T>(
   }
   return runExclusiveSpendCoordinated(
     async () => {
+      if (runtime) assertRuntimeCurrent(runtime)
+      throwIfAborted()
+      // After a restore, earlier payments are reconciled before the next one.
+      if (!opts?.background) {
+        const { awaitPaymentReconcile } = await import('./paymentReconcile')
+        await awaitPaymentReconcile(runtime)
+      }
+      throwIfAborted()
+      // The one network read BRC-249 allows here: after a gap, before the first spend.
+      await ensureHoldingFresh(runtime?.instance ?? null)
+      const takenMeanwhile = activeAccountSpendRefusal(runtime?.instance ?? null)
+      if (takenMeanwhile) throw new Error(takenMeanwhile)
       if (runtime) assertRuntimeCurrent(runtime)
       throwIfAborted()
       await reviewAfterAbandonedSpend()

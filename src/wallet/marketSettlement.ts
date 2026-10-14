@@ -61,7 +61,7 @@ import {
   clearAwaitingVerification,
   clearVerificationProgress,
 } from './verificationProgress'
-import { buildBsv21ValueLock, decodeBsv21Binary } from './token'
+import { buildBsv21ValueLock, bsv21TipLayout, decodeBsv21Binary } from './token'
 import {
   MARKET_ITEM_VOUT,
   MARKET_OFFER_DEPOSIT_SATS,
@@ -549,12 +549,18 @@ export function validateMarketSettlementOutputs(args: {
       throw new Error('BSV-21 settlement requires a 162 amount')
     }
   }
+  const listedPoint = normalizeOutpoint(args.listing.outpoint).split('.')
   const buyerItemLock =
     args.listing.assetType === 'bsv21'
       ? buildBsv21ValueLock({
           tokenId: args.listing.origin,
           amount: BigInt(args.listing.amt!),
           address: buyerAddress,
+          layout: bsv21TipLayout({
+            lockingScript: (
+              args.tx.inputs[0]?.sourceTransaction ?? args.beef.findTxid(listedPoint[0]!)?.tx
+            )?.outputs[Number(listedPoint[1])]?.lockingScript?.toHex(),
+          }),
         })
       : buyerChangeLock
   const sellerLock = new P2PKH().lock(args.listing.payTo).toHex()
@@ -755,15 +761,8 @@ export async function executeMarketPurchase(
       listingMeta.sym?.trim() ||
       listingMeta.name?.trim() ||
       'Market item'
-    const buyerLock = isBsv21
-      ? buildBsv21ValueLock({
-          tokenId: listing.origin,
-          amount: BigInt(listing.amt!),
-          address: active.address,
-        })
-      : new P2PKH().lock(active.address).toHex()
     const sellerLock = new P2PKH().lock(listing.payTo).toHex()
-    const [itemTxid] = normalizeOutpoint(listing.outpoint).split('.')
+    const [itemTxid, itemVout] = normalizeOutpoint(listing.outpoint).split('.')
     const [offerTxid] = normalizeOutpoint(listing.offerOutpoint).split('.')
     if (itemTxid !== offerTxid) {
       throw new Error('Market item and offer token must come from the same listing transaction')
@@ -775,6 +774,18 @@ export async function executeMarketPurchase(
         needProof: true,
         allowUnprovenRawTx: true,
       })).toBinary()
+    const buyerLock = isBsv21
+      ? buildBsv21ValueLock({
+          tokenId: listing.origin,
+          amount: BigInt(listing.amt!),
+          address: active.address,
+          layout: bsv21TipLayout({
+            lockingScript: Beef.fromBinary(inputBeef)
+              .findTxid(itemTxid!)
+              ?.tx?.outputs[Number(itemVout)]?.lockingScript?.toHex(),
+          }),
+        })
+      : new P2PKH().lock(active.address).toHex()
     let created: Awaited<ReturnType<typeof active.wallet.createAction>>
     try {
       created = await active.wallet.createAction({

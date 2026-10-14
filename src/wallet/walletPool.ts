@@ -136,6 +136,15 @@ export function markWarmWalletSelected(unit: WarmWalletUnit): void {
   if (entry) entry.usedAt = ++clock
 }
 
+/**
+ * Another install holds this account now: stop its monitor so nothing here
+ * broadcasts for it, and forget the unit.
+ */
+export function dropWarmAccount(identityKey: string): void {
+  const suffix = `:${identityKey.trim().toLowerCase()}`
+  for (const key of [...units.keys()]) if (key.toLowerCase().endsWith(suffix)) drop(key)
+}
+
 /** Lock / wipe: stop every unit's monitor and forget them all. */
 export function clearWarmWallets(): void {
   poolGeneration += 1

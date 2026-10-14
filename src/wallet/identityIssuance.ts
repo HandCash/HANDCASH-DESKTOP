@@ -15,13 +15,29 @@ import {
 } from './token/issuer'
 
 type Args = Parameters<typeof enrichCreateActionForBsv21Issuer>[1]
+
+/**
+ * Whether a new item or token carries a BRC-247 issuer stamp by the selected
+ * identity key. Unsigned is a valid asset (BRC-163, BRC-160): its content and
+ * balance do not depend on a maker, and the user may always choose it.
+ */
+export type IssuanceAttestation =
+  | { kind: 'signed'; identityKey: string; displayName?: string }
+  | { kind: 'unsigned'; reason: 'opted-out' }
+
 export function isIdentityIssuanceArgs(method: string, args: unknown): boolean {
   return (
     isBsv21IdentityMintArgs(method, args) || isItemIssuanceArgs(method, args)
   )
 }
 
-/** Standard 1Sat SDK anchor pattern: noSend anchor → vin-bound Sigma → sendWith. */
+/**
+ * Standard 1Sat SDK anchor pattern: noSend anchor → vin-bound Sigma → sendWith.
+ * The anchored action is `noSend` too: the Toolbox funds an action from a prior
+ * action's `noSendChange` only when that action is itself `noSend`, and a
+ * wallet whose one UTXO paid for the anchor holds nothing else. Once signed,
+ * `sendWithAnchor` queues both together; until then aborting releases both.
+ */
 export async function withSigmaAnchor(
   active: ActiveWallet,
   args: Args,
@@ -58,6 +74,8 @@ export async function withSigmaAnchor(
       'Issuer anchor output did not match the requested funding lock.',
     )
   rememberBeefBinary(anchor.txid, Array.from(anchor.tx))
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
   return {
     ...args,
     inputs: [
@@ -71,13 +89,25 @@ export async function withSigmaAnchor(
     options: {
       ...args.options,
       randomizeOutputs: false,
-      noSendChange: anchor.noSendChange,
-      knownTxids: [anchor.txid],
-      sendWith: [anchor.txid],
+      noSend: true,
+      noSendChange: [...strings(args.options?.noSendChange), ...(anchor.noSendChange ?? [])],
+      knownTxids: [...strings(args.options?.knownTxids), anchor.txid],
+      sendWith: undefined,
       trustSelf: 'known',
       acceptDelayedBroadcast: true,
     },
   }
+}
+
+/** Queue a signed `noSend` anchor and the transaction that spends it for broadcast, together. */
+export async function sendWithAnchor(active: ActiveWallet, anchorTxid: string, txid: string): Promise<void> {
+  const sent = await active.wallet.createAction({
+    description: 'Send issuer anchor',
+    options: { sendWith: [anchorTxid, txid], acceptDelayedBroadcast: true },
+  })
+  const { formatReviewActionsError, sendWithHasFailure } = await import('./actionReview')
+  if (sendWithHasFailure(sent.sendWithResults))
+    throw new Error(formatReviewActionsError({ sendWithResults: sent.sendWithResults, reviewActionResults: [] }))
 }
 
 export async function enrichIdentityIssuance(
@@ -88,23 +118,14 @@ export async function enrichIdentityIssuance(
   if (!runtimeIsCurrent(runtime))
     throw new Error('Wallet changed; approve again.')
   const active = runtime.instance
-  const isOrdinal = (out: NonNullable<Args['outputs']>[number]) =>
-    out.satoshis === 1 && out.basket?.trim().toLowerCase() === '1sat'
-  const nft =
-    isItemIssuanceArgs('createAction', args) && !!args.outputs?.some(isOrdinal)
+  const nft = isNftIssuance(args)
   if (!nft && !isBsv21IdentityMintArgs('createAction', args)) return args
-  const signer = signerWithIdentity(runtime, expectedIssuer)
+  const signer = issuanceSigner(runtime, expectedIssuer)
   const targets = (args.outputs ?? []).filter(
     (out) => (nft && isOrdinal(out)) || isBsv21SigmaDeployOutput(out),
   )
   // Validate new inscriptions before making a durable anchor transaction.
-  if (
-    nft &&
-    targets
-      .filter(isOrdinal)
-      .some((out) => !out.lockingScript || !parseOrdEnvelope(out.lockingScript))
-  )
-    throw new Error('A new collectable must contain a valid ord inscription.')
+  if (nft) assertValidInscriptions(args)
   const funded = targets.length ? await withSigmaAnchor(active, args) : args
   try {
     const signed = await signIssuance(runtime, funded, signer, nft, isOrdinal)
@@ -116,18 +137,51 @@ export async function enrichIdentityIssuance(
   }
 }
 
-type IdentitySigner = ReturnType<typeof issuanceSigner> & {
-  identity: NonNullable<ReturnType<typeof issuanceSigner>['identity']>
+/** Issue without a stamp: no anchor, no issuer tape, no issuer tags. */
+export async function prepareUnsignedIssuance(
+  runtime: WalletRuntime,
+  args: Args,
+): Promise<Args> {
+  if (!runtimeIsCurrent(runtime))
+    throw new Error('Wallet changed; approve again.')
+  if (isNftIssuance(args)) assertValidInscriptions(args)
+  const unclaimed: Args = { ...args, outputs: args.outputs?.map(withoutIssuerClaim) }
+  if (!isBsv21IdentityMintArgs('createAction', unclaimed)) return unclaimed
+  return enrichCreateActionForBsv21Issuer(runtime.instance, unclaimed, null)
 }
 
-function signerWithIdentity(runtime: WalletRuntime, expectedIssuer?: string): IdentitySigner {
-  const signer = issuanceSigner(runtime, expectedIssuer)
-  if (!signer.identity)
-    throw new Error(
-      'Publish your issuer identity under ID → Public identities before issuing assets.',
-    )
-  return signer as IdentitySigner
+/** BRC-247: an unstamped output names no issuer in its tags or remittance. */
+function withoutIssuerClaim(out: NonNullable<Args['outputs']>[number]): NonNullable<Args['outputs']>[number] {
+  const next = { ...out }
+  if (out.tags) next.tags = out.tags.filter(tag => !tag.trim().toLowerCase().startsWith('issuer:'))
+  if (out.customInstructions) {
+    try {
+      const body = JSON.parse(out.customInstructions) as unknown
+      if (body && typeof body === 'object' && !Array.isArray(body) && ('issuer' in body || 'bapId' in body)) {
+        const { issuer: _issuer, bapId: _bapId, ...rest } = body as Record<string, unknown>
+        next.customInstructions = JSON.stringify(rest)
+      }
+    } catch {
+      // Not JSON, so it carries no issuer field.
+    }
+  }
+  return next
 }
+
+function isOrdinal(out: NonNullable<Args['outputs']>[number]): boolean {
+  return out.satoshis === 1 && out.basket?.trim().toLowerCase() === '1sat'
+}
+
+function isNftIssuance(args: Args): boolean {
+  return isItemIssuanceArgs('createAction', args) && !!args.outputs?.some(isOrdinal)
+}
+
+function assertValidInscriptions(args: Args): void {
+  if ((args.outputs ?? []).filter(isOrdinal).some((out) => !out.lockingScript || !parseOrdEnvelope(out.lockingScript)))
+    throw new Error('A new collectable must contain a valid ord inscription.')
+}
+
+type IdentitySigner = ReturnType<typeof issuanceSigner>
 
 const anchors = new WeakMap<object, string>()
 
@@ -169,7 +223,7 @@ async function signIssuance(
   const active = runtime.instance
   // Selection/account can change while anchor creation waits. Never sign with
   // a different key from the one the user saw in the approval.
-  if (signerWithIdentity(runtime, signer.selected).identityKey !== signer.identityKey)
+  if (issuanceSigner(runtime, signer.identityKey).identityKey !== signer.identityKey)
     throw new Error('Issuer identity changed after approval; approve again.')
   const funded = await enrichCreateActionForBsv21Issuer(active, args, signer)
   if (!nft) return funded
@@ -187,11 +241,8 @@ async function signIssuance(
           throw new Error('Invalid item remittance.')
       }
       // Keep remittance compact (BRC-37 / reference client's 1,000-byte limit).
-      const customInstructions = JSON.stringify({
-        ...ci,
-        issuer: signer.identityKey,
-        bapId: signer.bapId,
-      })
+      const { bapId: _bapId, ...rest } = ci
+      const customInstructions = JSON.stringify({ ...rest, issuer: signer.identityKey })
       if (new TextEncoder().encode(customInstructions).length > 1000)
         throw new Error('Item remittance exceeds the BRC-100 size limit.')
       return {
@@ -204,11 +255,7 @@ async function signIssuance(
           `issuer:${signer.identityKey}`,
         ],
         lockingScript: sigmaSignDeployLockingScript({
-          lockingScriptHex: appendIssuerMetadata(
-            out.lockingScript!,
-            signer.identityKey,
-            signer.bapId,
-          ),
+          lockingScriptHex: appendIssuerMetadata(out.lockingScript!, signer.identityKey),
           fundTxid: match[1]!,
           fundVout: Number(match[2]),
           identityKeyHex: signer.rootKeyHex,
@@ -240,6 +287,12 @@ export async function finishIdentityIssuance(
     row.signableTransaction,
     args.inputs.map((input) => input.outpoint),
   )
+  const anchor = anchors.get(args)
+  if (anchor) {
+    await sendWithAnchor(active, anchor.split('.')[0]!, completed.txid)
+    anchors.delete(args)
+  }
   const { signableTransaction: _drop, ...rest } = row
-  return { ...rest, ...completed }
+  const { noSendChange: _sent, ...done } = completed as typeof completed & { noSendChange?: unknown }
+  return { ...rest, ...done }
 }

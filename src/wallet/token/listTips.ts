@@ -178,7 +178,7 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
   const sym = fromCi?.sym ?? decoded?.payload?.sym ?? tagValue(tags, 'sym:')
   const dec = fromCi?.dec ?? decoded?.payload?.dec ?? 0
   const icon =
-    iconOutpointFromPayload(decoded.payload?.icon, tokenId) ?? fromCi?.icon
+    iconOutpointFromPayload(decoded.payload, tokenId) ?? fromCi?.icon
   const maxN = Number(amt)
   const maxSupply =
     op === 'deploy+mint' && Number.isSafeInteger(maxN) && maxN > 0

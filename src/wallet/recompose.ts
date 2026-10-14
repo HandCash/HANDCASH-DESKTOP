@@ -200,6 +200,11 @@ async function runRecomposeBody(
     await yieldToUi()
     if (runtime) assertRuntimeCurrent(runtime)
     await inUiPhase('recompose-relist', () => relistCollectablesAfterLocalStateReplace())
+    if (runtime) {
+      // Started inside the region so no payment slips in before the hold exists.
+      const { reconcilePaymentsAfterRestore } = await import('./paymentReconcile')
+      void reconcilePaymentsAfterRestore(runtime)
+    }
     return { step, chain }
   })
   const { history, historyError } = fenced.step
@@ -412,6 +417,9 @@ function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced
         refreshActivityLedger(runtime, { full: localStateWasReplaced }),
       )
       if (!(await waitOut(shouldYieldChainIngestToSpend))) return
+      const { deliverOwedBrc29Notices } = await import('./pendingBrc29Outbox')
+      await inUiPhase('payment-notices', () => deliverOwedBrc29Notices(runtime))
+      if (!runtimeIsCurrent(runtime)) return
       const { syncCustodyJournal } = await import('./custodyJournalBackup')
       await inUiPhase('derived-journal', () => syncCustodyJournal(runtime.instance, 'recompose'))
       if (!runtimeIsCurrent(runtime)) return

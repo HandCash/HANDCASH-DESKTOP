@@ -476,7 +476,7 @@ function holdNamedIssuers(items: readonly Collectable[]): void {
     holdIssuerIdentities(
       peekAccountLocalKeyScope().chain,
       listCacheKey(),
-      items.map((item) => item.bapId),
+      items.flatMap((item) => [item.bapId, item.issuerAttested ? item.issuer : undefined]),
     )
   } catch {
     // No bound account: nothing was persisted for it either.

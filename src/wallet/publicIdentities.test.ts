@@ -27,7 +27,7 @@ vi.mock('./durableStorage', () => ({
 }))
 import {
   accountProfile,
-  displayIssuerIdentity,
+  displayIssuerProfile,
   exportPublicIdentityBackup,
   importIssuerPrivateKey,
   issuanceSigner,
@@ -38,13 +38,18 @@ import {
   recordPublishedIdentity,
   removePublicIdentity,
   restorePublicIdentityBackup,
+  saveIdentityProfile,
   selectedPublicIdentityKey,
   selectPublicIdentity,
+  setSignsIssuance,
+  signsIssuance,
 } from './publicIdentities'
 import { bapIdentityFixture, beefOf, recordTx, rotationTx } from './issuerIdentity.fixture'
 import { bapIdFor, bapIdScript, bapKey, BAP_REVOKED_ADDRESS } from './bapRecords'
 import { buildIssuerIdentityPackage, issuerIdentityPackageBeef } from './issuerIdentity'
 import { resetIssuerIdentitiesForTests } from './issuerIdentities'
+import { identityProfileFor, resetIdentityProfilesForTests } from './identityProfiles'
+import { parseIdentityKeyPackage, profileFromPackage } from './identityProfile'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
 const root = PrivateKey.fromHex('01'.padStart(64, '0'))
@@ -65,11 +70,12 @@ beforeEach(() => {
   state.writable = true
   state.active = active()
   resetIssuerIdentitiesForTests()
+  resetIdentityProfilesForTests()
 })
 describe('issuer custody', () => {
   it('always lists the wallet signer, encrypts imported keys and keeps exports free of secrets', () => {
     expect(listPublicIdentities(runtime())).toEqual([
-      { identityKey: rootId, signer: 'wallet', bapId: bapIdFor(root), identity: null },
+      { identityKey: rootId, signer: 'wallet', bapId: bapIdFor(root), profile: null, identity: null },
     ])
     const id = importIssuerPrivateKey(runtime(), imported.toWif())
     expect(id).toBe(importedId)
@@ -81,15 +87,15 @@ describe('issuer custody', () => {
     expect(issuanceSigner(runtime()).rootKeyHex).toBe(imported.toHex().padStart(64, '0'))
     expect(() => issuanceSigner(runtime(), rootId)).toThrow(/changed after approval/)
   })
-  it('keeps records account/network scoped and refuses a different wallet backup', () => {
+  it('keeps records account/network scoped and refuses a different wallet backup', async () => {
     importIssuerPrivateKey(runtime(), imported.toWif())
     const backup = JSON.parse(exportPublicIdentityBackup(runtime()))
     state.active = active(imported)
     expect(listPublicIdentities(runtime())).toHaveLength(1)
-    expect(() => restorePublicIdentityBackup(runtime(), backup)).toThrow()
+    await expect(restorePublicIdentityBackup(runtime(), backup)).rejects.toThrow()
     state.active = active(root, 'test')
     expect(listPublicIdentities(runtime())).toHaveLength(1)
-    expect(() => restorePublicIdentityBackup(runtime(), backup)).toThrow()
+    await expect(restorePublicIdentityBackup(runtime(), backup)).rejects.toThrow()
   })
   it('only controlled keys can be selected; removing a selected signer resets to the wallet', () => {
     expect(() => selectPublicIdentity(runtime(), importedId)).toThrow(/does not control/)
@@ -109,22 +115,20 @@ describe('issuer custody', () => {
   })
 })
 describe('published identity', () => {
-  it('issues with the current BAP signing key under the published BAP ID', () => {
+  it('issues with the identity key; a published profile only names it', () => {
     expect(issuanceSigner(runtime())).toMatchObject({ identity: null, identityKey: rootId, priorKeys: [] })
     const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
     recordPublishedIdentity(runtime(), rootId, f.pkg)
-    expect(issuanceSigner(runtime())).toMatchObject({
-      selected: rootId,
-      identityKey: pub(f.signer),
-      rootKeyHex: f.signer.toHex().padStart(64, '0'),
-      bapId: f.bapId,
-      identity: { bapId: f.bapId, name: 'Wallet studio' },
-      priorKeys: [rootId],
+    expect(issuanceSigner(runtime())).toEqual({
+      identityKey: rootId,
+      rootKeyHex: root.toHex().padStart(64, '0'),
+      identity: expect.objectContaining({ bapId: f.bapId, name: 'Wallet studio' }),
+      priorKeys: [pub(f.signer)],
     })
     expect(listPublicIdentities(runtime())[0]).toMatchObject({ published: f.bapId, bapId: f.bapId })
-    expect(displayIssuerIdentity(runtime(), { issuer: pub(f.signer), bapId: f.bapId })?.name).toBe('Wallet studio')
-    expect(displayIssuerIdentity(runtime(), { issuer: rootId })?.bapId).toBe(f.bapId)
-    expect(displayIssuerIdentity(runtime(), { issuer: importedId, bapId: f.bapId })).toBeNull()
+    expect(displayIssuerProfile(runtime(), { issuer: pub(f.signer), bapId: f.bapId })?.name).toBe('Wallet studio')
+    expect(displayIssuerProfile(runtime(), { issuer: rootId })).toMatchObject({ id: f.bapId, source: 'bap' })
+    expect(displayIssuerProfile(runtime(), { issuer: importedId, bapId: f.bapId })).toBeNull()
     expect(() => recordPublishedIdentity(runtime(), rootId, bapIdentityFixture({ master: imported }).pkg)).toThrow(
       /another key/,
     )
@@ -132,7 +136,7 @@ describe('published identity', () => {
       /does not control/,
     )
   })
-  it('after a rotation, signs with the next key and still accepts earlier keys for its own tokens', () => {
+  it('after a rotation, still signs with the identity key and accepts every BAP key for its own earlier tokens', () => {
     const f = bapIdentityFixture({ master: root, aliasHeight: 900_010 })
     recordPublishedIdentity(runtime(), rootId, f.pkg)
     const { tx, next } = rotationTx(f, 1, { minedHeight: 900_020 })
@@ -142,9 +146,9 @@ describe('published identity', () => {
       buildIssuerIdentityPackage(f.bapId, [issuerIdentityPackageBeef(f.pkg), beefOf(tx)], { preferAlias: tx.id('hex') })!,
     )
     expect(issuanceSigner(runtime())).toMatchObject({
-      identityKey: pub(next),
-      bapId: f.bapId,
-      priorKeys: [rootId, pub(bapKey(root, 1))],
+      identityKey: rootId,
+      identity: { bapId: f.bapId },
+      priorKeys: [pub(f.signer), pub(next)],
     })
   })
   it('a revoked identity cannot issue', () => {
@@ -159,7 +163,16 @@ describe('published identity', () => {
     )
     expect(issuanceSigner(runtime()).identity).toBeNull()
   })
-  it('a backup carries the identity packages, so a fresh device can issue under the same BAP ID', () => {
+  it('signing is on by default and the opt-out survives a reload', () => {
+    expect(signsIssuance(runtime())).toBe(true)
+    setSignsIssuance(runtime(), false)
+    expect(signsIssuance(runtime())).toBe(false)
+    importIssuerPrivateKey(runtime(), imported.toWif())
+    expect(signsIssuance(runtime())).toBe(false)
+    setSignsIssuance(runtime(), true)
+    expect(signsIssuance(runtime())).toBe(true)
+  })
+  it('a backup carries the identity packages, so a fresh device can issue under the same BAP ID', async () => {
     importIssuerPrivateKey(runtime(), imported.toWif())
     const f = bapIdentityFixture({ master: imported, name: 'Imported studio' })
     recordPublishedIdentity(runtime(), importedId, f.pkg)
@@ -167,15 +180,16 @@ describe('published identity', () => {
     expect(backup.packages[f.bapId]).toEqual(f.pkg)
     state.values.clear()
     resetIssuerIdentitiesForTests()
-    restorePublicIdentityBackup(runtime(), backup)
+    await restorePublicIdentityBackup(runtime(), backup)
     selectPublicIdentity(runtime(), importedId)
     expect(issuanceSigner(runtime())).toMatchObject({
-      identityKey: pub(f.signer),
+      identityKey: importedId,
+      rootKeyHex: imported.toHex().padStart(64, '0'),
       identity: { bapId: f.bapId, name: 'Imported studio' },
     })
     const corrupted = structuredClone(backup)
     corrupted.identities[0].sealedKey = 'AAAA'
-    expect(() => restorePublicIdentityBackup(runtime(), corrupted)).toThrow()
+    await expect(restorePublicIdentityBackup(runtime(), corrupted)).rejects.toThrow()
   })
   it('migrates v1 profile records to custody only', () => {
     const sealed = EncryptedMessage.encrypt(
@@ -217,16 +231,21 @@ describe('published identity', () => {
   })
 })
 describe('presented identity', () => {
-  it('shares a published identity automatically and signs with its current BAP key', () => {
+  it('shares a published BAP identity automatically, countersigned by the key it labels', () => {
     expect(presentedIdentityMaterial(runtime())).toBeNull()
     expect(presentedPublicIdentityKey(runtime())).toBeNull()
-    expect(() => presentPublicIdentity(runtime(), rootId)).toThrow(/Publish this identity/)
+    expect(() => presentPublicIdentity(runtime(), rootId)).toThrow(/Add a profile/)
     const f = bapIdentityFixture({ master: root, name: 'Wallet studio' })
     recordPublishedIdentity(runtime(), rootId, f.pkg)
     expect(presentedPublicIdentityKey(runtime())).toBe(rootId)
     const material = presentedIdentityMaterial(runtime())
-    expect(material).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId }, pkg: { bapId: f.bapId } })
-    expect(material?.kind === 'presented' && pub(material.signingKey)).toBe(pub(f.signer))
+    expect(material).toMatchObject({
+      kind: 'presented',
+      identityKey: rootId,
+      profile: { id: f.bapId, source: 'bap', name: 'Wallet studio' },
+      pkg: { identityKey: rootId, bap: { bapId: f.bapId } },
+    })
+    expect(material?.kind === 'presented' && pub(material.signingKey)).toBe(rootId)
     expect(presentedIdentityMaterial(runtime())?.issuedAt).toBe(material!.issuedAt)
   })
 
@@ -236,7 +255,7 @@ describe('presented identity', () => {
     const key = accountLocalKeyFor(storageRegistry.publicIdentities.key, { identityKey: rootId, accountIndex: 0, chain: 'main' })
     const { presented: _p, presentedAt: _at, ...unshared } = JSON.parse(state.values.get(key)!)
     state.values.set(key, JSON.stringify(unshared))
-    expect(presentedIdentityMaterial(runtime())).toMatchObject({ kind: 'presented', identity: { bapId: f.bapId } })
+    expect(presentedIdentityMaterial(runtime())).toMatchObject({ kind: 'presented', profile: { id: f.bapId } })
   })
 
   it('removing the shared signer falls back to the wallet identity with a strictly later statement', () => {
@@ -249,7 +268,7 @@ describe('presented identity', () => {
     expect(presentedPublicIdentityKey(runtime())).toBe(importedId)
     removePublicIdentity(runtime(), importedId)
     const next = presentedIdentityMaterial(runtime())!
-    expect(next).toMatchObject({ kind: 'presented', identity: { bapId: own.bapId } })
+    expect(next).toMatchObject({ kind: 'presented', profile: { id: own.bapId } })
     expect(Date.parse(next.issuedAt)).toBeGreaterThan(Date.parse(shown.issuedAt))
     presentPublicIdentity(runtime(), rootId)
     expect(presentedIdentityMaterial(runtime())?.issuedAt).toBe(next.issuedAt)
@@ -272,13 +291,13 @@ describe('presented identity', () => {
     recordPublishedIdentity(runtime(), rootId, f.pkg)
     state.active = active(imported)
     expect(accountProfile({ identityKey: rootId, accountIndex: 0, chain: 'main' })).toMatchObject({
-      bapId: f.bapId,
+      id: f.bapId,
       name: 'Wallet studio',
     })
     expect(accountProfile({ identityKey: rootId, accountIndex: 1, chain: 'main' })).toBeNull()
   })
 
-  it('refuses a stored presentation that names an unpublished identity', () => {
+  it('refuses a stored presentation that names a key this wallet does not control', () => {
     const key = accountLocalKeyFor(storageRegistry.publicIdentities.key, {
       identityKey: rootId,
       accountIndex: 0,
@@ -292,10 +311,64 @@ describe('presented identity', () => {
         chain: 'main',
         selected: rootId,
         identities: [],
-        presented: rootId,
+        presented: importedId,
         presentedAt: '2026-09-01T00:00:00.000Z',
       }),
     )
-    expect(() => listPublicIdentities(runtime())).toThrow(/not published/)
+    expect(() => listPublicIdentities(runtime())).toThrow(/not controlled/)
+  })
+})
+describe("identity key's own profile", () => {
+  const png = { contentType: 'image/png', bytes: Uint8Array.from([137, 80, 78, 71, 9, 9]) }
+
+  it('saves without a transaction, labels the key ahead of its BAP identity, and is shared at once', async () => {
+    const f = bapIdentityFixture({ master: root, name: 'BAP studio' })
+    recordPublishedIdentity(runtime(), rootId, f.pkg)
+    const saved = await saveIdentityProfile(runtime(), rootId, { name: 'Studio', description: 'Prints' }, png)
+    expect(saved).toMatchObject({ id: rootId, source: 'identity-key', name: 'Studio', bap: { bapId: f.bapId } })
+    expect(listPublicIdentities(runtime())[0]).toMatchObject({ profile: { id: rootId, name: 'Studio' } })
+    expect(displayIssuerProfile(runtime(), { issuer: rootId })).toMatchObject({ id: rootId, name: 'Studio' })
+    expect(displayIssuerProfile(runtime(), { issuer: pub(f.signer), bapId: f.bapId })).toMatchObject({
+      id: rootId,
+      name: 'Studio',
+    })
+    expect(accountProfile({ identityKey: rootId, accountIndex: 0, chain: 'main' })).toMatchObject({ id: rootId, name: 'Studio' })
+    const material = presentedIdentityMaterial(runtime())
+    expect(material).toMatchObject({ kind: 'presented', identityKey: rootId, profile: { id: rootId } })
+    const pkg = parseIdentityKeyPackage(material?.kind === 'presented' ? material.pkg : null)!
+    expect(pkg.bap?.bapId).toBe(f.bapId)
+    expect((await profileFromPackage(pkg))?.profile).toMatchObject({ identityKey: rootId, name: 'Studio' })
+  })
+
+  it('a profile alone is enough to present a key, and each save is strictly later than the last', async () => {
+    importIssuerPrivateKey(runtime(), imported.toWif())
+    expect(() => presentPublicIdentity(runtime(), importedId)).toThrow(/Add a profile/)
+    await saveIdentityProfile(runtime(), importedId, { name: 'Imported', description: '' }, null)
+    const first = identityProfileFor('main', importedId)!
+    presentPublicIdentity(runtime(), importedId)
+    expect(presentedPublicIdentityKey(runtime())).toBe(importedId)
+    const material = presentedIdentityMaterial(runtime())
+    expect(material?.kind === 'presented' && pub(material.signingKey)).toBe(importedId)
+    const again = await saveIdentityProfile(runtime(), importedId, { name: 'Imported 2', description: '' }, null)
+    expect(Date.parse(identityProfileFor('main', importedId)!.issuedAt)).toBeGreaterThan(Date.parse(first.issuedAt))
+    expect(again.name).toBe('Imported 2')
+    await expect(
+      saveIdentityProfile(runtime(), pub(PrivateKey.fromRandom()), { name: 'Stranger', description: '' }, null),
+    ).rejects.toThrow(/does not control/)
+  })
+
+  it('a backup carries the profiles, and a restore keeps only those that verify for a key it controls', async () => {
+    await saveIdentityProfile(runtime(), rootId, { name: 'Studio', description: '' }, png)
+    const backup = JSON.parse(exportPublicIdentityBackup(runtime()))
+    expect(Object.keys(backup.profiles)).toEqual([rootId.toLowerCase()])
+    state.values.clear()
+    resetIdentityProfilesForTests()
+    const forged = structuredClone(backup)
+    forged.profiles[rootId.toLowerCase()].certificate.fields.name = 'Swapped'
+    await restorePublicIdentityBackup(runtime(), forged)
+    expect(identityProfileFor('main', rootId)).toBeNull()
+    await restorePublicIdentityBackup(runtime(), backup)
+    expect(identityProfileFor('main', rootId)).toMatchObject({ name: 'Studio' })
+    expect(Array.from(identityProfileFor('main', rootId)!.image!.bytes)).toEqual(Array.from(png.bytes))
   })
 })

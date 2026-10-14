@@ -1,6 +1,7 @@
-import { Beef, Transaction, UnlockingScript } from '@bsv/sdk'
+import { Beef, LockingScript, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeBsv21Binary } from './token/decode162'
+import { resetRequiredProcessingForTests, tokenRequiresProcessing } from './token/requiredProcessing'
 import { p2pkhScriptHex } from './ordinalOwnership'
 import {
   collectFungibleTipsPayingUs,
@@ -46,6 +47,7 @@ beforeEach(() => {
   getBeefForTxidCached.mockRejectedValue(new Error('offline'))
   internalizeAction.mockReset()
   ownSends.clear()
+  resetRequiredProcessingForTests()
 })
 
 describe('internalizePeerFungibleSettle', () => {
@@ -158,6 +160,8 @@ describe('internalizePeerFungibleSettle', () => {
   })
 
   describe('BRC-176 on receive', () => {
+    const senderKey = PrivateKey.fromHex('44'.repeat(32))
+    const SENDER = senderKey.toAddress()
     const deploy = () => {
       const tx = new Transaction()
       tx.addOutput({
@@ -165,7 +169,7 @@ describe('internalizePeerFungibleSettle', () => {
         lockingScript: encodeBsv21Binary({
           amount: 1000n,
           payload: { sym: 'GOLD', dec: 2 },
-          rest: p2pkhScriptHex(OTHER),
+          rest: p2pkhScriptHex(SENDER),
         }),
       })
       return tx
@@ -201,6 +205,39 @@ describe('internalizePeerFungibleSettle', () => {
       expect(internalizeAction).not.toHaveBeenCalled()
     })
 
+    it('refuses a transfer that spends the deploy without the deploy owner\'s key', async () => {
+      const genesis = deploy()
+      const tokenId = `${genesis.id('hex')}_0`
+      const transfer = new Transaction()
+      transfer.addInput({
+        sourceTransaction: genesis,
+        sourceOutputIndex: 0,
+        unlockingScriptTemplate: new P2PKH().unlock(PrivateKey.fromHex('55'.repeat(32))),
+      })
+      transfer.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
+      })
+      await transfer.sign()
+      const beef = new Beef()
+      beef.mergeTransaction(transfer)
+      const atomic = Array.from(beef.toBinaryAtomic(transfer.id('hex')))
+      atomicBeefForSubject.mockReturnValue(atomic)
+      completeAtomicBeefForSubject.mockResolvedValue({ atomic, missing: [], completed: [] })
+
+      const result = await internalizePeerFungibleSettle({
+        txid: transfer.id('hex'),
+        tx: atomic,
+        beefPurpose: 'inboundItemHint',
+        token: { kind: 'fungible', tokenId, amount: '1000', sym: 'GOLD', dec: 2 },
+      })
+      expect(result.accepted).toBe(false)
+      expect(result.reason).toBe(
+        `lineage-unproven:token input 0 of ${transfer.id('hex')} fails its locking script`,
+      )
+      expect(internalizeAction).not.toHaveBeenCalled()
+    })
+
     it('internalizes a proven tip and inherits sym/dec from the deploy payload', async () => {
       const genesis = deploy()
       const tokenId = `${genesis.id('hex')}_0`
@@ -208,12 +245,13 @@ describe('internalizePeerFungibleSettle', () => {
       transfer.addInput({
         sourceTransaction: genesis,
         sourceOutputIndex: 0,
-        unlockingScript: new UnlockingScript(),
+        unlockingScriptTemplate: new P2PKH().unlock(senderKey),
       })
       transfer.addOutput({
         satoshis: 1,
         lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
       })
+      await transfer.sign()
       const beef = new Beef()
       beef.mergeTransaction(transfer)
       const atomic = Array.from(beef.toBinaryAtomic(transfer.id('hex')))
@@ -244,6 +282,42 @@ describe('internalizePeerFungibleSettle', () => {
       expect(String(ci.dec)).toBe('2')
     })
 
+    it('refuses a proven token whose deploy requires processing (BRC-251 req)', async () => {
+      const genesis = new Transaction()
+      // OP_0 <1000> OP_2DROP <{"req":[1]}> OP_DROP <p2pkh>
+      genesis.addOutput({
+        satoshis: 1,
+        lockingScript: LockingScript.fromHex(`0002e8036d07a163726571810175${p2pkhScriptHex(SENDER)}`),
+      })
+      const tokenId = `${genesis.id('hex')}_0`
+      const transfer = new Transaction()
+      transfer.addInput({
+        sourceTransaction: genesis,
+        sourceOutputIndex: 0,
+        unlockingScriptTemplate: new P2PKH().unlock(senderKey),
+      })
+      transfer.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
+      })
+      await transfer.sign()
+      const beef = new Beef()
+      beef.mergeTransaction(transfer)
+      const atomic = Array.from(beef.toBinaryAtomic(transfer.id('hex')))
+      atomicBeefForSubject.mockReturnValue(atomic)
+      completeAtomicBeefForSubject.mockResolvedValue({ atomic, missing: [], completed: [] })
+
+      const result = await internalizePeerFungibleSettle({
+        txid: transfer.id('hex'),
+        tx: atomic,
+        beefPurpose: 'inboundItemHint',
+        token: { kind: 'fungible', tokenId, amount: '1000', sym: 'REQ', dec: 0 },
+      })
+      expect(result).toEqual({ accepted: false, outpoints: [], reason: 'unsupported-token:required-processing' })
+      expect(internalizeAction).not.toHaveBeenCalled()
+      expect(tokenRequiresProcessing(tokenId)).toBe(true)
+    })
+
     it('accepts our own send from the basket instead of internalizing it again', async () => {
       const genesis = deploy()
       const tokenId = `${genesis.id('hex')}_0`
@@ -251,12 +325,13 @@ describe('internalizePeerFungibleSettle', () => {
       transfer.addInput({
         sourceTransaction: genesis,
         sourceOutputIndex: 0,
-        unlockingScript: new UnlockingScript(),
+        unlockingScriptTemplate: new P2PKH().unlock(senderKey),
       })
       transfer.addOutput({
         satoshis: 1,
         lockingScript: encodeBsv21Binary({ tokenId, amount: 1000n, rest: p2pkhScriptHex(RECEIVER) }),
       })
+      await transfer.sign()
       const beef = new Beef()
       beef.mergeTransaction(transfer)
       const txid = transfer.id('hex')

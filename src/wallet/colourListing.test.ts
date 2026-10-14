@@ -44,7 +44,7 @@ describe('BRC-162 token listing', () => {
   })
 
   it('lists 162 value tips from basket bsv21', async () => {
-    const lockingScript = buildBsv21ValueLock({
+    const lockingScript = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_A,
       amount: 42n,
       address: ADDR,
@@ -104,6 +104,7 @@ describe('162 payload icon is live not legacy', () => {
     const { decodeListedBsv21Tip } = await import('./token/listTips')
     const deployOut = `${'aa'.repeat(32)}_0`
     const script = encodeBsv21Binary({
+      layout: 'draft-tagged',
       amount: 50n,
       payload: { sym: 'GOLD', icon: Uint8Array.from([2, 0, 0, 0]) },
       rest: `76a914${'11'.repeat(20)}88ac`,

@@ -8,6 +8,8 @@ export type DeployDisplay = {
   issuer?: string
   dec?: number
   encoding: 'binary' | 'json'
+  /** BRC-251: the deploy names required processing — the token is unsupported. */
+  requiresProcessing?: true
 }
 
 /**
@@ -22,12 +24,13 @@ export function deployDisplayFromScript(
   if (!scriptHex) return null
   const binary = decodeBsv21Binary(scriptHex)
   if (binary?.role === 'deploy') {
-    const icon = iconOutpointFromPayload(binary.payload?.icon, tokenId)
+    const icon = iconOutpointFromPayload(binary.payload, tokenId)
     return {
       encoding: 'binary',
       ...(binary.payload?.sym ? { sym: binary.payload.sym } : {}),
       ...(binary.payload?.dec != null ? { dec: binary.payload.dec } : {}),
       ...(icon ? { icon } : {}),
+      ...(binary.payload?.requiresProcessing ? { requiresProcessing: true as const } : {}),
     }
   }
   const envelope = parseOrdEnvelope(scriptHex)

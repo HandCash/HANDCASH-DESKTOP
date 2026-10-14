@@ -176,6 +176,27 @@ describe('message transport envelopes', () => {
     })
   })
 
+  it('reads a BRC-251 token notice with any tag or none', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const notice = JSON.stringify({
+      version: 1,
+      kind: 'tip',
+      text: 'Sent you TST',
+      meta: { txid: 'cd'.repeat(32), item: true, asset: { kind: 'fungible', tokenId, amount: '7', sym: 'TST', dec: 0 } },
+    })
+    for (const body of [notice, `other-wallet:${notice}`]) {
+      expect(decodeMessageBody(body).meta?.asset).toEqual({
+        kind: 'fungible',
+        tokenId,
+        amount: '7',
+        sym: 'TST',
+        dec: 0,
+      })
+    }
+    expect(decodeMessageBody('note: {not json')).toEqual({ kind: 'text', text: 'note: {not json' })
+    expect(decodeMessageBody('{"just":"text"}')).toEqual({ kind: 'text', text: '{"just":"text"}' })
+  })
+
   it('does not expose the retired fungible wire variant', () => {
     const decoded = decodeMessageBody(
       encodeMessageBody({
@@ -435,53 +456,32 @@ describe('messagebox base URL', () => {
     )
   })
 
-  it('sends sealed chat on a live IPv6 session and skips the box', async () => {
+  it('sends sealed chat on an open BRC-246 data channel and skips the box', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const { openPeerMessage } = await import('./messageEnvelope')
-    const {
-      installDirectSessionPort,
-      rememberSessionOffer,
-      resetDirectSessions,
-      setDirectSessionIdentity,
-    } = await import('./directSession/session')
-    const { signSessionHello, signSessionOffer, signSessionWelcome } =
-      await import('./directSession/protocol')
-    const a = PrivateKey.fromRandom()
-    const b = PrivateKey.fromRandom()
-    const aKey = a.toPublicKey().toString().toLowerCase()
-    const bKey = b.toPublicKey().toString().toLowerCase()
-    const dialer = aKey < bKey ? a : b
-    const acceptor = aKey < bKey ? b : a
-    const dialerKey = dialer.toPublicKey().toString().toLowerCase()
-    const acceptorKey = acceptor.toPublicKey().toString().toLowerCase()
-    setDirectSessionIdentity({ rootKeyHex: dialer.toHex(), identityKey: dialerKey })
-    rememberSessionOffer(
-      signSessionOffer({
-        rootKeyHex: acceptor.toHex(),
-        counterparty: dialerKey,
-        host: '2001:db8:2::8',
-        port: 9,
-      }),
-    )
-    const sent: string[] = []
-    installDirectSessionPort({
-      listen: async () => null,
-      connect: async (args) => {
-        const parsed = JSON.parse(args.hello) as ReturnType<typeof signSessionHello>
-        const welcome = signSessionWelcome({
-          rootKeyHex: acceptor.toHex(),
-          hello: parsed,
-        })
-        return { ok: true, remoteHello: JSON.stringify(welcome), socketId: 'sock' }
-      },
-      send: async (_id, body) => {
-        sent.push(body)
-        return true
-      },
-      close: async () => undefined,
-      accept: async () => undefined,
-      reject: async () => undefined,
-    })
+    const local = await import('./directSession/session')
+    const { fakeRtcFactory } = await import('./directSession/fakeRtc.fixture')
+    vi.resetModules()
+    const remote = await import('./directSession/session')
+    const me = PrivateKey.fromRandom()
+    const peer = PrivateKey.fromRandom()
+    const meKey = me.toPublicKey().toString()
+    const peerKey = peer.toPublicKey().toString()
+    const toPeer: string[] = []
+    const toMe: string[] = []
+    const received: string[] = []
+    local.setDirectSessionIdentity({ rootKeyHex: me.toHex(), identityKey: meKey, device: 'mac' })
+    local.installRtcFactory(fakeRtcFactory())
+    local.installSignalSender(async (_to, body) => void toPeer.push(body))
+    remote.setDirectSessionIdentity({ rootKeyHex: peer.toHex(), identityKey: peerKey, device: 'phone' })
+    remote.installRtcFactory(fakeRtcFactory())
+    remote.installSignalSender(async (_to, body) => void toMe.push(body))
+    remote.setDirectInboundHandler((_sender, body) => received.push(body))
+    await local.requestDirectSession(peerKey)
+    await remote.ingestSessionSignal(toPeer.shift()!)
+    await local.ingestSessionSignal(toMe.shift()!)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(local.hasDirectSession(peerKey)).toBe(true)
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -490,22 +490,79 @@ describe('messagebox base URL', () => {
     )
 
     const result = await deliverOutbound({
-      recipientIdentityKey: acceptorKey,
-      senderIdentityKey: dialerKey,
-      rootKeyHex: dialer.toHex(),
-      body: 'hello ipv6',
+      recipientIdentityKey: peerKey,
+      senderIdentityKey: meKey,
+      rootKeyHex: me.toHex(),
+      body: 'hello direct',
       peerId: 'peer-1',
       messagebox: 'https://mb.peer.example/v1/messagebox',
     })
 
     expect(result.delivered).toBe('direct')
-    expect(sent[0]).not.toContain('hello ipv6')
-    expect(openPeerMessage({ body: sent[0]!, rootKeyHex: acceptor.toHex() })).toEqual({
-      plaintext: 'hello ipv6',
+    expect(received[0]).not.toContain('hello direct')
+    expect(openPeerMessage({ body: received[0]!, rootKeyHex: peer.toHex() })).toEqual({
+      plaintext: 'hello direct',
       sealed: true,
     })
-    resetDirectSessions()
-    installDirectSessionPort(null)
+    local.resetDirectSessions()
+    local.installRtcFactory(null)
+    remote.resetDirectSessions()
+  })
+
+  it('leaves a signal for another install of this account on the session box, even without WebRTC', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const { sealPeerMessage } = await import('./messageEnvelope')
+    const { signSessionSignal, encodeSessionSignal, SESSION_BOX } = await import('./directSession/protocol')
+    const { fakeSdp } = await import('./directSession/fakeRtc.fixture')
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    const me = PrivateKey.fromRandom()
+    const meKey = me.toPublicKey().toString().toLowerCase()
+    const seal = (plaintext: string) =>
+      sealPeerMessage({ plaintext, rootKeyHex: me.toHex(), recipientIdentityKey: meKey })
+    const forSibling = encodeSessionSignal(
+      signSessionSignal({
+        rootKeyHex: me.toHex(),
+        t: 'offer',
+        fromDevice: 'tablet',
+        to: meKey,
+        toDevice: 'phone',
+        sdp: fakeSdp('AA:BB'),
+      }),
+    )
+    const posts: { url: string; body: string }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const body = String(init?.body ?? '')
+        posts.push({ url, body })
+        if (url.endsWith('/listMessages') && body.includes(SESSION_BOX))
+          return new Response(
+            JSON.stringify({
+              status: 'success',
+              messages: [
+                { messageId: 'sig-sibling', body: seal(forSibling), sender: meKey, createdAt: 1 },
+                { messageId: 'sig-junk', body: seal('not a signal'), sender: meKey, createdAt: 2 },
+              ],
+            }),
+            { status: 200 },
+          )
+        if (url.endsWith('/listMessages'))
+          return new Response(JSON.stringify({ status: 'success', messages: [] }), { status: 200 })
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+    await pollInboundTipHints({
+      rootKeyHex: me.toHex(),
+      messagebox: 'https://mb.peer.example/v1/messagebox',
+      peerIdForSender: () => null,
+    })
+    await vi.waitFor(() =>
+      expect(posts.some((post) => post.url.endsWith('/acknowledgeMessage'))).toBe(true),
+    )
+    const acks = posts.filter((post) => post.url.endsWith('/acknowledgeMessage'))
+    expect(acks).toHaveLength(1)
+    expect(JSON.parse(acks[0]!.body)).toMatchObject({ messageBox: SESSION_BOX, messageIds: ['sig-junk'] })
   })
 
   it('uploads BEEF as raw bytes with Content-Length (not a File body)', async () => {

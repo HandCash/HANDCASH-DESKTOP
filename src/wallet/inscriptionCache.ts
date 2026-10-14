@@ -25,6 +25,12 @@ const MISS_KEY = 'handcash.inscriptionMiss.v1'
 /** Long enough that a refresh loop stops re-walking, short enough to pick up new indexing. */
 export const RESOLVE_RETRY_MS = 10 * 60_000
 /**
+ * Each further miss doubles the wait, up to this. An address holding thousands
+ * of outputs no indexer names would otherwise spend every pass's budget asking
+ * about the same few again while the outputs behind them are never asked.
+ */
+export const RESOLVE_RETRY_MAX_MS = 24 * 60 * 60_000
+/**
  * Retry window for a tip a latch already proved is an item.
  *
  * These must not wait out the stray-dust backoff — the user is watching a
@@ -36,24 +42,44 @@ export const RESOLVE_RETRY_MS = 10 * 60_000
 export const PENDING_RETRY_MS = 45_000
 /** Hard cap so a flood of dust cannot grow the durable blob without bound. */
 export const RESOLVE_HIT_MAX = 2_000
-const MISS_MAX = 500
+/**
+ * Must exceed the one-sat outputs a real address holds. Past it the oldest miss
+ * is forgotten and asked about again at once, so a cap below the held count
+ * keeps the walk circling the same outputs.
+ */
+const MISS_MAX = 5_000
+/** Misses from one pass reach storage in one write. */
+const MISS_FLUSH_MS = 2_000
 
 type Stored = Record<string, ResolvedInscription>
+/** `n` is how many times in a row the outpoint came back empty. */
+type Miss = { at: number; n: number }
 
 let hits: Map<string, ResolvedInscription> | null = null
-let misses: Map<string, number> | null = null
+/** Oldest miss first: a repeat miss is re-inserted at the end. */
+let misses: Map<string, Miss> | null = null
 
-function loadMisses(): Map<string, number> {
+function loadMisses(): Map<string, Miss> {
   if (misses) return misses
   misses = new Map()
   try {
     const raw = durableGetItem(MISS_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as Record<string, number>
-      const now = Date.now()
-      for (const [outpoint, at] of Object.entries(parsed)) {
-        if (typeof at === 'number' && now - at < RESOLVE_RETRY_MS) misses.set(outpoint, at)
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const entries: Array<[string, Miss]> = []
+      for (const [outpoint, value] of Object.entries(parsed)) {
+        // v1 stored the bare timestamp of a single miss.
+        if (typeof value === 'number') entries.push([outpoint, { at: value, n: 1 }])
+        else if (
+          Array.isArray(value) &&
+          typeof value[0] === 'number' &&
+          typeof value[1] === 'number'
+        ) {
+          entries.push([outpoint, { at: value[0], n: Math.max(1, value[1]) }])
+        }
       }
+      entries.sort((a, b) => a[1].at - b[1].at)
+      for (const [outpoint, miss] of entries) misses.set(outpoint, miss)
     }
   } catch {
     // A corrupt blob only costs us the backoff, so start clean.
@@ -61,42 +87,58 @@ function loadMisses(): Map<string, number> {
   return misses
 }
 
-function persistMisses(map: Map<string, number>): void {
+function persistMisses(map: Map<string, Miss>): void {
+  const out: Record<string, [number, number]> = {}
+  for (const [outpoint, { at, n }] of map) out[outpoint] = [at, n]
   try {
-    durableSetItem(MISS_KEY, JSON.stringify(Object.fromEntries(map)))
+    durableSetItem(MISS_KEY, JSON.stringify(out))
   } catch {
     // Cache is an optimisation; losing it costs speed, not correctness.
   }
 }
 
 /**
- * Expired misses are dropped in memory and written once.
- *
- * Classifying an address calls {@link shouldResolveInscription} once per
- * one-sat output. Persisting on each expired miss rewrote the whole backoff
- * map through synchronous storage — hundreds of times, on the main thread,
- * immediately after the scan line. One flush after the burst is the same
- * durable result.
+ * The miss map is thousands of entries behind a synchronous storage call.
+ * Writing it per miss — once per output a classify pass walks — put that write
+ * on the main thread a dozen times a pass. Misses lost to a crash inside the
+ * window cost one repeat lookup.
  */
 let missesDirty = false
-let missFlushScheduled = false
+let missFlushTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleMissFlush(): void {
   missesDirty = true
-  if (missFlushScheduled) return
-  missFlushScheduled = true
-  queueMicrotask(() => {
-    missFlushScheduled = false
+  if (missFlushTimer != null) return
+  missFlushTimer = setTimeout(() => {
+    missFlushTimer = null
     flushInscriptionMisses()
-  })
+  }, MISS_FLUSH_MS)
 }
 
-/** Write dropped misses now. A no-op when nothing has expired since the last flush. */
+/** Write pending misses now. A no-op when nothing changed since the last flush. */
 export function flushInscriptionMisses(): void {
   flushHeldSeen()
+  if (missFlushTimer != null) {
+    clearTimeout(missFlushTimer)
+    missFlushTimer = null
+  }
   if (!missesDirty || !misses) return
   missesDirty = false
   persistMisses(misses)
+}
+
+/**
+ * How long a miss holds. A caller's short window (a tip someone is waiting on)
+ * stays flat; the stray-dust window doubles with each repeat miss.
+ */
+function missWindowMs(miss: Miss, retryMs: number): number {
+  if (retryMs < RESOLVE_RETRY_MS) return retryMs
+  return Math.min(retryMs * 2 ** Math.min(miss.n - 1, 16), RESOLVE_RETRY_MAX_MS)
+}
+
+/** When the outpoint last came back empty; 0 when it was never asked about. */
+export function lastInscriptionMiss(outpoint: string): number {
+  return loadMisses().get(outpoint)?.at ?? 0
 }
 
 /**
@@ -188,11 +230,8 @@ function trimHits(map: Map<string, ResolvedInscription>): void {
   }
 }
 
-function trimMisses(now = Date.now()): void {
+function trimMisses(): void {
   const map = loadMisses()
-  for (const [key, at] of map) {
-    if (now - at >= RESOLVE_RETRY_MS) map.delete(key)
-  }
   if (map.size <= MISS_MAX) return
   const drop = map.size - MISS_MAX
   let i = 0
@@ -273,7 +312,7 @@ export function shouldUpgradeResolution(
 ): boolean {
   if (!isThinResolution(load().get(outpoint))) return false
   const attempted = loadMisses().get(`${UPGRADE_PREFIX}${outpoint}`)
-  return attempted == null || now - attempted >= retryMs
+  return attempted == null || now - attempted.at >= retryMs
 }
 
 /** Note an upgrade attempt so a thin identity is not re-walked on every open. */
@@ -290,8 +329,7 @@ export function rememberResolvedInscription(
   // Re-insert so a refreshed hit is treated as newest when we trim from the front.
   map.delete(outpoint)
   map.set(outpoint, resolved)
-  const missMap = loadMisses()
-  if (missMap.delete(outpoint)) persistMisses(missMap)
+  if (loadMisses().delete(outpoint)) scheduleMissFlush()
   trimHits(map)
   persist(map)
 }
@@ -358,16 +396,19 @@ export function rememberResolvedSigners(signers: ReadonlyMap<string, string | nu
 /** Note that the indexer had nothing for this outpoint, so we back off. */
 export function rememberUnresolved(outpoint: string, now = Date.now()): void {
   const map = loadMisses()
-  map.set(outpoint, now)
-  trimMisses(now)
-  persistMisses(map)
+  const n = (map.get(outpoint)?.n ?? 0) + 1
+  map.delete(outpoint)
+  map.set(outpoint, { at: now, n })
+  trimMisses()
+  scheduleMissFlush()
 }
 
 /**
  * False while a recent miss is still fresh.
  *
  * `retryMs` lets a latch-proven tip come back sooner than stray dust without
- * dropping the backoff altogether.
+ * dropping the backoff altogether. An expired miss is kept: its time orders the
+ * next walk and its count sets the next window.
  */
 export function shouldResolveInscription(
   outpoint: string,
@@ -376,20 +417,16 @@ export function shouldResolveInscription(
 ): boolean {
   const hit = load().get(outpoint)
   if (hit && !isPlaceholderResolution(outpoint, hit)) return false
-  const map = loadMisses()
-  const missed = map.get(outpoint)
-  if (missed != null && now - missed < retryMs) return false
-  if (missed != null) {
-    map.delete(outpoint)
-    scheduleMissFlush()
-  }
-  return true
+  const missed = loadMisses().get(outpoint)
+  return missed == null || now - missed.at >= missWindowMs(missed, retryMs)
 }
 
 export function resetInscriptionCacheForTests(): void {
   hits = null
   misses = null
   missesDirty = false
+  if (missFlushTimer != null) clearTimeout(missFlushTimer)
+  missFlushTimer = null
   heldSeen = null
   heldSeenBaseline = false
   heldSeenDirty = false

@@ -37,6 +37,8 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 **BRC-CLOUD `/v1/messagebox` is a HandCash convenience host**, not the definition of messaging. Custody (A) must never require it.
 
+Installs of one vault move accounts **device to device** (draft BRC-249). Each unlocked install keeps a **vault link** to the others: a BRC-246 v2 data channel on the vault identity (account 0), signalled in box **`vault-link`** (never `session-upgrade`, so chat sessions never answer it). The signed `release-request` / `release-accept` ride the link. Box **`account-holding`** on the account's own key carries them only when no link opens or a frame is not acked, and always carries `handover` parts sealed to self, so they wait for an offline holder. None of this is counterparty P2P, and it never gates a payment. A request that cannot reach the holder by either path fails the move, and nobody is asked to confirm one. Only the install holding an account acknowledges that account's messages.
+
 ### Dev keys (not a messagebox client)
 
 Connected apps → Developer keys (the `</>` button) lists them. Each is created with the capabilities
@@ -81,9 +83,9 @@ nothing rides the messagebox. Settings shows money (basket `default`), items
 | Item identity / authenticity | BRC-150 v2 offline tip→origin proof | Keep; fail closed when proof cannot be verified |
 | BRC-150 remittance to peer | Inbox envelope `meta.provenance` + Atomic BEEF of this hop | Keep; receive verifies from the package. Indexer hydrate is C fallback for a slimmed origin body. Never gate chain custody on delivery |
 | BSV-21 lineage to peer | Inbox envelope `meta.tokenLineage`: token-parent bodies back to the deploy, beside the Atomic BEEF | Keep; payee runs BRC-176 offline, keeps the deploy for issuer attestation. Parent walk from cache/indexer is C fallback for older peers or an omitted (over-budget) lineage |
-| Chat delivery | Resolved peer **messagebox URL**; BRC-CLOUD fallback; live draft-BRC-246 IPv6 session when both wallets are reachable | Keep box as rendezvous + offline inbox; socket is the hot path |
+| Chat delivery | Resolved peer **messagebox URL**; BRC-CLOUD fallback; live draft-BRC-246 WebRTC data channel when both wallets are online | Keep box as rendezvous (signalling box `session-upgrade`) + offline inbox; the channel is the hot path |
 | Chat encryption | BRC-169 §7 envelope + BRC-78 content (legacy plaintext inbound still accepted) | Tolls / reachability policy; full Authrite Peer sessions |
-| Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |
+| Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. The payment output records `notice: pending` until a delivery marks it `delivered` (`paymentNotice.ts`); that rides BRC-39 and the handover delta, so a restored device or new holder re-sends exactly the notices still owed. The outbox never drops an owed notice: misses back off from 30 s to hourly, a row leaves only when the record says delivered or the payment failed, the flush re-reads the records every 10 min, and after 20 misses the payment's details show it stalled with **Notify now**. Because the BRC-39 push waits 45 s after a send, the notice is also journaled once the payment is sealed, before it propagates (`noticeJournal.ts`: payee, derivation, Atomic BEEF up to 64 KB), and replicated sealed beside BRC-39 as `notices.journal` within seconds; a delivery writes a tombstone, and a queued notice a tombstone settled — on any device — is dropped unsent and its stale record marked delivered. A device lost in that window leaves the notice for the next one, which can hand the payee a payment that never reached a miner. A restore that replaces localState reconciles before the next payment (`paymentReconcile.ts`): pull the journal, re-queue every owed notice, list in Activity any journaled payment the restored history lost; a foreground send waits for it at most 20 s, then sends anyway. A lost payment is resumed, never re-made: its journaled BEEF goes through `registerSignedSend` (inputs sealed before the hold lifts, same txid propagated), its notice waits for the miner verdict, and a proven reject settles the notice unsent; without a BEEF its Activity row stays pending until the chain shows it. A displaced install tombstones and pushes the notices of the payments it voids at handover before voiding them, so a holder never hands their BEEF to a payee. Activity marks a payment whose notice is still owed ("Notifying recipient…", "needs attention" once stalled). The payee keeps one card per payment output. |
 | Item/token send | Plain P2PKH transaction + asset metadata | `signedSendLifecycle` owns the same durable miner/Arcade/BUMP relationship as BSV; `ItemSettlePath` only routes optional remittance/internalization |
 | Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback (grade C) |
 | Inscription media | GP `/content/<origin>` | Keep as C; optional “fetch origin tx + parse” path when offline to GP |
@@ -115,11 +117,11 @@ nothing rides the messagebox. Settings shows money (basket `default`), items
 2. [x] Identity auth: `X-BRC33-*` everywhere; `X-BRC103-*` on BRC-CLOUD. Full **Authrite Peer** sessions still deferred.
 3. [x] Keep `/files` as a HandCash extension; advertise auth mode on box manifest.  
 4. [x] Resolve response already exposes `messagebox` — keep that as the federation hook.
-5. [x] BRC-169 §7 / BRC-78 sealed content. Chat also rides a live IPv6 session (draft BRC-246) when the pair is hot (Desktop Electron and Mobile Capacitor). The box is still the offline inbox.
+5. [x] BRC-169 §7 / BRC-78 sealed content. Chat also rides a WebRTC data channel (draft BRC-246) when the pair is online: IPv4 behind NAT, same LAN or IPv6, from the WebView on Desktop and Mobile with no native socket. The box is still the offline inbox.
 
 **Still deferred:** tolls/reachability policy, full Authrite Peer sessions + certificates, overlay catalog mirrors (BRC-230, parked).
 
-**Public beta vs dropping BETA.** Encrypted friend chat is a product requirement and is implemented. Draft BRC-246 sockets, overlay catalog mirrors, and Authrite-complete sessions are protocol polish: they must not block a public-beta **wallet**. They should block dropping the BETA badge if the promise includes Authrite-complete federated messaging or in-wallet catalogs.
+**Public beta vs dropping BETA.** Encrypted friend chat is a product requirement and is implemented. Draft BRC-246 data channels, overlay catalog mirrors, and Authrite-complete sessions are protocol polish: they must not block a public-beta **wallet**. They should block dropping the BETA badge if the promise includes Authrite-complete federated messaging or in-wallet catalogs.
 
 ### Phase 3 — Robustness (from I/O map; pick in order)
 
@@ -132,6 +134,7 @@ nothing rides the messagebox. Settings shows money (basket `default`), items
 ### Phase 4 — Item send is fully verifiable P2P
 
 - The sender attaches BRC-150 remittance on the same `sendMessage` as the hop’s Atomic BEEF (`notifyPeerItemIncoming`). Receive files that remittance against the held tip and verifies locally first.
+- A missed item notice waits in `pendingItemOutbox.ts`, keyed by txid and output. The item already locks to the payee's address, so a lost notice costs provenance, not custody. The queue never drops a row: backoff grows to hourly, stalls are logged at 20 attempts, a flush merges its outcomes into the current list so a notice queued mid-flush is kept, and one flight runs per owner.
 - Batch cards carry their exact output index. Receive merges every card sharing a
   txid before internalize, so each held output keeps its own name, origin, and
   BRC-150 remittance; the outbox likewise keys retries by txid + output index.
@@ -159,7 +162,7 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 - Requiring messagebox for BSV or collectable **custody**.  
 - Treating BRC-CLOUD as the only legal messagebox.  
 - Calling BRC-150 remittance “what peers receive” in UI or docs.  
-- Replacing BRC-33 with a raw socket. A signed IPv6 session (draft BRC-246) may upgrade a live pair after the box has exchanged a short-lived offer. The box stays the rendezvous and the offline inbox. Custody stays on the chain.
+- Replacing BRC-33 with a raw socket. A WebRTC data channel (draft BRC-246) may upgrade a live pair after the box has carried a signed offer and answer. The box stays the rendezvous and the offline inbox. Custody stays on the chain.
 
 ---
 
@@ -173,6 +176,7 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 | Chat transport | `messageTransport.ts` / `messageStore.ts` |
 | Dev keys (sign and/or shared Toolbox storage, server-spent) | `devKeys.ts` / `serverWalletRecoverMachine.ts` |
 | Handle + box URL | `handleResolve.ts` → BRC-CLOUD resolve |
+| Account move (vault link, box `account-holding`) | `vaultLink.ts` / `accountRelease.ts` / `accountMove.ts` / `accountHandover.ts` |
 | Box host | `BRC-CLOUD/src/worker.js` `handleMessagebox` |
 | Charts | `appStatecharts.ts` |
 

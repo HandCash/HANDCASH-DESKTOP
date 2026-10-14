@@ -19,7 +19,7 @@ const mint = {
   description: 'Issue award',
   outputs: [{ satoshis: 1_000, lockingScript: `76a914${'d'.repeat(40)}88ac`, outputDescription: 'Platform fee' }],
 }
-const issuer = { identityKey: '02'.padEnd(66, 'b'), displayName: 'Studio' }
+const issuer = { kind: 'signed' as const, identityKey: '02'.padEnd(66, 'b'), displayName: 'Studio' }
 
 describe('identity-signed issuance approval', () => {
   it('Auto-pay may cover a payment, never the same action once the issuer identity signs it', async () => {
@@ -58,7 +58,31 @@ describe('identity-signed issuance approval', () => {
       const decision = requestActionApproval(ORIGIN, 'createAction', funded, undefined, undefined, issuer)
       const prompt = current as PendingPrompt | null
       if (!prompt || prompt.kind !== 'action') throw new Error('missing prompt')
-      expect(prompt.issuance?.anchor).toBe(false)
+      expect(prompt.issuance).toMatchObject({ kind: 'signed', anchor: false })
+      resolvePermission(prompt.id, 'deny')
+      await decision
+    } finally {
+      unsubscribe()
+      cancelPendingPermissions()
+    }
+  })
+
+  it('an unsigned mint still prompts and says it carries no maker', async () => {
+    cancelPendingPermissions()
+    let current: PendingPrompt | null = null
+    const unsubscribe = subscribePermissionRequests((next) => {
+      current = next
+    })
+    try {
+      const automatic = vi.fn()
+      const decision = requestActionApproval(ORIGIN, 'createAction', mint, automatic, undefined, {
+        kind: 'unsigned',
+        reason: 'opted-out',
+      })
+      const prompt = current as PendingPrompt | null
+      if (!prompt || prompt.kind !== 'action') throw new Error('unsigned mint did not prompt')
+      expect(automatic).not.toHaveBeenCalled()
+      expect(prompt.issuance).toEqual({ kind: 'unsigned' })
       resolvePermission(prompt.id, 'deny')
       await decision
     } finally {

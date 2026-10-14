@@ -1,5 +1,5 @@
 import { PrivateKey } from '@bsv/sdk'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PresentedIdentityMaterial } from './publicIdentities'
 
 const state = vi.hoisted(() => ({
@@ -31,7 +31,7 @@ vi.mock('./walletRuntime', () => ({
 }))
 vi.mock('./publicIdentities', () => ({
   presentedIdentityMaterial: () => state.material,
-  presentedIdentityOfAccount: (scope: { identityKey: string; accountIndex?: number; chain: string }) =>
+  presentedProfileOfAccount: (scope: { identityKey: string; accountIndex?: number; chain: string }) =>
     state.accountIdentities.get(`${scope.chain}:${scope.accountIndex}:${scope.identityKey}`) ?? null,
 }))
 vi.mock('./vaultAccounts', () => ({
@@ -52,10 +52,10 @@ import {
   ingestIdentityCardBody,
   resetIdentityCardShareForTests,
   shareIdentityCardAfterDelivery,
-  siblingAccountIdentity,
+  siblingAccountProfile,
 } from './identityCardShare'
 import { IDENTITY_CARD_REQUEST, identityCardFromWire, parseIdentityCard } from './identityCard'
-import { bapIdentityFixture } from './issuerIdentity.fixture'
+import { identityKeyPackage, signIdentityProfile, type IdentityKeyPackage } from './identityProfile'
 import { brc42VaultMaster } from './vaultMaster'
 
 const me = PrivateKey.fromHex('0c'.padStart(64, '0'))
@@ -65,15 +65,27 @@ const meHex = me.toHex().padStart(64, '0')
 const master = PrivateKey.fromHex('0b'.padStart(64, '0'))
 const masterKey = master.toPublicKey().toString()
 const siblingKey = PrivateKey.fromHex('0f'.padStart(64, '0')).toPublicKey().toString().toLowerCase()
-const fixture = bapIdentityFixture({ name: 'Me' })
+const meKey = me.toPublicKey().toString().toLowerCase()
+let pkg: IdentityKeyPackage
+beforeAll(async () => {
+  const { record } = await signIdentityProfile({
+    master: me,
+    fields: { name: 'Me', description: '' },
+    issuedAt: '2026-09-01T00:00:00.000Z',
+  })
+  pkg = identityKeyPackage(meKey, { profile: record })!
+})
 
-function presented(issuedAt = '2026-09-01T00:00:00.000Z'): PresentedIdentityMaterial {
+function presented(
+  issuedAt = '2026-09-01T00:00:00.000Z',
+): Extract<PresentedIdentityMaterial, { kind: 'presented' }> {
   return {
     kind: 'presented',
     issuedAt,
-    pkg: fixture.pkg,
-    identity: { bapId: fixture.bapId, alias: { txid: fixture.aliasTx.id('hex') } } as never,
-    signingKey: fixture.signer,
+    identityKey: meKey,
+    pkg,
+    profile: { id: meKey, identityKey: meKey, source: 'identity-key', name: 'Me', description: '' },
+    signingKey: me,
   }
 }
 
@@ -116,10 +128,26 @@ describe('identity card sharing', () => {
     expect(cards()).toHaveLength(1)
     expect(cards()[0]).toMatchObject({ recipientIdentityKey: friendKey, messagebox: 'https://box.example' })
     const card = parseIdentityCard(identityCardFromWire(cards()[0]!.body))
-    expect(card).toMatchObject({ identityKey: me.toPublicKey().toString().toLowerCase(), bapId: fixture.bapId })
+    expect(card).toMatchObject({ v: 2, identityKey: meKey, presents: meKey, package: { identityKey: meKey } })
     state.material = presented('2026-09-02T00:00:00.000Z')
     await sent(friendKey)
     expect(cards()).toHaveLength(2)
+  })
+
+  it('an edited profile is a new card version, though the presentation time is unchanged', async () => {
+    await sent(friendKey)
+    const { record } = await signIdentityProfile({
+      master: me,
+      fields: { name: 'Me again', description: '' },
+      issuedAt: '2026-09-05T00:00:00.000Z',
+    })
+    state.material = { ...presented(), pkg: identityKeyPackage(meKey, { profile: record })! }
+    await sent(friendKey)
+    expect(cards()).toHaveLength(2)
+    expect(parseIdentityCard(identityCardFromWire(cards()[1]!.body))).toMatchObject({
+      issuedAt: '2026-09-01T00:00:00.000Z',
+      package: { certificates: [{ fields: expect.any(Object) }] },
+    })
   })
 
   it('never volunteers a card to a stranger or a market counterparty', async () => {
@@ -143,7 +171,7 @@ describe('identity card sharing', () => {
     await sent(friendKey)
     state.material = { kind: 'withdrawn', issuedAt: '2026-09-03T00:00:00.000Z' }
     await sent(friendKey)
-    expect(parseIdentityCard(identityCardFromWire(cards()[1]!.body))).toMatchObject({ bapId: null })
+    expect(parseIdentityCard(identityCardFromWire(cards()[1]!.body))).toMatchObject({ presents: null })
   })
 
   it('answers card requests from contacts only, at a bounded rate', async () => {
@@ -175,16 +203,16 @@ describe('identity card sharing', () => {
     state.accounts = [{ master: strangerKey, identityKey: siblingKey, index: 2 }]
     await ingestIdentityCardBody(siblingKey, IDENTITY_CARD_REQUEST)
     expect(state.delivered).toEqual([])
-    expect(siblingAccountIdentity('main', siblingKey)).toBeNull()
+    expect(siblingAccountProfile('main', siblingKey)).toBeNull()
   })
 
-  it("reads a sibling account's presented identity on this device, per chain", () => {
-    const identity = { bapId: 'sibling-bap', name: 'Sub' }
+  it("reads a sibling account's presented profile on this device, per chain", () => {
+    const identity = { id: siblingKey, name: 'Sub' }
     state.accountIdentities.set(`main:2:${siblingKey}`, identity)
-    expect(siblingAccountIdentity('main', siblingKey.toUpperCase())).toBe(identity)
-    expect(siblingAccountIdentity('test', siblingKey)).toBeNull()
-    expect(siblingAccountIdentity('main', friendKey)).toBeNull()
-    expect(siblingAccountIdentity('main', me.toPublicKey().toString())).toBeNull()
+    expect(siblingAccountProfile('main', siblingKey.toUpperCase())).toBe(identity)
+    expect(siblingAccountProfile('test', siblingKey)).toBeNull()
+    expect(siblingAccountProfile('main', friendKey)).toBeNull()
+    expect(siblingAccountProfile('main', me.toPublicKey().toString())).toBeNull()
   })
 
   it('does not share in reply to its own card traffic', async () => {

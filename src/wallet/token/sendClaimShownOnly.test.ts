@@ -5,7 +5,7 @@ import { buildBsv21ValueLock } from './sendPlan'
 const TOKEN = `${'ab'.repeat(32)}_0`
 const ADDR = PrivateKey.fromRandom().toAddress()
 const TIP = `${'cd'.repeat(32)}.1`
-const LOCK = buildBsv21ValueLock({ tokenId: TOKEN, amount: 800n, address: ADDR })
+const LOCK = buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN, amount: 800n, address: ADDR })
 
 const basket = { claimed: false, claimable: true, listsLock: true }
 const getLocalBeefForTxid = vi.fn(async (_wallet: unknown, _txid: string) => ({

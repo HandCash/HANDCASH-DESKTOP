@@ -32,6 +32,9 @@ export const storageRegistry = Object.freeze({
   issuerIdentities: defineStorage({
     key: 'handcash.issuerIdentities.v1', owner: 'identity', scope: 'chain', version: 1,
   }),
+  identityProfiles: defineStorage({
+    key: 'handcash.identityProfiles.v1', owner: 'identity', scope: 'chain', version: 1,
+  }),
   identityCards: defineStorage({
     key: 'handcash.identityCards.v1', owner: 'identity', scope: 'chain', version: 1,
   }),
@@ -165,6 +168,12 @@ export const storageRegistry = Object.freeze({
   custodyJournal: defineStorage({
     key: 'handcash.custodyJournal.v1',
     owner: 'custody',
+    scope: 'wallet',
+    version: 1,
+  }),
+  noticeJournal: defineStorage({
+    key: 'handcash.brc29.noticeJournal.v1',
+    owner: 'propagation',
     scope: 'wallet',
     version: 1,
   }),
@@ -473,6 +482,7 @@ export const storageRegistry = Object.freeze({
     owner: 'collectables',
     scope: 'chain',
     version: 1,
+    retention: 'rebuildable',
   }),
   /** First sight of each held one-sat; "arriving" only shortly after. */
   inscriptionHeldSeen: defineStorage({
@@ -729,6 +739,13 @@ export const storageRegistry = Object.freeze({
   }),
   vaultAccountsPrefix: defineStorage({
     key: 'handcash.vault-accounts.v1:',
+    owner: 'custody',
+    scope: 'device',
+    version: 1,
+  }),
+  /** Accounts taken elsewhere whose changes since their last upload still owe a handover (draft BRC-249). */
+  accountHandoverPending: defineStorage({
+    key: 'handcash.account-handover.pending.v1',
     owner: 'custody',
     scope: 'device',
     version: 1,

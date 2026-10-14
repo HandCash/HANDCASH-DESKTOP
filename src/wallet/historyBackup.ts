@@ -11,8 +11,8 @@ import { getActiveWallet } from './session'
  * a re-upload so the cloud upgrades to root-key encryption.
  */
 import {
-  exportBRC38Json,
   importBRC38,
+  parseBRC38Json,
   SetupClient,
   importBRC39,
   type BRC38ImportResult,
@@ -47,6 +47,9 @@ import { decideHistoryPush } from './historyEmptyGuard'
 import { purgeRetiredProofRequests, type ProofRequestStore } from './provenTxReqPurge'
 import { assertHistoryDocumentEncryptable, HISTORY_BACKUP_MAX_BYTES } from './historyDocumentBudget'
 import { inspectLocalToolboxState } from './layers'
+import { exportBrc38JsonStreaming } from './brc38StreamExport'
+import { activeAccountTakenElsewhere } from './vaultAccountHolding'
+import { assertRuntimeCurrent, type WalletRuntime } from './walletRuntime'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
@@ -92,7 +95,7 @@ async function exportBrc38JsonRepairingNulls(
   identityKey: string,
 ): Promise<string> {
   try {
-    return await exportBRC38Json(storage, identityKey)
+    return await exportBrc38JsonStreaming(storage, identityKey)
   } catch (err) {
     if (!isNullMemberRejection(err)) throw err
     appendAppLog('warn', `[cloud-backup] export rejected — ${(err as Error).message}`)
@@ -100,7 +103,7 @@ async function exportBrc38JsonRepairingNulls(
       storage as unknown as ProvenTxReqHistoryStore,
       identityKey,
     )
-    return await exportBRC38Json(storage, identityKey)
+    return await exportBrc38JsonStreaming(storage, identityKey)
   }
 }
 
@@ -250,6 +253,25 @@ export async function restoreBrc39BackupBytes(
   )
 }
 
+/**
+ * Merge a handover (draft BRC-249) from an install that lost the active
+ * account: newer rows win, nothing is replaced, and the document must be for
+ * this identity and chain.
+ */
+export async function mergeHandoverDocument(runtime: WalletRuntime, json: string): Promise<BRC38ImportResult> {
+  const active = runtime.instance
+  if (!active.wallet.storage.isActiveStorageProvider()) throw new Error('Active wallet storage cannot import BRC-38 data')
+  const document = parseBRC38Json(json)
+  if (document.user.identityKey !== active.identityKey) throw new Error('Handover is for another wallet')
+  if (document.sourceStorage.chain !== active.chain) throw new Error('Handover is for another chain')
+  return runHistoryReplica(() =>
+    active.wallet.storage.runAsStorageProvider(async (storage) => {
+      assertRuntimeCurrent(runtime)
+      return importBRC38(storage, document, { mode: 'merge' })
+    }),
+  )
+}
+
 export function downloadBrc39File(bytes: Uint8Array, filename = 'wallet.brc39'): void {
   const copy = asArrayBufferBytes(bytes)
   const blob = new Blob([copy], { type: BRC39_MEDIA })
@@ -306,6 +328,12 @@ export async function uploadBrc39Backup(
   if (!opts.passwordAlreadyVerified) await revealRootKeyHex(password)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
+  if (activeAccountTakenElsewhere(active)) {
+    // The backup now belongs to the install that took the account (draft BRC-249).
+    const msg = 'another device holds this wallet; its changes go there as a handover'
+    appendAppLog('info', `[cloud-backup] skip upload — ${msg}`)
+    throw new HistoryThinOverwriteError(msg)
+  }
 
   const prefs = getHistoryBackupPrefs()
   const url = historyBackupObjectUrl(active.identityKey, prefs)

@@ -10,7 +10,7 @@ describe('decodeListedBsv21Tip issuer', () => {
   const address = root.toAddress()
   const tokenId = `${'ab'.repeat(32)}_0`
   const outpoint = `${'cd'.repeat(32)}.1`
-  const lockingScript = buildBsv21ValueLock({
+  const lockingScript = buildBsv21ValueLock({ layout: 'brc162',
     tokenId,
     amount: 42n,
     address,

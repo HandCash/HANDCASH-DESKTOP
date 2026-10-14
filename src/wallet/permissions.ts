@@ -48,6 +48,7 @@ import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys.js
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
+import type { IssuanceAttestation } from './identityIssuance'
 
 const STORAGE_KEY_BASE = storageRegistry.connectedApps.key
 
@@ -108,13 +109,16 @@ export type PendingAction = {
   itemImageUrl?: string
   itemIcon?: string
   previewKind?: 'token' | 'collectable'
-  /** Published identity whose BAP key signs this mint; the prompt always shows it. */
-  issuance?: {
-    identityKey: string
-    displayName?: string
-    /** The wallet funds and sends a 2-sat Sigma anchor transaction with the mint. */
-    anchor: boolean
-  }
+  /** Whether this mint carries a BRC-247 issuer stamp; the prompt always says which. */
+  issuance?:
+    | {
+        kind: 'signed'
+        identityKey: string
+        displayName?: string
+        /** The wallet funds and sends a 2-sat Sigma anchor transaction with the mint. */
+        anchor: boolean
+      }
+    | { kind: 'unsigned' }
   createdAt: number
 }
 
@@ -1236,15 +1240,23 @@ export function requestActionApproval(
   args: unknown,
   onAutomaticApproval?: (reservation: AutoPayReservation) => void,
   bridgeRequestId?: number,
-  issuer?: { identityKey: string; displayName?: string },
+  attestation?: IssuanceAttestation,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
     summarizeAction(method, args)
   const inputs = asRecord(args).inputs
-  const issuance = issuer
-    ? { ...issuer, anchor: !Array.isArray(inputs) || inputs.length === 0 }
-    : undefined
+  const issuance: PendingAction['issuance'] =
+    attestation?.kind === 'signed'
+      ? {
+          kind: 'signed',
+          identityKey: attestation.identityKey,
+          ...(attestation.displayName ? { displayName: attestation.displayName } : {}),
+          anchor: !Array.isArray(inputs) || inputs.length === 0,
+        }
+      : attestation?.kind === 'unsigned'
+        ? { kind: 'unsigned' }
+        : undefined
   const itemSpend =
     isItemSpendArgs(method, args) ||
     isBsv21SpendArgs(method, args)
@@ -1477,10 +1489,10 @@ function summarizeTokenView(tickers: string[], wantsAll: boolean): {
     details.push('All BSV-21 tokens')
   }
   for (const ticker of tickers.slice(0, 24)) details.push(`Token: ${ticker}`)
-  if (tickers.length === 0) details.push('No BSV-21 tokens in this wallet')
+  if (tickers.length === 0) details.push('No tokens in this wallet')
   return {
     title: 'View tokens',
-    summary: 'See BSV-21 tokens in this wallet',
+    summary: 'See the tokens in this wallet',
     details,
   }
 }

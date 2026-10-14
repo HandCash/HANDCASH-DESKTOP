@@ -78,6 +78,12 @@ vi.mock('./staleOutputRelease', () => ({
     promotePendingLocalChangeOutputs(opts),
 }))
 
+const awaitPaymentReconcile = vi.fn(async (_runtime: unknown) => ({ kind: 'clear' as const }))
+
+vi.mock('./paymentReconcile', () => ({
+  awaitPaymentReconcile: (runtime: unknown) => awaitPaymentReconcile(runtime),
+}))
+
 vi.mock('./walletCoordinator', () => ({
   runExclusiveSpend: async <T>(fn: () => Promise<T>) => fn(),
   leaseSpendPriority: () => ({
@@ -277,6 +283,27 @@ describe('refreshSpendableBalance', () => {
     expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
     expect(promotePendingLocalChangeOutputs).not.toHaveBeenCalled()
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+  })
+
+  it('waits for the restore reconcile before a payment selects inputs', async () => {
+    const order: string[] = []
+    awaitPaymentReconcile.mockImplementationOnce(async () => {
+      order.push('reconciled')
+      return { kind: 'clear' }
+    })
+    const { runExclusiveSpend } = await import('./spendGuard')
+    await runExclusiveSpend(async () => {
+      order.push('spend')
+    })
+    expect(order).toEqual(['reconciled', 'spend'])
+  })
+
+  it('never holds background spends behind the restore reconcile', async () => {
+    const { runExclusiveSpend } = await import('./spendGuard')
+    await expect(
+      runExclusiveSpend(async () => 'ok', undefined, { background: true }),
+    ).resolves.toBe('ok')
+    expect(awaitPaymentReconcile).not.toHaveBeenCalled()
   })
 
   it('pauses toolbox maintenance while the spend owns IndexedDB', async () => {

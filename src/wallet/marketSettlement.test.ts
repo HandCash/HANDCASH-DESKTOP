@@ -239,7 +239,7 @@ describe('market exact settlement contract', () => {
     listing.origin = tokenId
     const buyerAddress = buyer.toAddress('mainnet')
     tx.outputs[0]!.lockingScript = LockingScript.fromHex(
-      buildBsv21ValueLock({
+      buildBsv21ValueLock({ layout: 'brc162',
         tokenId,
         amount: 60n,
         address: buyerAddress,
@@ -248,7 +248,7 @@ describe('market exact settlement contract', () => {
     tx.addOutput({
       satoshis: 1,
       lockingScript: LockingScript.fromHex(
-        buildBsv21ValueLock({
+        buildBsv21ValueLock({ layout: 'brc162',
           tokenId,
           amount: 7n,
           address: buyerAddress,
@@ -266,7 +266,7 @@ describe('market exact settlement contract', () => {
     listing.origin = tokenId
     const buyerAddress = buyer.toAddress('mainnet')
     tx.outputs[0]!.lockingScript = LockingScript.fromHex(
-      buildBsv21ValueLock({
+      buildBsv21ValueLock({ layout: 'brc162',
         tokenId,
         amount: 60n,
         address: buyerAddress,
@@ -274,7 +274,7 @@ describe('market exact settlement contract', () => {
     )
     tx.outputs[3]!.satoshis = 1
     tx.outputs[3]!.lockingScript = LockingScript.fromHex(
-      buildBsv21ValueLock({
+      buildBsv21ValueLock({ layout: 'brc162',
         tokenId,
         amount: 7n,
         address: PrivateKey.fromRandom().toPublicKey().toAddress('mainnet'),
@@ -337,7 +337,7 @@ describe('bsv21 market settlement buyer lock', () => {
     expect(validate).toThrow(/outputs do not match|162 amount/i)
     const buyerAddress = buyer.toAddress('mainnet')
     tx.outputs[0]!.lockingScript = LockingScript.fromHex(
-      buildBsv21ValueLock({
+      buildBsv21ValueLock({ layout: 'brc162',
         tokenId,
         amount: 60n,
         address: buyerAddress,

@@ -146,5 +146,6 @@ export type ActivityActionKind =
   | 'rebroadcastAll'
   | 'clearAll'
   | 'publishPending'
+  | 'notify'
 
 export const useActivityAction = () => useAsyncAction<ActivityActionKind>()

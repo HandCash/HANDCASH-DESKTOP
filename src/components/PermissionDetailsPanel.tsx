@@ -31,7 +31,7 @@ function itemGrantCopy(scopeId: string, origin: string): string | null {
     if (tokenAccess.view === 'none') {
       return 'Not granted — the app cannot list token inventory.'
     }
-    if (tokenAccess.view === 'all') return 'Granted: all BSV-21 tokens.'
+    if (tokenAccess.view === 'all') return 'Granted: every token in this wallet.'
     return `Granted (filtered): ${tokenAccess.ids.length} token id${
       tokenAccess.ids.length === 1 ? '' : 's'
     }`

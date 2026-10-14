@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.3.549",
+  "version": "1.3.550",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -13,6 +13,7 @@
     "copy:review": "node scripts/jev-copy-review.mjs",
     "docs:review": "node scripts/jev-doc-review.mjs",
     "ui:review:all": "node scripts/jev-ui-review.mjs --all",
+    "brc:map": "node scripts/jev-brc-map.mjs",
     "ui:facts": "node scripts/jev-ui-review.mjs --facts",
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",

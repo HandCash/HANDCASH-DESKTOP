@@ -1,4 +1,5 @@
 import { assign, setup } from 'xstate'
+import type { AccountMovePhase } from '../wallet/accountMoveMachine'
 
 type MenuError = string | null
 
@@ -6,21 +7,20 @@ type MenuError = string | null
 type AfterSwitch = 'stay' | 'profile'
 
 /**
- * Wallet menu: switch, create, and move accounts between devices.
+ * Wallet menu: switch and create accounts.
  *
- * An account another install holds is taken (`taking`), with a confirmation
- * when that install still holds it (`confirmTakeover`). The active account is
- * released after a confirmation (`confirmRelease` → `releasing`), and the menu
- * then switches to another held account or creates one. `DISPLACED` arrives
- * when a holder check finds another install took the active account.
+ * Choosing an account another install holds moves it here (`moving`, driven
+ * by `accountMoveMachine`; no step asks the user) and then switches to it.
+ * `DISPLACED` arrives when this install stops holding the active account:
+ * another install took it, or asked for it and this one released it.
  */
 export const walletAccountMenuMachine = setup({
   types: {
     context: {} as {
       targetAccountIndex: number | null
       afterSwitch: AfterSwitch
-      /** Taking over from an install that still holds the account. */
-      force: boolean
+      /** Where a move here stands, for the row's status line. */
+      movePhase: AccountMovePhase | null
       error: MenuError
     },
     events: {} as
@@ -31,32 +31,26 @@ export const walletAccountMenuMachine = setup({
       | { type: 'SWITCHED' }
       | { type: 'CREATE' }
       | { type: 'CREATED' }
-      | { type: 'TAKE'; accountIndex: number }
-      | { type: 'HELD_ELSEWHERE' }
-      | { type: 'TAKEN' }
-      | { type: 'RELEASE' }
-      | { type: 'RELEASED'; nextAccountIndex: number | null }
-      | { type: 'CONFIRM' }
-      | { type: 'CANCEL' }
+      | { type: 'MOVE'; accountIndex: number }
+      | { type: 'MOVE_PHASE'; phase: AccountMovePhase }
+      | { type: 'MOVED' }
       | { type: 'DISPLACED'; nextAccountIndex: number | null }
       | { type: 'FAIL'; error: string },
   },
   actions: {
     /** Provided by the projection: navigate to Publish identity. */
     openProfile: () => {},
-    /** Switch target after a release or a displacement. */
+    /** Switch target after a displacement. */
     targetNextAccount: assign(({ event }) => ({
-      targetAccountIndex:
-        event.type === 'RELEASED' || event.type === 'DISPLACED' ? event.nextAccountIndex : null,
+      targetAccountIndex: event.type === 'DISPLACED' ? event.nextAccountIndex : null,
       afterSwitch: 'stay' as const,
-      force: false,
+      movePhase: null,
       error: null,
     })),
-    clearError: assign({ force: false, error: null }),
+    clearError: assign({ movePhase: null, error: null }),
   },
   guards: {
-    hasNextAccount: ({ event }) =>
-      (event.type === 'RELEASED' || event.type === 'DISPLACED') && event.nextAccountIndex != null,
+    hasNextAccount: ({ event }) => event.type === 'DISPLACED' && event.nextAccountIndex != null,
   },
 }).createMachine({
   id: 'walletAccountMenu',
@@ -64,7 +58,7 @@ export const walletAccountMenuMachine = setup({
   context: {
     targetAccountIndex: null,
     afterSwitch: 'stay',
-    force: false,
+    movePhase: null,
     error: null,
   },
   states: {
@@ -112,62 +106,30 @@ export const walletAccountMenuMachine = setup({
           target: 'creating',
           actions: assign({ error: null }),
         },
-        TAKE: {
-          target: 'taking',
+        MOVE: {
+          target: 'moving',
           actions: assign({
             targetAccountIndex: ({ event }) => event.accountIndex,
-            force: false,
+            movePhase: 'reading',
             error: null,
           }),
         },
-        RELEASE: {
-          target: 'confirmRelease',
-          actions: assign({ error: null }),
-        },
       },
     },
-    taking: {
+    moving: {
       on: {
-        TAKEN: {
+        MOVE_PHASE: { actions: assign({ movePhase: ({ event }) => event.phase }) },
+        MOVED: {
           target: 'switching',
-          actions: assign({ afterSwitch: 'stay', force: false }),
+          actions: assign({ afterSwitch: 'stay', movePhase: null }),
         },
-        HELD_ELSEWHERE: 'confirmTakeover',
         FAIL: {
           target: 'open',
-          actions: assign({ force: false, error: ({ event }) => event.error }),
-        },
-      },
-    },
-    confirmTakeover: {
-      on: {
-        CONFIRM: { target: 'taking', actions: assign({ force: true }) },
-        CANCEL: { target: 'open', actions: assign({ targetAccountIndex: null, force: false }) },
-        DISPLACED: [
-          { guard: 'hasNextAccount', target: 'switching', actions: 'targetNextAccount' },
-          { target: 'creating', actions: 'clearError' },
-        ],
-      },
-    },
-    confirmRelease: {
-      on: {
-        CONFIRM: 'releasing',
-        CANCEL: 'open',
-        DISPLACED: [
-          { guard: 'hasNextAccount', target: 'switching', actions: 'targetNextAccount' },
-          { target: 'creating', actions: 'clearError' },
-        ],
-      },
-    },
-    releasing: {
-      on: {
-        RELEASED: [
-          { guard: 'hasNextAccount', target: 'switching', actions: 'targetNextAccount' },
-          { target: 'creating', actions: 'clearError' },
-        ],
-        FAIL: {
-          target: 'open',
-          actions: assign({ error: ({ event }) => event.error }),
+          actions: assign({
+            targetAccountIndex: null,
+            movePhase: null,
+            error: ({ event }) => event.error,
+          }),
         },
       },
     },

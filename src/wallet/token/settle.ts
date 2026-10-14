@@ -41,7 +41,8 @@ import { forgetItemsSent } from '../sentItemGuard'
 import { signedChequeAtomic } from '../signedChequeArchive'
 import { decodeBsv21Binary } from './decode162'
 import { deployDisplayFromScript, type DeployDisplay } from './deployDisplay'
-import { fillTokenParentBodies, prove } from './prove176'
+import { noteTokenRequiresProcessing } from './requiredProcessing'
+import { fillTokenParentBodies, prove, verifyTokenSpendScripts } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
 import { inboundTokenLineage } from './inboundLineage'
 import { chainTrackerFor, provenTokenDeployOf, rememberProvenTokenTips, withTokenLineage } from './lineage'
@@ -279,7 +280,8 @@ export async function internalizePeerFungibleSettle(opts: {
     // hint fate retries when the failure was a fetch, and a forged output
     // naming a real token id never paints a balance.
     const provingStarted = Date.now()
-    let proofBeef = withTokenLineage(beef, inboundTokenLineage(id))
+    const lineage = inboundTokenLineage(id)
+    let proofBeef = withTokenLineage(beef, lineage)
     const offline = tips.every((tip) => prove(`${id}_${tip.vout}`, proofBeef, provenTokenDeployOf).ok)
     if (!offline) {
       const { getBeefForTxidCached } = await import('../beefCache')
@@ -300,19 +302,19 @@ export async function internalizePeerFungibleSettle(opts: {
       )
     }
     let deployOutpoint: string | undefined
+    let walkedTxs = 0
+    let checkedSpends = 0
+    const unproven = (vout: number, reason: string) => {
+      console.warn(
+        `[fungible-settle] ${id.slice(0, 12)}_${vout} BRC-176 unproven — ${reason} (${Date.now() - provingStarted}ms)`,
+      )
+      clearInboundReceivePending(id)
+      return { accepted: false, outpoints: [], reason: `lineage-unproven:${reason.slice(0, 120)}` }
+    }
     for (const tip of tips) {
-      const proof = prove(`${id}_${tip.vout}`, proofBeef, provenTokenDeployOf)
-      if (!proof.ok) {
-        console.warn(
-          `[fungible-settle] ${id.slice(0, 12)}_${tip.vout} BRC-176 unproven — ${proof.reason} (${Date.now() - provingStarted}ms)`,
-        )
-        clearInboundReceivePending(id)
-        return {
-          accepted: false,
-          outpoints: [],
-          reason: `lineage-unproven:${proof.reason.slice(0, 120)}`,
-        }
-      }
+      const point = `${id}_${tip.vout}`
+      const proof = prove(point, proofBeef, provenTokenDeployOf)
+      if (!proof.ok) return unproven(tip.vout, proof.reason)
       if (proof.tokenId !== tokenId) {
         clearInboundReceivePending(id)
         return {
@@ -321,14 +323,18 @@ export async function internalizePeerFungibleSettle(opts: {
           reason: `token-id-mismatch:${proof.tokenId.slice(0, 16)}`,
         }
       }
+      const scripts = verifyTokenSpendScripts(point, proofBeef, provenTokenDeployOf)
+      if (!scripts.ok) return unproven(tip.vout, scripts.reason)
+      walkedTxs = Math.max(walkedTxs, scripts.transactions)
+      checkedSpends += scripts.spends
       deployOutpoint = proof.deployOutpoint
     }
-    const provingMs = Date.now() - provingStarted
-    if (provingMs > 250) {
-      console.info(
-        `[fungible-settle] ${id.slice(0, 12)} prove done ${provingMs}ms (${offline ? 'lineage' : 'parent walk'})`,
-      )
-    }
+    // One line per receive so triage can size BRC-251 proofs from uploads.
+    console.info(
+      `[fungible-settle] ${id.slice(0, 12)} proof done ${Date.now() - provingStarted}ms — ` +
+        `beef ${atomic.length}B lineage ${lineage?.length ?? 0}B walked ${walkedTxs} tx ` +
+        `scripts ${checkedSpends} (${offline ? 'lineage' : 'parent walk'})`,
+    )
     // The deploy carries the issuer's Sigma; keeping it and the walk that
     // reached it is what lets this token be attested after the tip moves.
     if (deployOutpoint) {
@@ -346,6 +352,12 @@ export async function internalizePeerFungibleSettle(opts: {
     // Display data is inherited from the proven deploy (BRC-162 §roles); the
     // sender's envelope and the tip's own inscription only fill gaps.
     const deploy = deployMetadataFromBeef(proofBeef, deployOutpoint ?? tokenId)
+    if (deploy?.requiresProcessing) {
+      noteTokenRequiresProcessing(tokenId)
+      console.warn(`[fungible-settle] ${id.slice(0, 12)} refused — deploy requires processing (BRC-251 req)`)
+      clearInboundReceivePending(id)
+      return { accepted: false, outpoints: [], reason: 'unsupported-token:required-processing' }
+    }
     resolvedSym = deploy?.sym || resolvedSym || matched.sym || 'Token'
     resolvedIcon = deploy?.icon || resolvedIcon || matched.icon
     resolvedIssuer = deploy?.issuer || resolvedIssuer || matched.issuer

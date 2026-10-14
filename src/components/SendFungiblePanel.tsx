@@ -9,6 +9,7 @@ import {
   formatFungibleAmount,
   getFungible,
   listFungibles,
+  spendableFungibleAmt,
   subscribeFungibles,
   type FungibleToken,
 } from '../wallet/token'
@@ -132,7 +133,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const issuerAssets = useMemo(() => (token ? [tokenIssuerAsset(token)] : []), [token])
 
   const balanceLabel = token
-    ? formatFungibleAmount(token.amt, token.dec)
+    ? formatFungibleAmount(spendableFungibleAmt(token), token.dec)
     : ''
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
@@ -148,7 +149,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       : pathVerdict.error === 'mixed_tips'
         ? 'This balance mixes plain and cosigned tips — send them separately.'
         : pathVerdict.error === 'unknown_lock'
-          ? 'This tip is not a BSV-21 value lock.'
+          ? 'This output is not a token this wallet can send.'
           : pathVerdict.error
   const canReview =
     !sendBlocked && to.trim().length > 0 && amount.trim().length > 0
@@ -263,7 +264,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
 
   const fillMax = () => {
     if (!token) return
-    setAmount(formatFungibleAmount(token.amt, token.dec))
+    setAmount(formatFungibleAmount(spendableFungibleAmt(token), token.dec))
     setError(null)
   }
 

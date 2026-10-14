@@ -102,3 +102,41 @@ describe('message store retention', () => {
     expect(encodes).toHaveLength(1)
   })
 })
+
+describe('inbound payment cards', () => {
+  const TXID = 'c'.repeat(64)
+  const card = (meta: Record<string, unknown> = {}, kind: 'pay-sent' | 'tip' = 'pay-sent') => ({
+    direction: 'in' as const,
+    kind,
+    text: 'Pay 500 sats',
+    meta: { txid: TXID, brc29: { derivationPrefix: 'p', derivationSuffix: 's', outputIndex: 0 }, ...meta },
+  })
+
+  beforeEach(() => {
+    store.clear()
+    bindAccountLocalKeyScope({ accountIndex: 0, identityKey: 'vitest-primary-identity', chain: 'main' })
+  })
+
+  it('is one card however many times its notice arrives', () => {
+    const first = appendMessage('peer', card({ status: 'Receiving (SPV)' }))
+    const again = appendMessage('peer', card({ status: 'Receiving (SPV)' }))
+    expect(again.id).toBe(first.id)
+    expect(listAllMessages()).toHaveLength(1)
+  })
+
+  it('keeps distinct outputs, kinds and senders of one transaction apart', () => {
+    appendMessage('peer', card({ itemOutputIndex: 0 }))
+    appendMessage('peer', card({ itemOutputIndex: 1 }))
+    appendMessage('peer', card({}, 'tip'))
+    appendMessage('other', card())
+    expect(listAllMessages()).toHaveLength(4)
+  })
+
+  it('never folds outgoing cards or plain chat', () => {
+    appendMessage('peer', { ...card(), direction: 'out' })
+    appendMessage('peer', { ...card(), direction: 'out' })
+    appendMessage('peer', { direction: 'in', kind: 'text', text: 'same' })
+    appendMessage('peer', { direction: 'in', kind: 'text', text: 'same' })
+    expect(listAllMessages()).toHaveLength(4)
+  })
+})

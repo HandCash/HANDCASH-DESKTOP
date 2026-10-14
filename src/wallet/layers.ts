@@ -40,11 +40,18 @@ import { getActiveWallet } from './session'
  *   or signed with. The spend guard reads holding from local storage only.
  *   Other installs learn it from a signed `holder.json` beside the account's
  *   BRC-39 blob, which changes only on create (create-only, so two devices
- *   never reserve one index), Move here / Take over, and Move to another
- *   device (history flushed first). Checked on unlock, on switch, and every
- *   five minutes for the active account. An account that arrives merges its
- *   BRC-39 backup before it spends. Not a spend lease: nothing on the spend
- *   path waits on the network. Draft BRC-249 (`docs/bsva/brcs/wallet/0249.md`).
+ *   never reserve one index), take and release. Moving is automatic
+ *   (`accountMove.ts`): choosing an account held elsewhere asks its holder
+ *   device to device over the vault link (`vaultLink.ts`, box
+ *   `account-holding` only when no link opens); a live holder releases, a
+ *   silent one is forced after 10 s, nobody is prompted. Checked on unlock, on switch, every
+ *   five minutes for the active account, and once before the first spend
+ *   after a gap (`holdingFreshness.ts`). An account that arrives merges its
+ *   BRC-39 backup before it spends; a displaced install hands over what it
+ *   recorded since its last upload instead of uploading
+ *   (`accountHandover.ts`). Not a spend lease: outside the one read per gap,
+ *   nothing on the spend path waits on the network. Draft BRC-249
+ *   (`docs/bsva/brcs/wallet/0249.md`).
  * - **Backup scope** → policy is vault-wide (`vaultLocalKeys.ts`): the key
  *   backup, the BRC-39 host and the "history backed up" confirmation do not
  *   change between sub-accounts. State is per account, because each account
@@ -99,6 +106,14 @@ import { getActiveWallet } from './session'
  *   history lives only in that account's own backup (BRC-208 discovery).
  *   Spends wait out the history decision; the funding pass after an unchanged
  *   localState is ordinary chainIngest, and only a replaced one stays fenced.
+ *   A replaced one also starts the payment reconcile (`paymentReconcile.ts`:
+ *   notice journal, owed notices, Activity relist of lost payments); the next
+ *   foreground spend waits for it, at most 20 s, then sends anyway. A
+ *   journaled payment the restored history lacks is resumed through
+ *   `registerSignedSend` from its journaled BEEF — inputs sealed before the
+ *   hold lifts, propagated as the same txid — and its notice waits for the
+ *   miner verdict; a proven reject settles it unsent. Without a BEEF its
+ *   Activity row stays pending unless the chain shows the payment.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
  *   Each change lock is derived from a random BRC-29 prefix/suffix that the
@@ -116,7 +131,8 @@ import { getActiveWallet } from './session'
  *   output is journaled before the call returns, ahead of propagation — plus a
  *   full sweep before any wipe or History replace. It survives factory wipe,
  *   replicates sealed (HKDF root key, AES-GCM) beside BRC-39 as
- *   `custody.journal` with conditional writes (`custodyJournalBackup.ts`), and
+ *   `custody.journal` with conditional writes (`custodyJournalBackup.ts` over
+ *   `journalReplica.ts`, shared with the BRC-29 notice journal), and
  *   after every recompose `custodyJournalRecovery.ts` re-internalizes each
  *   journaled output the chain says is unspent and `localState` has no row for.
  *   `derivedChangeEcho.ts` is the legacy capped copy; it feeds the journal.
@@ -131,16 +147,32 @@ import { getActiveWallet } from './session'
  *     storage. GorillaPool `/content/` is the last resort for an origin whose
  *     bytes never reached us (a legacy-address sweep), never how a fresh mint
  *     first paints — a just-signed transaction is in no indexer yet.
- *   - **Issuer identity** (`issuerIdentity.ts`, draft BRC-248 beside BRC-247) —
- *     a BAP identity: 0-sat AIP-signed ID records form a rotating key chain, the
- *     ALIAS is the profile, the image is a B:// file. Nothing is an ordinal.
- *     The wallet's own tree sits in basket `bap` as 1Sat wallets keep it;
- *     imported masters in `bap issuer`. Assets name the BAP ID inside their
- *     Sigma-signed tape, signed by the then-active key. The package (a minimal
- *     BEEF of the chain, ALIAS and image) is stored once per BAP ID
- *     (`issuerIdentities.ts`) and rides an item delivery as `meta.identities`
- *     only when it fits after the custody BEEF and item provenance. It never
- *     gates ingest or ACK.
+ *   - **Issuer identity** (BRC-247 stamp, draft BRC-248 package) — the issuer
+ *     is the BRC-100 identity key: every new item and token carries
+ *     `MAP SET issuer <identityKey>` and a Sigma BRC-77 signature by that key
+ *     over an anchor input, or no stamp at all when the user opts out. The name
+ *     and photo belong to the identity key: its own profile is a self-signed
+ *     BRC-52 certificate (`identityProfile.ts`, draft BRC-248 §2; name, bio,
+ *     optional photo, newest `issuedAt` wins), saved with no transaction and
+ *     kept per key (`identityProfiles.ts`). A linked BAP profile labels the key
+ *     only while it has none of its own. A BAP
+ *     identity (`issuerIdentity.ts`) is an optional mirror, never the issuer
+ *     signal: 0-sat AIP-signed ID records form a rotating key chain, the ALIAS
+ *     is the profile, the image is a B:// file, and a link record
+ *     (`identityLink.ts`) signed by both the identity key and the then-active
+ *     BAP key names the identity key it describes. Nothing is an ordinal. The
+ *     wallet's own tree sits in basket `bap` as 1Sat wallets keep it; imported
+ *     masters in `bap issuer`. A shelf is one identity key; its own profile,
+ *     else its linked BAP profile, names it, and a BAP stamp an earlier draft
+ *     wrote joins the identity key that profile links. The BAP package (a
+ *     minimal BEEF of the chain, ALIAS, image and links) is stored once per BAP
+ *     ID (`issuerIdentities.ts`). An item delivery carries `meta.identities` —
+ *     `{ v: 2, identityKey, certificates, images, bap }` for an identity-key
+ *     stamp (the BAP part kept only when it links that key and dropped first
+ *     when over budget) — only when it fits after the custody BEEF and item
+ *     provenance. It never gates ingest or ACK. The identity card (v2, signed
+ *     by the wallet key and countersigned by the presented key) carries the
+ *     same package to contacts; v1 BAP cards are still read.
  *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
  *     spend does not wait on an indexer.
  *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).
@@ -151,8 +183,9 @@ import { getActiveWallet } from './session'
  *     `externalBroadcast` classify only metadata delivery/internalization; a
  *     messagebox miss never changes transaction propagation or creates a second
  *     spend. Remittance ± inline BEEF rides `sendMessage`. A live pair
- *     may skip the box for that session after a signed IPv6 offer (draft
- *     BRC-246, `directSession/`). The box stays the rendezvous and the offline inbox.
+ *     may skip the box on a WebRTC data channel opened by signed offer/answer
+ *     on box `session-upgrade` (draft BRC-246, `directSession/`). The box stays
+ *     the rendezvous and the offline inbox.
  *   - **1Sat market** (`marketListing.ts` + `marketSettlement.ts`): listing
  *     spends the tip into a re-tipped item + BRC-48 offer. Settlement is one
  *     atomic tx (item0 + offer1). Abort is forbidden after `signAction`; a later
@@ -162,8 +195,9 @@ import { getActiveWallet } from './session'
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. Bodies are BRC-169 §7 / BRC-78 envelopes. A live draft-BRC-246
- *   IPv6 session carries the same sealed chat and skips the box for that message
- *   (Desktop Electron and Android Capacitor). BRC-CLOUD hosts a convenience box;
+ *   WebRTC data channel (IPv4 behind NAT, same LAN or IPv6) carries the same
+ *   sealed chat and skips the box for that message; an unacknowledged frame
+ *   falls back to the box. BRC-CLOUD hosts a convenience box;
  *   resolve may return any box URL.
  * - **BRC-100 app exchange** — the signed Atomic BEEF (+ remittance) *is* the
  *   payment. SPV is primary; broadcast is how we cash it (required, secondary).
@@ -211,6 +245,23 @@ import { getActiveWallet } from './session'
  *   (± inline Atomic BEEF) then goes on `sendMessage`. Inbox miss → local
  *   outbox retry, never a second payment. Inbox is not ACKed until ingest
  *   succeeds. Same-identity still notifies our box so other devices ingest.
+ *   What is owed is localState, not the outbox: the payment output's
+ *   instructions carry `notice: pending → delivered` (`paymentNotice.ts`), so
+ *   BRC-39 and the handover delta carry it and recompose / handover merge
+ *   re-queue every notice still owed. The payee folds a repeat into one card.
+ *   The outbox never gives an owed notice up: misses back off from 30 s to
+ *   hourly, a row leaves only when the record says delivered or the payment
+ *   failed, the flush re-reads the records every 10 min, and after 20 misses
+ *   the payment's details show it stalled with Notify now. The BRC-39 push
+ *   waits 45 s after a send, so the notice is also journaled once sealed,
+ *   before it propagates (`noticeJournal.ts`: payee, derivation, small Atomic
+ *   BEEF), and replicated sealed beside BRC-39 as `notices.journal` within
+ *   seconds; a delivery writes a tombstone, and a queued notice a tombstone
+ *   settled (on any device) is dropped unsent. A displaced install tombstones
+ *   the notices of the transactions it voids, and pushes them before voiding,
+ *   so no holder hands their BEEF to a payee. Recovery pulls it and re-queues
+ *   what the history does not have yet. Activity marks an owed notice on the
+ *   payment row ("Notifying recipient…", "needs attention" once stalled).
  *   `/files` is not the payment path (Android WebView). Plain address P2PKH
  *   remains for external/pasted addresses (`sendPayment.ts` + `bsvSendMachine`).
  * - **Dual-layer confirmation** → `txLifecycle` / `utxoLockManager` /
@@ -323,6 +374,10 @@ export const WALLET_LAYER_MODULES = {
     "pendingSend.ts",
     "sendPayment.ts",
     "sendBrc29Payment.ts",
+    "paymentNotice.ts",
+    "pendingBrc29Outbox.ts",
+    "noticeJournal.ts",
+    "paymentReconcile.ts",
     "marketListing.ts",
     "marketListingPath.ts",
     "marketSettlement.ts",
@@ -370,6 +425,7 @@ export const WALLET_LAYER_MODULES = {
     "custodyJournalCapture.ts",
     "custodyJournalRecovery.ts",
     "custodyJournalBackup.ts",
+    "journalReplica.ts",
     "reclaimSealBatch.ts",
     "oneSatImportGuard.ts",
     "oneSatCollectableGuard.ts",

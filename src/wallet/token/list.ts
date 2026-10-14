@@ -1,6 +1,12 @@
 import { issuerMetadataFromScript } from '../issuerMetadata'
 import { retainedIssuerMetadata } from '../issuerAttribution'
-import { proveHeldTokenTip, rememberProvenTokenTips, tokenAttestationGap, tokenIssuerAttested } from './lineage'
+import {
+  proveHeldTokenTip,
+  rememberProvenTokenTips,
+  tokenAttestationGap,
+  tokenIssuerAttested,
+  tokenTipBound,
+} from './lineage'
 import { judgeTokenImport } from './importProof'
 import { formatTokenLedger, tokenLedger } from './ledger'
 import { getActiveWallet } from '../session'
@@ -33,11 +39,11 @@ import {
   type FungibleHeldTip,
   type FungibleToken,
 } from './types'
-import { tipFromBsv21Script } from './sendPlan'
+import { bsv21TipLayout, tipFromBsv21Script } from './sendPlan'
 import { reportHoldings } from '../holdingsReconcile'
 import { createEmptyReadGate } from '../emptyBasketRead'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
-import { holdIssuerIdentities, issuerAttribution } from '../issuerIdentities'
+import { bapStampVerdict, holdIssuerIdentities } from '../issuerIdentities'
 import { accountLocalKey, peekAccountLocalKeyScope } from '../accountLocalKeys'
 import {
   beginOneSatImport,
@@ -59,6 +65,7 @@ import { attachMarketListingToToken } from './marketView'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { decodeBsv21Binary } from './decode162'
 import { deployDisplayFromScript } from './deployDisplay'
+import { noteTokenRequiresProcessing, tokenRequiresProcessing } from './requiredProcessing'
 import { holdTokenGenesis, retainedTokenGenesis } from './genesisStore'
 import { assetRowState, restoreUnspentAssetOutpoint } from '../staleOutputRelease'
 import { isLocalUnconfirmedTxid } from '../txStore'
@@ -262,7 +269,7 @@ function holdNamedIssuers(items: readonly FungibleToken[]): void {
     holdIssuerIdentities(
       peekAccountLocalKeyScope().chain,
       listCacheKey(),
-      items.map((t) => t.bapId),
+      items.flatMap((t) => [t.bapId, t.issuerAttested ? t.issuer : undefined]),
     )
   } catch {
     // No bound account: nothing was persisted for it either.
@@ -303,6 +310,8 @@ function setFungiblesCache(
   const paintedAt = Date.now()
   cached = items
     .filter(cacheExtraLooksLikeFungible)
+    .filter((token) => !tokenRequiresProcessing(token.tokenId))
+    .map(withLineageCheck)
     .map(attachMarketListingToToken)
     // Stamp first paint so an unconfirmed mint can age out of the list.
     .map((token) => (token.seenAt == null ? { ...token, seenAt: paintedAt } : token))
@@ -403,6 +412,7 @@ function tipFromProjection(token: FungibleToken): Bsv21Utxo {
     ...(token.icon ? { icon: token.icon } : {}),
     ...(token.binarySupply ? { binarySupply: token.binarySupply } : {}),
     ...(token.encoding ? { encoding: token.encoding } : {}),
+    ...(token.layout ? { layout: token.layout } : {}),
     ...(token.maxSupply != null ? { maxSupply: token.maxSupply } : {}),
     ...(token.seenAt != null ? { seenAt: token.seenAt } : {}),
   }
@@ -413,6 +423,24 @@ function heldTipsOf(token: FungibleToken): Bsv21Utxo[] {
     return token.heldTips.map((tip) => ({ ...tip }))
   }
   return [tipFromProjection(token)]
+}
+
+/**
+ * Hold tips no walk has bound to the deploy out of the balance (BRC-251
+ * §Verification): they show as checking until the lineage heal binds them,
+ * and a send walks every tip it spends before signing either way.
+ */
+export function withLineageCheck(row: FungibleToken): FungibleToken {
+  let checking = 0n
+  for (const tip of heldTipsOf(row)) {
+    if (!tokenTipBound(tip.outpoint, tip.tokenId)) {
+      checking += BigInt(tip.amt.replace(/\D/g, '') || '0')
+    }
+  }
+  const next = checking > 0n ? checking.toString() : undefined
+  if (next === row.checkingAmt) return row
+  const { checkingAmt: _prior, ...rest } = row
+  return next ? { ...rest, checkingAmt: next } : rest
 }
 
 function overlayFungibleMetadata(
@@ -752,16 +780,18 @@ async function recoverBsv21DeployMetadata(
   const tx =
     retainedTokenGenesis(txid)?.findTxid(txid)?.tx ?? (await tokenTxBody(wallet, txid))
   const deploy = deployDisplayFromScript(tx?.outputs[vout]?.lockingScript?.toHex(), normalized)
+  if (deploy?.requiresProcessing) noteTokenRequiresProcessing(normalized)
   if (!tx || !deploy || (!deploy.sym && !deploy.icon)) {
     deployMetadataMisses.set(normalized, Date.now())
     return null
   }
   deployMetadataMisses.delete(normalized)
   const icon = deploy.icon ? normalizeTokenId(deploy.icon) ?? undefined : undefined
-  // A binary deploy's icon resolves through the BRC-162 icon pointer below.
+  // An embedded BRC-162 image is this deploy output, already in hand; a draft
+  // pointer resolves through the icon outpoint below.
   const beef = { findTxid: (id: string) => (id.toLowerCase() === txid ? { tx } : undefined) }
   const iconUrl =
-    icon && deploy.encoding === 'json'
+    icon && (deploy.encoding === 'json' || icon === normalized)
       ? cacheTokenIconFromBeef(icon, beef) ?? (await resolveTokenIconDataUrl(icon, wallet))
       : undefined
   return {
@@ -1076,13 +1106,14 @@ async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken
     'remittance-only': 0,
     unsigned: 0,
     'unsigned-mint': 0,
+    'signer-only': 0,
   }
   const offShelf: string[] = []
   for (const row of rows) {
     let shelf: string
     if (row.issuerAttested && row.issuer) {
       shelf = row.bapId
-        ? issuerAttribution(wallet.chain, { bapId: row.bapId, signer: row.issuer })?.kind === 'verified'
+        ? bapStampVerdict(wallet.chain, { bapId: row.bapId, signer: row.issuer })?.kind === 'verified'
           ? 'bap'
           : 'bap-unconfirmed'
         : 'key'
@@ -1095,13 +1126,14 @@ async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken
       shelf = gap === 'attested' ? 'key' : gap
     }
     counts[shelf]! += 1
-    if (shelf !== 'bap') offShelf.push(`${row.sym || '?'} ${row.tokenId.slice(0, 12)} ${shelf}`)
+    if (shelf !== 'key' && shelf !== 'bap') offShelf.push(`${row.sym || '?'} ${row.tokenId.slice(0, 12)} ${shelf}`)
   }
   const census =
     `${rows.length} token(s) — ` +
     Object.entries(counts)
       .map(([kind, n]) => `${kind} ${n}`)
-      .join(', ')
+      .join(', ') +
+    `, checking ${rows.filter((row) => row.checkingAmt).length}`
   const named = offShelf.join('; ')
   if (`${census}|${named}` === lastAttestationCensus) return
   lastAttestationCensus = `${census}|${named}`
@@ -1110,9 +1142,10 @@ async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken
 }
 
 /**
- * Cards whose issuer is not attested yet — including received tokens whose
- * issuer is unknown until the deploy is held. Bind a tip and keep the deploy,
- * then re-attest every card from what is now retained.
+ * Cards with tips no walk has bound, or whose issuer is not attested yet —
+ * including received tokens whose issuer is unknown until the deploy is held.
+ * Bind the tips and keep the deploy, then re-attest and re-split every card
+ * from what is now retained.
  */
 let attestationInFlight: Promise<void> | null = null
 
@@ -1140,17 +1173,20 @@ async function attestHeldTokenLineagesNow(
   const startedAt = Date.now()
   let tried = 0
   for (const row of heal ? rows : []) {
-    if (row.issuerAttested) continue
     const tips = heldTipsOf(row)
-    // Only a missing deploy or an unbound tip is something a walk can supply;
-    // proving the same bound tip again spends the pass and changes nothing.
-    const gap = tokenAttestationGap({
-      tokenId: row.tokenId,
-      issuer: row.issuer,
-      tipOutpoints: tips.map((tip) => tip.outpoint),
-    })
-    if (gap !== 'no-genesis' && gap !== 'unbound') continue
-    for (const tip of tips) {
+    // Every unbound tip is held out of the balance until a walk binds it; a
+    // card whose tips are all bound only needs a walk to retain a missing
+    // deploy. Proving a bound tip again otherwise changes nothing.
+    const unbound = tips.filter((tip) => !tokenTipBound(tip.outpoint, tip.tokenId))
+    const gap = row.issuerAttested
+      ? 'attested'
+      : tokenAttestationGap({
+          tokenId: row.tokenId,
+          issuer: row.issuer,
+          tipOutpoints: tips.map((tip) => tip.outpoint),
+        })
+    const todo = unbound.length > 0 ? unbound : gap === 'no-genesis' ? tips.slice(0, 1) : []
+    for (const tip of todo) {
       if (tried >= LINEAGE_PROOFS_PER_PASS || epoch !== fungiblesAccountEpoch) break
       const proof = await proveHeldTokenTip(wallet, tip.outpoint, tip.tokenId).catch(
         () => ({ kind: 'refused', reason: 'walk-failed' }) as const,
@@ -1162,14 +1198,13 @@ async function attestHeldTokenLineagesNow(
         `[bsv21] lineage heal ${tip.outpoint.slice(0, 12)} — ` +
           (proof.kind === 'bound' ? `bound (${proof.source})` : `refused ${proof.reason}`),
       )
-      if (proof.kind === 'bound') break
     }
   }
   if (epoch !== fungiblesAccountEpoch) return
   if (tried > 0) reportPhase('lineage-proofs', startedAt, `${tried} tip(s)`)
   let changed = false
   const next = cached.map((row) => {
-    const upgraded = reattested(row)
+    const upgraded = withLineageCheck(reattested(row))
     if (upgraded !== row) changed = true
     return upgraded
   })
@@ -1261,7 +1296,7 @@ function parseListedOutput(
     ...(issuerMetadata.bapId ? { bapId: issuerMetadata.bapId } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
     encoding: from162 ? 'brc162' : 'legacy-json',
-    ...(from162 ? { binarySupply: 'locked' as const } : {}),
+    ...(from162 ? { binarySupply: 'locked' as const, layout: bsv21TipLayout(from162) } : {}),
   }
 }
 

@@ -39,6 +39,7 @@ import {
   rememberResolvedInscription,
   rememberUnresolved,
   flushInscriptionMisses,
+  lastInscriptionMiss,
   shouldResolveInscription,
   RESOLVE_RETRY_MS,
   heldTipArriving,
@@ -1329,11 +1330,19 @@ export async function classifyLegacyUtxos(
 
   // A collection-less tip already in basket `1sat` is re-probed only to catch a
   // misfiled token. A tip the wallet does not hold yet is what someone is
-  // waiting on, so it gets the per-pass budget first.
+  // waiting on, so it gets the per-pass budget first: never asked about, then
+  // longest since asked. Walking in scan order spent every pass on the same
+  // head of the list once its misses expired, and an address holding two
+  // thousand old items never reached the tail.
+  const lastMiss = new Map<LegacyUtxo, number>()
+  for (const u of candidates) lastMiss.set(u, lastInscriptionMiss(`${u.txid}.${u.vout}`))
   const walkOrder = [
-    ...candidates.filter((u) => !latchedCollectables.has(outpointKey(u.outpoint))),
+    ...candidates
+      .filter((u) => !latchedCollectables.has(outpointKey(u.outpoint)))
+      .sort((a, b) => lastMiss.get(a)! - lastMiss.get(b)!),
     ...candidates.filter((u) => latchedCollectables.has(outpointKey(u.outpoint))),
   ]
+  let named = 0
 
   for (const u of walkOrder) {
     // The scan result is already logged. This walk is the next thing on the
@@ -1434,6 +1443,7 @@ export async function classifyLegacyUtxos(
             }
           } else if (probe.kind === 'item') {
             resolved = { origin: txidVoutUnderscore(u.txid, u.vout) }
+            named += 1
           } else if (probe.kind === 'retired') {
             // Removed protocol tips stay held and never enter a product basket.
             rememberUnresolved(cacheKey)
@@ -1467,6 +1477,7 @@ export async function classifyLegacyUtxos(
           if (fetched && !isBsv21Mime(fetched.mimeType)) {
             rememberResolvedInscription(cacheKey, fetched)
             resolved = fetched
+            named += 1
           } else if (fetched && isBsv21Mime(fetched.mimeType)) {
             const again = await resolveBsv21Holding(u.txid, u.vout, chain)
             if (again) {
@@ -1543,8 +1554,19 @@ export async function classifyLegacyUtxos(
     // nonPositive / weird values: ignore (do not sweep)
   }
 
-  // Expired backoffs were dropped in memory during the walk. One write, not
-  // one per tip, and before the caller starts importing.
+  const probed = MAX_TRANSFER_PROBES_PER_PASS - probeBudget
+  const asked = MAX_UNKNOWN_RESOLVES_PER_PASS - resolveBudget
+  if (probed + asked > 0) {
+    const neverAsked = heldOneSats.filter(
+      (u) => lastInscriptionMiss(`${u.txid}.${u.vout}`) === 0,
+    ).length
+    console.info(
+      `[1sat] identify pass: probed ${probed}, asked indexer ${asked}, named ${named}` +
+        ` — ${neverAsked} held one-sat(s) never asked yet`,
+    )
+  }
+
+  // This pass's misses reach storage in one write, before the caller imports.
   flushInscriptionMisses()
 
   return { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips }

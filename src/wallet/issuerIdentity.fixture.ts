@@ -1,5 +1,6 @@
 import { Beef, MerklePath, P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
 import { bapAliasScript, bapIdFor, bapIdScript, bapKey, bFileScript } from './bapRecords'
+import { identityLinkScript, type IdentityLinkKind, type IdentityLinkSigner } from './identityLink'
 import {
   buildIssuerIdentityPackage,
   issuerProfile,
@@ -24,8 +25,7 @@ function provenAt(tx: Transaction, height: number): MerklePath {
 
 let nonce = 0
 
-/** One transaction carrying `scripts` as 0-sat outputs; proven when `minedHeight` is set. Heights must be distinct. */
-export function recordTx(scripts: string[], minedHeight?: number): Transaction {
+function fundTx(): Transaction {
   const fund = new Transaction()
   fund.addInput({
     sourceTXID: (++nonce).toString(16).padStart(64, '0'),
@@ -34,11 +34,20 @@ export function recordTx(scripts: string[], minedHeight?: number): Transaction {
   })
   fund.addOutput({ satoshis: 100, lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()) })
   fund.merklePath = provenAt(fund, 800_000 + nonce)
+  return fund
+}
+
+function spending(fund: Transaction, scripts: string[], minedHeight?: number): Transaction {
   const tx = new Transaction()
   tx.addInput({ sourceTransaction: fund, sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
   for (const script of scripts) tx.addOutput({ satoshis: 0, lockingScript: Script.fromHex(script) })
   if (minedHeight !== undefined) tx.merklePath = provenAt(tx, minedHeight)
   return tx
+}
+
+/** One transaction carrying `scripts` as 0-sat outputs; proven when `minedHeight` is set. Heights must be distinct. */
+export function recordTx(scripts: string[], minedHeight?: number): Transaction {
+  return spending(fundTx(), scripts, minedHeight)
 }
 
 export function beefOf(...txs: Transaction[]): number[] {
@@ -47,18 +56,48 @@ export function beefOf(...txs: Transaction[]): number[] {
   return beef.toBinary()
 }
 
+/**
+ * A BRC-248 link (or unlink) record bound to its own input 0. `signers`
+ * defaults to the identity key then the BAP key at `bapSeq` for a link.
+ */
+export function linkTx(
+  fixture: Pick<IdentityFixture, 'master' | 'bapId'>,
+  identity: PrivateKey,
+  opts?: { kind?: IdentityLinkKind; bapSeq?: number; signers?: IdentityLinkSigner[]; minedHeight?: number },
+): Transaction {
+  const fund = fundTx()
+  const signers = opts?.signers ?? [
+    { kind: 'identity' as const, key: identity },
+    { kind: 'bap' as const, key: bapKey(fixture.master, opts?.bapSeq ?? 1) },
+  ]
+  const script = identityLinkScript({
+    kind: opts?.kind ?? 'link',
+    identityKey: identity.toPublicKey().toString(),
+    bapId: fixture.bapId,
+    signers,
+    anchor: { txid: fund.id('hex'), vout: 0 },
+  })
+  return spending(fund, [script], opts?.minedHeight)
+}
+
 export type IdentityFixture = {
   master: PrivateKey
   bapId: string
-  /** `identity-1`: the signing key right after the first publish. */
+  /** `identity-1`: the BAP signing key right after the first publish. */
   signer: PrivateKey
   imageTx: Transaction
   aliasTx: Transaction
+  /** Set when the fixture links the profile to an identity key. */
+  linkTx?: Transaction
   pkg: IssuerIdentityPackage
   beefs: number[][]
 }
 
-/** First publish: image file, then root-signed ID declaring `identity-1` beside its ALIAS. */
+/**
+ * First publish: image file, then root-signed ID declaring `identity-1` beside
+ * its ALIAS; with `linked`, the link that labels the master's own identity key
+ * (or `identity`), as a wallet's publish writes it.
+ */
 export function bapIdentityFixture(opts: {
   master?: PrivateKey
   name?: string
@@ -66,6 +105,9 @@ export function bapIdentityFixture(opts: {
   image?: IssuerIdentityImage
   imageHeight?: number
   aliasHeight?: number
+  linked?: boolean
+  identity?: PrivateKey
+  linkHeight?: number
 }): IdentityFixture {
   const master = opts.master ?? PrivateKey.fromRandom()
   const bapId = bapIdFor(master)
@@ -79,10 +121,14 @@ export function bapIdentityFixture(opts: {
     ],
     opts.aliasHeight,
   )
-  const beefs = [beefOf(imageTx), beefOf(aliasTx)]
+  const link =
+    opts.linked || opts.identity
+      ? linkTx({ master, bapId }, opts.identity ?? master, { minedHeight: opts.linkHeight })
+      : undefined
+  const beefs = [beefOf(imageTx), beefOf(aliasTx), ...(link ? [beefOf(link)] : [])]
   const pkg = buildIssuerIdentityPackage(bapId, beefs, { preferAlias: aliasTx.id('hex') })
   if (!pkg) throw new Error('fixture identity package did not verify')
-  return { master, bapId, signer, imageTx, aliasTx, pkg, beefs }
+  return { master, bapId, signer, imageTx, aliasTx, ...(link ? { linkTx: link } : {}), pkg, beefs }
 }
 
 /** Rotation from `identity-<fromSeq>` to the next key, re-signing the profile in the same transaction. */

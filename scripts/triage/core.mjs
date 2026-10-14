@@ -196,6 +196,7 @@ function sessionFacts(header, events) {
   const tagCensus = tagCensusFacts(events)
   const tokenDeposits = tokenDepositFacts(events)
   const tokenAttestation = tokenAttestationFacts(events)
+  const tokenProofs = tokenProofFacts(events)
   const tokenLedger = tokenLedgerFacts(events)
   const appFlow = appFlowFacts(events)
   const toolboxSteps = toolboxStepFacts(events)
@@ -211,6 +212,7 @@ function sessionFacts(header, events) {
   const identityCards = identityCardFacts(events)
   const legacyImport = legacyImportFacts(events)
   const derivations = derivationFacts(events)
+  const paymentNotices = paymentNoticeFacts(events)
   const incomingFinality = incomingFinalityFacts(events)
   const incomingReceives = incomingReceiveFacts(events)
   const storageLock = storageLockFacts(events)
@@ -315,6 +317,9 @@ function sessionFacts(header, events) {
     // and whether legacy deposits were proven by their own path or parents.
     // `journal`: custody-journal captures, refused writes, backup syncs.
     derivations,
+    // BRC-29 notices owed to payees: flushes, stalled notices (still retried),
+    // rows settled by the records, reopens, and the notice journal's backup.
+    paymentNotices,
     // Incoming packages refused before crediting because an unmined tx in
     // them is not final (BRC-67 step 4), or its lock time met no chain height.
     incomingFinality,
@@ -364,6 +369,9 @@ function sessionFacts(header, events) {
     // they lack (no-genesis / unbound / remittance-only / unsigned /
     // unsigned-mint), the token on each, plus heals.
     tokenAttestation,
+    // Size and cost of each received token proof (BRC-251 lineage): bytes,
+    // transactions walked, token spends script-checked.
+    tokenProofs,
     // Each token card split by tip kind beside its Activity net.
     tokenLedger,
     screensVisited: [...new Set(navs.map((n) => n.to))].slice(0, 15),
@@ -1049,6 +1057,40 @@ function tokenAttestationFacts(events) {
   return { census, censusLines, offShelf, heals, tipsHealed: healedTips.size }
 }
 
+const TOKEN_PROOF_RE =
+  /^\[fungible-settle\] ([0-9a-f]{12}) proof done (\d+)ms — beef (\d+)B lineage (\d+)B walked (\d+) tx scripts (\d+) \((lineage|parent walk)\)$/
+
+/**
+ * One row per received token proof: how many bytes it carried, how far the
+ * walk went and how long it took, so proof growth is measured, not guessed.
+ */
+function tokenProofFacts(events) {
+  const proofs = []
+  for (const e of events) {
+    const m = TOKEN_PROOF_RE.exec(e.text)
+    if (!m) continue
+    proofs.push({
+      txid: m[1],
+      ms: Number(m[2]),
+      beefBytes: Number(m[3]),
+      lineageBytes: Number(m[4]),
+      walkedTxs: Number(m[5]),
+      scriptChecks: Number(m[6]),
+      source: m[7],
+    })
+  }
+  const max = (key) => proofs.reduce((top, p) => Math.max(top, p[key]), 0)
+  return {
+    count: proofs.length,
+    maxBeefBytes: max('beefBytes'),
+    maxLineageBytes: max('lineageBytes'),
+    maxWalkedTxs: max('walkedTxs'),
+    maxMs: max('ms'),
+    parentWalks: proofs.filter((p) => p.source === 'parent walk').length,
+    proofs: proofs.slice(-20),
+  }
+}
+
 const TOKEN_LEDGER_RE =
   /^\[bsv21\] ledger (\S+) ([0-9a-f]{12}) holds (\d+) in (\d+) tip\(s\) — brc162 (\d+)\/(\d+), legacy-json (\d+)\/(\d+), remittance (\d+)\/(\d+); history in (\d+) out (\d+) over (\d+) row\(s\)(?:; tips (.*))?$/
 
@@ -1201,6 +1243,8 @@ const IMPORTED_ITEMS_RE = /^\[chain-ingest\] imported (\d+) collectable tip\(s\)
 const IMPORTED_TOKENS_RE = /^\[chain-ingest\] imported (\d+) BSV-21 tip\(s\)/
 const IMPORT_PARTIAL_RE = /^\[chain-ingest\] 1sat import partial/
 const HELD_ONESAT_RE = /^\[chain-ingest\] holding (\d+) unrecognized one-sat/
+const IDENTIFY_PASS_RE =
+  /^\[1sat\] identify pass: probed (\d+), asked indexer (\d+), named (\d+) — (\d+) held one-sat\(s\) never asked yet/
 const PHRASE_FAIL_RE = /^\[phrase-sweep\] (tip unreadable|item migrate failed)/
 
 /**
@@ -1251,9 +1295,21 @@ function nftImportFacts(events) {
   let partialChunks = 0
   let heldUnrecognized = 0
   let heldUnrecognizedLines = 0
+  let identifyPasses = 0
+  let identifyNamed = 0
+  let neverAskedFirst = null
+  let neverAskedLast = null
   let phraseSweepFailures = 0
   const byLabel = new Map()
   for (const e of events) {
+    const id = IDENTIFY_PASS_RE.exec(e.text)
+    if (id) {
+      identifyPasses += 1
+      identifyNamed += Number(id[3])
+      neverAskedFirst ??= Number(id[4])
+      neverAskedLast = Number(id[4])
+      continue
+    }
     let m = IMPORTING_RE.exec(e.text)
     if (m) {
       importRuns += 1
@@ -1305,6 +1361,10 @@ function nftImportFacts(events) {
     partialChunks,
     heldUnrecognized,
     heldUnrecognizedLines,
+    identifyPasses,
+    identifyNamed,
+    neverAskedFirst,
+    neverAskedLast,
     phraseSweepFailures,
     timedSpans: spans,
     longestSpanMs: spans.reduce((a, s) => Math.max(a, s.longestMs), 0),
@@ -1392,7 +1452,20 @@ const HISTORY_EVENTS = [
   ['undecryptable', /^\[cloud-backup\] history blob could not be decrypted/],
   ['noRemote', /^\[cloud-backup\] no remote BRC-39 yet/],
   ['remotePresent', /^\[cloud-backup\] remote BRC-39 present/],
+  ['autoSync', /^\[cloud-backup\] auto-sync starting \(([\w-]+)\)/],
+  ['inspected', /^\[cloud-backup\] inspect done (\d+)ms/],
+  ['exported', /^\[cloud-backup\] export done (\d+)ms waited=(\d+)ms chars=(\d+)/],
+  ['encrypting', /^\[cloud-backup\] BRC-38 document (\d+) chars — encrypting/],
+  ['encrypted', /^\[cloud-backup\] encrypt done (\d+)ms bytes=(\d+)/],
+  ['uploaded', /^\[cloud-backup\] upload ok \(\S+\) put done (\d+)ms/],
+  ['uploadFailed', /^\[cloud-backup\] Upload failed \((\d+)\)/],
+  ['syncFailed', /^\[cloud-backup\] auto-sync failed \(([\w-]+)\): ([\s\S]{0,200})/],
+  ['neverFinished', /^\[cloud-backup\] previous BRC-39 backup never finished \(attempt (\d+)\)/],
 ]
+
+/** Backup phases in the order one attempt passes them; the last reached names where a dead attempt died. */
+const BACKUP_PHASES = ['autoSync', 'inspected', 'exported', 'encrypting', 'encrypted', 'upload', 'uploaded']
+const BACKUP_ENDS = new Set(['uploaded', 'uploadFailed', 'syncFailed'])
 
 /**
  * History-replica writes into localState, in order, beside every Arcade pin
@@ -1422,6 +1495,15 @@ function historyReplicaFacts(events) {
       if (kind === 'archiveRestore') row.snapshot = m[1]
       if (kind === 'recompose') Object.assign(row, { reason: m[1], history: m[2], sats: m[3] })
       if (kind === 'historyFailed' || kind === 'chainFailed') Object.assign(row, { reason: m[1], error: m[2] })
+      if (kind === 'autoSync') row.reason = m[1]
+      if (kind === 'inspected') row.ms = Number(m[1])
+      if (kind === 'exported') Object.assign(row, { ms: Number(m[1]), waitedMs: Number(m[2]), chars: Number(m[3]) })
+      if (kind === 'encrypting') row.chars = Number(m[1])
+      if (kind === 'encrypted') Object.assign(row, { ms: Number(m[1]), bytes: Number(m[2]) })
+      if (kind === 'uploaded') row.ms = Number(m[1])
+      if (kind === 'uploadFailed') row.status = Number(m[1])
+      if (kind === 'syncFailed') Object.assign(row, { reason: m[1], error: m[2] })
+      if (kind === 'neverFinished') row.attempt = Number(m[1])
       timeline.push(row)
       break
     }
@@ -1451,7 +1533,23 @@ function historyReplicaFacts(events) {
     row.count++
     pushMisses.set(family, row)
   }
+  // An attempt that started and reached no end: at the end of the window it
+  // is still running, or the app died inside the phase it last reached.
+  let attempt = null
+  for (const r of timeline) {
+    if (r.kind === 'autoSync') attempt = { startedS: r.s, reason: r.reason, lastPhase: 'autoSync', lastPhaseS: r.s }
+    else if (attempt && BACKUP_ENDS.has(r.kind)) attempt = null
+    else if (attempt && BACKUP_PHASES.includes(r.kind)) {
+      attempt.lastPhase = r.kind
+      attempt.lastPhaseS = r.s
+      if (r.chars != null) attempt.chars = r.chars
+      if (r.bytes != null) attempt.bytes = r.bytes
+    }
+  }
+  const lastExport = [...timeline].reverse().find((r) => r.kind === 'exported' || r.kind === 'encrypting')
   return {
+    unfinishedAttempt: attempt && { ...attempt, windowEndS: Math.round(((events.at(-1)?.at ?? t0) - t0) / 1000) },
+    lastDocumentChars: lastExport?.chars ?? null,
     replaces: timeline.filter((r) => r.kind === 'replace').length,
     restores: timeline.filter((r) => r.kind === 'restore').length,
     uploads: timeline.filter((r) => r.kind === 'upload').length,
@@ -2829,6 +2927,167 @@ const JOURNAL_BACKUP_RE =
   /^\[custody-journal\] backup (\S+) pulled=(\d+) pushed=(true|false) entries=(\d+) root=([0-9a-f]+) done (\d+)ms/
 const JOURNAL_BACKUP_FAIL_RE = /^\[custody-journal\] backup (\S+) failed: (.*)$/
 const JOURNAL_UNREADABLE_RE = /^\[custody-journal\] remote object unreadable/
+const NOTICE_FLUSH_RE = /^\[brc29-outbox\] flush done (\d+)ms — (\d+) delivered, (\d+) retrying, (\d+) queued/
+const NOTICE_STALLED_RE = /^\[brc29-outbox\] notice ([0-9a-f]{12})… stalled after (\d+) attempts — still retrying hourly: (.*)$/
+const NOTICE_DROPPED_RE =
+  /^\[brc29-outbox\] notice ([0-9a-f]{12})… (already-delivered|payment-failed|settled by the journal) — dropped/
+const RECONCILE_DONE_RE =
+  /^\[payment-reconcile\] restore done (\d+)ms — journal (\w+), (\d+) notice\(s\) queued, (\d+) payment\(s\) relisted(?:, (\d+) resumed)?/
+const RECONCILE_REJECTED_RE = /^\[payment-reconcile\] resumed payment ([0-9a-f]{12})… rejected/
+const RECONCILE_NOT_RESUMED_RE = /^\[payment-reconcile\] payment ([0-9a-f]{12})… not resumed/
+const HANDOVER_NOTICES_SETTLED_RE = /^\[account-holding\] handover a\d+: (\d+) notice\(s\) of voided payments settled/
+const ITEM_NOTICE_STALLED_RE = /^\[item-outbox\] notice ([0-9a-f]{12})… stalled after (\d+) attempts/
+const RECONCILE_INCOMPLETE_RE = /^\[payment-reconcile\] restore incomplete after (\d+)ms/
+const RECONCILE_HELD_RE = /^\[payment-reconcile\] payment held (?:done )?(\d+)ms/
+const RECONCILE_HELD_TIMEOUT_RE = /^\[payment-reconcile\] payment held \d+ms — reconcile still running/
+const NOTICE_REOPEN_RE = /^\[brc29-outbox\] reopen done (\d+)ms — (\d+) owed, (\d+) queued/
+const NOTICE_QUEUE_REFUSED_RE = /^\[brc29-outbox\] queue write refused \((\d+) rows\)/
+const NOTICE_UNMARKED_RE = /^\[(?:brc29-outbox|brc29)\] notice ([0-9a-f]{12})… delivered but not marked/
+const NOTICE_JOURNAL_BACKUP_RE =
+  /^\[notice-journal\] backup (\S+) pulled=(\d+) pushed=(true|false) entries=(\d+) root=([0-9a-f]+) done (\d+)ms/
+const NOTICE_JOURNAL_FAIL_RE = /^\[notice-journal\] backup (\S+) failed: (.*)$/
+const NOTICE_JOURNAL_REFUSED_RE = /^\[notice-journal\] write refused/
+
+/**
+ * BRC-29 notices the payee needs to find a payment: outbox flushes, notices
+ * stalled past 20 misses (still retried), rows dropped because the records say
+ * delivered or the payment failed (or another device's tombstone settled it),
+ * reopens from the records + notice journal, the journal's off-device copy,
+ * the restore reconcile that holds the next payment and resumes payments the
+ * restored history lost, notices settled for payments voided at handover, and
+ * item notices stalled past 20 misses (still retried hourly).
+ */
+function paymentNoticeFacts(events) {
+  const seen = new Set()
+  const facts = {
+    flushes: 0,
+    delivered: 0,
+    slowestFlushMs: 0,
+    lastQueued: null,
+    lastRetrying: null,
+    stalled: [],
+    dropped: { alreadyDelivered: 0, paymentFailed: 0, byJournal: 0 },
+    reopens: { runs: 0, owed: 0, queued: 0 },
+    reconcile: {
+      runs: 0,
+      incomplete: 0,
+      queued: 0,
+      relisted: 0,
+      resumed: 0,
+      resumedRejected: [],
+      notResumed: [],
+      slowestMs: 0,
+      held: 0,
+      heldMaxMs: 0,
+      heldTimedOut: 0,
+    },
+    handoverNoticesSettled: 0,
+    itemStalled: [],
+    queueWritesRefused: 0,
+    unmarked: 0,
+    journal: { syncs: 0, pushes: 0, pulled: 0, failures: [], refusedWrites: 0, lastEntries: null },
+  }
+  for (const e of events) {
+    const key = `${e.at}|${e.text}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    let m = NOTICE_FLUSH_RE.exec(e.text)
+    if (m) {
+      facts.flushes += 1
+      facts.slowestFlushMs = Math.max(facts.slowestFlushMs, Number(m[1]))
+      facts.delivered += Number(m[2])
+      facts.lastRetrying = Number(m[3])
+      facts.lastQueued = Number(m[4])
+      continue
+    }
+    m = NOTICE_STALLED_RE.exec(e.text)
+    if (m) {
+      facts.stalled.push({ txid: m[1], attempts: Number(m[2]), error: m[3].slice(0, 120) })
+      continue
+    }
+    m = NOTICE_DROPPED_RE.exec(e.text)
+    if (m) {
+      if (m[2] === 'already-delivered') facts.dropped.alreadyDelivered += 1
+      else if (m[2] === 'payment-failed') facts.dropped.paymentFailed += 1
+      else facts.dropped.byJournal += 1
+      continue
+    }
+    m = RECONCILE_DONE_RE.exec(e.text)
+    if (m) {
+      facts.reconcile.runs += 1
+      facts.reconcile.slowestMs = Math.max(facts.reconcile.slowestMs, Number(m[1]))
+      facts.reconcile.queued += Number(m[3])
+      facts.reconcile.relisted += Number(m[4])
+      facts.reconcile.resumed += Number(m[5] ?? 0)
+      continue
+    }
+    m = RECONCILE_REJECTED_RE.exec(e.text)
+    if (m) {
+      facts.reconcile.resumedRejected.push(m[1])
+      continue
+    }
+    m = RECONCILE_NOT_RESUMED_RE.exec(e.text)
+    if (m) {
+      facts.reconcile.notResumed.push(m[1])
+      continue
+    }
+    m = HANDOVER_NOTICES_SETTLED_RE.exec(e.text)
+    if (m) {
+      facts.handoverNoticesSettled += Number(m[1])
+      continue
+    }
+    m = ITEM_NOTICE_STALLED_RE.exec(e.text)
+    if (m) {
+      facts.itemStalled.push({ txid: m[1], attempts: Number(m[2]) })
+      continue
+    }
+    m = RECONCILE_INCOMPLETE_RE.exec(e.text)
+    if (m) {
+      facts.reconcile.runs += 1
+      facts.reconcile.incomplete += 1
+      facts.reconcile.slowestMs = Math.max(facts.reconcile.slowestMs, Number(m[1]))
+      continue
+    }
+    m = RECONCILE_HELD_RE.exec(e.text)
+    if (m) {
+      facts.reconcile.held += 1
+      facts.reconcile.heldMaxMs = Math.max(facts.reconcile.heldMaxMs, Number(m[1]))
+      if (RECONCILE_HELD_TIMEOUT_RE.test(e.text)) facts.reconcile.heldTimedOut += 1
+      continue
+    }
+    m = NOTICE_REOPEN_RE.exec(e.text)
+    if (m) {
+      facts.reopens.runs += 1
+      facts.reopens.owed = Number(m[2])
+      facts.reopens.queued += Number(m[3])
+      continue
+    }
+    if (NOTICE_QUEUE_REFUSED_RE.test(e.text)) {
+      facts.queueWritesRefused += 1
+      continue
+    }
+    if (NOTICE_UNMARKED_RE.test(e.text)) {
+      facts.unmarked += 1
+      continue
+    }
+    m = NOTICE_JOURNAL_BACKUP_RE.exec(e.text)
+    if (m) {
+      facts.journal.syncs += 1
+      facts.journal.pulled += Number(m[2])
+      if (m[3] === 'true') facts.journal.pushes += 1
+      facts.journal.lastEntries = Number(m[4])
+      continue
+    }
+    m = NOTICE_JOURNAL_FAIL_RE.exec(e.text)
+    if (m) {
+      facts.journal.failures.push({ reason: m[1], error: m[2].slice(0, 120) })
+      continue
+    }
+    if (NOTICE_JOURNAL_REFUSED_RE.test(e.text)) facts.journal.refusedWrites += 1
+  }
+  return facts
+}
+
 const DERIVED_SCRIPT_RE = /^\[change-script\] derived (\d+) change locking script/
 const LEGACY_BEEF_RE = /^\[legacy-beef\] ([0-9a-f]{12})… via=(proof|parents|tip)( FAIL)?(?: fetches=\d+)? (\d+)ms/
 const REPLACE_RE = /^\[cloud-backup\] replace local history\b/
@@ -2972,6 +3231,14 @@ const LEDGER_PHASE_RE = /^\[ui-phase\] activity-ledger-full done (\d+)ms/
 function activityLedgerFacts(events) {
   const t0 = events[0]?.at ?? 0
   const s = (e) => Math.round((e.at - t0) / 1000)
+  // Each sub-account has its own ledger: a read after a switch is a different
+  // account's history, never a shrink of the copy painted before it.
+  const switchStarts = []
+  for (const e of events) {
+    const sw = SWITCH_DONE_RE.exec(e.text)
+    if (sw) switchStarts.push({ at: e.at - Number(sw[1]), account: Number(sw[3]) })
+  }
+  const accountAt = (e) => switchStarts.filter((sw) => sw.at <= e.at).at(-1)?.account ?? null
   const restored = []
   const reads = []
   const failures = new Map()
@@ -3031,14 +3298,6 @@ function activityLedgerFacts(events) {
     ? (restored.filter((r) => r.account === newestRead.account).at(-1)?.rows ?? null)
     : null
   return {
-  // Each sub-account has its own ledger: a read after a switch is a different
-  // account's history, never a shrink of the copy painted before it.
-  const switchStarts = []
-  for (const e of events) {
-    const sw = SWITCH_DONE_RE.exec(e.text)
-    if (sw) switchStarts.push({ at: e.at - Number(sw[1]), account: Number(sw[3]) })
-  }
-  const accountAt = (e) => switchStarts.filter((sw) => sw.at <= e.at).at(-1)?.account ?? null
     restored,
     reads,
     // Rows the newest live read lost against the same account's painted copy.
@@ -4110,7 +4369,7 @@ function forensicQuestions(latest, previous) {
         nft_import_speedup: {
           type: 'choice',
           instructions:
-            'Can the NFT (1sat collectable) import in `latest.nftImport` be sped up, and where? `tipsQueued` / `chunkSize` is how many tips were taken serially in chunks. `collectablesImported` is how many landed. `partialChunks` and `phraseSweepFailures` are retries and unreadable tips. `heldUnrecognized` is the peak count of one-sat outputs the scan decided not to import, and `heldUnrecognizedLines` is how many passes reported that. `timedSpans` are the `done Nms` lines whose tag is the import or a lookup it performs (chain-ingest, 1sat, items, collectables, phrase-sweep, bsv21, tip-ingest); the importer itself does not log a duration, so an import with counts but empty `timedSpans` has no timing evidence. `longestSpanMs` is the slowest of those.',
+            'Can the NFT (1sat collectable) import in `latest.nftImport` be sped up, and where? `tipsQueued` / `chunkSize` is how many tips were taken serially in chunks. `collectablesImported` is how many landed. `partialChunks` and `phraseSweepFailures` are retries and unreadable tips. `heldUnrecognized` is the peak count of one-sat outputs the scan decided not to import, and `heldUnrecognizedLines` is how many passes reported that. `identifyPasses` counts passes that spent identification budget, `identifyNamed` how many outputs those passes named, and `neverAskedFirst` / `neverAskedLast` the held outputs never yet asked about at the first and last such pass (null on builds without the line); a falling `neverAskedLast` means the backlog is draining. `timedSpans` are the `done Nms` lines whose tag is the import or a lookup it performs (chain-ingest, 1sat, items, collectables, phrase-sweep, bsv21, tip-ingest); the importer itself does not log a duration, so an import with counts but empty `timedSpans` has no timing evidence. `longestSpanMs` is the slowest of those.',
           criteria: {
             no_import_in_window:
               '`tipsQueued`, `collectablesImported` and `timedSpans` are all empty: this window did not import NFTs, so it cannot say whether import is slow.',

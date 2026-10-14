@@ -317,6 +317,7 @@ export function clearActiveWallet(): void {
   active = null
   forgetVaultMasterCache()
   void import('./vaultAccountHolding').then(({ stopHoldingWatch }) => stopHoldingWatch())
+  void import('./accountMove').then(({ stopHoldingService }) => stopHoldingService())
   clearSessionBackupPassword()
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
     bindWalletProgressAccount(null)
@@ -526,6 +527,8 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   lastBalanceBreakdown = ''
   startDurablePropagationRecovery(runtime)
   startMonitorOnce(wallet)
+  // A newly selected account was not served before now: its first spend checks it.
+  void import('./accountMove').then(({ startHoldingService }) => startHoldingService())
   // Sync pill + chain-ingest status rebind inside the runtime lifecycle
   // (`accountLocalStores`), in the same tick as every other account store.
   return wallet

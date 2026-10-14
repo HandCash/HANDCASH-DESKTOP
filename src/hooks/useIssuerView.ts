@@ -4,6 +4,7 @@ import {
   type IssuerIdentityResolver,
   type IssuerView,
 } from '../wallet/collectableGroups'
+import { identityProfilesGeneration, subscribeIdentityProfiles } from '../wallet/identityProfiles'
 import {
   issuerIdentitiesGeneration,
   subscribeIssuerIdentities,
@@ -55,15 +56,16 @@ export function currentIssuerTrust(): IssuerTrust {
   return issuerTrustResolver(getWalletRuntime())
 }
 
-/** Generation that changes whenever an identity, a stored package or the verified list does. */
+/** Generation that changes whenever an identity, a stored profile or package, or the verified list does. */
 export function useIssuerIdentitiesGeneration(): string {
   const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
+  const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration)
   const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
   const listed = useSyncExternalStore(subscribeVerifiedIssuers, verifiedIssuersGeneration)
   useEffect(() => {
     ensureVerifiedIssuersFresh()
   }, [])
-  return `${identities}:${packages}:${listed}`
+  return `${identities}:${profiles}:${packages}:${listed}`
 }
 
 /** Distinct issuers across the assets one action moves, in first-seen order. */

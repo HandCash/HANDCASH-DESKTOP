@@ -15,19 +15,21 @@ const TOKEN_ID = `${'00112233445566778899aabbccddeeff'.repeat(2)}_7`
 
 describe('bsv21Binary encode/decode', () => {
   it('round-trips a fixed-supply deploy with CBOR payload and remainder', () => {
-    const icon = Uint8Array.from([1, 2, 3, 4])
+    const iconImage = { mediaType: 'image/png', bytes: Uint8Array.from([1, 2, 3, 4]) }
     const script = encodeBsv21Binary({
       amount: 21000000n,
-      payload: { sym: 'GOLD', dec: 8, icon },
+      payload: { sym: 'GOLD', dec: 8, iconImage },
       rest: P2PKH_REST,
     })
     const hex = script.toHex().toLowerCase()
-    expect(hex.startsWith('05' + BSV21_TAG_HEX)).toBe(true)
+    expect(hex.startsWith('00')).toBe(true)
+    expect(hex.includes(BSV21_TAG_HEX)).toBe(false)
     expect(hex.endsWith(P2PKH_REST)).toBe(true)
 
     const decoded = decodeBsv21Binary(hex)
     expect(decoded).not.toBeNull()
     expect(decoded).toMatchObject({
+      layout: 'brc162',
       role: 'deploy',
       amount: 21000000n,
       restScriptHex: P2PKH_REST,
@@ -35,7 +37,7 @@ describe('bsv21Binary encode/decode', () => {
     expect(decoded?.tokenId).toBeUndefined()
     expect(decoded?.payload?.sym).toBe('GOLD')
     expect(decoded?.payload?.dec).toBe(8)
-    expect(decoded?.payload?.icon).toEqual(icon)
+    expect(decoded?.payload?.iconImage).toEqual(iconImage)
 
     const again = decodeBsv21Binary(
       encodeBsv21Binary({

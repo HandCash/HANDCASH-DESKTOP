@@ -4636,7 +4636,8 @@ button.identity-qr-copy:focus-visible {
 }
 
 [data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="revoked"],
-[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="imported"] {
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="imported"],
+[data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="unlinked"] {
   border-color: color-mix(in srgb, #f5a524 45%, transparent);
   color: #f5a524;
 }
@@ -4676,6 +4677,18 @@ button.identity-qr-copy:focus-visible {
   font: inherit;
   font-size: 1.4rem;
   cursor: pointer;
+}
+
+.public-identity-image-col {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
+.public-identity-image-clear {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
 }
 
 .public-identity-image-pick[data-aeon-state="set"] {
@@ -4780,7 +4793,7 @@ button.identity-qr-copy:focus-visible {
   border-radius: 50%;
 }
 
-.identity-pill-lead .bap-identicon {
+.identity-pill-lead .profile-identicon {
   width: 10px;
   height: 10px;
   border-radius: 1px;
@@ -4861,7 +4874,7 @@ button.identity-qr-copy:focus-visible {
   font-weight: 600;
 }
 
-[data-aeon-part='bap-identicon'] {
+[data-aeon-part='profile-identicon'] {
   flex-shrink: 0;
   border-radius: 3px;
 }
@@ -7385,9 +7398,18 @@ html[data-aeon-mode='light']
 }
 
 /* A peer-published transfer is a normal outcome, not a warning to act on. */
-.payment-attempt-actions[data-aeon-state='counterpartyMaySettle'] {
+.payment-attempt-actions[data-aeon-state='counterpartyMaySettle'],
+[data-aeon-scope='payment-details'] [data-aeon-part='payee-notice'][data-aeon-state='retrying'] {
   border-color: var(--hc-border);
   background: var(--hc-sunken);
+}
+
+[data-aeon-part='payee-notice-last'] {
+  font-variant-numeric: tabular-nums;
+}
+
+[data-aeon-scope='activity-row'] [data-aeon-part='payee-notice'][data-aeon-state='stalled'] {
+  color: var(--hc-warn);
 }
 
 .payment-attempt-actions p {
@@ -10839,6 +10861,15 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   color: var(--hc-muted);
 }
 
+[data-aeon-scope='collectables'] [data-aeon-part='token'] [data-aeon-part='checking'] {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.64rem;
+  color: var(--hc-warn, #ffc857);
+}
+
 [data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='sending'] {
   opacity: 0.85;
 }
@@ -11149,6 +11180,13 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .fungible-details-list-price[data-aeon-state='unpublished'] {
+  color: var(--hc-warn, #ffc857);
+}
+
+[data-aeon-scope='fungible-details'] [data-aeon-part='checking'] {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.82rem;
   color: var(--hc-warn, #ffc857);
 }
 

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { MerklePath, P2PKH, PrivateKey, Script, Transaction, Utils } from '@bsv/sdk'
 import { SetupClient, type Wallet } from '@bsv/wallet-toolbox-client'
 import { describe, expect, it } from 'vitest'
-import { encodeBsv21Binary } from './token/decode162'
+import { decodeBsv21Binary, encodeBsv21Binary } from './token/decode162'
 import { persistNoSendActions } from './toolboxActionBatch'
 
 const BRC29: [2, string] = [2, '3241645161d8']
@@ -117,7 +117,7 @@ describe('toolbox action batch', () => {
     const change = await tokenChange(wallet)
     expect(change.map((o) => o.outpoint)).toEqual([`${txid}.0`])
     expect(change[0]!.spendable).toBe(true)
-    expect(change[0]!.lockingScript?.startsWith('054253563231')).toBe(true)
+    expect(decodeBsv21Binary(change[0]!.lockingScript ?? '')).toMatchObject({ layout: 'brc162', tokenId: TOKEN_ID })
 
     expect(sent.noSendChange.length).toBeGreaterThan(0)
     const next = await spendTokenChange(wallet, sent)

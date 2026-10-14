@@ -1,5 +1,6 @@
 import { getActiveWallet } from '../wallet/session'
 import { useActivityAction } from '../hooks/useAsyncAction'
+import { useBrc29NoticeDelivery } from '../hooks/useBrc29NoticeDelivery'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 
 import {
@@ -495,6 +496,12 @@ function HistoryRow({
   const pending = isPendingActivity(entry);
   const failed = isFailedActivity(entry);
   const failureReason = failed ? activityFailureLabel(entry) : null;
+  const notice = useBrc29NoticeDelivery(spent && !failed ? entry.txid : undefined);
+  const noticeState: "stalled" | "retrying" | null = notice
+    ? notice.stalled
+      ? "stalled"
+      : "retrying"
+    : null;
   const inventoryProven = Boolean(
     entry.item?.outpoint && isItemProven(entry.item.outpoint)
   );
@@ -565,6 +572,10 @@ function HistoryRow({
   const subtitle =
     failed && failureReason
       ? failureReason
+      : noticeState === "stalled"
+      ? "Recipient not notified — needs attention"
+      : noticeState === "retrying"
+      ? "Notifying recipient…"
       : event
       ? entry.origin !== WALLET_ACTIVITY_ORIGIN
         ? entry.origin
@@ -616,7 +627,12 @@ function HistoryRow({
             {title}
           </strong>
           {subtitle ? (
-            <span className="history-when" title={subtitle}>
+            <span
+              className="history-when"
+              title={subtitle}
+              data-aeon-part={noticeState ? "payee-notice" : undefined}
+              data-aeon-state={noticeState ?? undefined}
+            >
               {subtitle}
             </span>
           ) : null}
@@ -667,11 +683,11 @@ function batchTitleNames(members: readonly ActivityEntry[]): string {
  */
 function senderProfile(peer: PeerIdentityView | null): AccountProfile | null {
   if (peer?.kind !== "presented") return null;
-  const { identity, bap } = peer;
+  const { profile, mark } = peer;
   return {
-    bapId: identity.bapId,
-    name: identity.name,
-    ...(identity.image && !bap.caution ? { image: identity.image } : {}),
+    id: profile.id,
+    name: profile.name,
+    ...(profile.image && !mark.caution ? { image: profile.image } : {}),
   };
 }
 

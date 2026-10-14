@@ -39,24 +39,22 @@ export function normalizeBapId(value: unknown): string | null {
   }
 }
 
-/**
- * `MAP SET issuer <signing key> bapId <id>`. The BAP ID is a claim the Sigma
- * signer commits to; it is only trusted once that identity's ID chain shows
- * the signer was its active key when the asset was signed.
- */
-export function appendIssuerMetadata(scriptHex: string, issuer: string, bapId?: string): string {
-  const id = bapId === undefined ? null : normalizeBapId(bapId)
-  if (bapId !== undefined && !id) throw new Error('Issuer BAP ID is invalid.')
+/** `MAP SET issuer <identity key>` (BRC-247): the key the Sigma BRC-77 signature must recover. */
+export function appendIssuerMetadata(scriptHex: string, issuer: string): string {
   const base = Script.fromHex(scriptHex)
   const tail = new Script()
   if (base.chunks.some((chunk) => chunk.op === OP.OP_RETURN))
     tail.writeBin(Utils.toArray('|'))
   else tail.writeOpCode(OP.OP_RETURN)
-  for (const field of [MAP, 'SET', 'issuer', issuer, ...(id ? ['bapId', id] : [])])
-    tail.writeBin(Utils.toArray(field, 'utf8'))
+  for (const field of [MAP, 'SET', 'issuer', issuer]) tail.writeBin(Utils.toArray(field, 'utf8'))
   return Script.fromBinary([...base.toBinary(), ...tail.toBinary()]).toHex()
 }
 
+/**
+ * The issuer tape. `bapId` comes only from stamps written under earlier drafts
+ * of BRC-247 by a BAP key; it is trusted once that identity's ID chain shows
+ * the signer was its active key when the asset was signed.
+ */
 export function issuerMetadataFromScript(scriptHex?: string): {
   issuer?: string
   bapId?: string

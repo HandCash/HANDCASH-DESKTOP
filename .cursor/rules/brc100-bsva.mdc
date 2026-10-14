@@ -56,7 +56,9 @@ Canonical SSoT: `src/wallet/layers.ts`.
 - Empty-local history recovery uses `localToolboxStateLooksEmpty()` (outs **and** actions), not balance alone.
 - Device recovery: `recomposeWallet` (historyReplica then chainIngest) — unlock, History restore, Pair Sync.
 - No same-key device parity: no cross-device spend lease, and Refresh never pulls BRC-39. The History backup URL is backup + empty-local recovery only.
-- Devices on one vault hold different accounts (`accountHolding.ts`): holding is local state, read by the spend guard without the network; `holder.json` beside the account's BRC-39 blob tells other installs and changes only on create / take / release.
+- Devices on one vault hold different accounts (`accountHolding.ts`, draft BRC-249 in `docs/bsva/brcs/wallet/0249.md`): holding is local state, read by the spend guard; `holder.json` beside the account's BRC-39 blob tells other installs and changes only on reserve / take / release.
+- Moving an account is automatic, not a user flow (`accountMove.ts`, `accountMoveMachine`): no prompt, no manual Move button. Held-elsewhere accounts are never opened and never ACK their messagebox. Choosing one sends a signed `release-request` device to device over the vault link (`vaultLink.ts`, BRC-246 v2 on the vault identity), falling back to messagebox box `account-holding` only when no link opens; every install serves the link and the boxes of the accounts it holds every 5 s and releases without asking; no answer in 10 s = offline → forced take without a prompt. A request that cannot be sent fails the move instead of forcing.
+- Re-check holding before the first spend after every gap (start, resume, reconnect) — the only network read on the spend path. A displaced install hands its unsynced changes to the new holder (`handover`); it never uploads over the newer backup or broadcasts unsent transactions.
 - Recursive NFT *content* stays basket `1sat`; remittance + BRC-39 are the same path as other 1sat tips.
 - BRC-150 provenance: `oneSatProvenance.ts` — omit when over budget; never truncate.
 - Soft-latch (BRC-156) is withdrawn — no `oneSatLatch*`. Authenticity = BRC-150 v2 only.

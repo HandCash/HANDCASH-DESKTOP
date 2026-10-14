@@ -28,7 +28,7 @@ describe('runtime-owned propagation queues', () => {
   it('never exposes one account BRC-29 outbox to another account', async () => {
     const {
       enqueuePendingBrc29Remit,
-      pendingBrc29OutboxCount,
+      dueBrc29NoticeCount,
     } = await import('./pendingBrc29Outbox')
     const bind = (accountIndex: number, identityKey: string) =>
       bindAccountLocalKeyScope({ accountIndex, identityKey, chain: 'main' })
@@ -46,21 +46,21 @@ describe('runtime-owned propagation queues', () => {
 
     bind(0, 'primary')
     enqueuePendingBrc29Remit(row(1))
-    expect(pendingBrc29OutboxCount()).toBe(1)
+    expect(dueBrc29NoticeCount()).toBe(1)
 
     bind(1, 'minting')
-    expect(pendingBrc29OutboxCount()).toBe(0)
+    expect(dueBrc29NoticeCount()).toBe(0)
     enqueuePendingBrc29Remit(row(2))
-    expect(pendingBrc29OutboxCount()).toBe(1)
+    expect(dueBrc29NoticeCount()).toBe(1)
 
     bind(0, 'primary')
-    expect(pendingBrc29OutboxCount()).toBe(1)
+    expect(dueBrc29NoticeCount()).toBe(1)
   })
 
   it('files a late remittance callback under its captured owner after a switch', async () => {
     const {
       enqueuePendingItemRemit,
-      pendingItemOutboxCount,
+      dueItemNoticeCount,
     } = await import('./pendingItemOutbox')
     const primary = {
       accountIndex: 0,
@@ -84,8 +84,8 @@ describe('runtime-owned propagation queues', () => {
       primary,
     )
 
-    expect(pendingItemOutboxCount()).toBe(0)
+    expect(dueItemNoticeCount()).toBe(0)
     bindAccountLocalKeyScope(primary)
-    expect(pendingItemOutboxCount()).toBe(1)
+    expect(dueItemNoticeCount()).toBe(1)
   })
 })

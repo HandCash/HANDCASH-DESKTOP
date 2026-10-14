@@ -31,9 +31,10 @@ const createHmac = vi.fn(async (..._args: unknown[]) => ({
   hmac: Array.from({ length: 32 }, (_, i) => i),
 }))
 const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
-const postBeef = vi.fn(async () => [
-  { status: 'success', txidResults: [{ status: 'success' }] },
-])
+const postBeef = vi.fn(async () => {
+  order.push('miner post')
+  return [{ status: 'success', txidResults: [{ status: 'success' }] }]
+})
 const notifyPeerBrc29Payment = vi.fn(
   async (): Promise<{ delivered: 'local' | 'cloud'; beefInBox: boolean }> => ({
     delivered: 'cloud',
@@ -112,6 +113,25 @@ vi.mock('./messageTransport', () => ({
 vi.mock('./pendingBrc29Outbox', () => ({
   enqueuePendingBrc29Remit: vi.fn(),
   flushPendingBrc29Outbox: async () => 0,
+}))
+
+const order: string[] = []
+const journalOwedNotice = vi.fn((..._args: unknown[]) => {
+  order.push('journal owed')
+  return true
+})
+const journalNoticeDone = vi.fn((..._args: unknown[]) => {
+  order.push('journal done')
+})
+vi.mock('./noticeJournal', () => ({
+  journalOwedNotice: (...args: unknown[]) => journalOwedNotice(...args),
+  journalNoticeDone: (...args: unknown[]) => journalNoticeDone(...args),
+}))
+
+const markPaymentNoticeDelivered = vi.fn(async (..._args: unknown[]) => true)
+vi.mock('./paymentNotice', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./paymentNotice')>()),
+  markPaymentNoticeDelivered: (...args: unknown[]) => markPaymentNoticeDelivered(...args),
 }))
 
 const spendRegion = { inside: false }
@@ -222,6 +242,10 @@ describe('sendBrc29ToIdentityKey', () => {
     createHmac.mockClear()
     postBeef.mockClear()
     notifyPeerBrc29Payment.mockClear()
+    markPaymentNoticeDelivered.mockClear()
+    journalOwedNotice.mockClear()
+    journalNoticeDone.mockClear()
+    order.length = 0
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
     walletState.identityKey =
       '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -263,6 +287,8 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(instructions.derivationPrefix).toBe(result.remittance.derivationPrefix)
     expect(instructions.derivationSuffix).toBe(result.remittance.derivationSuffix)
     expect(instructions.payee).toBe(PAYEE)
+    expect(instructions.notice).toBe('pending')
+    expect(instructions.chatRef).toBeUndefined()
     expect(internalizeAction).not.toHaveBeenCalled()
     const settled = await result.settled
     expect(notifyPeerBrc29Payment).toHaveBeenCalledWith(
@@ -275,6 +301,47 @@ describe('sendBrc29ToIdentityKey', () => {
     await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
     expect(result.selfReceive).toBe(false)
     expect(settled.peerDelivered).toBe(true)
+    expect(markPaymentNoticeDelivered).toHaveBeenCalledWith(runtimeWallet, 'b'.repeat(64), 0)
+  })
+
+  it('journals the owed notice once sealed, before any miner sees the payment', async () => {
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000, chatRef: true })
+    await result.settled
+    await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
+
+    expect(journalOwedNotice).toHaveBeenCalledWith(
+      { identityKey: runtimeWallet.identityKey, accountIndex: 0, chain: 'main' },
+      expect.objectContaining({
+        txid: 'b'.repeat(64),
+        vout: 0,
+        satoshis: 1_000,
+        payee: PAYEE,
+        derivationPrefix: result.remittance.derivationPrefix,
+        derivationSuffix: result.remittance.derivationSuffix,
+        chatRef: true,
+        atomicBeef: [1, 2, 3],
+      }),
+    )
+    expect(order.indexOf('journal owed')).toBeLessThan(order.indexOf('miner post'))
+    expect(journalNoticeDone).toHaveBeenCalledWith(expect.anything(), 'b'.repeat(64), 0)
+  })
+
+  it('owes no journaled notice for a payment to this wallet', async () => {
+    walletState.identityKey = PAYEE
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    await (await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000 })).settled
+    expect(journalOwedNotice).not.toHaveBeenCalled()
+  })
+
+  it('records an in-thread payment as one, so a re-sent notice stays in the thread', async () => {
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    await sendBrc29ToIdentityKey({ payeeIdentityKey: PAYEE, satoshis: 1_000, chatRef: true })
+    const args = createAction.mock.calls[0]?.[0] as CreateActionArgs | undefined
+    expect(JSON.parse(args?.outputs?.[0]?.customInstructions || '{}')).toMatchObject({
+      notice: 'pending',
+      chatRef: true,
+    })
   })
 
   it('resolves a same-origin handle and completes its BRC-29 payment', async () => {
@@ -364,6 +431,7 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(result.txid).toBe('b'.repeat(64))
     expect(createAction).toHaveBeenCalledTimes(1)
     expect(abortAction).not.toHaveBeenCalled()
+    expect(markPaymentNoticeDelivered).not.toHaveBeenCalled()
   })
 
   it('internalizes immediately when paying this wallet', async () => {
@@ -377,6 +445,9 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(result.selfReceive).toBe(true)
     expect((await result.settled).selfReceived).toBe(true)
     expect(notifyPeerBrc29Payment).toHaveBeenCalled()
+    const args = createAction.mock.calls[0]?.[0] as CreateActionArgs | undefined
+    expect(JSON.parse(args?.outputs?.[0]?.customInstructions || '{}').notice).toBeUndefined()
+    expect(markPaymentNoticeDelivered).not.toHaveBeenCalled()
   })
 
   it('resolves once sealed and credits a self payment outside the spend region', async () => {

@@ -35,6 +35,7 @@ import { burnMachine } from '../wallet/burnMachine'
 import { serverWalletRecoverMachine } from '../wallet/serverWalletRecoverMachine'
 import { txLifecycleMachine } from '../wallet/txLifecycleMachine'
 import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
+import { accountMoveMachine } from '../wallet/accountMoveMachine'
 import { bsv21SendMachine } from '../wallet/token/sendMachine'
 
 /**
@@ -80,6 +81,7 @@ export const machineManifest = Object.freeze({
   serverWalletRecover: serverWalletRecoverMachine,
   txLifecycle: txLifecycleMachine,
   walletCoordinator: walletCoordinatorMachine,
+  accountMove: accountMoveMachine,
 })
 
 export type MachineManifestId = keyof typeof machineManifest

@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Beef, P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
+import { Beef, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 import { encodeBsv21Binary } from './decode162'
 import { judgeTokenImport } from './importProof'
 import { resetTokenLineageForTests } from './lineage'
 
-const owner = PrivateKey.fromRandom().toAddress()
+const ownerKey = PrivateKey.fromRandom()
+const owner = ownerKey.toAddress()
 
-function chain(transferAmount = 1000n) {
+async function chain(transferAmount = 1000n, signer = ownerKey) {
   const deploy = new Transaction()
   deploy.addOutput({
     satoshis: 1,
@@ -14,11 +15,16 @@ function chain(transferAmount = 1000n) {
   })
   const tokenId = `${deploy.id('hex')}_0`
   const transfer = new Transaction()
-  transfer.addInput({ sourceTransaction: deploy, sourceOutputIndex: 0, unlockingScript: new Script() })
+  transfer.addInput({
+    sourceTransaction: deploy,
+    sourceOutputIndex: 0,
+    unlockingScriptTemplate: new P2PKH().unlock(signer),
+  })
   transfer.addOutput({
     satoshis: 1,
     lockingScript: encodeBsv21Binary({ tokenId, amount: transferAmount, rest: new P2PKH().lock(owner) }),
   })
+  await transfer.sign()
   const full = new Beef()
   full.mergeRawTx(deploy.toBinary())
   full.mergeRawTx(transfer.toBinary())
@@ -35,7 +41,7 @@ describe('judgeTokenImport', () => {
   beforeEach(() => resetTokenLineageForTests())
 
   it('proves a tip whose walk reaches its deploy', async () => {
-    const c = chain()
+    const c = await chain()
     const verdict = await judgeTokenImport({
       ...base,
       beef: c.full,
@@ -48,7 +54,7 @@ describe('judgeTokenImport', () => {
   })
 
   it('refuses a claim the tip bytes contradict', async () => {
-    const c = chain()
+    const c = await chain()
     const common = { beef: c.full, txid: c.txid, requireLineage: false, fetchBody: async () => null }
     expect(await judgeTokenImport({ ...common, ...base, tokenId: c.tokenId, amt: '999' })).toEqual({
       kind: 'refused',
@@ -60,7 +66,7 @@ describe('judgeTokenImport', () => {
   })
 
   it('files a tip it cannot walk yet as unproven for chain ingest, and never fetches', async () => {
-    const c = chain()
+    const c = await chain()
     const fetchBody = vi.fn(async () => null)
     const verdict = await judgeTokenImport({
       ...base,
@@ -75,7 +81,7 @@ describe('judgeTokenImport', () => {
   })
 
   it('fetches the parents a claim by txid needs, and refuses when they never come', async () => {
-    const c = chain()
+    const c = await chain()
     const common = { ...base, beef: c.tipOnly, txid: c.txid, tokenId: c.tokenId, requireLineage: true }
 
     const refused = await judgeTokenImport({ ...common, fetchBody: async () => null })
@@ -87,7 +93,7 @@ describe('judgeTokenImport', () => {
   })
 
   it('refuses an over-transfer a claim by txid cannot walk', async () => {
-    const c = chain(2000n)
+    const c = await chain(2000n)
     const verdict = await judgeTokenImport({
       ...base,
       amt: '2000',
@@ -98,5 +104,18 @@ describe('judgeTokenImport', () => {
       fetchBody: async () => null,
     })
     expect(verdict.kind === 'refused' && verdict.reason).toMatch(/^lineage-unproven:over-transfer/)
+  })
+
+  it('refuses a tip whose token spend is not signed by the owner of the spent output', async () => {
+    const c = await chain(1000n, PrivateKey.fromRandom())
+    const verdict = await judgeTokenImport({
+      ...base,
+      beef: c.full,
+      txid: c.txid,
+      tokenId: c.tokenId,
+      requireLineage: true,
+      fetchBody: async () => null,
+    })
+    expect(verdict.kind === 'refused' && verdict.reason).toMatch(/^lineage-unproven:token input 0 of .* fails its locking script/)
   })
 })

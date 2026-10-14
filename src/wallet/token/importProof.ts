@@ -8,7 +8,7 @@
  * requires the walk, exactly like an inbound settle.
  */
 import type { Beef } from '@bsv/sdk'
-import { decodeTokenOutput, fillTokenParentBodies, prove } from './prove176'
+import { decodeTokenOutput, fillTokenParentBodies, proveWithScripts } from './prove176'
 import { provenTokenDeployOf } from './lineage'
 import { normalizeTokenId, type Bsv21Op } from './types'
 
@@ -50,10 +50,10 @@ export async function judgeTokenImport(args: {
   }
   if (decoded.amount !== claimed) return { kind: 'refused', reason: 'amount-mismatch' }
 
-  let proof = prove(tip, args.beef, provenTokenDeployOf)
+  let proof = proveWithScripts(tip, args.beef, provenTokenDeployOf)
   if (!proof.ok && args.requireLineage) {
     const filled = await fillTokenParentBodies(args.beef, args.fetchBody, [args.txid], provenTokenDeployOf)
-    proof = prove(tip, filled, provenTokenDeployOf)
+    proof = proveWithScripts(tip, filled, provenTokenDeployOf)
   }
   if (!proof.ok) {
     const reason = proof.reason.slice(0, 120)

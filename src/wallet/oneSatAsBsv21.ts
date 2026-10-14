@@ -109,7 +109,7 @@ export function classifyOneSatAsBsv21(
     const op = (args.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
     const tokenId = binary.tokenId ?? (binary.role === 'deploy' ? op : '')
     if (tokenId) {
-      const icon = iconOutpointFromPayload(binary.payload?.icon, tokenId)
+      const icon = iconOutpointFromPayload(binary.payload, tokenId)
       const payload = parseBsv21Json({
         p: 'bsv-20',
         op: binary.role === 'deploy' ? 'deploy+mint' : 'transfer',

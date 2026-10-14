@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const durable = vi.hoisted(() => new Map<string, string>())
 vi.mock('./durableStorage', () => ({
@@ -108,6 +108,11 @@ async function settledWalks(): Promise<number> {
 }
 
 describe('the background lineage walk budget', () => {
+  // Each test re-imports after resetModules; pay the one-time transform here.
+  beforeAll(async () => {
+    await import('./collectables')
+  }, 60_000)
+
   it('walks every imported tip whose lineage is already on this device', async () => {
     beef.local = true
     const { listCollectables } = await import('./collectables')

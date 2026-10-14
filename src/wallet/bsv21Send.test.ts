@@ -11,6 +11,7 @@ import {
   buildBsv21SendRemittance,
   buildBsv21SubjectBeef,
   buildBsv21ValueLock,
+  bsv21SpendLayout,
   classifyBsv21SendOutputs,
   planBsv21Send,
   tipFromBsv21Script,
@@ -53,7 +54,7 @@ describe('bsv21Send conservation', () => {
       [plan.payeeAmt, plan.changeAmt],
     )
 
-    const outputs = buildBsv21SendOutputs({
+    const outputs = buildBsv21SendOutputs({ layout: 'brc162',
       tokenId,
       payeeAmt: plan.payeeAmt,
       changeAmt: plan.changeAmt,
@@ -105,7 +106,7 @@ describe('bsv21Send conservation', () => {
       tips: [{ outpoint: `${'cd'.repeat(32)}_0`, tokenId, amt: 100n }],
     })
     expect(plan.changeAmt).toBe(0n)
-    const outputs = buildBsv21SendOutputs({
+    const outputs = buildBsv21SendOutputs({ layout: 'brc162',
       tokenId,
       payeeAmt: plan.payeeAmt,
       changeAmt: plan.changeAmt,
@@ -120,7 +121,7 @@ describe('bsv21Send conservation', () => {
 
   it('keeps a self-payee output in basket bsv21 (combine / self-send)', () => {
     const tokenId = `${'ab'.repeat(32)}_0`
-    const outputs = buildBsv21SendOutputs({
+    const outputs = buildBsv21SendOutputs({ layout: 'brc162',
       tokenId,
       payeeAmt: 100n,
       changeAmt: 0n,
@@ -148,12 +149,12 @@ describe('bsv21Send conservation', () => {
   it('builds a 176 BEEF that proves payee and change', () => {
     const deploy = deployTx(100n)
     const id = tokenIdOf(deploy)
-    const payeeLock = buildBsv21ValueLock({
+    const payeeLock = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: id,
       amount: 60n,
       address: PAYEE,
     })
-    const changeLock = buildBsv21ValueLock({
+    const changeLock = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: id,
       amount: 40n,
       address: CHANGE,
@@ -209,7 +210,7 @@ describe('bsv21Send conservation', () => {
       lockingScript: encodeBsv21Binary({
         tokenId: id,
         amount: 100n,
-        rest: decodeBsv21Binary(buildBsv21ValueLock({
+        rest: decodeBsv21Binary(buildBsv21ValueLock({ layout: 'brc162',
           tokenId: id,
           amount: 100n,
           address: PAYEE,
@@ -250,7 +251,7 @@ describe('bsv21Send conservation', () => {
     })
     spend.addOutput({
       satoshis: 1,
-      lockingScript: buildBsv21ValueLock({
+      lockingScript: buildBsv21ValueLock({ layout: 'brc162',
         tokenId: id,
         amount: 240n,
         address: PAYEE,
@@ -258,7 +259,7 @@ describe('bsv21Send conservation', () => {
     })
     spend.addOutput({
       satoshis: 1,
-      lockingScript: buildBsv21ValueLock({
+      lockingScript: buildBsv21ValueLock({ layout: 'brc162',
         tokenId: id,
         amount: 68520n,
         address: CHANGE,
@@ -298,7 +299,7 @@ describe('binary bsv21 burn plan', () => {
     outpoint: `${String(n).repeat(64).slice(0, 64)}_0`,
     tokenId: id,
     amt,
-    lockingScript: buildBsv21ValueLock({ tokenId: id, amount: amt, address: CHANGE }),
+    lockingScript: buildBsv21ValueLock({ layout: 'brc162', tokenId: id, amount: amt, address: CHANGE }),
   })
   const cosignedRest = `76a914${'22'.repeat(20)}88ad21${'02'}${'ef'.repeat(32)}ac`
 
@@ -346,7 +347,7 @@ describe('bsv21 burn conservation', () => {
     const tx = new Transaction()
     tx.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex(P2PKH_REST) })
     for (const lock of locks) {
-      tx.addOutput({ satoshis: 1, lockingScript: buildBsv21ValueLock({ tokenId: id, ...lock }) })
+      tx.addOutput({ satoshis: 1, lockingScript: buildBsv21ValueLock({ layout: 'brc162', tokenId: id, ...lock }) })
     }
     return tx
   }
@@ -440,7 +441,7 @@ describe('bsv21Send remittance', () => {
 
   it('decodes a 162 listed script as a spendable tip', () => {
     const tokenId = `${'ab'.repeat(32)}_0`
-    const script = buildBsv21ValueLock({
+    const script = buildBsv21ValueLock({ layout: 'brc162',
       tokenId,
       amount: 88n,
       address: PAYEE,
@@ -462,5 +463,80 @@ describe('bsv21Send remittance', () => {
         satoshis: 1,
       }),
     ).toBeNull()
+  })
+})
+
+describe('bsv21Send layouts', () => {
+  const tokenId = `${'ab'.repeat(32)}_0`
+  const tip = (n: number, amt: bigint, layout: 'brc162' | 'draft-tagged') => ({
+    outpoint: `${n.toString(16).padStart(2, '0').repeat(32)}_0`,
+    tokenId,
+    amt,
+    lockingScript: encodeBsv21Binary({ layout, tokenId, amount: amt, rest: P2PKH_REST }).toHex(),
+  })
+
+  it('spends one layout and writes payee and change in it', () => {
+    const plan = planBsv21Send({
+      tokenId,
+      amount: 50n,
+      tips: [tip(1, 40n, 'brc162'), tip(2, 60n, 'draft-tagged')],
+    })
+    expect(plan.layout).toBe('draft-tagged')
+    expect(plan.selected.map((t) => t.amt)).toEqual([60n])
+    const outputs = buildBsv21SendOutputs({
+      layout: plan.layout,
+      tokenId,
+      payeeAmt: plan.payeeAmt,
+      changeAmt: plan.changeAmt,
+      payeeAddress: PAYEE,
+      changeAddress: CHANGE,
+    })
+    for (const out of outputs) {
+      expect(decodeBsv21Binary(out.lockingScript)?.layout).toBe('draft-tagged')
+    }
+  })
+
+  it('spends bound tips before tips no walk has bound yet', () => {
+    const plan = planBsv21Send({
+      tokenId,
+      amount: 30n,
+      tips: [
+        { ...tip(1, 90n, 'brc162'), bound: false },
+        { ...tip(2, 20n, 'brc162'), bound: true },
+        { ...tip(3, 15n, 'brc162'), bound: true },
+      ],
+    })
+    expect(plan.selected.map((t) => t.amt)).toEqual([20n, 15n])
+  })
+
+  it('prefers the current layout when either covers the amount', () => {
+    const plan = planBsv21Send({
+      tokenId,
+      amount: 30n,
+      tips: [tip(1, 40n, 'brc162'), tip(2, 60n, 'draft-tagged')],
+    })
+    expect(plan.layout).toBe('brc162')
+  })
+
+  it('refuses an amount only both layouts together can cover', () => {
+    expect(() =>
+      planBsv21Send({
+        tokenId,
+        amount: 90n,
+        tips: [tip(1, 40n, 'brc162'), tip(2, 60n, 'draft-tagged')],
+      }),
+    ).toThrow(/two token formats.*at most 60/)
+  })
+
+  it('refuses a burn or listing that would spend both layouts', () => {
+    expect(bsv21SpendLayout([tip(1, 1n, 'draft-tagged')])).toBe('draft-tagged')
+    expect(() => bsv21SpendLayout([tip(1, 1n, 'brc162'), tip(2, 1n, 'draft-tagged')])).toThrow(
+      /two token formats/,
+    )
+  })
+
+  it('writes a value lock in the layout asked for', () => {
+    const lock = buildBsv21ValueLock({ tokenId, amount: 5n, address: PAYEE, layout: 'draft-tagged' })
+    expect(decodeBsv21Binary(lock)?.layout).toBe('draft-tagged')
   })
 })

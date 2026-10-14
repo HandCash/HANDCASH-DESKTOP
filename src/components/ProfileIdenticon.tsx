@@ -1,19 +1,20 @@
-import { bapFingerprint } from '../wallet/issuerTrust'
+import { profileFingerprint } from '../wallet/issuerTrust'
 import type { IssuerViewState } from './IssuerIdentityMark'
 
 /**
- * 5×5 mirrored identicon drawn from the BAP ID's hash; vector, so nothing to defer.
- * Colours come from the BAP ID alone — an opaque plate, never `currentColor` or a
- * see-through fill — so the fingerprint reads the same in every theme.
+ * 5×5 mirrored identicon drawn from the profile ID's hash (an identity key or
+ * a BAP ID); vector, so nothing to defer. Colours come from the ID alone — an
+ * opaque plate, never `currentColor` or a see-through fill — so the
+ * fingerprint reads the same in every theme.
  */
-export function BapIdenticon({ bapId, size = 16 }: { bapId: string; size?: number }) {
-  const { hue, cells } = bapFingerprint(bapId)
+export function ProfileIdenticon({ id, size = 16 }: { id: string; size?: number }) {
+  const { hue, cells } = profileFingerprint(id)
   const plate = `hsl(${hue} 48% 91%)`
   const ink = `hsl(${hue} 62% 40%)`
   return (
     <svg
-      className="bap-identicon"
-      data-aeon-part="bap-identicon"
+      className="profile-identicon"
+      data-aeon-part="profile-identicon"
       viewBox="0 0 5 5"
       width={size}
       height={size}
@@ -29,16 +30,16 @@ export function BapIdenticon({ bapId, size = 16 }: { bapId: string; size?: numbe
   )
 }
 
-/** Identicon plus the short BAP ID, as an identity pill: the part a look-alike cannot copy. */
-export function BapFingerprint({
-  bapId,
+/** Identicon plus the short profile ID, as an identity pill: the part a look-alike cannot copy. */
+export function ProfileFingerprint({
+  id,
   className,
   showId = true,
   state,
 }: {
-  bapId: string
+  id: string
   className?: string
-  /** Off where the surrounding label already spells the short BAP ID. */
+  /** Off where the surrounding label already spells the short profile ID. */
   showId?: boolean
   /** The issuer trust state, so the pill tints like the identity it fingerprints. */
   state?: IssuerViewState
@@ -46,14 +47,14 @@ export function BapFingerprint({
   return (
     <span
       className={className ? `identity-pill ${className}` : 'identity-pill'}
-      data-aeon-part="bap-fingerprint"
+      data-aeon-part="profile-fingerprint"
       data-aeon-state={state}
-      title={`Profile ID ${bapId}`}
+      title={`Profile ID ${id}`}
     >
       <span className="identity-pill-lead">
-        <BapIdenticon bapId={bapId} size={10} />
+        <ProfileIdenticon id={id} size={10} />
       </span>
-      {showId ? <span className="identity-pill-id mono">{bapFingerprint(bapId).short}</span> : null}
+      {showId ? <span className="identity-pill-id mono">{profileFingerprint(id).short}</span> : null}
     </span>
   )
 }
@@ -71,9 +72,9 @@ export function SignerFingerprint({ address, className }: { address: string; cla
       title={`Signed by ${address} · as the index reports it, not checked here`}
     >
       <span className="identity-pill-lead">
-        <BapIdenticon bapId={address} size={10} />
+        <ProfileIdenticon id={address} size={10} />
       </span>
-      <span className="identity-pill-id mono">{bapFingerprint(address).short}</span>
+      <span className="identity-pill-id mono">{profileFingerprint(address).short}</span>
     </span>
   )
 }

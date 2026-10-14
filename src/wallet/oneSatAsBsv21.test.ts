@@ -93,12 +93,13 @@ describe('classifyOneSatAsBsv21', () => {
     expect(binary.kind === 'bsv21' && binary.encoding).toBe('binary')
   })
 
-  it('keeps a BRC-162 payload icon on the painted token', () => {
+  it('keeps a draft-tagged payload icon pointer on the painted token', () => {
     const iconTx = 'b30338c15080cc0775c64af3572e156f8ba96037550d0f3466bb9320fe6697e2'
     const got = classifyOneSatAsBsv21({
       satoshis: 1,
       outpoint: `${'aa'.repeat(32)}.0`,
       lockingScriptHex: encodeBsv21Binary({
+        layout: 'draft-tagged',
         amount: 1000n,
         payload: { sym: 'REF', icon: tokenIdToWire(`${iconTx}_1`) },
         rest: P2PKH,
@@ -106,6 +107,20 @@ describe('classifyOneSatAsBsv21', () => {
     })
     expect(got.kind).toBe('bsv21')
     if (got.kind === 'bsv21') expect(got.payload.icon).toBe(`${iconTx}_1`)
+  })
+
+  it('points a BRC-162 embedded icon at the deploy itself', () => {
+    const got = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${'aa'.repeat(32)}.0`,
+      lockingScriptHex: encodeBsv21Binary({
+        amount: 1000n,
+        payload: { sym: 'REF', iconImage: { mediaType: 'image/png', bytes: Uint8Array.from([9]) } },
+        rest: P2PKH,
+      }).toHex(),
+    })
+    expect(got.kind).toBe('bsv21')
+    if (got.kind === 'bsv21') expect(got.payload.icon).toBe(`${'aa'.repeat(32)}_0`)
   })
 
   it('does not move an image collectable even with token remittance', () => {

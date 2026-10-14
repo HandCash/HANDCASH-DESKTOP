@@ -29,7 +29,7 @@ import {
   type CollectionView,
 } from '../../wallet/collectionView'
 import { playWalletSound } from '../../wallet/soundService'
-import { SignerFingerprint } from '../BapIdenticon'
+import { SignerFingerprint } from '../ProfileIdenticon'
 import { CollectFacepile } from '../CollectFacepile'
 import { CollectionViewToggle } from '../CollectionViewToggle'
 import { DeferredImage } from '../DeferredImage'

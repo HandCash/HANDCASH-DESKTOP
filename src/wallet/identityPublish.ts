@@ -11,7 +11,10 @@ import {
   bapKey,
   bFileScript,
 } from './bapRecords'
+import { abortQuietly, sendWithAnchor, withSigmaAnchor } from './identityIssuance'
+import { identityLinkScript, identityLinkScriptMaxBytes } from './identityLink'
 import {
+  bapIdentityLinks,
   bapKeyChain,
   buildIssuerIdentityPackage,
   currentIssuerSigningKey,
@@ -35,6 +38,7 @@ import {
 } from './publicIdentities'
 import type { ActiveWallet } from './session'
 import { runExclusiveSpend } from './spendGuard'
+import { completeBsv21SignableWithRootP2pkh } from './token/issuer'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 /**
@@ -43,6 +47,10 @@ import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
  * other signed transaction; none of them holds value. The wallet's own key
  * tree sits in basket `bap` exactly as 1Sat wallets keep it, so a 1Sat app on
  * this wallet sees the same identity; an imported master's sits in `bap issuer`.
+ *
+ * A BAP profile labels the identity key only through a BRC-248 link record,
+ * which both keys sign over a Sigma anchor input. Any publish of an identity
+ * whose key no live link names writes one last, after the records it relies on.
  */
 
 type DataOutput = {
@@ -78,8 +86,9 @@ export type IdentityPublishRequest =
       image: IssuerIdentityImage | null
     }
   | { kind: 'rotate'; identityKey: string }
+  | { kind: 'link'; identityKey: string }
 
-export type IdentityRecordPurpose = 'image' | 'publish' | 'update' | 'rotate'
+export type IdentityRecordPurpose = 'image' | 'publish' | 'update' | 'rotate' | 'link'
 
 export type IdentityRecordTx = {
   purpose: IdentityRecordPurpose
@@ -95,7 +104,7 @@ export type IdentityPlanKey = { seq: number; publicKey: string }
 
 /** Everything the user approves before an identity record is signed. Public data only. */
 export type IdentityPublishPlan = {
-  kind: 'publish' | 'update' | 'rotate'
+  kind: 'publish' | 'update' | 'rotate' | 'link'
   identityKey: string
   bapId: string
   signer: 'wallet' | 'imported'
@@ -123,6 +132,7 @@ export type IdentityPublishRefusal =
   | 'not-published'
   | 'missing-package'
   | 'plan-changed'
+  | 'already-linked'
   | 'staged-mismatch'
   | 'fee-over-plan'
   | 'not-signed'
@@ -166,9 +176,13 @@ function outputBytes(lockingScript: string): number {
 
 const feeFor = (bytes: number) => Math.ceil((bytes * FEE_SAT_PER_KB) / 1000)
 
-function recordTx(purpose: IdentityRecordPurpose, description: string, outputs: DataOutput[]): IdentityRecordTx {
-  const sized = outputs.map((o) => ({ description: o.outputDescription, bytes: outputBytes(o.lockingScript) }))
-  const body = TX_OVERHEAD_BYTES + sized.reduce((sum, o) => sum + o.bytes, 0)
+function sizedTx(
+  purpose: IdentityRecordPurpose,
+  description: string,
+  sized: IdentityRecordTx['outputs'],
+  extraBytes = 0,
+): IdentityRecordTx {
+  const body = TX_OVERHEAD_BYTES + extraBytes + sized.reduce((sum, o) => sum + o.bytes, 0)
   return {
     purpose,
     description,
@@ -176,6 +190,27 @@ function recordTx(purpose: IdentityRecordPurpose, description: string, outputs: 
     feeSats: feeFor(body + FUNDING_INPUT_BYTES + MAX_CHANGE_OUTPUTS * CHANGE_OUTPUT_BYTES),
     maxFeeSats: feeFor(body + MAX_FUNDING_INPUTS * FUNDING_INPUT_BYTES + MAX_CHANGE_OUTPUTS * CHANGE_OUTPUT_BYTES),
   }
+}
+
+function recordTx(purpose: IdentityRecordPurpose, description: string, outputs: DataOutput[]): IdentityRecordTx {
+  return sizedTx(
+    purpose,
+    description,
+    outputs.map((o) => ({ description: o.outputDescription, bytes: outputBytes(o.lockingScript) })),
+  )
+}
+
+/** The link transaction spends the Sigma anchor, which is its own funded transaction; one quote covers both. */
+function linkTx(identityKey: string, bapId: string, bapAddress: string): IdentityRecordTx {
+  const scriptBytes = identityLinkScriptMaxBytes(identityKey, bapId, bapAddress)
+  const link = sizedTx(
+    'link',
+    'Link profile to identity key',
+    [{ description: 'Identity link', bytes: 8 + varIntBytes(scriptBytes) + scriptBytes }],
+    FUNDING_INPUT_BYTES,
+  )
+  const anchor = sizedTx('link', 'Sigma anchor', [{ description: 'Anchor', bytes: CHANGE_OUTPUT_BYTES }])
+  return { ...link, feeSats: link.feeSats + anchor.feeSats, maxFeeSats: link.maxFeeSats + anchor.maxFeeSats }
 }
 
 /** Fee of a staged transaction, after checking it carries exactly our records first, in order. */
@@ -234,10 +269,90 @@ async function sendIdentityRecords(
   const tx = signed.tx ? Array.from(signed.tx) : []
   if (!/^[0-9a-f]{64}$/.test(txid) || !tx.length) refuse('not-signed', `${step.description} was not signed.`)
   console.info(`[identity-publish] ${step.purpose} ${txid.slice(0, 12)} fee ${fee} sats (approved ≤ ${step.maxFeeSats})`)
+  return propagate(txid, tx)
+}
+
+async function propagate(txid: string, tx: number[]): Promise<{ txid: string; tx: number[] }> {
   const { registerSignedSend, startSignedSendPropagation } = await import('./signedSendLifecycle')
   const handle = await registerSignedSend({ txid, atomicBeef: tx, flow: 'identity_publish', satoshis: 0 })
   startSignedSendPropagation(handle)
   return { txid, tx }
+}
+
+/**
+ * The BRC-248 link: a `noSend` Sigma anchor, then a transaction spending it as
+ * input 0 whose one output both keys sign over that outpoint. The anchor goes
+ * to the network with it (`sendWith`); any refusal before both are queued
+ * releases both.
+ */
+async function sendIdentityLink(
+  active: ActiveWallet,
+  step: IdentityRecordTx,
+  link: LinkPlan,
+  signer: Signer,
+): Promise<{ txid: string; tx: number[] }> {
+  const anchored = await withSigmaAnchor(active, { outputs: [] })
+  const anchorOutpoint = anchored.inputs![0]!.outpoint
+  const [anchorTxid, vout] = anchorOutpoint.split('.') as [string, string]
+  let staged: { reference: string; tx: number[]; fee: number }
+  let reference: string | undefined
+  try {
+    const outputs: DataOutput[] = [
+      {
+        lockingScript: identityLinkScript({
+          kind: 'link',
+          identityKey: link.identityKey,
+          bapId: link.bapId,
+          signers: [
+            { kind: 'identity', key: signer.master },
+            { kind: 'bap', key: bapKey(signer.master, link.bapSeq) },
+          ],
+          anchor: { txid: anchorTxid, vout: Number(vout) },
+        }),
+        satoshis: 0,
+        outputDescription: 'Identity link',
+        basket: signer.basket,
+        tags: ['type:link', `bapId:${link.bapId}`, `identityKey:${link.identityKey}`],
+      },
+    ]
+    const created = await active.wallet.createAction({
+      description: step.description,
+      labels: ['bap-identity'],
+      inputs: [{ outpoint: anchorOutpoint, inputDescription: 'Sigma link anchor', unlockingScriptLength: 108 }],
+      inputBEEF: anchored.inputBEEF,
+      outputs,
+      options: { ...anchored.options, signAndProcess: false },
+    })
+    const signable = created.signableTransaction
+    if (!signable?.reference || !signable.tx?.length)
+      refuse('not-signed', `${step.description} could not be staged. Nothing was signed.`)
+    reference = signable.reference
+    const tx = Array.from(signable.tx)
+    const fee = stagedFee(tx, outputs)
+    if (fee > step.maxFeeSats)
+      refuse(
+        'fee-over-plan',
+        `${step.description} needs a ${fee}-sat network fee, above the ${step.maxFeeSats} sats you approved. Nothing was signed.`,
+      )
+    staged = { reference, tx, fee }
+  } catch (error) {
+    if (reference) await abortQuietly(active, reference)
+    await abortQuietly(active, anchorTxid)
+    throw error
+  }
+  const signed = await completeBsv21SignableWithRootP2pkh(active, { reference: staged.reference, tx: staged.tx }, [
+    anchorOutpoint,
+  ])
+  try {
+    if (!/^[0-9a-f]{64}$/.test(signed.txid) || !signed.tx?.length) refuse('not-signed', `${step.description} was not signed.`)
+    await sendWithAnchor(active, anchorTxid, signed.txid)
+  } catch (error) {
+    await abortQuietly(active, staged.reference)
+    await abortQuietly(active, anchorTxid)
+    throw error
+  }
+  console.info(`[identity-publish] link ${signed.txid.slice(0, 12)} fee ${staged.fee} sats (approved ≤ ${step.maxFeeSats})`)
+  return propagate(signed.txid, signed.tx)
 }
 
 /**
@@ -304,7 +419,12 @@ function packaged(
   return recordPublishedIdentity(runtime, identityKey, pkg)
 }
 
-type Step = { tx: IdentityRecordTx; outputs: (imageTxid: string) => DataOutput[] }
+/** A link the publish writes: the identity key, its BAP ID and the BAP key that will be current. */
+type LinkPlan = { identityKey: string; bapId: string; bapSeq: number }
+
+type Step =
+  | { kind: 'records'; tx: IdentityRecordTx; outputs: (imageTxid: string) => DataOutput[] }
+  | { kind: 'link'; tx: IdentityRecordTx; link: LinkPlan }
 
 type Prepared = {
   key: string
@@ -362,7 +482,22 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
   let base: PlanBase
   let imageTxid: string | undefined
   const priorImage = prior ? issuerIdentityImageRef(prior) : undefined
-  if (!fields) {
+  const linked = bapIdentityLinks(bapId, beefs).some((link) => link.identityKey === key)
+  if (request.kind === 'link') {
+    if (!prior || !chain) refuse('not-published', 'Publish the identity before linking it.')
+    if (linked) refuse('already-linked', 'This profile already labels the identity key.')
+    const seq = chain.keys.at(-1)!.seq
+    const signingKey = currentIssuerSigningKey(master, chain)
+    base = {
+      kind: 'link',
+      ...who,
+      name: prior.name,
+      description: prior.description,
+      image: { status: 'reused', txid: priorImage ?? '' },
+      signingKey: planKey(seq, signingKey),
+      retiredKey: null,
+    }
+  } else if (!fields) {
     if (!prior) refuse('not-published', 'Publish the identity before rotating its key.')
     if (!priorImage) refuse('no-image', 'Publish an image before rotating the key.')
     if (!chain) refuse('missing-package', 'The identity package is missing; restore an identity backup.')
@@ -375,7 +510,7 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
       idOutput(signer, bapId, seq + 1, bapIdScript({ bapId, address: next.toAddress(), signer: outgoing })),
       aliasOutput(signer, bapId, bapAliasScript({ bapId, profile, signer: next })),
     ]
-    steps.push({ tx: recordTx('rotate', 'Rotate issuer signing key', outputs), outputs: () => outputs })
+    steps.push({ kind: 'records', tx: recordTx('rotate', 'Rotate issuer signing key', outputs), outputs: () => outputs })
     base = {
       kind: 'rotate',
       ...who,
@@ -393,7 +528,7 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
     const signingKey = chain ? currentIssuerSigningKey(master, chain) : bapKey(master, 1)
     if (!imageTxid) {
       const outputs = [imageOutput(signer, bapId, bitmap!)]
-      steps.push({ tx: recordTx('image', 'Issuer identity image', outputs), outputs: () => outputs })
+      steps.push({ kind: 'records', tx: recordTx('image', 'Issuer identity image', outputs), outputs: () => outputs })
     }
     const records = (txid: string): DataOutput[] => [
       ...(chain
@@ -402,6 +537,7 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
       aliasOutput(signer, bapId, bapAliasScript({ bapId, profile: issuerProfile(fields, txid), signer: signingKey })),
     ]
     steps.push({
+      kind: 'records',
       tx: recordTx(
         chain ? 'update' : 'publish',
         chain ? 'Update issuer identity' : 'Publish issuer identity',
@@ -421,6 +557,10 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
       retiredKey: null,
     }
   }
+  if (!linked) {
+    const link = { identityKey: key, bapId, bapSeq: base.signingKey.seq }
+    steps.push({ kind: 'link', tx: linkTx(key, bapId, bapAddress(master, link.bapSeq)), link })
+  }
   const transactions = steps.map((step) => step.tx)
   const body = {
     ...base,
@@ -428,8 +568,11 @@ async function prepare(runtime: WalletRuntime, request: IdentityPublishRequest):
     feeSats: transactions.reduce((sum, tx) => sum + tx.feeSats, 0),
     maxFeeSats: transactions.reduce((sum, tx) => sum + tx.maxFeeSats, 0),
   }
+  // A link's signatures are randomized and bound to an anchor made at send time; its plan pins what it signs.
   const scripts = steps.map((step) =>
-    step.outputs(imageTxid ?? UNSIGNED_IMAGE_TXID).map((output) => output.lockingScript),
+    step.kind === 'link'
+      ? [`link:${step.link.identityKey}:${step.link.bapId}:${step.link.bapSeq}`]
+      : step.outputs(imageTxid ?? UNSIGNED_IMAGE_TXID).map((output) => output.lockingScript),
   )
   const digest = Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify({ plan: body, scripts }), 'utf8')))
   return { key, plan: { ...body, digest }, steps, beefs, imageTxid }
@@ -467,8 +610,13 @@ export async function publishIdentityPlan(
       refuse('plan-changed', 'This identity changed since you reviewed it. Review the publish again.')
     const active = assertCurrent(runtime)
     let imageTxid = prepared.imageTxid
-    let aliasTxid = ''
+    let aliasTxid = publishedIdentityForIssuer(runtime, prepared.key)?.alias.txid ?? ''
     for (const step of prepared.steps) {
+      if (step.kind === 'link') {
+        prepared.beefs.push((await sendIdentityLink(active, step.tx, step.link, signerFor(runtime, prepared.key))).tx)
+        assertCurrent(runtime)
+        continue
+      }
       if (step.tx.purpose !== 'image' && !imageTxid) refuse('no-image', 'Choose an image first.')
       const sent = await sendIdentityRecords(active, step.tx, step.outputs(imageTxid ?? UNSIGNED_IMAGE_TXID))
       prepared.beefs.push(sent.tx)
@@ -540,6 +688,7 @@ export async function upgradeIssuerIdentityProofs(runtime: WalletRuntime): Promi
       ...identity.keys.filter((k) => k.minedHeight === undefined).map((k) => k.txid),
       ...(identity.alias.minedHeight === undefined ? [identity.alias.txid] : []),
       ...(identity.revoked && identity.revoked.minedHeight === undefined ? [identity.revoked.txid] : []),
+      ...identity.links.filter((link) => link.minedHeight === undefined).map((link) => link.txid),
     ])
     if (!unmined.size) continue
     const proven: number[][] = []

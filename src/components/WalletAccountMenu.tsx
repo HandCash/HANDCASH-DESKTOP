@@ -1,9 +1,10 @@
 import { stateToAttr } from '@aeon-ui/core'
-import { Prompt } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
+import { moveAccountHere } from '../wallet/accountMove'
+import type { AccountMovePhase } from '../wallet/accountMoveMachine'
 import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
 import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
@@ -17,13 +18,10 @@ import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
 import { vaultIdentityKey } from '../wallet/vaultMaster'
-import {
-  claimVaultAccount,
-  releaseActiveVaultAccount,
-  takeVaultAccount,
-} from '../wallet/vaultAccountHolding'
+import { claimVaultAccount } from '../wallet/vaultAccountHolding'
 import {
   ensureVaultAccounts,
+  holdingOf,
   isHeldHere,
   readVaultAccounts,
   subscribeVaultAccounts,
@@ -67,6 +65,17 @@ function messageOf(error: unknown): string {
 
 function fallbackLabel(account: VaultAccount): string {
   return account.name || (account.index === 0 ? 'Primary' : `Wallet ${account.index}`)
+}
+
+const MOVE_PHASE_COPY: Record<AccountMovePhase, string> = {
+  reading: 'Moving here…',
+  dialing: 'Connecting to your other device…',
+  requestingDirect: 'Asking your other device…',
+  requestingBox: 'Asking your other device…',
+  awaitingAccept: 'Asking your other device…',
+  awaitingRelease: 'Your other device is handing it over…',
+  forcing: 'Other device offline · moving anyway…',
+  taking: 'Moving here…',
 }
 
 export function WalletAccountMenu({
@@ -252,44 +261,23 @@ export function WalletAccountMenu({
     return store.accounts.find((a) => a.index !== exclude && isHeldHere(a))?.index ?? null
   }
 
-  /** Move an account another device holds onto this one. */
-  const runTake = async (index: number, force: boolean) => {
+  /** Move an account another device holds onto this one, then open it. */
+  const runMove = async (index: number) => {
     const active = activeAccount()
     if (!active) {
       toastError('Accounts', 'Unlock the vault before moving a wallet.')
       return
     }
-    send(force ? { type: 'CONFIRM' } : { type: 'TAKE', accountIndex: index })
+    send({ type: 'MOVE', accountIndex: index })
     try {
-      const result = await takeVaultAccount({ master: active.vaultMaster, index, force })
-      if (result.kind === 'held-elsewhere') {
-        send({ type: 'HELD_ELSEWHERE' })
-        return
-      }
-      if (result.kind === 'unavailable') {
-        throw new Error(`HandCash could not move this wallet here: ${result.reason}.`)
-      }
-      send({ type: 'TAKEN' })
+      const result = await moveAccountHere({
+        master: active.vaultMaster,
+        index,
+        onPhase: (phase) => send({ type: 'MOVE_PHASE', phase }),
+      })
+      if (result.kind === 'failed') throw new Error(result.message)
+      send({ type: 'MOVED' })
       await performSwitch(index, true)
-    } catch (error) {
-      toastError('Move wallet', messageOf(error))
-      send({ type: 'FAIL', error: messageOf(error) })
-    }
-  }
-
-  /** Release the active account for another device, then leave it. */
-  const runRelease = async () => {
-    const runtime = getWalletRuntime()
-    if (!runtime) return
-    const active = runtime.instance
-    send({ type: 'CONFIRM' })
-    try {
-      await releaseActiveVaultAccount(runtime)
-      const next = nextHeldAccount(active.accountIndex)
-      toastSuccess('Ready to move', 'On your other device, open the wallet menu and choose Move here.')
-      send({ type: 'RELEASED', nextAccountIndex: next })
-      if (next != null) await performSwitch(next)
-      else await performCreate()
     } catch (error) {
       toastError('Move wallet', messageOf(error))
       send({ type: 'FAIL', error: messageOf(error) })
@@ -311,7 +299,12 @@ export function WalletAccountMenu({
       const nextAccountIndex = next(active.accountIndex)
       if (!actor.getSnapshot().can({ type: 'DISPLACED', nextAccountIndex })) return
       displacedRef.current = active.identityKey
-      toastError('Wallet moved', 'Another device now holds this wallet, so it no longer spends here.')
+      const holding = holdingOf(account)
+      if (holding.kind === 'elsewhere' && holding.deviceId == null) {
+        toastSuccess('Wallet moved', 'Your other device asked for this wallet, so it moved there.')
+      } else {
+        toastError('Wallet moved', 'Another device now holds this wallet, so it no longer spends here.')
+      }
       send({ type: 'DISPLACED', nextAccountIndex })
       void (nextAccountIndex != null ? toAccount(nextAccountIndex) : toNew())
     }
@@ -378,9 +371,9 @@ export function WalletAccountMenu({
           <ul className="wallet-account-list" role="listbox" aria-label="Wallets">
             {accounts.map((account) => {
               const selected = account.index === activeIndex
-              const switching =
-                snapshot.matches('switching') &&
-                snapshot.context.targetAccountIndex === account.index
+              const targeted = snapshot.context.targetAccountIndex === account.index
+              const switching = snapshot.matches('switching') && targeted
+              const movePhase = snapshot.matches('moving') && targeted ? snapshot.context.movePhase : null
               const name = account.profile?.name ?? account.label
               const editLabel = account.profile ? `Edit ${name} profile` : `Publish a profile for ${name}`
               return (
@@ -395,7 +388,7 @@ export function WalletAccountMenu({
                       }
                       disabled={busy}
                       onClick={() =>
-                        void (account.heldHere ? runSwitch(account.index) : runTake(account.index, false))
+                        void (account.heldHere ? runSwitch(account.index) : runMove(account.index))
                       }
                     >
                       <span className="wallet-account-option-lead">
@@ -403,11 +396,13 @@ export function WalletAccountMenu({
                         <span className="wallet-account-option-copy">
                           <strong>{name}</strong>
                           <span>
-                            {switching
-                              ? 'Switching…'
-                              : !account.heldHere
-                                ? 'On another device · Move here'
-                                : account.handle ?? (account.profile ? account.label : 'No public profile')}
+                            {movePhase
+                              ? MOVE_PHASE_COPY[movePhase]
+                              : switching
+                                ? 'Switching…'
+                                : !account.heldHere
+                                  ? 'On another device'
+                                  : account.handle ?? (account.profile ? account.label : 'No public profile')}
                           </span>
                         </span>
                       </span>
@@ -443,16 +438,6 @@ export function WalletAccountMenu({
             <span>Add wallet</span>
           </button>
 
-          <button
-            type="button"
-            className="wallet-account-create"
-            data-aeon-part="release"
-            disabled={busy}
-            onClick={() => send({ type: 'RELEASE' })}
-          >
-            <span>Move {current?.profile?.name ?? current?.label ?? 'this wallet'} to another device</span>
-          </button>
-
           {snapshot.context.error ? (
             <p className="wallet-account-error" role="alert">
               {snapshot.context.error}
@@ -461,63 +446,6 @@ export function WalletAccountMenu({
         </section>
       ) : null}
 
-      <Prompt.Root
-        open={snapshot.matches('confirmTakeover') || snapshot.matches('confirmRelease')}
-        status="pending"
-        onOpenChange={(next) => {
-          if (!next) send({ type: 'CANCEL' })
-        }}
-      >
-        <Prompt.Portal>
-          <Prompt.Backdrop className="permission-backdrop" />
-          <Prompt.Positioner className="permission-positioner">
-            <Prompt.Content
-              className="panel modal permission-modal"
-              data-aeon-part="holding-confirm"
-              data-aeon-state={stateAttr}
-            >
-              {snapshot.matches('confirmTakeover') ? (
-                <>
-                  <Prompt.Title>Take this wallet from your other device?</Prompt.Title>
-                  <Prompt.Effect>
-                    Another device still holds it. Take it only if that device is lost or you have
-                    stopped using this wallet there: two devices spending one wallet can pick the same
-                    coins. The other device stops spending it when it next connects.
-                  </Prompt.Effect>
-                </>
-              ) : (
-                <>
-                  <Prompt.Title>Move this wallet to another device?</Prompt.Title>
-                  <Prompt.Effect>
-                    HandCash backs up its history, then stops using it here. On your other device, open
-                    the wallet menu and choose Move here.
-                  </Prompt.Effect>
-                </>
-              )}
-              <Prompt.Actions className="actions">
-                <Prompt.Secondary
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => send({ type: 'CANCEL' })}
-                >
-                  Cancel
-                </Prompt.Secondary>
-                <Prompt.Primary
-                  type="button"
-                  className={snapshot.matches('confirmTakeover') ? 'btn btn-danger' : 'btn btn-primary'}
-                  onClick={() => {
-                    const index = snapshot.context.targetAccountIndex
-                    if (snapshot.matches('confirmTakeover') && index != null) void runTake(index, true)
-                    else void runRelease()
-                  }}
-                >
-                  {snapshot.matches('confirmTakeover') ? 'Take over' : 'Move'}
-                </Prompt.Primary>
-              </Prompt.Actions>
-            </Prompt.Content>
-          </Prompt.Positioner>
-        </Prompt.Portal>
-      </Prompt.Root>
     </div>
   )
 }

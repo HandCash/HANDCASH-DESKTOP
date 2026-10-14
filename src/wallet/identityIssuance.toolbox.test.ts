@@ -72,11 +72,13 @@ import { resetIssuerAttributionForTests, retainedIssuerMetadata, retainedScriptI
 import { appendIssuerMetadata, issuerMetadataFromScript } from './issuerMetadata'
 import {
   displayIssuerAttribution,
-  displayIssuerIdentity,
+  displayIssuerProfile,
   importIssuerPrivateKey,
   issuanceSigner,
+  saveIdentityProfile,
   selectPublicIdentity,
 } from './publicIdentities'
+import { identityProfileFor, resetIdentityProfilesForTests } from './identityProfiles'
 import {
   IdentityPublishRefused,
   planIdentityPublish,
@@ -270,6 +272,23 @@ const master = (h: Harness) => PrivateKey.fromHex(h.active.rootKeyHex)
 const signingKey = (h: Harness, seq = 1) => bapKey(master(h), seq).toPublicKey().toString()
 const walletLock = (h: Harness) => new P2PKH().lock(master(h).toAddress()).toHex()
 
+/** An item as an earlier draft of BRC-247 stamped it: BAP key `seq` signs `issuer <its key> bapId <id>`. */
+function earlierBapStamp(h: Harness, seq: number, bapId: string): { outpoint: string; script: string } {
+  const signer = bapKey(master(h), seq)
+  const tape =
+    appendIssuerMetadata(itemOutput(walletLock(h)).lockingScript, signer.toPublicKey().toString()) +
+    new Script().writeBin(Utils.toArray('bapId', 'utf8')).writeBin(Utils.toArray(bapId, 'utf8')).toHex()
+  const fundTxid = '44'.repeat(32)
+  const script = sigmaSignDeployLockingScript({ lockingScriptHex: tape, fundTxid, fundVout: 0, identityKeyHex: signer.toHex() })
+  const tx = new Transaction()
+  tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
+  tx.addOutput({ satoshis: 1, lockingScript: Script.fromHex(script) })
+  const beef = new Beef()
+  beef.mergeTransaction(tx)
+  state.retained.set(tx.id('hex'), beef)
+  return { outpoint: `${tx.id('hex')}.0`, script }
+}
+
 async function mint(h: Harness, outputs: ReturnType<typeof itemOutput | typeof tokenOutput>[], expected = h.active.identityKey) {
   const enriched = await enrichIdentityIssuance(h.runtime, { description: 'Issue', outputs }, expected)
   const created = await appCreateAction(h.active, enriched)
@@ -292,6 +311,7 @@ beforeEach(() => {
   state.provider.clear()
   resetIssuerAttributionForTests()
   resetIssuerIdentitiesForTests()
+  resetIdentityProfilesForTests()
   resetTokenGenesisForTests()
   resetTokenLineageForTests()
   vi.mocked(registerSignedSend).mockClear()
@@ -312,7 +332,11 @@ async function mintAndTransferToken(h: Harness) {
   const vout = minted.tx.outputs.findIndex((o) => decodeTokenOutput(o.lockingScript)?.role === 'deploy')
   const tokenId = `${minted.done.txid}_${vout}`
   const transfer = new Transaction()
-  transfer.addInput({ sourceTransaction: minted.tx, sourceOutputIndex: vout, unlockingScript: Script.fromHex('') })
+  transfer.addInput({
+    sourceTransaction: minted.tx,
+    sourceOutputIndex: vout,
+    unlockingScriptTemplate: new P2PKH().unlock(master(h)),
+  })
   transfer.addOutput({
     satoshis: 1,
     lockingScript: encodeBsv21Binary({
@@ -321,6 +345,7 @@ async function mintAndTransferToken(h: Harness) {
       rest: new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex(),
     }),
   })
+  await transfer.sign()
   const senderBeef = minted.beef.clone()
   senderBeef.mergeTransaction(transfer)
   const subject = new Beef()
@@ -329,7 +354,7 @@ async function mintAndTransferToken(h: Harness) {
 }
 
 describe('identity issuance against a real toolbox wallet', () => {
-  it('publishes a BAP identity as 0-sat records: a B:// image, then the root-declared key and its profile', async () => {
+  it('publishes a BAP profile as 0-sat records: a B:// image, the root-declared key and its profile, then the link to the identity key', async () => {
     const h = await fundedWallet()
     const identity = await publish(h)
     expect(identity).toMatchObject({
@@ -341,10 +366,13 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(identity.keys.map((k) => [k.seq, k.address])).toEqual([[1, bapKey(master(h), 1).toAddress()]])
     expect(identity.image).toEqual(PNG_1PX)
     const txids = vi.mocked(registerSignedSend).mock.calls.map(([args]) => args.txid)
-    expect(txids).toEqual([identity.imageTxid, identity.alias.txid])
+    expect(identity.links).toEqual([{ identityKey: h.active.identityKey, txid: txids[2] }])
+    expect(txids).toEqual([identity.imageTxid, identity.alias.txid, identity.links[0]!.txid])
     expect(vi.mocked(registerSignedSend).mock.calls.every(([args]) => args.flow === 'identity_publish')).toBe(true)
     const records = await h.active.wallet.listOutputs({ basket: BAP_BASKET, includeTags: true })
-    expect(records.outputs.map((o) => o.satoshis)).toEqual([0, 0, 0])
+    expect(records.outputs.map((o) => o.satoshis)).toEqual([0, 0, 0, 0])
+    expect(records.outputs.filter((o) => o.tags?.includes('type:link'))).toHaveLength(1)
+    expect((await h.active.wallet.listOutputs({ basket: 'sigma' })).outputs).toEqual([])
     expect((await h.active.wallet.listOutputs({ basket: '1sat' })).outputs).toEqual([])
     const { publicKey } = await h.active.wallet.getPublicKey({
       protocolID: [1, 'sigma'],
@@ -363,7 +391,11 @@ describe('identity issuance against a real toolbox wallet', () => {
     await h.sendWaiting()
     expect(h.posted.flat()).toEqual(expect.arrayContaining(txids))
     for (const txid of txids) expect(await statusOf(h, txid!)).toMatch(BROADCAST)
-    expect(displayIssuerIdentity(h.runtime, { issuer: h.active.identityKey })?.bapId).toBe(identity.bapId)
+    expect(displayIssuerProfile(h.runtime, { issuer: h.active.identityKey })).toMatchObject({
+      id: identity.bapId,
+      source: 'bap',
+      bap: { bapId: identity.bapId },
+    })
   })
 
   it('a profile update re-signs only the ALIAS and reuses the published image', async () => {
@@ -391,6 +423,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(plan.transactions.map((tx) => [tx.purpose, tx.outputs.map((o) => o.description)])).toEqual([
       ['image', ['Identity image']],
       ['publish', ['BAP ID', 'BAP ALIAS']],
+      ['link', ['Identity link']],
     ])
     expect(plan.feeSats).toBeGreaterThan(0)
     expect(plan.maxFeeSats).toBeGreaterThan(plan.feeSats)
@@ -451,30 +484,26 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(await spendable(h)).toBe(FUNDING)
   })
 
-  it('refuses to issue before an identity is published', async () => {
+  it('signs with the identity key before any profile is published', async () => {
     const h = await fundedWallet()
-    await expect(
-      enrichIdentityIssuance(h.runtime, { description: 'Issue award', outputs: [itemOutput(walletLock(h))] }, h.active.identityKey),
-    ).rejects.toThrow(/Publish your issuer identity/)
-    expect(await spendable(h)).toBe(FUNDING)
+    const { tx } = await mint(h, [itemOutput(walletLock(h))])
+    expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(true)
+    expect(issuerMetadataFromScript(tx.outputs[0]!.lockingScript.toHex())).toEqual({ issuer: h.active.identityKey })
   })
 
-  it('mints an item and a token signed by the current BAP key, and sends the anchor with them', async () => {
+  it('mints an item and a token signed by the identity key, never a BAP key, and sends the anchor with them', async () => {
     const h = await fundedWallet()
-    const identity = await publish(h)
+    await publish(h)
     await h.sendWaiting()
     h.posted.length = 0
-    const { enriched, done, beef, tx } = await mint(h, [itemOutput(walletLock(h)), tokenOutput(walletLock(h))])
-    const anchorTxid = enriched.options!.sendWith![0]!
+    const { enriched, done, beef, tx } = await mint(h, [tokenOutput(walletLock(h)), itemOutput(walletLock(h))])
+    const anchorTxid = enriched.inputs![0]!.outpoint.split('.')[0]!
     expect(tx.inputs[0]!.sourceTXID).toBe(anchorTxid)
     expect(beef.findTxid(anchorTxid)?.tx).toBeTruthy()
     for (const vout of [0, 1]) {
-      expect(verifySigmaIssuer(tx, vout, signingKey(h))).toBe(true)
-      expect(verifySigmaIssuer(tx, vout, h.active.identityKey)).toBe(false)
-      expect(issuerMetadataFromScript(tx.outputs[vout]!.lockingScript.toHex())).toEqual({
-        issuer: signingKey(h),
-        bapId: identity.bapId,
-      })
+      expect(verifySigmaIssuer(tx, vout, h.active.identityKey)).toBe(true)
+      expect(verifySigmaIssuer(tx, vout, signingKey(h))).toBe(false)
+      expect(issuerMetadataFromScript(tx.outputs[vout]!.lockingScript.toHex())).toEqual({ issuer: h.active.identityKey })
     }
     expect(h.posted).toEqual([])
     await h.sendWaiting()
@@ -482,27 +511,30 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(await statusOf(h, anchorTxid)).toMatch(BROADCAST)
     expect(await statusOf(h, done.txid)).toMatch(BROADCAST)
     const items = await h.active.wallet.listOutputs({ basket: '1sat' })
-    expect(items.outputs.map((o) => o.outpoint)).toEqual([`${done.txid}.0`])
+    expect(items.outputs.map((o) => o.outpoint)).toEqual([`${done.txid}.1`])
   })
 
-  it("signs with an imported master key's BAP key while the wallet funds the mint", async () => {
+  it('signs with an imported identity key while the wallet funds the mint', async () => {
     const h = await fundedWallet()
     const issuer = PrivateKey.fromRandom()
     const id = importIssuerPrivateKey(h.runtime, issuer.toHex())
     const identity = await publish(h, id)
     expect(identity.bapId).toBe(bapIdFor(issuer))
+    expect(identity.links.map((link) => link.identityKey)).toEqual([id])
     expect((await h.active.wallet.listOutputs({ basket: BAP_BASKET })).outputs).toEqual([])
     const held = await h.active.wallet.listOutputs({ basket: IMPORTED_BAP_BASKET, includeCustomInstructions: true })
     expect(held.outputs.map((o) => [o.satoshis, o.customInstructions ?? null])).toEqual([
       [0, null],
       [0, null],
       [0, null],
+      [0, null],
     ])
     selectPublicIdentity(h.runtime, id)
     const { tx } = await mint(h, [itemOutput(walletLock(h))], id)
-    expect(verifySigmaIssuer(tx, 0, bapKey(issuer, 1).toPublicKey().toString())).toBe(true)
+    expect(verifySigmaIssuer(tx, 0, id)).toBe(true)
+    expect(verifySigmaIssuer(tx, 0, bapKey(issuer, 1).toPublicKey().toString())).toBe(false)
     expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(false)
-    expect(issuerMetadataFromScript(tx.outputs[0]!.lockingScript.toHex()).bapId).toBe(identity.bapId)
+    expect(issuerMetadataFromScript(tx.outputs[0]!.lockingScript.toHex())).toEqual({ issuer: id })
     expect(await spendable(h)).toBeLessThan(FUNDING)
   })
 
@@ -513,7 +545,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     h.posted.length = 0
     const before = await spendable(h)
     const enriched = await enrichIdentityIssuance(h.runtime, { description: 'Issue award', outputs: [itemOutput(walletLock(h))] }, h.active.identityKey)
-    const anchorTxid = enriched.options!.sendWith![0]!
+    const anchorTxid = enriched.inputs![0]!.outpoint.split('.')[0]!
     const created = await appCreateAction(h.active, enriched)
     expect(await spendable(h)).toBeLessThan(FUNDING)
     await releaseIdentityIssuance(h.runtime, enriched, created)
@@ -524,23 +556,27 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect((await h.active.wallet.listOutputs({ basket: '1sat' })).outputs).toEqual([])
   })
 
-  it('a key rotation keeps one shelf: assets from both keys sit under the BAP ID, a copied claim apart', async () => {
+  it('one shelf per identity key: mints across a rotation and an earlier-draft BAP stamp sit together, a copied claim apart', async () => {
     const h = await fundedWallet()
     const identity = await publish(h)
-    const before = await mint(h, [itemOutput(walletLock(h)), tokenOutput(walletLock(h))])
+    const before = await mint(h, [tokenOutput(walletLock(h)), itemOutput(walletLock(h))])
+    const earlier = earlierBapStamp(h, 1, identity.bapId)
+    vi.mocked(registerSignedSend).mockClear()
     const rotated = await rotate(h)
     expect(rotated.keys.map((k) => k.seq)).toEqual([1, 2])
     expect(rotated).toMatchObject({ bapId: identity.bapId, name: 'Studio', imageTxid: identity.imageTxid })
-    expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 2))
+    expect(rotated.links).toEqual(identity.links)
+    expect(registerSignedSend).toHaveBeenCalledTimes(1)
+    expect(issuanceSigner(h.runtime).identityKey).toBe(h.active.identityKey)
     const after = await mint(h, [itemOutput(walletLock(h))])
-    expect(verifySigmaIssuer(after.tx, 0, signingKey(h, 2))).toBe(true)
+    expect(verifySigmaIssuer(after.tx, 0, h.active.identityKey)).toBe(true)
 
-    const itemScript = before.tx.outputs[0]!.lockingScript.toHex()
-    const tokenScript = before.tx.outputs[1]!.lockingScript.toHex()
+    const itemScript = before.tx.outputs[1]!.lockingScript.toHex()
+    const tokenScript = before.tx.outputs[0]!.lockingScript.toHex()
     const laterScript = after.tx.outputs[0]!.lockingScript.toHex()
     const copy = new Transaction()
     copy.addInput({ sourceTXID: '22'.repeat(32), sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
-    const claimScript = appendIssuerMetadata(itemOutput(walletLock(h)).lockingScript, signingKey(h, 2), identity.bapId)
+    const claimScript = appendIssuerMetadata(itemOutput(walletLock(h)).lockingScript, h.active.identityKey)
     copy.addOutput({ satoshis: 1, lockingScript: Script.fromHex(claimScript) })
     const copyBeef = new Beef()
     copyBeef.mergeTransaction(copy)
@@ -548,27 +584,71 @@ describe('identity issuance against a real toolbox wallet', () => {
 
     const shelves = groupCollectables(
       [
-        shelfItem(`${before.done.txid}.0`, itemScript),
+        shelfItem(`${before.done.txid}.1`, itemScript),
         shelfItem(`${after.done.txid}.0`, laterScript),
+        shelfItem(earlier.outpoint, earlier.script),
         shelfItem(`${copy.id('hex')}.0`, claimScript),
       ],
-      [shelfToken(`${before.done.txid}.1`, tokenScript)],
+      [shelfToken(`${before.done.txid}.0`, tokenScript)],
       (asset) => displayIssuerAttribution(h.runtime, asset),
     ).issuers
-    const verified = shelves.find((s) => s.key === `issuer:bap:${identity.bapId}`)
-    const claim = shelves.find((s) => s.key === `issuer:claim:${signingKey(h, 2)}`)
+    const verified = shelves.find((s) => s.key === `issuer:pubkey:${h.active.identityKey}`)
+    const claim = shelves.find((s) => s.key === `issuer:claim:${h.active.identityKey}`)
     expect(shelves).toHaveLength(2)
     expect(verified).toMatchObject({
       issuerAttested: true,
       label: 'Studio',
       icon: issuerIdentityImageDataUrl(rotated.image!),
-      bapId: identity.bapId,
+      profile: { id: identity.bapId, state: 'verified' },
     })
-    expect(verified?.items.map((i) => i.outpoint).sort()).toEqual([`${before.done.txid}.0`, `${after.done.txid}.0`].sort())
-    expect(verified?.tokens.map((t) => t.outpoint)).toEqual([`${before.done.txid}.1`])
+    expect(verified?.items.map((i) => i.outpoint).sort()).toEqual(
+      [`${before.done.txid}.1`, `${after.done.txid}.0`, earlier.outpoint].sort(),
+    )
+    expect(verified?.tokens.map((t) => t.outpoint)).toEqual([`${before.done.txid}.0`])
     expect(claim?.issuerAttested).toBe(false)
     expect(claim?.icon).toBeUndefined()
     expect(claim?.label).not.toBe('Studio')
+  })
+
+  it('links a profile published before identity links existed, once', async () => {
+    const h = await fundedWallet()
+    const bapId = bapIdFor(master(h))
+    await h.active.wallet.createAction({
+      description: 'BAP identity creation with profile',
+      labels: ['handcash-bap', 'bap-identity'],
+      outputs: [
+        {
+          lockingScript: bapIdScript({ bapId, address: bapKey(master(h), 1).toAddress(), signer: bapKey(master(h), 0) }),
+          satoshis: 1,
+          outputDescription: 'BAP ID',
+          basket: BAP_BASKET,
+          tags: ['type:id', `bapId:${bapId}`, 'seq:1'],
+        },
+        {
+          lockingScript: bapAliasScript({ bapId, profile: { '@type': 'Person', name: 'Old studio' }, signer: bapKey(master(h), 1) }),
+          satoshis: 1,
+          outputDescription: 'BAP ALIAS',
+          basket: BAP_BASKET,
+          tags: ['type:alias', `bapId:${bapId}`, 'publishedAt:1'],
+        },
+      ],
+      options: { acceptDelayedBroadcast: true, randomizeOutputs: false },
+    })
+    expect(await syncHeldIssuerIdentities(h.runtime)).toBe(1)
+    expect(issuerIdentityFor('main', bapId)?.links).toEqual([])
+    const request: IdentityPublishRequest = { kind: 'link', identityKey: h.active.identityKey }
+    const plan = await planIdentityPublish(h.runtime, request)
+    expect(plan.kind).toBe('link')
+    expect(plan.transactions.map((tx) => [tx.purpose, tx.outputs.map((o) => o.description)])).toEqual([
+      ['link', ['Identity link']],
+    ])
+    vi.mocked(registerSignedSend).mockClear()
+    const linked = await publishIdentityPlan(h.runtime, request, plan)
+    expect(registerSignedSend).toHaveBeenCalledTimes(1)
+    expect(linked).toMatchObject({ name: 'Old studio', links: [{ identityKey: h.active.identityKey }] })
+    await expect(planIdentityPublish(h.runtime, request)).rejects.toMatchObject({ reason: 'already-linked' })
+    await h.sendWaiting()
+    expect(await statusOf(h, linked.links[0]!.txid)).toMatch(BROADCAST)
   })
 
   it('continues a chain the earlier ID-panel compose published instead of declaring a second one', async () => {
@@ -607,7 +687,8 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(identity.keys).toEqual([expect.objectContaining({ seq: 1, txid: legacy.txid })])
     expect(identity.name).toBe('Studio')
     expect(identity.image).toEqual(PNG_1PX)
-    expect(vi.mocked(registerSignedSend)).toHaveBeenCalledTimes(2)
+    expect(identity.links.map((link) => link.identityKey)).toEqual([h.active.identityKey])
+    expect(vi.mocked(registerSignedSend)).toHaveBeenCalledTimes(3)
   })
 
   it('follows a rotation a 1Sat app wrote into `bap`, so issuance and the next rotation continue it', async () => {
@@ -630,50 +711,101 @@ describe('identity issuance against a real toolbox wallet', () => {
     })
     // 1Sat's rotateIdentity relinquishes the ID outputs it replaced.
     await h.active.wallet.relinquishOutput({ basket: BAP_BASKET, output: `${identity.keys[0]!.txid}.0` })
-    expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 1))
+    expect(issuanceSigner(h.runtime).priorKeys).toEqual([signingKey(h, 1)])
 
     expect(await syncHeldIssuerIdentities(h.runtime, h.active.identityKey)).toBe(1)
     expect(await syncHeldIssuerIdentities(h.runtime, h.active.identityKey)).toBe(0)
     const synced = issuerIdentityFor('main', bapId)!
     expect(synced.keys.map((k) => k.txid)).toEqual([identity.keys[0]!.txid, foreign.txid])
-    expect(synced).toMatchObject({ name: 'Studio', imageTxid: identity.imageTxid })
-    expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 2))
+    expect(synced).toMatchObject({ name: 'Studio', imageTxid: identity.imageTxid, links: identity.links })
+    expect(issuanceSigner(h.runtime)).toMatchObject({
+      identityKey: h.active.identityKey,
+      priorKeys: [signingKey(h, 1), signingKey(h, 2)],
+    })
 
     const rotated = await rotate(h)
     expect(rotated.keys.map((k) => k.seq)).toEqual([1, 2, 3])
     expect(rotated.keys[1]!.txid).toBe(foreign.txid)
-    expect(issuanceSigner(h.runtime).identityKey).toBe(signingKey(h, 3))
+    expect(issuanceSigner(h.runtime).priorKeys).toEqual([signingKey(h, 1), signingKey(h, 2), signingKey(h, 3)])
   })
 
-  it('delivers the identity package once beside the item, and the receiver stores and resolves it', async () => {
+  it('delivers the identity key with its linked profile once beside the item, and the receiver stores and resolves it', async () => {
     const h = await fundedWallet()
     const identity = await publish(h)
     const { done } = await mint(h, [itemOutput(walletLock(h))])
     const packages = identityPackagesForDelivery('main', { itemOrigin: `${done.txid}_0` })
-    expect(packages.map((pkg) => pkg.bapId)).toEqual([identity.bapId])
+    expect(packages).toEqual([
+      { v: 2, identityKey: h.active.identityKey, bap: expect.objectContaining({ bapId: identity.bapId }) },
+    ])
 
     state.values.clear()
     resetIssuerIdentitiesForTests()
     expect(issuerIdentityFor('main', identity.bapId)).toBeNull()
+    expect(displayIssuerProfile(h.runtime, { issuer: h.active.identityKey, origin: `${done.txid}_0` })).toBeNull()
     expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
-    expect(displayIssuerIdentity(h.runtime, { issuer: signingKey(h), bapId: identity.bapId, origin: `${done.txid}_0` })).toMatchObject({
-      bapId: identity.bapId,
+    expect(displayIssuerProfile(h.runtime, { issuer: h.active.identityKey, origin: `${done.txid}_0` })).toMatchObject({
+      id: identity.bapId,
+      bap: { bapId: identity.bapId },
       name: 'Studio',
     })
   })
 
-  it('attests a received token from the lineage it arrived with and shelves it under the BAP ID', async () => {
+  it("delivers the identity key's own profile beside the item; the receiver names the issuer by key, not by BAP", async () => {
     const h = await fundedWallet()
     const identity = await publish(h)
+    await saveIdentityProfile(h.runtime, h.active.identityKey, { name: 'Studio Key', description: '' }, PNG_1PX)
+    const { done } = await mint(h, [itemOutput(walletLock(h))])
+    const packages = identityPackagesForDelivery('main', { itemOrigin: `${done.txid}_0` })
+    expect(packages).toEqual([
+      expect.objectContaining({
+        v: 2,
+        identityKey: h.active.identityKey,
+        certificates: [expect.anything()],
+        bap: expect.objectContaining({ bapId: identity.bapId }),
+      }),
+    ])
+
+    state.values.clear()
+    resetIssuerIdentitiesForTests()
+    resetIdentityProfilesForTests()
+    expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
+    expect(identityProfileFor('main', h.active.identityKey)).toMatchObject({ name: 'Studio Key', image: PNG_1PX })
+    expect(displayIssuerProfile(h.runtime, { issuer: h.active.identityKey, origin: `${done.txid}_0` })).toMatchObject({
+      id: h.active.identityKey,
+      source: 'identity-key',
+      name: 'Studio Key',
+      bap: { bapId: identity.bapId },
+    })
+  })
+
+  it('delivers an earlier-draft BAP stamp with its profile, and the receiver shelves it under the linked identity key', async () => {
+    const h = await fundedWallet()
+    const identity = await publish(h)
+    const earlier = earlierBapStamp(h, 1, identity.bapId)
+    const packages = identityPackagesForDelivery('main', { itemOrigin: earlier.outpoint.replace('.', '_') })
+    expect(packages).toEqual([expect.objectContaining({ bapId: identity.bapId })])
+
+    state.values.clear()
+    resetIssuerIdentitiesForTests()
+    expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
+    const shelves = groupCollectables([shelfItem(earlier.outpoint, earlier.script)], [], (asset) =>
+      displayIssuerAttribution(h.runtime, asset),
+    ).issuers
+    expect(shelves.map((s) => [s.key, s.label])).toEqual([[`issuer:pubkey:${h.active.identityKey}`, 'Studio']])
+  })
+
+  it('attests a received token from the lineage it arrived with and shelves it under the identity key', async () => {
+    const h = await fundedWallet()
+    await publish(h)
     const { tokenId, tip, transferTxid, senderBeef, subject } = await mintAndTransferToken(h)
     const lineage = tokenLineageFromBeef(senderBeef, transferTxid, tokenId)
     expect(lineage).not.toBeNull()
     expect(Beef.fromBinary(lineage!).findTxid(transferTxid)).toBeUndefined()
     const packages = identityPackagesForDelivery('main', { tokenId })
-    expect(packages.map((pkg) => pkg.bapId)).toEqual([identity.bapId])
+    expect(packages.map((pkg) => 'identityKey' in pkg && pkg.identityKey)).toEqual([h.active.identityKey])
 
     forgetSenderDevice()
-    const issuer = signingKey(h)
+    const issuer = h.active.identityKey
     expect(recordProvenTokenTips(subject, [tip], tokenId)).toBeNull()
     expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer })).toBe(false)
 
@@ -681,7 +813,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(recordProvenTokenTips(proof, [tip], tokenId)).toBe(tokenId)
     expect(await retainTokenGenesis(proof, tokenId.split('_')[0]!, null)).toBe(true)
     expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer })).toBe(true)
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: h.active.identityKey })).toBe(false)
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(false)
     expect(tokenIssuerAttested({ outpoint: `${'33'.repeat(32)}_0`, tokenId, issuer })).toBe(false)
 
     expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
@@ -694,22 +826,21 @@ describe('identity issuance against a real toolbox wallet', () => {
       outpoint: tip,
       spendKind: 'plain',
       issuer,
-      bapId: retainedIssuerMetadata(tokenId)?.bapId,
       issuerAttested: tokenIssuerAttested({ outpoint: tip, tokenId, issuer }),
     }
     const shelves = groupCollectables([], [token], (asset) => displayIssuerAttribution(h.runtime, asset)).issuers
     expect(shelves).toHaveLength(1)
-    expect(shelves[0]).toMatchObject({ key: `issuer:bap:${identity.bapId}`, label: 'Studio', issuerAttested: true })
+    expect(shelves[0]).toMatchObject({ key: `issuer:pubkey:${issuer}`, label: 'Studio', issuerAttested: true })
     expect(shelves[0]!.tokens.map((t) => t.outpoint)).toEqual([tip])
   })
 
   it('keeps a self-minted token attested after its mint ages out of the BEEF cache', async () => {
     const h = await fundedWallet()
-    const identity = await publish(h)
+    await publish(h)
     const minted = await mint(h, [tokenOutput(walletLock(h))])
     const vout = minted.tx.outputs.findIndex((o) => decodeTokenOutput(o.lockingScript)?.role === 'deploy')
     const tokenId = `${minted.done.txid}_${vout}`
-    const issuer = signingKey(h)
+    const issuer = h.active.identityKey
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
 
     state.retained.clear()
@@ -722,7 +853,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     state.toolbox.clear()
     resetIssuerAttributionForTests()
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
-    expect(retainedIssuerMetadata(tokenId)?.bapId).toBe(identity.bapId)
+    expect(retainedIssuerMetadata(tokenId)).toEqual({ issuer })
     const otherScript = tokenOutput(walletLock(h)).lockingScript
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer, lockingScript: otherScript })).toBe(false)
   })
@@ -739,12 +870,12 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'bound', source: 'local' })
     state.retained.clear()
     resetIssuerAttributionForTests()
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(true)
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: h.active.identityKey })).toBe(true)
   })
 
-  it('binds a tip received before lineage existed from bodies fetched by txid, then names its issuer and BAP ID', async () => {
+  it('binds a tip received before lineage existed from bodies fetched by txid, then names its issuer', async () => {
     const h = await fundedWallet()
-    const identity = await publish(h)
+    await publish(h)
     const { tokenId, tip, transferTxid, senderBeef, subject } = await mintAndTransferToken(h)
     forgetSenderDevice()
     state.retained.set(transferTxid, subject)
@@ -763,8 +894,8 @@ describe('identity issuance against a real toolbox wallet', () => {
     resetIssuerAttributionForTests()
 
     expect(tokenAttestationGap({ tokenId, tipOutpoints: tips })).toBe('attested')
-    expect(retainedIssuerMetadata(tokenId)).toMatchObject({ issuer: signingKey(h), bapId: identity.bapId })
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(true)
+    expect(retainedIssuerMetadata(tokenId)).toEqual({ issuer: h.active.identityKey })
+    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: h.active.identityKey })).toBe(true)
     expect(tokenAttestationGap({ tokenId, tipOutpoints: [`${'33'.repeat(32)}_0`] })).toBe('unbound')
   })
 })
@@ -804,5 +935,14 @@ describe('token attestation gap names the step a held deploy lacks', () => {
     expect(
       tokenAttestationGap({ tokenId, issuer: signer.toPublicKey().toString(), tipOutpoints: [tokenId] }),
     ).toBe('attested')
+  })
+
+  it('a deploy with a valid Sigma and no issuer tape, as 1sat-sdk writes it, is signer-only, not unsigned', () => {
+    const signer = PrivateKey.fromRandom()
+    const tokenId = retainDeploy(
+      sigmaSignDeployLockingScript({ lockingScriptHex: deployScript(), fundTxid, fundVout: 0, identityKeyHex: signer.toHex() }),
+    )
+    expect(retainedIssuerMetadata(tokenId)).toEqual({})
+    expect(tokenAttestationGap({ tokenId, tipOutpoints: [tokenId] })).toBe('signer-only')
   })
 })

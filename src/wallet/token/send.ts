@@ -23,7 +23,8 @@ import {
 import { decodeBsv21Binary } from './decode162'
 import { fillTokenParentBodies } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
-import { chainTrackerFor, recordProvenTokenTips, tokenLineageFromBeef } from './lineage'
+import { deployRequiresProcessing } from './requiredProcessing'
+import { chainTrackerFor, recordProvenTokenTips, tokenLineageFromBeef, tokenTipBound } from './lineage'
 import {
   type Bsv21SendPath,
   type Bsv21TipKind,
@@ -471,7 +472,10 @@ export async function sendBsv21Tokens(args: {
   const plan = planBsv21Send({
     tokenId,
     amount: BigInt(args.amount),
-    tips: fromArgs.length ? fromArgs : fromBasket,
+    tips: (fromArgs.length ? fromArgs : fromBasket).map((tip) => ({
+      ...tip,
+      bound: tokenTipBound(tip.outpoint, tokenId),
+    })),
   })
   const selected = plan.selected
   const change = plan.changeAmt
@@ -593,6 +597,7 @@ export async function sendBsv21Tokens(args: {
           changeAmt: plan.changeAmt,
           payeeAddress: to,
           changeAddress: wallet.address,
+          layout: plan.layout,
           sym,
           dec,
           issuer,
@@ -673,6 +678,12 @@ export async function sendBsv21Tokens(args: {
           console.info(
             `[bsv21] pre-sign valid token ancestry=${validity.ancestryTxids.length}`,
           )
+          if (deployRequiresProcessing(beef, tokenId)) {
+            console.warn(`[bsv21] pre-sign refuse required-processing token=${tokenId.slice(0, 16)}`)
+            throw new Error(
+              'This token requires processing HandCash does not support, so it cannot be sent.',
+            )
+          }
           if (icon) {
             await preSign.step('loading the icon', mergeIconTxIntoBeef(wallet, beef, icon))
           }

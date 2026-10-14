@@ -310,7 +310,7 @@ describe('listFungibles coalescing', () => {
     const signed = new Transaction()
     signed.addOutput({
       lockingScript: LockingScript.fromHex(
-        buildBsv21ValueLock({
+        buildBsv21ValueLock({ layout: 'brc162',
           tokenId: TOKEN,
           amount: 500n,
           address: PrivateKey.fromRandom().toAddress(),

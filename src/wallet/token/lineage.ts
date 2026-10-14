@@ -3,6 +3,7 @@ import { storageRegistry } from '../../storage/registry'
 import { durableGetItem, durableSetItem } from '../durableStorage'
 import {
   retainedCarriesSigma,
+  retainedSigmaSignerAddress,
   retainedIssuerMetadata,
   retainedScriptIs,
   retainedSignedBy,
@@ -14,7 +15,7 @@ import {
   collectBsv21TokenAncestryTxids,
   decodeTokenOutput,
   fillTokenParentBodies,
-  prove,
+  proveWithScripts,
 } from './prove176'
 import { normalizeTokenId } from './types'
 
@@ -155,8 +156,9 @@ export function provenTokenDeployOf(outpoint: string): string | null {
 }
 
 /**
- * Prove `outpoints` against `beef` and file the ones that reach `tokenId`'s
- * deploy. Returns the deploy outpoint when at least one did.
+ * Prove `outpoints` against `beef` — token rules and the scripts of every
+ * token spend walked — and file the ones that reach `tokenId`'s deploy.
+ * Returns the deploy outpoint when at least one did.
  */
 export function recordProvenTokenTips(
   beef: Beef,
@@ -167,7 +169,7 @@ export function recordProvenTokenTips(
   if (!tokenId) return null
   const proven: string[] = []
   for (const outpoint of outpoints) {
-    const result = prove(outpoint, beef, provenTokenDeployOf)
+    const result = proveWithScripts(outpoint, beef, provenTokenDeployOf)
     if (result.ok && result.tokenId === tokenId) proven.push(outpoint)
   }
   if (proven.length === 0) return null
@@ -342,6 +344,11 @@ export type TokenAttestationGap =
   | 'no-genesis'
   /** The deploy is retained and names no issuer: an unsigned mint. */
   | 'unsigned-mint'
+  /**
+   * The deploy names no issuer key but carries a verified Sigma, as 1sat-sdk
+   * writes it: the issuer is that address until a BAP identity resolves it.
+   */
+  | 'signer-only'
   /** No held tip has a walk that reached the deploy. */
   | 'unbound'
   /**
@@ -363,7 +370,7 @@ export function tokenAttestationGap(token: {
   const deploy = retainedIssuerMetadata(tokenId)
   if (!deploy) return 'no-genesis'
   const issuer = deploy.issuer ?? token.issuer
-  if (!issuer) return 'unsigned-mint'
+  if (!issuer) return retainedSigmaSignerAddress(tokenId) ? 'signer-only' : 'unsigned-mint'
   if (!token.tipOutpoints.some((tip) => tokenTipBound(tip, tokenId))) return 'unbound'
   if (retainedSignedBy(tokenId, issuer)) return 'attested'
   return deploy.issuer || retainedCarriesSigma(tokenId) ? 'unsigned' : 'remittance-only'

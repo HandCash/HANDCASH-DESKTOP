@@ -17,6 +17,7 @@ import { durableRemoveItem } from './durableStorage'
 import {
   ARRIVAL_WINDOW_MS,
   RESOLVE_RETRY_MS,
+  lastInscriptionMiss,
   resetInscriptionCacheForTests,
   shouldResolveInscription,
 } from './inscriptionCache'
@@ -699,6 +700,29 @@ describe('classifyLegacyUtxos', () => {
     // pass picks it up instead of it being written off as unresolvable.
     const walked = ids.filter((id) => !shouldResolveInscription(`${id}.0`))
     expect(walked).toHaveLength(MAX_UNKNOWN_RESOLVES_PER_PASS)
+  })
+
+  it('reaches every held output in turn instead of re-asking the head of the list', async () => {
+    resetInscriptionCacheForTests()
+    const ids = Array.from(
+      { length: MAX_UNKNOWN_RESOLVES_PER_PASS * 3 },
+      (_, i) => `${'e'.repeat(60)}${String(i).padStart(4, '0')}`,
+    )
+    const scan = ids.map((id) => utxo(`${id}.0`, 1))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    const start = Date.now()
+    const now = vi.spyOn(Date, 'now')
+    const asked = new Set<string>()
+    for (let pass = 0; pass < 3; pass += 1) {
+      // Each pass lands after the last one's misses expired.
+      now.mockReturnValue(start + pass * RESOLVE_RETRY_MS)
+      await classifyLegacyUtxos(scan, 'main')
+      for (const id of ids) if (lastInscriptionMiss(`${id}.0`) !== 0) asked.add(id)
+    }
+    now.mockRestore()
+    vi.unstubAllGlobals()
+
+    expect(asked.size).toBe(ids.length)
   })
 })
 

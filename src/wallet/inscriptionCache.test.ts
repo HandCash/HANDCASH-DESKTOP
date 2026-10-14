@@ -53,24 +53,24 @@ describe('inscriptionCache', () => {
     expect(reloaded.shouldResolveInscription('aa.0')).toBe(false)
   })
 
-  it('drops a burst of expired misses in one write, not one per tip', async () => {
+  it('writes a burst of misses once, not once per tip', async () => {
     const cache = await import('./inscriptionCache')
     const at = Date.now()
-    for (let i = 0; i < 400; i += 1) cache.rememberUnresolved(`aa.${i}`, at)
-    const before = store.get('handcash.inscriptionMiss.v1')
     let writes = 0
     const original = store.set.bind(store)
     store.set = (key, value) => {
       if (key === 'handcash.inscriptionMiss.v1') writes += 1
       return original(key, value)
     }
+    for (let i = 0; i < 400; i += 1) cache.rememberUnresolved(`aa.${i}`, at)
     for (let i = 0; i < 400; i += 1) {
       expect(cache.shouldResolveInscription(`aa.${i}`, at + cache.RESOLVE_RETRY_MS)).toBe(true)
     }
     expect(writes).toBe(0)
     cache.flushInscriptionMisses()
     expect(writes).toBe(1)
-    expect(store.get('handcash.inscriptionMiss.v1')).not.toBe(before)
+    cache.flushInscriptionMisses()
+    expect(writes).toBe(1)
     store.set = original
   })
 
@@ -84,10 +84,54 @@ describe('inscriptionCache', () => {
     expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MS)).toBe(true)
   })
 
+  it('doubles the wait on each repeat miss, up to a day', async () => {
+    const cache = await import('./inscriptionCache')
+    let at = Date.now()
+    cache.rememberUnresolved('aa.0', at)
+    at += cache.RESOLVE_RETRY_MS
+    cache.rememberUnresolved('aa.0', at)
+
+    expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MS)).toBe(false)
+    expect(cache.shouldResolveInscription('aa.0', at + 2 * cache.RESOLVE_RETRY_MS)).toBe(true)
+
+    for (let i = 0; i < 20; i += 1) cache.rememberUnresolved('aa.0', at)
+    expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MAX_MS - 1)).toBe(false)
+    expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MAX_MS)).toBe(true)
+  })
+
+  it('keeps a short caller window flat, so a tip someone waits on is not pushed back', async () => {
+    const cache = await import('./inscriptionCache')
+    const at = Date.now()
+    for (let i = 0; i < 5; i += 1) cache.rememberUnresolved('aa.0', at)
+
+    expect(cache.shouldResolveInscription('aa.0', at + cache.PENDING_RETRY_MS, cache.PENDING_RETRY_MS)).toBe(true)
+  })
+
+  it('remembers when each outpoint was last asked, past its window', async () => {
+    const cache = await import('./inscriptionCache')
+    const at = Date.now()
+    cache.rememberUnresolved('aa.0', at)
+
+    expect(cache.lastInscriptionMiss('aa.0')).toBe(at)
+    expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MS)).toBe(true)
+    expect(cache.lastInscriptionMiss('aa.0')).toBe(at)
+    expect(cache.lastInscriptionMiss('bb.0')).toBe(0)
+  })
+
+  it('reads the v1 miss map, a bare timestamp per outpoint', async () => {
+    const at = Date.now()
+    store.set('handcash.inscriptionMiss.v1', JSON.stringify({ 'aa.0': at }))
+    const cache = await import('./inscriptionCache')
+
+    expect(cache.shouldResolveInscription('aa.0', at + 1)).toBe(false)
+    expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MS)).toBe(true)
+  })
+
   it('keeps the back-off across a reload, so a restart re-walks nothing', async () => {
     const cache = await import('./inscriptionCache')
     const at = Date.now()
     cache.rememberUnresolved('aa.0', at)
+    cache.flushInscriptionMisses()
 
     vi.resetModules()
     const reloaded = await import('./inscriptionCache')

@@ -14,8 +14,9 @@ import { getWalletRuntime } from './walletRuntime'
  * Android CORS misses). Bodies are BRC-169 §7 envelopes (BRC-78 content).
  * Legacy plaintext inbound still decodes. `/files` is a HandCash extension.
  *
- * A live draft-BRC-246 IPv6 session carries the same sealed body and skips the
- * box for that message. The box stays the rendezvous and the offline inbox.
+ * A live draft-BRC-246 WebRTC data channel carries the same sealed body and
+ * skips the box for that message; signalling rides box `session-upgrade`. The
+ * box stays the rendezvous and the offline inbox.
  */
 import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import {
@@ -46,8 +47,7 @@ import type {
   MarketSettlementReceipt,
 } from './marketListing'
 import { bytesToBase64 } from './base64Binary'
-import { installElectronDirectSession } from './directSession/bridge'
-import type { IssuerIdentityPackage } from './issuerIdentity'
+import type { DeliveredIdentityPackage } from './identityProfile'
 import { isIdentityCardControl } from './identityCard'
 import {
   encodeRemittanceForPeerBox,
@@ -55,14 +55,17 @@ import {
   type ProvenanceV2,
 } from './oneSatProvenance'
 import {
-  ensureDirectListener,
-  ingestSessionOfferBody,
-  sessionOfferMessage,
+  hasPendingSessionOffers,
+  ingestSessionSignal,
+  installOfferPolicy,
+  installSignalSender,
+  requestDirectSession,
   setDirectInboundHandler,
   setDirectSessionIdentity,
   tryDirectDeliver,
-  warmDirectSession,
 } from './directSession/session'
+import { SESSION_BOX, isLegacySessionOffer } from './directSession/protocol'
+import { getOrCreateDeviceId } from './deviceWallets'
 
 export { bytesToBase64 }
 
@@ -382,7 +385,7 @@ type WireMessage = {
     /** BRC-150 remittance for this hop — peer verifies identity from the package. */
     provenance?: ProvenanceV2
     /** BAP identity packages for the issuers the asset's signed tape names. */
-    identities?: IssuerIdentityPackage[]
+    identities?: DeliveredIdentityPackage[]
     /** BRC-176 token-parent bodies back to the deploy — BSV-21 payee proves offline. */
     tokenLineage?: string
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
@@ -437,7 +440,7 @@ export function withOptionalProvenance(
 /** Attach issuer identity packages last, as many as fit: custody and item proof keep the box cap first. */
 export function withOptionalIdentities(
   body: string,
-  identities: readonly IssuerIdentityPackage[],
+  identities: readonly DeliveredIdentityPackage[],
 ): { body: string; identitiesInBox: boolean } {
   if (!identities.length || !body.startsWith(WIRE_PREFIX)) {
     return { body, identitiesInBox: false }
@@ -445,7 +448,7 @@ export function withOptionalIdentities(
   try {
     const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
     let fitted = body
-    const carried: IssuerIdentityPackage[] = []
+    const carried: DeliveredIdentityPackage[] = []
     for (const pkg of identities) {
       const encoded = `${WIRE_PREFIX}${JSON.stringify({
         ...parsed,
@@ -662,6 +665,18 @@ function validItemTransferMembers(value: unknown): ItemTransferMember[] | undefi
   return members
 }
 
+/**
+ * JSON of a wire message body. BRC-251 §Delivery: the object may carry an
+ * implementation tag (`handcash-message:`, or any `[A-Za-z0-9-]+:`) or none.
+ */
+function wireJsonOf(body: string): string | null {
+  if (body.startsWith(WIRE_PREFIX)) return body.slice(WIRE_PREFIX.length)
+  if (body.startsWith(MARKET_WIRE_PREFIX)) return null
+  const tagged = /^[A-Za-z0-9-]{1,64}:(?=\{)/.exec(body)
+  if (tagged) return body.slice(tagged[0].length)
+  return body.startsWith('{') ? body : null
+}
+
 export function decodeMessageBody(body: string): {
   kind: WireMessage['kind']
   text: string
@@ -670,9 +685,10 @@ export function decodeMessageBody(body: string): {
   identities?: unknown[]
   tokenLineage?: string
 } {
-  if (!body.startsWith(WIRE_PREFIX)) return { kind: 'text', text: body }
+  const json = wireJsonOf(body)
+  if (json == null) return { kind: 'text', text: body }
   try {
-    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as Partial<WireMessage>
+    const parsed = JSON.parse(json) as Partial<WireMessage>
     const kind = parsed.kind
     if (
       parsed.version !== 1 ||
@@ -785,11 +801,12 @@ function signedMessageboxHeaders(
   method: MessageboxMethod,
   extra: Record<string, string> | undefined,
   box: string,
+  messageBox = 'inbox',
 ): Headers {
   const signed = freshMessageboxAuthHeaders({
     rootKeyHex,
     method,
-    messageBox: 'inbox',
+    messageBox,
     includeAuthrite: messageboxHostAllowsAuthrite(box),
   })
   const headers = new Headers()
@@ -910,19 +927,22 @@ function threadIdForSender(identityKey: string): string | null {
 }
 
 function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }): void {
-  installElectronDirectSession()
+  const self = env.senderIdentityKey.trim().toLowerCase()
   setDirectSessionIdentity({
     rootKeyHex: env.rootKeyHex,
-    identityKey: env.senderIdentityKey,
+    identityKey: self,
+    device: getOrCreateDeviceId(),
   })
   setDirectInboundHandler((sender, body) => {
     acceptDirectBody(sender, body, env.rootKeyHex)
   })
+  installOfferPolicy((identityKey) => !!getFriendByIdentityKey(identityKey))
+  installSignalSender((to, body) => postSessionSignal(env.rootKeyHex, self, to, body))
 }
 
 /**
- * Bind the IPv6 listener and put a short-lived offer in the friend's box so a
- * live pair can move chat onto the socket before the next typed line.
+ * Offer a direct session (draft BRC-246) through the friend's box so a live
+ * pair can move chat onto a data channel before the next typed line.
  */
 export async function preparePeerDirectPath(args: {
   rootKeyHex: string
@@ -931,22 +951,10 @@ export async function preparePeerDirectPath(args: {
   messagebox?: string | null
 }): Promise<void> {
   armDirectSession(args)
-  const box = normalizeMessageboxBase(args.messagebox)
-  await postSessionOffer(
-    {
-      recipientIdentityKey: args.recipientIdentityKey,
-      senderIdentityKey: args.senderIdentityKey,
-      rootKeyHex: args.rootKeyHex,
-      body: '',
-      peerId: threadIdForSender(args.recipientIdentityKey) ?? args.recipientIdentityKey,
-      messagebox: box,
-    },
-    box,
-  )
-  warmDirectSession(args.recipientIdentityKey)
+  await requestDirectSession(args.recipientIdentityKey)
 }
 
-/** Deliver outbound text. A live IPv6 session skips the box; otherwise the box is the path. */
+/** Deliver outbound text. An open direct session skips the box; otherwise the box is the path. */
 export async function deliverOutbound(
   env: OutboundEnvelope,
 ): Promise<{
@@ -1024,7 +1032,7 @@ export async function deliverOutbound(
       }
     }
     if (res.ok) {
-      void postSessionOffer(env, box)
+      void requestDirectSession(env.recipientIdentityKey)
       shareIdentityCard(env)
       return { delivered: 'cloud', messagebox: box, beefStripped }
     }
@@ -1062,47 +1070,121 @@ function ingestIdentityCard(senderKey: string, inner: string): Promise<void> {
     })
 }
 
-async function postSessionOffer(env: OutboundEnvelope, box: string): Promise<void> {
-  await ensureDirectListener()
-  const offer = sessionOfferMessage(env.recipientIdentityKey)
-  if (!offer) return
-  let body = offer
+/** Box for signalling to `to`: our own for a sibling install, else the friend's resolved box. */
+function sessionSignalBox(self: string, to: string): string {
+  if (to === self) return defaultMessageboxBase()
+  return normalizeMessageboxBase(getFriendByIdentityKey(to)?.messagebox)
+}
+
+async function postSessionSignal(rootKeyHex: string, self: string, to: string, plaintext: string): Promise<void> {
+  const box = sessionSignalBox(self, to)
+  const body = sealForPeer({ plaintext, rootKeyHex, recipientIdentityKey: to })
+  const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/sendMessage`, {
+    method: 'POST',
+    headers: signedMessageboxHeaders(rootKeyHex, 'sendMessage', {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }, box, SESSION_BOX),
+    body: JSON.stringify({ message: { recipient: to, messageBox: SESSION_BOX, body } }),
+  })
+  if (!res.ok) throw new Error(`session signal refused (${res.status})`)
+}
+
+/**
+ * A box on the identity's own key, shared by every install of that identity
+ * (`account-holding`, draft BRC-249). Lives on the default host, like sibling
+ * session signalling.
+ */
+export async function sendToOwnBox(rootKeyHex: string, messageBox: string, body: string): Promise<void> {
+  const box = defaultMessageboxBase()
+  const self = PrivateKey.fromHex(rootKeyHex.trim()).toPublicKey().toString().toLowerCase()
+  const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/sendMessage`, {
+    method: 'POST',
+    headers: signedMessageboxHeaders(rootKeyHex, 'sendMessage', {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }, box, messageBox),
+    body: JSON.stringify({ message: { recipient: self, messageBox, body } }),
+  })
+  if (!res.ok) throw new Error(`${messageBox} send refused (${res.status})`)
+}
+
+/** Messages waiting in an own-key box; null when the host did not answer. */
+export async function listOwnBox(rootKeyHex: string, messageBox: string): Promise<ListedMessage[] | null> {
+  const box = defaultMessageboxBase()
   try {
-    body = sealForPeer({
-      plaintext: offer,
-      rootKeyHex: env.rootKeyHex,
-      recipientIdentityKey: env.recipientIdentityKey,
-    })
-  } catch {
-    return
-  }
-  try {
-    await authenticatedMessageboxFetch(env.rootKeyHex, box, `${box}/sendMessage`, {
+    const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/listMessages`, {
       method: 'POST',
-      headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
+      headers: signedMessageboxHeaders(rootKeyHex, 'listMessages', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }, box),
-      body: JSON.stringify({
-        message: {
-          recipient: env.recipientIdentityKey,
-          messageBox: 'inbox',
-          body,
-        },
-      }),
+      }, box, messageBox),
+      body: JSON.stringify({ messageBox }),
     })
+    if (!res.ok) return null
+    const data = (await res.json()) as { messages?: ListedMessage[] }
+    return Array.isArray(data.messages) ? data.messages : []
   } catch {
-    /* the payload already landed; the offer can ride the next box send */
+    return null
+  }
+}
+
+export function acknowledgeOwnBox(rootKeyHex: string, messageBox: string, messageIds: string[]): Promise<void> {
+  if (!messageIds.length) return Promise.resolve()
+  return acknowledgeMessages(messageIds, rootKeyHex, defaultMessageboxBase(), messageBox)
+}
+
+/** Seal `plaintext` to the identity itself (BRC-78), for an own-key box. */
+export function sealToSelf(rootKeyHex: string, plaintext: string): string {
+  const self = PrivateKey.fromHex(rootKeyHex.trim()).toPublicKey().toString().toLowerCase()
+  return sealPeerMessage({ plaintext, rootKeyHex, recipientIdentityKey: self })
+}
+
+/** Open a body sealed by {@link sealToSelf}; null when it is not one. */
+export function openFromSelf(rootKeyHex: string, body: string): string | null {
+  const self = PrivateKey.fromHex(rootKeyHex.trim()).toPublicKey().toString().toLowerCase()
+  const opened = openPeerMessage({ body, rootKeyHex, expectedSenderIdentityKey: self })
+  return 'refuse' in opened || !opened.sealed ? null : opened.plaintext
+}
+
+let sessionBoxPolledAt = 0
+const SESSION_BOX_IDLE_POLL_MS = 20_000
+
+/**
+ * Offers and answers live in box `session-upgrade` (draft BRC-246), which
+ * older installs never list. Poll it on every inbox pass while an offer
+ * awaits its answer, otherwise at the idle cadence.
+ */
+async function pollSessionSignals(rootKeyHex: string, box: string): Promise<void> {
+  const now = Date.now()
+  if (!hasPendingSessionOffers() && now - sessionBoxPolledAt < SESSION_BOX_IDLE_POLL_MS) return
+  sessionBoxPolledAt = now
+  try {
+    const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/listMessages`, {
+      method: 'POST',
+      headers: signedMessageboxHeaders(rootKeyHex, 'listMessages', {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      }, box, SESSION_BOX),
+      body: JSON.stringify({ messageBox: SESSION_BOX }),
+    })
+    if (!res.ok) return
+    const data = (await res.json()) as { messages?: ListedMessage[] }
+    const ackIds: string[] = []
+    for (const m of Array.isArray(data.messages) ? data.messages : []) {
+      const inner = plaintextFromPeer(m.body, rootKeyHex, listedSender(m))
+      const disposition = inner == null ? 'invalid' : await ingestSessionSignal(inner)
+      if (disposition !== 'not-mine' && m.messageId) ackIds.push(String(m.messageId))
+    }
+    if (ackIds.length) await acknowledgeMessages(ackIds, rootKeyHex, box, SESSION_BOX)
+  } catch (err) {
+    console.info('[direct-session] signal poll failed', err instanceof Error ? err.message : String(err))
   }
 }
 
 function acceptDirectBody(sender: string, body: string, rootKeyHex: string): void {
   const inner = plaintextFromPeer(body, rootKeyHex, sender)
-  if (inner == null) return
-  if (ingestSessionOfferBody(inner)) {
-    warmDirectSession(sender)
-    return
-  }
+  if (inner == null || isLegacySessionOffer(inner)) return
   if (isIdentityCardControl(inner)) {
     void ingestIdentityCard(sender, inner)
     return
@@ -1312,13 +1394,12 @@ export async function pollInboundTipHints(args: {
     } catch {
       /* locked or unreadable key — inbox parse still runs */
     }
-    void ensureDirectListener()
+    void pollSessionSignals(args.rootKeyHex, box)
     for (const m of list) {
       const senderKey = listedSender(m)
       const inner = plaintextFromPeer(m.body, args.rootKeyHex, senderKey)
       if (inner == null) continue
-      if (ingestSessionOfferBody(inner)) {
-        warmDirectSession(senderKey)
+      if (isLegacySessionOffer(inner)) {
         if (m.messageId) ackIds.push(String(m.messageId))
         continue
       }
@@ -1720,6 +1801,7 @@ async function acknowledgeMessages(
   messageIds: string[],
   rootKeyHex: string,
   messagebox?: string | null,
+  messageBox = 'inbox',
 ): Promise<void> {
   const box = normalizeMessageboxBase(messagebox)
   try {
@@ -1728,8 +1810,8 @@ async function acknowledgeMessages(
       headers: signedMessageboxHeaders(rootKeyHex, 'acknowledgeMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-      }, box),
-      body: JSON.stringify({ messageBox: 'inbox', messageIds }),
+      }, box, messageBox),
+      body: JSON.stringify({ messageBox, messageIds }),
     })
   } catch {
     /* ignore */

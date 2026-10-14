@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
-import { verifyIssuerIdentityPackage, issuerIdentityImageDataUrl } from './issuerIdentity'
+import { profileFromBap, profileFromIdentityKey, verifyIssuerIdentityPackage, issuerIdentityImageDataUrl } from './issuerIdentity'
 import {
   collectionSeriesLabel,
   groupCollectables,
@@ -62,29 +62,30 @@ describe('groupCollectables', () => {
     expect(claimed?.icon).toBeUndefined()
   })
 
-  it('shelves NFTs and FTs whose signer speaks for a BAP identity under that BAP ID', () => {
-    const f = bapIdentityFixture({ name: 'Example Studio' })
+  it('shelves identity-key stamps and earlier BAP stamps under the identity key, named by its linked profile', () => {
+    const f = bapIdentityFixture({ name: 'Example Studio', linked: true })
     const identity = verifyIssuerIdentityPackage(f.pkg)!
+    const identityKey = f.master.toPublicKey().toString()
     const signer = f.signer.toPublicKey().toString()
-    const nextKey = PrivateKey.fromRandom().toPublicKey().toString()
     const assets = [
       item({ outpoint: 'aa.0', issuer: signer, bapId: f.bapId, app: 'An app', collectionId: 'awards' }),
-      item({ outpoint: 'cc.0', issuer: nextKey, bapId: f.bapId }),
+      item({ outpoint: 'cc.0', issuer: identityKey }),
     ]
     const tokens = [token({ tokenId: 'bb', sym: 'FT', issuer: signer, bapId: f.bapId, issuerHandle: 'unverified-handle' })]
     const seen: unknown[] = []
     const result = groupCollectables(assets, tokens, (asset) => {
       seen.push(asset)
-      return asset.bapId === f.bapId ? { kind: 'verified', identity } : null
+      return asset.bapId === f.bapId || asset.issuer === identityKey ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) } : null
     })
     expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'aa_0' })
     expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'bb' })
+    expect(seen).toContainEqual({ issuer: identityKey, origin: 'cc_0' })
     expect(result.issuers).toHaveLength(1)
     expect(result.issuers[0]).toMatchObject({
-      key: `issuer:bap:${f.bapId}`,
+      key: `issuer:pubkey:${identityKey}`,
       label: 'Example Studio',
       icon: issuerIdentityImageDataUrl(identity.image!),
-      bapId: f.bapId,
+      profile: { id: f.bapId, state: 'verified' },
       issuerAttested: true,
     })
     expect(result.issuers[0]?.items).toHaveLength(2)
@@ -100,10 +101,11 @@ describe('groupCollectables', () => {
     const refused = groupCollectables(assets, [], () => null)
     expect(refused.issuers[0]).toMatchObject({ key: `issuer:pubkey:${signer}` })
     expect(refused.issuers[0]?.icon).toBeUndefined()
+    const identityKey = f.master.toPublicKey().toString()
     const unattested = groupCollectables(
       assets.map((asset) => ({ ...asset, issuerAttested: false })),
       [],
-      () => ({ kind: 'verified', identity }),
+      () => ({ kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }),
     )
     expect(unattested.issuers[0]?.key).toBe(`issuer:claim:${signer}`)
     expect(unattested.issuers[0]?.label).not.toBe('Example Studio')
@@ -111,7 +113,7 @@ describe('groupCollectables', () => {
     const mismatched = groupCollectables(
       [item({ outpoint: 'aa.0', issuer: signer, bapId: otherId })],
       [],
-      () => ({ kind: 'verified', identity }),
+      () => ({ kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }),
     )
     expect(mismatched.issuers[0]?.key).toBe(`issuer:pubkey:${signer}`)
     const retired = groupCollectables(assets, [], () => ({
@@ -120,13 +122,13 @@ describe('groupCollectables', () => {
       reason: 'retired-key',
     }))
     expect(retired.issuers[0]).toMatchObject({ key: `issuer:pubkey:${signer}` })
-    expect(retired.issuers[0]?.bapId).toBeUndefined()
+    expect(retired.issuers[0]?.profile).toBeUndefined()
   })
 
   it('puts named publishers first and unknown publishers last, whatever their labels', () => {
     const f = bapIdentityFixture({ name: 'Zebra Studio' })
     const identity = verifyIssuerIdentityPackage(f.pkg)!
-    const signer = f.signer.toPublicKey().toString()
+    const identityKey = f.master.toPublicKey().toString()
     const bare = PrivateKey.fromHex('02').toPublicKey().toString()
     const claimant = PrivateKey.fromHex('03').toPublicKey().toString()
     const stamper = PrivateKey.fromHex('04').toPublicKey().toString()
@@ -137,18 +139,18 @@ describe('groupCollectables', () => {
         item({ outpoint: 'a2.0', issuer: bare }),
         item({ outpoint: 'a3.0', issuer: stamper, bapId: stampId }),
         item({ outpoint: 'a4.0', app: 'Aardvark app' }),
-        item({ outpoint: 'a5.0', issuer: signer, bapId: f.bapId }),
+        item({ outpoint: 'a5.0', issuer: identityKey }),
       ],
       [],
       (asset) =>
-        asset.issuer === signer
-          ? { kind: 'verified', identity }
+        asset.issuer === identityKey
+          ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }
           : asset.bapId === stampId
-            ? { kind: 'unconfirmed', bapId: stampId, reason: 'unknown-key' }
+            ? { kind: 'unconfirmed', bapId: stampId, reason: 'not-linked' }
             : null,
     )
     expect(result.issuers.map((i) => i.key)).toEqual([
-      `issuer:bap:${f.bapId}`,
+      `issuer:pubkey:${identityKey}`,
       'issuer:app:aardvark app',
       `issuer:pubkey:${bare}`,
       `issuer:bap-unconfirmed:${stampId}`,
@@ -160,6 +162,7 @@ describe('groupCollectables', () => {
     const f = bapIdentityFixture({ name: 'Example Studio' })
     const identity = verifyIssuerIdentityPackage(f.pkg)!
     const signer = f.signer.toPublicKey().toString()
+    const identityKey = f.master.toPublicKey().toString()
     const stranger = PrivateKey.fromRandom().toPublicKey().toString()
     const result = groupCollectables(
       [
@@ -170,21 +173,21 @@ describe('groupCollectables', () => {
       [token({ tokenId: 'cc', sym: 'FT', issuer: stranger, bapId: f.bapId, issuerHandle: '$studio' })],
       (asset) =>
         asset.issuer === signer
-          ? { kind: 'verified', identity }
+          ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }
           : { kind: 'unconfirmed', bapId: f.bapId, reason: 'unknown-key' },
     )
     expect(result.issuers.map((i) => i.key).sort()).toEqual(
-      [`issuer:bap-unconfirmed:${f.bapId}`, `issuer:bap:${f.bapId}`].sort(),
+      [`issuer:bap-unconfirmed:${f.bapId}`, `issuer:pubkey:${identityKey}`].sort(),
     )
-    const unconfirmed = result.issuers.find((i) => i.bapState === 'unconfirmed')!
-    expect(unconfirmed).toMatchObject({ bapId: f.bapId, issuerAttested: true })
+    const unconfirmed = result.issuers.find((i) => i.profile?.state === 'unconfirmed')!
+    expect(unconfirmed).toMatchObject({ profile: { id: f.bapId }, issuerAttested: true })
     expect(unconfirmed.label).toMatch(/^Unconfirmed profile /)
     expect(unconfirmed.label).not.toContain('Example Studio')
     expect(unconfirmed.label).not.toContain('$studio')
     expect(unconfirmed.icon).toBeUndefined()
     expect(unconfirmed.items.map((i) => i.outpoint)).toEqual(['bb.0', 'dd.0'])
     expect(unconfirmed.tokens).toHaveLength(1)
-    expect(result.issuers.find((i) => i.bapState === 'verified')?.label).toBe('Example Studio')
+    expect(result.issuers.find((i) => i.profile?.state === 'verified')?.label).toBe('Example Studio')
   })
 
   it('marks a listed BAP identity and cautions a look-alike, never an unconfirmed stamp', () => {
@@ -208,20 +211,57 @@ describe('groupCollectables', () => {
       [],
       (asset) => {
         if (asset.issuer === stranger) return { kind: 'unconfirmed', bapId: real.bapId, reason: 'unknown-key' }
-        return { kind: 'verified', identity: asset.bapId === real.bapId ? realIdentity : fakeIdentity }
+        const f = asset.bapId === real.bapId ? real : fake
+        return {
+          kind: 'verified',
+          identityKey: f.master.toPublicKey().toString(),
+          profile: profileFromBap(f.master.toPublicKey().toString(), f === real ? realIdentity : fakeIdentity),
+        }
       },
       trust,
     )
     const byKey = new Map(result.issuers.map((i) => [i.key, i]))
-    expect(byKey.get(`issuer:bap:${real.bapId}`)?.bap).toMatchObject({ listed })
-    expect(byKey.get(`issuer:bap:${real.bapId}`)?.bap?.caution).toBeUndefined()
-    expect(byKey.get(`issuer:bap:${fake.bapId}`)?.bap).toMatchObject({
+    const shelf = (f: typeof real) => byKey.get(`issuer:pubkey:${f.master.toPublicKey().toString()}`)
+    expect(shelf(real)?.profile).toMatchObject({ listed })
+    expect(shelf(real)?.profile?.caution).toBeUndefined()
+    expect(shelf(fake)?.profile).toMatchObject({
       caution: { kind: 'imitates-listed', listed },
     })
-    expect(byKey.get(`issuer:bap:${fake.bapId}`)?.bap?.listed).toBeUndefined()
+    expect(shelf(fake)?.profile?.listed).toBeUndefined()
     const unconfirmed = byKey.get(`issuer:bap-unconfirmed:${real.bapId}`)
-    expect(unconfirmed?.bap?.listed).toBeUndefined()
-    expect(unconfirmed?.bap?.caution).toBeUndefined()
+    expect(unconfirmed?.profile?.listed).toBeUndefined()
+    expect(unconfirmed?.profile?.caution).toBeUndefined()
+  })
+
+  it("names a shelf by the identity key's own profile, and a linked listed BAP identity carries its listing", () => {
+    const f = bapIdentityFixture({ name: 'Example Studio', linked: true })
+    const bap = verifyIssuerIdentityPackage(f.pkg)!
+    const identityKey = f.master.toPublicKey().toString()
+    const own = { identityKey, name: 'Example Studio Ltd', description: '', issuedAt: '2026-10-01T00:00:00.000Z' }
+    const listed = { bapId: f.bapId, name: 'Example Studio' }
+    const trust = issuerTrustFrom({
+      listed: (id) => (id === listed.bapId ? listed : null),
+      listedEntries: [listed],
+      storedIdentities: () => [{ id: identityKey, name: own.name }],
+    })
+    const resolve = () => ({ kind: 'verified' as const, identityKey, profile: profileFromIdentityKey(own, bap) })
+    const [shelf] = groupCollectables([item({ outpoint: 'aa.0', issuer: identityKey })], [], resolve, trust).issuers
+    expect(shelf).toMatchObject({
+      key: `issuer:pubkey:${identityKey}`,
+      label: 'Example Studio Ltd',
+      profile: { id: identityKey, state: 'verified', listed },
+    })
+    expect(shelf?.icon).toBeUndefined()
+    const unlisted = issuerTrustFrom({ listed: () => null, listedEntries: [], storedIdentities: () => [] })
+    const [alone] = groupCollectables(
+      [item({ outpoint: 'aa.0', issuer: identityKey })],
+      [],
+      () => ({ kind: 'verified', identityKey, profile: profileFromIdentityKey(own) }),
+      unlisted,
+    ).issuers
+    expect(alone?.profile).toMatchObject({ id: identityKey, state: 'verified' })
+    expect(alone?.profile?.listed).toBeUndefined()
+    expect(alone?.profile?.caution).toBeUndefined()
   })
 
   it('nests collections under the issuer, not the other way around', () => {

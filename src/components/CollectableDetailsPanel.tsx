@@ -242,7 +242,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   }, [item?.outpoint, item?.authenticity])
 
   const issuerView = useIssuerView(item)
-  const issuerBap = issuerView?.bap
+  const issuerProfile = issuerView?.profile
+  const profileIdRow = issuerProfile && issuerProfile.id !== issuerView?.identityKey ? issuerProfile : null
 
   const copy = async (label: string, value: string) => {
     await copyText(value, { label })
@@ -506,14 +507,14 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             onCopy={() => void copy('issuer key', issuerView.identityKey)}
           />
         ) : null}
-        {issuerBap ? (
+        {profileIdRow ? (
           <MetaRow
-            label={issuerBap.state === 'verified' ? 'Profile ID' : 'Profile ID (unconfirmed)'}
-            value={issuerBap.id}
-            onCopy={() => void copy('profile ID', issuerBap.id)}
+            label={profileIdRow.state === 'verified' ? 'Profile ID' : 'Profile ID (unconfirmed)'}
+            value={profileIdRow.id}
+            onCopy={() => void copy('profile ID', profileIdRow.id)}
           />
         ) : null}
-        {issuerView?.bap ? (
+        {issuerView?.profile ? (
           <>
             <dt>Verification</dt>
             <dd className="detail-issuer-trust" data-aeon-part="issuer-trust" data-aeon-state={issuerViewState(issuerView)}>

@@ -1,9 +1,10 @@
 /**
  * Holding vault accounts across devices: check, claim, take, release.
  *
- * The model is in `accountHolding.ts`. Every operation here runs on unlock,
- * on a switch, on a five-minute watch of the active account, or on an explicit
- * user action. None runs on the spend path; the spend guard asks
+ * The model is in `accountHolding.ts`; moving on demand is `accountMove.ts`.
+ * Every operation here runs on unlock, on a switch, on a five-minute watch of
+ * the active account, on a move, or once before the first spend after a gap
+ * (`holdingFreshness.ts`). Otherwise the spend guard asks
  * {@link activeAccountSpendRefusal}, which reads local storage only.
  */
 import {
@@ -18,6 +19,7 @@ import {
   type HolderWrite,
 } from './accountHolding'
 import { appendAppLog } from './appLog'
+import { noteHoldingChecked } from './holdingFreshness'
 import {
   ACCOUNT_HELD_ELSEWHERE,
   createVaultAccount,
@@ -135,7 +137,12 @@ export type HoldingCheck = {
  */
 export async function checkVaultAccountHoldings(
   master: VaultMaster,
-  opts: { indices?: number[]; io?: HolderIo } = {},
+  opts: {
+    indices?: number[]
+    io?: HolderIo
+    /** Accounts this check found taken elsewhere; defaults to handing their changes over. */
+    onDisplaced?: (indices: number[]) => void
+  } = {},
 ): Promise<HoldingCheck> {
   const started = Date.now()
   const io = opts.io ?? (await defaultIo())
@@ -147,6 +154,8 @@ export async function checkVaultAccountHoldings(
   const outcomes = await Promise.all(
     indices.map((index) => reconcileAccount({ master, index, io, deviceId })),
   )
+  // A check that ran, reachable or not, closes the gap for what it covered.
+  for (const index of indices) noteHoldingChecked(identityKeyForAccount(master, index), started)
   const incomplete = outcomes.some((o) => o.kind === 'incomplete')
   const after = readVaultAccounts(masterIdentityKey)
   const isHere = new Set(after.accounts.filter(isHeldHere).map((a) => a.index))
@@ -165,7 +174,16 @@ export async function checkVaultAccountHoldings(
         (reasons.length ? ` · unchecked ${reasons.join('; ')}` : ''),
     )
   }
+  if (displaced.length) (opts.onDisplaced ?? ((lost) => handOverDisplaced(master, lost)))(displaced)
   return { displaced, gained, incomplete }
+}
+
+function handOverDisplaced(master: VaultMaster, indices: number[]): void {
+  void import('./accountHandover')
+    .then(({ handOverAccounts }) => handOverAccounts(master, indices))
+    .catch((error: unknown) =>
+      appendAppLog('warn', `[account-holding] handover of ${list(indices)} failed: ${messageOf(error)}`),
+    )
 }
 
 export class AccountAllocationError extends Error {}
@@ -266,8 +284,8 @@ export type TakeResult =
 
 /**
  * Hold account `index` here. A released account moves at once; one another
- * install still holds moves only with `force`, the user's word that the other
- * device is gone or will stop.
+ * install still holds moves only with `force`, which `accountMove.ts` sets
+ * once that install has had its answer window and did not accept.
  */
 export async function takeVaultAccount(args: {
   master: VaultMaster
@@ -457,6 +475,21 @@ export function activeAccountSpendRefusal(active: ActiveAccount | null): string 
   return account && !isHeldHere(account) ? ACCOUNT_HELD_ELSEWHERE : null
 }
 
+/**
+ * A check found another install holding the active account. Its backup and
+ * unsent transactions are that install's now; this one hands over instead.
+ * A release (no holder named) still lets the releasing install re-push.
+ */
+export function activeAccountTakenElsewhere(active: ActiveAccount | null): boolean {
+  if (!active?.vaultMaster) return false
+  const account = readVaultAccounts(masterIdentityKeyOf(active.vaultMaster)).accounts.find(
+    (a) => a.index === active.accountIndex,
+  )
+  if (!account) return false
+  const holding = holdingOf(account)
+  return holding.kind === 'elsewhere' && holding.deviceId != null
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -495,6 +528,8 @@ export async function releaseActiveVaultAccount(runtime: WalletRuntime): Promise
     await waitForForegroundSpendIdle()
     await flushAccountHistory(runtime)
     await releaseVaultAccount({ master: active.vaultMaster, index: active.accountIndex })
+    const { dropWarmAccount } = await import('./walletPool')
+    dropWarmAccount(active.identityKey)
     // A receive ingested during the flush must reach the backup before another install opens it.
     const { isHistoryBackupDirty } = await import('./deviceSync')
     if (isHistoryBackupDirty()) {
@@ -506,6 +541,26 @@ export async function releaseActiveVaultAccount(runtime: WalletRuntime): Promise
   } finally {
     releasingIdentityKey = null
   }
+}
+
+/**
+ * Hand an account held here but not open to another install. Its history
+ * backup is uploaded only while it is open, so what changed since then goes
+ * to the new holder as a handover once the release is written.
+ */
+export async function releaseIdleVaultAccount(master: VaultMaster, index: number): Promise<void> {
+  const identityKey = identityKeyForAccount(master, index)
+  const { getWalletRuntime } = await import('./walletRuntime')
+  if (getWalletRuntime()?.instance.identityKey === identityKey) {
+    throw new Error('This wallet is open; it is released with its history instead')
+  }
+  const started = Date.now()
+  const { dropWarmAccount } = await import('./walletPool')
+  dropWarmAccount(identityKey)
+  await releaseVaultAccount({ master, index })
+  const { handOverAccounts } = await import('./accountHandover')
+  await handOverAccounts(master, [index])
+  appendAppLog('info', `[account-holding] release a${index} (not open) done ${Date.now() - started}ms`)
 }
 
 /** How often the active account's holder record is re-read while unlocked. */

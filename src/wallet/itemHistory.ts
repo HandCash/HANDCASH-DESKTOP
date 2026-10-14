@@ -65,7 +65,7 @@ export function activityContactLink(entry: ActivityEntry): HistoryContactLink | 
 function assetForEntry(entry: ActivityEntry): HistoryAssetLink | null {
   const item = entry.item
   if (!item) return null
-  const name = item.name?.trim() || (item.tokenId ? 'BSV-21 token' : 'Collectable')
+  const name = item.name?.trim() || (item.tokenId ? 'Token' : 'Collectable')
   const tokenId = item.tokenId?.trim()
   if (tokenId) return { kind: 'token', tokenId, name }
   const outpoint = (item.outpoint || item.origin || '').trim()

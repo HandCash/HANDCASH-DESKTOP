@@ -301,7 +301,7 @@ describe('market 162 listing remittance', () => {
   const address = PrivateKey.fromRandom().toAddress()
 
   it('lists a 162 tip into basket bsv21 with 163 amt/id', () => {
-    const lockingScriptHex = buildBsv21ValueLock({
+    const lockingScriptHex = buildBsv21ValueLock({ layout: 'brc162',
       tokenId,
       amount: 60n,
       address,
@@ -404,7 +404,7 @@ describe('162 market list createAction lock', () => {
     for (let i = 0; i < vout; i++) {
       transfer.addOutput({ satoshis: 1, lockingScript: filler })
     }
-    const lockingScriptHex = buildBsv21ValueLock({
+    const lockingScriptHex = buildBsv21ValueLock({ layout: 'brc162',
       tokenId,
       amount,
       address: seller.toAddress(),
@@ -507,7 +507,7 @@ describe('162 market list createAction lock', () => {
       }),
     ).toThrow(MarketListingError)
     const forgedId = `${'ab'.repeat(32)}_0`
-    const forgedLock = buildBsv21ValueLock({
+    const forgedLock = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: forgedId,
       amount: 60n,
       address: seller.toAddress(),

@@ -77,6 +77,7 @@ describe('bsv21Prove', () => {
       deployOutpoint: outpoint,
       role: 'deploy',
       encoding: 'binary',
+      layout: 'brc162',
     })
   })
 
@@ -346,6 +347,83 @@ describe('bsv21Prove', () => {
       tokenId: id,
       amount: 100n,
       deployOutpoint: id,
+    })
+  })
+
+  describe('binary layouts', () => {
+    function taggedDeploy(amount: bigint): Transaction {
+      const tx = new Transaction()
+      tx.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ layout: 'draft-tagged', amount, payload: { sym: 'OLD' }, rest: P2PKH_REST }),
+      })
+      return tx
+    }
+    const taggedValue = (tokenId: string, amount: bigint) =>
+      encodeBsv21Binary({ layout: 'draft-tagged', tokenId, amount, rest: P2PKH_REST })
+
+    it('proves a draft-tagged lineage under its own layout', () => {
+      const deploy = taggedDeploy(100n)
+      const id = tokenIdOf(deploy)
+      const split = spend([{ tx: deploy, vout: 0 }], [taggedValue(id, 70n), taggedValue(id, 30n)])
+      expect(prove(`${split.id('hex')}_0`, beefOf(split))).toMatchObject({
+        ok: true,
+        tokenId: id,
+        amount: 70n,
+        layout: 'draft-tagged',
+      })
+    })
+
+    it('does not prove a current-layout output that spends a draft-tagged token', () => {
+      const deploy = taggedDeploy(100n)
+      const id = tokenIdOf(deploy)
+      const crossed = spend([{ tx: deploy, vout: 0 }], [valueScript(id, 100n)])
+      expect(prove(`${crossed.id('hex')}_0`, beefOf(crossed)).ok).toBe(false)
+    })
+
+    it('does not prove a draft-tagged output that spends a current-layout token', () => {
+      const deploy = deployTx(100n)
+      const id = tokenIdOf(deploy)
+      const crossed = spend([{ tx: deploy, vout: 0 }], [taggedValue(id, 100n)])
+      expect(prove(`${crossed.id('hex')}_0`, beefOf(crossed)).ok).toBe(false)
+    })
+
+    it('treats a current-layout deploy at a nonzero output as no token', () => {
+      const tx = new Transaction()
+      tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(P2PKH_REST) })
+      tx.addOutput({
+        satoshis: 1,
+        lockingScript: encodeBsv21Binary({ amount: 100n, payload: { sym: 'BAD' }, rest: P2PKH_REST }),
+      })
+      expect(prove(`${tx.id('hex')}_1`, beefOf(tx)).ok).toBe(false)
+    })
+
+    it('refuses to collect ancestry for tips that spend one JSON deploy in both layouts', () => {
+      const hex = (t: string) => [...new TextEncoder().encode(t)].map((x) => x.toString(16).padStart(2, '0')).join('')
+      const body = hex(JSON.stringify({ p: 'bsv-20', op: 'deploy+mint', sym: 'JSN', amt: '100' }))
+      const jsonDeploy = new Transaction()
+      jsonDeploy.addOutput({
+        satoshis: 1,
+        lockingScript: LockingScript.fromHex(
+          `0063036f726451${'12'}${hex('application/bsv-20')}00${(body.length / 2).toString(16).padStart(2, '0')}${body}68${P2PKH_REST}`,
+        ),
+      })
+      const id = tokenIdOf(jsonDeploy)
+      expect(prove(id, beefOf(jsonDeploy))).toMatchObject({ ok: true, encoding: 'json' })
+      const split = new Transaction()
+      split.addInput({ sourceTransaction: jsonDeploy, sourceOutputIndex: 0, unlockingScript: new UnlockingScript() })
+      split.addOutput({ satoshis: 1, lockingScript: valueScript(id, 60n) })
+      split.addOutput({ satoshis: 1, lockingScript: taggedValue(id, 40n) })
+      const beef = beefOf(split)
+      expect(prove(`${split.id('hex')}_0`, beef)).toMatchObject({ ok: true, tokenId: id, layout: 'brc162' })
+      expect(prove(`${split.id('hex')}_1`, beef)).toMatchObject({ ok: true, tokenId: id, layout: 'draft-tagged' })
+      expect(() =>
+        collectBsv21TokenAncestryTxids({
+          outpoints: [`${split.id('hex')}_0`, `${split.id('hex')}_1`],
+          tokenId: id,
+          beef,
+        }),
+      ).toThrow(/mix the brc162 and draft-tagged layouts/)
     })
   })
 })

@@ -13,17 +13,17 @@ const TOKEN_B = `${'cd'.repeat(32)}_0`
 
 describe('bsv21 listing aggregation', () => {
   it('aggregates Σ amt by deploy outpoint and ignores 1sat-ft leftovers', () => {
-    const payee = buildBsv21ValueLock({
+    const payee = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_A,
       amount: 60n,
       address: ADDR,
     })
-    const change = buildBsv21ValueLock({
+    const change = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_A,
       amount: 40n,
       address: ADDR,
     })
-    const other = buildBsv21ValueLock({
+    const other = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_B,
       amount: 7n,
       address: ADDR,
@@ -170,9 +170,10 @@ describe('parseListedOutput remittance-only', () => {
   describe('162 payload icon and binary supply', () => {
   const P2PKH = `76a914${'11'.repeat(20)}88ac`
 
-  it('deploy 162 with 4-byte payload icon and no CI is live locked with icon outpoint', () => {
+  it('draft-tagged deploy with 4-byte payload icon and no CI is live locked with icon outpoint', () => {
     const deployOut = `${'ee'.repeat(32)}_0`
     const script = encodeBsv21Binary({
+      layout: 'draft-tagged',
       amount: 69240n,
       payload: { sym: 'GOLD', dec: 0, icon: Uint8Array.from([1, 0, 0, 0]) },
       rest: P2PKH,
@@ -192,10 +193,11 @@ describe('parseListedOutput remittance-only', () => {
     expect(card?.maxSupply).toBe(69240)
   })
 
-  it('deploy 162 with 36-byte payload icon and no CI is live locked', () => {
+  it('draft-tagged deploy with 36-byte payload icon and no CI is live locked', () => {
     const deployOut = `${'ab'.repeat(32)}_0`
     const iconId = `${'ff'.repeat(32)}_3`
     const script = encodeBsv21Binary({
+      layout: 'draft-tagged',
       amount: 100n,
       payload: { sym: 'GOLD', icon: tokenIdToWire(iconId) },
       rest: P2PKH,
@@ -210,5 +212,25 @@ describe('parseListedOutput remittance-only', () => {
     const card = aggregateFungibles([tip!])[0]
     expect(card?.binarySupply).toBe('locked')
     expect(card?.icon).toBe(iconId)
+  })
+
+  it('current-layout deploy with an embedded icon names itself as the icon', () => {
+    const deployOut = `${'cd'.repeat(32)}_0`
+    const script = encodeBsv21Binary({
+      amount: 500n,
+      payload: {
+        sym: 'GOLD',
+        iconImage: { mediaType: 'image/png', bytes: Uint8Array.from([1, 2, 3]) },
+      },
+      rest: P2PKH,
+    }).toHex()
+    const tip = decodeListedBsv21Tip({
+      outpoint: deployOut.replace('_', '.'),
+      satoshis: 1,
+      lockingScript: script,
+    })
+    expect(tip?.binarySupply).toBe('locked')
+    expect(tip?.icon).toBe(deployOut)
+    expect(tip?.sym).toBe('GOLD')
   })
 })

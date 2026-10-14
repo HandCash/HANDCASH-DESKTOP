@@ -12,8 +12,8 @@
  * `deploy+auth`, `auth`, `mint` or amount-0 output on the path fails closed.
  * A burn output counts toward O and, as a spent input, contributes nothing.
  */
-import { Beef, type Transaction } from '@bsv/sdk'
-import { decodeBsv21Binary, parseDisplayOutpoint } from './decode162'
+import { Beef, Spend, type Transaction } from '@bsv/sdk'
+import { decodeBsv21Binary, parseDisplayOutpoint, type Bsv21BinaryLayout } from './decode162'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { toUnderscoreOutpoint } from '../outpointFormat'
 import { BSV21_PROTOCOL, normalizeTokenId } from './types'
@@ -36,6 +36,8 @@ export type Bsv21Proof = {
   role: 'deploy' | 'value'
   /** Wire encoding of the proven tip itself. */
   encoding: 'binary' | 'json'
+  /** Binary layout the lineage was proven under (BRC-251 §Compatibility). */
+  layout: Bsv21BinaryLayout
 }
 
 export type Bsv21ProofFailure = {
@@ -62,6 +64,8 @@ export type TokenOutput = {
   tokenId?: string
   amount: bigint
   encoding: 'binary' | 'json'
+  /** Binary outputs only. */
+  layout?: Bsv21BinaryLayout
 }
 
 function fail(reason: string): Bsv21ProofFailure {
@@ -132,26 +136,43 @@ function decodeJsonTokenOutput(scriptHex: string): TokenOutput | null {
 /**
  * Decode a BSV-21 output in either encoding. Binary wins when both are
  * present (BRC-162 §"binary wins").
+ *
+ * `layout` scopes binary outputs to one rule set: the current BRC-162 layout
+ * and the pre-#273 draft-tagged layout are different tokens to every indexer,
+ * so an output in the other layout is not a token in this walk. JSON outputs
+ * belong to both. Omitted = either layout.
  */
-export function decodeTokenOutput(script: { toHex(): string } | string | undefined): TokenOutput | null {
+export function decodeTokenOutput(
+  script: { toHex(): string } | string | undefined,
+  layout?: Bsv21BinaryLayout,
+): TokenOutput | null {
   if (!script) return null
   const hex = typeof script === 'string' ? script : script.toHex()
   const binary = decodeBsv21Binary(hex)
-  if (binary) {
+  if (binary && (!layout || binary.layout === layout)) {
+    const encoded = { encoding: 'binary' as const, layout: binary.layout }
     if (binary.role === 'authority' || binary.amount === 0n) {
-      return { role: 'authority', ...(binary.tokenId ? { tokenId: binary.tokenId } : {}), amount: binary.amount, encoding: 'binary' }
+      return { role: 'authority', ...(binary.tokenId ? { tokenId: binary.tokenId } : {}), amount: binary.amount, ...encoded }
     }
-    if (binary.role === 'deploy') return { role: 'deploy', amount: binary.amount, encoding: 'binary' }
+    if (binary.role === 'deploy') return { role: 'deploy', amount: binary.amount, ...encoded }
     if (!binary.tokenId) return null
-    return { role: 'value', tokenId: binary.tokenId, amount: binary.amount, encoding: 'binary' }
+    return { role: 'value', tokenId: binary.tokenId, amount: binary.amount, ...encoded }
   }
   return decodeJsonTokenOutput(hex)
 }
 
-function decodeOutput(tx: Transaction, vout: number): TokenOutput | null {
+function decodeOutput(tx: Transaction, vout: number, layout?: Bsv21BinaryLayout): TokenOutput | null {
   const out = tx.outputs[vout]
   if (!out) return null
-  return decodeTokenOutput(out.lockingScript)
+  const decoded = decodeTokenOutput(out.lockingScript, layout)
+  // BRC-162: a binary deploy is valid only as output 0.
+  if (decoded?.layout === 'brc162' && decoded.role === 'deploy' && vout !== 0) return null
+  return decoded
+}
+
+/** The rule set a tip is proven under: its own binary layout, else current. */
+export function tokenLayoutOf(script: { toHex(): string } | string | undefined): Bsv21BinaryLayout {
+  return decodeTokenOutput(script)?.layout ?? 'brc162'
 }
 
 function isTokenOutput(tx: Transaction, vout: number): boolean {
@@ -231,6 +252,7 @@ type WalkScope = {
   beef: Beef
   seen: Set<string>
   known?: KnownTokenDeploy
+  layout: Bsv21BinaryLayout
 }
 
 function walk(
@@ -264,7 +286,7 @@ function walkBody(
   const tx = txBody(beef, txid)
   if (!tx) return fail(`missing token-parent body ${key}`)
 
-  const decoded = decodeOutput(tx, vout)
+  const decoded = decodeOutput(tx, vout, scope.layout)
   if (!decoded) return fail(`output ${key} is not BSV-21`)
   if (decoded.role === 'authority' || decoded.amount === 0n) {
     return fail('authority outputs are not proven in this slice')
@@ -279,13 +301,14 @@ function walkBody(
       deployOutpoint: key,
       role: 'deploy',
       encoding: decoded.encoding,
+      layout: scope.layout,
     }
   }
 
   const tokenId = decoded.tokenId
   if (!tokenId) return fail(`value output ${key} has no token id`)
 
-  const conservation = checkConservation(beef, tx, tokenId)
+  const conservation = checkConservation(beef, tx, tokenId, scope.layout)
   if (!conservation.ok) return conservation
 
   if (conservation.parents.length === 0) {
@@ -303,6 +326,7 @@ function walkBody(
           deployOutpoint: provenDeploy,
           role: 'value',
           encoding: decoded.encoding,
+          layout: scope.layout,
         }
       : walk(scope, parent.txid, parent.vout, hops + 1)
     if (!parentResult.ok) return parentResult
@@ -323,6 +347,7 @@ function walkBody(
     deployOutpoint,
     role: 'value',
     encoding: decoded.encoding,
+    layout: scope.layout,
   }
 }
 
@@ -330,13 +355,14 @@ function checkConservation(
   beef: Beef,
   tx: Transaction,
   tokenId: string,
+  layout: Bsv21BinaryLayout,
 ):
   | { ok: true; parents: { txid: string; vout: number; amount: bigint }[]; input: bigint; output: bigint }
   | Bsv21ProofFailure {
   let output = 0n
   const txid = tx.id('hex')
   for (let i = 0; i < tx.outputs.length; i++) {
-    const decoded = decodeOutput(tx, i)
+    const decoded = decodeOutput(tx, i, layout)
     if (!decoded) continue
     const id = tokenIdOf(decoded, txid, i)
     if (id !== tokenId) continue
@@ -366,7 +392,7 @@ function checkConservation(
       if (stub && !stub.tx) sameIdMissing.push(`${prev}_${prevVout}`)
       continue
     }
-    const decoded = decodeOutput(parentTx, prevVout)
+    const decoded = decodeOutput(parentTx, prevVout, layout)
     if (!decoded) continue
     const id = tokenIdOf(decoded, prev, prevVout)
     if (id !== tokenId) continue
@@ -397,9 +423,9 @@ function checkConservation(
  * Prove a BSV-21 tip from its BEEF: walk token parents to the fixed-supply
  * deploy and enforce per-id conservation (I >= O).
  *
- * Token rules only. Bitcoin validity (merkle paths, script) is the toolbox's
- * verify on `internalizeAction` / `processAction`; callers admit a tip when
- * both hold.
+ * Token rules only. Merkle paths are the toolbox's verify on
+ * `internalizeAction`; the unlocking scripts of the token spends on the walk
+ * are `verifyTokenSpendScripts` (`proveWithScripts` runs both).
  */
 export function prove(
   outpoint: string,
@@ -410,7 +436,114 @@ export function prove(
   if (!parsed) return fail(`invalid outpoint ${outpoint}`)
   const parsedBeef = asBeef(beef)
   if (!parsedBeef) return fail('invalid BEEF')
-  return walk({ beef: parsedBeef, seen: new Set(), known }, parsed.txid, parsed.vout, 0)
+  const tip = parsedBeef.findTxid(parsed.txid)?.tx?.outputs[parsed.vout]
+  const layout = tokenLayoutOf(tip?.lockingScript)
+  return walk({ beef: parsedBeef, seen: new Set(), known, layout }, parsed.txid, parsed.vout, 0)
+}
+
+/** Interpreter memory for one token spend; real token locks need a few KB. */
+const SPEND_MEMORY_LIMIT = 32 * 1024 * 1024
+
+export type TokenScriptCheck =
+  | { ok: true; transactions: number; spends: number }
+  | Bsv21ProofFailure
+
+/**
+ * Script-validate every token input on the walk to `outpoint` (BRC-251
+ * §Verification). `prove` checks token rules only, and a BUMP in a lineage
+ * is not verified here, so a forged ancestor could spend a real token output
+ * with any unlocking script. Each spend of a same-id output is run against
+ * the parent's locking script; a parent a previous walk proved is the last
+ * spend checked on that branch.
+ */
+export function verifyTokenSpendScripts(
+  outpoint: string,
+  beef: Beef | number[] | Uint8Array,
+  known?: KnownTokenDeploy,
+): TokenScriptCheck {
+  const parsed = parseDisplayOutpoint(toUnderscoreOutpoint(outpoint))
+  if (!parsed) return fail(`invalid outpoint ${outpoint}`)
+  const parsedBeef = asBeef(beef)
+  if (!parsedBeef) return fail('invalid BEEF')
+  const tipTx = txBody(parsedBeef, parsed.txid)
+  if (!tipTx) return fail(`missing token-parent body ${parsed.txid}_${parsed.vout}`)
+  const layout = tokenLayoutOf(tipTx.outputs[parsed.vout]?.lockingScript)
+  const tip = decodeOutput(tipTx, parsed.vout, layout)
+  const tokenId = tip ? tokenIdOf(tip, parsed.txid, parsed.vout) : null
+  if (!tokenId) return fail(`output ${parsed.txid}_${parsed.vout} is not BSV-21`)
+
+  const queue = [parsed.txid]
+  const walked = new Set<string>()
+  let spends = 0
+  while (queue.length > 0) {
+    const txid = queue.shift()!
+    if (walked.has(txid)) continue
+    if (walked.size >= MAX_PACKET_TXS) {
+      return fail(`token ancestry exceeded packet limit ${MAX_PACKET_TXS}`)
+    }
+    walked.add(txid)
+    const tx = txBody(parsedBeef, txid)
+    if (!tx) return fail(`missing token-parent body ${txid}`)
+    for (let index = 0; index < tx.inputs.length; index++) {
+      const input = tx.inputs[index]!
+      const parentTxid = sourceTxid(input)
+      const parentVout = input.sourceOutputIndex
+      const parentTx = txBody(parsedBeef, parentTxid)
+      if (!parentTx) continue
+      const decoded = decodeOutput(parentTx, parentVout, layout)
+      if (!decoded || decoded.role === 'burn') continue
+      if (tokenIdOf(decoded, parentTxid, parentVout) !== tokenId) continue
+      const source = parentTx.outputs[parentVout]!
+      if (!input.unlockingScript) {
+        return fail(`token input ${index} of ${txid} has no unlocking script`)
+      }
+      let valid = false
+      try {
+        valid = new Spend({
+          sourceTXID: parentTxid,
+          sourceOutputIndex: parentVout,
+          sourceSatoshis: source.satoshis ?? 0,
+          lockingScript: source.lockingScript,
+          transactionVersion: tx.version,
+          otherInputs: [],
+          allInputs: tx.inputs,
+          unlockingScript: input.unlockingScript,
+          inputSequence: input.sequence ?? 0xffffffff,
+          inputIndex: index,
+          outputs: tx.outputs,
+          lockTime: tx.lockTime,
+          memoryLimit: SPEND_MEMORY_LIMIT,
+          // Consensus, not relay policy: malleability rules do not decide who
+          // may spend a token output.
+          isRelaxed: true,
+        }).validateJavaScript()
+      } catch {
+        valid = false
+      }
+      if (!valid) return fail(`token input ${index} of ${txid} fails its locking script`)
+      spends += 1
+      if (!known?.(`${parentTxid}_${parentVout}`)) queue.push(parentTxid)
+    }
+  }
+  return { ok: true, transactions: walked.size, spends }
+}
+
+/**
+ * `prove` plus script validation of every token spend on the walk — the check
+ * for lineage bytes that came from outside this wallet (a receive, an import,
+ * a heal from fetched bodies).
+ */
+export function proveWithScripts(
+  outpoint: string,
+  beef: Beef | number[] | Uint8Array,
+  known?: KnownTokenDeploy,
+): Bsv21ProofResult {
+  const parsedBeef = asBeef(beef)
+  if (!parsedBeef) return fail('invalid BEEF')
+  const proof = prove(outpoint, parsedBeef, known)
+  if (!proof.ok) return proof
+  const scripts = verifyTokenSpendScripts(outpoint, parsedBeef, known)
+  return scripts.ok ? proof : scripts
 }
 
 /**
@@ -429,12 +562,17 @@ export function collectBsv21TokenAncestryTxids(args: {
   if (!parsedBeef) throw new Error('invalid token-parent BEEF')
   const tokenId = args.tokenId.trim().toLowerCase()
   const queue: string[] = []
+  let layout: Bsv21BinaryLayout | undefined
   for (const outpoint of args.outpoints) {
     const proof = prove(outpoint, parsedBeef)
     if (!proof.ok) throw new Error(`BRC-176 prove failed: ${proof.reason}`)
     if (proof.tokenId !== tokenId) {
       throw new Error(`token tip is ${proof.tokenId}, expected ${tokenId}`)
     }
+    if (layout && proof.layout !== layout) {
+      throw new Error(`token tips mix the ${layout} and ${proof.layout} layouts`)
+    }
+    layout = proof.layout
     const parsed = parseDisplayOutpoint(toUnderscoreOutpoint(outpoint))
     if (!parsed) throw new Error(`invalid outpoint ${outpoint}`)
     queue.push(parsed.txid)
@@ -452,7 +590,7 @@ export function collectBsv21TokenAncestryTxids(args: {
       const parentVout = input.sourceOutputIndex
       const parentTx = txBody(parsedBeef, parentTxid)
       if (!parentTx) continue
-      const decoded = decodeOutput(parentTx, parentVout)
+      const decoded = decodeOutput(parentTx, parentVout, layout)
       if (!decoded || decoded.role === 'burn') continue
       if (tokenIdOf(decoded, parentTxid, parentVout) === tokenId) {
         queue.push(parentTxid)

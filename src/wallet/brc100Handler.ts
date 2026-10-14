@@ -2,9 +2,11 @@ import {
   enrichIdentityIssuance,
   finishIdentityIssuance,
   isIdentityIssuanceArgs,
+  prepareUnsignedIssuance,
   releaseIdentityIssuance,
+  type IssuanceAttestation,
 } from './identityIssuance'
-import { selectedPublicIdentityKey, publishedIdentityForIssuer } from './publicIdentities'
+import { issuerProfileForKey, selectedPublicIdentityKey, signsIssuance } from './publicIdentities'
 import {
   getWalletRuntime,
   runtimeIsCurrent,
@@ -1022,7 +1024,7 @@ async function handleBrc100RequestInner(
     }
   }
 
-  let approvedIssuer: { identityKey: string; displayName?: string } | undefined
+  let attestation: IssuanceAttestation | undefined
   if (isActionMethod(method)) {
     startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
@@ -1044,14 +1046,12 @@ async function handleBrc100RequestInner(
         assertOnlineForPayment()
         if (isIdentityIssuanceArgs(method, args)) {
           const identityKey = selectedPublicIdentityKey(runtime)
-          const { syncHeldIssuerIdentities } = await import('./identityPublish')
-          await syncHeldIssuerIdentities(runtime, identityKey).catch((error) =>
-            console.warn('[identity-publish] held records not synced before issuance', error),
-          )
-          const identity = publishedIdentityForIssuer(runtime, identityKey)
-          if (!identity) throw new Error('Publish your issuer identity under ID → Public identities before issuing assets.')
-          if (identity.revoked) throw new Error('The selected issuer identity was revoked; select another before issuing assets.')
-          approvedIssuer = { identityKey, displayName: identity.name }
+          const profile = issuerProfileForKey(runtime, identityKey)
+          attestation = !signsIssuance(runtime)
+            ? { kind: 'unsigned', reason: 'opted-out' }
+            : { kind: 'signed', identityKey, ...(profile ? { displayName: profile.name } : {}) }
+          if (attestation.kind === 'unsigned')
+            console.info(`[bsv21-issuer] issuing unsigned — ${attestation.reason}`)
         }
         // Local toolbox / history backup is authoritative — no chain heal before pay.
         const amountSats = extractSatsFromArgs(method, args)
@@ -1075,7 +1075,7 @@ async function handleBrc100RequestInner(
     }
     lapActionPhase(event.request_id, 'preflight')
     const actionDecision = await requestActionApproval(originator, method, args,
-      reservation => { automaticReservation = reservation }, event.request_id, approvedIssuer)
+      reservation => { automaticReservation = reservation }, event.request_id, attestation)
     lapActionPhase(event.request_id, 'approval')
     if (actionDecision !== 'allow') {
       return {
@@ -1175,11 +1175,11 @@ async function handleBrc100RequestInner(
             if (method === 'createAction' && args && typeof args === 'object') {
               try {
                 setPaymentProgress('preparing', 'Preparing payment', null, 'Working…')
-                actionArgs = issuance = await enrichIdentityIssuance(
-                  runtime!,
-                  args as Parameters<typeof enrichIdentityIssuance>[1],
-                  approvedIssuer?.identityKey,
-                )
+                const issuanceArgs = args as Parameters<typeof enrichIdentityIssuance>[1]
+                actionArgs = issuance =
+                  attestation?.kind === 'unsigned'
+                    ? await prepareUnsignedIssuance(runtime!, issuanceArgs)
+                    : await enrichIdentityIssuance(runtime!, issuanceArgs, attestation?.identityKey)
               } catch (err) {
                 console.warn('[bsv21-issuer] enrich createAction failed', err)
                 // Identity mints with tip spends need inputBEEF — do not fall
@@ -1203,14 +1203,14 @@ async function handleBrc100RequestInner(
               )
               // Auth / Sigma fund tips use unlockingScriptLength → signable only.
               // Complete with root P2PKH so the app gets a txid (collectables pattern).
-              if (method !== 'createAction' || !approvedIssuer) return created
+              if (method !== 'createAction' || !attestation) return created
               return await finishIdentityIssuance(
                 runtime!,
                 actionArgs as Parameters<typeof finishIdentityIssuance>[1],
                 created,
               )
             } catch (err) {
-              if (approvedIssuer) console.warn('[bsv21-issuer] signable mint failed', err)
+              if (attestation) console.warn('[bsv21-issuer] signable mint failed', err)
               if (issuance) await releaseIdentityIssuance(runtime!, issuance, created)
               throw err
             }

@@ -225,7 +225,6 @@ export function p2pkhScriptHex(address: string): string {
 
 const OP_NOTIF = 0x64
 const OP_RETURN = 0x6a
-const BRC162_TAG_PUSH = '054253563231'
 
 /** Index just past the opcode at `at`, or null when its push runs off the end. */
 function opEnd(bytes: Uint8Array, at: number): number | null {
@@ -296,10 +295,8 @@ export function scriptPaysAddress(
   }
   if (!script.includes(expected)) return false
 
-  if (script.startsWith(BRC162_TAG_PUSH)) {
-    const binary = decodeBsv21Binary(script)
-    return binary != null && scriptPaysAddress(binary.restScriptHex, address)
-  }
+  const binary = decodeBsv21Binary(script)
+  if (binary) return scriptPaysAddress(binary.restScriptHex, address)
 
   const bytes = hexToUint8(script)
   const lock = hexToUint8(expected)

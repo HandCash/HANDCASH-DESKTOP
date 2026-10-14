@@ -1,18 +1,23 @@
 import type { ChainTracker } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { parseIdentityKeyPackage, profileFromPackage, type IdentityProfile } from './identityProfile'
+import { holdIdentityProfiles, identityProfileFor, rememberIdentityProfile } from './identityProfiles'
 import {
   buildIssuerIdentityPackage,
   issuerIdentityPackageBeef,
   issuerIdentityPackageRoots,
   issuerSignerVerdict,
   parseIssuerIdentityPackage,
+  profileFromBap,
+  profileFromIdentityKey,
   verifyIssuerIdentityPackage,
-  type IssuerAttribution,
+  type BapStampVerdict,
   type IssuerIdentity,
   type IssuerIdentityPackage,
+  type IssuerProfile,
 } from './issuerIdentity'
-import { normalizeBapId } from './issuerMetadata'
+import { normalizeBapId, normalizeIssuerIdentityKey } from './issuerMetadata'
 import type { Chain } from './vault'
 
 /**
@@ -121,12 +126,25 @@ function evict(chain: Chain, index: Index): Index {
 }
 
 /**
- * Record every BAP ID a persisted list names, replacing what that list named
- * before. `holder` is the list's own durable key, so each account's contacts,
- * tokens and items hold for themselves. Held packages are never evicted.
+ * Record every identity a persisted list names, replacing what that list named
+ * before: an identity key's own profile and the BAP profiles that link it, and
+ * a BAP ID directly. `holder` is the list's own durable key, so each account's
+ * contacts, tokens and items hold for themselves. Held packages are never
+ * evicted.
  */
-export function holdIssuerIdentities(chain: Chain, holder: string, bapIds: Iterable<unknown>): void {
+export function holdIssuerIdentities(chain: Chain, holder: string, names: Iterable<unknown>): void {
   if (!holder) return
+  const keys = new Set<string>()
+  const bapIds: unknown[] = []
+  for (const name of names) {
+    const key = normalizeIssuerIdentityKey(name)
+    if (key) keys.add(key)
+    else bapIds.push(name)
+  }
+  holdIdentityProfiles(chain, holder, keys)
+  if (keys.size)
+    for (const identity of storedIssuerIdentities(chain))
+      if (identity.links.some((link) => keys.has(link.identityKey))) bapIds.push(identity.bapId)
   const ids = bapIdList(bapIds)
   const index = readIndex(chain)
   const prior = index.holds?.[holder] ?? []
@@ -173,11 +191,55 @@ export function storedIssuerIdentities(chain: Chain): IssuerIdentity[] {
   })
 }
 
+/**
+ * The BAP profile labelling `identityKey` (BRC-248 §5): among stored
+ * identities with a live link to it, the latest mined link wins and two at the
+ * same height cancel; an unmined link counts only while none is mined.
+ */
+export function linkedIssuerIdentity(chain: Chain, identityKey: string): IssuerIdentity | null {
+  const key = `${chain}:${generation}:${identityKey}`
+  if (linkedMemo.has(key)) return linkedMemo.get(key)!
+  if (linkedMemo.size > 512) linkedMemo.clear()
+  const candidates = storedIssuerIdentities(chain).flatMap((identity) => {
+    const link = identity.revoked ? undefined : identity.links.find((l) => l.identityKey === identityKey)
+    return link ? [{ identity, height: link.minedHeight }] : []
+  })
+  const mined = candidates.filter((c) => c.height !== undefined).sort((a, b) => b.height! - a.height!)
+  const pool = mined.length ? mined : candidates
+  const winner = pool.length === 1 || (mined.length > 1 && mined[0]!.height !== mined[1]!.height) ? pool[0]!.identity : null
+  linkedMemo.set(key, winner)
+  return winner
+}
+const linkedMemo = new Map<string, IssuerIdentity | null>()
+
+/**
+ * The label for an identity key (BRC-248 §4, its own profile ahead of BAP):
+ * its own signed profile, else a live BAP profile. `bap` names that BAP
+ * identity when the caller knows it (its own published one, or the identity a
+ * verified stamp proved); otherwise the latest stored link decides.
+ */
+export function identityKeyProfile(
+  chain: Chain,
+  identityKey: string,
+  bap?: IssuerIdentity | null,
+): IssuerProfile | null {
+  const candidate = bap === undefined ? linkedIssuerIdentity(chain, identityKey) : bap
+  const live = candidate && !candidate.revoked ? candidate : null
+  const own = identityProfileFor(chain, identityKey)
+  if (own) return profileFromIdentityKey(own, live)
+  return live ? profileFromBap(identityKey, live) : null
+}
+
+/** The identity key a stamp by this BAP identity's key belongs to: its oldest live link. */
+export function linkedIdentityKey(identity: Pick<IssuerIdentity, 'links' | 'revoked'>): string | null {
+  return identity.revoked ? null : (identity.links[0]?.identityKey ?? null)
+}
+
 /** Whether `signer` spoke for the stamped BAP ID when it signed an asset mined at `minedHeight`. */
-export function issuerAttribution(
+export function bapStampVerdict(
   chain: Chain,
   claim: { bapId: string; signer: string; minedHeight?: number },
-): IssuerAttribution | null {
+): BapStampVerdict | null {
   const bapId = normalizeBapId(claim.bapId)
   if (!bapId) return null
   const identity = issuerIdentityFor(chain, bapId)
@@ -195,8 +257,8 @@ export function issuerIdentityForSigner(
   chain: Chain,
   claim: { bapId: string; signer: string; minedHeight?: number },
 ): IssuerIdentity | null {
-  const attribution = issuerAttribution(chain, claim)
-  return attribution?.kind === 'verified' ? attribution.identity : null
+  const verdict = bapStampVerdict(chain, claim)
+  return verdict?.kind === 'verified' ? verdict.identity : null
 }
 
 /**
@@ -268,7 +330,40 @@ export async function rememberConfirmedIssuerIdentityPackage(
   return rememberIssuerIdentityPackage(chain, raw)
 }
 
+export type KeptIdentityKeyPackage = {
+  identityKey: string
+  /** The key's own profile, when one verified (it may be older than one already held). */
+  profile: IdentityProfile | null
+  /** The linked BAP identity, when its package verified, header-checked and links the key. */
+  bap: IssuerIdentity | null
+}
+
+/**
+ * Verify and keep a BRC-248 §1 package. The key's own profile is checked by
+ * its signature alone; its BAP profile is kept only when it links the key
+ * and every merkle proof matches a block header. Null when neither part held.
+ */
+export async function rememberIdentityKeyPackage(
+  chain: Chain,
+  raw: unknown,
+  tracker: ChainTracker | null | undefined,
+): Promise<KeptIdentityKeyPackage | null> {
+  const pkg = parseIdentityKeyPackage(raw)
+  if (!pkg) return null
+  const found = await profileFromPackage(pkg)
+  if (found) rememberIdentityProfile(chain, found)
+  const bapPkg = pkg.bap ? parseIssuerIdentityPackage({ v: 1, ...pkg.bap }) : null
+  const linked = bapPkg ? verifyIssuerIdentityPackage(bapPkg) : null
+  const bap =
+    linked?.links.some((link) => link.identityKey === pkg.identityKey)
+      ? await rememberConfirmedIssuerIdentityPackage(chain, bapPkg, tracker)
+      : null
+  if (!found && !bap) return null
+  return { identityKey: pkg.identityKey, profile: found?.profile ?? null, bap }
+}
+
 export function resetIssuerIdentitiesForTests(): void {
   verified.clear()
+  linkedMemo.clear()
   generation = 0
 }

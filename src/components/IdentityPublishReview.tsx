@@ -8,7 +8,7 @@ export type IdentityReviewStage = 'quoting' | 'reviewing' | 'publishing' | 'refu
 type Props = {
   stage: IdentityReviewStage | null
   /** What is under review, before the quote names the kind. */
-  rotation: boolean
+  pending: 'publish' | 'rotate' | 'link' | null
   plan: IdentityPublishPlan | null
   error: string | null
   onApprove: () => void
@@ -18,22 +18,28 @@ type Props = {
 
 const COPY = {
   publish: {
-    title: 'Publish identity',
+    title: 'Publish to BAP',
     effect:
-      'Public and permanent on-chain.',
+      'Copies your profile to a BAP identity for wallets that read BAP. Public and permanent on-chain.',
     approve: 'Sign and publish',
   },
   update: {
-    title: 'Update identity',
+    title: 'Update BAP profile',
     effect:
-      'Replaces your profile. The earlier one stays on-chain.',
+      'Replaces the BAP copy of your profile. The earlier one stays on-chain.',
     approve: 'Sign and update',
   },
   rotate: {
-    title: 'Rotate signing key',
+    title: 'Rotate BAP signing key',
     effect:
-      'Same profile and profile ID. A new key signs from now on.',
+      'Same BAP profile and ID. A new key signs its changes from now on.',
     approve: 'Sign rotation',
+  },
+  link: {
+    title: 'Link BAP profile',
+    effect:
+      'Your identity key and the BAP profile both sign that it names the assets you issue. Public and permanent on-chain.',
+    approve: 'Sign and link',
   },
 } as const
 
@@ -49,7 +55,7 @@ const kb = (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`
  */
 export function IdentityPublishReview({
   stage,
-  rotation,
+  pending,
   plan,
   error,
   onApprove,
@@ -57,7 +63,7 @@ export function IdentityPublishReview({
   onDismiss,
 }: Props) {
   const open = stage !== null
-  const copy = COPY[plan?.kind ?? (rotation ? 'rotate' : 'publish')]
+  const copy = COPY[plan?.kind ?? pending ?? 'publish']
   const fiat = plan
     ? formatPrimaryFromSats(plan.feeSats, getDisplayCurrency(), getCachedUsdPerBsv())
     : null

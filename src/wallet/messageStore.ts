@@ -445,10 +445,31 @@ function uid(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+/**
+ * An inbound payment card names one payment output. The same notice arrives
+ * again whenever its box message stays unacknowledged across polls or the
+ * sender re-sends it after a restore; each arrival is that same card.
+ */
+function inboundPaymentCardKey(
+  peerId: string,
+  m: Pick<ChatMessage, 'direction' | 'kind' | 'meta'>,
+): string | null {
+  if (m.direction !== 'in' || (m.kind !== 'pay-sent' && m.kind !== 'tip')) return null
+  const txid = m.meta?.txid?.trim().toLowerCase()
+  if (!txid) return null
+  return `${peerId}|${m.kind}|${txid}|${m.meta?.itemOutputIndex ?? ''}|${m.meta?.brc29?.outputIndex ?? ''}`
+}
+
 export function appendMessage(
   peerId: string,
   partial: Omit<ChatMessage, 'id' | 'peerId' | 'createdAt'> & { createdAt?: number },
 ): ChatMessage {
+  const state = readState()
+  const cardKey = inboundPaymentCardKey(peerId, partial)
+  if (cardKey) {
+    const existing = state.messages.find((m) => inboundPaymentCardKey(m.peerId, m) === cardKey)
+    if (existing) return existing
+  }
   const msg: ChatMessage = {
     id: uid(),
     peerId,
@@ -461,7 +482,6 @@ export function appendMessage(
       partial.readAt ??
       (partial.direction === 'out' || partial.direction === 'system' ? Date.now() : undefined),
   }
-  const state = readState()
   state.messages.push(msg)
   writeState(state)
   return msg

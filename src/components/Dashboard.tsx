@@ -363,14 +363,14 @@ export function Dashboard({
         )
         const {
           flushPendingBrc29Outbox,
-          pendingBrc29OutboxCount,
+          dueBrc29NoticeCount,
         } = await import('../wallet/pendingBrc29Outbox')
         const {
           flushPendingItemOutbox,
-          pendingItemOutboxCount,
+          dueItemNoticeCount,
         } = await import('../wallet/pendingItemOutbox')
         const outboxBusy =
-          pendingBrc29OutboxCount() > 0 || pendingItemOutboxCount() > 0
+          dueBrc29NoticeCount() > 0 || dueItemNoticeCount() > 0
         await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex, runtime })
         await flushPendingItemOutbox({ rootKeyHex: active.rootKeyHex, runtime })
         const hints = await pollInboundTipHints({

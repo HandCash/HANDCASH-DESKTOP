@@ -8,6 +8,7 @@ import {
   parseBFile,
   type BapRecord,
 } from './bapRecords'
+import { parseIdentityLink, type IdentityLinkRecord } from './identityLink'
 import { normalizeBapId } from './issuerMetadata'
 import { parseOrdEnvelope } from './ordinalOwnership'
 
@@ -19,8 +20,10 @@ import { parseOrdEnvelope } from './ordinalOwnership'
  * later does not gain the identity.
  *
  * An identity package is a BEEF of exactly the transactions a verifier needs:
- * the ID chain, the ALIAS and the image transaction, each with its merkle proof
- * once mined. It is stored once per BAP ID and travels beside BRC-150 remittance.
+ * the ID chain, the ALIAS, the image transaction and the BRC-248 link records,
+ * each with its merkle proof once mined. It is stored once per BAP ID and
+ * travels beside BRC-150 remittance. The profile labels only the identity keys
+ * a live link names (BRC-248 §5); it never issues anything itself.
  */
 
 export const IDENTITY_IMAGE_MAX_BYTES = 64 * 1024
@@ -34,6 +37,8 @@ const MAX_KEYS = 64
 export type IssuerIdentityFields = { name: string; description: string }
 export type IssuerIdentityImage = { contentType: string; bytes: Uint8Array }
 export type BapSigningKey = { seq: number; address: string; txid: string; minedHeight?: number }
+/** An identity key this BAP profile labels: both signed the link, and nothing ended it. */
+export type IdentityLink = { identityKey: string; txid: string; minedHeight?: number }
 
 /** A verified identity: its key chain and the profile its active key signed. */
 export type IssuerIdentity = IssuerIdentityFields & {
@@ -48,6 +53,8 @@ export type IssuerIdentity = IssuerIdentityFields & {
   /** Inscription outpoint (`txid_vout`) the profile names instead of a B:// file. */
   imageOrigin?: string
   alias: { txid: string; signer: string; minedHeight?: number }
+  /** Live links, oldest first; empty once the identity is revoked. */
+  links: IdentityLink[]
 }
 
 export type IssuerIdentityPackage = { v: 1; bapId: string; beefB64: string }
@@ -55,14 +62,64 @@ export type IssuerIdentityPackage = { v: 1; bapId: string; beefB64: string }
 /** Why a signer does or does not speak for an identity at a given height. */
 export type SignerVerdict = 'active' | 'unknown-key' | 'retired-key' | 'revoked'
 
-/**
- * What an asset's issuer stamp proves against the packages this wallet holds.
- * Only `verified` may show the identity's name or image; an `unconfirmed`
- * stamp can still be copied onto anyone's asset.
- */
-export type IssuerAttribution =
+/** What a stamp by a BAP signing key (earlier drafts of BRC-247) proves against the stored package. */
+export type BapStampVerdict =
   | { kind: 'verified'; identity: IssuerIdentity }
   | { kind: 'unconfirmed'; bapId: string; reason: 'no-package' | 'unknown-key' | 'height-unknown' }
+  | { kind: 'refused'; bapId: string; reason: 'retired-key' | 'revoked' }
+
+/**
+ * The name and image shown for an identity key, and where they came from
+ * (BRC-248 §4): the identity key's own signed profile, else a BAP profile
+ * linked to it. `id` is what a person compares and the identicon draws: the
+ * identity key for its own profile, the BAP ID for a linked one. `bap` is the
+ * linked BAP identity whenever one is held, whichever source won.
+ */
+export type IssuerProfile = IssuerIdentityFields & {
+  id: string
+  identityKey: string
+  source: 'identity-key' | 'bap'
+  image?: IssuerIdentityImage
+  bap?: IssuerIdentity
+}
+
+export function profileFromIdentityKey(
+  profile: IssuerIdentityFields & { identityKey: string; image?: IssuerIdentityImage },
+  bap?: IssuerIdentity | null,
+): IssuerProfile {
+  return {
+    id: profile.identityKey,
+    identityKey: profile.identityKey,
+    source: 'identity-key',
+    name: profile.name,
+    description: profile.description,
+    ...(profile.image ? { image: profile.image } : {}),
+    ...(bap && !bap.revoked ? { bap } : {}),
+  }
+}
+
+export function profileFromBap(identityKey: string, identity: IssuerIdentity): IssuerProfile {
+  return {
+    id: identity.bapId,
+    identityKey,
+    source: 'bap',
+    name: identity.name,
+    description: identity.description,
+    ...(identity.image ? { image: identity.image } : {}),
+    bap: identity,
+  }
+}
+
+/**
+ * Who an asset's verified BRC-247 stamp names, and the profile that labels
+ * them. The issuer is always an identity key; `profile` is its own signed
+ * profile or its linked BAP profile. Only `verified` may show a name or
+ * image; an `unconfirmed` stamp by a BAP key can still be copied onto
+ * anyone's asset.
+ */
+export type IssuerAttribution =
+  | { kind: 'verified'; identityKey: string; profile: IssuerProfile }
+  | { kind: 'unconfirmed'; bapId: string; reason: 'no-package' | 'unknown-key' | 'height-unknown' | 'not-linked' }
   | { kind: 'refused'; bapId: string; reason: 'retired-key' | 'revoked' }
 
 const CONTROL = /[\u0000-\u001f\u007f]/
@@ -278,6 +335,56 @@ function recordsOf(beef: Beef, bapId: string): Located[] {
   return records
 }
 
+type LocatedLink = { txid: string; minedHeight?: number; record: IdentityLinkRecord }
+
+function linkRecordsOf(beef: Beef, bapId: string): LocatedLink[] {
+  const records: LocatedLink[] = []
+  for (const btx of beef.txs) {
+    const tx = btx.tx
+    if (!tx) continue
+    const minedHeight = btx.bumpIndex === undefined ? undefined : beef.bumps[btx.bumpIndex]?.blockHeight
+    tx.outputs.forEach((_, vout) => {
+      const record = parseIdentityLink(tx, vout)
+      if (record?.bapId === bapId) records.push({ txid: btx.txid, minedHeight, record })
+    })
+  }
+  return records
+}
+
+/**
+ * Links in force (BRC-248 §5): the BAP signer was active at the link's height
+ * and no unlink for that identity key came at or after it. A revocation ends
+ * them all. `txids` keeps every valid record, ended or not, so a merge cannot
+ * drop an unlink.
+ */
+function linksOf(records: LocatedLink[], chain: KeyChain): { links: IdentityLink[]; txids: string[] } {
+  const bapSigned = (r: LocatedLink) =>
+    r.record.bapSigner !== undefined && verdictAt(chain, r.record.bapSigner, r.minedHeight) === 'active'
+  const links = records.filter((r) => r.record.kind === 'link' && bapSigned(r))
+  const unlinks = records.filter((r) => r.record.kind === 'unlink' && (r.record.bapSigner === undefined || bapSigned(r)))
+  const ends = (link: LocatedLink, unlink: LocatedLink) =>
+    unlink.record.identityKey === link.record.identityKey &&
+    (unlink.minedHeight === undefined || (link.minedHeight !== undefined && unlink.minedHeight >= link.minedHeight))
+  // Latest mined first; an unmined link only stands in while none is mined.
+  const rank = (height?: number) => height ?? -1
+  const byKey = new Map<string, IdentityLink>()
+  for (const link of chain.revoked ? [] : links) {
+    if (unlinks.some((unlink) => ends(link, unlink))) continue
+    const prior = byKey.get(link.record.identityKey)
+    if (prior && rank(prior.minedHeight) >= rank(link.minedHeight)) continue
+    byKey.set(link.record.identityKey, {
+      identityKey: link.record.identityKey,
+      txid: link.txid,
+      ...(link.minedHeight !== undefined ? { minedHeight: link.minedHeight } : {}),
+    })
+  }
+  const age = (l: IdentityLink) => l.minedHeight ?? Number.MAX_SAFE_INTEGER
+  return {
+    links: [...byKey.values()].sort((a, b) => age(a) - age(b) || (a.txid < b.txid ? -1 : 1)),
+    txids: [...new Set([...links, ...unlinks].map((r) => r.txid))],
+  }
+}
+
 function keyChainOf(records: Located[], bapId: string): KeyChain | null {
   const ids = records.filter((r): r is Located<IdRecord> => r.record.kind === 'id')
   const rootAddress = ids.map((r) => r.record.signer).find((s) => bapIdForAddress(s) === bapId)
@@ -332,6 +439,18 @@ export function bapKeyChain(bapId: string, beefs: readonly number[][]): KeyChain
   }
 }
 
+/** Live links `beefs` establish for `bapId`, with or without a usable ALIAS. */
+export function bapIdentityLinks(bapId: string, beefs: readonly number[][]): IdentityLink[] {
+  try {
+    const work = new Beef()
+    for (const binary of beefs) work.mergeBeef(binary)
+    const chain = keyChainOf(recordsOf(work, bapId), bapId)
+    return chain ? linksOf(linkRecordsOf(work, bapId), chain).links : []
+  } catch {
+    return []
+  }
+}
+
 function analyze(beef: Beef, bapId: string, preferAlias?: string): Analysis | null {
   const records = recordsOf(beef, bapId)
   const chain = keyChainOf(records, bapId)
@@ -367,9 +486,11 @@ function analyze(beef: Beef, bapId: string, preferAlias?: string): Analysis | nu
       if (declaredWith(a) !== declaredWith(b)) return declaredWith(a) ? 1 : -1
       return offset(b) - offset(a) || b.order - a.order
     })
+  let linked: ReturnType<typeof linksOf> | undefined
   for (const alias of aliases) {
     const profile = profileFrom(alias.record.profile, beef)
     if (!profile) continue
+    linked ??= linksOf(linkRecordsOf(beef, bapId), chain)
     const identity: IssuerIdentity = {
       bapId,
       rootAddress,
@@ -381,8 +502,9 @@ function analyze(beef: Beef, bapId: string, preferAlias?: string): Analysis | nu
         signer: alias.record.signer,
         ...(alias.minedHeight !== undefined ? { minedHeight: alias.minedHeight } : {}),
       },
+      links: linked.links,
     }
-    const txids = new Set([...keys.map((key) => key.txid), alias.txid])
+    const txids = new Set([...keys.map((key) => key.txid), alias.txid, ...linked.txids])
     if (revoked) txids.add(revoked.txid)
     if (profile.imageTxid) txids.add(profile.imageTxid)
     if (profile.imageOrigin) txids.add(profile.imageOrigin.split('_')[0]!)

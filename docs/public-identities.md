@@ -1,22 +1,40 @@
 # Public issuer identities
 
-Under **ID → Public identities** you can publish the identity behind the items and tokens you issue. It is a **BAP identity** with an image, a name and an optional bio.
+Under **ID → Public identities** you give each identity key a name, an optional bio and an optional photo. That profile is what contacts, apps and the holders of the items and tokens you issue see.
 
-- An issuer is either the wallet itself or an imported hex or WIF **master key**.
-- You select which issuer new issuance uses.
-- Issuing requires a published identity that has not been revoked.
+- An identity key is either the wallet itself or an imported hex or WIF **master key**.
+- You select which identity key signs new issuance and which one your identity card presents.
 - The wallet's payment identity, and the ownership locks on assets, stay independent of the issuer.
 
 Two drafts cover the normative rules:
 
-- [BRC-247](../../BRCs/peer-to-peer/0247.md) is the asset stamp: a Sigma signature by the current BAP key over a MAP tape that names the BAP ID.
-- [BRC-248](../../BRCs/peer-to-peer/0248.md) covers the key chain, signer verdicts, profile selection, the package format and delivery.
+- [BRC-247](../../BRCs/peer-to-peer/0247.md) is the asset stamp: a Sigma signature by the issuer's identity key over a MAP tape that names that key.
+- [BRC-248](../../BRCs/peer-to-peer/0248.md) covers the identity key's own profile (§2), the package format and delivery, and the optional BAP profile: its key chain, signer verdicts and link to the identity key.
 
 This page covers how the wallet implements them.
 
-## What an identity is
+## The identity key's own profile
 
-An identity is a [BAP](https://github.com/BitcoinSchema/bap/blob/master/PROTOCOL.md) identity, not an ordinal. Nothing about it is a spendable output, so it cannot be moved or sold. Authority comes from the key chain alone.
+The name and photo belong to the **identity key**. Its profile is a BRC-52 certificate whose certifier and subject are both that key (`identityProfile.ts`). Every field is revealed to anyone:
+
+| Field | Value |
+|---|---|
+| `name` | 1–80 characters; never an email address or phone number |
+| `description` | up to 280 characters |
+| `profilePhoto` | optional UHRP URL; the bytes travel beside the certificate and must hash to it |
+| `issuedAt` | when it was signed; of two profiles by one key, the later wins |
+
+**Save** signs it with the key's master and keeps it on this device. Nothing goes on chain and there is no fee. The photo is encoded as for BAP below (square, at most 512 px, metadata stripped, at most 64 KB). Each save is strictly later than the one before, so an older copy can never be replayed over it.
+
+The store (`identityProfiles.ts`) keeps one profile per identity key, only after its certificate verified. Profiles of keys this wallet controls are pinned and ride the identity backup. A contact's or a held asset's profile is held; at most 8 profiles nothing on the device names are kept.
+
+**Who it labels.** Everywhere the wallet names an identity key (account menu, identity card, chat, Collect shelves, asset details, app approvals, BRC-100 `displayName`) it uses `identityKeyProfile`: the key's own profile first, else a live BAP profile that links that key. `IssuerProfile.id` is what a person compares: the identity key for its own profile, the BAP ID for a BAP profile. A key with neither shows as its key.
+
+A profile proves only that the key's holder chose that name. It is not a real-world identity or a handle.
+
+## The optional BAP profile
+
+A key can also mirror its profile as a [BAP](https://github.com/BitcoinSchema/bap/blob/master/PROTOCOL.md) identity, for 1Sat apps that read BAP. It is never the label of a key that has its own profile, and never the issuer signal. **Publish to BAP**, **Update BAP profile**, **Link BAP profile to identity key** and **Rotate BAP signing key** are in the row menu; each is a quoted, approved transaction. A BAP identity is not an ordinal. Nothing about it is a spendable output, so it cannot be moved or sold. Authority comes from the key chain alone.
 
 **BAP ID.** The BAP ID is the hash of the root address, which is key 0. Every key in the chain derives from the issuer's master key, at protocol `[1,'sigma']` with key ID `identity-N` and counterparty `self`. 1Sat BRC-100 wallets use the same derivation, so the same master key gives the same BAP ID there. The BAP ID never changes.
 
@@ -62,35 +80,31 @@ A revoked identity cannot be updated, rotated or used to issue. The wallet does 
 
 ## How assets name it
 
-New item and BSV-21 genesis scripts carry a BRC-247 stamp: `MAP SET issuer <current signing key> bapId <BAP ID>` before their Sigma signature, and that signing key is the one that signs. Remittance carries the same two values as compact claims. The reference sits inside the signed origin script, so every later holder recovers it from the item's BRC-150 package, with no indexer involved.
+New item and BSV-21 genesis scripts carry a BRC-247 stamp: `MAP SET issuer <identity key>` before a Sigma signature by that key over an anchor input, or no stamp when the user opts out. Remittance carries the same value as a compact claim. The reference sits inside the signed origin script, so every later holder recovers it from the item's BRC-150 package, with no indexer involved.
 
-Collect shows the issuer's image and name only when all of these hold:
+Collect has one shelf per issuer identity key (`issuer:pubkey:<identityKey>`). `issuerAttribution` (`issuerIdentities.ts`) decides whether a signed asset is `verified` for its key, and `issuerViewFor` (`collectableGroups.ts`) turns that into the shelf, the token chip label and the issuer rows in item and token details. The shelf's name and image come from the key's own profile, else its linked BAP profile; a key with neither still gets its shelf, labelled with the key shortened. A newer profile from any delivery or identity card relabels it.
 
-- the asset's Sigma signature verifies, bound to its funding input, and its signer equals `issuer`;
-- a verified package for `bapId` is in the store;
-- that signer is an **active** key of the chain at the asset's mined height. The height comes from the retained merkle path of the asset's origin; without one, it is unknown.
+Earlier drafts stamped `bapId <BAP ID>` and signed with the current BAP key. Those assets still resolve through the BAP chain:
 
-Collect groups by BAP ID. `issuerAttribution` (`issuerIdentities.ts`) gives each signed asset one of three answers, and `issuerViewFor` (`collectableGroups.ts`) turns it into the shelf, the token chip label and the issuer rows in item and token details:
+| Attribution | When | Shelf |
+|---|---|---|
+| `verified` | the signer is an active key of the chain at the asset's mined height, and the BAP profile links an identity key | that identity key's shelf |
+| `unconfirmed` | no package yet, a signer the package does not list, or a retired key at an unknown height | `issuer:bap-unconfirmed:<bapId>`, "Unconfirmed profile …"; never a name or image |
+| `refused` | the package retires the signer before the asset's height, or the identity is revoked | the signing key |
 
-| Attribution | When | Shelf | Shows |
-|---|---|---|---|
-| `verified` | the signer is an active key at the asset's height | `issuer:bap:<bapId>` | the newest profile in the stored package: image, name, BAP ID |
-| `unconfirmed` | no package yet, a signer the package does not list, or a retired key at an unknown height | `issuer:bap-unconfirmed:<bapId>` | "Unconfirmed BAP …" and the BAP ID; never a name, image or handle |
-| `refused` | the package retires the signer before the asset's height, or the identity is revoked | `issuer:pubkey:<signer>` | the signing key |
-
-Every verified asset of one BAP ID shares a shelf across rotations, labelled with the newest profile the wallet holds, and a newer package merged from any delivery relabels it. Anyone can copy a stamp, so unconfirmed assets keep their own BAP shelf until a package proves their signer. An unsigned copy stays on a separate "issuer claim" shelf.
+The height comes from the retained merkle path of the asset's origin; without one, it is unknown. Anyone can copy a stamp, so an unsigned copy stays on a separate "issuer claim" shelf.
 
 ### Telling identities apart
 
-A name and image are whatever the identity's owner chose, so anyone can publish "HandCash" with HandCash's logo. Every BAP identity is therefore shown with its **fingerprint**: the BAP ID shortened (first 6 and last 4 characters) beside a 5×5 identicon drawn from `sha256(bapId)` (`bapFingerprint` in `issuerTrust.ts`, `BapIdenticon.tsx`). The full BAP ID stays in the title and in item and token details.
+A name and image are whatever the key's owner chose, so anyone can call themselves "HandCash" with HandCash's logo. Every profile is therefore shown with its **fingerprint**: the profile ID (the identity key, or the BAP ID for a BAP profile) shortened to its first 6 and last 4 characters beside a 5×5 identicon drawn from its SHA-256 (`profileFingerprint` in `issuerTrust.ts`, `ProfileIdenticon.tsx`). The full ID stays in the title and in item and token details.
 
-A verified identity can also carry one of these marks (`issuerTrustFrom`):
+A verified profile can also carry one of these marks (`verifiedProfileMark` → `issuerTrustFrom`):
 
 | Mark | When |
 |---|---|
-| checkmark, **Verified by HandCash** | the BAP ID is on HandCash's verified-issuer list |
+| checkmark, **Verified by HandCash** | the profile ID, or the BAP ID of the BAP profile the key links, is on HandCash's verified-issuer list |
 | caution, **imitation** | not listed, and its name reads like a listed issuer's name (case, accents, spacing and look-alike characters such as `rn`/`m`, `0`/`o`, `1`/`l` folded away) |
-| caution, **shared name** | not listed, and another identity in the store reads the same |
+| caution, **shared name** | not listed, and another stored profile reads the same. A BAP profile linked to a key that has its own profile is not counted, so nobody collides with themselves |
 
 Unconfirmed stamps get neither mark; they never show a name to imitate.
 
@@ -104,9 +118,11 @@ Builds before 1.3.393 wrote a self-signed `issuerProfile` JSON with an icon URL 
 
 ## Store once, attach when needed
 
-A package is `{ v: 1, bapId, beefB64 }`. The BEEF holds only the ID chain, the chosen `ALIAS`, its image and any revocation, with merkle paths once mined, up to 160 KB.
+An identity-key package is `{ v: 2, identityKey, certificates?, images?, bap? }`, up to 160 KB: the key's profile certificate, the photo bytes, and the BAP package when it links that key. A package over its budget drops the BAP part first, never the key's own profile.
 
-The store (`issuerIdentities.ts`) keeps one durable key per BAP ID plus a small index. Assets hold only the BAP ID.
+A BAP package is `{ v: 1, bapId, beefB64 }`. The BEEF holds only the ID chain, the chosen `ALIAS`, its image, the link and any revocation, with merkle paths once mined.
+
+The BAP store (`issuerIdentities.ts`) keeps one durable key per BAP ID plus a small index. Assets hold only the identity key (or, from earlier drafts, the BAP ID).
 
 - The identities this wallet controls are pinned. Only its own publish, rotate, adopt and proof-upgrade flows rewrite them, and they are included in the identity backup.
 - A peer's package is accepted only after every merkle root in it matches a block header. Heights decide rotation and revocation, so a forged proof must never reach the store.
@@ -126,24 +142,31 @@ An item is attested when its retained origin carries the issuer's Sigma and a BR
 
 ### Where the issuer shows
 
-Item details, token details, Send, Burn and every app approval that previews a held asset show its issuer with one mark (`AssetIssuers` → `IssuerIdentityMark`). That mark is the BAP identity with its image, HandCash checkmark and fingerprint when a package proves the signer. Otherwise it is the signing key, or an unsigned issuer claim. It is never a handle. A batch shows each distinct issuer, up to three.
+Item details, token details, Send, Burn and every app approval that previews a held asset show its issuer with one mark (`AssetIssuers` → `IssuerIdentityMark`). That mark is the issuer key's profile with its image, HandCash checkmark and fingerprint when the asset's signature verifies for that key. Otherwise it is the signing key, or an unsigned issuer claim. It is never a handle. A batch shows each distinct issuer, up to three.
 
-A received token therefore lands on its issuer's BAP shelf beside that issuer's items, and it can be forwarded with the same identity package.
+A received token therefore lands on its issuer's shelf beside that issuer's items, and it can be forwarded with the same identity package.
 
-When an item or token is delivered over the messagebox, `notifyPeerItemIncoming` looks up the BAP ID that the asset's origin names. If that package is in the store, it attaches it as `meta.identities`, at most 2 per envelope. It goes in **last**: the Atomic BEEF, the item's BRC-150 provenance and the token's lineage keep the box cap first, and a package that does not fit is omitted. The receiver header-checks, verifies and stores packages off the receive path. Packages never gate ingest or ACK, and they are kept out of the chat transcript.
+When an item or token is delivered over the messagebox, `notifyPeerItemIncoming` builds the package for the identity key that the asset's origin names (or the BAP package an earlier-draft stamp names) and attaches it as `meta.identities`, at most 2 per envelope. It goes in **last**: the Atomic BEEF, the item's BRC-150 provenance and the token's lineage keep the box cap first, and a package that does not fit is omitted. The receiver verifies the certificate and photo hash, header-checks the BAP part (kept only when it links that key) and stores both off the receive path (`rememberIdentityKeyPackage`). Packages never gate ingest or ACK, and they are kept out of the chat transcript.
+
+## Identity cards
+
+Contacts learn the profile from a signed **identity card** (`identityCard.ts`, `identityCardShare.ts`), sent once per contact after a delivery and again when the profile or the presented key changes. A v2 card is the statement `{ v: 2, identityKey, presents, issuedAt }`, BRC-3 signed by the wallet key under protocol `[2, 'identity card']`, key ID `1`, counterparty `anyone`. When the presented key is not the wallet key, it countersigns. The card carries the presented key's v2 package; `presents: null` withdraws it. An older card, or one at the same time naming a different key, is refused. v1 cards from older builds (a BAP identity, protocol `[2, 'bap identity card']`) are still read. Presenting a key needs only its own profile, not a BAP identity.
 
 ## Custody and recovery
 
 Imported master keys are sealed to the active account with SDK BRC-78 authenticated encryption. Records are scoped by account and network, and hold custody only: the key, the signer kind, and the sealed key for imported signers. The BAP signing keys are derived on demand and are never stored.
 
-The identity backup contains the sealed keys and the packages they publish under. A device restored from it can keep issuing, and keep rotating, without fetching anything. Keep **both the identity backup and the wallet recovery phrase**, or the original imported key. The phrase alone cannot derive an imported master key, and BRC-39 history backup does not replace the identity backup.
+The identity backup contains the sealed keys, each key's own profile and the BAP packages they publish under. Restore keeps a profile only when its certificate verifies for a key the backup controls. A device restored from it can keep issuing, and keep rotating, without fetching anything. Keep **both the identity backup and the wallet recovery phrase**, or the original imported key. The phrase alone cannot derive an imported master key, and BRC-39 history backup does not replace the identity backup.
 
 Removing an imported signer deletes its key from this wallet. Published identities and existing assets are unaffected. The issuer selection is captured at approval and checked again before signing; switching wallet or issuer stops signing. Key material never enters chart state, public metadata or app responses.
 
 ## Standards notes and limits
 
 - Wallet requests stay standard BRC-100 `createAction`. Records are standard BAP / AIP / B, and asset authorship is standard Sigma / BRC-77.
-- The asset stamp is proposed as BRC-247. The package format, the verdict rules and the `meta.identities` envelope field are proposed as BRC-248. Wallets that implement neither can ignore them.
+- The asset stamp is proposed as BRC-247. The identity key's profile, the package format, the verdict rules and the `meta.identities` envelope field are proposed as BRC-248. Wallets that implement neither can ignore them.
+- The wallet labels a key by its own profile ahead of a linked BAP profile. BRC-248 §4 as drafted still ranks a BAP profile first and has no `issuedAt` rule for self-published profiles.
+- HandCash's verified-issuer list is keyed by BAP ID. A key with its own profile gets the checkmark through the BAP profile it links.
+- Builds before v2 identity cards refuse them and keep showing the previous card.
 - A receiver with no prior package sees only the records it is sent. A fork that the sender leaves out is invisible to it until another package brings it in.
 - A rotation written by an app on this wallet is followed (held-record sync). A rotation written by a different wallet, for example 1Sat holding the same master, is only seen once its records reach this wallet. Without an indexer, a chain that moved on elsewhere is not discovered. Publishing over it then fails to package after broadcast, because the new ALIAS is signed by a retired key.
 - Proof upgrade runs when the panel opens, not in the background. Until it does, a fresh publish verifies as unmined. An unmined update stays the preferred profile while it is unmined.

@@ -35,7 +35,7 @@ function jsonTip(payload: unknown, mime = 'application/bsv-20'): string {
 describe('chooseBsv21ListingLock', () => {
   it('accepts a 162 value lock and reads its id and amount', () => {
     const lock = chooseBsv21ListingLock(
-      buildBsv21ValueLock({ tokenId: TOKEN_ID, amount: 250n, address }),
+      buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN_ID, amount: 250n, address }),
     )
     expect(lock).toMatchObject({ lock: 'value', tokenId: TOKEN_ID, amount: 250n })
   })
@@ -74,7 +74,7 @@ describe('chooseBsv21ListingLock', () => {
   })
 
   it('is case insensitive about the script it is handed', () => {
-    const upper = buildBsv21ValueLock({
+    const upper = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_ID,
       amount: 7n,
       address,

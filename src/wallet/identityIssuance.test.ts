@@ -31,10 +31,11 @@ vi.mock('./beefCache', () => ({
 import {
   enrichIdentityIssuance,
   finishIdentityIssuance,
+  prepareUnsignedIssuance,
   releaseIdentityIssuance,
 } from './identityIssuance'
 import { issuerMetadataFromScript } from './issuerMetadata'
-import { sigmaSignDeployLockingScript, verifySigmaIssuer } from './token/issuer'
+import { issuerFromRemittance, sigmaSignDeployLockingScript, verifySigmaIssuer } from './token/issuer'
 import {
   importIssuerPrivateKey,
   recordPublishedIdentity,
@@ -127,21 +128,20 @@ function boundTransaction(
   return tx
 }
 describe('standard issuer-backed minting', () => {
-  it('requires a published identity before preparing an anchor', async () => {
+  it('signs with the identity key when no profile is published', async () => {
     state.values.clear()
     resetIssuerIdentitiesForTests()
-    await expect(enrichIdentityIssuance(runtime(), nftArgs())).rejects.toThrow(
-      /Publish your issuer identity/,
-    )
-    expect(state.active!.wallet.createAction).not.toHaveBeenCalled()
+    const id = root.toPublicKey().toString()
+    const args = await enrichIdentityIssuance(runtime(), nftArgs(), id)
+    expect(verifySigmaIssuer(boundTransaction(args), 0, id)).toBe(true)
+    expect(issuerMetadataFromScript(args.outputs![0]!.lockingScript)).toEqual({ issuer: id })
   })
-  it('signs mixed NFT and FT genesis outputs under one issuer and one anchor', async () => {
+  it('signs mixed NFT and FT genesis outputs with the identity key under one anchor, never a BAP key', async () => {
     const id = root.toPublicKey().toString()
     const args = await enrichIdentityIssuance(
       runtime(),
       {
         outputs: [
-          ...nftArgs().outputs,
           {
             satoshis: 1,
             basket: 'bsv21',
@@ -156,20 +156,39 @@ describe('standard issuer-backed minting', () => {
               rest: lock,
             }).toHex(),
           },
+          ...nftArgs().outputs,
         ],
       },
       id,
     )
     const tx = boundTransaction(args)
     for (let i = 0; i < 2; i++) {
-      expect(verifySigmaIssuer(tx, i, rootSigner)).toBe(true)
-      expect(verifySigmaIssuer(tx, i, id)).toBe(false)
-      expect(issuerMetadataFromScript(args.outputs![i]!.lockingScript)).toEqual({
-        issuer: rootSigner,
-        bapId: rootIdentity.bapId,
-      })
+      expect(verifySigmaIssuer(tx, i, id)).toBe(true)
+      expect(verifySigmaIssuer(tx, i, rootSigner)).toBe(false)
+      expect(issuerMetadataFromScript(args.outputs![i]!.lockingScript)).toEqual({ issuer: id })
     }
     expect(state.active!.wallet.createAction).toHaveBeenCalledTimes(1)
+  })
+  it('refuses a binary token genesis that is not output 0', async () => {
+    const id = root.toPublicKey().toString()
+    await expect(
+      enrichIdentityIssuance(
+        runtime(),
+        {
+          outputs: [
+            ...nftArgs().outputs,
+            {
+              satoshis: 1,
+              basket: 'bsv21',
+              tags: ['op:deploy+mint'],
+              customInstructions: JSON.stringify({ op: 'deploy+mint', amt: '10' }),
+              lockingScript: encodeBsv21Binary({ amount: 10n, payload: { sym: 'MIX' }, rest: lock }).toHex(),
+            },
+          ],
+        },
+        id,
+      ),
+    ).rejects.toThrow(/must be output 0/)
   })
   it('uses the SDK anchor flow and the selected imported key for an NFT, while funding stays with the wallet', async () => {
     const id = importIssuer()
@@ -187,20 +206,17 @@ describe('standard issuer-backed minting', () => {
         ],
       }),
     )
-    expect(args.options?.sendWith).toEqual([
-      args.inputs![0]!.outpoint.split('.')[0],
-    ])
+    expect(args.options).toMatchObject({ noSend: true, knownTxids: [sourceBeef().txid] })
+    expect(args.options?.sendWith).toBeUndefined()
+    expect(args.inputs![0]!.outpoint).toBe(`${sourceBeef().txid}.0`)
     const out = args.outputs![0]!
-    expect(out.tags?.filter((tag) => tag.startsWith('issuer:'))).toEqual([
-      `issuer:${issuerSigner}`,
-    ])
-    expect(JSON.parse(out.customInstructions!)).toMatchObject({
-      issuer: issuerSigner,
-      bapId: issuerIdentity.bapId,
-    })
-    const metadata = issuerMetadataFromScript(out.lockingScript)
-    expect(metadata).toEqual({ issuer: issuerSigner, bapId: issuerIdentity.bapId })
-    expect(verifySigmaIssuer(boundTransaction(args), 0, issuerSigner)).toBe(true)
+    expect(out.tags?.filter((tag) => tag.startsWith('issuer:'))).toEqual([`issuer:${id}`])
+    const instructions = JSON.parse(out.customInstructions!)
+    expect(instructions).toMatchObject({ issuer: id })
+    expect(instructions).not.toHaveProperty('bapId')
+    expect(issuerMetadataFromScript(out.lockingScript)).toEqual({ issuer: id })
+    expect(verifySigmaIssuer(boundTransaction(args), 0, id)).toBe(true)
+    expect(verifySigmaIssuer(boundTransaction(args), 0, issuerSigner)).toBe(false)
     expect(
       verifySigmaIssuer(
         boundTransaction(args),
@@ -209,7 +225,7 @@ describe('standard issuer-backed minting', () => {
       ),
     ).toBe(false)
   })
-  it('signs a BRC-162 fungible genesis with the same BAP ID and Sigma wire', async () => {
+  it('signs a BRC-162 fungible genesis with the same identity key and Sigma wire', async () => {
     const id = root.toPublicKey().toString()
     const args = await enrichIdentityIssuance(
       runtime(),
@@ -234,10 +250,8 @@ describe('standard issuer-backed minting', () => {
       },
       id,
     )
-    expect(issuerMetadataFromScript(args.outputs![0]!.lockingScript).bapId).toBe(
-      rootIdentity.bapId,
-    )
-    expect(verifySigmaIssuer(boundTransaction(args), 0, rootSigner)).toBe(true)
+    expect(issuerMetadataFromScript(args.outputs![0]!.lockingScript)).toEqual({ issuer: id })
+    expect(verifySigmaIssuer(boundTransaction(args), 0, id)).toBe(true)
   })
   it('rejects changed selection after consent or during anchor creation, and never returns an unsigned mint', async () => {
     const id = importIssuer()
@@ -337,5 +351,66 @@ describe('standard issuer-backed minting', () => {
         spends: { 0: { unlockingScript: expect.any(String) } },
       }),
     )
+    expect(state.active!.wallet.createAction).toHaveBeenLastCalledWith({
+      description: 'Send issuer anchor',
+      options: { sendWith: [sourceBeef().txid, tx.id('hex')], acceptDelayedBroadcast: true },
+    })
+  })
+  it('releases both when the signed mint cannot be queued with its anchor', async () => {
+    const args = await enrichIdentityIssuance(runtime(), nftArgs())
+    const tx = boundTransaction(args)
+    const beef = Beef.fromBinary(args.inputBEEF!)
+    beef.mergeTransaction(tx)
+    vi.mocked(state.active!.wallet.signAction).mockResolvedValue({ txid: tx.id('hex') })
+    vi.mocked(state.active!.wallet.createAction).mockResolvedValueOnce({
+      sendWithResults: [{ txid: tx.id('hex'), status: 'failed' }],
+    } as never)
+    const created = { signableTransaction: { tx: beef.toBinary(), reference: 'mint-reference' } }
+    await expect(finishIdentityIssuance(runtime(), args, created)).rejects.toThrow()
+    await releaseIdentityIssuance(runtime(), args, created)
+    expect(vi.mocked(state.active!.wallet.abortAction).mock.calls).toEqual([
+      [{ reference: 'mint-reference' }],
+      [{ reference: sourceBeef().txid }],
+    ])
+  })
+})
+
+describe('unsigned issuance', () => {
+  beforeEach(() => {
+    state.values.clear()
+    resetIssuerIdentitiesForTests()
+  })
+  it('issues an item with no identity: no anchor, no issuer tape, no issuer tag', async () => {
+    const args = await prepareUnsignedIssuance(runtime(), nftArgs())
+    const out = args.outputs![0]!
+    expect(out.lockingScript).toBe(nftArgs().outputs[0]!.lockingScript)
+    expect(issuerMetadataFromScript(out.lockingScript)).toEqual({})
+    expect(out.tags).toEqual(['ordinal'])
+    expect(args.inputs).toBeUndefined()
+    expect(state.active!.wallet.createAction).not.toHaveBeenCalled()
+  })
+  it('deploys a BSV-21 token with no stamp and no issuer claim', async () => {
+    const args = await prepareUnsignedIssuance(runtime(), {
+      outputs: [
+        {
+          satoshis: 1,
+          basket: 'bsv21',
+          tags: ['op:deploy+mint', 'issuer:' + rootSigner],
+          customInstructions: JSON.stringify({ op: 'deploy+mint', amt: '10', issuer: rootSigner, bapId: rootIdentity.bapId }),
+          lockingScript: encodeBsv21Binary({ amount: 10n, payload: { sym: 'RAW' }, rest: lock }).toHex(),
+        },
+      ],
+    })
+    const out = args.outputs![0]!
+    expect(issuerMetadataFromScript(out.lockingScript)).toEqual({})
+    expect(out.tags!.some(tag => tag.startsWith('issuer:'))).toBe(false)
+    expect(issuerFromRemittance(out)).toBeNull()
+    expect(JSON.parse(out.customInstructions!)).not.toHaveProperty('bapId')
+    expect(state.active!.wallet.createAction).not.toHaveBeenCalled()
+  })
+  it('still refuses an item without a valid ord inscription', async () => {
+    const args = nftArgs()
+    args.outputs[0]!.lockingScript = lock
+    await expect(prepareUnsignedIssuance(runtime(), args)).rejects.toThrow(/valid ord inscription/)
   })
 })

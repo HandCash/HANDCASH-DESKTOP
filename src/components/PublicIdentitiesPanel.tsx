@@ -17,8 +17,11 @@ import {
   publicIdentitiesGeneration,
   removePublicIdentity,
   restorePublicIdentityBackup,
+  saveIdentityProfile,
   selectedPublicIdentityKey,
   selectPublicIdentity,
+  setSignsIssuance,
+  signsIssuance,
   subscribePublicIdentities,
   type PublicIdentityRow,
 } from '../wallet/publicIdentities'
@@ -27,6 +30,7 @@ import {
   IDENTITY_NAME_MAX,
   issuerIdentityImageDataUrl,
 } from '../wallet/issuerIdentity'
+import { identityProfilesGeneration, subscribeIdentityProfiles } from '../wallet/identityProfiles'
 import { issuerIdentitiesGeneration, subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { encodeIdentityImage } from '../wallet/identityImage'
 import {
@@ -40,15 +44,16 @@ import { toastSuccess } from '../wallet/toast'
 import type { WalletProfile } from '../machines/appMachine'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { DeferredImage } from './DeferredImage'
-import { BapIdenticon } from './BapIdenticon'
+import { ProfileIdenticon } from './ProfileIdenticon'
 import { IdentityPublishReview, type IdentityReviewStage } from './IdentityPublishReview'
 
 const REVIEW_STAGES: readonly IdentityReviewStage[] = ['quoting', 'reviewing', 'publishing', 'refused']
 
 const PUBLISHED_TOAST = {
-  publish: 'Identity published',
-  update: 'Identity updated',
-  rotate: 'Signing key rotated',
+  publish: 'Profile published to BAP',
+  update: 'BAP profile updated',
+  rotate: 'BAP signing key rotated',
+  link: 'BAP profile linked to your identity key',
 } as const
 
 function downloadJson(value: string, filename: string) {
@@ -81,6 +86,10 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   const [snapshot, send] = useMachine(publicIdentitiesMachine, {
     input: {
       ports: {
+        save: async (identityKey, fields, image) => {
+          await saveIdentityProfile(ownerRuntime(profile), identityKey, fields, image)
+          toastSuccess('Profile saved')
+        },
         quote: async (request) => planIdentityPublish(ownerRuntime(profile), request),
         publish: async (request, plan) => {
           await publishIdentityPlan(ownerRuntime(profile), request, plan)
@@ -99,6 +108,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     | 'copy'
     | 'present'
     | 'share'
+    | 'signing'
   >()
   const privateKey = useRef<HTMLInputElement>(null)
   const backupFile = useRef<HTMLInputElement>(null)
@@ -108,6 +118,10 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   const generation = useSyncExternalStore(
     subscribePublicIdentities,
     publicIdentitiesGeneration,
+  )
+  const profiles = useSyncExternalStore(
+    subscribeIdentityProfiles,
+    identityProfilesGeneration,
   )
   const packages = useSyncExternalStore(
     subscribeIssuerIdentities,
@@ -119,6 +133,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         rows: listPublicIdentities(runtime),
         selected: selectedPublicIdentityKey(runtime),
         presented: presentedPublicIdentityKey(runtime),
+        signs: signsIssuance(runtime),
         error: null,
       }
     } catch (error) {
@@ -126,10 +141,11 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         rows: [] as PublicIdentityRow[],
         selected: profile.identityKey,
         presented: null,
+        signs: true,
         error: error instanceof Error ? error.message : String(error),
       }
     }
-  }, [generation, packages, profile.identityKey, runtime])
+  }, [generation, profiles, packages, profile.identityKey, runtime])
   const assertOwner = () => {
     if (ownerRuntime(profile) !== runtime) throw new Error('Wallet changed; reopen Identity and retry.')
   }
@@ -153,13 +169,22 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     send({
       type: 'COMPOSE',
       identityKey: row.identityKey,
-      ...(row.identity
+      ...(row.profile
         ? {
-            fields: { name: row.identity.name, description: row.identity.description },
-            ...(row.identity.image ? { image: row.identity.image } : {}),
+            fields: { name: row.profile.name, description: row.profile.description },
+            ...(row.profile.image ? { image: row.profile.image } : {}),
           }
         : {}),
     })
+  const publishBap = (row: PublicIdentityRow) => {
+    if (!row.profile?.image) return
+    send({
+      type: 'PUBLISH_BAP',
+      identityKey: row.identityKey,
+      fields: { name: row.profile.name, description: row.profile.description },
+      image: row.profile.image,
+    })
+  }
   const importKey = () =>
     action.run('import', async () => {
       assertOwner()
@@ -179,7 +204,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     action.run('present', async () => {
       assertOwner()
       presentPublicIdentity(runtime!, row.identityKey)
-      toastSuccess(`${row.identity?.name ?? 'Identity'} shared with contacts`)
+      toastSuccess(`${row.profile?.name ?? 'Profile'} shared with contacts`)
     })
   const shareCard = () =>
     action.run('share', async () => {
@@ -193,14 +218,14 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         throw new Error('Backup file is too large (4 MB maximum).')
       const raw: unknown = JSON.parse(await picked.text())
       assertOwner()
-      restorePublicIdentityBackup(runtime!, raw)
+      await restorePublicIdentityBackup(runtime!, raw)
       toastSuccess('Identities restored')
     })
   const review = REVIEW_STAGES.find((stage) => snapshot.matches(stage)) ?? null
   const { request } = snapshot.context
-  const rotating = !!review && request?.kind === 'rotate'
-  const busy = action.busy || snapshot.hasTag('review')
-  const browsing = snapshot.matches('browsing') || rotating
+  const saving = snapshot.matches('saving')
+  const busy = action.busy || snapshot.hasTag('busy')
+  const browsing = snapshot.matches('browsing') || !!review
   const importing = snapshot.matches('importing')
   const draft = snapshot.context
   const exportBackup = () =>
@@ -212,6 +237,12 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
     action.run('copy', async () => {
       assertOwner()
       await copyText(row.identityKey, { label: 'issuer wallet key' })
+    })
+  const toggleSigning = () =>
+    action.run('signing', async () => {
+      assertOwner()
+      setSignsIssuance(runtime!, !view.signs)
+      toastSuccess(view.signs ? 'New mints will be unsigned' : 'New mints are signed by your identity key')
     })
   const useAsIssuer = (row: PublicIdentityRow) =>
     action.run('select', async () => {
@@ -266,6 +297,10 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                     <Menu.Item disabled={!!view.error} onClick={() => send({ type: 'IMPORT_KEY' })}>
                       Import signing key
                     </Menu.Item>
+                    <Menu.Separator />
+                    <Menu.Item disabled={!!view.error} onClick={() => void toggleSigning()}>
+                      {view.signs ? 'Issue new mints unsigned' : 'Sign new mints'}
+                    </Menu.Item>
                   </Menu.Content>
                 </Menu.Positioner>
               </Menu.Root>
@@ -283,50 +318,58 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
             />
             <ul className="identity-list" data-aeon-part="records">
               {view.rows.map((row) => {
-                const live = !!row.identity && !row.identity.revoked
+                const bap = row.identity && !row.identity.revoked ? row.identity : null
+                const own = row.profile?.source === 'identity-key'
                 const issuer = row.identityKey === view.selected
                 const shown = row.identityKey === view.presented
-                const confirming =
-                  live && row.identity!.keys.at(-1)!.minedHeight === undefined
+                const confirming = !!bap && bap.keys.at(-1)!.minedHeight === undefined
+                const unlinked = !!bap && !bap.links.some((link) => link.identityKey === row.identityKey)
+                const profileId = row.profile?.id ?? row.identityKey
                 return (
                   <li
                     key={row.identityKey}
                     data-aeon-part="record"
-                    data-aeon-state={
-                      row.identity?.revoked ? 'revoked' : row.identity ? 'published' : 'draft'
-                    }
+                    data-aeon-state={own ? 'profile' : row.profile ? 'bap' : row.identity?.revoked ? 'revoked' : 'draft'}
                   >
                     <span className="public-identity-avatar" aria-hidden>
-                      {row.identity?.image ? (
+                      {row.profile?.image ? (
                         <DeferredImage
-                          src={issuerIdentityImageDataUrl(row.identity.image)}
+                          src={issuerIdentityImageDataUrl(row.profile.image)}
                           alt=""
                           width={44}
                           height={44}
-                          fallback={<BapIdenticon bapId={row.bapId} size={44} />}
+                          fallback={<ProfileIdenticon id={profileId} size={44} />}
                         />
                       ) : (
-                        <BapIdenticon bapId={row.bapId} size={44} />
+                        <ProfileIdenticon id={profileId} size={44} />
                       )}
                     </span>
                     <div className="public-identity-main">
                       <strong className="public-identity-name">
-                        {row.identity?.name ?? 'Unpublished'}
+                        {row.profile?.name ?? 'No profile'}
                       </strong>
-                      <span className="public-identity-bap mono" title={row.bapId}>
-                        {shortKey(row.bapId)}
+                      <span className="public-identity-bap mono" title={profileId}>
+                        {shortKey(profileId)}
                       </span>
-                      {row.identity?.description ? (
-                        <p className="public-identity-bio">{row.identity.description}</p>
+                      {row.profile?.description ? (
+                        <p className="public-identity-bio">{row.profile.description}</p>
                       ) : null}
                       <span className="public-identity-chips" data-aeon-part="chips">
-                        {issuer ? <span data-aeon-part="chip" data-aeon-state="issuer">Issuer</span> : null}
+                        {issuer ? (
+                          <span data-aeon-part="chip" data-aeon-state={view.signs ? 'issuer' : 'unsigned'}>
+                            {view.signs ? 'Issuer' : 'Mints unsigned'}
+                          </span>
+                        ) : null}
                         {shown ? <span data-aeon-part="chip" data-aeon-state="shown">Shared with contacts</span> : null}
+                        {bap && own ? <span data-aeon-part="chip" data-aeon-state="bap">On BAP</span> : null}
                         {row.identity?.revoked ? (
-                          <span data-aeon-part="chip" data-aeon-state="revoked">Revoked</span>
+                          <span data-aeon-part="chip" data-aeon-state="revoked">BAP revoked</span>
                         ) : null}
                         {confirming ? (
-                          <span data-aeon-part="chip" data-aeon-state="pending">Confirming</span>
+                          <span data-aeon-part="chip" data-aeon-state="pending">BAP confirming</span>
+                        ) : null}
+                        {unlinked ? (
+                          <span data-aeon-part="chip" data-aeon-state="unlinked">BAP not linked</span>
                         ) : null}
                         {row.signer === 'imported' ? (
                           <span data-aeon-part="chip" data-aeon-state="imported">Imported key</span>
@@ -335,17 +378,17 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                     </div>
                     <div className="public-identity-actions">
                       <Button.Root
-                        className={row.identity ? 'btn btn-ghost' : 'btn btn-primary'}
-                        disabled={busy || !!row.identity?.revoked}
+                        className={own ? 'btn btn-ghost' : 'btn btn-primary'}
+                        disabled={busy}
                         onClick={() => compose(row)}
                       >
-                        {row.identity ? 'Edit' : 'Publish'}
+                        {own ? 'Edit' : 'Add profile'}
                       </Button.Root>
                       <Menu.Root>
                         <Menu.Trigger
                           className="btn btn-ghost public-identity-more"
                           disabled={busy}
-                          aria-label={`More for ${row.identity?.name ?? 'this identity'}`}
+                          aria-label={`More for ${row.profile?.name ?? 'this identity'}`}
                         >
                           ⋯
                         </Menu.Trigger>
@@ -354,18 +397,31 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
                             {!issuer ? (
                               <Menu.Item onClick={() => void useAsIssuer(row)}>Use as issuer</Menu.Item>
                             ) : null}
-                            {live && !shown ? (
+                            {row.profile && !shown ? (
                               <Menu.Item onClick={() => void present(row)}>Share this one instead</Menu.Item>
                             ) : null}
-                            {live && shown ? (
+                            {row.profile && shown ? (
                               <Menu.Item onClick={() => void shareCard()}>Share identity card</Menu.Item>
                             ) : null}
-                            {live ? (
+                            {own && !row.identity?.revoked ? (
+                              <>
+                                <Menu.Separator />
+                                <Menu.Item disabled={!row.profile!.image} onClick={() => publishBap(row)}>
+                                  {bap ? 'Update BAP profile' : 'Publish to BAP'}
+                                </Menu.Item>
+                              </>
+                            ) : null}
+                            {unlinked ? (
+                              <Menu.Item onClick={() => send({ type: 'LINK', identityKey: row.identityKey })}>
+                                Link BAP profile to identity key
+                              </Menu.Item>
+                            ) : null}
+                            {bap ? (
                               <Menu.Item
-                                disabled={!row.identity!.image}
+                                disabled={!bap.image}
                                 onClick={() => send({ type: 'ROTATE', identityKey: row.identityKey })}
                               >
-                                Rotate signing key
+                                Rotate BAP signing key
                               </Menu.Item>
                             ) : null}
                             <Menu.Item onClick={() => void copyKey(row)}>Copy wallet key</Menu.Item>
@@ -415,37 +471,53 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         ) : (
           <>
             <h3 className="identity-compose-title">
-              {view.rows.find((row) => row.identityKey === draft.identityKey)?.identity
-                ? 'Edit identity'
-                : 'Publish identity'}
+              {view.rows.find((row) => row.identityKey === draft.identityKey)?.profile?.source === 'identity-key'
+                ? 'Edit profile'
+                : 'Add profile'}
             </h3>
+            <p className="identity-note">
+              Signed by this identity key and kept on this device; contacts get it with your identity card. No
+              transaction, no fee.
+            </p>
             <div className="public-identity-compose" data-aeon-part="compose">
-              <button
-                type="button"
-                className="public-identity-image-pick"
-                data-aeon-part="image"
-                data-aeon-state={
-                  action.running('image') ? 'preparing' : draft.image ? 'set' : 'empty'
-                }
-                disabled={busy}
-                aria-label={draft.image ? 'Change image' : 'Choose image'}
-                onClick={() => imageFile.current?.click()}
-              >
+              <div className="public-identity-image-col">
+                <button
+                  type="button"
+                  className="public-identity-image-pick"
+                  data-aeon-part="image"
+                  data-aeon-state={
+                    action.running('image') ? 'preparing' : draft.image ? 'set' : 'empty'
+                  }
+                  disabled={busy}
+                  aria-label={draft.image ? 'Change image' : 'Choose image'}
+                  onClick={() => imageFile.current?.click()}
+                >
+                  {draft.image ? (
+                    <DeferredImage
+                      src={issuerIdentityImageDataUrl(draft.image)}
+                      alt=""
+                      width={88}
+                      height={88}
+                      fallback={<span aria-hidden>◈</span>}
+                    />
+                  ) : (
+                    <span aria-hidden>{action.running('image') ? '…' : '+'}</span>
+                  )}
+                  <span className="public-identity-image-label">
+                    {action.running('image') ? 'Preparing…' : draft.image ? 'Change' : 'Image'}
+                  </span>
+                </button>
                 {draft.image ? (
-                  <DeferredImage
-                    src={issuerIdentityImageDataUrl(draft.image)}
-                    alt=""
-                    width={88}
-                    height={88}
-                    fallback={<span aria-hidden>◈</span>}
-                  />
-                ) : (
-                  <span aria-hidden>{action.running('image') ? '…' : '+'}</span>
-                )}
-                <span className="public-identity-image-label">
-                  {action.running('image') ? 'Preparing…' : draft.image ? 'Change' : 'Image'}
-                </span>
-              </button>
+                  <Button.Root
+                    variant="ghost"
+                    className="btn btn-ghost public-identity-image-clear"
+                    disabled={busy}
+                    onClick={() => send({ type: 'CLEAR_IMAGE' })}
+                  >
+                    Remove
+                  </Button.Root>
+                ) : null}
+              </div>
               <input
                 ref={imageFile}
                 type="file"
@@ -488,10 +560,10 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
             <div className="actions">
               <Button.Root
                 className="btn btn-primary"
-                disabled={busy || !draft.image || !draft.fields.name.trim()}
-                onClick={() => send({ type: 'REVIEW' })}
+                disabled={busy || !draft.fields.name.trim()}
+                onClick={() => send({ type: 'SAVE' })}
               >
-                {review ? 'Publishing…' : 'Review'}
+                {saving ? 'Saving…' : 'Save'}
               </Button.Root>
               <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={close}>
                 Cancel
@@ -499,16 +571,16 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
             </div>
           </>
         )}
-        {view.error || action.error ? (
+        {view.error || action.error || (!review && snapshot.context.error) ? (
           <p role="alert" className="identity-compose-status">
-            {view.error ?? action.error}
+            {view.error ?? action.error ?? snapshot.context.error}
           </p>
         ) : null}
       </div>
       <AsyncActionPrompt action={action} />
       <IdentityPublishReview
         stage={review}
-        rotation={request?.kind === 'rotate'}
+        pending={request ? (request.kind === 'profile' ? 'publish' : request.kind) : null}
         plan={snapshot.context.plan}
         error={snapshot.context.error}
         onApprove={() => send({ type: 'APPROVE' })}

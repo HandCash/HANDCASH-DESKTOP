@@ -87,6 +87,7 @@ describe('BSV-21 mint inputBEEF', () => {
       const enriched = enrichCreateActionForBsv21Issuer(
         active,
         mintArgs(outpoint, binary),
+        active,
       )
       await vi.advanceTimersByTimeAsync(10_000)
       const args = await enriched
@@ -113,6 +114,7 @@ describe('BSV-21 mint inputBEEF', () => {
     const args = await enrichCreateActionForBsv21Issuer(
       active,
       mintArgs(outpoint, binary),
+      active,
     )
 
     expect(args.inputBEEF).toEqual(hydrated)
@@ -127,7 +129,7 @@ describe('BSV-21 mint inputBEEF', () => {
     const { binary, outpoint } = unminedTipBeef()
     hydrateInputBeef.mockResolvedValue(undefined)
 
-    await enrichCreateActionForBsv21Issuer(active, mintArgs(outpoint, binary))
+    await enrichCreateActionForBsv21Issuer(active, mintArgs(outpoint, binary), active)
 
     expect(buildMergedInputBeef).not.toHaveBeenCalled()
   })

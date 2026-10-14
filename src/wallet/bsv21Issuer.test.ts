@@ -214,7 +214,7 @@ describe('bsv21Issuer', () => {
           }),
         },
       ],
-    })
+    }, active as never)
 
     const issued = enriched.outputs?.[0]?.lockingScript ?? ''
     const decoded = decodeBsv21Binary(issued)

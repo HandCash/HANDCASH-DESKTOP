@@ -10,6 +10,7 @@ import {
 import { formatHandCashHandle } from '../wallet/handleFormat'
 import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
 import { toastError } from '../wallet/toast'
+import { identityProfilesGeneration, subscribeIdentityProfiles } from '../wallet/identityProfiles'
 import { issuerIdentitiesGeneration, subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import {
   listPublicIdentities,
@@ -20,7 +21,7 @@ import { getWalletRuntime } from '../wallet/walletRuntime'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
 import { CopyIcon } from './icons'
-import { BapIdenticon } from './BapIdenticon'
+import { ProfileIdenticon } from './ProfileIdenticon'
 
 type Props = {
   profile: WalletProfile
@@ -40,14 +41,17 @@ export function IdentityPanel({ profile }: Props) {
     claimedHandleForIdentity(profile.identityKey),
   )
   const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
+  const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration)
   const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
-  const bap = useMemo(() => {
+  /** Only a BAP profile has an ID apart from the wallet key. */
+  const bapProfileId = useMemo(() => {
     try {
-      return listPublicIdentities(getWalletRuntime()).find((row) => row.signer === 'wallet') ?? null
+      const row = listPublicIdentities(getWalletRuntime()).find((entry) => entry.signer === 'wallet')
+      return row?.profile?.source === 'bap' ? row.profile.id : null
     } catch {
       return null
     }
-  }, [identities, packages, profile.identityKey])
+  }, [identities, profiles, packages, profile.identityKey])
 
   useEffect(() => {
     let cancelled = false
@@ -191,17 +195,20 @@ ${profile.identityKey}`}
                     : 'Bitcoin SV Testnet'}
                 </strong>
               </li>
-              <li className="identity-field">
-                <span className="identity-field-label">Profile ID</span>
-                <strong className="mono identity-bap-id" title={bap?.bapId}>
-                  {bap ? <BapIdenticon bapId={bap.bapId} /> : null}
-                  {bap ? shortIdentityKey(bap.bapId) : '—'}
-                </strong>
-              </li>
+              {bapProfileId ? (
+                <li className="identity-field">
+                  <span className="identity-field-label">Profile ID</span>
+                  <strong className="mono identity-bap-id" title={bapProfileId}>
+                    <ProfileIdenticon id={bapProfileId} />
+                    {shortIdentityKey(bapProfileId)}
+                  </strong>
+                </li>
+              ) : null}
             </ul>
             <p className="identity-note">
-              People pay your wallet key. Your profile ID is the public name they
-              check: a copycat can borrow your name and picture, never this ID.
+              {bapProfileId
+                ? 'People pay your wallet key. Your profile ID is the public name they check: a copycat can borrow your name and picture, never this ID.'
+                : 'People pay your wallet key, and your profile is signed by it: a copycat can borrow your name and picture, never this key.'}
             </p>
           </section>
 

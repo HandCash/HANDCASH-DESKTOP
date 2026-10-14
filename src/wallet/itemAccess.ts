@@ -10,7 +10,7 @@
  */
 
 import { normalizeAppHost } from './appIdentity'
-import { decodeBsv21Binary } from './token'
+import { decodeBsv21Binary, isBsv21BinaryScript } from './token'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
 
 /** Storage basket that holds collectables — not spendable under normal pay. */
@@ -1068,7 +1068,7 @@ export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: stri
       }
     }
     const tagged = tags.includes('bsv21') || tags.some((t) => t.toLowerCase().startsWith('bsv21:'))
-    const lockLooks = lockingScriptHexOf(o.lockingScript).includes('4253563231')
+    const lockLooks = isBsv21BinaryScript(lockingScriptHexOf(o.lockingScript))
     if (proto !== 'bsv-20' && proto !== 'bsv21' && !tagged && !lockLooks) continue
     const outpoint = typeof (o as { outpoint?: unknown }).outpoint === 'string'
       ? (o as { outpoint: string }).outpoint

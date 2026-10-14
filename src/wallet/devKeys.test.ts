@@ -57,10 +57,10 @@ vi.mock('./permissions', () => ({ approveWalletPayment: vi.fn(async () => {}) })
 vi.mock('./publicIdentities', async () => {
   const { bapKey } = await import('./bapRecords')
   return {
-    presentedIdentityMaterial: () => h.material,
+    presentedBapMaterial: () => h.material ?? { kind: 'none' },
     presentedIdentityKeyAt: (_runtime: unknown, bapId: string, seq: number) => {
       const m = h.material as { kind: string; identity: { bapId: string } } | null
-      return m?.kind === 'presented' && m.identity.bapId === bapId
+      return m?.kind === 'ready' && m.identity.bapId === bapId
         ? bapKey(h.master as import('@bsv/sdk').PrivateKey, seq)
         : null
     },
@@ -250,12 +250,10 @@ const active = {
 const runtime = { instance: active } as unknown as WalletRuntime
 h.runtime = runtime
 
-/** The identity this account presents, its current key at `seq`. */
+/** The BAP identity behind the presented key, its current key at `seq`. */
 function present(seq: number, extra: { revoked?: boolean } = {}): void {
   h.material = {
-    kind: 'presented',
-    issuedAt: '2026-10-03T00:00:00.000Z',
-    pkg: { v: 1, bapId: BAP_ID, beefB64: '' },
+    kind: extra.revoked ? 'revoked' : 'ready',
     identity: {
       bapId: BAP_ID,
       name: 'Studio',
@@ -342,9 +340,9 @@ describe('sign capability', () => {
     expect(h.built[0]!.identityKey).toBe(bapKey(master, 1).toPublicKey().toString())
   })
 
-  it('refuses without a published identity, after withdrawal, and for the root', () => {
+  it('refuses without a published BAP identity, after its revocation, and for the root', () => {
     expect(devSignEligibility(runtime)).toMatchObject({ kind: 'refused', reason: 'not-published' })
-    h.material = { kind: 'withdrawn', issuedAt: '2026-10-03T00:00:00.000Z' }
+    present(1, { revoked: true })
     expect(devSignEligibility(runtime)).toMatchObject({ kind: 'refused', reason: 'revoked' })
     present(0)
     expect(() => generateDevKey(runtime, { sign: true, wallet: false })).toThrow(DevKeyRefused)

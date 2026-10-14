@@ -129,6 +129,50 @@ describe('flushPendingItemOutbox', () => {
     )
   })
 
+  it('never gives a notice up: past the stall point it is reported and retried hourly', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    store.set(KEY, JSON.stringify([{ ...row(1), attempts: 19 }]))
+    notifyPeerItemIncoming.mockResolvedValue({ delivered: 'local', beefInBox: false })
+    const { flushPendingItemOutbox, STALL_ATTEMPTS } = await import('./pendingItemOutbox')
+
+    await flushPendingItemOutbox({ rootKeyHex: ROOT })
+    const [kept] = savedRows() as Array<{ attempts: number; nextAttemptAt: number }>
+    expect(kept!.attempts).toBe(STALL_ATTEMPTS)
+    expect(kept!.nextAttemptAt - Date.now()).toBeGreaterThan(59 * 60_000)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('stalled after 20 attempts'))
+    warn.mockRestore()
+  })
+
+  it('keeps every row, not just the oldest fifty', async () => {
+    const { enqueuePendingItemRemit } = await import('./pendingItemOutbox')
+    for (let n = 1; n <= 80; n++) enqueuePendingItemRemit(row(n))
+    expect(savedRows()).toHaveLength(80)
+    expect(savedRows().at(-1)!.txid).toBe(row(80).txid)
+  })
+
+  it('keeps a row queued while a flush is in flight, and sends each notice once', async () => {
+    store.set(KEY, JSON.stringify([row(1)]))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    notifyPeerItemIncoming.mockImplementationOnce(async () => {
+      await gate
+      return { delivered: 'cloud', beefInBox: true }
+    })
+    const { enqueuePendingItemRemit, flushPendingItemOutbox } = await import('./pendingItemOutbox')
+
+    const first = flushPendingItemOutbox({ rootKeyHex: ROOT })
+    const second = flushPendingItemOutbox({ rootKeyHex: ROOT })
+    await vi.waitFor(() => expect(notifyPeerItemIncoming).toHaveBeenCalledTimes(1))
+    enqueuePendingItemRemit(row(2))
+    release()
+    await Promise.all([first, second])
+
+    expect(notifyPeerItemIncoming.mock.calls.map(([args]) => args.txid)).toEqual([row(1).txid, row(2).txid])
+    expect(savedRows()).toEqual([])
+  })
+
   it('keeps every failed batch remittance sharing one txid', async () => {
     const { enqueuePendingItemRemit, flushPendingItemOutbox } = await import(
       './pendingItemOutbox'

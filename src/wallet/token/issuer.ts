@@ -11,7 +11,8 @@ import { Algorithm, Sigma as SigmaParser } from 'sigma-protocol'
 import Sigma from '@1sat/templates/sigma'
 import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../beefCache'
 import { normalizeTokenId } from './types'
-import { planBsv21MintWire } from './mintWire'
+import { bsv21DeployIconRef, planBsv21MintWire, type Bsv21DeployIconRef } from './mintWire'
+import type { Bsv21IconImage } from './decode162'
 import { fetchRawTxHex } from '../oneSatImport'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import type { ActiveWallet } from '../session'
@@ -125,7 +126,8 @@ export function verifiedSigmaSigner(tx: Transaction, outputIndex: number): Sigma
     parsedTx.addOutput({ satoshis: 1, lockingScript: script })
     const sig = new SigmaParser(parsedTx).sig
     if (!sig?.address) return null
-    const vin = sig.vin === -1 ? outputIndex : sig.vin
+    // BRC-247: a stamp names a concrete input; signers resolve -1 before writing.
+    const vin = sig.vin
     if (!Number.isSafeInteger(vin) || vin < 0 || !tx.inputs[vin]) return null
     const input = tx.inputs[vin]!
     const txid = input.sourceTXID ?? input.sourceTransaction?.id('hex')
@@ -482,6 +484,22 @@ export async function findPriorBsv21Icon(
   return null
 }
 
+/** Bytes for a genesis icon reference: a sibling output of this action, or an outpoint. */
+async function deployIconImage(
+  active: ActiveWallet,
+  outputs: readonly CreateActionOutput[],
+  ref: Bsv21DeployIconRef,
+): Promise<Bsv21IconImage | null> {
+  const { iconImageFromScript, resolveTokenIconImage } = await import('./icons/resolve')
+  if (ref.kind === 'sameTx') return iconImageFromScript(outputs[ref.vout]?.lockingScript)
+  try {
+    return await resolveTokenIconImage(ref.outpoint, active)
+  } catch (err) {
+    console.warn('[bsv21-issuer] genesis icon lookup failed', err)
+    return null
+  }
+}
+
 function normalizeDotOutpoint(op: string): string {
   const m = op
     .trim()
@@ -491,11 +509,10 @@ function normalizeDotOutpoint(op: string): string {
   return `${m[1]}.${m[2]}`
 }
 
-/** Key that Sigma-signs issuance, the BAP ID it speaks for, and earlier keys of that identity. */
+/** Identity key that Sigma-signs issuance (BRC-247), and keys that stamped its tokens before. */
 export type IssuanceSigningKey = {
   identityKey: string
   rootKeyHex: string
-  bapId?: string
   priorKeys?: readonly string[]
 }
 
@@ -507,7 +524,8 @@ export type IssuanceSigningKey = {
 export async function enrichCreateActionForBsv21Issuer(
   active: ActiveWallet,
   args: CreateActionArgs,
-  signer: IssuanceSigningKey = active,
+  /** The selected identity key (BRC-247), or `null` to issue unsigned. */
+  signer: IssuanceSigningKey | null,
 ): Promise<CreateActionArgs> {
   const outputs = args.outputs
   if (!outputs?.length) return args
@@ -516,8 +534,8 @@ export async function enrichCreateActionForBsv21Issuer(
     .filter((i) => i >= 0)
   if (issuanceIdxs.length === 0) return args
 
-  const issuer = normalizeIssuerPubKey(signer.identityKey)
-  if (!issuer) throw new Error('Invalid issuer identity key.')
+  const issuer = signer ? normalizeIssuerPubKey(signer.identityKey) : null
+  if (signer && !issuer) throw new Error('Invalid issuer identity key.')
 
   const nextOutputs = outputs.map((o) => ({ ...o }))
 
@@ -528,14 +546,14 @@ export async function enrichCreateActionForBsv21Issuer(
 
   // Reuse a prior icon for the same issuer+sym when genesis omitted it.
   const priorIconBySym = new Map<string, string | null>()
-  for (const i of deployIdxs) {
+  for (const i of issuer ? deployIdxs : []) {
     const out = nextOutputs[i]!
     if (iconFromCi(out.customInstructions)) continue
     const sym = symFromOutput(out)
     if (!sym) continue
     const key = sym.toUpperCase()
     if (!priorIconBySym.has(key)) {
-      priorIconBySym.set(key, await findPriorBsv21Icon(active, sym, issuer))
+      priorIconBySym.set(key, await findPriorBsv21Icon(active, sym, issuer!))
     }
     const prior = priorIconBySym.get(key)
     if (!prior) continue
@@ -552,7 +570,7 @@ export async function enrichCreateActionForBsv21Issuer(
     nextOutputs[i] = {
       ...out,
       lockingScript,
-      customInstructions: mergeIssuerIntoCi(out.customInstructions, issuer, {
+      customInstructions: mergeIssuerIntoCi(out.customInstructions, issuer!, {
         icon: prior,
       }),
     }
@@ -567,12 +585,21 @@ export async function enrichCreateActionForBsv21Issuer(
     if (i < 0) continue
     const out = nextOutputs[i]!
     if (!out.lockingScript) continue
-    const wire = planBsv21MintWire(out.lockingScript)
+    const iconRef = bsv21DeployIconRef(out.lockingScript)
+    const iconImage = iconRef ? await deployIconImage(active, nextOutputs, iconRef) : null
+    const wire = planBsv21MintWire(out.lockingScript, { vout: i, iconImage })
+    if (wire.kind === 'refuse') {
+      console.warn(`[bsv21-issuer] genesis refused — ${wire.reason}`)
+      throw new Error(`This token cannot be issued: ${wire.reason}.`)
+    }
     if (wire.kind === 'upgrade') {
       nextOutputs[i] = { ...out, lockingScript: wire.lockingScript }
       console.info(
-        `[bsv21-issuer] genesis ${wire.sym ?? 'token'} issued as BRC-162 (amt ${wire.amount}) — legacy JSON deploy upgraded`,
+        `[bsv21-issuer] genesis ${wire.sym ?? 'token'} issued as BRC-162 (amt ${wire.amount})${iconImage ? ', icon embedded' : ''}`,
       )
+      if (wire.iconDropped) {
+        console.warn('[bsv21-issuer] genesis icon could not be loaded — issued without an embedded icon')
+      }
     } else if (wire.kind === 'keep') {
       console.warn(
         `[bsv21-issuer] genesis stays legacy JSON and cannot be proven — ${wire.reason}`,
@@ -583,17 +610,18 @@ export async function enrichCreateActionForBsv21Issuer(
   for (const i of allIssuanceIdxs) {
     const out = nextOutputs[i]!
     const claimed = issuerFromRemittance(out)
-    if (bsv21OpFromOutput(out) === 'mint' && claimed && claimed !== issuer && !signer.priorKeys?.includes(claimed))
+    if (signer && bsv21OpFromOutput(out) === 'mint' && claimed && claimed !== issuer && !signer.priorKeys?.includes(claimed))
       throw new Error('Select the original issuer identity before minting more tokens.')
+    // An unsigned issuance names no issuer, so an app's `issuer:` tag would be an unbacked claim.
     const tags = [...(out.tags ?? []).filter(tag => !tag.trim().toLowerCase().startsWith('issuer:'))]
     if (!tags.some((t) => t === 'bsv21' || t.startsWith('bsv21:'))) {
       tags.unshift('bsv21')
     }
-    tags.push(`issuer:${issuer}`)
+    if (issuer) tags.push(`issuer:${issuer}`)
     nextOutputs[i] = {
       ...out,
       tags,
-      customInstructions: mergeIssuerIntoCi(out.customInstructions, issuer),
+      ...(issuer ? { customInstructions: mergeIssuerIntoCi(out.customInstructions, issuer) } : {}),
     }
   }
 
@@ -606,7 +634,7 @@ export async function enrichCreateActionForBsv21Issuer(
   const [bindTxid = '', bindVoutS = ''] = bindOutpoint.split('.')
   const bindVout = Number(bindVoutS)
 
-  if (deployIdxs.length > 0) {
+  if (signer && issuer && deployIdxs.length > 0) {
     if (/^[0-9a-f]{64}$/.test(bindTxid) && Number.isSafeInteger(bindVout) && bindVout >= 0 && bindVout <= 0xffffffff) {
       for (const i of deployIdxs) {
         const out = nextOutputs[i]!
@@ -615,7 +643,7 @@ export async function enrichCreateActionForBsv21Issuer(
           nextOutputs[i] = {
             ...out,
             lockingScript: sigmaSignDeployLockingScript({
-              lockingScriptHex: appendIssuerMetadata(out.lockingScript, issuer, signer.bapId),
+              lockingScriptHex: appendIssuerMetadata(out.lockingScript, issuer),
               fundTxid: bindTxid,
               fundVout: bindVout,
               identityKeyHex: signer.rootKeyHex,

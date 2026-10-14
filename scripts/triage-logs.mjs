@@ -784,6 +784,54 @@ function report(state, answers) {
     }
   }
 
+  const pn = latest.paymentNotices
+  if (
+    pn &&
+    (pn.flushes || pn.stalled.length || pn.dropped.alreadyDelivered || pn.dropped.paymentFailed ||
+      pn.dropped.byJournal || pn.reopens.queued || pn.reconcile.runs || pn.reconcile.held ||
+      pn.reconcile.resumedRejected.length || pn.reconcile.notResumed.length ||
+      pn.handoverNoticesSettled || pn.itemStalled.length || pn.queueWritesRefused || pn.unmarked || pn.journal.syncs || pn.journal.failures.length)
+  ) {
+    console.log('\nPayment notices (code-counted):')
+    if (pn.flushes) {
+      console.log(
+        `  ${pn.flushes} flush(es) · ${pn.delivered} delivered · slowest ${pn.slowestFlushMs}ms` +
+          `${pn.lastQueued != null ? ` · last ${pn.lastQueued} queued, ${pn.lastRetrying} retrying` : ''}`,
+      )
+    }
+    for (const s of pn.stalled.slice(-5)) console.log(`  stalled ${s.txid}… after ${s.attempts} attempts: ${s.error}`)
+    if (pn.dropped.alreadyDelivered || pn.dropped.paymentFailed || pn.dropped.byJournal) {
+      console.log(
+        `  settled unsent: ${pn.dropped.alreadyDelivered} already delivered · ${pn.dropped.paymentFailed} payment failed` +
+          ` · ${pn.dropped.byJournal} by another device's tombstone`,
+      )
+    }
+    if (pn.reopens.runs) console.log(`  ${pn.reopens.runs} reopen(s) queued ${pn.reopens.queued} · last ${pn.reopens.owed} owed`)
+    const rc = pn.reconcile
+    if (rc.runs || rc.held) {
+      console.log(
+        `  restore reconcile: ${rc.runs} run(s)${rc.incomplete ? ` (${rc.incomplete} incomplete)` : ''} · slowest ${rc.slowestMs}ms` +
+          ` · ${rc.queued} notice(s) queued · ${rc.relisted} payment(s) relisted · ${rc.resumed} resumed` +
+          ` · ${rc.held} payment(s) held, max ${rc.heldMaxMs}ms${rc.heldTimedOut ? `, ${rc.heldTimedOut} sent at the limit` : ''}`,
+      )
+    }
+    for (const t of rc.resumedRejected.slice(-5)) console.log(`  resumed payment ${t}… rejected by the miner — voided, notice settled`)
+    for (const t of rc.notResumed.slice(-5)) console.log(`  payment ${t}… not resumed — listed from the chain check only`)
+    if (pn.handoverNoticesSettled) console.log(`  ${pn.handoverNoticesSettled} notice(s) of payments voided at handover settled`)
+    for (const s of pn.itemStalled.slice(-5)) console.log(`  item notice ${s.txid}… stalled after ${s.attempts} attempts — retrying hourly`)
+    if (pn.queueWritesRefused) console.log(`  ${pn.queueWritesRefused} queue write(s) refused — reconcile restores them`)
+    if (pn.unmarked) console.log(`  ${pn.unmarked} delivered notice(s) not marked — a recovery may re-send`)
+    const nj = pn.journal
+    if (nj.syncs || nj.failures.length || nj.refusedWrites) {
+      console.log(
+        `  notice journal: ${nj.syncs} sync(s) · ${nj.pushes} push(es) · pulled ${nj.pulled} · ${nj.failures.length} failure(s)` +
+          `${nj.refusedWrites ? ` · ${nj.refusedWrites} refused write(s)` : ''}` +
+          `${nj.lastEntries != null ? ` · last ${nj.lastEntries} entries` : ''}`,
+      )
+      for (const f of nj.failures.slice(-3)) console.log(`    ${f.reason}: ${f.error}`)
+    }
+  }
+
   const fin = latest.incomingFinality
   if (fin && (fin.nonFinal || fin.finalityUnknown)) {
     console.log('\nIncoming finality (code-counted):')

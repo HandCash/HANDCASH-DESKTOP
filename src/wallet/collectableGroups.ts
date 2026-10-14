@@ -1,7 +1,7 @@
 import {
   issuerIdentityImageDataUrl,
   type IssuerAttribution,
-  type IssuerIdentity,
+  type IssuerProfile,
 } from './issuerIdentity'
 import type { Collectable } from './collectables'
 import {
@@ -14,10 +14,10 @@ import { normalizeIssuerPubKey, shortIssuerLabel } from './token/issuer'
 import type { FungibleToken } from './token/types'
 
 /**
- * Collect hierarchy is issuer → collections → assets. A signed asset that
- * names a BAP ID shelves under that BAP ID, so a key rotation keeps one shelf
- * labelled with the newest profile held; other signed assets are keyed by
- * their normalized issuer public key. Handles are display only. Items without
+ * Collect hierarchy is issuer → collections → assets. A signed asset shelves
+ * under its issuer identity key, labelled by that key's profile; a BAP stamp
+ * from an earlier draft joins the identity key its BAP identity links.
+ * Handles are display only. Items without
  * an issuer tape but with a Sigma signer on their origin — every item the
  * HandCash cloud minted — shelve by that signer, as Import shows them.
  * Label-only item shelves stay separate and cannot impersonate a keyed issuer.
@@ -50,11 +50,9 @@ export type CollectableIssuer = {
   key: string
   /** Attribution key from the asset record; presence does not certify its signature. */
   identityKey?: string
-  /** Image of the BAP identity the shelf's signers speak for. */
+  /** Image of the profile that labels the shelf's issuer. */
   icon?: string
-  bapId?: string
-  bapState?: IssuerBap['state']
-  bap?: IssuerBap
+  profile?: IssuerProfileMark
   issuerAttested?: boolean
   label: string
   app?: string
@@ -152,14 +150,18 @@ export type IssuerIdentityResolver = (asset: {
   origin?: string
 }) => IssuerAttribution | null
 
-export type IssuerBap = {
+/**
+ * The profile that labels an issuer. `id` is what a person compares: the
+ * identity key for its own profile, the BAP ID for a BAP profile.
+ */
+export type IssuerProfileMark = {
   id: string
   state: 'verified' | 'unconfirmed'
-  /** Newest profile the stored package proves; only on `verified`. */
-  identity?: IssuerIdentity
+  /** The verified profile; only on `verified`. */
+  profile?: IssuerProfile
   /** On HandCash's signed verified-issuer list; only on `verified`. */
   listed?: VerifiedIssuer
-  /** The name reads like another identity's; only on `verified`, never with `listed`. */
+  /** The name reads like another profile's; only on `verified`, never with `listed`. */
   caution?: IssuerNameCaution
 }
 
@@ -169,14 +171,30 @@ export type IssuerView = {
   label: string
   identityKey: string
   issuerAttested: boolean
-  bap?: IssuerBap
+  profile?: IssuerProfileMark
+}
+
+/** A verified profile judged against HandCash's list and look-alike names. */
+export function verifiedProfileMark(profile: IssuerProfile, trust: IssuerTrust): IssuerProfileMark {
+  // HandCash's signed list names BAP IDs; a linked BAP identity carries its listing to the identity key.
+  const listed = trust.listed(profile.id) ?? (profile.bap ? trust.listed(profile.bap.bapId) : null)
+  const caution = listed ? null : trust.caution(profile.id, profile.name)
+  return {
+    id: profile.id,
+    state: 'verified',
+    profile,
+    ...(listed ? { listed } : {}),
+    ...(caution ? { caution } : {}),
+  }
 }
 
 /**
- * Every asset stamped with a BAP ID shares one shelf per BAP ID, across key
- * rotations. Verified signers show the identity; unconfirmed stamps get their
- * own BAP shelf with no name or image, because anyone can copy a stamp. A
- * signer the package retires or revokes keeps a shelf of its own key.
+ * One shelf per issuer identity key (BRC-247). Its own signed profile, else
+ * its linked BAP profile, supplies the name and image; stamps an earlier
+ * draft wrote with a linked BAP identity's keys join the same shelf. A BAP
+ * stamp no link claims gets a BAP shelf with no name or image, because anyone
+ * can copy a stamp. A signer the package retires or revokes keeps a shelf of
+ * its own key.
  */
 export function issuerViewFor(
   asset: { issuer?: string; issuerAttested?: boolean; bapId?: string; origin?: string },
@@ -194,21 +212,14 @@ export function issuerViewFor(
     }
   const signed = { identityKey: issuer, issuerAttested: true }
   const attribution = identityFor({ issuer, bapId: asset.bapId, origin: asset.origin })
-  if (attribution?.kind === 'verified' && (!asset.bapId || attribution.identity.bapId === asset.bapId)) {
-    const { identity } = attribution
-    const listed = trust.listed(identity.bapId)
-    const caution = listed ? null : trust.caution(identity.bapId, identity.name)
+  if (attribution?.kind === 'verified' && (!asset.bapId || attribution.profile.bap?.bapId === asset.bapId)) {
+    const { profile, identityKey } = attribution
     return {
-      ...signed,
-      key: `issuer:bap:${identity.bapId}`,
-      label: identity.name,
-      bap: {
-        id: identity.bapId,
-        state: 'verified',
-        identity,
-        ...(listed ? { listed } : {}),
-        ...(caution ? { caution } : {}),
-      },
+      identityKey,
+      issuerAttested: true,
+      key: `issuer:pubkey:${identityKey}`,
+      label: profile.name,
+      profile: verifiedProfileMark(profile, trust),
     }
   }
   if (attribution?.kind === 'unconfirmed' && attribution.bapId === asset.bapId)
@@ -216,7 +227,7 @@ export function issuerViewFor(
       ...signed,
       key: `issuer:bap-unconfirmed:${attribution.bapId}`,
       label: `Unconfirmed profile ${shortId(attribution.bapId)}`,
-      bap: { id: attribution.bapId, state: 'unconfirmed' },
+      profile: { id: attribution.bapId, state: 'unconfirmed' },
     }
   return { ...signed, key: `issuer:pubkey:${issuer}`, label: shortIssuerLabel(issuer) }
 }
@@ -228,7 +239,7 @@ type IssuerMeta = {
   signer?: string
   identityKey?: string
   issuerAttested?: boolean
-  bap?: IssuerBap
+  profile?: IssuerProfileMark
 }
 
 function issuerKeyFor(
@@ -372,14 +383,14 @@ export function groupCollectables(
     bucket.tokens.sort((a, b) =>
       a.sym.localeCompare(b.sym, undefined, { sensitivity: 'base' }),
     )
-    const { bap } = bucket.meta
+    const { profile } = bucket.meta
     issuers.push({
       key: bucket.meta.key,
       label: bucket.meta.label,
-      ...(bap?.identity?.image
-        ? { icon: issuerIdentityImageDataUrl(bap.identity.image) }
+      ...(profile?.profile?.image
+        ? { icon: issuerIdentityImageDataUrl(profile.profile.image) }
         : {}),
-      ...(bap ? { bapId: bap.id, bapState: bap.state, bap } : {}),
+      ...(profile ? { profile } : {}),
       ...(bucket.meta.identityKey
         ? {
             identityKey: bucket.meta.identityKey,
@@ -418,11 +429,11 @@ export function groupCollectables(
  * all unknown — the shelf shows a key fragment, not a name anyone vouched for.
  */
 export function issuerPublisherRank(
-  issuer: Pick<CollectableIssuer, 'bap' | 'app' | 'identityKey' | 'issuerAttested'>,
+  issuer: Pick<CollectableIssuer, 'profile' | 'app' | 'identityKey' | 'issuerAttested'>,
 ): number {
-  if (issuer.bap?.state === 'verified') return issuer.bap.listed ? 0 : 1
+  if (issuer.profile?.state === 'verified') return issuer.profile.listed ? 0 : 1
   if (!issuer.identityKey) return 2
-  if (issuer.bap?.state === 'unconfirmed') return 4
+  if (issuer.profile?.state === 'unconfirmed') return 4
   return issuer.issuerAttested ? 3 : 5
 }
 

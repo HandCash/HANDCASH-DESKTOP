@@ -37,6 +37,7 @@ import {
 import {
   buildBsv21SendRemittance,
   buildBsv21ValueLock,
+  bsv21SpendLayout,
   decodeBsv21Binary,
   decodeListedBsv21Tip,
   getTokenIconDataUrl,
@@ -1204,10 +1205,12 @@ async function splitBsv21CoverToExactAmt(args: {
     throw new Error('Not enough units available to list that amount.')
   }
   const changeAmt = coverSum - requested
+  const layout = bsv21SpendLayout(args.covers)
   const listedLock = buildBsv21ValueLock({
     tokenId: args.origin,
     amount: requested,
     address: args.active.address,
+    layout,
   })
   const key = PrivateKey.fromHex(args.active.rootKeyHex)
   const vin0 = args.covers[0]
@@ -1255,6 +1258,7 @@ async function splitBsv21CoverToExactAmt(args: {
                 tokenId: args.origin,
                 amount: changeAmt,
                 address: args.active.address,
+                layout,
               }),
               satoshis: 1,
               outputDescription: 'BSV-21 listing change',
@@ -1945,6 +1949,7 @@ async function createMarketListingAdvertExclusive(
           tokenId: origin,
           amount: BigInt(amt!),
           address: active.address,
+          layout: bsv21SpendLayout([{ lockingScript: lockingScriptHex }, ...extraCoverTips]),
         })
       : new P2PKH().lock(active.address).toHex()
   const path = chooseMarketListingPath({
@@ -2034,6 +2039,7 @@ async function createMarketListingAdvertExclusive(
                   tokenId: origin,
                   amount: BigInt(tipAmt - amt),
                   address: active.address,
+                  layout: bsv21SpendLayout([{ lockingScript: lockingScriptHex }, ...extraCoverTips]),
                 }),
                 satoshis: 1,
                 outputDescription: 'BSV-21 listing change',

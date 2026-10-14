@@ -89,6 +89,8 @@ export type Bsv21Utxo = {
   binarySupply?: 'locked' | 'open'
   /** Positive wire classification. Absence means an old cache row is unclassified. */
   encoding?: 'brc162' | 'legacy-json'
+  /** Binary layout of a BRC-162 tip; `draft-tagged` is the pre-#273 layout (BRC-251 §Compatibility). */
+  layout?: 'brc162' | 'draft-tagged'
   maxSupply?: number | null
   /** Local projection time; never serialized onto the Bitcoin output. */
   seenAt?: number
@@ -159,6 +161,8 @@ export type FungibleToken = {
    * unknown, not proof that the token uses the legacy JSON encoding.
    */
   encoding?: 'brc162' | 'legacy-json'
+  /** Every output of one token shares its deploy's layout; `draft-tagged` shows as the old format. */
+  layout?: 'brc162' | 'draft-tagged'
   /**
    * When this card was first painted. Used to bound how long a mint that never
    * reached the chain may keep painting; a row without it predates the field and
@@ -167,6 +171,12 @@ export type FungibleToken = {
   seenAt?: number
   maxSupply?: number | null
   provenanceOk?: boolean
+  /**
+   * Units of `amt` in tips no BRC-176 walk has bound to the deploy yet
+   * (BRC-251 §Verification). Held, never spendable; absent when every tip is
+   * bound.
+   */
+  checkingAmt?: string
   /** Active BRC-48 listing when this held tip is on the market. */
   marketListing?: {
     priceSats: number
@@ -190,6 +200,13 @@ export function classifyFungibleEncoding(
   if (token.binarySupply) return { kind: 'brc162', supply: token.binarySupply }
   if (token.encoding === 'legacy-json') return { kind: 'legacy-json' }
   return { kind: 'unknown' }
+}
+
+/** Units of a held token that a walk has bound to its deploy — the balance. */
+export function spendableFungibleAmt(token: Pick<FungibleToken, 'amt' | 'checkingAmt'>): string {
+  const held = BigInt(token.amt.replace(/\D/g, '') || '0')
+  const checking = BigInt(token.checkingAmt?.replace(/\D/g, '') || '0')
+  return (held > checking ? held - checking : 0n).toString()
 }
 
 export function normalizeTokenId(raw: string): string | null {
@@ -472,6 +489,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.icon ? { icon: u.icon } : {}),
         ...(u.binarySupply ? { binarySupply: u.binarySupply } : {}),
         ...(u.encoding ? { encoding: u.encoding } : {}),
+        ...(u.layout ? { layout: u.layout } : {}),
         ...(u.maxSupply != null ? { maxSupply: u.maxSupply } : {}),
         ...(u.seenAt != null ? { seenAt: u.seenAt } : {}),
         _sum: add,
@@ -493,6 +511,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (!existing.icon && u.icon) existing.icon = u.icon
     if (!existing.binarySupply && u.binarySupply) existing.binarySupply = u.binarySupply
     if (!existing.encoding && u.encoding) existing.encoding = u.encoding
+    if (!existing.layout && u.layout) existing.layout = u.layout
     if (existing.maxSupply == null && u.maxSupply != null) {
       existing.maxSupply = u.maxSupply
     }

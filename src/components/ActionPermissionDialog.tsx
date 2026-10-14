@@ -184,18 +184,23 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     <dt>What for</dt>
                     <dd>{pending.summary}</dd>
                   </div>
-                  {pending.issuance ? (
+                  {pending.issuance?.kind === 'signed' ? (
                     <div data-aeon-part="issuance-signer">
                       <dt>Signs as</dt>
                       <dd>
-                        {pending.issuance.displayName ?? 'Wallet identity'} ·{' '}
+                        {pending.issuance.displayName ?? 'Identity key'} ·{' '}
                         <span className="mono" title={pending.issuance.identityKey}>
                           {pending.issuance.identityKey.slice(0, 10)}…{pending.issuance.identityKey.slice(-6)}
                         </span>
                       </dd>
                     </div>
+                  ) : pending.issuance?.kind === 'unsigned' ? (
+                    <div data-aeon-part="issuance-signer">
+                      <dt>Maker</dt>
+                      <dd>Not signed. Holders will see no maker; turn on signing under ID → Public identities to sign future mints.</dd>
+                    </div>
                   ) : null}
-                  {pending.issuance?.anchor ? (
+                  {pending.issuance?.kind === 'signed' && pending.issuance.anchor ? (
                     <div data-aeon-part="issuance-anchor">
                       <dt>Extra transaction</dt>
                       <dd>A 2-sat Sigma signing anchor, sent with the mint, and its network fee</dd>

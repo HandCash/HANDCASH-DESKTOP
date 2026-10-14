@@ -128,7 +128,7 @@ describe('per-account outpoint guards', () => {
     const { listBsv21BinaryTips } = await import('./token/listTips')
     const mine = PrivateKey.fromRandom().toAddress()
     const txid = 'ab'.repeat(32)
-    const lockingScript = buildBsv21ValueLock({
+    const lockingScript = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_ID,
       amount: 7n,
       address: mine,
@@ -149,7 +149,7 @@ describe('per-account outpoint guards', () => {
     const { listBsv21BinaryTips } = await import('./token/listTips')
     const mine = PrivateKey.fromRandom().toAddress()
     const tipTxid = 'cd'.repeat(32)
-    const lockingScript = buildBsv21ValueLock({
+    const lockingScript = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_ID,
       amount: 7n,
       address: mine,

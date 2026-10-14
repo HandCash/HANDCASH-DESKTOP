@@ -9,7 +9,18 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   refreshShared: vi.fn(),
   relist: vi.fn(),
+  reconcile: vi.fn(),
+  runtime: null as { runtimeId: string; instance: { identityKey: string } } | null,
   inRegion: false,
+}))
+
+vi.mock('./walletRuntime', () => ({
+  assertRuntimeCurrent: () => {},
+  getWalletRuntime: () => mocks.runtime,
+}))
+
+vi.mock('./paymentReconcile', () => ({
+  reconcilePaymentsAfterRestore: mocks.reconcile,
 }))
 
 vi.mock('./collectables', () => ({
@@ -72,6 +83,7 @@ describe('recomposeWallet', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.inRegion = false
+    mocks.runtime = null
     mocks.hasBackupUrl.mockReturnValue(false)
     mocks.refresh.mockResolvedValue({
       balanceSats: 0,
@@ -130,6 +142,31 @@ describe('recomposeWallet', () => {
     expect(mocks.refreshShared).not.toHaveBeenCalled()
     expect(fencedDuringChain).toBe(true)
     expect(fencedDuringRelist).toBe(true)
+  })
+
+  it('starts the payment reconcile inside the fence once history replaced local state', async () => {
+    mocks.runtime = { runtimeId: 'rt-restore', instance: { identityKey: '02ab' } }
+    mocks.hasBackupUrl.mockReturnValue(true)
+    mocks.autoPush.mockResolvedValue({ pulled: true, skipReason: null, pullError: null })
+    let fencedAtReconcile: boolean | null = null
+    mocks.reconcile.mockImplementation(async () => {
+      fencedAtReconcile = mocks.inRegion
+    })
+    const { recomposeWallet } = await import('./recompose')
+
+    await recomposeWallet({ password: 'test-password', reason: 'unlock' })
+
+    expect(mocks.reconcile).toHaveBeenCalledWith(mocks.runtime)
+    expect(fencedAtReconcile).toBe(true)
+  })
+
+  it('does not reconcile payments when local state was kept', async () => {
+    mocks.runtime = { runtimeId: 'rt-unlock', instance: { identityKey: '02ab' } }
+    const { recomposeWallet } = await import('./recompose')
+
+    await recomposeWallet({ reason: 'unlock' })
+
+    expect(mocks.reconcile).not.toHaveBeenCalled()
   })
 
   it('re-lists collectables after a caller already replaced local state', async () => {

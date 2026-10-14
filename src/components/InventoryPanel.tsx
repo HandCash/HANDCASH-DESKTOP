@@ -16,7 +16,7 @@ import { CollectionViewToggle } from './CollectionViewToggle'
 import { CollectFacepile } from './CollectFacepile'
 import { SelectionCheckbox } from './SelectionCheckbox'
 import { DeferredImage } from './DeferredImage'
-import { BapFingerprint, SignerFingerprint } from './BapIdenticon'
+import { ProfileFingerprint, SignerFingerprint } from './ProfileIdenticon'
 import { IssuerTrustBadge, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
@@ -74,6 +74,7 @@ import {
   classifyFungibleEncoding,
   formatFungibleAmount,
   getCachedFungibles,
+  spendableFungibleAmt,
   listFungibles,
   subscribeFungibles,
   type FungibleToken,
@@ -434,10 +435,10 @@ function IssuerGroupItem({
           <span className="collect-collection-body">
             <strong
               className="collect-collection-name"
-              data-aeon-state={issuer.bap ? issuerViewState(issuer) : undefined}
+              data-aeon-state={issuer.profile ? issuerViewState(issuer) : undefined}
               title={
-                issuer.bap
-                  ? `${issuer.bap.state === 'verified' ? `${issuer.label} · ` : ''}Profile ID ${issuer.bap.id} · ${issuerTrustNote(issuer)}`
+                issuer.profile
+                  ? `${issuer.profile.state === 'verified' ? `${issuer.label} · ` : ''}Profile ID ${issuer.profile.id} · ${issuerTrustNote(issuer)}`
                   : issuer.identityKey
                     ? `${issuer.label} · issuer attribution: ${issuer.identityKey}`
                     : issuer.signer
@@ -446,14 +447,14 @@ function IssuerGroupItem({
               }
             >
               <span className="collect-collection-name-text">{issuer.label}</span>
-              {issuer.bap ? <IssuerTrustBadge view={issuer} /> : null}
+              {issuer.profile ? <IssuerTrustBadge view={issuer} /> : null}
             </strong>
             <span className="collect-collection-meta">
-              {issuer.bap ? (
-                <BapFingerprint
-                  bapId={issuer.bap.id}
+              {issuer.profile ? (
+                <ProfileFingerprint
+                  id={issuer.profile.id}
                   className="collect-issuer-fingerprint"
-                  showId={issuer.bap.state === 'verified'}
+                  showId={issuer.profile.state === 'verified'}
                   state={issuerViewState(issuer)}
                 />
               ) : issuer.signer ? (
@@ -486,7 +487,7 @@ function IssuerGroupItem({
               tokens={issuer.tokens}
               view={view}
               label={`${issuer.label} tokens`}
-              issuerLabel={issuer.bapId ? issuer.label : undefined}
+              issuerLabel={issuer.profile ? issuer.label : undefined}
             />
           </section>
         ) : null}
@@ -542,15 +543,20 @@ function FungibleItem({
   /** The BAP shelf's label; a cached handle never overrides it. */
   issuerLabel?: string
 }) {
-  const amount = formatFungibleAmount(token.amt, token.dec)
+  const amount = formatFungibleAmount(spendableFungibleAmt(token), token.dec)
+  const checking = token.checkingAmt ? formatFungibleAmount(token.checkingAmt, token.dec) : null
   const encoding = classifyFungibleEncoding(token)
   const issuer = issuerLabel
     ? issuerLabel
     : token.issuer
     ? token.issuerHandle || shortIssuerLabel(token.issuer)
     : encoding.kind === 'legacy-json'
-      ? 'Legacy BSV-21'
-      : 'BSV-21'
+      ? 'BSV-21 JSON (legacy)'
+      : encoding.kind === 'brc162'
+        ? token.layout === 'draft-tagged'
+          ? 'P2P-FT (old format)'
+          : 'P2P-FT'
+        : 'Token'
   const listing: MarketListingMark | null = token.marketListing
     ? token.marketListing.published === false
       ? { kind: 'unpublished', priceSats: token.marketListing.priceSats, reason: '' }
@@ -571,7 +577,7 @@ function FungibleItem({
         className="token-chip-main"
         onClick={openDetails}
         title={`${token.sym} · ${issuer}`}
-        aria-label={`${token.sym}, ${amount}, ${issuer}`}
+        aria-label={`${token.sym}, ${amount}${checking ? `, ${checking} checking` : ''}, ${issuer}`}
       >
         <span className="collectable-media collectable-media-sm collectable-media-token token-chip-face">
           <FungibleTokenFace
@@ -591,6 +597,11 @@ function FungibleItem({
         <span className="fungible-card-amount token-chip-amount" title={amount}>
           {amount}
         </span>
+        {checking ? (
+          <span data-aeon-part="checking" title={`${checking} checking`}>
+            +{checking} checking
+          </span>
+        ) : null}
       </button>
     </li>
   )

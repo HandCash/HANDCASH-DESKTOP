@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const store = new Map<string, string>()
 
@@ -40,6 +40,11 @@ function preRenameCacheRow() {
 }
 
 describe('cached fungible field migration', () => {
+  // Each test re-imports after resetModules; pay the one-time transform here.
+  beforeAll(async () => {
+    await import('./token/list')
+  }, 60_000)
+
   beforeEach(() => {
     store.clear()
     vi.resetModules()
@@ -81,7 +86,7 @@ describe('cached fungible field migration', () => {
     )
     const { getCachedFungibles } = await import('./token/list')
     const [token] = getCachedFungibles()
-    // `binarySupply` is the gate Collect uses for Send vs "Legacy BSV-21 — burn only".
+    // `binarySupply` is the gate Collect uses for Send vs "BSV-21 JSON (legacy) — burn only".
     expect(token?.binarySupply).toBe('locked')
     expect(token?.encoding).toBe('brc162')
     expect(token?.maxSupply).toBe(69420)

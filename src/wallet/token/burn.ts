@@ -18,6 +18,7 @@ import {
   assertBsv21BurnConservation,
   buildBsv21SendRemittance,
   buildBsv21ValueLock,
+  bsv21SpendLayout,
   planBsv21Send,
   type Bsv21SendTip,
 } from './sendPlan'
@@ -336,6 +337,7 @@ export async function burnBsv21Tokens(args: {
               tokenId,
               amount: change,
               address: active.address,
+              layout: bsv21SpendLayout(selected),
             }),
             satoshis: 1,
             outputDescription: 'BSV-21 burn change',
