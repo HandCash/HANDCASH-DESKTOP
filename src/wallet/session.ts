@@ -637,12 +637,26 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
 export async function bootWallet(args: WalletBootArgs): Promise<ActiveWallet> {
   disposeWalletRuntime('replaced')
   active = null
-  const { migrateWalletEngineStorage } = await import('./walletEngineMigration')
+  // Let "Almost ready" paint before the engine module evaluates.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const started = Date.now()
+  const { migrateWalletEngineStorage, scheduleWalletEngineSettlement } = await import(
+    './walletEngineMigration'
+  )
   await migrateWalletEngineStorage(args)
+  const adopted = Date.now()
   const unit = await walletUnitFor(args)
   const wallet = await replaceWarmWallet(unit, () => buildWallet(args, unit.databaseName))
+  const opened = Date.now()
   markWarmWalletSelected(unit)
   const selected = await selectWallet(wallet)
+  const ms = Date.now() - started
+  if (ms > 250) {
+    console.info(
+      `[wallet-boot] open done ${ms}ms — adopt ${adopted - started}ms, storage ${opened - adopted}ms`,
+    )
+  }
+  scheduleWalletEngineSettlement(args)
   prewarmVaultAccounts(selected, args)
   return selected
 }

@@ -7,7 +7,7 @@ import { toolboxDatabaseName } from './vaultAccounts'
 import {
   __resetWalletEngineMigrationForTests,
   legacyToolboxDatabaseName,
-  migrateWalletEngineStorage,
+  settleWalletEngineStorage,
 } from './walletEngineMigration'
 
 const BRC29: [2, string] = [2, '3241645161d8']
@@ -152,7 +152,7 @@ describe('wallet engine commit boundaries', () => {
     await legacy.setup.activeStorage.destroy()
     __resetWalletEngineMigrationForTests()
 
-    await migrateWalletEngineStorage({
+    await settleWalletEngineStorage({
       chain: 'main',
       rootKeyHex: root.toHex(),
       handle,

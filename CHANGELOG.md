@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.571] - 2026-10-15
+
+### Fixed
+- **Unlock opens the wallet before any engine housekeeping.** Adopting the existing database is a local marker. Deleting a leftover copy, and copying an old shared database, wait until the wallet is on screen.
+
 ## [1.3.570] - 2026-10-15
 
 ### Fixed

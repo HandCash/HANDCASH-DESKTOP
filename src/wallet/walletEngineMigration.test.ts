@@ -33,6 +33,7 @@ vi.mock('./durableStorage', () => ({
 import {
   __resetWalletEngineMigrationForTests,
   migrateWalletEngineStorage,
+  settleWalletEngineStorage,
 } from './walletEngineMigration'
 
 const rootKeyHex = '01'.padStart(64, '0')
@@ -95,8 +96,9 @@ async function storedNames(): Promise<string[]> {
   return (await indexedDB.databases()).map((row) => row.name ?? '').sort()
 }
 
-const run = () =>
-  migrateWalletEngineStorage({ chain: 'main', rootKeyHex, handle: 'alice', accountIndex: 0 })
+const args = { chain: 'main' as const, rootKeyHex, handle: 'alice', accountIndex: 0 }
+const unlock = () => migrateWalletEngineStorage(args)
+const settle = () => settleWalletEngineStorage(args)
 
 describe('wallet engine migration', () => {
   beforeEach(() => {
@@ -121,8 +123,9 @@ describe('wallet engine migration', () => {
 
   it('adopts an account already in its own database without copying it', async () => {
     await seedDatabase('wallet-main-primary', [{ identityKey }])
+    await seedDatabase('wallet-toolbox-mainnet', [{ identityKey }])
 
-    await run()
+    await unlock()
 
     expect(mocks.createStorageIdb).not.toHaveBeenCalled()
     expect(mocks.exportBRC38Json).not.toHaveBeenCalled()
@@ -131,22 +134,28 @@ describe('wallet engine migration', () => {
       expect.any(String),
       'wallet-main-primary',
     )
+    expect(await storedNames()).toEqual(['wallet-main-primary', 'wallet-toolbox-mainnet'])
   })
 
-  it('drops a staging copy an interrupted run left behind', async () => {
+  it('drops a staging copy only after unlock', async () => {
     await seedDatabase('wallet-main-primary', [{ identityKey }])
     await seedDatabase('wallet-main-primary-restore-engine-v1-abandoned')
 
-    await run()
+    await unlock()
+    expect(await storedNames()).toContain('wallet-main-primary-restore-engine-v1-abandoned')
 
+    await settle()
     expect(await storedNames()).toEqual(['wallet-main-primary'])
+    expect(mocks.importBRC38).not.toHaveBeenCalled()
   })
 
-  it('copies history held in the shared legacy database through a verified stage', async () => {
+  it('copies legacy history after unlock when the account database does not hold it', async () => {
     await seedDatabase('wallet-toolbox-mainnet', [{ identityKey }])
 
-    await run()
+    await unlock()
+    expect(mocks.importBRC38).not.toHaveBeenCalled()
 
+    await settle()
     expect(mocks.importBRC38).toHaveBeenCalledOnce()
     expect(mocks.select).toHaveBeenCalledWith(
       { chain: 'main', handle: 'alice', accountIndex: 0 },
@@ -161,7 +170,7 @@ describe('wallet engine migration', () => {
       .mockReturnValueOnce(document())
       .mockReturnValueOnce(document(20))
 
-    await expect(run()).rejects.toThrow('verification failed')
+    await expect(settle()).rejects.toThrow('verification failed')
     expect(mocks.select).not.toHaveBeenCalled()
   })
 })

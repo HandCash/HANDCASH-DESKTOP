@@ -131,37 +131,44 @@ async function dropAbandonedStages(base: string, selected: string): Promise<void
   const prefix = `${base}-restore-engine-v${ENGINE_SCHEMA}-`
   for (const name of await databaseNames()) {
     if (!name.startsWith(prefix) || name === selected) continue
+    const started = Date.now()
     await new Promise<void>((resolve) => {
       const request = indexedDB.deleteDatabase(name)
-      request.onsuccess = () => resolve()
-      request.onerror = () => resolve()
-      request.onblocked = () => resolve()
+      const timer = setTimeout(resolve, 60_000)
+      const finish = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      request.onsuccess = finish
+      request.onerror = finish
+      request.onblocked = finish
     })
-    console.info(`[wallet-engine] dropped abandoned migration copy ${name}`)
+    console.info(`[wallet-engine] dropped abandoned migration copy done ${Date.now() - started}ms — ${name}`)
+  }
+}
+
+function accountOf(args: MigrationArgs) {
+  const accountIndex = args.accountIndex ?? 0
+  const account = { chain: args.chain, handle: args.handle, accountIndex }
+  return {
+    accountIndex,
+    account,
+    base: originalToolboxDatabaseName(account),
+    selected: toolboxDatabaseName(account),
   }
 }
 
 /**
- * Bring one account onto the HandCash-owned engine.
+ * Let unlock open the wallet.
  *
- * The engine opens the toolbox's own IndexedDB schema (version 6, the same
- * stores and indexes), so an account already in its own database is adopted
- * in place. Copying it cost a full BRC-38 export, import and second export
- * before unlock, which a phone with a long history never finished.
- *
- * Only history held in the shared legacy database is copied, and the pointer
- * moves only after the portable history round-trips with identical custody
- * facts. The source database remains untouched as the rollback copy.
+ * The engine reads the toolbox's own IndexedDB schema, so an account already
+ * in its own database needs no copy. The previous unlock waited on a full
+ * history export and, after that was removed, on deleting the leftover copy.
+ * Both happen after the wallet is on screen, in {@link settleWalletEngineStorage}.
  */
 export async function migrateWalletEngineStorage(args: MigrationArgs): Promise<void> {
-  const accountIndex = args.accountIndex ?? 0
-  const account = {
-    chain: args.chain,
-    handle: args.handle,
-    accountIndex,
-  }
-  const base = originalToolboxDatabaseName(account)
-  const selected = toolboxDatabaseName(account)
+  const started = Date.now()
+  const { selected, base } = accountOf(args)
   const key = markerKey(base)
   if (
     migratedThisRun.has(selected) ||
@@ -171,7 +178,27 @@ export async function migrateWalletEngineStorage(args: MigrationArgs): Promise<v
     migratedThisRun.add(selected)
     return
   }
+  if (!durableSetItem(key, selected)) {
+    throw new Error('Wallet-engine migration marker could not be persisted')
+  }
+  migratedThisRun.add(selected)
+  const ms = Date.now() - started
+  console.info(
+    ms > 250
+      ? `[wallet-engine] adopt done ${ms}ms — ${selected}`
+      : `[wallet-engine] adopted ${selected} in place`,
+  )
+}
 
+/**
+ * After unlock: delete copies a stalled run left behind, and copy a shared
+ * legacy database only when this account's own database does not hold it.
+ * The pointer moves only after the portable history round-trips with identical
+ * custody facts. The source database stays as the rollback copy.
+ */
+export async function settleWalletEngineStorage(args: MigrationArgs): Promise<void> {
+  const { accountIndex, account, base, selected } = accountOf(args)
+  const key = markerKey(base)
   const identityKey = PrivateKey.fromHex(args.rootKeyHex).toPublicKey().toString()
   const legacy = legacyToolboxDatabaseName(args.chain)
   const sourceName =
@@ -181,14 +208,7 @@ export async function migrateWalletEngineStorage(args: MigrationArgs): Promise<v
       ? legacy
       : selected
   if (sourceName === selected) {
-    // Already in its own database (or a new account with nothing to copy):
-    // the engine reads it as it is.
-    if (!durableSetItem(key, selected)) {
-      throw new Error('Wallet-engine migration marker could not be persisted')
-    }
-    migratedThisRun.add(selected)
-    await dropAbandonedStages(base, selected).catch(() => undefined)
-    console.info(`[wallet-engine] adopted ${selected} in place`)
+    await dropAbandonedStages(base, selected)
     return
   }
   const replacement =
@@ -231,6 +251,24 @@ export async function migrateWalletEngineStorage(args: MigrationArgs): Promise<v
   console.info(
     `[wallet-engine] migration done ${Date.now() - startedAt}ms — a${accountIndex} ${sourceName} → ${replacement}`,
   )
+  await dropAbandonedStages(base, replacement)
+}
+
+/** Run settlement once the wallet is on screen, so unlock never waits on it. */
+export function scheduleWalletEngineSettlement(args: MigrationArgs): void {
+  if (import.meta.env?.MODE === 'test' || typeof window === 'undefined') return
+  const start = () => {
+    void settleWalletEngineStorage(args).catch((error) => {
+      console.warn(
+        '[wallet-engine] settlement skipped',
+        error instanceof Error ? error.message : String(error),
+      )
+    })
+  }
+  setTimeout(() => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: 20_000 })
+    else start()
+  }, 8_000)
 }
 
 export function __resetWalletEngineMigrationForTests(): void {
