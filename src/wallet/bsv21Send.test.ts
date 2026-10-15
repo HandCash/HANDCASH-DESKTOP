@@ -17,6 +17,7 @@ import {
   tipFromBsv21Script,
 } from './token'
 import { tokenLineageFromBeef } from './token/lineage'
+import { paymentPaysThisWallet } from './token/send'
 import { tokenWalkRemainder } from './token/prove176'
 
 const PAYEE = PrivateKey.fromRandom().toAddress()
@@ -135,6 +136,31 @@ describe('bsv21Send conservation', () => {
     expect(outputs[0]!.role).toBe('payee')
     expect(outputs[0]!.basket).toBe('p2pft')
     expect(outputs[0]!.tags).toContain(`p2pft:${tokenId}`)
+  })
+
+  it('treats this wallet as the payee by identity or by the same lock', () => {
+    const key = PrivateKey.fromRandom()
+    const address = key.toAddress()
+    expect(
+      paymentPaysThisWallet({
+        payeeAddress: address,
+        walletAddress: key.toPublicKey().toAddress('mainnet'),
+        recipientIdentityKey: key.toPublicKey().toString(),
+        walletIdentityKey: key.toPublicKey().toString(),
+      }),
+    ).toBe(true)
+    expect(
+      paymentPaysThisWallet({
+        payeeAddress: address,
+        walletAddress: address,
+      }),
+    ).toBe(true)
+    expect(
+      paymentPaysThisWallet({
+        payeeAddress: PAYEE,
+        walletAddress: CHANGE,
+      }),
+    ).toBe(false)
   })
 
   it('spends the shorter remainder when both tips cover the amount', () => {

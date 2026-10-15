@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.559] - 2026-10-15
+
+### Fixed
+- **Sending p2pft to yourself keeps the token in inventory.** The outputs this wallet still holds are painted before the spent tips are hidden, and a payment to this identity is filed as held. A full-balance self-send no longer disappears until ingest.
+
 ## [1.3.558] - 2026-10-15
 
 ### Fixed

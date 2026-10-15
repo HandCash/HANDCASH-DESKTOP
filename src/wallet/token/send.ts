@@ -21,6 +21,7 @@ import {
   requireTokenId,
 } from './types'
 import { decodeBsv21Binary } from './decode162'
+import { paintFungibleAfterSpend } from './list'
 import { fillTokenParentBodies, tokenWalkRemainderFromSession } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
 import { deployRequiresProcessing } from './requiredProcessing'
@@ -147,6 +148,31 @@ export function chooseBsv21ValueTipPath(
       return kind.kind === 'plain' && isCovenantLockedScript(rest) ? { kind: 'unknown' } : kind
     }),
   )
+}
+
+/**
+ * A payment to this wallet, including the same key written as another address
+ * encoding or selected by identity. Those outputs stay in the token filing;
+ * otherwise a full-balance self-send leaves the basket and the card goes empty
+ * until ingest files it again.
+ */
+export function paymentPaysThisWallet(args: {
+  payeeAddress: string
+  walletAddress: string
+  recipientIdentityKey?: string | null
+  walletIdentityKey?: string | null
+}): boolean {
+  const recipient = args.recipientIdentityKey?.trim().toLowerCase()
+  const self = args.walletIdentityKey?.trim().toLowerCase()
+  if (recipient && self && recipient === self) return true
+  try {
+    return (
+      new P2PKH().lock(args.payeeAddress).toHex() ===
+      new P2PKH().lock(args.walletAddress).toHex()
+    )
+  } catch {
+    return args.payeeAddress.trim().toLowerCase() === args.walletAddress.trim().toLowerCase()
+  }
 }
 
 /** Every tip outpoint the cached card of this token shows. */
@@ -692,10 +718,14 @@ export async function sendBsv21Tokens(args: {
         'resolving the recipient',
         resolvePaymentRecipient(args.toAddress, wallet.chain),
       )
-      // Resolved, not typed: a handle that resolves to this wallet is a
-      // self-send too. Self outputs stay in basket `bsv21` (BRC-163).
-      const payeeIsSelf =
-        to.trim().toLowerCase() === wallet.address.trim().toLowerCase()
+      // Resolved, not typed: a handle or another encoding of this wallet is a
+      // self-send too. Self outputs stay in the p2pft filing.
+      const payeeIsSelf = paymentPaysThisWallet({
+        payeeAddress: to,
+        walletAddress: wallet.address,
+        recipientIdentityKey: args.recipientIdentityKey,
+        walletIdentityKey: wallet.identityKey,
+      })
       const issuer = (() => {
         for (const tip of listed162) {
           if (tip.tokenId === tokenId && tip.issuer) return tip.issuer
@@ -1014,6 +1044,31 @@ export async function sendBsv21Tokens(args: {
           console.info(
             `[bsv21] signed outputs payee=${classified.payee.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'} change=${classified.change.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'}`,
           )
+          if (remainingAmt > 0n) {
+            paintFungibleAfterSpend({
+              tokenId,
+              remainingAmt,
+              outpoint: remainingOp,
+              sym,
+              icon,
+              dec,
+              binarySupply: 'locked',
+              utxoCount: heldAfter.length,
+              heldTips: heldAfter.map((out) => ({
+                outpoint: out.outpoint,
+                tokenId,
+                amt: out.amt.toString(),
+                op: 'transfer' as const,
+                sym,
+                dec,
+                satoshis: 1,
+                binarySupply: 'locked' as const,
+                encoding: 'brc162' as const,
+                ...(icon ? { icon } : {}),
+                seenAt: Date.now(),
+              })),
+            })
+          }
           const { beef: proved } = buildBsv21SubjectBeef({
             parentBeef: withParents,
             subjectTx: signedTx,
@@ -1069,6 +1124,22 @@ export async function sendBsv21Tokens(args: {
       })
       // Signed — settle owns broadcast; do not abort this reference on peer miss.
       actionReference = undefined
+      // Spent tips are hidden only after the replacement card is already painted.
+      markItemsSent([
+        ...selected.map((tip) => ({
+          outpoint: normalizeOutpoint(tip.outpoint),
+          txid,
+          asset: 'token' as const,
+        })),
+        ...(payeeIsSelf
+          ? []
+          : payeeOutpoints.map((outpoint) => ({
+              outpoint,
+              txid,
+              settle: 'senderBroadcast' as const,
+              asset: 'token' as const,
+            }))),
+      ])
       if (peerKey) {
         setPaymentProgress(
           'finishing',
@@ -1177,21 +1248,9 @@ export async function sendBsv21Tokens(args: {
       startSignedSendPropagation(signedSend, {
         pendingId: outboundPending.id,
       })
-      void (async () => {
-        try {
-          const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
-          markItemsSent([
-            ...spent.map((outpoint) => ({ outpoint, txid, asset: 'token' as const })),
-            ...(payeeIsSelf
-              ? []
-              : payeeOutpoints.map((outpoint) => ({
-                  outpoint,
-                  txid,
-                  settle: 'senderBroadcast' as const,
-                  asset: 'token' as const,
-                }))),
-          ])
-          if (!payeeIsSelf) {
+      if (!payeeIsSelf) {
+        void (async () => {
+          try {
             const { relinquishTokenFiling } = await import('./filingStore')
             for (const op of payeeOutpoints) {
               try {
@@ -1200,42 +1259,14 @@ export async function sendBsv21Tokens(args: {
                 /* createAction may already have dropped it */
               }
             }
+          } catch (error) {
+            console.warn(
+              '[p2pft] payee filing release deferred',
+              error instanceof Error ? error.message : String(error),
+            )
           }
-          const { paintFungibleAfterSpend } = await import('./list')
-          paintFungibleAfterSpend({
-            tokenId,
-            remainingAmt,
-            outpoint: remainingOp,
-            sym,
-            icon,
-            dec,
-            binarySupply: 'locked',
-            ...(heldAfter.length > 1
-              ? {
-                  utxoCount: heldAfter.length,
-                  heldTips: heldAfter.map((out) => ({
-                    outpoint: out.outpoint,
-                    tokenId,
-                    amt: out.amt.toString(),
-                    op: 'transfer' as const,
-                    sym,
-                    dec,
-                    satoshis: 1,
-                    binarySupply: 'locked' as const,
-                    encoding: 'brc162' as const,
-                    ...(icon ? { icon } : {}),
-                    seenAt: Date.now(),
-                  })),
-                }
-              : {}),
-          })
-        } catch (error) {
-          console.warn(
-            '[p2pft] post-sign inventory projection deferred',
-            error instanceof Error ? error.message : String(error),
-          )
-        }
-      })()
+        })()
+      }
       return { txid, tipsSpent: selected.length, change: remainingAmt }
       } finally {
         if (actionReference) {
