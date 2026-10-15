@@ -3,7 +3,9 @@
  * This module decides which baskets, and that an output moves once.
  */
 
+import { storageRegistry } from '../../storage/registry'
 import type { ActiveWallet } from '../session'
+import { durableGetItem, durableSetItem } from '../durableStorage'
 import {
   LEGACY_TOKEN_BASKET,
   P2PFT_BASKET,
@@ -38,7 +40,35 @@ type FilingStorage = {
   runAsStorageProvider?: <T>(fn: (sp: FilingProvider) => Promise<T>) => Promise<T>
 }
 
-const moving = new Map<string, Promise<number>>()
+const MOVED_KEY = storageRegistry.legacyTokenFilingMoved.key
+
+export type LegacyMove = 'done' | 'pending' | 'skipped'
+
+const moving = new Map<string, Promise<LegacyMove>>()
+const moved = new Set<string>()
+let movedLoaded = false
+
+function loadMoved(): Set<string> {
+  if (movedLoaded) return moved
+  movedLoaded = true
+  try {
+    const raw = durableGetItem(MOVED_KEY)
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null
+    if (Array.isArray(parsed)) {
+      for (const key of parsed) if (typeof key === 'string' && key) moved.add(key)
+    }
+  } catch {
+    moved.clear()
+  }
+  return moved
+}
+
+function rememberMoved(key: string): void {
+  const keys = loadMoved()
+  if (keys.has(key)) return
+  keys.add(key)
+  durableSetItem(MOVED_KEY, JSON.stringify([...keys]))
+}
 
 function walletKey(wallet: Pick<ActiveWallet, 'chain' | 'accountIndex' | 'identityKey'>): string {
   return `${wallet.chain}:${wallet.accountIndex}:${wallet.identityKey}`
@@ -62,21 +92,21 @@ async function readOne<T>(basket: string, read: (basket: string) => Promise<T[]>
 }
 
 /**
- * List both filings and keep one row per outpoint.
- * Moves `bsv21` into `p2pft` first. A move that cannot run still returns both.
+ * List the live filing, `p2pft`.
+ *
+ * `bsv21` is not a listOutputs target. Rows still filed there move into
+ * `p2pft` by indexed id, and only when a send is not waiting on the storage
+ * lock. Until that move finishes, a send uses the tips it already has.
  */
 export async function readTokenFiling<T>(
   wallet: ActiveWallet,
   read: (basket: string) => Promise<T[]>,
   outpoint: (row: T) => string | undefined,
 ): Promise<T[]> {
-  const { walletRegionsIdle } = await import('../walletCoordinator')
-  // A send waiting on this read must not start the one-time basket move.
-  // Legacy `bsv21` rows are still listed below until the wallet is idle.
-  if (walletRegionsIdle()) await moveLegacyTokenFiling(wallet)
+  const { spendNeedsStorage } = await import('../walletCoordinator')
+  if (!spendNeedsStorage()) await moveLegacyTokenFiling(wallet)
   const current = await readOne(P2PFT_BASKET, read)
-  const legacy = await readOne(LEGACY_TOKEN_BASKET, read)
-  return mergeFilingRows([...current, ...legacy], outpoint)
+  return mergeFilingRows(current, outpoint)
 }
 
 /** Drop a token output from whichever filing still holds it. */
@@ -93,50 +123,69 @@ export async function relinquishTokenFiling(
   }
 }
 
-/** Move every output filed under `bsv21` into `p2pft`. Once per wallet. */
-export function moveLegacyTokenFiling(wallet: ActiveWallet): Promise<number> {
+/** Move every output filed under `bsv21` into `p2pft`. Retries until done. */
+export function moveLegacyTokenFiling(wallet: ActiveWallet): Promise<LegacyMove> {
   const key = walletKey(wallet)
+  if (loadMoved().has(key)) return Promise.resolve('done')
   const existing = moving.get(key)
   if (existing) return existing
-  const run = moveLegacy(wallet).catch((err: unknown) => {
-    moving.delete(key)
-    console.warn(
-      '[p2pft] filing move skipped',
-      err instanceof Error ? err.message : String(err),
-    )
-    return 0
-  })
+  const run = moveLegacy(wallet)
+    .then((result) => {
+      moving.delete(key)
+      if (result === 'done') rememberMoved(key)
+      return result
+    })
+    .catch((err: unknown) => {
+      moving.delete(key)
+      console.warn(
+        '[p2pft] filing move skipped',
+        err instanceof Error ? err.message : String(err),
+      )
+      return 'skipped' as const
+    })
   moving.set(key, run)
   return run
 }
 
-async function moveLegacy(wallet: ActiveWallet): Promise<number> {
+async function moveLegacy(wallet: ActiveWallet): Promise<LegacyMove> {
   const storage = (wallet.wallet as { storage?: FilingStorage }).storage
-  if (typeof storage?.runAsStorageProvider !== 'function') return 0
-  const moved = await storage.runAsStorageProvider((sp) => moveOnProvider(sp, wallet.identityKey))
-  if (moved > 0) console.info(`[p2pft] filing move done — ${moved} output(s)`)
-  return moved
+  if (typeof storage?.runAsStorageProvider !== 'function') return 'skipped'
+  const { spendNeedsStorage } = await import('../walletCoordinator')
+  if (spendNeedsStorage()) return 'pending'
+  const result = await storage.runAsStorageProvider((sp) =>
+    moveOnProvider(sp, wallet.identityKey),
+  )
+  if (result.moved > 0) {
+    console.info(
+      `[p2pft] filing move ${result.status} — ${result.moved} output(s) into p2pft`,
+    )
+  }
+  return result.status
 }
 
-async function moveOnProvider(sp: FilingProvider, identityKey: string): Promise<number> {
+async function moveOnProvider(
+  sp: FilingProvider,
+  identityKey: string,
+): Promise<{ status: LegacyMove; moved: number }> {
   if (
     typeof sp.findUserByIdentityKey !== 'function' ||
     typeof sp.findOutputBaskets !== 'function' ||
     typeof sp.findOutputs !== 'function' ||
     typeof sp.updateOutput !== 'function'
   ) {
-    return 0
+    return { status: 'skipped', moved: 0 }
   }
+  const { spendNeedsStorage } = await import('../walletCoordinator')
   const user = await sp.findUserByIdentityKey(identityKey)
   const userId = user?.userId
-  if (typeof userId !== 'number') return 0
+  if (typeof userId !== 'number') return { status: 'skipped', moved: 0 }
   const baskets = await sp.findOutputBaskets({ partial: { userId } })
   const legacy = baskets.find((b) => b.name?.trim().toLowerCase() === LEGACY_TOKEN_BASKET)
   const legacyId = legacy?.basketId
-  if (typeof legacyId !== 'number') return 0
+  if (typeof legacyId !== 'number') return { status: 'done', moved: 0 }
   let nextId = baskets.find((b) => b.name?.trim().toLowerCase() === P2PFT_BASKET)?.basketId
   if (typeof nextId !== 'number') {
-    if (typeof sp.insertOutputBasket !== 'function') return 0
+    if (typeof sp.insertOutputBasket !== 'function') return { status: 'skipped', moved: 0 }
     const now = new Date()
     nextId = await sp.insertOutputBasket({
       basketId: 0,
@@ -149,24 +198,26 @@ async function moveOnProvider(sp: FilingProvider, identityKey: string): Promise<
       updated_at: now,
     })
   }
-  if (typeof nextId !== 'number') return 0
+  if (typeof nextId !== 'number') return { status: 'skipped', moved: 0 }
   let moved = 0
   for (let page = 0; page < 100; page += 1) {
+    if (spendNeedsStorage()) return { status: 'pending', moved }
     const rows =
       (await sp.findOutputs({
         partial: { userId, basketId: legacyId },
         noScript: true,
         paged: { limit: 500, offset: 0 },
       })) ?? []
-    if (rows.length === 0) return moved
+    if (rows.length === 0) return { status: 'done', moved }
     let progressed = 0
     for (const row of rows) {
+      if (spendNeedsStorage()) return { status: 'pending', moved }
       if (typeof row.outputId !== 'number') continue
       await sp.updateOutput(row.outputId, { basketId: nextId })
       progressed += 1
       moved += 1
     }
-    if (progressed === 0 || rows.length < 500) return moved
+    if (progressed === 0 || rows.length < 500) return { status: 'done', moved }
   }
-  return moved
+  return { status: 'pending', moved }
 }

@@ -101,6 +101,16 @@ function slimmed(value: ReturnType<typeof lineage>): ProvenanceV2 {
 }
 
 describe('publishing a BRC-150 proof to the market overlay', () => {
+  it('names ancestry behind a recipient frontier by txid while the package still fits', () => {
+    const value = lineage()
+    const originTxid = value.path[1]!.slice(0, 64)
+    const fitted = fitRemittanceBeef(value.beef, value.path, 1_000_000, [originTxid])
+    expect(fitted).not.toBeNull()
+    expect(fitted!.stripped).toEqual([originTxid])
+    expect(fitted!.beef.findTxid(originTxid)?.isTxidOnly).toBe(true)
+    expect(fitted!.beef.findTxid(value.path[0]!.slice(0, 64))?.tx).toBeTruthy()
+  })
+
   it('accepts the complete package', () => {
     expect(verifyProvenanceV2(lineage().provenance)).toMatchObject({ ok: true })
   })

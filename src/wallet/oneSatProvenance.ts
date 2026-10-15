@@ -375,6 +375,12 @@ export function fitRemittanceBeef(
   beef: Beef,
   path: string[],
   maxBytes: number = REMITTANCE_MAX_BEEF_BYTES,
+  /**
+   * Path transactions the recipient can already supply (BRC-150 txid-only,
+   * the collectable form of a BRC-252 frontier). Named even when the package
+   * is under budget. The tip is never dropped.
+   */
+  txidOnly: readonly string[] = [],
 ): { beef: Beef; binary: number[]; stripped: string[] } | null {
   const lean = beef.clone()
   // Remittance is a full BEEF package. A prior AtomicBEEF subject is the spent
@@ -393,11 +399,6 @@ export function fitRemittanceBeef(
   const measure = (): number[] =>
     typeof lean.toBinary === 'function' ? lean.toBinary() : []
 
-  let binary = measure()
-  if (binary.length <= maxBytes) {
-    return { beef: lean, binary, stripped }
-  }
-
   const strip = (txid: string): boolean => {
     if (!txid || txid === tipTxid) return false
     const entry = lean.findTxid(txid)
@@ -405,6 +406,15 @@ export function fitRemittanceBeef(
     lean.makeTxidOnly(txid)
     stripped.push(txid)
     return true
+  }
+
+  for (const txid of txidOnly) {
+    strip(txid.trim().toLowerCase())
+  }
+
+  let binary = measure()
+  if (binary.length <= maxBytes) {
+    return { beef: lean, binary, stripped }
   }
 
   // Origin first — almost always the batch mint.
@@ -548,12 +558,48 @@ export async function completeProvenanceForPublish(args: {
 export function encodeRemittanceBeef(
   beef: Beef,
   path: string[],
+  txidOnly: readonly string[] = [],
 ): { beefB64: string; stripped: string[] } | null {
-  const fitted = fitRemittanceBeef(beef, path)
+  const fitted = fitRemittanceBeef(beef, path, REMITTANCE_MAX_BEEF_BYTES, txidOnly)
   if (!fitted) return null
   return {
     beefB64: bytesToBase64(fitted.binary),
     stripped: fitted.stripped,
+  }
+}
+
+/**
+ * Wire copy of a BRC-150 package for a recipient who already checked `frontier`.
+ *
+ * The path stays complete. Transactions older than the newest frontier hop are
+ * named by txid; the new hop and that frontier transaction stay raw. The
+ * stored remittance is not modified. A recipient that no longer has the body
+ * fetches it. Unknown proof fields are ignored — BRC-252 registers none.
+ */
+export function provenanceForRecipient(
+  provenance: unknown,
+  frontier: ReadonlySet<string>,
+): unknown {
+  const parsed = parseProvenanceV2(provenance)
+  if (!parsed || frontier.size === 0) return provenance
+  const path = parsed.path.map((hop) => toUnderscore(hop).toLowerCase())
+  const cut = path.findIndex((hop) => frontier.has(hop))
+  if (cut < 0) return provenance
+  const older = path
+    .slice(cut + 1)
+    .map((hop) => pathTxid(hop))
+    .filter((txid) => /^[0-9a-f]{64}$/.test(txid))
+  if (older.length === 0) return provenance
+  try {
+    const beef = Beef.fromBinary(base64ToBytes(parsed.beefB64))
+    const encoded = encodeRemittanceBeef(beef, path, older)
+    if (!encoded || encoded.stripped.length === 0) return provenance
+    console.info(
+      `[brc-150] remittance named ${encoded.stripped.length} older tx(s) by txid — recipient frontier`,
+    )
+    return { ...parsed, path, beefB64: encoded.beefB64 }
+  } catch {
+    return provenance
   }
 }
 

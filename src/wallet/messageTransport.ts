@@ -1548,8 +1548,11 @@ export async function notifyPeerItemIncoming(args: {
   /** The caller already merged local unconfirmed ancestry into `atomicBeef`. */
   ancestryComplete?: boolean
   provenance?: unknown
-  /** BRC-176 lineage for a fungible; derived from `atomicBeef` when absent. */
-  tokenLineage?: number[]
+  /**
+   * BRC-176 lineage for a fungible. Omitted: derive it from `atomicBeef`.
+   * Null: the sender already cut it (nothing past the recipient's frontier).
+   */
+  tokenLineage?: number[] | null
 }): Promise<PeerBeefNotifyResult> {
   const none: PeerBeefNotifyResult = {
     delivered: 'local',
@@ -1597,7 +1600,16 @@ export async function notifyPeerItemIncoming(args: {
       },
     })
   const base = itemMessage()
-  const withProof = withOptionalProvenance(base, args.provenance)
+  let provenance = args.provenance
+  if (provenance && itemOrigin && args.asset?.kind !== 'fungible') {
+    const { provenanceForRecipient } = await import('./oneSatProvenance')
+    const { itemFrontierAsset, proofFrontier } = await import('./proofFrontier')
+    provenance = provenanceForRecipient(
+      provenance,
+      proofFrontier(args.recipientIdentityKey, itemFrontierAsset(itemOrigin)),
+    )
+  }
+  const withProof = withOptionalProvenance(base, provenance)
   let packed = {
     ...withOptionalBeefB64(withProof.body, atomicBeef),
     provenanceInBox: withProof.provenanceInBox,
@@ -1640,7 +1652,7 @@ export async function notifyPeerItemIncoming(args: {
       `[messagebox] BSV-21 AtomicBEEF omitted txid=${txid.slice(0, 12)} — payee cannot settle without an indexer`,
     )
   }
-  if (args.asset?.kind === 'fungible') {
+  if (args.asset?.kind === 'fungible' && args.tokenLineage !== null) {
     try {
       let lineage = args.tokenLineage ?? null
       if (!lineage && atomicBeef?.length) {
@@ -1685,11 +1697,20 @@ export async function notifyPeerItemIncoming(args: {
       peerId: recipient,
     })
     if (deliveryReachedPeer(delivered.delivered)) {
-      return {
+      const result = {
         delivered: delivered.delivered,
         beefInBox: packed.beefInBox && delivered.beefStripped !== true,
         provenanceInBox: packed.provenanceInBox,
       }
+      if (result.provenanceInBox && itemOrigin && args.asset?.kind !== 'fungible') {
+        const { itemFrontierAsset, rememberProofFrontier } = await import('./proofFrontier')
+        const vout =
+          Number.isInteger(args.itemOutputIndex) && args.itemOutputIndex! >= 0
+            ? args.itemOutputIndex!
+            : 0
+        rememberProofFrontier(recipient, itemFrontierAsset(itemOrigin), [`${txid}_${vout}`])
+      }
+      return result
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }

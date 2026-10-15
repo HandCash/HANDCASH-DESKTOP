@@ -58,6 +58,11 @@ export function tokenLineageFromBeef(
   source: Beef | number[] | Uint8Array,
   subjectTxid: string,
   rawTokenId: string,
+  /**
+   * Recipient frontier (BRC-252 §2). Bodies behind these outpoints are left
+   * out. With nothing recorded, the package is the full walk.
+   */
+  stopAt?: ReadonlySet<string>,
 ): number[] | null {
   const beef = asBeef(source)
   const tokenId = normalizeTokenId(rawTokenId)
@@ -71,7 +76,12 @@ export function tokenLineageFromBeef(
   if (tips.length === 0) return null
   let ancestry: string[]
   try {
-    ancestry = collectBsv21TokenAncestryTxids({ outpoints: tips, tokenId, beef })
+    ancestry = collectBsv21TokenAncestryTxids({
+      outpoints: tips,
+      tokenId,
+      beef,
+      stopAt,
+    })
   } catch {
     return null
   }
@@ -85,7 +95,19 @@ export function tokenLineageFromBeef(
       txid === deployTxid && entry.bumpIndex !== undefined ? beef.bumps[entry.bumpIndex] : undefined
     lineage.mergeRawTx(entry.tx.toBinary(), bump ? lineage.mergeBump(bump) : undefined)
   }
-  if (lineage.txs.length === 0) return null
+  if (lineage.txs.length === 0) {
+    if (stopAt && stopAt.size > 0) {
+      console.info(
+        `[p2pft] lineage for ${subject.slice(0, 12)} stopped at the recipient frontier`,
+      )
+    }
+    return null
+  }
+  if (stopAt && stopAt.size > 0) {
+    console.info(
+      `[p2pft] lineage for ${subject.slice(0, 12)} kept ${lineage.txs.length} body(s) up to the recipient frontier`,
+    )
+  }
   const bytes = lineage.toBinary()
   if (bytes.length > TOKEN_LINEAGE_MAX_BYTES) {
     console.warn(
@@ -146,6 +168,17 @@ export function rememberProvenTokenTips(outpoints: readonly string[], deployOutp
   if (!changed) return
   while (rows.size > MAX_VERDICTS) rows.delete(rows.keys().next().value!)
   durableSetItem(VERDICT_KEY, JSON.stringify(Object.fromEntries(rows)))
+}
+
+/** Outputs of this token a walk on this wallet has already checked. */
+export function provenTokenOutpoints(rawTokenId: string): string[] {
+  const tokenId = normalizeTokenId(rawTokenId)
+  if (!tokenId) return []
+  const found = [tokenId]
+  for (const [tip, deploy] of loadVerdicts()) {
+    if (deploy === tokenId) found.push(tip)
+  }
+  return found
 }
 
 /** Deploy a recorded walk bound this output to — a terminal for later walks. */

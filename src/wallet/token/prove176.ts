@@ -11,6 +11,9 @@
  * output carries both. Authority / mint paths are not implemented — a
  * `deploy+auth`, `auth`, `mint` or amount-0 output on the path fails closed.
  * A burn output counts toward O and, as a spent input, contributes nothing.
+ *
+ * A compressed proof is not consulted. BRC-252 registers none; a proof this
+ * wallet cannot check is ignored and the bodies are walked.
  */
 import { Beef, Spend, type Transaction } from '@bsv/sdk'
 import { decodeBsv21Binary, parseDisplayOutpoint, type Bsv21BinaryLayout } from './decode162'
@@ -557,6 +560,12 @@ export function collectBsv21TokenAncestryTxids(args: {
   outpoints: string[]
   tokenId: string
   beef: Beef | number[] | Uint8Array
+  /**
+   * Parent outpoints whose own history is already checked by the recipient
+   * (BRC-252 §2). The walk includes each body until it reaches one of these,
+   * and does not include the body behind it.
+   */
+  stopAt?: ReadonlySet<string>
 }): string[] {
   const parsedBeef = asBeef(args.beef)
   if (!parsedBeef) throw new Error('invalid token-parent BEEF')
@@ -575,9 +584,11 @@ export function collectBsv21TokenAncestryTxids(args: {
     layout = proof.layout
     const parsed = parseDisplayOutpoint(toUnderscoreOutpoint(outpoint))
     if (!parsed) throw new Error(`invalid outpoint ${outpoint}`)
+    if (args.stopAt?.has(`${parsed.txid}_${parsed.vout}`)) continue
     queue.push(parsed.txid)
   }
 
+  const stopAt = args.stopAt
   const ancestry = new Set<string>()
   while (queue.length > 0 && ancestry.size < MAX_PACKET_TXS) {
     const txid = queue.shift()
@@ -592,13 +603,73 @@ export function collectBsv21TokenAncestryTxids(args: {
       if (!parentTx) continue
       const decoded = decodeOutput(parentTx, parentVout, layout)
       if (!decoded || decoded.role === 'burn') continue
-      if (tokenIdOf(decoded, parentTxid, parentVout) === tokenId) {
-        queue.push(parentTxid)
-      }
+      if (tokenIdOf(decoded, parentTxid, parentVout) !== tokenId) continue
+      if (stopAt?.has(`${parentTxid}_${parentVout}`)) continue
+      queue.push(parentTxid)
     }
   }
   if (queue.length > 0) {
     throw new Error(`token ancestry exceeded packet limit ${MAX_PACKET_TXS}`)
   }
   return [...ancestry]
+}
+
+/**
+ * How many token bodies a payment that spends `outpoint` still has to carry
+ * for a recipient whose frontier is `stopAt` (BRC-252 §2–3). Zero when that
+ * output is already on the frontier. Null when a token parent body is missing,
+ * so the caller does not pretend the walk is short.
+ */
+export function tokenWalkRemainder(args: {
+  outpoint: string
+  tokenId: string
+  beef: Beef | number[] | Uint8Array
+  stopAt?: ReadonlySet<string>
+}): number | null {
+  const outpoint = toUnderscoreOutpoint(args.outpoint).toLowerCase()
+  if (args.stopAt?.has(outpoint)) return 0
+  try {
+    return collectBsv21TokenAncestryTxids({
+      outpoints: [outpoint],
+      tokenId: args.tokenId,
+      beef: args.beef,
+      stopAt: args.stopAt,
+    }).length
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Same count, using only bodies already in memory. A missing token parent
+ * returns null instead of fetching.
+ */
+export function tokenWalkRemainderFromSession(args: {
+  outpoint: string
+  tokenId: string
+  stopAt?: ReadonlySet<string>
+  peek: (txid: string) => Beef | null | undefined
+}): number | null {
+  const parsed = parseDisplayOutpoint(toUnderscoreOutpoint(args.outpoint))
+  if (!parsed) return null
+  if (args.stopAt?.has(`${parsed.txid}_${parsed.vout}`)) return 0
+  const beef = new Beef()
+  const queue = [parsed.txid]
+  const seen = new Set<string>()
+  while (queue.length > 0 && seen.size < 64) {
+    const txid = queue.shift()
+    if (!txid || seen.has(txid)) continue
+    seen.add(txid)
+    let tx = beef.findTxid(txid)?.tx
+    if (!tx) {
+      tx = args.peek(txid)?.findTxid(txid)?.tx
+      if (!tx) continue
+      beef.mergeRawTx(tx.toBinary())
+    }
+    for (const input of tx.inputs) {
+      const parent = sourceTxid(input)
+      if (/^[0-9a-f]{64}$/.test(parent)) queue.push(parent)
+    }
+  }
+  return tokenWalkRemainder({ ...args, beef })
 }

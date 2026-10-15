@@ -32,6 +32,7 @@ import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 import { readTokenFiling } from './filingStore'
+import { listOutputsInSlices } from '../basketSubReads'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
 
@@ -586,17 +587,34 @@ const HELD_PAGE_SIZE = 1000
 async function readWholeBasket(wallet: ActiveWallet, basket: string): Promise<ListedOutput[]> {
   const rows: ListedOutput[] = []
   for (let offset = 0; ; offset += HELD_PAGE_SIZE) {
-    const listed = (await wallet.wallet.listOutputs({
-      basket,
-      limit: HELD_PAGE_SIZE,
-      offset,
-      include: 'locking scripts',
-      includeCustomInstructions: true,
-      includeTags: true,
-      seekPermission: false,
-    })) as { outputs?: ListedOutput[]; totalOutputs?: number }
+    // One 1,000-row read holds the storage lock the whole time. A send queued
+    // behind it never reaches signing. Short slices let that send take the lock
+    // between them.
+    const listed = await listOutputsInSlices(
+      async (page) => {
+        const answer = (await wallet.wallet.listOutputs({
+          basket,
+          limit: page.limit,
+          offset: page.offset,
+          include: 'locking scripts',
+          includeCustomInstructions: true,
+          includeTags: true,
+          seekPermission: false,
+        })) as { outputs?: ListedOutput[]; totalOutputs?: number }
+        if (!Array.isArray(answer.outputs)) {
+          throw new Error(`basket ${basket} answered without outputs`)
+        }
+        return answer
+      },
+      { limit: HELD_PAGE_SIZE, offset },
+      { subRows: 100 },
+    )
+    if (listed.yieldedMs >= 250) {
+      console.info(
+        `[bsv21] basket read let a send through — waited ${listed.yieldedMs}ms`,
+      )
+    }
     const page = listed.outputs
-    if (!Array.isArray(page)) throw new Error(`basket ${basket} answered without outputs`)
     rows.push(...page)
     const total = typeof listed.totalOutputs === 'number' ? listed.totalOutputs : null
     if (page.length < HELD_PAGE_SIZE) {
@@ -677,15 +695,21 @@ async function listBasketTips(
   opts: { scripts?: boolean; includeCustomInstructions?: boolean } = {},
 ): Promise<ListedOutput[]> {
   try {
-    const listed = (await wallet.wallet.listOutputs({
-      basket,
-      limit: 1000,
-      ...(opts.scripts === false ? {} : { include: 'locking scripts' }),
-      includeCustomInstructions: opts.includeCustomInstructions !== false,
-      includeTags: true,
-      seekPermission: false,
-    })) as { outputs?: ListedOutput[] }
-    return listed.outputs ?? []
+    const listed = await listOutputsInSlices(
+      (page) =>
+        wallet.wallet.listOutputs({
+          basket,
+          limit: page.limit,
+          offset: page.offset,
+          ...(opts.scripts === false ? {} : { include: 'locking scripts' }),
+          includeCustomInstructions: opts.includeCustomInstructions !== false,
+          includeTags: true,
+          seekPermission: false,
+        }) as Promise<{ outputs?: ListedOutput[] }>,
+      { limit: 1000, offset: 0 },
+      { subRows: 100 },
+    )
+    return listed.outputs
   } catch {
     return []
   }

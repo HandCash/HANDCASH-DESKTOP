@@ -221,18 +221,31 @@ export function planBsv21Send(args: {
   tokenId: string
   tips: Bsv21SendTip[]
   amount: bigint
+  /**
+   * Bodies this tip would still add for the recipient (BRC-252 §3).
+   * Null means the walk is not in memory; those tips keep the largest-first
+   * order. A known shorter walk is spent first. An older branch remains valid.
+   */
+  remainder?: (outpoint: string) => number | null
 }): Bsv21SendPlan {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
   if (args.amount <= 0n) throw new Error('Amount must be greater than zero')
 
+  const remainderOf = (tip: Bsv21SendTip): number => {
+    const n = args.remainder?.(tip.outpoint)
+    return n == null ? Number.POSITIVE_INFINITY : n
+  }
   const usable = args.tips
     .filter((t) => normalizeTokenId(t.tokenId) === tokenId && t.amt > 0n)
-    .sort(
-      (a, b) =>
-        Number(a.bound === false) - Number(b.bound === false) ||
-        (b.amt > a.amt ? 1 : b.amt < a.amt ? -1 : 0),
-    )
+    .sort((a, b) => {
+      const bound = Number(a.bound === false) - Number(b.bound === false)
+      if (bound !== 0) return bound
+      const left = remainderOf(a)
+      const right = remainderOf(b)
+      if (left !== right) return left < right ? -1 : 1
+      return b.amt > a.amt ? 1 : b.amt < a.amt ? -1 : 0
+    })
 
   // One layout per spend: outputs in the current layout spending draft-tagged
   // inputs (or the reverse) are burned under the rules of the other.

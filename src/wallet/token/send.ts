@@ -21,10 +21,16 @@ import {
   requireTokenId,
 } from './types'
 import { decodeBsv21Binary } from './decode162'
-import { fillTokenParentBodies } from './prove176'
+import { fillTokenParentBodies, tokenWalkRemainderFromSession } from './prove176'
 import { retainTokenGenesis } from './genesisStore'
 import { deployRequiresProcessing } from './requiredProcessing'
-import { chainTrackerFor, recordProvenTokenTips, tokenLineageFromBeef, tokenTipBound } from './lineage'
+import {
+  chainTrackerFor,
+  provenTokenOutpoints,
+  recordProvenTokenTips,
+  tokenLineageFromBeef,
+  tokenTipBound,
+} from './lineage'
 import {
   type Bsv21SendPath,
   type Bsv21TipKind,
@@ -570,6 +576,16 @@ export async function sendBsv21Tokens(args: {
       `[bsv21] send tips done ${tipsMs}ms — listed ${listedForToken}, recovered ${fromBasket.length - listedForToken}${claimedNote}`,
     )
   }
+  const peerForPlan = args.recipientIdentityKey?.trim().toLowerCase() || null
+  const selfKey = active.identityKey.trim().toLowerCase()
+  const { proofFrontier, tokenFrontierAsset } = await import('../proofFrontier')
+  const recipientFrontier =
+    peerForPlan && peerForPlan !== selfKey
+      ? proofFrontier(peerForPlan, tokenFrontierAsset(tokenId))
+      : peerForPlan === selfKey
+        ? new Set(provenTokenOutpoints(tokenId))
+        : new Set<string>()
+  const { peekSessionBeef } = await import('../beefCache')
   const plan = planBsv21Send({
     tokenId,
     amount: BigInt(args.amount),
@@ -577,6 +593,13 @@ export async function sendBsv21Tokens(args: {
       ...tip,
       bound: tokenTipBound(tip.outpoint, tokenId),
     })),
+    remainder: (outpoint) =>
+      tokenWalkRemainderFromSession({
+        outpoint,
+        tokenId,
+        stopAt: recipientFrontier,
+        peek: peekSessionBeef,
+      }),
   })
   const selected = plan.selected
   const change = plan.changeAmt
@@ -986,7 +1009,13 @@ export async function sendBsv21Tokens(args: {
             parentBeef: withParents,
             subjectTx: signedTx,
           })
-          tokenLineage = tokenLineageFromBeef(withParents, txid, tokenId)
+          const lineageStop =
+            payeeIsSelf || peerKey === selfKey
+              ? new Set(provenTokenOutpoints(tokenId))
+              : peerKey
+                ? proofFrontier(peerKey, tokenFrontierAsset(tokenId))
+                : new Set<string>()
+          tokenLineage = tokenLineageFromBeef(withParents, txid, tokenId, lineageStop)
           const deployOutpoint = recordProvenTokenTips(
             withParents,
             heldAfter.map((out) => out.outpoint),
@@ -1061,7 +1090,7 @@ export async function sendBsv21Tokens(args: {
               itemName: sym,
               asset,
               atomicBeef: peerAtomic,
-              ...(tokenLineage ? { tokenLineage } : {}),
+              tokenLineage,
             })
             console.info(
               `[bsv21] peer notify box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
@@ -1070,6 +1099,8 @@ export async function sendBsv21Tokens(args: {
               (delivered.delivered === 'cloud' || delivered.delivered === 'direct') &&
               delivered.beefInBox
             ) {
+              const { rememberProofFrontier } = await import('../proofFrontier')
+              rememberProofFrontier(peerKey, tokenFrontierAsset(tokenId), payeeOutpoints)
               recordTransactionStage('peer_delivered', {
                 flow: 'token_transfer',
                 txid,

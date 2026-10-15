@@ -16,6 +16,8 @@ import {
   planBsv21Send,
   tipFromBsv21Script,
 } from './token'
+import { tokenLineageFromBeef } from './token/lineage'
+import { tokenWalkRemainder } from './token/prove176'
 
 const PAYEE = PrivateKey.fromRandom().toAddress()
 const CHANGE = PrivateKey.fromRandom().toAddress()
@@ -133,6 +135,66 @@ describe('bsv21Send conservation', () => {
     expect(outputs[0]!.role).toBe('payee')
     expect(outputs[0]!.basket).toBe('p2pft')
     expect(outputs[0]!.tags).toContain(`p2pft:${tokenId}`)
+  })
+
+  it('spends the shorter remainder when both tips cover the amount', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const deep = `${'11'.repeat(32)}_0`
+    const shallow = `${'22'.repeat(32)}_0`
+    const plan = planBsv21Send({
+      tokenId,
+      amount: 40n,
+      tips: [
+        { outpoint: deep, tokenId, amt: 100n },
+        { outpoint: shallow, tokenId, amt: 50n },
+      ],
+      remainder: (outpoint) => (outpoint === deep ? 8 : 1),
+    })
+    expect(plan.selected.map((tip) => tip.outpoint)).toEqual([shallow])
+  })
+
+  it('omits token bodies behind a recipient frontier', () => {
+    const deploy = deployTx(100n)
+    const id = tokenIdOf(deploy)
+    const spend = new Transaction()
+    spend.addInput({
+      sourceTransaction: deploy,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    spend.addOutput({
+      satoshis: 1,
+      lockingScript: encodeBsv21Binary({
+        tokenId: id,
+        amount: 100n,
+        rest: P2PKH_REST,
+      }),
+    })
+    const { beef } = buildBsv21SubjectBeef({
+      parentBeef: new Beef(),
+      subjectTx: spend,
+    })
+    const subject = spend.id('hex')
+    const full = tokenLineageFromBeef(beef, subject, id)
+    expect(full).toBeTruthy()
+    const cut = tokenLineageFromBeef(beef, subject, id, new Set([id]))
+    expect(cut).toBeNull()
+    expect(
+      tokenWalkRemainder({
+        outpoint: `${subject}_0`,
+        tokenId: id,
+        beef,
+        stopAt: new Set([id]),
+      }),
+    ).toBe(1)
+    expect(
+      tokenWalkRemainder({
+        outpoint: id,
+        tokenId: id,
+        beef,
+        stopAt: new Set([id]),
+      }),
+    ).toBe(0)
   })
 
   it('refuses over-send', () => {

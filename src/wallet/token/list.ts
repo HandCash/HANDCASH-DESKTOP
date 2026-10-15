@@ -1760,15 +1760,22 @@ export async function listFungibleTips(
   const rows = await readTokenFiling(
     active,
     async (basket) => {
-      const listed = await active.wallet.listOutputs({
-        basket,
-        limit: 1000,
-        includeCustomInstructions: true,
-        includeTags: true,
-        include: 'locking scripts',
-        seekPermission: false,
-      })
-      return listed.outputs ?? []
+      const { listOutputsInSlices } = await import('../basketSubReads')
+      const listed = await listOutputsInSlices(
+        (page) =>
+          active.wallet.listOutputs({
+            basket,
+            limit: page.limit,
+            offset: page.offset,
+            includeCustomInstructions: true,
+            includeTags: true,
+            include: 'locking scripts',
+            seekPermission: false,
+          }),
+        { limit: 1000, offset: 0 },
+        { subRows: 100 },
+      )
+      return listed.outputs
     },
     (row) => (row as { outpoint?: string }).outpoint,
   )

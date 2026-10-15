@@ -470,6 +470,22 @@ export const storageRegistry = Object.freeze({
     version: 1,
     retention: 'rebuildable',
   }),
+  /** Set once the `bsv21` filing has been moved into `p2pft`. */
+  legacyTokenFilingMoved: defineStorage({
+    key: 'handcash.p2pft.legacyMoved.v1',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  /** Outputs a counterparty was given in a package their box accepted. */
+  proofFrontier: defineStorage({
+    key: 'handcash.proofFrontier.v1',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   itemArt: defineStorage({
     key: 'handcash.itemArt.v1',
     owner: 'collectables',

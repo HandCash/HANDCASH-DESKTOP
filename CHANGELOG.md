@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.555] - 2026-10-15
+
+### Fixed
+- **A p2pft send reads the p2pft basket.** The old `bsv21` basket is no longer a `listOutputs` scan. Leftover rows move into `p2pft` by output id, and that move stops when a send needs the storage lock. Token basket pages come back 100 rows at a time so signing can run between them.
+- **A repeat payment omits history the recipient already has.** After their box accepts a package, the next p2pft or collectable payment names older transactions by txid. The send spends the tip whose remaining walk is shortest. An unregistered compressed proof is ignored.
+
 ## [1.3.554] - 2026-10-15
 
 ### Fixed
