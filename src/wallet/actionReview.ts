@@ -74,40 +74,50 @@ export async function releaseStuckNosends(
   const resolved = active ?? getActiveWallet();
   const wallet = resolved?.wallet;
   if (!wallet) return;
-  // Coin selection is about to read spendable rows. A child of a failed tx
-  // must not be among them — its change is phantom and its parent cannot be
-  // sourced for the BEEF (hc-a580a 2026-09-29: send died on 828a0685…).
-  await withSendCleanupBudget("fail orphaned local txs", async () => {
-    const { failOrphanedLocalTxs } = await import("./localTxClosure");
-    return failOrphanedLocalTxs(resolved);
-  });
-  const listed = await withSendCleanupBudget("list no-send actions", () =>
-    wallet.listNoSendActions({ labels: [], limit: 100 }, false)
-  );
-  if (listed) {
-    let protectedRefs = new Set<string>();
-    try {
-      const { protectedMarketActionReferences } = await import(
-        "./marketSettlement"
-      );
-      protectedRefs = protectedMarketActionReferences();
-    } catch {
-      /* market module optional during early boot */
-    }
-    if (protectedRefs.size === 0) {
-      await withSendCleanupBudget("abort no-send actions", () =>
-        wallet.listNoSendActions({ labels: [], limit: 100 }, true)
-      );
-    } else {
-      for (const action of listed.actions ?? []) {
-        const reference = String(
-          (action as { reference?: string }).reference ?? ""
-        ).trim();
-        if (!reference || protectedRefs.has(reference)) continue;
-        await withSendCleanupBudget(
-          `abort no-send ${reference.slice(0, 12)}`,
-          () => wallet.abortAction({ reference })
+  // A live payment already holds the storage lock's place in line. Listing
+  // historical noSend actions (and failing orphaned txs) starts a scan that
+  // the cleanup budget cannot cancel, so createAction waits behind it — a
+  // funded send sat 786s before signing (hc-a580a 2026-10-15). The live batch
+  // abort below is the reservation that would collide with this payment.
+  // Idle ingest still lists, when no send is waiting.
+  if (shouldYieldChainIngestToSpend()) {
+    console.info("[action-review] nosend scan skipped — send in progress");
+  } else {
+    // Coin selection is about to read spendable rows. A child of a failed tx
+    // must not be among them — its change is phantom and its parent cannot be
+    // sourced for the BEEF (hc-a580a 2026-09-29: send died on 828a0685…).
+    await withSendCleanupBudget("fail orphaned local txs", async () => {
+      const { failOrphanedLocalTxs } = await import("./localTxClosure");
+      return failOrphanedLocalTxs(resolved);
+    });
+    const listed = await withSendCleanupBudget("list no-send actions", () =>
+      wallet.listNoSendActions({ labels: [], limit: 100 }, false)
+    );
+    if (listed) {
+      let protectedRefs = new Set<string>();
+      try {
+        const { protectedMarketActionReferences } = await import(
+          "./marketSettlement"
         );
+        protectedRefs = protectedMarketActionReferences();
+      } catch {
+        /* market module optional during early boot */
+      }
+      if (protectedRefs.size === 0) {
+        await withSendCleanupBudget("abort no-send actions", () =>
+          wallet.listNoSendActions({ labels: [], limit: 100 }, true)
+        );
+      } else {
+        for (const action of listed.actions ?? []) {
+          const reference = String(
+            (action as { reference?: string }).reference ?? ""
+          ).trim();
+          if (!reference || protectedRefs.has(reference)) continue;
+          await withSendCleanupBudget(
+            `abort no-send ${reference.slice(0, 12)}`,
+            () => wallet.abortAction({ reference })
+          );
+        }
       }
     }
   }

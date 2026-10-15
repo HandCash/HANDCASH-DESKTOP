@@ -210,8 +210,10 @@ export function scheduleHealAfterSendCleanup(): void {
         console.info('[change-heal] post-cleanup heal deferred — spend active')
         return
       }
-      const { releaseSpendAttemptFunds } = await import('./spendAttempt')
-      await releaseSpendAttemptFunds()
+      // Do not scan every unsigned transaction here. That read holds the
+      // storage lock after its 30s budget expires, so the retry waits behind
+      // a cleanup that already gave up (hc-a580a 2026-10-15, three timeouts).
+      // The next payment aborts the live batch itself.
       const gate = await runChangeHeal({ path: 'spendGate' })
       if (gate.pendingPromoted === 0 && gate.restored === 0 && gate.reclaimed === 0) {
         await runChangeHeal({ path: 'chainingScriptHeal' })

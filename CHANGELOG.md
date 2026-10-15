@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.564] - 2026-10-15
+
+### Fixed
+- **A payment signs without scanning historical no-send actions first.** That scan held the storage lock after its timeout, so a funded send waited minutes before signing. Historical repair still runs when nothing is waiting to pay.
+
 ## [1.3.563] - 2026-10-15
 
 ### Fixed

@@ -254,6 +254,14 @@ describe("actionReview", () => {
     expect(reviewStatus).not.toHaveBeenCalled();
   });
 
+  it("does not list historical no-send actions while a payment is in progress", async () => {
+    spendPriority.depth = 1;
+    listNoSendActions.mockClear();
+    const { releaseStuckNosends } = await import("./actionReview");
+    await releaseStuckNosends();
+    expect(listNoSendActions).not.toHaveBeenCalled();
+  });
+
   it("does not let a stalled no-send lookup block payment preparation", async () => {
     vi.useFakeTimers();
     try {

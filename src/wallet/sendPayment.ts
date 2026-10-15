@@ -100,10 +100,8 @@ export async function sendSatsToAddress(opts: {
           })
 
           chart.send({ type: 'START', to, satoshis })
-          const { releaseStuckNosends, releaseUnsignedSpendReservations } =
-            await import('./actionReview')
+          const { releaseStuckNosends } = await import('./actionReview')
           await releaseStuckNosends(active)
-          await releaseUnsignedSpendReservations(active)
           await prepareSpendHeal(satoshis)
 
           const availableSats = await fetchBalanceSats(active.wallet).catch(() => 0)
