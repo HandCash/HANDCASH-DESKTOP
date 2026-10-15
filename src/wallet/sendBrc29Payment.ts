@@ -455,11 +455,9 @@ export async function sendBrc29ToIdentityKey(opts: {
           const realTxid = (result as { txid?: string })?.txid
           let atomicBeef = atomicBeefFromCreateAction(result)
           if (atomicBeef?.length && realTxid) {
-            const { mergeLocalUnconfirmedAncestry, rememberBeefTree } = await import(
-              './beefCache'
-            )
-            rememberBeefTree(atomicBeef, realTxid)
-            atomicBeef = await mergeLocalUnconfirmedAncestry(active, atomicBeef)
+            // Parent bodies are folded once, inside registerSignedSend. Doing it
+            // here as well walked local storage twice before the inputs were sealed.
+            const { rememberBeefTree } = await import('./beefCache')
             rememberBeefTree(atomicBeef, realTxid)
           }
           signedTxid = realTxid
@@ -501,6 +499,11 @@ export async function sendBrc29ToIdentityKey(opts: {
             satoshis,
             to: payee,
           })
+          if (signedSend.atomicBeef.length > 0) {
+            atomicBeef = signedSend.atomicBeef
+            const { rememberBeefTree } = await import('./beefCache')
+            rememberBeefTree(atomicBeef, txid)
+          }
           mark('inputs sealed')
           if (settlePath.settle === 'peerDeliver') {
             const { journalOwedNotice } = await import('./noticeJournal')

@@ -539,6 +539,7 @@ export async function sealSpentInputsOfSignedTx(
     return 0;
   }
 
+  const sealStarted = Date.now();
   const hidden = await hideSpentOutpoints(
     inputs,
     id,
@@ -558,6 +559,10 @@ export async function sealSpentInputsOfSignedTx(
   // while a spend holds priority). The signed body travels with the seal so a
   // script-less change row is rebuilt from the transaction itself.
   await keepChangeOfSignedTx(id, active, updateForegroundOverlay, atomic);
+  const sealMs = Date.now() - sealStarted;
+  if (sealMs >= 250) {
+    console.info(`[stale-output] seal done ${sealMs}ms`);
+  }
   const done = promotedSetFor(active?.identityKey ?? "");
   done.add(id);
   commitPromotedGeneration(active?.identityKey ?? "");
@@ -2496,32 +2501,34 @@ async function findDetachedChangeRows(
   const weak: Candidate[] = [];
   const seen = new Set<number>();
 
+  // createAction just inserted this row, so it is among the newest outputs.
+  // Walking the historical output table (up to 4,000 rows) held signing for
+  // ~31s on a long-lived wallet (hc-a580a, 2026-10-15). One newest page per
+  // spendable flag is enough to reattach it; inputs are already sealed.
   for (const spendable of [false, true]) {
-    for (let offset = 0; offset < 2_000; offset += 200) {
-      const batch = await sp.findOutputs({
-        partial: { spendable },
-        paged: { limit: 200, offset },
-      });
-      if (!Array.isArray(batch) || batch.length === 0) break;
-      for (const row of batch as Candidate[]) {
-        const outputId = positiveId(row.outputId);
-        if (outputId == null || seen.has(outputId)) continue;
-        seen.add(outputId);
-        if (row.change !== true || positiveId(row.spentBy) != null) continue;
-        const basket = String(row.basket ?? "").toLowerCase();
-        if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
-        const vout = Number(row.vout ?? row.outputIndex);
-        if (!Number.isInteger(vout) || vout < 0) continue;
-        const out = tx.outputs[vout];
-        if (!out || Number(out.satoshis) !== Number(row.satoshis)) continue;
+    const batch = await sp.findOutputs({
+      partial: { spendable },
+      orderDescending: true,
+      paged: { limit: 40, offset: 0 },
+    });
+    if (!Array.isArray(batch) || batch.length === 0) continue;
+    for (const row of batch as Candidate[]) {
+      const outputId = positiveId(row.outputId);
+      if (outputId == null || seen.has(outputId)) continue;
+      seen.add(outputId);
+      if (row.change !== true || positiveId(row.spentBy) != null) continue;
+      const basket = String(row.basket ?? "").toLowerCase();
+      if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
+      const vout = Number(row.vout ?? row.outputIndex);
+      if (!Number.isInteger(vout) || vout < 0) continue;
+      const out = tx.outputs[vout];
+      if (!out || Number(out.satoshis) !== Number(row.satoshis)) continue;
 
-        const bodyHex = out.lockingScript.toHex().toLowerCase();
-        const rowHex = lockingScriptHex(row.lockingScript);
-        const attached = { ...row, txid, vout };
-        if (rowHex && rowHex === bodyHex) exact.push(attached);
-        else if (!rowHex) weak.push(attached);
-      }
-      if (batch.length < 200) break;
+      const bodyHex = out.lockingScript.toHex().toLowerCase();
+      const rowHex = lockingScriptHex(row.lockingScript);
+      const attached = { ...row, txid, vout };
+      if (rowHex && rowHex === bodyHex) exact.push(attached);
+      else if (!rowHex) weak.push(attached);
     }
   }
 

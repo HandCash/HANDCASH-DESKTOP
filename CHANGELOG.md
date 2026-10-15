@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.565] - 2026-10-15
+
+### Fixed
+- **A payment signs from the newest change coins.** Planning stops once those coins cover the amount, and sealing looks for the new change row on the newest page. Parent transactions are folded into the signed body once. A payment the newest coins cannot cover still reads the full history.
+
 ## [1.3.564] - 2026-10-15
 
 ### Fixed

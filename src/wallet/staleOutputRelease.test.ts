@@ -1036,6 +1036,44 @@ describe('keepChangeOfSignedTx', () => {
     }
   })
 
+  it('reattaches a just-created change row from the newest page only', async () => {
+    const { P2PKH, Transaction } = await import('@bsv/sdk')
+    const body = new Transaction()
+    body.addOutput({
+      satoshis: 55_515,
+      lockingScript: new P2PKH().lock('1BitcoinEaterAddressDontSendf59kuE'),
+    })
+    const txid = body.id('hex')
+    const pages: Array<{ limit?: number }> = []
+    findOutputs.mockImplementation(async (args: {
+      partial?: { txid?: string }
+      paged?: { limit?: number }
+    }) => {
+      if (args.partial?.txid) return []
+      pages.push(args.paged ?? {})
+      return [
+        {
+          outputId: 44,
+          vout: 0,
+          change: true,
+          satoshis: 55_515,
+          spendable: false,
+          lockingScript: body.outputs[0]!.lockingScript.toBinary(),
+        },
+      ]
+    })
+
+    await expect(
+      keepChangeOfSignedTx(txid, undefined, true, body.toBinary()),
+    ).resolves.toBe(1)
+    expect(pages.length).toBeLessThanOrEqual(2)
+    expect(pages.every((page) => (page.limit ?? 0) <= 40)).toBe(true)
+    expect(updateOutput).toHaveBeenCalledWith(
+      44,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
   it('promotes received (non-change) BSV outs so apps can chain them', async () => {
     const txid = 'ab'.repeat(32)
     findOutputs.mockResolvedValue([
