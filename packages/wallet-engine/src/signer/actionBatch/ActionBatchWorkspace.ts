@@ -476,10 +476,12 @@ class ActionBatchWorkspace {
       return this.state.sharedBeef.findTxid(txid)?.tx == null
     })
     if (missing.length > 0) {
-      const fetched = await this.wallet.storage.getActive().getBeefForTransactions(missing, {
-        knownTxids: args.options.knownTxids,
-        ignoreServices: true
-      })
+      const fetched = await this.wallet.storage.runAsStorageProvider(async storage =>
+        await storage.getBeefForTransactions(missing, {
+          knownTxids: args.options.knownTxids,
+          ignoreServices: true
+        })
+      )
       this.state.sharedBeef.mergeBeef(fetched)
     }
     if (args.isSignAction) {
