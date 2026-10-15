@@ -19,7 +19,7 @@
  * item imports with "no provider had raw transaction" for txids both had.
  */
 import { Utils } from '@bsv/sdk'
-import type { Services } from '@bsv/wallet-toolbox-client'
+import type { Services } from '@handcash/wallet-engine'
 
 import { appendAppLog } from './appLog'
 import { preferServiceOrder } from './serviceOrder'

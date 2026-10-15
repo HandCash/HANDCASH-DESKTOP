@@ -17,7 +17,7 @@ import {
   importBRC39,
   type BRC38ImportResult,
   type StorageProvider,
-} from '@bsv/wallet-toolbox-client'
+} from '@handcash/wallet-engine'
 import { appendAppLog } from './appLog'
 import { encryptBrc39Document, decryptBrc39Document } from './brc39Encrypt'
 import { historyCryptoSecret } from './historyCryptoSecret'

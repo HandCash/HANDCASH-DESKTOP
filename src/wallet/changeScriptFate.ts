@@ -29,7 +29,7 @@ import { getActiveWallet } from './session'
  * prefix/suffix, exactly as `makeChangeLock` (or the payment's sender) built it.
  */
 import { P2PKH, Transaction, type KeyDeriverApi } from '@bsv/sdk'
-import { brc29ProtocolID } from '@bsv/wallet-toolbox-client'
+import { brc29ProtocolID } from '@handcash/wallet-engine'
 import { type ActiveWallet } from './session'
 
 export type ChangeRow = {

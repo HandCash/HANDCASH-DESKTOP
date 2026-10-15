@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
-import { StorageIdb, importBRC38, parseBRC38Json, type StorageProvider } from '@bsv/wallet-toolbox-client'
+import { StorageIdb, importBRC38, parseBRC38Json, type StorageProvider } from '@handcash/wallet-engine'
 
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 

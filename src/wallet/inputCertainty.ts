@@ -19,7 +19,7 @@
  * never left this device.
  */
 import { Beef, Transaction } from '@bsv/sdk'
-import type { Wallet } from '@bsv/wallet-toolbox-client'
+import type { Wallet } from '@handcash/wallet-engine'
 import type { Chain } from './vault'
 import {
   judgeInputCertainty,

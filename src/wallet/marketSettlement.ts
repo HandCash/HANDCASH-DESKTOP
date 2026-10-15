@@ -10,7 +10,7 @@ import {
   Transaction,
   Utils,
 } from '@bsv/sdk'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
+import { SetupClient } from '@handcash/wallet-engine'
 import { createActor } from 'xstate'
 import {
   marketPurchaseMachine,

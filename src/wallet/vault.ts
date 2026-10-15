@@ -680,22 +680,15 @@ export function normalizeHandle(input: string): string {
 
 const LOCAL_WALLET_LABEL = 'wallet'
 
-export async function listToolboxIdentityKeys(): Promise<string[]> {
-  if (typeof indexedDB === 'undefined') return []
+function isWalletDatabaseName(name: string): boolean {
+  return name.startsWith('wallet-toolbox') || name.startsWith('handcash-brc100')
+}
 
-  try {
-    if (typeof indexedDB.databases === 'function') {
-      const dbs = await indexedDB.databases()
-      if (!dbs.some((d) => d.name === TOOLBOX_DB)) return []
-    }
-  } catch {
-    // fall through
-  }
-
+async function identityKeysInDatabase(name: string): Promise<string[]> {
   return new Promise((resolve) => {
     let req: IDBOpenDBRequest
     try {
-      req = indexedDB.open(TOOLBOX_DB)
+      req = indexedDB.open(name)
     } catch {
       resolve([])
       return
@@ -717,19 +710,19 @@ export async function listToolboxIdentityKeys(): Promise<string[]> {
         return
       }
       try {
-        const tx = db.transaction('users', 'readonly')
-        const getAll = tx.objectStore('users').getAll()
+        const getAll = db.transaction('users', 'readonly').objectStore('users').getAll()
         getAll.onerror = () => {
           db.close()
           resolve([])
         }
         getAll.onsuccess = () => {
           const rows = (getAll.result ?? []) as ToolboxUserRow[]
-          const keys = rows
-            .map((r) => r.identityKey)
-            .filter((k): k is string => typeof k === 'string' && k.length > 0)
           db.close()
-          resolve(keys)
+          resolve(
+            rows
+              .map((row) => row.identityKey)
+              .filter((key): key is string => typeof key === 'string' && key.length > 0),
+          )
         }
       } catch {
         db.close()
@@ -737,6 +730,29 @@ export async function listToolboxIdentityKeys(): Promise<string[]> {
       }
     }
   })
+}
+
+export async function listToolboxIdentityKeys(): Promise<string[]> {
+  if (typeof indexedDB === 'undefined') return []
+  const names = new Set<string>([TOOLBOX_DB])
+  try {
+    if (typeof indexedDB.databases === 'function') {
+      const dbs = await indexedDB.databases()
+      for (const db of dbs) {
+        if (db.name && isWalletDatabaseName(db.name)) names.add(db.name)
+      }
+      for (const name of [...names]) {
+        if (!dbs.some((db) => db.name === name)) names.delete(name)
+      }
+    }
+  } catch {
+    // Probe the historical names when enumeration is unavailable.
+  }
+  const keys = new Set<string>()
+  for (const name of names) {
+    for (const key of await identityKeysInDatabase(name)) keys.add(key)
+  }
+  return [...keys]
 }
 
 export async function hasOrphanedToolboxWallet(): Promise<boolean> {

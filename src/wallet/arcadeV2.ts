@@ -17,7 +17,7 @@ import { defaultHttpClient, type HttpClient } from '@bsv/sdk'
 import {
   GoChaintracksServiceClient,
   type Services,
-} from '@bsv/wallet-toolbox-client'
+} from '@handcash/wallet-engine'
 import type { Chain } from './vault'
 import { configurePostBeefServices } from './serviceOrder'
 

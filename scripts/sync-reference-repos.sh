@@ -24,4 +24,4 @@ clone_or_pull "$ROOT/bsv-desktop" "https://github.com/bitcoin-sv/wallet-desktop.
 echo ""
 echo "Reference repos updated under $ROOT"
 echo "HandCash pins: @bsv/sdk $(node -p "require('./package.json').dependencies['@bsv/sdk']" 2>/dev/null || echo '?')"
-echo "               @bsv/wallet-toolbox-client $(node -p "require('./package.json').dependencies['@bsv/wallet-toolbox-client']" 2>/dev/null || echo '?')"
+echo "               @handcash/wallet-engine $(node -p "require('./packages/wallet-engine/package.json').version" 2>/dev/null || echo '?')"

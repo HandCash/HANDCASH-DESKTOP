@@ -12,7 +12,7 @@
  * delivered. Outputs written before the field existed carry no notice and are
  * never re-sent.
  */
-import type { StorageProvider } from '@bsv/wallet-toolbox-client'
+import type { StorageProvider } from '@handcash/wallet-engine'
 
 export type PaymentNoticeState = 'pending' | 'delivered'
 

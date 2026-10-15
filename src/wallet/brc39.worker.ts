@@ -12,7 +12,7 @@
  * layouts, and the Mobile build ships an exports map that seals deep paths off.
  * The root entry is the only specifier that resolves in both.
  */
-import { encryptBRC39, type BRC38WalletData } from '@bsv/wallet-toolbox-client'
+import { encryptBRC39, type BRC38WalletData } from '@handcash/wallet-engine'
 import { Brc39LeanUnsupportedError, decryptBrc39Lean, encryptBrc39Lean } from './brc39Lean'
 import { peerSnapshotFromBrc38, type PeerSnapshot } from './peerSnapshot'
 

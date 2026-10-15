@@ -65,10 +65,18 @@ const active = {
   address: '1HandCashTestAddressAAAAAAAAAAAAAA',
   chain: 'main' as const,
   wallet: {
-    listOutputs: vi.fn(async (args: { basket?: string; includeTags?: boolean }) => {
+    listOutputs: vi.fn(async (args: {
+      basket?: string
+      includeTags?: boolean
+      limit?: number
+      offset?: number
+    }) => {
       if (args.basket !== '1sat' || !args.includeTags) return { outputs: [] }
+      const start = Math.max(0, -(args.offset ?? -1) - 1)
+      const limit = Math.max(1, args.limit ?? TIPS.length)
       return {
-        outputs: TIPS.map((outpoint) => ({
+        totalOutputs: TIPS.length,
+        outputs: TIPS.slice(start, start + limit).map((outpoint) => ({
           outpoint,
           satoshis: 1,
           tags: ['ordinal', `origin:${outpoint}`, `name:item ${outpoint.slice(0, 4)}`],

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
-import { StorageIdb, decryptBRC39, encryptBRC39, exportBRC38Json } from '@bsv/wallet-toolbox-client'
+import { StorageIdb, decryptBRC39, encryptBRC39, exportBRC38Json } from '@handcash/wallet-engine'
 import { decryptBrc39Lean, encryptBrc39Lean } from './brc39Lean'
 
 async function brc38Document(): Promise<string> {

@@ -13,7 +13,7 @@ vi.mock('./vaultAccounts', () => ({ toolboxDatabaseName: () => state.selected, o
 vi.mock('./reimportDerivedChange', () => ({ echoAllDerivedOutputs: state.echo, recoverEchoedChange: state.recover }))
 vi.mock('./brc39Encrypt', () => ({ decryptBrc39Document: state.decrypt, encryptBrc39Document: vi.fn() }))
 vi.mock('./historyCryptoSecret', () => ({ historyCryptoSecret: () => 'secret' }))
-vi.mock('@bsv/wallet-toolbox-client', () => ({ importBRC38: state.import, importBRC39: vi.fn(), exportBRC38Json: vi.fn(), SetupClient: { createStorageIdb: async () => ({ destroy: state.destroy }) } }))
+vi.mock('@handcash/wallet-engine', () => ({ importBRC38: state.import, importBRC39: vi.fn(), exportBRC38Json: vi.fn(), SetupClient: { createStorageIdb: async () => ({ destroy: state.destroy }) } }))
 vi.mock('./historyBackupPrefs', () => ({ getHistoryBackupPrefs: () => ({}), historyBackupObjectUrl: () => 'https://history.test/backup', setHistoryBackupPrefs: vi.fn(), noteSpendableHighWater: vi.fn(), setSpendableHighWaterFromPush: vi.fn() }))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./vault', () => ({ revealRootKeyHex: vi.fn() }))

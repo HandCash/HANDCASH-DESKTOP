@@ -19,7 +19,7 @@
  * merges a complete document (newer rows win; nothing is replaced) and
  * acknowledges the parts only after the merge succeeded.
  */
-import type { StorageProvider } from '@bsv/wallet-toolbox-client'
+import type { StorageProvider } from '@handcash/wallet-engine'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
 import { HOLDING_BOX } from './accountRelease'
@@ -107,7 +107,7 @@ async function defaultIo(): Promise<HandoverIo> {
   const [{ getOrCreateDeviceId }, { getWalletRuntime }, { SetupClient }, transport, outbox, pool] = await Promise.all([
     import('./deviceWallets'),
     import('./walletRuntime'),
-    import('@bsv/wallet-toolbox-client'),
+    import('@handcash/wallet-engine'),
     import('./messageTransport'),
     import('./pendingMinerOutbox'),
     import('./walletPool'),

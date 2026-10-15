@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Telemetry } from '@bsv/sdk'
-import type { Wallet } from '@bsv/wallet-toolbox-client'
+import type { Wallet } from '@handcash/wallet-engine'
 import { traceSlowToolboxSteps } from './toolboxTelemetry'
 
 function tracedWallet(): { telemetry: Telemetry } {
@@ -26,12 +26,20 @@ describe('traceSlowToolboxSteps', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     runSpan(tracedWallet(), 'wallet.create_action.storage_plan', 2_400)
     expect(info).toHaveBeenCalledWith('[toolbox] create_action.storage_plan done 2400ms')
+    expect(info).toHaveBeenCalledWith('[wallet-engine] planning done 2400ms')
   })
 
   it('stays quiet for fast steps', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     runSpan(tracedWallet(), 'wallet.validate_args', 3)
     expect(info).not.toHaveBeenCalled()
+  })
+
+  it('names signing as its own phase', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    runSpan(tracedWallet(), 'wallet.create_action.complete_signing', 800)
+    expect(info).toHaveBeenCalledWith('[toolbox] create_action.complete_signing done 800ms')
+    expect(info).toHaveBeenCalledWith('[wallet-engine] signing done 800ms')
   })
 
   it('names a failed step', () => {
@@ -46,5 +54,6 @@ describe('traceSlowToolboxSteps', () => {
       }),
     ).toThrow('refused')
     expect(info).toHaveBeenCalledWith('[toolbox] create_action.process done 900ms error')
+    expect(info).toHaveBeenCalledWith('[wallet-engine] commit done 900ms error')
   })
 })

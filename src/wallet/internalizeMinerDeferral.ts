@@ -25,7 +25,7 @@
  * runs first, so a non-final package is refused here ({@link assertIncomingFinal}).
  */
 import { Transaction } from '@bsv/sdk'
-import type { Services, Wallet } from '@bsv/wallet-toolbox-client'
+import type { Services, Wallet } from '@handcash/wallet-engine'
 import { assertIncomingFinal } from './incomingFinality'
 
 type PostBeef = Services['postBeef']

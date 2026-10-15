@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CachedKeyDeriver, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
-import { ScriptTemplateBRC29 } from '@bsv/wallet-toolbox-client'
+import { ScriptTemplateBRC29 } from '@handcash/wallet-engine'
 
 const mockGetActiveWallet = vi.fn()
 

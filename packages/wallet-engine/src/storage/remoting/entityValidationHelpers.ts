@@ -1,0 +1,133 @@
+import { SyncChunk, SyncChunkTotals } from '../../sdk/WalletStorage.interfaces'
+import { EntityTimeStamp } from '../../sdk/types'
+
+/**
+ * Shared entity-validation helpers used by both client-side storage remoting
+ * (StorageClientBase / StorageMobile) and the server-side StorageServer.
+ *
+ * These helpers normalise records returned from remote calls or database queries:
+ *   - Coerce date strings / timestamps to `Date` objects.
+ *   - Replace `null` values with `undefined`.
+ *   - Replace `Uint8Array` / `Buffer` values with plain `number[]` arrays.
+ */
+
+export function validateDate(date: Date | string | number): Date {
+  if (date instanceof Date) return date
+  return new Date(date)
+}
+
+function defineOwnValues(target: object, values: ReadonlyMap<string, unknown>): void {
+  Object.defineProperties(
+    target,
+    Object.fromEntries(
+      Array.from(values, ([key, value]) => [
+        key,
+        {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        }
+      ])
+    )
+  )
+}
+
+/**
+ * Force uniform behaviour across database engines.
+ * Use to process all individual records with timestamps retrieved from database.
+ */
+export function validateEntity<T extends EntityTimeStamp>(entity: T, dateFields?: string[]): T {
+  const indexedEntity = entity as T & Record<string, unknown>
+  entity.created_at = validateDate(entity.created_at)
+  entity.updated_at = validateDate(entity.updated_at)
+  const replacements = new Map<string, unknown>()
+  if (dateFields != null) {
+    for (const df of dateFields) {
+      const value = indexedEntity[df]
+      if (Object.hasOwn(entity, df) && value) {
+        replacements.set(df, validateDate(value as Date | string | number))
+      }
+    }
+  }
+  for (const key of Object.keys(entity)) {
+    const val = replacements.has(key) ? replacements.get(key) : indexedEntity[key]
+    if (val === null) {
+      replacements.set(key, undefined)
+    } else if (val instanceof Uint8Array) {
+      replacements.set(key, Array.from(val))
+    }
+  }
+  if (replacements.size > 0) defineOwnValues(entity, replacements)
+  return entity
+}
+
+/**
+ * Force uniform behaviour across database engines.
+ * Use to process all arrays of records with timestamps retrieved from database.
+ * @returns input `entities` array with contained values validated.
+ */
+export function validateEntities<T extends EntityTimeStamp>(entities: T[], dateFields?: string[]): T[] {
+  if (!Array.isArray(entities)) return entities
+  for (let i = 0; i < entities.length; i++) {
+    entities[i] = validateEntity(entities[i], dateFields)
+  }
+  return entities
+}
+
+const syncChunkTotalRecordNames = [
+  'provenTxs',
+  'outputBaskets',
+  'outputTags',
+  'txLabels',
+  'transactions',
+  'outputs',
+  'txLabelMaps',
+  'outputTagMaps',
+  'certificates',
+  'certificateFields',
+  'commissions',
+  'provenTxReqs'
+] as const
+
+function validateSyncChunkTotals(totals: SyncChunkTotals): void {
+  if (typeof totals !== 'object' || totals == null || typeof totals.records !== 'object' || totals.records == null) {
+    throw new TypeError('Invalid sync chunk totals')
+  }
+  if (!Number.isSafeInteger(totals.totalRecords) || totals.totalRecords < 0) {
+    throw new TypeError('Invalid sync chunk totalRecords')
+  }
+  let calculatedTotal = 0
+  for (const name of syncChunkTotalRecordNames) {
+    const count = totals.records[name]
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new TypeError(`Invalid sync chunk total for ${name}`)
+    }
+    calculatedTotal += count
+  }
+  if (!Number.isSafeInteger(calculatedTotal) || calculatedTotal !== totals.totalRecords) {
+    throw new TypeError('Sync chunk record totals do not equal totalRecords')
+  }
+}
+
+/**
+ * Validate all entity arrays within a `SyncChunk` received from a remote storage call.
+ * Normalises timestamps, nulls, and binary fields in-place.
+ */
+export function validateSyncChunkEntities(r: SyncChunk): SyncChunk {
+  if (r.totals != null) validateSyncChunkTotals(r.totals)
+  if (r.certificateFields != null) r.certificateFields = validateEntities(r.certificateFields)
+  if (r.certificates != null) r.certificates = validateEntities(r.certificates)
+  if (r.commissions != null) r.commissions = validateEntities(r.commissions)
+  if (r.outputBaskets != null) r.outputBaskets = validateEntities(r.outputBaskets)
+  if (r.outputTagMaps != null) r.outputTagMaps = validateEntities(r.outputTagMaps)
+  if (r.outputTags != null) r.outputTags = validateEntities(r.outputTags)
+  if (r.outputs != null) r.outputs = validateEntities(r.outputs)
+  if (r.provenTxReqs != null) r.provenTxReqs = validateEntities(r.provenTxReqs)
+  if (r.provenTxs != null) r.provenTxs = validateEntities(r.provenTxs)
+  if (r.transactions != null) r.transactions = validateEntities(r.transactions)
+  if (r.txLabelMaps != null) r.txLabelMaps = validateEntities(r.txLabelMaps)
+  if (r.txLabels != null) r.txLabels = validateEntities(r.txLabels)
+  if (r.user != null) r.user = validateEntity(r.user)
+  return r
+}

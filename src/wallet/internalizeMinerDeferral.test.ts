@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Beef, P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
-import type { Services, Wallet } from '@bsv/wallet-toolbox-client'
+import type { Services, Wallet } from '@handcash/wallet-engine'
 import {
   directPostBeef,
   installInternalizeMinerDeferral,

@@ -1,4 +1,4 @@
-import type { Wallet } from '@bsv/wallet-toolbox-client'
+import type { Wallet } from '@handcash/wallet-engine'
 
 type ActionBatchController = Wallet['actionBatch']
 type ActionBatchControllerClass = new (

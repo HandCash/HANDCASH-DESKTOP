@@ -1,6 +1,6 @@
 import { Beef, MerklePath, P2PKH, PrivateKey, Script, Transaction } from '@bsv/sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Wallet } from '@bsv/wallet-toolbox-client'
+import type { Wallet } from '@handcash/wallet-engine'
 import {
   InputsUnverifiedError,
   installSpendCertainty,

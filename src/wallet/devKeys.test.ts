@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
   lifecycle: null as { dispose?: (runtime: unknown, reason: string) => void } | null,
 }))
 
-vi.mock('@bsv/wallet-toolbox-client', async (importOriginal) => {
+vi.mock('@handcash/wallet-engine', async (importOriginal) => {
   class WalletStorageManager {
     constructor(readonly identityKey: string) {}
     async addWalletStorageProvider(client: { wallet: { identityKey: string; services: unknown }; url: string }) {
@@ -46,7 +46,7 @@ vi.mock('@bsv/wallet-toolbox-client', async (importOriginal) => {
     }
   }
   return {
-    ...(await importOriginal<typeof import('@bsv/wallet-toolbox-client')>()),
+    ...(await importOriginal<typeof import('@handcash/wallet-engine')>()),
     Wallet,
     WalletStorageManager,
     StorageClient,

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it, vi } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
-import { StorageIdb, exportBRC38Json, parseBRC38Json } from '@bsv/wallet-toolbox-client'
+import { StorageIdb, exportBRC38Json, parseBRC38Json } from '@handcash/wallet-engine'
 
 const watchdog = vi.hoisted(() => ({ noteBackupOversize: vi.fn(), clearBackupOversize: vi.fn() }))
 vi.mock('./backupWatchdog', () => watchdog)

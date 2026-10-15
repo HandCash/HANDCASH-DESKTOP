@@ -10,7 +10,7 @@ import { traceSlowToolboxSteps } from './toolboxTelemetry'
 import { gateMonitorTasksOnSpend } from './monitorSpendGate'
 import { traceStorageLocks } from './storageLockTrace'
 import { persistNoSendActions } from './toolboxActionBatch'
-import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
+import { SetupClient, Wallet, sdk, type Services } from '@handcash/wallet-engine'
 import type { Chain } from './vault'
 import { brc42VaultMaster, forgetVaultMasterCache, vaultIdentityKey, type VaultMaster } from './vaultMaster'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -637,6 +637,8 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
 export async function bootWallet(args: WalletBootArgs): Promise<ActiveWallet> {
   disposeWalletRuntime('replaced')
   active = null
+  const { migrateWalletEngineStorage } = await import('./walletEngineMigration')
+  await migrateWalletEngineStorage(args)
   const unit = await walletUnitFor(args)
   const wallet = await replaceWarmWallet(unit, () => buildWallet(args, unit.databaseName))
   markWarmWalletSelected(unit)

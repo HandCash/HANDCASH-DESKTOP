@@ -1,0 +1,323 @@
+export const BINARY_ENCODING_HEADER = 'X-BSV-Binary-Encoding'
+export const BINARY_REQUEST_ENCODING_HEADER = 'X-BSV-Binary-Request-Encoding'
+export const BINARY_ENCODING = 'base64'
+
+const TAG = '$bsvBinary'
+const ESCAPED = 'escaped'
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+function getBufferCtor(): any {
+  return typeof globalThis === 'undefined' ? undefined : (globalThis as any).Buffer
+}
+
+function toBase64(bytes: Uint8Array): string {
+  const BufferCtor = getBufferCtor()
+  if (BufferCtor != null) return BufferCtor.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64')
+  if (typeof globalThis.btoa === 'function') {
+    let binary = ''
+    const chunkSize = 0x8000
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCodePoint(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)))
+    }
+    return globalThis.btoa(binary)
+  }
+  let encoded = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const first = bytes[i]
+    const second = bytes[i + 1] ?? 0
+    const third = bytes[i + 2] ?? 0
+    encoded += BASE64[first >>> 2]
+    encoded += BASE64[((first & 3) << 4) | (second >>> 4)]
+    encoded += i + 1 < bytes.length ? BASE64[((second & 15) << 2) | (third >>> 6)] : '='
+    encoded += i + 2 < bytes.length ? BASE64[third & 63] : '='
+  }
+  return encoded
+}
+
+function validateBase64(base64: string): number {
+  if (base64.length % 4 !== 0) throw new TypeError('Invalid base64 binary JSON value')
+  let padding = 0
+  if (base64.endsWith('==')) {
+    padding = 2
+  } else if (base64.endsWith('=')) {
+    padding = 1
+  }
+  const contentLength = base64.length - padding
+  for (let i = 0; i < contentLength; i++) {
+    if (!BASE64.includes(base64[i])) throw new TypeError('Invalid base64 binary JSON value')
+  }
+  for (let i = contentLength; i < base64.length; i++) {
+    if (base64[i] !== '=') throw new TypeError('Invalid base64 binary JSON value')
+  }
+  if (
+    (padding === 1 && (BASE64.indexOf(base64[contentLength - 1]) & 3) !== 0) ||
+    (padding === 2 && (BASE64.indexOf(base64[contentLength - 1]) & 15) !== 0)
+  )
+    throw new TypeError('Invalid base64 binary JSON value')
+  return padding
+}
+
+function decodeBase64WithoutPlatformSupport(base64: string, padding: number): Uint8Array {
+  const bytes = new Uint8Array(Math.floor((base64.length * 3) / 4) - padding)
+  let offset = 0
+  for (let i = 0; i < base64.length; i += 4) {
+    const first = BASE64.indexOf(base64[i])
+    const second = BASE64.indexOf(base64[i + 1])
+    const third = base64[i + 2] === '=' ? 0 : BASE64.indexOf(base64[i + 2])
+    const fourth = base64[i + 3] === '=' ? 0 : BASE64.indexOf(base64[i + 3])
+    const value = (first << 18) | (second << 12) | (third << 6) | fourth
+    if (offset < bytes.length) bytes[offset++] = value >>> 16
+    if (offset < bytes.length) bytes[offset++] = value >>> 8
+    if (offset < bytes.length) bytes[offset++] = value
+  }
+  return bytes
+}
+
+function fromBase64(base64: string): Uint8Array {
+  const padding = validateBase64(base64)
+  const BufferCtor = getBufferCtor()
+  if (BufferCtor != null) {
+    const buffer = BufferCtor.from(base64, 'base64')
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  }
+  if (typeof globalThis.atob === 'function') {
+    const binary = globalThis.atob(base64)
+    // Uint8Array.from performs the conversion in the native collection
+    // primitive and avoids an attacker-controlled JavaScript loop bound.
+    return Uint8Array.from(binary, character => character.codePointAt(0)!)
+  }
+  return decodeBase64WithoutPlatformSupport(base64, padding)
+}
+
+function isTaggedBinary(value: unknown): value is { [TAG]: typeof BINARY_ENCODING; data: string } {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    (value as any)[TAG] === BINARY_ENCODING &&
+    typeof (value as any).data === 'string' &&
+    Object.keys(value).length === 2
+  )
+}
+
+function isBufferJson(value: unknown): value is { type: 'Buffer'; data: number[] } {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    (value as any).type === 'Buffer' &&
+    Array.isArray((value as any).data) &&
+    Object.keys(value).length === 2
+  )
+}
+
+function isEscapedJson(value: unknown): value is { [TAG]: typeof ESCAPED; entries: Array<[string, unknown]> } {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    (value as any)[TAG] === ESCAPED &&
+    Array.isArray((value as any).entries) &&
+    Object.keys(value).length === 2 &&
+    (value as any).entries.every(
+      (entry: unknown) => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string'
+    )
+  )
+}
+
+function escapeJsonObject(value: object): unknown {
+  return { [TAG]: ESCAPED, entries: Object.entries(value) }
+}
+
+function defineOwnValues(target: object, values: Array<readonly [string, unknown]>): void {
+  // Build the descriptors through Object.fromEntries so reserved keys such as
+  // __proto__ remain ordinary own data properties. Defining the batch avoids
+  // both prototype setters and individual writes through remote property names.
+  Object.defineProperties(
+    target,
+    Object.fromEntries(
+      values.map(([key, value]) => [
+        key,
+        {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        }
+      ])
+    )
+  )
+}
+
+function collectDecodedChild(
+  key: string,
+  child: unknown,
+  replacements: Array<readonly [string, unknown]>,
+  stack: object[]
+): void {
+  if (isTaggedBinary(child)) {
+    replacements.push([key, fromBase64(child.data)])
+  } else if (isEscapedJson(child)) {
+    const restored = Object.fromEntries(child.entries)
+    replacements.push([key, restored])
+    stack.push(restored)
+  } else if (child != null && typeof child === 'object') {
+    stack.push(child)
+  }
+}
+
+export function binaryJsonReplacer(this: Record<string, unknown>, key: string, value: unknown): unknown {
+  if (value instanceof Uint8Array) return { [TAG]: BINARY_ENCODING, data: toBase64(value) }
+  if (value == null || typeof value !== 'object') return value
+  // Buffer.toJSON runs before a JSON replacer, but the holder still contains
+  // the original Buffer. Literal Buffer-JSON objects must remain ordinary data.
+  if (isBufferJson(value)) {
+    const original = this[key]
+    if (original instanceof Uint8Array) return { [TAG]: BINARY_ENCODING, data: toBase64(original) }
+    return escapeJsonObject(value)
+  }
+  if (isTaggedBinary(value) || isEscapedJson(value)) return escapeJsonObject(value)
+  return value
+}
+
+export function legacyBinaryJsonReplacer(_key: string, value: unknown): unknown {
+  if (value instanceof Uint8Array) return Array.from(value)
+  return value
+}
+
+export function binaryJsonReviver(_key: string, value: unknown): unknown {
+  if (isTaggedBinary(value)) return fromBase64(value.data)
+  if (isEscapedJson(value)) return Object.fromEntries(value.entries)
+  return value
+}
+
+function collectDecodedChildren(
+  current: object,
+  replacements: Array<readonly [string, unknown]>,
+  stack: object[]
+): void {
+  if (Array.isArray(current)) {
+    // Numeric byte arrays are common in sync responses. Avoid allocating an
+    // entry tuple and invoking a JSON reviver for every byte.
+    for (let index = 0; index < current.length; index++) {
+      const child: unknown = current[index]
+      if (child != null && typeof child === 'object') {
+        collectDecodedChild(String(index), child, replacements, stack)
+      }
+    }
+  } else {
+    for (const [key, child] of Object.entries(current)) {
+      collectDecodedChild(key, child, replacements, stack)
+    }
+  }
+}
+
+export function decodeBinaryJsonValue(value: unknown): unknown {
+  if (isTaggedBinary(value)) return fromBase64(value.data)
+  if (value == null || typeof value !== 'object') return value
+
+  // JSON can be nested far more deeply than the JavaScript call stack. Walk it
+  // iteratively so an authenticated peer cannot turn binary decoding into a
+  // recursion overflow.
+  const decoded = isEscapedJson(value) ? Object.fromEntries(value.entries) : value
+  const stack: object[] = [decoded]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (current == null) continue
+    const replacements: Array<readonly [string, unknown]> = []
+    collectDecodedChildren(current, replacements, stack)
+    if (replacements.length > 0) defineOwnValues(current, replacements)
+  }
+  return decoded
+}
+
+const JSON_RPC_REPLACERS = new Map<boolean, typeof binaryJsonReplacer | typeof legacyBinaryJsonReplacer>([
+  [true, binaryJsonReplacer],
+  [false, legacyBinaryJsonReplacer]
+])
+
+export function stringifyJsonRpc(value: unknown, binary: boolean): string {
+  return JSON.stringify(value, JSON_RPC_REPLACERS.get(binary))
+}
+
+type Frame = { value: object; holder: object; key: string; visited: boolean }
+
+function pushJsonChildren(frame: Frame, stack: Frame[]): void {
+  const push = (key: string, child: unknown): void => {
+    if (child != null && typeof child === 'object') {
+      stack.push({ value: child, holder: frame.value, key, visited: false })
+    }
+  }
+  if (Array.isArray(frame.value)) {
+    for (let index = frame.value.length - 1; index >= 0; index--) {
+      const child: unknown = frame.value[index]
+      if (child != null && typeof child === 'object') push(String(index), child)
+    }
+  } else {
+    const entries = Object.entries(frame.value)
+    for (let index = entries.length - 1; index >= 0; index--) push(...entries[index])
+  }
+}
+
+export function parseJsonRpc(text: string, binary: boolean = false): any {
+  const value: unknown = JSON.parse(text)
+  if (!binary || value == null || typeof value !== 'object') return value
+
+  // Match the exported reviver's bottom-up semantics, including escaped
+  // marker collisions and duplicate entry validation, without a callback per
+  // scalar byte or recursion proportional to remote JSON nesting depth.
+  const root = { value }
+  const stack: Frame[] = [{ value, holder: root, key: 'value', visited: false }]
+  while (stack.length > 0) {
+    const frame = stack.pop()!
+    if (frame.visited) {
+      const decoded = binaryJsonReviver(frame.key, frame.value)
+      if (decoded !== frame.value) defineOwnValues(frame.holder, [[frame.key, decoded]])
+      continue
+    }
+    stack.push({ ...frame, visited: true })
+    pushJsonChildren(frame, stack)
+  }
+  return root.value
+}
+
+export type ValidatedJsonRpcResponse =
+  { jsonrpc: '2.0'; id: number; result: unknown } | { jsonrpc: '2.0'; id: number; error: unknown }
+
+/** Require one exact response for the request that produced it. */
+export function validateJsonRpcResponse(value: unknown, expectedId: number): ValidatedJsonRpcResponse {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Wallet storage returned an invalid JSON-RPC response')
+  }
+  const prototype = Object.getPrototypeOf(value)
+  const properties = Object.getOwnPropertyDescriptors(value)
+  const keys = Object.keys(properties)
+  if (
+    (prototype !== Object.prototype && prototype !== null) ||
+    Object.getOwnPropertySymbols(value).length !== 0 ||
+    Object.values(properties).some(property => property.get != null || property.set != null) ||
+    keys.some(key => key !== 'jsonrpc' && key !== 'id' && key !== 'result' && key !== 'error') ||
+    keys.length !== 3 ||
+    properties.jsonrpc?.value !== '2.0' ||
+    properties.id?.value !== expectedId ||
+    !Number.isSafeInteger(expectedId) ||
+    expectedId < 1 ||
+    Object.prototype.hasOwnProperty.call(properties, 'result') ===
+      Object.prototype.hasOwnProperty.call(properties, 'error')
+  ) {
+    throw new Error('Wallet storage returned an invalid JSON-RPC response')
+  }
+  if (Object.prototype.hasOwnProperty.call(properties, 'error')) {
+    const error = properties.error.value
+    if (error == null || typeof error !== 'object' || Array.isArray(error)) {
+      throw new Error('Wallet storage returned an invalid JSON-RPC response')
+    }
+    const errorPrototype = Object.getPrototypeOf(error)
+    const errorProperties = Object.getOwnPropertyDescriptors(error)
+    if (
+      (errorPrototype !== Object.prototype && errorPrototype !== null) ||
+      Object.getOwnPropertySymbols(error).length !== 0 ||
+      Object.values(errorProperties).some(property => property.get != null || property.set != null)
+    ) {
+      throw new Error('Wallet storage returned an invalid JSON-RPC response')
+    }
+  }
+  return value as ValidatedJsonRpcResponse
+}

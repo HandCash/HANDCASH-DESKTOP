@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { Beef, MerklePath, P2PKH, PrivateKey, PublicKey, Script, Transaction, Utils } from '@bsv/sdk'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
+import { SetupClient } from '@handcash/wallet-engine'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveWallet } from './session'
 import type { WalletRuntime } from './walletRuntime'

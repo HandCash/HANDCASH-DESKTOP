@@ -12,7 +12,7 @@
  * stays retryable.
  */
 import { Beef, Transaction, type BEEF } from '@bsv/sdk'
-import type { Services } from '@bsv/wallet-toolbox-client'
+import type { Services } from '@handcash/wallet-engine'
 
 import { appendAppLog } from './appLog'
 

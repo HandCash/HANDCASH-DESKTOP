@@ -268,9 +268,9 @@ describe('locally seeded collectables', () => {
       new Set([newest, oldest]),
     )
     expect(listOutputs.mock.calls.slice(0, 11).map(([args]) => args.offset)).toEqual([
-      ...Array.from({ length: 10 }, (_, i) => -(i * 100 + 1)),
-      -1_001,
+      ...Array.from({ length: 11 }, (_, i) => -(i * 10 + 1)),
     ])
+    expect(listOutputs.mock.calls.at(-1)?.[0].offset).toBe(-1_001)
     expect(getCollectablePageStatus().totalOutputs).toBe(1_001)
     expect(getCollectablePageStatus().hasMore).toBe(false)
   })

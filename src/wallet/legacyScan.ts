@@ -6,7 +6,7 @@ import {
   cloudSpentStatus,
   cloudTxExists,
 } from './chainProbeClient'
-import type { Services } from '@bsv/wallet-toolbox-client'
+import type { Services } from '@handcash/wallet-engine'
 import { type ActiveWallet } from './session'
 import type { Chain } from './vault'
 import { getDependencyHealthSnapshot } from './dependencyHealth'

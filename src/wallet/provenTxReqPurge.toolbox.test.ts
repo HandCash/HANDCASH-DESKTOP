@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { PrivateKey } from '@bsv/sdk'
-import { SetupClient, type StorageProvider } from '@bsv/wallet-toolbox-client'
+import { SetupClient, type StorageProvider } from '@handcash/wallet-engine'
 import { describe, expect, it } from 'vitest'
 import {
   PROOF_REQUEST_RETENTION_MS,

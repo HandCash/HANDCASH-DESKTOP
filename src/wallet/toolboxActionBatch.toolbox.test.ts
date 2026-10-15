@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { MerklePath, P2PKH, PrivateKey, Script, Transaction, Utils } from '@bsv/sdk'
-import { SetupClient, type Wallet } from '@bsv/wallet-toolbox-client'
+import { SetupClient, type Wallet } from '@handcash/wallet-engine'
 import { describe, expect, it } from 'vitest'
 import { decodeBsv21Binary, encodeBsv21Binary } from './token/decode162'
 import { persistNoSendActions } from './toolboxActionBatch'

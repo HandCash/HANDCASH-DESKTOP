@@ -1,0 +1,1578 @@
+// @ts-nocheck — recovered upstream adapter; public contracts are tested at the package boundary.
+import {
+  type ValidAcquireIssuanceCertificateArgs,
+  type ValidCreateActionArgs,
+  type ValidWalletSignerArgs,
+  validateAbortActionArgs,
+  validateAcquireDirectCertificateArgs,
+  validateAcquireIssuanceCertificateArgs,
+  validateCreateActionArgs,
+  validateDiscoverByAttributesArgs,
+  validateDiscoverByIdentityKeyArgs,
+  validateInternalizeActionArgs,
+  validateListActionsArgs,
+  validateListCertificatesArgs,
+  validateListOutputsArgs as validateSDKListOutputsArgs,
+  validateOriginator,
+  validateProveCertificateArgs,
+  validateRelinquishCertificateArgs,
+  validateRelinquishOutputArgs,
+  validateSignActionArgs
+} from '@bsv/sdk/wallet/validationHelpers'
+import {
+  AbortActionArgs,
+  AbortActionResult,
+  AcquireCertificateArgs,
+  AcquireCertificateResult,
+  AuthenticatedResult,
+  Beef,
+  BeefParty,
+  CreateActionArgs,
+  CreateActionResult,
+  CreateHmacArgs,
+  CreateHmacResult,
+  CreateSignatureArgs,
+  CreateSignatureResult,
+  DiscoverByAttributesArgs,
+  DiscoverByIdentityKeyArgs,
+  DiscoverCertificatesResult,
+  GetHeaderArgs,
+  GetHeaderResult,
+  GetHeightResult,
+  GetNetworkResult,
+  GetPublicKeyArgs,
+  GetPublicKeyResult,
+  GetVersionResult,
+  InternalizeActionArgs,
+  InternalizeActionResult,
+  ListActionsArgs,
+  ListActionsResult,
+  ListCertificatesArgs,
+  ListCertificatesResult,
+  ListOutputsArgs,
+  ListOutputsResult,
+  OriginatorDomainNameStringUnder250Bytes,
+  ProtoWallet,
+  ProveCertificateArgs,
+  ProveCertificateResult,
+  PubKeyHex,
+  RelinquishCertificateArgs,
+  RelinquishCertificateResult,
+  RelinquishOutputArgs,
+  RelinquishOutputResult,
+  RevealCounterpartyKeyLinkageArgs,
+  RevealCounterpartyKeyLinkageResult,
+  RevealSpecificKeyLinkageArgs,
+  RevealSpecificKeyLinkageResult,
+  SignActionArgs,
+  SignActionResult,
+  Transaction as BsvTransaction,
+  TrustSelf,
+  VerifyHmacArgs,
+  VerifyHmacResult,
+  VerifySignatureArgs,
+  VerifySignatureResult,
+  VerifiableCertificate,
+  WalletDecryptArgs,
+  WalletDecryptResult,
+  WalletEncryptArgs,
+  WalletEncryptResult,
+  WalletInterface,
+  createNonce,
+  AuthFetch,
+  verifyNonce,
+  MasterCertificate,
+  Certificate,
+  LookupResolver,
+  LookupAnswer,
+  AtomicBEEF,
+  BEEF,
+  KeyDeriverApi,
+  WalletLoggerInterface,
+  MakeWalletLogger,
+  Telemetry,
+  TelemetryConfig,
+  createPublicHTTPSFetch
+} from '@bsv/sdk'
+import type { SpendVerifierInterface } from '@bsv/sdk'
+import { fromBase58, toArray, toHex } from '@bsv/sdk/primitives/utils'
+import { acquireDirectCertificate } from './signer/methods/acquireDirectCertificate'
+import { proveCertificate } from './signer/methods/proveCertificate'
+import { createAction, CreateActionResultX } from './signer/methods/createAction'
+import { signAction, SignActionResultX } from './signer/methods/signAction'
+import { internalizeAction } from './signer/methods/internalizeAction'
+import { WalletSettingsManager } from './WalletSettingsManager'
+import {
+  filterCertificatesByAttributes,
+  filterCertificatesByIdentityKey,
+  IdentityEvidenceVerifier,
+  parseResults,
+  queryOverlayEvidence,
+  transformVerifiableCertificatesWithTrust
+} from './utility/identityUtils'
+import { maxPossibleSatoshis } from './storage/methods/generateChange'
+import { hasBrc177NoSendExpiryLabel, parseBrc177NoSendExpiryLabels } from './utility/brc177NoSendExpiry'
+import { createNoSendExpiryAction } from './signer/methods/createNoSendExpiryAction'
+import { WalletStorageManager } from './storage/WalletStorageManager'
+import { Monitor } from './monitor/Monitor'
+import { WalletSigner } from './signer/WalletSigner'
+import { randomBytesBase64, toLookupNetworkPreset, toWalletNetwork } from './utility/utilityHelpers'
+import { ScriptTemplateBRC29 } from './utility/ScriptTemplateBRC29'
+import {
+  Chain,
+  KeyPair,
+  specOpFailedActions,
+  specOpInvalidChange,
+  specOpNoSendActions,
+  specOpSetWalletChangeParams,
+  specOpThrowReviewActions,
+  specOpWalletBalance,
+  specOpWalletManagedUtxos,
+  StorageIdentity,
+  WalletBalance
+} from './sdk/types'
+import { WalletServices } from './sdk/WalletServices.interfaces'
+import { PrivilegedKeyManager } from './sdk/PrivilegedKeyManager'
+import { WERR_INTERNAL, WERR_INVALID_PARAMETER, WERR_NOT_IMPLEMENTED, WERR_REVIEW_ACTIONS } from './sdk/WERR_errors'
+import { AuthId, StorageCreateActionResult, StorageInternalizeActionResult } from './sdk/WalletStorage.interfaces'
+import { WalletError } from './sdk/WalletError'
+import { asArray } from './utility/utilityHelpers.noBuffer'
+import { getResultBeef } from './signer/methods/resultBeef'
+import type { ValidListOutputsArgs } from '@bsv/sdk/wallet/validationHelpers'
+import { ActionBatchController, ActionBatchMode } from './signer/actionBatch/ActionBatchWorkspace'
+import {
+  assertAbortResult,
+  assertInternalizeAccepted,
+  assertStorageMutationSucceeded
+} from './utility/walletResultGuards'
+
+function prepareKnownTxidsForCreateAction(wallet: Wallet, args: CreateActionArgs): void {
+  if (!wallet.autoKnownTxids || args.options?.knownTxids != null) return
+  if (!wallet.telemetry.enabled) {
+    args.options!.knownTxids = wallet.getKnownTxids(args.options?.knownTxids)
+    return
+  }
+  args.options!.knownTxids = wallet.telemetry.withSpan(
+    'wallet.create_action.prepare_known_txids',
+    {
+      component: 'wallet-toolbox',
+      carrier: args,
+      attributes: { 'beef.tx_count': wallet.beef.txs.length }
+    },
+    span => {
+      const knownTxids = wallet.getKnownTxids(args.options?.knownTxids)
+      span.end({ attributes: { 'beef.known_txid_count': knownTxids.length } })
+      return knownTxids
+    }
+  )
+}
+
+/**
+ * The preferred means of constructing a `Wallet` is with a `WalletArgs` instance.
+ */
+/**
+ * Minimal interface the wallet uses to short-circuit identity discovery against the user's local
+ * contacts before hitting the overlay. Installing a source is an explicit local trust-policy
+ * decision: its records are authoritative personal assertions, like a self-signed certificate or
+ * locally installed trust anchor. The authority is scoped to this user's saved identity-key
+ * association and local metadata; it is not an independent third-party certifier attestation or
+ * a transferable trust statement for another wallet.
+ *
+ * The result shape matches what `discoverByIdentityKey` / `discoverByAttributes` return so callers
+ * do not have to special-case contact-sourced records. Contact results are identifiable by their
+ * default `contact` type and empty certificate proof fields. Do not wire network responses or other
+ * unauthenticated third-party data directly into this interface. Authenticating the local store
+ * proves who saved the record, while the prior user/application validation supplies its identity
+ * authority.
+ *
+ * Implementations typically wrap `@bsv/sdk` `ContactsManager` or another on-device source. Reads
+ * are expected to be very fast (single-digit ms against local SQLite is typical).
+ */
+export interface ContactSource {
+  /** Look up a contact by identity key. Return `null` (or undefined) if unknown. */
+  findByIdentityKey: (identityKey: PubKeyHex) => Promise<ContactRecord | null | undefined>
+  /** Look up contacts matching a set of attributes. May be a no-op if attribute search is unsupported. */
+  findByAttributes?: (attributes: Record<string, string> | string[]) => Promise<ContactRecord[]>
+}
+
+/**
+ * What a {@link ContactSource} returns. Carries enough to synthesize a locally authoritative
+ * `DiscoverCertificatesResult` without touching the overlay. The authority comes from the user's
+ * independent decision to save or validate the contact, not from a third-party certificate.
+ * Consumers must preserve that distinction when rendering or exporting the result.
+ */
+export interface ContactRecord {
+  identityKey: PubKeyHex
+  /** Optional certificate type (e.g. xCert / discordCert) so callers can render a badge. */
+  type?: string
+  /** Optional decrypted fields. Whatever the app stored when saving the contact. */
+  decryptedFields?: Record<string, string>
+  /**
+   * Optional local trust metadata. Missing trust defaults to `Infinity`, meaning the user's contact
+   * assertion overrides third-party overlay thresholds by explicit local policy. It does not mean
+   * that an external certifier supplied or cryptographically verified the record. Infinity is
+   * scoped to the local policy decision; it must not be serialized as a universal trust claim.
+   */
+  certifierInfo?: {
+    name?: string
+    iconUrl?: string
+    description?: string
+    trust?: number
+  }
+}
+
+/**
+ * Build a {@link DiscoverCertificatesResult} from contact records so {@link Wallet.discoverByIdentityKey}
+ * and {@link Wallet.discoverByAttributes} can short-circuit on a local contacts hit. The synthetic
+ * result has `trust: Infinity` by default so downstream trust filtering honors the user's local
+ * assertion as authoritative. Its empty serial, signature, and revocation outpoint deliberately
+ * distinguish it from an independently certified third-party attestation.
+ */
+function synthesizeContactResult(contacts: ContactRecord[]): DiscoverCertificatesResult {
+  const certificates = contacts.map(c => ({
+    type: c.type ?? 'contact',
+    subject: c.identityKey,
+    serialNumber: '',
+    certifier: c.identityKey,
+    revocationOutpoint: '',
+    signature: '',
+    fields: {},
+    keyring: {},
+    decryptedFields: c.decryptedFields ?? {},
+    publiclyRevealedKeyring: {},
+    certifierInfo: {
+      name: c.certifierInfo?.name ?? 'Contact',
+      iconUrl: c.certifierInfo?.iconUrl ?? '',
+      description: c.certifierInfo?.description ?? 'Locally saved contact',
+      trust: c.certifierInfo?.trust ?? Number.POSITIVE_INFINITY
+    }
+  }))
+  return {
+    totalCertificates: certificates.length,
+    certificates: certificates as unknown as DiscoverCertificatesResult['certificates']
+  }
+}
+
+export interface WalletArgs {
+  chain: Chain
+  keyDeriver: KeyDeriverApi
+  storage: WalletStorageManager
+  services?: WalletServices
+  monitor?: Monitor
+  privilegedKeyManager?: PrivilegedKeyManager
+  settingsManager?: WalletSettingsManager
+  lookupResolver?: LookupResolver
+  /**
+   * Optional caller-installed, local contact source consulted before the overlay in
+   * `discoverByIdentityKey` / `discoverByAttributes`. A match is a user-authoritative personal
+   * assertion, not an external certifier attestation, and skips the overlay entirely. Only connect
+   * a locally authenticated/contact-management source whose records the user has independently
+   * chosen to trust. A contact-store signature or encryption authenticates local persistence; it
+   * does not replace that independent validation step.
+   * Pass `forceRefresh: true` on the discover args to bypass both contacts and the overlay
+   * cache.
+   */
+  contactSource?: ContactSource
+  /**
+   * Optional. Provide a function conforming to the `MakeWalletLogger` type to enable wallet request logging.
+   *
+   * For simple requests using `Console` may be adequate, initialize with
+   * `() => Console`
+   *
+   * Aggregate tracing and control over capturing all logged output in one place:
+   * `(log?: string | WalletLoggerInterface) => new WalletLogger(log)`
+   */
+  makeLogger?: MakeWalletLogger
+  /**
+   * Internal Wallet Toolbox optimization policy. `auto` (the default)
+   * negotiates the optional action-batch storage capability; `legacy` always
+   * uses per-action storage. This does not change the BRC-100 wallet interface.
+   */
+  actionBatchMode?: ActionBatchMode
+  /**
+   * Optional high-performance script verifier used by Wallet Toolbox's
+   * internal transaction checks. This is an implementation extension and does
+   * not change the BRC-100 wallet interface.
+   */
+  scriptVerifier?: SpendVerifierInterface
+  /**
+   * Optional provider-neutral tracing shared by wallet, lookup, storage, and
+   * permission layers. Disabled unless an enabled sink is supplied.
+   */
+  telemetry?: TelemetryConfig
+}
+
+function isWalletSigner(args: WalletArgs | WalletSigner): args is WalletSigner {
+  return 'isWalletSigner' in args && args.isWalletSigner
+}
+
+export class Wallet implements WalletInterface, ProtoWallet {
+  chain: Chain
+  keyDeriver: KeyDeriverApi
+  storage: WalletStorageManager
+  settingsManager: WalletSettingsManager
+  lookupResolver: LookupResolver
+
+  services?: WalletServices
+  monitor?: Monitor
+  contactSource?: ContactSource
+
+  identityKey: string
+
+  /**
+   * The wallet creates a `BeefParty` when it is created.
+   * All the Beefs that pass through the wallet are merged into this beef.
+   * Thus what it contains at any time is the union of all transactions and proof data processed.
+   * The class `BeefParty` derives from `Beef`, adding the ability to track the source of merged data.
+   *
+   * This allows it to generate beefs to send to a particular “party” (storage or the user)
+   * that includes “txid only proofs” for transactions they already know about.
+   * Over time, this allows an active wallet to drastically reduce the amount of data transmitted.
+   */
+  beef: BeefParty
+  /**
+   * If true, signableTransactions will include sourceTransaction for each input,
+   * including those that do not require signature and those that were also contained
+   * in the inputBEEF.
+   */
+  includeAllSourceTransactions: boolean = true
+  /**
+   * If true, txids that are known to the wallet's party beef do not need to be returned from storage.
+   */
+  autoKnownTxids: boolean = false
+  /**
+   * If true, beefs returned to the user may contain txidOnly transactions.
+   */
+  returnTxidOnly: boolean = false
+  trustSelf?: TrustSelf
+  userParty: string
+  proto: ProtoWallet
+  privilegedKeyManager?: PrivilegedKeyManager
+  makeLogger?: MakeWalletLogger
+
+  pendingSignActions: Record<string, PendingSignAction>
+  readonly actionBatch: ActionBatchController
+  readonly scriptVerifier?: SpendVerifierInterface
+  readonly telemetry: Telemetry
+
+  /**
+   * For repeatability testing, set to an array of random numbers from [0..1).
+   */
+  randomVals?: number[] = undefined
+
+  constructor(
+    argsOrSigner: WalletArgs | WalletSigner,
+    services?: WalletServices,
+    monitor?: Monitor,
+    privilegedKeyManager?: PrivilegedKeyManager,
+    makeLogger?: MakeWalletLogger
+  ) {
+    const args: WalletArgs = isWalletSigner(argsOrSigner)
+      ? {
+          chain: argsOrSigner.chain,
+          keyDeriver: argsOrSigner.keyDeriver,
+          storage: argsOrSigner.storage,
+          services,
+          monitor,
+          privilegedKeyManager,
+          makeLogger
+        }
+      : argsOrSigner
+
+    if (args.storage._authId.identityKey != args.keyDeriver.identityKey) {
+      throw new WERR_INVALID_PARAMETER(
+        'storage',
+        `authenticated as the same identityKey (${args.storage._authId.identityKey}) as the keyDeriver (${args.keyDeriver.identityKey}).`
+      )
+    }
+
+    this.telemetry = new Telemetry(args.telemetry)
+    this.settingsManager = args.settingsManager || new WalletSettingsManager(this)
+    this.chain = args.chain
+    this.lookupResolver =
+      args.lookupResolver ||
+      new LookupResolver({
+        networkPreset: toLookupNetworkPreset(this.chain),
+        telemetry: args.telemetry
+      })
+    this.keyDeriver = args.keyDeriver
+    this.storage = args.storage
+    this.proto = new ProtoWallet(args.keyDeriver)
+    this.services = args.services
+    this.monitor = args.monitor
+    this.privilegedKeyManager = args.privilegedKeyManager
+    this.makeLogger = args.makeLogger
+    this.contactSource = args.contactSource
+
+    this.identityKey = this.keyDeriver.identityKey
+
+    this.pendingSignActions = {}
+    this.actionBatch = new ActionBatchController(this, args.actionBatchMode ?? 'auto')
+    this.scriptVerifier = args.scriptVerifier
+
+    this.userParty = `user ${this.getClientChangeKeyPair().publicKey}`
+    this.beef = new BeefParty([this.userParty])
+    this.trustSelf = 'known'
+
+    if (this.services != null) {
+      this.storage.setServices(this.services)
+    }
+  }
+
+  async destroy(): Promise<void> {
+    this._identityEvidenceClosed = true
+    this._identityEvidenceVerifier?.dispose()
+    this._overlayEvidenceCache.clear()
+    clearTimeout(this._overlayEvidenceExpiryTimer)
+    await this.actionBatch.abort()
+    await this.storage.destroy()
+    if (this.privilegedKeyManager != null) this.privilegedKeyManager.destroyKey()
+  }
+
+  getClientChangeKeyPair(): KeyPair {
+    const kp: KeyPair = {
+      privateKey: this.keyDeriver.rootKey.toString(),
+      publicKey: this.keyDeriver.rootKey.toPublicKey().toString()
+    }
+    return kp
+  }
+
+  async getIdentityKey(): Promise<PubKeyHex> {
+    return (await this.getPublicKey({ identityKey: true })).publicKey
+  }
+
+  async getPublicKey(
+    args: GetPublicKeyArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<GetPublicKeyResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.getPublicKey(args)
+    }
+    return await this.proto.getPublicKey(args)
+  }
+
+  async revealCounterpartyKeyLinkage(
+    args: RevealCounterpartyKeyLinkageArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<RevealCounterpartyKeyLinkageResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.revealCounterpartyKeyLinkage(args)
+    }
+    return await this.proto.revealCounterpartyKeyLinkage(args)
+  }
+
+  async revealSpecificKeyLinkage(
+    args: RevealSpecificKeyLinkageArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<RevealSpecificKeyLinkageResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.revealSpecificKeyLinkage(args)
+    }
+    return await this.proto.revealSpecificKeyLinkage(args)
+  }
+
+  async encrypt(
+    args: WalletEncryptArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<WalletEncryptResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.encrypt(args)
+    }
+    return await this.proto.encrypt(args)
+  }
+
+  async decrypt(
+    args: WalletDecryptArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<WalletDecryptResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.decrypt(args)
+    }
+    return await this.proto.decrypt(args)
+  }
+
+  async createHmac(
+    args: CreateHmacArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<CreateHmacResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.createHmac(args)
+    }
+    return await this.proto.createHmac(args)
+  }
+
+  async verifyHmac(
+    args: VerifyHmacArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<VerifyHmacResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.verifyHmac(args)
+    }
+    return await this.proto.verifyHmac(args)
+  }
+
+  async createSignature(
+    args: CreateSignatureArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<CreateSignatureResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.createSignature(args)
+    }
+    return await this.proto.createSignature(args)
+  }
+
+  async verifySignature(
+    args: VerifySignatureArgs,
+    _originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<VerifySignatureResult> {
+    if (args.privileged) {
+      if (this.privilegedKeyManager == null) {
+        throw new Error('Privileged operations require the Wallet to be configured with a privileged key manager.')
+      }
+      return await this.privilegedKeyManager.verifySignature(args)
+    }
+    return await this.proto.verifySignature(args)
+  }
+
+  getServices(): WalletServices {
+    if (this.services == null) {
+      throw new WERR_INVALID_PARAMETER('services', 'valid in constructor arguments to be retreived here.')
+    }
+    return this.services
+  }
+
+  /**
+   * @returns the full list of txids whose validity this wallet claims to know.
+   *
+   * @param newKnownTxids Optional. Additional new txids known to be valid by the caller to be merged.
+   */
+  getKnownTxids(newKnownTxids?: string[]): string[] {
+    if (newKnownTxids != null) {
+      for (const txid of newKnownTxids) this.beef.mergeTxidOnly(txid)
+    }
+    const r = this.beef.sortTxs()
+    const knownTxids = r.valid
+    return knownTxids
+  }
+
+  getStorageIdentity(): StorageIdentity {
+    const s = this.storage.getSettings()
+    return {
+      storageIdentityKey: s.storageIdentityKey,
+      storageName: s.storageName
+    }
+  }
+
+  private validateAuthAndArgs<A, T extends ValidWalletSignerArgs>(
+    args: A,
+    validate: (args: A, logger?: WalletLoggerInterface) => T,
+    logger?: WalletLoggerInterface
+  ): { vargs: T; auth: AuthId } {
+    if (!this.telemetry.enabled || typeof args !== 'object' || args == null) {
+      const vargs = validate(args, logger)
+      const auth: AuthId = { identityKey: this.identityKey }
+      return { vargs, auth }
+    }
+
+    const span = this.telemetry.startSpan('wallet.validate_args', {
+      component: 'wallet-toolbox',
+      carrier: args
+    })
+    try {
+      const vargs = validate(args, logger)
+      if (typeof vargs === 'object' && vargs != null) {
+        this.telemetry.bindContext(vargs, span.context)
+      }
+      const auth: AuthId = { identityKey: this.identityKey }
+      span.end({ attributes: { 'validation.result': 'ok' } })
+      return { vargs, auth }
+    } catch (error) {
+      span.end({
+        status: 'error',
+        error,
+        attributes: { 'validation.result': 'rejected' }
+      })
+      throw error
+    }
+  }
+
+  /// ///////////////
+  // List Methods
+  /// ///////////////
+
+  async listActions(
+    args: ListActionsArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<ListActionsResult> {
+    validateOriginator(originator)
+    const { vargs } = this.validateAuthAndArgs(args, validateListActionsArgs)
+    const storageArgs = this.actionBatch.hasWorkspace ? { ...vargs, limit: 10000, offset: 0 } : vargs
+    const r = this.actionBatch.overlayListActions(await this.storage.listActions(storageArgs), vargs)
+    // Implement security policy to block customInstructions from output results.
+    for (const action of r.actions) {
+      if (action.outputs != null) {
+        for (const output of action.outputs) {
+          output.customInstructions = undefined
+        }
+      }
+    }
+    return r
+  }
+
+  get storageParty(): string {
+    return `storage ${this.getStorageIdentity().storageIdentityKey}`
+  }
+
+  async listOutputs(
+    args: ListOutputsArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<ListOutputsResult> {
+    validateOriginator(originator)
+    const { vargs } = this.validateAuthAndArgs(args, validateListOutputsArgs)
+    if (this.autoKnownTxids && !vargs.knownTxids) {
+      vargs.knownTxids = this.getKnownTxids()
+    }
+    const storageArgs =
+      this.actionBatch.hasWorkspace && vargs.basket !== specOpWalletBalance && !vargs.tags.includes(specOpWalletBalance)
+        ? { ...vargs, limit: 10000, offset: 0 }
+        : vargs
+    const r = this.actionBatch.overlayListOutputs(await this.storage.listOutputs(storageArgs), vargs)
+    if (r.BEEF != null) {
+      this.beef.mergeBeefFromParty(this.storageParty, asArray(r.BEEF))
+      r.BEEF = this.verifyReturnedTxidOnlyBEEF(r.BEEF)
+    }
+    return r
+  }
+
+  async listCertificates(
+    args: ListCertificatesArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<ListCertificatesResult> {
+    validateOriginator(originator)
+    const { vargs } = this.validateAuthAndArgs(args, validateListCertificatesArgs)
+    const r = await this.storage.listCertificates(vargs)
+    return r
+  }
+
+  /// ///////////////
+  // Certificates
+  /// ///////////////
+
+  private async acquireDirectCertificateProtocol(args: AcquireCertificateArgs): Promise<AcquireCertificateResult> {
+    const { auth, vargs } = this.validateAuthAndArgs(args, validateAcquireDirectCertificateArgs)
+    vargs.subject = (
+      await this.getPublicKey({
+        identityKey: true,
+        privileged: args.privileged,
+        privilegedReason: args.privilegedReason
+      })
+    ).publicKey
+    try {
+      const certificate = new MasterCertificate(
+        vargs.type,
+        vargs.serialNumber,
+        vargs.subject,
+        vargs.certifier,
+        vargs.revocationOutpoint,
+        vargs.fields,
+        vargs.keyringForSubject,
+        vargs.signature
+      )
+      if (!(await certificate.verify())) throw new Error('Certificate verification failed')
+      await MasterCertificate.decryptFields(
+        this,
+        vargs.keyringForSubject,
+        vargs.fields,
+        vargs.certifier,
+        vargs.privileged,
+        vargs.privilegedReason
+      )
+    } catch (error_: unknown) {
+      const error = WalletError.fromUnknown(error_)
+      throw new WERR_INVALID_PARAMETER(
+        'args',
+        `valid encrypted and signed certificate and keyring from revealer. ${error.name}: ${error.message}`
+      )
+    }
+    return await acquireDirectCertificate(this, auth, vargs)
+  }
+
+  private validateIssuedCertificateFields(certificate: Certificate, expectedFields: Record<string, string>): void {
+    if (Object.keys(certificate.fields).length !== Object.keys(expectedFields).length) {
+      throw new Error('Fields mismatch! Objects have different numbers of keys.')
+    }
+    for (const field of Object.keys(expectedFields)) {
+      if (!(field in certificate.fields)) {
+        throw new Error(`Missing field: ${field} in certificate.fields`)
+      }
+      if (certificate.fields[field] !== expectedFields[field]) {
+        throw new Error(`Invalid field! Expected: ${expectedFields[field]}, Received: ${certificate.fields[field]}`)
+      }
+    }
+  }
+
+  private validateIssuedCertificate(
+    certificate: Certificate,
+    vargs: ValidAcquireIssuanceCertificateArgs,
+    expectedFields: Record<string, string>
+  ): void {
+    if (certificate.type !== vargs.type) {
+      throw new Error(`Invalid certificate type! Expected: ${vargs.type}, Received: ${certificate.type}`)
+    }
+    if (certificate.subject !== this.identityKey) {
+      throw new Error(`Invalid certificate subject! Expected: ${this.identityKey}, Received: ${certificate.subject}`)
+    }
+    if (certificate.certifier !== vargs.certifier) {
+      throw new Error(`Invalid certifier! Expected: ${vargs.certifier}, Received: ${certificate.certifier}`)
+    }
+    if (!certificate.revocationOutpoint) {
+      throw new Error('Invalid revocationOutpoint!')
+    }
+    this.validateIssuedCertificateFields(certificate, expectedFields)
+  }
+
+  private async acquireIssuedCertificateProtocol(args: AcquireCertificateArgs): Promise<AcquireCertificateResult> {
+    const { auth, vargs } = this.validateAuthAndArgs(args, validateAcquireIssuanceCertificateArgs)
+    const clientNonce = await createNonce(this, vargs.certifier)
+    const endpoint = new URL('signCertificate', `${vargs.certifierUrl}/`)
+    const authClient = new AuthFetch(this, undefined, undefined, undefined, {}, createPublicHTTPSFetch(endpoint.origin))
+    const { certificateFields, masterKeyring } = await MasterCertificate.createCertificateFields(
+      this,
+      vargs.certifier,
+      vargs.fields
+    )
+    const response = await authClient.fetch(endpoint.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientNonce,
+        type: vargs.type,
+        fields: certificateFields,
+        masterKeyring
+      })
+    })
+    const responseIdentity = response.headers.get('x-bsv-auth-identity-key')
+    if (responseIdentity !== vargs.certifier) {
+      throw new Error(`Invalid certifier! Expected: ${vargs.certifier}, Received: ${responseIdentity}`)
+    }
+    const { certificate, serverNonce } = await response.json()
+    if (!certificate) throw new Error('No certificate received from certifier!')
+    if (!serverNonce) throw new Error('No serverNonce received from certifier!')
+
+    const signedCertificate = new Certificate(
+      certificate.type,
+      certificate.serialNumber,
+      certificate.subject,
+      certificate.certifier,
+      certificate.revocationOutpoint,
+      certificate.fields,
+      certificate.signature
+    )
+    await verifyNonce(serverNonce, this, vargs.certifier)
+    const { valid } = await this.verifyHmac({
+      hmac: toArray(signedCertificate.serialNumber, 'base64'),
+      data: toArray(clientNonce + serverNonce, 'base64'),
+      protocolID: [2, 'certificate issuance'],
+      keyID: serverNonce + clientNonce,
+      counterparty: vargs.certifier
+    })
+    if (valid !== true) throw new Error('Invalid serialNumber')
+    this.validateIssuedCertificate(signedCertificate, vargs, certificateFields)
+    if (!(await signedCertificate.verify())) throw new Error('Certificate verification failed')
+    await MasterCertificate.decryptFields(this, masterKeyring, certificate.fields, vargs.certifier)
+    return await acquireDirectCertificate(this, auth, {
+      ...certificate,
+      keyringRevealer: 'certifier',
+      keyringForSubject: masterKeyring,
+      privileged: vargs.privileged
+    })
+  }
+
+  async acquireCertificate(
+    args: AcquireCertificateArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<AcquireCertificateResult> {
+    validateOriginator(originator)
+    if (args.acquisitionProtocol === 'direct') {
+      return await this.acquireDirectCertificateProtocol(args)
+    }
+    if (args.acquisitionProtocol === 'issuance') {
+      return await this.acquireIssuedCertificateProtocol(args)
+    }
+
+    throw new WERR_INVALID_PARAMETER('acquisitionProtocol', `valid.${args.acquisitionProtocol} is unrecognized.`)
+  }
+
+  async relinquishCertificate(
+    args: RelinquishCertificateArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<RelinquishCertificateResult> {
+    validateOriginator(originator)
+    this.validateAuthAndArgs(args, validateRelinquishCertificateArgs)
+    const updated = await this.storage.relinquishCertificate(args)
+    assertStorageMutationSucceeded(updated, 'certificate relinquishment')
+    return { relinquished: true }
+  }
+
+  async proveCertificate(
+    args: ProveCertificateArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<ProveCertificateResult> {
+    validateOriginator(originator)
+    const { auth, vargs } = this.validateAuthAndArgs(args, validateProveCertificateArgs)
+    const r = await proveCertificate(this, auth, vargs)
+    return r
+  }
+
+  /** 2-minute cache of trust settings for identity resolution paths */
+  private _trustSettingsCache?: {
+    expiresAt: number
+    trustSettings: Awaited<ReturnType<WalletSettingsManager['get']>>['trustSettings']
+  }
+
+  /** Bounded two-minute untrusted receipts. Every use rechecks canonical evidence. */
+  private readonly _overlayEvidenceCache = new Map<string, { expiresAt: number; value: LookupAnswer; bytes: number }>()
+  private _overlayEvidenceExpiryTimer?: ReturnType<typeof setTimeout>
+  private _identityEvidenceVerifier?: IdentityEvidenceVerifier
+  private _identityEvidenceClosed = false
+
+  private pruneOverlayEvidence(): void {
+    for (const [key, value] of this._overlayEvidenceCache) {
+      if (value.expiresAt <= Date.now()) this._overlayEvidenceCache.delete(key)
+    }
+  }
+
+  private scheduleOverlayEvidenceExpiry(): void {
+    clearTimeout(this._overlayEvidenceExpiryTimer)
+    const expiresAt = Math.min(...[...this._overlayEvidenceCache.values()].map(value => value.expiresAt))
+    if (!Number.isFinite(expiresAt)) return
+    this._overlayEvidenceExpiryTimer = setTimeout(
+      () => {
+        this.pruneOverlayEvidence()
+        this.scheduleOverlayEvidenceExpiry()
+      },
+      Math.max(1, expiresAt - Date.now())
+    )
+    this._overlayEvidenceExpiryTimer.unref?.()
+  }
+
+  private async requireOverlayChainTracker(forceRefresh: boolean) {
+    if (this.services == null) {
+      if (forceRefresh) {
+        throw new WERR_INVALID_PARAMETER('services', 'valid in constructor arguments to be retreived here.')
+      }
+      return undefined
+    }
+    return await this.services.getChainTracker()
+  }
+
+  private async discoverOverlayCertificates(
+    query: unknown,
+    cacheKey: string,
+    forceRefresh: boolean,
+    now: number
+  ): Promise<VerifiableCertificate[]> {
+    const chainTracker = await this.requireOverlayChainTracker(forceRefresh)
+    if (chainTracker == null) return []
+    if (this._identityEvidenceClosed) return []
+    const chainNamespace = `wallet:${this.chain}`
+    if (
+      this._identityEvidenceVerifier?.chainTracker !== chainTracker ||
+      this._identityEvidenceVerifier.chainNamespace !== chainNamespace
+    ) {
+      this._identityEvidenceVerifier?.dispose()
+      this._identityEvidenceVerifier = new IdentityEvidenceVerifier(chainTracker, chainNamespace)
+    }
+    const verifier = this._identityEvidenceVerifier
+    this.pruneOverlayEvidence()
+    let cached = forceRefresh ? undefined : this._overlayEvidenceCache.get(cacheKey)
+    if (cached == null || cached.expiresAt <= now) {
+      const value = await queryOverlayEvidence(query, this.lookupResolver)
+      if (this._identityEvidenceClosed) return []
+      const bytes =
+        value.type === 'output-list'
+          ? value.outputs.reduce((total, output) => total + output.beef.length + (output.context?.length ?? 0), 0)
+          : 0
+      cached = { value, bytes, expiresAt: now + 2 * 60 * 1000 }
+      this._overlayEvidenceCache.delete(cacheKey)
+      let retained = [...this._overlayEvidenceCache.values()].reduce((total, entry) => total + entry.bytes, 0)
+      while (
+        this._overlayEvidenceCache.size > 0 &&
+        (this._overlayEvidenceCache.size >= 32 || retained + bytes > 16 * 1024 * 1024)
+      ) {
+        const oldest = this._overlayEvidenceCache.keys().next().value!
+        retained -= this._overlayEvidenceCache.get(oldest)!.bytes
+        this._overlayEvidenceCache.delete(oldest)
+      }
+      this._overlayEvidenceCache.set(cacheKey, cached)
+      this.scheduleOverlayEvidenceExpiry()
+    }
+    if (cached.value.type !== 'output-list') {
+      this._overlayEvidenceCache.delete(cacheKey)
+      return []
+    }
+    let certificates: VerifiableCertificate[]
+    try {
+      certificates = await parseResults(cached.value, chainTracker, verifier)
+    } catch (error) {
+      this._overlayEvidenceCache.delete(cacheKey)
+      throw error
+    }
+    // Failed evidence must allow another fetch, including after temporary chain unavailability.
+    if (certificates.length !== cached.value.outputs.length) this._overlayEvidenceCache.delete(cacheKey)
+    return certificates
+  }
+
+  /**
+   * Resolves an identity from a caller-installed local contact source first, then the certificate
+   * overlay. A local hit expresses the user's own authoritative trust decision and carries empty
+   * third-party certificate proof fields; use `forceRefresh` to bypass it and query the overlay.
+   */
+  async discoverByIdentityKey(
+    args: DiscoverByIdentityKeyArgs & { forceRefresh?: boolean },
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<DiscoverCertificatesResult> {
+    validateOriginator(originator)
+    const { vargs } = this.validateAuthAndArgs(args, validateDiscoverByIdentityKeyArgs)
+
+    const now = Date.now()
+    const forceRefresh = args.forceRefresh === true
+
+    // Local contacts are explicit user trust anchors, not third-party certifier attestations.
+    if (!forceRefresh && this.contactSource != null) {
+      try {
+        const contact = await this.contactSource.findByIdentityKey(vargs.identityKey)
+        if (contact != null && contact.identityKey === vargs.identityKey && vargs.offset === 0) {
+          return synthesizeContactResult([contact])
+        }
+      } catch {
+        // Contact source failures must never block the network path.
+      }
+    }
+
+    // Authorization policy is read fresh on every call. A removed certifier or
+    // raised threshold must take effect immediately rather than after a cache TTL.
+    const trustSettings = (await this.settingsManager.get()).trustSettings
+
+    const certifiers = trustSettings.trustedCertifiers.map(c => c.identityKey).sort((a, b) => a.localeCompare(b))
+
+    // --- Untrusted overlay response cache; verify again before use. ---
+    const cacheKey = JSON.stringify({
+      fn: 'discoverByIdentityKey',
+      identityKey: vargs.identityKey,
+      certifiers,
+      limit: vargs.limit,
+      offset: vargs.offset
+    })
+
+    const certificates = await this.discoverOverlayCertificates(
+      { identityKey: args.identityKey, certifiers },
+      cacheKey,
+      forceRefresh,
+      now
+    )
+    return transformVerifiableCertificatesWithTrust(
+      trustSettings,
+      filterCertificatesByIdentityKey(certificates, vargs.identityKey)
+    )
+  }
+
+  /**
+   * Resolves matching identities from a caller-installed local contact source first, then the
+   * certificate overlay. Local hits are authoritative personal assertions with empty third-party
+   * certificate proof fields; use `forceRefresh` to bypass them and query the overlay.
+   */
+  async discoverByAttributes(
+    args: DiscoverByAttributesArgs & { forceRefresh?: boolean },
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<DiscoverCertificatesResult> {
+    validateOriginator(originator)
+    const { vargs } = this.validateAuthAndArgs(args, validateDiscoverByAttributesArgs)
+
+    const now = Date.now()
+    const forceRefresh = args.forceRefresh === true
+
+    // Local contacts are explicit user trust anchors, not third-party certifier attestations.
+    if (!forceRefresh && this.contactSource?.findByAttributes != null && vargs.attributes != null) {
+      try {
+        const matches = await this.contactSource.findByAttributes(vargs.attributes)
+        if (Array.isArray(matches) && matches.length > 0) {
+          return synthesizeContactResult(matches.slice(vargs.offset, vargs.offset + vargs.limit))
+        }
+      } catch {
+        // Fall through to network path on contact-source failure.
+      }
+    }
+
+    // Authorization policy is read fresh on every call. A removed certifier or
+    // raised threshold must take effect immediately rather than after a cache TTL.
+    const trustSettings = (await this.settingsManager.get()).trustSettings
+
+    const certifiers = trustSettings.trustedCertifiers.map(c => c.identityKey).sort((a, b) => a.localeCompare(b))
+
+    // Normalize attributes for a stable cache key.
+    // If attributes is an object, sort its top-level keys; if it's an array, sort a shallow copy.
+    let attributesKey: unknown = vargs.attributes
+    if (vargs.attributes != null && typeof vargs.attributes === 'object') {
+      const keys = Object.keys(vargs.attributes).sort((a, b) => a.localeCompare(b))
+      attributesKey = JSON.stringify(vargs.attributes, keys)
+    }
+
+    // --- Untrusted overlay response cache; verify again before use. ---
+    const cacheKey = JSON.stringify({
+      fn: 'discoverByAttributes',
+      attributes: attributesKey,
+      certifiers,
+      limit: vargs.limit,
+      offset: vargs.offset
+    })
+
+    const certificates = await this.discoverOverlayCertificates(
+      { attributes: args.attributes, certifiers },
+      cacheKey,
+      forceRefresh,
+      now
+    )
+    return transformVerifiableCertificatesWithTrust(
+      trustSettings,
+      filterCertificatesByAttributes(certificates, vargs.attributes)
+    )
+  }
+
+  verifyReturnedTxidOnly(beef: Beef, knownTxids?: string[]): Beef {
+    if (this.returnTxidOnly) return beef
+    const onlyTxids = beef.txs.filter(btx => btx.isTxidOnly).map(btx => btx.txid)
+    for (const txid of onlyTxids) {
+      if (knownTxids?.includes(txid)) continue
+      const tx = this.beef.findAtomicTransaction(txid)
+      if (tx == null) throw new WERR_INTERNAL(`unable to merge txid ${txid} into beef`)
+      beef.mergeTransaction(tx)
+    }
+    for (const btx of beef.txs) {
+      if (knownTxids?.includes(btx.txid)) continue
+      if (btx.isTxidOnly) throw new WERR_INTERNAL(`remaining txidOnly ${btx.txid} is not known`)
+    }
+    return beef
+  }
+
+  verifyReturnedTxidOnlyAtomicBEEF(beef: AtomicBEEF, knownTxids?: string[], parsedBeef?: Beef): AtomicBEEF {
+    if (this.returnTxidOnly) return beef
+    const b = parsedBeef ?? Beef.fromBinaryStrict(beef)
+    if (!b.atomicTxid) throw new WERR_INTERNAL()
+    const hasUnknownTxidOnly = b.txs.some(btx => btx.isTxidOnly && !knownTxids?.includes(btx.txid))
+    if (!hasUnknownTxidOnly) return beef
+    return this.verifyReturnedTxidOnly(b, knownTxids).toBinaryAtomic(b.atomicTxid)
+  }
+
+  verifyReturnedTxidOnlyBEEF(beef: BEEF): BEEF {
+    if (this.returnTxidOnly) return beef
+    const b = Beef.fromBinaryStrict(beef)
+    return this.verifyReturnedTxidOnly(b).toBinary()
+  }
+
+  logMakeLogger(method: string, args: any): WalletLoggerInterface | undefined {
+    const logger = this.makeLogger?.(args.log)
+    this.logMethodStart(method, logger)
+    return logger
+  }
+
+  logMethodStart(method: string, logger?: WalletLoggerInterface): void {
+    logger?.group(`Wallet ${method}`)
+  }
+
+  logResult(r: any, logger?: WalletLoggerInterface): void {
+    if (logger == null) return
+    logger.groupEnd()
+    r.log = logger.flush?.()
+  }
+
+  logWalletError(eu: unknown, logger?: WalletLoggerInterface): void {
+    if (logger == null) return
+    logger.error('WalletError:', WalletError.unknownToJson(eu))
+    logger.flush?.()
+  }
+
+  /// ///////////////
+  // Actions
+  /// ///////////////
+
+  async createAction(
+    args: CreateActionArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<CreateActionResult> {
+    const logger = this.logMakeLogger('createAction', args)
+    try {
+      validateOriginator(originator)
+
+      args.options ??= {}
+      args.options.trustSelf ||= this.trustSelf
+      prepareKnownTxidsForCreateAction(this, args)
+
+      const { auth, vargs } = this.validateAuthAndArgs(args, validateCreateActionArgs, logger)
+      logger?.log('validated args')
+
+      vargs.includeAllSourceTransactions = this.includeAllSourceTransactions
+      if (this.randomVals != null && this.randomVals.length > 1) {
+        vargs.randomVals = [...this.randomVals]
+      }
+
+      const brc177Requested = hasBrc177NoSendExpiryLabel(vargs.labels)
+      if (brc177Requested) parseBrc177NoSendExpiryLabels(vargs.labels)
+      const r = brc177Requested
+        ? await createNoSendExpiryAction(this, auth, vargs)
+        : await createAction(this, auth, vargs)
+      logger?.log('action created')
+
+      const resultBeef = getResultBeef(r)
+      if (r.tx != null) {
+        const merge = (): void => this.beef.mergeBeefFromParty(this.storageParty, resultBeef ?? r.tx!)
+        if (this.telemetry.enabled) {
+          this.telemetry.withSpan(
+            'wallet.create_action.merge_result_beef',
+            {
+              component: 'wallet-toolbox',
+              carrier: args,
+              attributes: {
+                'beef.retained_tx_count_before': this.beef.txs.length,
+                'beef.result_byte_count': r.tx.length
+              }
+            },
+            merge
+          )
+        } else {
+          merge()
+        }
+      }
+
+      if (r.tx != null) {
+        const verify = (): AtomicBEEF =>
+          this.verifyReturnedTxidOnlyAtomicBEEF(r.tx!, args.options?.knownTxids, resultBeef)
+        r.tx = this.telemetry.enabled
+          ? this.telemetry.withSpan(
+              'wallet.create_action.verify_result_beef',
+              {
+                component: 'wallet-toolbox',
+                carrier: args,
+                attributes: { 'beef.result_byte_count': r.tx.length }
+              },
+              verify
+            )
+          : verify()
+        logger?.log('verify returned AtomicBEEF')
+      }
+
+      if (!vargs.isDelayed) throwIfAnyUnsuccessfulCreateActions(r)
+
+      this.logResult(r, logger)
+      return r
+    } catch (error_: unknown) {
+      this.logWalletError(error_, logger)
+      throw error_
+    }
+  }
+
+  async signAction(
+    args: SignActionArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<SignActionResult> {
+    validateOriginator(originator)
+
+    const { auth, vargs } = this.validateAuthAndArgs(args, validateSignActionArgs)
+    const prior = this.pendingSignActions[args.reference]
+    if (!prior) {
+      throw new WERR_NOT_IMPLEMENTED('recovery of out-of-session signAction reference data is not yet implemented.')
+    }
+    // createAction options are merged with undefined signAction options before validation...
+    const r = await signAction(this, auth, args)
+
+    if (!vargs.isDelayed) throwIfAnyUnsuccessfulSignActions(r)
+
+    if (r.tx != null)
+      r.tx = this.verifyReturnedTxidOnlyAtomicBEEF(r.tx, prior.args.options?.knownTxids, getResultBeef(r))
+    delete this.pendingSignActions[args.reference]
+
+    return r
+  }
+
+  async internalizeAction(
+    args: InternalizeActionArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<InternalizeActionResult> {
+    validateOriginator(originator)
+    const { auth, vargs } = this.validateAuthAndArgs(args, validateInternalizeActionArgs)
+
+    if (vargs.labels.includes(specOpThrowReviewActions)) throwDummyReviewActions()
+    if (hasBrc177NoSendExpiryLabel(vargs.labels)) {
+      throw new WERR_INVALID_PARAMETER('labels', 'BRC-177 noSend expiry labels only on outgoing createAction requests')
+    }
+
+    const r = await internalizeAction(this, auth, args)
+
+    throwIfUnsuccessfulInternalizeAction(r)
+
+    return r
+  }
+
+  async abortAction(
+    args: AbortActionArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<AbortActionResult> {
+    validateOriginator(originator)
+
+    this.validateAuthAndArgs(args, validateAbortActionArgs)
+    if (this.actionBatch.ownsReference(args.reference)) {
+      return { aborted: await this.actionBatch.abortAction(args.reference) }
+    }
+    const r = await this.storage.abortAction(args)
+    assertAbortResult(r)
+    return r
+  }
+
+  async relinquishOutput(
+    args: RelinquishOutputArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<RelinquishOutputResult> {
+    validateOriginator(originator)
+    this.validateAuthAndArgs(args, validateRelinquishOutputArgs)
+    const updated = await this.storage.relinquishOutput(args)
+    assertStorageMutationSucceeded(updated, 'output relinquishment')
+    return { relinquished: true }
+  }
+
+  async isAuthenticated(args: {}, originator?: OriginatorDomainNameStringUnder250Bytes): Promise<AuthenticatedResult> {
+    validateOriginator(originator)
+    const r: { authenticated: true } = {
+      authenticated: true
+    }
+    return r
+  }
+
+  async waitForAuthentication(
+    args: {},
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<AuthenticatedResult> {
+    validateOriginator(originator)
+    return { authenticated: true }
+  }
+
+  async getHeight(args: {}, originator?: OriginatorDomainNameStringUnder250Bytes): Promise<GetHeightResult> {
+    validateOriginator(originator)
+    const height = await this.getServices().getHeight()
+    return { height }
+  }
+
+  async getHeaderForHeight(
+    args: GetHeaderArgs,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<GetHeaderResult> {
+    validateOriginator(originator)
+    const serializedHeader = await this.getServices().getHeaderForHeight(args.height)
+    return { header: toHex(serializedHeader) }
+  }
+
+  async getNetwork(args: {}, originator?: OriginatorDomainNameStringUnder250Bytes): Promise<GetNetworkResult> {
+    validateOriginator(originator)
+    return { network: toWalletNetwork(this.chain) }
+  }
+
+  async getVersion(args: {}, originator?: OriginatorDomainNameStringUnder250Bytes): Promise<GetVersionResult> {
+    validateOriginator(originator)
+    return { version: 'wallet-brc100-1.0.0' }
+  }
+
+  /**
+   * Transfer all possible satoshis held by this wallet to `toWallet`.
+   *
+   * @param toWallet wallet which will receive this wallet's satoshis.
+   */
+  async sweepTo(toWallet: Wallet): Promise<void> {
+    const derivationPrefix = randomBytesBase64(8)
+    const derivationSuffix = randomBytesBase64(8)
+    const keyDeriver = this.keyDeriver
+
+    const t = new ScriptTemplateBRC29({
+      derivationPrefix,
+      derivationSuffix,
+      keyDeriver
+    })
+
+    const label = 'sweep'
+
+    const satoshis = maxPossibleSatoshis
+
+    const car = await this.createAction({
+      outputs: [
+        {
+          lockingScript: t.lock(keyDeriver.rootKey.toString(), toWallet.identityKey).toHex(),
+          satoshis,
+          outputDescription: label,
+          tags: ['relinquish'],
+          customInstructions: JSON.stringify({
+            derivationPrefix,
+            derivationSuffix,
+            type: 'BRC29'
+          })
+        }
+      ],
+      options: {
+        randomizeOutputs: false,
+        acceptDelayedBroadcast: false
+      },
+      labels: [label],
+      description: label
+    })
+
+    await toWallet.internalizeAction({
+      tx: car.tx!,
+      outputs: [
+        {
+          outputIndex: 0,
+          protocol: 'wallet payment',
+          paymentRemittance: {
+            derivationPrefix,
+            derivationSuffix,
+            senderIdentityKey: this.identityKey
+          }
+        }
+      ],
+      description: label,
+      labels: [label]
+    })
+  }
+
+  /**
+   * Uses `listOutputs` to iterate over chunks of up to 1000 outputs to
+   * compute the sum of output satoshis.
+   *
+   * For `default`, only wallet-managed BRC-29 change is included. Raw
+   * administrative `listOutputs({ basket: 'default' })` remains available to
+   * discover legacy incompatible rows for recovery.
+   *
+   * @param {string} basket - Optional. Defaults to 'default', the wallet change basket.
+   * @returns {WalletBalance} total sum of output satoshis and utxo details (satoshis and outpoints)
+   */
+  async balanceAndUtxos(basket: string = 'default'): Promise<WalletBalance> {
+    const r: WalletBalance = { total: 0, utxos: [] }
+    const listBasket = basket === 'default' ? specOpWalletManagedUtxos : basket
+    let offset = 0
+    for (;;) {
+      const change = await this.listOutputs({
+        basket: listBasket,
+        limit: 1000,
+        offset
+      })
+      if (change.outputs.length === 0) break
+      for (const o of change.outputs) {
+        r.total += o.satoshis
+        r.utxos.push({ satoshis: o.satoshis, outpoint: o.outpoint })
+      }
+      offset += change.outputs.length
+      if (offset >= change.totalOutputs) break
+    }
+    return r
+  }
+
+  /**
+   * Uses `listOutputs` special operation to compute the total value (of satoshis) for
+   * all spendable outputs in the 'default' basket.
+   *
+   * @returns {number} sum of output satoshis
+   */
+  async balance(args?: ListOutputsArgs): Promise<number> {
+    args ||= { basket: specOpWalletBalance }
+    if (args.basket !== specOpWalletBalance) {
+      args.tags = [...(args.tags || []), specOpWalletBalance]
+    }
+    const r = await this.listOutputs(args)
+    return r.totalOutputs
+  }
+
+  /**
+   * Uses `listOutputs` special operation to review the spendability via `Services` of
+   * outputs currently considered spendable. Returns only outputs conclusively
+   * confirmed spent. Rejects the review if any provider result is inconclusive.
+   *
+   * Ignores the `limit` and `offset` properties.
+   *
+   * @param all Defaults to false. If false, only change outputs ('default' basket) are reviewed. If true, all spendable outputs are reviewed.
+   * @param release Defaults to false. If true, atomically sets conclusively spent outputs to un-spendable (spendable: false). No outputs change if any candidate is inconclusive.
+   * @param optionalArgs Optional. Additional tags will constrain the outputs processed.
+   * @returns outputs previously considered spendable but conclusively confirmed spent.
+   */
+  async reviewSpendableOutputs(
+    all = false,
+    release = false,
+    optionalArgs?: Partial<ListOutputsArgs>
+  ): Promise<ListOutputsResult> {
+    const args: ListOutputsArgs = {
+      ...optionalArgs,
+      basket: specOpInvalidChange
+    }
+    args.tags ||= []
+    if (all) args.tags.push('all')
+    if (release) args.tags.push('release')
+    const r = await this.listOutputs(args)
+    return r
+  }
+
+  /**
+   * Uses `listOutputs` special operation to update the 'default' basket's automatic
+   * change generation parameters.
+   *
+   * @param count target number of change UTXOs to maintain.
+   * @param satoshis target value for new change outputs.
+   */
+  async setWalletChangeParams(count: number, satoshis: number): Promise<void> {
+    const args: ListOutputsArgs = {
+      basket: specOpSetWalletChangeParams,
+      tags: [count.toString(), satoshis.toString()]
+    }
+    await this.listOutputs(args)
+  }
+
+  /**
+   * Uses `listActions` special operation to return only actions with status 'nosend'.
+   *
+   * @param abort Defaults to false. If true, runs `abortAction` on each 'nosend' action.
+   * @returns {ListActionsResult} start `listActions` result restricted to 'nosend' (or 'failed' if aborted) actions.
+   */
+  async listNoSendActions(args: ListActionsArgs, abort = false): Promise<ListActionsResult> {
+    const { vargs } = this.validateAuthAndArgs(args, validateListActionsArgs)
+    vargs.labels.push(specOpNoSendActions)
+    if (abort) {
+      await this.actionBatch.abort()
+      vargs.labels.push('abort')
+    }
+    return await this.listActions(vargs)
+  }
+
+  /**
+   * Uses `listActions` special operation to return only actions with status 'failed'.
+   *
+   * @param unfail Defaults to false. If true, queues the action for attempted recovery.
+   * @returns {ListActionsResult} start `listActions` result restricted to 'failed' status actions.
+   */
+  async listFailedActions(args: ListActionsArgs, unfail = false): Promise<ListActionsResult> {
+    const { vargs } = this.validateAuthAndArgs(args, validateListActionsArgs)
+    vargs.labels.push(specOpFailedActions)
+    if (unfail) vargs.labels.push('unfail')
+    const r = await this.storage.listActions(vargs)
+    return r
+  }
+}
+
+export interface PendingStorageInput {
+  vin: number
+  derivationPrefix: string
+  derivationSuffix: string
+  unlockerPubKey?: string
+  sourceSatoshis: number
+  lockingScript: string
+}
+
+export interface PendingSignAction {
+  reference: string
+  dcr: StorageCreateActionResult
+  args: ValidCreateActionArgs
+  tx: BsvTransaction
+  amount: number
+  pdi: PendingStorageInput[]
+}
+
+function throwIfAnyUnsuccessfulCreateActions(r: CreateActionResultX) {
+  const ndrs = r.notDelayedResults
+  const swrs = r.sendWithResults
+
+  if (ndrs == null || swrs == null || swrs.every(r => r.status === 'unproven')) return
+
+  throw new WERR_REVIEW_ACTIONS(ndrs, swrs, r.txid, r.tx, r.noSendChange)
+}
+
+function throwIfAnyUnsuccessfulSignActions(r: SignActionResultX) {
+  const ndrs = r.notDelayedResults
+  const swrs = r.sendWithResults
+
+  if (ndrs == null || swrs == null || swrs.every(r => r.status === 'unproven')) return
+
+  throw new WERR_REVIEW_ACTIONS(ndrs, swrs, r.txid, r.tx)
+}
+
+function throwIfUnsuccessfulInternalizeAction(r: StorageInternalizeActionResult) {
+  assertInternalizeAccepted(r)
+  const ndrs = r.notDelayedResults
+  const swrs = r.sendWithResults
+
+  if (ndrs == null || swrs == null || swrs.every(r => r.status === 'unproven')) return
+
+  throw new WERR_REVIEW_ACTIONS(ndrs, swrs, r.txid)
+}
+
+/**
+ * Throws a WERR_REVIEW_ACTIONS with a full set of properties to test data formats and propagation.
+ */
+export function throwDummyReviewActions() {
+  const b58Beef =
+    'gno9MC7VXii1KoCkc2nsVyYJpqzN3dhBzYATETJcys62emMKfpBof4R7GozwYEaSapUtnNvqQ57aaYYjm3U2dv9eUJ1sV46boHkQgppYmAz9YH8FdZduV8aJayPViaKcyPmbDhEw6UW8TM5iFZLXNs7HBnJHUKCeTdNK4FUEL7vAugxAV9WUUZ43BZjJk2SmSeps9TCXjt1Ci9fKWp3d9QSoYvTpxwzyUFHjRKtbUgwq55ZfkBp5bV2Bpz9qSuKywKewW7Hh4S1nCUScwwzpKDozb3zic1V9p2k8rQxoPsRxjUJ8bjhNDdsN8d7KukFuc3n47fXzdWttvnxwsujLJRGnQbgJuknQqx3KLf5kJXHzwjG6TzigZk2t24qeB6d3hbYiaDr2fFkUJBL3tukTHhfNkQYRXuz3kucVDzvejHyqJaF51mXG8BjMN5aQj91ZJXCaPVqkMWCzmvyaqmXMdRiJdSAynhXbQK91xf6RwdNhz1tg5f9B6oJJMhsi9UYSVymmax8VLKD9AKzBCBDcfyD83m3jyS1VgKGZn3SkQmr6bsoWq88L3GsMnnmYUGogvdAYarTqg3pzkjCMxHzmJBMN6ofnUk8c1sRTXQue7BbyUaN5uZu3KW6CmFsEfpuqVvnqFW93TU1jrPP2S8yz8AexAnARPCKE8Yz7RfVaT6RCavwQKL3u5iookwRWEZXW1QWmM37yJWHD87SjVynyg327a1CLwcBxmE2CB48QeNVGyQki4CTQMqw2o8TMhDPJej1g68oniAjBcxBLSCs7KGvK3k7AfrHbCMULX9CTibYhCjdFjbsbBoocqJpxxcvkMo1fEEiAzZuiBVZQDYktDdTVbhKHvYkW25HcYX75NJrpNAhm7AjFeKLzEVxqAQkMfvTufpESNRZF4kQqg2Rg8h2ajcKTd5cpEPwXCrZLHm4EaZEmZVbg3QNfGhn7BJu1bHMtLqPD4y8eJxm2uGrW6saf6qKYmmu64F8A667NbD4yskPRQ1S863VzwGpxxmgLc1Ta3R46jEqsAoRDoZVUaCgBBZG3Yg1CTgi1EVBMXU7qvY4n3h8o2FLCEMWY4KadnV3iD4FbcdCmg4yxBosNAZgbPjhgGjCimjh4YsLd9zymGLmivmz2ZBg5m3xaiXT9NN81X9C1JUujd'
+  const beef = Beef.fromBinaryStrict(fromBase58(b58Beef))
+  const btx = beef.txs.at(-1)!
+  const txid = btx.txid
+
+  throw new WERR_REVIEW_ACTIONS(
+    [
+      {
+        txid, // only care that it is syntactically a txid
+        status: 'doubleSpend',
+        competingTxs: [txid], // a txid in the beef
+        competingBeef: beef.toBinary()
+      }
+    ],
+    [
+      {
+        txid,
+        status: 'failed'
+      }
+    ],
+    txid,
+    beef.toBinaryAtomic(txid),
+    [`${txid}.0`]
+  )
+}
+
+/**
+ * Implement BRC-112
+ * @param vargs
+ * @returns
+ */
+function validateListOutputsArgs(args: ListOutputsArgs): ValidListOutputsArgs {
+  const vargs = validateSDKListOutputsArgs(args)
+  const balancePrefix = 'balance '
+  if (vargs.basket.startsWith(balancePrefix)) {
+    vargs.basket = vargs.basket.slice(balancePrefix.length)
+    vargs.tags = [...vargs.tags, specOpWalletBalance]
+  }
+  return vargs
+}

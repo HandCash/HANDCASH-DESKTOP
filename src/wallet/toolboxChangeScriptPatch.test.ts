@@ -1,48 +1,36 @@
-/** Guard the Toolbox release that upstreamed our change-script hydration fix. */
+/** Guard durability fixes in the HandCash-owned engine source. */
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-// @ts-expect-error -- plain ESM script shared with the pre-push hook. Keep it
-// shebang-free: Vite transforms it here, and Windows chokes on `#!`.
-import { assertToolboxPatchPinned } from '../../scripts/require-toolbox-patch.mjs'
 
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
-function installedToolboxVersion(): string {
-  const pkgJson = require.resolve('@bsv/wallet-toolbox-client/package.json')
-  return (JSON.parse(readFileSync(pkgJson, 'utf8')) as { version: string }).version
+function engineSource(relative: string): string {
+  return readFileSync(
+    path.join(repoRoot, 'packages', 'wallet-engine', 'src', relative),
+    'utf8',
+  )
 }
 
-describe('toolbox change-script hydration release floor', () => {
-  it('uses a release containing the upstream StorageIdb fix', () => {
-    const [major, minor, patch] = installedToolboxVersion()
-      .split('.')
-      .map((part) => Number.parseInt(part, 10))
-    expect(
-      major > 2 ||
-        (major === 2 && (minor > 1 || (minor === 1 && patch >= 24))),
-    ).toBe(true)
+describe('wallet-engine durability source', () => {
+  it('hydrates the one selected change script after a script-free scan', () => {
+    const source = engineSource('storage/StorageIdb.ts')
+    expect(source).toContain('if (output.lockingScript == null)')
+    expect(source).toContain('findOutputById(output.outputId')
   })
 
-  it('ships a patch pinned to the installed Toolbox version', () => {
-    const root = repoRoot
-    expect(assertToolboxPatchPinned(root).version).toBe(installedToolboxVersion())
+  it('bounds ordinary funding reads and retains the full-history fallback', () => {
+    const source = engineSource('storage/methods/actionBatch.ts')
+    expect(source).toContain('const maxPages = 5')
+    expect(source).toContain('findAvailableManagedChangeInputs')
   })
 
-  it('does not patch out BEEF verification', () => {
-    const root = repoRoot
-    const patch = readFileSync(
-      path.join(
-        root,
-        'patches',
-        `@bsv+wallet-toolbox-client+${installedToolboxVersion()}.patch`,
-      ),
-      'utf8',
+  it('reserves every explicit input absent from the batch workspace', () => {
+    const source = engineSource(
+      'signer/actionBatch/ActionBatchWorkspace.ts',
     )
-    expect(patch).not.toContain('__HANDCASH_INTERNAL_BEEF_SCOPE')
-    expect(patch).not.toContain('Beef.prototype.verify')
+    expect(source).not.toContain('discardedStagedTxids.has(outpoint.txid)')
+    expect(source).toContain('!this.state.reserved.has(key)')
   })
 })

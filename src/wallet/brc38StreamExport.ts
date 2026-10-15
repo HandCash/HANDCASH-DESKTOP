@@ -17,7 +17,7 @@
  * validation before sealing.
  */
 import { Utils } from '@bsv/sdk'
-import { exportBRC38Json, type StorageProvider } from '@bsv/wallet-toolbox-client'
+import { exportBRC38Json, type StorageProvider } from '@handcash/wallet-engine'
 import { appendAppLog } from './appLog'
 import { noteBackupOversize } from './backupWatchdog'
 import { HISTORY_DOCUMENT_BUDGET_BYTES, HistoryDocumentTooLargeError } from './historyDocumentBudget'

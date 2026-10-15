@@ -18,7 +18,7 @@
  * Unlock replays every pinned cheque that never landed, oldest first, so a
  * night of sends Arcade could not land is repaired on the next launch.
  */
-import type { Services } from '@bsv/wallet-toolbox-client'
+import type { Services } from '@handcash/wallet-engine'
 import type { Chain } from './vault'
 import type { BoundAccountKeyScope } from './accountLocalKeys'
 import { accountKeyScopeFor } from './accountLocalKeys'

@@ -1,0 +1,561 @@
+import type { ChainTracker } from '@bsv/sdk'
+import type { ChaintracksClientApi } from './chaintracks/Api/ChaintracksClientApi'
+
+/** @public */
+export type LocalChainTrackerMode = 'local-primary' | 'remote-only'
+
+/** @public */
+export type LocalChainTrackerConsistency =
+  'unchecked' | 'agreed' | 'lagging' | 'diverged' | 'insufficient-references' | 'error'
+
+/** @public */
+export interface LocalChainTrackerRecoveryEvidence {
+  reason: 'lagging' | 'diverged'
+  localHeight: number
+  referenceHeight: number
+  heightLag: number
+  comparisonHeight: number
+  expectedHash: string
+  referenceAgreement: number
+}
+
+/** @public */
+export interface LocalChainTrackerStatus {
+  mode: LocalChainTrackerMode
+  activeSource: string
+  consistency: LocalChainTrackerConsistency
+  localHeight?: number
+  localTipHash?: string
+  referenceHeight?: number
+  heightLag?: number
+  comparisonHeight?: number
+  expectedHash?: string
+  referenceAgreement?: number
+  checkedAt?: string
+  recoveredAt?: string
+  lastFallbackAt?: string
+  lastError?: string
+}
+
+/** @public */
+export interface LocalChainTrackerOptions {
+  /** Locally persisted, proof-of-work-validating ChainTracks client. */
+  local: ChaintracksClientApi
+  /** Independent references used for diagnostics and exceptional fallback. */
+  fallbacks?: ChaintracksClientApi[]
+  mode?: LocalChainTrackerMode
+  fallbackOnLocalError?: boolean
+  /** Number of matching references needed for a fallback validation result. */
+  requiredFallbackAgreement?: number
+  /** Number of matching references needed to declare local divergence. */
+  requiredConsistencyAgreement?: number
+  /** Quorum-backed height lag tolerated before local state is considered stuck. */
+  maxHeightLag?: number
+  autoRecover?: boolean
+  /** Clears/reseeds local state and returns the replacement local client. */
+  recoverLocal?: (evidence: LocalChainTrackerRecoveryEvidence) => Promise<ChaintracksClientApi>
+  /** Clears local state and returns a fresh local client. */
+  clearLocal?: () => Promise<ChaintracksClientApi>
+  now?: () => Date
+}
+
+/**
+ * Local-first SDK ChainTracker with explicit management and fallback state.
+ *
+ * A definitive local `false` validation is never overridden by a remote
+ * source. Fallback is reserved for local exceptions or explicit remote-only
+ * mode, and applications can require agreement across multiple independent
+ * references before accepting a fallback result.
+ *
+ * @public
+ */
+export class LocalChainTracker implements ChainTracker {
+  private local: ChaintracksClientApi
+  private readonly fallbacks: ChaintracksClientApi[]
+  private readonly fallbackOnLocalError: boolean
+  private readonly requiredFallbackAgreement: number
+  private readonly requiredConsistencyAgreement: number
+  private readonly maxHeightLag: number
+  private readonly autoRecover: boolean
+  private readonly recoverLocal: LocalChainTrackerOptions['recoverLocal']
+  private readonly clearLocal: LocalChainTrackerOptions['clearLocal']
+  private readonly now: () => Date
+  private verificationContext = 0
+  private resetting = false
+  private eventEpoch = 0
+  private observerGeneration = 0
+  private readonly eventSubscriptions = new Map<ChaintracksClientApi, string>()
+  private readonly eventSetups = new Map<ChaintracksClientApi, Promise<void>>()
+  private status: LocalChainTrackerStatus
+
+  constructor(options: LocalChainTrackerOptions) {
+    this.local = options.local
+    this.fallbacks = [...(options.fallbacks ?? [])]
+    this.fallbackOnLocalError = options.fallbackOnLocalError ?? true
+    this.requiredFallbackAgreement = this.validateAgreement(
+      options.requiredFallbackAgreement ?? 1,
+      'requiredFallbackAgreement'
+    )
+    this.requiredConsistencyAgreement = this.validateAgreement(
+      options.requiredConsistencyAgreement ?? 2,
+      'requiredConsistencyAgreement'
+    )
+    this.maxHeightLag = this.validateHeightLag(options.maxHeightLag ?? 6)
+    this.autoRecover = options.autoRecover ?? false
+    this.recoverLocal = options.recoverLocal
+    this.clearLocal = options.clearLocal
+    this.now = options.now ?? (() => new Date())
+    this.status = {
+      mode: options.mode ?? 'local-primary',
+      activeSource: options.mode === 'remote-only' ? 'fallback' : 'local',
+      consistency: 'unchecked'
+    }
+  }
+
+  getMode(): LocalChainTrackerMode {
+    return this.status.mode
+  }
+
+  setMode(mode: LocalChainTrackerMode): void {
+    if (this.status.mode !== mode) this.verificationContext++
+    this.status = {
+      ...this.status,
+      mode,
+      activeSource: mode === 'remote-only' ? 'fallback' : 'local'
+    }
+  }
+
+  /** Local mode/source generation marker for consumers that invalidate derived verdicts. */
+  getVerificationContext(): string {
+    return `local-chaintracks:${this.sourceContext()}`
+  }
+
+  /**
+   * Fresh token for providers participating in this attempt's canonical authority.
+   * Remote-only uses fallbacks only; local-primary uses the local client only.
+   * A missing participating identity fails closed. Unused providers are omitted
+   * and cannot stand in. This is not an atomic multi-source snapshot.
+   */
+  async getVerificationContextToken(signal?: AbortSignal): Promise<string> {
+    const context = this.sourceContext()
+    this.throwIfAborted(signal)
+    this.assertCurrentContext(context, 'canonical token lookup')
+    const sources = this.attemptSources()
+    if (sources.length === 0) throw new Error('No canonical ChainTracks source is available')
+    await this.ensureEventObservers(sources)
+    const tips = await Promise.all(sources.map(async source => await source.findChainTipHash()))
+    this.throwIfAborted(signal)
+    this.assertCurrentContext(context, 'canonical token lookup')
+    if (!this.sameSources(sources, this.attemptSources())) {
+      throw new Error('Local ChainTracks provider changed during canonical token lookup')
+    }
+    if (tips.some(tip => tip == null || tip === '')) {
+      throw new Error('Canonical ChainTracks source identity is unavailable')
+    }
+    return JSON.stringify({ context, eventEpoch: this.eventEpoch, tips })
+  }
+
+  async dispose(): Promise<void> {
+    this.observerGeneration++
+    await Promise.all(
+      Array.from(this.eventSubscriptions.entries()).map(async ([source, subscription]) => {
+        this.eventSubscriptions.delete(source)
+        await source.unsubscribe(subscription).catch(() => undefined)
+      })
+    )
+  }
+
+  getStatus(): LocalChainTrackerStatus {
+    return { ...this.status }
+  }
+
+  getLocalClient(): ChaintracksClientApi {
+    return this.local
+  }
+
+  async currentHeight(): Promise<number> {
+    const context = this.sourceContext()
+    this.assertCurrentContext(context, 'height lookup')
+    if (this.status.mode === 'remote-only') {
+      const height = await this.fallbackHeight()
+      this.assertCurrentContext(context, 'height lookup')
+      return height
+    }
+    const local = this.local
+    try {
+      const height = await local.getPresentHeight()
+      this.assertCurrentContext(context, 'height lookup')
+      this.status = { ...this.status, activeSource: 'local', localHeight: height, lastError: undefined }
+      return height
+    } catch (error) {
+      this.assertCurrentContext(context, 'height lookup')
+      this.recordError(error)
+      if (!this.fallbackOnLocalError) throw error
+      const height = await this.fallbackHeight()
+      this.assertCurrentContext(context, 'height lookup')
+      return height
+    }
+  }
+
+  async isValidRootForHeight(root: string, height: number): Promise<boolean> {
+    const context = this.sourceContext()
+    this.assertCurrentContext(context, 'root validation')
+    if (this.status.mode !== 'remote-only') {
+      const local = this.local
+      try {
+        const valid = await local.isValidRootForHeight(root, height)
+        if (typeof valid !== 'boolean') {
+          throw new TypeError('Local ChainTracker returned a non-boolean Merkle-root verdict.')
+        }
+        this.assertCurrentContext(context, 'root validation')
+        this.status = { ...this.status, activeSource: 'local', lastError: undefined }
+        return valid
+      } catch (error) {
+        this.assertCurrentContext(context, 'root validation')
+        this.recordError(error)
+        if (!this.fallbackOnLocalError) throw error
+      }
+    }
+    const valid = await this.fallbackValidation(root, height)
+    this.assertCurrentContext(context, 'root validation')
+    return valid
+  }
+
+  async synchronize(): Promise<LocalChainTrackerStatus> {
+    await this.local.startListening()
+    await this.local.listening()
+    return await this.checkConsistency()
+  }
+
+  async clearLocalData(): Promise<LocalChainTrackerStatus> {
+    const clearLocal = this.clearLocal
+    if (clearLocal == null) throw new Error('Local ChainTracks clearing is not configured.')
+    const reset = this.beginReset()
+    await this.applyReset(reset, clearLocal)
+    this.status = {
+      mode: this.status.mode,
+      activeSource: this.status.mode === 'remote-only' ? 'fallback' : 'local',
+      consistency: 'unchecked'
+    }
+    return this.getStatus()
+  }
+
+  async checkConsistency(): Promise<LocalChainTrackerStatus> {
+    return await this.checkConsistencyInternal(true)
+  }
+
+  private async checkConsistencyInternal(allowRecovery: boolean): Promise<LocalChainTrackerStatus> {
+    const checkedAt = this.now().toISOString()
+    try {
+      const localHeight = await this.local.getPresentHeight()
+      const localTipHash = await this.local.findChainTipHash()
+      const references = await Promise.all(
+        this.fallbacks.map(async (client, index) => {
+          try {
+            return { client, index, height: await client.getPresentHeight() }
+          } catch {
+            return undefined
+          }
+        })
+      )
+      const available = references.filter(
+        (value): value is { client: ChaintracksClientApi; index: number; height: number } => value != null
+      )
+      if (available.length === 0) {
+        this.status = {
+          ...this.status,
+          activeSource: 'local',
+          consistency: 'insufficient-references',
+          localHeight,
+          localTipHash,
+          checkedAt,
+          lastError: undefined
+        }
+        return this.getStatus()
+      }
+
+      if (available.length < this.requiredConsistencyAgreement) {
+        this.status = {
+          ...this.status,
+          activeSource: 'local',
+          consistency: 'insufficient-references',
+          localHeight,
+          localTipHash,
+          checkedAt,
+          lastError: undefined
+        }
+        return this.getStatus()
+      }
+
+      // The Nth highest reference height is the greatest height reached by at
+      // least N references. A stale or inflated minority cannot move it.
+      const referenceHeight = [...available].map(reference => reference.height).sort((a, b) => b - a)[
+        this.requiredConsistencyAgreement - 1
+      ]
+      const comparisonHeight = Math.min(localHeight, referenceHeight)
+      const heightLag = Math.max(0, referenceHeight - localHeight)
+      const localHeader = await this.local.findHeaderForHeight(comparisonHeight)
+      const referenceHeaders = await Promise.all(
+        available
+          .filter(reference => reference.height >= comparisonHeight)
+          .map(async reference => {
+            try {
+              return await reference.client.findHeaderForHeight(comparisonHeight)
+            } catch {
+              return undefined
+            }
+          })
+      )
+      const agreements = new Map<string, number>()
+      for (const header of referenceHeaders) {
+        if (header != null) agreements.set(header.hash, (agreements.get(header.hash) ?? 0) + 1)
+      }
+      const [expectedHash, referenceAgreement] = [...agreements.entries()].sort(
+        ([hashA, countA], [hashB, countB]) => countB - countA || hashA.localeCompare(hashB)
+      )[0] ?? [undefined, 0]
+
+      const enoughReferences = referenceAgreement >= this.requiredConsistencyAgreement
+      let consistency: LocalChainTrackerConsistency
+      if (!enoughReferences) consistency = 'insufficient-references'
+      else if (localHeader?.hash !== expectedHash) consistency = 'diverged'
+      else if (heightLag > this.maxHeightLag) consistency = 'lagging'
+      else consistency = 'agreed'
+      this.status = {
+        ...this.status,
+        activeSource: 'local',
+        consistency,
+        localHeight,
+        localTipHash,
+        referenceHeight,
+        heightLag,
+        comparisonHeight,
+        expectedHash,
+        referenceAgreement,
+        checkedAt,
+        lastError: undefined
+      }
+
+      if (
+        (consistency === 'diverged' || consistency === 'lagging') &&
+        allowRecovery &&
+        this.autoRecover &&
+        this.recoverLocal != null &&
+        expectedHash != null
+      ) {
+        const reset = this.beginReset()
+        await this.applyReset(
+          reset,
+          async () =>
+            await this.recoverLocal!({
+              reason: consistency,
+              localHeight,
+              referenceHeight,
+              heightLag,
+              comparisonHeight,
+              expectedHash,
+              referenceAgreement
+            })
+        )
+        const recoveredAt = this.now().toISOString()
+        const recovered = await this.checkConsistencyInternal(false)
+        this.status = { ...recovered, recoveredAt }
+      }
+      return this.getStatus()
+    } catch (error) {
+      this.status = {
+        ...this.status,
+        consistency: 'error',
+        checkedAt,
+        lastError: this.errorMessage(error)
+      }
+      return this.getStatus()
+    }
+  }
+
+  private async fallbackHeight(): Promise<number> {
+    let lastError: unknown
+    for (const [index, fallback] of this.fallbacks.entries()) {
+      try {
+        const height = await fallback.getPresentHeight()
+        this.recordFallback(index)
+        return height
+      } catch (error) {
+        lastError = error
+      }
+    }
+    const error = lastError ?? new Error('No fallback ChainTracks source is configured.')
+    this.recordError(error)
+    throw error
+  }
+
+  private attemptSources(): ChaintracksClientApi[] {
+    return this.status.mode === 'remote-only' ? [...this.fallbacks] : [this.local]
+  }
+
+  private sameSources(left: ChaintracksClientApi[], right: ChaintracksClientApi[]): boolean {
+    return left.length === right.length && left.every((source, index) => source === right[index])
+  }
+
+  private async applyReset(reset: number, nextLocal: () => Promise<ChaintracksClientApi>): Promise<void> {
+    await this.dispose()
+    this.assertResetOwner(reset)
+    const local = await nextLocal()
+    this.assertResetOwner(reset)
+    this.local = local
+    this.resetting = false
+  }
+
+  private sourceContext(): string {
+    const nested = (source: ChaintracksClientApi): string => {
+      const provider = source as ChaintracksClientApi & { getVerificationContext?: () => string | number }
+      return String(provider.getVerificationContext?.() ?? '')
+    }
+    return JSON.stringify([
+      this.verificationContext,
+      this.resetting,
+      this.status.mode,
+      this.eventEpoch,
+      this.observerGeneration,
+      nested(this.local),
+      this.fallbacks.map(nested)
+    ])
+  }
+
+  private assertCurrentContext(context: string, operation: string): void {
+    if (this.resetting || context !== this.sourceContext()) {
+      throw new Error(`Local ChainTracks provider changed during ${operation}`)
+    }
+  }
+
+  private throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted === true) throw signal.reason ?? new Error('Local ChainTracks token lookup aborted')
+  }
+
+  private beginReset(): number {
+    this.verificationContext++
+    this.resetting = true
+    return this.verificationContext
+  }
+
+  private assertResetOwner(reset: number): void {
+    if (reset !== this.verificationContext) throw new Error('Local ChainTracks reset was superseded')
+  }
+
+  private reorgSubscribe(source: ChaintracksClientApi): ((listener: unknown) => Promise<string>) | undefined {
+    if (source.supportsReorgEvents === false) return undefined
+    const events = source as ChaintracksClientApi & {
+      subscribeReorgs?: (listener: unknown) => Promise<string>
+    }
+    if (typeof events.subscribeReorgs === 'function') return async listener => await events.subscribeReorgs!(listener)
+    if (source.supportsReorgEvents === true) {
+      throw new Error('Chaintracks provider promised reorg events but subscribeReorgs is not implemented')
+    }
+    return undefined
+  }
+
+  private async ensureEventObservers(sources: ChaintracksClientApi[]): Promise<void> {
+    await Promise.all(
+      sources.map(async source => {
+        const subscribe = this.reorgSubscribe(source)
+        if (subscribe == null) return
+        if (this.eventSubscriptions.has(source)) return
+        const pending = this.eventSetups.get(source)
+        if (pending !== undefined) {
+          await pending
+          if (
+            !this.eventSubscriptions.has(source) &&
+            !this.resetting &&
+            (source === this.local || this.fallbacks.includes(source))
+          ) {
+            await this.ensureEventObservers([source])
+          }
+          return
+        }
+        const generation = this.observerGeneration
+        const current = (): boolean =>
+          !this.resetting &&
+          generation === this.observerGeneration &&
+          (source === this.local || this.fallbacks.includes(source))
+        const setup = (async () => {
+          const subscription = await subscribe(() => {
+            if (current()) this.eventEpoch++
+          })
+          if (!current()) {
+            await source.unsubscribe(subscription).catch(() => undefined)
+            return
+          }
+          this.eventSubscriptions.set(source, subscription)
+        })()
+        this.eventSetups.set(source, setup)
+        try {
+          await setup
+        } finally {
+          if (this.eventSetups.get(source) === setup) this.eventSetups.delete(source)
+        }
+      })
+    )
+  }
+
+  private async fallbackValidation(root: string, height: number): Promise<boolean> {
+    let valid = 0
+    let invalid = 0
+    let lastError: unknown
+    for (const [index, fallback] of this.fallbacks.entries()) {
+      try {
+        const verdict = await fallback.isValidRootForHeight(root, height)
+        if (typeof verdict !== 'boolean') {
+          throw new TypeError('Fallback ChainTracker returned a non-boolean Merkle-root verdict.')
+        }
+        if (verdict === true) valid++
+        else invalid++
+        if (valid >= this.requiredFallbackAgreement) {
+          this.recordFallback(index)
+          return true
+        }
+        if (invalid >= this.requiredFallbackAgreement) {
+          this.recordFallback(index)
+          return false
+        }
+      } catch (error) {
+        lastError = error
+      }
+    }
+    const error =
+      lastError ??
+      new Error(
+        `Fallback agreement unavailable: ${valid} valid and ${invalid} invalid responses, ` +
+          `${this.requiredFallbackAgreement} required.`
+      )
+    this.recordError(error)
+    throw error
+  }
+
+  private recordFallback(index: number): void {
+    this.status = {
+      ...this.status,
+      activeSource: `fallback-${index + 1}`,
+      lastFallbackAt: this.now().toISOString(),
+      lastError: undefined
+    }
+  }
+
+  private recordError(error: unknown): void {
+    this.status = { ...this.status, activeSource: 'unavailable', lastError: this.errorMessage(error) }
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
+  }
+
+  private validateAgreement(value: number, name: string): number {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer`)
+    return value
+  }
+
+  private validateHeightLag(value: number): number {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error('maxHeightLag must be a non-negative safe integer')
+    }
+    return value
+  }
+}

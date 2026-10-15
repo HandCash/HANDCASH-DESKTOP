@@ -2,7 +2,7 @@ import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const signers: string[] = []
-vi.mock('@bsv/wallet-toolbox-client', () => ({
+vi.mock('@handcash/wallet-engine', () => ({
   SetupClient: {
     getKeyPair: (privateKey: PrivateKey) => ({ privateKey }),
     getUnlockP2PKH: (privateKey: PrivateKey) => (signers.push(privateKey.toHex()), {

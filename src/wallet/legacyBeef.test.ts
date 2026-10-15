@@ -1,5 +1,5 @@
 import { Beef, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
-import type { Services } from '@bsv/wallet-toolbox-client'
+import type { Services } from '@handcash/wallet-engine'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildLegacyInputBeef, resetLegacyBeefCache, withVisibleOnChainBeef } from './legacyBeef'

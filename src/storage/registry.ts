@@ -49,6 +49,9 @@ export const storageRegistry = Object.freeze({
   toolboxDatabasePointer: defineStorage({
     key: 'handcash.toolboxDatabasePointer.v1:', owner: 'history', scope: 'device', version: 1,
   }),
+  walletEngineMigration: defineStorage({
+    key: 'handcash.wallet-engine-migration.v1:', owner: 'history', scope: 'device', version: 1,
+  }),
   activity: defineStorage({
     key: 'handcash.brc100.appActivity',
     owner: 'activity',

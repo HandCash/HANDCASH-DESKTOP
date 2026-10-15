@@ -15,7 +15,7 @@ import {
   ARGON2ID_MAX_PARALLELISM,
   parseBRC38Json,
   type BRC38WalletData,
-} from '@bsv/wallet-toolbox-client'
+} from '@handcash/wallet-engine'
 import { Utils } from '@bsv/sdk'
 import { argon2id } from 'hash-wasm'
 

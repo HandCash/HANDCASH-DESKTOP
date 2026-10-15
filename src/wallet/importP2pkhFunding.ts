@@ -6,7 +6,7 @@
  * sweep to ARC — a local-only sweep is not a receive.
  */
 import { Beef, PrivateKey, type BEEF, type WalletInterface } from '@bsv/sdk'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
+import { SetupClient } from '@handcash/wallet-engine'
 
 import { withVisibleOnChainBeef } from './legacyBeef'
 import type { ActiveWallet } from './session'

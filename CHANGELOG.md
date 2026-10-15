@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.566] - 2026-10-15
+
+### Fixed
+- **Signing runs on HandCash's own wallet engine.** An existing ledger is copied and checked before that database is selected, and the original stays. A payment still seals its inputs before another send can take them. Keys, scripts, and BEEF stay with the BSV SDK.
+
 ## [1.3.565] - 2026-10-15
 
 ### Fixed

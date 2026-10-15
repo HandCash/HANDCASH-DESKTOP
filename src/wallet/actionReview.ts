@@ -395,6 +395,19 @@ export async function releaseUnsignedSpendReservations(
   active?: ActiveWallet | null,
   opts?: { skipReview?: boolean }
 ): Promise<{ failedTxs: number; reviewLog: string; batchesAborted: number }> {
+  const startedAt = Date.now()
+  try {
+    return await releaseUnsignedSpendReservationsNow(active, opts)
+  } finally {
+    const ms = Date.now() - startedAt
+    if (ms >= 250) console.info(`[wallet-engine] recovery done ${ms}ms`)
+  }
+}
+
+async function releaseUnsignedSpendReservationsNow(
+  active?: ActiveWallet | null,
+  opts?: { skipReview?: boolean }
+): Promise<{ failedTxs: number; reviewLog: string; batchesAborted: number }> {
   // This API is called by Activity cleanup and delayed healing. During a live
   // send, createAction may already have returned a signable reference whose
   // action batch is still needed by signAction. Aborting it here corrupts that

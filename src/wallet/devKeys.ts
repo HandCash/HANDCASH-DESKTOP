@@ -536,7 +536,7 @@ async function openDevWallet(runtime: WalletRuntime, n: number): Promise<WalletI
     const started = Date.now()
     wallet = (async () => {
       const [{ Wallet, WalletStorageManager, StorageClient }, { walletCryptoBackend }] = await Promise.all([
-        import('@bsv/wallet-toolbox-client'),
+        import('@handcash/wallet-engine'),
         import('./cryptoBackend'),
       ])
       const keyDeriver = new CachedKeyDeriver(rootKey)

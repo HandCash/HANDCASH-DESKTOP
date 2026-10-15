@@ -1,0 +1,774 @@
+import type {
+  AbortActionArgs,
+  AbortActionResult,
+  BEEF,
+  Beef,
+  ChainTracker,
+  InternalizeActionArgs,
+  InternalizeActionResult,
+  ListActionsResult,
+  ListCertificatesResult,
+  ListOutputsResult,
+  RelinquishCertificateArgs,
+  RelinquishOutputArgs,
+  SendWithResult,
+  TXIDHexString,
+  Validation,
+  WalletLoggerInterface
+} from '@bsv/sdk'
+import {
+  TableCertificate,
+  TableCertificateField,
+  TableCertificateX,
+  TableCommission,
+  TableMonitorEvent,
+  TableOutput,
+  TableOutputBasket,
+  TableOutputTag,
+  TableOutputTagMap,
+  TableProvenTx,
+  TableProvenTxReq,
+  TableSettings,
+  TableSyncState,
+  TableTransaction,
+  TableTxLabel,
+  TableTxLabelMap,
+  TableUser
+} from '../storage/schema/tables'
+import { WalletServices } from './WalletServices.interfaces'
+import { Chain, Paged, ProvenTxReqStatus, TransactionStatus } from './types'
+import { WalletError } from './WalletError'
+import {
+  AbortActionBatchResult,
+  ActionBatchManifest,
+  BeginActionBatchArgs,
+  BeginActionBatchResult,
+  CommitActionBatchByDigestArgs,
+  CommitActionBatchResult,
+  ExtendActionBatchArgs,
+  ExtendActionBatchResult,
+  PrepareActionBatchCommitResult,
+  PutActionBatchBlobArgs,
+  PutActionBatchPackArgs,
+  ResumeActionBatchArgs,
+  ResumeActionBatchResult,
+  RenewActionBatchResult,
+  StorageCapabilities
+} from './ActionBatch.interfaces'
+import type { Brc177NoSendExpiry } from '../utility/brc177NoSendExpiry'
+
+/**
+ * This is the `WalletStorage` interface implemented by a class such as `WalletStorageManager`,
+ * which manges an active and set of backup storage providers.
+ *
+ * Access and conrol is not directly managed. Typically each request is made with an associated identityKey
+ * and it is left to the providers: physical access or remote channel authentication.
+ */
+export interface WalletStorage {
+  /**
+   * @returns false
+   */
+  isStorageProvider: () => boolean
+
+  isAvailable: () => boolean
+  makeAvailable: () => Promise<TableSettings>
+  migrate: (storageName: string, storageIdentityKey: string) => Promise<string>
+  destroy: () => Promise<void>
+
+  setServices: (v: WalletServices) => void
+  getServices: () => WalletServices
+  getSettings: () => TableSettings
+
+  getAuth: () => Promise<AuthId>
+
+  findOrInsertUser: (identityKey: string) => Promise<{ user: TableUser, isNew: boolean }>
+
+  abortAction: (args: AbortActionArgs) => Promise<AbortActionResult>
+  createAction: (args: Validation.ValidCreateActionArgs) => Promise<StorageCreateActionResult>
+  processAction: (args: StorageProcessActionArgs) => Promise<StorageProcessActionResults>
+  prepareNoSendExpiry?: (args: Validation.ValidCreateActionArgs) => Promise<StoragePrepareNoSendExpiryResult>
+  activateNoSendExpiry?: (args: StorageActivateNoSendExpiryArgs) => Promise<StorageActivateNoSendExpiryResult>
+  armNoSendExpiry?: (args: StorageArmNoSendExpiryArgs) => Promise<void>
+  getCapabilities: () => Promise<StorageCapabilities>
+  beginActionBatch: (args: BeginActionBatchArgs) => Promise<BeginActionBatchResult>
+  extendActionBatch: (args: ExtendActionBatchArgs) => Promise<ExtendActionBatchResult>
+  renewActionBatch: (batchId: string) => Promise<RenewActionBatchResult>
+  resumeActionBatch?: (args: ResumeActionBatchArgs) => Promise<ResumeActionBatchResult>
+  prepareActionBatchCommit: (manifest: ActionBatchManifest) => Promise<PrepareActionBatchCommitResult>
+  putActionBatchBlob: (args: PutActionBatchBlobArgs) => Promise<void>
+  putActionBatchPack?: (args: PutActionBatchPackArgs) => Promise<void>
+  commitActionBatch: (manifest: ActionBatchManifest) => Promise<CommitActionBatchResult>
+  commitActionBatchByDigest?: (args: CommitActionBatchByDigestArgs) => Promise<CommitActionBatchResult>
+  abortActionBatch: (batchId: string) => Promise<AbortActionBatchResult>
+  internalizeAction: (args: InternalizeActionArgs) => Promise<InternalizeActionResult>
+
+  findCertificates: (args: FindCertificatesArgs) => Promise<TableCertificateX[]>
+  findOutputBaskets: (args: FindOutputBasketsArgs) => Promise<TableOutputBasket[]>
+  findOutputs: (args: FindOutputsArgs) => Promise<TableOutput[]>
+  findProvenTxReqs: (args: FindProvenTxReqsArgs) => Promise<TableProvenTxReq[]>
+
+  listActions: (args: Validation.ValidListActionsArgs) => Promise<ListActionsResult>
+  listCertificates: (args: Validation.ValidListCertificatesArgs) => Promise<ListCertificatesResult>
+  listOutputs: (args: Validation.ValidListOutputsArgs) => Promise<ListOutputsResult>
+
+  insertCertificate: (certificate: TableCertificateX) => Promise<number>
+
+  relinquishCertificate: (args: RelinquishCertificateArgs) => Promise<number>
+  relinquishOutput: (args: RelinquishOutputArgs) => Promise<number>
+
+  getStores: () => WalletStorageInfo[]
+}
+
+/**
+ * Snapshot of the current state of a storage provider configured for an `WalletStorageManager`.
+ */
+export interface WalletStorageInfo {
+  isActive: boolean
+  isEnabled: boolean
+  isBackup: boolean
+  isConflicting: boolean
+  userId: number
+  storageIdentityKey: string
+  storageName: string
+  storageClass: string
+  endpointURL?: string
+}
+
+/**
+ * This is the `WalletStorage` interface implemented with authentication checking and
+ * is the actual minimal interface implemented by storage and remoted storage providers.
+ */
+export interface WalletStorageProvider extends WalletStorageSync {
+  /**
+   * @returns true if this object's interface can be extended to the full `StorageProvider` interface
+   */
+  isStorageProvider: () => boolean
+  setServices: (v: WalletServices) => void
+}
+
+export interface WalletStorageSync extends WalletStorageWriter {
+  /** Compact writer checkpoint. Undefined means a legacy remote provider. */
+  getSyncCheckpoint?: (
+    auth: AuthId,
+    storageIdentityKey: string,
+    storageName: string
+  ) => Promise<SyncCheckpoint | undefined>
+
+  findOrInsertSyncStateAuth: (
+    auth: AuthId,
+    storageIdentityKey: string,
+    storageName: string
+  ) => Promise<{ syncState: TableSyncState, isNew: boolean }>
+
+  /**
+   * Updagte the `activeStorage` property of the authenticated user by their `userId`.
+   * @param auth
+   * @param newActiveStorageIdentityKey
+   */
+  setActive: (auth: AuthId, newActiveStorageIdentityKey: string) => Promise<number>
+
+  getSyncChunk: (args: RequestSyncChunkArgs) => Promise<SyncChunk>
+  /**
+   * Apply one sync page. First-party providers throw on failure.
+   * A custom writer may instead set `ProcessSyncChunkResult.error`;
+   * `WalletStorageManager` live-sync loops throw that error and stop.
+   */
+  processSyncChunk: (args: RequestSyncChunkArgs, chunk: SyncChunk) => Promise<ProcessSyncChunkResult>
+}
+
+/**
+ * This is the minimal interface required for a WalletStorageProvider to export data to another provider.
+ */
+export interface WalletStorageSyncReader {
+  makeAvailable: () => Promise<TableSettings>
+  getSyncChunk: (args: RequestSyncChunkArgs) => Promise<SyncChunk>
+}
+
+export interface WalletStorageWriter extends WalletStorageReader {
+  makeAvailable: () => Promise<TableSettings>
+  migrate: (storageName: string, storageIdentityKey: string) => Promise<string>
+  destroy: () => Promise<void>
+
+  findOrInsertUser: (identityKey: string) => Promise<{ user: TableUser, isNew: boolean }>
+
+  abortAction: (auth: AuthId, args: AbortActionArgs) => Promise<AbortActionResult>
+  createAction: (auth: AuthId, args: Validation.ValidCreateActionArgs) => Promise<StorageCreateActionResult>
+  processAction: (auth: AuthId, args: StorageProcessActionArgs) => Promise<StorageProcessActionResults>
+  prepareNoSendExpiry?: (
+    auth: AuthId,
+    args: Validation.ValidCreateActionArgs
+  ) => Promise<StoragePrepareNoSendExpiryResult>
+  activateNoSendExpiry?: (
+    auth: AuthId,
+    args: StorageActivateNoSendExpiryArgs
+  ) => Promise<StorageActivateNoSendExpiryResult>
+  armNoSendExpiry?: (auth: AuthId, args: StorageArmNoSendExpiryArgs) => Promise<void>
+  getCapabilities: () => Promise<StorageCapabilities>
+  beginActionBatch: (auth: AuthId, args: BeginActionBatchArgs) => Promise<BeginActionBatchResult>
+  extendActionBatch: (auth: AuthId, args: ExtendActionBatchArgs) => Promise<ExtendActionBatchResult>
+  renewActionBatch: (auth: AuthId, batchId: string) => Promise<RenewActionBatchResult>
+  resumeActionBatch?: (auth: AuthId, args: ResumeActionBatchArgs) => Promise<ResumeActionBatchResult>
+  prepareActionBatchCommit: (auth: AuthId, manifest: ActionBatchManifest) => Promise<PrepareActionBatchCommitResult>
+  putActionBatchBlob: (auth: AuthId, args: PutActionBatchBlobArgs) => Promise<void>
+  putActionBatchPack?: (auth: AuthId, args: PutActionBatchPackArgs) => Promise<void>
+  commitActionBatch: (auth: AuthId, manifest: ActionBatchManifest) => Promise<CommitActionBatchResult>
+  commitActionBatchByDigest?: (
+    auth: AuthId,
+    args: CommitActionBatchByDigestArgs
+  ) => Promise<CommitActionBatchResult>
+  abortActionBatch: (auth: AuthId, batchId: string) => Promise<AbortActionBatchResult>
+  internalizeAction: (auth: AuthId, args: InternalizeActionArgs) => Promise<StorageInternalizeActionResult>
+
+  insertCertificateAuth: (auth: AuthId, certificate: TableCertificateX) => Promise<number>
+
+  relinquishCertificate: (auth: AuthId, args: RelinquishCertificateArgs) => Promise<number>
+  relinquishOutput: (auth: AuthId, args: RelinquishOutputArgs) => Promise<number>
+}
+
+export interface WalletStorageReader {
+  isAvailable: () => boolean
+
+  getServices: () => WalletServices
+  getSettings: () => TableSettings
+
+  findCertificatesAuth: (auth: AuthId, args: FindCertificatesArgs) => Promise<TableCertificateX[]>
+  findOutputBasketsAuth: (auth: AuthId, args: FindOutputBasketsArgs) => Promise<TableOutputBasket[]>
+  findOutputsAuth: (auth: AuthId, args: FindOutputsArgs) => Promise<TableOutput[]>
+  findProvenTxReqs: (args: FindProvenTxReqsArgs) => Promise<TableProvenTxReq[]>
+
+  listActions: (auth: AuthId, vargs: Validation.ValidListActionsArgs) => Promise<ListActionsResult>
+  listCertificates: (auth: AuthId, vargs: Validation.ValidListCertificatesArgs) => Promise<ListCertificatesResult>
+  listOutputs: (auth: AuthId, vargs: Validation.ValidListOutputsArgs) => Promise<ListOutputsResult>
+}
+
+export interface AuthId {
+  identityKey: string
+  userId?: number
+  isActive?: boolean
+}
+
+export interface FindSincePagedArgs {
+  since?: Date
+  paged?: Paged
+  trx?: TrxToken
+  /**
+   * Support for orderDescending is implemented in StorageKnex for basic table find methods,
+   * excluding certificate_fields table, map tables, and settings (singleton row table).
+   */
+  orderDescending?: boolean
+}
+
+export interface FindForUserSincePagedArgs extends FindSincePagedArgs {
+  userId: number
+}
+
+export interface FindPartialSincePagedArgs<T extends object> extends FindSincePagedArgs {
+  partial: Partial<T>
+}
+
+export interface FindCertificatesArgs extends FindSincePagedArgs {
+  partial: Partial<TableCertificate>
+  certifiers?: string[]
+  types?: string[]
+  includeFields?: boolean
+}
+
+export interface FindOutputBasketsArgs extends FindSincePagedArgs {
+  partial: Partial<TableOutputBasket>
+}
+
+export interface FindOutputsArgs extends FindSincePagedArgs {
+  partial: Partial<TableOutput>
+  noScript?: boolean
+  txStatus?: TransactionStatus[]
+}
+
+export type StorageProvidedBy = 'you' | 'storage' | 'you-and-storage'
+
+export interface StorageCreateTransactionSdkInput {
+  vin: number
+  sourceTxid: string
+  sourceVout: number
+  sourceSatoshis: number
+  sourceLockingScript: string
+  /**
+   *
+   */
+  sourceTransaction?: number[] | Uint8Array
+  unlockingScriptLength: number
+  providedBy: StorageProvidedBy
+  type: string
+  spendingDescription?: string
+  derivationPrefix?: string
+  derivationSuffix?: string
+  senderIdentityKey?: string
+}
+
+export interface StorageCreateTransactionSdkOutput extends Validation.ValidCreateActionOutput {
+  vout: number
+  providedBy: StorageProvidedBy
+  purpose?: string
+  derivationSuffix?: string
+}
+
+export interface StorageCreateActionResult {
+  inputBeef?: number[] | Uint8Array
+  inputs: StorageCreateTransactionSdkInput[]
+  outputs: StorageCreateTransactionSdkOutput[]
+  noSendChangeOutputVouts?: number[]
+  derivationPrefix: string
+  version: number
+  lockTime: number
+  reference: string
+}
+
+export interface StoragePrepareNoSendExpiryResult {
+  funding: StorageCreateActionResult
+  anchorSatoshis: number
+  anchorVout: number
+  reclaimFee: number
+  reclaimSatoshis: number
+}
+
+export interface StorageActivateNoSendExpiryArgs {
+  target: Validation.ValidCreateActionArgs
+  fundingReference: string
+  fundingTxid: string
+  anchorVout: number
+}
+
+export interface StorageActivateNoSendExpiryResult {
+  action: StorageCreateActionResult
+  expiry: Brc177NoSendExpiry
+  deadline: number
+  anchorTxid: string
+  anchorVout: number
+}
+
+export interface StorageArmNoSendExpiryArgs {
+  reference: string
+  reclaimTxid: string
+  reclaimRawTx: number[] | Uint8Array
+  reclaimDerivationPrefix: string
+  reclaimDerivationSuffix: string
+  reclaimSatoshis: number
+}
+
+export interface StorageProcessActionArgs {
+  isNewTx: boolean
+  isSendWith: boolean
+  isNoSend: boolean
+  isDelayed: boolean
+  reference?: string
+  txid?: string
+  rawTx?: number[] | Uint8Array
+  sendWith: string[]
+  logger?: WalletLoggerInterface
+}
+
+export interface StorageInternalizeActionResult extends InternalizeActionResult {
+  /** true if internalizing outputs on an existing storage transaction */
+  isMerge: boolean
+  /** txid of transaction being internalized */
+  txid: string
+  /** net change in change balance for user due to this internalization */
+  satoshis: number
+
+  /** valid iff not isMerge and txid was unknown to storage and non-delayed broadcast was not success */
+  sendWithResults?: SendWithResult[]
+  /** valid iff not isMerge and txid was unknown to storage and non-delayed broadcast was not success */
+  notDelayedResults?: ReviewActionResult[]
+}
+
+/**
+ * Indicates status of a new Action following a `createAction` or `signAction` in immediate mode:
+ * When `acceptDelayedBroadcast` is falses.
+ *
+ * 'success': The action has been broadcast and accepted by the bitcoin processing network.
+ * 'doubleSpend': The action has been confirmed to double spend one or more inputs, and by the "first-seen-rule" is the losing transaction.
+ * 'invalidTx': The action was rejected by the processing network as an invalid bitcoin transaction.
+ * 'serviceError': The broadcast services are currently unable to reach the bitcoin network. The action is now queued for delayed retries.
+ */
+export type ReviewActionResultStatus = 'success' | 'doubleSpend' | 'serviceError' | 'invalidTx'
+
+export interface ReviewActionResult {
+  txid: TXIDHexString
+  status: ReviewActionResultStatus
+  /**
+   * Any competing txids reported for this txid, valid when status is 'doubleSpend'.
+   */
+  competingTxs?: string[]
+  /**
+   * Merged beef of competingTxs, valid when status is 'doubleSpend'.
+   */
+  competingBeef?: BEEF
+}
+
+export interface StorageProcessActionResults {
+  sendWithResults?: SendWithResult[]
+  notDelayedResults?: ReviewActionResult[]
+  log?: string
+}
+
+export interface ProvenOrRawTx {
+  proven?: TableProvenTx
+  rawTx?: number[]
+  inputBEEF?: BEEF
+}
+
+export interface PurgeParams {
+  purgeCompleted: boolean
+  purgeFailed: boolean
+  purgeSpent: boolean
+
+  /**
+   * Minimum age in msecs for transient completed transaction data purge.
+   * Default is 14 days.
+   */
+  purgeCompletedAge?: number
+  /**
+   * Minimum age in msecs for failed transaction data purge.
+   * Default is 14 days.
+   */
+  purgeFailedAge?: number
+  /**
+   * Minimum age in msecs for failed transaction data purge.
+   * Default is 14 days.
+   */
+  purgeSpentAge?: number
+}
+
+export interface PurgeResults {
+  count: number
+  log: string
+}
+
+export interface StorageProvenOrReq {
+  proven?: TableProvenTx
+  req?: TableProvenTxReq
+  isNew?: boolean
+}
+
+/**
+ * Specifies the available options for computing transaction fees.
+ */
+export interface StorageFeeModel {
+  /**
+   * Available models. Currently only "sat/kb" is supported.
+   */
+  model: 'sat/kb'
+  /**
+   * When "fee.model" is "sat/kb", this is an integer representing the number of satoshis per kb of block space
+   * the transaction will pay in fees.
+   *
+   * If undefined, the default value is used.
+   */
+  value?: number
+}
+
+export interface StorageGetBeefOptions {
+  /** if 'known', txids known to local storage as valid are included as txidOnly */
+  trustSelf?: 'known'
+  /** list of txids to be included as txidOnly if referenced. Validity is known to caller. */
+  knownTxids?: string[]
+  /** optional. If defined, raw transactions and merkle paths required by txid are merged to this instance and returned. Otherwise a new Beef is constructed and returned. */
+  mergeToBeef?: Beef | number[] | Uint8Array
+  /** Maximum independent ancestor lookups to perform concurrently. Defaults to 8. */
+  maxConcurrency?: number
+  /** optional. Default is false. `storage` is used for raw transaction and merkle proof lookup */
+  ignoreStorage?: boolean
+  /** optional. Default is false. `getServices` is used for raw transaction and merkle proof lookup */
+  ignoreServices?: boolean
+  /** optional. Default is false. If true, raw transactions with proofs missing from `storage` and obtained from `getServices` are not inserted to `storage`. */
+  ignoreNewProven?: boolean
+  /** optional. Default is zero. Ignores available merkle paths until recursion detpth equals or exceeds value  */
+  minProofLevel?: number
+  /** optional. If valid, any merkleRoot that fails to validate will result in an exception without merging to `mergeToBeef`. */
+  chainTracker?: ChainTracker
+  /** optional. Default is false. If chainTracker is valid and an invalid proof is found: if true, pursues deeper beef. If false, throws WERR_INVALID_MERKLE_ROOT. */
+  skipInvalidProofs?: boolean
+}
+
+export interface StorageSyncReaderOptions {
+  chain: Chain
+}
+
+export interface FindCertificateFieldsArgs extends FindSincePagedArgs {
+  partial: Partial<TableCertificateField>
+}
+
+export interface FindCommissionsArgs extends FindSincePagedArgs {
+  partial: Partial<TableCommission>
+}
+export interface FindOutputTagMapsArgs extends FindSincePagedArgs {
+  partial: Partial<TableOutputTagMap>
+  tagIds?: number[]
+}
+export interface FindOutputTagsArgs extends FindSincePagedArgs {
+  partial: Partial<TableOutputTag>
+}
+export interface FindProvenTxReqsArgs extends FindSincePagedArgs {
+  partial: Partial<TableProvenTxReq>
+  status?: ProvenTxReqStatus[]
+  txids?: string[]
+}
+export interface FindProvenTxsArgs extends FindSincePagedArgs {
+  partial: Partial<TableProvenTx>
+  txids?: string[]
+}
+export interface FindStaleMerkleRootsArgs {
+  height: number
+  /**
+   * The current valid merkle root for the given height.
+   * Any proven transaction with a different merkle root at this height is considered to have a stale proof.
+   */
+  merkleRoot: string
+  trx?: TrxToken
+}
+export interface FindSyncStatesArgs extends FindSincePagedArgs {
+  partial: Partial<TableSyncState>
+}
+export interface FindTransactionsArgs extends FindSincePagedArgs {
+  partial: Partial<TableTransaction>
+  status?: TransactionStatus[]
+  from?: Date
+  to?: Date
+  noRawTx?: boolean
+}
+export interface FindTxLabelMapsArgs extends FindSincePagedArgs {
+  partial: Partial<TableTxLabelMap>
+  labelIds?: number[]
+}
+export interface FindTxLabelsArgs extends FindSincePagedArgs {
+  partial: Partial<TableTxLabel>
+}
+export interface FindUsersArgs extends FindSincePagedArgs {
+  partial: Partial<TableUser>
+}
+export interface FindMonitorEventsArgs extends FindSincePagedArgs {
+  partial: Partial<TableMonitorEvent>
+}
+/**
+ * Place holder for the transaction control object used by actual storage provider implementation.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+export interface TrxToken {}
+
+export interface UpdateProvenTxReqWithNewProvenTxArgs {
+  provenTxReqId: number
+  txid: string
+  attempts: number
+  status: ProvenTxReqStatus
+  history: string
+  height: number
+  index: number
+  blockHash: string
+  merkleRoot: string
+  merklePath: number[]
+}
+
+export interface UpdateProvenTxReqWithNewProvenTxResult {
+  status: ProvenTxReqStatus
+  history: string
+  provenTxId: number
+  /** Final durable notification state, when supplied by the storage implementation. */
+  notified?: boolean
+  /** Final durable notification payload, when supplied by the storage implementation. */
+  notify?: string
+  log?: string
+}
+
+/**
+ * success: Last sync of this user from this storage was successful.
+ *
+ * error: Last sync protocol operation for this user to this storage threw and error.
+ *
+ * identified: Configured sync storage has been identified but not sync'ed.
+ *
+ * unknown: Sync protocol state is unknown.
+ */
+export type SyncStatus = 'success' | 'error' | 'identified' | 'updated' | 'unknown'
+
+export type SyncProtocolVersion = '0.1.0'
+
+/** Compact writer progress; omits the durable ID mapping from this response. */
+export interface SyncCheckpoint {
+  syncStateId: number
+  since?: Date
+  offsets: Array<{ name: string, offset: number }>
+}
+
+export interface RequestSyncChunkArgs {
+  /** Request committed progress with the write response; legacy writers ignore it. */
+  includeNextCheckpoint?: boolean
+
+  /**
+   * The writer-local sync state selected when the source provider was
+   * registered. New clients include this to disambiguate legacy databases
+   * that contain multiple rows for a reused storage identity key.
+   */
+  syncStateId?: number
+  /**
+   * The storageIdentityKey of the storage supplying the update SyncChunk data.
+   */
+  fromStorageIdentityKey: string
+  /**
+   * The storageIdentityKey of the storage consuming the update SyncChunk data.
+   */
+  toStorageIdentityKey: string
+
+  /** Require the writer checkpoint to still match before applying a staged transfer. */
+  requireMatchingCheckpoint?: boolean
+  /** The identity of whose data is being requested. */
+  identityKey: string
+  /**
+   * The max updated_at time received from the storage service receiving the request.
+   * Will be undefiend if this is the first request or if no data was previously sync'ed.
+   *
+   * `since` must include items if 'updated_at' is greater or equal. Thus, when not undefined, a sync request should always return at least one item already seen.
+   */
+  since?: Date
+  /**
+   * A rough limit on how large the response should be.
+   * The item that exceeds the limit is included and ends adding more items.
+   */
+  maxRoughSize: number
+  /**
+   * The maximum number of items (records) to be returned.
+   */
+  maxItems: number
+  /**
+   * Include source-side record totals for this `since` window when the
+   * provider can calculate them efficiently. Older providers ignore this
+   * optional hint and remain wire-compatible.
+   */
+  includeTotals?: boolean
+  /**
+   * For each entity in dependency order, the offset at which to start returning items
+   * from `since`.
+   *
+   * The entity order is:
+   * 0 ProvenTxs
+   * 1 ProvenTxReqs
+   * 2 OutputBaskets
+   * 3 TxLabels
+   * 4 OutputTags
+   * 5 Transactions
+   * 6 TxLabelMaps
+   * 7 Commissions
+   * 8 Outputs
+   * 9 OutputTagMaps
+   * 10 Certificates
+   * 11 CertificateFields
+   */
+  offsets: Array<{ name: string, offset: number }>
+}
+
+export interface SyncChunkTotals {
+  totalRecords: number
+  records: {
+    provenTxs: number
+    outputBaskets: number
+    outputTags: number
+    txLabels: number
+    transactions: number
+    outputs: number
+    txLabelMaps: number
+    outputTagMaps: number
+    certificates: number
+    certificateFields: number
+    commissions: number
+    provenTxReqs: number
+  }
+}
+
+/**
+ * Result received from remote `WalletStorage` in response to a `RequestSyncChunkArgs` request.
+ *
+ * Each property is undefined if there was no attempt to update it. Typically this is caused by size and count limits on this result.
+ *
+ * If all properties are empty arrays the sync process has received all available new and updated items.
+ */
+export interface SyncChunk {
+  fromStorageIdentityKey: string
+  toStorageIdentityKey: string
+  userIdentityKey: string
+
+  /** Optional progress totals requested with `includeTotals`. */
+  totals?: SyncChunkTotals
+
+  user?: TableUser
+  provenTxs?: TableProvenTx[]
+  provenTxReqs?: TableProvenTxReq[]
+  outputBaskets?: TableOutputBasket[]
+  txLabels?: TableTxLabel[]
+  outputTags?: TableOutputTag[]
+  transactions?: TableTransaction[]
+  txLabelMaps?: TableTxLabelMap[]
+  commissions?: TableCommission[]
+  outputs?: TableOutput[]
+  outputTagMaps?: TableOutputTagMap[]
+  certificates?: TableCertificate[]
+  certificateFields?: TableCertificateField[]
+}
+
+export interface ProcessSyncChunkResult {
+  /** Present only when requested, after the page and checkpoint commit together. */
+  nextCheckpoint?: SyncCheckpoint
+
+  done: boolean
+  maxUpdated_at: Date | undefined
+  updates: number
+  inserts: number
+  /**
+   * Optional non-throwing failure from a custom writer. First-party
+   * `StorageProvider` implementations throw instead of setting this field.
+   * `WalletStorageManager.syncToWriter` and `syncFromReader` throw `error`
+   * immediately and do not request another chunk.
+   */
+  error?: WalletError
+}
+
+/**
+ * Returned results from WalletStorageManager reproveHeader method.
+ */
+export interface ReproveHeaderResult {
+  /**
+   * Human readable log of the reproveHeader process.
+   */
+  log: string
+  /**
+   * List of proven_txs records that were updated with new proof data.
+   */
+  updated: Array<{ was: TableProvenTx, update: Partial<TableProvenTx>, logUpdate: string }>
+  /**
+   * List of proven_txs records that were checked but currently available proof is unchanged.
+   */
+  unchanged: TableProvenTx[]
+  /**
+   * List of proven_txs records that were checked but currently proof data is unavailable.
+   */
+  unavailable: TableProvenTx[]
+}
+
+/**
+ * Returned results from WalletStorageManager reproveProven method.
+ */
+export interface ReproveProvenResult {
+  /**
+   * Human readable log of the reproveProven process.
+   */
+  log: string
+  /**
+   * Valid if proof data for proven_txs record is available and has changed.
+   */
+  updated?: { update: Partial<TableProvenTx>, logUpdate: string }
+  /**
+   * True if proof data for proven_txs record was found to be unchanged.
+   */
+  unchanged: boolean
+  /**
+   * True if proof data for proven_txs record is currently unavailable.
+   */
+  unavailable: boolean
+}

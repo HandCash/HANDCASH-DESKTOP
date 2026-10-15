@@ -1,5 +1,5 @@
 import { Telemetry, type TelemetryEvent } from '@bsv/sdk'
-import type { Wallet } from '@bsv/wallet-toolbox-client'
+import type { Wallet } from '@handcash/wallet-engine'
 
 /** Toolbox steps shorter than this are not worth a log line. */
 const SLOW_SPAN_MS = 250
@@ -10,18 +10,28 @@ const hexId = (width: number): string => {
   return nextId.toString(16).padStart(width, '0')
 }
 
+const ENGINE_PHASES: Array<[RegExp, string]> = [
+  [/create_action\.storage_plan$/, 'planning'],
+  [/complete_signing$/, 'signing'],
+  [/(?:create_action|sign_action)\.process$/, 'commit'],
+]
+
 function logSlowSpan(event: Readonly<TelemetryEvent>): void {
   if (event.type !== 'span' || event.durationMs == null) return
   if (event.durationMs < SLOW_SPAN_MS) return
   const phase = event.name.replace(/^wallet\./, '')
+  const ms = Math.round(event.durationMs)
   const status = event.spanStatus && event.spanStatus !== 'ok' ? ` ${event.spanStatus}` : ''
-  console.info(`[toolbox] ${phase} done ${Math.round(event.durationMs)}ms${status}`)
+  console.info(`[toolbox] ${phase} done ${ms}ms${status}`)
+  const enginePhase = ENGINE_PHASES.find(([pattern]) => pattern.test(phase))?.[1]
+  if (enginePhase) console.info(`[wallet-engine] ${enginePhase} done ${ms}ms${status}`)
 }
 
 /**
- * Log every slow Toolbox step (`storage_plan`, `complete_signing`,
- * `verify_unlock_scripts`, `process`, …) as `[toolbox] <step> done <N>ms`, so
- * triage can split a slow createAction without anyone reading the log.
+ * Log every slow engine step (`storage_plan`, `complete_signing`,
+ * `verify_unlock_scripts`, `process`, …) as `[toolbox] <step> done <N>ms`.
+ * Planning, signing, and commit also get a `[wallet-engine] <phase> done <N>ms`
+ * line so field sessions can be compared without reading the log.
  *
  * `SetupClient.createWalletIdb` does not forward `telemetry` to the Wallet it
  * builds; the Wallet reads `this.telemetry` on every call, so replacing the
