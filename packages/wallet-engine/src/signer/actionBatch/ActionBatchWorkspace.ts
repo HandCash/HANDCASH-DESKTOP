@@ -32,6 +32,7 @@ import {
   ActionBatchPlannedAction,
   ActionBatchPlannerState,
   addPlannerOutputs,
+  attachInputBeef,
   mergePlannerBeef,
   planAction,
   plannerInputLockingScript,
@@ -451,8 +452,44 @@ class ActionBatchWorkspace {
       }
     }
     if (planned == null) throw new WERR_INVALID_OPERATION('unable to plan action batch transaction')
+    await this.ensurePlannedInputBeef(args, planned)
     this.planned.set(planned.dcr.reference, { args, planned })
     return planned.dcr
+  }
+
+  /**
+   * Load proof data for the inputs this action spends, and no others.
+   * Reservation can hold several coins so a following action is cheap; their
+   * ancestry is fetched when one of them is actually selected.
+   */
+  private async ensurePlannedInputBeef(
+    args: ValidCreateActionArgs,
+    planned: ActionBatchPlannedAction
+  ): Promise<void> {
+    if (args.options.returnTXIDOnly) {
+      attachInputBeef(this.state, args, planned.dcr)
+      return
+    }
+    const known = new Set(args.options.knownTxids ?? [])
+    const missing = [...new Set(planned.dcr.inputs.map(input => input.sourceTxid))].filter(txid => {
+      if (known.has(txid)) return false
+      return this.state.sharedBeef.findTxid(txid)?.tx == null
+    })
+    if (missing.length > 0) {
+      const fetched = await this.wallet.storage.getActive().getBeefForTransactions(missing, {
+        knownTxids: args.options.knownTxids,
+        ignoreServices: true
+      })
+      this.state.sharedBeef.mergeBeef(fetched)
+    }
+    if (args.isSignAction) {
+      for (const input of planned.dcr.inputs) {
+        if (input.sourceTransaction != null) continue
+        const source = this.state.sharedBeef.findTxid(input.sourceTxid)?.tx
+        if (source != null) input.sourceTransaction = source.toUint8Array()
+      }
+    }
+    attachInputBeef(this.state, args, planned.dcr)
   }
 
   private updateEwma(plan: PendingBatchPlan): void {

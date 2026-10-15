@@ -367,24 +367,41 @@ async function makeFundingResult(
   args: ValidCreateActionArgs,
   outputs: TableOutput[]
 ): Promise<{ outputs: ActionBatchFundingOutput[]; beef?: Uint8Array }> {
-  const beef = new Beef()
-  const result: ActionBatchFundingOutput[] = []
-  for (const output of outputs) {
-    await storage.validateOutputScript(output)
-    const copy: ActionBatchFundingOutput = { ...output }
-    if (args.isSignAction && args.includeAllSourceTransactions) {
-      copy.sourceTransaction = await storage.getRawTxOfKnownValidTransaction(output.txid)
+  // Script bytes are required to plan. Proof bytes are not: a normal payment
+  // signs from the locking script and amount, then loads BEEF only for the
+  // inputs it actually spends. Loading every reserved coin's ancestry here
+  // made "Signing" wait on coins the transaction never uses.
+  // Candidate scans omit scripts. Restore the stored script, or the slice
+  // kept beside the raw transaction, without walking its parents.
+  await Promise.all(
+    outputs.map(async output => {
+      await storage.validateOutputScript(output)
+      if (output.lockingScript != null && output.lockingScript.length > 0) return
+      const stored = await storage.findOutputById(output.outputId)
+      if (stored?.lockingScript != null && stored.lockingScript.length > 0) {
+        output.lockingScript = stored.lockingScript
+      }
+    })
+  )
+  const result: ActionBatchFundingOutput[] = outputs.map(output => ({ ...output }))
+  if (!args.isSignAction) return { outputs: result }
+
+  const txids: string[] = []
+  const seen = new Set<string>()
+  for (const output of result) {
+    if (args.includeAllSourceTransactions) {
+      output.sourceTransaction = await storage.getRawTxOfKnownValidTransaction(output.txid)
     }
-    if (output.txid != null && beef.findTxid(output.txid) == null) {
-      beef.mergeBeef(
-        await storage.getBeefForTransaction(output.txid, {
-          knownTxids: args.options.knownTxids,
-          ignoreServices: true
-        })
-      )
+    if (output.txid != null && !seen.has(output.txid)) {
+      seen.add(output.txid)
+      txids.push(output.txid)
     }
-    result.push(copy)
   }
+  if (txids.length === 0) return { outputs: result }
+  const beef = await storage.getBeefForTransactions(txids, {
+    knownTxids: args.options.knownTxids,
+    ignoreServices: true
+  })
   return { outputs: result, beef: beef.toUint8Array() }
 }
 

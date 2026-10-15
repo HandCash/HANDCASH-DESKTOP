@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.568] - 2026-10-15
+
+### Fixed
+- **A payment proves only the coins it spends.** Reserved change keeps its locking script, and the proof is loaded after the inputs are chosen. Those inputs are signed on the live transaction.
+
 ## [1.3.567] - 2026-10-15
 
 ### Fixed

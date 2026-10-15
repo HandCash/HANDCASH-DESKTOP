@@ -193,6 +193,15 @@ function sourceTransactionFor(
   return state.sharedBeef.findTxid(output.txid)?.tx?.toUint8Array()
 }
 
+/** Replace the planned input BEEF from the proofs currently in the workspace. */
+export function attachInputBeef(
+  state: ActionBatchPlannerState,
+  args: ValidCreateActionArgs,
+  dcr: StorageCreateActionResult
+): void {
+  dcr.inputBeef = trimInputBeef(state, args, dcr.inputs)
+}
+
 function trimInputBeef(
   state: ActionBatchPlannerState,
   args: ValidCreateActionArgs,

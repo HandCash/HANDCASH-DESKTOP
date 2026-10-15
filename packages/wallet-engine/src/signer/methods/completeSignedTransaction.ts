@@ -116,6 +116,9 @@ export async function completeSignedTransaction(
   /// //////////////////
   // Sign wallet signed inputs making transaction fully valid.
   /// //////////////////
+  const sign = async (): Promise<void> => {
+    if (!(await signManagedInputs(prior))) await prior.tx.sign()
+  }
   if (wallet.telemetry.enabled) {
     await wallet.telemetry.withSpan(
       'wallet.crypto.transaction_sign',
@@ -126,13 +129,45 @@ export async function completeSignedTransaction(
           'crypto.input_count': prior.tx.inputs.length
         }
       },
-      async () => await prior.tx.sign()
+      sign
     )
   } else {
-    await prior.tx.sign()
+    await sign()
   }
 
   return prior.tx
+}
+
+/**
+ * Sign the inputs this wallet prepared without cloning the source graph once
+ * per input. `Transaction.sign` snapshots every parent transaction for every
+ * input before it asks the template for a signature. Managed inputs already
+ * carry their amount and locking script, so the template can sign the live
+ * transaction. Anything else keeps the SDK signer.
+ */
+async function signManagedInputs(prior: PendingSignAction): Promise<boolean> {
+  const managed = new Set(prior.pdi.map(pdi => pdi.vin))
+  const pending: Array<{
+    index: number
+    sign: (tx: Transaction, inputIndex: number) => Promise<{ toUint8Array: () => Uint8Array }>
+  }> = []
+  for (let index = 0; index < prior.tx.inputs.length; index++) {
+    const template = prior.tx.inputs[index]?.unlockingScriptTemplate
+    if (template == null) continue
+    if (!managed.has(index) || typeof template.sign !== 'function') return false
+    pending.push({ index, sign: template.sign.bind(template) })
+  }
+  if (pending.length === 0) return false
+  const signed = await Promise.all(
+    pending.map(async item => ({
+      index: item.index,
+      script: await item.sign(prior.tx, item.index)
+    }))
+  )
+  for (const item of signed) {
+    prior.tx.inputs[item.index].unlockingScript = item.script as Transaction['inputs'][number]['unlockingScript']
+  }
+  return true
 }
 
 export { verifyUnlockScripts } from './verifyUnlockScripts'
