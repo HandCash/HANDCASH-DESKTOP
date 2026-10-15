@@ -105,6 +105,24 @@ describe('activityRowState', () => {
     expect(activityRowStateLabel('seen')).toBe('Seen on network')
   })
 
+  it('keeps a pending inbound leg on Receiving even when its tx was sent', () => {
+    const inbound = entry({
+      kind: 'earned',
+      method: 'receive',
+      status: 'pending',
+      txid: 'ab'.repeat(32),
+    })
+    expect(
+      activityRowState({
+        entry: inbound,
+        live: null,
+        chainProof: 'unconfirmed',
+        arcStatus: 'SEEN_ON_NETWORK',
+      }),
+    ).toBe('receiving')
+    expect(activityRowStateLabel('receiving')).toBe('Receiving')
+  })
+
   it('lets the durable verdict win over a retiring live action', () => {
     expect(
       activityRowState({

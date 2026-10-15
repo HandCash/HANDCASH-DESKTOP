@@ -812,7 +812,18 @@ export async function internalizeBrc29Payment(opts: {
   }
   const inflight = brc29InternalizeInflight.get(id)
   if (inflight) return inflight
-  const work = internalizeBrc29PaymentOnce(opts)
+  const work = (async () => {
+    // Receive custody is foreground wallet mutation. Raise priority before its
+    // first balance read so a background basket read or dead-coin census
+    // cannot enter the one Toolbox lock ahead of internalizeAction.
+    const { leaseSpendPriority } = await import('./walletCoordinator')
+    const priority = leaseSpendPriority('receive-internalize')
+    try {
+      return await internalizeBrc29PaymentOnce(opts)
+    } finally {
+      priority.release()
+    }
+  })()
   brc29InternalizeInflight.set(id, work)
   try {
     return await work

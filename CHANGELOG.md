@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.563] - 2026-10-15
+
+### Fixed
+- **A self-payment's receive stays Receiving until the coins are in the wallet.** Receive internalization takes the storage lock before a background dead-coin census can, and the inbound row no longer says Sent while that work is still running.
+
 ## [1.3.562] - 2026-10-15
 
 ### Fixed

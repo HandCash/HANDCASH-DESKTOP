@@ -26,6 +26,7 @@ import type { ArcStatus } from '../../wallet/txLifecycle'
 
 export type ActivityRowState =
   | ActionStage
+  | 'receiving'
   | 'signed'
   | 'sent'
   | 'seen'
@@ -77,6 +78,11 @@ export function activityRowState(args: {
   if (live && isStage(live.face) && !live.txid) return live.face
   if (entry.status === 'failed') return 'failed'
   if (live?.face === 'failed' && entry.status !== 'complete') return 'failed'
+  // The tx record belongs to the transaction, not to one direction of an
+  // Activity leg. A self-payment can be seen by a miner while its inbound leg
+  // is still internalizing. Calling that receive "Sent" beside a spinner says
+  // the opposite of the work that remains.
+  if (entry.kind === 'earned' && entry.status === 'pending') return 'receiving'
   if (chainProof === 'headerProven') return 'settled'
   if (arcStatus === 'SEEN_ON_NETWORK') return 'seen'
   if (
@@ -96,6 +102,7 @@ export function activityRowStateLabel(
   heights?: { minedHeight?: number | null; tipHeight?: number | null }
 ): string | null {
   if (isStage(state)) return ACTION_STAGE_LABELS[state]
+  if (state === 'receiving') return 'Receiving'
   if (state === 'settled') return null
   if (state === 'failed') return 'Failed'
   return formatSettlementLabel({

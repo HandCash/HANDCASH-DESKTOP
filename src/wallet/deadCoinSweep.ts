@@ -334,6 +334,12 @@ export async function sweepDeadCoins(runtime: WalletRuntime): Promise<DeadCoinSw
   const chain = runtime.instance.chain
   const started = Date.now()
 
+  // `probeableChange` is one storage-provider census. On a large phone wallet
+  // it held the FIFO lock for 16.5s. Check foreground send/receive priority
+  // before entering that non-interruptible call, not only before network
+  // chunks after it.
+  if (!(await waitForSpendRegion())) return { ran: false, reason: 'spendBusy' }
+  if (!runtimeIsCurrent(runtime)) return { ran: false, reason: 'accountChanged' }
   const outpoints = await probeableChange(runtime.instance)
   if (!outpoints) return { ran: false, reason: 'noStorage' }
 
