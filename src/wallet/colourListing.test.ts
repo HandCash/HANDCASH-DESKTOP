@@ -43,7 +43,7 @@ describe('BRC-162 token listing', () => {
     vi.resetModules()
   })
 
-  it('lists 162 value tips from basket bsv21', async () => {
+  it('lists 162 value tips from basket p2pft', async () => {
     const lockingScript = buildBsv21ValueLock({ layout: 'brc162',
       tokenId: TOKEN_A,
       amount: 42n,
@@ -52,7 +52,7 @@ describe('BRC-162 token listing', () => {
     const { listBsv21BinaryTokens } = await import('./token/listTips')
     const tokens = await listBsv21BinaryTokens(
       mockWallet({
-        bsv21: [
+        p2pft: [
           {
             outpoint: `${'aa'.repeat(32)}.1`,
             satoshis: 1,

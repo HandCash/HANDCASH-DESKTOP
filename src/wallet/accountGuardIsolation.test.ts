@@ -42,7 +42,7 @@ function heldTipWallet(args: {
     wallet: {
       listOutputs: async (q: { basket?: string }) => ({
         outputs:
-          q.basket === 'bsv21'
+          q.basket === 'p2pft'
             ? [
                 {
                   outpoint: args.outpoint,

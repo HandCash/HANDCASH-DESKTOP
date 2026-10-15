@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.557] - 2026-10-15
+
+### Fixed
+- **The full regression suite now uses the live `p2pft` filing contract.** Two legacy fixtures still answered only the retired `bsv21` basket, although production correctly reads `p2pft`.
+
 ## [1.3.556] - 2026-10-15
 
 ### Fixed
