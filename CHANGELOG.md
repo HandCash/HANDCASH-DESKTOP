@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.558] - 2026-10-15
+
+### Fixed
+- **A p2pft send now reads only the token being sent.** Send and Combine query the `p2pft:<tokenId>` filing tag instead of decoding every fungible output in the wallet. Legacy-tagged rows already moved into `p2pft` remain spendable. Recipient-proof remainder work is computed once per candidate tip, and a failed filing read is reported instead of looking like an empty balance.
+
 ## [1.3.557] - 2026-10-15
 
 ### Fixed

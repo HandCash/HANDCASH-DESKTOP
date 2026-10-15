@@ -47,7 +47,10 @@ import {
   tipFromBsv21Script,
   type Bsv21SendTip,
 } from './sendPlan'
-import { listBsv21BinaryTips, listBsv21BinaryTokens } from './listTips'
+import {
+  listBsv21BinaryTipsForToken,
+  listBsv21BinaryTokens,
+} from './listTips'
 import { mergeIconTxIntoBeef } from './icons/resolve'
 import {
   EMPTY_INPUT_BEEF,
@@ -148,10 +151,10 @@ export function chooseBsv21ValueTipPath(
 
 /** Every tip outpoint the cached card of this token shows. */
 async function cardTipOutpoints(tokenId: string): Promise<Set<string>> {
-  const { getCachedFungibles } = await import('./list')
+  const { getFungible } = await import('./list')
   const outpoints = new Set<string>()
-  for (const token of getCachedFungibles()) {
-    if (normalizeTokenId(token.tokenId) !== tokenId) continue
+  const token = getFungible(tokenId)
+  if (token) {
     if (token.outpoint) outpoints.add(token.outpoint)
     for (const outpoint of token.tipOutpoints ?? []) outpoints.add(outpoint)
     for (const tip of token.heldTips ?? []) outpoints.add(tip.outpoint)
@@ -483,14 +486,14 @@ export async function sendBsv21Tokens(args: {
   const tipsStartedAt = Date.now()
   const { walletRegionsIdle } = await import('../walletCoordinator')
   const walletBusy = !walletRegionsIdle()
-  let listed162: Awaited<ReturnType<typeof listBsv21BinaryTips>> = []
+  let listed162: Awaited<ReturnType<typeof listBsv21BinaryTipsForToken>> = []
   let fromBasket: Bsv21SendTip[] = []
   if ((args.tips ?? []).length === 0 && walletBusy) {
     fromBasket = await localP2pftTips(active, tokenId)
     const coveredNow = fromBasket.reduce((sum, t) => sum + t.amt, 0n)
     if (coveredNow >= BigInt(args.amount)) {
       console.info(
-        `[p2pft] send tips from local bodies ${fromBasket.length} in ${Date.now() - tipsStartedAt}ms — wallet busy`,
+        `[p2pft] send tips from token index ${fromBasket.length} in ${Date.now() - tipsStartedAt}ms — wallet busy`,
       )
     } else {
       console.info(
@@ -500,7 +503,7 @@ export async function sendBsv21Tokens(args: {
     }
   }
   if (fromBasket.length === 0) {
-    listed162 = await listBsv21BinaryTips(active, {
+    listed162 = await listBsv21BinaryTipsForToken(active, tokenId, {
       includeCustomInstructions: false,
     })
   }
@@ -547,7 +550,7 @@ export async function sendBsv21Tokens(args: {
     if (shownOnly.length > 0) {
       const { reconcileNow } = await import('../holdingsReconcile')
       await reconcileNow('token', shownOnly)
-      listed162 = await listBsv21BinaryTips(active, {
+      listed162 = await listBsv21BinaryTipsForToken(active, tokenId, {
         includeCustomInstructions: false,
       })
       const after = tipsOfToken(listed162)
@@ -586,20 +589,26 @@ export async function sendBsv21Tokens(args: {
         ? new Set(provenTokenOutpoints(tokenId))
         : new Set<string>()
   const { peekSessionBeef } = await import('../beefCache')
-  const plan = planBsv21Send({
-    tokenId,
-    amount: BigInt(args.amount),
-    tips: (fromArgs.length ? fromArgs : fromBasket).map((tip) => ({
-      ...tip,
-      bound: tokenTipBound(tip.outpoint, tokenId),
-    })),
-    remainder: (outpoint) =>
+  const candidateTips = fromArgs.length ? fromArgs : fromBasket
+  const remainderByOutpoint = new Map(
+    candidateTips.map((tip) => [
+      tip.outpoint,
       tokenWalkRemainderFromSession({
-        outpoint,
+        outpoint: tip.outpoint,
         tokenId,
         stopAt: recipientFrontier,
         peek: peekSessionBeef,
       }),
+    ]),
+  )
+  const plan = planBsv21Send({
+    tokenId,
+    amount: BigInt(args.amount),
+    tips: candidateTips.map((tip) => ({
+      ...tip,
+      bound: tokenTipBound(tip.outpoint, tokenId),
+    })),
+    remainder: (outpoint) => remainderByOutpoint.get(outpoint) ?? null,
   })
   const selected = plan.selected
   const change = plan.changeAmt
@@ -1306,7 +1315,7 @@ export async function combineBsv21Tips(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  const listed162 = await listBsv21BinaryTips(active)
+  const listed162 = await listBsv21BinaryTipsForToken(active, tokenId)
   const mine = listed162.filter(
     (t) =>
       t.tokenId === tokenId && !!t.lockingScript && !!decodeBsv21Binary(t.lockingScript),

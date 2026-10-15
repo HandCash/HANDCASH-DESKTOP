@@ -574,6 +574,48 @@ export async function listBsv21BinaryTips(
   return decodeHeldRows(wallet, rows, (row) => decodeListedBsv21Tip(row, wallet.identityKey))
 }
 
+/**
+ * Read one token's filed tips by tag. Send/combine paths use this instead of
+ * decoding every p2pft output the wallet has ever held.
+ */
+export async function listBsv21BinaryTipsForToken(
+  wallet: ActiveWallet,
+  tokenId: string,
+  opts: { includeCustomInstructions?: boolean } = {},
+): Promise<Bsv21Utxo[]> {
+  const id = normalizeTokenId(tokenId)
+  if (!id) return []
+  const readStartedAt = Date.now()
+  const listed = await readTokenFiling(
+    wallet,
+    async (basket) => {
+      const rows = await Promise.all(
+        [`p2pft:${id}`, `bsv21:${id}`].map((tag) =>
+          listBasketTips(wallet, basket, {
+            includeCustomInstructions: opts.includeCustomInstructions,
+            tags: [tag],
+            strict: true,
+          }),
+        ),
+      )
+      const seen = new Set<string>()
+      return rows.flat().filter((row) => {
+        const key = row.outpoint?.trim().toLowerCase()
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    },
+    (row) => row.outpoint,
+  )
+  reportPhase('token-tip-read', readStartedAt, `${listed.length} row(s)`)
+  const rows = await withTokenScripts(wallet, listed)
+  return decodeHeldRows(wallet, rows, (row) => {
+    const tip = decodeListedBsv21Tip(row, wallet.identityKey)
+    return tip && normalizeTokenId(tip.tokenId) === id ? tip : null
+  })
+}
+
 /** Rows per basket page for the held-tokens projection. */
 const HELD_PAGE_SIZE = 1000
 
@@ -692,7 +734,12 @@ async function withDeployCaps(
 async function listBasketTips(
   wallet: ActiveWallet,
   basket: string,
-  opts: { scripts?: boolean; includeCustomInstructions?: boolean } = {},
+  opts: {
+    scripts?: boolean
+    includeCustomInstructions?: boolean
+    tags?: string[]
+    strict?: boolean
+  } = {},
 ): Promise<ListedOutput[]> {
   try {
     const listed = await listOutputsInSlices(
@@ -704,13 +751,17 @@ async function listBasketTips(
           ...(opts.scripts === false ? {} : { include: 'locking scripts' }),
           includeCustomInstructions: opts.includeCustomInstructions !== false,
           includeTags: true,
+          ...(opts.tags?.length
+            ? { tags: opts.tags, tagQueryMode: 'all' as const }
+            : {}),
           seekPermission: false,
         }) as Promise<{ outputs?: ListedOutput[] }>,
       { limit: 1000, offset: 0 },
       { subRows: 100 },
     )
     return listed.outputs
-  } catch {
+  } catch (error) {
+    if (opts.strict) throw error
     return []
   }
 }

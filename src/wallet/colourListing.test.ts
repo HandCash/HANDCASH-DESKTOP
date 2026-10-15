@@ -74,6 +74,60 @@ describe('BRC-162 token listing', () => {
     expect(tokens[0]!.amt).toBe('42')
     expect(tokens[0]!.sym).toBe('GOLD')
   })
+
+  it('reads one token by filing tag instead of scanning the basket', async () => {
+    const lockingScript = buildBsv21ValueLock({
+      layout: 'brc162',
+      tokenId: TOKEN_A,
+      amount: 42n,
+      address: ADDR,
+    })
+    const calls: Array<{ basket?: string; tags?: string[] }> = []
+    const wallet = {
+      identityKey: '',
+      wallet: {
+        listOutputs: async (args: { basket?: string; tags?: string[] }) => {
+          calls.push(args)
+          return {
+            outputs:
+              args.tags?.[0] === `p2pft:${TOKEN_A}`
+                ? [{
+                    outpoint: `${'aa'.repeat(32)}.1`,
+                    satoshis: 1,
+                    tags: ['p2pft', `p2pft:${TOKEN_A}`],
+                    lockingScript,
+                  }]
+                : [],
+          }
+        },
+      },
+    } as never
+    const { listBsv21BinaryTipsForToken } = await import('./token/listTips')
+
+    const tips = await listBsv21BinaryTipsForToken(wallet, TOKEN_A)
+
+    expect(tips).toHaveLength(1)
+    expect(calls.map((call) => call.tags?.[0])).toEqual([
+      `p2pft:${TOKEN_A}`,
+      `bsv21:${TOKEN_A}`,
+    ])
+    expect(calls.every((call) => call.basket === 'p2pft')).toBe(true)
+  })
+
+  it('does not turn a failed send-path filing read into an empty balance', async () => {
+    const wallet = {
+      wallet: {
+        listOutputs: async () => {
+          throw new Error('storage unavailable')
+        },
+      },
+    } as never
+    const { listBsv21BinaryTipsForToken } = await import('./token/listTips')
+
+    await expect(listBsv21BinaryTipsForToken(wallet, TOKEN_A)).rejects.toThrow(
+      'storage unavailable',
+    )
+  })
 })
 
 

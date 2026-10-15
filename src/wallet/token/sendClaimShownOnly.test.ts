@@ -37,6 +37,7 @@ const listBsv21BinaryTips = vi.fn(async () =>
 
 vi.mock('./listTips', () => ({
   listBsv21BinaryTips: (...args: unknown[]) => listBsv21BinaryTips(...args),
+  listBsv21BinaryTipsForToken: (...args: unknown[]) => listBsv21BinaryTips(...args),
   listBsv21BinaryTokens: async () => [],
 }))
 
@@ -46,6 +47,14 @@ vi.mock('../walletCoordinator', async (importActual) => ({
 }))
 
 vi.mock('./list', () => ({
+  getFungible: () => ({
+    tokenId: TOKEN,
+    sym: 'REF',
+    amt: '800',
+    dec: 0,
+    utxoCount: 1,
+    outpoint: TIP,
+  }),
   getCachedFungibles: () => [
     { tokenId: TOKEN, sym: 'REF', amt: '800', dec: 0, utxoCount: 1, outpoint: TIP },
   ],
