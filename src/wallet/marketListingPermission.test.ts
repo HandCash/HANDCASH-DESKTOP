@@ -17,6 +17,27 @@ describe('market listing permission summary', () => {
     expect(summary.itemOutpoint).toBe(`${'b'.repeat(64)}.0`)
   })
 
+  it('names a token listing as p2pft and keeps its id and icon', () => {
+    const origin = `${'a'.repeat(64)}_0`
+    const icon = `${'c'.repeat(64)}_1`
+    const summary = summarizeAction('createMarketListingAdvert', {
+      outpoint: `${'b'.repeat(64)}_0`,
+      assetType: 'bsv21',
+      sym: 'KING',
+      origin,
+      icon,
+      listAmt: 240,
+      priceSats: 57600,
+    })
+    expect(summary.summary).toContain('p2pft')
+    expect(summary.summary).not.toMatch(/BSV-21/i)
+    expect(summary.tokenId).toBe(`${'a'.repeat(64)}.0`)
+    expect(summary.itemIcon).toBe(`${'c'.repeat(64)}.1`)
+    expect(summary.itemName).toBe('KING')
+    expect(summary.previewKind).toBe('token')
+    expect(summary.details?.join('\n')).toContain(`${'a'.repeat(64)}.0`)
+  })
+
   it('ignores anything the app says about the item itself', () => {
     const summary = summarizeAction('createMarketListingAdvert', {
       outpoint: `${'b'.repeat(64)}_0`,

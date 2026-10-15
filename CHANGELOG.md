@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.554] - 2026-10-15
+
+### Fixed
+- **A p2pft send no longer looks like the tap did nothing.** Activity and the status pill show Sending before any basket read. When the wallet is already busy, the amount is planned from the token's local transaction bodies instead of waiting on `listOutputs`. The one-time move of old `bsv21` rows into `p2pft` waits until the wallet is idle.
+- **Listing one item reads that output.** The selected outpoint is loaded directly. The approval names a token listing as p2pft and keeps its id and icon.
+
 ## [1.3.553] - 2026-10-15
 
 ### Fixed

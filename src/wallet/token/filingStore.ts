@@ -70,7 +70,10 @@ export async function readTokenFiling<T>(
   read: (basket: string) => Promise<T[]>,
   outpoint: (row: T) => string | undefined,
 ): Promise<T[]> {
-  await moveLegacyTokenFiling(wallet)
+  const { walletRegionsIdle } = await import('../walletCoordinator')
+  // A send waiting on this read must not start the one-time basket move.
+  // Legacy `bsv21` rows are still listed below until the wallet is idle.
+  if (walletRegionsIdle()) await moveLegacyTokenFiling(wallet)
   const current = await readOne(P2PFT_BASKET, read)
   const legacy = await readOne(LEGACY_TOKEN_BASKET, read)
   return mergeFilingRows([...current, ...legacy], outpoint)

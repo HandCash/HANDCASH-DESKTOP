@@ -1123,19 +1123,23 @@ export function summarizeAction(method: string, args: unknown): {
       isToken && Number.isSafeInteger(Number(body.listAmt))
         ? `${Number(body.listAmt).toLocaleString()} `
         : ''
+    const tokenId = isToken ? normalizeItemOutpoint(body.origin) ?? undefined : undefined
+    const itemIcon = isToken ? normalizeItemOutpoint(body.icon) ?? undefined : undefined
     return {
       title: `List ${units}${label} for sale`,
       summary: isToken
-        ? 'Create an on-chain BRC-48 offer for this BSV-21 token'
+        ? 'Create an on-chain offer for this p2pft token'
         : 'Create an on-chain BRC-48 offer for this collectable',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
       itemOutpoint: normalizeItemOutpoint(body.outpoint) ?? undefined,
-      tokenId: isToken
-        ? (typeof body.origin === 'string' ? body.origin : undefined)
-        : undefined,
+      tokenId,
+      itemName: isToken ? label : undefined,
+      itemIcon,
+      previewKind: isToken ? 'token' : 'collectable',
       details: [
         price ? `Price ${price.toLocaleString()} sats` : 'Price unset',
+        ...(tokenId ? [`Id ${tokenId}`] : []),
       ],
     }
   }

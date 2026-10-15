@@ -7,6 +7,7 @@ import {
   Spend,
   Transaction,
   UnlockingScript,
+  Utils,
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -48,6 +49,9 @@ const listingHarness = vi.hoisted(() => ({
   address: '',
   identityKey: '',
   listOutputsCalls: [] as Array<{ basket?: string; tags?: string[]; limit?: number }>,
+  storage: null as null | {
+    runAsStorageProvider: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T>
+  },
   signAction: vi.fn(async (): Promise<{ txid?: string; tx?: number[] }> => {
     throw new Error('signAction not staged')
   }),
@@ -84,6 +88,7 @@ vi.mock('./session', () => ({
       createAction: listingHarness.createAction,
       signAction: listingHarness.signAction,
       abortAction: listingHarness.abortAction,
+      storage: listingHarness.storage ?? undefined,
     },
   }),
 }))
@@ -423,6 +428,46 @@ describe('162 market list createAction lock', () => {
     }
   }
 
+  /** The tip `listingHarness.listed` names, answered by txid and vout. */
+  function holdListedTip() {
+    const listed = listingHarness.listed as {
+      outpoint: string
+      satoshis?: number
+      lockingScript?: string
+      customInstructions?: string
+      tags?: string[]
+    } | null
+    if (!listed) return
+    const [txid, voutText] = listed.outpoint.split('.')
+    listingHarness.storage = {
+      runAsStorageProvider: async (fn) =>
+        fn({
+          findUserByIdentityKey: async () => ({ userId: 1 }),
+          findOutputBaskets: async () => [{ basketId: 4, name: 'bsv21' }],
+          findOutputs: async (args: { partial: { txid: string; vout: number } }) => {
+            if (args.partial.txid !== txid || args.partial.vout !== Number(voutText)) return []
+            return [
+              {
+                outputId: 1,
+                basketId: 4,
+                spendable: true,
+                satoshis: listed.satoshis ?? 1,
+                customInstructions: listed.customInstructions,
+                lockingScript: listed.lockingScript
+                  ? [...Utils.toArray(listed.lockingScript, 'hex')]
+                  : undefined,
+              },
+            ]
+          },
+          findOutputTagMaps: async () =>
+            (listed.tags ?? []).map((_, index) => ({ outputTagId: index + 1, isDeleted: false })),
+          findOutputTags: async (args: { partial: { outputTagId: number } }) => [
+            { tag: listed.tags?.[args.partial.outputTagId - 1], isDeleted: false },
+          ],
+        }),
+    }
+  }
+
   beforeEach(() => {
     listingHarness.createAction.mockClear()
     listingHarness.createAction.mockImplementation(async () => {
@@ -431,12 +476,59 @@ describe('162 market list createAction lock', () => {
     listingHarness.listed = null
     listingHarness.beef = null
     listingHarness.listOutputsCalls.length = 0
+    listingHarness.storage = null
     listingHarness.signAction.mockReset().mockRejectedValue(new Error('signAction not staged'))
     listingHarness.abortAction.mockClear()
     listingHarness.registerSignedSend.mockClear()
     listingHarness.startSignedSendPropagation.mockClear()
     listingHarness.address = seller.toAddress()
     listingHarness.identityKey = seller.toPublicKey().toString()
+  })
+
+  it('reads the selected tip by outpoint instead of the basket', async () => {
+    const minted = mintTip(60n, 1)
+    const dotted = minted.tip.replace('_', '.')
+    const [txid, voutText] = dotted.split('.')
+    const findOutputs = vi.fn(async () => [
+      {
+        outputId: 11,
+        basketId: 4,
+        spendable: true,
+        satoshis: 1,
+        customInstructions: JSON.stringify({
+          p: 'bsv-20',
+          op: 'transfer',
+          id: minted.tokenId,
+          amt: '60',
+        }),
+        lockingScript: [...Utils.toArray(minted.lockingScriptHex, 'hex')],
+      },
+    ])
+    listingHarness.beef = minted.beef
+    listingHarness.storage = {
+      runAsStorageProvider: async (fn) =>
+        fn({
+          findUserByIdentityKey: async () => ({ userId: 7 }),
+          findOutputBaskets: async () => [{ basketId: 4, name: 'bsv21' }],
+          findOutputs,
+          findOutputTagMaps: async () => [{ outputTagId: 2, isDeleted: false }],
+          findOutputTags: async () => [
+            { tag: `bsv21:${minted.tokenId}`, isDeleted: false },
+          ],
+        }),
+    }
+    await expect(
+      createMarketListingAdvert({
+        outpoint: minted.tip,
+        assetType: 'bsv21',
+        priceSats: 100,
+      }),
+    ).rejects.toThrow(/stop-after-createAction/)
+    expect(findOutputs).toHaveBeenCalledWith({
+      partial: { userId: 7, txid, vout: Number(voutText) },
+      noScript: false,
+    })
+    expect(listingHarness.listOutputsCalls).toEqual([])
   })
 
   it('reads the held tip by origin tag instead of scanning the whole basket', async () => {
@@ -536,6 +628,7 @@ describe('162 market list createAction lock', () => {
         amt: '60',
       }),
     }
+    holdListedTip()
     await expect(
       createMarketListingAdvert({ outpoint: minted.tip, priceSats: 100 }),
     ).rejects.toThrow(/stop-after-createAction/)
@@ -577,6 +670,7 @@ describe('162 market list createAction lock', () => {
         amt: '69000',
       }),
     }
+    holdListedTip()
     await expect(
       createMarketListingAdvert({
         outpoint: minted.tip,
@@ -612,6 +706,7 @@ describe('162 market list createAction lock', () => {
         tags: ['bsv21', `bsv21:${minted.tokenId}`, 'amt:69000'],
         customInstructions: JSON.stringify({ p: 'bsv-20', op: 'transfer', id: minted.tokenId, amt: '69000' }),
       }
+      holdListedTip()
       const [tipTxid, tipVout] = minted.tip.split('_') as [string, string]
       const split = new Transaction()
       listingHarness.createAction.mockImplementationOnce((async (args: {

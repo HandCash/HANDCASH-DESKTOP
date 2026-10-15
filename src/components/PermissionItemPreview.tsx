@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { tokenIssuerAsset, type IssuerAsset } from '../hooks/useIssuerView'
 import { getCachedCollectables } from '../wallet/collectables'
-import { getCachedFungibles, getTokenIconDataUrl } from '../wallet/token'
+import { getCachedFungibles, getTokenIconDataUrl, shortTokenLabel } from '../wallet/token'
 import { AssetIssuers } from './AssetIssuers'
 import { DeferredImage } from './DeferredImage'
 import { CollectablesIcon, InventoryIcon } from './icons'
@@ -60,7 +60,7 @@ function resolvePreview(
         hints?.itemImageUrl ||
         (hints?.itemIcon ? getTokenIconDataUrl(hints.itemIcon) : undefined),
       kind: 'token',
-      subtitle: 'Token',
+      subtitle: id ? `p2pft · ${shortTokenLabel(id)}` : 'p2pft',
       issuer: tokenIssuerAsset(token),
     }
   }
@@ -70,7 +70,12 @@ function resolvePreview(
       name: hints.itemName,
       imageUrl: hints.itemImageUrl || iconUrl,
       kind: hints.previewKind ?? (id ? 'token' : 'collectable'),
-      subtitle: hints.previewKind === 'token' ? 'Token' : 'Collectable',
+      subtitle:
+        hints.previewKind === 'token'
+          ? id
+            ? `p2pft · ${shortTokenLabel(id)}`
+            : 'p2pft'
+          : 'Collectable',
     }
   }
   return null

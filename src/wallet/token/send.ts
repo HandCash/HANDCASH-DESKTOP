@@ -225,6 +225,54 @@ export async function recoverBsv21TipsFromLocalBeef(
 }
 
 /**
+ * Scripts already in memory or the durable BEEF cache. No toolbox lock and
+ * no indexer. Used when a send would otherwise queue behind a basket scan.
+ */
+async function localP2pftTips(
+  wallet: ActiveWallet,
+  tokenId: string,
+): Promise<Bsv21SendTip[]> {
+  const { getLocalBeefForTxid, peekSessionBeef } = await import('../beefCache')
+  const { isItemSent } = await import('../sentItemGuard')
+  const want = requireTokenId(tokenId)
+  const tips: Bsv21SendTip[] = []
+  for (const op of await cardTipOutpoints(want)) {
+    const wire = wireOutpoint(op)
+    if (isItemSent(wire)) continue
+    const [txid, voutRaw] = wire.split('.')
+    if (!txid) continue
+    const scriptAt = (
+      beef: {
+        findTxid: (id: string) => {
+          tx?: { outputs?: Array<{ lockingScript?: { toHex: () => string } }> }
+        } | undefined
+      } | null,
+    ): string | undefined =>
+      beef
+        ?.findTxid(txid.toLowerCase())
+        ?.tx?.outputs?.[Number(voutRaw)]
+        ?.lockingScript?.toHex()
+    const hex =
+      scriptAt(peekSessionBeef(txid)) ??
+      scriptAt(await getLocalBeefForTxid(wallet, txid, { toolbox: false }))
+    if (!hex || !decodeBsv21Binary(hex)) continue
+    const decoded = tipFromBsv21Script({
+      outpoint: wire,
+      lockingScript: hex,
+      satoshis: 1,
+    })
+    if (!decoded || normalizeTokenId(decoded.tokenId) !== want) continue
+    tips.push({
+      outpoint: decoded.outpoint,
+      tokenId: decoded.tokenId,
+      amt: decoded.amt,
+      lockingScript: hex,
+    })
+  }
+  return tips
+}
+
+/**
  * Complete a staged BSV-21 transfer with the wallet root P2PKH key.
  */
 export async function signBsv21TipTransfer(args: {
@@ -393,10 +441,63 @@ export async function sendBsv21Tokens(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  const tipsStartedAt = Date.now()
-  let listed162 = await listBsv21BinaryTips(active, {
-    includeCustomInstructions: false,
+  setPaymentProgress(
+    'preparing',
+    args.skipPeerNotify
+      ? 'Waiting to combine tips'
+      : `Sending ${args.sym?.trim() || 'token'}`,
+    args.tips?.[0]?.outpoint ?? null,
+    undefined,
+    'token_transfer',
+  )
+  // Activity and the status pill update before any basket read. On a phone
+  // the send screen is already gone, and a storage lock used to leave this
+  // looking like the tap did nothing.
+  const outboundPending = beginPendingSend({
+    to: args.toAddress,
+    sats: 1,
+    friendLabel: args.friendLabel ?? null,
   })
+  noteOutboundSendPending({
+    pendingId: outboundPending.id,
+    sats: 1,
+    to: args.toAddress,
+    friendLabel: args.friendLabel ?? null,
+    recipientIdentityKey: args.recipientIdentityKey ?? null,
+    item: {
+      name: args.sym?.trim() || 'Token',
+      origin: tokenId,
+      tokenId,
+      amt: String(args.amount),
+      ...(args.dec != null ? { dec: args.dec } : {}),
+    },
+  })
+
+  try {
+  const tipsStartedAt = Date.now()
+  const { walletRegionsIdle } = await import('../walletCoordinator')
+  const walletBusy = !walletRegionsIdle()
+  let listed162: Awaited<ReturnType<typeof listBsv21BinaryTips>> = []
+  let fromBasket: Bsv21SendTip[] = []
+  if ((args.tips ?? []).length === 0 && walletBusy) {
+    fromBasket = await localP2pftTips(active, tokenId)
+    const coveredNow = fromBasket.reduce((sum, t) => sum + t.amt, 0n)
+    if (coveredNow >= BigInt(args.amount)) {
+      console.info(
+        `[p2pft] send tips from local bodies ${fromBasket.length} in ${Date.now() - tipsStartedAt}ms — wallet busy`,
+      )
+    } else {
+      console.info(
+        `[p2pft] local bodies cover ${coveredNow} of ${args.amount} — listing p2pft`,
+      )
+      fromBasket = []
+    }
+  }
+  if (fromBasket.length === 0) {
+    listed162 = await listBsv21BinaryTips(active, {
+      includeCustomInstructions: false,
+    })
+  }
   const tipsOfToken = (listed: typeof listed162): Bsv21SendTip[] =>
     listed
       .filter(
@@ -423,7 +524,7 @@ export async function sendBsv21Tokens(args: {
     }
     return []
   })
-  let fromBasket = tipsOfToken(listed162)
+  if (fromBasket.length === 0) fromBasket = tipsOfToken(listed162)
   let listedForToken = fromBasket.length
   if (fromArgs.length === 0 && fromBasket.length === 0) {
     fromBasket.push(...(await recoverBsv21TipsFromLocalBeef(active, tokenId)))
@@ -520,11 +621,6 @@ export async function sendBsv21Tokens(args: {
   setCollectableVerifyWalkDeferred(true)
   const spendPriority = leaseSpendPriority('send-fungible')
   const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
-  const outboundPending = beginPendingSend({
-    to: args.toAddress,
-    sats: selected.length,
-    friendLabel: args.friendLabel ?? null,
-  })
   const activityItem = {
     name: sym,
     origin: tokenId,
@@ -1143,6 +1239,18 @@ export async function sendBsv21Tokens(args: {
     spendPriority.release()
     setCollectableVerifyWalkDeferred(false)
     resumeCollectableVerifyWalk()
+  }
+  } catch (err) {
+    if (
+      failOutboundSendPending({
+        pendingId: outboundPending.id,
+        reason: err instanceof Error ? err.message : String(err),
+      })
+    ) {
+      clearPendingSend(outboundPending.id)
+      clearPaymentProgress()
+    }
+    throw err
   }
 }
 export async function combineBsv21Tips(args: {

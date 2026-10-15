@@ -8,7 +8,8 @@ const TIP = `${'cd'.repeat(32)}.1`
 const LOCK = buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN, amount: 800n, address: ADDR })
 
 const basket = { claimed: false, claimable: true, listsLock: true }
-const getLocalBeefForTxid = vi.fn(async (_wallet: unknown, _txid: string) => ({
+const regions = { idle: true }
+const getLocalBeefForTxid = vi.fn(async (_wallet: unknown, _txid: string, _opts?: { toolbox?: boolean }) => ({
   findTxid: () => ({
     tx: {
       outputs: [{ lockingScript: { toHex: () => '51' } }, { lockingScript: { toHex: () => LOCK } }],
@@ -28,12 +29,20 @@ vi.mock('../session', () => ({
   }),
 }))
 
+const listBsv21BinaryTips = vi.fn(async () =>
+  basket.claimed && basket.listsLock
+    ? [{ outpoint: TIP, tokenId: TOKEN, amt: '800', dec: 0, lockingScript: LOCK }]
+    : [],
+)
+
 vi.mock('./listTips', () => ({
-  listBsv21BinaryTips: async () =>
-    basket.claimed && basket.listsLock
-      ? [{ outpoint: TIP, tokenId: TOKEN, amt: '800', dec: 0, lockingScript: LOCK }]
-      : [],
+  listBsv21BinaryTips: (...args: unknown[]) => listBsv21BinaryTips(...args),
   listBsv21BinaryTokens: async () => [],
+}))
+
+vi.mock('../walletCoordinator', async (importActual) => ({
+  ...(await importActual<typeof import('../walletCoordinator')>()),
+  walletRegionsIdle: () => regions.idle,
 }))
 
 vi.mock('./list', () => ({
@@ -52,7 +61,14 @@ vi.mock('../staleOutputRelease', () => ({
 
 vi.mock('../beefCache', async (importActual) => ({
   ...(await importActual<typeof import('../beefCache')>()),
-  getLocalBeefForTxid: (wallet: unknown, txid: string) => getLocalBeefForTxid(wallet, txid),
+  getLocalBeefForTxid: (
+    wallet: unknown,
+    txid: string,
+    opts?: { toolbox?: boolean },
+  ) =>
+    opts === undefined
+      ? getLocalBeefForTxid(wallet, txid)
+      : getLocalBeefForTxid(wallet, txid, opts),
   peekSessionBeef: () => undefined,
 }))
 
@@ -61,8 +77,10 @@ describe('token send over a tip only its card shows', () => {
     basket.claimed = false
     basket.claimable = true
     basket.listsLock = true
+    regions.idle = true
     reconcileNow.mockClear()
     getLocalBeefForTxid.mockClear()
+    listBsv21BinaryTips.mockClear()
   })
 
   it('reads the claimed tip from local BEEF when its row lists without the 162 lock', async () => {
@@ -90,6 +108,19 @@ describe('token send over a tip only its card shows', () => {
       sendBsv21Tokens({ tokenId: TOKEN, amount: 200, toAddress: ADDR }),
     ).rejects.toThrow(/only 0 available/)
     expect(reconcileNow).toHaveBeenCalledTimes(1)
+  })
+
+  it('plans a p2pft send from local bodies when the wallet is busy', async () => {
+    regions.idle = false
+    const { sendBsv21Tokens } = await import('./send')
+    await expect(
+      sendBsv21Tokens({ tokenId: TOKEN, amount: 200, toAddress: ADDR }),
+    ).rejects.not.toThrow(/only 0 available/)
+    expect(listBsv21BinaryTips).not.toHaveBeenCalled()
+    expect(reconcileNow).not.toHaveBeenCalled()
+    expect(getLocalBeefForTxid).toHaveBeenCalledWith(expect.anything(), TIP.split('.')[0], {
+      toolbox: false,
+    })
   })
 
   it('never asks the reconcile when the basket covers the amount', async () => {

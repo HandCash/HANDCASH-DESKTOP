@@ -49,6 +49,7 @@ import {
 } from './token'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
 import { getBeefForTxidCached } from './beefCache'
+import { withStorageLockLabel } from './storageLockTrace'
 import { getProvenVerdict } from './provenCache'
 import { toUnderscoreOutpoint } from './outpointFormat'
 import {
@@ -1047,10 +1048,126 @@ function parseCustomInstructions(raw: unknown): Record<string, unknown> {
   }
 }
 
+const LISTING_BASKETS = new Set(['1sat', 'bsv21'])
+
+type ListedTip = {
+  outpoint: string
+  satoshis?: number
+  tags?: string[]
+  customInstructions?: string
+  lockingScript?: string
+}
+
+type HeldListingRow = {
+  outputId?: number
+  basketId?: number | null
+  spendable?: boolean
+  satoshis?: number
+  customInstructions?: string | null
+  lockingScript?: number[] | Uint8Array | null
+}
+
+type HeldListingStorage = {
+  findUserByIdentityKey?: (identityKey: string) => Promise<{ userId: number } | undefined>
+  findOutputBaskets?: (args: {
+    partial: { basketId?: number }
+  }) => Promise<Array<{ basketId: number; name?: string }>>
+  findOutputs?: (args: {
+    partial: { userId: number; txid: string; vout: number }
+    noScript?: boolean
+  }) => Promise<HeldListingRow[]>
+  findOutputTagMaps?: (args: {
+    partial: { outputId: number }
+  }) => Promise<Array<{ outputTagId: number; isDeleted?: boolean }>>
+  findOutputTags?: (args: {
+    partial: { outputTagId: number }
+  }) => Promise<Array<{ tag?: string; isDeleted?: boolean }>>
+}
+
+function lockingScriptHexFromBytes(
+  raw: number[] | Uint8Array | null | undefined,
+): string | undefined {
+  if (!raw || raw.length === 0) return undefined
+  return Utils.toHex(raw instanceof Uint8Array ? Array.from(raw) : raw)
+}
+
 /**
- * Dotted origin for a held tip, read from local caches only. Items are tagged
- * `origin:<txid.vout>` on every ingest path, so a known origin turns the basket
- * read below into a one-row query.
+ * The tip the seller selected, read by its txid and output index.
+ *
+ * A basket `listOutputs` with scripts and remittance walks every held item.
+ * On a ~1,000-item wallet that hold ran past 70s and the listing was abandoned
+ * before it signed. The selected outpoint is already known, so the row is one
+ * indexed read plus that row's own tags.
+ */
+async function readListedOutputByOutpoint(
+  active: ActiveWallet,
+  outpoint: string,
+  preferred: Array<'1sat' | 'bsv21'>,
+): Promise<ListedTip | 'unsupported' | undefined> {
+  const dotted = outpoint.replace('_', '.')
+  const [txid, voutText] = dotted.split('.')
+  const vout = Number(voutText)
+  const storage = (
+    active.wallet as {
+      storage?: {
+        runAsStorageProvider?: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T>
+      }
+    }
+  ).storage
+  if (!storage?.runAsStorageProvider || !txid || !Number.isInteger(vout)) return 'unsupported'
+  return withStorageLockLabel('listedOutput', () =>
+    storage.runAsStorageProvider!(async (raw) => {
+      const sp = raw as HeldListingStorage
+      if (!sp.findUserByIdentityKey || !sp.findOutputs || !sp.findOutputBaskets) {
+        return 'unsupported' as const
+      }
+      const user = await sp.findUserByIdentityKey(active.identityKey)
+      if (!user) return undefined
+      const rows = await sp.findOutputs({
+        partial: { userId: user.userId, txid, vout },
+        noScript: false,
+      })
+      const basketName = new Map<number, string>()
+      for (const row of rows) {
+        if (row.basketId == null || basketName.has(row.basketId)) continue
+        const [basket] = await sp.findOutputBaskets({ partial: { basketId: row.basketId } })
+        if (basket?.name) basketName.set(row.basketId, basket.name)
+      }
+      const rank = (name: string) => {
+        const at = preferred.indexOf(name as '1sat' | 'bsv21')
+        return at < 0 ? preferred.length : at
+      }
+      const hit = rows
+        .filter((row) => row.spendable && LISTING_BASKETS.has(basketName.get(row.basketId ?? -1) ?? ''))
+        .sort(
+          (a, b) =>
+            rank(basketName.get(a.basketId ?? -1) ?? '') -
+            rank(basketName.get(b.basketId ?? -1) ?? ''),
+        )[0]
+      if (!hit) return undefined
+      const tags: string[] = []
+      if (sp.findOutputTagMaps && sp.findOutputTags && hit.outputId != null) {
+        const maps = await sp.findOutputTagMaps({ partial: { outputId: hit.outputId } })
+        for (const map of maps) {
+          if (map.isDeleted) continue
+          const [tag] = await sp.findOutputTags({ partial: { outputTagId: map.outputTagId } })
+          if (tag && !tag.isDeleted && tag.tag) tags.push(tag.tag)
+        }
+      }
+      return {
+        outpoint: dotted,
+        satoshis: hit.satoshis,
+        tags,
+        customInstructions: hit.customInstructions ?? undefined,
+        lockingScript: lockingScriptHexFromBytes(hit.lockingScript),
+      }
+    }),
+  )
+}
+
+/**
+ * Dotted origin for a held tip, read from local caches only. Used only when
+ * storage cannot answer by outpoint; a known origin then limits the tag query.
  */
 function knownItemOriginTag(outpoint: string): string | null {
   const target = normalizeOutpoint(outpoint)
@@ -1070,70 +1187,64 @@ async function loadListedOutput(
 ) {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
-  const query = {
-    limit: 10_000,
-    includeTags: true,
-    includeCustomInstructions: true,
-    include: 'locking scripts' as const,
-    seekPermission: false,
-  }
-  type Listed = NonNullable<Awaited<ReturnType<typeof active.wallet.listOutputs>>['outputs']>[number]
   const baskets: Array<'1sat' | 'bsv21'> =
     preferredAsset === 'bsv21'
       ? ['bsv21', '1sat']
       : preferredAsset === 'ordinal'
         ? ['1sat', 'bsv21']
         : ['1sat', 'bsv21']
-  const findInBaskets = async (): Promise<Listed | undefined> => {
-    for (const basket of baskets) {
-      const listed = await active.wallet.listOutputs({ ...query, basket })
-      const hit = (listed.outputs ?? []).find(
-        (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint,
-      )
-      if (hit) return hit
-    }
-    return undefined
-  }
-  // Reading a whole basket with locking scripts *and* remittance costs seconds
-  // once an account holds hundreds of items — remittance carries BRC-150 BEEF.
-  // Narrow by the item's own origin tag first; the scan stays as the fallback
-  // for tips whose origin is not cached yet.
-  const findByOriginTag = async (): Promise<Listed | undefined> => {
+  // Only when storage has no outpoint index. A tag query still walks the tag
+  // map; it never becomes a full basket read with scripts and remittance.
+  const findByOriginTag = async (): Promise<ListedTip | undefined> => {
     const originTag = knownItemOriginTag(outpoint)
     if (!originTag) return undefined
     for (const basket of baskets) {
       const listed = await active.wallet.listOutputs({
-        ...query,
         basket,
         limit: 25,
+        includeTags: true,
+        includeCustomInstructions: true,
+        include: 'locking scripts',
+        seekPermission: false,
         tags: [`origin:${originTag}`],
-        tagQueryMode: 'all' as const,
+        tagQueryMode: 'all',
       })
       const hit = (listed.outputs ?? []).find(
         (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint,
       )
-      if (hit) return hit
+      if (!hit) continue
+      return {
+        outpoint: hit.outpoint,
+        satoshis: hit.satoshis,
+        tags: hit.tags,
+        customInstructions: hit.customInstructions,
+        lockingScript: typeof hit.lockingScript === 'string' ? hit.lockingScript : undefined,
+      }
     }
     return undefined
   }
-  // Liveness is a network probe and the basket read is local storage. Starting
+  const readSelected = () => readListedOutputByOutpoint(active, outpoint, baskets)
+  // Liveness is a network probe and the row read is local storage. Starting
   // both together means a list waits for the slower one, not for their sum.
   const liveness = tipStillUnspentOnChain(active, outpoint).catch(() => null)
-  const narrowed = await findByOriginTag()
-  mark(`basket read ${narrowed ? 'narrowed by origin tag' : 'full scan'}`)
-  let output = narrowed ?? (await findInBaskets())
+  const located = await readSelected()
+  let how: 'by outpoint' | 'origin tag' = located === 'unsupported' ? 'origin tag' : 'by outpoint'
+  let output = located === 'unsupported' ? await findByOriginTag() : located
   if (!output) {
     // Prior Arcade hard-reject can leave the tip spendable=false while still on
-    // chain. Revive once, then rescan — avoid probing explorers on every list.
+    // chain. Revive once, then re-read that same outpoint.
     try {
       const { restoreUnspentAssetOutpoint } = await import('./staleOutputRelease')
       if (await restoreUnspentAssetOutpoint(active, outpoint.replace('_', '.'))) {
-        output = await findInBaskets()
+        const again = await readSelected()
+        how = again === 'unsupported' ? 'origin tag' : 'by outpoint'
+        output = again === 'unsupported' ? await findByOriginTag() : again
       }
     } catch {
       /* restore is best-effort */
     }
   }
+  mark(`basket read ${output ? how : 'not held'}`)
   if (!output) {
     throw new MarketListingError(
       'ITEM_NOT_HELD',
