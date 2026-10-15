@@ -39,6 +39,8 @@ jobs:
           src/wallet/utxoHealFromHistory.test.ts
 
       - name: Full hermetic test suite
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run test:ci
 
       - name: Renderer build

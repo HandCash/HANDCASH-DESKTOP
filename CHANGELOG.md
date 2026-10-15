@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.567] - 2026-10-15
+
+### Fixed
+- **Release builds finish the regression suite.** The installer jobs give the test runner enough memory to complete, so the desktop packages can publish.
+
 ## [1.3.566] - 2026-10-15
 
 ### Fixed

@@ -44,6 +44,8 @@ jobs:
         run: npm ci
 
       - name: Hermetic regression suite
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run test:ci
 
       - name: Read version
