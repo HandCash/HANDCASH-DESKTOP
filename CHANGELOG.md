@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.553] - 2026-10-15
+
+### Fixed
+- **An app transaction no longer waits behind change-script repair.** Looking up an old transaction body for a missing change script no longer holds the wallet storage lock, so coin selection can run while that repair continues.
+
 ## [1.3.552] - 2026-10-14
 
 ### Added

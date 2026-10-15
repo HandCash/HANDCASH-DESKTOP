@@ -295,12 +295,9 @@ async function loadTxRowByTransactionId(
 }
 
 async function readRawTxInSession(
-  active: ActiveWallet,
   txid: string,
   sp: ChangeStorage,
   cache: Map<string, number[] | null>,
-  fromChain: boolean,
-  budget: { chainFetches: number },
   primed?: TxStatusRow | null,
 ): Promise<number[] | null> {
   const key = txid.trim().toLowerCase()
@@ -322,31 +319,36 @@ async function readRawTxInSession(
     console.warn('[change-script] local rawTx lookup skipped', key, err)
   }
 
-  if (!rawTx) {
-    try {
-      // `getProvenOrRawTx` above already missed the toolbox; only the
-      // session / archive / durable trees are left to check.
-      const { getLocalBeefForTxid } = await import('./beefCache')
-      const beef = await getLocalBeefForTxid(active, key, { toolbox: false })
-      const tx = beef?.findTxid(key)?.tx
-      if (tx) rawTx = tx.toBinary()
-    } catch {
-      // local BEEF optional
-    }
-  }
+  cache.set(key, rawTx)
+  return rawTx
+}
 
-  if (!rawTx && typeof sp.findTransactions === 'function') {
-    try {
-      const rows = await sp.findTransactions({
-        partial: { txid: key },
-        noRawTx: false,
-        paged: { limit: 1, offset: 0 },
-      })
-      const local = rows?.[0]?.rawTx
-      if (Array.isArray(local) && local.length > 0) rawTx = local
-    } catch (err) {
-      console.warn('[change-script] toolbox rawTx lookup skipped', key, err)
-    }
+/**
+ * Look beyond toolbox storage only after its provider session has closed.
+ *
+ * Network fetches here can take seconds. Running them inside
+ * `runAsStorageProvider` blocks createAction coin selection behind a repair
+ * pass, which made an otherwise fast app action take almost a minute.
+ */
+async function readRawTxOutsideSession(
+  active: ActiveWallet,
+  txid: string,
+  cache: Map<string, number[] | null>,
+  fromChain: boolean,
+  budget: { chainFetches: number },
+): Promise<number[] | null> {
+  const key = txid.trim().toLowerCase()
+  const cached = cache.get(key)
+  if (cached !== undefined) return cached
+
+  let rawTx: number[] | null = null
+  try {
+    const { getLocalBeefForTxid } = await import('./beefCache')
+    const beef = await getLocalBeefForTxid(active, key, { toolbox: false })
+    const tx = beef?.findTxid(key)?.tx
+    if (tx) rawTx = tx.toBinary()
+  } catch {
+    // local BEEF optional
   }
 
   if (!rawTx && fromChain && budget.chainFetches < CHAIN_FETCH_MAX) {
@@ -490,31 +492,79 @@ export async function sweepChangeScripts(args?: {
     return Math.max(0, Number(b.satoshis) || 0) - Math.max(0, Number(a.satoshis) || 0)
   })
 
-  const rawTxCache = new Map<string, number[] | null>()
+  const storageRawTxCache = new Map<string, number[] | null>()
+  const outsideRawTxCache = new Map<string, number[] | null>()
   const txByIdCache = new Map<number, TxStatusRow | null>()
   const budget = { chainFetches: 0 }
   const walletScript = walletChangeLockingScript(active)
 
+  // A guessed script is not evidence: never on a row whose derivation says
+  // otherwise, and never a reason to revive a written-off coin.
+  const tryAddressFallback = async (
+    sp: ChangeStorage,
+    row: ChangeRow,
+    outputId: number,
+  ): Promise<boolean> => {
+    if (!isWalletChangeRow(row) || !walletScript) return false
+    if (row.derivationPrefix?.trim() && row.derivationSuffix?.trim()) return false
+    try {
+      await sp.updateOutput(outputId, { lockingScript: walletScript })
+      result.healed += 1
+      result.addressFallback = (result.addressFallback ?? 0) + 1
+      return true
+    } catch (err) {
+      console.warn('[change-script] address fallback skipped', outputId, err)
+      return false
+    }
+  }
+
+  const applyResolvedFate = async (
+    sp: ChangeStorage,
+    row: ChangeRow,
+    outputId: number,
+    resolved: ChangeRow,
+    derived: number[] | null,
+    rawTx: number[] | null,
+  ): Promise<void> => {
+    const fate = classifyChangeScript(resolved, rawTx, derived)
+    if (fate.kind === 'scripted') return
+
+    if (fate.kind === 'heal') {
+      try {
+        await sp.updateOutput(outputId, { lockingScript: fate.lockingScript })
+        result.healed += 1
+        if (!rawTx?.length) result.derived = (result.derived ?? 0) + 1
+        refusedBefore.delete(outputId)
+        return
+      } catch (err) {
+        console.warn('[change-script] heal skipped', outputId, err)
+      }
+    } else {
+      result.refused += 1
+      refusedBefore.add(outputId)
+      refuseReasons[fate.reason] = (refuseReasons[fate.reason] ?? 0) + 1
+    }
+
+    if (row.spendable !== true) return
+    try {
+      await sp.updateOutput(outputId, { spendable: false, spentBy: undefined })
+      result.quarantined += 1
+    } catch (err) {
+      console.warn('[change-script] quarantine skipped', outputId, err)
+    }
+  }
+
+  type PendingOutsideRow = {
+    row: ChangeRow
+    outputId: number
+    resolved: ChangeRow
+    derived: number[] | null
+  }
+
   const processBatch = async (batch: ChangeRow[]): Promise<void> => {
+    const pendingOutside: PendingOutsideRow[] = []
     await active.wallet.storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as ChangeStorage
-
-      // A guessed script is not evidence: never on a row whose derivation says
-      // otherwise, and never a reason to revive a written-off coin.
-      const tryAddressFallback = async (row: ChangeRow, outputId: number): Promise<boolean> => {
-        if (!isWalletChangeRow(row) || !walletScript) return false
-        if (row.derivationPrefix?.trim() && row.derivationSuffix?.trim()) return false
-        try {
-          await sp.updateOutput(outputId, { lockingScript: walletScript })
-          result.healed += 1
-          result.addressFallback = (result.addressFallback ?? 0) + 1
-          return true
-        } catch (err) {
-          console.warn('[change-script] address fallback skipped', outputId, err)
-          return false
-        }
-      }
-
       for (const row of batch) {
         const outputId = Number(row.outputId)
         if (!Number.isFinite(outputId) || outputId <= 0) continue
@@ -539,7 +589,7 @@ export async function sweepChangeScripts(args?: {
           }
         }
         if (!resolved?.txid) {
-          if (await tryAddressFallback(row, outputId)) {
+          if (await tryAddressFallback(sp, row, outputId)) {
             refusedBefore.delete(outputId)
             continue
           }
@@ -558,43 +608,49 @@ export async function sweepChangeScripts(args?: {
         }
 
         const rawTx = await readRawTxInSession(
-          active,
           resolved.txid,
           sp,
-          rawTxCache,
-          fromChain,
-          budget,
+          storageRawTxCache,
           txRow,
         )
-        const fate = classifyChangeScript(resolved, rawTx, derived)
-
-        if (fate.kind === 'scripted') continue
-
-        if (fate.kind === 'heal') {
-          try {
-            await sp.updateOutput(outputId, { lockingScript: fate.lockingScript })
-            result.healed += 1
-            if (!rawTx?.length) result.derived = (result.derived ?? 0) + 1
-            refusedBefore.delete(outputId)
-            continue
-          } catch (err) {
-            console.warn('[change-script] heal skipped', outputId, err)
-          }
-        } else {
-          result.refused += 1
-          refusedBefore.add(outputId)
-          refuseReasons[fate.reason] = (refuseReasons[fate.reason] ?? 0) + 1
+        if (!rawTx) {
+          pendingOutside.push({ row, outputId, resolved, derived })
+          continue
         }
-
-        if (row.spendable !== true) continue
-        try {
-          await sp.updateOutput(outputId, { spendable: false, spentBy: undefined })
-          result.quarantined += 1
-        } catch (err) {
-          console.warn('[change-script] quarantine skipped', outputId, err)
-        }
+        await applyResolvedFate(sp, row, outputId, resolved, derived, rawTx)
       }
     })
+
+    // Slow durable-cache and optional chain reads happen with no toolbox
+    // provider session open.
+    let pendingApplied = 0
+    for (const pending of pendingOutside) {
+      const rawTx = await readRawTxOutsideSession(
+        active,
+        pending.resolved.txid!,
+        outsideRawTxCache,
+        fromChain,
+        budget,
+      )
+      await active.wallet.storage.runAsStorageProvider(async (activeSp) => {
+        await applyResolvedFate(
+          activeSp as ChangeStorage,
+          pending.row,
+          pending.outputId,
+          pending.resolved,
+          pending.derived,
+          rawTx,
+        )
+      })
+      pendingApplied += 1
+      const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+      if (shouldYieldChainIngestToSpend()) {
+        result.deferred = true
+        break
+      }
+    }
+    // Pending rows not reached remain owed to the next pass.
+    result.attempted -= pendingOutside.length - pendingApplied
   }
 
   try {
@@ -617,7 +673,7 @@ export async function sweepChangeScripts(args?: {
       }
       const size = spendWaiting ? MIN_PROGRESS_BATCH : SWEEP_BATCH_SIZE
       await processBatch(ordered.slice(offset, offset + size))
-      if (spendWaiting) {
+      if (spendWaiting || result.deferred) {
         console.info(
           `[change-script] send waiting — kept repair moving with a short batch ` +
             `(scanned ${offset + size}/${ordered.length})`,

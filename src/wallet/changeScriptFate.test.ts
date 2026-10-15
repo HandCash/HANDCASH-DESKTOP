@@ -121,6 +121,7 @@ describe('sweepChangeScripts', () => {
   const getProvenOrRawTx = vi.fn()
   const findTransactions = vi.fn()
   const updateOutput = vi.fn()
+  let providerSessions = 0
 
   beforeEach(() => {
     forgetChangeScriptRefusals()
@@ -136,14 +137,21 @@ describe('sweepChangeScripts', () => {
     getProvenOrRawTx.mockResolvedValue({})
     findTransactions.mockResolvedValue([])
     updateOutput.mockResolvedValue(1)
+    providerSessions = 0
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
       address: walletAddress,
       wallet: {
         storage: {
-          runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
-            fn({ findOutputs, getProvenOrRawTx, findTransactions, updateOutput }),
+          runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) => {
+            providerSessions += 1
+            try {
+              return await fn({ findOutputs, getProvenOrRawTx, findTransactions, updateOutput })
+            } finally {
+              providerSessions -= 1
+            }
+          },
         },
       },
     })
@@ -335,6 +343,29 @@ describe('sweepChangeScripts', () => {
     expect(updateOutput).toHaveBeenCalledExactlyOnceWith(15, {
       lockingScript: tx.outputs[0].lockingScript.toBinary(),
     })
+  })
+
+  it('never holds the storage provider session across a chain lookup', async () => {
+    const tx = fixtureTx(701)
+    pageOnce([], [
+      {
+        outputId: 151,
+        change: true,
+        spendable: false,
+        txid: tx.id('hex'),
+        vout: 0,
+        satoshis: 701,
+      },
+    ])
+    fetchRawTxHex.mockImplementation(async () => {
+      expect(providerSessions).toBe(0)
+      return tx.toHex()
+    })
+
+    const r = await sweepChangeScripts({ fromChain: true })
+
+    expect(r.healed).toBe(1)
+    expect(providerSessions).toBe(0)
   })
 
   it('pages past the first window so late poison rows are still found', async () => {
