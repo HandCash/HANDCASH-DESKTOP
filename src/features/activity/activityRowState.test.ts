@@ -81,7 +81,7 @@ describe('activityRowState', () => {
   })
 
   it('is the settlement phrase once nothing is running', () => {
-    expect(activityRowState({ entry: entry({ status: 'pending' }), live: null })).toBe('signed')
+    expect(activityRowState({ entry: entry({ status: 'pending' }), live: null })).toBe('settled')
     expect(
       activityRowState({ entry: entry({ status: 'pending', txid: 'ab'.repeat(32) }), live: null })
     ).toBe('signed')

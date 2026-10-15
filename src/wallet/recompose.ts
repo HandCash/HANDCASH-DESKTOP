@@ -423,15 +423,24 @@ function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced
       const { syncCustodyJournal } = await import('./custodyJournalBackup')
       await inUiPhase('derived-journal', () => syncCustodyJournal(runtime.instance, 'recompose'))
       if (!runtimeIsCurrent(runtime)) return
-      const { echoAllDerivedOutputs, recoverEchoedChange } = await import(
-        './reimportDerivedChange'
-      )
-      const recovered = await inUiPhase('derived-recover', () => recoverEchoedChange(runtime.instance))
-      if (!runtimeIsCurrent(runtime)) return
-      await inUiPhase('derived-echo', () => echoAllDerivedOutputs(runtime.instance))
-      if (recovered.imported > 0) {
-        const { bumpBalanceAfterHeal } = await import('./session')
-        bumpBalanceAfterHeal()
+      // Action wrappers journal every new output at write time. A full
+      // spent+unspent output sweep is only needed after localState was
+      // replaced; doing it after every ordinary unlock made maintenance scale
+      // with every NFT the wallet had ever held and could occupy IndexedDB for
+      // minutes in front of a payment.
+      if (localStateWasReplaced) {
+        const { echoAllDerivedOutputs, recoverEchoedChange } = await import(
+          './reimportDerivedChange'
+        )
+        const recovered = await inUiPhase('derived-recover', () =>
+          recoverEchoedChange(runtime.instance),
+        )
+        if (!runtimeIsCurrent(runtime)) return
+        await inUiPhase('derived-echo', () => echoAllDerivedOutputs(runtime.instance))
+        if (recovered.imported > 0) {
+          const { bumpBalanceAfterHeal } = await import('./session')
+          bumpBalanceAfterHeal()
+        }
       }
       await ledgerRead
       if (!runtimeIsCurrent(runtime)) return

@@ -1148,29 +1148,9 @@ export async function sendBsv21Tokens(args: {
         })()
       }
 
-      setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
-      const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
-      markItemsSent([
-        ...spent.map((outpoint) => ({ outpoint, txid, asset: 'token' as const })),
-        ...(payeeIsSelf
-          ? []
-          : payeeOutpoints.map((outpoint) => ({
-              outpoint,
-              txid,
-              settle: 'senderBroadcast' as const,
-              asset: 'token' as const,
-            }))),
-      ])
-      if (!payeeIsSelf) {
-        for (const op of payeeOutpoints) {
-          try {
-            const { relinquishTokenFiling } = await import('./filingStore')
-            await relinquishTokenFiling(wallet.wallet, wireOutpoint(op))
-          } catch {
-            /* createAction may already have dropped it */
-          }
-        }
-      }
+      // The signed-send registration sealed the selected inputs and durably
+      // queued miner propagation. That is the foreground terminal condition:
+      // inventory projection and broadcast are independent background work.
       noteOutboundSendComplete({
         pendingId: outboundPending.id,
         txid,
@@ -1188,34 +1168,65 @@ export async function sendBsv21Tokens(args: {
       startSignedSendPropagation(signedSend, {
         pendingId: outboundPending.id,
       })
-      const { paintFungibleAfterSpend } = await import('./list')
-      paintFungibleAfterSpend({
-        tokenId,
-        remainingAmt,
-        outpoint: remainingOp,
-        sym,
-        icon,
-        dec,
-        binarySupply: 'locked',
-        ...(heldAfter.length > 1
-          ? {
-              utxoCount: heldAfter.length,
-              heldTips: heldAfter.map((out) => ({
-                outpoint: out.outpoint,
-                tokenId,
-                amt: out.amt.toString(),
-                op: 'transfer' as const,
-                sym,
-                dec,
-                satoshis: 1,
-                binarySupply: 'locked' as const,
-                encoding: 'brc162' as const,
-                ...(icon ? { icon } : {}),
-                seenAt: Date.now(),
-              })),
+      void (async () => {
+        try {
+          const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
+          markItemsSent([
+            ...spent.map((outpoint) => ({ outpoint, txid, asset: 'token' as const })),
+            ...(payeeIsSelf
+              ? []
+              : payeeOutpoints.map((outpoint) => ({
+                  outpoint,
+                  txid,
+                  settle: 'senderBroadcast' as const,
+                  asset: 'token' as const,
+                }))),
+          ])
+          if (!payeeIsSelf) {
+            const { relinquishTokenFiling } = await import('./filingStore')
+            for (const op of payeeOutpoints) {
+              try {
+                await relinquishTokenFiling(wallet.wallet, wireOutpoint(op))
+              } catch {
+                /* createAction may already have dropped it */
+              }
             }
-          : {}),
-      })
+          }
+          const { paintFungibleAfterSpend } = await import('./list')
+          paintFungibleAfterSpend({
+            tokenId,
+            remainingAmt,
+            outpoint: remainingOp,
+            sym,
+            icon,
+            dec,
+            binarySupply: 'locked',
+            ...(heldAfter.length > 1
+              ? {
+                  utxoCount: heldAfter.length,
+                  heldTips: heldAfter.map((out) => ({
+                    outpoint: out.outpoint,
+                    tokenId,
+                    amt: out.amt.toString(),
+                    op: 'transfer' as const,
+                    sym,
+                    dec,
+                    satoshis: 1,
+                    binarySupply: 'locked' as const,
+                    encoding: 'brc162' as const,
+                    ...(icon ? { icon } : {}),
+                    seenAt: Date.now(),
+                  })),
+                }
+              : {}),
+          })
+        } catch (error) {
+          console.warn(
+            '[p2pft] post-sign inventory projection deferred',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+      })()
       return { txid, tipsSpent: selected.length, change: remainingAmt }
       } finally {
         if (actionReference) {
@@ -1241,7 +1252,10 @@ export async function sendBsv21Tokens(args: {
           primary.outpoint,
         )
       },
-      { promote: 'light' },
+      // The token inputs are explicit. Global pending-change promotion scales
+      // with the wallet's entire history and may run for minutes; createAction
+      // can select an already-spendable fee coin without that maintenance.
+      { promote: false },
     )
   } catch (err) {
     clearPendingSend(outboundPending.id)

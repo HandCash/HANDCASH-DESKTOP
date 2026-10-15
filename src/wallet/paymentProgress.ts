@@ -224,20 +224,22 @@ onActionStuck((view) => {
             )
           })
           .catch(() => {})
-        void import('./appActivity')
-          .then(({ expireStaleOutboundPending }) => {
-            const n = expireStaleOutboundPending(STUCK_PAYMENT_MS)
-            if (n > 0) {
-              console.warn(
-                `[payment-progress] expired ${n} stuck Sending… Activity row(s)`,
-              )
-            }
-          })
-          .catch(() => {})
         void import('./chainedChangeHeal')
           .then(({ scheduleHealAfterSendCleanup }) => scheduleHealAfterSendCleanup())
           .catch(() => {})
       }
+      void import('./appActivity')
+        .then(({ expireStaleOutboundPending }) => {
+          const n = expireStaleOutboundPending(STUCK_PAYMENT_MS, Date.now(), {
+            force: true,
+          })
+          if (n > 0) {
+            console.warn(
+              `[payment-progress] expired ${n} stuck Sending… Activity row(s)`,
+            )
+          }
+        })
+        .catch(() => {})
       if (stuckPhase !== 'idle') {
         recordTransactionStage('retry_exhausted', {
           flow: telemetryFlow,

@@ -1828,7 +1828,8 @@ function reportStuckOutbound(
  */
 export function expireStaleOutboundPending(
   maxAgeMs = 90_000,
-  now = Date.now()
+  now = Date.now(),
+  opts?: { force?: boolean }
 ): number {
   // A hung send still holds spend priority after the pill watchdog fires.
   // Failing a *priced* Activity row while that work is alive made Sending…
@@ -1857,7 +1858,9 @@ export function expireStaleOutboundPending(
       );
       return [];
     }
-    if (yielding) return e;
+    // The watchdog already gave the spend up. Leaving the row pending makes
+    // Activity call an unsigned attempt Signed.
+    if (yielding && !opts?.force) return e;
     expired += 1;
     const name = e.item?.name?.trim();
     return [{
@@ -2756,11 +2759,11 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     // carries the phase, so the title never repeats it.
     const approved = entry.note?.trim();
     if (approved) return approved;
-    return entry.txid ? "Unconfirmed" : "Signed";
+    return entry.txid ? "Unconfirmed" : "Sending…";
   }
   if (entry.status === "pending" && entry.kind === "earned") {
     if (entry.item?.name) return `Receiving ${entry.item.name}…`;
-    return entry.txid ? "Unconfirmed" : "Signed";
+    return entry.txid ? "Unconfirmed" : "Receiving…";
   }
   if (entry.status === "pending" && entry.kind === "event") {
     if (entry.method === UTXO_HEAL_METHOD) return "Healing balance…";

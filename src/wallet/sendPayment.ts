@@ -127,8 +127,8 @@ export async function sendSatsToAddress(opts: {
           try {
             const lockingScript = new P2PKH().lock(to).toHex()
             setPaymentProgress(
-              'broadcasting',
-              'Signing and broadcasting your payment',
+              'signing',
+              'Signing your payment',
             )
             const createActionArgs = {
               description: opts.description ?? `HandCash send to ${to}`,

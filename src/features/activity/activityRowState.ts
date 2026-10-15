@@ -84,7 +84,9 @@ export function activityRowState(args: {
     arcStatus === 'ANNOUNCED_TO_NETWORK' ||
     chainProof === 'unconfirmed'
   ) return 'sent'
-  if (entry.txid || entry.status === 'pending') return 'signed'
+  // A txid is the cheque. A pending row that never got one is not Signed —
+  // the send was still preparing, or it was abandoned before it signed.
+  if (entry.txid) return 'signed'
   return 'settled'
 }
 

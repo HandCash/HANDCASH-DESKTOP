@@ -247,21 +247,32 @@ export function runExclusiveSpend<T>(
   }
   return runExclusiveSpendCoordinated(
     async () => {
+      const preflight = async <R>(name: string, work: () => Promise<R>): Promise<R> => {
+        const startedAt = Date.now()
+        try {
+          return await work()
+        } finally {
+          const ms = Date.now() - startedAt
+          if (ms >= 250) console.info(`[spend-guard] ${name} done ${ms}ms`)
+        }
+      }
       if (runtime) assertRuntimeCurrent(runtime)
       throwIfAborted()
       // After a restore, earlier payments are reconciled before the next one.
       if (!opts?.background) {
         const { awaitPaymentReconcile } = await import('./paymentReconcile')
-        await awaitPaymentReconcile(runtime)
+        await preflight('payment reconcile', () => awaitPaymentReconcile(runtime))
       }
       throwIfAborted()
       // The one network read BRC-249 allows here: after a gap, before the first spend.
-      await ensureHoldingFresh(runtime?.instance ?? null)
+      await preflight('holding freshness', () =>
+        ensureHoldingFresh(runtime?.instance ?? null),
+      )
       const takenMeanwhile = activeAccountSpendRefusal(runtime?.instance ?? null)
       if (takenMeanwhile) throw new Error(takenMeanwhile)
       if (runtime) assertRuntimeCurrent(runtime)
       throwIfAborted()
-      await reviewAfterAbandonedSpend()
+      await preflight('abandoned spend review', reviewAfterAbandonedSpend)
       throwIfAborted()
       const resumeMonitor = pauseMonitorForSpend()
       try {

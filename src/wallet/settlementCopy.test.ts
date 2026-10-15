@@ -60,7 +60,7 @@ describe('settlementCopy', () => {
     ).toBe('Signed')
     expect(
       inFlightSettlementLabel({ status: 'pending', txid: undefined }),
-    ).toBe('Signed')
+    ).toBe('Sending…')
     expect(
       inFlightSettlementLabel({
         status: 'pending',

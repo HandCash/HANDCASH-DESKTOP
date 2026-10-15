@@ -117,12 +117,12 @@ describe("sameActivityRow", () => {
 });
 
 describe("activityEntryTitle", () => {
-  it("calls a local cheque Signed and a networked body Unconfirmed", () => {
+  it("calls an unsigned attempt Sending and a networked body Unconfirmed", () => {
     expect(
       activityEntryTitle(
         entry({ kind: "spent", method: "send", status: "pending" }),
       ),
-    ).toBe("Signed");
+    ).toBe("Sending…");
     expect(
       activityEntryTitle(
         entry({
@@ -137,7 +137,7 @@ describe("activityEntryTitle", () => {
       activityEntryTitle(
         entry({ kind: "earned", method: "receive", status: "pending" }),
       ),
-    ).toBe("Signed");
+    ).toBe("Receiving…");
   });
 
   it("names a removed market item as sold instead of sent", () => {

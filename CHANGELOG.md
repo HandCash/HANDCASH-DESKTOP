@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.556] - 2026-10-15
+
+### Fixed
+- **A p2pft send no longer waits on the wallet's entire transaction history.** Explicit token tips go straight to signing with an already-spendable fee coin; wallet-wide pending-change promotion and ordinary unlock sweeps no longer sit in front of the transaction. Signed miner propagation, recipient notification and inventory projection run outside the signing region so another payment can begin.
+- **Progress now says what actually happened.** An unsigned pending row says Sending, not Signed. BSV and BRC-29 creation says Signing, and a p2pft send leaves the foreground as soon as its signed cheque is sealed and queued instead of hanging on Broadcasting. An abandoned unsigned row is marked failed immediately.
+
 ## [1.3.555] - 2026-10-15
 
 ### Fixed

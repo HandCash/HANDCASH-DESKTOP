@@ -78,7 +78,8 @@ export function inFlightSettlementLabel(args: {
   tipHeight?: number | null
 }): string | null {
   if (args.status === 'failed') return null
-  if (!args.txid?.trim()) return args.status === 'pending' ? 'Signed' : null
+  // No txid means nothing was signed. "Signed" is the local cheque, not the attempt.
+  if (!args.txid?.trim()) return args.status === 'pending' ? 'Sending…' : null
   // A verified mined row returns to its ordinary date/time: that timestamp is
   // the compact confirmation affordance the activity feed already understands.
   if (args.chainProof === 'headerProven') return null

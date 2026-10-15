@@ -419,7 +419,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             outputIndex: 0,
           }
 
-          setPaymentProgress('broadcasting', 'Signing and broadcasting your payment')
+          setPaymentProgress('signing', 'Signing your payment')
           const createActionArgs = {
             description:
               opts.description ??
