@@ -97,6 +97,10 @@ import { getActiveWallet } from './session'
  *   omits — is filed durably in `holdingsReconcile.ts` and settled by one
  *   chain answer per backoff step: spent closes or retires, unspent restores
  *   or re-claims, unknown waits. Nothing leaves silently.
+ *   `inventoryProjection.ts` is the materialized read side: permissions,
+ *   market views and menus project the account-scoped durable paints in memory.
+ *   Those consumers never start their own basket scan; only the holdings owners
+ *   reconcile Toolbox, and custody paths verify the exact output they spend.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
  * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;

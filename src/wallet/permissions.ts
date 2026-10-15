@@ -1,6 +1,3 @@
-import { getActiveWallet } from './session'
-import { TOKEN_FILING_BASKETS } from './token/filing'
-
 import {
   appDisplayName,
   normalizeAppHost,
@@ -1383,50 +1380,14 @@ function summarizeItemView(request: ItemViewRequest): {
   }
 }
 
-/**
- * A prompt must never wait on the toolbox. This read only names what the
- * prompt offers; when storage is slow or held (hc-a580a 2026-09-29: a
- * third-party `listOutputs` sat here for minutes with no prompt, no log and
- * no reply), the basket the wallet last painted names it instead.
- */
-const HELD_OUTPUTS_BUDGET_MS = 6_000
-
 async function listHeldOutputs(basket: string): Promise<unknown[]> {
-  const active = getActiveWallet()
-  if (!active) return []
-  const live = active.wallet
-    .listOutputs({
-      basket,
-      limit: 1000,
-      includeTags: true,
-      includeCustomInstructions: true,
-      seekPermission: false,
-    })
-    .then((listed) => listed.outputs ?? [])
-  live.catch(() => {})
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      live,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error('held outputs read timed out')),
-          HELD_OUTPUTS_BUDGET_MS,
-        )
-      }),
-    ])
-  } catch (err) {
-    const { cachedMarketListOutputs } = await import('./marketInventory')
-    const cached = cachedMarketListOutputs(basket)
-    console.info(
-      `[permission] ${basket} basket read ${
-        err instanceof Error ? err.message : 'failed'
-      } — naming the prompt from ${cached ? `${cached.outputs.length} cached row(s)` : 'nothing'}`,
-    )
-    return cached?.outputs ?? []
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
+  // Permission copy is a projection, never a custody decision. The inventory
+  // modules already reconcile Toolbox into an account-scoped durable paint and
+  // maintain keyed in-memory indexes. Starting an uninterruptible basket scan
+  // here used to keep the single Toolbox storage lock for 26–51 seconds even
+  // after the prompt's timeout had fired, putting the next send in Preparing.
+  const { heldInventoryOutputs } = await import('./inventoryProjection')
+  return heldInventoryOutputs(basket)?.outputs ?? []
 }
 
 async function thirdPartyItemViewRequest(
@@ -1457,9 +1418,7 @@ async function thirdPartyTokenViewRequest(
   if (!request.wantsAll && request.scope === 'id' && request.ids.length > 0) {
     return { request, tickers: request.ids }
   }
-  const outputs = (
-    await Promise.all(TOKEN_FILING_BASKETS.map((basket) => listHeldOutputs(basket)))
-  ).flat()
+  const outputs = await listHeldOutputs('p2pft')
   const tokens = grantableTokensFromOutputs(outputs)
   return {
     request: {

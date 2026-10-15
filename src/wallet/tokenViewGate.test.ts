@@ -12,9 +12,9 @@ vi.mock('./session', () => ({
   formatBsvSignificant: (sats: number) => `${sats} sats`,
 }))
 
-vi.mock('./marketInventory', () => ({
-  cachedMarketListOutputs: (basket: unknown) =>
-    basket === 'bsv21'
+vi.mock('./inventoryProjection', () => ({
+  heldInventoryOutputs: (basket: unknown) =>
+    basket === 'p2pft'
       ? {
           outputs: [
             {
@@ -40,7 +40,7 @@ describe('listOutputs view gate never waits on the toolbox', () => {
     vi.useRealTimers()
   })
 
-  it('names a new token prompt from the painted basket when the live read stalls', async () => {
+  it('names a new token prompt from the painted projection without a basket read', async () => {
     const { requestTokenViewApproval, subscribePermissionRequests, resolvePermission } =
       await import('./permissions')
     let prompt: { id: number; title?: string; details?: string[] } | null = null
@@ -49,13 +49,8 @@ describe('listOutputs view gate never waits on the toolbox', () => {
     })
 
     const decision = requestTokenViewApproval(ORIGIN, { basket: 'bsv21' })
-    expect(listOutputs).toHaveBeenCalledTimes(2)
-    expect(listOutputs.mock.calls.map((call) => (call[0] as { basket?: string }).basket).sort()).toEqual([
-      'bsv21',
-      'p2pft',
-    ])
-    // Before the fix this promise never resolved; the app saw no prompt and no reply.
-    await vi.advanceTimersByTimeAsync(6_100)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(listOutputs).not.toHaveBeenCalled()
     expect(prompt).not.toBeNull()
     expect(prompt!.title).toBe('View tokens')
     expect(prompt!.details?.some((line) => line.includes('HNDC'))).toBe(true)
@@ -74,7 +69,7 @@ describe('listOutputs view gate never waits on the toolbox', () => {
       prompt = next as typeof prompt
     })
     const first = requestTokenViewApproval(origin, { basket: 'bsv21' })
-    await vi.advanceTimersByTimeAsync(6_100)
+    await vi.advanceTimersByTimeAsync(0)
     resolvePermission(prompt!.id, 'allow')
     await expect(first).resolves.toBe('allow')
     listOutputs.mockClear()

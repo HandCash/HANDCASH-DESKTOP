@@ -1,12 +1,8 @@
 import type { WalletInterface } from '@bsv/sdk'
-import { bsv21Tags } from './token'
-import { isTokenFilingBasket } from './token/filing'
-import { getCachedCollectables, listOutputsWithTimeout } from './collectables'
 import type { ActiveWallet } from './session'
-import type { Collectable } from './collectables'
-import { getCachedFungibles } from './token'
 import { authenticityFromProvenCache, getProvenVerdict } from './provenCache'
-import { toDottedOutpoint, toUnderscoreOutpoint } from './outpointFormat'
+import { toDottedOutpoint } from './outpointFormat'
+import { heldInventoryOutputs } from './inventoryProjection'
 import {
   getWalletCoordinatorSnapshot,
   shouldYieldChainIngestToSpend,
@@ -29,52 +25,9 @@ function normalizeOutpoint(value: unknown): string | null {
   return /^[0-9a-f]{64}\.(0|[1-9]\d*)$/.test(dotted) ? dotted : null
 }
 
-function originTag(origin: string): string {
-  return toUnderscoreOutpoint(origin)
-}
-
-function collectableToListOutput(item: Collectable): Record<string, unknown> {
-  const origin = originTag(item.origin)
-  const tags: string[] = [`origin:${origin}`, `name:${item.name}`]
-  if (item.app) tags.push(`app:${item.app}`)
-  if (item.collectionId) tags.push(`collection:${item.collectionId}`)
-  return {
-    outpoint: item.outpoint,
-    satoshis: item.satoshis,
-    tags,
-  }
-}
-
-function cachedItemBasketOutputs(): { outputs: unknown[]; totalOutputs: number } {
-  const outputs = getCachedCollectables().map(collectableToListOutput)
-  return { outputs, totalOutputs: outputs.length }
-}
-
-function cachedTokenBasketOutputs(): { outputs: unknown[]; totalOutputs: number } {
-  const outputs = getCachedFungibles().map((token) => {
-    const tokenId = originTag(token.tokenId)
-    return {
-      outpoint: token.outpoint,
-      satoshis: 1,
-      tags: bsv21Tags({
-        tokenId,
-        amt: token.amt,
-        sym: token.sym,
-        ...(token.icon ? { icon: token.icon } : {}),
-        op: 'transfer',
-      }),
-    }
-  })
-  return { outputs, totalOutputs: outputs.length }
-}
-
 /** The basket as the wallet last painted it — what a stalled toolbox read falls back to. */
 export function cachedMarketListOutputs(basket: unknown): { outputs: unknown[]; totalOutputs: number } | null {
-  if (typeof basket !== 'string') return null
-  const t = basket.trim()
-  if (t === '1sat' || t === 'p 1sat all') return cachedItemBasketOutputs()
-  if (isTokenFilingBasket(t) || t === 'p bsv21 all' || t === 'p p2pft all') return cachedTokenBasketOutputs()
-  return null
+  return heldInventoryOutputs(basket)
 }
 
 function walletBusyForMarketRead(): boolean {
@@ -116,17 +69,17 @@ export async function listMarketBasketOutputs(
       : undefined
 
   const cached = cachedMarketListOutputs(basket)
-  if (cached && cached.outputs.length > 0) {
+  const busy = walletBusyForMarketRead()
+  if (cached && (cached.outputs.length > 0 || busy)) {
     console.info(
-      `[market-inventory] serving cached ${String(basket ?? 'basket')} (${cached.outputs.length} row(s))`,
+      `[market-inventory] serving projected ${String(basket ?? 'basket')} (${cached.outputs.length} row(s)${
+        busy ? ', wallet busy' : ''
+      })`,
     )
-    if (!walletBusyForMarketRead()) {
-      void refreshMarketBasketInBackground(wallet, inventoryReadArgs(args), basket)
-    }
     return cached as ListOutputsResult
   }
 
-  if (walletBusyForMarketRead()) {
+  if (busy) {
     console.info(
       `[market-inventory] wallet busy — no cache for ${String(basket ?? 'basket')}`,
     )
@@ -177,29 +130,6 @@ function raceTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   return Promise.race([work, expiry]).finally(() => {
     if (timer !== undefined) clearTimeout(timer)
   }) as Promise<T>
-}
-
-async function refreshMarketBasketInBackground(
-  wallet: WalletInterface,
-  args: ListOutputsArgs,
-  basket: unknown,
-): Promise<void> {
-  if (walletBusyForMarketRead()) return
-  try {
-    await listOutputsWithTimeout(
-      wallet as ActiveWallet['wallet'],
-      inventoryReadArgs(args),
-      MARKET_LIST_TIMEOUT_MS,
-    )
-    console.info(
-      `[market-inventory] background refresh ok for ${String(basket ?? 'basket')}`,
-    )
-  } catch (err) {
-    console.info(
-      `[market-inventory] background refresh skipped for ${String(basket ?? 'basket')}`,
-      err instanceof Error ? err.message : String(err),
-    )
-  }
 }
 
 /**

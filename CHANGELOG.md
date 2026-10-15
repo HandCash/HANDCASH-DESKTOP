@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.560] - 2026-10-15
+
+### Fixed
+- **Preparing a payment no longer scans the item basket.** Permission prompts, market inventory, and collectable send and abandon read the painted inventory. A selected item is one outpoint lookup. A missing card fails closed instead of holding the storage lock across hundreds of rows.
+
 ## [1.3.559] - 2026-10-15
 
 ### Fixed

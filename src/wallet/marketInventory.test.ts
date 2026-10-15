@@ -2,24 +2,18 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { rememberProvenVerdict } from './provenCache'
 import { addMarketOriginVerdicts, listMarketBasketOutputs } from './marketInventory'
 
-const listOutputsWithTimeout = vi.fn()
 const getCachedCollectables = vi.fn()
 const getCachedFungibles = vi.fn()
 const getWalletCoordinatorSnapshot = vi.fn()
 const shouldYieldChainIngestToSpend = vi.fn()
 
 vi.mock('./collectables', () => ({
-  listOutputsWithTimeout: (...args: unknown[]) => listOutputsWithTimeout(...args),
   getCachedCollectables: () => getCachedCollectables(),
 }))
 
-vi.mock('./token', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./token')>()
-  return {
-    ...actual,
-    getCachedFungibles: () => getCachedFungibles(),
-  }
-})
+vi.mock('./token/list', () => ({
+  getCachedFungibles: () => getCachedFungibles(),
+}))
 
 vi.mock('./walletCoordinator', () => ({
   getWalletCoordinatorSnapshot: () => getWalletCoordinatorSnapshot(),
@@ -28,7 +22,6 @@ vi.mock('./walletCoordinator', () => ({
 
 describe('market inventory listOutputs fast path', () => {
   beforeEach(() => {
-    listOutputsWithTimeout.mockReset()
     getCachedCollectables.mockReset()
     getCachedFungibles.mockReset()
     getWalletCoordinatorSnapshot.mockReturnValue({
@@ -60,7 +53,18 @@ describe('market inventory listOutputs fast path', () => {
     const wallet = { listOutputs: vi.fn() }
     const result = await listMarketBasketOutputs(wallet as never, { basket: '1sat' })
     expect(result.outputs).toHaveLength(1)
-    expect(listOutputsWithTimeout).not.toHaveBeenCalled()
+  })
+
+  it('serves an empty projection instead of starting a scan while a send waits', async () => {
+    getWalletCoordinatorSnapshot.mockReturnValue({
+      chainIngest: 'idle',
+      spend: 'active',
+    })
+    getCachedCollectables.mockReturnValue([])
+    const wallet = { listOutputs: vi.fn() }
+    const result = await listMarketBasketOutputs(wallet as never, { basket: '1sat' })
+    expect(result.outputs).toEqual([])
+    expect(wallet.listOutputs).not.toHaveBeenCalled()
   })
 
   it('serves cached rows immediately even when the wallet is idle', async () => {
@@ -77,12 +81,10 @@ describe('market inventory listOutputs fast path', () => {
         authenticity: 'brc150',
       },
     ])
-    listOutputsWithTimeout.mockImplementation(
-      () => new Promise(() => undefined),
-    )
     const wallet = { listOutputs: vi.fn() }
     const result = await listMarketBasketOutputs(wallet as never, { basket: '1sat' })
     expect(result.outputs).toHaveLength(1)
+    expect(wallet.listOutputs).not.toHaveBeenCalled()
   })
 
   it('serves cached BRC-165 p 1sat all rows without remittance blobs', async () => {
@@ -116,7 +118,6 @@ describe('market inventory listOutputs fast path', () => {
         'collection:foxes',
       ]),
     )
-    expect(listOutputsWithTimeout).not.toHaveBeenCalled()
   })
 
   it('never forwards remittance BEEF on a live inventory read', async () => {
@@ -182,7 +183,6 @@ describe('market inventory listOutputs fast path', () => {
   })
 
   it('falls back to cached bsv21 rows after a live read times out', async () => {
-    listOutputsWithTimeout.mockRejectedValue(new Error('listOutputs timed out'))
     getCachedFungibles.mockReturnValue([
       {
         tokenId: `${'c'.repeat(64)}.0`,

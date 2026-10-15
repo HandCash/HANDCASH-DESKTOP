@@ -4226,20 +4226,10 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
   const outpoint = normalizeOutpoint(outpointRaw)
   const wallet = getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
-  const cached = cachedCollectables.find(
-    (item) => normalizeOutpoint(item.outpoint) === outpoint
-  )
-
-  const match =
-    cached ??
-    (
-      await wallet.wallet.listOutputs({
-        basket: '1sat',
-        limit: 1000,
-        includeCustomInstructions: false,
-        seekPermission: false,
-      })
-    ).outputs?.find((o) => normalizeOutpoint(o.outpoint) === outpoint)
+  // Abandon is launched from a painted card. Never turn one exact operation
+  // into a full `1sat` basket scan under the storage lock; a stale card fails
+  // closed and the holdings reconciler decides whether it returns.
+  const match = getCachedCollectable(outpoint)
   if (!match) throw new Error('Collectable is no longer in this wallet')
 
   console.info(
@@ -4262,13 +4252,13 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
     kind: 'event',
     sats: 0,
     method: 'forget-collectable',
-    note: `Forgot ${cached?.name ?? 'collectable'} from this wallet`,
+    note: `Forgot ${match.name ?? 'collectable'} from this wallet`,
     item: {
-      name: cached?.name ?? 'Collectable',
-      origin: cached?.origin ?? outpoint.replace('.', '_'),
+      name: match.name ?? 'Collectable',
+      origin: match.origin ?? outpoint.replace('.', '_'),
       outpoint,
-      ...(cached?.imageUrl ? { imageUrl: cached.imageUrl } : {}),
-      ...(cached?.app ? { app: cached.app } : {}),
+      ...(match.imageUrl ? { imageUrl: match.imageUrl } : {}),
+      ...(match.app ? { app: match.app } : {}),
     },
     status: 'complete',
   })
@@ -4381,17 +4371,18 @@ export async function sendCollectable(args: {
             throw new Error('Invalid recipient address or identity key')
           }
 
-          // Prefer the in-memory list for name/origin so the tip listOutputs can be a
-          // tagged narrow query instead of a full-basket read of every held ordinal.
-          const cachedItem =
-            cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
+          // The selected card already names the tip. Its script comes from the
+          // input BEEF below. A missing card is one indexed row, never a basket
+          // page: an origin-tag query walks every tag map, and a wide page holds
+          // the storage lock in front of createAction.
+          const cachedItem = getCachedCollectable(outpoint)
+          const provenTierEarly = getProvenVerdict(outpoint)?.tier ?? null
+          const trustVerifiedSend = provenTierEarly === 'brc150' && cachedItem != null
           const originGuess = parseOrigin(
             args.origin ?? cachedItem?.origin,
             outpoint
           )
           const originTag = originGuess.replace(/_(\d+)$/, '.$1')
-          const provenTierEarly = getProvenVerdict(outpoint)?.tier ?? null
-          const trustVerifiedSend = provenTierEarly === 'brc150' && cachedItem != null
 
           type HeldOutput = NonNullable<
             Awaited<
@@ -4399,68 +4390,29 @@ export async function sendCollectable(args: {
             >['outputs']
           >[number]
 
-          let match: HeldOutput | undefined
-          if (trustVerifiedSend) {
-            match = {
-              outpoint,
-              satoshis: 1,
-              spendable: true,
-              tags: [],
-              ...(cachedItem!.lockingScript
-                ? { lockingScript: cachedItem!.lockingScript }
-                : {}),
-            } as HeldOutput
-          } else {
-            const held = await listOutputsWithTimeout(wallet.wallet, {
-              basket: '1sat',
-              tags: [`origin:${originTag}`],
-              tagQueryMode: 'all',
-              limit: 20,
-              includeTags: true,
-              // Locking script and satoshis are all this needs; remittance BEEF for every
-              // held item would be tens of megabytes on a full wallet.
-              includeCustomInstructions: true,
-              include: 'locking scripts',
-              seekPermission: false,
-            })
-            match = (held.outputs ?? []).find(
-              (o) => normalizeOutpoint(o.outpoint) === outpoint
-            )
-            // Origin tag can miss after a migrate / rename; trust inventory cache before
-            // a wide basket scan that blocks send on large wallets.
-            if (!match) {
-              if (cachedItem) {
-                console.info(
-                  `[collectables] narrow tag miss — trusting inventory cache for ${outpoint}`,
-                )
-                match = {
-                  outpoint,
-                  satoshis: 1,
-                  spendable: true,
-                  tags: [],
-                } as HeldOutput
-              } else {
-                const wide = await listOutputsWithTimeout(wallet.wallet, {
-                  basket: '1sat',
-                  limit: 200,
-                  includeTags: true,
-                  includeCustomInstructions: true,
-                  include: 'locking scripts',
-                  seekPermission: false,
-                })
-                match = (wide.outputs ?? []).find(
-                  (o) => normalizeOutpoint(o.outpoint) === outpoint
-                )
-              }
-            }
-          }
+          const heldRow = cachedItem
+            ? null
+            : await readHeldItemRow(wallet, normalizeOutpoint(outpoint), originTag)
+          const match: HeldOutput | undefined = cachedItem || heldRow
+            ? ({
+                outpoint,
+                satoshis: 1,
+                spendable: true,
+                tags: [],
+                ...(cachedItem?.lockingScript
+                  ? { lockingScript: cachedItem.lockingScript }
+                  : {}),
+                ...(heldRow?.customInstructions
+                  ? { customInstructions: heldRow.customInstructions }
+                  : {}),
+              } as HeldOutput)
+            : undefined
           if (!match) throw new Error('Collectable is no longer in this wallet')
           if ((match.satoshis ?? 1) !== 1) {
             throw new Error('Collectable UTXO is not a 1-sat ordinal')
           }
 
-          const item =
-            cachedItem ?? (await getCollectable(outpoint, wallet)) ?? null
+          const item = cachedItem
           // Remittance identity must not come from tags — the SDK lowercases them, and
           // after the signing-speed path we paint the list from those flattened tags.
           // Resolution cache + tip remittance keep the case the recipient should see.
@@ -5299,25 +5251,10 @@ export async function sendCollectables(
               ReturnType<ActiveWallet['wallet']['listOutputs']>
             >['outputs']
           >[number]
-          // A selected card already names its origin and metadata, and the tip
-          // script comes from the input BEEF. Scripts plus remittance for the
-          // whole basket was a 28s read inside this send's own timeout.
-          const painted = new Set(cachedCollectables.map((item) => item.outpoint))
-          const held = outpoints.every((outpoint) => painted.has(outpoint))
-            ? { outputs: [] }
-            : await listOutputsWithTimeout(wallet.wallet, {
-                basket: '1sat',
-                limit: 1000,
-                includeTags: true,
-                includeCustomInstructions: false,
-                seekPermission: false,
-              })
-          const heldByOutpoint = new Map(
-            (held.outputs ?? []).map((output) => [
-              normalizeOutpoint(output.outpoint),
-              output as HeldOutput,
-            ]),
-          )
+          // A bulk send is selected from the materialized inventory. Missing
+          // cards fail closed; never scan a thousand-row basket in front of a
+          // signature. The input BEEF below supplies each authoritative script
+          // and the pre-sign certainty gate proves the exact selected tips.
           const inputBEEF = await buildInputBeefForSpends(wallet, outpoints)
           const live = await awaitLiveOutpoints(wallet)
 
@@ -5332,8 +5269,7 @@ export async function sendCollectables(
             if (uiBudgetExpired()) await yieldToUi()
             const cached = cachedNow.get(outpoint) ?? null
             const match =
-              heldByOutpoint.get(outpoint) ??
-              (cached
+              cached
                 ? ({
                     outpoint,
                     satoshis: 1,
@@ -5343,7 +5279,7 @@ export async function sendCollectables(
                       ? { lockingScript: cached.lockingScript }
                       : {}),
                   } as HeldOutput)
-                : undefined)
+                : undefined
             if (!match) throw new Error('Collectable is no longer in this wallet')
             if ((match.satoshis ?? 1) !== 1) {
               throw new Error('Collectable UTXO is not a 1-sat ordinal')
