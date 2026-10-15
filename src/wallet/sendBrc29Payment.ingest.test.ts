@@ -2,9 +2,8 @@
  * Payee-side ingest + broadcast efficiency rules.
  *
  * Guards two things that must not drift:
- * - `skipIfOnChain` is opt-in. BRC-29 receive may skip a redundant postBeef
- *   (sender already broadcast); item peerDeliver must not, because the payee is
- *   normally the first broadcaster and an existence probe is pure latency.
+ * - Ingest posts the signed body. It does not ask an explorer whether the
+ *   transaction is already visible; that lookup is not propagation.
  * - independent tips ingest concurrently, bounded.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -226,25 +225,23 @@ beforeEach(async () => {
 })
 
 describe('broadcastAtomicBeef', () => {
-  it('skips a redundant postBeef when the tx is already on chain', async () => {
+  it('posts the signed body without asking whether an explorer has seen it', async () => {
     txExistsOnChain.mockResolvedValue(true)
     const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
 
-    const ok = await broadcastAtomicBeef('a'.repeat(64), ATOMIC, {
-      skipIfOnChain: true,
-    })
+    const ok = await broadcastAtomicBeef('a'.repeat(64), ATOMIC)
 
     expect(ok).toBe(true)
-    expect(txExistsOnChain).toHaveBeenCalledTimes(1)
-    expect(postBeef).not.toHaveBeenCalled()
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(postBeef).toHaveBeenCalledTimes(1)
   })
 
-  it('still broadcasts when the network has not seen the tx', async () => {
+  it('broadcasts when the network has not seen the tx', async () => {
     txExistsOnChain.mockResolvedValue(false)
     const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
 
     await expect(
-      broadcastAtomicBeef('a'.repeat(64), ATOMIC, { skipIfOnChain: true }),
+      broadcastAtomicBeef('a'.repeat(64), ATOMIC),
     ).resolves.toBe(true)
     expect(postBeef).toHaveBeenCalledTimes(1)
   })
@@ -254,7 +251,7 @@ describe('broadcastAtomicBeef', () => {
     const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
 
     await expect(
-      broadcastAtomicBeef('a'.repeat(64), ATOMIC, { skipIfOnChain: true }),
+      broadcastAtomicBeef('a'.repeat(64), ATOMIC),
     ).resolves.toBe(true)
     expect(postBeef).toHaveBeenCalledTimes(1)
   })

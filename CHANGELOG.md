@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.562] - 2026-10-15
+
+### Fixed
+- **Ingest posts the signed body without asking an explorer if it is already visible.** A payment that just arrived is not indexed yet, so that lookup only delayed the broadcast. A slow explorer probe now names the hop and how long it took. The landing line reports the check, and keeps Arcade's status as a fact rather than the work.
+
 ## [1.3.561] - 2026-10-15
 
 ### Fixed

@@ -253,22 +253,38 @@ async function checkLanding(args: {
 }): Promise<LandingRound> {
   const { txid, runtime } = args
   const chain = runtime.instance.chain
+  const checkStarted = Date.now()
   const { fetchArcadeTxFate, arcadeStatusLanded } = await import('./arcadeV2')
+  const arcadeStarted = Date.now()
   const arcade = toLandingArcade(await fetchArcadeTxFate(chain, txid), arcadeStatusLanded)
+  const arcadeMs = Date.now() - arcadeStarted
   const elapsedMs = Date.now() - args.since
   let fate = decideLanding({ arcade, elapsedMs })
   let evidence: LandingEvidence | undefined
+  let probeMs = 0
   if (fate.kind === 'gatherEvidence') {
+    const probeStarted = Date.now()
     evidence = withArcadeConflict(await landingEvidence(txid, args.atomic, chain), arcade)
+    probeMs = Date.now() - probeStarted
     fate = decideLanding({ arcade, elapsedMs, evidence })
+  }
+  const status =
+    arcade.kind === 'landed' || arcade.kind === 'queued' || arcade.kind === 'stalled'
+      ? arcade.status
+      : arcade.kind
+  const checkMs = Date.now() - checkStarted
+  if (checkMs >= 250 || fate.kind === 'landed' || fate.kind === 'dead') {
+    // `check` is the work. The Arcade status is a fact about the cheque, not
+    // a phase ingest or propagation waits on, so it stays after `done`.
+    console.info(
+      `[landing] ${txid.slice(0, 12)} check done ${checkMs}ms — arcade ${arcadeMs}ms status=${status} verdict=${fate.kind} chainProbe=${probeMs}ms ${fate.reason}`,
+    )
   }
   if (!runtimeIsCurrent(runtime)) {
     return { fate: { kind: 'waiting', reason: 'account changed' }, arcade, evidence }
   }
-  if (fate.kind === 'landed') {
-    noteTxLanded(txid)
-    console.info(`[landing] ${txid.slice(0, 12)} landed ${fate.reason} done ${elapsedMs}ms`)
-  } else if (fate.kind === 'dead' && evidence) {
+  if (fate.kind === 'landed') noteTxLanded(txid)
+  else if (fate.kind === 'dead' && evidence) {
     const retired = await retireDeadCheque({
       txid,
       fate,

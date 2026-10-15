@@ -152,12 +152,11 @@ const broadcastInFlight = new Map<string, Promise<boolean>>()
 export function broadcastAtomicBeef(
   txid: string,
   atomic: number[],
-  opts?: { skipIfOnChain?: boolean },
 ): Promise<boolean> {
   const id = txid.trim().toLowerCase()
   const joined = broadcastInFlight.get(id)
   if (joined) return joined
-  const round = broadcastAtomicBeefOnce(id, atomic, opts).finally(() => {
+  const round = broadcastAtomicBeefOnce(id, atomic).finally(() => {
     if (broadcastInFlight.get(id) === round) broadcastInFlight.delete(id)
   })
   if (/^[0-9a-f]{64}$/.test(id)) broadcastInFlight.set(id, round)
@@ -167,7 +166,6 @@ export function broadcastAtomicBeef(
 async function broadcastAtomicBeefOnce(
   id: string,
   atomic: number[],
-  opts?: { skipIfOnChain?: boolean },
 ): Promise<boolean> {
   const active = getActiveWallet()
   if (!active || !/^[0-9a-f]{64}$/.test(id) || !atomic.length) return false
@@ -176,19 +174,9 @@ async function broadcastAtomicBeefOnce(
     console.info(`[brc29-ingest ${id.slice(0, 12)}…] +${Date.now() - t0}ms ${phase}`)
   }
   try {
-    // BRC-29 sender already broadcast — optional existence check saves a full
-    // multi-provider postBeef RTT. Item peerDeliver must not use this (payee
-    // is often the first broadcaster; the check would only add latency).
-    if (opts?.skipIfOnChain) {
-      const { txExistsOnChain } = await import('./legacyScan')
-      const onChain = await txExistsOnChain(id, active.chain)
-      mark(`exists=${String(onChain)}`)
-      if (onChain === true) {
-        forgetGhostTx(id)
-        return true
-      }
-    }
-
+    // The signed body is the propagation. An explorer "seen" answer is not a
+    // gate: a payment that just arrived is not indexed yet, and asking first
+    // only delays the post.
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')
     const result = await submitAtomicBeefToMiners(id, atomic)
     mark(`postBeef ${result.kind}`)
@@ -930,7 +918,7 @@ async function internalizeBrc29PaymentOnce(opts: {
       let internalizeMs = 0
       const broadcastP = (async () => {
         const t0 = Date.now()
-        const ok = await broadcastAtomicBeef(id, atomic!, { skipIfOnChain: true })
+        const ok = await broadcastAtomicBeef(id, atomic!)
         existsMs = Date.now() - t0
         return ok
       })()
@@ -961,7 +949,7 @@ async function internalizeBrc29PaymentOnce(opts: {
       })()
       await Promise.all([broadcastP, internalizeP])
       markIngest(
-        `parallel exists/postBeef=${existsMs}ms internalize=${internalizeMs}ms`,
+        `parallel postBeef=${existsMs}ms internalize=${internalizeMs}ms`,
       )
     } else {
       const t0 = Date.now()

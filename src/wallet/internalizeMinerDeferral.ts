@@ -117,7 +117,7 @@ export function installInternalizeMinerDeferral(
     broadcast ??
     (async (txid: string, atomic: number[]) => {
       const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
-      return broadcastAtomicBeef(txid, atomic, { skipIfOnChain: true })
+      return broadcastAtomicBeef(txid, atomic)
     })
 
   const originalInternalize = wallet.internalizeAction.bind(wallet)

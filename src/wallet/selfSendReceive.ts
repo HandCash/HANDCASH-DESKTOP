@@ -90,7 +90,7 @@ export async function reconcileSelfSendReceive(args: {
 
   if (broadcastTried.has(id)) return 'broadcast'
   broadcastTried.add(id)
-  const posted = await broadcastAtomicBeef(id, atomic, { skipIfOnChain: true })
+  const posted = await broadcastAtomicBeef(id, atomic)
   if (!posted || isGhostTxSuppressed(id)) {
     clearInboundReceivePending(id)
     console.info(

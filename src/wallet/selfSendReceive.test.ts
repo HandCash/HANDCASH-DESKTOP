@@ -115,7 +115,7 @@ describe('reconcileSelfSendReceive', () => {
     mocks.cheque.mockReturnValue([4, 5])
     pinTokenReceive()
     expect(await reconcileSelfSendReceive({ txid: TX, now: agePastGrace() })).toBe('broadcast')
-    expect(mocks.broadcast).toHaveBeenCalledWith(TX, [4, 5], { skipIfOnChain: true })
+    expect(mocks.broadcast).toHaveBeenCalledWith(TX, [4, 5])
     const rows = listRecentActivity(10)
     const sent = rows.find((row) => row.kind === 'spent')
     expect(sent?.method).toBe('send-token')

@@ -203,54 +203,92 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   // Explorer 404 / "not found" is NOT proof the tx is absent — mempool /
   // indexer lag can last several minutes (up to ~10). Only an explicit hit
   // returns true; 404 and errors return null (unknown).
+  //
+  // This is evidence for a conflict or a dead cheque. Ingest and miner
+  // propagation do not call it: a payment posts from its signed body.
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
+  const started = Date.now()
+  const hops: string[] = []
+  const hop = (name: string, at: number, outcome: string) => {
+    hops.push(`${name} ${Date.now() - at}ms ${outcome}`)
+  }
+
+  let result: boolean | null = null
 
   // Bitails first — BananaBlocks aborts under phone WebView contention and was
   // starving every probe (mobile logs: AbortError code=20 on /tx/hash).
   const bitails = bitailsBase(chain)
   if (bitails) {
+    const at = Date.now()
     try {
       const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
-      if (res.ok) return true
+      if (res.ok) {
+        hop('bitails', at, 'hit')
+        result = true
+      } else hop('bitails', at, `http ${res.status}`)
     } catch (err) {
+      hop('bitails', at, isAbortError(err) ? 'timeout' : 'error')
       if (!isAbortError(err)) {
         console.warn('[legacy-scan] Bitails tx lookup failed', err)
       }
     }
   }
 
-  const banana = bananablocksBase(chain)
+  const banana = result == null ? bananablocksBase(chain) : null
   if (banana) {
+    const at = Date.now()
     try {
       const res = await fetchWithDeadline(`${banana}/tx/hash/${id}`)
-      if (res.ok) return true
+      if (res.ok) {
+        hop('banana', at, 'hit')
+        result = true
+      } else hop('banana', at, `http ${res.status}`)
     } catch (err) {
+      hop('banana', at, isAbortError(err) ? 'timeout' : 'error')
       if (!isAbortError(err)) {
         console.warn('[legacy-scan] BananaBlocks tx lookup failed', err)
       }
     }
   }
 
-
-  if (handcashChainLikelyUp()) {
+  if (result == null && handcashChainLikelyUp()) {
+    const at = Date.now()
     try {
       const cloud = await cloudTxExists(id, chain)
-      if (cloud === true || cloud === false) return cloud
+      if (cloud === true || cloud === false) {
+        hop('cloud', at, cloud ? 'hit' : 'miss')
+        result = cloud
+      } else hop('cloud', at, 'unknown')
     } catch {
-      /* fall through */
+      hop('cloud', at, 'error')
     }
   }
 
-  try {
-    const res = await fetchWhatsOnChainPaced(`${wocBase(chain)}/tx/hash/${id}`)
-    if (!res) return null
-    if (res.status === 404) return null
-    if (!res.ok) return null
-    return true
-  } catch {
-    return null
+  if (result == null) {
+    const at = Date.now()
+    try {
+      const res = await fetchWhatsOnChainPaced(`${wocBase(chain)}/tx/hash/${id}`)
+      if (!res) hop('woc', at, 'skipped')
+      else if (res.status === 404 || !res.ok) hop('woc', at, `http ${res.status}`)
+      else {
+        hop('woc', at, 'hit')
+        result = true
+      }
+    } catch {
+      hop('woc', at, 'error')
+    }
   }
+
+  const ms = Date.now() - started
+  if (ms >= 250) {
+    console.info(
+      `[chain-probe] probe done ${ms}ms — ${id.slice(0, 12)} ${hops.join(', ')} result=${
+        result == null ? 'unknown' : result
+      }`,
+    )
+  }
+  return result
 }
 
 /** `txid.vout` or `txid_vout` → parts, or null when the key is not an outpoint. */
