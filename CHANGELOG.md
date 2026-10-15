@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.561] - 2026-10-15
+
+### Fixed
+- **A basket read no longer holds the storage lock for a whole page.** Item and token pages come back 10 rows at a time, and each call waits until a tap already in progress has the lock. The balance label fits in one measurement instead of forcing layout on every step.
+
 ## [1.3.560] - 2026-10-15
 
 ### Fixed

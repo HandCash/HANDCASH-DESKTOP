@@ -25,15 +25,16 @@ export function useFitFontSize(
       content.style.transformOrigin = ''
       content.style.fontSize = `${maxPx}px`
 
-      let size = maxPx
-      while (size > minPx && content.scrollWidth > available + 0.5) {
-        size -= 0.5
-        content.style.fontSize = `${size}px`
-      }
-
-      // If still overflowing at min font, scale the whole amount down.
-      if (content.scrollWidth > available + 0.5) {
-        const scale = Math.max(0.35, available / content.scrollWidth)
+      // One ratio from the width at maxPx. Stepping half a pixel and reading
+      // scrollWidth each time forced layout on every dashboard commit — 264ms
+      // of it on a send tap.
+      const full = content.scrollWidth
+      if (full <= available + 0.5) return
+      const fitted = Math.max(minPx, (maxPx * available) / full)
+      content.style.fontSize = `${fitted}px`
+      const projected = (full * fitted) / maxPx
+      if (projected > available + 0.5) {
+        const scale = Math.max(0.35, available / projected)
         content.style.transformOrigin = 'center center'
         content.style.transform = `scale(${scale})`
       }

@@ -32,7 +32,7 @@ import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 import { readTokenFiling } from './filingStore'
-import { listOutputsInSlices } from '../basketSubReads'
+import { BASKET_SUB_READ_ROWS, listOutputsInSlices } from '../basketSubReads'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
 
@@ -649,7 +649,7 @@ async function readWholeBasket(wallet: ActiveWallet, basket: string): Promise<Li
         return answer
       },
       { limit: HELD_PAGE_SIZE, offset },
-      { subRows: 100 },
+      { subRows: BASKET_SUB_READ_ROWS },
     )
     if (listed.yieldedMs >= 250) {
       console.info(
@@ -757,7 +757,7 @@ async function listBasketTips(
           seekPermission: false,
         }) as Promise<{ outputs?: ListedOutput[] }>,
       { limit: 1000, offset: 0 },
-      { subRows: 100 },
+      { subRows: BASKET_SUB_READ_ROWS },
     )
     return listed.outputs
   } catch (error) {

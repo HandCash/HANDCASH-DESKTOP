@@ -1,13 +1,14 @@
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 
 /**
- * The toolbox storage lock is FIFO, so a send that arrives behind one
- * 1,000-row basket read waits for all of it — 16s for bare item rows with tags
- * on a phone, right after unlock. Read the same page in short slices and let
- * a waiting send take the lock between them.
+ * The toolbox storage lock is FIFO and a call already inside it cannot be
+ * interrupted. On a phone one 100-row `1sat` page held that lock for 18s, so
+ * a send tapped during the page waited the rest of it. Keep each call to a
+ * handful of rows, and give the event loop a turn before every call so a tap
+ * can register before the next one starts.
  */
 
-export const BASKET_SUB_READ_ROWS = 100
+export const BASKET_SUB_READ_ROWS = 10
 const SPEND_WAIT_POLL_MS = 200
 const SPEND_WAIT_MAX_MS = 90_000
 
@@ -50,7 +51,10 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
   let slices = 0
   let yieldedMs = 0
   while (outputs.length < limit) {
-    if (slices > 0 && spendWaiting()) yieldedMs += await letSpendPass()
+    // A macrotask, not a microtask: the tap that starts a send is a task, and
+    // it has to run before this loop takes the lock again.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    if (spendWaiting()) yieldedMs += await letSpendPass()
     const want = Math.min(subRows, limit - outputs.length)
     const at = skip + outputs.length
     const page = await listOutputs({

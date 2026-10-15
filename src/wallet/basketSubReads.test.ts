@@ -43,6 +43,23 @@ describe('listOutputsInSlices', () => {
     expect(read.totalOutputs).toBe(1500)
   })
 
+  it('does not start a slice while a send is already waiting', async () => {
+    vi.useFakeTimers()
+    spend.waiting = 1
+    const { listOutputs, calls } = basket(40)
+    const pending = listOutputsInSlices(listOutputs, { limit: 40, offset: -1 }, { subRows: 10 })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(calls).toHaveLength(0)
+    spend.waiting = 0
+    await vi.advanceTimersByTimeAsync(1_000)
+    const read = await pending
+    expect(calls.length).toBeGreaterThan(0)
+    expect(read.outputs).toHaveLength(40)
+    expect(read.yieldedMs).toBeGreaterThan(0)
+    spend.waiting = 0
+    vi.useRealTimers()
+  })
+
   it('lets a waiting send take the lock between slices', async () => {
     vi.useFakeTimers()
     const { listOutputs, calls } = basket(200)
