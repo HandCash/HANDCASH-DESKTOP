@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.569] - 2026-10-15
+
+### Fixed
+- **The update package can publish.** The release checks run in separate processes, so one of them no longer runs out of memory before the Mac installer is uploaded.
+
 ## [1.3.568] - 2026-10-15
 
 ### Fixed

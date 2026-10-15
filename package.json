@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.3.568",
+  "version": "1.3.569",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -30,7 +30,7 @@
     "package:win": "npm run build && electron-builder --win",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:ci": "vitest run --reporter=default",
+    "test:ci": "node scripts/test-ci.mjs",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
     "test:watch": "vitest",
