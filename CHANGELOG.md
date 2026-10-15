@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.570] - 2026-10-15
+
+### Fixed
+- **Unlock no longer stalls on "Almost ready" after the engine update.** A wallet already in its own database opens in place instead of being copied first. Copying exported, re-imported and re-checked the whole history before unlock, and a phone with a long history never finished. Copies left by those interrupted runs are deleted.
+
 ## [1.3.569] - 2026-10-15
 
 ### Fixed

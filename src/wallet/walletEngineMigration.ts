@@ -126,9 +126,31 @@ async function identityIsStored(name: string, identityKey: string): Promise<bool
   }
 }
 
+/** Drop staging copies an interrupted run left behind; the selected one stays. */
+async function dropAbandonedStages(base: string, selected: string): Promise<void> {
+  const prefix = `${base}-restore-engine-v${ENGINE_SCHEMA}-`
+  for (const name of await databaseNames()) {
+    if (!name.startsWith(prefix) || name === selected) continue
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(name)
+      request.onsuccess = () => resolve()
+      request.onerror = () => resolve()
+      request.onblocked = () => resolve()
+    })
+    console.info(`[wallet-engine] dropped abandoned migration copy ${name}`)
+  }
+}
+
 /**
- * Copy one account into the HandCash-owned engine and switch with one pointer
- * write only after the portable history round-trips with identical custody
+ * Bring one account onto the HandCash-owned engine.
+ *
+ * The engine opens the toolbox's own IndexedDB schema (version 6, the same
+ * stores and indexes), so an account already in its own database is adopted
+ * in place. Copying it cost a full BRC-38 export, import and second export
+ * before unlock, which a phone with a long history never finished.
+ *
+ * Only history held in the shared legacy database is copied, and the pointer
+ * moves only after the portable history round-trips with identical custody
  * facts. The source database remains untouched as the rollback copy.
  */
 export async function migrateWalletEngineStorage(args: MigrationArgs): Promise<void> {
@@ -158,17 +180,15 @@ export async function migrateWalletEngineStorage(args: MigrationArgs): Promise<v
     (await identityIsStored(legacy, identityKey))
       ? legacy
       : selected
-  if (
-    typeof indexedDB !== 'undefined' &&
-    typeof indexedDB.databases === 'function' &&
-    !(await identityIsStored(sourceName, identityKey))
-  ) {
-    // A new account has nothing to copy. The next open creates its own
-    // database; there is no legacy ledger to retain.
+  if (sourceName === selected) {
+    // Already in its own database (or a new account with nothing to copy):
+    // the engine reads it as it is.
     if (!durableSetItem(key, selected)) {
       throw new Error('Wallet-engine migration marker could not be persisted')
     }
     migratedThisRun.add(selected)
+    await dropAbandonedStages(base, selected).catch(() => undefined)
+    console.info(`[wallet-engine] adopted ${selected} in place`)
     return
   }
   const replacement =
