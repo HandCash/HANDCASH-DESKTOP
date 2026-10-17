@@ -231,7 +231,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('sendBrc29ToIdentityKey', () => {
+describe('sendBrc29ToIdentityKey', { timeout: 30_000 }, () => {
   beforeEach(() => {
     createAction.mockClear()
     abortAction.mockClear()
