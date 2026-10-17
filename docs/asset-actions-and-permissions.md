@@ -139,7 +139,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
 | Token split as a user action | Missing; only combine is exposed | The combine self-send |
-| Issuer-controlled tokens (freeze, acceptance) | Missing; cosigned tips are refused | BRC-253 draft, section 9 |
+| Issuer-controlled tokens (freeze, acceptance) | Missing; cosigned tips are refused | Unpublished issuer-control draft |
 | Required-processing profiles | Every `req` is unsupported | `requiredProcessing.ts` is the hook |
 | On-chain escrow | Chat card only, local stub | BRC-218 parser |
 | Subscriptions | Missing | Spending authorization, auto-pay |
@@ -172,13 +172,13 @@ Run every bridge asset action in one pass, swaps included, at `https://brc-cloud
 | Token → BSV | P2PKH sats | Same as a market token listing, minus fee and overlay |
 | Token → token | A BRC-162 output of the wanted token | The taker adds its token inputs and change; each token sums exactly |
 | Item → token or BSV | Same as above | Ordinal satoshi placement: the item sits behind taker pads, as in `ordinal-v2` |
-| Countersigned assets | One transaction, both holders sign `0xC1`, the acceptor countersigns | Same issuer only (BRC-253 open question 2) |
+| Countersigned assets | One transaction, both holders sign `0xC1`, the acceptor countersigns | Same issuer only (open question in that draft) |
 
 Every swap transaction goes through `signedSendLifecycle`. Delivery of the maker's proceeds rides the messagebox and never gates broadcast.
 
 ## 9. Countersigned assets: basket `cosigned`
 
-Proposed in the local BRC-253 draft (not published). Tokens and items share one scheme, because an item is a countersigned deploy with a supply of 1.
+Proposed in an unpublished issuer-control draft. Tokens and items share one scheme, because an item is a countersigned deploy with a supply of 1.
 
 - Filing name `cosigned`, wallet-internal. An app naming it is refused.
 - Tags: `cosigned:<assetId>` (deploy outpoint), `cosigned:token` or `cosigned:item`, `col:<collectionId>` when membership checks out, `id:<key>` (BRC-164).

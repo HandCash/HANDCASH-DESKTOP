@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.573] - 2026-10-17
+
+### Added
+- **Token swaps, peer to peer.** Offer an exact amount of a P2P-FT token for sats or for another token. The wallet freezes that lot in escrow and signs only its own input against what it wants back, so whoever takes the offer must pay exactly that. Taking proves the lot back to its deploy before anything is signed. Claim proceeds or cancel to release the lot. Apps reach it through `createTokenSwapOffer`, `acceptTokenSwapOffer`, `claimTokenSwapProceeds`, `cancelTokenSwapOffer` and `listTokenSwapOffers`, each approved on its own.
+- **Frozen coins in Activity.** A swap offer shows the token with a snowflake badge until it is taken or cancelled; a cancel shows Released and a trade shows Swap.
+
+### Changed
+- **Market listings bind the seller's signatures to the payment and fee** (settlement v2), so a buyer cannot redirect either.
+
 ## [1.3.572] - 2026-10-17
 
 ### Fixed
