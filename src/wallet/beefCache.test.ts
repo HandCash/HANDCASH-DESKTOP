@@ -1,8 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Beef, LockingScript, MerklePath, PrivateKey, P2PKH, Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 
 describe('beefCache', () => {
+  // beefCache imports these lazily; their first transform takes seconds on a
+  // slow runner and must not count against a single test's timeout.
+  beforeAll(async () => {
+    await Promise.all([
+      import('./beefCache'),
+      import('./oneSatImport'),
+      import('./signedChequeArchive'),
+      import('./walletCoordinator'),
+    ])
+  }, 60_000)
+
   beforeEach(async () => {
     vi.resetModules()
     const { resetBeefCacheForTests, resetDurableBeefForTests } = await import('./beefCache')
