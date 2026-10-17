@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.575] - 2026-10-17
+
+### Changed
+- **Market listings and direct offers are one mechanism in code too.** Both venues sign the listed lot through one seller signer and buyers check it with the same script check. List, cancel, direct buy and collect run in one chart. Market listing signatures are byte-for-byte what they were.
+- **Direct offer methods are named as listings.** The bridge methods are now `createDirectOffer`, `buyDirectOffer`, `collectDirectOfferProceeds`, `cancelDirectOffer` and `listDirectOffers`. The offer protocol is `handcash-direct-offer` and the offer fields are `seller` and `sellerUnlockingScript`. The old token-swap names are gone.
+- **Nothing listed in 1.3.573 is stranded.** Its records are read once into the new store, and a lot listed then stays cancellable from its original basket. Activity rows from 1.3.573 show as direct offers.
+
+### Fixed
+- **Direct offer calls get the spend deadline on the Desktop bridge**, so a slow listing or purchase reports "may still complete" instead of timing out as a read.
+
 ## [1.3.574] - 2026-10-17
 
 ### Changed
