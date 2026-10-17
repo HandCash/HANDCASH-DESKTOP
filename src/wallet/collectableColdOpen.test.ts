@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // A cold open must paint last session's items. Recompose used to empty the
 // durable list cache, so the next boot started at zero and Collect showed
@@ -35,6 +35,7 @@ const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
 let recomposeActive = false
 /** A send or sync holding a coordinator region. */
 let walletBusy = false
+let testRun = 0
 
 vi.mock('./walletCoordinator', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./walletCoordinator')>()
@@ -44,6 +45,20 @@ vi.mock('./walletCoordinator', async (importOriginal) => {
     walletRegionsIdle: () => !recomposeActive && !walletBusy && actual.walletRegionsIdle(),
     walletRegionsIdleSince: (generation: number) =>
       !recomposeActive && !walletBusy && actual.walletRegionsIdleSince(generation),
+    // Must agree with walletRegionsIdle above, or a deferred relist resolves
+    // "idle", defers again and spins until the heap runs out. A relist left
+    // waiting by an earlier test never sees idle, so it cannot spend this
+    // test's listOutputs mock.
+    waitForWalletRegionsIdle: async (maxWaitMs: number) => {
+      const deadline = Date.now() + maxWaitMs
+      const run = testRun
+      while (recomposeActive || walletBusy) {
+        if (Date.now() >= deadline) return false
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      if (run !== testRun) return false
+      return actual.waitForWalletRegionsIdle(Math.max(0, deadline - Date.now()))
+    },
   }
 })
 
@@ -112,6 +127,7 @@ function seedDurableList(identityKey: string | null, items = [itemRow(TIP, 'Test
 
 describe('collectables across a cold open', () => {
   beforeEach(() => {
+    testRun += 1
     vi.resetModules()
     store.clear()
     recomposeActive = false
@@ -121,6 +137,19 @@ describe('collectables across a cold open', () => {
     active.wallet.listOutputs.mockResolvedValue({
       outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
     })
+  })
+
+  // Reads a test leaves behind (deferred relists, timer-driven slices) finish
+  // here, not inside the next test where they would take its one-shot answer.
+  afterEach(async () => {
+    recomposeActive = false
+    walletBusy = false
+    const deadline = Date.now() + 3_000
+    let seen = -1
+    while (seen !== active.wallet.listOutputs.mock.calls.length && Date.now() < deadline) {
+      seen = active.wallet.listOutputs.mock.calls.length
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
   })
 
   it('paints the durable list before any basket read', async () => {
