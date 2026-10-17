@@ -146,33 +146,6 @@ export function LockIcon(props: IconProps) {
   )
 }
 
-/** Material Icons — `ac_unit` (coins frozen in a swap escrow) */
-export function FrozenIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M22 11h-4.17l3.24-3.24-1.41-1.42L15 11h-2V9l4.66-4.66-1.42-1.41L13 6.17V2h-2v4.17L7.76 2.93 6.34 4.34 11 9v2H9L4.34 6.34 2.93 7.76 6.17 11H2v2h4.17l-3.24 3.24 1.41 1.42L9 13h2v2l-4.66 4.66 1.42 1.41L11 17.83V22h2v-4.17l3.24 3.24 1.42-1.41L13 15v-2h2l4.66 4.66 1.41-1.42L17.83 13H22z" />
-    </Icon>
-  )
-}
-
-/** Material Icons — `lock_open` (frozen coins released back to the balance) */
-export function ReleaseIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z" />
-    </Icon>
-  )
-}
-
-/** Material Icons — `swap_horiz` (token swap) */
-export function SwapIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M6.99 11 3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" />
-    </Icon>
-  )
-}
-
 /** Material Icons — `vpn_key` */
 export function KeyIcon(props: IconProps) {
   return (

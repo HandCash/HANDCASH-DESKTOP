@@ -642,10 +642,11 @@ const TOKEN_SWAP = `stateDiagram-v2
   ingesting --> committed : INGESTED
   ingesting --> failed : FAIL
   note right of staging
-    make: escrow exact lot (basket token-swap-offers),
+    list: hold the exact lot out of the balance
+    (basket token-swap-offers), as a market listing does,
     then sign input 0 SINGLE|ANYONECANPAY over output 0.
-    take: Spend-check the maker unlock and prove the
-    lot to its deploy before signing any taker coin.
+    buy: Spend-check the seller unlock and prove the
+    lot to its deploy before signing any buyer coin.
     cancel: spend the lot back to the token balance.
   end note
   note right of ingesting
@@ -1696,9 +1697,9 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   },
   {
     id: 'tokenSwap',
-    label: 'Token swap',
+    label: 'Direct offer',
     caption:
-      'tokenSwapMachine — maker escrow + SINGLE|ACP offer; taker proves the lot, pays output 0; maker claims or cancels',
+      'tokenSwapMachine — an unpublished listing: lot listed with a SINGLE|ACP signature over what the seller wants (sats or a token); buyer proves the lot, pays output 0; seller collects or cancels',
     source: TOKEN_SWAP,
   },
   {

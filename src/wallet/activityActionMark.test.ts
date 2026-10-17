@@ -40,14 +40,14 @@ describe('activityActionMark', () => {
     ).toBe('sale')
   })
 
-  it('marks a swap escrow as frozen coins, its cancel as released, and the trade as a swap', () => {
+  it('marks a direct offer with the same marks as a market listing', () => {
     const marks = [
       activityActionMark(entry({ method: 'token-swap-offer', kind: 'event', sats: 0 })),
       activityActionMark(entry({ method: 'token-swap-cancel', kind: 'event', sats: 0 })),
       activityActionMark(entry({ method: 'token-swap', kind: 'spent', sats: 500 })),
       activityActionMark(entry({ method: 'token-swap-proceeds', sats: 500 })),
     ]
-    expect(marks).toEqual(['freeze', 'release', 'swap', 'swap'])
+    expect(marks).toEqual(['list', 'cancel', 'purchase', 'sale'])
   })
 
   it('marks plain transfers by direction', () => {

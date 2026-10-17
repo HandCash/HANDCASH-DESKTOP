@@ -28,10 +28,7 @@ import {
   SendIcon,
   SoldIcon,
   FireIcon,
-  FrozenIcon,
   RefreshIcon,
-  ReleaseIcon,
-  SwapIcon,
   WarningIcon,
 } from "./icons";
 import { DeferredImage } from "./DeferredImage";
@@ -251,9 +248,6 @@ function actionGlyphs(
     },
     sale: { label: "Sold", glyph: <SoldIcon size={icon + 1} /> },
     purchase: { label: "Purchase", glyph: <PurchaseIcon size={icon} /> },
-    freeze: { label: "Frozen", glyph: <FrozenIcon size={icon} /> },
-    release: { label: "Released", glyph: <ReleaseIcon size={icon} /> },
-    swap: { label: "Swap", glyph: <SwapIcon size={icon + 1} /> },
     burn: { label: "Burn", glyph: <FireIcon size={icon - 1} /> },
     mint: { label: "Mint", glyph: <MintIcon size={icon - 1} /> },
     send: { label: "Send", glyph: <SendIcon size={icon * 0.75} /> },
@@ -740,14 +734,14 @@ function eventAmountLabel(entry: ActivityEntry): string {
   if (m === "forget-collectable") return "Forgot";
   if (m === "market-list") return "Listed";
   if (m === "market-cancel") return "Cancelled";
-  if (m === "token-swap-offer") return "Frozen";
-  if (m === "token-swap-cancel") return "Released";
+  if (m === "token-swap-offer") return "Listed";
+  if (m === "token-swap-cancel") return "Cancelled";
   return "Action";
 }
 
 function eventIcon(entry: ActivityEntry, size = 18) {
   const m = entry.method;
-  // The coins themselves; the frozen / released mark rides the action badge.
+  // The listed lot; the Listing / Cancel listing mark rides the action badge.
   if (m === "token-swap-offer" || m === "token-swap-cancel") {
     return <InventoryIcon size={size} />;
   }

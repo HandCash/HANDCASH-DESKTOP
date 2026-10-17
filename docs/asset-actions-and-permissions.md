@@ -1,6 +1,6 @@
 # Asset actions and permissions
 
-Every permission an app can hold, and every item, token, market and BSV action the wallet performs, with the module that owns it. The last sections cover token swaps, what is still missing, and the basket scheme proposed for countersigned assets.
+Every permission an app can hold, and every item, token, market and BSV action the wallet performs, with the module that owns it. The last sections cover offers (market listings and direct offers), what is still missing, and the basket scheme proposed for countersigned assets.
 
 Related: [`brc-wallet-feature-map.md`](./brc-wallet-feature-map.md) (feature → BRC), [`token-architecture.md`](./token-architecture.md), [`wallet-p2p-messagebox.md`](./wallet-p2p-messagebox.md).
 
@@ -46,7 +46,7 @@ All grants are stored per account (`accountLocalKey`). Every HandCash catalog ho
 | **Identity proof** | `proveCertificate` without a prompt | Auto inside the fresh-connect window, then for the session in memory | Session end |
 | **Held-row spend label** | `createAction` label `p 1sat input id <key>` / `p p2pft input id <key>` names the one held output this action may spend | Per action, inside the action prompt | Single use |
 
-Always prompted, never covered by a grant: item and token sends, mints, identity-signed issuance, every market write and swap, `createSignature`, encryption and key linkage. Prompt wording comes from `summarizeAction` (`permissions.ts`). Market prompts show the item and "Total includes the 5% market fee".
+Always prompted, never covered by a grant: item and token sends, mints, identity-signed issuance, every market write and direct offer, `createSignature`, encryption and key linkage. Prompt wording comes from `summarizeAction` (`permissions.ts`). Market prompts show the item and "Total includes the 5% market fee".
 
 Not implemented: BRC-73 protocol, basket, certificate and counterparty grants. Calls that would use them prompt each time. Persisted grants never expire.
 
@@ -133,8 +133,9 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 
 | Feature | State | Builds on |
 |---|---|---|
-| Item ↔ token / BSV swaps | Missing; token → BSV and token → token ship (section 8) | Ordinal pads from `ordinal-v2` |
-| Swap offer delivery | Offers are shared by hand (JSON); the maker claims with the take txid | Messagebox `token-swap` box |
+| Item direct offers | Missing; token for sats and token for token ship (section 8) | Ordinal pads from `ordinal-v2` |
+| Token-priced market listings | Missing; the market prices in sats only | Overlay offer fields carry a token price; fee rule for a token price |
+| Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `token-swap` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
 | Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
@@ -147,34 +148,41 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Grant expiry | Grants never expire | Auto-pay window timestamps |
 | Wallet-side mint, list and buy screens | Apps and the market site only | `identityIssuance.ts`, market methods |
 
-## 8. Swaps
+## 8. Offers: market listings and direct offers
 
-A swap offer is market settlement v2 without the market. The maker holds an output with exactly the amount it offers, then signs that one input with `SIGHASH_SINGLE|ANYONECANPAY|FORKID` at input 0. That signature binds output 0 to what the maker wants. The taker adds its own inputs and the remaining outputs, signs `ALL`, and broadcasts. The maker loses nothing if the taker never acts, and it can cancel by spending the offered output to itself.
+There is one offer mechanism. The seller holds an output with exactly what it offers, out of the spendable balance, and signs that input with `SIGHASH_SINGLE|ANYONECANPAY|FORKID`, binding the output at the same index to what it wants back. Whoever holds the signature can complete the trade without the seller; the buyer adds its own inputs and the remaining outputs and signs `ALL`. The seller cancels by spending the held output to itself. Holding the lot back is not a separate rule: spending it elsewhere would leave a published signature pointing at a coin that no longer exists.
 
-Shipped for tokens: `tokenSwap.ts`, path vocabulary `tokenSwapPath.ts`, chart `tokenSwapMachine`.
+Two venues use it:
+
+| | Market listing | Direct offer |
+|---|---|---|
+| Wanted back | Sats | Sats, or another token |
+| Who sees it | Published to the market overlay and index | JSON handed to a buyer |
+| Fee | 5% market fee, bound by the BRC-48 offer deposit's signature | None |
+| Code | `marketListing.ts`, `marketSettlement.ts` (settlement v2) | `tokenSwap.ts`, `tokenSwapPath.ts`, chart `tokenSwapMachine` |
+
+Activity treats them alike: **Listing**, **Cancel listing**, **Sold** and **Purchase** marks, with the asset as the row's subject. Direct-offer notes end in "(direct offer)". The bridge methods keep their `TokenSwap` names.
 
 | Method (action, prompts) | What it does |
 |---|---|
-| `createTokenSwapOffer({ give: { tokenId, amount }, want })` | Escrows the exact lot (basket `token-swap-offers`, so send and burn never select it), signs input 0, returns the offer JSON |
-| `acceptTokenSwapOffer({ offer })` | Proves the lot back to its deploy (BRC-176), script-checks the maker unlock inside the real transaction, then signs the taker's coins |
-| `claimTokenSwapProceeds({ offerId, txid })` | Maker files output 0 (P2PKH sweep, or token ingest) and retires the escrow |
+| `createTokenSwapOffer({ give: { tokenId, amount }, want })` | Holds the exact lot (basket `token-swap-offers`, so send and burn never select it), signs input 0, returns the offer JSON |
+| `acceptTokenSwapOffer({ offer })` | Proves the lot back to its deploy (BRC-176), script-checks the seller unlock inside the real transaction, then signs the buyer's coins |
+| `claimTokenSwapProceeds({ offerId, txid })` | Seller files output 0 (P2PKH sweep, or token ingest) and retires the held lot |
 | `cancelTokenSwapOffer({ offerId })` | Spends the lot back to the token balance; refused once the chain shows it spent |
-| `listTokenSwapOffers()` (connect) | This account's offers and takes |
+| `listTokenSwapOffers()` (connect) | This account's direct offers and purchases |
 
-`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-taken`, and the rest in `TokenSwapRefusal`. A self-swap (maker and taker are one wallet) files output 0 at once.
+`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-taken`, and the rest in `TokenSwapRefusal`. When one wallet is seller and buyer, it files output 0 itself.
 
-Activity marks the lot while it sits in escrow: the offer row shows the token with a **Frozen** (snowflake) badge, a cancel shows **Released**, and the take and the maker proceeds show **Swap** (`activityActionMark.ts`).
+Run every bridge asset action in one pass, direct offers included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; it ends by checking that every listed unit came back. The wallet boundary run at `/wallet-demo` ends with a direct offer bought by the same wallet.
 
-Run every bridge asset action in one pass, swaps included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; it ends by checking that every frozen unit came back. The wallet boundary run at `/wallet-demo` ends with a self-swap.
-
-| Pair | How output 0 pays the maker | Notes |
+| Pair | How output 0 pays the seller | Notes |
 |---|---|---|
 | Token → BSV | P2PKH sats | Same as a market token listing, minus fee and overlay |
-| Token → token | A BRC-162 output of the wanted token | The taker adds its token inputs and change; each token sums exactly |
+| Token → token | A BRC-162 output of the wanted token | The buyer adds its token inputs and change; each token sums exactly |
 | Item → token or BSV | Same as above | Ordinal satoshi placement: the item sits behind taker pads, as in `ordinal-v2` |
 | Countersigned assets | One transaction, both holders sign `0xC1`, the acceptor countersigns | Same issuer only (open question in that draft) |
 
-Every swap transaction goes through `signedSendLifecycle`. Delivery of the maker's proceeds rides the messagebox and never gates broadcast.
+Every offer transaction goes through `signedSendLifecycle`. Delivery of the seller's proceeds rides the messagebox and never gates broadcast.
 
 ## 9. Countersigned assets: basket `cosigned`
 

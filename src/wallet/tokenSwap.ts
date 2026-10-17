@@ -313,7 +313,7 @@ export async function createTokenSwapOffer(args: {
         kind: 'event',
         sats: 0,
         method: 'token-swap-offer',
-        note: `Offered ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)}`,
+        note: `Listed ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
         txid,
         item: frozenLotItem(offer),
       })
@@ -330,7 +330,7 @@ export async function createTokenSwapOffer(args: {
   }, undefined, { promote: false })
 }
 
-/** The escrowed lot as an Activity subject: the token face carries the frozen / released mark. */
+/** The listed lot as an Activity subject, the same way a market listing row carries its asset. */
 function frozenLotItem(offer: TokenSwapOffer): ActivityItem {
   return {
     name: offer.give.sym ?? 'Token',
@@ -612,7 +612,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         kind: 'spent',
         sats: offer.want.kind === 'sats' ? offer.want.sats : 0,
         method: 'token-swap',
-        note: `Swapped ${describeWant(offer.want)} for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
+        note: `Bought ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
         txid,
       })
       void import('./token')
@@ -719,7 +719,7 @@ export async function claimTokenSwapProceeds(args: { offerId?: string; txid?: st
       kind: 'earned',
       sats: offer.want.kind === 'sats' ? offer.want.sats : 0,
       method: 'token-swap-proceeds',
-      note: `Swap proceeds: ${describeWant(offer.want)}`,
+      note: `Sold ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
       txid: path.txid,
     })
     scheduleHistoryBackupPush('token-swap')
@@ -837,7 +837,7 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
         kind: 'event',
         sats: 0,
         method: 'token-swap-cancel',
-        note: `Cancelled swap offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
+        note: `Cancelled direct offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
         txid,
         item: frozenLotItem(offer),
       })

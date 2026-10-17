@@ -1226,13 +1226,14 @@ export function summarizeAction(method: string, args: unknown): {
         ? `${Math.max(0, Math.trunc(Number(want.sats) || 0)).toLocaleString()} sats`
         : `${String(want.amount ?? '?')} ${typeof want.sym === 'string' ? want.sym : 'tokens'}`
     return {
-      title: 'Offer a token swap',
-      summary: `Escrow ${giveAmount || '?'} units for ${wantLabel}`,
+      title: 'List as a direct offer',
+      summary: `List ${giveAmount || '?'} units for ${wantLabel}`,
       tokenId: typeof give.tokenId === 'string' ? give.tokenId : undefined,
       previewKind: 'token',
       details: [
-        'The units leave your token balance until the offer is taken or cancelled',
-        'Anyone holding the offer can take it, and only by paying exactly what you asked',
+        'Listed units leave your token balance until the offer is bought or cancelled, as on the market',
+        'Not published to the market and no market fee: share the offer with a buyer yourself',
+        'Anyone holding the offer can buy it, and only by paying exactly what you asked',
       ],
     }
   }
@@ -1251,7 +1252,7 @@ export function summarizeAction(method: string, args: unknown): {
         ? `${sats.toLocaleString()} sats`
         : `${String(want.amount ?? '?')} ${typeof want.sym === 'string' ? want.sym : 'tokens'}`
     return {
-      title: `Swap for ${giveLabel}`,
+      title: `Buy ${giveLabel}`,
       summary: `Pay ${payLabel} and receive ${giveLabel}`,
       amountSats: sats || undefined,
       amountLabel: sats ? formatBsvSignificant(sats, 5) : undefined,
@@ -1267,16 +1268,16 @@ export function summarizeAction(method: string, args: unknown): {
 
   if (method === 'claimTokenSwapProceeds') {
     return {
-      title: 'Claim swap proceeds',
-      summary: 'File what the taker paid into your wallet',
+      title: 'Collect sale proceeds',
+      summary: 'File what the buyer paid for your direct offer',
       details: [typeof body.offerId === 'string' ? `Offer: ${body.offerId}` : 'Unknown offer'],
     }
   }
 
   if (method === 'cancelTokenSwapOffer') {
     return {
-      title: 'Cancel swap offer',
-      summary: 'Spend the escrowed units back to your token balance',
+      title: 'Cancel direct offer',
+      summary: 'Spend the listed units back to your token balance',
       details: [typeof body.offerId === 'string' ? `Offer: ${body.offerId}` : 'Unknown offer'],
     }
   }

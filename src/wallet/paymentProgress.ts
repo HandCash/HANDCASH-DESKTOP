@@ -281,7 +281,7 @@ export function inFlightVerb(outpoint: string): string | null {
 
 export function isMarketBusy(): boolean {
   const label = (progress.label || '').replace(/…/g, '').trim()
-  return progress.phase !== 'idle' && /^(Listing|Cancelling|Buying)$/i.test(label)
+  return progress.phase !== 'idle' && /^(Listing|Cancelling|Buying|Collecting)$/i.test(label)
 }
 
 const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
@@ -298,20 +298,20 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     detail: 'Settling the purchase',
   },
   createTokenSwapOffer: {
-    label: 'Offering…',
-    detail: 'Escrowing the token lot',
+    label: 'Listing…',
+    detail: 'Creating the direct offer',
   },
   acceptTokenSwapOffer: {
-    label: 'Swapping…',
-    detail: 'Settling the swap',
+    label: 'Buying…',
+    detail: 'Settling the direct offer',
   },
   claimTokenSwapProceeds: {
-    label: 'Claiming…',
-    detail: 'Filing the swap proceeds',
+    label: 'Collecting…',
+    detail: 'Filing the sale proceeds',
   },
   cancelTokenSwapOffer: {
     label: 'Cancelling…',
-    detail: 'Returning the token lot',
+    detail: 'Returning the listed lot',
   },
 }
 

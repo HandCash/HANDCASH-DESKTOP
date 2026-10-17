@@ -21,9 +21,6 @@ export type ActivityActionMark =
   | 'cancel'
   | 'sale'
   | 'purchase'
-  | 'freeze'
-  | 'release'
-  | 'swap'
   | 'burn'
   | 'mint'
   | 'send'
@@ -35,9 +32,6 @@ export const ACTION_MARK_LABEL: Record<ActivityActionMark, string> = {
   cancel: 'Cancel listing',
   sale: 'Sold',
   purchase: 'Purchase',
-  freeze: 'Frozen',
-  release: 'Released',
-  swap: 'Swap',
   burn: 'Burn',
   mint: 'Mint',
   send: 'Send',
@@ -45,9 +39,9 @@ export const ACTION_MARK_LABEL: Record<ActivityActionMark, string> = {
 }
 
 /**
- * Wallet actions recorded as events or as transfers that are not plain sends.
- * A swap offer freezes an exact lot in escrow (basket `token-swap-offers`) until
- * it is taken or cancelled; cancelling releases it back to the balance.
+ * Offer actions, recorded as events or as transfers that are not plain sends.
+ * A direct offer (`token-swap-*`) is a listing that is not published to the
+ * market: the same list / cancel / sale / purchase, so it gets the same marks.
  */
 const ACTION_MARKS: Record<string, ActivityActionMark> = {
   'market-list': 'list',
@@ -56,16 +50,16 @@ const ACTION_MARKS: Record<string, ActivityActionMark> = {
   'market-sale-proceeds': 'sale',
   'market-purchase': 'purchase',
   'market-purchase-receive': 'purchase',
-  'token-swap-offer': 'freeze',
-  'token-swap-cancel': 'release',
-  'token-swap': 'swap',
-  'token-swap-proceeds': 'swap',
+  'token-swap-offer': 'list',
+  'token-swap-cancel': 'cancel',
+  'token-swap': 'purchase',
+  'token-swap-proceeds': 'sale',
 }
 
 /** Null when the row records no wallet action — a connect, a friend, a heal. */
 export function activityActionMark(entry: ActivityEntry): ActivityActionMark | null {
   const named = ACTION_MARKS[entry.method]
-  // Listings, cancels and swap escrows are written as wallet events, yet each is
+  // Listings and cancels are written as wallet events, yet each is
   // an action the user took. Every other event has no action to mark.
   if (!named && isEventActivity(entry)) return null
   if (isFailedActivity(entry)) return 'failed'
