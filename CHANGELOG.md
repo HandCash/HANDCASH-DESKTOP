@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.579] - 2026-10-17
+
+### Added
+- **Countersigned tokens and items.** An app can issue a token or an item with `issueCountersignedAsset`. Your wallet becomes its issuer and holds it first. Every transfer needs the issuer's signature as well as the holder's: `transferCountersignedAsset` signs as the holder and asks the issuer to countersign. When this wallet is the issuer it answers itself; otherwise the request goes to the issuer's messagebox. A refusal comes back with a named reason, and if the issuer has not answered after 45 seconds, nothing is sent. Nothing exists on chain until the issuer accepts.
+- **The issuer accepts each output once.** It records what it accepted before it signs, so it cannot accept two spends of one output. It pays the network fee from its own small fee coins and keeps an on-chain beacon alive, so the backup (successor) keys named in every output can see it is still answering.
+- **Recipients check transfers themselves.** A delivered transfer is checked against the asset's deploy, with no indexer involved, before the wallet files it. A transfer that fails the check is never credited.
+- **Apps read these assets through `p cosigned all | tokens | items | asset | collection | id`**, with their own view prompt. Apps cannot write into the `cosigned` basket, and cannot move these assets with a spend label.
+- The reference run at `/token-demo` now covers all four asset types: P2P-FT tokens, 1Sat items, countersigned tokens and countersigned items.
+
 ## [1.3.578] - 2026-10-17
 
 ### Fixed
