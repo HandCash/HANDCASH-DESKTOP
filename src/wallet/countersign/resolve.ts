@@ -1,4 +1,4 @@
-import { Transaction, Utils } from '@bsv/sdk'
+import { PublicKey, Transaction, Utils } from '@bsv/sdk'
 import { decodeCountersignPayload, type CountersignDeployFields, type CountersignKind } from './payload'
 import {
   beaconLock,
@@ -306,6 +306,78 @@ export function blockingPriorSpends(prior: readonly PriorSpend[], request: Trans
     else final.push(spend)
   }
   return { conflicting, maybeDead, final }
+}
+
+/** An issuer's transfer rules for one asset (BRC-253 §6 step 3), set by `setCountersignedAssetPolicy`. */
+export type AcceptorPolicy = {
+  /** Identity keys that may neither send nor receive the asset. */
+  frozen?: string[]
+  /** Most units one transfer may move to identities other than its senders, decimal. */
+  maxTransfer?: string
+}
+
+export type PolicyCheck = { ok: true } | { ok: false; reason: 'frozen' | 'recipient' | 'limit'; detail: string }
+
+/**
+ * Apply an issuer's policy to a request that passed `checkAcceptRequest`.
+ *
+ * The senders are the identities behind the asset inputs. The acceptor knows
+ * them from the linkage entries of the requests it accepted (`holderOf`); an
+ * output locked to an identity key's own hash is recognised for a frozen key;
+ * otherwise the requester stands in. A frozen sender refuses `frozen`, a
+ * frozen recipient `recipient`. The limit counts units paid to identities
+ * other than the senders, and never binds the issuer's own transfers.
+ */
+export function checkAcceptorPolicy(args: {
+  tx: Transaction
+  assetId: string
+  policy: AcceptorPolicy | undefined
+  issuer: string
+  prover: string
+  holderOf: (holderPkhHex: string) => string | undefined
+  recipients: ReadonlyArray<{ vout: number; identityKey: string }>
+}): PolicyCheck {
+  const frozen = new Set((args.policy?.frozen ?? []).map((k) => k.toLowerCase()))
+  const max = args.policy?.maxTransfer == null ? null : BigInt(args.policy.maxTransfer)
+  if (frozen.size === 0 && max == null) return { ok: true }
+  const frozenByHash = new Map<string, string>()
+  for (const key of frozen) {
+    try {
+      frozenByHash.set(Utils.toHex(PublicKey.fromString(key).toHash() as number[]), key)
+    } catch {
+      // Keys are validated when the policy is set; a bad one cannot match anything.
+    }
+  }
+  const senders = new Set<string>()
+  for (let vin = 0; vin < args.tx.inputs.length; vin++) {
+    const source = sourceOutputOf(args.tx, vin)
+    const read = source ? readCountersigned(source.lockingScript) : null
+    if (!read) continue
+    const assetId = read.assetId ?? `${sourceTxidOf(args.tx, vin)}_${args.tx.inputs[vin]!.sourceOutputIndex}`
+    if (assetId !== args.assetId) continue
+    const who = args.holderOf(read.holderPkhHex) ?? frozenByHash.get(read.holderPkhHex)
+    if (!who) continue
+    if (frozen.has(who)) return { ok: false, reason: 'frozen', detail: `input ${vin} is held by a frozen identity` }
+    senders.add(who)
+  }
+  const prover = args.prover.toLowerCase()
+  if (frozen.has(prover)) return { ok: false, reason: 'frozen', detail: 'the requester is frozen' }
+  if (senders.size === 0) senders.add(prover)
+  const named = new Map(args.recipients.map((r) => [r.vout, r.identityKey.toLowerCase()]))
+  let moved = 0n
+  for (let vout = 0; vout < args.tx.outputs.length; vout++) {
+    const script = args.tx.outputs[vout]!.lockingScript
+    const read = script ? readCountersigned(script) : null
+    if (read?.assetId !== args.assetId) continue
+    const to = named.get(vout)
+    if (!to) continue
+    if (frozen.has(to)) return { ok: false, reason: 'recipient', detail: `output ${vout} pays a frozen identity` }
+    if (!senders.has(to)) moved += read.amount
+  }
+  if (max != null && moved > max && !senders.has(args.issuer.toLowerCase())) {
+    return { ok: false, reason: 'limit', detail: `${moved} units is over the limit of ${max}` }
+  }
+  return { ok: true }
 }
 
 /** Holder public key of input `vin`, from its pre-acceptance unlock. */

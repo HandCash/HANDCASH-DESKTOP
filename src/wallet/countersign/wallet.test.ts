@@ -165,6 +165,7 @@ const {
   retireCountersignedAsset,
   releaseCountersignedAsset,
   serveCountersignBox,
+  setCountersignedAssetPolicy,
 } = await import('./wallet')
 const { readCountersignState, writeCountersignState, deployMap } = await import('./store')
 const { COUNTERSIGN_SCOPE, inputScriptValid, readCountersigned: readOutput, requestIdOf, signInput, sourceOutputOf } =
@@ -280,6 +281,43 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
       transferCountersignedAsset({ assetId: issued.assetId, amount: '6', recipient: identityKey }),
     ).rejects.toMatchObject({ code: 'insufficient' })
     expect(registered.length).toBe(before)
+  })
+
+  it('keeps transfer rules: a frozen recipient is refused before anything is broadcast, and unfreezing lets it through', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'ICE', supply: '9', release: custodians })
+    const recipient = PrivateKey.fromRandom().toPublicKey().toString()
+    await expect(setCountersignedAssetPolicy({ assetId: issued.assetId, freeze: [identityKey] })).rejects.toMatchObject({ code: 'bad-asset-args' })
+    await expect(setCountersignedAssetPolicy({ assetId: issued.assetId, freeze: ['02nope'] })).rejects.toMatchObject({ code: 'bad-asset-args' })
+    await expect(setCountersignedAssetPolicy({ assetId: issued.assetId, maxTransfer: '0' })).rejects.toMatchObject({ code: 'bad-asset-args' })
+    await expect(setCountersignedAssetPolicy({ assetId: `${'ef'.repeat(32)}_0`, maxTransfer: '1' })).rejects.toMatchObject({ code: 'not-issuer' })
+
+    expect(await setCountersignedAssetPolicy({ assetId: issued.assetId, freeze: [recipient], maxTransfer: '3' })).toEqual({
+      assetId: issued.assetId,
+      frozen: [recipient],
+      maxTransfer: '3',
+    })
+    const { assets } = await listCountersignedAssets()
+    expect(assets).toEqual([expect.objectContaining({ assetId: issued.assetId, policy: { frozen: [recipient], maxTransfer: '3' } })])
+    const before = registered.length
+    await expect(transferCountersignedAsset({ assetId: issued.assetId, amount: '1', recipient })).rejects.toMatchObject({
+      code: 'acceptor-refused',
+      acceptorReason: 'recipient',
+    })
+    expect(registered.slice(before).every((id) => rows.some((r) => r.outpoint.startsWith(id) && r.basket === 'countersign-fee'))).toBe(true)
+
+    expect(await setCountersignedAssetPolicy({ assetId: issued.assetId, unfreeze: [recipient], maxTransfer: null })).toEqual({
+      assetId: issued.assetId,
+      frozen: [],
+      maxTransfer: null,
+    })
+    expect(readCountersignState().acceptor[issued.assetId]!.policy).toBeUndefined()
+    // The issuer's own transfers are never limited.
+    await setCountersignedAssetPolicy({ assetId: issued.assetId, maxTransfer: '1' })
+    const sent = await transferCountersignedAsset({ assetId: issued.assetId, amount: '5', recipient })
+    expect(sent.acceptedBy).toBe('local')
+    expect(readCountersignState().acceptor[issued.assetId]!.holders?.[readOutput(txs.get(sent.txid)!.outputs[0]!.lockingScript.toHex())!.holderPkhHex]).toBe(
+      recipient,
+    )
   })
 })
 

@@ -6,10 +6,12 @@ import { checkCountersignedListing, parseCountersignedListingProof } from '../ma
 import { decodeCountersignPayload, encodeCountersignPayload, MIN_SILENCE_SECONDS } from './payload'
 import {
   blockingPriorSpends,
+  checkAcceptorPolicy,
   checkAcceptRequest,
   plainInputsOf,
   readCountersignDeploy,
   resolveCountersignTransfer,
+  type AcceptorPolicy,
   type CountersignDeploy,
   type PriorSpend,
 } from './resolve'
@@ -340,6 +342,55 @@ describe('countersigned transfer', () => {
     const otherSets = { issuer: { threshold: 1, keys: [pub(recipient)] }, release: sets.release }
     expect(check(listing(40n, otherSets))).toEqual({ ok: false, reason: 'key-sets' })
     expect(check(listing(40n, sets, new P2PKH().lock(recipient.toAddress())))).toEqual({ ok: false, reason: 'offer-output' })
+  })
+
+  describe('acceptor policy', () => {
+    const sender = pub(holder)
+    const payee = pub(recipient)
+    const { request } = transfer(deploy, 0, [{ to: recipient, amount: 60n }, { to: holder, amount: 40n }], assetId)
+    const recipients = [
+      { vout: 0, identityKey: payee },
+      { vout: 1, identityKey: sender },
+    ]
+    const policyCheck = (policy: AcceptorPolicy | undefined, overrides: Partial<Parameters<typeof checkAcceptorPolicy>[0]> = {}) =>
+      checkAcceptorPolicy({
+        tx: request,
+        assetId,
+        policy,
+        issuer: pub(issuer),
+        prover: sender,
+        holderOf: (holderPkhHex) => (holderPkhHex === pkh(holder) ? sender : undefined),
+        recipients,
+        ...overrides,
+      })
+
+    it('passes with no rules, or rules the transfer keeps', () => {
+      expect(policyCheck(undefined)).toEqual({ ok: true })
+      expect(policyCheck({})).toEqual({ ok: true })
+      expect(policyCheck({ frozen: [pub(PrivateKey.fromRandom())], maxTransfer: '60' })).toEqual({ ok: true })
+    })
+
+    it('refuses a frozen sender, whether recorded, matched by its own hash, or the requester', () => {
+      expect(policyCheck({ frozen: [sender] })).toMatchObject({ ok: false, reason: 'frozen' })
+      expect(policyCheck({ frozen: [sender] }, { holderOf: () => undefined, prover: payee })).toMatchObject({ ok: false, reason: 'frozen' })
+      const stranger = pub(PrivateKey.fromRandom())
+      expect(policyCheck({ frozen: [stranger] }, { prover: stranger, holderOf: () => undefined })).toMatchObject({ ok: false, reason: 'frozen' })
+    })
+
+    it('refuses paying a frozen recipient', () => {
+      expect(policyCheck({ frozen: [payee] })).toMatchObject({ ok: false, reason: 'recipient' })
+    })
+
+    it('counts only units leaving the senders against the limit, and never limits the issuer', () => {
+      expect(policyCheck({ maxTransfer: '59' })).toMatchObject({ ok: false, reason: 'limit' })
+      const toSelf = transfer(deploy, 0, [{ to: holder, amount: 100n }], assetId).request
+      expect(policyCheck({ maxTransfer: '1' }, { tx: toSelf, recipients: [{ vout: 0, identityKey: sender }] })).toEqual({ ok: true })
+      expect(policyCheck({ maxTransfer: '1' }, { holderOf: () => pub(issuer) })).toEqual({ ok: true })
+    })
+
+    it('ignores units of another asset', () => {
+      expect(policyCheck({ maxTransfer: '1' }, { assetId: `${'cd'.repeat(32)}_0` })).toEqual({ ok: true })
+    })
   })
 })
 

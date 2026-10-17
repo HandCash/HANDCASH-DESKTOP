@@ -571,6 +571,10 @@ export async function dispatchWalletMethod(
       return (await import('./countersign/wallet')).retireCountersignedAsset(
         (args ?? {}) as Parameters<typeof import('./countersign/wallet').retireCountersignedAsset>[0],
       )
+    case 'setCountersignedAssetPolicy':
+      return (await import('./countersign/wallet')).setCountersignedAssetPolicy(
+        (args ?? {}) as Parameters<typeof import('./countersign/wallet').setCountersignedAssetPolicy>[0],
+      )
     case 'releaseCountersignedAsset':
       return (await import('./countersign/wallet')).releaseCountersignedAsset(
         (args ?? {}) as Parameters<typeof import('./countersign/wallet').releaseCountersignedAsset>[0],

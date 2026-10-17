@@ -125,6 +125,7 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   issueCountersignedAsset: 'issuer-accepted issue',
   transferCountersignedAsset: 'issuer-accepted transfer',
   retireCountersignedAsset: 'issuer retire',
+  setCountersignedAssetPolicy: 'transfer rules',
   releaseCountersignedAsset: 'asset release',
   joinCountersignedAsset: 'cosigner join',
 }

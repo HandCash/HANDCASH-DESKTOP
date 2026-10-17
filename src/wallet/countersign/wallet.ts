@@ -1,4 +1,4 @@
-import { Beef, Hash, KeyDeriver, LockingScript, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
+import { Beef, Hash, KeyDeriver, LockingScript, P2PKH, PrivateKey, ProtoWallet, PublicKey, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { countersignMachine } from '../../machines/countersignMachine'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
@@ -45,11 +45,13 @@ import { encodeCountersignPayload, MIN_SILENCE_SECONDS, type CountersignDeployFi
 import {
   assetOfInput,
   blockingPriorSpends,
+  checkAcceptorPolicy,
   checkAcceptRequest,
   plainInputsOf,
   readCountersignDeploy,
   resolveCountersignTransfer,
   type AcceptCheck,
+  type AcceptorPolicy,
   type AcceptRefusal,
   type CountersignDeploy,
   type PriorSpend,
@@ -244,18 +246,54 @@ function ownRemittances(active: ActiveWallet, remittance: HolderRemittance | und
 function provenRecipients(
   active: ActiveWallet,
   request: HolderRequest,
-): { ok: true; recipients: Array<{ vout: number; holderPkhHex: string }> } | { ok: false; detail: string } {
+): { ok: true; recipients: ProvenRecipient[] } | { ok: false; detail: string } {
   const root = rootKeyOf(active)
-  const recipients: Array<{ vout: number; holderPkhHex: string }> = []
+  const recipients: ProvenRecipient[] = []
   for (const entry of request.recipients) {
     const script = request.tx.outputs[entry.vout]?.lockingScript
     const assetId = script ? readCountersigned(script)?.assetId : null
     if (!assetId) return { ok: false, detail: `recipient ${entry.vout} names no asset output` }
     const holderPkhHex = provenRecipientPkh(root, request.prover, assetId, entry)
     if (!holderPkhHex) return { ok: false, detail: `recipient ${entry.vout} linkage does not open` }
-    recipients.push({ vout: entry.vout, holderPkhHex })
+    recipients.push({ vout: entry.vout, holderPkhHex, identityKey: entry.identityKey })
   }
   return { ok: true, recipients }
+}
+
+type ProvenRecipient = { vout: number; holderPkhHex: string; identityKey: string }
+
+/** The issuer's policy (BRC-253 §6 step 3) over every asset of a request that passed the protocol checks. */
+function policyRefusal(
+  active: ActiveWallet,
+  state: CountersignState,
+  request: HolderRequest,
+  assetIds: readonly string[],
+  recipients: readonly ProvenRecipient[],
+): AcceptCheck | null {
+  for (const assetId of assetIds) {
+    const record = state.acceptor[assetId]
+    const verdict = checkAcceptorPolicy({
+      tx: request.tx,
+      assetId,
+      policy: record?.policy,
+      issuer: active.identityKey,
+      prover: request.prover,
+      holderOf: (pkh) => record?.holders?.[pkh],
+      recipients,
+    })
+    if (!verdict.ok) return verdict
+  }
+  return null
+}
+
+/** Remember who a request's linkage proved behind each output it writes, so later spends know their sender. */
+function recordHolders(state: CountersignState, tx: Transaction, recipients: readonly ProvenRecipient[]): void {
+  for (const r of recipients) {
+    const script = tx.outputs[r.vout]?.lockingScript
+    const assetId = script ? readCountersigned(script)?.assetId : null
+    const record = assetId ? state.acceptor[assetId] : undefined
+    if (record) record.holders = { ...record.holders, [r.holderPkhHex]: r.identityKey }
+  }
 }
 
 function underscore(outpoint: string): string {
@@ -841,6 +879,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
         cancelled: [],
         beacon: `${txid}_1`,
         beaconAt: Date.now(),
+        holders: { [readCountersigned(deployTx!.outputs[0]!.lockingScript)!.holderPkhHex]: active.identityKey.toLowerCase() },
         ...(quorum.quorum === 'shared' ? { shared: true as const } : {}),
       }
       writeCountersignState(state)
@@ -1075,7 +1114,7 @@ async function acceptRequest(
   const answersFor = (assetId: string) => Boolean(state.acceptor[assetId] && !state.acceptor[assetId]!.ended)
   const accepted = await acceptedInputs(active, request.tx, deploys, state, answersFor)
   const held = await heldInputs(active, state, request.tx, deploys, request.requestId)
-  const check = checkAcceptRequest({
+  const protocol = checkAcceptRequest({
     tx: request.tx,
     deploys,
     answersFor,
@@ -1084,6 +1123,9 @@ async function acceptRequest(
     requestId: request.requestId,
     recipients: proven.recipients,
   })
+  const check: AcceptCheck = protocol.ok
+    ? (policyRefusal(active, state, request, protocol.assetIds, proven.recipients) ?? protocol)
+    : protocol
   if (!check.ok) {
     console.warn(`[countersign] acceptor refuse ${check.reason} — ${check.detail}`)
     return { kind: 'refused', reason: check.reason, detail: check.detail }
@@ -1120,6 +1162,7 @@ async function acceptRequest(
     })
     record.requests[request.requestId] = { txid, efHex, at: Date.now() }
   }
+  recordHolders(state, tx, proven.recipients)
   writeCountersignState(state)
   await relinquishFeeCoins(active, coins)
   console.info(`[countersign] accepted ${request.requestId.slice(0, 12)} → ${txid.slice(0, 12)}`)
@@ -1203,7 +1246,7 @@ async function cosignRequest(
   }
   const accepted = await acceptedInputs(active, tx, deploys, state, answersFor)
   const held = await heldInputs(active, state, tx, deploys, request.requestId)
-  const check: AcceptCheck = proven.ok
+  const protocol: AcceptCheck = proven.ok
     ? checkAcceptRequest({
         tx,
         deploys,
@@ -1216,6 +1259,8 @@ async function cosignRequest(
         ...(opts.swap ? { swap: true } : {}),
       })
     : { ok: false, reason: 'recipient', detail: proven.detail }
+  const check: AcceptCheck =
+    protocol.ok && proven.ok ? (policyRefusal(active, state, request, protocol.assetIds, proven.recipients) ?? protocol) : protocol
   if (!check.ok) {
     // A refusal is final: the holder's cancel proof counts on it never turning into a signature.
     for (let vin = 0; vin < tx.inputs.length; vin++) {
@@ -1236,6 +1281,7 @@ async function cosignRequest(
     record.spent[asset.outpoint] = request.requestId
     record.requests[request.requestId] = { txid, efHex, at: Date.now(), ...(opts.swap ? { senderFunded: true as const } : {}) }
   }
+  if (proven.ok) recordHolders(state, tx, proven.recipients)
   writeCountersignState(state)
   console.info(`[countersign] cosigned ${opts.swap ? 'trade ' : ''}${request.requestId.slice(0, 12)} (${signatures.length} inputs)`)
   log('cosign', startedAt)
@@ -3072,6 +3118,80 @@ export async function retireCountersignedAsset(args: { assetId?: unknown }): Pro
   }, undefined, { promote: false })
 }
 
+export type CountersignPolicyResult = { assetId: string; frozen: string[]; maxTransfer: string | null }
+
+function identityKeyList(value: unknown, field: string): string[] {
+  if (value == null) return []
+  if (!Array.isArray(value)) refuse('bad-asset-args', `${field} must be a list of identity keys.`)
+  return value.map((raw) => {
+    const key = String(raw).trim().toLowerCase()
+    let valid = /^0[23][0-9a-f]{64}$/.test(key)
+    if (valid) {
+      try {
+        PublicKey.fromString(key)
+      } catch {
+        valid = false
+      }
+    }
+    if (!valid) refuse('bad-asset-args', `${field} holds "${String(raw).slice(0, 20)}", which is not a compressed identity key.`)
+    return key
+  })
+}
+
+/**
+ * The issuer's transfer rules for an asset it accepts (BRC-253 §6 step 3):
+ * identities frozen out of sending and receiving, and the most units one
+ * transfer may move to someone else (`maxTransfer`, `null` clears it). A
+ * cosigner of a shared set keeps its own rules; one binds only once more than
+ * n − m cosigners apply it. Rules never move an output; they end at release.
+ */
+export async function setCountersignedAssetPolicy(args: {
+  assetId?: unknown
+  freeze?: unknown
+  unfreeze?: unknown
+  maxTransfer?: unknown
+}): Promise<CountersignPolicyResult> {
+  return runExclusiveSpend(async () => {
+    const active = requireActive()
+    const state = readCountersignState()
+    const assetId = normalizeTokenId(String(args.assetId ?? ''))
+    const record = assetId ? state.acceptor[assetId] : undefined
+    if (!assetId || !record) refuse('not-issuer', 'This wallet did not issue that asset.')
+    if (record.ended) refuse('asset-ended', `This asset has already ${record.ended === 'released' ? 'been released' : record.ended}; its rules ended with it.`)
+    const freeze = identityKeyList(args.freeze, 'freeze')
+    const unfreeze = identityKeyList(args.unfreeze, 'unfreeze')
+    if (freeze.includes(active.identityKey.toLowerCase())) refuse('bad-asset-args', 'The issuer cannot freeze itself.')
+    const frozen = new Set(record.policy?.frozen ?? [])
+    for (const key of freeze) frozen.add(key)
+    for (const key of unfreeze) frozen.delete(key)
+    let maxTransfer = record.policy?.maxTransfer
+    if (args.maxTransfer === null) maxTransfer = undefined
+    else if (args.maxTransfer !== undefined) {
+      const raw = String(args.maxTransfer).trim()
+      if (!/^[1-9]\d*$/.test(raw)) refuse('bad-asset-args', 'maxTransfer must be a positive whole number of units, or null to clear it.')
+      maxTransfer = raw
+    }
+    const policy: AcceptorPolicy = {
+      ...(frozen.size ? { frozen: [...frozen].sort() } : {}),
+      ...(maxTransfer ? { maxTransfer } : {}),
+    }
+    if (policy.frozen || policy.maxTransfer) record.policy = policy
+    else delete record.policy
+    writeCountersignState(state)
+    const fields = state.deploys[assetId]?.fields
+    recordAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'event',
+      sats: 0,
+      method: 'countersign-policy',
+      note: `Transfer rules for ${fields?.sym ?? fields?.name ?? 'asset'}: ${frozen.size} frozen, ${maxTransfer ? `limit ${maxTransfer}` : 'no limit'}`,
+    })
+    scheduleHistoryBackupPush('countersign')
+    console.info(`[countersign] policy ${assetId.slice(0, 12)}: ${frozen.size} frozen, limit ${maxTransfer ?? 'none'}`)
+    return { assetId, frozen: policy.frozen ?? [], maxTransfer: maxTransfer ?? null }
+  })
+}
+
 /**
  * A custodian publishes the release keys this wallet holds for an asset whose
  * issuer retired or lapsed. A live asset is never released, except by its own
@@ -3182,6 +3302,8 @@ export async function listCountersignedAssets(): Promise<{
     supply: string
     held: string
     issuer: boolean
+    /** This wallet's rules as issuer or cosigner (`setCountersignedAssetPolicy`). */
+    policy?: { frozen: string[]; maxTransfer: string | null }
     acceptors: string[]
     /** The issuer set: how many of which cosigners countersign a transfer. */
     cosigners: KeySet
@@ -3206,6 +3328,14 @@ export async function listCountersignedAssets(): Promise<{
       supply: d.supply,
       held: (held.get(d.assetId) ?? 0n).toString(),
       issuer: Boolean(state.acceptor[d.assetId]),
+      ...(state.acceptor[d.assetId]
+        ? {
+            policy: {
+              frozen: state.acceptor[d.assetId]!.policy?.frozen ?? [],
+              maxTransfer: state.acceptor[d.assetId]!.policy?.maxTransfer ?? null,
+            },
+          }
+        : {}),
       acceptors: d.sets.issuer.keys,
       cosigners: d.sets.issuer,
       phase: state.acceptor[d.assetId]?.ended

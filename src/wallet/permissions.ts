@@ -639,6 +639,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'issueCountersignedAsset',
         'transferCountersignedAsset',
         'retireCountersignedAsset',
+        'setCountersignedAssetPolicy',
         'releaseCountersignedAsset',
         'joinCountersignedAsset',
       ].includes(prompt.method)
@@ -1357,6 +1358,29 @@ export function summarizeAction(method: string, args: unknown): {
       details: [
         typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
         'Freezes and transfer rules end; this cannot be undone',
+      ],
+    }
+  }
+
+  if (method === 'setCountersignedAssetPolicy') {
+    const keyCount = (v: unknown) => (Array.isArray(v) ? v.length : 0)
+    const freeze = keyCount(body.freeze)
+    const unfreeze = keyCount(body.unfreeze)
+    const limit =
+      body.maxTransfer === null
+        ? 'Clear the transfer limit'
+        : body.maxTransfer !== undefined
+          ? `Limit each transfer to ${String(body.maxTransfer)} units`
+          : null
+    return {
+      title: 'Change transfer rules',
+      summary: 'Your wallet refuses to countersign transfers that break these rules. Holders keep what they hold.',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      details: [
+        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
+        ...(freeze ? [`Freeze ${freeze} identit${freeze === 1 ? 'y' : 'ies'}`] : []),
+        ...(unfreeze ? [`Unfreeze ${unfreeze} identit${unfreeze === 1 ? 'y' : 'ies'}`] : []),
+        ...(limit ? [limit] : []),
       ],
     }
   }

@@ -35,6 +35,7 @@ export const ACTION_BRC100_METHODS = [
   'issueCountersignedAsset',
   'transferCountersignedAsset',
   'retireCountersignedAsset',
+  'setCountersignedAssetPolicy',
   'releaseCountersignedAsset',
   'joinCountersignedAsset',
   'encrypt',

@@ -3,7 +3,7 @@ import { accountLocalKey } from '../accountLocalKeys'
 import { durableGetItem, durableSetItem } from '../durableStorage'
 import type { BeaconChainView, CountersignPhase } from './beacon'
 import type { CountersignDeployFields } from './payload'
-import type { AcceptRefusal, CountersignDeploy } from './resolve'
+import type { AcceptorPolicy, AcceptRefusal, CountersignDeploy } from './resolve'
 import type { CountersignKeySets } from './script'
 import type { HolderRemittance } from './holderKeys'
 
@@ -37,6 +37,10 @@ export type AcceptorRecord = {
   shared?: true
   /** The beacon refresh this cosigner proposed, kept until a quorum signs it or the beacon moves. */
   beaconProposal?: BeaconProposal
+  /** Holder pubkey hash → the identity a request's linkage proved behind it, for every output this acceptor accepted. */
+  holders?: Record<string, string>
+  /** The issuer's freezes and transfer limit; absent, it accepts every valid transfer. */
+  policy?: AcceptorPolicy
 }
 
 export type SignedRequest = {
