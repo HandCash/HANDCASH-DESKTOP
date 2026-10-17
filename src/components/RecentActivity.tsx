@@ -28,7 +28,10 @@ import {
   SendIcon,
   SoldIcon,
   FireIcon,
+  FrozenIcon,
   RefreshIcon,
+  ReleaseIcon,
+  SwapIcon,
   WarningIcon,
 } from "./icons";
 import { DeferredImage } from "./DeferredImage";
@@ -248,6 +251,9 @@ function actionGlyphs(
     },
     sale: { label: "Sold", glyph: <SoldIcon size={icon + 1} /> },
     purchase: { label: "Purchase", glyph: <PurchaseIcon size={icon} /> },
+    freeze: { label: "Frozen", glyph: <FrozenIcon size={icon} /> },
+    release: { label: "Released", glyph: <ReleaseIcon size={icon} /> },
+    swap: { label: "Swap", glyph: <SwapIcon size={icon + 1} /> },
     burn: { label: "Burn", glyph: <FireIcon size={icon - 1} /> },
     mint: { label: "Mint", glyph: <MintIcon size={icon - 1} /> },
     send: { label: "Send", glyph: <SendIcon size={icon * 0.75} /> },
@@ -734,22 +740,28 @@ function eventAmountLabel(entry: ActivityEntry): string {
   if (m === "forget-collectable") return "Forgot";
   if (m === "market-list") return "Listed";
   if (m === "market-cancel") return "Cancelled";
+  if (m === "token-swap-offer") return "Frozen";
+  if (m === "token-swap-cancel") return "Released";
   return "Action";
 }
 
-function eventIcon(entry: ActivityEntry) {
+function eventIcon(entry: ActivityEntry, size = 18) {
   const m = entry.method;
-  if (m === "utxo-heal") return <RefreshIcon size={18} />;
-  if (m === "add-friend") return <FriendsIcon size={18} />;
+  // The coins themselves; the frozen / released mark rides the action badge.
+  if (m === "token-swap-offer" || m === "token-swap-cancel") {
+    return <InventoryIcon size={size} />;
+  }
+  if (m === "utxo-heal") return <RefreshIcon size={size} />;
+  if (m === "add-friend") return <FriendsIcon size={size} />;
   if (
     m.startsWith("connect") ||
     m === "disconnect" ||
     m === "approve" ||
     m === "deny"
   ) {
-    return <AppsIcon size={18} />;
+    return <AppsIcon size={size} />;
   }
-  return <ActivityIcon size={18} />;
+  return <ActivityIcon size={size} />;
 }
 
 type FeedProps = {

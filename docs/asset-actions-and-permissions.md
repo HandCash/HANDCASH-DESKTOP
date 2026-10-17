@@ -163,7 +163,9 @@ Shipped for tokens: `tokenSwap.ts`, path vocabulary `tokenSwapPath.ts`, chart `t
 
 `want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-taken`, and the rest in `TokenSwapRefusal`. A self-swap (maker and taker are one wallet) files output 0 at once.
 
-Try every bridge asset action, swaps included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; the end-to-end run at `/wallet-demo` ends with a self-swap.
+Activity marks the lot while it sits in escrow: the offer row shows the token with a **Frozen** (snowflake) badge, a cancel shows **Released**, and the take and the maker proceeds show **Swap** (`activityActionMark.ts`).
+
+Run every bridge asset action in one pass, swaps included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; it ends by checking that every frozen unit came back. The wallet boundary run at `/wallet-demo` ends with a self-swap.
 
 | Pair | How output 0 pays the maker | Notes |
 |---|---|---|

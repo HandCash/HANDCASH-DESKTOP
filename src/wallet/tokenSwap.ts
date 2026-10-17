@@ -22,7 +22,7 @@ import {
   rememberBeefTree,
 } from './beefCache'
 import { describeInsufficientFunds, isInsufficientFundsError } from './insufficientFunds'
-import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { recordAppActivity, WALLET_ACTIVITY_ORIGIN, type ActivityItem } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   buildBsv21SendRemittance,
@@ -315,6 +315,7 @@ export async function createTokenSwapOffer(args: {
         method: 'token-swap-offer',
         note: `Offered ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)}`,
         txid,
+        item: frozenLotItem(offer),
       })
       scheduleHistoryBackupPush('token-swap')
       const ms = Date.now() - startedAt
@@ -327,6 +328,19 @@ export async function createTokenSwapOffer(args: {
       chart.stop()
     }
   }, undefined, { promote: false })
+}
+
+/** The escrowed lot as an Activity subject: the token face carries the frozen / released mark. */
+function frozenLotItem(offer: TokenSwapOffer): ActivityItem {
+  return {
+    name: offer.give.sym ?? 'Token',
+    origin: offer.give.tokenId,
+    outpoint: offer.offerId,
+    tokenId: offer.give.tokenId,
+    amt: offer.give.amount,
+    dec: offer.give.dec,
+    ...(offer.give.icon ? { icon: offer.give.icon } : {}),
+  }
 }
 
 function describeWant(want: TokenSwapWant): string {
@@ -825,6 +839,7 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
         method: 'token-swap-cancel',
         note: `Cancelled swap offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
         txid,
+        item: frozenLotItem(offer),
       })
       void import('./token')
         .then(({ listFungibles }) => listFungibles(active))

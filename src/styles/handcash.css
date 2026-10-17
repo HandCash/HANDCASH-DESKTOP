@@ -5711,6 +5711,16 @@ a.history-row-link:hover .history-tx-hint {
   background: #e8b84f;
 }
 
+/* Swap family: coins frozen in escrow read icy until released or traded. */
+.history-action-badge.is-freeze {
+  background: #5fb8e6;
+}
+
+.history-action-badge.is-release,
+.history-action-badge.is-swap {
+  background: #6f8fe0;
+}
+
 .history-action-badge.is-failed {
   background: #c44747;
   font-size: 10px;

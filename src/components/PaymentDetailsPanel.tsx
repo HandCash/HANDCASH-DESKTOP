@@ -140,6 +140,8 @@ function eventStatusLabel(method: string): string {
   if (method === 'disconnect') return 'Removed'
   if (method === 'market-list') return 'Listed'
   if (method === 'market-cancel') return 'Cancelled'
+  if (method === 'token-swap-offer') return 'Frozen in swap offer'
+  if (method === 'token-swap-cancel') return 'Released to balance'
   if (method === 'add-friend') return 'Added'
   if (method === 'forget-collectable') return 'Forgot'
   return 'Done'
@@ -368,19 +370,23 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         data-aeon-state="event"
       >
         <div className="payment-details-hero">
-          <div className="history-icon-wrap">
-            <div className="history-icon">
-              {isWallet ? (
-                <ReceiveIcon size={16} />
-              ) : (
-                <AppAvatar
-                  origin={entry.origin}
-                  name={appDisplayName(entry.origin)}
-                  size="sm"
-                />
-              )}
+          {isWallet && activityActionMark(entry) ? (
+            <HistoryIconCluster entry={entry} stacked={false} />
+          ) : (
+            <div className="history-icon-wrap">
+              <div className="history-icon">
+                {isWallet ? (
+                  <ReceiveIcon size={16} />
+                ) : (
+                  <AppAvatar
+                    origin={entry.origin}
+                    name={appDisplayName(entry.origin)}
+                    size="sm"
+                  />
+                )}
+              </div>
             </div>
-          </div>
+          )}
           <div className="payment-details-copy">
             <div className="payment-details-title-row">
               <strong className="payment-details-title">

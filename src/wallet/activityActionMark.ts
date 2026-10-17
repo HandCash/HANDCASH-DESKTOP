@@ -21,6 +21,9 @@ export type ActivityActionMark =
   | 'cancel'
   | 'sale'
   | 'purchase'
+  | 'freeze'
+  | 'release'
+  | 'swap'
   | 'burn'
   | 'mint'
   | 'send'
@@ -32,29 +35,41 @@ export const ACTION_MARK_LABEL: Record<ActivityActionMark, string> = {
   cancel: 'Cancel listing',
   sale: 'Sold',
   purchase: 'Purchase',
+  freeze: 'Frozen',
+  release: 'Released',
+  swap: 'Swap',
   burn: 'Burn',
   mint: 'Mint',
   send: 'Send',
   receive: 'Receive',
 }
 
-const MARKET_MARKS: Record<string, ActivityActionMark> = {
+/**
+ * Wallet actions recorded as events or as transfers that are not plain sends.
+ * A swap offer freezes an exact lot in escrow (basket `token-swap-offers`) until
+ * it is taken or cancelled; cancelling releases it back to the balance.
+ */
+const ACTION_MARKS: Record<string, ActivityActionMark> = {
   'market-list': 'list',
   'market-cancel': 'cancel',
   'market-sale': 'sale',
   'market-sale-proceeds': 'sale',
   'market-purchase': 'purchase',
   'market-purchase-receive': 'purchase',
+  'token-swap-offer': 'freeze',
+  'token-swap-cancel': 'release',
+  'token-swap': 'swap',
+  'token-swap-proceeds': 'swap',
 }
 
 /** Null when the row records no wallet action — a connect, a friend, a heal. */
 export function activityActionMark(entry: ActivityEntry): ActivityActionMark | null {
-  const market = MARKET_MARKS[entry.method]
-  // A listing and a cancel are written as wallet events, yet both are actions the
-  // user took. Every other event has no action to mark.
-  if (!market && isEventActivity(entry)) return null
+  const named = ACTION_MARKS[entry.method]
+  // Listings, cancels and swap escrows are written as wallet events, yet each is
+  // an action the user took. Every other event has no action to mark.
+  if (!named && isEventActivity(entry)) return null
   if (isFailedActivity(entry)) return 'failed'
-  if (market) return market
+  if (named) return named
   if (isBurnActivity(entry)) return 'burn'
   if (isMintTokenActivity(entry) || isMintCollectableActivity(entry)) return 'mint'
   return entry.kind === 'spent' ? 'send' : 'receive'
