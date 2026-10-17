@@ -20,7 +20,7 @@ export type AcceptorRecord = {
   /** Outpoint → the request that spent it. */
   spent: Record<string, string>
   /** Request id → the transaction this acceptor signed for it, Extended Format hex. */
-  requests: Record<string, { txid: string; efHex: string; at: number }>
+  requests: Record<string, SignedRequest>
   cancelled: string[]
   /** Current beacon outpoint and the body that holds it. */
   beacon: string
@@ -37,6 +37,16 @@ export type AcceptorRecord = {
   shared?: true
   /** The beacon refresh this cosigner proposed, kept until a quorum signs it or the beacon moves. */
   beaconProposal?: BeaconProposal
+}
+
+export type SignedRequest = {
+  txid: string
+  efHex: string
+  at: number
+  /** A trade its requester funds and broadcasts; this acceptor returned countersignatures, not a transaction. */
+  senderFunded?: true
+  /** Set once a mined transaction spent one of its plain inputs: it can never confirm. */
+  dead?: true
 }
 
 export type BeaconProposal = {
@@ -82,6 +92,21 @@ export type OutgoingRequest = {
   cancelPending?: string[]
 }
 
+/**
+ * A trade this wallet funded with fee coins and asked to have countersigned
+ * (a market listing or cancel). An acceptor that signed it without being
+ * heard keeps its asset inputs reserved until it dies, so a retry spends the
+ * same fee coins: the two conflict and the acceptor may sign the second.
+ */
+export type OpenSwap = {
+  requestId: string
+  assetId: string
+  inputs: string[]
+  feeCoins: string[]
+  state: 'open' | 'abandoned' | 'done'
+  at: number
+}
+
 /** A cosigner's signed `refused` (or `cancelled`) decision on one request. */
 export type SignedRefusal = { t: 'refused' | 'cancelled'; reason: AcceptRefusal; signature: string }
 
@@ -91,6 +116,7 @@ export type CountersignState = {
   outgoing: Record<string, OutgoingRequest>
   phases: Record<string, StoredPhase>
   invites: Record<string, CosignerInvite>
+  swaps: Record<string, OpenSwap>
 }
 
 function key(): string {
@@ -106,9 +132,10 @@ export function readCountersignState(): CountersignState {
       outgoing: parsed.outgoing ?? {},
       phases: parsed.phases ?? {},
       invites: parsed.invites ?? {},
+      swaps: parsed.swaps ?? {},
     }
   } catch {
-    return { deploys: {}, acceptor: {}, outgoing: {}, phases: {}, invites: {} }
+    return { deploys: {}, acceptor: {}, outgoing: {}, phases: {}, invites: {}, swaps: {} }
   }
 }
 

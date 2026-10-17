@@ -45,6 +45,9 @@ import {
 } from './directOfferPath'
 import { chooseMarketCancelReturn } from './marketListingPath'
 import { tipSigningKey } from './token/tipKeys'
+import type { CountersignedScheme } from './itemAccess'
+import type { HolderRemittance } from './countersign/holderKeys'
+import { holderSignatureValid, readCountersigned, sameKeySets, SWAP_HOLDER_SCOPE } from './countersign/script'
 
 export type DirectOfferRecord = {
   offer: DirectOffer
@@ -53,8 +56,8 @@ export type DirectOfferRecord = {
   soldTxid?: string
   collectTxid?: string
   cancelTxid?: string
-  /** Basket holding the listed lot; absent means {@link DIRECT_OFFER_BASKET}. */
-  basket?: typeof DIRECT_OFFER_LEGACY_BASKET
+  /** Basket holding the listed lot; absent means {@link DIRECT_OFFER_BASKET}. A countersigned lot stays in its csft / csnft basket. */
+  basket?: typeof DIRECT_OFFER_LEGACY_BASKET | CountersignedScheme
   updatedAt: number
 }
 
@@ -237,6 +240,95 @@ function describeWant(want: OfferWant): string {
     : `${want.amount} ${want.sym ?? 'tokens'}`
 }
 
+type OfferChart = { send: (event: { type: 'STAGED'; reference: string } | { type: 'SIGNED_UNKNOWN' } | { type: 'BROADCASTED'; txid: string } | { type: 'COMMITTED' }) => void }
+
+/**
+ * List a countersigned lot: a funded trade the issuer countersigns moves the
+ * exact units to output 0 under a fresh holder key (tagged held, so transfers
+ * never select it), then that key signs the offer's holder half.
+ */
+async function listCountersignedLot(
+  active: ActiveWallet,
+  path: Extract<ReturnType<typeof chooseDirectOfferListPath>, { path: 'list' }>,
+  scheme: CountersignedScheme,
+  chart: OfferChart,
+): Promise<DirectOffer> {
+  const cs = await import('./countersign/wallet')
+  const deploy = await cs.countersignedDeploy(active, path.tokenId)
+  if (!deploy) throw new DirectOfferError('invalid-offer', 'This countersigned asset has no readable deploy.')
+  if (deploy.kind === 'item' && path.amount !== 1n) {
+    throw new DirectOfferError('bad-amount', 'A countersigned item is offered whole.')
+  }
+  const holdings = (await cs.listCountersignedHoldings(active, path.tokenId)).sort((a, b) =>
+    b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0,
+  )
+  const covers: typeof holdings = []
+  let covered = 0n
+  for (const holding of holdings) {
+    if (covered >= path.amount) break
+    covers.push(holding)
+    covered += holding.amount
+  }
+  if (covered < path.amount) {
+    throw new DirectOfferError('INSUFFICIENT_FUNDS', 'Not enough units of this asset are held to offer that amount.')
+  }
+  const self = active.identityKey.toLowerCase()
+  const trade = await cs.runFundedCountersignedTrade({
+    assetId: path.tokenId,
+    holdings: covers,
+    outputs: [
+      { kind: 'asset', amount: path.amount, identityKey: self, tags: [cs.MARKET_HELD_TAG] },
+      ...(covered > path.amount ? [{ kind: 'asset' as const, amount: covered - path.amount, identityKey: self }] : []),
+    ],
+    description: 'direct offer list',
+    flow: 'direct_offer',
+    progress: {
+      staged: (reference) => chart.send({ type: 'STAGED', reference }),
+      countersigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
+      broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
+    },
+  })
+  const sellerUnlockingScript = await signDirectOfferLot({
+    listingTx: trade.tx,
+    lotVout: 0,
+    want: path.want,
+    payTo: active.address,
+    privateKey: cs.tradeHolderKey(active, path.tokenId, trade.remittance, 0),
+  })
+  const sym = (deploy.kind === 'item' ? deploy.fields.name : deploy.fields.sym) || deploy.fields.name
+  const offer: DirectOffer = {
+    protocol: DIRECT_OFFER_PROTOCOL,
+    v: DIRECT_OFFER_VERSION,
+    offerId: `${trade.txid}.0`,
+    seller: self,
+    payTo: active.address,
+    give: {
+      tokenId: path.tokenId,
+      amount: path.amount.toString(),
+      dec: deploy.fields.dec ?? 0,
+      ...(sym ? { sym } : {}),
+      lockingScript: trade.tx.outputs[0]!.lockingScript!.toHex(),
+    },
+    want: path.want,
+    sellerUnlockingScript,
+    beefB64: Utils.toBase64(trade.atomic),
+    createdAt: Date.now(),
+  }
+  saveRecord({ offer, role: 'seller', state: 'listed', basket: scheme, updatedAt: Date.now() })
+  chart.send({ type: 'COMMITTED' })
+  recordAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'event',
+    sats: 0,
+    method: 'direct-offer-list',
+    note: `Listed ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
+    txid: trade.txid,
+    item: listedLotItem(offer),
+  })
+  scheduleHistoryBackupPush('direct-offer')
+  return offer
+}
+
 /**
  * List an exact lot of `give` at this wallet's address and sign the offer.
  * The lot leaves the token balance (basket {@link DIRECT_OFFER_BASKET}) until
@@ -266,20 +358,26 @@ export async function createDirectOffer(args: {
         !(await plainValueTips(selected)))
     const { countersignedProfileOf, knownCountersignedProfile } = await import('./countersign/wallet')
     const wantTokenId = normalizeTokenId(String((args.want as { tokenId?: unknown } | null)?.tokenId ?? ''))
-    const countersigned =
-      Boolean(wantTokenId && knownCountersignedProfile(wantTokenId)) ||
-      Boolean(tokenId && tips.length === 0 && (await countersignedProfileOf(active, tokenId).catch(() => null)))
+    const giveScheme =
+      tokenId && tips.length === 0 ? await countersignedProfileOf(active, tokenId).catch(() => null) : null
     const path = chooseDirectOfferListPath({
       tokenId,
       amount: args.give?.amount,
       want: args.want,
       cosigned,
-      countersigned,
+      countersignedGive: giveScheme != null,
+      countersignedWant: Boolean(wantTokenId && knownCountersignedProfile(wantTokenId)),
     })
     const chart = createActor(offerMachine).start()
     chart.send({ type: 'LIST', venue: 'direct', path })
     try {
       if (path.path === 'refuse') failRefused(path)
+      if (path.lot === 'countersigned') {
+        const offer = await listCountersignedLot(active, path, giveScheme!, chart)
+        const ms = Date.now() - startedAt
+        if (ms >= 250) console.info(`[direct-offer] list done ${ms}ms`)
+        return { offer }
+      }
       const meta = tips.find((t) => t.sym) ?? tips[0]
       const { splitBsv21CoverToExactAmt } = await import('./marketListing')
       const lot = await splitBsv21CoverToExactAmt({
@@ -352,6 +450,45 @@ export async function createDirectOffer(args: {
 }
 
 /**
+ * Have the issuer countersign a purchase of a countersigned lot. Input 0
+ * carries the seller's holder half (SINGLE|ANYONECANPAY over output 0);
+ * toolbox funding is unsigned yet and travels with empty scripts, which the
+ * issuer's ALL countersignature never covers.
+ */
+async function countersignPurchase(args: {
+  beef: Beef
+  txid: string
+  sellerHalf: string
+  holderPkhHex: string
+  coverSpends: Record<number, { unlockingScript: string }>
+  assetId: string
+  remittance: HolderRemittance
+}): Promise<string> {
+  const tx = args.beef.findTransactionForSigning(args.txid)
+  if (!tx) throw new Error('Purchase transaction is missing from its signable package')
+  tx.inputs.forEach((input, vin) => {
+    if (!input.sourceTransaction) throw new Error(`Purchase input ${vin} has no source`)
+    const own = vin === DIRECT_OFFER_LOT_VIN ? args.sellerHalf : args.coverSpends[vin]?.unlockingScript
+    input.unlockingScript = own ? UnlockingScript.fromHex(own) : new UnlockingScript()
+  })
+  const bound = tx.outputs[DIRECT_OFFER_PRICE_VOUT]?.lockingScript
+  if (
+    !holderSignatureValid(tx, DIRECT_OFFER_LOT_VIN, args.holderPkhHex, [SWAP_HOLDER_SCOPE]) ||
+    !bound ||
+    readCountersigned(bound)
+  ) {
+    failRefused({
+      path: 'refuse',
+      reason: 'unbound-signature',
+      message: 'The seller signature does not unlock this purchase. Nothing was spent.',
+    })
+  }
+  const { countersignTrade } = await import('./countersign/wallet')
+  const trade = await countersignTrade({ tx, assetId: args.assetId, remittance: args.remittance })
+  return trade.unlocks[DIRECT_OFFER_LOT_VIN]!.toHex()
+}
+
+/**
  * Buy a direct offer: pay output 0 exactly, take the listed lot. Input 0 is
  * the seller's signed lot; the buyer's want-token covers and the toolbox
  * funding follow.
@@ -377,28 +514,51 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
       const lotSource = offerBeef.findTxid(lotPoint.txid)?.tx?.outputs[lotPoint.vout]
       const lotLock = lotSource?.lockingScript?.toHex().toLowerCase()
       const decodedLot = lotLock ? decodeBsv21Binary(lotLock) : null
-      if (
-        !lotSource ||
-        lotLock !== offer.give.lockingScript ||
-        !decodedLot ||
-        decodedLot.role !== 'value' ||
-        decodedLot.tokenId !== offer.give.tokenId ||
-        decodedLot.amount !== BigInt(offer.give.amount)
-      ) {
+      const csLot = lotLock ? readCountersigned(lotLock) : null
+      if (!lotSource || lotLock !== offer.give.lockingScript) {
         throw new DirectOfferError('invalid-offer', 'The offer does not carry the token lot it describes.')
       }
-      if (!(await plainValueTips([{ lockingScript: lotLock }]))) {
-        failRefused({ path: 'refuse', reason: 'cosigned-token', message: 'Issuer-cosigned tokens cannot be listed.' })
+      // A countersigned lot needs no lineage walk: the issuer accepts only
+      // outputs it countersigned, and countersigns this purchase below.
+      let receive: ReturnType<typeof import('./countersign/wallet').planCountersignedReceive> | null = null
+      let lotUnlockLength = 108
+      if (csLot) {
+        const cs = await import('./countersign/wallet')
+        const deploy = await cs.countersignedDeploy(active, offer.give.tokenId)
+        if (
+          !deploy ||
+          lotSource.satoshis !== 1 ||
+          csLot.assetId !== offer.give.tokenId ||
+          csLot.amount !== BigInt(offer.give.amount) ||
+          !sameKeySets(csLot.sets, deploy.sets)
+        ) {
+          throw new DirectOfferError('invalid-offer', 'The offer does not carry the countersigned lot it describes.')
+        }
+        receive = cs.planCountersignedReceive(active, deploy, DIRECT_OFFER_BUYER_VOUT, csLot.amount)
+        lotUnlockLength = 112 + 74 * Math.max(deploy.sets.issuer.threshold, deploy.sets.release.threshold)
+        mark('countersigned lot checked')
+      } else {
+        if (
+          !decodedLot ||
+          decodedLot.role !== 'value' ||
+          decodedLot.tokenId !== offer.give.tokenId ||
+          decodedLot.amount !== BigInt(offer.give.amount)
+        ) {
+          throw new DirectOfferError('invalid-offer', 'The offer does not carry the token lot it describes.')
+        }
+        if (!(await plainValueTips([{ lockingScript: lotLock }]))) {
+          failRefused({ path: 'refuse', reason: 'cosigned-token', message: 'Issuer-cosigned tokens cannot be listed.' })
+        }
+        const { proveTokenTipLineage } = await import('./token/proveTipLineage')
+        const lineage = await proveTokenTipLineage(active, offer.offerId, offerBeef.toBinary())
+        if (!lineage.ok || lineage.tokenId !== offer.give.tokenId) {
+          throw new DirectOfferError(
+            'DIRECT_OFFER_UNPROVEN',
+            `The offered token's history could not be proven back to its deploy${lineage.ok ? '' : ` (${lineage.reason})`}. Nothing was spent.`,
+          )
+        }
+        mark('lot lineage proven')
       }
-      const { proveTokenTipLineage } = await import('./token/proveTipLineage')
-      const lineage = await proveTokenTipLineage(active, offer.offerId, offerBeef.toBinary())
-      if (!lineage.ok || lineage.tokenId !== offer.give.tokenId) {
-        throw new DirectOfferError(
-          'DIRECT_OFFER_UNPROVEN',
-          `The offered token's history could not be proven back to its deploy${lineage.ok ? '' : ` (${lineage.reason})`}. Nothing was spent.`,
-        )
-      }
-      mark('lot lineage proven')
 
       let covers: Array<{ outpoint: string; amt: bigint; lockingScript?: string }> = []
       let wantChange = 0n
@@ -449,22 +609,31 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
           : {}
       const outputs = [
         { ...price, outputDescription: 'Direct offer payment to seller', ...priceRemittance },
-        {
-          lockingScript: buildBsv21ValueLock({
-            tokenId: offer.give.tokenId,
-            amount: BigInt(offer.give.amount),
-            address: active.address,
-            layout: decodedLot.layout,
-          }),
-          satoshis: 1,
-          outputDescription: 'Purchased token to buyer',
-          ...buildBsv21SendRemittance({
-            tokenId: offer.give.tokenId,
-            amt: BigInt(offer.give.amount),
-            ...(offer.give.sym ? { sym: offer.give.sym } : {}),
-            ...(offer.give.icon ? { icon: offer.give.icon } : {}),
-          }),
-        },
+        receive
+          ? {
+              lockingScript: receive.lockingScript,
+              satoshis: 1,
+              outputDescription: 'Purchased token to buyer',
+              basket: receive.basket,
+              tags: receive.tags,
+              customInstructions: receive.customInstructions,
+            }
+          : {
+              lockingScript: buildBsv21ValueLock({
+                tokenId: offer.give.tokenId,
+                amount: BigInt(offer.give.amount),
+                address: active.address,
+                layout: decodedLot!.layout,
+              }),
+              satoshis: 1,
+              outputDescription: 'Purchased token to buyer',
+              ...buildBsv21SendRemittance({
+                tokenId: offer.give.tokenId,
+                amt: BigInt(offer.give.amount),
+                ...(offer.give.sym ? { sym: offer.give.sym } : {}),
+                ...(offer.give.icon ? { icon: offer.give.icon } : {}),
+              }),
+            },
         ...(offer.want.kind === 'token' && wantChange > 0n && wantLayout
           ? [
               {
@@ -492,7 +661,7 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
           labels: [OFFER_LABEL, `direct-offer:${offer.offerId}`],
           inputBEEF: inputBeef.toBinary(),
           inputs: [
-            { outpoint: offer.offerId, inputDescription: 'Direct offer lot', unlockingScriptLength: 108 },
+            { outpoint: offer.offerId, inputDescription: 'Direct offer lot', unlockingScriptLength: lotUnlockLength },
             ...covers.map((c) => ({
               outpoint: c.outpoint.replace('_', '.'),
               inputDescription: 'Direct offer payment token',
@@ -520,7 +689,8 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
       if (!signable) throw new Error('Direct offer purchase did not return a signable transaction')
       reference = signable.reference
       chart.send({ type: 'STAGED', reference })
-      const tx = Beef.fromBinary(signable.tx).txs
+      const signableBeef = Beef.fromBinary(signable.tx)
+      const tx = signableBeef.txs
         .map((entry) => entry.tx)
         .find((candidate) =>
           candidate?.inputs.some(
@@ -544,6 +714,7 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
         )
       }
       if (
+        !receive &&
         !sellerUnlockValid({
           tx,
           vin: DIRECT_OFFER_LOT_VIN,
@@ -580,12 +751,25 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
         return vin
       })
       const coverSpends = await signTipInputs(tx, coverVins)
+      let lotUnlockingScript = offer.sellerUnlockingScript
+      if (receive && csLot) {
+        lotUnlockingScript = await countersignPurchase({
+          beef: signableBeef,
+          txid: tx.id('hex'),
+          sellerHalf: offer.sellerUnlockingScript,
+          holderPkhHex: csLot.holderPkhHex,
+          coverSpends,
+          assetId: offer.give.tokenId,
+          remittance: receive.remittance,
+        })
+        mark('issuer countersigned the purchase')
+      }
       chart.send({ type: 'SIGNED_UNKNOWN' })
       const signed = await active.wallet.signAction({
         reference,
         spends: {
           ...coverSpends,
-          [DIRECT_OFFER_LOT_VIN]: { unlockingScript: offer.sellerUnlockingScript },
+          [DIRECT_OFFER_LOT_VIN]: { unlockingScript: lotUnlockingScript },
         },
         options: { acceptDelayedBroadcast: true },
       })
@@ -768,6 +952,37 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
         failRefused(path)
       }
       const offer = record.offer
+      if (record.basket === 'csft' || record.basket === 'csnft') {
+        const cs = await import('./countersign/wallet')
+        const source = await cs.countersignedHoldingAt(active, offer.offerId)
+        if (!source || source.holding.assetId !== offer.give.tokenId) {
+          throw new DirectOfferError('invalid-offer', 'This wallet no longer holds the listed lot. Nothing was spent.')
+        }
+        const trade = await cs.runFundedCountersignedTrade({
+          assetId: offer.give.tokenId,
+          holdings: [source.holding],
+          outputs: [{ kind: 'asset', amount: source.holding.amount, identityKey: active.identityKey.toLowerCase() }],
+          description: 'direct offer cancel',
+          flow: 'direct_offer',
+          progress: {
+            staged: (requestId) => chart.send({ type: 'STAGED', reference: requestId }),
+            countersigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
+            broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
+          },
+        })
+        saveRecord({ ...record, state: 'cancelled', cancelTxid: trade.txid })
+        chart.send({ type: 'COMMITTED' })
+        recordAppActivity({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          kind: 'event',
+          sats: 0,
+          method: 'direct-offer-cancel',
+          note: `Cancelled direct offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
+          txid: trade.txid,
+          item: listedLotItem(offer),
+        })
+        return { offerId: offer.offerId, txid: trade.txid }
+      }
       const back = chooseMarketCancelReturn({
         assetType: 'bsv21',
         listedLockHex: offer.give.lockingScript,

@@ -8,8 +8,8 @@
  * the offer token to the market fee. The asset cannot move without paying the
  * seller, and withdrawing the advert costs the fee.
  *
- * BRC-162 tokens travel in the script, so the buyer output follows the two
- * bound outputs. An ordinal follows its satoshi: two buyer pads come first and
+ * BRC-162 tokens and countersigned assets travel in the script, so the buyer
+ * output follows the two bound outputs. An ordinal follows its satoshi: two buyer pads come first and
  * output 0 returns exactly their satoshis, so the item's satoshi lands in
  * output 1 while the item's signature binds output 2.
  */
@@ -64,8 +64,9 @@ const ORDINAL: MarketSettlementShape = {
   firstChangeIndex: 4,
 }
 
+/** Tokens and countersigned assets travel in the script; only an ordinal follows its satoshi. */
 export function marketSettlementShape(assetType: MarketAssetType): MarketSettlementShape {
-  return assetType === 'bsv21' ? TOKEN : ORDINAL
+  return assetType === 'ordinal' ? ORDINAL : TOKEN
 }
 
 export function marketSettlementShapeForLayout(

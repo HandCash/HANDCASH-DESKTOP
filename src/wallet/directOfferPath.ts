@@ -12,6 +12,10 @@ import { SELLER_SIGHASH_BYTE, type OfferWant } from './offerTerms'
  * buyer completes the transaction by paying output 0 and taking the lot, and
  * nobody can take the lot while paying less. The offer is the signed input
  * plus its BEEF; no index or server decides who may buy it.
+ *
+ * A countersigned lot (csft / csnft, BRC-253) is the same offer: the seller's
+ * signature is the holder half of input 0, and the buyer, who completes the
+ * trade, has the issuer countersign it before broadcasting.
  */
 
 export const DIRECT_OFFER_PROTOCOL = 'handcash-direct-offer' as const
@@ -59,7 +63,7 @@ export type DirectOfferRefusal =
   | 'same-token'
   | 'bad-amount'
   | 'cosigned-token'
-  | 'countersigned-asset'
+  | 'countersigned-want'
   | 'want-layout-mismatch'
   | 'not-seller'
   | 'offer-not-listed'
@@ -74,8 +78,8 @@ const REFUSAL_MESSAGE: Record<DirectOfferRefusal, string> = {
   'bad-amount': 'Offer amounts must be positive whole units.',
   'cosigned-token':
     'Issuer-cosigned tokens need the issuer’s signature on every transfer and cannot be listed.',
-  'countersigned-asset':
-    'Countersigned tokens and items (csft, csnft) move only with their issuer’s acceptance, so they cannot be offered or asked for.',
+  'countersigned-want':
+    'An offer can sell countersigned tokens and items (csft, csnft) but cannot yet ask for them: the issuer must see your receive output proven before the buyer pays it.',
   'want-layout-mismatch':
     'Your tokens use a different token format from the one this offer asks for.',
   'not-seller': 'Only the wallet that listed this offer can do that.',
@@ -109,7 +113,7 @@ export function refuseDirectOffer(reason: DirectOfferRefusal): DirectOfferRefuse
 }
 
 export type DirectOfferListPath =
-  | { path: 'list'; tokenId: string; amount: bigint; want: OfferWant }
+  | { path: 'list'; lot: 'brc162' | 'countersigned'; tokenId: string; amount: bigint; want: OfferWant }
   | DirectOfferRefuse
 
 /**
@@ -164,8 +168,10 @@ export function chooseDirectOfferListPath(args: {
   amount: unknown
   want: unknown
   cosigned: boolean
-  /** The given or wanted asset is a `csft` / `csnft` asset. */
-  countersigned?: boolean
+  /** The given asset is a `csft` / `csnft` asset. */
+  countersignedGive?: boolean
+  /** The wanted asset is a `csft` / `csnft` asset. */
+  countersignedWant?: boolean
 }): DirectOfferListPath {
   const tokenId = normalizeTokenId(String(args.tokenId ?? ''))
   const amount = positiveUnits(args.amount)
@@ -174,9 +180,10 @@ export function chooseDirectOfferListPath(args: {
   const want = wantOf(args.want)
   if (!want) return refuseDirectOffer('bad-amount')
   if (want.kind === 'token' && want.tokenId === tokenId) return refuseDirectOffer('same-token')
-  if (args.countersigned) return refuseDirectOffer('countersigned-asset')
+  if (args.countersignedWant) return refuseDirectOffer('countersigned-want')
+  if (args.countersignedGive) return { path: 'list', lot: 'countersigned', tokenId, amount, want }
   if (args.cosigned) return refuseDirectOffer('cosigned-token')
-  return { path: 'list', tokenId, amount, want }
+  return { path: 'list', lot: 'brc162', tokenId, amount, want }
 }
 
 /** Structural parse of a shared offer. Script and lineage checks run on purchase. */

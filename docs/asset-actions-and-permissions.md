@@ -17,11 +17,11 @@ Every asset the wallet holds belongs to exactly one profile. A profile is a stor
 | App view (section 2) | `p 1sat all \| collection \| app \| creator \| id` | `p p2pft all \| token \| id` | `p csft all \| asset \| id` | `p csnft all \| asset \| collection \| id` |
 | App spend label | `p 1sat input id <key>` | `p p2pft input id <key>` | None: wallet only | None: wallet only |
 | Send | `sendCollectable` (section 3) | `sendFungible` (section 4) | `transferCountersignedAsset` (section 9) | `transferCountersignedAsset` |
-| Market listing (section 5) | `ordinal-v2` | `token-v2` | Refused: `COUNTERSIGNED_NOT_LISTABLE` | Refused: `COUNTERSIGNED_NOT_LISTABLE` |
-| Direct offer (section 8) | Not yet (section 7) | Give, or ask for | Refused: `countersigned-asset` | Refused: `countersigned-asset` |
-| App actions, each prompted | Mint; `createAction` spend by label; list, cancel, buy | Deploy; `createAction` spend by label; list, cancel, buy; direct offers | `issue`, `transfer`, `join`, `retire`, `releaseCountersignedAsset` | Same as `csft` |
+| Market listing (section 5) | `ordinal-v2` | `token-v2` | `token-v2`; the issuer countersigns list, buy and cancel | Same as `csft`, one unit |
+| Direct offer (section 8) | Not yet (section 7) | Give, or ask for | Give; asking for one is refused (`countersigned-want`) | Same as `csft` |
+| App actions, each prompted | Mint; `createAction` spend by label; list, cancel, buy | Deploy; `createAction` spend by label; list, cancel, buy; direct offers | `issue`, `transfer`, `join`, `retire`, `releaseCountersignedAsset`; list, cancel, buy; direct offers that give | Same as `csft` |
 
-The two left profiles are open: only the chain and the proof decide. The two right profiles carry the issuer's control in the lock, so a sats price or a market signature alone cannot move them. That is why their market and offer paths refuse by name rather than reporting the asset as missing.
+The two left profiles are open: only the chain and the proof decide. The two right profiles carry the issuer's control in the lock, so a sats price or a market signature alone cannot move them. Either party can still ask the issuer: every list, buy and cancel of a countersigned asset is a sender-funded trade (BRC-253 §6). The party that builds the transaction funds it and sends it to the acceptor, which countersigns the asset inputs.
 
 ## 1. Bridge methods
 
@@ -134,6 +134,14 @@ Version 1 signed the asset `NONE|ANYONECANPAY`, and the index served that signat
 
 Before paying for a token, the buyer walks its BRC-176 lineage with script checks (`proveListedToken`). Token listings read both token baskets (`p2pft` and legacy `bsv21`).
 
+Countersigned listings (`csft`, `csnft`) use `token-v2`. Listing is a sender-funded trade the acceptor countersigns: the listed units go to vout 0 under a fresh holder key (tag `market-held`), the offer to vout 1, and change, if any, to vout 2. The seller then signs vout 0 `0xC3` against its payment, so the listing needs no live seller. The proof is `{ v: 253, assetId, kind, amt }`. The buyer and the index check it against the listing transaction and the deploy (`checkCountersignedListing`). To buy, the buyer:
+
+1. builds the settlement with its own countersigned output (`planCountersignedReceive`), with a linkage entry for it;
+2. asks the acceptor to countersign vout 0 (`countersignSettlement`);
+3. broadcasts.
+
+Cancel is another trade back to the seller. It spends the listed output and the offer. The live-seller sign path is refused for a countersigned listing. An earlier countersigned sale never blocks a later request, so a buyer that goes silent cannot freeze a listing.
+
 | Action | Method | Chart |
 |---|---|---|
 | List an item or tokens (tokens split to the exact lot first) | `createMarketListingAdvert` | `marketListingMachine` |
@@ -162,7 +170,8 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Feature | State | Builds on |
 |---|---|---|
 | Item direct offers | Missing; token for sats and token for token ship (section 8) | Ordinal pads from `ordinal-v2` |
-| Countersigned listings and swaps | Refused by name (`COUNTERSIGNED_NOT_LISTABLE`, `countersigned-asset`) | One countersigned transfer with both holders and the acceptor; BRC-253 open question |
+| Asking for a countersigned asset in a direct offer | Refused by name (`countersigned-want`) | The seller signs before the buyer's receive output exists, so the offer cannot carry the linkage the acceptor checks; needs a per-entry prover in BRC-253 |
+| Countersigned swaps across issuers | Missing | A conditional accept per acceptor; BRC-253 open question |
 | Token-priced market listings | Missing; the market prices in sats only | Overlay offer fields carry a token price; fee rule for a token price |
 | Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `direct-offer` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
@@ -189,7 +198,7 @@ Two venues use it:
 | Who sees it | Published to the market overlay and index | JSON handed to a buyer |
 | Fee | 5% market fee, bound by the BRC-48 offer deposit's signature | None |
 | Code | `marketListing.ts`, `marketSettlement.ts` (settlement v2) | `directOffer.ts`, `directOfferPath.ts` |
-| Basket of the held lot | Token or `1sat` basket, tag `market-held` | `direct-offers` |
+| Basket of the held lot | Token, `1sat`, `csft` or `csnft` basket, tag `market-held` | `direct-offers`; a countersigned lot stays in `csft` or `csnft`, tag `market-held` |
 
 Both venues share the vocabulary in `offerTerms.ts` (`OfferVenue`, `OfferWant`), the seller signer and buyer check in `offerSeal.ts` (`signSellerInputs`, `sellerUnlockValid`), and one chart, `offerMachine`, for list, cancel, direct buy and collect. A market purchase keeps its own chart, `marketPurchaseMachine`, for overlay hydrate and the seller receipt.
 
@@ -203,7 +212,7 @@ Activity treats them alike: **Listing**, **Cancel listing**, **Sold** and **Purc
 | `cancelDirectOffer({ offerId })` | Spends the lot back to the token balance; refused once the chain shows it spent |
 | `listDirectOffers()` (connect) | This account's direct offers and purchases |
 
-`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-sold`, and the rest in `DirectOfferRefusal`. When one wallet is seller and buyer, it files output 0 itself.
+`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `countersigned-want`, `want-layout-mismatch`, `unbound-signature`, `offer-already-sold`, and the rest in `DirectOfferRefusal`. When one wallet is seller and buyer, it files output 0 itself.
 
 Run every bridge asset action in one pass, direct offers included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; it ends by checking that every listed unit came back. The wallet boundary run at `/wallet-demo` ends with a direct offer bought by the same wallet.
 
@@ -212,7 +221,7 @@ Run every bridge asset action in one pass, direct offers included, at `https://b
 | Token → BSV | P2PKH sats | Same as a market token listing, minus fee and overlay |
 | Token → token | A BRC-162 output of the wanted token | The buyer adds its token inputs and change; each token sums exactly |
 | Item → token or BSV | Not built (section 7) | Would need ordinal satoshi placement: the item behind buyer pads, as in `ordinal-v2` |
-| Countersigned assets (`csft`, `csnft`) | Refused, `countersigned-asset`, as give or want | A `SINGLE\|ANYONECANPAY` seller signature cannot carry the issuer's acceptance. A swap would be one countersigned transfer, both holders signing `0xC1` and the acceptor countersigning; the BRC-253 draft leaves it open (same issuer only) |
+| Countersigned asset (`csft`, `csnft`) → BSV or token | P2PKH sats, or the wanted token | Listing and cancel are funded trades the acceptor countersigns. The buyer checks the lot against its deploy, gets its own output countersigned, and broadcasts. Asking for a countersigned asset is refused, `countersigned-want` (section 7) |
 
 Every offer transaction goes through `signedSendLifecycle`. Delivery of the seller's proceeds rides the messagebox and never gates broadcast.
 
@@ -239,6 +248,7 @@ From an unpublished issuer-control draft. A countersigned output is a BRC-162 tr
 - Who must be online: the sender and the issuer (or m of its n cosigners, with the receipt final once mined), for every transfer of a live asset (45 s answer window). The recipient may be offline: the delivery waits in box `countersign` and is checked offline against the deploy when the recipient next opens its wallet. After release only the sender must be online, and the recipient files the transfer once it is mined. True offline payment (both sides offline) is not supported; that is BRC-175's model.
 - After release the asset is owner-only: the holder countersigns with the published keys and funds the fee from its own `countersign-fee` coins. Accept-once is gone, so a receipt that spends on the release branch, or any receipt of an asset known to be released, is filed only once mined.
 - Two profiles, each its own filing basket and permission scheme: countersigned tokens in `csft` (countersigned fungible token), countersigned items in `csnft` (countersigned non-fungible token), beside `p2pft` and `1sat`. A released asset stays in its countersigned profile: its lock still carries the clause and spends with the published keys, so it is not a plain token or item.
-- Tags: `<profile>:<assetId>` (`<profile>:deploy` on the issuer's deploy row, which is its own asset id), `amt:<units>`, `id:<key>` (BRC-164).
+- Tags: `<profile>:<assetId>` (`<profile>:deploy` on the issuer's deploy row, which is its own asset id), `amt:<units>`, `sym:` and `name:` when known (display only; views list tags, never the remittance), `id:<key>` (BRC-164).
+- Trades (BRC-253 §6): market listings, purchases and cancels, and direct offers that give a countersigned asset, are sender-funded. The party that builds the transaction funds it, the acceptor countersigns without adding an input and replies `cosigned`, and the builder broadcasts. A holder may sign `0xC3` (`SWAP_HOLDER_SCOPE`) bound to a plain payment at its own index. The acceptor refuses one bound to a countersigned output. An earlier signed sale, or a request sharing a plain input, never blocks a new request (`blockingPriorSpends`), because at most one of them can be mined. Any other sender-funded request blocks until a mined spend of one of its plain inputs proves it dead. Recipients file a trade once it is mined.
 - App scopes: `p csft all | asset | id` and `p csnft all | asset | collection | id`, with `<profile>:<assetId>`, `collection:<id>` or `id:<key>` tags for the narrow ones. Listed deploy rows get a `<profile>:<assetId>` tag.
 - Apps cannot write into either profile or spend from it with a label; transfers go through `transferCountersignedAsset`. `p 1sat …`, `p p2pft …` and `bsv21` never return a countersigned output, and payment or auto-pay grants never cover one.

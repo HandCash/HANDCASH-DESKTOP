@@ -31,6 +31,15 @@ export const HOLDER_SCOPE =
   TransactionSignature.SIGHASH_ALL |
   TransactionSignature.SIGHASH_ANYONECANPAY |
   TransactionSignature.SIGHASH_FORKID
+/**
+ * A holder that sells signs its input and only the output at its own index,
+ * its payment: SINGLE | ANYONECANPAY | FORKID. The buyer completes the rest,
+ * and the acceptor's ALL signature then fixes the whole transaction.
+ */
+export const SWAP_HOLDER_SCOPE =
+  TransactionSignature.SIGHASH_SINGLE |
+  TransactionSignature.SIGHASH_ANYONECANPAY |
+  TransactionSignature.SIGHASH_FORKID
 /** An acceptor signs everything: ALL | FORKID. */
 export const COUNTERSIGN_SCOPE =
   TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
@@ -403,17 +412,29 @@ export function readHolderUnlock(
   return { signature: signature.data, publicKey: publicKey.data }
 }
 
-/** A holder signature that is ALL|ANYONECANPAY, from the key the clause names. */
-export function holderSignatureValid(tx: Transaction, vin: number, holderPkhHex: string): boolean {
+/** The sighash byte of input `vin`'s holder signature, or null without one. */
+export function holderScopeOf(tx: Transaction, vin: number): number | null {
+  const holder = readHolderUnlock(tx.inputs[vin]?.unlockingScript)
+  return holder ? holder.signature[holder.signature.length - 1]! : null
+}
+
+/** A holder signature in one of `scopes` (ALL|ANYONECANPAY alone by default), from the key the clause names. */
+export function holderSignatureValid(
+  tx: Transaction,
+  vin: number,
+  holderPkhHex: string,
+  scopes: readonly number[] = [HOLDER_SCOPE],
+): boolean {
   const holder = readHolderUnlock(tx.inputs[vin]?.unlockingScript)
   if (!holder) return false
-  if (holder.signature[holder.signature.length - 1] !== HOLDER_SCOPE) return false
+  const scope = holder.signature[holder.signature.length - 1]!
+  if (!scopes.includes(scope)) return false
   const publicKeyHex = Utils.toHex(holder.publicKey)
   if (pubkeyHashHex(publicKeyHex) !== holderPkhHex) return false
   try {
     const signature = TransactionSignature.fromChecksigFormat(holder.signature)
     return PublicKey.fromString(publicKeyHex).verify(
-      Hash.sha256(sighashPreimage(tx, vin, HOLDER_SCOPE)),
+      Hash.sha256(sighashPreimage(tx, vin, scope)),
       signature,
     )
   } catch {

@@ -2,6 +2,8 @@ import { Transaction, Utils } from '@bsv/sdk'
 import { decodeCountersignPayload, type CountersignDeployFields, type CountersignKind } from './payload'
 import {
   beaconLock,
+  HOLDER_SCOPE,
+  holderScopeOf,
   holderSignatureValid,
   inputScriptValid,
   readCountersigned,
@@ -9,6 +11,7 @@ import {
   sameKeySets,
   sourceOutputOf,
   sourceTxidOf,
+  SWAP_HOLDER_SCOPE,
   type CountersignKeySets,
   type CountersignedOutput,
 } from './script'
@@ -160,6 +163,11 @@ export type AcceptCheck =
  * holder ALL|ANYONECANPAY; every output keeps the clause, carries one
  * satoshi, and pays either the holder hash a recipient entry proved or an
  * input's holder back; amounts are conserved.
+ *
+ * A sender-funded request (`swap`) is a trade: plain outputs (a seller's
+ * payment, an offer token, change) may sit beside the asset outputs, and a
+ * selling holder may sign SINGLE|ANYONECANPAY, which binds its input to the
+ * plain output at the same index.
  */
 export function checkAcceptRequest(args: {
   tx: Transaction
@@ -176,8 +184,11 @@ export function checkAcceptRequest(args: {
    * They are plain outputs, never countersigned ones, and never come first.
    */
   holderFunded?: boolean
+  /** Sender-funded trade: implies `holderFunded`, admits plain outputs and SINGLE|ANYONECANPAY holders. */
+  swap?: boolean
 }): AcceptCheck {
   const { tx } = args
+  const funded = args.holderFunded || args.swap
   if (tx.inputs.length === 0) return { ok: false, reason: 'invalid', detail: 'no inputs' }
   const ins = new Map<string, bigint>()
   const inputs: string[] = []
@@ -185,7 +196,7 @@ export function checkAcceptRequest(args: {
   let feeFrom: number | null = null
   for (let vin = 0; vin < tx.inputs.length; vin++) {
     const asset = assetOfInput(tx, vin, args.deploys)
-    if (!asset && args.holderFunded && vin > 0) {
+    if (!asset && funded && vin > 0) {
       const source = sourceOutputOf(tx, vin)
       if (source && !readCountersigned(source.lockingScript)) {
         feeFrom ??= vin
@@ -204,8 +215,14 @@ export function checkAcceptRequest(args: {
     }
     const holder = args.reservedBy(asset.outpoint)
     if (holder && holder !== args.requestId) return { ok: false, reason: 'spent', detail: asset.outpoint }
-    if (!holderSignatureValid(tx, vin, asset.read.holderPkhHex)) {
+    if (!holderSignatureValid(tx, vin, asset.read.holderPkhHex, args.swap ? [HOLDER_SCOPE, SWAP_HOLDER_SCOPE] : [HOLDER_SCOPE])) {
       return { ok: false, reason: 'invalid', detail: `input ${vin} holder signature` }
+    }
+    if (holderScopeOf(tx, vin) === SWAP_HOLDER_SCOPE) {
+      const bound = tx.outputs[vin]?.lockingScript
+      if (!bound || readCountersigned(bound)) {
+        return { ok: false, reason: 'invalid', detail: `input ${vin} binds no plain payment output` }
+      }
     }
     if (args.frozen?.(asset.read.holderPkhHex)) return { ok: false, reason: 'frozen', detail: asset.outpoint }
     ins.set(asset.assetId, (ins.get(asset.assetId) ?? 0n) + asset.read.amount)
@@ -217,6 +234,7 @@ export function checkAcceptRequest(args: {
   for (let vout = 0; vout < tx.outputs.length; vout++) {
     const output = tx.outputs[vout]!
     const read = output.lockingScript ? readCountersigned(output.lockingScript) : null
+    if (!read && args.swap && output.lockingScript) continue
     if (!read?.assetId || !ins.has(read.assetId)) {
       return { ok: false, reason: 'invalid', detail: `output ${vout} is not an output of a spent asset` }
     }
@@ -239,6 +257,55 @@ export function checkAcceptRequest(args: {
     }
   }
   return { ok: true, assetIds: [...ins.keys()], inputs }
+}
+
+/** Outpoints of the inputs that spend no countersigned output: fee and payment coins, offer tokens. */
+export function plainInputsOf(tx: Transaction): string[] {
+  const plain: string[] = []
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const source = sourceOutputOf(tx, vin)
+    if (source && readCountersigned(source.lockingScript)) continue
+    plain.push(`${sourceTxidOf(tx, vin)}_${tx.inputs[vin]!.sourceOutputIndex}`)
+  }
+  return plain
+}
+
+/** A request this acceptor already signed that spends a given asset input. */
+export type PriorSpend = {
+  requestId: string
+  plainInputs: readonly string[]
+  /** The requester funds and broadcasts it, so it dies when one of its plain inputs is spent elsewhere. */
+  requesterFunded: boolean
+  /**
+   * Its holder sold this input SINGLE|ANYONECANPAY against a payment in the
+   * same transaction. A later spend can only void that sale, never cost the
+   * buyer anything, so it reserves nothing.
+   */
+  sale?: boolean
+}
+
+/**
+ * The earlier signed spends of one input that still stop a new request from
+ * spending it. A sale, or one that shares a plain input with the new request,
+ * conflicts with it: at most one of the two confirms and the loser loses
+ * nothing. Any other stops it until proven dead; one this acceptor funded and
+ * broadcast never dies.
+ */
+export function blockingPriorSpends(prior: readonly PriorSpend[], request: Transaction): {
+  conflicting: PriorSpend[]
+  maybeDead: PriorSpend[]
+  final: PriorSpend[]
+} {
+  const mine = new Set(plainInputsOf(request))
+  const conflicting: PriorSpend[] = []
+  const maybeDead: PriorSpend[] = []
+  const final: PriorSpend[] = []
+  for (const spend of prior) {
+    if (spend.sale || spend.plainInputs.some((outpoint) => mine.has(outpoint))) conflicting.push(spend)
+    else if (spend.requesterFunded) maybeDead.push(spend)
+    else final.push(spend)
+  }
+  return { conflicting, maybeDead, final }
 }
 
 /** Holder public key of input `vin`, from its pre-acceptance unlock. */

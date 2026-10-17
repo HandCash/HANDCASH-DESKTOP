@@ -120,6 +120,46 @@ export function chooseCountersignTransferPath(args: {
 }
 
 /**
+ * Who countersigns a trade the requester funded (a market listing, purchase
+ * or cancel, a direct offer). The transaction is fixed before anyone
+ * countersigns, so every path returns countersignatures and the requester
+ * broadcasts: the issuer in process when this wallet is it, the issuer peer
+ * to peer otherwise, m of n cosigners for a shared set, and the disclosed
+ * release keys once released. Either side of a trade may ask.
+ */
+export type CountersignSwapPath =
+  | { path: 'local-acceptor'; assetId: string }
+  | { path: 'remote-acceptor'; assetId: string; acceptors: string[] }
+  | { path: 'quorum'; assetId: string; cosigners: KeySet; selfCosigns: boolean }
+  | { path: 'released'; assetId: string; keys: string[] }
+  | { path: 'refuse'; reason: CountersignRefuse; message: string }
+
+export function chooseCountersignSwapPath(args: {
+  deploy: CountersignDeploy | null
+  identityKey: string
+  phase?: CountersignPhase
+}): CountersignSwapPath {
+  if (!args.deploy) {
+    return { path: 'refuse', reason: 'unknown-asset', message: 'This wallet has no deploy body for that asset.' }
+  }
+  const assetId = args.deploy.assetId
+  if (args.phase?.phase === 'released') return { path: 'released', assetId, keys: args.phase.keys }
+  if (args.phase?.phase === 'ended') {
+    return {
+      path: 'refuse',
+      reason: 'asset-ended',
+      message: 'The issuer has stopped accepting this asset. It trades again once its release keys are published.',
+    }
+  }
+  const self = args.identityKey.toLowerCase()
+  const issuer = args.deploy.sets.issuer
+  if (isQuorum(issuer)) return { path: 'quorum', assetId, cosigners: issuer, selfCosigns: issuer.keys.includes(self) }
+  return issuer.keys.includes(self)
+    ? { path: 'local-acceptor', assetId }
+    : { path: 'remote-acceptor', assetId, acceptors: issuer.keys }
+}
+
+/**
  * The issuer set of a new asset. `solo`: this wallet alone (the default).
  * `shared`: m of n cosigners, this wallet among them. Any two quorums must
  * share a cosigner (2m > n): that cosigner refuses the second of two

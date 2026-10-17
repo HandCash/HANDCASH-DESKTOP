@@ -9,6 +9,7 @@ import {
   PrivateKey,
   PublicKey,
   Transaction,
+  UnlockingScript,
   Utils,
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
@@ -32,6 +33,7 @@ import {
   findMarketListingAuthorizationBySaleId,
   listMarketListingAuthorizations,
   getMarketListingAuthorization,
+  isCountersignedMarketAsset,
   marketFeePayToAddress,
   markMarketSettlementProgress,
   MarketListingError,
@@ -40,6 +42,7 @@ import {
   verifyMarketPurchaseIntent,
   verifyMarketListingProvenance,
   verifyMarketSettlementReceipt,
+  type CountersignedMarketAsset,
   type MarketListingAdvert,
   type MarketListingAuthorization,
   type MarketPurchaseIntent,
@@ -83,6 +86,8 @@ import {
   isInsufficientFundsError,
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
+import type { HolderRemittance } from './countersign/holderKeys'
+import { checkCountersignedListing, parseCountersignedListingProof } from './marketCountersigned'
 import { signTipInputs } from './signTipInputs'
 import {
   choosePendingMarketReceiptPath,
@@ -536,6 +541,8 @@ export function validateMarketSettlementOutputs(args: {
   buyerAddress?: string
   chain: 'main' | 'test'
   shape: MarketSettlementShape
+  /** A countersigned buyer output: the exact lock the buyer planned for its fresh holder key. */
+  buyerItemLock?: string
 }): void {
   if (args.chain !== 'main') {
     throw new Error('Market settlement is mainnet only')
@@ -557,8 +564,8 @@ export function validateMarketSettlementOutputs(args: {
     }
   }
   const listedPoint = normalizeOutpoint(args.listing.outpoint).split('.')
-  const buyerItemLock =
-    args.listing.assetType === 'bsv21'
+  const buyerItemLock = args.buyerItemLock?.toLowerCase() ??
+    (args.listing.assetType === 'bsv21'
       ? buildBsv21ValueLock({
           tokenId: args.listing.origin,
           amount: BigInt(args.listing.amt!),
@@ -570,7 +577,10 @@ export function validateMarketSettlementOutputs(args: {
             )?.outputs[Number(listedPoint[1])]?.lockingScript?.toHex(),
           }),
         })
-      : buyerChangeLock
+      : buyerChangeLock)
+  if (isCountersignedMarketAsset(args.listing.assetType ?? 'ordinal') && !args.buyerItemLock) {
+    throw new Error('Countersigned settlement needs the buyer output the wallet planned')
+  }
   const sellerLock = new P2PKH().lock(args.listing.payTo).toHex()
   const feeLock = new P2PKH()
     .lock(marketFeePayToAddress(args.listing))
@@ -740,6 +750,38 @@ async function proveListedToken(
   mark('token lineage proven')
 }
 
+/**
+ * Have the issuer countersign a countersigned settlement. vin 0 carries the
+ * seller's list-time holder half (SINGLE|ANYONECANPAY over its payment); the
+ * buyer's own inputs are not signed yet and travel with empty scripts — the
+ * countersignature is ALL and never covers unlocking scripts.
+ */
+async function countersignSettlement(args: {
+  beef: Beef
+  txid: string
+  itemVin: number
+  offerVin: number
+  holderHalf: string
+  offerUnlock: string
+  assetId: string
+  remittance: HolderRemittance
+}): Promise<string> {
+  const tx = args.beef.findTransactionForSigning(args.txid)
+  if (!tx) throw new Error('Settlement transaction is missing from its signable package')
+  tx.inputs.forEach((input, vin) => {
+    if (!input.sourceTransaction) throw new Error(`Settlement input ${vin} has no source`)
+    input.unlockingScript =
+      vin === args.itemVin
+        ? UnlockingScript.fromHex(args.holderHalf)
+        : vin === args.offerVin
+          ? UnlockingScript.fromHex(args.offerUnlock)
+          : new UnlockingScript()
+  })
+  const { countersignTrade } = await import('./countersign/wallet')
+  const trade = await countersignTrade({ tx, assetId: args.assetId, remittance: args.remittance })
+  return trade.unlocks[args.itemVin]!.toHex()
+}
+
 export async function executeMarketPurchase(
   args: PurchaseMarketListingArgs & { intent: MarketPurchaseIntent }
 ): Promise<{
@@ -763,12 +805,19 @@ export async function executeMarketPurchase(
     mark(
       `listing unlocks=${String(listingHasBuyerCompletableSettlement(listing))} beef=${Boolean(overlayListingBeefBinary(listing, listingItemTxid(listing)))}`,
     )
+    const countersigned = isCountersignedMarketAsset(listing.assetType ?? 'ordinal')
+      ? (listing.assetType as CountersignedMarketAsset)
+      : null
     const provenance =
-      listing.assetType === 'bsv21'
+      listing.assetType === 'bsv21' || countersigned
         ? undefined
         : parseProvenanceV2(args.provenance)
-    if (listing.assetType !== 'bsv21' && !provenance) {
+    if (listing.assetType !== 'bsv21' && !countersigned && !provenance) {
       throw new Error('Missing BRC-150 provenance')
+    }
+    const countersignedProof = countersigned ? parseCountersignedListingProof(args.provenance) : null
+    if (countersigned && (!countersignedProof || listing.amt == null || !(listing.amt > 0))) {
+      throw new MarketListingError('MARKET_ASSET_UNSUPPORTED', 'This countersigned listing carries no listing proof.')
     }
     if (
       args.intent.buyer.toLowerCase() !== active.identityKey.toLowerCase() ||
@@ -817,7 +866,7 @@ export async function executeMarketPurchase(
     if (itemTxid !== offerTxid) {
       throw new Error('Market item and offer token must come from the same listing transaction')
     }
-    const shape = marketSettlementShape(isBsv21 ? 'bsv21' : 'ordinal')
+    const shape = marketSettlementShape(listing.assetType ?? 'ordinal')
     if (
       !listingHasBuyerCompletableSettlement(listing, amounts) &&
       chooseMarketReceiptDeliveryPath({
@@ -838,6 +887,44 @@ export async function executeMarketPurchase(
         allowUnprovenRawTx: true,
       })).toBinary()
     if (isBsv21) await proveListedToken(active, listing, listingBeef, mark)
+    let receive: ReturnType<typeof import('./countersign/wallet').planCountersignedReceive> | null = null
+    let countersignedUnlockLength = 0
+    if (countersigned) {
+      // The issuer countersigns the settlement at the sale; list-time unlocks
+      // carry only the seller's holder half, so a self-buy needs them too.
+      if (!listingHasBuyerCompletableSettlement(listing, amounts)) {
+        throw new MarketListingError(
+          'MARKET_SELLER_TIMEOUT',
+          'This countersigned listing has no bound list-time seller signature. Nothing was charged.',
+        )
+      }
+      const { countersignedDeploy, planCountersignedReceive } = await import('./countersign/wallet')
+      const listingTx = Beef.fromBinary(listingBeef).findTxid(itemTxid!)?.tx
+      const deploy = await countersignedDeploy(active, countersignedProof!.assetId)
+      const checked =
+        listingTx && deploy
+          ? checkCountersignedListing({
+              assetType: countersigned,
+              origin: listing.origin,
+              amt: listing.amt,
+              offerLockingScript: listing.offerLockingScript,
+              proof: countersignedProof!,
+              listingTx,
+              deploy,
+            })
+          : ({ ok: false, reason: 'listed-output' } as const)
+      if (!checked.ok || !deploy) {
+        console.warn(`[market-buy] refuse countersigned-listing ${checked.ok ? 'deploy' : checked.reason} ${listing.outpoint}`)
+        throw new MarketListingError(
+          'MARKET_TOKEN_UNPROVEN',
+          `The listed output does not hold the advertised countersigned asset (${checked.ok ? 'deploy' : checked.reason}). Nothing was charged.`,
+        )
+      }
+      receive = planCountersignedReceive(active, deploy, shape.buyerOutputIndex, BigInt(listing.amt!))
+      const threshold = Math.max(deploy.sets.issuer.threshold, deploy.sets.release.threshold)
+      countersignedUnlockLength = 112 + 74 * threshold
+      mark('countersigned listing checked')
+    }
     const padded = shape.padVins.length > 0 ? await ensureMarketPads(active) : null
     if (padded) {
       padded.beef.mergeBeef(listingBeef)
@@ -845,7 +932,9 @@ export async function executeMarketPurchase(
     }
     const inputBeef = padded ? padded.beef.toBinary() : listingBeef
     const padSats = padded?.pads.reduce((sum, pad) => sum + pad.satoshis, 0) ?? 0
-    const buyerLock = isBsv21
+    const buyerLock = receive
+      ? receive.lockingScript
+      : isBsv21
       ? buildBsv21ValueLock({
           tokenId: listing.origin,
           amount: BigInt(listing.amt!),
@@ -861,7 +950,7 @@ export async function executeMarketPurchase(
       [shape.itemVin]: {
         outpoint: normalizeOutpoint(listing.outpoint),
         inputDescription: 'Listed market item',
-        unlockingScriptLength: 108,
+        unlockingScriptLength: countersignedUnlockLength || 108,
       },
       [shape.offerVin]: {
         outpoint: normalizeOutpoint(listing.offerOutpoint),
@@ -886,13 +975,15 @@ export async function executeMarketPurchase(
         lockingScript: buyerLock,
         satoshis: 1,
         outputDescription: 'Market item to buyer',
-        ...buildMarketHeldRemittance({
-          assetType: isBsv21 ? 'bsv21' : 'ordinal',
-          origin: listing.origin,
-          amt: listing.amt,
-          name: itemDisplayName,
-          ...(provenance ? { provenance } : {}),
-        }),
+        ...(receive
+          ? { basket: receive.basket, tags: receive.tags, customInstructions: receive.customInstructions }
+          : buildMarketHeldRemittance({
+              assetType: isBsv21 ? 'bsv21' : 'ordinal',
+              origin: listing.origin,
+              amt: listing.amt,
+              name: itemDisplayName,
+              ...(provenance ? { provenance } : {}),
+            })),
       },
       [shape.sellerOutputIndex]: {
         lockingScript: sellerLock,
@@ -918,7 +1009,7 @@ export async function executeMarketPurchase(
     let created: Awaited<ReturnType<typeof active.wallet.createAction>>
     try {
       created = await active.wallet.createAction({
-      description: isBsv21
+      description: isBsv21 || countersigned === 'csft'
         ? `Buy ${listing.amt?.toLocaleString() ?? ''} ${itemDisplayName}`.replace('  ', ' ')
         : `Buy ${itemDisplayName}`,
       labels: [
@@ -927,7 +1018,7 @@ export async function executeMarketPurchase(
         'brc153',
         `brc153-correlator:${saleId}`,
         `brc153-reference:${listing.offerOutpoint}`,
-        '1sat',
+        receive ? receive.basket : '1sat',
       ],
       inputBEEF: inputBeef,
       inputs,
@@ -969,6 +1060,7 @@ export async function executeMarketPurchase(
         buyerAddress: active.address,
         chain: active.chain,
         shape,
+        ...(receive ? { buyerItemLock: receive.lockingScript } : {}),
       })
       if (padded) {
         const rootKey = PrivateKey.fromHex(active.rootKeyHex)
@@ -1053,7 +1145,20 @@ export async function executeMarketPurchase(
         itemUnlockingScript = listing.settlementUnlocks.itemUnlockingScript
         offerUnlockingScript = listing.settlementUnlocks.offerUnlockingScript
         chart.send({ type: 'SELLER_SIGNED' })
-      } else if (receiptPath.path === 'localSellerReconcile') {
+        if (receive) {
+          itemUnlockingScript = await countersignSettlement({
+            beef,
+            txid: settlementTx.id('hex'),
+            itemVin,
+            offerVin,
+            holderHalf: itemUnlockingScript,
+            offerUnlock: offerUnlockingScript,
+            assetId: countersignedProof!.assetId,
+            remittance: receive.remittance,
+          })
+          mark('issuer countersigned the settlement')
+        }
+      } else if (receiptPath.path === 'localSellerReconcile' && !receive) {
         // Same wallet is buyer and seller — sign locally; never wait on messagebox.
         const selfWire = {
           type: 'sign-request' as const,
@@ -1121,7 +1226,11 @@ export async function executeMarketPurchase(
         buyerAddress: active.address,
         listingOutpoints: [listing.outpoint, listing.offerOutpoint],
       })
-      if (!isBsv21) {
+      if (receive) {
+        // The csft / csnft basket already holds the bought output (filed by
+        // createAction); the holdings view reads it from there.
+        mark('buyer countersigned output filed')
+      } else if (!isBsv21) {
         try {
           const purchasedOutpoint = `${txid}.${shape.buyerOutputIndex}`
           // Prove tip→origin from the listing remittance before we finalize the
@@ -1514,6 +1623,10 @@ async function signSellerInputs(args: {
     throw new Error('Settlement request expired')
   const listing = args.wire.listing as MarketListingAdvert
   const intent = args.wire.intent as MarketPurchaseIntent
+  if (isCountersignedMarketAsset(listing.assetType ?? 'ordinal')) {
+    console.warn(`[market-sell] refuse sign-request countersigned-listing ${listing.outpoint}`)
+    throw new Error('A countersigned listing settles with its list-time unlocks and the issuer, never a live seller signature')
+  }
   if (
     !intent ||
     intent.intentId !== args.wire.saleId ||
@@ -1858,7 +1971,12 @@ export async function handleInboundMarketSettlementWire(args: {
       for (const spend of [
         ...(listing.assetType === 'bsv21'
           ? []
-          : [{ basket: '1sat', output: listing.outpoint.replace('_', '.') }]),
+          : [
+              {
+                basket: isCountersignedMarketAsset(listing.assetType ?? 'ordinal') ? listing.assetType! : '1sat',
+                output: listing.outpoint.replace('_', '.'),
+              },
+            ]),
         { basket: 'market-offers', output: listing.offerOutpoint.replace('_', '.') },
       ]) {
         try {

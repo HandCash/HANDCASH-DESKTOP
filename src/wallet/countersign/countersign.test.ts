@@ -1,13 +1,17 @@
 import { LockingScript, OP, P2PKH, PrivateKey, Script, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { beaconPhase, readBeaconChain, type BeaconChainSource } from './beacon'
-import { chooseCosignerQuorum, chooseCountersignTransferPath } from './path'
+import { chooseCosignerQuorum, chooseCountersignSwapPath, chooseCountersignTransferPath } from './path'
+import { checkCountersignedListing, parseCountersignedListingProof } from '../marketCountersigned'
 import { decodeCountersignPayload, encodeCountersignPayload, MIN_SILENCE_SECONDS } from './payload'
 import {
+  blockingPriorSpends,
   checkAcceptRequest,
+  plainInputsOf,
   readCountersignDeploy,
   resolveCountersignTransfer,
   type CountersignDeploy,
+  type PriorSpend,
 } from './resolve'
 import {
   beaconLock,
@@ -20,6 +24,7 @@ import {
   countersignedUnlock,
   disclosedReleaseKeys,
   HOLDER_SCOPE,
+  holderScopeOf,
   holderSignatureValid,
   holderUnlock,
   inputScriptValid,
@@ -32,6 +37,7 @@ import {
   requestIdOf,
   retireMarkerLock,
   signInput,
+  SWAP_HOLDER_SCOPE,
   unlockBranch,
   type CountersignKeySets,
 } from './script'
@@ -235,6 +241,105 @@ describe('countersigned transfer', () => {
       for (const output of request.outputs) feeFirst.addOutput(output)
       expect(base(feeFirst, { holderFunded: true })).toMatchObject({ reason: 'invalid' })
     })
+
+    /** Holder sells input 0 SINGLE|ANYONECANPAY against a plain payment at output 0; the buyer takes output 1 and funds it. */
+    function sale(payment: LockingScript = new P2PKH().lock(holder.toAddress())) {
+      const tx = new Transaction()
+      tx.addInput({ sourceTransaction: deploy, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      tx.addOutput({ lockingScript: payment, satoshis: 900 })
+      tx.addOutput({ lockingScript: countersignedLock({ assetId, amount: 100n, holderPkhHex: pkh(recipient), sets }), satoshis: 1 })
+      tx.inputs[0]!.unlockingScript = holderUnlock(signInput(tx, 0, holder, SWAP_HOLDER_SCOPE), pub(holder))
+      tx.addInput({ sourceTransaction: feeCoin(recipient), sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      return tx
+    }
+
+    it('accepts a sale only as a swap, bound to a plain payment at the holder’s index', () => {
+      const request = sale()
+      expect(holderScopeOf(request, 0)).toBe(SWAP_HOLDER_SCOPE)
+      expect(holderSignatureValid(request, 0, pkh(holder), [HOLDER_SCOPE, SWAP_HOLDER_SCOPE])).toBe(true)
+      expect(base(request, { recipients: [{ vout: 1, holderPkhHex: pkh(recipient) }] })).toMatchObject({ reason: 'invalid' })
+      expect(base(request, { swap: true, recipients: [{ vout: 1, holderPkhHex: pkh(recipient) }] })).toEqual({
+        ok: true,
+        assetIds: [assetId],
+        inputs: [assetId],
+      })
+      const boundToAsset = sale(countersignedLock({ assetId, amount: 1n, holderPkhHex: pkh(holder), sets }))
+      expect(base(boundToAsset, { swap: true, recipients: [{ vout: 1, holderPkhHex: pkh(recipient) }] })).toMatchObject({
+        reason: 'invalid',
+      })
+    })
+
+    it('a sale or a request sharing a plain input reserves nothing; others wait to be proven dead or are final', () => {
+      const request = sale()
+      const plain = plainInputsOf(request)
+      expect(plain).toHaveLength(1)
+      const fee = plain[0]
+      const spend = (id: string, extra: Partial<PriorSpend> = {}): PriorSpend => ({
+        requestId: id,
+        plainInputs: [`${'cd'.repeat(32)}_0`],
+        requesterFunded: false,
+        ...extra,
+      })
+      const out = blockingPriorSpends(
+        [
+          spend('sale', { sale: true }),
+          spend('shared', { plainInputs: [fee!] }),
+          spend('funded', { requesterFunded: true }),
+          spend('final'),
+        ],
+        request,
+      )
+      expect(out.conflicting.map((s) => s.requestId)).toEqual(['sale', 'shared'])
+      expect(out.maybeDead.map((s) => s.requestId)).toEqual(['funded'])
+      expect(out.final.map((s) => s.requestId)).toEqual(['final'])
+    })
+  })
+
+  it('routes a trade to the issuer in process, peer to peer, a quorum or the release keys', () => {
+    const known = readCountersignDeploy(deploy)!
+    expect(chooseCountersignSwapPath({ deploy: null, identityKey: pub(holder) })).toMatchObject({ reason: 'unknown-asset' })
+    expect(chooseCountersignSwapPath({ deploy: known, identityKey: pub(issuer) })).toEqual({ path: 'local-acceptor', assetId })
+    expect(chooseCountersignSwapPath({ deploy: known, identityKey: pub(holder) })).toEqual({
+      path: 'remote-acceptor',
+      assetId,
+      acceptors: [pub(issuer)],
+    })
+    expect(
+      chooseCountersignSwapPath({ deploy: known, identityKey: pub(holder), phase: { phase: 'released', keys: ['k'] } as never }),
+    ).toEqual({ path: 'released', assetId, keys: ['k'] })
+  })
+
+  it('checks a countersigned listing against the deploy: asset, units, key sets and the offer output', () => {
+    const known = readCountersignDeploy(deploy)!
+    const offer = new P2PKH().lock(holder.toAddress())
+    const listing = (amount: bigint, keySets = sets, offerLock = offer) => {
+      const tx = new Transaction()
+      tx.addInput({ sourceTransaction: funding, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      tx.addOutput({ lockingScript: countersignedLock({ assetId, amount, holderPkhHex: pkh(holder), sets: keySets }), satoshis: 1 })
+      tx.addOutput({ lockingScript: offerLock, satoshis: 1 })
+      return tx
+    }
+    const proof = parseCountersignedListingProof({ v: 253, assetId: assetId.replace('_', '.'), kind: 'token', amt: '40' })!
+    const check = (tx: Transaction, overrides: Partial<Parameters<typeof checkCountersignedListing>[0]> = {}) =>
+      checkCountersignedListing({
+        assetType: 'csft',
+        origin: assetId,
+        amt: 40,
+        offerLockingScript: offer.toHex(),
+        proof,
+        listingTx: tx,
+        deploy: known,
+        ...overrides,
+      })
+    expect(proof.assetId).toBe(assetId)
+    expect(parseCountersignedListingProof({ v: 253, assetId, kind: 'item', amt: '2' })).toBeNull()
+    expect(check(listing(40n))).toEqual({ ok: true })
+    expect(check(listing(40n), { assetType: 'csnft' })).toEqual({ ok: false, reason: 'profile' })
+    expect(check(listing(41n))).toEqual({ ok: false, reason: 'amount' })
+    expect(check(listing(40n), { amt: 39 })).toEqual({ ok: false, reason: 'amount' })
+    const otherSets = { issuer: { threshold: 1, keys: [pub(recipient)] }, release: sets.release }
+    expect(check(listing(40n, otherSets))).toEqual({ ok: false, reason: 'key-sets' })
+    expect(check(listing(40n, sets, new P2PKH().lock(recipient.toAddress())))).toEqual({ ok: false, reason: 'offer-output' })
   })
 })
 

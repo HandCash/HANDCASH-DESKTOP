@@ -189,10 +189,14 @@ describe('direct offer paths', () => {
       reason: 'cosigned-token',
     })
     expect(
-      chooseDirectOfferListPath({ tokenId: giveTokenId, amount: 5, want, cosigned: false, countersigned: true }),
-    ).toMatchObject({ path: 'refuse', reason: 'countersigned-asset' })
+      chooseDirectOfferListPath({ tokenId: giveTokenId, amount: 5, want, cosigned: false, countersignedWant: true }),
+    ).toMatchObject({ path: 'refuse', reason: 'countersigned-want' })
+    expect(
+      chooseDirectOfferListPath({ tokenId: giveTokenId, amount: 5, want, cosigned: false, countersignedGive: true }),
+    ).toMatchObject({ path: 'list', lot: 'countersigned', amount: 5n })
     expect(chooseDirectOfferListPath({ tokenId: giveTokenId, amount: 5, want, cosigned: false })).toMatchObject({
       path: 'list',
+      lot: 'brc162',
       amount: 5n,
       want: { kind: 'sats', sats: 10 },
     })

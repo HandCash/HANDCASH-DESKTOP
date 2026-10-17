@@ -99,6 +99,11 @@ import { DIRECT_OFFER_BASKET } from './directOfferPath'
 import { signSellerInputs } from './offerSeal'
 import { SELLER_SIGHASH } from './offerTerms'
 import { rememberTipKey, selfColorOutput, tipSigningKey } from './token/tipKeys'
+import {
+  checkCountersignedListing,
+  parseCountersignedListingProof,
+  type CountersignedListingProof,
+} from './marketCountersigned'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -121,7 +126,7 @@ export type MarketListingAdvert = {
   outpoint: string
   offerOutpoint: string
   offerLockingScript: string
-  assetType: 'ordinal' | 'bsv21'
+  assetType: MarketAssetType
   amt?: number
   seller: string
   payTo: string
@@ -152,9 +157,9 @@ export type MarketSettlementUnlocks = MarketSettlementUnlocksV2
 
 export type CreateMarketListingArgs = {
   outpoint: string
-  assetType?: 'ordinal' | 'bsv21'
+  assetType?: MarketAssetType
   priceSats: number
-  /** BSV-21 units to list. Defaults to the whole tip. Remainder is 162 change. */
+  /** BSV-21 or csft units to list. Defaults to the whole tip. Remainder is change. */
   listAmt?: number
   expiresAt?: number | null
   messagebox?: string | null
@@ -162,7 +167,7 @@ export type CreateMarketListingArgs = {
 
 export type MarketListingPostPayload = {
   listing: MarketListingAdvert
-  provenance: ProvenanceV2 | Bsv21ListingProof
+  provenance: ProvenanceV2 | Bsv21ListingProof | CountersignedListingProof
   txid: string
   beef: number[]
   token: {
@@ -264,7 +269,17 @@ export class MarketListingError extends Error {
 }
 
 
-export type MarketAssetType = 'ordinal' | 'bsv21'
+/**
+ * What a listing sells: a 1sat item, a p2pft (BRC-162) token, or a
+ * countersigned asset (csft units, a csnft item) whose issuer countersigns
+ * the sale when either side asks.
+ */
+export type MarketAssetType = 'ordinal' | 'bsv21' | CountersignedMarketAsset
+export type CountersignedMarketAsset = 'csft' | 'csnft'
+
+export function isCountersignedMarketAsset(value: unknown): value is CountersignedMarketAsset {
+  return value === 'csft' || value === 'csnft'
+}
 
 /** BRC-176 listing proof for 162 tips. Not BRC-150. */
 export type Bsv21ListingProof = {
@@ -709,7 +724,7 @@ export function choosePublishableProvenance(
 }
 
 export function hashMarketProvenance(
-  provenance: ProvenanceV2 | Bsv21ListingProof,
+  provenance: ProvenanceV2 | Bsv21ListingProof | CountersignedListingProof,
 ): {
   json: string
   hash: string
@@ -781,7 +796,7 @@ export function marketListingPreviewFromArgs(args: unknown): MarketListingPrevie
   const outpoint =
     typeof listing.outpoint === 'string' ? listing.outpoint.trim().toLowerCase() : ''
   if (!outpoint) return null
-  const isToken = listing.assetType === 'bsv21'
+  const isToken = listing.assetType === 'bsv21' || listing.assetType === 'csft'
   const provenance =
     body.provenance && typeof body.provenance === 'object' && !Array.isArray(body.provenance)
       ? (body.provenance as Record<string, unknown>)
@@ -1249,15 +1264,6 @@ async function loadListedOutput(
   }
   mark(`basket read ${output ? how : 'not held'}`)
   if (!output) {
-    const { countersignedProfileOf } = await import('./countersign/wallet')
-    const profile = await countersignedProfileOf(active, outpoint).catch(() => null)
-    if (profile) {
-      console.warn(`[market-list] refuse countersigned-asset ${profile} ${outpoint}`)
-      throw new MarketListingError(
-        'COUNTERSIGNED_NOT_LISTABLE',
-        `This is a countersigned ${profile === 'csnft' ? 'item' : 'token'} (${profile}). Its issuer accepts every transfer, so it cannot be listed on the market.`,
-      )
-    }
     throw new MarketListingError(
       'ITEM_NOT_HELD',
       'The listed item is no longer held by this wallet.'
@@ -1828,12 +1834,29 @@ async function createMarketListingAdvertExclusive(
   if (!activeEarly) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
   await prepareMarketListingSpend(activeEarly)
   mark('reservations cleared')
+  const countersignedSource = async () => {
+    const { countersignedHoldingAt } = await import('./countersign/wallet')
+    return countersignedHoldingAt(activeEarly, outpoint).catch(() => null)
+  }
+  if (isCountersignedMarketAsset(args.assetType)) {
+    const source = await countersignedSource()
+    if (!source) throw new MarketListingError('ITEM_NOT_HELD', 'The listed asset is no longer held by this wallet.')
+    return createCountersignedListing(args, activeEarly, source, mark)
+  }
   const preferred =
     args.assetType === 'bsv21' || args.assetType === 'ordinal'
       ? args.assetType
       : undefined
-  const { active, output, assetType, tokenId, amt: classifiedAmt } =
-    await loadListedOutput(outpoint, preferred, mark)
+  let loaded: Awaited<ReturnType<typeof loadListedOutput>>
+  try {
+    loaded = await loadListedOutput(outpoint, preferred, mark)
+  } catch (err) {
+    // csft / csnft outputs live in their own baskets; the asset type is optional.
+    const source = err instanceof MarketListingError && err.code === 'ITEM_NOT_HELD' ? await countersignedSource() : null
+    if (source) return createCountersignedListing(args, activeEarly, source, mark)
+    throw err
+  }
+  const { active, output, assetType, tokenId, amt: classifiedAmt } = loaded
   mark(`item loaded asset=${assetType}`)
   const priceSats = Math.trunc(Number(args.priceSats))
   if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
@@ -2535,15 +2558,280 @@ async function createMarketListingAdvertExclusive(
   }
 }
 
+type CountersignedListingSource = NonNullable<
+  Awaited<ReturnType<typeof import('./countersign/wallet').countersignedHoldingAt>>
+>
+
+/**
+ * List a countersigned asset. The listing transaction moves the units into
+ * output 0 (to a fresh holder key) beside the offer token, so it is itself a
+ * countersigned trade: fee coins fund it and the issuer countersigns it now.
+ * The list-time signature then binds that output to the seller's payment
+ * SINGLE|ANYONECANPAY, and the buyer asks the issuer again at the sale.
+ */
+async function createCountersignedListing(
+  args: CreateMarketListingArgs,
+  active: ActiveWallet,
+  source: CountersignedListingSource,
+  mark: (phase: string) => void,
+): Promise<MarketListingPostPayload> {
+  const { holding, deploy, profile } = source
+  if (holding.listed) {
+    throw new MarketListingError('ITEM_ALREADY_LISTED', 'This output is already listed. Cancel that listing to list it again.')
+  }
+  const priceSats = Math.trunc(Number(args.priceSats))
+  if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
+    throw new Error('Listing price must be at least 20 satoshis')
+  }
+  const listedAt = Date.now()
+  const expiresAt = args.expiresAt == null ? null : Math.trunc(Number(args.expiresAt))
+  if (expiresAt != null && (!Number.isSafeInteger(expiresAt) || expiresAt <= listedAt)) {
+    throw new Error('Listing expiry must be in the future')
+  }
+  const { listCountersignedHoldings, runFundedCountersignedTrade, tradeHolderKey, MARKET_HELD_TAG } = await import(
+    './countersign/wallet'
+  )
+  const isItem = deploy.kind === 'item'
+  const raw = isItem ? '1' : args.listAmt == null ? holding.amount.toString() : String(Math.trunc(Number(args.listAmt)))
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error('List at least 1 unit')
+  const requested = BigInt(raw)
+  if (requested > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('List at most 9,007,199,254,740,991 units at once')
+  const covers = [holding]
+  let covered = holding.amount
+  if (covered < requested) {
+    const others = (await listCountersignedHoldings(active, holding.assetId))
+      .filter((h) => normalizeOutpoint(h.outpoint) !== normalizeOutpoint(holding.outpoint))
+      .sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))
+    for (const other of others) {
+      if (covered >= requested) break
+      covers.push(other)
+      covered += other.amount
+    }
+  }
+  if (covered < requested) throw new Error('Not enough units available to list that amount.')
+  const assetId = holding.assetId
+  const self = active.identityKey.toLowerCase()
+  const proof: CountersignedListingProof = { v: 253, assetId, kind: deploy.kind, amt: requested.toString() }
+  const digest = hashMarketProvenance(proof)
+  const nonce = randomNonce()
+  const fields = normalizeMarketOfferFields({
+    sellerIdentityKey: active.identityKey,
+    payTo: active.address,
+    grossPriceSats: priceSats,
+    feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
+    feePayTo: MARKET_FEE_PAY_TO_ADDRESS,
+    feeBasisPoints: MARKET_FEE_BASIS_POINTS,
+    exactFeeSats: Math.floor((priceSats * MARKET_FEE_BASIS_POINTS) / 10_000),
+    provenanceHash: digest.hash,
+    provenanceSize: digest.size,
+    provenanceVersion: MARKET_PROVENANCE_VERSION,
+    expiresAt,
+    nonce,
+    messagebox: publicMessageboxBase(args.messagebox),
+  })
+  const offerKey = PrivateKey.fromHex(active.rootKeyHex)
+  const offerLockingScript = encodeMarketOffer(fields, offerKey)
+  const path = chooseMarketListingPath({
+    itemOutpoint: normalizeOutpoint(holding.outpoint),
+    satoshis: 1,
+    ordinal: true,
+    provenanceProven: true,
+    termsValid: true,
+  })
+  if (path.path === 'refuse') throw new MarketListingError('MARKET_LISTING_REFUSED', path.reason)
+  const name = (isItem ? deploy.fields.name : deploy.fields.sym) || deploy.fields.name || (isItem ? 'Item' : 'Token')
+  const chart = createActor(offerMachine).start()
+  chart.send({ type: 'LIST', venue: 'market', path })
+  try {
+    const trade = await runFundedCountersignedTrade({
+      assetId,
+      holdings: covers,
+      outputs: [
+        { kind: 'asset', amount: requested, identityKey: self, tags: [MARKET_HELD_TAG] },
+        {
+          kind: 'plain',
+          lockingScript: offerLockingScript,
+          satoshis: MARKET_OFFER_DEPOSIT_SATS,
+          file: {
+            basket: 'market-offers',
+            tags: ['brc48', `nonce:${nonce}`, `origin:${assetId.replace('_', '.')}`],
+            customInstructions: JSON.stringify({ fields }),
+          },
+        },
+        ...(covered > requested ? [{ kind: 'asset' as const, amount: covered - requested, identityKey: self }] : []),
+      ],
+      description: 'market list',
+      flow: 'market_listing',
+      progress: {
+        staged: (requestId) => chart.send({ type: 'STAGED', reference: requestId }),
+        countersigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
+        broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
+      },
+    })
+    const txid = trade.txid
+    mark(`countersigned listing ${txid.slice(0, 12)} (${trade.acceptedBy})`)
+    const listedOutpoint = `${txid}_0`
+    const advert: MarketListingAdvert = {
+      outpoint: listedOutpoint,
+      offerOutpoint: `${txid}_1`,
+      offerLockingScript,
+      assetType: profile,
+      amt: Number(requested),
+      seller: fields.sellerIdentityKey,
+      payTo: fields.payTo,
+      priceSats: fields.grossPriceSats,
+      feeIdentityKey: fields.feeIdentityKey,
+      feePayTo: fields.feePayTo,
+      feeBasisPoints: fields.feeBasisPoints,
+      exactFeeSats: fields.exactFeeSats,
+      depositSats: fields.depositSats,
+      messagebox: fields.messagebox,
+      origin: assetId,
+      provenanceHash: fields.provenanceHash,
+      provenanceSize: fields.provenanceSize,
+      provenanceVersion: fields.provenanceVersion,
+      listedAt,
+      expiresAt: fields.expiresAt,
+      nonce: fields.nonce,
+    }
+    advert.settlementUnlocks = await buildMarketSettlementUnlocks({
+      listingTx: trade.tx,
+      txid,
+      assetType: profile,
+      itemLockingScript: trade.tx.outputs[MARKET_ITEM_VOUT]!.lockingScript!.toHex(),
+      offerLockingScript,
+      payTo: fields.payTo,
+      priceSats,
+      feePayToAddress: fields.feePayTo,
+      privateKey: offerKey,
+      itemPrivateKey: tradeHolderKey(active, assetId, trade.remittance, MARKET_ITEM_VOUT),
+    })
+    mark('settlement unlocks pre-signed')
+    saveAuthorization({
+      key: listingAuthorizationKey(listedOutpoint, nonce),
+      outpoint: listedOutpoint,
+      nonce,
+      seller: advert.seller,
+      origin: assetId,
+      provenanceHash: digest.hash,
+      priceSats,
+      state: 'active',
+      createdAt: listedAt,
+      updatedAt: listedAt,
+      listing: advert,
+    })
+    chart.send({ type: 'COMMITTED' })
+    scheduleHistoryBackupPush('market-list')
+    rememberGhostTx(txid)
+    recordWalletEvent({
+      method: 'market-list',
+      note: isItem
+        ? `Listed ${name} for ${priceSats.toLocaleString()} sats`
+        : `Listed ${Number(requested).toLocaleString()} ${name} for ${priceSats.toLocaleString()} sats`,
+      txid,
+      item: { name, origin: assetId, outpoint: listedOutpoint.replace('_', '.') },
+    })
+    mark('done — countersigned advert ready to publish')
+    return {
+      listing: advert,
+      provenance: proof,
+      txid,
+      beef: trade.atomic,
+      token: {
+        outpoint: advert.offerOutpoint,
+        outputIndex: MARKET_OFFER_VOUT,
+        satoshis: MARKET_OFFER_DEPOSIT_SATS,
+        lockingScript: offerLockingScript,
+        fields,
+      },
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    const snap = chart.getSnapshot()
+    if (snap.matches('preSignAbortable')) chart.send({ type: 'ABORTED', error: reason })
+    else if (!snap.matches('broadcast') && !snap.matches('committed')) chart.send({ type: 'FAIL', error: reason })
+    recordWalletEvent({
+      method: 'market-list',
+      note: snap.context.txid ? 'Listed (broadcast ok; finish failed)' : 'Listing failed',
+      status: 'failed',
+      failureReason: reason.slice(0, 280),
+      ...(snap.context.txid ? { txid: snap.context.txid } : {}),
+      item: { name, origin: assetId, outpoint: holding.outpoint.replace('_', '.') },
+    })
+    throw err
+  } finally {
+    chart.stop()
+  }
+}
+
+/**
+ * Cancel a countersigned listing: the listed output and the offer token go
+ * back in one trade the issuer countersigns. It shares the offer token with
+ * every buyer's request, so it conflicts with them and the issuer may sign it
+ * whatever a silent buyer left reserved.
+ */
+async function cancelCountersignedListing(args: {
+  active: ActiveWallet
+  current: MarketListingAuthorization
+  listing: MarketListingAdvert
+  listingTx: Transaction
+  chart: { send: (event: { type: 'STAGED'; reference: string } | { type: 'SIGNED_UNKNOWN' } | { type: 'BROADCASTED'; txid: string } | { type: 'COMMITTED' }) => void }
+}): Promise<MarketCancelAdvert> {
+  const { active, current, listing, listingTx, chart } = args
+  const { countersignedHoldingAt, runFundedCountersignedTrade } = await import('./countersign/wallet')
+  const source = await countersignedHoldingAt(active, listing.outpoint)
+  if (!source || source.holding.assetId !== normalizeOutpoint(listing.origin)) {
+    throw new MarketListingError('MARKET_CANCEL_REFUSED', 'This wallet no longer holds the listed output. Nothing was spent.')
+  }
+  const offerKey = PrivateKey.fromHex(active.rootKeyHex)
+  const offerOut = listingTx.outputs[MARKET_OFFER_VOUT]
+  if (!offerOut?.lockingScript || offerOut.satoshis !== MARKET_OFFER_DEPOSIT_SATS) {
+    throw new Error('Cancellation needs the offer output of the listing transaction')
+  }
+  const trade = await runFundedCountersignedTrade({
+    assetId: source.holding.assetId,
+    holdings: [source.holding],
+    plainInputs: [
+      {
+        outpoint: normalizeOutpoint(listing.offerOutpoint),
+        sourceTransaction: listingTx,
+        sign: (tx, vin) => checksigOnlyUnlock(offerKey, MARKET_OFFER_DEPOSIT_SATS, offerOut.lockingScript).sign(tx, vin),
+        basket: 'market-offers',
+      },
+    ],
+    outputs: [{ kind: 'asset', amount: source.holding.amount, identityKey: active.identityKey.toLowerCase() }],
+    description: 'market cancel',
+    flow: 'market_cancel',
+    progress: {
+      staged: (requestId) => chart.send({ type: 'STAGED', reference: requestId }),
+      countersigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
+      broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
+    },
+  })
+  markMarketListingCancelled({ outpoint: current.outpoint, nonce: current.nonce, txid: trade.txid })
+  chart.send({ type: 'COMMITTED' })
+  scheduleHistoryBackupPush('market-list')
+  return {
+    action: 'cancel',
+    itemOutpoint: current.outpoint,
+    offerOutpoint: listing.offerOutpoint,
+    txid: trade.txid,
+    beef: trade.atomic,
+  }
+}
+
 export async function verifyMarketListingProvenance(args: {
   listing: MarketListingAdvert
   provenance: unknown
 }): Promise<{ verified: boolean; reason: string | null }> {
   const advert = args.listing
   const isBsv21 = advert.assetType === 'bsv21'
-  const provenance = isBsv21
-    ? parseBsv21ListingProof(args.provenance)
-    : parseProvenanceV2(args.provenance)
+  const countersigned = isCountersignedMarketAsset(advert.assetType) ? advert.assetType : null
+  const provenance = countersigned
+    ? parseCountersignedListingProof(args.provenance)
+    : isBsv21
+      ? parseBsv21ListingProof(args.provenance)
+      : parseProvenanceV2(args.provenance)
   const fail = (reason: string) => ({ verified: false, reason })
   if (!provenance || advert.provenanceVersion !== 2) {
     return fail('INVALID_PROVENANCE_VERSION')
@@ -2595,9 +2883,11 @@ export async function verifyMarketListingProvenance(args: {
     return fail('OFFER_TOKEN_TERMS_MISMATCH')
   }
   try {
-    const proofOrigin = isBsv21
-      ? (provenance as Bsv21ListingProof).tokenId
-      : (provenance as ProvenanceV2).origin
+    const proofOrigin = countersigned
+      ? (provenance as CountersignedListingProof).assetId
+      : isBsv21
+        ? (provenance as Bsv21ListingProof).tokenId
+        : (provenance as ProvenanceV2).origin
     if (
       normalizeOriginOutpoint(proofOrigin) !==
       normalizeOriginOutpoint(advert.origin)
@@ -2605,9 +2895,9 @@ export async function verifyMarketListingProvenance(args: {
       return fail('PROVENANCE_ORIGIN_MISMATCH')
     }
     if (
-      isBsv21 &&
+      (isBsv21 || countersigned) &&
       advert.amt != null &&
-      (provenance as Bsv21ListingProof).amt !== String(advert.amt)
+      (provenance as Bsv21ListingProof | CountersignedListingProof).amt !== String(advert.amt)
     ) {
       return fail('PROVENANCE_AMT_MISMATCH')
     }
@@ -2631,6 +2921,34 @@ export async function verifyMarketListingProvenance(args: {
   if (isBsv21) {
     return { verified: true, reason: null }
   }
+  const active = getActiveWallet()
+  if (countersigned) {
+    if (!active) return fail('WALLET_LOCKED')
+    const proof = provenance as CountersignedListingProof
+    try {
+      const txid = outpoint.slice(0, 64)
+      const { countersignedDeploy } = await import('./countersign/wallet')
+      const [beef, deploy] = await Promise.all([
+        getBeefForTxidCached(active, txid, { needProof: false, allowUnprovenRawTx: true }),
+        countersignedDeploy(active, proof.assetId),
+      ])
+      const listingTx = beef.findTxid(txid)?.tx
+      if (!listingTx) return fail('LISTING_TX_UNAVAILABLE')
+      if (!deploy) return fail('COUNTERSIGNED_DEPLOY_UNAVAILABLE')
+      const checked = checkCountersignedListing({
+        assetType: countersigned,
+        origin: advert.origin,
+        amt: advert.amt,
+        offerLockingScript: advert.offerLockingScript,
+        proof,
+        listingTx,
+        deploy,
+      })
+      return checked.ok ? { verified: true, reason: null } : fail(`COUNTERSIGNED_LISTING_${checked.reason.toUpperCase().replace('-', '_')}`)
+    } catch (err) {
+      return fail(`COUNTERSIGNED_LISTING_UNVERIFIED: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
   // Overlay BRC-150 proves the pre-list item tip. The listing outpoint is
   // output 0 of a new tx the buyer does not have in BEEF — do not treat it
   // as a held tip. Hash / origin / offer terms already bound the listing.
@@ -2642,7 +2960,6 @@ export async function verifyMarketListingProvenance(args: {
   const proofTip = (provenance as ProvenanceV2).tip
   const missing = provenanceMissingPathBodies(provenance)
   if (missing && missing.length > 0) {
-    const active = getActiveWallet()
     if (!active) {
       return fail(
         `ITEM_ORIGIN_INCOMPLETE: BRC-150 proof is missing ${missing.length} path body(ies) and wallet is locked`,
@@ -2898,6 +3215,8 @@ export async function buildMarketSettlementUnlocks(args: {
   priceSats: number
   feePayToAddress: string
   privateKey: PrivateKey
+  /** The listed item's own key when it is not `privateKey` (a countersigned holder key). */
+  itemPrivateKey?: PrivateKey
 }): Promise<MarketSettlementUnlocks> {
   const txid = args.txid.trim().toLowerCase()
   if (String(args.listingTx.id('hex')).toLowerCase() !== txid) {
@@ -2918,6 +3237,7 @@ export async function buildMarketSettlementUnlocks(args: {
         sourceSatoshis: 1,
         lockingScript: args.itemLockingScript,
         bound: { satoshis: amounts.sellerSats, lockingScript: new P2PKH().lock(args.payTo).toHex() },
+        ...(args.itemPrivateKey ? { privateKey: args.itemPrivateKey } : {}),
       },
       {
         vin: shape.offerVin,
@@ -3001,13 +3321,13 @@ function markMarketListingCancelled(args: {
   recordWalletEvent({
     method: 'market-cancel',
     note:
-      listed?.assetType === 'bsv21'
+      listed?.assetType === 'bsv21' || listed?.assetType === 'csft'
         ? 'Cancelled token listing'
         : 'Cancelled listing',
     ...(args.txid ? { txid: args.txid } : {}),
     item: listed
       ? {
-          name: listed.assetType === 'bsv21' ? 'Token' : 'Collectable',
+          name: listed.assetType === 'bsv21' || listed.assetType === 'csft' ? 'Token' : 'Collectable',
           origin: listed.origin,
           outpoint: listed.outpoint,
         }
@@ -3177,6 +3497,9 @@ async function createCancelMarketListingAdvertExclusive(args: {
     const listedLock = listingTx?.outputs[MARKET_ITEM_VOUT]?.lockingScript
     if (itemTxid !== offerTxid || !listingTx || !listedLock) {
       throw new Error('Cancellation needs the listing transaction that holds item and offer')
+    }
+    if (isCountersignedMarketAsset(listing.assetType)) {
+      return await cancelCountersignedListing({ active, current, listing, listingTx, chart })
     }
     const assetType: MarketAssetType = listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal'
     const back = chooseMarketCancelReturn({

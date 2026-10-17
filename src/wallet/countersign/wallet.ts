@@ -1,4 +1,4 @@
-import { Beef, Hash, KeyDeriver, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
+import { Beef, Hash, KeyDeriver, LockingScript, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { countersignMachine } from '../../machines/countersignMachine'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
@@ -6,6 +6,7 @@ import { atomicBeefForSubject, getBeefForTxidCached, getLocalBeefForTxid, rememb
 import { scheduleHistoryBackupPush } from '../deviceSync'
 import { COUNTERSIGNED_SCHEMES, countersignedSchemeFor, stampBrc164Id, type CountersignedScheme } from '../itemAccess'
 import type { ActiveWallet } from '../session'
+import type { TransactionFlow } from '../transactionTelemetry'
 import { getWalletRuntime } from '../walletRuntime'
 import { runExclusiveSpend } from '../spendGuard'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
@@ -29,9 +30,11 @@ import {
 import {
   ACCEPT_REFUSAL_COPY,
   chooseCosignerQuorum,
+  chooseCountersignSwapPath,
   chooseCountersignTransferPath,
   chooseReleaseCustody,
   isQuorum,
+  type CountersignSwapPath,
   type ReleaseCustody,
   CountersignError,
   type CountersignRefuse,
@@ -41,12 +44,15 @@ import { whatsOnChainBeaconSource } from './beaconSource'
 import { encodeCountersignPayload, MIN_SILENCE_SECONDS, type CountersignDeployFields } from './payload'
 import {
   assetOfInput,
+  blockingPriorSpends,
   checkAcceptRequest,
+  plainInputsOf,
   readCountersignDeploy,
   resolveCountersignTransfer,
   type AcceptCheck,
   type AcceptRefusal,
   type CountersignDeploy,
+  type PriorSpend,
 } from './resolve'
 import {
   beaconLock,
@@ -63,6 +69,7 @@ import {
   inputScriptValid,
   pubkeyHashHex,
   readCountersigned,
+  holderScopeOf,
   quorumSignatures,
   readHolderUnlock,
   releaseDisclosureLock,
@@ -70,7 +77,10 @@ import {
   retireMarkerLock,
   signInput,
   sourceOutputOf,
+  sourceTxidOf,
+  SWAP_HOLDER_SCOPE,
   unlockBranch,
+  type CountersignBranch,
   type CountersignKeySets,
   type KeySet,
 } from './script'
@@ -112,6 +122,8 @@ const RELEASE_PROTOCOL: [2, string] = [2, 'countersign release']
 /** A release-branch transfer is final only once mined; ask the chain at most this often per txid. */
 const MINED_CHECK_MS = 60_000
 const LABEL = 'countersign'
+/** Tag on an output a market listing holds. */
+export const MARKET_HELD_TAG = 'market-held'
 
 type Wire =
   | {
@@ -123,6 +135,8 @@ type Wire =
       recipients: RecipientEntry[]
       /** Ancestors of the request, so a cosigner can prove each input was accepted. */
       beef?: string
+      /** A trade the requester funded and broadcasts: the answer is `cosigned`, never a transaction. */
+      funding?: 'sender'
     }
   | { v: 1; t: 'accepted'; token: string; request: string; ef: string; beef?: string }
   /** A cosigner's countersignature per asset input (quorum path). */
@@ -162,6 +176,8 @@ export type CountersignHolding = {
   lockingScript: string
   /** The `p color` remittance of the holder key; absent for an identity-key holding. */
   remittance?: ColorRemittance
+  /** Held by a market listing (only returned with `includeListed`). */
+  listed?: true
 }
 
 type HolderRequest = { tx: Transaction; recipients: RecipientEntry[]; requestId: string; prover: string }
@@ -376,6 +392,7 @@ async function deployFor(
 export async function listCountersignedHoldings(
   active: ActiveWallet,
   assetId?: string,
+  opts: { includeListed?: boolean } = {},
 ): Promise<CountersignHolding[]> {
   const pages = await Promise.all(
     COUNTERSIGNED_SCHEMES.map((basket) =>
@@ -391,6 +408,8 @@ export async function listCountersignedHoldings(
   const self = selfPkh(active)
   return pages.flatMap((page) => page.outputs ?? []).flatMap((o) => {
     if (o.spendable === false || !o.lockingScript) return []
+    // A listed output moves only by its sale or its cancel.
+    if (!opts.includeListed && (o.tags ?? []).includes(MARKET_HELD_TAG)) return []
     const read = readCountersigned(o.lockingScript)
     if (!read) return []
     const id = read.assetId ?? underscore(o.outpoint)
@@ -412,6 +431,7 @@ export async function listCountersignedHoldings(
       amount: read.amount,
       lockingScript: o.lockingScript,
       ...(read.holderPkhHex !== self && remittance ? { remittance } : {}),
+      ...((o.tags ?? []).includes(MARKET_HELD_TAG) ? { listed: true as const } : {}),
     }]
   })
 }
@@ -424,8 +444,7 @@ export function knownCountersignedProfile(assetId: string): CountersignedScheme 
 
 /**
  * The countersigned profile (`csft` / `csnft`) of an asset id or held outpoint,
- * or null when it is neither. Market and direct-offer paths refuse by this
- * name instead of reporting a held asset as missing.
+ * or null when it is neither. Market and direct-offer paths route on it.
  */
 export async function countersignedProfileOf(
   active: ActiveWallet,
@@ -444,9 +463,24 @@ export async function countersignedProfileOf(
   return null
 }
 
-function countersignedTags(assetId: string | null, deploy: Pick<CountersignDeploy, 'kind'>, amount: bigint): string[] {
+/** Display tags: `p csft` / `p csnft` views list tags, never the remittance in customInstructions. */
+function displayTag(prefix: string, value: string | undefined): string[] {
+  const text = value?.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 64)
+  return text ? [`${prefix}:${text}`] : []
+}
+
+function countersignedTags(
+  assetId: string | null,
+  deploy: Pick<CountersignDeploy, 'kind'> & { fields?: Pick<CountersignDeployFields, 'sym' | 'name'> },
+  amount: bigint,
+): string[] {
   const scheme = countersignedSchemeFor(deploy.kind)
-  return stampBrc164Id([assetId ? `${scheme}:${assetId}` : `${scheme}:deploy`, `amt:${amount}`])
+  return stampBrc164Id([
+    assetId ? `${scheme}:${assetId}` : `${scheme}:deploy`,
+    `amt:${amount}`,
+    ...displayTag('sym', deploy.fields?.sym),
+    ...displayTag('name', deploy.fields?.name),
+  ])
 }
 
 function countersignedInstructions(
@@ -504,12 +538,16 @@ async function mintFeeCoins(active: ActiveWallet): Promise<void> {
   log('fee inputs', startedAt)
 }
 
-/** Fee coins summing to at least `need`, minting a batch when short. */
-async function takeFeeCoins(active: ActiveWallet, need: number): Promise<FeeCoin[]> {
+/** Fee coins summing to at least `need`, `prefer` first, minting a batch when short. */
+async function takeFeeCoins(active: ActiveWallet, need: number, prefer: readonly string[] = []): Promise<FeeCoin[]> {
+  const preferred = new Set(prefer)
   const pick = (coins: FeeCoin[]) => {
     const chosen: FeeCoin[] = []
     let sum = 0
-    for (const coin of [...coins].sort((a, b) => b.satoshis - a.satoshis)) {
+    const order = [...coins].sort(
+      (a, b) => Number(preferred.has(feeCoinKey(b))) - Number(preferred.has(feeCoinKey(a))) || b.satoshis - a.satoshis,
+    )
+    for (const coin of order) {
       if (sum >= need) break
       chosen.push(coin)
       sum += coin.satoshis
@@ -517,6 +555,7 @@ async function takeFeeCoins(active: ActiveWallet, need: number): Promise<FeeCoin
     return sum >= need ? chosen : null
   }
   const held = feeCoinsHeld()
+  for (const coin of preferred) held.delete(coin)
   const first = pick(await listFeeCoins(active, held))
   if (first) return first
   await mintFeeCoins(active)
@@ -525,12 +564,19 @@ async function takeFeeCoins(active: ActiveWallet, need: number): Promise<FeeCoin
   return second
 }
 
-/** Fee coins already in a signed transaction a quorum may still complete: an open quorum request or a beacon proposal. */
+/**
+ * Fee coins already in a signed transaction someone may still complete: an
+ * open quorum request, a beacon proposal, or a trade an acceptor may have
+ * signed unheard (kept for that trade's retry).
+ */
 function feeCoinsHeld(): Set<string> {
   const state = readCountersignState()
   const held = new Set<string>()
   for (const request of Object.values(state.outgoing)) {
     if (request.state === 'open') for (const coin of request.feeCoins ?? []) held.add(coin)
+  }
+  for (const swap of Object.values(state.swaps)) {
+    if (swap.state !== 'done') for (const coin of swap.feeCoins) held.add(coin)
   }
   for (const record of Object.values(state.acceptor)) {
     for (const coin of record.beaconProposal?.feeCoins ?? []) held.add(coin)
@@ -563,12 +609,13 @@ async function fundWithFeeCoins(
   tx: Transaction,
   state: CountersignState,
   countersigs: number,
+  prefer: readonly string[] = [],
 ): Promise<FeeCoin[]> {
   let feeCount = 1
-  let coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount, countersigs))
+  let coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount, countersigs), prefer)
   if (coins.length > feeCount) {
     feeCount = coins.length
-    coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount, countersigs))
+    coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount, countersigs), prefer)
   }
   for (const coin of coins) {
     const parent = await fullTx(active, coin.txid, state)
@@ -841,12 +888,153 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
 
 // ── Acceptor ───────────────────────────────────────────────────────────────
 
-function priorAcceptance(state: CountersignState, requestId: string): { record: AcceptorRecord; efHex: string } | null {
+function priorAcceptance(
+  state: CountersignState,
+  requestId: string,
+): { record: AcceptorRecord; efHex: string; senderFunded: boolean } | null {
   for (const record of Object.values(state.acceptor)) {
     const hit = record.requests[requestId]
-    if (hit) return { record, efHex: hit.efHex }
+    if (hit) return { record, efHex: hit.efHex, senderFunded: hit.senderFunded === true }
   }
   return null
+}
+
+type SignedSpend = PriorSpend & { tx: Transaction }
+
+const signedSpendCache = new Map<string, { tx: Transaction; inputs: Set<string>; plain: string[] }>()
+
+function readSignedSpend(requestId: string, efHex: string): { tx: Transaction; inputs: Set<string>; plain: string[] } | null {
+  const cached = signedSpendCache.get(requestId)
+  if (cached) return cached
+  try {
+    const tx = Transaction.fromEF(Utils.toArray(efHex, 'hex'))
+    const inputs = new Set(tx.inputs.map((_, vin) => `${sourceTxidOf(tx, vin)}_${tx.inputs[vin]!.sourceOutputIndex}`))
+    const read = { tx, inputs, plain: plainInputsOf(tx) }
+    signedSpendCache.set(requestId, read)
+    return read
+  } catch {
+    return null
+  }
+}
+
+/** Requests this acceptor signed that spend `outpoint` and are not proven dead. */
+function signedSpendsOf(state: CountersignState, outpoint: string, except: string): SignedSpend[] {
+  const spends = new Map<string, SignedSpend>()
+  for (const record of Object.values(state.acceptor)) {
+    for (const [requestId, entry] of Object.entries(record.requests)) {
+      if (requestId === except || entry.dead || spends.has(requestId)) continue
+      const read = readSignedSpend(requestId, entry.efHex)
+      if (!read?.inputs.has(outpoint)) continue
+      const vin = read.tx.inputs.findIndex(
+        (input, i) => `${sourceTxidOf(read.tx, i)}_${input.sourceOutputIndex}` === outpoint,
+      )
+      spends.set(requestId, {
+        requestId,
+        plainInputs: read.plain,
+        requesterFunded: entry.senderFunded === true || record.shared === true,
+        ...(holderScopeOf(read.tx, vin) === SWAP_HOLDER_SCOPE ? { sale: true as const } : {}),
+        tx: read.tx,
+      })
+    }
+  }
+  return [...spends.values()]
+}
+
+/**
+ * True once a mined transaction other than the request itself spent one of
+ * its plain inputs: the request can never confirm.
+ */
+async function signedSpendDead(active: ActiveWallet, request: Transaction): Promise<boolean> {
+  const source = whatsOnChainBeaconSource(active.chain)
+  const ownInputs = new Set(request.inputs.map((_, vin) => `${sourceTxidOf(request, vin)}_${request.inputs[vin]!.sourceOutputIndex}`))
+  const ownOutputs = request.outputs.map((o) => `${o.satoshis}:${o.lockingScript?.toHex()}`).join('|')
+  for (const outpoint of plainInputsOf(request)) {
+    const [txid, vout] = outpoint.split('_')
+    const spender = await source.spentBy(txid!, Number(vout))
+    if (typeof spender !== 'string') continue
+    const spending = await source.tx(spender)
+    if (!spending) continue
+    const itself =
+      spending.inputs.length === ownInputs.size &&
+      spending.inputs.every((input) => ownInputs.has(`${String(input.sourceTXID).toLowerCase()}_${input.sourceOutputIndex}`)) &&
+      spending.outputs.map((o) => `${o.satoshis}:${o.lockingScript?.toHex()}`).join('|') === ownOutputs
+    if (itself) return false
+    if ((await source.blockTime(spender)) != null) return true
+  }
+  return false
+}
+
+/**
+ * The asset inputs of `tx` that an earlier signed request still holds, each
+ * with that request's id. An earlier sale, or a request that conflicts with
+ * this one on a plain input, never blocks it (at most one of them confirms); a
+ * requester-funded one blocks until proven dead, which is written back.
+ */
+async function heldInputs(
+  active: ActiveWallet,
+  state: CountersignState,
+  tx: Transaction,
+  deploys: Map<string, CountersignDeploy>,
+  requestId: string,
+): Promise<Map<string, string>> {
+  const startedAt = Date.now()
+  const held = new Map<string, string>()
+  const died: string[] = []
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const asset = assetOfInput(tx, vin, deploys)
+    if (!asset) continue
+    const { maybeDead, final } = blockingPriorSpends(signedSpendsOf(state, asset.outpoint, requestId), tx)
+    if (final[0]) {
+      held.set(asset.outpoint, final[0].requestId)
+      continue
+    }
+    for (const spend of maybeDead as SignedSpend[]) {
+      if (died.includes(spend.requestId)) continue
+      if (await signedSpendDead(active, spend.tx).catch(() => false)) {
+        died.push(spend.requestId)
+        continue
+      }
+      held.set(asset.outpoint, spend.requestId)
+      break
+    }
+  }
+  if (died.length) {
+    for (const record of Object.values(state.acceptor)) {
+      for (const requestId of died) {
+        const entry = record.requests[requestId]
+        if (!entry) continue
+        entry.dead = true
+        for (const [outpoint, by] of Object.entries(record.spent)) {
+          if (by !== requestId) continue
+          delete record.spent[outpoint]
+          if (!record.shared && !record.accepted.includes(outpoint)) record.accepted.push(outpoint)
+        }
+      }
+    }
+    writeCountersignState(state)
+    console.info(`[countersign] freed ${died.length} reservation(s) whose request a mined spend voided`)
+  }
+  log('reservations', startedAt)
+  return held
+}
+
+/** The asset inputs of `tx` this acceptor answers for and has accepted, by record or by proof. */
+async function acceptedInputs(
+  active: ActiveWallet,
+  tx: Transaction,
+  deploys: Map<string, CountersignDeploy>,
+  state: CountersignState,
+  answersFor: (assetId: string) => boolean,
+): Promise<Set<string>> {
+  const accepted = new Set<string>()
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const asset = assetOfInput(tx, vin, deploys)
+    if (!asset) break
+    if (answersFor(asset.assetId) && (await inputAccepted(active, asset.outpoint, asset.assetId, state))) {
+      accepted.add(asset.outpoint)
+    }
+  }
+  return accepted
 }
 
 /**
@@ -884,15 +1072,15 @@ async function acceptRequest(
     console.warn(`[countersign] acceptor refuse recipient — ${proven.detail}`)
     return { kind: 'refused', reason: 'recipient', detail: proven.detail }
   }
-  const accepted = new Set(Object.values(state.acceptor).flatMap((r) => r.accepted))
-  const spentBy = (outpoint: string) =>
-    Object.values(state.acceptor).find((r) => r.spent[outpoint])?.spent[outpoint]
+  const answersFor = (assetId: string) => Boolean(state.acceptor[assetId] && !state.acceptor[assetId]!.ended)
+  const accepted = await acceptedInputs(active, request.tx, deploys, state, answersFor)
+  const held = await heldInputs(active, state, request.tx, deploys, request.requestId)
   const check = checkAcceptRequest({
     tx: request.tx,
     deploys,
-    answersFor: (assetId) => Boolean(state.acceptor[assetId] && !state.acceptor[assetId]!.ended),
+    answersFor,
     accepted,
-    reservedBy: spentBy,
+    reservedBy: (outpoint) => held.get(outpoint),
     requestId: request.requestId,
     recipients: proven.recipients,
   })
@@ -921,7 +1109,9 @@ async function acceptRequest(
   const efHex = Utils.toHex(tx.toEF())
   for (const assetId of check.assetIds) {
     const record = state.acceptor[assetId]!
-    const spentHere = check.inputs.filter((outpoint) => record.accepted.includes(outpoint))
+    const spentHere = Array.from({ length: tokenInputs }, (_, vin) => assetOfInput(tx, vin, deploys))
+      .filter((asset) => asset?.assetId === assetId)
+      .map((asset) => asset!.outpoint)
     record.accepted = record.accepted.filter((outpoint) => !spentHere.includes(outpoint))
     for (const outpoint of spentHere) record.spent[outpoint] = request.requestId
     tx.outputs.forEach((output, vout) => {
@@ -945,12 +1135,13 @@ function assetInputCount(tx: Transaction, deploys: Map<string, CountersignDeploy
 }
 
 /**
- * A cosigner of a shared issuer set accepts an output it did not sign for
- * when the transaction that wrote it spent every asset input on the issuer
- * branch with valid countersignatures and resolves. The deploy output is
- * accepted by definition.
+ * An acceptor accepts an output it has no record of when the transaction
+ * that wrote it spent every asset input on the issuer branch with valid
+ * countersignatures and resolves: a cosigner of a shared set, which a quorum
+ * may outvote, and any acceptor after a trade, whose final txid only the
+ * requester learns. The deploy output is accepted by definition.
  */
-async function quorumAccepted(
+async function inputAccepted(
   active: ActiveWallet,
   outpoint: string,
   assetId: string,
@@ -979,15 +1170,17 @@ async function quorumAccepted(
 }
 
 /**
- * One cosigner's answer to a quorum request: check it, reserve its asset
- * inputs and countersign each of them, in one durable write before the
- * signatures leave this wallet. The holder funded the fee, so every cosigner
- * signs the same transaction. A request answered before gets the same
- * signatures again (RFC 6979). Callers hold the spend lease.
+ * Countersign a transaction its requester funded and will broadcast: a
+ * quorum request to one cosigner of a shared set, or a trade (`swap`) to any
+ * acceptor. Check it, reserve its asset inputs and countersign each of them,
+ * in one durable write before the signatures leave this wallet. Every
+ * acceptor signs the same transaction, and a request answered before gets
+ * the same signatures again (RFC 6979). Callers hold the spend lease.
  */
 async function cosignRequest(
   active: ActiveWallet,
   request: HolderRequest,
+  opts: { swap?: boolean } = {},
 ): Promise<Decision> {
   const startedAt = Date.now()
   const state = readCountersignState()
@@ -996,7 +1189,7 @@ async function cosignRequest(
   const countersign = (tx: Transaction) =>
     Array.from({ length: assetInputCount(tx, deploys) }, (_, vin) => signInput(tx, vin, root, COUNTERSIGN_SCOPE))
   const prior = priorAcceptance(state, request.requestId)
-  if (prior?.record.shared) {
+  if (prior && (prior.record.shared || prior.senderFunded)) {
     return { kind: 'cosigned', signatures: countersign(Transaction.fromEF(Utils.toArray(prior.efHex, 'hex'))) }
   }
   if (Object.values(state.acceptor).some((r) => r.cancelled.includes(request.requestId))) {
@@ -1004,25 +1197,23 @@ async function cosignRequest(
   }
   const tx = request.tx
   const proven = provenRecipients(active, request)
-  const answersFor = (assetId: string) => Boolean(state.acceptor[assetId]?.shared && !state.acceptor[assetId]!.ended)
-  const accepted = new Set<string>()
-  for (let vin = 0; vin < tx.inputs.length; vin++) {
-    const asset = assetOfInput(tx, vin, deploys)
-    if (!asset) break
-    if (answersFor(asset.assetId) && (await quorumAccepted(active, asset.outpoint, asset.assetId, state))) {
-      accepted.add(asset.outpoint)
-    }
+  const answersFor = (assetId: string) => {
+    const record = state.acceptor[assetId]
+    return Boolean(record && !record.ended && (record.shared || opts.swap))
   }
+  const accepted = await acceptedInputs(active, tx, deploys, state, answersFor)
+  const held = await heldInputs(active, state, tx, deploys, request.requestId)
   const check: AcceptCheck = proven.ok
     ? checkAcceptRequest({
         tx,
         deploys,
         answersFor,
         accepted,
-        reservedBy: (outpoint) => Object.values(state.acceptor).find((r) => r.spent[outpoint])?.spent[outpoint],
+        reservedBy: (outpoint) => held.get(outpoint),
         requestId: request.requestId,
         recipients: proven.recipients,
         holderFunded: true,
+        ...(opts.swap ? { swap: true } : {}),
       })
     : { ok: false, reason: 'recipient', detail: proven.detail }
   if (!check.ok) {
@@ -1043,10 +1234,10 @@ async function cosignRequest(
     const record = state.acceptor[asset.assetId]!
     record.accepted = record.accepted.filter((outpoint) => outpoint !== asset.outpoint)
     record.spent[asset.outpoint] = request.requestId
-    record.requests[request.requestId] = { txid, efHex, at: Date.now() }
+    record.requests[request.requestId] = { txid, efHex, at: Date.now(), ...(opts.swap ? { senderFunded: true as const } : {}) }
   }
   writeCountersignState(state)
-  console.info(`[countersign] cosigned ${request.requestId.slice(0, 12)} (${signatures.length} inputs)`)
+  console.info(`[countersign] cosigned ${opts.swap ? 'trade ' : ''}${request.requestId.slice(0, 12)} (${signatures.length} inputs)`)
   log('cosign', startedAt)
   return { kind: 'cosigned', signatures }
 }
@@ -1673,29 +1864,50 @@ async function fileResolvedOutputs(
   deploys: Map<string, CountersignDeploy>,
   deploy: CountersignDeploy,
   held: ReadonlyMap<string, ColorRemittance | null>,
+  /** Plain outputs of the same transaction this wallet keeps (a trade's offer token). */
+  extra: ReadonlyArray<{ outputIndex: number; basket: string; tags: string[]; customInstructions?: string }> = [],
+  /** More tags on this wallet's asset outputs, by output index. */
+  extraTags: ReadonlyMap<number, string[]> = new Map(),
 ): Promise<number> {
   const resolved = resolveCountersignTransfer(tx, deploys, new Set(held.keys()))
   if (!resolved.ok || resolved.mine.length === 0) return 0
   const { withRestoredInternalizeStatus } = await import('../peerIngestHelpers')
+  type Insertion = {
+    outputIndex: number
+    protocol: 'basket insertion'
+    insertionRemittance: { basket: string; tags: string[]; customInstructions?: string }
+  }
+  const outputs: Insertion[] = resolved.mine.map((m) => ({
+    outputIndex: m.vout,
+    protocol: 'basket insertion',
+    insertionRemittance: {
+      basket: countersignedSchemeFor(deploys.get(m.assetId)!.kind),
+      tags: [...countersignedTags(m.assetId, deploys.get(m.assetId)!, m.amount), ...(extraTags.get(m.vout) ?? [])],
+      customInstructions: countersignedInstructions(
+        m.assetId,
+        deploys.get(m.assetId)!,
+        m.amount,
+        held.get(readCountersigned(tx.outputs[m.vout]!.lockingScript!)!.holderPkhHex),
+      ),
+    },
+  }))
+  for (const e of extra) {
+    outputs.push({
+      outputIndex: e.outputIndex,
+      protocol: 'basket insertion',
+      insertionRemittance: {
+        basket: e.basket,
+        tags: e.tags,
+        ...(e.customInstructions ? { customInstructions: e.customInstructions } : {}),
+      },
+    })
+  }
   await withRestoredInternalizeStatus(txid, () =>
     active.wallet.internalizeAction({
       tx: atomic,
       description: `Receive ${deploy.fields.sym ?? deploy.fields.name ?? 'asset'} (countersigned)`.slice(0, 50),
       labels: [LABEL],
-      outputs: resolved.mine.map((m) => ({
-        outputIndex: m.vout,
-        protocol: 'basket insertion' as const,
-        insertionRemittance: {
-          basket: countersignedSchemeFor(deploys.get(m.assetId)!.kind),
-          tags: countersignedTags(m.assetId, deploys.get(m.assetId)!, m.amount),
-          customInstructions: countersignedInstructions(
-            m.assetId,
-            deploys.get(m.assetId)!,
-            m.amount,
-            held.get(readCountersigned(tx.outputs[m.vout]!.lockingScript!)!.holderPkhHex),
-          ),
-        },
-      })),
+      outputs,
     }),
   )
   return resolved.mine.length
@@ -1726,6 +1938,463 @@ async function deliverTransfer(
     ...(deployHex && ef.length + beef.length + deployHex.length < budget ? { deploy: deployHex } : {}),
   }
   await sendSealedToPeerBox(active.rootKeyHex, recipient, COUNTERSIGN_BOX, JSON.stringify(wire))
+}
+
+// ── Trades ─────────────────────────────────────────────────────────────────
+
+export type CountersignTradeResult = {
+  /** The completed unlocking script of each asset input, by vin; also set on the transaction. */
+  unlocks: UnlockingScript[]
+  branch: CountersignBranch
+  acceptedBy: 'local' | 'remote' | 'quorum' | 'released'
+}
+
+type Collected =
+  | { kind: 'signed'; byKey: Map<string, number[][]> }
+  | { kind: 'refused'; reason: AcceptRefusal }
+  | { kind: 'silent' }
+
+/**
+ * Ask the countersigners of one fixed trade and wait until `set.threshold`
+ * of them signed every asset input, too many refused, or the wait ran out.
+ * `own` is this wallet's answer when it is one of them.
+ */
+async function collectCountersignatures(
+  active: ActiveWallet,
+  tx: Transaction,
+  assetVins: number,
+  set: KeySet,
+  wireFor: (acceptor: string) => Promise<Extract<Wire, { t: 'request' }>>,
+  requestId: string,
+  own: Decision | null,
+): Promise<Collected> {
+  const self = active.identityKey.toLowerCase()
+  const byKey = new Map<string, number[][]>()
+  const refusedBy = new Map<string, AcceptRefusal>()
+  const take = (key: string, answer: Decision): Collected | null => {
+    if (answer.kind === 'cosigned') {
+      const valid =
+        answer.signatures.length === assetVins &&
+        answer.signatures.every((signature, vin) => countersignatureValid(tx, vin, key, signature))
+      if (valid) byKey.set(key, answer.signatures)
+      else console.warn(`[countersign] ${key.slice(0, 12)} sent trade signatures that do not verify`)
+    } else if (answer.kind === 'refused') {
+      refusedBy.set(key, answer.reason)
+    }
+    if (byKey.size >= set.threshold) return { kind: 'signed', byKey }
+    if (set.keys.length - refusedBy.size < set.threshold) {
+      const reasons = new Set(refusedBy.values())
+      return { kind: 'refused', reason: reasons.size === 1 ? [...reasons][0]! : 'quorum' }
+    }
+    return null
+  }
+  if (own) {
+    const done = take(self, own)
+    if (done) return done
+  }
+  const others = set.keys.filter((k) => k !== self)
+  const { sendSealedToPeerBox, listSealedOwnBox, acknowledgeOwnBox } = await import('../messageTransport')
+  let sent = 0
+  for (const acceptor of others) {
+    try {
+      await sendSealedToPeerBox(active.rootKeyHex, acceptor, COUNTERSIGN_BOX, JSON.stringify(await wireFor(acceptor)))
+      sent += 1
+    } catch (err) {
+      console.warn('[countersign] trade request send failed', acceptor.slice(0, 12), err instanceof Error ? err.message : String(err))
+    }
+  }
+  if (sent === 0) return { kind: 'silent' }
+  awaiting.add(requestId)
+  try {
+    const deadline = Date.now() + REMOTE_ACCEPT_WAIT_MS
+    while (Date.now() < deadline) {
+      const messages = (await listSealedOwnBox(active.rootKeyHex, COUNTERSIGN_BOX)) ?? []
+      for (const m of messages) {
+        const reply = parseWire(m.plaintext)
+        if (!reply || !('request' in reply) || reply.request !== requestId || !others.includes(m.sender)) continue
+        const answer = await decisionFromReply(reply, m.sender)
+        await acknowledgeOwnBox(active.rootKeyHex, COUNTERSIGN_BOX, [m.messageId]).catch(() => {})
+        if (!answer) continue
+        const done = take(m.sender, answer)
+        if (done) return done
+      }
+      await new Promise((resolve) => setTimeout(resolve, REMOTE_POLL_MS))
+    }
+    return { kind: 'silent' }
+  } finally {
+    awaiting.delete(requestId)
+  }
+}
+
+function countersignaturesNeeded(path: CountersignSwapPath, deploy: CountersignDeploy): number {
+  if (path.path === 'quorum') return path.cosigners.threshold
+  if (path.path === 'released') return deploy.sets.release.threshold
+  return 1
+}
+
+/**
+ * Have the asset inputs of one fixed trade countersigned. Every asset input
+ * comes first and carries its holder's `<sig> <pubkey>`; every input carries
+ * its source. Whoever completes the trade asks (seller at list or cancel,
+ * buyer at purchase): this wallet signs in process when it is the issuer,
+ * the issuer or m of n cosigners answer peer to peer otherwise, and the
+ * disclosed release keys sign once the asset is released. The requester
+ * broadcasts. Callers hold the spend lease.
+ */
+export async function countersignTrade(args: {
+  tx: Transaction
+  assetId: string
+  /** Who holds each asset output, proven to every acceptor by linkage. */
+  remittance: HolderRemittance
+}): Promise<CountersignTradeResult> {
+  const startedAt = Date.now()
+  const active = requireActive()
+  const state = readCountersignState()
+  const assetId = normalizeTokenId(args.assetId) ?? ''
+  const deploy = assetId ? await deployFor(active, assetId, state) : null
+  writeCountersignState(state)
+  const deploys = deployMap(state)
+  const { tx } = args
+  const assetVins = assetInputCount(tx, deploys)
+  const spendsOne = Array.from({ length: assetVins }, (_, vin) => assetOfInput(tx, vin, deploys)?.assetId).every(
+    (id) => id === assetId,
+  )
+  if (!deploy || assetVins === 0 || !spendsOne) {
+    refuse('bad-asset-args', 'A countersigned trade spends outputs of one known asset, before any other input.')
+  }
+  const holders = Array.from({ length: assetVins }, (_, vin) => readHolderUnlock(tx.inputs[vin]!.unlockingScript))
+  if (holders.some((h) => !h)) refuse('bad-asset-args', 'Every asset input of a trade carries its holder signature.')
+  const path = chooseCountersignSwapPath({
+    deploy,
+    identityKey: active.identityKey,
+    ...(state.phases[assetId] ? { phase: state.phases[assetId]!.phase } : {}),
+  })
+  if (path.path === 'refuse') refuse(path.reason, path.message)
+  const self = active.identityKey.toLowerCase()
+  const root = rootKeyOf(active)
+  const efBytes = tx.toEF()
+  const requestId = requestIdOf(efBytes)
+  let ancestors: Promise<string | null> | null = null
+  const wireFor = async (acceptor: string): Promise<Extract<Wire, { t: 'request' }>> => {
+    const { MESSAGEBOX_BODY_MAX } = await import('../messageTransport')
+    const ef = Utils.toBase64(efBytes)
+    ancestors ??= atomicBeefFor(active, Transaction.fromEF(efBytes), readCountersignState())
+      .then((bytes) => Utils.toBase64(bytes))
+      .catch(() => null)
+    const beef = await ancestors
+    const recipients = await recipientEntries(root, assetId, args.remittance, acceptor)
+    const fits = beef != null && ef.length + beef.length + JSON.stringify(recipients).length < MESSAGEBOX_BODY_MAX / 2
+    return { v: 1, t: 'request', token: assetId, ef, recipients, funding: 'sender', ...(fits ? { beef } : {}) }
+  }
+  const releaseSignatures = (keysHex: string[]): number[][][] => {
+    const keys = disclosedReleaseKeys(keysHex, deploy!.sets.release)
+    if (!keys) refuse('invalid-acceptance', 'The published release keys do not match this asset. Nothing was sent.')
+    return Array.from({ length: assetVins }, (_, vin) => keys.map((key) => signInput(tx, vin, key, COUNTERSIGN_SCOPE)))
+  }
+  let branch: CountersignBranch = 'issuer'
+  let acceptedBy: CountersignTradeResult['acceptedBy'] = 'released'
+  let perVin: number[][][]
+  if (path.path === 'released') {
+    branch = 'release'
+    perVin = releaseSignatures(path.keys)
+  } else {
+    const set: KeySet =
+      path.path === 'quorum'
+        ? path.cosigners
+        : { threshold: 1, keys: path.path === 'local-acceptor' ? [self] : path.acceptors }
+    const selfSigns = path.path === 'local-acceptor' || (path.path === 'quorum' && path.selfCosigns)
+    const own = selfSigns
+      ? await cosignRequest(
+          active,
+          { tx: Transaction.fromEF(efBytes), recipients: await recipientEntries(root, assetId, args.remittance, self), requestId, prover: self },
+          { swap: true },
+        )
+      : null
+    let answer = await collectCountersignatures(active, tx, assetVins, set, wireFor, requestId, own)
+    let released: string[] | null = null
+    if (
+      path.path !== 'local-acceptor' &&
+      (answer.kind === 'silent' || (answer.kind === 'refused' && answer.reason === 'not_acceptor'))
+    ) {
+      const phase = await refreshPhase(active, assetId).catch((err) => {
+        console.warn('[countersign] beacon chain unread', err instanceof Error ? err.message : String(err))
+        return null
+      })
+      if (phase?.phase === 'released') released = phase.keys
+    }
+    if (released) {
+      branch = 'release'
+      perVin = releaseSignatures(released)
+    } else {
+      if (answer.kind === 'silent') {
+        refuse(
+          'acceptor-silent',
+          path.path === 'quorum'
+            ? `Fewer than ${set.threshold} of ${set.keys.length} cosigners answered. Nothing was sent.`
+            : 'The issuer has not answered. Nothing was sent.',
+        )
+      }
+      if (answer.kind === 'refused') {
+        refuse('acceptor-refused', `${ACCEPT_REFUSAL_COPY[answer.reason]} Nothing was sent.`, answer.reason)
+      }
+      answer = answer as Extract<Collected, { kind: 'signed' }>
+      const byKey = answer.byKey
+      perVin = Array.from({ length: assetVins }, (_, vin) =>
+        quorumSignatures(set, new Map([...byKey].map(([key, sigs]) => [key, sigs[vin]!])))!,
+      )
+      acceptedBy = path.path === 'local-acceptor' ? 'local' : path.path === 'quorum' ? 'quorum' : 'remote'
+    }
+  }
+  const unlocks = perVin.map((countersignatures, vin) => {
+    const unlock = countersignedUnlock({
+      countersignatures,
+      branch,
+      holderSignature: holders[vin]!.signature,
+      holderPublicKey: holders[vin]!.publicKey,
+    })
+    tx.inputs[vin]!.unlockingScript = unlock
+    if (!inputScriptValid(tx, vin)) throw new Error(`Countersigned trade input ${vin} does not verify`)
+    return unlock
+  })
+  console.info(`[countersign] trade ${requestId.slice(0, 12)} countersigned (${acceptedBy}, ${assetVins} inputs)`)
+  log('trade countersign', startedAt)
+  return { unlocks, branch, acceptedBy }
+}
+
+/** One output of a trade this wallet funds: units held under a fresh `p color` child, or a plain output. */
+export type TradeOutput =
+  | { kind: 'asset'; amount: bigint; identityKey: string; tags?: string[] }
+  | {
+      kind: 'plain'
+      lockingScript: string
+      satoshis: number
+      /** Filed with the asset outputs when this wallet keeps it (an offer token). */
+      file?: { basket: string; tags: string[]; customInstructions?: string }
+    }
+
+/** A plain input this wallet signs ALL once the fee coins are in (an offer token). */
+export type TradePlainInput = {
+  outpoint: string
+  sourceTransaction: Transaction
+  sign: (tx: Transaction, vin: number) => Promise<UnlockingScript>
+  /** The basket the toolbox files it in, told once the trade is out. */
+  basket?: string
+}
+
+export type FundedTradeResult = {
+  txid: string
+  atomic: number[]
+  tx: Transaction
+  remittance: HolderRemittance
+  acceptedBy: CountersignTradeResult['acceptedBy']
+}
+
+/**
+ * Build, fund, countersign and broadcast a trade this wallet pays for: a
+ * market listing (asset + offer token) or its cancel. Fee coins fund it so
+ * the bytes are fixed before anyone countersigns, and a retry after an
+ * unanswered attempt spends the same fee coins, which lets an acceptor that
+ * did sign the first attempt sign the second. Callers hold the spend lease.
+ */
+export async function runFundedCountersignedTrade(args: {
+  assetId: string
+  holdings: CountersignHolding[]
+  plainInputs?: TradePlainInput[]
+  outputs: TradeOutput[]
+  description: string
+  flow: TransactionFlow
+  /** Chart hooks: signed and recorded, countersigned, handed to the miners. */
+  progress?: { staged?: (requestId: string) => void; countersigned?: () => void; broadcast?: (txid: string) => void }
+}): Promise<FundedTradeResult> {
+  const startedAt = Date.now()
+  const active = requireActive()
+  const state = readCountersignState()
+  const assetId = normalizeTokenId(args.assetId) ?? ''
+  const deploy = assetId ? await deployFor(active, assetId, state) : null
+  if (!deploy) refuse('unknown-asset', 'This wallet has no deploy body for that asset.')
+  if (args.holdings.length === 0 || args.holdings.some((h) => h.assetId !== assetId)) {
+    refuse('bad-asset-args', 'A trade spends held outputs of the asset it names.')
+  }
+  const path = chooseCountersignSwapPath({
+    deploy,
+    identityKey: active.identityKey,
+    ...(state.phases[assetId] ? { phase: state.phases[assetId]!.phase } : {}),
+  })
+  if (path.path === 'refuse') refuse(path.reason, path.message)
+  const root = rootKeyOf(active)
+  const tx = new Transaction()
+  for (const holding of args.holdings) {
+    const [txid, vout] = holding.outpoint.replace('_', '.').split('.')
+    const parent = await fullTx(active, txid!, state)
+    if (!parent) throw new Error(`The source of ${holding.outpoint} is not available`)
+    tx.addInput({ sourceTransaction: parent, sourceTXID: txid!, sourceOutputIndex: Number(vout), unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+  }
+  for (const input of args.plainInputs ?? []) {
+    const [txid, vout] = underscore(input.outpoint).split('_')
+    tx.addInput({ sourceTransaction: input.sourceTransaction, sourceTXID: txid!, sourceOutputIndex: Number(vout), unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+  }
+  const remittance = planHolderRemittance(
+    args.outputs.flatMap((output, vout) => (output.kind === 'asset' ? [{ vout, identityKey: output.identityKey }] : [])),
+  )
+  args.outputs.forEach((output, vout) => {
+    if (output.kind === 'plain') {
+      tx.addOutput({ lockingScript: LockingScript.fromHex(output.lockingScript), satoshis: output.satoshis })
+      return
+    }
+    tx.addOutput({
+      lockingScript: countersignedLock({
+        assetId,
+        amount: output.amount,
+        holderPkhHex: holderPkhFor(root, assetId, remittance.prefix, remittance.outputs.find((o) => o.vout === vout)!),
+        sets: deploy!.sets,
+      }),
+      satoshis: 1,
+    })
+  })
+  // A refusal by a shared cosigner is final per request, so each attempt is new bytes.
+  tx.lockTime = Math.floor(Math.random() * 400_000)
+  const inputs = args.holdings.map((h) => underscore(h.outpoint))
+  const prefer = Object.values(state.swaps)
+    .filter((s) => s.state === 'abandoned' && s.inputs.some((i) => inputs.includes(i)))
+    .flatMap((s) => s.feeCoins)
+  const coins = await fundWithFeeCoins(active, tx, state, countersignaturesNeeded(path, deploy!), prefer)
+  args.holdings.forEach((holding, vin) => {
+    const key = holderKeyOf(active, holding)
+    tx.inputs[vin]!.unlockingScript = holderUnlock(signInput(tx, vin, key, HOLDER_SCOPE), key.toPublicKey().toString())
+  })
+  const plainFrom = args.holdings.length
+  for (const [i, input] of (args.plainInputs ?? []).entries()) {
+    tx.inputs[plainFrom + i]!.unlockingScript = await input.sign(tx, plainFrom + i)
+  }
+  await signFeeInputs(active, tx, coins, plainFrom + (args.plainInputs?.length ?? 0))
+  const requestId = requestIdOf(tx.toEF())
+  state.swaps[requestId] = { requestId, assetId, inputs, feeCoins: coins.map(feeCoinKey), state: 'open', at: Date.now() }
+  writeCountersignState(state)
+  args.progress?.staged?.(requestId)
+  let trade: CountersignTradeResult
+  try {
+    trade = await countersignTrade({ tx, assetId, remittance })
+  } catch (err) {
+    const next = readCountersignState()
+    if (next.swaps[requestId]) next.swaps[requestId]!.state = 'abandoned'
+    writeCountersignState(next)
+    throw err
+  }
+  args.progress?.countersigned?.()
+  const txid = String(tx.id('hex')).toLowerCase()
+  const atomic = await atomicBeefFor(active, tx, readCountersignState())
+  rememberBeefTree(atomic, txid)
+  const { registerSignedSend, startSignedSendPropagation } = await import('../signedSendLifecycle')
+  startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: args.flow }))
+  args.progress?.broadcast?.(txid)
+  const filed = readCountersignState()
+  const deploys = deployMap(filed)
+  const extra = args.outputs.flatMap((output, vout) =>
+    output.kind === 'plain' && output.file ? [{ outputIndex: vout, ...output.file }] : [],
+  )
+  const extraTags = new Map(
+    args.outputs.flatMap((output, vout) => (output.kind === 'asset' && output.tags?.length ? [[vout, output.tags] as const] : [])),
+  )
+  await fileResolvedOutputs(
+    active,
+    txid,
+    atomic,
+    tx,
+    deploys,
+    deploy!,
+    heldHashes(active, tx, ownRemittances(active, remittance)),
+    extra,
+    extraTags,
+  )
+  for (const outpoint of inputs) {
+    await active.wallet
+      .relinquishOutput({ basket: countersignedSchemeFor(deploy!.kind), output: outpoint.replace('_', '.') })
+      .catch(() => {})
+  }
+  for (const input of args.plainInputs ?? []) {
+    if (!input.basket) continue
+    await active.wallet.relinquishOutput({ basket: input.basket, output: underscore(input.outpoint).replace('_', '.') }).catch(() => {})
+  }
+  await relinquishFeeCoins(active, coins)
+  const spentCoins = new Set(coins.map(feeCoinKey))
+  for (const swap of Object.values(filed.swaps)) {
+    if (swap.requestId === requestId || (swap.state === 'abandoned' && swap.feeCoins.some((c) => spentCoins.has(c)))) {
+      swap.state = 'done'
+    }
+  }
+  writeCountersignState(filed)
+  scheduleHistoryBackupPush('countersign')
+  log(`trade ${args.description}`, startedAt)
+  return { txid, atomic, tx, remittance, acceptedBy: trade.acceptedBy }
+}
+
+/** A held countersigned output by outpoint, with its deploy, or null when this wallet does not hold it. */
+export async function countersignedHoldingAt(
+  active: ActiveWallet,
+  outpoint: string,
+): Promise<{ holding: CountersignHolding; deploy: CountersignDeploy; profile: CountersignedScheme } | null> {
+  const target = underscore(outpoint)
+  const holding = (await listCountersignedHoldings(active, undefined, { includeListed: true })).find(
+    (h) => underscore(h.outpoint) === target,
+  )
+  if (!holding) return null
+  const state = readCountersignState()
+  const deploy = await deployFor(active, holding.assetId, state)
+  if (!deploy) return null
+  writeCountersignState(state)
+  return { holding, deploy, profile: countersignedSchemeFor(deploy.kind) }
+}
+
+/** The deploy of a countersigned asset, read and kept, or null. */
+export async function countersignedDeploy(active: ActiveWallet, assetId: string, bodyHex?: string): Promise<CountersignDeploy | null> {
+  const state = readCountersignState()
+  const id = normalizeTokenId(assetId)
+  const deploy = id ? await deployFor(active, id, state, bodyHex) : null
+  if (deploy) writeCountersignState(state)
+  return deploy
+}
+
+/** The holder key of output `vout` of a trade this wallet planned. */
+export function tradeHolderKey(active: ActiveWallet, assetId: string, remittance: HolderRemittance, vout: number): PrivateKey {
+  const output = remittance.outputs.find((o) => o.vout === vout)
+  if (!output) throw new Error(`Output ${vout} has no holder in this trade`)
+  return holderPrivateKey(rootKeyOf(active), assetId, {
+    derivationPrefix: remittance.prefix,
+    derivationSuffix: output.derivationSuffix,
+    senderIdentityKey: active.identityKey.toLowerCase(),
+  })
+}
+
+/**
+ * The output a buyer writes for units it receives in a trade: a countersigned
+ * lock to a fresh `p color` child, and its csft / csnft filing.
+ */
+export function planCountersignedReceive(
+  active: ActiveWallet,
+  deploy: CountersignDeploy,
+  vout: number,
+  amount: bigint,
+): { lockingScript: string; remittance: HolderRemittance; basket: CountersignedScheme; tags: string[]; customInstructions: string } {
+  const self = active.identityKey.toLowerCase()
+  const remittance = planHolderRemittance([{ vout, identityKey: self }])
+  const output = remittance.outputs[0]!
+  const lockingScript = countersignedLock({
+    assetId: deploy.assetId,
+    amount,
+    holderPkhHex: holderPkhFor(rootKeyOf(active), deploy.assetId, remittance.prefix, output),
+    sets: deploy.sets,
+  }).toHex()
+  return {
+    lockingScript,
+    remittance,
+    basket: countersignedSchemeFor(deploy.kind),
+    tags: countersignedTags(deploy.assetId, deploy, amount),
+    customInstructions: countersignedInstructions(deploy.assetId, deploy, amount, {
+      derivationPrefix: remittance.prefix,
+      derivationSuffix: output.derivationSuffix,
+      senderIdentityKey: self,
+    }),
+  }
 }
 
 // ── Box ────────────────────────────────────────────────────────────────────
@@ -1759,15 +2428,20 @@ async function answerRequest(active: ActiveWallet, sender: string, wire: Extract
     try {
       rememberBeefTree(Utils.toArray(wire.beef, 'base64'), String(tx.id('hex')).toLowerCase())
     } catch {
-      // Ancestors are a shortcut; quorumAccepted fetches what it lacks.
+      // Ancestors are a shortcut; inputAccepted fetches what it lacks.
     }
   }
   const recipients = readRecipientEntries(wire.recipients)
   const state = readCountersignState()
   const asset = assetOfInput(tx, 0, deployMap(state))
   const shared = asset ? state.acceptor[asset.assetId]?.shared === true : false
+  const swap = wire.funding === 'sender'
+  const holderRequest = { tx, recipients, requestId, prover: sender }
   const decision = await runExclusiveSpend(
-    () => (shared ? cosignRequest : acceptRequest)(active, { tx, recipients, requestId, prover: sender }),
+    () =>
+      swap || shared
+        ? cosignRequest(active, holderRequest, swap ? { swap: true } : {})
+        : acceptRequest(active, holderRequest),
     undefined,
     { promote: false },
   )
@@ -2454,7 +3128,7 @@ async function receiveInvite(active: ActiveWallet, sender: string, wire: Extract
 /**
  * Become one of an asset's cosigners. The deploy must name this wallet in a
  * shared issuer set; from now on it answers transfer requests and beacon
- * proposals for the asset, and accepts outputs by proof (`quorumAccepted`).
+ * proposals for the asset, and accepts outputs by proof (`inputAccepted`).
  */
 export async function joinCountersignedAsset(args: { assetId?: unknown }): Promise<{
   assetId: string
