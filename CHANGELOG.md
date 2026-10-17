@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.577] - 2026-10-17
+
+### Fixed
+- **Tokens no longer show under "Tokens without an issuer" while their issuer is still being read.** A received token's issuer is only known once the wallet has walked back to its deploy, and until then Collect filed it as issuer-less. Those tokens now sit under a placeholder issuer heading and move to their issuer's shelf when the read finishes. A token lands on "Tokens without an issuer" only after a read gave up or its deploy names no issuer. When one pass runs out of its proof budget, the next pass starts two seconds later instead of waiting for the next refresh.
+
 ## [1.3.576] - 2026-10-17
 
 ### Fixed
