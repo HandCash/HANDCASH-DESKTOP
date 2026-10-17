@@ -1,3 +1,4 @@
+import type { CountersignPhase } from './beacon'
 import type { AcceptRefusal, CountersignDeploy } from './resolve'
 
 /** Every way an issue or transfer of a countersigned asset ends without a transaction. */
@@ -11,6 +12,12 @@ export type CountersignRefuse =
   | 'acceptor-refused'
   | 'acceptor-silent'
   | 'invalid-acceptance'
+  | 'not-issuer'
+  | 'not-custodian'
+  | 'asset-live'
+  | 'asset-ended'
+  | 'asset-released'
+  | 'phase-unknown'
 
 export class CountersignError extends Error {
   readonly code: CountersignRefuse
@@ -24,12 +31,15 @@ export class CountersignError extends Error {
 }
 
 /**
- * Who accepts a transfer. A wallet that holds an issuer key accepts its own
- * request in process; anyone else asks the issuer peer to peer.
+ * Who countersigns a transfer. While the asset is live, a wallet that holds an
+ * issuer key accepts its own request in process and anyone else asks the
+ * issuer peer to peer. Once released, the holder countersigns with the
+ * disclosed release keys and funds the fee itself; no request is sent.
  */
 export type CountersignTransferPath =
   | { path: 'local-acceptor'; assetId: string; amount: bigint; recipient: string }
   | { path: 'remote-acceptor'; assetId: string; amount: bigint; recipient: string; acceptors: string[] }
+  | { path: 'released'; assetId: string; amount: bigint; recipient: string; keys: string[] }
   | { path: 'refuse'; reason: CountersignRefuse; message: string }
 
 const KEY_RE = /^0[23][0-9a-f]{64}$/
@@ -40,6 +50,8 @@ export function chooseCountersignTransferPath(args: {
   recipient: unknown
   amount: unknown
   held: bigint
+  /** Last phase this wallet read; absent counts as live. */
+  phase?: CountersignPhase
 }): CountersignTransferPath {
   if (!args.deploy) {
     return { path: 'refuse', reason: 'unknown-asset', message: 'This wallet has no deploy body for that asset.' }
@@ -65,6 +77,14 @@ export function chooseCountersignTransferPath(args: {
   }
   const self = args.identityKey.toLowerCase()
   const base = { assetId: args.deploy.assetId, amount, recipient }
+  if (args.phase?.phase === 'released') return { path: 'released', ...base, keys: args.phase.keys }
+  if (args.phase?.phase === 'ended') {
+    return {
+      path: 'refuse',
+      reason: 'asset-ended',
+      message: 'The issuer has stopped accepting this asset. It moves again once its release keys are published.',
+    }
+  }
   return args.deploy.sets.issuer.keys.includes(self)
     ? { path: 'local-acceptor', ...base }
     : { path: 'remote-acceptor', ...base, acceptors: args.deploy.sets.issuer.keys }
@@ -79,5 +99,5 @@ export const ACCEPT_REFUSAL_COPY: Record<AcceptRefusal, string> = {
   limit: 'The transfer is over the issuer’s limit.',
   fee: 'The issuer asks for a fee in tokens.',
   policy: 'The issuer’s policy refuses this transfer.',
-  not_acceptor: 'That key does not accept transfers of this asset.',
+  not_acceptor: 'The issuer no longer accepts transfers of this asset.',
 }

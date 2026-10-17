@@ -188,6 +188,11 @@ async function fetchWhatsOnChainPaced(url: string): Promise<Response | null> {
   }
 }
 
+/** WhatsOnChain GET `path` behind the shared rate budget; null is "no evidence". */
+export async function whatsOnChainGet(chain: Chain, path: string): Promise<Response | null> {
+  return fetchWhatsOnChainPaced(`${wocBase(chain)}${path}`)
+}
+
 /**
  * True when the network has heard of `txid` (mempool or mined), null if unknown.
  *

@@ -34,7 +34,7 @@ export function readCountersignDeploy(tx: Transaction): CountersignDeploy | null
   if (!read || read.assetId != null || !read.payload) return null
   const fields = decodeCountersignPayload(read.payload)
   if (!fields) return null
-  if (out1.toHex() !== beaconLock(read.sets.issuer).toHex()) return null
+  if (out1.toHex() !== beaconLock(read.sets).toHex()) return null
   if (fields.kind === 'item' && read.amount !== 1n) return null
   return {
     assetId: `${String(tx.id('hex')).toLowerCase()}_0`,

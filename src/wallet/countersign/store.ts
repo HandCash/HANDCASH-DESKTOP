@@ -1,6 +1,7 @@
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
 import { durableGetItem, durableSetItem } from '../durableStorage'
+import type { BeaconChainView, CountersignPhase } from './beacon'
 import type { CountersignDeployFields } from './payload'
 import type { AcceptRefusal, CountersignDeploy } from './resolve'
 import type { CountersignKeySets } from './script'
@@ -24,7 +25,12 @@ export type AcceptorRecord = {
   beacon: string
   beaconTxHex?: string
   beaconAt: number
+  /** Set once: this issuer never countersigns or refreshes the beacon again. */
+  ended?: 'retired' | 'lapsed' | 'released'
 }
+
+/** The beacon chain as last read, and the phase it gave. */
+export type StoredPhase = { view: BeaconChainView; phase: CountersignPhase; checkedAt: number }
 
 export type OutgoingRequest = {
   requestId: string
@@ -44,6 +50,7 @@ export type CountersignState = {
   deploys: Record<string, StoredDeploy>
   acceptor: Record<string, AcceptorRecord>
   outgoing: Record<string, OutgoingRequest>
+  phases: Record<string, StoredPhase>
 }
 
 function key(): string {
@@ -57,9 +64,10 @@ export function readCountersignState(): CountersignState {
       deploys: parsed.deploys ?? {},
       acceptor: parsed.acceptor ?? {},
       outgoing: parsed.outgoing ?? {},
+      phases: parsed.phases ?? {},
     }
   } catch {
-    return { deploys: {}, acceptor: {}, outgoing: {} }
+    return { deploys: {}, acceptor: {}, outgoing: {}, phases: {} }
   }
 }
 

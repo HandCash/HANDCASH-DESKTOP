@@ -7,7 +7,7 @@ export type CountersignKind = 'token' | 'item'
 
 export type CountersignDeployFields = {
   kind: CountersignKind
-  /** Seconds of beacon silence before the successors may take over. */
+  /** Seconds between mined beacons after which the asset has lapsed and may be released. */
   sil: number
   sym?: string
   dec?: number
@@ -17,7 +17,6 @@ export type CountersignDeployFields = {
   ctype?: string
   col?: string
   hdl?: string
-  shdl?: string
 }
 
 type CborValue = string | number | Uint8Array | CborValue[] | Map<string, CborValue>
@@ -77,7 +76,6 @@ export function encodeCountersignPayload(fields: CountersignDeployFields): numbe
   if (fields.ctype) map.set('ctype', fields.ctype)
   if (fields.col) map.set('col', fields.col)
   if (fields.hdl) map.set('hdl', fields.hdl)
-  if (fields.shdl) map.set('shdl', fields.shdl)
   return encode(map)
 }
 
@@ -100,9 +98,9 @@ export function decodeCountersignPayload(bytes: Uint8Array): CountersignDeployFi
   const kindRaw = map.get('kind')
   if (kindRaw != null && kindRaw !== 'token' && kindRaw !== 'item') return null
   const kind: CountersignKind = kindRaw === 'item' ? 'item' : 'token'
-  const strings = ['sym', 'name', 'ctype', 'col', 'hdl', 'shdl'].map((key) => text(map, key))
+  const strings = ['sym', 'name', 'ctype', 'col', 'hdl'].map((key) => text(map, key))
   if (strings.some((value) => value && /:\/\//.test(value))) return null
-  const [sym, name, ctype, col, hdl, shdl] = strings
+  const [sym, name, ctype, col, hdl] = strings
   const dec = map.get('dec')
   if (dec != null && (kind === 'item' || typeof dec !== 'number' || !Number.isInteger(dec) || dec < 0 || dec > 18)) {
     return null
@@ -127,6 +125,5 @@ export function decodeCountersignPayload(bytes: Uint8Array): CountersignDeployFi
     ...(ctype ? { ctype } : {}),
     ...(col ? { col } : {}),
     ...(hdl ? { hdl } : {}),
-    ...(shdl ? { shdl } : {}),
   }
 }

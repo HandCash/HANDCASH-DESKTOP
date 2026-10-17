@@ -16,6 +16,8 @@ import {
   CountersignError,
   type CountersignRefuse,
 } from './path'
+import { beaconPhase, readBeaconChain, type CountersignPhase } from './beacon'
+import { whatsOnChainBeaconSource } from './beaconSource'
 import { encodeCountersignPayload, MIN_SILENCE_SECONDS, type CountersignDeployFields } from './payload'
 import {
   checkAcceptRequest,
@@ -26,19 +28,24 @@ import {
 } from './resolve'
 import {
   beaconLock,
+  beaconUnlock,
   contentLock,
   COUNTERSIGN_SCOPE,
   countersignDeployLock,
   countersignedLock,
   countersignedUnlock,
+  disclosedReleaseKeys,
   HOLDER_SCOPE,
   holderUnlock,
   inputScriptValid,
   pubkeyHashHex,
   readCountersigned,
   readHolderUnlock,
+  releaseDisclosureLock,
   requestIdOf,
+  retireMarkerLock,
   signInput,
+  unlockBranch,
   type CountersignKeySets,
   type KeySet,
 } from './script'
@@ -50,6 +57,7 @@ import {
   type AcceptorRecord,
   type CountersignState,
   type OutgoingRequest,
+  type StoredDeploy,
 } from './store'
 
 /** Filing name for resolved outputs of every countersigned asset. */
@@ -72,7 +80,9 @@ const BOX_IDLE_POLL_MS = 20_000
 const MAX_CONTENT_BYTES = 1024 * 1024
 const MAX_ICON_BYTES = 96 * 1024
 const DECISION_PROTOCOL: [2, string] = [2, 'countersign decision']
-const SUCCESSOR_PROTOCOL: [2, string] = [2, 'countersign successor']
+const RELEASE_PROTOCOL: [2, string] = [2, 'countersign release']
+/** A release-branch transfer is final only once mined; ask the chain at most this often per txid. */
+const MINED_CHECK_MS = 60_000
 const LABEL = 'countersign'
 
 type Wire =
@@ -127,13 +137,26 @@ function log(phase: string, startedAt: number): void {
   if (ms >= 250) console.info(`[countersign] ${phase} done ${ms}ms`)
 }
 
-/** Two self-derived successor keys, 2-of-2, when the caller names no trustees. */
-function defaultSuccessors(active: ActiveWallet): KeySet {
-  const deriver = new KeyDeriver(rootKeyOf(active))
-  return {
-    threshold: 2,
-    keys: ['1', '2'].map((id) => deriver.derivePublicKey(SUCCESSOR_PROTOCOL, id, 'self', true).toString()),
-  }
+/** This wallet's release (custodian) key: one self-derived child of the root. */
+function ownReleaseKey(active: ActiveWallet): PrivateKey {
+  return new KeyDeriver(rootKeyOf(active)).derivePrivateKey(RELEASE_PROTOCOL, '1', 'self')
+}
+
+/** A 1-of-1 release set on this wallet's own release key, when the caller names no custodians. */
+function defaultRelease(active: ActiveWallet): KeySet {
+  return { threshold: 1, keys: [ownReleaseKey(active).toPublicKey().toString()] }
+}
+
+/** The release keys this wallet can sign with, when they meet the threshold. */
+function releaseKeysHeld(active: ActiveWallet, release: KeySet): PrivateKey[] | null {
+  return disclosedReleaseKeys([ownReleaseKey(active).toHex()], release)
+}
+
+/** An issuer whose last refresh is older than the silence period has lapsed, whatever it broadcasts next. */
+function endedReason(record: AcceptorRecord, deploy: StoredDeploy | undefined): AcceptorRecord['ended'] {
+  if (record.ended) return record.ended
+  if (deploy && Date.now() - record.beaconAt > deploy.fields.sil * 1000) return 'lapsed'
+  return undefined
 }
 
 function decisionPreimage(t: string, token: string, request: string, reason = ''): number[] {
@@ -322,14 +345,51 @@ async function relinquishFeeCoins(active: ActiveWallet, coins: FeeCoin[]): Promi
   }
 }
 
-/** Network fee plus the satoshis the outputs carry beyond the asset inputs. */
-function acceptorNeed(tx: Transaction, feeInputs: number): number {
-  const countersignBytes = 2 + 74
+/** Network fee plus the satoshis the outputs carry beyond the inputs already there. */
+function acceptorNeed(tx: Transaction, feeInputs: number, countersigs = 1): number {
+  const countersignBytes = 2 + 74 * countersigs
   const bytes = tx.toBinary().length + tx.inputs.length * countersignBytes + feeInputs * 148
   const fee = Math.ceil((bytes * FEE_SATS_PER_KB) / 1000) + 1
   const inSats = tx.inputs.reduce((sum, input) => sum + (input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis ?? 0), 0)
   const outSats = tx.outputs.reduce((sum, output) => sum + (output.satoshis ?? 0), 0)
   return fee + Math.max(0, outSats - inSats)
+}
+
+/** Add fee coins covering `tx`; they are signed last, by `signFeeInputs`. */
+async function fundWithFeeCoins(
+  active: ActiveWallet,
+  tx: Transaction,
+  state: CountersignState,
+  countersigs: number,
+): Promise<FeeCoin[]> {
+  let feeCount = 1
+  let coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount, countersigs))
+  if (coins.length > feeCount) {
+    feeCount = coins.length
+    coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount, countersigs))
+  }
+  for (const coin of coins) {
+    const parent = await fullTx(active, coin.txid, state)
+    if (!parent) throw new Error('A countersign fee input has no source transaction')
+    tx.addInput({
+      sourceTransaction: parent,
+      sourceTXID: coin.txid,
+      sourceOutputIndex: coin.vout,
+      unlockingScript: new UnlockingScript(),
+      sequence: 0xffffffff,
+    })
+  }
+  return coins
+}
+
+async function signFeeInputs(active: ActiveWallet, tx: Transaction, coins: FeeCoin[], from: number): Promise<void> {
+  const root = rootKeyOf(active)
+  for (let vin = from; vin < tx.inputs.length; vin++) {
+    const coin = coins[vin - from]!
+    tx.inputs[vin]!.unlockingScript = await new P2PKH()
+      .unlock(root, 'all', false, coin.satoshis, new P2PKH().lock(active.address))
+      .sign(tx, vin)
+  }
 }
 
 // ── Atomic BEEF ────────────────────────────────────────────────────────────
@@ -382,7 +442,7 @@ function mediaBytes(arg: MediaArg | undefined, max: number, what: string): { med
   return { mediaType, bytes }
 }
 
-function successorsFrom(arg: unknown): KeySet | null {
+function releaseFrom(arg: unknown): KeySet | null {
   if (!arg || typeof arg !== 'object') return null
   const raw = arg as { threshold?: unknown; keys?: unknown }
   const keys = Array.isArray(raw.keys) ? raw.keys.map((k) => String(k).trim().toLowerCase()) : []
@@ -397,14 +457,16 @@ export type IssueCountersignedArgs = {
   dec?: unknown
   icon?: MediaArg
   content?: MediaArg
-  successors?: unknown
+  /** Custodians' release set `{ threshold, keys }`; defaults to this wallet's own release key. */
+  release?: unknown
   silenceSeconds?: unknown
 }
 
 /**
  * Deploy a countersigned token or item. This wallet's identity key is the
  * issuer (1-of-1) and the first holder; output 1 is the first beacon and an
- * item's content is output 2.
+ * item's content is output 2. Countersigning suits assets whose value comes
+ * from their issuer; the release set frees holders once the issuer is gone.
  */
 export async function issueCountersignedAsset(args: IssueCountersignedArgs): Promise<{
   assetId: string
@@ -412,7 +474,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
   kind: 'token' | 'item'
   supply: string
   acceptor: string
-  successors: KeySet
+  release: KeySet
 }> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
@@ -442,7 +504,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
       }
       const sets: CountersignKeySets = {
         issuer: { threshold: 1, keys: [active.identityKey.toLowerCase()] },
-        successor: successorsFrom(args.successors) ?? defaultSuccessors(active),
+        release: releaseFrom(args.release) ?? defaultRelease(active),
       }
       let payload: number[]
       try {
@@ -484,7 +546,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
             customInstructions: cosignedInstructions(null, shape, BigInt(supplyRaw)),
           },
           {
-            lockingScript: beaconLock(sets.issuer).toHex(),
+            lockingScript: beaconLock(sets).toHex(),
             satoshis: 1,
             outputDescription: 'Issuer beacon',
             basket: BEACON_BASKET,
@@ -539,7 +601,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
         kind,
         supply: supplyRaw,
         acceptor: active.identityKey.toLowerCase(),
-        successors: sets.successor,
+        release: sets.release,
       }
     } catch (err) {
       chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
@@ -580,13 +642,23 @@ async function acceptRequest(
     return { kind: 'refused', reason: 'policy', detail: 'cancelled' }
   }
   const deploys = deployMap(state)
+  let marked = false
+  for (const record of Object.values(state.acceptor)) {
+    const ended = endedReason(record, state.deploys[record.assetId])
+    if (ended && !record.ended) {
+      record.ended = ended
+      marked = true
+      console.warn(`[countersign] ${record.assetId.slice(0, 12)} ${ended}: this issuer no longer countersigns it`)
+    }
+  }
+  if (marked) writeCountersignState(state)
   const accepted = new Set(Object.values(state.acceptor).flatMap((r) => r.accepted))
   const spentBy = (outpoint: string) =>
     Object.values(state.acceptor).find((r) => r.spent[outpoint])?.spent[outpoint]
   const check = checkAcceptRequest({
     tx: request.tx,
     deploys,
-    answersFor: (assetId) => Boolean(state.acceptor[assetId]),
+    answersFor: (assetId) => Boolean(state.acceptor[assetId] && !state.acceptor[assetId]!.ended),
     accepted,
     reservedBy: spentBy,
     requestId: request.requestId,
@@ -599,24 +671,8 @@ async function acceptRequest(
   const tx = request.tx
   const holders = tx.inputs.map((input) => readHolderUnlock(input.unlockingScript)!)
   const tokenInputs = tx.inputs.length
-  let feeCount = 1
-  let coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount))
-  if (coins.length > feeCount) {
-    feeCount = coins.length
-    coins = await takeFeeCoins(active, acceptorNeed(tx, feeCount))
-  }
+  const coins = await fundWithFeeCoins(active, tx, state, 1)
   const root = rootKeyOf(active)
-  for (const coin of coins) {
-    const parent = await fullTx(active, coin.txid, state)
-    if (!parent) throw new Error('A countersign fee input has no source transaction')
-    tx.addInput({
-      sourceTransaction: parent,
-      sourceTXID: coin.txid,
-      sourceOutputIndex: coin.vout,
-      unlockingScript: new UnlockingScript(),
-      sequence: 0xffffffff,
-    })
-  }
   for (let vin = 0; vin < tokenInputs; vin++) {
     tx.inputs[vin]!.unlockingScript = countersignedUnlock({
       countersignatures: [signInput(tx, vin, root, COUNTERSIGN_SCOPE)],
@@ -625,12 +681,7 @@ async function acceptRequest(
       holderPublicKey: holders[vin]!.publicKey,
     })
   }
-  for (let vin = tokenInputs; vin < tx.inputs.length; vin++) {
-    const coin = coins[vin - tokenInputs]!
-    tx.inputs[vin]!.unlockingScript = await new P2PKH()
-      .unlock(root, 'all', false, coin.satoshis, new P2PKH().lock(active.address))
-      .sign(tx, vin)
-  }
+  await signFeeInputs(active, tx, coins, tokenInputs)
   for (let vin = 0; vin < tokenInputs; vin++) {
     if (!inputScriptValid(tx, vin)) throw new Error(`Countersigned input ${vin} does not verify`)
   }
@@ -652,6 +703,85 @@ async function acceptRequest(
   console.info(`[countersign] accepted ${request.requestId.slice(0, 12)} → ${txid.slice(0, 12)}`)
   log('accept', startedAt)
   return { kind: 'accepted', tx, efHex, atomic: await atomicBeefFor(active, tx, state) }
+}
+
+// ── Release phase ──────────────────────────────────────────────────────────
+
+/**
+ * Follow the asset's beacon chain from where this wallet last stopped and
+ * store the phase. A collection member follows its collection's beacon.
+ */
+async function refreshPhase(active: ActiveWallet, assetId: string): Promise<CountersignPhase | null> {
+  const startedAt = Date.now()
+  const state = readCountersignState()
+  const deploy = await deployFor(active, assetId, state)
+  const beaconId = deploy?.fields.col ?? assetId
+  const beaconDeploy = beaconId === assetId ? deploy : await deployFor(active, beaconId, state)
+  if (!deploy || !beaconDeploy) return null
+  const source = whatsOnChainBeaconSource(active.chain)
+  const known = state.phases[beaconId]?.view
+  const view = await readBeaconChain({ assetId: beaconId, sets: beaconDeploy.sets, source, ...(known ? { known } : {}) })
+  const phase = beaconPhase(view, await source.tipTime(), beaconDeploy.fields.sil)
+  const next = readCountersignState()
+  for (const id of new Set([assetId, beaconId])) {
+    next.deploys[id] ??= state.deploys[id]!
+    next.phases[id] = { view, phase, checkedAt: Date.now() }
+  }
+  const record = next.acceptor[assetId]
+  if (record && phase.phase !== 'live' && !record.ended) {
+    record.ended = phase.phase === 'released' ? 'released' : phase.why
+  }
+  writeCountersignState(next)
+  console.info(`[countersign] ${assetId.slice(0, 12)} phase ${phase.phase}`)
+  log('beacon chain', startedAt)
+  return phase
+}
+
+/**
+ * After a release the holder countersigns its own signed transfer with the
+ * disclosed keys on the release branch and funds the fee from its own coins.
+ */
+async function countersignReleased(
+  active: ActiveWallet,
+  tx: Transaction,
+  keysHex: string[],
+  deploy: CountersignDeploy,
+  state: CountersignState,
+): Promise<Extract<Decision, { kind: 'accepted' }>> {
+  const startedAt = Date.now()
+  const keys = disclosedReleaseKeys(keysHex, deploy.sets.release)
+  if (!keys) refuse('invalid-acceptance', 'The published release keys do not match this asset. Nothing was sent.')
+  const holders = tx.inputs.map((input) => readHolderUnlock(input.unlockingScript))
+  if (holders.some((h) => !h)) throw new Error('A released transfer needs the holder signature on every input')
+  const tokenInputs = tx.inputs.length
+  const coins = await fundWithFeeCoins(active, tx, state, keys.length)
+  for (let vin = 0; vin < tokenInputs; vin++) {
+    tx.inputs[vin]!.unlockingScript = countersignedUnlock({
+      countersignatures: keys.map((key) => signInput(tx, vin, key, COUNTERSIGN_SCOPE)),
+      branch: 'release',
+      holderSignature: holders[vin]!.signature,
+      holderPublicKey: holders[vin]!.publicKey,
+    })
+  }
+  await signFeeInputs(active, tx, coins, tokenInputs)
+  for (let vin = 0; vin < tokenInputs; vin++) {
+    if (!inputScriptValid(tx, vin)) throw new Error(`Released input ${vin} does not verify`)
+  }
+  await relinquishFeeCoins(active, coins)
+  log('release countersign', startedAt)
+  return { kind: 'accepted', tx, efHex: Utils.toHex(tx.toEF()), atomic: await atomicBeefFor(active, tx, state) }
+}
+
+const minedCheckedAt = new Map<string, number>()
+
+/** A release-branch transfer is credited only once mined; the chain is asked at most once a minute per txid. */
+async function minedYet(active: ActiveWallet, txid: string): Promise<boolean> {
+  const last = minedCheckedAt.get(txid) ?? 0
+  if (Date.now() - last < MINED_CHECK_MS) return false
+  minedCheckedAt.set(txid, Date.now())
+  const time = await whatsOnChainBeaconSource(active.chain).blockTime(txid)
+  if (time != null) minedCheckedAt.delete(txid)
+  return time != null
 }
 
 // ── Transfer ───────────────────────────────────────────────────────────────
@@ -739,12 +869,13 @@ export type CountersignTransferResult = {
   requestId: string
   amount: string
   recipient: string
-  acceptedBy: 'local' | 'remote'
+  acceptedBy: 'local' | 'remote' | 'released'
 }
 
 /**
- * Transfer units of a countersigned asset. The holder signs; the acceptor
- * countersigns or refuses. A refusal or silence leaves no transaction.
+ * Transfer units of a countersigned asset. The holder signs; the issuer
+ * countersigns or refuses, and a refusal or silence leaves no transaction.
+ * Once the asset is released the holder countersigns with the published keys.
  */
 export async function transferCountersignedAsset(args: {
   assetId?: unknown
@@ -770,6 +901,7 @@ export async function transferCountersignedAsset(args: {
       recipient: args.recipient,
       amount: args.amount,
       held: free.reduce((sum, h) => sum + h.amount, 0n),
+      ...(assetId && state.phases[assetId] ? { phase: state.phases[assetId]!.phase } : {}),
     })
     const chart = createActor(countersignMachine).start()
     chart.send({ type: 'TRANSFER', path })
@@ -830,7 +962,12 @@ export async function transferCountersignedAsset(args: {
         efHex: Utils.toHex(efBytes),
         recipient: path.recipient,
         amount: path.amount.toString(),
-        acceptors: path.path === 'remote-acceptor' ? path.acceptors : [active.identityKey.toLowerCase()],
+        acceptors:
+          path.path === 'remote-acceptor'
+            ? path.acceptors
+            : path.path === 'local-acceptor'
+              ? [active.identityKey.toLowerCase()]
+              : [],
         inputs: selected.map((h) => underscore(h.outpoint)),
         state: 'open',
         at: Date.now(),
@@ -838,15 +975,32 @@ export async function transferCountersignedAsset(args: {
       state.outgoing[requestId] = outgoing
       writeCountersignState(state)
 
-      const decision =
-        path.path === 'local-acceptor'
-          ? await acceptRequest(active, { tx: Transaction.fromEF(efBytes), recipients, requestId })
-          : await requestRemoteAcceptance(
-              active,
-              path.acceptors,
-              { v: 1, t: 'request', token: path.assetId, ef: Utils.toBase64(efBytes), recipients },
-              requestId,
-            )
+      let released = path.path === 'released'
+      let decision: Decision =
+        path.path === 'released'
+          ? await countersignReleased(active, Transaction.fromEF(efBytes), path.keys, deploy!, state)
+          : path.path === 'local-acceptor'
+            ? await acceptRequest(active, { tx: Transaction.fromEF(efBytes), recipients, requestId })
+            : await requestRemoteAcceptance(
+                active,
+                path.acceptors,
+                { v: 1, t: 'request', token: path.assetId, ef: Utils.toBase64(efBytes), recipients },
+                requestId,
+              )
+      // A silent or retired issuer: the beacon chain says whether the release keys are out.
+      if (
+        path.path === 'remote-acceptor' &&
+        (decision.kind === 'silent' || (decision.kind === 'refused' && decision.reason === 'not_acceptor'))
+      ) {
+        const phase = await refreshPhase(active, path.assetId).catch((err) => {
+          console.warn('[countersign] beacon chain unread', err instanceof Error ? err.message : String(err))
+          return null
+        })
+        if (phase?.phase === 'released') {
+          decision = await countersignReleased(active, Transaction.fromEF(efBytes), phase.keys, deploy!, readCountersignState())
+          released = true
+        }
+      }
       if (decision.kind === 'silent') {
         chart.send({ type: 'SILENT', error: 'acceptor-silent' })
         refuse(
@@ -861,9 +1015,9 @@ export async function transferCountersignedAsset(args: {
         chart.send({ type: 'REFUSED', error: decision.reason })
         refuse('acceptor-refused', `${ACCEPT_REFUSAL_COPY[decision.reason]} Nothing was sent.`, decision.reason)
       }
-      const filed = await completeAcceptedTransfer(active, outgoing, decision, chart)
+      const filed = await completeAcceptedTransfer(active, outgoing, decision, chart, released)
       log('transfer', startedAt)
-      return { ...filed, acceptedBy: path.path === 'local-acceptor' ? 'local' : 'remote' }
+      return { ...filed, acceptedBy: released ? 'released' : path.path === 'local-acceptor' ? 'local' : 'remote' }
     } catch (err) {
       chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
       throw err
@@ -873,19 +1027,20 @@ export async function transferCountersignedAsset(args: {
   }, undefined, { promote: false })
 }
 
-/** Register the accepted cheque, file what pays us, deliver to the recipient. */
+/** Register the countersigned transfer, file what pays us, deliver to the recipient. */
 async function completeAcceptedTransfer(
   active: ActiveWallet,
   outgoing: OutgoingRequest,
   decision: Extract<Decision, { kind: 'accepted' }>,
   chart?: { send: (event: { type: 'ACCEPTED' | 'BROADCASTED'; txid: string } | { type: 'COMMITTED' }) => void },
+  released = false,
 ): Promise<Omit<CountersignTransferResult, 'acceptedBy'>> {
   const state = readCountersignState()
   const deploys = deployMap(state)
   const request = Transaction.fromEF(Utils.toArray(outgoing.efHex, 'hex'))
   const accepted = decision.tx
   if (!acceptanceMatches(request, accepted, deploys, selfPkh(active))) {
-    refuse('invalid-acceptance', 'The issuer answered with a transaction that is not this transfer. Nothing was filed.')
+    refuse('invalid-acceptance', 'The countersigned transaction is not this transfer. Nothing was filed.')
   }
   const txid = String(accepted.id('hex')).toLowerCase()
   chart?.send({ type: 'ACCEPTED', txid })
@@ -915,7 +1070,7 @@ async function completeAcceptedTransfer(
     kind: 'event',
     sats: 0,
     method: 'countersign-transfer',
-    note: `Sent ${label} (issuer accepted)`,
+    note: `Sent ${label} (${released ? 'released asset' : 'issuer accepted'})`,
     txid,
   })
   scheduleHistoryBackupPush('countersign')
@@ -1065,6 +1220,11 @@ async function ingestTransfer(active: ActiveWallet, wire: Extract<Wire, { t: 'tr
   const txid = String(tx.id('hex')).toLowerCase()
   const held = await listCountersignedHoldings(active, wire.token)
   if (held.some((h) => h.outpoint.startsWith(txid))) return 'filed'
+  // Accept-once ends at release: the holder could countersign another spend, so only mining is final.
+  const releasedSpend =
+    tx.inputs.some((input) => unlockBranch(input.unlockingScript) === 'release') ||
+    resolved.assetIds.some((id) => state.phases[id]?.phase.phase === 'released')
+  if (releasedSpend && !(await minedYet(active, txid))) return 'retry'
   let atomic = wire.beef ? atomicBeefForSubject(Utils.toArray(wire.beef, 'base64'), txid) : undefined
   atomic ??= await atomicBeefFor(active, tx, state)
   try {
@@ -1080,7 +1240,7 @@ async function ingestTransfer(active: ActiveWallet, wire: Extract<Wire, { t: 'tr
     kind: 'event',
     sats: 0,
     method: 'countersign-receive',
-    note: `Received ${deploy.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`} (issuer accepted)`,
+    note: `Received ${deploy.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`} (${releasedSpend ? 'released asset, mined' : 'issuer accepted'})`,
     txid,
   })
   return 'filed'
@@ -1115,7 +1275,8 @@ export async function serveCountersignBox(opts?: { force?: boolean }): Promise<v
   // An account another device holds never answers or acknowledges its boxes.
   if (activeAccountSpendRefusal(active)) return
   const state = readCountersignState()
-  const busy = Object.keys(state.acceptor).length > 0 || Object.values(state.outgoing).some((r) => r.state === 'open')
+  const busy =
+    Object.values(state.acceptor).some((r) => !r.ended) || Object.values(state.outgoing).some((r) => r.state === 'open')
   const now = Date.now()
   if (!opts?.force && now - boxPolledAt < (busy ? BOX_ACTIVE_POLL_MS : BOX_IDLE_POLL_MS)) return
   boxPolledAt = now
@@ -1160,39 +1321,77 @@ export async function serveCountersignBox(opts?: { force?: boolean }): Promise<v
 
 // ── Beacon ─────────────────────────────────────────────────────────────────
 
-/** Re-spend each beacon to itself at least every half silence period. */
+/**
+ * Spend a beacon: fee coins fund it, `unlock` signs input 0 once every input
+ * is in place, and it goes through the signed-send lifecycle.
+ */
+async function spendBeacon(
+  active: ActiveWallet,
+  state: CountersignState,
+  args: {
+    beacon: string
+    parent: Transaction
+    outputs: Array<{ lockingScript: ReturnType<typeof beaconLock>; satoshis: number }>
+    signatures: number
+    unlock: (tx: Transaction) => UnlockingScript
+  },
+): Promise<{ txid: string; tx: Transaction }> {
+  const [beaconTxid, beaconVout] = args.beacon.split('_')
+  const tx = new Transaction()
+  tx.addInput({
+    sourceTransaction: args.parent,
+    sourceTXID: beaconTxid!,
+    sourceOutputIndex: Number(beaconVout),
+    unlockingScript: new UnlockingScript(),
+    sequence: 0xffffffff,
+  })
+  for (const output of args.outputs) tx.addOutput(output)
+  const coins = await fundWithFeeCoins(active, tx, state, args.signatures)
+  tx.inputs[0]!.unlockingScript = args.unlock(tx)
+  await signFeeInputs(active, tx, coins, 1)
+  if (!inputScriptValid(tx, 0)) throw new Error('The beacon spend does not verify')
+  const txid = String(tx.id('hex')).toLowerCase()
+  const atomic = await atomicBeefFor(active, tx, state)
+  rememberBeefTree(atomic, txid)
+  await relinquishFeeCoins(active, coins)
+  await active.wallet.relinquishOutput({ basket: BEACON_BASKET, output: `${beaconTxid}.${beaconVout}` }).catch(() => {})
+  const { registerSignedSend, startSignedSendPropagation } = await import('../signedSendLifecycle')
+  startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'countersign' }))
+  return { txid, tx }
+}
+
+/**
+ * Re-spend each beacon on the issuer branch at least every half silence
+ * period. An issuer whose last refresh is older than the silence period has
+ * lapsed for good and stops instead.
+ */
 async function refreshDueBeacons(active: ActiveWallet): Promise<void> {
   const state = readCountersignState()
   const due = Object.values(state.acceptor).filter((record) => {
     const deploy = state.deploys[record.assetId]
-    return deploy && Date.now() - record.beaconAt > (deploy.fields.sil * 1000) / 2
+    return deploy && !record.ended && Date.now() - record.beaconAt > (deploy.fields.sil * 1000) / 2
   })
   for (const record of due) {
     await runExclusiveSpend(async () => {
       const deploy = state.deploys[record.assetId]!
-      const [beaconTxid, beaconVout] = record.beacon.split('_')
-      const parent = await fullTx(active, beaconTxid!, state)
+      const lapsed = endedReason(record, deploy)
+      if (lapsed) {
+        const next = readCountersignState()
+        if (next.acceptor[record.assetId]) next.acceptor[record.assetId]!.ended = lapsed
+        writeCountersignState(next)
+        console.warn(`[countersign] beacon ${record.assetId.slice(0, 12)} lapsed: this issuer stops countersigning`)
+        return
+      }
+      const parent = await fullTx(active, record.beacon.slice(0, 64), state)
       if (!parent) throw new Error('The beacon body is not available')
-      const lock = beaconLock(deploy.sets.issuer)
-      const tx = new Transaction()
-      tx.addInput({ sourceTransaction: parent, sourceTXID: beaconTxid!, sourceOutputIndex: Number(beaconVout), unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
-      tx.addOutput({ lockingScript: lock, satoshis: 1 })
-      const coins = await takeFeeCoins(active, Math.ceil(((tx.toBinary().length + 76 + 148) * FEE_SATS_PER_KB) / 1000) + 1)
-      for (const coin of coins) {
-        const coinParent = await fullTx(active, coin.txid, state)
-        if (!coinParent) throw new Error('A countersign fee input has no source transaction')
-        tx.addInput({ sourceTransaction: coinParent, sourceTXID: coin.txid, sourceOutputIndex: coin.vout, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
-      }
       const root = rootKeyOf(active)
-      tx.inputs[0]!.unlockingScript = new UnlockingScript().writeOpCode(0).writeBin(signInput(tx, 0, root, COUNTERSIGN_SCOPE))
-      for (let vin = 1; vin < tx.inputs.length; vin++) {
-        const coin = coins[vin - 1]!
-        tx.inputs[vin]!.unlockingScript = await new P2PKH()
-          .unlock(root, 'all', false, coin.satoshis, new P2PKH().lock(active.address))
-          .sign(tx, vin)
-      }
-      const txid = String(tx.id('hex')).toLowerCase()
-      const atomic = await atomicBeefFor(active, tx, state)
+      const { txid, tx } = await spendBeacon(active, state, {
+        beacon: record.beacon,
+        parent,
+        outputs: [{ lockingScript: beaconLock(deploy.sets), satoshis: 1 }],
+        signatures: 1,
+        unlock: (t) => beaconUnlock([signInput(t, 0, root, COUNTERSIGN_SCOPE)], 'issuer'),
+      })
       const next = readCountersignState()
       const current = next.acceptor[record.assetId]
       if (!current) return
@@ -1200,13 +1399,146 @@ async function refreshDueBeacons(active: ActiveWallet): Promise<void> {
       current.beaconTxHex = tx.toHex()
       current.beaconAt = Date.now()
       writeCountersignState(next)
-      await relinquishFeeCoins(active, coins)
-      await active.wallet.relinquishOutput({ basket: BEACON_BASKET, output: `${beaconTxid}.${beaconVout}` }).catch(() => {})
-      const { registerSignedSend, startSignedSendPropagation } = await import('../signedSendLifecycle')
-      startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'countersign' }))
       console.info(`[countersign] beacon ${record.assetId.slice(0, 12)} refreshed → ${txid.slice(0, 12)}`)
     }, undefined, { promote: false })
   }
+}
+
+export type CountersignEndResult = {
+  assetId: string
+  txid: string
+  phase: 'ended' | 'released'
+}
+
+/** Spend `beacon` on the release branch, publishing the release keys this wallet holds. */
+async function publishRelease(
+  active: ActiveWallet,
+  state: CountersignState,
+  deploy: CountersignDeploy,
+  beacon: string,
+  parent: Transaction,
+  keys: PrivateKey[],
+): Promise<string> {
+  const { txid } = await spendBeacon(active, state, {
+    beacon,
+    parent,
+    outputs: [{ lockingScript: releaseDisclosureLock(deploy.assetId, keys), satoshis: 0 }],
+    signatures: keys.length,
+    unlock: (t) => beaconUnlock(keys.map((key) => signInput(t, 0, key, COUNTERSIGN_SCOPE)), 'release'),
+  })
+  const next = readCountersignState()
+  next.deploys[deploy.assetId] ??= toStoredDeploy(deploy)
+  const steps = next.phases[deploy.assetId]?.view.steps ?? [{ outpoint: beacon }]
+  const keysHex = keys.map((key) => key.toHex())
+  next.phases[deploy.assetId] = {
+    view: { steps, release: { txid, keys: keysHex } },
+    phase: { phase: 'released', txid, keys: keysHex },
+    checkedAt: Date.now(),
+  }
+  const record = next.acceptor[deploy.assetId]
+  if (record) record.ended = 'released'
+  writeCountersignState(next)
+  recordAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'event',
+    sats: 0,
+    method: 'countersign-release',
+    note: `Released ${deploy.fields.sym ?? deploy.fields.name ?? 'asset'}: holders move it on their own signature`,
+    txid,
+  })
+  scheduleHistoryBackupPush('countersign')
+  console.info(`[countersign] ${deploy.assetId.slice(0, 12)} released → ${txid.slice(0, 12)}`)
+  return txid
+}
+
+/**
+ * The issuer stops accepting an asset for good. When this wallet also holds
+ * the release keys it publishes them in the same step; otherwise it writes the
+ * final beacon and a retire marker for the custodians to release.
+ */
+export async function retireCountersignedAsset(args: { assetId?: unknown }): Promise<CountersignEndResult> {
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const active = requireActive()
+    const state = readCountersignState()
+    const assetId = normalizeTokenId(String(args.assetId ?? ''))
+    const record = assetId ? state.acceptor[assetId] : undefined
+    const deploy = assetId ? deployMap(state).get(assetId) : undefined
+    if (!assetId || !record || !deploy) refuse('not-issuer', 'This wallet did not issue that asset.')
+    if (record.ended) refuse('asset-ended', `This asset has already ${record.ended === 'released' ? 'been released' : record.ended}.`)
+    if (deploy.fields.col) refuse('bad-asset-args', 'A collection member retires with its collection.')
+    const parent = await fullTx(active, record.beacon.slice(0, 64), state)
+    if (!parent) throw new Error('The beacon body is not available')
+    const held = releaseKeysHeld(active, deploy.sets.release)
+    if (held) {
+      const txid = await publishRelease(active, state, deploy, record.beacon, parent, held)
+      log('retire', startedAt)
+      return { assetId, txid, phase: 'released' as const }
+    }
+    const root = rootKeyOf(active)
+    const { txid, tx } = await spendBeacon(active, state, {
+      beacon: record.beacon,
+      parent,
+      outputs: [
+        { lockingScript: beaconLock(deploy.sets), satoshis: 1 },
+        { lockingScript: retireMarkerLock(assetId), satoshis: 0 },
+      ],
+      signatures: 1,
+      unlock: (t) => beaconUnlock([signInput(t, 0, root, COUNTERSIGN_SCOPE)], 'issuer'),
+    })
+    const next = readCountersignState()
+    const current = next.acceptor[assetId]!
+    current.ended = 'retired'
+    current.beacon = `${txid}_0`
+    current.beaconTxHex = tx.toHex()
+    current.beaconAt = Date.now()
+    writeCountersignState(next)
+    recordAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'event',
+      sats: 0,
+      method: 'countersign-retire',
+      note: `Retired ${deploy.fields.sym ?? deploy.fields.name ?? 'asset'}: waiting for its custodians to release it`,
+      txid,
+    })
+    scheduleHistoryBackupPush('countersign')
+    log('retire', startedAt)
+    return { assetId, txid, phase: 'ended' as const }
+  }, undefined, { promote: false })
+}
+
+/**
+ * A custodian publishes the release keys this wallet holds for an asset whose
+ * issuer retired or lapsed. A live asset is never released, except by its own
+ * issuer, for whom releasing is retiring.
+ */
+export async function releaseCountersignedAsset(args: { assetId?: unknown }): Promise<CountersignEndResult> {
+  const active = requireActive()
+  const assetId = normalizeTokenId(String(args.assetId ?? ''))
+  if (!assetId) refuse('bad-asset-args', 'assetId must be an asset id (txid_vout).')
+  const state = readCountersignState()
+  const deploy = await deployFor(active, assetId, state)
+  if (!deploy) refuse('unknown-asset', 'This wallet has no deploy body for that asset.')
+  writeCountersignState(state)
+  const held = releaseKeysHeld(active, deploy.sets.release)
+  if (!held) refuse('not-custodian', 'This wallet holds no release key for that asset.')
+  if (state.acceptor[assetId] && !state.acceptor[assetId]!.ended) return retireCountersignedAsset({ assetId })
+  const phase = await refreshPhase(active, assetId)
+  if (!phase) refuse('phase-unknown', 'The beacon chain could not be read. Try again shortly.')
+  if (phase.phase === 'released') return { assetId, txid: phase.txid, phase: 'released' }
+  if (phase.phase === 'live') {
+    refuse('asset-live', 'The issuer is still live. Release keys are published only after it retires or its beacon lapses.')
+  }
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const current = readCountersignState()
+    const beacon = current.phases[assetId]?.view.steps.at(-1)?.outpoint
+    const parent = beacon ? await fullTx(active, beacon.slice(0, 64), current) : null
+    if (!beacon || !parent) throw new Error('The final beacon body is not available')
+    const txid = await publishRelease(active, current, deploy, beacon, parent, held)
+    log('release', startedAt)
+    return { assetId, txid, phase: 'released' as const }
+  }, undefined, { promote: false })
 }
 
 /** Assets this wallet issued or knows, with what it holds of each. */
@@ -1220,7 +1552,10 @@ export async function listCountersignedAssets(): Promise<{
     held: string
     issuer: boolean
     acceptors: string[]
+    phase: CountersignPhase['phase'] | 'unknown'
   }>
+  /** This wallet's custodian key, for an issuer that names it in a release set. */
+  releaseKey: string
 }> {
   const active = requireActive()
   const state = readCountersignState()
@@ -1237,6 +1572,12 @@ export async function listCountersignedAssets(): Promise<{
       held: (held.get(d.assetId) ?? 0n).toString(),
       issuer: Boolean(state.acceptor[d.assetId]),
       acceptors: d.sets.issuer.keys,
+      phase: state.acceptor[d.assetId]?.ended
+        ? state.acceptor[d.assetId]!.ended === 'released'
+          ? 'released'
+          : 'ended'
+        : state.phases[d.assetId]?.phase.phase ?? (state.acceptor[d.assetId] ? 'live' : 'unknown'),
     })),
+    releaseKey: ownReleaseKey(active).toPublicKey().toString(),
   }
 }

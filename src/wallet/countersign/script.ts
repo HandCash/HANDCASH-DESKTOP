@@ -12,17 +12,19 @@ import {
   Utils,
   type ScriptChunk,
 } from '@bsv/sdk'
-import { decodeBsv21Binary, encodeBsv21Binary, encodeScriptNumber } from '../token/decode162'
+import { decodeBsv21Binary, encodeBsv21Binary, encodeScriptNumber, tokenIdFromWire, tokenIdToWire } from '../token/decode162'
 
 /**
  * Countersigned assets (unpublished issuer-control draft): a BRC-162 prefix
- * followed by a clause that needs the holder's signature and an acceptor
- * quorum's. The acceptor's signature is the acceptance, so a transfer it
- * refused is not valid Bitcoin.
+ * followed by a clause that needs the holder's signature and a quorum of
+ * either the issuer set or the release set. The issuer's signature is the
+ * acceptance, so a transfer it refused is not valid Bitcoin. The release set
+ * signs nothing while the issuer is alive; once the beacon ends, its private
+ * keys are published and the asset moves on its holder's signature alone.
  */
 
 export type KeySet = { threshold: number; keys: string[] }
-export type CountersignKeySets = { issuer: KeySet; successor: KeySet }
+export type CountersignKeySets = { issuer: KeySet; release: KeySet }
 
 /** The holder signs its input and every output: ALL | ANYONECANPAY | FORKID. */
 export const HOLDER_SCOPE =
@@ -36,10 +38,10 @@ export const COUNTERSIGN_SCOPE =
 const MAX_SET = 5
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 
-export type CountersignBranch = 'issuer' | 'successor'
+export type CountersignBranch = 'issuer' | 'release'
 
 export function keySetsError(sets: CountersignKeySets): string | null {
-  for (const [name, set] of [['issuer', sets.issuer], ['successor', sets.successor]] as const) {
+  for (const [name, set] of [['issuer', sets.issuer], ['release', sets.release]] as const) {
     const n = set.keys.length
     if (!Number.isInteger(set.threshold) || set.threshold < 1 || set.threshold > n || n > MAX_SET) {
       return `${name} set must be m-of-n with 1 ≤ m ≤ n ≤ ${MAX_SET}`
@@ -47,8 +49,8 @@ export function keySetsError(sets: CountersignKeySets): string | null {
     if (!set.keys.every((key) => KEY_RE.test(key))) return `${name} keys must be compressed public keys`
     if (new Set(set.keys).size !== n) return `${name} set repeats a key`
   }
-  if (sets.successor.keys.some((key) => sets.issuer.keys.includes(key))) {
-    return 'a successor key may not also be an issuer key'
+  if (sets.release.keys.some((key) => sets.issuer.keys.includes(key))) {
+    return 'a release key may not also be an issuer key'
   }
   return null
 }
@@ -68,7 +70,7 @@ export function pubkeyHashHex(publicKeyHex: string): string {
   return Utils.toHex(Hash.hash160(Utils.toArray(publicKeyHex, 'hex')))
 }
 
-/** Holder AND (issuer m-of-n OR successor k-of-j). */
+/** Holder AND (issuer m-of-n OR release k-of-j). */
 export function countersignClause(holderPkhHex: string, sets: CountersignKeySets): Script {
   const error = keySetsError(sets)
   if (error) throw new Error(error)
@@ -83,7 +85,7 @@ export function countersignClause(holderPkhHex: string, sets: CountersignKeySets
     .writeOpCode(OP.OP_IF)
   writeMultisig(script, sets.issuer)
   script.writeOpCode(OP.OP_ELSE)
-  writeMultisig(script, sets.successor)
+  writeMultisig(script, sets.release)
   script.writeOpCode(OP.OP_ENDIF)
   return script
 }
@@ -122,11 +124,88 @@ export function countersignDeployLock(args: {
   return script
 }
 
-/** The beacon the issuer re-spends to show it is alive: `OP_m <issuer keys> OP_n OP_CHECKMULTISIG`. */
-export function beaconLock(issuer: KeySet): LockingScript {
+/** The beacon: `OP_IF <issuer m-of-n> OP_ELSE <release k-of-j> OP_ENDIF`. */
+export function beaconLock(sets: CountersignKeySets): LockingScript {
+  const script = new LockingScript().writeOpCode(OP.OP_IF)
+  writeMultisig(script, sets.issuer)
+  script.writeOpCode(OP.OP_ELSE)
+  writeMultisig(script, sets.release)
+  return script.writeOpCode(OP.OP_ENDIF)
+}
+
+/** `OP_0 <signatures> <branch>`; signatures in key order, sighash ALL|FORKID. */
+export function beaconUnlock(signatures: number[][], branch: CountersignBranch): UnlockingScript {
+  const script = new UnlockingScript().writeOpCode(OP.OP_0)
+  for (const signature of signatures) script.writeBin(signature)
+  return script.writeOpCode(branch === 'issuer' ? OP.OP_1 : OP.OP_0)
+}
+
+const RETIRE_TAG = Utils.toArray('countersign retire', 'utf8')
+const RELEASE_TAG = Utils.toArray('countersign release', 'utf8')
+
+/** `OP_FALSE OP_RETURN "countersign retire" <asset id>`, beside the final beacon. */
+export function retireMarkerLock(assetId: string): LockingScript {
+  return new LockingScript()
+    .writeOpCode(OP.OP_FALSE)
+    .writeOpCode(OP.OP_RETURN)
+    .writeBin(RETIRE_TAG)
+    .writeBin([...tokenIdToWire(assetId)])
+}
+
+/** `OP_FALSE OP_RETURN "countersign release" <asset id> <private keys>`, 32-byte big-endian scalars. */
+export function releaseDisclosureLock(assetId: string, keys: PrivateKey[]): LockingScript {
   const script = new LockingScript()
-  writeMultisig(script, issuer)
+    .writeOpCode(OP.OP_FALSE)
+    .writeOpCode(OP.OP_RETURN)
+    .writeBin(RELEASE_TAG)
+    .writeBin([...tokenIdToWire(assetId)])
+  for (const key of keys) script.writeBin(key.toArray('be', 32))
   return script
+}
+
+export type BeaconMarker =
+  | { kind: 'retire'; assetId: string }
+  | { kind: 'release'; assetId: string; keys: string[] }
+
+/** A retire or release marker; a parsed script folds everything after OP_RETURN into one chunk. */
+export function readBeaconMarker(script: Script | string): BeaconMarker | null {
+  let chunks: ScriptChunk[]
+  try {
+    const hex = typeof script === 'string' ? script : script.toHex()
+    const top = Script.fromHex(hex).chunks
+    if (top[0]?.op !== OP.OP_FALSE || top[1]?.op !== OP.OP_RETURN || !top[1].data?.length) return null
+    chunks = Script.fromBinary(top[1].data).chunks
+  } catch {
+    return null
+  }
+  const tag = Utils.toHex(chunks[0]?.data ?? [])
+  const assetId = chunks[1]?.data?.length === 36 ? tokenIdFromWire(chunks[1].data) : null
+  if (!assetId) return null
+  if (tag === Utils.toHex(RETIRE_TAG)) return chunks.length === 2 ? { kind: 'retire', assetId } : null
+  if (tag !== Utils.toHex(RELEASE_TAG)) return null
+  const keys = chunks.slice(2).map((c) => (c.data?.length === 32 ? Utils.toHex(c.data) : ''))
+  return keys.length > 0 && keys.every(Boolean) ? { kind: 'release', assetId, keys } : null
+}
+
+/**
+ * The disclosed keys of a release marker, in release-set order, when they are
+ * at least `k` distinct keys of that set; anything else is no release.
+ */
+export function disclosedReleaseKeys(keysHex: string[], release: KeySet): PrivateKey[] | null {
+  const byPub = new Map<string, PrivateKey>()
+  for (const hex of keysHex) {
+    let key: PrivateKey
+    try {
+      key = PrivateKey.fromHex(hex)
+    } catch {
+      return null
+    }
+    const pub = key.toPublicKey().toString()
+    if (!release.keys.includes(pub) || byPub.has(pub)) return null
+    byPub.set(pub, key)
+  }
+  if (byPub.size < release.threshold) return null
+  return release.keys.flatMap((pub) => (byPub.has(pub) ? [byPub.get(pub)!] : [])).slice(0, release.threshold)
 }
 
 /** An item's content, fixed by its asset id: `OP_FALSE OP_RETURN <content>`. */
@@ -174,11 +253,11 @@ export function readCountersignClause(
   }
   const issuer = readMultisig(chunks, 6)
   if (!issuer || chunks[issuer.next]?.op !== OP.OP_ELSE) return null
-  const successor = readMultisig(chunks, issuer.next + 1)
-  if (!successor || chunks[successor.next]?.op !== OP.OP_ENDIF || chunks.length !== successor.next + 1) {
+  const release = readMultisig(chunks, issuer.next + 1)
+  if (!release || chunks[release.next]?.op !== OP.OP_ENDIF || chunks.length !== release.next + 1) {
     return null
   }
-  const sets = { issuer: issuer.set, successor: successor.set }
+  const sets = { issuer: issuer.set, release: release.set }
   if (keySetsError(sets)) return null
   const holderPkhHex = Utils.toHex(chunks[2]!.data!)
   // Round-trip: only the canonical encoding counts.
@@ -220,7 +299,7 @@ export function readCountersigned(script: Script | string): CountersignedOutput 
 export function sameKeySets(a: CountersignKeySets, b: CountersignKeySets): boolean {
   const same = (x: KeySet, y: KeySet) =>
     x.threshold === y.threshold && x.keys.length === y.keys.length && x.keys.every((k, i) => k === y.keys[i])
-  return same(a.issuer, b.issuer) && same(a.successor, b.successor)
+  return same(a.issuer, b.issuer) && same(a.release, b.release)
 }
 
 export function sourceOutputOf(
@@ -278,6 +357,15 @@ export function countersignedUnlock(args: {
   for (const signature of args.countersignatures) script.writeBin(signature)
   script.writeOpCode(args.branch === 'issuer' ? OP.OP_1 : OP.OP_0)
   return script.writeBin(args.holderSignature).writeBin(args.holderPublicKey)
+}
+
+/** The branch a countersigned unlock took, read from `… <branch> <holder sig> <holder pubkey>`. */
+export function unlockBranch(unlocking: UnlockingScript | undefined): CountersignBranch | null {
+  const chunks = unlocking?.chunks ?? []
+  if (chunks.length < 4 || chunks[0]?.op !== OP.OP_0) return null
+  const branch = chunks[chunks.length - 3]
+  if (branch?.data?.length) return null
+  return branch?.op === OP.OP_1 ? 'issuer' : branch?.op === OP.OP_0 ? 'release' : null
 }
 
 /** The holder's half of an unlocking script before acceptance: `<sig> <pubkey>`. */
