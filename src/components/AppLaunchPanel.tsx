@@ -2,12 +2,11 @@ import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
 import {
   appBrowserSurfaceLabel,
   chooseAppBrowserSurface,
-  inAppBrowserNeedsLab,
+  preferredAppSurface,
 } from '../wallet/appBrowserSurface'
 import { clearNavChild, openEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
-import { useLab } from '../hooks/useLab'
 import { AppAvatar } from './AppAvatar'
 import { AppsIcon, CloseIcon, LaunchIcon } from './icons'
 import { WalletRequestTemplate } from './WalletRequestTemplate'
@@ -21,10 +20,9 @@ type Props = {
 export function AppLaunchPanel({ origin, name, url }: Props) {
   const target = decideAppBrowserTarget(url)
   const safeUrl = target.kind === 'open' ? target.url : null
-  const inAppBrowser = useLab('inAppBrowser')
-  const surface = chooseAppBrowserSurface(window.handcash, inAppBrowser)
+  const surface = chooseAppBrowserSurface(window.handcash)
   const inAppAvailable = surface.surface !== 'external'
-  const inAppInLabs = !inAppAvailable && inAppBrowserNeedsLab(window.handcash)
+  const inAppFirst = preferredAppSurface(window.handcash).surface === 'embedded'
 
   const openExternal = async () => {
     if (!safeUrl) return
@@ -60,7 +58,6 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     onClick: openInApp,
     disabled: !safeUrl || !inAppAvailable,
     icon: <AppsIcon size={18} />,
-    tone: 'secondary' as const,
   }
 
   const browserAction = {
@@ -71,16 +68,15 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     icon: <LaunchIcon size={18} />,
   }
 
-  // System browser is the default return path after connect. In-app only when
-  // the user explicitly picks it here.
+  const [primary, secondary] = inAppFirst
+    ? [inAppAction, browserAction]
+    : [browserAction, inAppAvailable ? inAppAction : null]
+
   const actions = {
     ariaLabel: `Launch ${name}`,
     tertiary: cancelAction,
-    ...(inAppAvailable ? { secondary: inAppAction } : {}),
-    primary: {
-      ...browserAction,
-      tone: 'primary' as const,
-    },
+    ...(secondary ? { secondary: { ...secondary, tone: 'secondary' as const } } : {}),
+    primary: { ...primary, tone: 'primary' as const },
   }
 
   return (
@@ -99,10 +95,10 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       </div>
 
       <p className="permission-note">
-        {inAppAvailable
-          ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
-          : inAppInLabs
-            ? 'Opens in your system browser with the same connected wallet permissions. The in-app browser is in Settings → Labs.'
+        {inAppFirst
+          ? 'Opens in a tab inside HandCash, where approvals answer at once. Chrome works too, with a switch back here for every approval.'
+          : inAppAvailable
+            ? 'Opens in your system browser by default. Use in-app only when you want the session inside HandCash. Same wallet permissions either way.'
             : 'Opens in your system browser with the same connected wallet permissions.'}
       </p>
     </WalletRequestTemplate>

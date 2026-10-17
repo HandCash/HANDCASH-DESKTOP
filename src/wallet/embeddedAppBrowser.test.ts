@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setLabEnabled } from './labs'
 import {
   clearNavChild,
   closeAllEmbeddedAppBrowsers,
@@ -16,33 +15,31 @@ import {
 afterEach(() => {
   closeAllEmbeddedAppBrowsers()
   setNavSection('activity')
-  setLabEnabled('inAppBrowser', false)
   vi.unstubAllGlobals()
 })
 
-describe('mobile in-app browser behind Labs', () => {
-  beforeEach(() => {
+describe('app tabs per shell', () => {
+  it('opens a phone tab with no lab to turn on', () => {
     vi.stubGlobal('window', { handcash: { appBrowserGuest: { create: vi.fn() } } })
-  })
-
-  it('refuses to open a tab while the lab is off', () => {
     openEmbeddedAppBrowser('https://app.example', 'https://app.example/play')
-    expect(getEmbeddedAppBrowserTabs()).toEqual([])
-    expect(getNavState().child).toBeNull()
+    expect(getEmbeddedAppBrowserTabs()).toEqual([
+      { origin: 'https://app.example', url: 'https://app.example/play' },
+    ])
   })
 
-  it('closes every tab when the lab is turned off', () => {
-    setLabEnabled('inAppBrowser', true)
-    openEmbeddedAppBrowser('https://a.example', 'https://a.example/')
-    openEmbeddedAppBrowser('https://b.example', 'https://b.example/')
-    expect(getEmbeddedAppBrowserTabs()).toHaveLength(2)
-    setLabEnabled('inAppBrowser', false)
+  it('refuses a tab on a shell that hosts none (iPhone)', () => {
+    vi.stubGlobal('window', { handcash: {} })
+    openEmbeddedAppBrowser('https://app.example', 'https://app.example/play')
     expect(getEmbeddedAppBrowserTabs()).toEqual([])
     expect(getNavState().child).toBeNull()
   })
 })
 
 describe('embedded app browser session', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', { handcash: { embeddedAppBrowser: true } })
+  })
+
   it('keeps the session parked when navigating away from Apps', () => {
     openEmbeddedAppBrowser('https://pixelwar.click', 'https://pixelwar.click/')
     expect(getEmbeddedAppBrowser()).toEqual({

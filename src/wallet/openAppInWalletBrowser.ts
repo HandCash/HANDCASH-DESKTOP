@@ -1,5 +1,5 @@
 import { decideAppBrowserTarget } from './appBrowserUrl'
-import { chooseAppBrowserSurface } from './appBrowserSurface'
+import { chooseAppBrowserSurface, preferredAppSurface } from './appBrowserSurface'
 import { openEmbeddedAppBrowser } from './navStore'
 
 async function openSystemBrowser(url: string): Promise<boolean> {
@@ -20,22 +20,23 @@ async function openSystemBrowser(url: string): Promise<boolean> {
 }
 
 /**
- * Open a connected-app URL.
- *
- * Default is the **system browser** so connect / launch returns the user to
- * Chrome (or their default). Pass `preferInApp: true` only when the user
- * explicitly chose the in-app browser.
+ * Open a connected-app URL on the shell's preferred surface
+ * (`preferredAppSurface`): a tab on a phone, the system browser on Desktop.
+ * `surface` is the user's explicit pick of the other one.
  */
 export async function openAppInWalletBrowser(args: {
   origin: string
   url: string
-  /** Only when the user explicitly asked for the in-app browser. */
-  preferInApp?: boolean
+  surface?: 'in-app' | 'browser'
 }): Promise<'embedded' | 'external' | 'unavailable'> {
   const target = decideAppBrowserTarget(args.url)
   if (target.kind !== 'open') return 'unavailable'
 
-  if (args.preferInApp && chooseAppBrowserSurface(window.handcash).surface === 'embedded') {
+  const inApp =
+    args.surface === 'in-app'
+      ? chooseAppBrowserSurface(window.handcash).surface === 'embedded'
+      : args.surface !== 'browser' && preferredAppSurface(window.handcash).surface === 'embedded'
+  if (inApp) {
     openEmbeddedAppBrowser(args.origin, target.url)
     return 'embedded'
   }
@@ -45,8 +46,12 @@ export async function openAppInWalletBrowser(args: {
 }
 
 /** Fire-and-forget launch used after connect / Visit site / launch button. */
-export function launchConnectedApp(origin: string, url?: string | null): void {
+export function launchConnectedApp(
+  origin: string,
+  url?: string | null,
+  surface?: 'in-app' | 'browser',
+): void {
   const targetUrl = url?.trim() || null
   if (!targetUrl) return
-  void openAppInWalletBrowser({ origin, url: targetUrl })
+  void openAppInWalletBrowser({ origin, url: targetUrl, surface })
 }

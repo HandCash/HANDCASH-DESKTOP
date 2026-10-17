@@ -7,12 +7,15 @@ export type GuestEvent =
   | { type: 'loaded'; history: GuestHistory }
   | { type: 'navigated'; url: string; history: GuestHistory }
   | { type: 'failed'; description: string }
+  /** 0–100; only guests that can measure it send this. */
+  | { type: 'progress'; value: number }
 
 /** What draws an app tab's page. The panel's toolbar drives it on every shell. */
 export type AppBrowserGuest = {
   goBack(): void
   goForward(): void
   reload(): void
+  stop(): void
   /** JPEG/PNG data URL for the tab switcher, or null. */
   capture(width: number): Promise<string | null>
   /** Keep the page off screen while the panel shows its own failure card. */
@@ -46,6 +49,7 @@ type WebviewElement = HTMLElement & {
   goBack: () => void
   goForward: () => void
   reload: () => void
+  stop: () => void
   capturePage: () => Promise<CapturedImage>
 }
 
@@ -95,6 +99,7 @@ function createWebviewGuest({ host, url, emit }: GuestArgs): AppBrowserGuest {
     goBack: () => view.goBack(),
     goForward: () => view.goForward(),
     reload: () => view.reload(),
+    stop: () => view.stop(),
     capture: (width) =>
       view
         .capturePage()
@@ -197,6 +202,9 @@ function createNativeGuest(
       case 'failed':
         emit({ type: 'failed', description: event.description || 'This app could not be loaded.' })
         return
+      case 'progress':
+        emit({ type: 'progress', value: event.progress })
+        return
     }
   })
 
@@ -215,7 +223,7 @@ function createNativeGuest(
     },
   )
 
-  const navigate = (action: 'back' | 'forward' | 'reload') => {
+  const navigate = (action: 'back' | 'forward' | 'reload' | 'stop') => {
     void bridge.navigate({ id, action }).catch(() => undefined)
   }
 
@@ -223,6 +231,7 @@ function createNativeGuest(
     goBack: () => navigate('back'),
     goForward: () => navigate('forward'),
     reload: () => navigate('reload'),
+    stop: () => navigate('stop'),
     capture: (width) =>
       bridge.capture({ id, width }).then(
         (result) => result.dataUrl,

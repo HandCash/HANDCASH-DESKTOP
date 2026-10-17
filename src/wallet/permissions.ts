@@ -240,8 +240,11 @@ function pumpQueue(): void {
   current = queue.shift() ?? null
   notify()
   syncPermissionSpendPriority()
+  const raisedFor = current?.request.id
+  // A retry after the prompt is answered would pull the wallet back over the
+  // app that `releasePromptFocus` just returned to.
   const focus = () => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && current?.request.id === raisedFor) {
       void window.handcash?.focusWindow?.()
     }
   }

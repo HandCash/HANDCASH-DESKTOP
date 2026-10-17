@@ -93,11 +93,13 @@ type AppBrowserGuestEvent =
   | { id: string; type: 'loaded'; url: string; canGoBack: boolean; canGoForward: boolean }
   | { id: string; type: 'navigated'; url: string; canGoBack: boolean; canGoForward: boolean }
   | { id: string; type: 'failed'; url: string; description: string }
+  /** 0–100 while the main document loads. */
+  | { id: string; type: 'progress'; progress: number }
 
 interface AppBrowserGuestBridge {
   create(options: { id: string; url: string } & AppBrowserGuestBounds): Promise<void>
   setBounds(options: { id: string } & AppBrowserGuestBounds): Promise<void>
-  navigate(options: { id: string; action: 'back' | 'forward' | 'reload' }): Promise<void>
+  navigate(options: { id: string; action: 'back' | 'forward' | 'reload' | 'stop' }): Promise<void>
   /** JPEG data URL of the page scaled to `width`, or null when nothing is drawn. */
   capture(options: { id: string; width: number }): Promise<{ dataUrl: string | null }>
   destroy(options: { id: string }): Promise<void>

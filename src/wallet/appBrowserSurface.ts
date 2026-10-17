@@ -1,5 +1,3 @@
-import { isLabEnabled } from './labs'
-
 /**
  * Which in-app surface a connected app opens on. Both shells show the same
  * browser panel (toolbar, tabs, previews); only the guest that draws the page
@@ -8,8 +6,10 @@ import { isLabEnabled } from './labs'
  * Desktop draws it with an Electron `<webview>`. Android has no such element —
  * `createElement('webview')` yields an inert node that never loads — so the
  * mobile shell lays a native WebView over the panel's content area through
- * `appBrowserGuest`. Neither guest carries a wallet interface: the page reaches
- * the wallet over the local BRC-100 bridge, as it does from Chrome.
+ * `appBrowserGuest`. Neither guest carries a wallet interface: Desktop's page
+ * reaches the wallet over the local BRC-100 bridge as it does from Chrome, and
+ * Android's carries the same requests over a WebView message channel that
+ * names the frame origin.
  *
  * The capability cannot be sniffed from the DOM (Electron upgrades the element
  * only once attached), so each shell declares what it hosts.
@@ -34,30 +34,30 @@ function hostsNativeGuest(caps: AppBrowserCapabilities | undefined): boolean {
   return typeof guest === 'object' && guest !== null && typeof guest.create === 'function'
 }
 
-/**
- * The native guest is still being proven on phones, so it stays behind
- * Settings → Labs → In-app browser. Desktop's `<webview>` is never gated.
- */
-export function inAppBrowserNeedsLab(
-  caps: AppBrowserCapabilities | undefined = globalCaps(),
-): boolean {
-  return !caps?.embeddedAppBrowser && hostsNativeGuest(caps)
-}
-
 export function chooseAppBrowserSurface(
   caps: AppBrowserCapabilities | undefined = globalCaps(),
-  nativeLabEnabled: boolean = isLabEnabled('inAppBrowser'),
 ): AppBrowserSurface {
   if (caps?.embeddedAppBrowser) return { surface: 'embedded', host: 'webview' }
-  if (hostsNativeGuest(caps) && nativeLabEnabled) return { surface: 'embedded', host: 'native' }
+  if (hostsNativeGuest(caps)) return { surface: 'embedded', host: 'native' }
   return { surface: 'external' }
 }
 
-/** Opening an in-app tab is refused only where the lab gates it and is off. */
-export function inAppBrowserRefused(
+/**
+ * Where a connected app opens unless the user picks the other surface.
+ *
+ * A phone keeps it in the wallet. From Chrome every request waits on a
+ * wallet the OS has throttled in the background, and every prompt is an app
+ * switch the OS may refuse to make; a tab has neither. Desktop answers Chrome
+ * over its bridge as fast as a tab, and the system browser is where the
+ * user's sessions already live.
+ */
+export function preferredAppSurface(
   caps: AppBrowserCapabilities | undefined = globalCaps(),
-): boolean {
-  return inAppBrowserNeedsLab(caps) && !isLabEnabled('inAppBrowser')
+): AppBrowserSurface {
+  const surface = chooseAppBrowserSurface(caps)
+  return surface.surface === 'embedded' && surface.host === 'native'
+    ? surface
+    : { surface: 'external' }
 }
 
 function globalCaps(): AppBrowserCapabilities | undefined {

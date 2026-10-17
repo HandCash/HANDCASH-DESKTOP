@@ -1,6 +1,5 @@
 import { Switch } from '@aeon-ui/ui'
 import { useLab } from '../../hooks/useLab'
-import { inAppBrowserNeedsLab } from '../../wallet/appBrowserSurface'
 import { LAB_FEATURES, setLabEnabled, type LabFeature } from '../../wallet/labs'
 import { playWalletSound } from '../../wallet/soundService'
 import { SettingsControlRow } from './SettingsControlRow'
@@ -23,11 +22,6 @@ function LabRow({ feature }: { feature: LabFeature }) {
   )
 }
 
-/** Desktop's `<webview>` browser is not experimental, so it has no lab there. */
-function appliesHere(feature: LabFeature): boolean {
-  return feature.id !== 'inAppBrowser' || inAppBrowserNeedsLab()
-}
-
 /** Settings → Labs. Every feature starts off on this device. */
 export function LabsPanel() {
   return (
@@ -39,7 +33,7 @@ export function LabsPanel() {
         Features still being finished. They are off until you turn them on, and only on this device.
       </p>
       <ul className="settings-list">
-        {LAB_FEATURES.filter(appliesHere).map((feature) => (
+        {LAB_FEATURES.map((feature) => (
           <LabRow key={feature.id} feature={feature} />
         ))}
       </ul>

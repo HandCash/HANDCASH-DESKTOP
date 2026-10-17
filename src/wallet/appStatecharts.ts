@@ -778,6 +778,11 @@ const CONNECT_PERMISSION = `stateDiagram-v2
   loading : Loading
   pending : Pending
   committing : Decision locked
+  note right of idle
+    Queue empty and the prompt raised the wallet
+    over another app: releasePromptFocus hands it back
+    (macOS app.hide, Android moveTaskToBack)
+  end note
 `
 
 const ACTION_PERMISSION = `stateDiagram-v2
@@ -792,6 +797,31 @@ const ACTION_PERMISSION = `stateDiagram-v2
   loading : Loading
   pending : Pending
   committing : Decision locked
+  note right of idle
+    Queue empty and the prompt raised the wallet
+    over another app: releasePromptFocus hands it back
+    (macOS app.hide, Android moveTaskToBack)
+  end note
+`
+
+const APP_BROWSER_PAGE = `stateDiagram-v2
+  direction LR
+  [*] --> loading
+  loading --> ready : LOADED
+  loading --> ready : STOP / stop
+  loading --> failed : FAILED
+  ready --> loading : RELOAD / reload
+  ready --> loading : LOADING
+  ready --> failed : FAILED
+  failed --> loading : RETRY / reload
+  failed --> loading : RELOAD / reload
+  loading : Loading (progress bar)
+  ready : Ready
+  failed : Failed (Try again / Open in browser)
+  note right of ready
+    Location: app | insecure (http loopback)
+    | elsewhere (left the app's host)
+  end note
 `
 
 const ACTIVITY = `stateDiagram-v2
@@ -1740,6 +1770,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Connect',
     caption: 'connectPermission — BRC-100 app connect prompt',
     source: CONNECT_PERMISSION,
+  },
+  {
+    id: 'appBrowserPage',
+    label: 'App tab',
+    caption: 'appBrowserPage — in-app browser tab page lifecycle',
+    source: APP_BROWSER_PAGE,
   },
   {
     id: 'actionPermission',

@@ -1,8 +1,7 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
 import { isCompactShell } from './isCompactShell'
-import { subscribeLabs } from './labs'
-import { inAppBrowserNeedsLab, inAppBrowserRefused } from './appBrowserSurface'
+import { chooseAppBrowserSurface } from './appBrowserSurface'
 
 export type NavSection =
   | 'activity'
@@ -185,12 +184,6 @@ export function closeAllEmbeddedAppBrowsers() {
   }
 }
 
-// Where the lab gates the browser, turning it off closes every tab so parked
-// guests do not keep app sessions alive.
-subscribeLabs((labs) => {
-  if (!labs.inAppBrowser && inAppBrowserNeedsLab()) closeAllEmbeddedAppBrowsers()
-})
-
 /** Bring a parked browser tab back to the Apps foreground. */
 export function focusEmbeddedAppBrowser(origin = activeEmbeddedBrowserOrigin ?? undefined) {
   const tab = embeddedAppBrowsers.find((candidate) => candidate.origin === origin)
@@ -212,8 +205,10 @@ export function setNavSection(section: NavSection) {
 }
 
 export function openNavChild(section: NavSection, child: NavChild) {
-  if (child.type === 'app-browser' && inAppBrowserRefused()) {
-    console.warn(`[nav] refused in-app browser for ${child.origin} — Labs › In-app browser is off`)
+  // iPhone (and a plain web build) has no guest; a tab there would only ever
+  // show its failure card.
+  if (child.type === 'app-browser' && chooseAppBrowserSurface().surface === 'external') {
+    console.warn(`[nav] refused in-app browser for ${child.origin} — this shell hosts no app tabs`)
     return
   }
   if (section !== 'settings' || child.type !== 'setting') {

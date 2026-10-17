@@ -173,7 +173,7 @@ export function PermissionRequestPanel({
                 className="link-btn"
                 onClick={() => {
                   playWalletSound('soft')
-                  launchConnectedApp(pending.origin, home)
+                  launchConnectedApp(pending.origin, home, 'browser')
                 }}
               >
                 Visit site

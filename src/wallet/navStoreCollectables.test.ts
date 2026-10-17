@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   closeAllEmbeddedAppBrowsers,
   getNavState,
@@ -11,6 +11,7 @@ import {
 afterEach(() => {
   closeAllEmbeddedAppBrowsers()
   setNavSection('activity')
+  vi.unstubAllGlobals()
 })
 
 describe('collectable batch navigation', () => {
@@ -31,6 +32,7 @@ describe('collectable batch navigation', () => {
   })
 
   it('opens an embedded app browser in the Apps section', () => {
+    vi.stubGlobal('window', { handcash: { embeddedAppBrowser: true } })
     openEmbeddedAppBrowser('https://handcash.io', 'https://handcash.io/apps')
     expect(getNavState()).toEqual({
       section: 'apps',

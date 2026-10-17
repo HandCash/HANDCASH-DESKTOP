@@ -15546,13 +15546,36 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 }
 
 .app-browser-location strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--hc-text);
   font-size: 0.78rem;
 }
 
-.app-browser-location span {
+.app-browser-location strong > svg {
+  flex: 0 0 auto;
+  color: var(--hc-muted);
+}
+
+.app-browser-location > span {
   color: var(--hc-muted);
   font-size: 0.66rem;
+}
+
+[data-aeon-part='location'][data-aeon-state='insecure'] strong > svg,
+[data-aeon-part='location'][data-aeon-state='insecure'] > span,
+[data-aeon-part='location'][data-aeon-state='elsewhere'] strong > svg,
+[data-aeon-part='location'][data-aeon-state='elsewhere'] > span {
+  color: var(--hc-warn);
+}
+
+.app-browser-stage {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .app-browser-content {
@@ -15569,9 +15592,9 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   height: 100%;
 }
 
-.app-browser-failure {
+[data-aeon-scope='app-browser'] [data-aeon-part='notice'] {
   position: absolute;
-  inset: 45px 0 0;
+  inset: 0;
   display: grid;
   place-content: center;
   justify-items: center;
@@ -15581,26 +15604,30 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   background: var(--hc-surface);
 }
 
-.app-browser-failure > span {
+[data-aeon-scope='app-browser'] [data-aeon-part='notice'] > span {
   max-width: 46ch;
   color: var(--hc-muted);
 }
 
-.app-browser-loading {
-  position: absolute;
-  top: 45px;
-  left: 0;
-  width: 35%;
-  height: 2px;
-  background: var(--hc-accent);
-  animation: app-browser-loading 900ms ease-in-out infinite alternate;
+[data-aeon-scope='app-browser'] [data-aeon-part='notice-actions'] {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 
-.app-browser-unavailable {
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 12px;
+[data-aeon-scope='app-browser'] [data-aeon-part='progress'] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  background: var(--hc-accent);
+  transition: width 200ms ease-out;
+}
+
+[data-aeon-scope='app-browser'] [data-aeon-part='progress'][data-aeon-state='indeterminate'] {
+  width: 35%;
+  animation: app-browser-loading 900ms ease-in-out infinite alternate;
 }
 
 .app-browser-tab-switcher {

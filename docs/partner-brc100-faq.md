@@ -16,6 +16,14 @@
 
 Do **not** hard-require HTTPS for HandCash Mobile. Dial the IPv4 loopback HTTP port.
 
+## Chrome or the HandCash tab on a phone?
+
+HandCash Mobile opens connected apps in a tab inside the wallet by default. Keep calling `http://127.0.0.1:3321` exactly as you would from Chrome. In a tab, the call never reaches a socket: the tab hands it to the wallet over a WebView message channel, and the WebView, not your page, names your origin. There is no app switch and no background wallet to wake.
+
+From Chrome the socket still works, with two costs. Android throttles the wallet while Chrome is in front, and every approval switches to HandCash. Once nothing is left to approve, HandCash steps back and Chrome returns with your page as it was, so the request you are awaiting completes there. A grant made in a HandCash tab is honored only in a tab (`ORIGIN_BOUND_IN_APP` on the socket).
+
+iPhone has no route yet. iOS suspends a backgrounded app within seconds, so Safari cannot reach a wallet server on the phone.
+
 ## Why do we see “insufficient funds” while the wallet balance looks funded?
 
 Displayed balance credits **unconfirmed change** from the user’s own recent sends (and internalized receives). `createAction` only selects toolbox rows with `spendable: true`.

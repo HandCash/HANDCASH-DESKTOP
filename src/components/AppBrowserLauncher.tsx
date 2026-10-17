@@ -5,7 +5,6 @@ import { appBrowserMachine, type AppBrowserOpener } from '../machines/appBrowser
 import { chooseAppBrowserSurface } from '../wallet/appBrowserSurface'
 import { openEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { useLab } from '../hooks/useLab'
 
 const openTab: AppBrowserOpener = async (url) => {
   openEmbeddedAppBrowser(new URL(url).origin, url)
@@ -18,8 +17,7 @@ const openTab: AppBrowserOpener = async (url) => {
  * renders only where the native guest hosts tabs.
  */
 export function AppBrowserLauncher() {
-  const inAppBrowser = useLab('inAppBrowser')
-  const surface = chooseAppBrowserSurface(window.handcash, inAppBrowser)
+  const surface = chooseAppBrowserSurface(window.handcash)
   if (surface.surface !== 'embedded' || surface.host !== 'native') return null
   return <Launcher />
 }

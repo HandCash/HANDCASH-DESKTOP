@@ -22,29 +22,29 @@ describe('labs', () => {
   })
 
   it('persists a feature turned on and forgets it when turned off', () => {
-    setLabEnabled('inAppBrowser', true)
-    expect(isLabEnabled('inAppBrowser')).toBe(true)
-    expect(JSON.parse(durableGetItem(KEY) ?? '{}')).toEqual({ inAppBrowser: true })
-    setLabEnabled('inAppBrowser', false)
-    expect(isLabEnabled('inAppBrowser')).toBe(false)
+    setLabEnabled('localHandCashHosts', true)
+    expect(isLabEnabled('localHandCashHosts')).toBe(true)
+    expect(JSON.parse(durableGetItem(KEY) ?? '{}')).toEqual({ localHandCashHosts: true })
+    setLabEnabled('localHandCashHosts', false)
+    expect(isLabEnabled('localHandCashHosts')).toBe(false)
     expect(JSON.parse(durableGetItem(KEY) ?? '{}')).toEqual({})
   })
 
   it('reads anything but a literal true as off', () => {
-    durableSetItem(KEY, JSON.stringify({ inAppBrowser: 'yes', localHandCashHosts: 1 }))
-    expect(isLabEnabled('inAppBrowser')).toBe(false)
+    durableSetItem(KEY, JSON.stringify({ localHandCashHosts: 'yes' }))
+    expect(isLabEnabled('localHandCashHosts')).toBe(false)
     expect(isLabEnabled('localHandCashHosts')).toBe(false)
     durableSetItem(KEY, 'not json')
-    expect(isLabEnabled('inAppBrowser')).toBe(false)
+    expect(isLabEnabled('localHandCashHosts')).toBe(false)
   })
 
   it('tells subscribers the new state', () => {
     const seen: unknown[] = []
     const stop = subscribeLabs((state) => seen.push(state))
-    setLabEnabled('inAppBrowser', true)
+    setLabEnabled('localHandCashHosts', true)
     stop()
-    setLabEnabled('inAppBrowser', false)
-    expect(seen).toEqual([{ inAppBrowser: true }])
+    setLabEnabled('localHandCashHosts', false)
+    expect(seen).toEqual([{ localHandCashHosts: true }])
   })
 
   it('trusts localhost in a shipped build only when the user opts in', () => {

@@ -6,7 +6,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
  * turns them on on this device. Unknown or unreadable state reads as off, and
  * a wallet wipe clears the record, so every flag returns to off.
  */
-export type LabFeatureId = 'inAppBrowser' | 'localHandCashHosts'
+export type LabFeatureId = 'localHandCashHosts'
 
 export type LabFeature = {
   id: LabFeatureId
@@ -15,12 +15,6 @@ export type LabFeature = {
 }
 
 export const LAB_FEATURES: readonly LabFeature[] = [
-  {
-    id: 'inAppBrowser',
-    label: 'In-app browser',
-    description:
-      'Open connected apps in a tab inside HandCash on this phone, the same browser Desktop uses. Apps still ask before anything moves.',
-  },
   {
     id: 'localHandCashHosts',
     label: 'Local HandCash hosts',
@@ -56,7 +50,7 @@ export function isLabEnabled(id: LabFeatureId): boolean {
 }
 
 export function setLabEnabled(id: LabFeatureId, enabled: boolean): void {
-  const next = { ...read(), [id]: enabled }
+  const next: LabState = { ...read(), [id]: enabled }
   if (!enabled) delete next[id]
   durableSetItem(KEY, JSON.stringify(next))
   console.info(`[labs] ${id} ${enabled ? 'on' : 'off'}`)

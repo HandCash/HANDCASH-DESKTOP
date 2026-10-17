@@ -9,6 +9,7 @@ import { countersignMachine } from './countersignMachine'
 import { marketPurchaseMachine } from './marketPurchaseMachine'
 import { marketSellerSettlementMachine } from './marketSellerSettlementMachine'
 import { appBrowserMachine } from './appBrowserMachine'
+import { appBrowserPageMachine } from './appBrowserPageMachine'
 import { assetBurnUiMachine } from './assetBurnUiMachine'
 import { deviceBackupMachine } from './deviceBackupMachine'
 import { fungibleDetailsMachine } from './fungibleDetailsMachine'
@@ -56,6 +57,7 @@ export const machineManifest = Object.freeze({
   marketPurchase: marketPurchaseMachine,
   marketSellerSettlement: marketSellerSettlementMachine,
   appBrowser: appBrowserMachine,
+  appBrowserPage: appBrowserPageMachine,
   assetBurnUi: assetBurnUiMachine,
   deviceBackup: deviceBackupMachine,
   fungibleDetails: fungibleDetailsMachine,
