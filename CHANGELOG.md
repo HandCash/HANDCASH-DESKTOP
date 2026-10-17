@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.572] - 2026-10-17
+
+### Fixed
+- **Installers publish again.** One collectables test looped until the test worker ran out of memory, so 1.3.569, 1.3.570 and 1.3.571 never uploaded installers. This build also carries their fixes.
+- **A wallet opens the database that holds its history.** Some builds kept every account in the shared database, and the wallet opened an empty per-account one and showed a zero balance. The wallet now picks the database holding more of the account's transactions, merges the other into it once, and remembers the choice.
+- **P2P-FT tokens get the 1Sat permission model.** Apps read tokens through `p p2pft all|token|id` and spend them with `p p2pft input id <key>` labels.
+- **BRC-162 deploys keep the issuer's supply in custody.** The issuer stamp rides a separate zero-value output instead of following the owner lock.
+
 ## [1.3.571] - 2026-10-15
 
 ### Fixed
