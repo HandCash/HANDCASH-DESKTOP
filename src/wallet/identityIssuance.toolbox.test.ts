@@ -500,7 +500,11 @@ describe('identity issuance against a real toolbox wallet', () => {
     const anchorTxid = enriched.inputs![0]!.outpoint.split('.')[0]!
     expect(tx.inputs[0]!.sourceTXID).toBe(anchorTxid)
     expect(beef.findTxid(anchorTxid)?.tx).toBeTruthy()
-    for (const vout of [0, 1]) {
+    // The BRC-162 deploy stays plain custody; its stamp is the trailing output.
+    expect(tx.outputs).toHaveLength(4)
+    expect(tx.outputs[2]!.satoshis).toBe(0)
+    expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(false)
+    for (const vout of [1, 2]) {
       expect(verifySigmaIssuer(tx, vout, h.active.identityKey)).toBe(true)
       expect(verifySigmaIssuer(tx, vout, signingKey(h))).toBe(false)
       expect(issuerMetadataFromScript(tx.outputs[vout]!.lockingScript.toHex())).toEqual({ issuer: h.active.identityKey })
@@ -854,7 +858,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     resetIssuerAttributionForTests()
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
     expect(retainedIssuerMetadata(tokenId)).toEqual({ issuer })
-    const otherScript = tokenOutput(walletLock(h)).lockingScript
+    const otherScript = tokenOutput(new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex()).lockingScript
     expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer, lockingScript: otherScript })).toBe(false)
   })
 

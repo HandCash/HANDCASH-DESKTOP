@@ -1,4 +1,4 @@
-import { appendIssuerMetadata, expandedProtocolScript } from '../issuerMetadata'
+import { appendIssuerMetadata, brc162StampFromScript, brc162StampScript, expandedProtocolScript } from '../issuerMetadata'
 /**
  * BSV-21 issuer attestation (BRC-163): on-chain Sigma + CI/tag mirror.
  *
@@ -13,7 +13,7 @@ import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../b
 import { isFilingTag, isTokenFilingBasket, P2PFT_BASKET } from './filing'
 import { normalizeTokenId } from './types'
 import { bsv21DeployIconRef, planBsv21MintWire, type Bsv21DeployIconRef } from './mintWire'
-import type { Bsv21IconImage } from './decode162'
+import { decodeBsv21Binary, type Bsv21IconImage } from './decode162'
 import { fetchRawTxHex } from '../oneSatImport'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import type { ActiveWallet } from '../session'
@@ -640,25 +640,46 @@ export async function enrichCreateActionForBsv21Issuer(
   const [bindTxid = '', bindVoutS = ''] = bindOutpoint.split('.')
   const bindVout = Number(bindVoutS)
 
+  // BRC-247: a transaction carries at most one stamp output, and only the
+  // issuing wallet writes it. An app-supplied one is an unbacked claim.
+  if (nextOutputs.some((o) => brc162StampFromScript(o.lockingScript))) {
+    throw new Error('This issuance already carries an issuer stamp output.')
+  }
+
   if (signer && issuer && deployIdxs.length > 0) {
     if (/^[0-9a-f]{64}$/.test(bindTxid) && Number.isSafeInteger(bindVout) && bindVout >= 0 && bindVout <= 0xffffffff) {
+      const sign = (lockingScriptHex: string) =>
+        sigmaSignDeployLockingScript({
+          lockingScriptHex,
+          fundTxid: bindTxid,
+          fundVout: bindVout,
+          identityKeyHex: signer.rootKeyHex,
+        })
+      const stamps: CreateActionOutput[] = []
       for (const i of deployIdxs) {
         const out = nextOutputs[i]!
         if (!out.lockingScript) continue
+        // A tape after a BRC-162 owner lock leaves the output outside BRC-207 /
+        // BRC-251 custody, so a BRC-162 deploy is stamped in a sibling output.
+        const binary = decodeBsv21Binary(out.lockingScript)
+        if (binary && (binary.layout !== 'brc162' || binary.role !== 'deploy' || i !== 0)) {
+          throw new Error('Only a BRC-162 deploy at output 0 can carry an issuer stamp.')
+        }
         try {
-          nextOutputs[i] = {
-            ...out,
-            lockingScript: sigmaSignDeployLockingScript({
-              lockingScriptHex: appendIssuerMetadata(out.lockingScript, issuer),
-              fundTxid: bindTxid,
-              fundVout: bindVout,
-              identityKeyHex: signer.rootKeyHex,
-            }),
+          if (binary) {
+            stamps.push({
+              satoshis: 0,
+              lockingScript: sign(brc162StampScript(issuer, out.lockingScript)),
+              outputDescription: 'Issuer stamp (BRC-247)',
+            })
+          } else {
+            nextOutputs[i] = { ...out, lockingScript: sign(appendIssuerMetadata(out.lockingScript, issuer)) }
           }
         } catch (err) {
           throw new Error('Could not sign the issuer attestation.', { cause: err })
         }
       }
+      nextOutputs.push(...stamps)
     } else {
       throw new Error('Identity-backed mint requires a Sigma funding anchor.')
     }

@@ -1,5 +1,5 @@
 import type { WalletRuntime } from './walletRuntime'
-import { Beef, P2PKH, PrivateKey, Script, Transaction, Utils } from '@bsv/sdk'
+import { Beef, Hash, P2PKH, PrivateKey, Script, Transaction, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActiveWallet } from './session'
 const state = vi.hoisted(() => ({
@@ -34,7 +34,7 @@ import {
   prepareUnsignedIssuance,
   releaseIdentityIssuance,
 } from './identityIssuance'
-import { issuerMetadataFromScript } from './issuerMetadata'
+import { brc162StampFromScript, issuerMetadataFromScript } from './issuerMetadata'
 import { issuerFromRemittance, sigmaSignDeployLockingScript, verifySigmaIssuer } from './token/issuer'
 import {
   importIssuerPrivateKey,
@@ -162,7 +162,10 @@ describe('standard issuer-backed minting', () => {
       id,
     )
     const tx = boundTransaction(args)
-    for (let i = 0; i < 2; i++) {
+    // The item carries its stamp; the BRC-162 deploy's stamp is the trailing output.
+    expect(args.outputs).toHaveLength(3)
+    expect(verifySigmaIssuer(tx, 0, id)).toBe(false)
+    for (const i of [1, 2]) {
       expect(verifySigmaIssuer(tx, i, id)).toBe(true)
       expect(verifySigmaIssuer(tx, i, rootSigner)).toBe(false)
       expect(issuerMetadataFromScript(args.outputs![i]!.lockingScript)).toEqual({ issuer: id })
@@ -250,8 +253,18 @@ describe('standard issuer-backed minting', () => {
       },
       id,
     )
-    expect(issuerMetadataFromScript(args.outputs![0]!.lockingScript)).toEqual({ issuer: id })
-    expect(verifySigmaIssuer(boundTransaction(args), 0, id)).toBe(true)
+    // The deploy stays a plain BRC-162 lock; the stamp is a sibling output.
+    const deploy = args.outputs![0]!.lockingScript!
+    expect(deploy).not.toContain('5349474d41')
+    expect(issuerMetadataFromScript(deploy)).toEqual({})
+    expect(args.outputs).toHaveLength(2)
+    const stamp = args.outputs![1]!
+    expect(stamp.satoshis).toBe(0)
+    expect(brc162StampFromScript(stamp.lockingScript)).toEqual({
+      issuer: id,
+      deploy: Utils.toHex(Hash.sha256(Utils.toArray(deploy, 'hex'))),
+    })
+    expect(verifySigmaIssuer(boundTransaction(args), 1, id)).toBe(true)
   })
   it('rejects changed selection after consent or during anchor creation, and never returns an unsigned mint', async () => {
     const id = importIssuer()

@@ -1,4 +1,4 @@
-import { OP, PublicKey, Script, Utils } from '@bsv/sdk'
+import { Hash, OP, PublicKey, Script, Utils } from '@bsv/sdk'
 
 // Standard Bitcom MAP tape. The issuer fields are optional HandCash metadata,
 // not a new token protocol. Sigma signs these bytes together with the asset script.
@@ -48,6 +48,55 @@ export function appendIssuerMetadata(scriptHex: string, issuer: string): string 
   else tail.writeOpCode(OP.OP_RETURN)
   for (const field of [MAP, 'SET', 'issuer', issuer]) tail.writeBin(Utils.toArray(field, 'utf8'))
   return Script.fromBinary([...base.toBinary(), ...tail.toBinary()]).toHex()
+}
+
+function sha256Hex(scriptHex: string): string {
+  return Utils.toHex(Hash.sha256(Utils.toArray(scriptHex.trim().toLowerCase(), 'hex')))
+}
+
+/**
+ * The unsigned BRC-247 stamp output for a BRC-162 deploy at output 0:
+ * `OP_FALSE OP_RETURN MAP SET issuer <key> deploy <sha256(output 0)>`.
+ * SIGMA is appended to it; the deploy lock itself stays plain custody.
+ */
+export function brc162StampScript(issuer: string, deployLockingScriptHex: string): string {
+  const key = normalizeIssuerIdentityKey(issuer)
+  if (!key) throw new Error('Invalid issuer identity key.')
+  const script = new Script().writeOpCode(OP.OP_FALSE).writeOpCode(OP.OP_RETURN)
+  for (const field of [MAP, 'SET', 'issuer', key, 'deploy', sha256Hex(deployLockingScriptHex)])
+    script.writeBin(Utils.toArray(field, 'utf8'))
+  return script.toHex()
+}
+
+export type Brc162Stamp = { issuer: string; deploy: string }
+
+/** The issuer tape of a BRC-162 stamp output, signed or not; null for any other script. */
+export function brc162StampFromScript(scriptHex?: string): Brc162Stamp | null {
+  if (!scriptHex || scriptHex.length > 20_000 || !scriptHex.includes(ISSUER_PUSH_HEX)) return null
+  try {
+    const chunks = expandedProtocolScript(scriptHex).chunks
+    if (chunks[0]?.op !== OP.OP_FALSE || chunks[0].data?.length || chunks[1]?.op !== OP.OP_RETURN) return null
+    const text = (i: number) => (chunks[i]?.data ? Utils.toUTF8(chunks[i].data!) : '')
+    if (text(2) !== MAP || text(3) !== 'SET') return null
+    const fields = new Map<string, string>()
+    let i = 4
+    for (; i + 1 < chunks.length && text(i) !== '|'; i += 2) {
+      if (fields.has(text(i))) return null
+      fields.set(text(i), text(i + 1))
+    }
+    if (i < chunks.length && text(i) !== '|') return null
+    const issuer = normalizeIssuerIdentityKey(fields.get('issuer'))
+    const deploy = fields.get('deploy') ?? ''
+    if (!issuer || !/^[0-9a-f]{64}$/.test(deploy)) return null
+    return { issuer, deploy }
+  } catch {
+    return null
+  }
+}
+
+/** The stamp names exactly this output-0 locking script. */
+export function brc162StampNames(stamp: Brc162Stamp, deployLockingScriptHex: string): boolean {
+  return stamp.deploy === sha256Hex(deployLockingScriptHex)
 }
 
 /**
