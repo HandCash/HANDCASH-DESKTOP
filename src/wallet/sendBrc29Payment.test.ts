@@ -350,7 +350,7 @@ describe('sendBrc29ToIdentityKey', { timeout: 30_000 }, () => {
       new Response(
         JSON.stringify({
           handle: 'alice',
-          domain: 'handcash.io',
+          domain: 'brc-cloud.bcryderman.workers.dev',
           identityKey: PAYEE,
           certificate,
           messagebox: 'https://messagebox.example/v1/messagebox',

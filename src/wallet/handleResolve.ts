@@ -7,6 +7,7 @@
  * `@handle@domain` (no `$`).
  */
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatHandCashHandle } from './handleFormat'
 import { parseWalletProtocols } from './peerTokenCapability'
 import {
@@ -78,7 +79,7 @@ export function parseHandleInput(raw: string): { handle: string; domain: string 
   const t = raw.trim()
   if (!t) return null
 
-  // @$alice@handcash.io, $alice@handcash.io, or @alice@handcash.io
+  // @$alice@example.com, $alice@example.com, or @alice@example.com
   let m =
     /^(?:@\$|[$@])([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: m[2]!.toLowerCase() }
@@ -87,7 +88,7 @@ export function parseHandleInput(raw: string): { handle: string; domain: string 
   m = /^(?:@\$|[$@])([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: null }
 
-  // alice@handcash.io (paymail-shaped → handle grammar)
+  // alice@example.com (paymail-shaped → handle grammar)
   m = /^([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: m[2]!.toLowerCase() }
 
@@ -300,7 +301,7 @@ export async function claimHandle(args: {
     ...data,
     handle: data.handle ?? args.handle,
     identityKey: data.identityKey ?? args.identityKey,
-    domain: data.domain ?? 'handcash.io',
+    domain: data.domain ?? HOME_HANDLE_DOMAIN,
   })
   if (certified.identityKey !== args.identityKey.toLowerCase()) {
     throw new Error('Handle claim answered for a different identity key')

@@ -6,6 +6,7 @@
  * the BRC-169 `@handle@domain` grammar (at, no `$`). Input still accepts
  * `$handle`, `@handle`, `@$handle`, and bare / paymail-shaped forms.
  */
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 
 export function normalizeHandleName(raw: string): string {
   return raw
@@ -33,7 +34,7 @@ export function formatHandCashHandle(
 ): string {
   const h = normalizeHandleName(handle)
   if (!h) return ''
-  const home = (opts.homeDomain || 'handcash.io').toLowerCase()
+  const home = (opts.homeDomain || HOME_HANDLE_DOMAIN).toLowerCase()
   const d = domain?.trim().toLowerCase() || null
   if (opts.fullyQualified || (d && d !== home)) {
     return `@${h}@${d || home}`

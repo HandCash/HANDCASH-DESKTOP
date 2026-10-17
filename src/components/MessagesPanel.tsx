@@ -68,6 +68,7 @@ import {
   preparePeerDirectPath,
   uploadChatFile,
 } from '../features/messages'
+import { stateToAttr } from '@aeon-ui/core'
 import { Composer, Thread } from '@aeon-ui/react'
 import type { ComposerState } from '@aeon-ui/react'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
@@ -1205,7 +1206,7 @@ export function MessagesPanel({
     <div
       className={shellClass}
       data-aeon-scope="messages"
-      data-aeon-state={shellState}
+      data-aeon-state={stateToAttr(shellState)}
     >
       {!threadOnly ? (
       <aside className="chat-sidebar">
@@ -1569,7 +1570,7 @@ export function MessagesPanel({
             <CommandConfirmPrompt
               open={Boolean(confirmCmd)}
               verb={confirmCmd?.verb ?? 'pay'}
-              recipient={`@${activeFriend.label.replace(/^@\$|^[$@]/, '')}@handcash.io`}
+              recipient={activeFriend.label}
               amountLabel={confirmCmd?.amountLabel ?? ''}
               satsLabel={confirmCmd?.satsLabel}
               effect={`Send ${confirmCmd?.amountLabel ?? 'this amount'} to ${activeFriend.label}. This moves value and cannot be undone.`}

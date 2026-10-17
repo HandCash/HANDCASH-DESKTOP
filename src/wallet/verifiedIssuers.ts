@@ -12,6 +12,7 @@ import { ProtoWallet, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { HANDLE_CERTIFIERS } from './handleCertificate'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { normalizeBapId } from './issuerMetadata'
 import type { VerifiedIssuer } from './issuerTrust'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
@@ -28,7 +29,7 @@ export type VerifiedIssuerList = {
 
 const PROTOCOL: [2, string] = [2, 'handcash verified issuers']
 const KEY_ID = '1'
-const HANDCASH_CERTIFIER_DOMAIN = 'handcash.io'
+const HANDCASH_CERTIFIER_DOMAIN = HOME_HANDLE_DOMAIN
 const REFRESH_MS = 6 * 60 * 60 * 1000
 const RETRY_MS = 5 * 60 * 1000
 const STORAGE_KEY = storageRegistry.verifiedIssuers.key

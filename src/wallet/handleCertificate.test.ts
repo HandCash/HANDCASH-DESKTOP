@@ -48,14 +48,14 @@ describe('verifyHandleCertificate (BRC-169 §4.1)', () => {
     const forged = await signedHandleCertificate('alice', subject)
     const verdict = await verifyHandleCertificate(forged, {
       handle: 'alice',
-      domain: 'handcash.io',
+      domain: 'brc-cloud.bcryderman.workers.dev',
       identityKey: subject,
     })
     expect(verdict).toEqual({ kind: 'refused', reason: 'wrong-certifier' })
   })
 
-  it('pins handcash.io to a real certifier, not a well-known key', () => {
-    const pin = HANDLE_CERTIFIERS['handcash.io']
+  it('pins the home handle domain to a real certifier, not a well-known key', () => {
+    const pin = HANDLE_CERTIFIERS['brc-cloud.bcryderman.workers.dev']
     expect(pin).toMatch(/^0[23][0-9a-f]{64}$/)
     // secp256k1 G is the public key of private key 1.
     expect(pin).not.toBe('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798')

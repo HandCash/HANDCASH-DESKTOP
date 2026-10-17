@@ -18,11 +18,11 @@ import { accountLocalKey, accountLocalKeyFor, type BoundAccountKeyScope } from '
 
 import { claimHandle, HandleNotFoundError, resolveHandle } from './handleResolve'
 import { BRC169_HANDLE_CERT_TYPE, HANDLE_CERTIFIERS } from './handleCertificate'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
 import { isMigrationOrigin } from './migration'
 
 const STORAGE_KEY = storageRegistry.claimedHandle.key
-const HANDLE_DOMAIN = 'handcash.io'
 
 export { BRC169_HANDLE_CERT_TYPE }
 
@@ -111,7 +111,7 @@ function asWalletHandleCertificate(
     !fields ||
     !keyringForSubject ||
     text('type') !== BRC169_HANDLE_CERT_TYPE ||
-    text('certifier').toLowerCase() !== HANDLE_CERTIFIERS[HANDLE_DOMAIN] ||
+    text('certifier').toLowerCase() !== HANDLE_CERTIFIERS[HOME_HANDLE_DOMAIN] ||
     text('subject').toLowerCase() !== identityKey.toLowerCase() ||
     !text('serialNumber') ||
     !text('revocationOutpoint') ||
@@ -142,7 +142,7 @@ async function syncHeldHandleCertificate(current: WalletHandleCertificate | null
   if (current && heldSerials.has(current.serialNumber)) return
   const wallet = getActiveWallet()?.wallet
   if (!wallet?.listCertificates) return
-  const certifier = HANDLE_CERTIFIERS[HANDLE_DOMAIN]!
+  const certifier = HANDLE_CERTIFIERS[HOME_HANDLE_DOMAIN]!
   try {
     const { certificates } = await wallet.listCertificates({
       certifiers: [certifier],
@@ -215,10 +215,8 @@ function parseClaimedHandle(raw: string | null): ClaimedHandleState | null {
     }
     return {
       handle: parsed.handle,
-      // Upgrade legacy `$…` / `@$…@domain` cache rows to `@handle@domain`.
-      display: /^@[a-z0-9]/.test(parsed.display) && !parsed.display.startsWith('@$')
-        ? parsed.display
-        : formatHandCashHandle(parsed.handle, 'handcash.io', { fullyQualified: true }),
+      // The claim is always in the home namespace; older rows named another domain or the `$` form.
+      display: formatHandCashHandle(parsed.handle, HOME_HANDLE_DOMAIN, { fullyQualified: true }),
       identityKey: parsed.identityKey.toLowerCase(),
       claimedAt: parsed.claimedAt,
       certificate: asCertificate(parsed.certificate),

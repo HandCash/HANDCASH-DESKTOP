@@ -47,18 +47,18 @@ const publicCertificate = {
 }
 
 const claimHandle = vi.fn(async (): Promise<Record<string, unknown>> => ({
-  display: '@alice@handcash.io',
+  display: '@alice@brc-cloud.bcryderman.workers.dev',
   certificate: publicCertificate,
   walletCertificate: null,
 }))
 
 const resolveHandle = vi.fn(async (): Promise<Record<string, unknown>> => ({
   handle: 'alice',
-  domain: 'handcash.io',
+  domain: 'brc-cloud.bcryderman.workers.dev',
   identityKey: walletState.identityKey,
   certificate: publicCertificate,
   walletCertificate: null,
-  display: '@alice@handcash.io',
+  display: '@alice@brc-cloud.bcryderman.workers.dev',
   messagebox: null,
 }))
 
@@ -119,7 +119,7 @@ describe('claimCloudHandlePayload', () => {
   it('stores the verified public certificate and acquires the wallet copy', async () => {
     const walletCertificate = await walletHandleCertificate('alice', OWN_KEY)
     claimHandle.mockResolvedValueOnce({
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       certificate: publicCertificate,
       walletCertificate,
     })
@@ -141,7 +141,7 @@ describe('claimCloudHandlePayload', () => {
   it('never acquires a wallet copy for another subject or certifier', async () => {
     const foreign = await walletHandleCertificate('alice', testIdentityKey(99))
     claimHandle.mockResolvedValueOnce({
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       certificate: publicCertificate,
       walletCertificate: foreign,
     })
@@ -155,16 +155,16 @@ describe('claimCloudHandlePayload', () => {
     held.push({ serialNumber: 'old-serial' }, { serialNumber: String(current.serialNumber) })
     resolveHandle.mockResolvedValueOnce({
       handle: 'alice',
-      domain: 'handcash.io',
+      domain: 'brc-cloud.bcryderman.workers.dev',
       identityKey: OWN_KEY,
       certificate: publicCertificate,
       walletCertificate: current,
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       messagebox: null,
     })
     store.set(
       accountLocalKey('handcash.brc169.claimedHandle.v1'),
-      JSON.stringify({ handle: 'alice', display: '@alice@handcash.io', identityKey: OWN_KEY, claimedAt: 1 }),
+      JSON.stringify({ handle: 'alice', display: '@alice@brc-cloud.bcryderman.workers.dev', identityKey: OWN_KEY, claimedAt: 1 }),
     )
     const { getClaimedCloudHandleVerified } = await import('./handleClaim')
     await getClaimedCloudHandleVerified()
@@ -187,7 +187,7 @@ describe('getClaimedCloudHandleVerified', () => {
       accountLocalKey('handcash.brc169.claimedHandle.v1'),
       JSON.stringify({
         handle: 'alice',
-        display: '@alice@handcash.io',
+        display: '@alice@brc-cloud.bcryderman.workers.dev',
         identityKey: walletState.identityKey,
         claimedAt: 1,
       }),
@@ -205,17 +205,17 @@ describe('getClaimedCloudHandleVerified', () => {
       accountLocalKey('handcash.brc169.claimedHandle.v1'),
       JSON.stringify({
         handle: 'alice',
-        display: '@alice@handcash.io',
+        display: '@alice@brc-cloud.bcryderman.workers.dev',
         identityKey: walletState.identityKey,
         claimedAt: 1,
       }),
     )
     resolveHandle.mockResolvedValueOnce({
       handle: 'alice',
-      domain: 'handcash.io',
+      domain: 'brc-cloud.bcryderman.workers.dev',
       identityKey: testIdentityKey(77),
       certificate: publicCertificate,
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       messagebox: null,
     })
     held.push({ serialNumber: 'stale' })
@@ -234,7 +234,7 @@ describe('getClaimedCloudHandleVerified', () => {
   it('keeps the claim while the registry is unreachable, and ends it on an answered not-found', async () => {
     const claim = {
       handle: 'alice',
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       identityKey: walletState.identityKey,
       claimedAt: 1,
     }
@@ -260,9 +260,9 @@ describe('claimedHandleForAccount', () => {
     const scope = { identityKey: other, accountIndex: 2, chain: 'main' as const }
     const key = accountLocalKeyFor(storageRegistry.claimedHandle.key, scope)
     expect(claimedHandleForAccount(scope)).toBeNull()
-    store.set(key, JSON.stringify({ handle: 'bob', display: '@bob@handcash.io', identityKey: other, claimedAt: 1 }))
-    expect(claimedHandleForAccount(scope)).toMatchObject({ handle: 'bob', display: '@bob@handcash.io' })
-    store.set(key, JSON.stringify({ handle: 'bob', display: '@bob@handcash.io', identityKey: OWN_KEY, claimedAt: 1 }))
+    store.set(key, JSON.stringify({ handle: 'bob', display: '@bob@brc-cloud.bcryderman.workers.dev', identityKey: other, claimedAt: 1 }))
+    expect(claimedHandleForAccount(scope)).toMatchObject({ handle: 'bob', display: '@bob@brc-cloud.bcryderman.workers.dev' })
+    store.set(key, JSON.stringify({ handle: 'bob', display: '@bob@brc-cloud.bcryderman.workers.dev', identityKey: OWN_KEY, claimedAt: 1 }))
     expect(claimedHandleForAccount(scope)).toBeNull()
   })
 })

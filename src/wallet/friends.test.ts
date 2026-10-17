@@ -26,10 +26,10 @@ vi.mock('./handleResolve', async (importOriginal) => {
       const parsed = actual.parseHandleInput(raw)!
       return {
         handle: parsed.handle,
-        domain: parsed.domain ?? 'handcash.io',
+        domain: parsed.domain ?? 'brc-cloud.bcryderman.workers.dev',
         identityKey: resolveAnswer.identityKey,
         certificate: null,
-        display: `@${parsed.handle}@${parsed.domain ?? 'handcash.io'}`,
+        display: `@${parsed.handle}@${parsed.domain ?? 'brc-cloud.bcryderman.workers.dev'}`,
         messagebox: null,
         protocols: [],
       }
@@ -61,10 +61,10 @@ describe('handle key pinning', () => {
     addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
     const resolved = {
       handle: 'alice',
-      domain: 'handcash.io',
+      domain: 'brc-cloud.bcryderman.workers.dev',
       identityKey: moved,
       certificate: null,
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       messagebox: null,
       protocols: [],
     }
@@ -75,13 +75,13 @@ describe('handle key pinning', () => {
 
   it('pins a legacy friend that stored the handle only as its label', () => {
     const saved = freshIdentityKey()
-    addFriend({ label: '@alice@handcash.io', identityKey: saved })
+    addFriend({ label: '@alice@brc-cloud.bcryderman.workers.dev', identityKey: saved })
     const resolved = {
       handle: 'alice',
-      domain: 'handcash.io',
+      domain: 'brc-cloud.bcryderman.workers.dev',
       identityKey: freshIdentityKey(),
       certificate: null,
-      display: '@alice@handcash.io',
+      display: '@alice@brc-cloud.bcryderman.workers.dev',
       messagebox: null,
       protocols: [],
     }
@@ -101,8 +101,8 @@ describe('handle key pinning', () => {
     const saved = freshIdentityKey()
     const other = freshIdentityKey()
     addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
-    expect(() => refuseBoundHandleConflict('@alice@handcash.io', { identityKey: saved }, 'main')).not.toThrow()
-    expect(() => refuseBoundHandleConflict('@alice@handcash.io', { identityKey: other }, 'main')).toThrow(
+    expect(() => refuseBoundHandleConflict('@alice@brc-cloud.bcryderman.workers.dev', { identityKey: saved }, 'main')).not.toThrow()
+    expect(() => refuseBoundHandleConflict('@alice@brc-cloud.bcryderman.workers.dev', { identityKey: other }, 'main')).toThrow(
       HandleKeyChangedError,
     )
     expect(() =>
@@ -160,7 +160,7 @@ function freshIdentityKey(): string {
 describe('labelLooksLikeFixedHandle', () => {
   it('accepts $handle and @handle@domain', () => {
     expect(labelLooksLikeFixedHandle('$alice')).toBe(true)
-    expect(labelLooksLikeFixedHandle('@alice@handcash.io')).toBe(true)
+    expect(labelLooksLikeFixedHandle('@alice@brc-cloud.bcryderman.workers.dev')).toBe(true)
   })
 
   it('rejects bare custom names and identity-key snippets', () => {

@@ -1,6 +1,7 @@
 import { Certificate, MasterCertificate, PrivateKey, ProtoWallet, Utils } from '@bsv/sdk'
 import { afterEach, beforeEach } from 'vitest'
 import { BRC169_HANDLE_CERT_TYPE, HANDLE_CERTIFIERS } from './handleCertificate'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 
 /** BRC-169 Appendix A.1 `lkup.net certifier`. */
 export const TEST_CERTIFIER = new ProtoWallet(
@@ -21,7 +22,7 @@ const b64 = (s: string) => Utils.toBase64(Utils.toArray(s, 'utf8'))
 export async function signedHandleCertificate(
   handle: string,
   identityKey: string,
-  domain = 'handcash.io',
+  domain = HOME_HANDLE_DOMAIN,
   certifier: ProtoWallet = TEST_CERTIFIER,
 ): Promise<Record<string, unknown>> {
   const cert = new Certificate(
@@ -39,7 +40,7 @@ export async function signedHandleCertificate(
 export async function walletHandleCertificate(
   handle: string,
   identityKey: string,
-  domain = 'handcash.io',
+  domain = HOME_HANDLE_DOMAIN,
 ): Promise<Record<string, unknown>> {
   const master = await MasterCertificate.issueCertificateForSubject(
     TEST_CERTIFIER,
@@ -60,15 +61,15 @@ export async function walletHandleCertificate(
   }
 }
 
-/** Pins the A.1 test certifier for `handcash.io` around each test in the file. */
+/** Pins the A.1 test certifier for the home handle domain around each test in the file. */
 export function useTestHandleCertifier(): void {
   const pins = HANDLE_CERTIFIERS as Record<string, string>
   let previous: string | undefined
   beforeEach(() => {
-    previous = pins['handcash.io']
-    pins['handcash.io'] = TEST_CERTIFIER_PUB
+    previous = pins[HOME_HANDLE_DOMAIN]
+    pins[HOME_HANDLE_DOMAIN] = TEST_CERTIFIER_PUB
   })
   afterEach(() => {
-    if (previous) pins['handcash.io'] = previous
+    if (previous) pins[HOME_HANDLE_DOMAIN] = previous
   })
 }

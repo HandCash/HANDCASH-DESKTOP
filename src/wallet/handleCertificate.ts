@@ -10,12 +10,13 @@
  * revocation UTXOs; the resolver's 404/410 is the revocation channel (§5.3).
  */
 import { Certificate, Utils } from '@bsv/sdk'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 
 /** BRC-169 §4.5 handle-certificate type. */
 export const BRC169_HANDLE_CERT_TYPE = 'XgCFdUfxEcI+3xtDjsIuSAjMl5EwzCUjsQc45ds1lC8='
 
 export const HANDLE_CERTIFIERS: Readonly<Record<string, string>> = {
-  'handcash.io': '027bf8f661e41618907329e78a0460ffe4a9b3c59dbc9fda49ccb4e08317b7de55',
+  [HOME_HANDLE_DOMAIN]: '027bf8f661e41618907329e78a0460ffe4a9b3c59dbc9fda49ccb4e08317b7de55',
 }
 
 export type HandleCertificate = {

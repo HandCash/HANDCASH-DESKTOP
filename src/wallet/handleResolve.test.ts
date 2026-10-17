@@ -23,7 +23,7 @@ const KEY_B = testIdentityKey(12)
 async function row(handle: string, identityKey: string, extra: Record<string, unknown> = {}) {
   return {
     handle,
-    domain: 'handcash.io',
+    domain: 'brc-cloud.bcryderman.workers.dev',
     identityKey,
     certificate: await signedHandleCertificate(handle, identityKey),
     ...extra,
@@ -101,8 +101,9 @@ describe('resolveHandle answers only for what was asked', () => {
   it('refuses a key for another domain or another handle', async () => {
     answerWith(await row('alice', KEY_A))
     await expect(resolveHandle('alice@lkup.net')).rejects.toThrow(/not served by this resolver/)
+    await expect(resolveHandle('@alice@handcash.io')).rejects.toThrow(/Handles on handcash\.io are not served/)
     await expect(resolveHandle('$bob')).rejects.toThrow(/different handle/)
-    await expect(resolveHandle('@alice@handcash.io')).resolves.toMatchObject({ identityKey: KEY_A })
+    await expect(resolveHandle('@alice@brc-cloud.bcryderman.workers.dev')).resolves.toMatchObject({ identityKey: KEY_A })
     await expect(resolveHandle('$alice')).resolves.toMatchObject({ identityKey: KEY_A })
   })
 
@@ -121,7 +122,7 @@ describe('resolveHandle answers only for what was asked', () => {
     answerWith({ ...(await row('alice', KEY_A)), identityKey: KEY_B })
     await expect(resolveHandle('$alice')).rejects.toMatchObject({ reason: 'subject-mismatch' })
 
-    answerWith({ handle: 'alice', domain: 'handcash.io', identityKey: KEY_A })
+    answerWith({ handle: 'alice', domain: 'brc-cloud.bcryderman.workers.dev', identityKey: KEY_A })
     await expect(resolveHandle('$alice')).rejects.toMatchObject({ reason: 'missing' })
   })
 })
@@ -159,7 +160,7 @@ describe('resolveHandleByIdentityKey', () => {
     expect(url).not.toContain('handle=')
     expect(results).toHaveLength(1)
     expect(results[0]?.handle).toBe('alice')
-    expect(results[0]?.display).toBe('@alice@handcash.io')
+    expect(results[0]?.display).toBe('@alice@brc-cloud.bcryderman.workers.dev')
   })
 
   it('returns an empty list when the registry has no binding', async () => {
@@ -192,7 +193,7 @@ describe('resolveHandleByIdentityKey', () => {
 
 describe('claimHandle', () => {
   it('returns the verified certificate and refuses one for another key', async () => {
-    answerWith({ ...(await row('alice', KEY_A)), display: '@alice@handcash.io' })
+    answerWith({ ...(await row('alice', KEY_A)), display: '@alice@brc-cloud.bcryderman.workers.dev' })
     const claimed = await claimHandle({ handle: 'alice', identityKey: KEY_A, claimTicket: 't' })
     expect(claimed.certificate.subject).toBe(KEY_A)
 

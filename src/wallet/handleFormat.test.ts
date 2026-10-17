@@ -21,10 +21,10 @@ describe('handleFormat', () => {
   })
 
   it('uses @handle@domain email grammar when fully qualified', () => {
-    expect(formatHandCashHandle('alice', 'handcash.io')).toBe('$alice')
+    expect(formatHandCashHandle('alice', 'brc-cloud.bcryderman.workers.dev')).toBe('$alice')
     expect(formatHandCashHandle('alice', 'other.tld')).toBe('@alice@other.tld')
-    expect(formatHandCashHandle('alice', 'handcash.io', { fullyQualified: true })).toBe(
-      '@alice@handcash.io',
+    expect(formatHandCashHandle('alice', 'brc-cloud.bcryderman.workers.dev', { fullyQualified: true })).toBe(
+      '@alice@brc-cloud.bcryderman.workers.dev',
     )
   })
 })
