@@ -1,6 +1,6 @@
 # Asset actions and permissions
 
-Every permission an app can hold, and every item, token, market and BSV action the wallet performs, with the module that owns it. The last sections list what is missing, including swaps, and the basket scheme proposed for countersigned assets.
+Every permission an app can hold, and every item, token, market and BSV action the wallet performs, with the module that owns it. The last sections cover token swaps, what is still missing, and the basket scheme proposed for countersigned assets.
 
 Related: [`brc-wallet-feature-map.md`](./brc-wallet-feature-map.md) (feature → BRC), [`token-architecture.md`](./token-architecture.md), [`wallet-p2p-messagebox.md`](./wallet-p2p-messagebox.md).
 
@@ -13,8 +13,8 @@ The bridge listens on `https://127.0.0.1:2121`, with an HTTP fallback on `http:/
 | Public | `getVersion`, `getNetwork`, `getHeight`, `getHeaderForHeight` | No origin check |
 | Silent | `isAuthenticated` | Never prompts |
 | Connect | `waitForAuthentication` | Shows the Connect prompt |
-| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, market reads | Connect only. `listOutputs` on an item or token scope adds a view gate. |
-| Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes | Connect, then an approval for each call. No two actions share consent. |
+| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listTokenSwapOffers`, market reads | Connect only. `listOutputs` on an item or token scope adds a view gate. |
+| Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes, `createTokenSwapOffer`, `acceptTokenSwapOffer`, `claimTokenSwapProceeds`, `cancelTokenSwapOffer` | Connect, then an approval for each call. No two actions share consent. |
 | Migration | `getLegacyAddress`, `refreshLegacyAddress`, `listMigrationTxids`, `openKeyRecovery` | HandCash hosts only (`migration.ts`) |
 
 Origin-limited HandCash methods:
@@ -46,7 +46,7 @@ All grants are stored per account (`accountLocalKey`). Every HandCash catalog ho
 | **Identity proof** | `proveCertificate` without a prompt | Auto inside the fresh-connect window, then for the session in memory | Session end |
 | **Held-row spend label** | `createAction` label `p 1sat input id <key>` / `p p2pft input id <key>` names the one held output this action may spend | Per action, inside the action prompt | Single use |
 
-Always prompted, never covered by a grant: item and token sends, mints, identity-signed issuance, every market write, `createSignature`, encryption and key linkage. Prompt wording comes from `summarizeAction` (`permissions.ts`). Market prompts show the item and "Total includes the 5% market fee".
+Always prompted, never covered by a grant: item and token sends, mints, identity-signed issuance, every market write and swap, `createSignature`, encryption and key linkage. Prompt wording comes from `summarizeAction` (`permissions.ts`). Market prompts show the item and "Total includes the 5% market fee".
 
 Not implemented: BRC-73 protocol, basket, certificate and counterparty grants. Calls that would use them prompt each time. Persisted grants never expire.
 
@@ -133,7 +133,8 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 
 | Feature | State | Builds on |
 |---|---|---|
-| **Atomic P2P swaps**: token↔token, token↔BSV, item↔token | Missing. The only "swap" is a link to an external exchange. | Market settlement v2 (`SINGLE\|ANYONECANPAY` at a fixed index); plan in section 8 |
+| Item ↔ token / BSV swaps | Missing; token → BSV and token → token ship (section 8) | Ordinal pads from `ordinal-v2` |
+| Swap offer delivery | Offers are shared by hand (JSON); the maker claims with the take txid | Messagebox `token-swap` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
 | Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
@@ -149,6 +150,18 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 ## 8. Swaps
 
 A swap offer is market settlement v2 without the market. The maker holds an output with exactly the amount it offers, then signs that one input with `SIGHASH_SINGLE|ANYONECANPAY|FORKID` at input 0. That signature binds output 0 to what the maker wants. The taker adds its own inputs and the remaining outputs, signs `ALL`, and broadcasts. The maker loses nothing if the taker never acts, and it can cancel by spending the offered output to itself.
+
+Shipped for tokens: `tokenSwap.ts`, path vocabulary `tokenSwapPath.ts`, chart `tokenSwapMachine`.
+
+| Method (action, prompts) | What it does |
+|---|---|
+| `createTokenSwapOffer({ give: { tokenId, amount }, want })` | Escrows the exact lot (basket `token-swap-offers`, so send and burn never select it), signs input 0, returns the offer JSON |
+| `acceptTokenSwapOffer({ offer })` | Proves the lot back to its deploy (BRC-176), script-checks the maker unlock inside the real transaction, then signs the taker's coins |
+| `claimTokenSwapProceeds({ offerId, txid })` | Maker files output 0 (P2PKH sweep, or token ingest) and retires the escrow |
+| `cancelTokenSwapOffer({ offerId })` | Spends the lot back to the token balance; refused once the chain shows it spent |
+| `listTokenSwapOffers()` (connect) | This account's offers and takes |
+
+`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-taken`, and the rest in `TokenSwapRefusal`. A self-swap (maker and taker are one wallet) files output 0 at once.
 
 | Pair | How output 0 pays the maker | Notes |
 |---|---|---|

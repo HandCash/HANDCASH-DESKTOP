@@ -38,6 +38,7 @@ import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { accountMoveMachine } from '../wallet/accountMoveMachine'
 import { bsv21SendMachine } from '../wallet/token/sendMachine'
 import { emailRecoveryMachine } from './emailRecoveryMachine'
+import { tokenSwapMachine } from './tokenSwapMachine'
 
 /**
  * Executable statechart catalog. Settings and architecture tests consume this
@@ -53,6 +54,7 @@ export const machineManifest = Object.freeze({
   marketListing: marketListingMachine,
   marketPurchase: marketPurchaseMachine,
   marketSellerSettlement: marketSellerSettlementMachine,
+  tokenSwap: tokenSwapMachine,
   appBrowser: appBrowserMachine,
   assetBurnUi: assetBurnUiMachine,
   deviceBackup: deviceBackupMachine,

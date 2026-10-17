@@ -19,7 +19,7 @@ describe('machine manifest', () => {
     }
 
     expect(missing).toEqual([])
-    expect(catalog.size).toBe(40)
+    expect(catalog.size).toBe(41)
   })
 
   it('gives every authoritative flow a stable id and states', () => {
@@ -39,6 +39,7 @@ describe('machine manifest', () => {
         'brc29Send',
         'bsvSend',
         'bsv21Send',
+        'tokenSwap',
         'burn',
         'serverWalletRecover',
         'walletCoordinator',

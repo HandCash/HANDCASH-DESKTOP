@@ -101,6 +101,7 @@ import {
   verifyMarketListingProvenance,
   type CreateMarketListingArgs,
 } from './marketListing'
+import { TokenSwapError } from './tokenSwapPath'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { internalizeActionWithBroadcast } from './internalizeBroadcast'
@@ -249,7 +250,15 @@ function brcSpendErrorCode(err: unknown): {
 
 function marketOutpointFromArgs(args: unknown): string {
   if (args && typeof args === 'object' && !Array.isArray(args)) {
-    const top = String((args as { outpoint?: unknown }).outpoint ?? '').trim().toLowerCase()
+    const body = args as {
+      outpoint?: unknown
+      offerId?: unknown
+      offer?: { offerId?: unknown }
+      give?: { tokenId?: unknown }
+    }
+    const top = String(
+      body.outpoint ?? body.offerId ?? body.offer?.offerId ?? body.give?.tokenId ?? '',
+    ).trim().toLowerCase()
     if (top) return top
   }
   return marketListingPreviewFromArgs(args)?.itemOutpoint?.toLowerCase() ?? ''
@@ -528,6 +537,24 @@ export async function dispatchWalletMethod(
       return { ok: true }
     case 'markMarketListingPublished':
       return markMarketListingPublished((args ?? {}) as { txid?: string })
+    case 'createTokenSwapOffer':
+      return (await import('./tokenSwap')).createTokenSwapOffer(
+        (args ?? {}) as Parameters<typeof import('./tokenSwap').createTokenSwapOffer>[0],
+      )
+    case 'acceptTokenSwapOffer':
+      return (await import('./tokenSwap')).acceptTokenSwapOffer(
+        (args ?? {}) as Parameters<typeof import('./tokenSwap').acceptTokenSwapOffer>[0],
+      )
+    case 'claimTokenSwapProceeds':
+      return (await import('./tokenSwap')).claimTokenSwapProceeds(
+        (args ?? {}) as Parameters<typeof import('./tokenSwap').claimTokenSwapProceeds>[0],
+      )
+    case 'cancelTokenSwapOffer':
+      return (await import('./tokenSwap')).cancelTokenSwapOffer(
+        (args ?? {}) as Parameters<typeof import('./tokenSwap').cancelTokenSwapOffer>[0],
+      )
+    case 'listTokenSwapOffers':
+      return (await import('./tokenSwap')).listTokenSwapOffers()
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -1273,13 +1300,9 @@ async function handleBrc100RequestInner(
       } finally {
         clearPaymentProgress()
       }
-    } else if (
-      method === 'createMarketListingAdvert' ||
-      method === 'createCancelMarketListingAdvert' ||
-      method === 'purchaseMarketListing'
-    ) {
+    } else if (marketBusyCopy(method)) {
       // Keep the wallet visibly busy after the permission prompt resolves.
-      // List / cancel / purchase serialize inside their modules via
+      // Market list / cancel / purchase and token swaps serialize inside their modules via
       // runExclusiveSpend so consolidate cannot race fee inputs, and a failed
       // Arcade reject aborts the noSend before the tip is scanned again.
       const busy = marketBusyCopy(method) ?? {
@@ -1294,7 +1317,7 @@ async function handleBrc100RequestInner(
           body: JSON.stringify({
             status: 'error',
             code: 'ACTION_IN_PROGRESS',
-            description: 'This market action is already in progress.',
+            description: 'This action is already in progress.',
           }),
         }
       }
@@ -1520,7 +1543,7 @@ async function handleBrc100RequestInner(
     if (isActionMethod(method)) playWalletSound('error')
     const flat = flattenJsonError(error)
     const code =
-      error instanceof MarketListingError
+      error instanceof MarketListingError || error instanceof TokenSwapError
         ? error.code
         : flat.code
     return {

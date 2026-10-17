@@ -612,7 +612,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
       })
       return
     }
-    // Market list/buy/cancel already write their own activity row with the
+    // Market and swap actions already write their own activity row with the
     // item. A second "Approved / App BRC Cloud" event hides the failure.
     if (
       prompt.kind === 'action' &&
@@ -621,6 +621,10 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'createCancelMarketListingAdvert',
         'purchaseMarketListing',
         'createMarketPurchaseIntent',
+        'createTokenSwapOffer',
+        'acceptTokenSwapOffer',
+        'claimTokenSwapProceeds',
+        'cancelTokenSwapOffer',
       ].includes(prompt.method)
     ) {
       return
@@ -1208,6 +1212,72 @@ export function summarizeAction(method: string, args: unknown): {
           ? `Item: ${body.outpoint}`
           : 'Unknown item',
       ],
+    }
+  }
+
+  if (method === 'createTokenSwapOffer') {
+    const give =
+      body.give && typeof body.give === 'object' ? (body.give as Record<string, unknown>) : {}
+    const want =
+      body.want && typeof body.want === 'object' ? (body.want as Record<string, unknown>) : {}
+    const giveAmount = String(give.amount ?? '').trim()
+    const wantLabel =
+      want.kind === 'sats'
+        ? `${Math.max(0, Math.trunc(Number(want.sats) || 0)).toLocaleString()} sats`
+        : `${String(want.amount ?? '?')} ${typeof want.sym === 'string' ? want.sym : 'tokens'}`
+    return {
+      title: 'Offer a token swap',
+      summary: `Escrow ${giveAmount || '?'} units for ${wantLabel}`,
+      tokenId: typeof give.tokenId === 'string' ? give.tokenId : undefined,
+      previewKind: 'token',
+      details: [
+        'The units leave your token balance until the offer is taken or cancelled',
+        'Anyone holding the offer can take it, and only by paying exactly what you asked',
+      ],
+    }
+  }
+
+  if (method === 'acceptTokenSwapOffer') {
+    const offer =
+      body.offer && typeof body.offer === 'object' ? (body.offer as Record<string, unknown>) : {}
+    const give =
+      offer.give && typeof offer.give === 'object' ? (offer.give as Record<string, unknown>) : {}
+    const want =
+      offer.want && typeof offer.want === 'object' ? (offer.want as Record<string, unknown>) : {}
+    const sats = want.kind === 'sats' ? Math.max(0, Math.trunc(Number(want.sats) || 0)) : 0
+    const giveLabel = `${String(give.amount ?? '?')} ${typeof give.sym === 'string' ? give.sym : 'tokens'}`
+    const payLabel =
+      want.kind === 'sats'
+        ? `${sats.toLocaleString()} sats`
+        : `${String(want.amount ?? '?')} ${typeof want.sym === 'string' ? want.sym : 'tokens'}`
+    return {
+      title: `Swap for ${giveLabel}`,
+      summary: `Pay ${payLabel} and receive ${giveLabel}`,
+      amountSats: sats || undefined,
+      amountLabel: sats ? formatBsvSignificant(sats, 5) : undefined,
+      tokenId: typeof give.tokenId === 'string' ? give.tokenId : undefined,
+      itemName: giveLabel,
+      previewKind: 'token',
+      details: [
+        'One atomic transaction: both sides settle or neither does',
+        'The offered token is proven back to its deploy before you pay',
+      ],
+    }
+  }
+
+  if (method === 'claimTokenSwapProceeds') {
+    return {
+      title: 'Claim swap proceeds',
+      summary: 'File what the taker paid into your wallet',
+      details: [typeof body.offerId === 'string' ? `Offer: ${body.offerId}` : 'Unknown offer'],
+    }
+  }
+
+  if (method === 'cancelTokenSwapOffer') {
+    return {
+      title: 'Cancel swap offer',
+      summary: 'Spend the escrowed units back to your token balance',
+      details: [typeof body.offerId === 'string' ? `Offer: ${body.offerId}` : 'Unknown offer'],
     }
   }
 

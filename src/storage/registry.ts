@@ -400,6 +400,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 2,
   }),
+  tokenSwapOffers: defineStorage({
+    key: 'handcash.tokenSwap.offers.v1',
+    owner: 'tokens',
+    scope: 'wallet',
+    version: 1,
+  }),
   marketPending: defineStorage({
     key: 'handcash.market.pending.v2',
     owner: 'market',

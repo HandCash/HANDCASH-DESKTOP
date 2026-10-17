@@ -297,6 +297,22 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Buying…',
     detail: 'Settling the purchase',
   },
+  createTokenSwapOffer: {
+    label: 'Offering…',
+    detail: 'Escrowing the token lot',
+  },
+  acceptTokenSwapOffer: {
+    label: 'Swapping…',
+    detail: 'Settling the swap',
+  },
+  claimTokenSwapProceeds: {
+    label: 'Claiming…',
+    detail: 'Filing the swap proceeds',
+  },
+  cancelTokenSwapOffer: {
+    label: 'Cancelling…',
+    detail: 'Returning the token lot',
+  },
 }
 
 /** Copy for a market method that keeps the wallet busy after approval. */

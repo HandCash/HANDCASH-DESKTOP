@@ -26,6 +26,10 @@ const SPEND_METHODS = new Set([
   'createmarketpurchaseintent',
   'purchasemarketlisting',
   'createcancelmarketlistingadvert',
+  'createtokenswapoffer',
+  'accepttokenswapoffer',
+  'claimtokenswapproceeds',
+  'canceltokenswapoffer',
 ])
 
 function methodOf(path: string): string {

@@ -716,26 +716,12 @@ async function proveListedToken(
   mark: (phase: string) => void,
 ): Promise<void> {
   const startedAt = Date.now()
-  const { fillTokenParentBodies, proveWithScripts } = await import('./token/prove176')
-  const { provenTokenDeployOf } = await import('./token/lineage')
-  const point = normalizeOutpoint(listing.outpoint).replace('.', '_')
-  let beef = Beef.fromBinary(Array.from(listingBeef))
-  let proof = proveWithScripts(point, beef, provenTokenDeployOf)
-  if (!proof.ok) {
-    beef = await fillTokenParentBodies(
-      beef,
-      async (txid) => {
-        try {
-          return await getBeefForTxidCached(active, txid, { needProof: false, allowUnprovenRawTx: true })
-        } catch {
-          return null
-        }
-      },
-      [point.slice(0, 64)],
-      provenTokenDeployOf,
-    )
-    proof = proveWithScripts(point, beef, provenTokenDeployOf)
-  }
+  const { proveTokenTipLineage } = await import('./token/proveTipLineage')
+  const proof = await proveTokenTipLineage(
+    active,
+    normalizeOutpoint(listing.outpoint),
+    listingBeef,
+  )
   if (!proof.ok) {
     throw new MarketListingError(
       'MARKET_TOKEN_UNPROVEN',
@@ -743,7 +729,7 @@ async function proveListedToken(
     )
   }
   const listed = listing.origin.trim().toLowerCase().replace('.', '_')
-  if (proof.tokenId.toLowerCase() !== listed) {
+  if (proof.tokenId !== listed) {
     throw new MarketListingError(
       'MARKET_TOKEN_UNPROVEN',
       'The listed output is a different token from the one advertised. Nothing was charged.',

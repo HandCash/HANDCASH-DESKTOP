@@ -95,6 +95,7 @@ import {
   marketSettlementShape,
   type MarketSettlementUnlocksV2,
 } from './marketSettlementLayout'
+import { TOKEN_SWAP_BASKET } from './tokenSwapPath'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -1291,25 +1292,49 @@ async function loadListedOutput(
   }
 }
 
+const EXACT_LOT_PURPOSE = {
+  'market-list': {
+    description: 'Split BSV-21 cover for market list',
+    labels: ['market-v3', 'bsv21-split'],
+    lotDescription: 'BSV-21 list amount',
+    changeDescription: 'BSV-21 listing change',
+    flow: 'market_listing',
+    lotBasket: null,
+  },
+  'token-swap': {
+    description: 'Escrow BSV-21 lot for a swap offer',
+    labels: ['token-swap', 'bsv21-split'],
+    lotDescription: 'BSV-21 swap escrow',
+    changeDescription: 'BSV-21 swap change',
+    flow: 'token_swap',
+    lotBasket: TOKEN_SWAP_BASKET,
+  },
+} as const
+
 /**
  * When listAmt is not the covering tip's 162 amt, split/consolidate first so
  * the listed UTXO lock equals listAmt (remainder is 162 change to the seller).
  * The listing tx then lists that exact tip: advert.amt === lock amt === 176
  * proof.amt. Never advertise a partial amt against a larger covering lock.
  */
-async function splitBsv21CoverToExactAmt(args: {
+export async function splitBsv21CoverToExactAmt(args: {
   active: ActiveWallet
   origin: string
-  requested: number
+  requested: number | bigint
   covers: Array<{ outpoint: string; amt: bigint; lockingScript?: string }>
   icon?: string
   sym?: string
+  /** What the exact lot is for; names the action and files the lot. */
+  purpose?: keyof typeof EXACT_LOT_PURPOSE
+  onStaged?: (reference: string) => void
+  onSigned?: () => void
 }): Promise<{
   outpoint: string
   lockingScript: string
   beef: Awaited<ReturnType<typeof getBeefForTxidCached>>
 }> {
   const requested = BigInt(args.requested)
+  const purpose = EXACT_LOT_PURPOSE[args.purpose ?? 'market-list']
   const coverSum = args.covers.reduce((sum, t) => sum + t.amt, 0n)
   if (coverSum < requested) {
     throw new Error('Not enough units available to list that amount.')
@@ -1341,8 +1366,8 @@ async function splitBsv21CoverToExactAmt(args: {
     }
   }
   const created = await args.active.wallet.createAction({
-    description: 'Split BSV-21 cover for market list',
-    labels: ['market-v3', 'bsv21-split'],
+    description: purpose.description,
+    labels: [...purpose.labels],
     inputBEEF: splitBeef.toBinary(),
     inputs: args.covers.map((tip, i) => ({
       outpoint: tip.outpoint.replace('_', '.'),
@@ -1353,13 +1378,14 @@ async function splitBsv21CoverToExactAmt(args: {
       {
         lockingScript: listedLock,
         satoshis: 1,
-        outputDescription: 'BSV-21 list amount',
+        outputDescription: purpose.lotDescription,
         ...buildBsv21SendRemittance({
           tokenId: args.origin,
           amt: requested,
           icon: args.icon,
           ...(args.sym ? { sym: args.sym } : {}),
         }),
+        ...(purpose.lotBasket ? { basket: purpose.lotBasket } : {}),
       },
       ...(changeAmt > 0n
         ? [
@@ -1371,7 +1397,7 @@ async function splitBsv21CoverToExactAmt(args: {
                 layout,
               }),
               satoshis: 1,
-              outputDescription: 'BSV-21 listing change',
+              outputDescription: purpose.changeDescription,
               ...buildBsv21SendRemittance({
                 tokenId: args.origin,
                 amt: changeAmt,
@@ -1391,6 +1417,7 @@ async function splitBsv21CoverToExactAmt(args: {
   const signable = created.signableTransaction
   if (!signable) throw new Error('BSV-21 list split did not return a signable action')
   let reference: string | null = signable.reference
+  args.onStaged?.(signable.reference)
   try {
     const beef = Beef.fromBinary(signable.tx)
     const vin0Vout = Number(vin0.outpoint.split('_')[1])
@@ -1445,6 +1472,7 @@ async function splitBsv21CoverToExactAmt(args: {
       spends[i] = { unlockingScript }
     }
     if (!spends[0]) throw new Error('BSV-21 list-split signature missing')
+    args.onSigned?.()
     const signed = await args.active.wallet.signAction({
       reference,
       spends,
@@ -1465,7 +1493,7 @@ async function splitBsv21CoverToExactAmt(args: {
       './signedSendLifecycle'
     )
     startSignedSendPropagation(
-      await registerSignedSend({ txid, atomicBeef: atomic, flow: 'market_listing' }),
+      await registerSignedSend({ txid, atomicBeef: atomic, flow: purpose.flow }),
     )
     return {
       outpoint: `${txid}_0`,

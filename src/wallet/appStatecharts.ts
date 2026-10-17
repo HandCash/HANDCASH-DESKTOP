@@ -623,6 +623,39 @@ const MARKET_LISTING = `stateDiagram-v2
   end note
 `
 
+const TOKEN_SWAP = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> classifying : MAKE / TAKE / CLAIM / CANCEL
+  classifying --> failed : refuse / named reason
+  classifying --> staging : make / take / cancel
+  classifying --> ingesting : claim
+  staging --> preSignAbortable : STAGED reference
+  preSignAbortable --> signedUnknown : SIGNED_UNKNOWN
+  preSignAbortable --> failed : ABORTED
+  signedUnknown --> broadcast : BROADCASTED
+  signedUnknown --> failed : ABORTED
+  signedUnknown --> recovery : FAIL / RECOVER
+  recovery --> broadcast : BROADCASTED
+  recovery --> failed : ABORTED when Arcade never accepted
+  broadcast --> committed : COMMITTED
+  ingesting --> committed : INGESTED
+  ingesting --> failed : FAIL
+  note right of staging
+    make: escrow exact lot (basket token-swap-offers),
+    then sign input 0 SINGLE|ANYONECANPAY over output 0.
+    take: Spend-check the maker unlock and prove the
+    lot to its deploy before signing any taker coin.
+    cancel: spend the lot back to the token balance.
+  end note
+  note right of ingesting
+    TokenSwapClaimPath:
+    sats → P2PKH sweep of output 0
+    token → peer fungible ingest of output 0
+    then retire the escrow row.
+  end note
+`
+
 const MARKET_PURCHASE = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -1660,6 +1693,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'marketSellerSettlementMachine — authorize terms → item-input signature → peer deliver',
     source: MARKET_SELLER_SETTLEMENT,
+  },
+  {
+    id: 'tokenSwap',
+    label: 'Token swap',
+    caption:
+      'tokenSwapMachine — maker escrow + SINGLE|ACP offer; taker proves the lot, pays output 0; maker claims or cancels',
+    source: TOKEN_SWAP,
   },
   {
     id: 'connectedApps',
