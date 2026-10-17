@@ -3,8 +3,8 @@
 ## [1.3.581] - 2026-10-17
 
 ### Changed
-
-- Patch release (every push must ship a new version).
+- **Handles no longer claim handcash.io.** Under BRC-169 the domain in a handle is its authority, and it must publish the certifier key in its own `/manifest.json`. handcash.io publishes none, so handle certificates now name the registry that does publish it, `brc-cloud.bcryderman.workers.dev`. You still see `$alice`. The fully qualified form is `@alice@brc-cloud.bcryderman.workers.dev`, and `@alice@handcash.io` is refused rather than answered by a registry that does not speak for handcash.io. Your claimed handle and saved friends carry over: the registry re-signs each certificate under the new domain, with the same certifier key.
+- The payment confirm in chat shows the friend's handle as saved, instead of always appending `@handcash.io`, which was wrong for friends on other domains.
 
 ## [1.3.580] - 2026-10-17
 
