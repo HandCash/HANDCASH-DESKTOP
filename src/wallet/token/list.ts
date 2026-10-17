@@ -876,6 +876,7 @@ export function clearFungiblesCache(options?: { notify?: boolean }): void {
   listInFlight = null
   listWorkInFlight = null
   holdNamedIssuers([])
+  resetIssuerReads()
   durableRemoveItem(listCacheKey())
   if (options?.notify !== false) notify()
 }
@@ -891,6 +892,7 @@ export function rebindFungiblesForAccount(): void {
   encodingProofInFlight.clear()
   encodingProofRetries.clear()
   legacyTipProvenAt.clear()
+  resetIssuerReads()
   const durable = loadDurableList()
   if (durable.length > 0) {
     cached = durable
@@ -1142,6 +1144,57 @@ async function reportAttestationCensus(wallet: ActiveWallet, rows: FungibleToken
 }
 
 /**
+ * Token ids whose issuer read finished this session: the deploy was walked
+ * for, refused, or the read gave up. Until then a token with no issuer and no
+ * retained deploy is still being read, not issuer-less.
+ */
+const issuerReadsDone = new Set<string>()
+let issuerReadsGeneration = 0
+const issuerReadListeners = new Set<() => void>()
+
+function settleIssuerReads(tokenIds: Iterable<string>): void {
+  let changed = false
+  for (const id of tokenIds) {
+    const key = normalizeTokenId(id) ?? id
+    if (issuerReadsDone.has(key)) continue
+    issuerReadsDone.add(key)
+    changed = true
+  }
+  if (!changed) return
+  issuerReadsGeneration += 1
+  for (const cb of issuerReadListeners) cb()
+}
+
+function resetIssuerReads(): void {
+  if (issuerReadsDone.size === 0) return
+  issuerReadsDone.clear()
+  issuerReadsGeneration += 1
+  for (const cb of issuerReadListeners) cb()
+}
+
+/** True while this token's issuer is unknown only because its deploy has not been read yet. */
+export function tokenIssuerPending(token: Pick<FungibleToken, 'tokenId' | 'issuer'>): boolean {
+  if (token.issuer) return false
+  const key = normalizeTokenId(token.tokenId) ?? token.tokenId
+  if (issuerReadsDone.has(key)) return false
+  return !retainedIssuerMetadata(key)
+}
+
+export function subscribeTokenIssuerReads(cb: () => void): () => void {
+  issuerReadListeners.add(cb)
+  return () => {
+    issuerReadListeners.delete(cb)
+  }
+}
+
+export function tokenIssuerReadsGeneration(): number {
+  return issuerReadsGeneration
+}
+
+/** Pause before the next heal pass when one pass ran out of its proof budget. */
+const LINEAGE_FOLLOW_UP_MS = 2_000
+
+/**
  * Cards with tips no walk has bound, or whose issuer is not attested yet —
  * including received tokens whose issuer is unknown until the deploy is held.
  * Bind the tips and keep the deploy, then re-attest and re-split every card
@@ -1156,7 +1209,10 @@ function attestHeldTokenLineages(
 ): Promise<void> {
   if (attestationInFlight) return attestationInFlight
   const run = attestHeldTokenLineagesNow(wallet, rows, opts.heal)
-    .catch((err) => console.warn('[bsv21] attestation pass failed', err))
+    .catch((err) => {
+      console.warn('[bsv21] attestation pass failed', err)
+      if (opts.heal) settleIssuerReads(rows.map((row) => row.tokenId))
+    })
     .finally(() => {
       if (attestationInFlight === run) attestationInFlight = null
     })
@@ -1172,6 +1228,8 @@ async function attestHeldTokenLineagesNow(
   const epoch = fungiblesAccountEpoch
   const startedAt = Date.now()
   let tried = 0
+  let budgetSpent = false
+  const read: string[] = []
   for (const row of heal ? rows : []) {
     const tips = heldTipsOf(row)
     // Every unbound tip is held out of the balance until a walk binds it; a
@@ -1186,8 +1244,14 @@ async function attestHeldTokenLineagesNow(
           tipOutpoints: tips.map((tip) => tip.outpoint),
         })
     const todo = unbound.length > 0 ? unbound : gap === 'no-genesis' ? tips.slice(0, 1) : []
+    let finished = true
     for (const tip of todo) {
-      if (tried >= LINEAGE_PROOFS_PER_PASS || epoch !== fungiblesAccountEpoch) break
+      if (epoch !== fungiblesAccountEpoch) return
+      if (tried >= LINEAGE_PROOFS_PER_PASS) {
+        finished = false
+        budgetSpent = true
+        break
+      }
       const proof = await proveHeldTokenTip(wallet, tip.outpoint, tip.tokenId).catch(
         () => ({ kind: 'refused', reason: 'walk-failed' }) as const,
       )
@@ -1199,6 +1263,7 @@ async function attestHeldTokenLineagesNow(
           (proof.kind === 'bound' ? `bound (${proof.source})` : `refused ${proof.reason}`),
       )
     }
+    if (finished) read.push(row.tokenId)
   }
   if (epoch !== fungiblesAccountEpoch) return
   if (tried > 0) reportPhase('lineage-proofs', startedAt, `${tried} tip(s)`)
@@ -1209,7 +1274,15 @@ async function attestHeldTokenLineagesNow(
     return upgraded
   })
   if (changed) setFungiblesCache(next, { forEpoch: epoch })
+  // Re-shelve first, so a token whose issuer was just read never shows issuer-less.
+  settleIssuerReads(read)
   await reportAttestationCensus(wallet, changed ? next : cached)
+  if (budgetSpent) {
+    setTimeout(() => {
+      if (epoch !== fungiblesAccountEpoch) return
+      void attestHeldTokenLineages(wallet, cached)
+    }, LINEAGE_FOLLOW_UP_MS)
+  }
 }
 
 export function areFungiblesHydrated(): boolean {
@@ -1340,12 +1413,18 @@ function startFungiblesList(
     )
   })
   listInFlight = run
+  const epoch = fungiblesAccountEpoch
   void work
     .catch(() => {})
     .then(() => {
       if (listWorkInFlight === work) {
         listWorkInFlight = null
         listInFlight = null
+      }
+      // A read that failed or timed out starts no heal pass; its tokens are
+      // not being read, so they must not wait on one.
+      if (epoch === fungiblesAccountEpoch && !attestationInFlight && !relistWhenIdle) {
+        settleIssuerReads(cached.map((row) => row.tokenId))
       }
     })
   return run
@@ -1370,7 +1449,10 @@ function relistFungiblesWhenIdle(): void {
   relistWhenIdle = (async () => {
     try {
       const { waitForWalletRegionsIdle } = await import('../walletCoordinator')
-      if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) return
+      if (!(await waitForWalletRegionsIdle(RELIST_IDLE_WAIT_MS))) {
+        if (epoch === fungiblesAccountEpoch) settleIssuerReads(cached.map((row) => row.tokenId))
+        return
+      }
       if (epoch !== fungiblesAccountEpoch) return
       console.info('[bsv21] wallet idle — running the deferred listOutputs')
       await listFungibles()

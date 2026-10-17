@@ -492,6 +492,18 @@ describe('groupCollectables with fungibles', () => {
     expect(ungroupedTokens.map((t) => t.sym)).toEqual(['FREE'])
   })
 
+  it('holds a token whose issuer is still being read off the issuer-less shelf', () => {
+    const { ungroupedTokens, pendingTokens } = groupCollectables(
+      [],
+      [token({ tokenId: 't1', sym: 'READING' }), token({ tokenId: 't2', sym: 'FREE' })],
+      () => null,
+      undefined,
+      (t) => t.tokenId === 't1',
+    )
+    expect(pendingTokens.map((t) => t.sym)).toEqual(['READING'])
+    expect(ungroupedTokens.map((t) => t.sym)).toEqual(['FREE'])
+  })
+
   it('keeps token facepiles and quantities under their key', () => {
     const { issuers } = groupCollectables(
       [],

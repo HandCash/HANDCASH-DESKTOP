@@ -77,6 +77,8 @@ export type GroupedCollectables = {
   ungrouped: Collectable[]
   /** Fungibles whose issuer is unknown — shown on the last shelf. */
   ungroupedTokens: FungibleToken[]
+  /** Fungibles whose issuer is still being read; never shown as issuer-less. */
+  pendingTokens: FungibleToken[]
   /** Flattened collections (every size, including one). */
   groups: CollectableGroup[]
   /** Always empty — one-item collections stay under their issuer. */
@@ -299,6 +301,7 @@ export function groupCollectables(
   tokens: readonly FungibleToken[] = [],
   identityFor: IssuerIdentityResolver = () => null,
   trust: IssuerTrust = NO_ISSUER_TRUST,
+  issuerPending: (token: FungibleToken) => boolean = () => false,
 ): GroupedCollectables {
   const issuerBuckets = new Map<
     string,
@@ -306,6 +309,7 @@ export function groupCollectables(
   >()
   const ungrouped: Collectable[] = []
   const ungroupedTokens: FungibleToken[] = []
+  const pendingTokens: FungibleToken[] = []
 
   for (const item of items) {
     const meta = issuerKeyFor(item, identityFor, trust)
@@ -321,7 +325,8 @@ export function groupCollectables(
   for (const token of tokens) {
     const meta = tokenIssuerViewFor(token, identityFor, trust)
     if (!meta) {
-      ungroupedTokens.push(token)
+      if (issuerPending(token)) pendingTokens.push(token)
+      else ungroupedTokens.push(token)
       continue
     }
     const bucket = issuerBuckets.get(meta.key)
@@ -420,7 +425,7 @@ export function groupCollectables(
       issuerPublisherRank(a) - issuerPublisherRank(b) ||
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
   )
-  return { issuers, ungrouped, ungroupedTokens, groups, singles: [] }
+  return { issuers, ungrouped, ungroupedTokens, pendingTokens, groups, singles: [] }
 }
 
 /**

@@ -174,6 +174,34 @@ describe('listFungibles coalescing', () => {
     expect(reported).toEqual([])
   })
 
+  it('reads a token with no issuer as pending until a read gives up on it', async () => {
+    const { listFungibles, rememberFungibleToken, tokenIssuerPending } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    expect(tokenIssuerPending(card())).toBe(true)
+    expect(tokenIssuerPending({ ...card(), issuer: '02' + 'ab'.repeat(32) })).toBe(false)
+    liveRead.run = async () => {
+      throw new Error('basket unreadable')
+    }
+    await listFungibles()
+    await vi.waitFor(() => expect(tokenIssuerPending(card())).toBe(false))
+  })
+
+  it('keeps the issuer read pending while a busy wallet defers the list', async () => {
+    const { listFungibles, rememberFungibleToken, tokenIssuerPending } = await import('./list')
+    rememberFungibleToken({ ...card(), seenAt: 1 })
+    regions.idle = () => false
+    let releaseIdle!: (idle: boolean) => void
+    const coordinator = await import('../walletCoordinator')
+    vi.spyOn(coordinator, 'waitForWalletRegionsIdle').mockImplementation(
+      () => new Promise<boolean>((resolve) => (releaseIdle = resolve)),
+    )
+    await listFungibles()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(tokenIssuerPending(card())).toBe(true)
+    releaseIdle(false)
+    await vi.waitFor(() => expect(tokenIssuerPending(card())).toBe(false))
+  })
+
   it('drops an aged card the basket no longer lists and files its tip', async () => {
     const { listFungibles, rememberFungibleToken } = await import('./list')
     rememberFungibleToken({ ...card(), seenAt: 1 })

@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import {
   currentIssuerResolver,
@@ -77,9 +78,13 @@ import {
   spendableFungibleAmt,
   listFungibles,
   subscribeFungibles,
+  subscribeTokenIssuerReads,
+  tokenIssuerPending,
+  tokenIssuerReadsGeneration,
   type FungibleToken,
   shortIssuerLabel,
 } from '../wallet/token'
+import { SkeletonLine } from './Skeleton'
 import {
   formatPrimaryFromSats,
   getCachedUsdPerBsv,
@@ -642,6 +647,7 @@ function TokenShelf({
 
 export function InventoryPanel() {
   const identityGeneration = useIssuerIdentitiesGeneration()
+  const issuerReads = useSyncExternalStore(subscribeTokenIssuerReads, tokenIssuerReadsGeneration)
   const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -881,15 +887,16 @@ export function InventoryPanel() {
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const searching = deferredQuery.trim().length > 0
-  const { issuers, ungrouped, ungroupedTokens } = useMemo(
+  const { issuers, ungrouped, ungroupedTokens, pendingTokens } = useMemo(
     () =>
       groupCollectables(
         visibleItems,
         searching ? [] : tokens,
         currentIssuerResolver(),
         currentIssuerTrust(),
+        tokenIssuerPending,
       ),
-    [visibleItems, tokens, searching, identityGeneration],
+    [visibleItems, tokens, searching, identityGeneration, issuerReads],
   )
   const empty =
     items.filter((item) => !collectableIsFungible(item)).length === 0 &&
@@ -989,6 +996,21 @@ export function InventoryPanel() {
               </span>
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {pendingTokens.length > 0 ? (
+        <section
+          className="collect-tokens-section"
+          aria-label="Tokens, finding their issuer"
+          aria-busy="true"
+          data-aeon-part="issuer-pending"
+        >
+          <h3 className="collect-section-title">
+            <span className="sr-only">Finding issuer</span>
+            <SkeletonLine width="7rem" height={10} />
+          </h3>
+          <TokenShelf tokens={pendingTokens} view={view} label="Tokens, finding their issuer" />
         </section>
       ) : null}
 
