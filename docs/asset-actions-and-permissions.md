@@ -163,6 +163,8 @@ Shipped for tokens: `tokenSwap.ts`, path vocabulary `tokenSwapPath.ts`, chart `t
 
 `want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-taken`, and the rest in `TokenSwapRefusal`. A self-swap (maker and taker are one wallet) files output 0 at once.
 
+Try every bridge asset action, swaps included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; the end-to-end run at `/wallet-demo` ends with a self-swap.
+
 | Pair | How output 0 pays the maker | Notes |
 |---|---|---|
 | Token → BSV | P2PKH sats | Same as a market token listing, minus fee and overlay |
