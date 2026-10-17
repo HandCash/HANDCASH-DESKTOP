@@ -206,17 +206,18 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
 }
 
 /**
- * Countersigned (issuer-accepted) profiles. Each kind has its own filing
- * basket and BRC-99 permission scheme, beside `p2pft` and `1sat`.
+ * Countersigned (issuer-accepted) profiles: `csft` fungible tokens, `csnft`
+ * items. Each has its own filing basket and BRC-99 permission scheme, beside
+ * `p2pft` and `1sat`.
  */
-export const P2PFT_CS = 'p2pft-cs'
-export const ONESAT_CS = '1sat-cs'
-export type CountersignedScheme = typeof P2PFT_CS | typeof ONESAT_CS
-export const COUNTERSIGNED_SCHEMES: readonly CountersignedScheme[] = [P2PFT_CS, ONESAT_CS]
+export const CSFT = 'csft'
+export const CSNFT = 'csnft'
+export type CountersignedScheme = typeof CSFT | typeof CSNFT
+export const COUNTERSIGNED_SCHEMES: readonly CountersignedScheme[] = [CSFT, CSNFT]
 
 /** The profile for a deploy's kind. */
 export function countersignedSchemeFor(kind: 'token' | 'item'): CountersignedScheme {
-  return kind === 'item' ? ONESAT_CS : P2PFT_CS
+  return kind === 'item' ? CSNFT : CSFT
 }
 
 function countersignedScheme(name: unknown): CountersignedScheme | null {
@@ -234,11 +235,11 @@ export type CountersignedViewRequest = {
 }
 
 const COUNTERSIGNED_SCOPES: Record<CountersignedScheme, CountersignedViewScope[]> = {
-  [P2PFT_CS]: ['all', 'asset', 'id'],
-  [ONESAT_CS]: ['all', 'asset', 'collection', 'id'],
+  [CSFT]: ['all', 'asset', 'id'],
+  [CSNFT]: ['all', 'asset', 'collection', 'id'],
 }
 
-/** `p p2pft-cs …` / `p 1sat-cs …` view basket (never the bare filing name). */
+/** `p csft …` / `p csnft …` view basket (never the bare filing name). */
 export function countersignedViewScheme(basket: unknown): CountersignedScheme | null {
   const p = parsePBasket(basket)
   return p ? countersignedScheme(p.scheme) : null
@@ -256,7 +257,7 @@ function namesCountersignedFiling(basket: unknown): boolean {
 export function countersignedWriteRefusal(args: unknown): string | null {
   const body = asRecord(args)
   const labels = Array.isArray(body.labels) ? body.labels : []
-  if (labels.some((l) => typeof l === 'string' && /^p (p2pft-cs|1sat-cs) input id /i.test(l))) {
+  if (labels.some((l) => typeof l === 'string' && /^p (csft|csnft) input id /i.test(l))) {
     return 'Issuer-accepted assets move only through transferCountersignedAsset.'
   }
   const outputs = Array.isArray(body.outputs) ? body.outputs : []
@@ -264,7 +265,7 @@ export function countersignedWriteRefusal(args: unknown): string | null {
     const out = asRecord(raw)
     const rem = asRecord(out.insertionRemittance)
     if (namesCountersignedFiling(out.basket) || namesCountersignedFiling(rem.basket)) {
-      return 'Only the wallet files issuer-accepted outputs; apps cannot write baskets "p2pft-cs" or "1sat-cs".'
+      return 'Only the wallet files issuer-accepted outputs; apps cannot write baskets "csft" or "csnft".'
     }
   }
   return null
@@ -641,7 +642,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21", "p2pft", "p2pft-cs" and "1sat-cs" are implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21", "p2pft", "csft" and "csnft" are implemented.`
     }
     return null
   }
@@ -655,7 +656,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21", "p2pft", "p2pft-cs" and "1sat-cs" are implemented.`
+        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21", "p2pft", "csft" and "csnft" are implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err

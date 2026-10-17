@@ -66,7 +66,7 @@ export type ConnectedApp = {
   itemAccess?: ItemAccess
   /** BSV-21 token view — never implied by item view. */
   tokenAccess?: TokenAccess
-  /** Issuer-accepted views granted, per profile (`p2pft-cs`, `1sat-cs`) — never implied by item or token view. */
+  /** Issuer-accepted views granted, per profile (`csft`, `csnft`) — never implied by item or token view. */
   countersignedViews?: CountersignedScheme[]
   /** Granted with Connect Authorize — automatic plain-BSV internalizeAction. */
   acceptIncomingFunds?: boolean
@@ -163,7 +163,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
           ...(Array.isArray(a.countersignedViews) && a.countersignedViews.length
-            ? { countersignedViews: a.countersignedViews.filter((v) => v === 'p2pft-cs' || v === '1sat-cs') }
+            ? { countersignedViews: a.countersignedViews.filter((v) => v === 'csft' || v === 'csnft') }
             : {}),
           acceptIncomingFunds:
             a.acceptIncomingFunds === true
@@ -1753,7 +1753,7 @@ export async function requestTokenViewApproval(
 }
 
 /**
- * `p p2pft-cs …` / `p 1sat-cs …` inventory view. One grant per profile covers
+ * `p csft …` / `p csnft …` inventory view. One grant per profile covers
  * every scope; `id` is a narrow row lookup and, as for items and tokens, never prompts.
  */
 export async function requestCountersignedViewApproval(
@@ -1764,7 +1764,7 @@ export async function requestCountersignedViewApproval(
   if (idx >= 0 && apps[idx]?.countersignedViews?.includes(request.scheme)) return 'allow'
   if (request.scope === 'id' || !isThirdPartyOriginator(origin)) return 'allow'
   const key = normalizeOrigin(origin)
-  const what = request.scheme === 'p2pft-cs' ? 'tokens' : 'items'
+  const what = request.scheme === 'csft' ? 'tokens' : 'items'
   return enqueuePrompt({
     id: idCounter++,
     kind: 'action',

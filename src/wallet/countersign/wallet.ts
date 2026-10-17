@@ -233,7 +233,7 @@ async function deployFor(
 
 // ── Holdings ───────────────────────────────────────────────────────────────
 
-/** Resolved outputs this wallet holds, from the `p2pft-cs` and `1sat-cs` filings. */
+/** Resolved outputs this wallet holds, from the `csft` and `csnft` filings. */
 export async function listCountersignedHoldings(
   active: ActiveWallet,
   assetId?: string,
