@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.578] - 2026-10-17
+
+### Fixed
+- **Cancelling a market listing works before the listing is mined.** Cancel asked the network for a proven copy of the listing transaction, and a listing still waiting for a block has no proof yet, so it refused with "Cancellation needs the listing transaction that holds item and offer". It now uses the copy this wallet signed.
+- **Each listed asset comes back its own way.** An ordinal returns by P2PKH. A BRC-162 token and a draft-tagged token are each rebuilt in their own format for exactly the units the listed output holds. A legacy JSON token, or a listing whose lock does not match its advert, refuses with a named reason before anything is signed. Before, an undecodable lock fell back to the BRC-162 format. Direct offer cancels follow the same rule.
+- **A handle you saved as a friend can no longer be redirected.** Typing a `$handle` in the BSV, collectable or token send field skipped the check that the handle still points to your saved friend's key. Every recipient field now checks it as the handle resolves, and every send checks it again right before signing. A friend whose handle is only its label is covered too. A handle friend's key cannot be edited, device sync cannot repoint it, and Add friend refuses when the key changed after its preview. Accepting a new key means removing the friend after confirming the change with them another way.
+- **A recipient field never pays the previous recipient.** While a new handle resolves, the old recipient is cleared, and a late answer for input you already changed is dropped.
+
 ## [1.3.577] - 2026-10-17
 
 ### Fixed
