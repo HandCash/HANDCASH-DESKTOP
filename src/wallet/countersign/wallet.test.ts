@@ -129,6 +129,11 @@ const { issueCountersignedAsset, transferCountersignedAsset, listCountersignedHo
   await import('./wallet')
 const { readCountersignState, deployMap } = await import('./store')
 
+const custodians = {
+  threshold: 1,
+  keys: [PrivateKey.fromRandom().toPublicKey().toString(), PrivateKey.fromRandom().toPublicKey().toString()],
+}
+
 describe('countersigned wallet flows (issuer is the local acceptor)', () => {
   beforeEach(() => {
     durable.clear()
@@ -136,9 +141,31 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
     registered.length = 0
   })
 
+  it('refuses an issue that names no custodians, or custodians only the issuer can meet', async () => {
+    await expect(issueCountersignedAsset({ kind: 'token', sym: 'NONE', supply: '1' })).rejects.toMatchObject({
+      code: 'release-required',
+    })
+    await expect(
+      issueCountersignedAsset({
+        kind: 'token',
+        sym: 'MINE',
+        supply: '1',
+        release: { threshold: 2, keys: [custodians.keys[0]!, identityKey] },
+      }),
+    ).rejects.toMatchObject({ code: 'release-issuer-only' })
+    expect(registered).toHaveLength(0)
+  })
+
+  it('records issuer-only custody when the issuer explicitly keeps the release key', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'SELF', supply: '3', release: 'self' })
+    expect(issued.releaseCustody).toBe('issuer-only')
+    expect(issued.release.threshold).toBe(1)
+  })
+
   it('issues a token, then transfers part of it with the issuer countersignature', async () => {
-    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'GOLD', supply: '100' })
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'GOLD', supply: '100', release: custodians })
     expect(issued.kind).toBe('token')
+    expect(issued.releaseCustody).toBe('independent')
     expect(issued.acceptor).toBe(identityKey)
     const recipient = PrivateKey.fromRandom().toPublicKey().toString()
 
@@ -164,6 +191,7 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
     const issued = await issueCountersignedAsset({
       kind: 'item',
       name: 'Deed #1',
+      release: custodians,
       content: { mediaType: 'text/plain', base64: btoa('deed') },
     })
     expect(issued.supply).toBe('1')
@@ -175,7 +203,7 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
   })
 
   it('refuses to send more than is held, before anything is signed', async () => {
-    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'TIN', supply: '5' })
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'TIN', supply: '5', release: custodians })
     const before = registered.length
     await expect(
       transferCountersignedAsset({ assetId: issued.assetId, amount: '6', recipient: identityKey }),

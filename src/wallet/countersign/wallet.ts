@@ -13,6 +13,8 @@ import { normalizeTokenId } from '../token/types'
 import {
   ACCEPT_REFUSAL_COPY,
   chooseCountersignTransferPath,
+  chooseReleaseCustody,
+  type ReleaseCustody,
   CountersignError,
   type CountersignRefuse,
 } from './path'
@@ -140,9 +142,20 @@ function ownReleaseKey(active: ActiveWallet): PrivateKey {
   return new KeyDeriver(rootKeyOf(active)).derivePrivateKey(RELEASE_PROTOCOL, '1', 'self')
 }
 
-/** A 1-of-1 release set on this wallet's own release key, when the caller names no custodians. */
+/** A 1-of-1 release set on this wallet's own release key (`release: 'self'`). */
 function defaultRelease(active: ActiveWallet): KeySet {
   return { threshold: 1, keys: [ownReleaseKey(active).toPublicKey().toString()] }
+}
+
+function releaseCustodyOf(active: ActiveWallet, release: unknown): ReleaseCustody {
+  const ownRelease = defaultRelease(active)
+  return chooseReleaseCustody({ release, issuerHeld: [active.identityKey, ...ownRelease.keys], ownRelease })
+}
+
+/** An issue's release refusal, checked before the approval prompt; null when it may proceed. */
+export function issueReleaseRefusal(args: IssueCountersignedArgs): { reason: CountersignRefuse; message: string } | null {
+  const custody = releaseCustodyOf(requireActive(), args.release)
+  return custody.custody === 'refuse' ? { reason: custody.reason, message: custody.message } : null
 }
 
 /** The release keys this wallet can sign with, when they meet the threshold. */
@@ -436,13 +449,6 @@ function mediaBytes(arg: MediaArg | undefined, max: number, what: string): { med
   return { mediaType, bytes }
 }
 
-function releaseFrom(arg: unknown): KeySet | null {
-  if (!arg || typeof arg !== 'object') return null
-  const raw = arg as { threshold?: unknown; keys?: unknown }
-  const keys = Array.isArray(raw.keys) ? raw.keys.map((k) => String(k).trim().toLowerCase()) : []
-  return { threshold: Number(raw.threshold), keys }
-}
-
 export type IssueCountersignedArgs = {
   kind?: unknown
   sym?: unknown
@@ -451,7 +457,10 @@ export type IssueCountersignedArgs = {
   dec?: unknown
   icon?: MediaArg
   content?: MediaArg
-  /** Custodians' release set `{ threshold, keys }`; defaults to this wallet's own release key. */
+  /**
+   * Custodians' release set `{ threshold, keys }`, which keys this wallet does
+   * not hold must meet; or `'self'` for this wallet's own release key alone.
+   */
   release?: unknown
   silenceSeconds?: unknown
 }
@@ -469,6 +478,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
   supply: string
   acceptor: string
   release: KeySet
+  releaseCustody: 'independent' | 'issuer-only'
 }> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
@@ -496,9 +506,11 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
       if (!Number.isSafeInteger(silence) || silence < MIN_SILENCE_SECONDS) {
         refuse('bad-asset-args', `silenceSeconds must be at least ${MIN_SILENCE_SECONDS}.`)
       }
+      const custody = releaseCustodyOf(active, args.release)
+      if (custody.custody === 'refuse') refuse(custody.reason, custody.message)
       const sets: CountersignKeySets = {
         issuer: { threshold: 1, keys: [active.identityKey.toLowerCase()] },
-        release: releaseFrom(args.release) ?? defaultRelease(active),
+        release: custody.release,
       }
       let payload: number[]
       try {
@@ -596,6 +608,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
         supply: supplyRaw,
         acceptor: active.identityKey.toLowerCase(),
         release: sets.release,
+        releaseCustody: custody.custody,
       }
     } catch (err) {
       chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })

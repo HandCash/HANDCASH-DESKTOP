@@ -598,8 +598,14 @@ const COUNTERSIGN = `stateDiagram-v2
   [*] --> idle
   idle --> issuing : ISSUE
   issuing --> broadcast : BROADCASTED deploy + beacon
-  issuing --> failed : FAIL
+  issuing --> failed : FAIL bad-asset-args | release-required | release-issuer-only
   idle --> classifying : TRANSFER (CountersignTransferPath)
+  note right of issuing
+    ReleaseCustody: independent (keys the
+    issuer does not hold meet k) or
+    issuer-only (release: 'self', freezes
+    for good if the issuer stops).
+  end note
   classifying --> failed : refuse / named reason
   classifying --> holderSigning : local-acceptor | remote-acceptor | released
   holderSigning --> requesting : SIGNED request id

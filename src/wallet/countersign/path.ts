@@ -1,5 +1,6 @@
 import type { CountersignPhase } from './beacon'
 import type { AcceptRefusal, CountersignDeploy } from './resolve'
+import type { KeySet } from './script'
 
 /** Every way an issue or transfer of a countersigned asset ends without a transaction. */
 export type CountersignRefuse =
@@ -18,6 +19,8 @@ export type CountersignRefuse =
   | 'asset-ended'
   | 'asset-released'
   | 'phase-unknown'
+  | 'release-required'
+  | 'release-issuer-only'
 
 export class CountersignError extends Error {
   readonly code: CountersignRefuse
@@ -88,6 +91,58 @@ export function chooseCountersignTransferPath(args: {
   return args.deploy.sets.issuer.keys.includes(self)
     ? { path: 'local-acceptor', ...base }
     : { path: 'remote-acceptor', ...base, acceptors: args.deploy.sets.issuer.keys }
+}
+
+/**
+ * Who can release an asset once its issuer is gone. `independent`: keys the
+ * issuer does not hold meet the threshold, so holders are freed even if the
+ * issuer vanishes. `issuer-only`: only the issuer's own release key, chosen
+ * explicitly with `release: 'self'`; the asset freezes for good if the issuer
+ * stops without releasing it. Anything else refuses before signing.
+ */
+export type ReleaseCustody =
+  | { custody: 'independent'; release: KeySet }
+  | { custody: 'issuer-only'; release: KeySet }
+  | { custody: 'refuse'; reason: CountersignRefuse; message: string }
+
+export function chooseReleaseCustody(args: {
+  release: unknown
+  /** Keys the issuer holds: its issuer keys and its own release key. */
+  issuerHeld: string[]
+  ownRelease: KeySet
+}): ReleaseCustody {
+  if (args.release === 'self') return { custody: 'issuer-only', release: args.ownRelease }
+  if (args.release == null) {
+    return {
+      custody: 'refuse',
+      reason: 'release-required',
+      message:
+        'Name release custodians (their releaseKey) who can free holders without you, or pass release: "self" to accept that the asset freezes for good if your wallet stops without releasing it.',
+    }
+  }
+  if (typeof args.release !== 'object') {
+    return { custody: 'refuse', reason: 'bad-asset-args', message: 'release must be "self" or { threshold, keys }.' }
+  }
+  const raw = args.release as { threshold?: unknown; keys?: unknown }
+  const keys = Array.isArray(raw.keys) ? raw.keys.map((k) => String(k).trim().toLowerCase()) : []
+  const threshold = Number(raw.threshold)
+  if (!Number.isInteger(threshold) || threshold < 1 || threshold > keys.length || keys.some((k) => !KEY_RE.test(k))) {
+    return {
+      custody: 'refuse',
+      reason: 'bad-asset-args',
+      message: 'release needs compressed public keys and a threshold from 1 to their count.',
+    }
+  }
+  const held = new Set(args.issuerHeld.map((k) => k.toLowerCase()))
+  const independent = new Set(keys.filter((k) => !held.has(k)))
+  if (independent.size < threshold) {
+    return {
+      custody: 'refuse',
+      reason: 'release-issuer-only',
+      message: `Custodians other than you must be able to release on their own: ${threshold} needed, ${independent.size} named. Otherwise the asset freezes for good if your wallet stops.`,
+    }
+  }
+  return { custody: 'independent', release: { threshold, keys } }
 }
 
 export const ACCEPT_REFUSAL_COPY: Record<AcceptRefusal, string> = {

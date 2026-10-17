@@ -1100,6 +1100,21 @@ async function handleBrc100RequestInner(
         }
       }
     }
+    if (method === 'issueCountersignedAsset') {
+      const refusal = (await import('./countersign/wallet')).issueReleaseRefusal(
+        (args ?? {}) as Parameters<typeof import('./countersign/wallet').issueReleaseRefusal>[0],
+      )
+      if (refusal) {
+        return {
+          status: 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: `COUNTERSIGN_${refusal.reason.toUpperCase().replace(/-/g, '_')}`,
+            description: refusal.message,
+          }),
+        }
+      }
+    }
     if (method === 'createAction' || method === 'signAction') {
       try {
         assertOnlineForPayment()

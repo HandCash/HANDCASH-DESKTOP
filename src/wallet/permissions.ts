@@ -1300,15 +1300,22 @@ export function summarizeAction(method: string, args: unknown): {
       kind === 'item'
         ? typeof body.name === 'string' ? body.name : 'item'
         : `${String(body.supply ?? '?')} ${typeof body.sym === 'string' ? body.sym : 'tokens'}`
+    const release = body.release as { threshold?: unknown; keys?: unknown } | string | undefined
+    const custodians =
+      release && typeof release === 'object' && Array.isArray(release.keys)
+        ? `${String(release.threshold)} of ${release.keys.length} release custodians`
+        : null
     return {
       title: `Issue ${label}`,
       summary: `Deploy an issuer-accepted ${kind}; you hold it and accept every transfer of it`,
       itemName: label,
       previewKind: kind === 'item' ? 'collectable' : 'token',
       details: [
-        'Every later transfer needs your wallet to countersign it',
+        'Every later transfer needs your wallet online to countersign it; the recipient may be offline',
         'Your wallet keeps a beacon output alive while it answers',
-        'If your wallet retires it or stops answering, holders can move it on their own signature',
+        release === 'self'
+          ? 'Only your wallet can release it: if your wallet stops without releasing it, it can never move again'
+          : `If your wallet retires it or stops answering, ${custodians ?? 'its release custodians'} can release it so holders move it on their own signature`,
       ],
     }
   }
