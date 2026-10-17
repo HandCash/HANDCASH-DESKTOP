@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.580] - 2026-10-17
+
+### Changed
+- **Countersigned assets can outlive their issuer.** Backup (successor) keys are gone. When the issuer retires an asset, or stops answering for longer than its silence period, the asset's release custodians publish their release keys on chain. From then on holders move it on their own signature, with no issuer involved. The phase (live, ended or released) is read from the asset's beacon chain alone. `retireCountersignedAsset` and `releaseCountersignedAsset` are new bridge methods, each with its own prompt.
+- **Issuing names who can release.** `issueCountersignedAsset` now requires `release`: custodians that can release on their own, without this wallet, or `release: "self"` for this wallet's key alone. The prompt says plainly that "self" means the asset can never move again if this wallet stops without releasing it. An issue without custodians, or with custodians only this wallet can satisfy, is refused before any prompt.
+- **Two named profiles.** Countersigned tokens are filed under `csft` and countersigned items under `csnft`, beside `p2pft` and `1sat`. Apps read them through `p csft all | asset | id` and `p csnft all | asset | collection | id`, each with its own view prompt. A released asset stays in its countersigned profile.
+- **A released transfer is credited once mined.** Without the issuer, nothing stops a holder from signing two spends of one output, so the recipient waits for the block.
+- The issue prompt says who must be online: your wallet (as issuer) and the sender. The recipient may be offline; the transfer waits in its messagebox.
+
 ## [1.3.579] - 2026-10-17
 
 ### Added
