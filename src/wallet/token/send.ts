@@ -716,7 +716,7 @@ export async function sendBsv21Tokens(args: {
       )
       const to = await preSign.step(
         'resolving the recipient',
-        resolvePaymentRecipient(args.toAddress, wallet.chain),
+        resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel }),
       )
       // Resolved, not typed: a handle or another encoding of this wallet is a
       // self-send too. Self outputs stay in the p2pft filing.

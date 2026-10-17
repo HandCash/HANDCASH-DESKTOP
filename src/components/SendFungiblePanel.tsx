@@ -20,6 +20,7 @@ import {
   resolvePaymentAddress,
   searchFriends,
   subscribeFriends,
+  createPinnedHandleResolveDebouncer,
   type Friend,
 } from '../wallet/friends'
 import {
@@ -30,7 +31,7 @@ import {
   clearNavChild,
   openFungibleDetails,
 } from '../wallet/navStore'
-import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
+import { parseHandleInput } from '../wallet/handleResolve'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
@@ -97,7 +98,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningTo, setScanningTo] = useState(false)
-  const handleResolveRef = useRef(createHandleResolveDebouncer())
+  const handleResolveRef = useRef(createPinnedHandleResolveDebouncer())
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
@@ -181,6 +182,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
 
   /** Same recipient grammar as collectable / BSV send. */
   const applyRecipientInput = (value: string) => {
+    handleResolveRef.current.cancel()
     setRecipientQuery(value)
     setShowMatches(true)
     setFriendLabel(null)
@@ -247,6 +249,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   }
 
   const selectFriend = (friend: Friend) => {
+    handleResolveRef.current.cancel()
     try {
       const address = addressFromIdentityKey(friend.identityKey, chain)
       setRecipientQuery(friend.label)

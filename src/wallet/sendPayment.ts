@@ -91,7 +91,7 @@ export async function sendSatsToAddress(opts: {
           const active = getActiveWallet()
           if (!active) throw new Error('Wallet locked')
 
-          const to = await resolvePaymentRecipient(opts.to, active.chain)
+          const to = await resolvePaymentRecipient(opts.to, active.chain, { label: opts.friendLabel })
           noteOutboundSendPending({
             pendingId: pending.id,
             sats: satoshis,

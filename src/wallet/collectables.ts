@@ -4362,7 +4362,7 @@ export async function sendCollectable(args: {
             'Preparing the collectable for transfer',
             outpoint
           )
-          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
+          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel })
 
           let lockingScript: string
           try {
@@ -5238,7 +5238,7 @@ export async function sendCollectables(
             `Preparing ${outpoints.length} collectables for transfer`,
             outpoints[0],
           )
-          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
+          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel })
           let lockingScript: string
           try {
             lockingScript = new P2PKH().lock(to).toHex()

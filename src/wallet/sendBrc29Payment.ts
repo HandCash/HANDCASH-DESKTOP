@@ -69,7 +69,7 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
-import { validateIdentityKey, normalizeIdentityKey } from './friends'
+import { normalizeIdentityKey, refuseBoundHandleConflict, validateIdentityKey } from './friends'
 import { chooseBrc29SettlePath, type Brc29SettlePath } from './brc29SettlePath'
 import { releaseStuckNosends, sendWithHasFailure } from './actionReview'
 import {
@@ -320,6 +320,7 @@ export async function sendBrc29ToIdentityKey(opts: {
         const payee = normalizeIdentityKey(opts.payeeIdentityKey)
         const invalid = validateIdentityKey(payee)
         if (invalid) throw new Error(invalid)
+        refuseBoundHandleConflict(opts.friendLabel, { identityKey: payee }, active.chain)
 
         const settlePath = chooseBrc29SettlePath({
           payeeIdentityKey: payee,

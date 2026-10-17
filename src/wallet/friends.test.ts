@@ -16,11 +16,39 @@ vi.mock('./appActivity', () => ({
   WALLET_ACTIVITY_ORIGIN: 'handcash.wallet',
 }))
 
+const resolveAnswer = { identityKey: '' }
+
+vi.mock('./handleResolve', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./handleResolve')>()
+  return {
+    ...actual,
+    resolveHandle: vi.fn(async (raw: string) => {
+      const parsed = actual.parseHandleInput(raw)!
+      return {
+        handle: parsed.handle,
+        domain: parsed.domain ?? 'handcash.io',
+        identityKey: resolveAnswer.identityKey,
+        certificate: null,
+        display: `@${parsed.handle}@${parsed.domain ?? 'handcash.io'}`,
+        messagebox: null,
+        protocols: [],
+      }
+    }),
+  }
+})
+
 import {
   addFriend,
+  addFriendFromRecipient,
+  addressFromIdentityKey,
   friendHasFixedHandle,
+  HandleKeyChangedError,
   labelLooksLikeFixedHandle,
+  listFriends,
+  mergeFriends,
+  refuseBoundHandleConflict,
   refuseHandleKeyChange,
+  resolvePaymentRecipient,
   updateFriend,
 } from './friends'
 
@@ -43,6 +71,85 @@ describe('handle key pinning', () => {
     expect(() => refuseHandleKeyChange(resolved)).toThrow(/different identity key.*\$alice/)
     expect(() => refuseHandleKeyChange({ ...resolved, identityKey: saved.toUpperCase() })).not.toThrow()
     expect(() => refuseHandleKeyChange({ ...resolved, handle: 'bob' })).not.toThrow()
+  })
+
+  it('pins a legacy friend that stored the handle only as its label', () => {
+    const saved = freshIdentityKey()
+    addFriend({ label: '@alice@handcash.io', identityKey: saved })
+    const resolved = {
+      handle: 'alice',
+      domain: 'handcash.io',
+      identityKey: freshIdentityKey(),
+      certificate: null,
+      display: '@alice@handcash.io',
+      messagebox: null,
+      protocols: [],
+    }
+    expect(() => refuseHandleKeyChange(resolved)).toThrow(HandleKeyChangedError)
+  })
+
+  it('refuses a typed handle that now resolves elsewhere, before any address is built', async () => {
+    const saved = freshIdentityKey()
+    addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
+    resolveAnswer.identityKey = freshIdentityKey()
+    await expect(resolvePaymentRecipient('$alice', 'main')).rejects.toThrow(HandleKeyChangedError)
+    resolveAnswer.identityKey = saved
+    await expect(resolvePaymentRecipient('$alice', 'main')).resolves.toBe(addressFromIdentityKey(saved, 'main'))
+  })
+
+  it('checks the confirmed destination against the pin right before signing', () => {
+    const saved = freshIdentityKey()
+    const other = freshIdentityKey()
+    addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
+    expect(() => refuseBoundHandleConflict('@alice@handcash.io', { identityKey: saved }, 'main')).not.toThrow()
+    expect(() => refuseBoundHandleConflict('@alice@handcash.io', { identityKey: other }, 'main')).toThrow(
+      HandleKeyChangedError,
+    )
+    expect(() =>
+      refuseBoundHandleConflict('$alice', { address: addressFromIdentityKey(other, 'main') }, 'main'),
+    ).toThrow(HandleKeyChangedError)
+    expect(() =>
+      refuseBoundHandleConflict('$alice', { address: addressFromIdentityKey(saved, 'main') }, 'main'),
+    ).not.toThrow()
+    // A custom label is not a handle, even when it reads like a bare one.
+    expect(() => refuseBoundHandleConflict('alice', { identityKey: other }, 'main')).not.toThrow()
+    expect(() => refuseBoundHandleConflict('$bob', { identityKey: other }, 'main')).not.toThrow()
+  })
+
+  it('refuses to save a handle whose key changed after the preview', async () => {
+    const shown = freshIdentityKey()
+    resolveAnswer.identityKey = freshIdentityKey()
+    await expect(addFriendFromRecipient({ recipient: '$carol', expectedIdentityKey: shown })).rejects.toThrow(
+      /changed its identity key/,
+    )
+    expect(listFriends()).toHaveLength(0)
+    resolveAnswer.identityKey = shown
+    await expect(addFriendFromRecipient({ recipient: '$carol', expectedIdentityKey: shown })).resolves.toMatchObject({
+      identityKey: shown,
+      handle: '$carol',
+    })
+  })
+
+  it('never repoints a handle friend to another key', () => {
+    const friend = addFriend({ label: '$alice', identityKey: freshIdentityKey(), handle: '$alice' })
+    expect(() => updateFriend(friend.id, { identityKey: freshIdentityKey() })).toThrow(/keeps the identity key/)
+    const custom = addFriend({ label: 'Dave', identityKey: freshIdentityKey() })
+    const next = freshIdentityKey()
+    expect(updateFriend(custom.id, { identityKey: next }).identityKey).toBe(next)
+  })
+
+  it('skips a synced friend that names a pinned handle with another key', () => {
+    const saved = freshIdentityKey()
+    addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
+    const imposter = freshIdentityKey()
+    const bob = freshIdentityKey()
+    expect(
+      mergeFriends([
+        { id: 'x', label: '$alice', identityKey: imposter, createdAt: 1, handle: '$alice' },
+        { id: 'y', label: '$bob', identityKey: bob, createdAt: 1, handle: '$bob' },
+      ]),
+    ).toBe(1)
+    expect(listFriends().map((f) => f.identityKey).sort()).toEqual([saved, bob].sort())
   })
 })
 

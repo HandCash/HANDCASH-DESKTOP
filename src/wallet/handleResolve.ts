@@ -120,9 +120,14 @@ export type HandleResolveDebouncer = {
   ) => void
 }
 
-/** Debounced resolve — avoids 404 spam while the user is still typing `$al…`. */
+/**
+ * Debounced resolve — avoids 404 spam while the user is still typing `$al…`.
+ * Recipient fields use `createPinnedHandleResolveDebouncer` (friends.ts), which
+ * passes a resolver that applies the saved-friend pin.
+ */
 export function createHandleResolveDebouncer(
   debounceMs = HANDLE_RESOLVE_DEBOUNCE_MS,
+  resolve: (raw: string) => Promise<ResolvedHandle> = resolveHandle,
 ): HandleResolveDebouncer {
   let timer: ReturnType<typeof setTimeout> | undefined
   let gen = 0
@@ -136,12 +141,14 @@ export function createHandleResolveDebouncer(
     schedule(raw, handlers) {
       if (timer) clearTimeout(timer)
       timer = undefined
+      // Every new input retires the answer for the previous one, even input
+      // too short to resolve.
+      const myGen = ++gen
       const trimmed = raw.trim()
       if (!shouldResolveHandleInput(trimmed)) return
-      const myGen = ++gen
       timer = setTimeout(() => {
         timer = undefined
-        void resolveHandle(trimmed)
+        void resolve(trimmed)
           .then((resolved) => {
             if (myGen !== gen) return
             handlers.onResolved(resolved)

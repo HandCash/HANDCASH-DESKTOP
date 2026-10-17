@@ -76,6 +76,25 @@ describe('createHandleResolveDebouncer', () => {
       vi.useRealTimers()
     }
   })
+
+  it('drops a late answer once the input became too short to resolve', async () => {
+    vi.useFakeTimers()
+    try {
+      let answer!: (r: Awaited<ReturnType<typeof resolveHandle>>) => void
+      const resolve = vi.fn(() => new Promise<Awaited<ReturnType<typeof resolveHandle>>>((r) => (answer = r)))
+      const debouncer = createHandleResolveDebouncer(200, resolve)
+      const resolved: string[] = []
+      debouncer.schedule('$alice', { onResolved: (r) => resolved.push(r.handle), onError: () => {} })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(resolve).toHaveBeenCalledTimes(1)
+      debouncer.schedule('$a', { onResolved: (r) => resolved.push(r.handle), onError: () => {} })
+      answer({ handle: 'alice' } as Awaited<ReturnType<typeof resolveHandle>>)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(resolved).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('resolveHandle answers only for what was asked', () => {

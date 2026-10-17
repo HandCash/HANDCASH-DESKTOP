@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { addFriendFromRecipient } from '../wallet/friends'
+import { addFriendFromRecipient, createPinnedHandleResolveDebouncer } from '../wallet/friends'
 import { clearNavChild, getNavState } from '../wallet/navStore'
-import {
-  createHandleResolveDebouncer,
-  parseHandleInput,
-  type ResolvedHandle,
-} from '../wallet/handleResolve'
+import { parseHandleInput, type ResolvedHandle } from '../wallet/handleResolve'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
@@ -33,7 +29,7 @@ export function AddFriendPanel({ chain }: { chain: Chain }) {
   const add = useAsyncAction<'add'>()
   const [resolvedHandle, setResolvedHandle] = useState<ResolvedHandle | null>(null)
   const [resolveError, setResolveError] = useState<string | null>(null)
-  const handleResolveRef = useRef(createHandleResolveDebouncer())
+  const handleResolveRef = useRef(createPinnedHandleResolveDebouncer())
   const peer = usePeerIdentity(chain, resolvedHandle?.identityKey)
 
   const trimmedRecipient = recipient.trim()
@@ -75,6 +71,7 @@ export function AddFriendPanel({ chain }: { chain: Chain }) {
       const friend = await addFriendFromRecipient({
         label: canSetCustomLabel ? label.trim() || undefined : undefined,
         recipient: trimmedRecipient,
+        expectedIdentityKey: isHandleInput ? resolvedHandle?.identityKey ?? null : null,
       })
       void exchangeIdentityCards(friend)
     })

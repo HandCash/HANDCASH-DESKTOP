@@ -23,6 +23,7 @@ import {
   listFriends,
   searchFriends,
   subscribeFriends,
+  createPinnedHandleResolveDebouncer,
   type Friend,
 } from '../wallet/friends'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
@@ -39,7 +40,7 @@ import {
 import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
 import { toastSuccess } from '../wallet/toast'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
-import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
+import { parseHandleInput } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
@@ -153,7 +154,7 @@ export function SendPanel({
   const [amountDraft, setAmountDraft] = useState(() => sendSnap.context.amount)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
-  const handleResolveRef = useRef(createHandleResolveDebouncer())
+  const handleResolveRef = useRef(createPinnedHandleResolveDebouncer())
 
   const destIsNative = destAssetId === 'bsv'
   const destAsset = destIsNative
@@ -277,6 +278,7 @@ export function SendPanel({
   }
 
   const selectFriend = (friend: Friend) => {
+    handleResolveRef.current.cancel()
     try {
       const address = addressFromIdentityKey(friend.identityKey, chain)
       setRecipientQuery(friend.label)
@@ -293,6 +295,7 @@ export function SendPanel({
   }
 
   const applyRecipientInput = (value: string) => {
+    handleResolveRef.current.cancel()
     setRecipientQuery(value)
     setShowFriendMatches(true)
     if (tryParseBrc29SettlementUri(value)) {
@@ -342,6 +345,8 @@ export function SendPanel({
       }
     }
     if (parseHandleInput(value)) {
+      // Until this handle resolves, the previous recipient must not stay payable under it.
+      send({ type: 'EDIT', to: '', friendLabel: null, payeeIdentityKey: null })
       handleResolveRef.current.schedule(value, {
         onResolved: (resolved) => {
           const address = addressFromIdentityKey(resolved.identityKey, chain)

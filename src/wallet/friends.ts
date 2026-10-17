@@ -4,7 +4,14 @@ import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { formatHandCashHandle } from './handleFormat'
 import { tryParsePeerPayUri } from './peerPayUri'
-import { parseHandleInput, resolveHandle, type ResolvedHandle } from './handleResolve'
+import {
+  createHandleResolveDebouncer,
+  HANDLE_RESOLVE_DEBOUNCE_MS,
+  parseHandleInput,
+  resolveHandle,
+  type HandleResolveDebouncer,
+  type ResolvedHandle,
+} from './handleResolve'
 import { storageRegistry } from '../storage/registry'
 
 const STORAGE_KEY_BASE = storageRegistry.friends.key
@@ -111,13 +118,28 @@ export function listFriends(): Friend[] {
   return readRaw().slice().sort((a, b) => a.label.localeCompare(b.label))
 }
 
-/** Merge friends by identity key (keeps existing labels). */
+/**
+ * Merge friends by identity key (keeps existing labels). A synced friend that
+ * names a handle this device already pins to another key is skipped: another
+ * device cannot repoint a saved handle.
+ */
 export function mergeFriends(incoming: Friend[]): number {
   const local = readRaw()
   const byIk = new Map(local.map((f) => [f.identityKey, f]))
+  const pins = new Map<string, string>()
+  for (const f of local) {
+    const key = friendHandleKey(f)
+    if (key) pins.set(key, normalizeIdentityKey(f.identityKey))
+  }
   let added = 0
   for (const friend of incoming) {
     if (!friend?.identityKey || !friend.label) continue
+    const handle = friendHandleKey(friend)
+    const pinnedTo = handle ? pins.get(handle) : undefined
+    if (pinnedTo && pinnedTo !== normalizeIdentityKey(friend.identityKey)) {
+      console.warn(`[friends] sync skipped ${handle}: pinned here to another identity key`)
+      continue
+    }
     const existing = byIk.get(friend.identityKey)
     if (existing) {
       let next = existing
@@ -186,26 +208,69 @@ export function resolvePaymentAddress(recipient: string, chain: Chain): string {
 
 /**
  * Same as resolvePaymentAddress, plus BRC-169 `$handle` / paymail-shaped resolve
- * against BRC-CLOUD.
+ * against BRC-CLOUD. `label` is the recipient the user confirmed; when it is a
+ * handle a saved friend pins, the destination must still be that friend's key.
  */
 export async function resolvePaymentRecipient(
   recipient: string,
   chain: Chain,
+  opts: { label?: string | null } = {},
 ): Promise<string> {
   const value = recipient.trim()
   if (!value) throw new Error('Recipient required')
 
   // Concrete address / key / peerpay first — never send a base58 address through
   // handle resolve (bare-handle grammar can look similar).
+  let address: string | null = null
   try {
-    return resolvePaymentAddress(value, chain)
+    address = resolvePaymentAddress(value, chain)
   } catch (err) {
     if (!parseHandleInput(value)) throw err
   }
+  if (address == null) {
+    const resolved = await resolvePinnedHandle(value)
+    address = addressFromIdentityKey(resolved.identityKey, chain)
+  }
+  refuseBoundHandleConflict(opts.label, { address }, chain)
+  return address
+}
 
-  const resolved = await resolveHandle(value)
-  refuseHandleKeyChange(resolved)
-  return addressFromIdentityKey(resolved.identityKey, chain)
+/** A handle now answers another key than the saved friend that pins it. */
+export class HandleKeyChangedError extends Error {
+  readonly handle: string
+  readonly friendLabel: string
+  constructor(handle: string, friendLabel: string) {
+    super(
+      `${handle} now points to a different identity key than your saved friend "${friendLabel}". ` +
+        'Nothing was sent. Confirm the change with them another way, then remove that friend to accept the new key.',
+    )
+    this.name = 'HandleKeyChangedError'
+    this.handle = handle
+    this.friendLabel = friendLabel
+  }
+}
+
+/** Canonical handle display (`$alice`, `@alice@other.domain`), lower-cased for comparison. */
+function handleKey(raw: string | null | undefined): string | null {
+  const parsed = raw ? parseHandleInput(raw) : null
+  return parsed ? formatHandCashHandle(parsed.handle, parsed.domain).toLowerCase() : null
+}
+
+/** The handle a friend pins: its handle field, else a legacy handle-shaped label. */
+function friendHandleKey(friend: Pick<Friend, 'handle' | 'label'>): string | null {
+  return handleKey(friend.handle?.trim() || (labelLooksLikeFixedHandle(friend.label) ? friend.label : null))
+}
+
+/**
+ * The saved friend that pins this handle. Legacy friends stored the handle
+ * only as their label, and pin it the same way.
+ */
+function friendPinningHandle(handle: string): Friend | null {
+  const wanted = handleKey(handle)
+  if (!wanted) return null
+  return (
+    readRaw().find((f) => friendHandleKey(f) === wanted) ?? null
+  )
 }
 
 /**
@@ -214,16 +279,44 @@ export async function resolvePaymentRecipient(
  * (or lies), so paying or re-adding it refuses until the old friend is removed.
  */
 export function refuseHandleKeyChange(resolved: ResolvedHandle): void {
-  const display = formatHandCashHandle(resolved.handle, resolved.domain).toLowerCase()
-  const key = normalizeIdentityKey(resolved.identityKey)
-  const pinned = readRaw().find(
-    (f) => f.handle?.trim().toLowerCase() === display && normalizeIdentityKey(f.identityKey) !== key,
-  )
-  if (pinned) {
-    throw new Error(
-      `${formatHandCashHandle(resolved.handle, resolved.domain)} now resolves to a different identity key than your saved friend "${pinned.label}". Remove that friend to accept the new key.`,
-    )
+  const handle = formatHandCashHandle(resolved.handle, resolved.domain)
+  const pinned = friendPinningHandle(handle)
+  if (pinned && normalizeIdentityKey(pinned.identityKey) !== normalizeIdentityKey(resolved.identityKey)) {
+    throw new HandleKeyChangedError(handle, pinned.label)
   }
+}
+
+/** Resolve a handle and refuse it when a saved friend pins it to another key. */
+export async function resolvePinnedHandle(raw: string): Promise<ResolvedHandle> {
+  const resolved = await resolveHandle(raw)
+  refuseHandleKeyChange(resolved)
+  return resolved
+}
+
+/** The typing debouncer every recipient field uses, with the friend pin applied. */
+export function createPinnedHandleResolveDebouncer(): HandleResolveDebouncer {
+  return createHandleResolveDebouncer(HANDLE_RESOLVE_DEBOUNCE_MS, resolvePinnedHandle)
+}
+
+/**
+ * Last check before signing: a payment confirmed to a handle a saved friend
+ * pins must still go to that friend's key. Local only — no resolve.
+ */
+export function refuseBoundHandleConflict(
+  label: string | null | undefined,
+  destination: { identityKey?: string | null; address?: string | null },
+  chain: Chain,
+): void {
+  // A custom label such as "alice" parses as a bare handle; only `$` / `@` names one.
+  if (!label || !labelLooksLikeFixedHandle(label)) return
+  const pinned = friendPinningHandle(label)
+  if (!pinned) return
+  const key = destination.identityKey ? normalizeIdentityKey(destination.identityKey) : null
+  const address = destination.address?.trim() || null
+  const bound = key
+    ? key === normalizeIdentityKey(pinned.identityKey)
+    : address != null && address === addressFromIdentityKey(pinned.identityKey, chain)
+  if (!bound) throw new HandleKeyChangedError(label.trim(), pinned.label)
 }
 
 /**
@@ -329,6 +422,8 @@ export function addFriend(args: {
 export async function addFriendFromRecipient(args: {
   label?: string
   recipient: string
+  /** Key the user was shown before choosing Add; a different answer now refuses. */
+  expectedIdentityKey?: string | null
 }): Promise<Friend> {
   const value = args.recipient.trim()
   if (!value) throw new Error('Handle or identity key is required')
@@ -343,10 +438,14 @@ export async function addFriendFromRecipient(args: {
   if (peer) {
     identityKey = normalizeIdentityKey(peer.identityKey)
   } else if (parseHandleInput(value)) {
-    const resolved = await resolveHandle(value)
-    refuseHandleKeyChange(resolved)
+    const resolved = await resolvePinnedHandle(value)
     identityKey = normalizeIdentityKey(resolved.identityKey)
     fixedHandle = formatHandCashHandle(resolved.handle, resolved.domain)
+    if (args.expectedIdentityKey && normalizeIdentityKey(args.expectedIdentityKey) !== identityKey) {
+      throw new Error(
+        `${fixedHandle} changed its identity key while you were adding it. Nothing was saved — check the key shown and add again.`,
+      )
+    }
     suggestedLabel = fixedHandle
     messagebox = resolved.messagebox
     protocols = resolved.protocols
@@ -406,6 +505,10 @@ export function updateFriend(
     label !== current.label
   ) {
     throw new Error('Handle is fixed — custom labels are not allowed')
+  }
+  // The key is who the handle was pinned to; a new key is a new friend, added after removing this one.
+  if (friendHasFixedHandle(current) && identityKey !== normalizeIdentityKey(current.identityKey)) {
+    throw new Error('A handle friend keeps the identity key it was added with — remove it and add the handle again')
   }
   const invalid = validateIdentityKey(identityKey)
   if (invalid) throw new Error(invalid)
