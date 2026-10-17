@@ -34,6 +34,7 @@ export type TransactionFlow =
   | 'market_listing'
   | 'market_cancel'
   | 'market_purchase'
+  | 'market_pad'
   | 'consolidation'
   | 'inbound_internalization'
   | 'brc100_action'

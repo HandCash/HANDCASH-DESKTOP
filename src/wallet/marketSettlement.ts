@@ -4,13 +4,13 @@ import { type WalletRuntime } from './walletRuntime'
 import {
   Beef,
   Hash,
+  LockingScript,
   P2PKH,
   PrivateKey,
   PublicKey,
   Transaction,
   Utils,
 } from '@bsv/sdk'
-import { SetupClient } from '@handcash/wallet-engine'
 import { createActor } from 'xstate'
 import {
   marketPurchaseMachine,
@@ -27,6 +27,7 @@ import {
   adoptMarketSaleReceipt,
   buildMarketHeldRemittance,
   calculateMarketSettlement,
+  checksigOnlyUnlock,
   createMarketSettlementReceipt,
   findMarketListingAuthorizationBySaleId,
   listMarketListingAuthorizations,
@@ -63,7 +64,6 @@ import {
 } from './verificationProgress'
 import { buildBsv21ValueLock, bsv21TipLayout, decodeBsv21Binary } from './token'
 import {
-  MARKET_ITEM_VOUT,
   MARKET_OFFER_DEPOSIT_SATS,
   parseMarketOffer,
 } from './marketOverlayProtocol'
@@ -83,6 +83,7 @@ import {
   isInsufficientFundsError,
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
+import { signTipInputs } from './signTipInputs'
 import {
   choosePendingMarketReceiptPath,
   chooseMarketReceiptBroadcastPath,
@@ -90,6 +91,12 @@ import {
   type MarketReceiptDeliveryPath,
 } from './marketSettlementPath'
 import { clearSoldListingFromMarket } from './marketSoldAnnounce'
+import {
+  marketSettlementShape,
+  unlocksBindSellerPayment,
+  type MarketSettlementShape,
+} from './marketSettlementLayout'
+import { ensureMarketPads, marketPadOutput } from './marketPads'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   recordAppActivity,
@@ -528,14 +535,14 @@ export function validateMarketSettlementOutputs(args: {
   buyerIdentityKey: string
   buyerAddress?: string
   chain: 'main' | 'test'
-  itemVin: number
-  offerVin: number
-  itemOutputIndex: number
-  sellerOutputIndex: number
-  feeOutputIndex: number
+  shape: MarketSettlementShape
 }): void {
   if (args.chain !== 'main') {
     throw new Error('Market settlement is mainnet only')
+  }
+  const shape = args.shape
+  if (shape.layout !== marketSettlementShape(args.listing.assetType ?? 'ordinal').layout) {
+    throw new Error('Settlement layout does not match the listed asset')
   }
   const amounts = calculateMarketSettlement(args.listing.priceSats)
   const buyerAddress =
@@ -558,7 +565,8 @@ export function validateMarketSettlementOutputs(args: {
           address: buyerAddress,
           layout: bsv21TipLayout({
             lockingScript: (
-              args.tx.inputs[0]?.sourceTransaction ?? args.beef.findTxid(listedPoint[0]!)?.tx
+              args.tx.inputs[shape.itemVin]?.sourceTransaction ??
+              args.beef.findTxid(listedPoint[0]!)?.tx
             )?.outputs[Number(listedPoint[1])]?.lockingScript?.toHex(),
           }),
         })
@@ -567,28 +575,46 @@ export function validateMarketSettlementOutputs(args: {
   const feeLock = new P2PKH()
     .lock(marketFeePayToAddress(args.listing))
     .toHex()
-  const feeOutput = args.tx.outputs[args.feeOutputIndex]
+  const feeOutput = args.tx.outputs[shape.feeOutputIndex]
   const itemPoint = normalizeOutpoint(args.listing.outpoint)
   const offerPoint = normalizeOutpoint(args.listing.offerOutpoint)
   const [itemTxid, itemVout] = itemPoint.split('.')
   const [offerTxid, offerVout] = offerPoint.split('.')
+  const itemInput = args.tx.inputs[shape.itemVin]
+  const offerInput = args.tx.inputs[shape.offerVin]
   if (
-    args.itemVin !== 0 ||
-    args.offerVin !== 1 ||
-    args.itemOutputIndex !== MARKET_ITEM_VOUT ||
-    args.sellerOutputIndex !== 1 ||
-    args.feeOutputIndex !== 2 ||
-    String(args.tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
-    args.tx.inputs[0]?.sourceOutputIndex !== Number(itemVout) ||
-    String(args.tx.inputs[1]?.sourceTXID).toLowerCase() !== offerTxid ||
-    args.tx.inputs[1]?.sourceOutputIndex !== Number(offerVout)
+    String(itemInput?.sourceTXID).toLowerCase() !== itemTxid ||
+    itemInput?.sourceOutputIndex !== Number(itemVout) ||
+    String(offerInput?.sourceTXID).toLowerCase() !== offerTxid ||
+    offerInput?.sourceOutputIndex !== Number(offerVout)
   ) {
     throw new Error('Settlement item/offer input or output ordering is invalid')
   }
+  if (shape.padReturnOutputIndex != null) {
+    let padSats = 0
+    for (const vin of shape.padVins) {
+      const input = args.tx.inputs[vin]
+      const source =
+        input?.sourceTransaction ?? args.beef.findTxid(String(input?.sourceTXID))?.tx
+      const out = input ? source?.outputs[input.sourceOutputIndex] : undefined
+      if (
+        !out ||
+        !Number.isSafeInteger(out.satoshis) ||
+        (out.satoshis ?? 0) < 1 ||
+        out.lockingScript?.toHex().toLowerCase() !== buyerChangeLock
+      ) {
+        throw new Error('Settlement pad inputs must be buyer P2PKH outputs')
+      }
+      padSats += out.satoshis!
+    }
+    if (!outputEquals(args.tx, shape.padReturnOutputIndex, padSats, buyerChangeLock)) {
+      throw new Error('Settlement pad return must hold exactly the pad satoshis')
+    }
+  }
   const itemSource =
-    args.tx.inputs[0]?.sourceTransaction ?? args.beef.findTxid(itemTxid!)?.tx
+    itemInput?.sourceTransaction ?? args.beef.findTxid(itemTxid!)?.tx
   const offerSource =
-    args.tx.inputs[1]?.sourceTransaction ?? args.beef.findTxid(offerTxid!)?.tx
+    offerInput?.sourceTransaction ?? args.beef.findTxid(offerTxid!)?.tx
   const itemSourceOutput = itemSource?.outputs[Number(itemVout)]
   const offerSourceOutput = offerSource?.outputs[Number(offerVout)]
   if (itemSourceOutput?.satoshis !== 1 || offerSourceOutput?.satoshis !== 1) {
@@ -607,10 +633,10 @@ export function validateMarketSettlementOutputs(args: {
     throw new Error('Settlement offer token does not match active terms')
   }
   if (
-    !outputEquals(args.tx, args.itemOutputIndex, 1, buyerItemLock) ||
+    !outputEquals(args.tx, shape.buyerOutputIndex, 1, buyerItemLock) ||
     !outputEquals(
       args.tx,
-      args.sellerOutputIndex,
+      shape.sellerOutputIndex,
       amounts.sellerSats,
       sellerLock
     ) ||
@@ -625,7 +651,7 @@ export function validateMarketSettlementOutputs(args: {
   // (exact BSV funds, no change). Ordinary BSV change may use any wallet-derived
   // lock because it is funded by buyer inputs. BSV-21 extras must remain the
   // listed token and explicitly pay the buyer.
-  for (let i = 3; i < args.tx.outputs.length; i++) {
+  for (let i = shape.firstChangeIndex; i < args.tx.outputs.length; i++) {
     const output = args.tx.outputs[i]
     const script = output?.lockingScript?.toHex().toLowerCase() ?? ''
     const sats = output?.satoshis
@@ -661,33 +687,71 @@ export function validateMarketSettlementOutputs(args: {
   }
 }
 
-/** True when the advert carries list-time seller unlocks a buyer can spend. */
+/**
+ * True when the advert carries bound v2 list-time unlocks a buyer can spend.
+ * Version 1 adverts (item signed NONE|ANYONECANPAY) are never completed.
+ */
 export function listingHasBuyerCompletableSettlement(
-  listing: Pick<MarketListingAdvert, 'settlementUnlocks'>,
+  listing: Pick<MarketListingAdvert, 'settlementUnlocks' | 'assetType'>,
   amounts?: { sellerSats: number; feeSats: number },
 ): boolean {
   const unlocks = listing.settlementUnlocks
-  if (
-    !unlocks ||
-    unlocks.version !== 1 ||
-    typeof unlocks.itemUnlockingScript !== 'string' ||
-    typeof unlocks.offerUnlockingScript !== 'string' ||
-    !unlocks.itemUnlockingScript.trim() ||
-    !unlocks.offerUnlockingScript.trim()
-  ) {
-    return false
-  }
+  if (!unlocksBindSellerPayment(unlocks, listing.assetType ?? 'ordinal')) return false
   if (amounts) {
     if (unlocks.feeSats !== amounts.feeSats) return false
-    const deposit = MARKET_OFFER_DEPOSIT_SATS
-    if (
-      unlocks.sellerSats !== amounts.sellerSats &&
-      unlocks.sellerSats !== amounts.sellerSats - deposit
-    ) {
-      return false
-    }
+    if (unlocks.sellerSats !== amounts.sellerSats) return false
   }
   return true
+}
+
+/**
+ * BRC-176 walk of a listed token to its deploy, with every token spend
+ * script-checked, before the buyer pays. The index validated the listing, but
+ * the buyer does not take the index's word for a token's history.
+ */
+async function proveListedToken(
+  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  listing: MarketListingAdvert,
+  listingBeef: number[] | Uint8Array,
+  mark: (phase: string) => void,
+): Promise<void> {
+  const startedAt = Date.now()
+  const { fillTokenParentBodies, proveWithScripts } = await import('./token/prove176')
+  const { provenTokenDeployOf } = await import('./token/lineage')
+  const point = normalizeOutpoint(listing.outpoint).replace('.', '_')
+  let beef = Beef.fromBinary(Array.from(listingBeef))
+  let proof = proveWithScripts(point, beef, provenTokenDeployOf)
+  if (!proof.ok) {
+    beef = await fillTokenParentBodies(
+      beef,
+      async (txid) => {
+        try {
+          return await getBeefForTxidCached(active, txid, { needProof: false, allowUnprovenRawTx: true })
+        } catch {
+          return null
+        }
+      },
+      [point.slice(0, 64)],
+      provenTokenDeployOf,
+    )
+    proof = proveWithScripts(point, beef, provenTokenDeployOf)
+  }
+  if (!proof.ok) {
+    throw new MarketListingError(
+      'MARKET_TOKEN_UNPROVEN',
+      `This token's history could not be proven back to its deploy (${proof.reason}). Nothing was charged.`,
+    )
+  }
+  const listed = listing.origin.trim().toLowerCase().replace('.', '_')
+  if (proof.tokenId.toLowerCase() !== listed) {
+    throw new MarketListingError(
+      'MARKET_TOKEN_UNPROVEN',
+      'The listed output is a different token from the one advertised. Nothing was charged.',
+    )
+  }
+  const ms = Date.now() - startedAt
+  if (ms >= 250) console.info(`[market-buy] token proof done ${ms}ms`)
+  mark('token lineage proven')
 }
 
 export async function executeMarketPurchase(
@@ -767,25 +831,104 @@ export async function executeMarketPurchase(
     if (itemTxid !== offerTxid) {
       throw new Error('Market item and offer token must come from the same listing transaction')
     }
+    const shape = marketSettlementShape(isBsv21 ? 'bsv21' : 'ordinal')
+    if (
+      !listingHasBuyerCompletableSettlement(listing, amounts) &&
+      chooseMarketReceiptDeliveryPath({
+        buyerIdentityKey: active.identityKey,
+        sellerIdentityKey: listing.seller,
+      }).path !== 'localSellerReconcile'
+    ) {
+      throw new MarketListingError(
+        'MARKET_SELLER_TIMEOUT',
+        'This listing was signed by an older wallet and cannot be bought safely. Ask the seller to list it again. Nothing was charged.',
+      )
+    }
     const overlayBeef = overlayListingBeefBinary(listing, itemTxid!)
     if (overlayBeef) rememberBeefBinary(itemTxid!, overlayBeef)
-    const inputBeef = overlayBeef
+    const listingBeef = overlayBeef
       ?? (await getBeefForTxidCached(active, itemTxid!, {
         needProof: true,
         allowUnprovenRawTx: true,
       })).toBinary()
+    if (isBsv21) await proveListedToken(active, listing, listingBeef, mark)
+    const padded = shape.padVins.length > 0 ? await ensureMarketPads(active) : null
+    if (padded) {
+      padded.beef.mergeBeef(listingBeef)
+      mark(`pads ready ${padded.pads.map((p) => p.outpoint.slice(0, 8)).join(',')}`)
+    }
+    const inputBeef = padded ? padded.beef.toBinary() : listingBeef
+    const padSats = padded?.pads.reduce((sum, pad) => sum + pad.satoshis, 0) ?? 0
     const buyerLock = isBsv21
       ? buildBsv21ValueLock({
           tokenId: listing.origin,
           amount: BigInt(listing.amt!),
           address: active.address,
           layout: bsv21TipLayout({
-            lockingScript: Beef.fromBinary(inputBeef)
+            lockingScript: Beef.fromBinary(listingBeef)
               .findTxid(itemTxid!)
               ?.tx?.outputs[Number(itemVout)]?.lockingScript?.toHex(),
           }),
         })
       : new P2PKH().lock(active.address).toHex()
+    const sellerInputs: Record<number, { outpoint: string; inputDescription: string; unlockingScriptLength: number }> = {
+      [shape.itemVin]: {
+        outpoint: normalizeOutpoint(listing.outpoint),
+        inputDescription: 'Listed market item',
+        unlockingScriptLength: 108,
+      },
+      [shape.offerVin]: {
+        outpoint: normalizeOutpoint(listing.offerOutpoint),
+        inputDescription: 'BRC-48 offer token',
+        unlockingScriptLength: 73,
+      },
+    }
+    shape.padVins.forEach((vin, i) => {
+      sellerInputs[vin] = {
+        outpoint: padded!.pads[i]!.outpoint,
+        inputDescription: 'Market ordinal pad',
+        unlockingScriptLength: 108,
+      }
+    })
+    const inputs = Array.from({ length: Object.keys(sellerInputs).length }, (_, vin) => {
+      const input = sellerInputs[vin]
+      if (!input) throw new Error(`Settlement input ${vin} has no source`)
+      return input
+    })
+    const fixedOutputs: Record<number, { lockingScript: string; satoshis: number; outputDescription: string } & Partial<ReturnType<typeof buildMarketHeldRemittance>>> = {
+      [shape.buyerOutputIndex]: {
+        lockingScript: buyerLock,
+        satoshis: 1,
+        outputDescription: 'Market item to buyer',
+        ...buildMarketHeldRemittance({
+          assetType: isBsv21 ? 'bsv21' : 'ordinal',
+          origin: listing.origin,
+          amt: listing.amt,
+          name: itemDisplayName,
+          ...(provenance ? { provenance } : {}),
+        }),
+      },
+      [shape.sellerOutputIndex]: {
+        lockingScript: sellerLock,
+        satoshis: amounts.sellerSats,
+        outputDescription: 'Market seller proceeds',
+      },
+      [shape.feeOutputIndex]: {
+        lockingScript: feeLockingScript,
+        satoshis: amounts.feeSats,
+        outputDescription: 'Market operator fee',
+      },
+    }
+    if (shape.padReturnOutputIndex != null) {
+      fixedOutputs[shape.padReturnOutputIndex] = marketPadOutput(active.address, padSats)
+    }
+    const outputs = Array.from({ length: shape.firstChangeIndex }, (_, vout) => {
+      const output = fixedOutputs[vout]
+      if (!output) throw new Error(`Settlement output ${vout} has no recipient`)
+      return output
+    })
+    // Two pads in, one out: replace the spent one from buyer funds.
+    if (padded) outputs.push(marketPadOutput(active.address))
     let created: Awaited<ReturnType<typeof active.wallet.createAction>>
     try {
       created = await active.wallet.createAction({
@@ -801,42 +944,8 @@ export async function executeMarketPurchase(
         '1sat',
       ],
       inputBEEF: inputBeef,
-      inputs: [
-        {
-          outpoint: normalizeOutpoint(listing.outpoint),
-          inputDescription: 'Listed market item',
-          unlockingScriptLength: 108,
-        },
-        {
-          outpoint: normalizeOutpoint(listing.offerOutpoint),
-          inputDescription: 'BRC-48 offer token',
-          unlockingScriptLength: 108,
-        },
-      ],
-      outputs: [
-        {
-          lockingScript: buyerLock,
-          satoshis: 1,
-          outputDescription: 'Market item to buyer',
-          ...buildMarketHeldRemittance({
-            assetType: listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal',
-            origin: listing.origin,
-            amt: listing.amt,
-            name: itemDisplayName,
-            ...(provenance ? { provenance } : {}),
-          }),
-        },
-        {
-          lockingScript: sellerLock,
-          satoshis: amounts.sellerSats,
-          outputDescription: 'Market seller proceeds',
-        },
-        {
-          lockingScript: feeLockingScript,
-          satoshis: amounts.feeSats,
-          outputDescription: 'Market operator fee',
-        },
-      ],
+      inputs,
+      outputs,
       options: {
         randomizeOutputs: false,
         signAndProcess: false,
@@ -859,24 +968,39 @@ export async function executeMarketPurchase(
     const beef = Beef.fromBinary(signable.tx)
     const { vin: itemVin } = subjectTransaction(beef, listing.outpoint)
     const { vin: offerVin } = subjectTransaction(beef, listing.offerOutpoint)
-    if (itemVin !== 0 || offerVin !== 1) {
+    if (itemVin !== shape.itemVin || offerVin !== shape.offerVin) {
       await active.wallet.abortAction({ reference: signable.reference }).catch(() => {})
-      throw new Error('Wallet did not preserve item input0 and offer input1')
+      throw new Error(`Wallet did not preserve the ${shape.layout} settlement inputs`)
     }
     const settlementTx = subjectTransaction(beef, listing.outpoint).tx
-    validateMarketSettlementOutputs({
-      tx: settlementTx,
-      beef,
-      listing,
-      buyerIdentityKey: active.identityKey,
-      buyerAddress: active.address,
-      chain: active.chain,
-      itemVin,
-      offerVin,
-      itemOutputIndex: 0,
-      sellerOutputIndex: 1,
-      feeOutputIndex: 2,
-    })
+    const padSpends: Record<number, { unlockingScript: string }> = {}
+    try {
+      validateMarketSettlementOutputs({
+        tx: settlementTx,
+        beef,
+        listing,
+        buyerIdentityKey: active.identityKey,
+        buyerAddress: active.address,
+        chain: active.chain,
+        shape,
+      })
+      if (padded) {
+        const rootKey = PrivateKey.fromHex(active.rootKeyHex)
+        shape.padVins.forEach((vin, i) => {
+          settlementTx.inputs[vin]!.unlockingScriptTemplate = new P2PKH().unlock(
+            rootKey,
+            'all',
+            false,
+            padded.pads[i]!.satoshis,
+            LockingScript.fromHex(padded.pads[i]!.lockingScript),
+          )
+        })
+        Object.assign(padSpends, await signTipInputs(settlementTx, shape.padVins))
+      }
+    } catch (err) {
+      await active.wallet.abortAction({ reference: signable.reference }).catch(() => {})
+      throw err
+    }
     // Prefer explicit args, else the advert's BRC-33 endpoint, else the wallet's
     // public messagebox. Omitting this forced default cloud routing and left the
     // buyer waiting out MARKET_SELLER_TIMEOUT when the seller never saw the wire.
@@ -957,9 +1081,9 @@ export async function executeMarketPurchase(
           signableBeefB64: b64(signable.tx),
           itemVin,
           offerVin,
-          itemOutputIndex: 0,
-          sellerOutputIndex: 1,
-          feeOutputIndex: 2,
+          itemOutputIndex: shape.buyerOutputIndex,
+          sellerOutputIndex: shape.sellerOutputIndex,
+          feeOutputIndex: shape.feeOutputIndex,
           expiresAt: pending.expiresAt,
         }
         const signedLocal = await signSellerInputs({
@@ -972,7 +1096,7 @@ export async function executeMarketPurchase(
       } else {
         throw new MarketListingError(
           'MARKET_SELLER_TIMEOUT',
-          'This listing has no list-time seller signature. Nothing was charged.',
+          'This listing has no bound list-time seller signature. Nothing was charged.',
         )
       }
       chart.send({ type: 'SIGNING' })
@@ -981,6 +1105,7 @@ export async function executeMarketPurchase(
       const signed = await active.wallet.signAction({
         reference: signable.reference,
         spends: {
+          ...padSpends,
           [itemVin]: { unlockingScript: itemUnlockingScript },
           [offerVin]: { unlockingScript: offerUnlockingScript },
         },
@@ -1012,7 +1137,7 @@ export async function executeMarketPurchase(
       })
       if (!isBsv21) {
         try {
-          const purchasedOutpoint = `${txid}.0`
+          const purchasedOutpoint = `${txid}.${shape.buyerOutputIndex}`
           // Prove tip→origin from the listing remittance before we finalize the
           // buy. Waiting until the user opens the item left Activity rows
           // Unverified through the whole purchase receipt.
@@ -1073,7 +1198,7 @@ export async function executeMarketPurchase(
           paintFungibleAfterSpend({
             tokenId: listing.origin,
             remainingAmt: listing.amt ?? 0,
-            outpoint: `${txid}_0`,
+            outpoint: `${txid}_${shape.buyerOutputIndex}`,
             sym: itemDisplayName,
             ...(icon ? { icon } : {}),
             binarySupply: 'open',
@@ -1134,7 +1259,7 @@ export async function executeMarketPurchase(
           })
         }, 0)
       }
-      const bought = marketDealItem(listing, itemDisplayName, `${txid}.0`)
+      const bought = marketDealItem(listing, itemDisplayName, `${txid}.${shape.buyerOutputIndex}`)
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
@@ -1435,13 +1560,14 @@ async function signSellerInputs(args: {
   const { tx, vin } = subjectTransaction(beef, listing.outpoint)
   if (vin !== args.wire.itemVin) throw new Error('Listed item vin mismatch')
   const offerSubject = subjectTransaction(beef, listing.offerOutpoint)
+  const shape = marketSettlementShape(listing.assetType ?? 'ordinal')
   if (
     offerSubject.tx !== tx ||
     offerSubject.vin !== args.wire.offerVin ||
-    vin !== 0 ||
-    offerSubject.vin !== 1
+    vin !== shape.itemVin ||
+    offerSubject.vin !== shape.offerVin
   ) {
-    throw new Error('Listed item and offer inputs are not exact seller inputs 0/1')
+    throw new Error(`Listed item and offer inputs are not the ${shape.layout} seller inputs`)
   }
   const source =
     tx.inputs[vin]?.sourceTransaction ??
@@ -1457,11 +1583,7 @@ async function signSellerInputs(args: {
     buyerIdentityKey: args.wire.buyerIdentityKey,
     buyerAddress: args.wire.buyerAddress ?? addressFromIdentityKey(args.wire.buyerIdentityKey, active.chain),
     chain: active.chain,
-    itemVin: vin,
-    offerVin: offerSubject.vin,
-    itemOutputIndex: args.wire.itemOutputIndex,
-    sellerOutputIndex: args.wire.sellerOutputIndex,
-    feeOutputIndex: args.wire.feeOutputIndex,
+    shape,
   })
   reserveMarketListingAuthorization({
     outpoint: listing.outpoint,
@@ -1472,22 +1594,24 @@ async function signSellerInputs(args: {
     txCommitment: marketSettlementCommitment(tx),
     intent,
   })
-  tx.inputs[vin]!.sourceTransaction = source
-  tx.inputs[vin]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
-    PrivateKey.fromHex(active.rootKeyHex),
-    1
-  )
-  const offerInput = tx.inputs[offerSubject.vin]!
-  offerInput.sourceTransaction =
-    offerInput.sourceTransaction ??
-    beef.findTxid(String(offerInput.sourceTXID))?.tx
-  offerInput.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
-    PrivateKey.fromHex(active.rootKeyHex),
-    MARKET_OFFER_DEPOSIT_SATS
-  )
-  await tx.sign()
-  const itemUnlockingScript = tx.inputs[vin]!.unlockingScript?.toHex()
-  const offerUnlockingScript = tx.inputs[offerSubject.vin]!.unlockingScript?.toHex()
+  const key = PrivateKey.fromHex(active.rootKeyHex)
+  const offerSource =
+    tx.inputs[offerSubject.vin]?.sourceTransaction ??
+    beef.findTxid(String(tx.inputs[offerSubject.vin]?.sourceTXID))?.tx
+  const offerLock =
+    offerSource?.outputs[tx.inputs[offerSubject.vin]!.sourceOutputIndex]?.lockingScript
+  if (!sourceOutput.lockingScript || !offerLock) {
+    throw new Error('Seller input locking scripts missing')
+  }
+  const itemUnlockingScript = (
+    await new P2PKH()
+      .unlock(key, 'single', true, 1, sourceOutput.lockingScript)
+      .sign(tx, vin)
+  ).toHex()
+  const offerUnlockingScript = (
+    await checksigOnlyUnlock(key, MARKET_OFFER_DEPOSIT_SATS, offerLock, 'single', true)
+      .sign(tx, offerSubject.vin)
+  ).toHex()
   if (!itemUnlockingScript || !offerUnlockingScript) {
     throw new Error('Seller item/offer signatures missing')
   }
@@ -1642,6 +1766,8 @@ export async function handleInboundMarketSettlementWire(args: {
     const listing = authorization.listing
     if (!listing) return settle('listing-has-no-token')
     let receipt: MarketSettlementReceipt | null = null
+    const saleShape = marketSettlementShape(listing.assetType ?? 'ordinal')
+    let sellerOutputIndex: number = saleShape.sellerOutputIndex
     if (authority.path === 'reservedBySignHop') {
       if (
         marketSettlementCommitment(finalTx) !==
@@ -1656,8 +1782,8 @@ export async function handleInboundMarketSettlementWire(args: {
       receipt = createMarketSettlementReceipt({
         intent,
         settlementTxid: args.wire.txid,
-        sellerOutputIndex: 1,
-        feeOutputIndex: 2,
+        sellerOutputIndex: saleShape.sellerOutputIndex,
+        feeOutputIndex: saleShape.feeOutputIndex,
       })
     } else {
       // Pre-signed listing: the buyer never asked us to sign, so the transaction
@@ -1672,6 +1798,7 @@ export async function handleInboundMarketSettlementWire(args: {
         })),
       })
       if (!payout.ok) return settle(payout.reason)
+      sellerOutputIndex = payout.sellerOutputIndex
       adoptMarketSaleReceipt({
         outpoint: authorization.outpoint,
         nonce: authorization.nonce,
@@ -1717,7 +1844,7 @@ export async function handleInboundMarketSettlementWire(args: {
     if (!progress.proceedsInternalized) {
       const swept = await sweepVisibleP2pkhOutpoints(
         active,
-        [`${args.wire.txid}.1`],
+        [`${args.wire.txid}.${sellerOutputIndex}`],
         atomic,
       )
       if (!swept[0]?.success) {

@@ -48,6 +48,7 @@ import {
   prove,
 } from './token'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
+import { isTokenFilingBasket, TOKEN_FILING_BASKETS } from './token/filing'
 import { getBeefForTxidCached } from './beefCache'
 import { withStorageLockLabel } from './storageLockTrace'
 import { getProvenVerdict } from './provenCache'
@@ -87,6 +88,13 @@ import {
   chooseMarketListingPath,
 } from './marketListingPath'
 import { publicMessageboxBase } from './messageTransport'
+import {
+  MARKET_SELLER_SIGHASH,
+  MARKET_SETTLEMENT_VERSION,
+  isMarketPayoutIndexPair,
+  marketSettlementShape,
+  type MarketSettlementUnlocksV2,
+} from './marketSettlementLayout'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -136,15 +144,7 @@ export type MarketListingAdvert = {
   settlementUnlocks?: MarketSettlementUnlocks | null
 }
 
-export type MarketSettlementUnlocks = {
-  version: 1
-  itemUnlockingScript: string
-  offerUnlockingScript: string
-  itemSighash: 'NONE|ANYONECANPAY'
-  offerSighash: 'SINGLE|ANYONECANPAY'
-  sellerSats: number
-  feeSats: number
-}
+export type MarketSettlementUnlocks = MarketSettlementUnlocksV2
 
 export type CreateMarketListingArgs = {
   outpoint: string
@@ -844,8 +844,7 @@ export function verifyMarketSettlementReceipt(
     receipt.buyer.toLowerCase() === intent.buyer.toLowerCase() &&
     receipt.seller.toLowerCase() === intent.seller.toLowerCase() &&
     /^[0-9a-f]{64}$/i.test(receipt.settlementTxid) &&
-    receipt.sellerOutputIndex === 1 &&
-    receipt.feeOutputIndex === 2 &&
+    isMarketPayoutIndexPair(receipt.sellerOutputIndex, receipt.feeOutputIndex) &&
     Number.isSafeInteger(receipt.settledAt) &&
     Math.abs(now - receipt.settledAt) <= 15 * 60_000 &&
     verifyRawSignature(
@@ -1048,7 +1047,7 @@ function parseCustomInstructions(raw: unknown): Record<string, unknown> {
   }
 }
 
-const LISTING_BASKETS = new Set(['1sat', 'bsv21'])
+const LISTING_BASKETS = new Set<string>(['1sat', ...TOKEN_FILING_BASKETS])
 
 type ListedTip = {
   outpoint: string
@@ -1134,7 +1133,7 @@ async function readListedOutputByOutpoint(
         if (basket?.name) basketName.set(row.basketId, basket.name)
       }
       const rank = (name: string) => {
-        const at = preferred.indexOf(name as '1sat' | 'bsv21')
+        const at = preferred.indexOf(isTokenFilingBasket(name) ? 'bsv21' : (name as '1sat'))
         return at < 0 ? preferred.length : at
       }
       const hit = rows
@@ -2308,6 +2307,7 @@ async function createMarketListingAdvertExclusive(
       advert.settlementUnlocks = await buildMarketSettlementUnlocks({
         listingTx,
         txid,
+        assetType: listedAsset,
         itemLockingScript,
         offerLockingScript,
         payTo: fields.payTo,
@@ -2724,8 +2724,7 @@ export function createMarketSettlementReceipt(args: {
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
   if (
     active.identityKey.toLowerCase() !== args.intent.seller.toLowerCase() ||
-    args.sellerOutputIndex !== 1 ||
-    args.feeOutputIndex !== 2
+    !isMarketPayoutIndexPair(args.sellerOutputIndex, args.feeOutputIndex)
   ) {
     throw new MarketListingError(
       'MARKET_RECEIPT_TERMS_MISMATCH',
@@ -2843,13 +2842,14 @@ export function getMarketSaleStatus(args: { outpoint: string }): {
 
 
 /**
- * List-time SIGHASH_NONE|ANYONECANPAY on the item (buyer sets vout0) and
- * SIGHASH_SINGLE|ANYONECANPAY checksig-only on the offer (binds vout1 seller
- * payment). Publish fails closed when this cannot be built.
+ * List-time seller signatures in the layout `marketSettlementShape` fixes:
+ * the item over the seller payment, the offer over the market fee, both
+ * SINGLE|ANYONECANPAY. Publish fails closed when this cannot be built.
  */
 export async function buildMarketSettlementUnlocks(args: {
   listingTx: Transaction
   txid: string
+  assetType: MarketAssetType
   itemLockingScript: string
   offerLockingScript: string
   payTo: string
@@ -2861,65 +2861,63 @@ export async function buildMarketSettlementUnlocks(args: {
   if (String(args.listingTx.id('hex')).toLowerCase() !== txid) {
     throw new Error('Listing transaction does not match txid')
   }
+  const shape = marketSettlementShape(args.assetType)
   const amounts = calculateMarketSettlement(args.priceSats)
-  const itemLock = LockingScript.fromHex(args.itemLockingScript)
-  const offerLock = LockingScript.fromHex(args.offerLockingScript)
   const skeleton = new Transaction()
-  skeleton.addInput({
-    sourceTXID: txid,
-    sourceOutputIndex: MARKET_ITEM_VOUT,
-    sourceTransaction: args.listingTx,
-    unlockingScriptTemplate: new P2PKH().unlock(
+  // ANYONECANPAY keeps every other input out of each sighash and SINGLE keeps
+  // every other output out, so the pad and buyer slots are placeholders.
+  const inputs = Math.max(shape.itemVin, shape.offerVin) + 1
+  for (let vin = 0; vin < inputs; vin += 1) {
+    const vout =
+      vin === shape.itemVin ? MARKET_ITEM_VOUT : vin === shape.offerVin ? MARKET_OFFER_VOUT : null
+    skeleton.addInput({
+      sourceTXID: vout == null ? '00'.repeat(32) : txid,
+      sourceOutputIndex: vout ?? 0,
+      ...(vout == null ? {} : { sourceTransaction: args.listingTx }),
+      sequence: 0xffffffff,
+    })
+  }
+  const outputs = Math.max(shape.sellerOutputIndex, shape.feeOutputIndex) + 1
+  for (let vout = 0; vout < outputs; vout += 1) {
+    skeleton.addOutput(
+      vout === shape.sellerOutputIndex
+        ? { satoshis: amounts.sellerSats, lockingScript: new P2PKH().lock(args.payTo) }
+        : vout === shape.feeOutputIndex
+          ? { satoshis: amounts.feeSats, lockingScript: new P2PKH().lock(args.feePayToAddress) }
+          : { satoshis: 1, lockingScript: new P2PKH().lock(args.payTo) },
+    )
+  }
+  const itemUnlockingScript = (
+    await new P2PKH()
+      .unlock(args.privateKey, 'single', true, 1, LockingScript.fromHex(args.itemLockingScript))
+      .sign(skeleton, shape.itemVin)
+  ).toHex()
+  const offerUnlockingScript = (
+    await checksigOnlyUnlock(
       args.privateKey,
-      'none',
-      true,
-      1,
-      itemLock,
-    ),
-  })
-  skeleton.addInput({
-    sourceTXID: txid,
-    sourceOutputIndex: MARKET_OFFER_VOUT,
-    sourceTransaction: args.listingTx,
-    unlockingScriptTemplate: checksigOnlyUnlock(
-      args.privateKey,
-      1,
-      offerLock,
+      MARKET_OFFER_DEPOSIT_SATS,
+      LockingScript.fromHex(args.offerLockingScript),
       'single',
       true,
-    ),
-  })
-  skeleton.addOutput({
-    satoshis: 1,
-    lockingScript: new P2PKH().lock(args.payTo),
-  })
-  skeleton.addOutput({
-    satoshis: amounts.sellerSats,
-    lockingScript: new P2PKH().lock(args.payTo),
-  })
-  skeleton.addOutput({
-    satoshis: amounts.feeSats,
-    lockingScript: new P2PKH().lock(args.feePayToAddress),
-  })
-  await skeleton.sign()
-  const itemUnlockingScript = skeleton.inputs[0]?.unlockingScript?.toHex()
-  const offerUnlockingScript = skeleton.inputs[1]?.unlockingScript?.toHex()
+    ).sign(skeleton, shape.offerVin)
+  ).toHex()
   if (!itemUnlockingScript || !offerUnlockingScript) {
     throw new Error('List-time settlement signatures missing')
   }
   return {
-    version: 1,
+    version: MARKET_SETTLEMENT_VERSION,
+    layout: shape.layout,
     itemUnlockingScript,
     offerUnlockingScript,
-    itemSighash: 'NONE|ANYONECANPAY',
-    offerSighash: 'SINGLE|ANYONECANPAY',
+    itemSighash: MARKET_SELLER_SIGHASH,
+    offerSighash: MARKET_SELLER_SIGHASH,
     sellerSats: amounts.sellerSats,
     feeSats: amounts.feeSats,
   }
 }
 
 /** Offer lock is <pubkey> OP_CHECKSIG + PushDrop fields. Unlock is sig-only. */
-function checksigOnlyUnlock(
+export function checksigOnlyUnlock(
   privateKey: PrivateKey,
   satoshis: number,
   lockingScript: { toHex?: () => string } | unknown,
@@ -2986,6 +2984,74 @@ function markMarketListingCancelled(args: {
       : undefined,
   })
   return cancelled
+}
+
+/** The listed output's remittance without `market-held`, else rebuilt from the advert. */
+async function listedItemRemittance(
+  active: ActiveWallet,
+  listing: MarketListingAdvert,
+  assetType: MarketAssetType,
+): Promise<{ basket: string; tags: string[]; customInstructions: string }> {
+  const point = normalizeOutpoint(listing.outpoint)
+  for (const basket of assetType === 'bsv21' ? TOKEN_FILING_BASKETS : (['1sat'] as const)) {
+    try {
+      const page = await active.wallet.listOutputs({
+        basket,
+        tags: ['market-held'],
+        includeCustomInstructions: true,
+        includeTags: true,
+        limit: 200,
+        seekPermission: false,
+      })
+      const held = page.outputs.find((o) => normalizeOutpoint(o.outpoint) === point)
+      if (held?.customInstructions) {
+        return {
+          // Returned tokens file under the current name, never the legacy one.
+          basket: assetType === 'bsv21' ? TOKEN_FILING_BASKETS[0] : basket,
+          tags: (held.tags ?? []).filter((tag) => tag !== 'market-held'),
+          customInstructions: held.customInstructions,
+        }
+      }
+    } catch {
+      // Next basket, then the advert: it names origin and amount.
+    }
+  }
+  const provenance = assetType === 'ordinal' ? getRememberedProvenanceRemittance(point) : null
+  return buildMarketHeldRemittance({
+    assetType,
+    origin: listing.origin,
+    amt: listing.amt,
+    ...(provenance && 'origin' in provenance ? { provenance } : {}),
+  })
+}
+
+/** Point local inventory at the returned item; listOutputs stays the truth. */
+async function repaintReturnedItem(
+  active: ActiveWallet,
+  listing: MarketListingAdvert,
+  assetType: MarketAssetType,
+  returnedOutpoint: string,
+): Promise<void> {
+  try {
+    if (assetType === 'bsv21') {
+      const { listFungibles } = await import('./token')
+      await listFungibles(active)
+      return
+    }
+    const { noteIngestedItem, retireCollectableAfterSpend } = await import('./collectables')
+    retireCollectableAfterSpend(listing.outpoint, returnedOutpoint.slice(0, 64))
+    noteIngestedItem({
+      outpoint: returnedOutpoint,
+      chain: active.chain,
+      origin: listing.origin,
+      identityKey: active.identityKey,
+    })
+  } catch (err) {
+    console.warn(
+      '[market] returned item repaint deferred',
+      err instanceof Error ? err.message : String(err),
+    )
+  }
 }
 
 export async function createCancelMarketListingAdvert(args: {
@@ -3059,16 +3125,49 @@ async function createCancelMarketListingAdvertExclusive(args: {
   chart.send({ type: 'CANCEL', path })
   let reference: string | null = null
   try {
-    const inputBEEF = (await getBeefForTxidCached(active, offerTxid, { needProof: true })).toBinary()
+    // The item is spent too: its list-time signature stays valid for as long
+    // as the listed output does, so a cancel that left it would leave the sale
+    // open to anyone holding the advert.
+    const listingBeef = await getBeefForTxidCached(active, offerTxid, { needProof: true })
+    const listingTx = listingBeef.findTxid(offerTxid)?.tx
+    const itemTxid = normalizeOutpoint(listing.outpoint).split('.')[0]
+    const listedLock = listingTx?.outputs[MARKET_ITEM_VOUT]?.lockingScript
+    if (itemTxid !== offerTxid || !listingTx || !listedLock) {
+      throw new Error('Cancellation needs the listing transaction that holds item and offer')
+    }
+    const assetType: MarketAssetType = listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal'
+    const returnLock =
+      assetType === 'bsv21'
+        ? buildBsv21ValueLock({
+            tokenId: listing.origin,
+            amount: BigInt(listing.amt ?? 0),
+            address: active.address,
+            layout: bsv21SpendLayout([{ lockingScript: listedLock.toHex() }]),
+          })
+        : new P2PKH().lock(active.address).toHex()
+    const heldRemittance = await listedItemRemittance(active, listing, assetType)
     const created = await active.wallet.createAction({
       description: 'Cancel BRC-48 market offer',
       labels: ['market-v3', 'brc48', 'market-cancel'],
-      inputBEEF,
+      inputBEEF: listingBeef.toBinary(),
       inputs: [
         {
-          outpoint: listing.offerOutpoint.replace('_', '.'),
+          outpoint: normalizeOutpoint(listing.outpoint),
+          inputDescription: 'Listed market item returning',
+          unlockingScriptLength: 108,
+        },
+        {
+          outpoint: normalizeOutpoint(listing.offerOutpoint),
           inputDescription: 'Cancelled market offer',
           unlockingScriptLength: 73,
+        },
+      ],
+      outputs: [
+        {
+          lockingScript: returnLock,
+          satoshis: 1,
+          outputDescription: 'Market item returned',
+          ...heldRemittance,
         },
       ],
       options: {
@@ -3092,32 +3191,37 @@ async function createCancelMarketListingAdvertExclusive(args: {
     if (
       !tx ||
       String(tx.inputs[0]?.sourceTXID).toLowerCase() !== offerTxid ||
-      tx.inputs[0]?.sourceOutputIndex !== MARKET_OFFER_VOUT
+      tx.inputs[0]?.sourceOutputIndex !== MARKET_ITEM_VOUT ||
+      String(tx.inputs[1]?.sourceTXID).toLowerCase() !== offerTxid ||
+      tx.inputs[1]?.sourceOutputIndex !== MARKET_OFFER_VOUT ||
+      tx.outputs[0]?.satoshis !== 1 ||
+      tx.outputs[0]?.lockingScript?.toHex() !== returnLock
     ) {
-      throw new Error('Cancellation must spend the offer token as input zero')
+      throw new Error('Cancellation must spend item then offer and return the item at output zero')
     }
-    {
-      const vin = tx.inputs[0]!
-      vin.sourceTransaction ??= beef.findTxid(String(vin.sourceTXID))?.tx
-      const sourceOut = vin.sourceTransaction?.outputs[vin.sourceOutputIndex]
+    const key = PrivateKey.fromHex(active.rootKeyHex)
+    const spends: Record<number, { unlockingScript: string }> = {}
+    for (const vin of [0, 1]) {
+      const input = tx.inputs[vin]!
+      input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx ?? listingTx
+      const sourceOut = input.sourceTransaction?.outputs[input.sourceOutputIndex]
       const satoshis = sourceOut?.satoshis
       const lockingScript = sourceOut?.lockingScript
       if (typeof satoshis !== 'number' || !lockingScript) {
         throw new Error('Cancel input is missing its source locking script')
       }
-      vin.unlockingScriptTemplate = checksigOnlyUnlock(
-        PrivateKey.fromHex(active.rootKeyHex),
-        satoshis,
-        lockingScript,
-      )
+      const template =
+        vin === 0
+          ? new P2PKH().unlock(key, 'all', false, satoshis, lockingScript)
+          : checksigOnlyUnlock(key, satoshis, lockingScript)
+      const unlockingScript = (await template.sign(tx, vin)).toHex()
+      if (!unlockingScript) throw new Error('Cancellation signature missing')
+      spends[vin] = { unlockingScript }
     }
-    await tx.sign()
-    const unlockingScript = tx.inputs[0]?.unlockingScript?.toHex()
-    if (!unlockingScript) throw new Error('Offer cancellation signature missing')
     chart.send({ type: 'SIGNED_UNKNOWN' })
     const signed = await active.wallet.signAction({
       reference,
-      spends: { 0: { unlockingScript } },
+      spends,
       options: { acceptDelayedBroadcast: false },
     })
     const txid = signed.txid?.toLowerCase() ?? ''
@@ -3142,6 +3246,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
     })
     chart.send({ type: 'COMMITTED' })
     startSignedSendPropagation(signedCancel)
+    await repaintReturnedItem(active, listing, assetType, `${txid}.0`)
     scheduleHistoryBackupPush('market-list')
     return {
       action: 'cancel',

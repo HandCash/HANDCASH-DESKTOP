@@ -25,6 +25,11 @@ import {
   resolveOrdinalListingOrigin,
 } from './marketListing'
 import { rememberProvenVerdict } from './provenCache'
+import {
+  marketSettlementShape,
+  unlockSighashByte,
+  unlocksBindSellerPayment,
+} from './marketSettlementLayout'
 import { decodeBsv21Binary, encodeBsv21Binary } from './token'
 import { buildBsv21ValueLock } from './token'
 import {
@@ -845,24 +850,19 @@ describe('isAlreadySpentListingFailure', () => {
 })
 
 describe('list-time market settlement unlocks', () => {
-  it('builds version-1 NONE|ACP item and SINGLE|ACP offer unlocks', async () => {
+  const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
+
+  async function listed(assetType: 'ordinal' | 'bsv21') {
     const fields = fixture()
-    const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
     const offerLockingScript = encodeMarketOffer(fields, sellerKey)
     const itemLockingScript = new P2PKH().lock(fields.payTo).toHex()
     const listingTx = new Transaction()
-    listingTx.addOutput({
-      satoshis: 1,
-      lockingScript: LockingScript.fromHex(itemLockingScript),
-    })
-    listingTx.addOutput({
-      satoshis: 1,
-      lockingScript: LockingScript.fromHex(offerLockingScript),
-    })
-    const amounts = calculateMarketSettlement(fields.grossPriceSats)
+    listingTx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(itemLockingScript) })
+    listingTx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(offerLockingScript) })
     const unlocks = await buildMarketSettlementUnlocks({
       listingTx,
       txid: listingTx.id('hex') as string,
+      assetType,
       itemLockingScript,
       offerLockingScript,
       payTo: fields.payTo,
@@ -870,18 +870,119 @@ describe('list-time market settlement unlocks', () => {
       feePayToAddress: fields.feePayTo,
       privateKey: sellerKey,
     })
-    expect(unlocks).toMatchObject({
-      version: 1,
-      itemSighash: 'NONE|ANYONECANPAY',
-      offerSighash: 'SINGLE|ANYONECANPAY',
-      sellerSats: amounts.sellerSats,
-      feeSats: amounts.feeSats,
+    return { fields, listingTx, unlocks, itemLockingScript, offerLockingScript }
+  }
+
+  function spends(tx: Transaction, vin: number): boolean {
+    const input = tx.inputs[vin]!
+    const source = input.sourceTransaction!.outputs[input.sourceOutputIndex]!
+    try {
+      return new Spend({
+        sourceTXID: input.sourceTXID ?? (input.sourceTransaction!.id('hex') as string),
+        sourceOutputIndex: input.sourceOutputIndex,
+        sourceSatoshis: source.satoshis!,
+        lockingScript: source.lockingScript,
+        transactionVersion: tx.version,
+        otherInputs: tx.inputs.filter((_, i) => i !== vin),
+        outputs: tx.outputs,
+        inputIndex: vin,
+        unlockingScript: input.unlockingScript!,
+        inputSequence: input.sequence ?? 0xffffffff,
+        lockTime: tx.lockTime,
+      }).validate()
+    } catch {
+      return false
+    }
+  }
+
+  function addListed(tx: Transaction, listingTx: Transaction, vout: number, unlock: string) {
+    tx.addInput({
+      sourceTXID: listingTx.id('hex') as string,
+      sourceOutputIndex: vout,
+      sourceTransaction: listingTx,
+      unlockingScript: UnlockingScript.fromHex(unlock),
+      sequence: 0xffffffff,
     })
-    expect(unlocks.itemUnlockingScript).toMatch(/^[0-9a-f]+$/i)
-    expect(unlocks.offerUnlockingScript).toMatch(/^[0-9a-f]+$/i)
-    // Item is sig+pubkey; offer is checksig-only (sig push).
-    expect(unlocks.offerUnlockingScript.length).toBeLessThan(
-      unlocks.itemUnlockingScript.length,
-    )
+  }
+
+  it('signs both seller inputs SINGLE|ANYONECANPAY in the layout of the asset', async () => {
+    for (const assetType of ['ordinal', 'bsv21'] as const) {
+      const { fields, unlocks } = await listed(assetType)
+      const amounts = calculateMarketSettlement(fields.grossPriceSats)
+      expect(unlocks).toMatchObject({
+        version: 2,
+        layout: marketSettlementShape(assetType).layout,
+        itemSighash: 'SINGLE|ANYONECANPAY',
+        offerSighash: 'SINGLE|ANYONECANPAY',
+        sellerSats: amounts.sellerSats,
+        feeSats: amounts.feeSats,
+      })
+      expect(unlockSighashByte(unlocks.itemUnlockingScript)).toBe(0xc3)
+      expect(unlockSighashByte(unlocks.offerUnlockingScript)).toBe(0xc3)
+      expect(unlocksBindSellerPayment(unlocks, assetType)).toBe(true)
+      expect(unlocksBindSellerPayment(unlocks, assetType === 'bsv21' ? 'ordinal' : 'bsv21')).toBe(false)
+      expect(unlocksBindSellerPayment({ ...unlocks, version: 1 }, assetType)).toBe(false)
+    }
+  })
+
+  it('refuses the published item unlock on a transaction that does not pay the seller', async () => {
+    for (const assetType of ['ordinal', 'bsv21'] as const) {
+      const { listingTx, unlocks } = await listed(assetType)
+      const shape = marketSettlementShape(assetType)
+      const thief = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+      for (let vin = 0; vin <= shape.itemVin; vin += 1) {
+        const theft = new Transaction()
+        for (let i = 0; i < vin; i += 1) addListed(theft, listingTx, 1, unlocks.offerUnlockingScript)
+        addListed(theft, listingTx, 0, unlocks.itemUnlockingScript)
+        for (let i = 0; i <= Math.max(vin, shape.feeOutputIndex); i += 1) {
+          theft.addOutput({ satoshis: 1, lockingScript: thief })
+        }
+        expect(spends(theft, vin)).toBe(false)
+      }
+    }
+  })
+
+  it('refuses the published offer unlock on a transaction that does not pay the fee', async () => {
+    const { listingTx, unlocks } = await listed('bsv21')
+    const grief = new Transaction()
+    addListed(grief, listingTx, 0, unlocks.itemUnlockingScript)
+    addListed(grief, listingTx, 1, unlocks.offerUnlockingScript)
+    const thief = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    grief.addOutput({ satoshis: 1, lockingScript: thief })
+    grief.addOutput({ satoshis: 1, lockingScript: thief })
+    expect(spends(grief, 1)).toBe(false)
+  })
+
+  it('validates a buyer-completed ordinal settlement with pads ahead of the item', async () => {
+    const { fields, listingTx, unlocks } = await listed('ordinal')
+    const shape = marketSettlementShape('ordinal')
+    const amounts = calculateMarketSettlement(fields.grossPriceSats)
+    const buyer = PrivateKey.fromRandom()
+    const buyerLock = new P2PKH().lock(buyer.toAddress())
+    const padTx = new Transaction()
+    padTx.addOutput({ satoshis: 1, lockingScript: buyerLock })
+    padTx.addOutput({ satoshis: 1, lockingScript: buyerLock })
+    const tx = new Transaction()
+    for (const vout of [0, 1]) {
+      tx.addInput({
+        sourceTXID: padTx.id('hex') as string,
+        sourceOutputIndex: vout,
+        sourceTransaction: padTx,
+        unlockingScriptTemplate: new P2PKH().unlock(buyer, 'all', false, 1, buyerLock),
+        sequence: 0xffffffff,
+      })
+    }
+    addListed(tx, listingTx, 0, unlocks.itemUnlockingScript)
+    addListed(tx, listingTx, 1, unlocks.offerUnlockingScript)
+    tx.addOutput({ satoshis: 2, lockingScript: buyerLock })
+    tx.addOutput({ satoshis: 1, lockingScript: buyerLock })
+    tx.addOutput({ satoshis: amounts.sellerSats, lockingScript: new P2PKH().lock(fields.payTo) })
+    tx.addOutput({ satoshis: amounts.feeSats, lockingScript: new P2PKH().lock(fields.feePayTo) })
+    for (const vin of shape.padVins) {
+      tx.inputs[vin]!.unlockingScript = await tx.inputs[vin]!.unlockingScriptTemplate!.sign(tx, vin)
+    }
+    expect(shape.padVins.every((vin) => spends(tx, vin))).toBe(true)
+    expect(spends(tx, shape.itemVin)).toBe(true)
+    expect(spends(tx, shape.offerVin)).toBe(true)
   })
 })
