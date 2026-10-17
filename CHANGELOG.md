@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.582] - 2026-10-17
+
+### Changed
+- **Phone apps open in a tab inside HandCash by default.** The in-app browser is out of Labs. From Chrome, each request waits on a wallet Android has throttled in the background, and each approval is an app switch. A tab has neither, and the WebView, not the page, vouches for the app's origin. Chrome still works. Desktop still opens apps in the system browser.
+- **After approving a Chrome app's request on the phone, HandCash steps back to Chrome**, as Desktop already does. Chrome returns with the page as you left it, and the request finishes there. The wallet steps back only when a prompt pulled it over another app. Raise retries no longer pull it forward again after a fast answer, and the screen may sleep again once nothing is left to approve.
+- **App tab:** a stop button while a page loads, real load progress on Android, and **Try again** on a page that failed. The location shows the page's host, with a warning when the page leaves the app's host or uses plain http. Upload fields open the file picker on Android, where a tap used to do nothing. Opening a tab on a shell that hosts none (iPhone) is refused instead of showing a broken tab.
+
 ## [1.3.581] - 2026-10-17
 
 ### Changed
