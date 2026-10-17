@@ -161,8 +161,10 @@ describe('sendSatsToAddress', () => {
     const args = createAction.mock.calls[0]?.[0]
     expect(args?.options?.acceptDelayedBroadcast).toBe(true)
     // Drain the detached miner path so later suites never inherit an unhandled
-    // rejection from an incomplete mock.
-    await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
-    await vi.waitFor(() => expect(restoreOnChainLocalTx).toHaveBeenCalled())
-  })
+    // rejection from an incomplete mock. The path loads its modules on demand,
+    // which outlasts the default 1 s wait when the whole suite runs in parallel.
+    const drained = { timeout: 15_000 }
+    await vi.waitFor(() => expect(postBeef).toHaveBeenCalled(), drained)
+    await vi.waitFor(() => expect(restoreOnChainLocalTx).toHaveBeenCalled(), drained)
+  }, 20_000)
 })
