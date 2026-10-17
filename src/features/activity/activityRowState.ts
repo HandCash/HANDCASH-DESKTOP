@@ -118,10 +118,10 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   createMarketListingAdvert: 'listing',
   createCancelMarketListingAdvert: 'listing cancel',
   purchaseMarketListing: 'purchase',
-  createTokenSwapOffer: 'swap offer',
-  acceptTokenSwapOffer: 'swap',
-  claimTokenSwapProceeds: 'swap claim',
-  cancelTokenSwapOffer: 'swap cancel',
+  createDirectOffer: 'direct offer listing',
+  buyDirectOffer: 'direct offer purchase',
+  collectDirectOfferProceeds: 'sale proceeds',
+  cancelDirectOffer: 'direct offer cancel',
 }
 
 /** What the row is called before a description or txid exists. */

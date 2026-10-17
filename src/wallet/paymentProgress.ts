@@ -297,19 +297,19 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Buying…',
     detail: 'Settling the purchase',
   },
-  createTokenSwapOffer: {
+  createDirectOffer: {
     label: 'Listing…',
     detail: 'Creating the direct offer',
   },
-  acceptTokenSwapOffer: {
+  buyDirectOffer: {
     label: 'Buying…',
     detail: 'Settling the direct offer',
   },
-  claimTokenSwapProceeds: {
+  collectDirectOfferProceeds: {
     label: 'Collecting…',
     detail: 'Filing the sale proceeds',
   },
-  cancelTokenSwapOffer: {
+  cancelDirectOffer: {
     label: 'Cancelling…',
     detail: 'Returning the listed lot',
   },

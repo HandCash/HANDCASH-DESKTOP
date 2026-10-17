@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityActionMark } from './activityActionMark'
+import { activityActionMark, canonicalActivityMethod } from './activityActionMark'
 import type { ActivityEntry } from './appActivity'
 
 function entry(overrides: Partial<ActivityEntry> & { method: string }): ActivityEntry {
@@ -41,6 +41,17 @@ describe('activityActionMark', () => {
   })
 
   it('marks a direct offer with the same marks as a market listing', () => {
+    const marks = [
+      activityActionMark(entry({ method: 'direct-offer-list', kind: 'event', sats: 0 })),
+      activityActionMark(entry({ method: 'direct-offer-cancel', kind: 'event', sats: 0 })),
+      activityActionMark(entry({ method: 'direct-offer-buy', kind: 'spent', sats: 500 })),
+      activityActionMark(entry({ method: 'direct-offer-sale', sats: 500 })),
+    ]
+    expect(marks).toEqual(['list', 'cancel', 'purchase', 'sale'])
+  })
+
+  it('reads 1.3.573 token-swap rows as direct offers', () => {
+    expect(canonicalActivityMethod('token-swap-offer')).toBe('direct-offer-list')
     const marks = [
       activityActionMark(entry({ method: 'token-swap-offer', kind: 'event', sats: 0 })),
       activityActionMark(entry({ method: 'token-swap-cancel', kind: 'event', sats: 0 })),

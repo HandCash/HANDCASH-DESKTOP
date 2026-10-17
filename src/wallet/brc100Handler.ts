@@ -101,7 +101,7 @@ import {
   verifyMarketListingProvenance,
   type CreateMarketListingArgs,
 } from './marketListing'
-import { TokenSwapError } from './tokenSwapPath'
+import { DirectOfferError } from './directOfferPath'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { internalizeActionWithBroadcast } from './internalizeBroadcast'
@@ -537,24 +537,24 @@ export async function dispatchWalletMethod(
       return { ok: true }
     case 'markMarketListingPublished':
       return markMarketListingPublished((args ?? {}) as { txid?: string })
-    case 'createTokenSwapOffer':
-      return (await import('./tokenSwap')).createTokenSwapOffer(
-        (args ?? {}) as Parameters<typeof import('./tokenSwap').createTokenSwapOffer>[0],
+    case 'createDirectOffer':
+      return (await import('./directOffer')).createDirectOffer(
+        (args ?? {}) as Parameters<typeof import('./directOffer').createDirectOffer>[0],
       )
-    case 'acceptTokenSwapOffer':
-      return (await import('./tokenSwap')).acceptTokenSwapOffer(
-        (args ?? {}) as Parameters<typeof import('./tokenSwap').acceptTokenSwapOffer>[0],
+    case 'buyDirectOffer':
+      return (await import('./directOffer')).buyDirectOffer(
+        (args ?? {}) as Parameters<typeof import('./directOffer').buyDirectOffer>[0],
       )
-    case 'claimTokenSwapProceeds':
-      return (await import('./tokenSwap')).claimTokenSwapProceeds(
-        (args ?? {}) as Parameters<typeof import('./tokenSwap').claimTokenSwapProceeds>[0],
+    case 'collectDirectOfferProceeds':
+      return (await import('./directOffer')).collectDirectOfferProceeds(
+        (args ?? {}) as Parameters<typeof import('./directOffer').collectDirectOfferProceeds>[0],
       )
-    case 'cancelTokenSwapOffer':
-      return (await import('./tokenSwap')).cancelTokenSwapOffer(
-        (args ?? {}) as Parameters<typeof import('./tokenSwap').cancelTokenSwapOffer>[0],
+    case 'cancelDirectOffer':
+      return (await import('./directOffer')).cancelDirectOffer(
+        (args ?? {}) as Parameters<typeof import('./directOffer').cancelDirectOffer>[0],
       )
-    case 'listTokenSwapOffers':
-      return (await import('./tokenSwap')).listTokenSwapOffers()
+    case 'listDirectOffers':
+      return (await import('./directOffer')).listDirectOffers()
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -1302,7 +1302,7 @@ async function handleBrc100RequestInner(
       }
     } else if (marketBusyCopy(method)) {
       // Keep the wallet visibly busy after the permission prompt resolves.
-      // Market list / cancel / purchase and token swaps serialize inside their modules via
+      // Market list / cancel / purchase and direct offers serialize inside their modules via
       // runExclusiveSpend so consolidate cannot race fee inputs, and a failed
       // Arcade reject aborts the noSend before the tip is scanned again.
       const busy = marketBusyCopy(method) ?? {
@@ -1543,7 +1543,7 @@ async function handleBrc100RequestInner(
     if (isActionMethod(method)) playWalletSound('error')
     const flat = flattenJsonError(error)
     const code =
-      error instanceof MarketListingError || error instanceof TokenSwapError
+      error instanceof MarketListingError || error instanceof DirectOfferError
         ? error.code
         : flat.code
     return {

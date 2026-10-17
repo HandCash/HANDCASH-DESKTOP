@@ -32,7 +32,7 @@ export type TransactionFlow =
   | 'token_transfer'
   | 'burn'
   | 'market_listing'
-  | 'token_swap'
+  | 'direct_offer'
   | 'market_cancel'
   | 'market_purchase'
   | 'market_pad'

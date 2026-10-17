@@ -11,7 +11,7 @@ import {
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
+import { mayAbortOffer, offerMachine } from '../machines/offerMachine'
 import {
   buildBsv21ListingProof,
   buildMarketHeldRemittance,
@@ -27,9 +27,9 @@ import {
 import { rememberProvenVerdict } from './provenCache'
 import {
   marketSettlementShape,
-  unlockSighashByte,
   unlocksBindSellerPayment,
 } from './marketSettlementLayout'
+import { unlockSighashByte } from './offerSeal'
 import { decodeBsv21Binary, encodeBsv21Binary } from './token'
 import { buildBsv21ValueLock } from './token'
 import {
@@ -265,31 +265,33 @@ describe('BRC-48 one-sat market offer', () => {
   })
 
   it('allows abort until Arcade accepts, then routes unknown signing to recovery', () => {
-    const actor = createActor(marketListingMachine).start()
+    const actor = createActor(offerMachine).start()
     actor.send({
       type: 'LIST',
+      venue: 'market',
       path: { path: 'createOffer', itemOutpoint: 'item' },
     })
     actor.send({ type: 'STAGED', reference: 'ref' })
-    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
+    expect(mayAbortOffer(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'SIGNED_UNKNOWN' })
     // Hard-reject / never-broadcast must still abort the noSend tip reservation.
-    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
+    expect(mayAbortOffer(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'FAIL', error: 'lost receipt' })
     expect(actor.getSnapshot().matches('recovery')).toBe(true)
-    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
+    expect(mayAbortOffer(actor.getSnapshot())).toBe(true)
   })
 
   it('refuses abort after Arcade accepted the listing broadcast', () => {
-    const actor = createActor(marketListingMachine).start()
+    const actor = createActor(offerMachine).start()
     actor.send({
       type: 'LIST',
+      venue: 'market',
       path: { path: 'createOffer', itemOutpoint: 'item' },
     })
     actor.send({ type: 'STAGED', reference: 'ref' })
     actor.send({ type: 'SIGNED_UNKNOWN' })
     actor.send({ type: 'BROADCASTED', txid: 'ab'.repeat(32) })
-    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(false)
+    expect(mayAbortOffer(actor.getSnapshot())).toBe(false)
   })
 
   it('refunds the one-sat offer deposit to seller and pins market origins', () => {
@@ -904,6 +906,20 @@ describe('list-time market settlement unlocks', () => {
       sequence: 0xffffffff,
     })
   }
+
+  it('keeps the published seller signatures byte for byte', async () => {
+    // ANYONECANPAY|SINGLE leaves the input index out of the digest, so both
+    // layouts sign the same bytes.
+    for (const assetType of ['ordinal', 'bsv21'] as const) {
+      const { unlocks } = await listed(assetType)
+      expect(unlocks.itemUnlockingScript).toBe(
+        '4830450221008817e31ea39e3d305904050da9d90abcc33fbb83295e8305b841a8c23b6f2466022037f6687b380ca0d1e531cd983c64faa98ceca3a6d691a7b9022baad20de6b423c3210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
+      )
+      expect(unlocks.offerUnlockingScript).toBe(
+        '483045022100e6391ea682c55085d8e5f8a2ce60cbabcae084369136bdc9959b6226b7bcd463022033b3b530cd87bc340c7f52f0c1dc17c1a732f65804664660233b76dfc3ebd860c3',
+      )
+    }
+  })
 
   it('signs both seller inputs SINGLE|ANYONECANPAY in the layout of the asset', async () => {
     for (const assetType of ['ordinal', 'bsv21'] as const) {

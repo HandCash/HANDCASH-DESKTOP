@@ -38,10 +38,22 @@ export const ACTION_MARK_LABEL: Record<ActivityActionMark, string> = {
   receive: 'Receive',
 }
 
+/** 1.3.573 recorded direct offers as token swaps; those rows read as today's names. */
+const RENAMED_METHODS: Record<string, string> = {
+  'token-swap-offer': 'direct-offer-list',
+  'token-swap-cancel': 'direct-offer-cancel',
+  'token-swap': 'direct-offer-buy',
+  'token-swap-proceeds': 'direct-offer-sale',
+}
+
+export function canonicalActivityMethod(method: string): string {
+  return RENAMED_METHODS[method] ?? method
+}
+
 /**
  * Offer actions, recorded as events or as transfers that are not plain sends.
- * A direct offer (`token-swap-*`) is a listing that is not published to the
- * market: the same list / cancel / sale / purchase, so it gets the same marks.
+ * A direct offer is a listing that is not published to the market: the same
+ * list / cancel / sale / purchase, so it gets the same marks.
  */
 const ACTION_MARKS: Record<string, ActivityActionMark> = {
   'market-list': 'list',
@@ -50,15 +62,15 @@ const ACTION_MARKS: Record<string, ActivityActionMark> = {
   'market-sale-proceeds': 'sale',
   'market-purchase': 'purchase',
   'market-purchase-receive': 'purchase',
-  'token-swap-offer': 'list',
-  'token-swap-cancel': 'cancel',
-  'token-swap': 'purchase',
-  'token-swap-proceeds': 'sale',
+  'direct-offer-list': 'list',
+  'direct-offer-cancel': 'cancel',
+  'direct-offer-buy': 'purchase',
+  'direct-offer-sale': 'sale',
 }
 
 /** Null when the row records no wallet action — a connect, a friend, a heal. */
 export function activityActionMark(entry: ActivityEntry): ActivityActionMark | null {
-  const named = ACTION_MARKS[entry.method]
+  const named = ACTION_MARKS[canonicalActivityMethod(entry.method)]
   // Listings and cancels are written as wallet events, yet each is
   // an action the user took. Every other event has no action to mark.
   if (!named && isEventActivity(entry)) return null

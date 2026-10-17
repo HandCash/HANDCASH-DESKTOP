@@ -593,43 +593,13 @@ const BRC29_SEND = `stateDiagram-v2
   signing --> failed : FAIL
 `
 
-const MARKET_LISTING = `stateDiagram-v2
+const OFFER = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> classifying : LIST / CANCEL
+  idle --> classifying : LIST / CANCEL (market | direct), BUY / COLLECT (direct)
   classifying --> failed : refuse / named reason
-  classifying --> staging : createOffer / cancelOffer
-  staging --> preSignAbortable : STAGED reference
-  preSignAbortable --> signedUnknown : SIGNED_UNKNOWN
-  signedUnknown --> broadcast : BROADCASTED
-  signedUnknown --> failed : ABORTED
-  signedUnknown --> recovery : FAIL / RECOVER
-  recovery --> failed : ABORTED when Arcade never accepted
-  recovery --> broadcast : BROADCASTED
-  broadcast --> committed : COMMITTED
-  preSignAbortable --> failed : ABORTED
-  note right of signedUnknown
-    noSend listing/cancel.
-    Abort + restore tip until the cheque is registered.
-    BROADCASTED = registered + sealed; miners run
-    in the background (durable retry, late reject).
-    Never abort after BROADCASTED. A late reject
-    retires the listing auth (never-sent): no Cancel.
-  end note
-  note right of committed
-    MarketReceiptDeliveryPath:
-    self → local seller reconcile
-    counterparty → messagebox receipt
-  end note
-`
-
-const TOKEN_SWAP = `stateDiagram-v2
-  direction LR
-  [*] --> idle
-  idle --> classifying : MAKE / TAKE / CLAIM / CANCEL
-  classifying --> failed : refuse / named reason
-  classifying --> staging : make / take / cancel
-  classifying --> ingesting : claim
+  classifying --> staging : list / cancel / buy
+  classifying --> collecting : collect
   staging --> preSignAbortable : STAGED reference
   preSignAbortable --> signedUnknown : SIGNED_UNKNOWN
   preSignAbortable --> failed : ABORTED
@@ -639,21 +609,30 @@ const TOKEN_SWAP = `stateDiagram-v2
   recovery --> broadcast : BROADCASTED
   recovery --> failed : ABORTED when Arcade never accepted
   broadcast --> committed : COMMITTED
-  ingesting --> committed : INGESTED
-  ingesting --> failed : FAIL
+  collecting --> committed : COLLECTED
+  collecting --> failed : FAIL
   note right of staging
-    list: hold the exact lot out of the balance
-    (basket token-swap-offers), as a market listing does,
-    then sign input 0 SINGLE|ANYONECANPAY over output 0.
-    buy: Spend-check the seller unlock and prove the
-    lot to its deploy before signing any buyer coin.
-    cancel: spend the lot back to the token balance.
+    One mechanism (offerSeal): hold the exact lot,
+    sign it SINGLE|ANYONECANPAY over what the seller
+    wants back. market: item binds the seller payment,
+    advert deposit binds the fee (BRC-48 overlay).
+    direct: lot binds output 0 (sats or a token),
+    basket direct-offers, no index, no fee.
+    direct buy: Spend-check the seller unlock and
+    prove the lot to its deploy before signing.
   end note
-  note right of ingesting
-    TokenSwapClaimPath:
+  note right of signedUnknown
+    noSend: abort + restore the lot until the cheque
+    is registered. BROADCASTED = registered + sealed;
+    miners run in the background. Never abort after
+    BROADCASTED. A late reject retires a market
+    listing auth (never-sent): no Cancel.
+  end note
+  note right of collecting
+    DirectOfferCollectPath:
     sats → P2PKH sweep of output 0
     token → peer fungible ingest of output 0
-    then retire the escrow row.
+    then retire the listed lot.
   end note
 `
 
@@ -1675,11 +1654,11 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: BRC29_SEND,
   },
   {
-    id: 'marketListing',
-    label: 'Market list',
+    id: 'offer',
+    label: 'Offer',
     caption:
-      'marketListingMachine — noSend list/cancel; abort+restore tip until the cheque is registered; Arcade never blocks',
-    source: MARKET_LISTING,
+      'offerMachine — list / cancel on either venue, direct buy and collect; one SINGLE|ACP seller signature (offerSeal); abort+restore the lot until the cheque is registered',
+    source: OFFER,
   },
   {
     id: 'marketPurchase',
@@ -1694,13 +1673,6 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'marketSellerSettlementMachine — authorize terms → item-input signature → peer deliver',
     source: MARKET_SELLER_SETTLEMENT,
-  },
-  {
-    id: 'tokenSwap',
-    label: 'Direct offer',
-    caption:
-      'tokenSwapMachine — an unpublished listing: lot listed with a SINGLE|ACP signature over what the seller wants (sats or a token); buyer proves the lot, pays output 0; seller collects or cancels',
-    source: TOKEN_SWAP,
   },
   {
     id: 'connectedApps',

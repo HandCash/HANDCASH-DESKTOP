@@ -5,7 +5,6 @@ import {
   Beef,
   BigNumber,
   Hash,
-  LockingScript,
   P2PKH,
   PrivateKey,
   PublicKey,
@@ -15,7 +14,7 @@ import {
   Utils,
 } from '@bsv/sdk'
 import { createActor } from 'xstate'
-import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
+import { mayAbortOffer, offerMachine } from '../machines/offerMachine'
 import { normalizeAppHost } from './appIdentity'
 import { type ActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -89,13 +88,14 @@ import {
 } from './marketListingPath'
 import { publicMessageboxBase } from './messageTransport'
 import {
-  MARKET_SELLER_SIGHASH,
   MARKET_SETTLEMENT_VERSION,
   isMarketPayoutIndexPair,
   marketSettlementShape,
   type MarketSettlementUnlocksV2,
 } from './marketSettlementLayout'
-import { TOKEN_SWAP_BASKET } from './tokenSwapPath'
+import { DIRECT_OFFER_BASKET } from './directOfferPath'
+import { signSellerInputs } from './offerSeal'
+import { SELLER_SIGHASH } from './offerTerms'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -1301,13 +1301,13 @@ const EXACT_LOT_PURPOSE = {
     flow: 'market_listing',
     lotBasket: null,
   },
-  'token-swap': {
-    description: 'Escrow BSV-21 lot for a swap offer',
-    labels: ['token-swap', 'bsv21-split'],
-    lotDescription: 'BSV-21 swap escrow',
-    changeDescription: 'BSV-21 swap change',
-    flow: 'token_swap',
-    lotBasket: TOKEN_SWAP_BASKET,
+  'direct-offer': {
+    description: 'Split BSV-21 cover for a direct offer',
+    labels: ['direct-offer', 'bsv21-split'],
+    lotDescription: 'BSV-21 direct offer amount',
+    changeDescription: 'BSV-21 direct offer change',
+    flow: 'direct_offer',
+    lotBasket: DIRECT_OFFER_BASKET,
   },
 } as const
 
@@ -1526,7 +1526,7 @@ async function abortUnsentMarketAction(args: {
   active: ActiveWallet
   reference: string | null
   chart: {
-    getSnapshot: () => Parameters<typeof mayAbortMarketListing>[0]
+    getSnapshot: () => Parameters<typeof mayAbortOffer>[0]
     send: (event: { type: 'ABORTED'; error: string } | { type: 'FAIL'; error: string }) => void
   }
   tipOutpoint: string
@@ -1536,7 +1536,7 @@ async function abortUnsentMarketAction(args: {
   atomic?: number[] | null
 }): Promise<MarketSpendConflict> {
   const snap = args.chart.getSnapshot()
-  if (!mayAbortMarketListing(snap)) {
+  if (!mayAbortOffer(snap)) {
     args.chart.send({ type: 'FAIL', error: args.reason })
     return 'not-checked'
   }
@@ -2100,8 +2100,8 @@ async function createMarketListingAdvertExclusive(
   if (path.path === 'refuse') {
     throw new MarketListingError('MARKET_LISTING_REFUSED', path.reason)
   }
-  const chart = createActor(marketListingMachine).start()
-  chart.send({ type: 'LIST', path })
+  const chart = createActor(offerMachine).start()
+  chart.send({ type: 'LIST', venue: 'market', path })
   const listingBeef =
     splitListingBeef ??
     (await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true }))
@@ -2891,54 +2891,42 @@ export async function buildMarketSettlementUnlocks(args: {
   }
   const shape = marketSettlementShape(args.assetType)
   const amounts = calculateMarketSettlement(args.priceSats)
-  const skeleton = new Transaction()
-  // ANYONECANPAY keeps every other input out of each sighash and SINGLE keeps
-  // every other output out, so the pad and buyer slots are placeholders.
-  const inputs = Math.max(shape.itemVin, shape.offerVin) + 1
-  for (let vin = 0; vin < inputs; vin += 1) {
-    const vout =
-      vin === shape.itemVin ? MARKET_ITEM_VOUT : vin === shape.offerVin ? MARKET_OFFER_VOUT : null
-    skeleton.addInput({
-      sourceTXID: vout == null ? '00'.repeat(32) : txid,
-      sourceOutputIndex: vout ?? 0,
-      ...(vout == null ? {} : { sourceTransaction: args.listingTx }),
-      sequence: 0xffffffff,
-    })
-  }
-  const outputs = Math.max(shape.sellerOutputIndex, shape.feeOutputIndex) + 1
-  for (let vout = 0; vout < outputs; vout += 1) {
-    skeleton.addOutput(
-      vout === shape.sellerOutputIndex
-        ? { satoshis: amounts.sellerSats, lockingScript: new P2PKH().lock(args.payTo) }
-        : vout === shape.feeOutputIndex
-          ? { satoshis: amounts.feeSats, lockingScript: new P2PKH().lock(args.feePayToAddress) }
-          : { satoshis: 1, lockingScript: new P2PKH().lock(args.payTo) },
-    )
-  }
-  const itemUnlockingScript = (
-    await new P2PKH()
-      .unlock(args.privateKey, 'single', true, 1, LockingScript.fromHex(args.itemLockingScript))
-      .sign(skeleton, shape.itemVin)
-  ).toHex()
-  const offerUnlockingScript = (
-    await checksigOnlyUnlock(
-      args.privateKey,
-      MARKET_OFFER_DEPOSIT_SATS,
-      LockingScript.fromHex(args.offerLockingScript),
-      'single',
-      true,
-    ).sign(skeleton, shape.offerVin)
-  ).toHex()
-  if (!itemUnlockingScript || !offerUnlockingScript) {
-    throw new Error('List-time settlement signatures missing')
-  }
+  // The item binds the seller payment and the advert deposit binds the fee;
+  // each output sits at its signer's vin.
+  const unlocks = await signSellerInputs({
+    privateKey: args.privateKey,
+    inputs: [
+      {
+        vin: shape.itemVin,
+        sourceTXID: txid,
+        sourceOutputIndex: MARKET_ITEM_VOUT,
+        sourceTransaction: args.listingTx,
+        sourceSatoshis: 1,
+        lockingScript: args.itemLockingScript,
+        bound: { satoshis: amounts.sellerSats, lockingScript: new P2PKH().lock(args.payTo).toHex() },
+      },
+      {
+        vin: shape.offerVin,
+        sourceTXID: txid,
+        sourceOutputIndex: MARKET_OFFER_VOUT,
+        sourceTransaction: args.listingTx,
+        sourceSatoshis: MARKET_OFFER_DEPOSIT_SATS,
+        lockingScript: args.offerLockingScript,
+        bound: {
+          satoshis: amounts.feeSats,
+          lockingScript: new P2PKH().lock(args.feePayToAddress).toHex(),
+        },
+        checksigOnly: true,
+      },
+    ],
+  })
   return {
     version: MARKET_SETTLEMENT_VERSION,
     layout: shape.layout,
-    itemUnlockingScript,
-    offerUnlockingScript,
-    itemSighash: MARKET_SELLER_SIGHASH,
-    offerSighash: MARKET_SELLER_SIGHASH,
+    itemUnlockingScript: unlocks[shape.itemVin]!,
+    offerUnlockingScript: unlocks[shape.offerVin]!,
+    itemSighash: SELLER_SIGHASH,
+    offerSighash: SELLER_SIGHASH,
     sellerSats: amounts.sellerSats,
     feeSats: amounts.feeSats,
   }
@@ -3149,8 +3137,8 @@ async function createCancelMarketListingAdvertExclusive(args: {
   if (path.path === 'refuse') {
     throw new MarketListingError('MARKET_CANCEL_REFUSED', path.reason)
   }
-  const chart = createActor(marketListingMachine).start()
-  chart.send({ type: 'CANCEL', path })
+  const chart = createActor(offerMachine).start()
+  chart.send({ type: 'CANCEL', venue: 'market', path })
   let reference: string | null = null
   try {
     // The item is spent too: its list-time signature stays valid for as long

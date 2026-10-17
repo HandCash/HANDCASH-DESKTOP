@@ -1,15 +1,6 @@
-import {
-  Beef,
-  LockingScript,
-  P2PKH,
-  PrivateKey,
-  Spend,
-  Transaction,
-  UnlockingScript,
-  Utils,
-} from '@bsv/sdk'
+import { Beef, LockingScript, P2PKH, PrivateKey, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { createActor } from 'xstate'
-import { mayAbortTokenSwap, tokenSwapMachine } from '../machines/tokenSwapMachine'
+import { mayAbortOffer, offerMachine } from '../machines/offerMachine'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -32,64 +23,106 @@ import {
 } from './token'
 import { normalizeTokenId } from './token/types'
 import type { Bsv21BinaryLayout } from './token/decode162'
+import { sellerUnlockValid, signSellerInputs } from './offerSeal'
+import type { OfferWant } from './offerTerms'
 import {
-  chooseTokenSwapCancelPath,
-  chooseTokenSwapClaimPath,
-  chooseTokenSwapMakePath,
-  chooseTokenSwapTakePath,
-  parseTokenSwapOffer,
-  TOKEN_SWAP_BASKET,
-  TOKEN_SWAP_GIVE_VIN,
-  TOKEN_SWAP_PROTOCOL,
-  TOKEN_SWAP_TAKER_VOUT,
-  TOKEN_SWAP_VERSION,
-  TOKEN_SWAP_WANT_VOUT,
-  TokenSwapError,
-  type TokenSwapOffer,
-  type TokenSwapOfferState,
-  type TokenSwapRefuse,
-  type TokenSwapWant,
-} from './tokenSwapPath'
+  chooseDirectOfferBuyPath,
+  chooseDirectOfferCancelPath,
+  chooseDirectOfferCollectPath,
+  chooseDirectOfferListPath,
+  DIRECT_OFFER_BASKET,
+  DIRECT_OFFER_BUYER_VOUT,
+  DIRECT_OFFER_LEGACY_BASKET,
+  DIRECT_OFFER_LOT_VIN,
+  DIRECT_OFFER_PRICE_VOUT,
+  DIRECT_OFFER_PROTOCOL,
+  DIRECT_OFFER_VERSION,
+  DirectOfferError,
+  parseDirectOffer,
+  type DirectOffer,
+  type DirectOfferRefuse,
+  type DirectOfferState,
+} from './directOfferPath'
 
-export type TokenSwapRecord = {
-  offer: TokenSwapOffer
-  role: 'maker' | 'taker'
-  state: TokenSwapOfferState
-  takeTxid?: string
-  claimTxid?: string
+export type DirectOfferRecord = {
+  offer: DirectOffer
+  role: 'seller' | 'buyer'
+  state: DirectOfferState
+  soldTxid?: string
+  collectTxid?: string
   cancelTxid?: string
+  /** Basket holding the listed lot; absent means {@link DIRECT_OFFER_BASKET}. */
+  basket?: typeof DIRECT_OFFER_LEGACY_BASKET
   updatedAt: number
 }
 
-const OFFERS_KEY = storageRegistry.tokenSwapOffers.key
-const SWAP_LABEL = 'token-swap'
+const OFFER_LABEL = 'direct-offer'
 
 function offersStorageKey(): string {
-  return accountLocalKey(OFFERS_KEY)
+  return accountLocalKey(storageRegistry.directOffers.key)
 }
 
-function readRecords(): TokenSwapRecord[] {
+/** A 1.3.573 token-swap record, read once so an open lot stays cancellable. */
+function fromLegacyRecord(raw: unknown): DirectOfferRecord | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const o = (r.offer ?? {}) as Record<string, unknown>
+  const offer = parseDirectOffer({
+    ...o,
+    protocol: DIRECT_OFFER_PROTOCOL,
+    v: DIRECT_OFFER_VERSION,
+    seller: o.maker,
+    sellerUnlockingScript: o.makerUnlockingScript,
+  })
+  if (!offer) return null
+  const state = (
+    { open: 'listed', taken: 'sold', claimed: 'collected', cancelled: 'cancelled' } as const
+  )[String(r.state) as 'open' | 'taken' | 'claimed' | 'cancelled']
+  if (!state) return null
+  return {
+    offer,
+    role: r.role === 'taker' ? 'buyer' : 'seller',
+    state,
+    ...(typeof r.takeTxid === 'string' ? { soldTxid: r.takeTxid } : {}),
+    ...(typeof r.claimTxid === 'string' ? { collectTxid: r.claimTxid } : {}),
+    ...(typeof r.cancelTxid === 'string' ? { cancelTxid: r.cancelTxid } : {}),
+    basket: DIRECT_OFFER_LEGACY_BASKET,
+    updatedAt: Number(r.updatedAt) || 0,
+  }
+}
+
+function parseList(text: string | null): unknown[] {
   try {
-    const parsed = JSON.parse(durableGetItem(offersStorageKey()) ?? '[]') as unknown
-    return Array.isArray(parsed) ? (parsed as TokenSwapRecord[]) : []
+    const parsed = JSON.parse(text ?? '[]') as unknown
+    return Array.isArray(parsed) ? parsed : []
   } catch {
     return []
   }
 }
 
-function saveRecord(record: TokenSwapRecord): void {
+function readRecords(): DirectOfferRecord[] {
+  const current = durableGetItem(offersStorageKey())
+  if (current != null) return parseList(current) as DirectOfferRecord[]
+  const legacy = parseList(durableGetItem(accountLocalKey(storageRegistry.directOffersLegacy.key)))
+    .map(fromLegacyRecord)
+    .filter((record): record is DirectOfferRecord => record != null)
+  if (legacy.length > 0) durableSetItem(offersStorageKey(), JSON.stringify(legacy))
+  return legacy
+}
+
+function saveRecord(record: DirectOfferRecord): void {
   const rest = readRecords().filter(
     (r) => !(r.offer.offerId === record.offer.offerId && r.role === record.role),
   )
   durableSetItem(offersStorageKey(), JSON.stringify([...rest, { ...record, updatedAt: Date.now() }]))
 }
 
-function findRecord(offerId: string, role: TokenSwapRecord['role']): TokenSwapRecord | null {
+function findRecord(offerId: string, role: DirectOfferRecord['role']): DirectOfferRecord | null {
   const id = offerId.trim().toLowerCase().replace('_', '.')
   return readRecords().find((r) => r.offer.offerId === id && r.role === role) ?? null
 }
 
-export function listTokenSwapOffers(): { offers: TokenSwapRecord[] } {
+export function listDirectOffers(): { offers: DirectOfferRecord[] } {
   return { offers: readRecords().sort((a, b) => b.updatedAt - a.updatedAt) }
 }
 
@@ -99,9 +132,9 @@ function requireActive(): ActiveWallet {
   return active
 }
 
-function failRefused(path: TokenSwapRefuse): never {
-  console.warn(`[token-swap] refuse ${path.reason}`)
-  throw new TokenSwapError(path.reason, path.message)
+function failRefused(path: DirectOfferRefuse): never {
+  console.warn(`[direct-offer] refuse ${path.reason}`)
+  throw new DirectOfferError(path.reason, path.message)
 }
 
 function splitOutpoint(outpoint: string): { txid: string; vout: number } {
@@ -109,8 +142,8 @@ function splitOutpoint(outpoint: string): { txid: string; vout: number } {
   return { txid: txid!, vout: Number(vout) }
 }
 
-/** Output 0 exactly as the maker signed it. */
-export function tokenSwapWantOutput(offer: Pick<TokenSwapOffer, 'want' | 'payTo'>): {
+/** Output 0 exactly as the seller signed it. */
+export function directOfferPriceOutput(offer: Pick<DirectOffer, 'want' | 'payTo'>): {
   lockingScript: string
   satoshis: number
 } {
@@ -128,70 +161,31 @@ export function tokenSwapWantOutput(offer: Pick<TokenSwapOffer, 'want' | 'payTo'
   }
 }
 
-/**
- * The maker's SIGHASH_SINGLE|ANYONECANPAY signature over input 0 → output 0.
- * Every other input and output is outside the digest, so the skeleton needs
- * only those two.
- */
-export async function signTokenSwapMakerInput(args: {
-  giveTx: Transaction
-  giveVout: number
-  want: TokenSwapWant
+/** The seller's SINGLE|ANYONECANPAY signature over input 0 → output 0. */
+export async function signDirectOfferLot(args: {
+  listingTx: Transaction
+  lotVout: number
+  want: OfferWant
   payTo: string
   privateKey: PrivateKey
 }): Promise<string> {
-  const source = args.giveTx.outputs[args.giveVout]
-  if (!source?.lockingScript) throw new Error('Swap escrow output is missing')
-  const skeleton = new Transaction()
-  skeleton.addInput({
-    sourceTXID: String(args.giveTx.id('hex')),
-    sourceOutputIndex: args.giveVout,
-    sourceTransaction: args.giveTx,
-    sequence: 0xffffffff,
+  const source = args.listingTx.outputs[args.lotVout]
+  if (!source?.lockingScript) throw new Error('Listed lot output is missing')
+  const unlocks = await signSellerInputs({
+    privateKey: args.privateKey,
+    inputs: [
+      {
+        vin: DIRECT_OFFER_LOT_VIN,
+        sourceTXID: String(args.listingTx.id('hex')),
+        sourceOutputIndex: args.lotVout,
+        sourceTransaction: args.listingTx,
+        sourceSatoshis: source.satoshis ?? 1,
+        lockingScript: source.lockingScript.toHex(),
+        bound: directOfferPriceOutput({ want: args.want, payTo: args.payTo }),
+      },
+    ],
   })
-  const want = tokenSwapWantOutput({ want: args.want, payTo: args.payTo })
-  skeleton.addOutput({
-    satoshis: want.satoshis,
-    lockingScript: LockingScript.fromHex(want.lockingScript),
-  })
-  const unlocking = await new P2PKH()
-    .unlock(args.privateKey, 'single', true, source.satoshis ?? 1, source.lockingScript)
-    .sign(skeleton, TOKEN_SWAP_GIVE_VIN)
-  return unlocking.toHex()
-}
-
-/**
- * Script-check the maker's unlock inside the transaction the taker is about
- * to sign. A signature over a different output 0 — or a different input — is
- * refused here, before any of the taker's coins are signed.
- */
-export function tokenSwapMakerUnlockValid(args: {
-  tx: Transaction
-  giveSatoshis: number
-  giveLockingScript: string
-  makerUnlockingScript: string
-}): boolean {
-  const input = args.tx.inputs[TOKEN_SWAP_GIVE_VIN]
-  if (!input) return false
-  try {
-    return new Spend({
-      sourceTXID: String(input.sourceTXID),
-      sourceOutputIndex: input.sourceOutputIndex,
-      sourceSatoshis: args.giveSatoshis,
-      lockingScript: LockingScript.fromHex(args.giveLockingScript),
-      transactionVersion: args.tx.version,
-      otherInputs: [],
-      allInputs: args.tx.inputs,
-      unlockingScript: UnlockingScript.fromHex(args.makerUnlockingScript),
-      inputSequence: input.sequence ?? 0xffffffff,
-      inputIndex: TOKEN_SWAP_GIVE_VIN,
-      outputs: args.tx.outputs,
-      lockTime: args.tx.lockTime,
-      isRelaxed: true,
-    } as ConstructorParameters<typeof Spend>[0]).validate()
-  } catch {
-    return false
-  }
+  return unlocks[DIRECT_OFFER_LOT_VIN]!
 }
 
 async function tipsForToken(active: ActiveWallet, tokenId: string) {
@@ -222,116 +216,8 @@ async function plainValueTips(tips: ReadonlyArray<{ lockingScript?: string }>): 
   return chooseBsv21ValueTipPath(tips).path === 'plain'
 }
 
-/**
- * Escrow an exact lot of `give` at this wallet's address and sign the offer.
- * The lot leaves the token balance (basket {@link TOKEN_SWAP_BASKET}) until it
- * is taken or cancelled.
- */
-export async function createTokenSwapOffer(args: {
-  give?: { tokenId?: string; amount?: string | number }
-  want?: unknown
-}): Promise<{ offer: TokenSwapOffer }> {
-  return runExclusiveSpend(async () => {
-    const startedAt = Date.now()
-    const active = requireActive()
-    const tokenId = normalizeTokenId(String(args.give?.tokenId ?? ''))
-    const tips = tokenId ? await tipsForToken(active, tokenId) : []
-    let plan: ReturnType<typeof planBsv21Send> | null = null
-    try {
-      if (tokenId && /^\d+$/.test(String(args.give?.amount ?? ''))) {
-        plan = planBsv21Send({ tokenId, tips, amount: BigInt(String(args.give!.amount)) })
-      }
-    } catch (err) {
-      throw new TokenSwapError('bad-amount', err instanceof Error ? err.message : String(err))
-    }
-    const selected = plan?.selected ?? []
-    const cosigned =
-      selected.length > 0 &&
-      (tips.some((t) => t.cosigned && selected.some((s) => s.outpoint === t.outpoint)) ||
-        !(await plainValueTips(selected)))
-    const path = chooseTokenSwapMakePath({
-      tokenId,
-      amount: args.give?.amount,
-      want: args.want,
-      cosigned,
-    })
-    const chart = createActor(tokenSwapMachine).start()
-    chart.send({ type: 'MAKE', path })
-    try {
-      if (path.path === 'refuse') failRefused(path)
-      const meta = tips.find((t) => t.sym) ?? tips[0]
-      const { splitBsv21CoverToExactAmt } = await import('./marketListing')
-      const lot = await splitBsv21CoverToExactAmt({
-        active,
-        origin: path.tokenId,
-        requested: path.amount,
-        covers: selected,
-        ...(meta?.icon ? { icon: meta.icon } : {}),
-        ...(meta?.sym ? { sym: meta.sym } : {}),
-        purpose: 'token-swap',
-        onStaged: (reference) => chart.send({ type: 'STAGED', reference }),
-        onSigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
-      })
-      const { txid, vout } = splitOutpoint(lot.outpoint)
-      chart.send({ type: 'BROADCASTED', txid })
-      const giveTx = lot.beef.findTxid(txid)?.tx
-      if (!giveTx) throw new Error('Swap escrow transaction missing from its BEEF')
-      const makerUnlockingScript = await signTokenSwapMakerInput({
-        giveTx,
-        giveVout: vout,
-        want: path.want,
-        payTo: active.address,
-        privateKey: PrivateKey.fromHex(active.rootKeyHex),
-      })
-      const beef = await mergeLocalUnconfirmedAncestry(
-        active,
-        Array.from(lot.beef.toBinaryAtomic(txid)),
-      )
-      const offer: TokenSwapOffer = {
-        protocol: TOKEN_SWAP_PROTOCOL,
-        v: TOKEN_SWAP_VERSION,
-        offerId: `${txid}.${vout}`,
-        maker: active.identityKey.toLowerCase(),
-        payTo: active.address,
-        give: {
-          tokenId: path.tokenId,
-          amount: path.amount.toString(),
-          dec: meta?.dec ?? 0,
-          ...(meta?.sym ? { sym: meta.sym } : {}),
-          ...(meta?.icon ? { icon: meta.icon } : {}),
-          lockingScript: lot.lockingScript,
-        },
-        want: path.want,
-        makerUnlockingScript,
-        beefB64: Utils.toBase64(beef),
-        createdAt: Date.now(),
-      }
-      saveRecord({ offer, role: 'maker', state: 'open', updatedAt: Date.now() })
-      chart.send({ type: 'COMMITTED' })
-      recordAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'event',
-        sats: 0,
-        method: 'token-swap-offer',
-        note: `Listed ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
-        txid,
-        item: frozenLotItem(offer),
-      })
-      scheduleHistoryBackupPush('token-swap')
-      const ms = Date.now() - startedAt
-      if (ms >= 250) console.info(`[token-swap] offer done ${ms}ms`)
-      return { offer }
-    } catch (err) {
-      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
-      throw err
-    } finally {
-      chart.stop()
-    }
-  }, undefined, { promote: false })
-}
-
 /** The listed lot as an Activity subject, the same way a market listing row carries its asset. */
-function frozenLotItem(offer: TokenSwapOffer): ActivityItem {
+function listedLotItem(offer: DirectOffer): ActivityItem {
   return {
     name: offer.give.sym ?? 'Token',
     origin: offer.give.tokenId,
@@ -343,60 +229,168 @@ function frozenLotItem(offer: TokenSwapOffer): ActivityItem {
   }
 }
 
-function describeWant(want: TokenSwapWant): string {
+function describeWant(want: OfferWant): string {
   return want.kind === 'sats'
     ? `${want.sats.toLocaleString()} sats`
     : `${want.amount} ${want.sym ?? 'tokens'}`
 }
 
 /**
- * Complete a maker's offer: pay output 0 exactly, take the escrowed lot.
- * Input 0 is the maker's signed lot; the taker's want-token covers and the
- * toolbox funding follow.
+ * List an exact lot of `give` at this wallet's address and sign the offer.
+ * The lot leaves the token balance (basket {@link DIRECT_OFFER_BASKET}) until
+ * it is bought or cancelled.
  */
-export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
+export async function createDirectOffer(args: {
+  give?: { tokenId?: string; amount?: string | number }
+  want?: unknown
+}): Promise<{ offer: DirectOffer }> {
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const active = requireActive()
+    const tokenId = normalizeTokenId(String(args.give?.tokenId ?? ''))
+    const tips = tokenId ? await tipsForToken(active, tokenId) : []
+    let plan: ReturnType<typeof planBsv21Send> | null = null
+    try {
+      if (tokenId && /^\d+$/.test(String(args.give?.amount ?? ''))) {
+        plan = planBsv21Send({ tokenId, tips, amount: BigInt(String(args.give!.amount)) })
+      }
+    } catch (err) {
+      throw new DirectOfferError('bad-amount', err instanceof Error ? err.message : String(err))
+    }
+    const selected = plan?.selected ?? []
+    const cosigned =
+      selected.length > 0 &&
+      (tips.some((t) => t.cosigned && selected.some((s) => s.outpoint === t.outpoint)) ||
+        !(await plainValueTips(selected)))
+    const path = chooseDirectOfferListPath({
+      tokenId,
+      amount: args.give?.amount,
+      want: args.want,
+      cosigned,
+    })
+    const chart = createActor(offerMachine).start()
+    chart.send({ type: 'LIST', venue: 'direct', path })
+    try {
+      if (path.path === 'refuse') failRefused(path)
+      const meta = tips.find((t) => t.sym) ?? tips[0]
+      const { splitBsv21CoverToExactAmt } = await import('./marketListing')
+      const lot = await splitBsv21CoverToExactAmt({
+        active,
+        origin: path.tokenId,
+        requested: path.amount,
+        covers: selected,
+        ...(meta?.icon ? { icon: meta.icon } : {}),
+        ...(meta?.sym ? { sym: meta.sym } : {}),
+        purpose: 'direct-offer',
+        onStaged: (reference) => chart.send({ type: 'STAGED', reference }),
+        onSigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
+      })
+      const { txid, vout } = splitOutpoint(lot.outpoint)
+      chart.send({ type: 'BROADCASTED', txid })
+      const listingTx = lot.beef.findTxid(txid)?.tx
+      if (!listingTx) throw new Error('Listing transaction missing from its BEEF')
+      const sellerUnlockingScript = await signDirectOfferLot({
+        listingTx,
+        lotVout: vout,
+        want: path.want,
+        payTo: active.address,
+        privateKey: PrivateKey.fromHex(active.rootKeyHex),
+      })
+      const beef = await mergeLocalUnconfirmedAncestry(
+        active,
+        Array.from(lot.beef.toBinaryAtomic(txid)),
+      )
+      const offer: DirectOffer = {
+        protocol: DIRECT_OFFER_PROTOCOL,
+        v: DIRECT_OFFER_VERSION,
+        offerId: `${txid}.${vout}`,
+        seller: active.identityKey.toLowerCase(),
+        payTo: active.address,
+        give: {
+          tokenId: path.tokenId,
+          amount: path.amount.toString(),
+          dec: meta?.dec ?? 0,
+          ...(meta?.sym ? { sym: meta.sym } : {}),
+          ...(meta?.icon ? { icon: meta.icon } : {}),
+          lockingScript: lot.lockingScript,
+        },
+        want: path.want,
+        sellerUnlockingScript,
+        beefB64: Utils.toBase64(beef),
+        createdAt: Date.now(),
+      }
+      saveRecord({ offer, role: 'seller', state: 'listed', updatedAt: Date.now() })
+      chart.send({ type: 'COMMITTED' })
+      recordAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        kind: 'event',
+        sats: 0,
+        method: 'direct-offer-list',
+        note: `Listed ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
+        txid,
+        item: listedLotItem(offer),
+      })
+      scheduleHistoryBackupPush('direct-offer')
+      const ms = Date.now() - startedAt
+      if (ms >= 250) console.info(`[direct-offer] list done ${ms}ms`)
+      return { offer }
+    } catch (err) {
+      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      throw err
+    } finally {
+      chart.stop()
+    }
+  }, undefined, { promote: false })
+}
+
+/**
+ * Buy a direct offer: pay output 0 exactly, take the listed lot. Input 0 is
+ * the seller's signed lot; the buyer's want-token covers and the toolbox
+ * funding follow.
+ */
+export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
   offerId: string
   txid: string
-  settle: 'selfClaim' | 'peerClaim'
+  settle: 'selfCollect' | 'peerCollect'
 }> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
-    const mark = (phase: string) => console.info(`[token-swap] +${Date.now() - startedAt}ms ${phase}`)
+    const mark = (phase: string) => console.info(`[direct-offer] +${Date.now() - startedAt}ms ${phase}`)
     const active = requireActive()
-    const path = chooseTokenSwapTakePath({ offer: args.offer, takerIdentityKey: active.identityKey })
-    const chart = createActor(tokenSwapMachine).start()
-    chart.send({ type: 'TAKE', path })
+    const path = chooseDirectOfferBuyPath({ offer: args.offer, buyerIdentityKey: active.identityKey })
+    const chart = createActor(offerMachine).start()
+    chart.send({ type: 'BUY', venue: 'direct', path })
     let reference: string | null = null
     try {
       if (path.path === 'refuse') failRefused(path)
       const { offer, settle } = path
-      const give = splitOutpoint(offer.offerId)
+      const lotPoint = splitOutpoint(offer.offerId)
       const offerBeef = Beef.fromBinary(Utils.toArray(offer.beefB64, 'base64'))
-      const giveSource = offerBeef.findTxid(give.txid)?.tx?.outputs[give.vout]
-      const giveLock = giveSource?.lockingScript?.toHex().toLowerCase()
-      const decodedGive = giveLock ? decodeBsv21Binary(giveLock) : null
+      const lotSource = offerBeef.findTxid(lotPoint.txid)?.tx?.outputs[lotPoint.vout]
+      const lotLock = lotSource?.lockingScript?.toHex().toLowerCase()
+      const decodedLot = lotLock ? decodeBsv21Binary(lotLock) : null
       if (
-        !giveSource ||
-        giveLock !== offer.give.lockingScript ||
-        !decodedGive ||
-        decodedGive.role !== 'value' ||
-        decodedGive.tokenId !== offer.give.tokenId ||
-        decodedGive.amount !== BigInt(offer.give.amount)
+        !lotSource ||
+        lotLock !== offer.give.lockingScript ||
+        !decodedLot ||
+        decodedLot.role !== 'value' ||
+        decodedLot.tokenId !== offer.give.tokenId ||
+        decodedLot.amount !== BigInt(offer.give.amount)
       ) {
-        throw new TokenSwapError('invalid-offer', 'The offer does not carry the token lot it describes.')
+        throw new DirectOfferError('invalid-offer', 'The offer does not carry the token lot it describes.')
       }
-      if (!(await plainValueTips([{ lockingScript: giveLock }]))) {
-        failRefused({ path: 'refuse', reason: 'cosigned-token', message: 'Issuer-cosigned tokens cannot be swapped.' })
+      if (!(await plainValueTips([{ lockingScript: lotLock }]))) {
+        failRefused({ path: 'refuse', reason: 'cosigned-token', message: 'Issuer-cosigned tokens cannot be listed.' })
       }
       const { proveTokenTipLineage } = await import('./token/proveTipLineage')
       const lineage = await proveTokenTipLineage(active, offer.offerId, offerBeef.toBinary())
       if (!lineage.ok || lineage.tokenId !== offer.give.tokenId) {
-        throw new TokenSwapError(
-          'TOKEN_SWAP_UNPROVEN',
+        throw new DirectOfferError(
+          'DIRECT_OFFER_UNPROVEN',
           `The offered token's history could not be proven back to its deploy${lineage.ok ? '' : ` (${lineage.reason})`}. Nothing was spent.`,
         )
       }
-      mark('give lineage proven')
+      mark('lot lineage proven')
 
       let covers: Array<{ outpoint: string; amt: bigint; lockingScript?: string }> = []
       let wantChange = 0n
@@ -407,7 +401,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         try {
           plan = planBsv21Send({ tokenId: offer.want.tokenId, tips, amount: BigInt(offer.want.amount) })
         } catch (err) {
-          throw new TokenSwapError('INSUFFICIENT_FUNDS', err instanceof Error ? err.message : String(err))
+          throw new DirectOfferError('INSUFFICIENT_FUNDS', err instanceof Error ? err.message : String(err))
         }
         if (plan.layout !== offer.want.layout) {
           failRefused({
@@ -417,7 +411,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
           })
         }
         if (!(await plainValueTips(plan.selected))) {
-          failRefused({ path: 'refuse', reason: 'cosigned-token', message: 'Issuer-cosigned tokens cannot be swapped.' })
+          failRefused({ path: 'refuse', reason: 'cosigned-token', message: 'Issuer-cosigned tokens cannot be listed.' })
         }
         covers = plan.selected
         wantChange = plan.changeAmt
@@ -436,9 +430,9 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
       }
       inputBeef.atomicTxid = undefined
 
-      const want = tokenSwapWantOutput(offer)
-      const wantRemittance =
-        settle === 'selfClaim' && offer.want.kind === 'token'
+      const price = directOfferPriceOutput(offer)
+      const priceRemittance =
+        settle === 'selfCollect' && offer.want.kind === 'token'
           ? buildBsv21SendRemittance({
               tokenId: offer.want.tokenId,
               amt: BigInt(offer.want.amount),
@@ -446,16 +440,16 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
             })
           : {}
       const outputs = [
-        { ...want, outputDescription: 'Swap payment to maker', ...wantRemittance },
+        { ...price, outputDescription: 'Direct offer payment to seller', ...priceRemittance },
         {
           lockingScript: buildBsv21ValueLock({
             tokenId: offer.give.tokenId,
             amount: BigInt(offer.give.amount),
             address: active.address,
-            layout: decodedGive.layout,
+            layout: decodedLot.layout,
           }),
           satoshis: 1,
-          outputDescription: 'Swapped token to taker',
+          outputDescription: 'Purchased token to buyer',
           ...buildBsv21SendRemittance({
             tokenId: offer.give.tokenId,
             amt: BigInt(offer.give.amount),
@@ -473,7 +467,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
                   layout: wantLayout,
                 }),
                 satoshis: 1,
-                outputDescription: 'Swap token change',
+                outputDescription: 'Direct offer token change',
                 ...buildBsv21SendRemittance({
                   tokenId: offer.want.tokenId,
                   amt: wantChange,
@@ -486,14 +480,14 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
       let created: Awaited<ReturnType<typeof active.wallet.createAction>>
       try {
         created = await active.wallet.createAction({
-          description: `Swap for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
-          labels: [SWAP_LABEL, `token-swap-offer:${offer.offerId}`],
+          description: `Buy ${offer.give.amount} ${offer.give.sym ?? 'tokens'} (direct offer)`,
+          labels: [OFFER_LABEL, `direct-offer:${offer.offerId}`],
           inputBEEF: inputBeef.toBinary(),
           inputs: [
-            { outpoint: offer.offerId, inputDescription: 'Swap escrow lot', unlockingScriptLength: 108 },
+            { outpoint: offer.offerId, inputDescription: 'Direct offer lot', unlockingScriptLength: 108 },
             ...covers.map((c) => ({
               outpoint: c.outpoint.replace('_', '.'),
-              inputDescription: 'Swap payment token',
+              inputDescription: 'Direct offer payment token',
               unlockingScriptLength: 108,
             })),
           ],
@@ -507,7 +501,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         })
       } catch (err) {
         if (isInsufficientFundsError(err) && offer.want.kind === 'sats') {
-          throw new TokenSwapError(
+          throw new DirectOfferError(
             'INSUFFICIENT_FUNDS',
             await describeInsufficientFunds(active.wallet, offer.want.sats + 100),
           )
@@ -515,7 +509,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         throw err
       }
       const signable = created.signableTransaction
-      if (!signable) throw new Error('Swap did not return a signable transaction')
+      if (!signable) throw new Error('Direct offer purchase did not return a signable transaction')
       reference = signable.reference
       chart.send({ type: 'STAGED', reference })
       const tx = Beef.fromBinary(signable.tx).txs
@@ -523,39 +517,40 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         .find((candidate) =>
           candidate?.inputs.some(
             (input) =>
-              String(input.sourceTXID).toLowerCase() === give.txid &&
-              input.sourceOutputIndex === give.vout,
+              String(input.sourceTXID).toLowerCase() === lotPoint.txid &&
+              input.sourceOutputIndex === lotPoint.vout,
           ),
         )
-      const giveIn = tx?.inputs[TOKEN_SWAP_GIVE_VIN]
+      const lotIn = tx?.inputs[DIRECT_OFFER_LOT_VIN]
       if (
         !tx ||
-        String(giveIn?.sourceTXID).toLowerCase() !== give.txid ||
-        giveIn?.sourceOutputIndex !== give.vout ||
-        tx.outputs[TOKEN_SWAP_WANT_VOUT]?.lockingScript?.toHex() !== want.lockingScript ||
-        tx.outputs[TOKEN_SWAP_WANT_VOUT]?.satoshis !== want.satoshis ||
-        tx.outputs[TOKEN_SWAP_TAKER_VOUT]?.lockingScript?.toHex() !== outputs[1]!.lockingScript
+        String(lotIn?.sourceTXID).toLowerCase() !== lotPoint.txid ||
+        lotIn?.sourceOutputIndex !== lotPoint.vout ||
+        tx.outputs[DIRECT_OFFER_PRICE_VOUT]?.lockingScript?.toHex() !== price.lockingScript ||
+        tx.outputs[DIRECT_OFFER_PRICE_VOUT]?.satoshis !== price.satoshis ||
+        tx.outputs[DIRECT_OFFER_BUYER_VOUT]?.lockingScript?.toHex() !== outputs[1]!.lockingScript
       ) {
-        throw new TokenSwapError(
-          'TOKEN_SWAP_SHAPE_MISMATCH',
-          'The wallet did not keep the swap inputs and outputs in order. Nothing was spent.',
+        throw new DirectOfferError(
+          'DIRECT_OFFER_SHAPE_MISMATCH',
+          'The wallet did not keep the offer inputs and outputs in order. Nothing was spent.',
         )
       }
       if (
-        !tokenSwapMakerUnlockValid({
+        !sellerUnlockValid({
           tx,
-          giveSatoshis: giveSource.satoshis ?? 1,
-          giveLockingScript: giveLock,
-          makerUnlockingScript: offer.makerUnlockingScript,
+          vin: DIRECT_OFFER_LOT_VIN,
+          sourceSatoshis: lotSource.satoshis ?? 1,
+          lockingScript: lotLock,
+          unlockingScript: offer.sellerUnlockingScript,
         })
       ) {
         failRefused({
           path: 'refuse',
           reason: 'unbound-signature',
-          message: 'The maker signature does not unlock this swap. Nothing was spent.',
+          message: 'The seller signature does not unlock this purchase. Nothing was spent.',
         })
       }
-      tx.inputs[TOKEN_SWAP_GIVE_VIN]!.unlockingScript = UnlockingScript.fromHex(offer.makerUnlockingScript)
+      tx.inputs[DIRECT_OFFER_LOT_VIN]!.unlockingScript = UnlockingScript.fromHex(offer.sellerUnlockingScript)
       const rootKey = PrivateKey.fromHex(active.rootKeyHex)
       const coverVins = covers.map((cover) => {
         const { txid, vout } = splitOutpoint(cover.outpoint)
@@ -563,7 +558,7 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
           (input) => String(input.sourceTXID).toLowerCase() === txid && input.sourceOutputIndex === vout,
         )
         if (vin < 0 || !cover.lockingScript) {
-          throw new TokenSwapError('TOKEN_SWAP_SHAPE_MISMATCH', 'A swap payment token input is missing.')
+          throw new DirectOfferError('DIRECT_OFFER_SHAPE_MISMATCH', 'A payment token input is missing.')
         }
         tx.inputs[vin]!.unlockingScriptTemplate = new P2PKH().unlock(
           rootKey,
@@ -580,30 +575,32 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         reference,
         spends: {
           ...coverSpends,
-          [TOKEN_SWAP_GIVE_VIN]: { unlockingScript: offer.makerUnlockingScript },
+          [DIRECT_OFFER_LOT_VIN]: { unlockingScript: offer.sellerUnlockingScript },
         },
         options: { acceptDelayedBroadcast: true },
       })
       const txid = signed.txid?.toLowerCase() ?? ''
       let atomic = signed.tx ? Array.from(signed.tx) : []
-      if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) throw new Error('Signed swap transaction missing')
+      if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) {
+        throw new Error('Signed direct offer purchase missing')
+      }
       atomic = await mergeLocalUnconfirmedAncestry(active, atomic)
       rememberBeefTree(atomic, txid)
       const { registerSignedSend, startSignedSendPropagation } = await import('./signedSendLifecycle')
-      startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'token_swap' }))
+      startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'direct_offer' }))
       reference = null
       chart.send({ type: 'BROADCASTED', txid })
       mark(`signed ${txid.slice(0, 12)} — cheque registered, miners in background`)
 
-      saveRecord({ offer, role: 'taker', state: 'taken', takeTxid: txid, updatedAt: Date.now() })
-      const makerRecord = findRecord(offer.offerId, 'maker')
-      if (makerRecord) {
-        const filed = settle === 'selfClaim' && offer.want.kind === 'token'
+      saveRecord({ offer, role: 'buyer', state: 'sold', soldTxid: txid, updatedAt: Date.now() })
+      const sellerRecord = findRecord(offer.offerId, 'seller')
+      if (sellerRecord) {
+        const filed = settle === 'selfCollect' && offer.want.kind === 'token'
         saveRecord({
-          ...makerRecord,
-          state: filed ? 'claimed' : 'taken',
-          takeTxid: txid,
-          ...(filed ? { claimTxid: txid } : {}),
+          ...sellerRecord,
+          state: filed ? 'collected' : 'sold',
+          soldTxid: txid,
+          ...(filed ? { collectTxid: txid } : {}),
         })
       }
       chart.send({ type: 'COMMITTED' })
@@ -611,27 +608,27 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
         sats: offer.want.kind === 'sats' ? offer.want.sats : 0,
-        method: 'token-swap',
+        method: 'direct-offer-buy',
         note: `Bought ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
         txid,
       })
       void import('./token')
         .then(({ listFungibles }) => listFungibles(active))
         .catch(() => {})
-      scheduleHistoryBackupPush('token-swap')
-      // A self-swap that wanted sats paid output 0 to our own address; sweep it
+      scheduleHistoryBackupPush('direct-offer')
+      // Buying our own sats offer paid output 0 to our own address; sweep it
       // once this spend lease is released.
-      if (settle === 'selfClaim' && offer.want.kind === 'sats') {
+      if (settle === 'selfCollect' && offer.want.kind === 'sats') {
         setTimeout(() => {
-          void claimTokenSwapProceeds({ offerId: offer.offerId, txid }).catch((err) => {
-            console.warn('[token-swap] self claim deferred', err instanceof Error ? err.message : String(err))
+          void collectDirectOfferProceeds({ offerId: offer.offerId, txid }).catch((err) => {
+            console.warn('[direct-offer] self collect deferred', err instanceof Error ? err.message : String(err))
           })
         }, 0)
       }
       mark('done')
       return { offerId: offer.offerId, txid, settle }
     } catch (err) {
-      if (reference && mayAbortTokenSwap(chart.getSnapshot())) {
+      if (reference && mayAbortOffer(chart.getSnapshot())) {
         await active.wallet.abortAction({ reference }).catch(() => {})
         chart.send({ type: 'ABORTED', error: err instanceof Error ? err.message : String(err) })
       } else {
@@ -645,52 +642,52 @@ export async function acceptTokenSwapOffer(args: { offer?: unknown }): Promise<{
 }
 
 /**
- * Maker side after a take: file output 0 (sweep the sats, or ingest the
- * token), then retire the escrow row. Runs outside the spend lease — the
+ * Seller side after a purchase: file output 0 (sweep the sats, or ingest the
+ * token), then retire the listed lot. Runs outside the spend lease — the
  * sweep takes it itself.
  */
-export async function claimTokenSwapProceeds(args: { offerId?: string; txid?: string }): Promise<{
+export async function collectDirectOfferProceeds(args: { offerId?: string; txid?: string }): Promise<{
   offerId: string
   txid: string
   proceeds: 'sats' | 'token'
 }> {
   const active = requireActive()
-  const record = findRecord(String(args.offerId ?? ''), 'maker')
+  const record = findRecord(String(args.offerId ?? ''), 'seller')
   if (!record) {
-    throw new TokenSwapError('not-maker', 'This wallet has no record of making that offer.')
+    throw new DirectOfferError('not-seller', 'This wallet has no record of listing that offer.')
   }
-  const path = chooseTokenSwapClaimPath({
+  const path = chooseDirectOfferCollectPath({
     offer: record.offer,
     state: record.state,
-    makerIdentityKey: active.identityKey,
-    txid: args.txid ?? record.takeTxid,
+    sellerIdentityKey: active.identityKey,
+    txid: args.txid ?? record.soldTxid,
   })
-  const chart = createActor(tokenSwapMachine).start()
-  chart.send({ type: 'CLAIM', path })
+  const chart = createActor(offerMachine).start()
+  chart.send({ type: 'COLLECT', venue: 'direct', path })
   try {
     if (path.path === 'refuse') failRefused(path)
     const offer = record.offer
-    const give = splitOutpoint(offer.offerId)
+    const lotPoint = splitOutpoint(offer.offerId)
     const beef = await getBeefForTxidCached(active, path.txid, {
       needProof: false,
       allowUnprovenRawTx: true,
     })
     const tx = beef.findTxid(path.txid)?.tx
-    const want = tokenSwapWantOutput(offer)
+    const price = directOfferPriceOutput(offer)
     if (
       !tx ||
-      String(tx.inputs[TOKEN_SWAP_GIVE_VIN]?.sourceTXID).toLowerCase() !== give.txid ||
-      tx.inputs[TOKEN_SWAP_GIVE_VIN]?.sourceOutputIndex !== give.vout ||
-      tx.outputs[TOKEN_SWAP_WANT_VOUT]?.lockingScript?.toHex() !== want.lockingScript ||
-      tx.outputs[TOKEN_SWAP_WANT_VOUT]?.satoshis !== want.satoshis
+      String(tx.inputs[DIRECT_OFFER_LOT_VIN]?.sourceTXID).toLowerCase() !== lotPoint.txid ||
+      tx.inputs[DIRECT_OFFER_LOT_VIN]?.sourceOutputIndex !== lotPoint.vout ||
+      tx.outputs[DIRECT_OFFER_PRICE_VOUT]?.lockingScript?.toHex() !== price.lockingScript ||
+      tx.outputs[DIRECT_OFFER_PRICE_VOUT]?.satoshis !== price.satoshis
     ) {
-      throw new TokenSwapError('TOKEN_SWAP_SHAPE_MISMATCH', 'That transaction does not take this offer.')
+      throw new DirectOfferError('DIRECT_OFFER_SHAPE_MISMATCH', 'That transaction does not buy this offer.')
     }
     const atomic = Array.from(beef.toBinaryAtomic(path.txid))
     if (path.proceeds === 'sats') {
       const { sweepVisibleP2pkhOutpoints } = await import('./importP2pkhFunding')
-      const swept = await sweepVisibleP2pkhOutpoints(active, [`${path.txid}.${TOKEN_SWAP_WANT_VOUT}`], atomic)
-      if (!swept[0]?.success) throw new Error(swept[0]?.error ?? 'Swap proceeds sweep failed')
+      const swept = await sweepVisibleP2pkhOutpoints(active, [`${path.txid}.${DIRECT_OFFER_PRICE_VOUT}`], atomic)
+      if (!swept[0]?.success) throw new Error(swept[0]?.error ?? 'Sale proceeds sweep failed')
       bumpBalanceAfterHeal()
     } else if (offer.want.kind === 'token') {
       const { internalizePeerFungibleSettle } = await import('./token')
@@ -705,24 +702,24 @@ export async function claimTokenSwapProceeds(args: { offerId?: string; txid?: st
           dec: offer.want.dec ?? 0,
         },
       })
-      if (!ingested.accepted) throw new Error(`Swap token ingest refused (${ingested.reason ?? 'unknown'})`)
+      if (!ingested.accepted) throw new Error(`Sale token ingest refused (${ingested.reason ?? 'unknown'})`)
     }
     await active.wallet
-      .relinquishOutput({ basket: TOKEN_SWAP_BASKET, output: offer.offerId })
+      .relinquishOutput({ basket: record.basket ?? DIRECT_OFFER_BASKET, output: offer.offerId })
       .catch(() => {})
     const { hideSpentOutpoints } = await import('./staleOutputRelease')
     await hideSpentOutpoints([offer.offerId], path.txid, active).catch(() => 0)
-    saveRecord({ ...record, state: 'claimed', takeTxid: path.txid, claimTxid: path.txid })
-    chart.send({ type: 'INGESTED' })
+    saveRecord({ ...record, state: 'collected', soldTxid: path.txid, collectTxid: path.txid })
+    chart.send({ type: 'COLLECTED' })
     recordAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats: offer.want.kind === 'sats' ? offer.want.sats : 0,
-      method: 'token-swap-proceeds',
+      method: 'direct-offer-sale',
       note: `Sold ${offer.give.amount} ${offer.give.sym ?? 'tokens'} for ${describeWant(offer.want)} (direct offer)`,
       txid: path.txid,
     })
-    scheduleHistoryBackupPush('token-swap')
+    scheduleHistoryBackupPush('direct-offer')
     return { offerId: offer.offerId, txid: path.txid, proceeds: path.proceeds }
   } catch (err) {
     chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
@@ -732,42 +729,42 @@ export async function claimTokenSwapProceeds(args: { offerId?: string; txid?: st
   }
 }
 
-/** Spend the escrowed lot back to this wallet's token balance. */
-export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<{
+/** Spend the listed lot back to this wallet's token balance. */
+export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
   offerId: string
   txid: string
 }> {
   return runExclusiveSpend(async () => {
     const active = requireActive()
-    const record = findRecord(String(args.offerId ?? ''), 'maker')
+    const record = findRecord(String(args.offerId ?? ''), 'seller')
     if (!record) {
-      throw new TokenSwapError('not-maker', 'This wallet has no record of making that offer.')
+      throw new DirectOfferError('not-seller', 'This wallet has no record of listing that offer.')
     }
-    const give = splitOutpoint(record.offer.offerId)
+    const lotPoint = splitOutpoint(record.offer.offerId)
     const { cloudSpentStatus } = await import('./chainProbeClient')
-    const spent = await cloudSpentStatus(give.txid, give.vout, active.chain).catch(() => null)
-    const path = chooseTokenSwapCancelPath({
+    const spent = await cloudSpentStatus(lotPoint.txid, lotPoint.vout, active.chain).catch(() => null)
+    const path = chooseDirectOfferCancelPath({
       offer: record.offer,
       state: record.state,
-      makerIdentityKey: active.identityKey,
+      sellerIdentityKey: active.identityKey,
       spent,
     })
-    const chart = createActor(tokenSwapMachine).start()
-    chart.send({ type: 'CANCEL', path })
+    const chart = createActor(offerMachine).start()
+    chart.send({ type: 'CANCEL', venue: 'direct', path })
     let reference: string | null = null
     try {
       if (path.path === 'refuse') {
-        if (path.reason === 'offer-already-taken') saveRecord({ ...record, state: 'taken' })
+        if (path.reason === 'offer-already-sold') saveRecord({ ...record, state: 'sold' })
         failRefused(path)
       }
       const offer = record.offer
       const decoded = decodeBsv21Binary(offer.give.lockingScript)
-      if (!decoded) throw new TokenSwapError('invalid-offer', 'The escrowed lot is not a token output.')
+      if (!decoded) throw new DirectOfferError('invalid-offer', 'The listed lot is not a token output.')
       const created = await active.wallet.createAction({
-        description: `Cancel swap offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
-        labels: [SWAP_LABEL, 'token-swap-cancel', `token-swap-offer:${offer.offerId}`],
+        description: `Cancel direct offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
+        labels: [OFFER_LABEL, 'direct-offer-cancel', `direct-offer:${offer.offerId}`],
         inputBEEF: Utils.toArray(offer.beefB64, 'base64'),
-        inputs: [{ outpoint: offer.offerId, inputDescription: 'Swap escrow lot', unlockingScriptLength: 108 }],
+        inputs: [{ outpoint: offer.offerId, inputDescription: 'Direct offer lot', unlockingScriptLength: 108 }],
         outputs: [
           {
             lockingScript: buildBsv21ValueLock({
@@ -777,7 +774,7 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
               layout: decoded.layout,
             }),
             satoshis: 1,
-            outputDescription: 'Swap lot returned',
+            outputDescription: 'Listed lot returned',
             ...buildBsv21SendRemittance({
               tokenId: offer.give.tokenId,
               amt: BigInt(offer.give.amount),
@@ -789,7 +786,7 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
         options: { randomizeOutputs: false, signAndProcess: false, noSend: true, trustSelf: 'known' },
       })
       const signable = created.signableTransaction
-      if (!signable) throw new Error('Swap cancel did not return a signable transaction')
+      if (!signable) throw new Error('Direct offer cancel did not return a signable transaction')
       reference = signable.reference
       chart.send({ type: 'STAGED', reference })
       const tx = Beef.fromBinary(signable.tx).txs
@@ -797,15 +794,16 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
         .find((candidate) =>
           candidate?.inputs.some(
             (input) =>
-              String(input.sourceTXID).toLowerCase() === give.txid && input.sourceOutputIndex === give.vout,
+              String(input.sourceTXID).toLowerCase() === lotPoint.txid &&
+              input.sourceOutputIndex === lotPoint.vout,
           ),
         )
       if (
         !tx ||
-        String(tx.inputs[0]?.sourceTXID).toLowerCase() !== give.txid ||
-        tx.inputs[0]?.sourceOutputIndex !== give.vout
+        String(tx.inputs[0]?.sourceTXID).toLowerCase() !== lotPoint.txid ||
+        tx.inputs[0]?.sourceOutputIndex !== lotPoint.vout
       ) {
-        throw new TokenSwapError('TOKEN_SWAP_SHAPE_MISMATCH', 'The wallet did not keep the escrow input first.')
+        throw new DirectOfferError('DIRECT_OFFER_SHAPE_MISMATCH', 'The wallet did not keep the listed lot first.')
       }
       tx.inputs[0]!.unlockingScriptTemplate = new P2PKH().unlock(
         PrivateKey.fromHex(active.rootKeyHex),
@@ -823,11 +821,11 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
       })
       const txid = signed.txid?.toLowerCase() ?? ''
       let atomic = signed.tx ? Array.from(signed.tx) : []
-      if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) throw new Error('Signed swap cancel missing')
+      if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) throw new Error('Signed direct offer cancel missing')
       atomic = await mergeLocalUnconfirmedAncestry(active, atomic)
       rememberBeefTree(atomic, txid)
       const { registerSignedSend, startSignedSendPropagation } = await import('./signedSendLifecycle')
-      startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'token_swap' }))
+      startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'direct_offer' }))
       reference = null
       chart.send({ type: 'BROADCASTED', txid })
       saveRecord({ ...record, state: 'cancelled', cancelTxid: txid })
@@ -836,18 +834,18 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'event',
         sats: 0,
-        method: 'token-swap-cancel',
+        method: 'direct-offer-cancel',
         note: `Cancelled direct offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
         txid,
-        item: frozenLotItem(offer),
+        item: listedLotItem(offer),
       })
       void import('./token')
         .then(({ listFungibles }) => listFungibles(active))
         .catch(() => {})
-      scheduleHistoryBackupPush('token-swap')
+      scheduleHistoryBackupPush('direct-offer')
       return { offerId: offer.offerId, txid }
     } catch (err) {
-      if (reference && mayAbortTokenSwap(chart.getSnapshot())) {
+      if (reference && mayAbortOffer(chart.getSnapshot())) {
         await active.wallet.abortAction({ reference }).catch(() => {})
         chart.send({ type: 'ABORTED', error: err instanceof Error ? err.message : String(err) })
       } else {
@@ -858,9 +856,4 @@ export async function cancelTokenSwapOffer(args: { offerId?: string }): Promise<
       chart.stop()
     }
   }, undefined, { promote: false })
-}
-
-/** Parse a shared offer without touching the wallet (preview / permission copy). */
-export function previewTokenSwapOffer(raw: unknown): TokenSwapOffer | null {
-  return parseTokenSwapOffer(raw)
 }

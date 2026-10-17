@@ -79,6 +79,7 @@ import {
 import { viewActivityItem } from "../wallet/activityItemView";
 import {
   activityActionMark,
+  canonicalActivityMethod,
   type ActivityActionMark,
 } from "../wallet/activityActionMark";
 import {
@@ -725,7 +726,7 @@ export function HistoryAppBadge({ entry }: { entry: ActivityEntry }) {
 }
 
 function eventAmountLabel(entry: ActivityEntry): string {
-  const m = entry.method;
+  const m = canonicalActivityMethod(entry.method);
   if (m === "utxo-heal") return "Heal";
   if (m === "connect" || m === "approve") return "Allowed";
   if (m === "connect-deny" || m === "deny") return "Denied";
@@ -734,15 +735,15 @@ function eventAmountLabel(entry: ActivityEntry): string {
   if (m === "forget-collectable") return "Forgot";
   if (m === "market-list") return "Listed";
   if (m === "market-cancel") return "Cancelled";
-  if (m === "token-swap-offer") return "Listed";
-  if (m === "token-swap-cancel") return "Cancelled";
+  if (m === "direct-offer-list") return "Listed";
+  if (m === "direct-offer-cancel") return "Cancelled";
   return "Action";
 }
 
 function eventIcon(entry: ActivityEntry, size = 18) {
-  const m = entry.method;
+  const m = canonicalActivityMethod(entry.method);
   // The listed lot; the Listing / Cancel listing mark rides the action badge.
-  if (m === "token-swap-offer" || m === "token-swap-cancel") {
+  if (m === "direct-offer-list" || m === "direct-offer-cancel") {
     return <InventoryIcon size={size} />;
   }
   if (m === "utxo-heal") return <RefreshIcon size={size} />;

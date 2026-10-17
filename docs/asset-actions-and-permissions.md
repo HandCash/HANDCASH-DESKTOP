@@ -13,8 +13,8 @@ The bridge listens on `https://127.0.0.1:2121`, with an HTTP fallback on `http:/
 | Public | `getVersion`, `getNetwork`, `getHeight`, `getHeaderForHeight` | No origin check |
 | Silent | `isAuthenticated` | Never prompts |
 | Connect | `waitForAuthentication` | Shows the Connect prompt |
-| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listTokenSwapOffers`, market reads | Connect only. `listOutputs` on an item or token scope adds a view gate. |
-| Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes, `createTokenSwapOffer`, `acceptTokenSwapOffer`, `claimTokenSwapProceeds`, `cancelTokenSwapOffer` | Connect, then an approval for each call. No two actions share consent. |
+| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listDirectOffers`, market reads | Connect only. `listOutputs` on an item or token scope adds a view gate. |
+| Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes, `createDirectOffer`, `buyDirectOffer`, `collectDirectOfferProceeds`, `cancelDirectOffer` | Connect, then an approval for each call. No two actions share consent. |
 | Migration | `getLegacyAddress`, `refreshLegacyAddress`, `listMigrationTxids`, `openKeyRecovery` | HandCash hosts only (`migration.ts`) |
 
 Origin-limited HandCash methods:
@@ -135,7 +135,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 |---|---|---|
 | Item direct offers | Missing; token for sats and token for token ship (section 8) | Ordinal pads from `ordinal-v2` |
 | Token-priced market listings | Missing; the market prices in sats only | Overlay offer fields carry a token price; fee rule for a token price |
-| Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `token-swap` box |
+| Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `direct-offer` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
 | Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
@@ -159,19 +159,22 @@ Two venues use it:
 | Wanted back | Sats | Sats, or another token |
 | Who sees it | Published to the market overlay and index | JSON handed to a buyer |
 | Fee | 5% market fee, bound by the BRC-48 offer deposit's signature | None |
-| Code | `marketListing.ts`, `marketSettlement.ts` (settlement v2) | `tokenSwap.ts`, `tokenSwapPath.ts`, chart `tokenSwapMachine` |
+| Code | `marketListing.ts`, `marketSettlement.ts` (settlement v2) | `directOffer.ts`, `directOfferPath.ts` |
+| Basket of the held lot | Token or `1sat` basket, tag `market-held` | `direct-offers` |
 
-Activity treats them alike: **Listing**, **Cancel listing**, **Sold** and **Purchase** marks, with the asset as the row's subject. Direct-offer notes end in "(direct offer)". The bridge methods keep their `TokenSwap` names.
+Both venues share the vocabulary in `offerTerms.ts` (`OfferVenue`, `OfferWant`), the seller signer and buyer check in `offerSeal.ts` (`signSellerInputs`, `sellerUnlockValid`), and one chart, `offerMachine`, for list, cancel, direct buy and collect. A market purchase keeps its own chart, `marketPurchaseMachine`, for overlay hydrate and the seller receipt.
+
+Activity treats them alike: **Listing**, **Cancel listing**, **Sold** and **Purchase** marks, with the asset as the row's subject. Direct-offer notes end in "(direct offer)"; rows that 1.3.573 recorded as token swaps read the same way.
 
 | Method (action, prompts) | What it does |
 |---|---|
-| `createTokenSwapOffer({ give: { tokenId, amount }, want })` | Holds the exact lot (basket `token-swap-offers`, so send and burn never select it), signs input 0, returns the offer JSON |
-| `acceptTokenSwapOffer({ offer })` | Proves the lot back to its deploy (BRC-176), script-checks the seller unlock inside the real transaction, then signs the buyer's coins |
-| `claimTokenSwapProceeds({ offerId, txid })` | Seller files output 0 (P2PKH sweep, or token ingest) and retires the held lot |
-| `cancelTokenSwapOffer({ offerId })` | Spends the lot back to the token balance; refused once the chain shows it spent |
-| `listTokenSwapOffers()` (connect) | This account's direct offers and purchases |
+| `createDirectOffer({ give: { tokenId, amount }, want })` | Holds the exact lot (basket `direct-offers`, so send and burn never select it), signs input 0, returns the offer JSON |
+| `buyDirectOffer({ offer })` | Proves the lot back to its deploy (BRC-176), script-checks the seller unlock inside the real transaction, then signs the buyer's coins |
+| `collectDirectOfferProceeds({ offerId, txid })` | Seller files output 0 (P2PKH sweep, or token ingest) and retires the held lot |
+| `cancelDirectOffer({ offerId })` | Spends the lot back to the token balance; refused once the chain shows it spent |
+| `listDirectOffers()` (connect) | This account's direct offers and purchases |
 
-`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-taken`, and the rest in `TokenSwapRefusal`. When one wallet is seller and buyer, it files output 0 itself.
+`want` is `{ kind: 'sats', sats }` or `{ kind: 'token', tokenId, amount, layout? }`. Refusals are named: `same-token`, `cosigned-token`, `want-layout-mismatch`, `unbound-signature`, `offer-already-sold`, and the rest in `DirectOfferRefusal`. When one wallet is seller and buyer, it files output 0 itself.
 
 Run every bridge asset action in one pass, direct offers included, at `https://brc-cloud.bcryderman.workers.dev/token-demo`; it ends by checking that every listed unit came back. The wallet boundary run at `/wallet-demo` ends with a direct offer bought by the same wallet.
 
@@ -179,7 +182,7 @@ Run every bridge asset action in one pass, direct offers included, at `https://b
 |---|---|---|
 | Token → BSV | P2PKH sats | Same as a market token listing, minus fee and overlay |
 | Token → token | A BRC-162 output of the wanted token | The buyer adds its token inputs and change; each token sums exactly |
-| Item → token or BSV | Same as above | Ordinal satoshi placement: the item sits behind taker pads, as in `ordinal-v2` |
+| Item → token or BSV | Same as above | Ordinal satoshi placement: the item sits behind buyer pads, as in `ordinal-v2` |
 | Countersigned assets | One transaction, both holders sign `0xC1`, the acceptor countersigns | Same issuer only (open question in that draft) |
 
 Every offer transaction goes through `signedSendLifecycle`. Delivery of the seller's proceeds rides the messagebox and never gates broadcast.

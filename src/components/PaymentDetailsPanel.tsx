@@ -41,6 +41,7 @@ import {
 } from '../wallet/activityRecords'
 import {
   activityActionMark,
+  canonicalActivityMethod,
 } from '../wallet/activityActionMark'
 import {
   formatPrimaryFromSats,
@@ -134,14 +135,15 @@ function tokenLinkId(item: ActivityItem | undefined): string | null {
   return id || null
 }
 
-function eventStatusLabel(method: string): string {
+function eventStatusLabel(recorded: string): string {
+  const method = canonicalActivityMethod(recorded)
   if (method === 'connect' || method === 'approve') return 'Approved'
   if (method === 'connect-deny' || method === 'deny') return 'Cancelled'
   if (method === 'disconnect') return 'Removed'
   if (method === 'market-list') return 'Listed'
   if (method === 'market-cancel') return 'Cancelled'
-  if (method === 'token-swap-offer') return 'Listed (direct offer)'
-  if (method === 'token-swap-cancel') return 'Cancelled'
+  if (method === 'direct-offer-list') return 'Listed (direct offer)'
+  if (method === 'direct-offer-cancel') return 'Cancelled'
   if (method === 'add-friend') return 'Added'
   if (method === 'forget-collectable') return 'Forgot'
   return 'Done'

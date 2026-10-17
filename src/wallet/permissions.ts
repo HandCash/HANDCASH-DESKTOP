@@ -621,10 +621,10 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'createCancelMarketListingAdvert',
         'purchaseMarketListing',
         'createMarketPurchaseIntent',
-        'createTokenSwapOffer',
-        'acceptTokenSwapOffer',
-        'claimTokenSwapProceeds',
-        'cancelTokenSwapOffer',
+        'createDirectOffer',
+        'buyDirectOffer',
+        'collectDirectOfferProceeds',
+        'cancelDirectOffer',
       ].includes(prompt.method)
     ) {
       return
@@ -1215,7 +1215,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'createTokenSwapOffer') {
+  if (method === 'createDirectOffer') {
     const give =
       body.give && typeof body.give === 'object' ? (body.give as Record<string, unknown>) : {}
     const want =
@@ -1238,7 +1238,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'acceptTokenSwapOffer') {
+  if (method === 'buyDirectOffer') {
     const offer =
       body.offer && typeof body.offer === 'object' ? (body.offer as Record<string, unknown>) : {}
     const give =
@@ -1266,7 +1266,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'claimTokenSwapProceeds') {
+  if (method === 'collectDirectOfferProceeds') {
     return {
       title: 'Collect sale proceeds',
       summary: 'File what the buyer paid for your direct offer',
@@ -1274,7 +1274,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'cancelTokenSwapOffer') {
+  if (method === 'cancelDirectOffer') {
     return {
       title: 'Cancel direct offer',
       summary: 'Spend the listed units back to your token balance',

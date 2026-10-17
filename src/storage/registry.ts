@@ -400,9 +400,16 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 2,
   }),
-  tokenSwapOffers: defineStorage({
+  directOffers: defineStorage({
+    key: 'handcash.market.directOffers.v1',
+    owner: 'market',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** Direct offers from 1.3.573, named token swaps then. Read once into `directOffers`. */
+  directOffersLegacy: defineStorage({
     key: 'handcash.tokenSwap.offers.v1',
-    owner: 'tokens',
+    owner: 'market',
     scope: 'wallet',
     version: 1,
   }),
