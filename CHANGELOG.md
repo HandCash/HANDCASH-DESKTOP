@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.576] - 2026-10-17
+
+### Fixed
+- **A send no longer sits in "preparing" behind the background status review.** Every 15 minutes the wallet reviews failed transactions, and it read every output in the wallet, scripts included, to do it. On a phone with about 2,500 items that held the wallet store for 44 seconds, and a payment waited 15 seconds of it before it could be built. The review now reads only the outputs of the failed transactions, through their indexes. The repairs are the same.
+- **The dead-coin check holds the wallet store for less time.** Its census walked every transaction and checked the script of every change output. It now reads live transactions by status and skips scripts. A payment had waited 6 seconds behind it.
+
 ## [1.3.575] - 2026-10-17
 
 ### Changed

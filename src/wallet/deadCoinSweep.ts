@@ -173,20 +173,24 @@ async function probeableChange(active: ActiveWallet): Promise<string[] | null> {
     if (typeof sp.findOutputs !== 'function' || typeof sp.findTransactions !== 'function') {
       return null
     }
+    // One status per query so IndexedDB walks the status index; a `status`
+    // list with an empty partial walks every transaction. Scripts are never
+    // read here, and loading them validates each one against proven_txs.
     const unsettled = new Set<number>()
-    for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
-      const batch =
-        (await sp.findTransactions({
-          partial: {},
-          status: [...LIVE_LOCAL_TX_STATUSES],
-          noRawTx: true,
-          paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
-        })) ?? []
-      for (const row of batch) {
-        const id = Number(row.transactionId)
-        if (Number.isFinite(id) && id > 0) unsettled.add(id)
+    for (const status of LIVE_LOCAL_TX_STATUSES) {
+      for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
+        const batch =
+          (await sp.findTransactions({
+            partial: { status },
+            noRawTx: true,
+            paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+          })) ?? []
+        for (const row of batch) {
+          const id = Number(row.transactionId)
+          if (Number.isFinite(id) && id > 0) unsettled.add(id)
+        }
+        if (batch.length < ENUM_PAGE) break
       }
-      if (batch.length < ENUM_PAGE) break
     }
 
     const outpoints: string[] = []
@@ -194,6 +198,7 @@ async function probeableChange(active: ActiveWallet): Promise<string[] | null> {
       const batch =
         (await sp.findOutputs({
           partial: { spendable: true, change: true },
+          noScript: true,
           paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
         })) ?? []
       for (const row of batch) {

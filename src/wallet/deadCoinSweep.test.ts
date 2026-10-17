@@ -32,11 +32,19 @@ const outputs = [
   { txid: ITEM, vout: 0, satoshis: 1, change: true, transactionId: 4, basket: '1sat' },
 ]
 
+const censusQueries: Array<{ table: string; args: Record<string, unknown> }> = []
+
 const storage = {
   runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
     fn({
-      findTransactions: async () => [{ transactionId: 9 }],
-      findOutputs: async () => outputs,
+      findTransactions: async (args: Record<string, unknown>) => {
+        censusQueries.push({ table: 'transactions', args })
+        return (args.partial as { status?: string }).status === 'sending' ? [{ transactionId: 9 }] : []
+      },
+      findOutputs: async (args: Record<string, unknown>) => {
+        censusQueries.push({ table: 'outputs', args })
+        return outputs
+      },
     }),
 }
 
@@ -129,6 +137,7 @@ describe('sweepDeadCoins', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     hides.length = 0
+    censusQueries.length = 0
     spendBusy = false
     current = true
     flakyMisses = Infinity
@@ -200,6 +209,14 @@ describe('sweepDeadCoins', () => {
     await drained(() => sweepDeadCoins(runtime))
     expect(askedTxids()).not.toContain(UNMINED)
     expect(askedTxids()).not.toContain(ITEM)
+  })
+
+  it('reads the census through indexes and without scripts', async () => {
+    await drained(() => sweepDeadCoins(runtime))
+    const txQueries = censusQueries.filter((q) => q.table === 'transactions')
+    expect(txQueries.map((q) => q.args.partial)).toEqual([{ status: 'unproven' }, { status: 'sending' }])
+    expect(txQueries.every((q) => q.args.status === undefined)).toBe(true)
+    expect(censusQueries.find((q) => q.table === 'outputs')?.args).toMatchObject({ noScript: true })
   })
 
   it('does not re-ask coins cleared minutes ago', async () => {
