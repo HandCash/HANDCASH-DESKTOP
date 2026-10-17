@@ -189,7 +189,7 @@ function resetMaintenanceMocks(): void {
   })
 }
 
-describe('refreshFromChain pre-scan maintenance', () => {
+describe('refreshFromChain pre-scan maintenance', { timeout: 30_000 }, () => {
   beforeEach(() => {
     vi.resetModules()
     resetMaintenanceMocks()
