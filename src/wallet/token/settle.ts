@@ -10,7 +10,9 @@ import { getActiveWallet } from '../session'
  * Inbox hints must carry Atomic BEEF; missing BEEF is `missing-beef`, not a
  * WhatsOnChain walk. Miner postBeef runs after internalize.
  */
-import { Beef } from '@bsv/sdk'
+import { Beef, PrivateKey } from '@bsv/sdk'
+import { colorPrivateKey, readDeliveryRemittance, type ColorRemittance } from '../colorKeys'
+import { rememberTipKey } from './tipKeys'
 import type { AtomicBeefPurpose } from '../beefCache'
 import {
   BSV21_BASKET,
@@ -97,6 +99,8 @@ export function collectFungibleTipsPayingUs(args: {
     lockingScript?: { toHex(): string } | null
   } | null>
   address: string
+  /** vout → the derived `p color` address the delivery says that output pays. */
+  derived?: ReadonlyMap<number, string>
   tokenId: string
   amount: string
 }): { tips: PayingTip[]; sym?: string; icon?: string; issuer?: string } {
@@ -107,10 +111,12 @@ export function collectFungibleTipsPayingUs(args: {
   for (let i = 0; i < args.outputs.length; i++) {
     const output = args.outputs[i]
     const scriptHex = output?.lockingScript?.toHex()
+    const derivedAddress = args.derived?.get(i)
     if (
       output?.satoshis !== 1 ||
       !scriptHex ||
-      !scriptPaysAddress(scriptHex, args.address)
+      !(scriptPaysAddress(scriptHex, args.address) ||
+        (derivedAddress != null && scriptPaysAddress(scriptHex, derivedAddress)))
     ) {
       continue
     }
@@ -246,6 +252,8 @@ export async function internalizePeerFungibleSettle(opts: {
    * Receiving forever (hc-a580a, 438497125f03, 2026-09-27).
    */
   const tips: { vout: number; encoding: 'binary' | 'json' }[] = []
+  /** Outputs paying a `p color` child of ours, from `meta.asset.remittance` (BRC-251). */
+  const derived = new Map<number, { address: string; remittance: ColorRemittance; key: PrivateKey }>()
   let parsedBeef: Beef | null = null
   let resolvedSym = opts.token.sym
   let resolvedIcon = opts.token.icon
@@ -259,9 +267,18 @@ export async function internalizePeerFungibleSettle(opts: {
       clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'beef-missing-tx' }
     }
+    for (const [vout, remittance] of readDeliveryRemittance(opts.token.remittance)) {
+      try {
+        const key = colorPrivateKey(PrivateKey.fromHex(active.rootKeyHex), tokenId, remittance)
+        derived.set(vout, { address: key.toAddress(), remittance, key })
+      } catch {
+        /* a remittance this wallet cannot derive pays no key of ours */
+      }
+    }
     const matched = collectFungibleTipsPayingUs({
       outputs: tx.outputs,
       address: active.address,
+      derived: new Map([...derived].map(([vout, d]) => [vout, d.address])),
       tokenId,
       amount,
     })
@@ -373,6 +390,12 @@ export async function internalizePeerFungibleSettle(opts: {
     }
   }
 
+  /** The derived key of an accepted tip, unless the tip pays our identity address. */
+  const heldDerived = (vout: number) => {
+    const d = derived.get(vout)
+    const hex = parsedBeef?.findTxid(id)?.tx?.outputs[vout]?.lockingScript?.toHex()
+    return d && hex && scriptPaysAddress(hex, d.address) ? d : undefined
+  }
   const tipVout = tips[0]!.vout
   const tipOp = `${id}.${tipVout}`
   const outpoints = tips.map((tip) => `${id}.${tip.vout}`)
@@ -473,12 +496,17 @@ export async function internalizePeerFungibleSettle(opts: {
               icon: resolvedIcon,
               dec: resolvedDec,
               issuer: resolvedIssuer,
+              ...(heldDerived(tip.vout) ? { remittance: heldDerived(tip.vout)!.remittance } : {}),
             }),
           },
         })),
         seekPermission: false,
       }),
     )
+    for (const tip of tips) {
+      const held = heldDerived(tip.vout)
+      if (held) rememberTipKey(active, held.key)
+    }
     markOneSatImported(outpoints)
     rememberBeefTree(atomic, id)
     paintReceivedToken()

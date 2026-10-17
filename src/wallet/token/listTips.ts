@@ -28,10 +28,11 @@ import {
   getSentItemRecord,
   isItemSent,
 } from '../sentItemGuard'
-import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
+import { parseOrdEnvelope } from '../ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from '../retiredFungible'
 import { uiBudgetExpired, yieldToUi } from '../yieldToUi'
 import { readTokenFiling } from './filingStore'
+import { ownsTokenLock, tipKeyFromInstructions } from './tipKeys'
 import { BASKET_SUB_READ_ROWS, listOutputsInSlices } from '../basketSubReads'
 
 const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
@@ -349,7 +350,7 @@ function decodeContinuingRemittanceTip(
  *
  * The guard exists because `listOutputs` keeps returning a tip a send already
  * spent, so "in our basket" alone cannot clear a mark. Two facts together can:
- * the tip pays **us**, and the hiding transaction is the tip's *own* — a spent
+ * the tip pays **us** (the identity address or a `p color` child we hold), and the hiding transaction is the tip's *own* — a spent
  * input is never an output of the transaction that spent it, and a payee
  * output the sender hid pays the payee, not the sender. What remains is the
  * receiving account reading a mark the sending account wrote when both shared
@@ -357,11 +358,16 @@ function decodeContinuingRemittanceTip(
  *
  * Returns true when the tip may be listed.
  */
-function healStaleReceivedHide(tip: Bsv21Utxo, wallet: ActiveWallet): boolean {
+function healStaleReceivedHide(
+  tip: Bsv21Utxo,
+  wallet: ActiveWallet,
+  customInstructions: string | undefined,
+): boolean {
   const record = getSentItemRecord(tip.outpoint)
   const txid = tip.outpoint.split(/[._]/)[0]?.toLowerCase()
   if (!record?.txid || !txid || record.txid !== txid) return false
-  if (!scriptPaysAddress(tip.lockingScript, wallet.address)) return false
+  tipKeyFromInstructions(wallet, customInstructions)
+  if (!ownsTokenLock(wallet, tip.lockingScript)) return false
   console.info(
     `[bsv21] clearing a hide mark on a tip we hold and are paid by — ${tip.outpoint}`,
   )
@@ -397,7 +403,7 @@ async function decodeHeldRows(
     if (uiBudgetExpired()) await yieldToUi()
     const tip = decode(row)
     if (!tip) continue
-    if (isItemSent(tip.outpoint) && !healStaleReceivedHide(tip, wallet)) {
+    if (isItemSent(tip.outpoint) && !healStaleReceivedHide(tip, wallet, row.customInstructions)) {
       continue
     }
     if (seen.has(tip.outpoint)) continue

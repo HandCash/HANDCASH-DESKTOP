@@ -23,6 +23,7 @@ import {
   type Bsv21SendTip,
 } from './sendPlan'
 import { p2pkhScriptHex } from '../ordinalOwnership'
+import { rememberTipKey, selfColorOutput } from './tipKeys'
 import { listBsv21BinaryTips } from './listTips'
 import { chooseBsv21ValueTipPath, recoverBsv21TipsFromLocalBeef } from './send'
 import type { Bsv21BurnPlan, BurnRefusalReason } from '../burnPlan'
@@ -290,6 +291,7 @@ export async function burnBsv21Tokens(args: {
       console.warn(`[bsv21-burn] refused before build: ${plan.reason}`)
     }
     const change = plan.path === 'burnBsv21' ? plan.changeAmount : 0n
+    const changeKey = change > 0n ? selfColorOutput(active, tokenId) : null
     const recoverSatoshis = plan.path === 'burnBsv21' ? plan.recoverSatoshis : 0
     const spendOutpoints = selected.map((tip) => wireOutpoint(tip.outpoint))
 
@@ -331,12 +333,13 @@ export async function burnBsv21Tokens(args: {
             sym,
             dec: Number.isInteger(args.item.dec) ? args.item.dec : 0,
             ...(args.icon ? { icon: args.icon } : {}),
+            ...(changeKey ? { remittance: changeKey.remittance } : {}),
           })
           outputs.push({
             lockingScript: buildBsv21ValueLock({
               tokenId,
               amount: change,
-              address: active.address,
+              address: changeKey?.address ?? active.address,
               layout: bsv21SpendLayout(selected),
             }),
             satoshis: 1,
@@ -452,9 +455,10 @@ export async function burnBsv21Tokens(args: {
           assertBsv21BurnConservation({
             tx: signedTx,
             tokenId,
-            changeRestHex: p2pkhScriptHex(active.address),
+            changeRestHex: p2pkhScriptHex(changeKey?.address ?? active.address),
             changeAmt: change,
           })
+          if (changeKey) rememberTipKey(active, changeKey.key)
         } catch (err) {
           console.warn(`[bsv21-burn] ${signedTxid.slice(0, 12)} refused before broadcast`, err)
           throw err

@@ -10,7 +10,6 @@ import { accountKeyScopeFor } from '../accountLocalKeys'
 import {
   Beef,
   P2PKH,
-  PrivateKey,
   type SignableTransaction,
   type Transaction,
 } from '@bsv/sdk'
@@ -39,6 +38,7 @@ import {
   classifyBsv21TipKind,
 } from './tipKind'
 import { interpretBsv21SendPath } from './sendMachine'
+import { planColorOutputs, rememberTipKey, tipSigningKey } from './tipKeys'
 import {
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
@@ -374,7 +374,6 @@ export async function signBsv21TipTransfer(args: {
     }
   }
 
-  const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
@@ -389,7 +388,7 @@ export async function signBsv21TipTransfer(args: {
     // script. SetupClient.getUnlockP2PKH only hashes bare P2PKH and fails
     // CHECKSIG ("top stack element must be truthy") on ordinal tips.
     input.unlockingScriptTemplate = new P2PKH().unlock(
-      rootKey,
+      await tipSigningKey(args.wallet, lockingScript.toHex()),
       'all',
       false,
       satoshis,
@@ -747,28 +746,37 @@ export async function sendBsv21Tokens(args: {
       const icon =
         args.icon ||
         listed162.find((t) => t.tokenId === tokenId && t.icon)?.icon
+      const peerKey =
+        args.skipPeerNotify
+          ? null
+          : args.recipientIdentityKey?.trim().toLowerCase() || null
+      const keys = planColorOutputs({
+        wallet,
+        tokenId,
+        payeeIsSelf,
+        peerKey,
+        hasChange: plan.changeAmt > 0n,
+      })
       let plannedOutputs
       try {
         plannedOutputs = buildBsv21SendOutputs({
           tokenId,
           payeeAmt: plan.payeeAmt,
           changeAmt: plan.changeAmt,
-          payeeAddress: to,
-          changeAddress: wallet.address,
+          payeeAddress: keys.payee?.address ?? to,
+          changeAddress: keys.change?.address ?? wallet.address,
           layout: plan.layout,
           sym,
           dec,
           issuer,
           icon,
           payeeIsSelf,
+          payeeRemittance: keys.payee?.remittance,
+          changeRemittance: keys.change?.remittance,
         })
       } catch {
         throw new Error('Invalid recipient address or identity key')
       }
-      const peerKey =
-        args.skipPeerNotify
-          ? null
-          : args.recipientIdentityKey?.trim().toLowerCase() || null
       const spendOutpoints = selected.map((tip) => wireOutpoint(tip.outpoint))
       const knownTxids = [
         ...new Set(
@@ -999,6 +1007,7 @@ export async function sendBsv21Tokens(args: {
       let remainingAmt = change
       let remainingOp: string | undefined
       let payeeOutpoints: string[] = []
+      let payeeVouts: number[] = []
       /** Every output this wallet still holds after the spend (self payee + change). */
       let heldAfter: { outpoint: string; amt: bigint }[] = []
       let tokenLineage: number[] | null = null
@@ -1024,8 +1033,8 @@ export async function sendBsv21Tokens(args: {
           const classified = classifyBsv21SendOutputs({
             tx: signedTx,
             tokenId,
-            payeeRestHex: p2pkhScriptHex(to),
-            changeRestHex: p2pkhScriptHex(wallet.address),
+            payeeRestHex: p2pkhScriptHex(keys.payee?.address ?? to),
+            changeRestHex: p2pkhScriptHex(keys.change?.address ?? wallet.address),
             payeeAmt: plan.payeeAmt,
             changeAmt: plan.changeAmt,
           })
@@ -1041,6 +1050,8 @@ export async function sendBsv21Tokens(args: {
           remainingAmt = heldAfter.reduce((sum, out) => sum + out.amt, 0n)
           remainingOp = heldAfter[0]?.outpoint
           payeeOutpoints = classified.payee.map((out) => `${txid}_${out.vout}`)
+          payeeVouts = classified.payee.map((out) => out.vout)
+          for (const key of keys.held) rememberTipKey(wallet, key)
           console.info(
             `[bsv21] signed outputs payee=${classified.payee.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'} change=${classified.change.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'}`,
           )
@@ -1153,6 +1164,18 @@ export async function sendBsv21Tokens(args: {
           sym,
           dec,
           ...(icon ? { icon } : {}),
+          ...(keys.payee && !payeeIsSelf
+            ? {
+                remittance: {
+                  senderIdentityKey: keys.payee.remittance.senderIdentityKey,
+                  outputs: payeeVouts.map((vout) => ({
+                    vout,
+                    derivationPrefix: keys.payee!.remittance.derivationPrefix,
+                    derivationSuffix: keys.payee!.remittance.derivationSuffix,
+                  })),
+                },
+              }
+            : {}),
         }
         void (async () => {
           const { notifyPeerItemIncoming } = await import('../messageTransport')

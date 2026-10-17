@@ -4,7 +4,6 @@ import {
   Beef,
   createNonce,
   P2PKH,
-  PrivateKey,
   PublicKey,
   type SignableTransaction,
   type Transaction,
@@ -66,6 +65,7 @@ import { markItemsConsumed } from './sentItemGuard'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
 import { type ActiveWallet } from './session'
+import { ownsTokenLock, primeTipKeys, tipSigningKey } from './token/tipKeys'
 
 type SelfPayment = {
   lockingScript: string
@@ -180,7 +180,6 @@ async function signBurnInputs(args: {
     throw new Error('Burn inputs are missing from the signable transaction')
   }
 
-  const rootKey = PrivateKey.fromHex(args.active.rootKeyHex)
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     const outpoint = `${String(input.sourceTXID).toLowerCase()}.${
@@ -212,7 +211,7 @@ async function signBurnInputs(args: {
     // makes local script verification fail after createAction has already
     // reserved the inputs (the same phantom-item failure phrase migration had).
     input.unlockingScriptTemplate = new P2PKH().unlock(
-      rootKey,
+      await tipSigningKey(args.active, fullScript),
       'all',
       false,
       source.satoshis,
@@ -579,11 +578,12 @@ export async function previewBsv21Burn(args: {
     forgetFungibleToken(token.tokenId)
     throw new Error('Token is no longer spendable in this wallet. Inventory was refreshed.')
   }
+  await primeTipKeys(active)
   const plan = planBsv21Burn({
     tokenId,
     amount: args.amount,
     tips,
-    ownsLockingScript: (script) => scriptPaysAddress(script, active.address),
+    ownsLockingScript: (script) => ownsTokenLock(active, script),
   })
   if (plan.path === 'refuse') throw refusalMessage(plan.reason)
   const protocolOutputCount = 1 + (plan.changeAmount > 0n ? 1 : 0)
@@ -709,12 +709,12 @@ export async function burnBsv21(args: {
         forgetFungibleToken(token.tokenId)
         throw new Error('Token is no longer spendable in this wallet. Inventory was refreshed.')
       }
+      await primeTipKeys(active)
       const plan = planBsv21Burn({
         tokenId,
         amount: args.amount,
         tips,
-        ownsLockingScript: (script) =>
-          scriptPaysAddress(script, active.address),
+        ownsLockingScript: (script) => ownsTokenLock(active, script),
       })
       if (plan.path === 'refuse') throw refusalMessage(plan.reason)
       const result = await executeBurnPlan({

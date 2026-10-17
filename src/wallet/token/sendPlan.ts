@@ -16,6 +16,7 @@
  * tx). Overlay and market decode the image from that BEEF — no indexer.
  */
 import { Beef, type Transaction } from '@bsv/sdk'
+import type { ColorRemittance } from '../colorKeys'
 import {
   BSV21_BASKET,
   buildBsv21CustomInstructions,
@@ -359,6 +360,7 @@ export function buildBsv21SendRemittance(args: {
   issuer?: string
   icon?: string
   maxSupply?: number
+  remittance?: ColorRemittance
 }): { basket: typeof BSV21_BASKET; tags: string[]; customInstructions: string } {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -388,6 +390,7 @@ export function buildBsv21SendRemittance(args: {
       dec: args.dec,
       issuer: args.issuer,
       maxSupply: args.maxSupply,
+      remittance: args.remittance,
     }),
   }
 }
@@ -410,6 +413,9 @@ export function buildBsv21SendOutputs(args: {
    * drops it and the card forgets the balance at change 0.
    */
   payeeIsSelf?: boolean
+  /** `p color` remittance of each output whose address is a derived child. */
+  payeeRemittance?: ColorRemittance
+  changeRemittance?: ColorRemittance
 }): Bsv21SendOutput[] {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -427,6 +433,7 @@ export function buildBsv21SendOutputs(args: {
     dec: args.dec,
     issuer: args.issuer,
     icon: args.icon,
+    remittance: args.payeeRemittance,
   })
   const { basket: payeeBasket, ...payeeRemitFields } = payeeRemit
   const outputs: Bsv21SendOutput[] = [
@@ -453,6 +460,7 @@ export function buildBsv21SendOutputs(args: {
       dec: args.dec,
       issuer: args.issuer,
       icon: args.icon,
+      remittance: args.changeRemittance,
     })
     outputs.push({
       role: 'change',

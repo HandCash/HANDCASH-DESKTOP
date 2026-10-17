@@ -6,6 +6,7 @@ import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { storageRegistry } from '../storage/registry'
 import { listFriends, type Friend } from './friends'
+import type { DeliveryRemittance } from './colorKeys'
 
 const STORAGE_KEY_BASE = storageRegistry.messages.key
 const LEGACY_KEY = storageRegistry.legacyChat.key
@@ -54,6 +55,8 @@ export type ItemTransferAsset =
       dec: number
       icon?: string
       issuer?: string
+      /** BRC-251: how the recipient finds the `p color` key of each output paying it. */
+      remittance?: DeliveryRemittance
     }
 
 /** One collectable output in a multi-item transaction. */

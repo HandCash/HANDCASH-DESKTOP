@@ -17,6 +17,7 @@ import { decodeBsv21Binary, type Bsv21IconImage } from './decode162'
 import { fetchRawTxHex } from '../oneSatImport'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import type { ActiveWallet } from '../session'
+import { tipSigningKey } from './tipKeys'
 
 const PUBKEY_RE = /^(02|03)[0-9a-f]{64}$/i
 
@@ -968,7 +969,6 @@ export async function completeBsv21SignableWithRootP2pkh(
     throw new Error('BSV-21 auth input missing from the signable transaction')
   }
 
-  const rootKey = PrivateKey.fromHex(active.rootKeyHex)
   const spends: Record<number, { unlockingScript: string }> = {}
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
@@ -984,7 +984,7 @@ export async function completeBsv21SignableWithRootP2pkh(
     // full locking script. SetupClient.getUnlockP2PKH only hashes plain P2PKH
     // and fails CHECKSIG on ordinal tips (soft-latch dust is plain P2PKH).
     input.unlockingScriptTemplate = new P2PKH().unlock(
-      rootKey,
+      await tipSigningKey(active, lockingScript.toHex()),
       'all',
       false,
       satoshis,

@@ -108,6 +108,13 @@ Filing name `p2pft`, tag `p2pft:<tokenId>`; legacy `bsv21` rows move over once (
 | Cosigned (MNEE) | Detected and refused for send; sweep from imported keys through the MNEE API | Import |
 | Release from an app | `relinquishOutput` on a token basket | Prompt |
 
+Keys follow BRC-251 Custody. Every value output a transfer writes gets a fresh BRC-207 `p color` child:
+
+- the payee's own child, when the transfer is delivered to it by identity key;
+- this wallet's own child, for change, a self-send, burn change and the market split change.
+
+The remittance strings are stored in each output's `customInstructions`, so BRC-39 backs them up with the rest of local state. The delivery carries the payee's strings in `meta.asset.remittance`, and receive derives the key from them. A payee known only by a bare address keeps that address. Market and direct-offer lots stay on the identity address, because BRC-251 does not define swaps. Every token input signs with `tipSigningKey` (`token/tipKeys.ts`), and every ownership check uses `ownsTokenLock`.
+
 ## 5. Market actions
 
 A listing is a `1SAT-MARKET` PushDrop offer: the asset at vout 0, the offer at vout 1. At list time the seller signs both inputs of the buyer's settlement `SIGHASH_SINGLE|ANYONECANPAY|FORKID` (settlement v2, `marketSettlementLayout.ts`). Each signature commits to the output at its own input index: the asset to the seller payment, the offer to the market fee. The asset cannot move without paying the seller, and withdrawing someone else's advert costs the fee.

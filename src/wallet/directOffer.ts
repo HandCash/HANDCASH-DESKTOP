@@ -44,6 +44,7 @@ import {
   type DirectOfferState,
 } from './directOfferPath'
 import { chooseMarketCancelReturn } from './marketListingPath'
+import { tipSigningKey } from './token/tipKeys'
 
 export type DirectOfferRecord = {
   offer: DirectOffer
@@ -558,8 +559,10 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
         })
       }
       tx.inputs[DIRECT_OFFER_LOT_VIN]!.unlockingScript = UnlockingScript.fromHex(offer.sellerUnlockingScript)
-      const rootKey = PrivateKey.fromHex(active.rootKeyHex)
-      const coverVins = covers.map((cover) => {
+      const coverKeys = await Promise.all(
+        covers.map((cover) => (cover.lockingScript ? tipSigningKey(active, cover.lockingScript) : null)),
+      )
+      const coverVins = covers.map((cover, i) => {
         const { txid, vout } = splitOutpoint(cover.outpoint)
         const vin = tx.inputs.findIndex(
           (input) => String(input.sourceTXID).toLowerCase() === txid && input.sourceOutputIndex === vout,
@@ -568,7 +571,7 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
           throw new DirectOfferError('DIRECT_OFFER_SHAPE_MISMATCH', 'A payment token input is missing.')
         }
         tx.inputs[vin]!.unlockingScriptTemplate = new P2PKH().unlock(
-          rootKey,
+          coverKeys[i]!,
           'all',
           false,
           1,
@@ -821,7 +824,7 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
         throw new DirectOfferError('DIRECT_OFFER_SHAPE_MISMATCH', 'The wallet did not keep the listed lot first.')
       }
       tx.inputs[0]!.unlockingScriptTemplate = new P2PKH().unlock(
-        PrivateKey.fromHex(active.rootKeyHex),
+        await tipSigningKey(active, offer.give.lockingScript),
         'all',
         false,
         1,

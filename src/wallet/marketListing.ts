@@ -98,6 +98,7 @@ import {
 import { DIRECT_OFFER_BASKET } from './directOfferPath'
 import { signSellerInputs } from './offerSeal'
 import { SELLER_SIGHASH } from './offerTerms'
+import { rememberTipKey, selfColorOutput, tipSigningKey } from './token/tipKeys'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -1352,13 +1353,13 @@ export async function splitBsv21CoverToExactAmt(args: {
   }
   const changeAmt = coverSum - requested
   const layout = bsv21SpendLayout(args.covers)
+  const changeKey = changeAmt > 0n ? selfColorOutput(args.active, args.origin) : null
   const listedLock = buildBsv21ValueLock({
     tokenId: args.origin,
     amount: requested,
     address: args.active.address,
     layout,
   })
-  const key = PrivateKey.fromHex(args.active.rootKeyHex)
   const vin0 = args.covers[0]
   if (!vin0) throw new Error('Not enough units available to list that amount.')
   const itemTxid = vin0.outpoint.slice(0, 64)
@@ -1404,7 +1405,7 @@ export async function splitBsv21CoverToExactAmt(args: {
               lockingScript: buildBsv21ValueLock({
                 tokenId: args.origin,
                 amount: changeAmt,
-                address: args.active.address,
+                address: changeKey?.address ?? args.active.address,
                 layout,
               }),
               satoshis: 1,
@@ -1414,6 +1415,7 @@ export async function splitBsv21CoverToExactAmt(args: {
                 amt: changeAmt,
                 icon: args.icon,
                 ...(args.sym ? { sym: args.sym } : {}),
+                ...(changeKey ? { remittance: changeKey.remittance } : {}),
               }),
             },
           ]
@@ -1466,7 +1468,7 @@ export async function splitBsv21CoverToExactAmt(args: {
         throw new Error('List-split input is missing its source locking script')
       }
       vin.unlockingScriptTemplate = new P2PKH().unlock(
-        key,
+        await tipSigningKey(args.active, lockingScript.toHex()),
         'all',
         false,
         satoshis,
@@ -1483,6 +1485,7 @@ export async function splitBsv21CoverToExactAmt(args: {
       spends[i] = { unlockingScript }
     }
     if (!spends[0]) throw new Error('BSV-21 list-split signature missing')
+    if (changeKey) rememberTipKey(args.active, changeKey.key)
     args.onSigned?.()
     const signed = await args.active.wallet.signAction({
       reference,
@@ -2259,7 +2262,7 @@ async function createMarketListingAdvertExclusive(
       // 162 and 1sat tips are prefix ‖ P2PKH. getUnlockP2PKH hashes bare P2PKH
       // and fails CHECKSIG ("top stack element must be truthy").
       vin.unlockingScriptTemplate = new P2PKH().unlock(
-        offerKey,
+        await tipSigningKey(active, lockingScript.toHex()),
         'all',
         false,
         satoshis,
@@ -3262,7 +3265,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
       }
       const template =
         vin === 0
-          ? new P2PKH().unlock(key, 'all', false, satoshis, lockingScript)
+          ? new P2PKH().unlock(await tipSigningKey(active, lockingScript.toHex()), 'all', false, satoshis, lockingScript)
           : checksigOnlyUnlock(key, satoshis, lockingScript)
       const unlockingScript = (await template.sign(tx, vin)).toHex()
       if (!unlockingScript) throw new Error('Cancellation signature missing')
