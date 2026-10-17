@@ -319,7 +319,11 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
   },
   transferCountersignedAsset: {
     label: 'Sending…',
-    detail: 'Waiting for the issuer to accept',
+    detail: 'Waiting for the issuer or its cosigners to accept',
+  },
+  joinCountersignedAsset: {
+    label: 'Joining…',
+    detail: 'Becoming a cosigner of the issuer-accepted asset',
   },
   retireCountersignedAsset: {
     label: 'Retiring…',

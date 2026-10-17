@@ -30,6 +30,7 @@ export const BRC100_HANDLER_MANIFEST = Object.freeze({
   transferCountersignedAsset: 'tokens',
   retireCountersignedAsset: 'tokens',
   releaseCountersignedAsset: 'tokens',
+  joinCountersignedAsset: 'tokens',
   listCountersignedAssets: 'tokens',
   claimCloudHandle: 'identity',
   getClaimedCloudHandle: 'identity',

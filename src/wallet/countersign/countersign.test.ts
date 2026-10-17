@@ -1,7 +1,7 @@
 import { LockingScript, OP, P2PKH, PrivateKey, Script, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { beaconPhase, readBeaconChain, type BeaconChainSource } from './beacon'
-import { chooseCountersignTransferPath } from './path'
+import { chooseCosignerQuorum, chooseCountersignTransferPath } from './path'
 import { decodeCountersignPayload, encodeCountersignPayload, MIN_SILENCE_SECONDS } from './payload'
 import {
   checkAcceptRequest,
@@ -14,6 +14,7 @@ import {
   beaconUnlock,
   contentLock,
   COUNTERSIGN_SCOPE,
+  countersignatureValid,
   countersignDeployLock,
   countersignedLock,
   countersignedUnlock,
@@ -23,6 +24,7 @@ import {
   holderUnlock,
   inputScriptValid,
   pubkeyHashHex,
+  quorumSignatures,
   readCountersigned,
   readBeaconMarker,
   readCountersignClause,
@@ -220,6 +222,86 @@ describe('countersigned transfer', () => {
       unsigned.inputs[0]!.unlockingScript = holderUnlock(signInput(unsigned, 0, holder, COUNTERSIGN_SCOPE), pub(holder))
       expect(base(unsigned)).toMatchObject({ reason: 'invalid' })
     })
+
+    it('takes the holder’s fee inputs after the asset inputs only on a holder-funded request', () => {
+      const { request } = transfer(deploy, 0, [{ to: recipient, amount: 100n }], assetId)
+      const funded = Transaction.fromEF(request.toEF())
+      funded.addInput({ sourceTransaction: feeCoin(holder), sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      expect(base(funded)).toMatchObject({ reason: 'invalid' })
+      expect(base(funded, { holderFunded: true })).toEqual({ ok: true, assetIds: [assetId], inputs: [assetId] })
+      const feeFirst = new Transaction()
+      feeFirst.addInput({ sourceTransaction: feeCoin(holder), sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      for (const input of request.inputs) feeFirst.addInput(input)
+      for (const output of request.outputs) feeFirst.addOutput(output)
+      expect(base(feeFirst, { holderFunded: true })).toMatchObject({ reason: 'invalid' })
+    })
+  })
+})
+
+describe('cosigner quorum', () => {
+  const cosigners = [PrivateKey.fromRandom(), PrivateKey.fromRandom(), PrivateKey.fromRandom()]
+  const self = pub(cosigners[0]!)
+
+  it('defaults to the issuer alone and needs more than half of a shared set, the issuer among it', () => {
+    expect(chooseCosignerQuorum({ cosigners: undefined, identityKey: self })).toEqual({
+      quorum: 'solo',
+      issuer: { threshold: 1, keys: [self] },
+    })
+    expect(chooseCosignerQuorum({ cosigners: { threshold: 2, keys: cosigners.map(pub) }, identityKey: self })).toEqual({
+      quorum: 'shared',
+      issuer: { threshold: 2, keys: cosigners.map(pub) },
+    })
+    expect(chooseCosignerQuorum({ cosigners: { threshold: 1, keys: [self] }, identityKey: self })).toMatchObject({ quorum: 'solo' })
+    expect(chooseCosignerQuorum({ cosigners: { threshold: 1, keys: cosigners.slice(0, 2).map(pub) }, identityKey: self })).toMatchObject({
+      reason: 'cosigners-split',
+    })
+    expect(chooseCosignerQuorum({ cosigners: { threshold: 2, keys: cosigners.slice(1).map(pub) }, identityKey: self })).toMatchObject({
+      reason: 'cosigners-without-issuer',
+    })
+    for (const bad of [{ threshold: 4, keys: cosigners.map(pub) }, { threshold: 1, keys: [self, self] }, { threshold: 2, keys: ['nope', self] }, 'all']) {
+      expect(chooseCosignerQuorum({ cosigners: bad, identityKey: self })).toMatchObject({ reason: 'cosigners-invalid' })
+    }
+  })
+
+  it('routes a shared set to the quorum path, marking whether this wallet signs too', () => {
+    const shared: CountersignKeySets = { issuer: { threshold: 2, keys: cosigners.map(pub) }, release: sets.release }
+    const deploy = { sets: shared } as CountersignDeploy
+    const route = (identityKey: string) =>
+      chooseCountersignTransferPath({ deploy, identityKey, recipient: pub(recipient), amount: '1', held: 5n })
+    expect(route(self)).toMatchObject({ path: 'quorum', selfCosigns: true, cosigners: shared.issuer })
+    expect(route(pub(holder))).toMatchObject({ path: 'quorum', selfCosigns: false })
+  })
+
+  it('verifies each countersignature and orders a quorum by the issuer set, which CHECKMULTISIG needs', () => {
+    const shared: CountersignKeySets = { issuer: { threshold: 2, keys: cosigners.map(pub) }, release: sets.release }
+    const parent = new Transaction()
+    parent.addOutput({ lockingScript: countersignedLock({ assetId: `${'ab'.repeat(32)}_0`, amount: 1n, holderPkhHex: pkh(holder), sets: shared }), satoshis: 1 })
+    const tx = new Transaction()
+    tx.addInput({ sourceTransaction: parent, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    tx.addOutput({ lockingScript: countersignedLock({ assetId: `${'ab'.repeat(32)}_0`, amount: 1n, holderPkhHex: pkh(recipient), sets: shared }), satoshis: 1 })
+    const holderSig = signInput(tx, 0, holder, HOLDER_SCOPE)
+    const third = signInput(tx, 0, cosigners[2]!, COUNTERSIGN_SCOPE)
+    const first = signInput(tx, 0, cosigners[0]!, COUNTERSIGN_SCOPE)
+    expect(countersignatureValid(tx, 0, pub(cosigners[2]!), third)).toBe(true)
+    expect(countersignatureValid(tx, 0, pub(cosigners[1]!), third)).toBe(false)
+    expect(countersignatureValid(tx, 0, pub(holder), holderSig)).toBe(false)
+    const byKey = new Map([[pub(cosigners[2]!), third], [pub(cosigners[0]!), first]])
+    expect(quorumSignatures(shared.issuer, byKey)).toEqual([first, third])
+    expect(quorumSignatures(shared.issuer, new Map([[pub(cosigners[0]!), first]]))).toBeNull()
+    tx.inputs[0]!.unlockingScript = countersignedUnlock({
+      countersignatures: quorumSignatures(shared.issuer, byKey)!,
+      branch: 'issuer',
+      holderSignature: holderSig,
+      holderPublicKey: holder.toPublicKey().encode(true) as number[],
+    })
+    expect(inputScriptValid(tx, 0)).toBe(true)
+    tx.inputs[0]!.unlockingScript = countersignedUnlock({
+      countersignatures: [third, first],
+      branch: 'issuer',
+      holderSignature: holderSig,
+      holderPublicKey: holder.toPublicKey().encode(true) as number[],
+    })
+    expect(inputScriptValid(tx, 0)).toBe(false)
   })
 })
 

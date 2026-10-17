@@ -21,6 +21,10 @@ export type CountersignRefuse =
   | 'phase-unknown'
   | 'release-required'
   | 'release-issuer-only'
+  | 'cosigners-invalid'
+  | 'cosigners-without-issuer'
+  | 'cosigners-split'
+  | 'not-cosigner'
 
 export class CountersignError extends Error {
   readonly code: CountersignRefuse
@@ -34,16 +38,34 @@ export class CountersignError extends Error {
 }
 
 /**
- * Who countersigns a transfer. While the asset is live, a wallet that holds an
- * issuer key accepts its own request in process and anyone else asks the
- * issuer peer to peer. Once released, the holder countersigns with the
- * disclosed release keys and funds the fee itself; no request is sent.
+ * Who countersigns a transfer. While the asset is live and its issuer set is
+ * one key, a wallet that holds it accepts its own request in process and
+ * anyone else asks that issuer peer to peer. A shared issuer set (m of n
+ * cosigners) takes the quorum path: the holder funds the fee, so every
+ * cosigner signs the same transaction, and collects m countersignatures,
+ * its own among them when it is a cosigner. Once released, the holder
+ * countersigns with the disclosed release keys and funds the fee itself; no
+ * request is sent.
  */
 export type CountersignTransferPath =
   | { path: 'local-acceptor'; assetId: string; amount: bigint; recipient: string }
   | { path: 'remote-acceptor'; assetId: string; amount: bigint; recipient: string; acceptors: string[] }
+  | {
+      path: 'quorum'
+      assetId: string
+      amount: bigint
+      recipient: string
+      cosigners: KeySet
+      /** Whether this wallet is one of the cosigners and signs its own request. */
+      selfCosigns: boolean
+    }
   | { path: 'released'; assetId: string; amount: bigint; recipient: string; keys: string[] }
   | { path: 'refuse'; reason: CountersignRefuse; message: string }
+
+/** A shared issuer set: more than one cosigner, so no single wallet accepts alone. */
+export function isQuorum(issuer: KeySet): boolean {
+  return issuer.keys.length > 1
+}
 
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 
@@ -88,9 +110,68 @@ export function chooseCountersignTransferPath(args: {
       message: 'The issuer has stopped accepting this asset. It moves again once its release keys are published.',
     }
   }
-  return args.deploy.sets.issuer.keys.includes(self)
+  const issuer = args.deploy.sets.issuer
+  if (isQuorum(issuer)) {
+    return { path: 'quorum', ...base, cosigners: issuer, selfCosigns: issuer.keys.includes(self) }
+  }
+  return issuer.keys.includes(self)
     ? { path: 'local-acceptor', ...base }
-    : { path: 'remote-acceptor', ...base, acceptors: args.deploy.sets.issuer.keys }
+    : { path: 'remote-acceptor', ...base, acceptors: issuer.keys }
+}
+
+/**
+ * The issuer set of a new asset. `solo`: this wallet alone (the default).
+ * `shared`: m of n cosigners, this wallet among them. Any two quorums must
+ * share a cosigner (2m > n): that cosigner refuses the second of two
+ * conflicting spends of one output, so no two quorums countersign them both.
+ */
+export type CosignerQuorum =
+  | { quorum: 'solo'; issuer: KeySet }
+  | { quorum: 'shared'; issuer: KeySet }
+  | { quorum: 'refuse'; reason: CountersignRefuse; message: string }
+
+const MAX_COSIGNERS = 5
+
+export function chooseCosignerQuorum(args: { cosigners: unknown; identityKey: string }): CosignerQuorum {
+  const self = args.identityKey.toLowerCase()
+  if (args.cosigners == null) return { quorum: 'solo', issuer: { threshold: 1, keys: [self] } }
+  if (typeof args.cosigners !== 'object') {
+    return { quorum: 'refuse', reason: 'cosigners-invalid', message: 'cosigners must be { threshold, keys }.' }
+  }
+  const raw = args.cosigners as { threshold?: unknown; keys?: unknown }
+  const keys = Array.isArray(raw.keys) ? raw.keys.map((k) => String(k).trim().toLowerCase()) : []
+  const threshold = Number(raw.threshold)
+  if (
+    keys.length === 0 ||
+    keys.length > MAX_COSIGNERS ||
+    !keys.every((k) => KEY_RE.test(k)) ||
+    new Set(keys).size !== keys.length ||
+    !Number.isInteger(threshold) ||
+    threshold < 1 ||
+    threshold > keys.length
+  ) {
+    return {
+      quorum: 'refuse',
+      reason: 'cosigners-invalid',
+      message: `cosigners needs 1 to ${MAX_COSIGNERS} distinct identity keys and a threshold from 1 to their count.`,
+    }
+  }
+  if (!keys.includes(self)) {
+    return {
+      quorum: 'refuse',
+      reason: 'cosigners-without-issuer',
+      message: 'Your identity key must be one of the cosigners: you issue the asset and sign its first beacon.',
+    }
+  }
+  if (keys.length === 1) return { quorum: 'solo', issuer: { threshold: 1, keys } }
+  if (threshold * 2 <= keys.length) {
+    return {
+      quorum: 'refuse',
+      reason: 'cosigners-split',
+      message: `${threshold} of ${keys.length} lets two groups of cosigners each accept a different spend of the same units. Require more than half: at least ${Math.floor(keys.length / 2) + 1} of ${keys.length}.`,
+    }
+  }
+  return { quorum: 'shared', issuer: { threshold, keys } }
 }
 
 /**
@@ -155,4 +236,5 @@ export const ACCEPT_REFUSAL_COPY: Record<AcceptRefusal, string> = {
   fee: 'The issuer asks for a fee in tokens.',
   policy: 'The issuer’s policy refuses this transfer.',
   not_acceptor: 'The issuer no longer accepts transfers of this asset.',
+  quorum: 'Too few cosigners agreed to this transfer.',
 }

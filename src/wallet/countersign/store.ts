@@ -27,7 +27,30 @@ export type AcceptorRecord = {
   beaconAt: number
   /** Set once: this issuer never countersigns or refreshes the beacon again. */
   ended?: 'retired' | 'lapsed' | 'released'
+  /**
+   * One cosigner of a shared issuer set. It accepts an input by proof (the
+   * deploy, or a parent whose asset inputs carry a quorum's countersignatures)
+   * rather than by `accepted`, since a quorum may sign without it, and it
+   * learns the beacon from the chain.
+   */
+  shared?: true
+  /** The beacon refresh this cosigner proposed, kept until a quorum signs it or the beacon moves. */
+  beaconProposal?: BeaconProposal
 }
+
+export type BeaconProposal = {
+  /** sha256 of the proposal's Extended Format bytes, input 0 unsigned. */
+  proposal: string
+  efHex: string
+  /** Fee coins in it (`txid.vout`), held back from other transactions. */
+  feeCoins: string[]
+  /** Cosigner key → its ALL|FORKID signature over input 0, checksig hex. */
+  signatures: Record<string, string>
+  at: number
+}
+
+/** A named cosigner's invitation, kept until the user joins. */
+export type CosignerInvite = { assetId: string; from: string; at: number }
 
 /** The beacon chain as last read, and the phase it gave. */
 export type StoredPhase = { view: BeaconChainView; phase: CountersignPhase; checkedAt: number }
@@ -44,13 +67,27 @@ export type OutgoingRequest = {
   reason?: AcceptRefusal
   txid?: string
   at: number
+  /** Quorum path: the issuer set, and what each cosigner answered so far. */
+  cosigners?: CountersignKeySets['issuer']
+  /** Cosigner key → its countersignature per asset input, checksig hex. */
+  countersigs?: Record<string, string[]>
+  /** Cosigner key → its signed refusal, the proof that frees the others' reservations. */
+  refusals?: Record<string, SignedRefusal>
+  /** This holder's fee coins in the request (`txid.vout`), held back while it is open. */
+  feeCoins?: string[]
+  /** Cosigners that signed a refused quorum and have not confirmed the cancel yet. */
+  cancelPending?: string[]
 }
+
+/** A cosigner's signed `refused` (or `cancelled`) decision on one request. */
+export type SignedRefusal = { t: 'refused' | 'cancelled'; reason: AcceptRefusal; signature: string }
 
 export type CountersignState = {
   deploys: Record<string, StoredDeploy>
   acceptor: Record<string, AcceptorRecord>
   outgoing: Record<string, OutgoingRequest>
   phases: Record<string, StoredPhase>
+  invites: Record<string, CosignerInvite>
 }
 
 function key(): string {
@@ -65,9 +102,10 @@ export function readCountersignState(): CountersignState {
       acceptor: parsed.acceptor ?? {},
       outgoing: parsed.outgoing ?? {},
       phases: parsed.phases ?? {},
+      invites: parsed.invites ?? {},
     }
   } catch {
-    return { deploys: {}, acceptor: {}, outgoing: {}, phases: {} }
+    return { deploys: {}, acceptor: {}, outgoing: {}, phases: {}, invites: {} }
   }
 }
 

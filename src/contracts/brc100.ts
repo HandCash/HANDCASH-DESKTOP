@@ -36,6 +36,7 @@ export const ACTION_BRC100_METHODS = [
   'transferCountersignedAsset',
   'retireCountersignedAsset',
   'releaseCountersignedAsset',
+  'joinCountersignedAsset',
   'encrypt',
   'decrypt',
   'revealCounterpartyKeyLinkage',

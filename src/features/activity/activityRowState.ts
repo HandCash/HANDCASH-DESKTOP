@@ -126,6 +126,7 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   transferCountersignedAsset: 'issuer-accepted transfer',
   retireCountersignedAsset: 'issuer retire',
   releaseCountersignedAsset: 'asset release',
+  joinCountersignedAsset: 'cosigner join',
 }
 
 /** What the row is called before a description or txid exists. */

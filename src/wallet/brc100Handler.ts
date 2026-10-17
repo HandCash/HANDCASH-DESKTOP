@@ -575,6 +575,10 @@ export async function dispatchWalletMethod(
       return (await import('./countersign/wallet')).releaseCountersignedAsset(
         (args ?? {}) as Parameters<typeof import('./countersign/wallet').releaseCountersignedAsset>[0],
       )
+    case 'joinCountersignedAsset':
+      return (await import('./countersign/wallet')).joinCountersignedAsset(
+        (args ?? {}) as Parameters<typeof import('./countersign/wallet').joinCountersignedAsset>[0],
+      )
     case 'listCountersignedAssets':
       return (await import('./countersign/wallet')).listCountersignedAssets()
     case 'claimCloudHandle':
@@ -1101,8 +1105,8 @@ async function handleBrc100RequestInner(
       }
     }
     if (method === 'issueCountersignedAsset') {
-      const refusal = (await import('./countersign/wallet')).issueReleaseRefusal(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').issueReleaseRefusal>[0],
+      const refusal = (await import('./countersign/wallet')).issueRefusal(
+        (args ?? {}) as Parameters<typeof import('./countersign/wallet').issueRefusal>[0],
       )
       if (refusal) {
         return {

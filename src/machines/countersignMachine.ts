@@ -25,7 +25,11 @@ type Event =
  * acceptor countersigns it: until ACCEPTED nothing can be broadcast, so a
  * refusal or silence ends with no transaction and the holder's units intact.
  * A silent acceptor leaves the request open — repeating it is the same
- * request, and its inputs stay reserved for it. On a released asset the
+ * request, and its inputs stay reserved for it. With a shared issuer set
+ * (m of n cosigners) "requesting" collects countersignatures and ends in
+ * ACCEPTED at the m-th, REFUSED once too many refuse for m to remain, and
+ * SILENT at the deadline with the answers so far kept on the open request.
+ * On a released asset the
  * holder countersigns with the published release keys, so "requesting"
  * ends in ACCEPTED without asking anyone.
  */

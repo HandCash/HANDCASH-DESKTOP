@@ -342,6 +342,30 @@ export function signInput(tx: Transaction, vin: number, key: PrivateKey, scope: 
   return new TransactionSignature(signature.r, signature.s, scope).toChecksigFormat()
 }
 
+/** A cosigner's ALL|FORKID countersignature over input `vin`, from `publicKeyHex`. */
+export function countersignatureValid(
+  tx: Transaction,
+  vin: number,
+  publicKeyHex: string,
+  checksig: number[],
+): boolean {
+  if (checksig[checksig.length - 1] !== COUNTERSIGN_SCOPE) return false
+  try {
+    return PublicKey.fromString(publicKeyHex).verify(
+      Hash.sha256(sighashPreimage(tx, vin, COUNTERSIGN_SCOPE)),
+      TransactionSignature.fromChecksigFormat(checksig),
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Countersignatures by key, in the issuer set's key order (OP_CHECKMULTISIG's order), the first `threshold`. */
+export function quorumSignatures(set: KeySet, byKey: ReadonlyMap<string, number[]>): number[][] | null {
+  const ordered = set.keys.flatMap((key) => (byKey.has(key) ? [byKey.get(key)!] : []))
+  return ordered.length >= set.threshold ? ordered.slice(0, set.threshold) : null
+}
+
 export function holderUnlock(signature: number[], publicKeyHex: string): UnlockingScript {
   return new UnlockingScript().writeBin(signature).writeBin(Utils.toArray(publicKeyHex, 'hex'))
 }

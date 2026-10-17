@@ -147,6 +147,8 @@ export type AcceptRefusal =
   | 'fee'
   | 'policy'
   | 'not_acceptor'
+  /** Holder-side only: refusals left fewer cosigners than the threshold. */
+  | 'quorum'
 
 export type AcceptCheck =
   | { ok: true; assetIds: string[]; inputs: string[] }
@@ -168,15 +170,29 @@ export function checkAcceptRequest(args: {
   requestId: string
   recipients: ReadonlyArray<{ vout: number; identityKey: string }>
   frozen?: (holderPkhHex: string) => boolean
+  /**
+   * Quorum requests: the holder's own fee inputs follow the asset inputs.
+   * They are plain outputs, never countersigned ones, and never come first.
+   */
+  holderFunded?: boolean
 }): AcceptCheck {
   const { tx } = args
   if (tx.inputs.length === 0) return { ok: false, reason: 'invalid', detail: 'no inputs' }
   const ins = new Map<string, bigint>()
   const inputs: string[] = []
   const senders = new Set<string>()
+  let feeFrom: number | null = null
   for (let vin = 0; vin < tx.inputs.length; vin++) {
     const asset = assetOfInput(tx, vin, args.deploys)
+    if (!asset && args.holderFunded && vin > 0) {
+      const source = sourceOutputOf(tx, vin)
+      if (source && !readCountersigned(source.lockingScript)) {
+        feeFrom ??= vin
+        continue
+      }
+    }
     if (!asset) return { ok: false, reason: 'invalid', detail: `input ${vin} is not a countersigned output` }
+    if (feeFrom != null) return { ok: false, reason: 'invalid', detail: `input ${vin} follows the fee inputs` }
     if (!args.answersFor(asset.assetId)) return { ok: false, reason: 'not_acceptor', detail: asset.assetId }
     const deploy = args.deploys.get(asset.assetId)!
     if (!sameKeySets(asset.read.sets, deploy.sets)) {

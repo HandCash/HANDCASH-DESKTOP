@@ -640,6 +640,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'transferCountersignedAsset',
         'retireCountersignedAsset',
         'releaseCountersignedAsset',
+        'joinCountersignedAsset',
       ].includes(prompt.method)
     ) {
       return
@@ -1308,14 +1309,25 @@ export function summarizeAction(method: string, args: unknown): {
       release && typeof release === 'object' && Array.isArray(release.keys)
         ? `${String(release.threshold)} of ${release.keys.length} release custodians`
         : null
+    const cosigners = body.cosigners as { threshold?: unknown; keys?: unknown } | undefined
+    const shared =
+      cosigners && typeof cosigners === 'object' && Array.isArray(cosigners.keys) && cosigners.keys.length > 1
+        ? `${String(cosigners.threshold)} of ${cosigners.keys.length}`
+        : null
     return {
       title: `Issue ${label}`,
-      summary: `Deploy an issuer-accepted ${kind}; you hold it and accept every transfer of it`,
+      summary: shared
+        ? `Deploy an issuer-accepted ${kind}; you hold it, and any ${shared} cosigners (you among them) accept each transfer`
+        : `Deploy an issuer-accepted ${kind}; you hold it and accept every transfer of it`,
       itemName: label,
       previewKind: kind === 'item' ? 'collectable' : 'token',
       details: [
-        'Every later transfer needs your wallet online to countersign it; the recipient may be offline',
-        'Your wallet keeps a beacon output alive while it answers',
+        shared
+          ? `Every later transfer needs ${shared} cosigners online to countersign it; the recipient may be offline and credits it once mined`
+          : 'Every later transfer needs your wallet online to countersign it; the recipient may be offline',
+        shared
+          ? 'Each other cosigner is invited and countersigns only after joining'
+          : 'Your wallet keeps a beacon output alive while it answers',
         release === 'self'
           ? 'Only your wallet can release it: if your wallet stops without releasing it, it can never move again'
           : `If your wallet retires it or stops answering, ${custodians ?? 'its release custodians'} can release it so holders move it on their own signature`,
@@ -1345,6 +1357,19 @@ export function summarizeAction(method: string, args: unknown): {
       details: [
         typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
         'Freezes and transfer rules end; this cannot be undone',
+      ],
+    }
+  }
+
+  if (method === 'joinCountersignedAsset') {
+    return {
+      title: 'Become a cosigner',
+      summary: 'Countersign transfers of this issuer-accepted asset together with its other cosigners',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      details: [
+        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
+        'Your wallet answers transfer requests and beacon refreshes for it while it is open',
+        'Retire later to stop; the asset ends only when too few cosigners remain',
       ],
     }
   }

@@ -598,16 +598,21 @@ const COUNTERSIGN = `stateDiagram-v2
   [*] --> idle
   idle --> issuing : ISSUE
   issuing --> broadcast : BROADCASTED deploy + beacon
-  issuing --> failed : FAIL bad-asset-args | release-required | release-issuer-only
+  issuing --> failed : FAIL bad-asset-args | release-required | release-issuer-only | cosigners-invalid | cosigners-without-issuer | cosigners-split
   idle --> classifying : TRANSFER (CountersignTransferPath)
   note right of issuing
     ReleaseCustody: independent (keys the
     issuer does not hold meet k) or
     issuer-only (release: 'self', freezes
     for good if the issuer stops).
+    CosignerQuorum: solo (this wallet) or
+    shared m of n (this wallet among them,
+    2m > n so two quorums always overlap).
+    Other cosigners get a join invite and
+    sign only after joinCountersignedAsset.
   end note
   classifying --> failed : refuse / named reason
-  classifying --> holderSigning : local-acceptor | remote-acceptor | released
+  classifying --> holderSigning : local-acceptor | remote-acceptor | quorum | released
   holderSigning --> requesting : SIGNED request id
   holderSigning --> failed : FAIL
   requesting --> accepted : ACCEPTED countersigned EF
@@ -638,6 +643,13 @@ const COUNTERSIGN = `stateDiagram-v2
     beacon chain; released → holder
     countersigns and funds the fee.
     Released receipts credit once mined.
+    quorum: the holder funds the fee, each
+    cosigner proves the inputs, reserves
+    them and returns its countersignatures;
+    ACCEPTED at m, REFUSED once fewer than m
+    can remain (signed refusals free the
+    signers' reservations), SILENT keeps the
+    answers on the open request.
   end note
 `
 
@@ -1742,7 +1754,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'countersign',
     label: 'Countersigned',
     caption:
-      'countersignMachine — issuer-accepted tokens and items: holder signs, the acceptor countersigns or refuses; nothing exists until accepted',
+      'countersignMachine — issuer-accepted tokens and items: holder signs, the issuer (or m of n cosigners) countersigns or refuses; nothing exists until accepted',
     source: COUNTERSIGN,
   },
   {

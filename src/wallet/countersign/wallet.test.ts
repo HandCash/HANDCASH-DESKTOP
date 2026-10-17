@@ -1,4 +1,4 @@
-import { Beef, LockingScript, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
+import { Beef, LockingScript, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readCountersigned } from './script'
 import { resolveCountersignTransfer } from './resolve'
@@ -125,9 +125,49 @@ vi.mock('../beefCache', () => ({
   atomicBeefForSubject: (binary: number[] | undefined) => binary,
 }))
 
-const { issueCountersignedAsset, transferCountersignedAsset, listCountersignedHoldings, listCountersignedAssets } =
-  await import('./wallet')
-const { readCountersignState, deployMap } = await import('./store')
+type Box = { messageId: string; sender: string; plaintext: string }
+const sent: Array<{ to: string; wire: { t: string } & Record<string, unknown> }> = []
+const inbox: Box[] = []
+/** A remote cosigner's reply to what this wallet sends it; null stays silent. */
+let peer: (to: string, wire: { t: string } & Record<string, unknown>) => Promise<object | null> = async () => null
+
+vi.mock('../messageTransport', () => ({
+  MESSAGEBOX_BODY_MAX: 240_000,
+  sendSealedToPeerBox: async (_root: string, to: string, _box: string, plaintext: string) => {
+    const wire = JSON.parse(plaintext)
+    sent.push({ to, wire })
+    const reply = await peer(to, wire)
+    if (reply) inbox.push({ messageId: `m${inbox.length}-${Math.random()}`, sender: to, plaintext: JSON.stringify(reply) })
+  },
+  listSealedOwnBox: async () => [...inbox],
+  acknowledgeOwnBox: async (_root: string, _box: string, ids: string[]) => {
+    for (const id of ids) {
+      const at = inbox.findIndex((m) => m.messageId === id)
+      if (at >= 0) inbox.splice(at, 1)
+    }
+  },
+}))
+vi.mock('./beaconSource', () => ({
+  whatsOnChainBeaconSource: () => ({
+    spentBy: async () => null,
+    tx: async (txid: string) => txs.get(txid) ?? null,
+    blockTime: async () => null,
+    tipTime: async () => null,
+  }),
+}))
+
+const {
+  issueCountersignedAsset,
+  transferCountersignedAsset,
+  listCountersignedHoldings,
+  listCountersignedAssets,
+  retireCountersignedAsset,
+  releaseCountersignedAsset,
+  serveCountersignBox,
+} = await import('./wallet')
+const { readCountersignState, writeCountersignState, deployMap } = await import('./store')
+const { COUNTERSIGN_SCOPE, inputScriptValid, readCountersigned: readOutput, requestIdOf, signInput, sourceOutputOf } =
+  await import('./script')
 
 const custodians = {
   threshold: 1,
@@ -209,5 +249,138 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
       transferCountersignedAsset({ assetId: issued.assetId, amount: '6', recipient: identityKey }),
     ).rejects.toMatchObject({ code: 'insufficient' })
     expect(registered.length).toBe(before)
+  })
+})
+
+describe('countersigned wallet flows (2 of 3 cosigners)', () => {
+  const keyB = PrivateKey.fromRandom()
+  const keyC = PrivateKey.fromRandom()
+  const cosigners = { threshold: 2, keys: [identityKey, keyB.toPublicKey().toString(), keyC.toPublicKey().toString()] }
+  const keyOf = (pub: string) => [keyB, keyC].find((k) => k.toPublicKey().toString() === pub)!
+
+  const cosign = (to: string, wire: Record<string, unknown>) => {
+    const ef = Utils.toArray(String(wire.ef), 'base64')
+    const tx = Transaction.fromEF(ef)
+    const assetVins = tx.inputs.flatMap((_, vin) => (readOutput(sourceOutputOf(tx, vin)!.lockingScript) ? [vin] : []))
+    return {
+      v: 1,
+      t: 'cosigned',
+      token: wire.token,
+      request: requestIdOf(ef),
+      signatures: assetVins.map((vin) => Utils.toHex(signInput(tx, vin, keyOf(to), COUNTERSIGN_SCOPE))),
+    }
+  }
+  const refuseAs = async (to: string, wire: Record<string, unknown>, reason: string) => {
+    const request = requestIdOf(Utils.toArray(String(wire.ef), 'base64'))
+    const { signature } = await new ProtoWallet(keyOf(to)).createSignature({
+      data: Utils.toArray(`countersign\nv1\nrefused\n${String(wire.token)}\n${request}\n${reason}`, 'utf8'),
+      protocolID: [2, 'countersign decision'],
+      keyID: '1',
+      counterparty: 'anyone',
+    })
+    return { v: 1, t: 'refused', token: wire.token, request, reason, signature: Utils.toHex(signature) }
+  }
+
+  beforeEach(() => {
+    durable.clear()
+    rows.length = 0
+    registered.length = 0
+    sent.length = 0
+    inbox.length = 0
+    peer = async () => null
+  })
+
+  it('refuses a split quorum or one without the issuer before anything is signed', async () => {
+    await expect(
+      issueCountersignedAsset({ kind: 'token', sym: 'SPLIT', supply: '1', release: custodians, cosigners: { ...cosigners, threshold: 1 } }),
+    ).rejects.toMatchObject({ code: 'cosigners-split' })
+    await expect(
+      issueCountersignedAsset({
+        kind: 'token',
+        sym: 'AWAY',
+        supply: '1',
+        release: custodians,
+        cosigners: { threshold: 2, keys: cosigners.keys.slice(1) },
+      }),
+    ).rejects.toMatchObject({ code: 'cosigners-without-issuer' })
+    expect(registered).toHaveLength(0)
+  })
+
+  it('invites the other cosigners, then sends with its own and one other countersignature', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'QRM', supply: '10', release: custodians, cosigners })
+    expect(issued.cosigners).toEqual(cosigners)
+    expect(sent.filter((s) => s.wire.t === 'join').map((s) => s.to)).toEqual(cosigners.keys.slice(1))
+    expect(readCountersignState().acceptor[issued.assetId]?.shared).toBe(true)
+
+    peer = async (to, wire) => (wire.t === 'request' && to === cosigners.keys[1] ? cosign(to, wire) : null)
+    const recipient = PrivateKey.fromRandom().toPublicKey().toString()
+    const result = await transferCountersignedAsset({ assetId: issued.assetId, amount: '4', recipient })
+    expect(result.acceptedBy).toBe('quorum')
+    expect(registered).toContain(result.txid)
+    const outgoing = readCountersignState().outgoing[result.requestId]!
+    expect(outgoing.state).toBe('accepted')
+    expect(Object.keys(outgoing.countersigs ?? {}).sort()).toEqual([identityKey, cosigners.keys[1]].sort())
+    // The holder funded the request, so every cosigner signed the same transaction.
+    expect(Transaction.fromEF(Utils.toArray(outgoing.efHex, 'hex')).inputs.length).toBeGreaterThan(1)
+    // Change is filed only after the transfer resolves, every countersigned input script-checked.
+    const held = await listCountersignedHoldings(active as never, issued.assetId)
+    expect(held.map((h) => h.amount)).toEqual([6n])
+  })
+
+  it('a quorum the cosigners refuse sends nothing, frees its own reservation, and a new attempt goes through', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'NAY', supply: '3', release: custodians, cosigners })
+    peer = async (to, wire) => (wire.t === 'request' ? refuseAs(to, wire, 'policy') : null)
+    const recipient = PrivateKey.fromRandom().toPublicKey().toString()
+    const before = registered.length
+    await expect(transferCountersignedAsset({ assetId: issued.assetId, amount: '1', recipient })).rejects.toMatchObject({
+      code: 'acceptor-refused',
+      acceptorReason: 'policy',
+    })
+    // Only the fee-coin batch went out; no transfer did.
+    expect(registered.slice(before).every((id) => rows.some((r) => r.outpoint.startsWith(id) && r.basket === 'countersign-fee'))).toBe(true)
+    const record = readCountersignState().acceptor[issued.assetId]!
+    expect(record.spent[issued.assetId]).toBeUndefined()
+
+    peer = async (to, wire) => (wire.t === 'request' && to === cosigners.keys[2] ? cosign(to, wire) : null)
+    const retry = await transferCountersignedAsset({ assetId: issued.assetId, amount: '1', recipient })
+    expect(retry.acceptedBy).toBe('quorum')
+    expect(readCountersignState().acceptor[issued.assetId]!.spent[issued.assetId]).toBe(retry.requestId)
+  })
+
+  it('a cosigner retiring withdraws without a transaction; it cannot release a live shared asset', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'BYE', supply: '1', release: 'self', cosigners })
+    await expect(releaseCountersignedAsset({ assetId: issued.assetId })).rejects.toMatchObject({ code: 'asset-live' })
+    const before = registered.length
+    const ended = await retireCountersignedAsset({ assetId: issued.assetId })
+    expect(ended).toEqual({ assetId: issued.assetId, txid: null, phase: 'ended' })
+    expect(registered.length).toBe(before)
+    expect(readCountersignState().acceptor[issued.assetId]!.ended).toBe('retired')
+    const { assets } = await listCountersignedAssets()
+    expect(assets[0]).toMatchObject({ cosigners, phase: 'ended' })
+  })
+
+  it('refreshes the beacon once another cosigner signs its proposal', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'BCN', supply: '1', release: custodians, cosigners })
+    const state = readCountersignState()
+    state.acceptor[issued.assetId]!.beaconAt = 0
+    writeCountersignState(state)
+    peer = async (to, wire) => {
+      if (wire.t !== 'beacon-sign' || to !== cosigners.keys[2]) return null
+      const ef = Utils.toArray(String(wire.ef), 'base64')
+      const tx = Transaction.fromEF(ef)
+      return { v: 1, t: 'beacon-signed', token: wire.token, proposal: requestIdOf(ef), signature: Utils.toHex(signInput(tx, 0, keyC, COUNTERSIGN_SCOPE)) }
+    }
+    await serveCountersignBox({ force: true })
+    expect(sent.filter((s) => s.wire.t === 'beacon-sign').map((s) => s.to).sort()).toEqual(cosigners.keys.slice(1).sort())
+    expect(readCountersignState().acceptor[issued.assetId]!.beaconProposal).toBeDefined()
+    await serveCountersignBox({ force: true })
+    const record = readCountersignState().acceptor[issued.assetId]!
+    expect(record.beaconProposal).toBeUndefined()
+    expect(record.beacon).not.toBe(`${issued.txid}_1`)
+    const refresh = Transaction.fromHex(record.beaconTxHex!)
+    refresh.inputs[0]!.sourceTransaction = txs.get(issued.txid)!
+    expect(refresh.inputs[0]!.unlockingScript!.chunks).toHaveLength(4)
+    expect(inputScriptValid(refresh, 0)).toBe(true)
+    expect(registered).toContain(record.beacon.slice(0, 64))
   })
 })
