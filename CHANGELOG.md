@@ -3,8 +3,7 @@
 ## [1.3.574] - 2026-10-17
 
 ### Changed
-
-- Patch release (every push must ship a new version).
+- **A token swap is now a direct offer: a market listing you hand to a buyer instead of publishing.** It uses the same mechanism as a market listing. The units are held out of your balance and you sign only your own input against what you want back. The difference is that it is not posted to the market, charges no market fee, and can ask for sats or another token. Activity shows it the way it shows a market listing: Listing, Cancel listing, Purchase and Sold. Prompts and progress use the same words. The snowflake badge from 1.3.573 is gone.
 
 ## [1.3.573] - 2026-10-17
 
