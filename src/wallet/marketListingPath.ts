@@ -111,6 +111,51 @@ export function chooseMarketListingPath(args: {
   return { path: 'createOffer', itemOutpoint: args.itemOutpoint }
 }
 
+/**
+ * How a cancelled listing's asset comes back. Each listed lock has its own
+ * return: an ordinal follows its satoshi to P2PKH; a BRC-162 or draft-tagged
+ * token is rebuilt in its own layout for exactly the units the listed lock
+ * holds. A legacy JSON token is never listed, so meeting one refuses rather
+ * than rebuilding it as something else.
+ */
+export type MarketCancelReturn =
+  | { kind: 'ordinal' }
+  | { kind: 'brc162' | 'draft-tagged'; tokenId: string; amount: bigint }
+  | {
+      kind: 'refuse'
+      reason: 'no-listed-lock' | 'legacy-json' | 'authority-lock' | 'not-a-token' | 'asset-mismatch' | 'token-mismatch'
+    }
+
+export function chooseMarketCancelReturn(args: {
+  assetType: 'ordinal' | 'bsv21'
+  /** The listed output's locking script, read from the listing transaction. */
+  listedLockHex: string | undefined
+  /** Token id and units the advert names; checked against the listed lock. */
+  tokenId?: string | null
+  amt?: number | string | null
+}): MarketCancelReturn {
+  const hex = args.listedLockHex?.trim().toLowerCase()
+  if (!hex) return { kind: 'refuse', reason: 'no-listed-lock' }
+  const decoded = decodeBsv21Binary(hex)
+  if (args.assetType === 'ordinal') {
+    if (decoded || holdsLegacyJsonBsv21(hex)) return { kind: 'refuse', reason: 'asset-mismatch' }
+    return { kind: 'ordinal' }
+  }
+  if (!decoded) {
+    return { kind: 'refuse', reason: holdsLegacyJsonBsv21(hex) ? 'legacy-json' : 'not-a-token' }
+  }
+  if (decoded.role === 'authority' || decoded.amount <= 0n) return { kind: 'refuse', reason: 'authority-lock' }
+  const lockTokenId = decoded.tokenId?.toLowerCase() ?? null
+  const advertTokenId = args.tokenId?.trim().toLowerCase().replace('.', '_') ?? null
+  if (!lockTokenId || (advertTokenId && advertTokenId !== lockTokenId)) {
+    return { kind: 'refuse', reason: 'token-mismatch' }
+  }
+  if (args.amt != null && String(args.amt) !== decoded.amount.toString()) {
+    return { kind: 'refuse', reason: 'token-mismatch' }
+  }
+  return { kind: decoded.layout, tokenId: lockTokenId, amount: decoded.amount }
+}
+
 export function chooseMarketCancelPath(args: {
   offerOutpoint: string
   /** The signed listing was refused before any miner took it: no offer exists. */

@@ -48,7 +48,7 @@ import {
 } from './token'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
 import { isTokenFilingBasket, TOKEN_FILING_BASKETS } from './token/filing'
-import { getBeefForTxidCached } from './beefCache'
+import { getBeefForTxidCached, getLocalBeefForTxid } from './beefCache'
 import { withStorageLockLabel } from './storageLockTrace'
 import { getProvenVerdict } from './provenCache'
 import { toUnderscoreOutpoint } from './outpointFormat'
@@ -84,7 +84,9 @@ import {
 import {
   chooseBsv21ListingLock,
   chooseMarketCancelPath,
+  chooseMarketCancelReturn,
   chooseMarketListingPath,
+  type MarketCancelReturn,
 } from './marketListingPath'
 import { publicMessageboxBase } from './messageTransport'
 import {
@@ -3070,6 +3072,15 @@ async function repaintReturnedItem(
   }
 }
 
+const MARKET_CANCEL_RETURN_REFUSAL: Record<Extract<MarketCancelReturn, { kind: 'refuse' }>['reason'], string> = {
+  'no-listed-lock': 'The listing transaction does not hold the listed output, so it cannot be cancelled here.',
+  'legacy-json': 'This listing holds a legacy JSON token, which this wallet cannot return. Nothing was spent.',
+  'authority-lock': 'This listing holds a token authority output with no units to return. Nothing was spent.',
+  'not-a-token': 'This token listing does not hold a token lock. Nothing was spent.',
+  'asset-mismatch': 'This listing holds a different kind of asset than its advert names. Nothing was spent.',
+  'token-mismatch': 'The listed token or amount does not match its advert. Nothing was spent.',
+}
+
 export async function createCancelMarketListingAdvert(args: {
   outpoint: string
   nonce?: string
@@ -3144,23 +3155,37 @@ async function createCancelMarketListingAdvertExclusive(args: {
     // The item is spent too: its list-time signature stays valid for as long
     // as the listed output does, so a cancel that left it would leave the sale
     // open to anyone holding the advert.
-    const listingBeef = await getBeefForTxidCached(active, offerTxid, { needProof: true })
+    // This wallet signed the listing, so its own copy comes first: a listing
+    // that has not been mined has no proof yet, and cancelling it must not wait for one.
+    const listingBeef =
+      (await getLocalBeefForTxid(active, offerTxid).catch(() => null)) ??
+      (await getBeefForTxidCached(active, offerTxid, { needProof: true, allowUnprovenRawTx: true }))
     const listingTx = listingBeef.findTxid(offerTxid)?.tx
-    const itemTxid = normalizeOutpoint(listing.outpoint).split('.')[0]
+    const itemTxid = normalizeOutpoint(listing.outpoint).split(/[._]/)[0]
     const listedLock = listingTx?.outputs[MARKET_ITEM_VOUT]?.lockingScript
     if (itemTxid !== offerTxid || !listingTx || !listedLock) {
       throw new Error('Cancellation needs the listing transaction that holds item and offer')
     }
     const assetType: MarketAssetType = listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal'
+    const back = chooseMarketCancelReturn({
+      assetType,
+      listedLockHex: listedLock.toHex(),
+      tokenId: assetType === 'bsv21' ? listing.origin : null,
+      amt: assetType === 'bsv21' ? listing.amt : null,
+    })
+    console.info(`[market] cancel ${listing.offerOutpoint.slice(0, 18)}… return=${back.kind}${back.kind === 'refuse' ? ` ${back.reason}` : ''}`)
+    if (back.kind === 'refuse') {
+      throw new MarketListingError('MARKET_CANCEL_REFUSED', MARKET_CANCEL_RETURN_REFUSAL[back.reason])
+    }
     const returnLock =
-      assetType === 'bsv21'
-        ? buildBsv21ValueLock({
-            tokenId: listing.origin,
-            amount: BigInt(listing.amt ?? 0),
+      back.kind === 'ordinal'
+        ? new P2PKH().lock(active.address).toHex()
+        : buildBsv21ValueLock({
+            tokenId: back.tokenId,
+            amount: back.amount,
             address: active.address,
-            layout: bsv21SpendLayout([{ lockingScript: listedLock.toHex() }]),
+            layout: back.kind,
           })
-        : new P2PKH().lock(active.address).toHex()
     const heldRemittance = await listedItemRemittance(active, listing, assetType)
     const created = await active.wallet.createAction({
       description: 'Cancel BRC-48 market offer',

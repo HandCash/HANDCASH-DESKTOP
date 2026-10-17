@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
-import { chooseBsv21ListingLock } from './marketListingPath'
+import { chooseBsv21ListingLock, chooseMarketCancelReturn } from './marketListingPath'
 import { buildBsv21ValueLock } from './token/sendPlan'
 
 const TOKEN_ID = `${'ab'.repeat(32)}_0`
@@ -80,5 +80,43 @@ describe('chooseBsv21ListingLock', () => {
       address,
     }).toUpperCase()
     expect(chooseBsv21ListingLock(upper)).toMatchObject({ lock: 'value', amount: 7n })
+  })
+})
+
+describe('chooseMarketCancelReturn — one return per listed asset shape', () => {
+  it('returns an ordinal by P2PKH', () => {
+    expect(chooseMarketCancelReturn({ assetType: 'ordinal', listedLockHex: P2PKH })).toEqual({ kind: 'ordinal' })
+  })
+
+  it('rebuilds each token layout as itself, for exactly the listed units', () => {
+    for (const layout of ['brc162', 'draft-tagged'] as const) {
+      const listed = buildBsv21ValueLock({ layout, tokenId: TOKEN_ID, amount: 40n, address })
+      expect(
+        chooseMarketCancelReturn({ assetType: 'bsv21', listedLockHex: listed, tokenId: TOKEN_ID.replace('_', '.'), amt: 40 }),
+      ).toEqual({ kind: layout, tokenId: TOKEN_ID, amount: 40n })
+    }
+  })
+
+  it('refuses a legacy JSON token instead of rebuilding it as BRC-162', () => {
+    const transfer = jsonTip({ p: 'bsv-20', op: 'transfer', id: TOKEN_ID, amt: '60' })
+    expect(chooseMarketCancelReturn({ assetType: 'bsv21', listedLockHex: transfer })).toEqual({
+      kind: 'refuse',
+      reason: 'legacy-json',
+    })
+  })
+
+  it('refuses a listing whose lock is not what its advert names', () => {
+    const token = buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN_ID, amount: 40n, address })
+    expect(chooseMarketCancelReturn({ assetType: 'ordinal', listedLockHex: token })).toMatchObject({ reason: 'asset-mismatch' })
+    expect(chooseMarketCancelReturn({ assetType: 'bsv21', listedLockHex: P2PKH })).toMatchObject({ reason: 'not-a-token' })
+    expect(
+      chooseMarketCancelReturn({ assetType: 'bsv21', listedLockHex: token, tokenId: TOKEN_ID, amt: 41 }),
+    ).toMatchObject({ reason: 'token-mismatch' })
+    expect(
+      chooseMarketCancelReturn({ assetType: 'bsv21', listedLockHex: token, tokenId: `${'cd'.repeat(32)}_0` }),
+    ).toMatchObject({ reason: 'token-mismatch' })
+    expect(chooseMarketCancelReturn({ assetType: 'bsv21', listedLockHex: undefined })).toMatchObject({
+      reason: 'no-listed-lock',
+    })
   })
 })

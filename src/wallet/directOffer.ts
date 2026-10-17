@@ -43,6 +43,7 @@ import {
   type DirectOfferRefuse,
   type DirectOfferState,
 } from './directOfferPath'
+import { chooseMarketCancelReturn } from './marketListingPath'
 
 export type DirectOfferRecord = {
   offer: DirectOffer
@@ -758,8 +759,16 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
         failRefused(path)
       }
       const offer = record.offer
-      const decoded = decodeBsv21Binary(offer.give.lockingScript)
-      if (!decoded) throw new DirectOfferError('invalid-offer', 'The listed lot is not a token output.')
+      const back = chooseMarketCancelReturn({
+        assetType: 'bsv21',
+        listedLockHex: offer.give.lockingScript,
+        tokenId: offer.give.tokenId,
+        amt: offer.give.amount,
+      })
+      console.info(`[direct-offer] cancel ${offer.offerId.slice(0, 18)}… return=${back.kind}${back.kind === 'refuse' ? ` ${back.reason}` : ''}`)
+      if (back.kind !== 'brc162' && back.kind !== 'draft-tagged') {
+        throw new DirectOfferError('invalid-offer', 'The listed lot does not hold the token and amount the offer names.')
+      }
       const created = await active.wallet.createAction({
         description: `Cancel direct offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
         labels: [OFFER_LABEL, 'direct-offer-cancel', `direct-offer:${offer.offerId}`],
@@ -768,10 +777,10 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
         outputs: [
           {
             lockingScript: buildBsv21ValueLock({
-              tokenId: offer.give.tokenId,
-              amount: BigInt(offer.give.amount),
+              tokenId: back.tokenId,
+              amount: back.amount,
               address: active.address,
-              layout: decoded.layout,
+              layout: back.kind,
             }),
             satoshis: 1,
             outputDescription: 'Listed lot returned',
