@@ -244,7 +244,7 @@ This is where features live. A payment, a collectable, and a fungible token are 
 | Certificates | BRC-52 | Forwarded, not proven. Leave off the integrator path until a third-party call is shown succeeding. |
 | Catalog and overlay packs | BRC-230 | Not in this release. Shipping on `feature/brc-230-index-expansion`; the methods return `404 INDEX_EXPANSION_UNAVAILABLE` today |
 
-The permission grammar is part of this layer too. `p 1sat collection` and `p bsv21 id` are baskets in the BRC-100 sense — the wallet interprets them as scoped views. Another wallet may use a different grammar, so treat the scope string as a HandCash convention and the underlying `listOutputs` call as portable.
+The permission grammar is part of this layer too. `p 1sat collection` and `p p2pft id` are baskets in the BRC-100 sense — the wallet interprets them as scoped views. Another wallet may use a different grammar, so treat the scope string as a HandCash convention and the underlying `listOutputs` call as portable.
 
 ### Layer 3: methods HandCash adds
 
