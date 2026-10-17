@@ -367,11 +367,21 @@ export function noteOwnLedgerRows(rows: readonly ActivityEntry[]): void {
   installSnapshot(namespace, withProvisional(namespace, current.rows, null), { persist: true })
 }
 
+/** Smallest restored history an empty live read may not replace. */
+const EMPTY_READ_GUARD_ROWS = 20
+
 export function publishActivityLedger(
   namespace: string,
   rows: ActivityEntry[],
   readStartedAt: number | null = null,
 ): void {
+  const prev = snapshot?.namespace === namespace ? snapshot.rows : null
+  // An account's history does not empty itself. A live read of nothing over a
+  // real history is the wrong database or user, and saving it erased 3,726 rows.
+  if (rows.length === 0 && prev && prev.length >= EMPTY_READ_GUARD_ROWS) {
+    console.warn(`[activity-ledger] refused an empty read over ${prev.length} row(s) — kept the history`)
+    return
+  }
   installSnapshot(namespace, withProvisional(namespace, rows, readStartedAt), { persist: true })
 }
 

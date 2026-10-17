@@ -126,6 +126,119 @@ async function identityIsStored(name: string, identityKey: string): Promise<bool
   }
 }
 
+/**
+ * Transactions this identity holds in a database, or null when the database
+ * has no user for it. Counted on the `userId` index, never by reading rows.
+ */
+async function identityTransactionCount(name: string, identityKey: string): Promise<number | null> {
+  if (!(await databaseNames()).includes(name)) return null
+  const db = await new Promise<IDBDatabase | null>((resolve) => {
+    const request = indexedDB.open(name)
+    request.onerror = () => resolve(null)
+    request.onsuccess = () => resolve(request.result)
+  })
+  if (db == null || !db.objectStoreNames.contains('users') || !db.objectStoreNames.contains('transactions')) {
+    db?.close()
+    return null
+  }
+  try {
+    const users = await new Promise<Array<{ identityKey?: string, userId?: number }>>((resolve, reject) => {
+      const request = db.transaction('users', 'readonly').objectStore('users').getAll()
+      request.onerror = () => reject(request.error ?? new Error('users unreadable'))
+      request.onsuccess = () => resolve((request.result ?? []) as Array<{ identityKey?: string, userId?: number }>)
+    })
+    const user = users.find((row) => row.identityKey === identityKey)
+    if (user?.userId == null) return null
+    return await new Promise<number>((resolve, reject) => {
+      const request = db.transaction('transactions', 'readonly').objectStore('transactions')
+        .index('userId').count(IDBKeyRange.only(user.userId))
+      request.onerror = () => reject(request.error ?? new Error('transactions unreadable'))
+      request.onsuccess = () => resolve(request.result)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+function sourceKey(base: string): string {
+  return storageRegistry.walletEngineSource.key + base
+}
+
+/** The source chosen for this pointer value. A restore that moves the pointer re-decides. */
+function decidedSource(base: string, selected: string): string | null {
+  const [use, from] = (durableGetItem(sourceKey(base)) ?? '').split('\n')
+  return use && from === selected ? use : null
+}
+
+function recordSource(base: string, selected: string, use: string): void {
+  durableSetItem(sourceKey(base), `${use}\n${selected}`)
+}
+
+/**
+ * The database this account's wallet opens.
+ *
+ * Toolbox 2.13 ignored the database name and kept every account in the shared
+ * `wallet-toolbox-<chain>net` database. The engine honours the name, so an
+ * account whose history is only in the shared database opened an empty one,
+ * created a blank user there and showed a zero balance. Open the database that
+ * holds more of this identity's transactions, after merging the other one into
+ * it, so neither the shared history nor anything received since is dropped.
+ * A merge that fails opens the larger database anyway and is retried next open.
+ */
+export async function resolveWalletEngineDatabase(args: MigrationArgs): Promise<string> {
+  const { accountIndex, base, selected } = accountOf(args)
+  const legacy = legacyToolboxDatabaseName(args.chain)
+  if (selected === legacy || selected.includes(`-restore-engine-v${ENGINE_SCHEMA}-`)) return selected
+  if (typeof indexedDB === 'undefined') return selected
+  const identityKey = PrivateKey.fromHex(args.rootKeyHex).toPublicKey().toString()
+  const decided = decidedSource(base, selected)
+  if (decided === legacy && (await identityTransactionCount(legacy, identityKey)) != null) return legacy
+  if (decided === selected) return selected
+
+  const started = Date.now()
+  const [ownCount, legacyCount] = await Promise.all([
+    identityTransactionCount(selected, identityKey),
+    identityTransactionCount(legacy, identityKey),
+  ])
+  if (!legacyCount || (ownCount != null && ownCount >= legacyCount)) {
+    if (legacyCount) recordSource(base, selected, selected)
+    return selected
+  }
+  let merged = 0
+  if (ownCount) {
+    try {
+      merged = await mergeIdentity(args, selected, legacy, identityKey)
+    } catch (error) {
+      console.warn(
+        `[wallet-engine] source merge deferred — a${accountIndex} ${selected} → ${legacy}:`,
+        error instanceof Error ? error.message : String(error),
+      )
+      return legacy
+    }
+  }
+  recordSource(base, selected, legacy)
+  console.info(
+    `[wallet-engine] source done ${Date.now() - started}ms — a${accountIndex} ${legacy} (${legacyCount} txs) over ${selected} (${ownCount ?? 'no user'}), merged ${merged}`,
+  )
+  return legacy
+}
+
+/** Merge one identity's rows from `from` into `into`; newer rows win, nothing is replaced. */
+async function mergeIdentity(args: MigrationArgs, from: string, into: string, identityKey: string): Promise<number> {
+  const source = await SetupClient.createStorageIdb({ chain: args.chain, rootKeyHex: args.rootKeyHex, databaseName: from })
+  const target = await SetupClient.createStorageIdb({ chain: args.chain, rootKeyHex: args.rootKeyHex, databaseName: into })
+  try {
+    const document = parseBRC38Json(await exportBRC38Json(source, identityKey))
+    if (document.user.identityKey !== identityKey || document.sourceStorage.chain !== args.chain) {
+      throw new Error('identity or chain mismatch')
+    }
+    const result = await importBRC38(target, document, { mode: 'merge' })
+    return result.inserts + result.updates
+  } finally {
+    await Promise.allSettled([source.destroy(), target.destroy()])
+  }
+}
+
 /** Drop staging copies an interrupted run left behind; the selected one stays. */
 async function dropAbandonedStages(base: string, selected: string): Promise<void> {
   const prefix = `${base}-restore-engine-v${ENGINE_SCHEMA}-`
@@ -201,6 +314,12 @@ export async function settleWalletEngineStorage(args: MigrationArgs): Promise<vo
   const key = markerKey(base)
   const identityKey = PrivateKey.fromHex(args.rootKeyHex).toPublicKey().toString()
   const legacy = legacyToolboxDatabaseName(args.chain)
+  // The wallet already reads the shared database in place; copying it out is
+  // the long write that froze unlock, and nothing needs it.
+  if (decidedSource(base, selected) === legacy) {
+    await dropAbandonedStages(base, selected)
+    return
+  }
   const sourceName =
     selected !== legacy &&
     !(await identityIsStored(selected, identityKey)) &&

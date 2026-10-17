@@ -145,6 +145,18 @@ describe('Activity ledger runtime ownership', () => {
       paged: { limit: 200, offset: 0 },
     })
   })
+  it('refuses an empty live read over a real history and keeps it', () => {
+    const owner = wallet('owner'); control.current = owner.runtime
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      id: 'ledger:' + txid(i + 1), txid: txid(i + 1), origin: 'handcash', kind: 'earned' as const, method: 'receive', sats: 1, at: i + 1, note: 'Received coins',
+    }))
+    publishActivityLedger('owner', rows)
+    publishActivityLedger('owner', [])
+    expect(ledgerActivitySnapshot()).toHaveLength(25)
+    // A different account starts empty; the guard is per account.
+    publishActivityLedger('other', [])
+    expect(ledgerActivitySnapshot()).toHaveLength(0)
+  })
   it('publishes corrections to direction even when time, amount and description stay the same', () => {
     const owner = wallet('owner'); control.current = owner.runtime
     const row = { id: 'ledger:' + txid(1), txid: txid(1), origin: 'handcash', kind: 'spent' as const, method: 'send', sats: 10, at: 1, note: 'Transfer' }

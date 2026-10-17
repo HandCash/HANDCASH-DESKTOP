@@ -390,13 +390,13 @@ type WalletBootArgs = {
 }
 
 async function walletUnitFor(args: WalletBootArgs): Promise<WarmWalletUnit> {
-  const { toolboxDatabaseName } = await import('./vaultAccounts')
+  const { resolveWalletEngineDatabase } = await import('./walletEngineMigration')
   const accountIndex = args.accountIndex ?? 0
   return warmWalletUnit({
     chain: args.chain,
     accountIndex,
     identityKey: PrivateKey.fromHex(args.rootKeyHex).toPublicKey().toString(),
-    databaseName: toolboxDatabaseName({ chain: args.chain, handle: args.handle, accountIndex }),
+    databaseName: await resolveWalletEngineDatabase({ ...args, accountIndex }),
   })
 }
 

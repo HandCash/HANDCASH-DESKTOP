@@ -27,7 +27,7 @@ import { appendAppLog } from './appLog'
 import { UNBROADCAST_STATUSES, exportBrc38DeltaJson } from './brc38StreamExport'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import type { ListedMessage } from './messageTransport'
-import { identityKeyForAccount, rootKeyHexForAccount, toolboxDatabaseName } from './vaultAccounts'
+import { identityKeyForAccount, rootKeyHexForAccount } from './vaultAccounts'
 import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
 
 const PENDING_KEY = storageRegistry.accountHandoverPending.key
@@ -181,7 +181,13 @@ async function handOver(master: VaultMaster, entry: PendingHandover, io: Handove
   if (!where) throw new Error('vault is not open')
   const rootKeyHex = rootKeyHexForAccount(master, entry.index)
   const owner = { identityKey: entry.identityKey, accountIndex: entry.index, chain: where.chain }
-  const databaseName = toolboxDatabaseName({ chain: where.chain, handle: where.handle, accountIndex: entry.index })
+  const { resolveWalletEngineDatabase } = await import('./walletEngineMigration')
+  const databaseName = await resolveWalletEngineDatabase({
+    chain: where.chain,
+    handle: where.handle,
+    rootKeyHex,
+    accountIndex: entry.index,
+  })
   // Uploads stop once the account is taken, so this is still the upload before the take.
   const since = lastUploadedAt(owner)
   const storageArgs = { chain: where.chain, rootKeyHex, databaseName }
