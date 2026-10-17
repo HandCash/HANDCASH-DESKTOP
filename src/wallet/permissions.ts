@@ -1415,15 +1415,16 @@ async function thirdPartyItemViewRequest(
 async function thirdPartyTokenViewRequest(
   request: TokenViewRequest,
 ): Promise<{ request: TokenViewRequest; tickers: string[] }> {
-  if (!request.wantsAll && request.scope === 'id' && request.ids.length > 0) {
+  if (!request.wantsAll && request.scope === 'token' && request.ids.length > 0) {
     return { request, tickers: request.ids }
   }
   const outputs = await listHeldOutputs('p2pft')
   const tokens = grantableTokensFromOutputs(outputs)
   return {
     request: {
-      scope: 'id',
+      scope: 'token',
       ids: tokens.map((t) => t.id),
+      keys: [],
       wantsAll: false,
     },
     tickers: tokens.map((t) => t.ticker),
@@ -1558,6 +1559,13 @@ export async function requestTokenViewApproval(
   // basket read. The read below only names what a *new* prompt offers.
   const access = getTokenAccess(origin)
   if (tokenViewGranted(access, original)) return 'allow'
+  // BRC-165 `id` is a narrow row lookup, not inventory access, as for items.
+  if (original.scope === 'id') {
+    patchTokenAccess(origin, (cur) =>
+      mergeTokenViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
+    )
+    return 'allow'
+  }
   let tickers: string[] = original.ids
   if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
     const converted = await thirdPartyTokenViewRequest(original)

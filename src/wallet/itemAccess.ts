@@ -73,19 +73,29 @@ export type TokenAccess = {
   view: 'none' | 'all' | 'filtered'
   /** Allowed token ids (deploy outpoints) when view === 'filtered'. */
   ids: string[]
+  /** Allowed BRC-164 held-row keys when view === 'filtered'. */
+  keys: string[]
 }
 
 export const DEFAULT_TOKEN_ACCESS: TokenAccess = {
   view: 'none',
   ids: [],
+  keys: [],
 }
 
-export type TokenViewScope = 'plain' | 'all' | 'id'
+/**
+ * `token` filters by token id (`p2pft:<tokenId>` tags). `id` is the BRC-165
+ * held-row lookup (`id:<key>` tags), the same axis as `p 1sat id`.
+ */
+export type TokenViewScope = 'plain' | 'all' | 'token' | 'id'
 
 export type TokenViewRequest = {
   scope: TokenViewScope
+  /** Token ids (deploy outpoints) for scope `token`. */
   ids: string[]
-  /** True for plain `bsv21` or `p bsv21 all`. */
+  /** BRC-164 held-row keys for scope `id`. */
+  keys: string[]
+  /** True for plain `p2pft` or `p p2pft all`. */
   wantsAll: boolean
 }
 
@@ -133,6 +143,18 @@ export function p1SatSpendIds(args: unknown): string[] {
   const ids = labels.flatMap((label) => {
     if (typeof label !== 'string') return []
     const match = /^p 1sat input id ([^\s]+)$/.exec(label)
+    return match?.[1] ? [match[1].toLowerCase()] : []
+  })
+  return [...new Set(ids)]
+}
+
+/** BRC-165-shaped held-row keys named by `p p2pft input id <key>` spend labels. */
+export function p2pftSpendIds(args: unknown): string[] {
+  const labels = asRecord(args).labels
+  if (!Array.isArray(labels)) return []
+  const ids = labels.flatMap((label) => {
+    if (typeof label !== 'string') return []
+    const match = /^p p2pft input id ([^\s]+)$/.exec(label)
     return match?.[1] ? [match[1].toLowerCase()] : []
   })
   return [...new Set(ids)]
@@ -255,19 +277,29 @@ export function parseTokenViewRequest(args: unknown): TokenViewRequest {
   const p = parsePBasket(body.basket)
   if (p && isTokenPermissionScheme(p.scheme)) {
     const rest = p.rest.toLowerCase()
-    const scope: TokenViewScope = rest === 'id' ? 'id' : 'all'
-    return {
-      scope,
-      ids:
-        scope === 'id'
-          ? [...new Set([...tagValues(tags, ['id:', 'p2pft:', 'bsv21:'])])]
-          : [],
-      wantsAll: scope !== 'id',
+    const filed = tagValues(tags, ['p2pft:', 'bsv21:'])
+    const idValues = tagValues(tags, ['id:'])
+    // Before row keys, `p p2pft id` took token ids (`p2pft:<tokenId>`, or an
+    // outpoint in `id:`). Those requests still filter by token.
+    const legacyTokenIds = idValues.filter((v) => normalizeOutpointId(v))
+    const keys = idValues.filter((v) => !normalizeOutpointId(v)).map((v) => v.toLowerCase())
+    if (rest === 'token' || (rest === 'id' && keys.length === 0)) {
+      return {
+        scope: 'token',
+        ids: [...new Set([...filed, ...legacyTokenIds])],
+        keys: [],
+        wantsAll: false,
+      }
     }
+    if (rest === 'id') {
+      return { scope: 'id', ids: [], keys: [...new Set(keys)], wantsAll: false }
+    }
+    return { scope: 'all', ids: [], keys: [], wantsAll: true }
   }
   return {
     scope: 'plain',
     ids: [],
+    keys: [],
     wantsAll: true,
   }
 }
@@ -352,29 +384,33 @@ export function prepareItemBasketArgs(args: unknown): {
         error: {
           code: 'USE_PBSV21_SCOPE',
           description:
-            'Use BRC-99 basket "p bsv21 all|id" or "p p2pft all|id" (filter values in tags). Storage baskets "p2pft" and "bsv21" are wallet-internal.',
+            'Use BRC-99 basket "p p2pft all|token|id" (filter values in tags). Storage baskets "p2pft" and "bsv21" are wallet-internal.',
         },
       }
     }
     const scope = p.rest.toLowerCase()
-    const allowedScopes = new Set(['all', 'id'])
+    const allowedScopes = new Set(['all', 'token', 'id'])
     if (!allowedScopes.has(scope) || p.rest !== scope) {
       return {
         args,
         error: {
           code: 'INVALID_PBSV21_SCOPE',
-          description: 'Use exactly "p bsv21 all|id" or "p p2pft all|id"; filter values belong in tags.',
+          description: 'Use exactly "p p2pft all|token|id"; filter values belong in tags.',
         },
       }
     }
     tokenViewRequest = parseTokenViewRequest(body)
-    if (scope === 'id' && tokenViewRequest.ids.length === 0) {
+    const named =
+      tokenViewRequest.scope === 'id' ? tokenViewRequest.keys : tokenViewRequest.ids
+    if (scope !== 'all' && named.length === 0) {
       return {
         args,
         error: {
           code: 'MISSING_PBSV21_SCOPE_TAG',
           description:
-            'Basket "p bsv21 id" requires at least one "id:<tokenId>", "p2pft:<tokenId>" or "bsv21:<tokenId>" tag.',
+            scope === 'id'
+              ? 'Basket "p p2pft id" requires at least one "id:<key>" tag.'
+              : 'Basket "p p2pft token" requires at least one "p2pft:<tokenId>" tag.',
         },
       }
     }
@@ -391,6 +427,9 @@ export function prepareItemBasketArgs(args: unknown): {
         if (parsePBasket(out.basket)) out.basket = ITEM_STORAGE_BASKET
         out.tags = stampBrc164Id(out.tags)
         changed = true
+      } else if (typeof out.basket === 'string' && isTokenFilingBasket(out.basket)) {
+        out.tags = stampBrc164Id(out.tags)
+        changed = true
       }
       if (out.protocol === 'basket insertion') {
         const rem =
@@ -399,6 +438,10 @@ export function prepareItemBasketArgs(args: unknown): {
             : null
         if (rem && typeof rem.basket === 'string' && isItemBasket(rem.basket)) {
           if (parsePBasket(rem.basket)) rem.basket = ITEM_STORAGE_BASKET
+          rem.tags = stampBrc164Id(rem.tags)
+          out.insertionRemittance = rem
+          changed = true
+        } else if (rem && typeof rem.basket === 'string' && isTokenFilingBasket(rem.basket)) {
           rem.tags = stampBrc164Id(rem.tags)
           out.insertionRemittance = rem
           changed = true
@@ -457,6 +500,7 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
+  if (p2pftSpendIds(args).length > 0) return true
   if (
     labels.some(
       (l) =>
@@ -801,11 +845,14 @@ export function normalizeTokenAccess(raw: unknown): TokenAccess {
   const o = raw as Partial<TokenAccess>
   const view =
     o.view === 'all' || o.view === 'filtered' || o.view === 'none' ? o.view : 'none'
+  const strings = (list: unknown) =>
+    Array.isArray(list)
+      ? list.filter((c): c is string => typeof c === 'string' && !!c.trim())
+      : []
   return {
     view,
-    ids: Array.isArray(o.ids)
-      ? o.ids.filter((c): c is string => typeof c === 'string' && !!c.trim())
-      : [],
+    ids: strings(o.ids),
+    keys: strings(o.keys),
   }
 }
 
@@ -818,11 +865,11 @@ export function mergeTokenViewGrant(
   if (allowAll && (request.wantsAll || current.view === 'all')) {
     return { ...current, view: 'all' }
   }
-  const ids = [...new Set([...current.ids, ...request.ids])]
   return {
     ...current,
     view: 'filtered',
-    ids,
+    ids: [...new Set([...current.ids, ...request.ids])],
+    keys: [...new Set([...current.keys, ...request.keys])],
   }
 }
 
@@ -830,10 +877,23 @@ export function tokenViewGranted(access: TokenAccess, request: TokenViewRequest)
   if (access.view === 'none') return false
   if (access.view === 'all') return true
   if (request.wantsAll) return access.view === 'filtered'
-  if (request.scope === 'id') {
+  if (request.scope === 'token') {
     return request.ids.length > 0 && request.ids.every((value) => access.ids.includes(value))
   }
+  if (request.scope === 'id') {
+    return request.keys.length > 0 && request.keys.every((value) => access.keys.includes(value))
+  }
   return false
+}
+
+/** BRC-164 held-row key of a token output. Outpoint-shaped `id:` tags are legacy token ids. */
+function tokenRowKey(tags: string[] | undefined): string | undefined {
+  for (const t of tags ?? []) {
+    if (!t.toLowerCase().startsWith('id:') || t.length <= 3) continue
+    const value = t.slice(3).trim()
+    if (value && !normalizeOutpointId(value)) return value.toLowerCase()
+  }
+  return undefined
 }
 
 function normalizeOutpointId(value: string): string | undefined {
@@ -886,20 +946,26 @@ export function outputMatchesTokenAccess(
 ): boolean {
   if (access.view === 'none') return false
   const tokenId = tokenIdFromOutput(tags, customInstructions, lockingScript, outpoint)
+  const rowKey = tokenRowKey(tags)
+  if (request?.scope === 'id') {
+    if (!rowKey || !request.keys.includes(rowKey)) return false
+    return access.view === 'all' || access.keys.includes(rowKey)
+  }
   if (access.view === 'all') {
     if (!request || request.wantsAll) return true
-    if (request.scope === 'id') return !!tokenId && request.ids.includes(tokenId)
+    if (request.scope === 'token') return !!tokenId && request.ids.includes(tokenId)
     return true
   }
-  if (!tokenId) return false
-  // A filtered grant remains an id allowlist even when the caller requests
-  // "all". Widening it here silently exposed newly discovered token ids without
+  // A filtered grant remains an allowlist even when the caller requests "all".
+  // Widening it here silently exposed newly discovered token ids without
   // another permission decision.
-  if (!request || request.wantsAll) return access.ids.includes(tokenId)
-  if (request.scope === 'id') {
-    return request.ids.includes(tokenId) && access.ids.includes(tokenId)
+  const allowed =
+    (!!tokenId && access.ids.includes(tokenId)) || (!!rowKey && access.keys.includes(rowKey))
+  if (!request || request.wantsAll) return allowed
+  if (request.scope === 'token') {
+    return !!tokenId && request.ids.includes(tokenId) && access.ids.includes(tokenId)
   }
-  return access.ids.includes(tokenId)
+  return allowed
 }
 
 function lockingScriptHexOf(raw: unknown): string {

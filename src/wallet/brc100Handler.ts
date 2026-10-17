@@ -45,6 +45,7 @@ import {
   isItemReceiveArgs,
   isTokenViewBasket,
   p1SatSpendIds,
+  p2pftSpendIds,
   prepareItemBasketArgs,
   type ItemViewRequest,
   type TokenViewRequest,
@@ -310,15 +311,17 @@ function normalizeOutpoint(value: unknown): string | null {
 }
 
 /**
- * Bind every BRC-165 id label to exactly one held `1sat` row and to an input
- * in this action. This prevents a label approval from authorizing a different
- * spend set than the row the user saw.
+ * Bind every BRC-165-shaped id label (`p 1sat input id`, `p p2pft input id`)
+ * to exactly one held row of its storage basket and to an input in this
+ * action. This prevents a label approval from authorizing a different spend
+ * set than the row the user saw.
  */
-async function verifyP1SatSpendLabels(
+async function verifyHeldRowSpendLabels(
   wallet: WalletInterface,
   args: unknown,
+  ids: string[],
+  basket: '1sat' | 'p2pft',
 ): Promise<void> {
-  const ids = p1SatSpendIds(args)
   if (ids.length === 0) return
   const body = args && typeof args === 'object' && !Array.isArray(args)
     ? (args as { inputs?: unknown[] })
@@ -332,7 +335,7 @@ async function verifyP1SatSpendLabels(
   )
   for (const id of ids) {
     const listed = await wallet.listOutputs({
-      basket: '1sat',
+      basket,
       tags: [`id:${id}`],
       tagQueryMode: 'all',
       limit: 2,
@@ -340,11 +343,11 @@ async function verifyP1SatSpendLabels(
       seekPermission: false,
     })
     if (listed.outputs.length !== 1) {
-      throw new Error(`BRC-165 item id "${id}" does not resolve to exactly one held row`)
+      throw new Error(`Held-row id "${id}" does not resolve to exactly one ${basket} row`)
     }
     const heldOutpoint = normalizeOutpoint(listed.outputs[0]?.outpoint)
     if (!heldOutpoint || !actionInputs.has(heldOutpoint)) {
-      throw new Error(`BRC-165 item id "${id}" is not an input in this action`)
+      throw new Error(`Held-row id "${id}" is not an input in this action`)
     }
   }
 }
@@ -1027,17 +1030,22 @@ async function handleBrc100RequestInner(
   let attestation: IssuanceAttestation | undefined
   if (isActionMethod(method)) {
     startActionPhases(event.request_id, originator, method, args)
-    if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
-      try {
-        await verifyP1SatSpendLabels(active.wallet, args)
-      } catch (err) {
-        return {
-          status: 400,
-          body: JSON.stringify({
-            status: 'error',
-            code: 'INVALID_P1SAT_SPEND',
-            description: err instanceof Error ? err.message : String(err),
-          }),
+    if (method === 'createAction') {
+      for (const [ids, basket, code] of [
+        [p1SatSpendIds(args), '1sat', 'INVALID_P1SAT_SPEND'],
+        [p2pftSpendIds(args), 'p2pft', 'INVALID_P2PFT_SPEND'],
+      ] as const) {
+        try {
+          await verifyHeldRowSpendLabels(active.wallet, args, ids, basket)
+        } catch (err) {
+          return {
+            status: 400,
+            body: JSON.stringify({
+              status: 'error',
+              code,
+              description: err instanceof Error ? err.message : String(err),
+            }),
+          }
         }
       }
     }
